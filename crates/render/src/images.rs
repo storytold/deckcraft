@@ -22,13 +22,15 @@ const BAD_BUDGET: usize = 64 << 20;
 
 struct Entry {
     _bytes: Arc<Vec<u8>>,
+    _fonts: Vec<Arc<Vec<u8>>>,
+    font_bytes: usize,
     pm: Arc<Pixmap>,
     stamp: u64,
 }
 
 #[derive(Default)]
 struct Cache {
-    map: HashMap<(usize, u32, u64), Entry>,
+    map: HashMap<(usize, u32, u64, u64), Entry>,
     bytes: usize,
     clock: u64,
     /// Failed sources by address; each holds its bytes so the address can't be reused while it
@@ -131,6 +133,9 @@ fn decode_at(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
     if crate::metafile::is_metafile(bytes) {
         return crate::metafile::rasterize(bytes, side);
     }
+    if crate::svg::is_svg(bytes) {
+        return crate::svg::rasterize(bytes, side);
+    }
     decode_raster(bytes, MAX_RGBA)
 }
 
@@ -181,6 +186,9 @@ fn decode_raster(bytes: &[u8], max: u64) -> Option<image::RgbaImage> {
 /// pixel size, scaled by the resolution it records (PNG `pHYs`, JPEG JFIF density) when that
 /// isn't 96 dpi, as PowerPoint sizes pictures. `None` for metafiles and anything unreadable.
 pub fn natural_size(bytes: &[u8]) -> Option<(f64, f64)> {
+    if crate::svg::is_svg(bytes) {
+        return crate::svg::natural_size(bytes);
+    }
     if crate::metafile::is_metafile(bytes) {
         return None;
     }
@@ -319,15 +327,53 @@ fn png_crc(data: &[u8]) -> u32 {
 }
 
 /// A premultiplied pixmap of the picture, downsampled so its longer side is near `want` px.
+#[cfg(test)]
 pub fn decode_for(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust) -> Option<Arc<Pixmap>> {
+    decode_for_pres(bytes, want, adj, None)
+}
+
+/// SVG text is scoped to the presentation's font parts, including cached pictures.
+fn svg_font_key(pres: Option<&deckcraft_model::Presentation>) -> Option<(u64, Vec<Arc<Vec<u8>>>, usize)> {
+    use std::hash::{Hash, Hasher};
+    let mut key = std::hash::DefaultHasher::new();
+    let mut sources = vec![];
+    let mut bytes = 0usize;
+    if let Some(p) = pres {
+        for f in &p.embedded_fonts {
+            f.typeface.hash(&mut key);
+            for id in f.faces() {
+                let item = id.and_then(|id| p.media(id));
+                item.map(|m| Arc::as_ptr(&m.data) as usize).hash(&mut key);
+                if let Some(item) = item {
+                    bytes = bytes.saturating_add(item.data.len());
+                    if bytes > 64 << 20 || sources.len() >= 64 {
+                        return None;
+                    }
+                    sources.push(item.data.clone());
+                }
+            }
+        }
+    }
+    Some((key.finish(), sources, bytes))
+}
+
+pub(crate) fn decode_for_pres(
+    bytes: &Arc<Vec<u8>>,
+    want: f64,
+    adj: &PictureAdjust,
+    pres: Option<&deckcraft_model::Presentation>,
+) -> Option<Arc<Pixmap>> {
     let addr = Arc::as_ptr(bytes) as usize;
     if with(|c| c.is_bad(addr, bytes)) {
         return None;
     }
     // Power-of-two size buckets so zooming doesn't re-decode every frame.
     let bucket = (want.max(16.0).log2().ceil() as u32).min(15);
-    let key = (addr, bucket, adjust_key(adj));
+    let vector = crate::svg::is_svg(bytes);
+    let context = if vector { svg_font_key(pres) } else { Some((0, vec![], 0)) };
+    let key = (addr, bucket, adjust_key(adj), context.as_ref().map_or(0, |c| c.0));
     if let Some(pm) = with(|c| {
+        context.as_ref()?;
         c.clock += 1;
         let clock = c.clock;
         c.map.get_mut(&key).map(|e| {
@@ -338,7 +384,8 @@ pub fn decode_for(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust) -> Optio
         return Some(pm);
     }
     let target = 1u32 << bucket;
-    let Some(mut img) = decode_at(bytes, target) else {
+    let decoded = if vector { crate::svg::rasterize_with_fonts(bytes, target, pres) } else { decode_at(bytes, target) };
+    let Some(mut img) = decoded else {
         with(|c| c.mark_bad(addr, bytes));
         return None;
     };
@@ -351,15 +398,18 @@ pub fn decode_for(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust) -> Optio
     apply_adjust(&mut img, adj);
     let (w, h) = img.dimensions();
     let pm = pixmap(&img)?;
+    let Some((_, fonts, font_bytes)) = context else {
+        return Some(pm);
+    };
     with(|c| {
         c.clock += 1;
-        let n = w as usize * h as usize * 4;
+        let n = w as usize * h as usize * 4 + font_bytes;
         c.bytes += n;
-        c.map.insert(key, Entry { _bytes: bytes.clone(), pm: pm.clone(), stamp: c.clock });
+        c.map.insert(key, Entry { _bytes: bytes.clone(), _fonts: fonts, font_bytes, pm: pm.clone(), stamp: c.clock });
         while c.bytes > BUDGET && c.map.len() > 1 {
             let Some(oldest) = c.map.iter().min_by_key(|(_, e)| e.stamp).map(|(k, _)| *k) else { break };
             if let Some(e) = c.map.remove(&oldest) {
-                c.bytes = c.bytes.saturating_sub(e.pm.width() as usize * e.pm.height() as usize * 4);
+                c.bytes = c.bytes.saturating_sub(e.pm.width() as usize * e.pm.height() as usize * 4 + e.font_bytes);
             }
         }
     });

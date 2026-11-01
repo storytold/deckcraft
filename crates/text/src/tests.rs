@@ -334,6 +334,29 @@ fn space_before_the_first_paragraph_with_spc_first_last_para() {
 }
 
 #[test]
+fn paragraph_percent_spacing_uses_natural_line_height_even_with_reduced_line_pitch() {
+    let (p, mut sh) = setup("First\nSecond", 600.0, 300.0);
+    let body = sh.text.as_mut().unwrap();
+    body.body.autofit = Some(AutoFit::None);
+    for para in &mut body.paragraphs {
+        para.props.line_spacing = Some(Spacing::Pct(1.0));
+        para.props.space_before = Some(Spacing::Pts(0.0));
+        para.props.space_after = Some(Spacing::Pts(0.0));
+    }
+    let natural = lay(&p, &sh, 600.0, 300.0);
+    let height = natural.lines[0].bottom - natural.lines[0].top;
+    let body = sh.text.as_mut().unwrap();
+    for para in &mut body.paragraphs {
+        para.props.line_spacing = Some(Spacing::Pct(0.9));
+        para.props.space_before = Some(Spacing::Pct(0.2));
+        para.props.space_after = Some(Spacing::Pct(0.35));
+    }
+    let spaced = lay(&p, &sh, 600.0, 300.0);
+    let gap = spaced.lines[1].top - spaced.lines[0].bottom;
+    assert!((gap - height * 0.55).abs() < 1e-6, "gap {gap}, natural {height}");
+}
+
+#[test]
 fn caret_and_hit_roundtrip() {
     let (p, sh) = setup("Hello world", 600.0, 100.0);
     let l = lay(&p, &sh, 600.0, 100.0);
@@ -2002,4 +2025,17 @@ fn diagram_font_floor_prevents_unreadable_autofit() {
     let result = lay(&p, &shape, 100.0, 40.0);
     assert_eq!(result.font_scale, 0.7);
     assert!(result.overflow);
+}
+
+#[test]
+fn diagram_at_full_font_floor_uses_only_needed_line_compression() {
+    let (p, mut shape) = setup("One\nTwo\nThree\nFour", 300.0, 400.0);
+    let natural = lay(&p, &shape, 300.0, 400.0);
+    let height = natural.content_height * 0.94 + 7.2;
+    shape.text.as_mut().unwrap().body.autofit = Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
+    shape.text.as_mut().unwrap().body.min_autofit_scale = Some(1.0);
+    let result = lay(&p, &shape, 300.0, height);
+    assert!(!result.overflow);
+    assert_eq!(result.font_scale, 1.0);
+    assert!(result.line_reduction > 0.0 && result.line_reduction < 0.15, "{}", result.line_reduction);
 }

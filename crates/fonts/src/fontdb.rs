@@ -792,10 +792,12 @@ pub fn embedded_face(source: Arc<Vec<u8>>, family: &str, style: &str) -> Option<
     let index = if let Some(i) = cache.iter().position(|e| Arc::ptr_eq(&e.source, &source)) {
         i
     } else {
-        let sfnt = crate::decode_embedded_sfnt(&source)?;
-        let bytes = match sfnt {
-            std::borrow::Cow::Borrowed(b) if b.len() == source.len() => source.clone(),
-            other => Arc::new(other.into_owned()),
+        let bytes = match crate::decode_embedded_sfnt(&source) {
+            Some(std::borrow::Cow::Borrowed(b)) if b.len() == source.len() => source.clone(),
+            Some(other) => Arc::new(other.into_owned()),
+            // Failed decodes also occupy a bounded entry. Retrying the same damaged MTX
+            // subset for every text run otherwise repeats its decompression indefinitely.
+            None => source.clone(),
         };
         let retained_bytes = source.len() + if Arc::ptr_eq(&source, &bytes) { 0 } else { bytes.len() };
         let faces: Vec<Arc<FontFace>> = enumerate_faces(&bytes)

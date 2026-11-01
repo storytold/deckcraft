@@ -68,8 +68,7 @@ fn group(p: &deckcraft_model::Presentation) -> &Shape {
     p.slides.iter().flat_map(|s| &s.shapes).find(|s| s.diagram.is_some()).unwrap()
 }
 
-#[test]
-fn uncached_custom_layout_executes_tree_constraints_and_retains_original_graph() {
+fn uncached_fixture() -> Vec<u8> {
     let mut s = Session::with_new();
     s.execute("insert.smartArt", &serde_json::json!({"kind":"process"})).unwrap();
     s.execute(
@@ -80,14 +79,19 @@ fn uncached_custom_layout_executes_tree_constraints_and_retains_original_graph()
     let mut parts = files(&deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap());
     // An original nested card layout: a parent label and its ordered child labels. Deliberately
     // unrelated to the layout name, so template-name dispatch cannot make this test pass.
-    let layout = r#"<dgm:layoutDef xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" uniqueId="urn:deckcraft:test:uncached-original">
-    <dgm:layoutNode name="root"><dgm:alg type="lin"/><dgm:forEach axis="ch" ptType="node"><dgm:layoutNode name="card"><dgm:alg type="composite"/>
-      <dgm:layoutNode name="header" styleLbl="node1"><dgm:presOf axis="self"/><dgm:alg type="tx"/><dgm:shape type="roundRect"/></dgm:layoutNode>
-      <dgm:layoutNode name="details" styleLbl="node1"><dgm:presOf axis="ch" ptType="node"/><dgm:alg type="tx"/><dgm:shape type="rect"/></dgm:layoutNode>
-      <dgm:constrLst><dgm:constr type="w" for="ch" refType="w" fact="0.9"/><dgm:constr type="l" for="ch" refType="w" fact="0.05"/>
-      <dgm:constr type="h" for="ch" forName="header" refType="h" fact="0.25"/>
-      <dgm:constr type="h" for="ch" forName="details" refType="h" fact="0.65"/><dgm:constr type="t" for="ch" forName="details" refType="h" fact="0.35"/>
-      <dgm:constr type="primFontSz" for="ch" val="16"/></dgm:constrLst></dgm:layoutNode></dgm:forEach></dgm:layoutNode></dgm:layoutDef>"#;
+    let layout = r#"<dgm:layoutDef xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" uniqueId="urn:deckcraft:test:uncached-original" minVer="12.0">
+ <dgm:title val="Original nested cards"/><dgm:desc val="Three parent cards with child labels"/><dgm:catLst><dgm:cat type="process" pri="99"/></dgm:catLst>
+ <dgm:layoutNode name="canvas"><dgm:alg type="lin"/><dgm:presOf/><dgm:shape type="none"/>
+ <dgm:constrLst><dgm:constr type="w" for="ch" refType="w" fact="0.25"/><dgm:constr type="h" for="ch" refType="h" fact="0.8"/></dgm:constrLst><dgm:ruleLst/>
+ <dgm:forEach axis="ch" ptType="node"><dgm:layoutNode name="card"><dgm:alg type="composite"/><dgm:presOf/><dgm:shape type="none"/>
+ <dgm:constrLst><dgm:constr type="w" for="ch" forName="header" refType="w" fact="0.9"/><dgm:constr type="w" for="ch" forName="details" refType="w" fact="0.9"/><dgm:constr type="l" for="ch" forName="header" refType="w" fact="0.05"/><dgm:constr type="l" for="ch" forName="details" refType="w" fact="0.05"/>
+ <dgm:constr type="h" for="ch" forName="header" refType="h" fact="0.25"/><dgm:constr type="t" for="ch" forName="header" val="0"/>
+ <dgm:constr type="h" for="ch" forName="details" refType="h" fact="0.65"/><dgm:constr type="t" for="ch" forName="details" refType="h" fact="0.35"/>
+ </dgm:constrLst><dgm:ruleLst/>
+ <dgm:layoutNode name="header" styleLbl="node1"><dgm:alg type="tx"/><dgm:presOf axis="self"/><dgm:shape type="roundRect"/>
+ <dgm:constrLst><dgm:constr type="primFontSz" val="18"/></dgm:constrLst><dgm:ruleLst/></dgm:layoutNode>
+ <dgm:layoutNode name="details" styleLbl="node1"><dgm:alg type="tx"/><dgm:presOf axis="ch" ptType="node"/><dgm:shape type="rect"/>
+ <dgm:constrLst><dgm:constr type="primFontSz" val="14"/></dgm:constrLst><dgm:ruleLst/></dgm:layoutNode></dgm:layoutNode></dgm:forEach></dgm:layoutNode></dgm:layoutDef>"#;
     let drawing: Vec<_> = parts.iter().filter(|(_, b)| parse_xml(b).ok().is_some_and(|d| d.root.is("drawing"))).map(|(n, _)| n.clone()).collect();
     parts.retain(|(n, _)| !drawing.contains(n));
     for (_, bytes) in &mut parts {
@@ -119,14 +123,28 @@ fn uncached_custom_layout_executes_tree_constraints_and_retains_original_graph()
             if let Some(ext) = doc.root.elements_mut().find(|e| e.is("extLst")) {
                 ext.children.clear();
             }
-            *bytes = doc.root.to_xml().into_bytes();
+            *bytes = doc.root.to_xml().replace("<a:rPr lang=\"en-US\"/>", "<a:rPr lang=\"en-US\"><a:latin typeface=\"Inter\"/></a:rPr>").into_bytes();
         }
     }
-    let input = zip(parts);
+    zip(parts)
+}
+
+#[test]
+fn uncached_custom_layout_executes_tree_constraints_and_retains_original_graph() {
+    let input = uncached_fixture();
     let original_ids = ids(&by_root(&input, "dataModel"));
     let p = deckcraft_pptx::import(&input).unwrap();
     let g = group(&p);
+    let first = g.children()[0].xfrm.unwrap();
+    // Independently measured from native rendering of this original uncached definition.
+    for (actual, expected) in [(first.x, 124.8), (first.y, 32.4), (first.w, 172.8), (first.h, 64.8)] {
+        assert!((actual - expected).abs() < 1e-6, "{actual} != {expected}");
+    }
     assert_eq!(g.children().len(), 6, "layout should create two shapes per top-level node");
+    let first_text = g.children()[0].text.as_ref().unwrap();
+    assert_eq!(first_text.body.inset_l, Some(18.0 * 0.56));
+    assert_eq!(first_text.paragraphs[0].props.line_spacing, Some(deckcraft_model::text::Spacing::Pct(0.9)));
+    assert_eq!(first_text.paragraphs[0].props.space_after, Some(deckcraft_model::text::Spacing::Pct(0.35)));
     let texts: Vec<_> = g.children().iter().filter_map(|s| s.text.as_ref()).map(|t| t.text()).collect();
     assert!(texts.iter().any(|s| s.contains("Observe") && s.contains("Measure")), "{texts:?}");
     let output = deckcraft_pptx::export(&p).unwrap();
@@ -144,6 +162,26 @@ fn uncached_custom_layout_executes_tree_constraints_and_retains_original_graph()
         std::fs::write(dir.join("uncached-composite.png"), image.to_png()).unwrap();
     }
 }
+#[test]
+fn uncached_shape_adjustment_keeps_unspecified_preset_defaults() {
+    let mut parts = files(&uncached_fixture());
+    for (name, bytes) in &mut parts {
+        if name.ends_with("layout1.xml") && name.contains("diagrams/") {
+            let xml = String::from_utf8(bytes.clone()).unwrap();
+            *bytes = xml
+                .replace(
+                    "<dgm:shape type=\"roundRect\"/>",
+                    "<dgm:shape type=\"leftBrace\"><dgm:adjLst><dgm:adj idx=\"2\" val=\"0.3\"/></dgm:adjLst></dgm:shape>",
+                )
+                .into_bytes();
+        }
+    }
+    let p = deckcraft_pptx::import(&zip(parts)).unwrap();
+    let deckcraft_model::Geom::Preset { name, adj } = &group(&p).children()[0].geom else { panic!("preset") };
+    assert_eq!(name, "leftBrace");
+    assert_eq!(adj, &[8333.0, 30000.0]);
+}
+
 fn geometry(s: &Shape) -> Vec<deckcraft_geom::Xfrm> {
     let mut out = vec![];
     {

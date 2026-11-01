@@ -171,6 +171,27 @@ fn absolute_spacing_survives_linear_pack() {
 }
 
 #[test]
+fn linear_pack_uses_the_visible_composite_extent() {
+    let d = source();
+    let l = layout(
+        r#"<layoutNode><alg type="lin"/><constrLst>
+      <constr type="w" for="ch" forName="card" refType="w" fact="0.25"/>
+      <constr type="h" for="ch" forName="card" refType="h" fact="0.8"/></constrLst>
+      <forEach axis="ch" ptType="node"><layoutNode name="card"><alg type="composite"/>
+      <constrLst><constr type="w" for="ch" forName="label" refType="w" fact="0.9"/>
+      <constr type="h" for="ch" forName="label" refType="h"/>
+      <constr type="l" for="ch" forName="label" refType="w" fact="0.05"/></constrLst>
+      <layoutNode name="label"><alg type="tx"/><presOf axis="self"/><shape type="rect"/></layoutNode>
+      </layoutNode></forEach></layoutNode>"#,
+    );
+    let p = evaluate(&l, &d, frame()).unwrap();
+    assert_eq!(p.len(), 3);
+    assert_eq!(p[0].rect, Xfrm::new(97.5, 30.0, 135.0, 240.0));
+    assert_eq!(p[1].rect.x, p[0].rect.x + p[0].rect.w);
+    assert_eq!(p[2].rect.x, p[1].rect.x + p[1].rect.w);
+}
+
+#[test]
 fn over_limit_data_and_selectors_refuse_instead_of_truncating() {
     let source = source();
     let data = Data::new(&source).unwrap();

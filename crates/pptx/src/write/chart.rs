@@ -244,7 +244,7 @@ fn error_bars(w: &mut W, e: &ErrorBars, g: Group) {
 
 /// Per-point fills of pie, doughnut and bar series.
 fn point_fills(w: &mut W, s: &Series, g: Group) {
-    if !matches!(g, Group::Pie | Group::Doughnut | Group::Bar) {
+    if !matches!(g, Group::Pie | Group::Doughnut | Group::Bar | Group::Bubble) {
         return;
     }
     for (idx, f) in s.point_fills.iter().take(1000) {
@@ -577,6 +577,11 @@ fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)], 
             }
         }
         Group::Line => w.val("c:marker", 1),
+        Group::Bubble => {
+            w.val("c:bubbleScale", c.bubbles.scale.min(300));
+            w.val("c:showNegBubbles", u8::from(c.bubbles.show_negative));
+            w.val("c:sizeRepresents", if c.bubbles.size_is_width { "w" } else { "area" });
+        }
         Group::Stock => {
             w.open0("c:hiLowLines");
             w.open0("c:spPr");
@@ -898,6 +903,24 @@ fn cx_text(w: &mut W, t: &str) {
     w.close("cx:tx");
 }
 
+/// Literal titles use rich text. A formula-less `txData` cache is ignored by PowerPoint.
+fn cx_title_text(w: &mut W, c: &Chart, t: &str, role: ChartTextRole) {
+    w.open0("cx:tx");
+    w.open0("cx:rich");
+    super::dml::body_pr(w, &c.format.bodies.get(&role).cloned().unwrap_or_default());
+    w.empty0("a:lstStyle");
+    for line in t.split('\n') {
+        w.open0("a:p");
+        w.open0("a:r");
+        chart_rpr(w, "a:rPr", &c.text_props(role));
+        w.elt("a:t", line);
+        w.close("a:r");
+        w.close("a:p");
+    }
+    w.close("cx:rich");
+    w.close("cx:tx");
+}
+
 /// A `cx:lvl` of points.
 fn cx_level(w: &mut W, pts: &[String], format: Option<&str>) {
     let mut a = A::new().a("ptCount", pts.len());
@@ -957,7 +980,7 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
     w.open0("cx:chart");
     if let Some(t) = &c.title {
         w.open("cx:title", A::new().a("pos", "t").a("align", "ctr").a("overlay", u8::from(c.format.title_overlay)));
-        cx_text(&mut w, t);
+        cx_title_text(&mut w, c, t, ChartTextRole::Title);
         tx_pr_tag(&mut w, c, ChartTextRole::Title, "cx:txPr");
         w.close("cx:title");
     }
@@ -1008,9 +1031,9 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
                             .o("overflow", options.overflow.filter(|v| v.is_finite()).map(fmt_num)),
                     );
                     if let Some(size) = c.bin_size {
-                        w.elt("cx:binSize", &fmt_num(size));
+                        w.val("cx:binSize", fmt_num(size));
                     } else if let Some(n) = c.bin_count {
-                        w.elt("cx:binCount", &n.to_string());
+                        w.val("cx:binCount", n);
                     }
                     w.close("cx:binning");
                 }
@@ -1047,16 +1070,18 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
             _ => {}
         }
         if !matches!(c.kind, ChartType::Treemap | ChartType::Sunburst | ChartType::RegionMap) {
-            w.elt("cx:axisId", "0");
+            // Native Office reads `val`, despite the published schema's simple-text type.
+            // The text form hangs PowerPoint for Mac; the reader accepts both encodings.
+            w.val("cx:axisId", 0);
             if c.kind != ChartType::Funnel {
-                w.elt("cx:axisId", "1");
+                w.val("cx:axisId", 1);
             }
         }
         w.close("cx:series");
     }
     if c.kind == ChartType::Pareto {
         w.open("cx:series", A::new().a("layoutId", "paretoLine").a("ownerIdx", "0").a("uniqueId", "{DC0000FF-0000-4000-8000-000000000000}"));
-        w.elt("cx:axisId", "2");
+        w.val("cx:axisId", 2);
         w.close("cx:series");
     }
     w.close("cx:plotAreaRegion");
@@ -1078,7 +1103,7 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
 fn chartex_axis_title(w: &mut W, c: &Chart, text: Option<&str>, role: ChartTextRole) {
     if let Some(text) = text {
         w.open0("cx:title");
-        cx_text(w, text);
+        cx_title_text(w, c, text, role);
         tx_pr_tag(w, c, role, "cx:txPr");
         w.close("cx:title");
     }

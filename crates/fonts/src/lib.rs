@@ -56,6 +56,8 @@ pub fn embedded_sfnt(part: &[u8]) -> Option<&[u8]> {
 /// expanded font sizes are bounded at 40 MiB. Compressed font hints are reconstructed as data;
 /// the decoder does not execute them. The caller keeps the original part for lossless export.
 pub fn decode_embedded_sfnt(part: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
+    #[cfg(test)]
+    EMBEDDED_DECODE_ATTEMPTS.with(|n| n.set(n.get() + 1));
     if part.len() > 40 << 20 {
         return None;
     }
@@ -64,6 +66,11 @@ pub fn decode_embedded_sfnt(part: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
     }
     let compressed = eot_payload(part).unwrap_or(part);
     mtx::decode(compressed).ok().map(std::borrow::Cow::Owned)
+}
+
+#[cfg(test)]
+thread_local! {
+    static EMBEDDED_DECODE_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn sfnt_or_collection(b: &[u8]) -> bool {

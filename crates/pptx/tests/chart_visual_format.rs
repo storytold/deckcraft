@@ -44,13 +44,78 @@ fn styled(kind: ChartType) -> Chart {
 }
 
 #[test]
+fn bubble_sizes_control_area_without_lines_and_survive_rebuild() {
+    use deckcraft_model::chart::Series;
+    let mut c = styled(ChartType::Bubble);
+    c.title = None;
+    c.legend = None;
+    c.gridlines = false;
+    c.y_min = Some(0.0);
+    c.y_max = Some(10.0);
+    c.format.plot_layout =
+        Some(ChartLayout { inner: true, x: Some(0.1), y: Some(0.1), w: Some(0.8), h: Some(0.8), x_edge: true, y_edge: true, ..Default::default() });
+    c.series = vec![Series {
+        name: "Independent bubble data".into(),
+        x_values: vec![Some(2.0), Some(4.0), Some(6.0), Some(8.0), Some(10.0)],
+        values: vec![Some(5.0), Some(5.0), Some(5.0), Some(5.0), None],
+        sizes: vec![Some(1.0), Some(4.0), Some(0.0), Some(-9.0), Some(1000.0)],
+        fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 0, 0)))),
+        point_fills: vec![(1, Fill::solid(ColorRef::rgb(Rgba::rgb(0, 0, 255)))), (3, Fill::solid(ColorRef::rgb(Rgba::rgb(0, 255, 0))))],
+        ..Default::default()
+    }];
+    let mut p = Presentation::default();
+    p.slides.clear();
+    append(&mut p, c.clone());
+    c.bubbles.size_is_width = true;
+    append(&mut p, c.clone());
+    c.bubbles.show_negative = true;
+    c.bubbles.scale = 150;
+    append(&mut p, c);
+    let saved = deckcraft_pptx::export(&p).unwrap();
+    let back = deckcraft_pptx::import(&saved).unwrap();
+    for i in 0..3 {
+        assert_eq!(chart(&back, i).bubbles, chart(&p, i).bubbles);
+        assert_eq!(chart(&back, i).series[0].sizes, chart(&p, i).series[0].sizes);
+        assert_eq!(chart(&back, i).series[0].point_fills, chart(&p, i).series[0].point_fills);
+        let image = render_slide(&back, i, &RenderOpts::default());
+        let counts: Vec<_> = [[255, 0, 0, 255], [0, 0, 255, 255], [0, 255, 0, 255]]
+            .iter()
+            .map(|color| image.pixels.chunks_exact(4).filter(|p| *p == color).count())
+            .collect();
+        assert!(counts[0] > 40, "visible first bubble, {counts:?}");
+        let ratio = counts[1] as f64 / counts[0] as f64;
+        let expected = if i == 0 { 4.0 } else { 16.0 };
+        assert!((ratio / expected - 1.0).abs() < 0.22, "area/width semantics: {counts:?}");
+        assert_eq!(counts[2] > 0, i == 2, "negative size visibility");
+        // Each colored glyph occupies a contiguous x interval: no connected line or zero-size dot.
+        let columns: Vec<_> = (0..image.width)
+            .map(|x| {
+                (0..image.height).any(|y| {
+                    let p = image.pixel(x, y);
+                    p[3] == 255
+                        && ((p[0] > 200 && p[1] < 50 && p[2] < 50)
+                            || (p[2] > 200 && p[0] < 50 && p[1] < 50)
+                            || (p[1] > 200 && p[0] < 50 && p[2] < 50))
+                })
+            })
+            .collect();
+        let groups = columns.iter().enumerate().filter(|(x, on)| **on && (*x == 0 || !columns[*x - 1])).count();
+        assert_eq!(groups, if i == 2 { 3 } else { 2 }, "bubbles must not be connected");
+    }
+    if let Some(dir) = std::env::var_os("DECKCRAFT_RENDER_PROBES") {
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(std::path::PathBuf::from(dir).join("bubble-options.pptx"), saved).unwrap();
+    }
+}
+
+#[test]
 fn chartex_statistics_and_layout_options_survive_rebuild_and_change_pixels() {
     use deckcraft_model::chart::ExtendedChartOptions;
     for kind in [ChartType::Histogram, ChartType::Pareto, ChartType::BoxWhisker, ChartType::Waterfall, ChartType::Treemap] {
         let mut c = styled(kind);
         c.extended = match kind {
             ChartType::Histogram | ChartType::Pareto => {
-                ExtendedChartOptions { underflow: Some(3.0), overflow: Some(7.0), bin_closed_left: true, ..Default::default() }
+                ExtendedChartOptions { underflow: Some(18.0), overflow: Some(40.0), bin_closed_left: true, ..Default::default() }
             }
             ChartType::BoxWhisker => {
                 ExtendedChartOptions { mean_marker: false, mean_line: true, inner_points: true, outliers: false, ..Default::default() }
@@ -58,6 +123,9 @@ fn chartex_statistics_and_layout_options_survive_rebuild_and_change_pixels() {
             ChartType::Waterfall => ExtendedChartOptions { connector_lines: false, ..Default::default() },
             _ => ExtendedChartOptions { parent_labels: Some("none".into()), ..Default::default() },
         };
+        if matches!(kind, ChartType::Histogram | ChartType::Pareto) {
+            c.bin_size = Some(5.0);
+        }
         if kind == ChartType::Treemap {
             c.category_levels = vec![vec!["North".into(), "North".into(), "South".into(), "South".into()]];
         }
@@ -83,7 +151,23 @@ fn chartex_statistics_and_layout_options_survive_rebuild_and_change_pixels() {
 }
 
 #[test]
-fn chartex_scalar_elements_follow_their_distinct_schema_types() {
+fn waterfall_series_visibility_overrides_chart_defaults_in_pixels() {
+    let mut c = styled(ChartType::Waterfall);
+    c.extended.connector_lines = true;
+    c.series[0].extended = Some(deckcraft_model::chart::ExtendedChartOptions { connector_lines: false, ..Default::default() });
+    let mut p = Presentation::default();
+    p.slides.clear();
+    append(&mut p, c.clone());
+    let no_connectors = render_slide(&p, 0, &RenderOpts::default());
+    c.series[0].extended = None;
+    append(&mut p, c);
+    assert_ne!(no_connectors.pixels, render_slide(&p, 1, &RenderOpts::default()).pixels);
+    let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+    assert_eq!(render_slide(&back, 0, &RenderOpts::default()).pixels, no_connectors.pixels);
+}
+
+#[test]
+fn chartex_scalar_elements_use_native_office_attribute_encoding() {
     use deckcraft_pptx::parse_xml;
     use std::io::Read;
     for kind in [ChartType::Histogram, ChartType::Waterfall] {
@@ -107,8 +191,8 @@ fn chartex_scalar_elements_follow_their_distinct_schema_types() {
             let tag = if kind == ChartType::Histogram { "binCount" } else { "idx" };
             let scalar = root.find(tag).unwrap();
             if kind == ChartType::Histogram {
-                assert_eq!(scalar.text(), "4");
-                assert!(!scalar.has_attr("val"));
+                assert_eq!(scalar.attr("val"), Some("4"));
+                assert!(scalar.text().is_empty());
             } else {
                 assert_eq!(scalar.attr("val"), Some("0"));
                 assert!(scalar.text().is_empty());
@@ -296,8 +380,8 @@ fn chartex_axes_and_text_are_modeled_instead_of_only_kept_as_raw_xml() {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
     let mut xml = String::new();
     std::io::Read::read_to_string(&mut zip.by_name("ppt/charts/chartEx1.xml").unwrap(), &mut xml).unwrap();
-    // Axis references are simple element text in chartEx, not c:axId/@val.
-    assert!(xml.contains("<cx:axisId>0</cx:axisId><cx:axisId>1</cx:axisId>"));
+    // Native Office accepts attribute scalars; the reader also supports the SDK text form.
+    assert!(xml.contains("<cx:axisId val=\"0\"/><cx:axisId val=\"1\"/>"));
     let mut back = deckcraft_pptx::import(&bytes).unwrap();
     assert_eq!(chart(&back, 0).text_props(Role::Title), chart(&p, 0).text_props(Role::Title));
     assert_eq!(chart(&back, 0).format, chart(&p, 0).format);

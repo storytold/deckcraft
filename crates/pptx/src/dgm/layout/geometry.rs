@@ -8,12 +8,12 @@ struct BoxStyle {
     rect: Xfrm,
     font: Option<f64>,
     min_font: Option<f64>,
-    margins: [f64; 4],
+    margins: [Option<f64>; 4],
     extra: [Option<f64>; 64],
 }
 impl BoxStyle {
     fn new(rect: Xfrm) -> Self {
-        Self { rect, font: None, min_font: None, margins: [3.6; 4], extra: [None; 64] }
+        Self { rect, font: None, min_font: None, margins: [None; 4], extra: [None; 64] }
     }
     fn get(&self, property: &str) -> Option<f64> {
         let r = self.rect;
@@ -28,10 +28,10 @@ impl BoxStyle {
             "ctrX" => r.x + r.w / 2.0,
             "ctrY" => r.y + r.h / 2.0,
             "primFontSz" | "secFontSz" => self.font.unwrap_or(18.0),
-            "lMarg" => self.margins[0],
-            "tMarg" => self.margins[1],
-            "rMarg" => self.margins[2],
-            "bMarg" => self.margins[3],
+            "lMarg" => self.margins[0].unwrap_or(self.font.unwrap_or(18.0) * 0.56),
+            "tMarg" => self.margins[1].unwrap_or(self.font.unwrap_or(18.0) * 0.56),
+            "rMarg" => self.margins[2].unwrap_or(self.font.unwrap_or(18.0) * 0.56),
+            "bMarg" => self.margins[3].unwrap_or(self.font.unwrap_or(18.0) * 0.56),
             _ => return extra_index(property).and_then(|i| self.extra.get(i)).copied().flatten(),
         })
     }
@@ -59,10 +59,10 @@ impl BoxStyle {
             "ctrX" => self.rect.x = v - self.rect.w / 2.0,
             "ctrY" => self.rect.y = v - self.rect.h / 2.0,
             "primFontSz" | "secFontSz" => self.font = Some(v.clamp(1.0, 400.0)),
-            "lMarg" => self.margins[0] = v.max(0.0),
-            "tMarg" => self.margins[1] = v.max(0.0),
-            "rMarg" => self.margins[2] = v.max(0.0),
-            "bMarg" => self.margins[3] = v.max(0.0),
+            "lMarg" => self.margins[0] = Some(v.max(0.0)),
+            "tMarg" => self.margins[1] = Some(v.max(0.0)),
+            "rMarg" => self.margins[2] = Some(v.max(0.0)),
+            "bMarg" => self.margins[3] = Some(v.max(0.0)),
             _ => {
                 if let Some(i) = extra_index(property)
                     && let Some(extra) = self.extra.get_mut(i)
@@ -154,7 +154,7 @@ fn place_inner<'a>(
             rect,
             font: style.font,
             min_font: style.min_font,
-            margins: style.margins,
+            margins: style.margins.map(|m| m.unwrap_or(style.font.unwrap_or(18.0) * 0.56)),
             text_rotation: node.number("txRot", 0.0),
             connector: node.alg == "conn" || shape.attr("type") == Some("conn"),
             params: node.params.clone(),
@@ -169,7 +169,7 @@ fn place_inner<'a>(
             rect: style.rect,
             font: style.font,
             min_font: style.min_font,
-            margins: style.margins,
+            margins: style.margins.map(|m| m.unwrap_or(style.font.unwrap_or(18.0) * 0.56)),
             text_rotation: node.number("txRot", 0.0),
             connector: false,
             params: node.params.clone(),
@@ -222,20 +222,82 @@ fn place_inner<'a>(
     }
     let iter: Box<dyn Iterator<Item = usize>> =
         if node.reverse { Box::new((0..node.children.len()).rev()) } else { Box::new(0..node.children.len()) };
+    let mut ranges = vec![0..0; children.len()];
     for i in iter {
         if let (Some(child), Some(bounds)) = (node.children.get(i), children.get(i)) {
             let mut global = *bounds;
             global.rect.x += style.rect.x;
             global.rect.y += style.rect.y;
+            let start = out.len();
             place_inner(child, global, data, out, depth + 1, &inherited, work)?;
+            if let Some(range) = ranges.get_mut(i) {
+                *range = start..out.len();
+            }
         }
     }
+    pack_composite_extents(node, style, local, &children, &ranges, out, work)?;
     Ok(())
 }
 
 fn matches_target(node: &Instance<'_>, constraint: &El, data: &Data<'_>) -> bool {
     constraint.attr("forName").is_none_or(|n| n.is_empty() || n == node.name)
         && constraint.attr("ptType").is_none_or(|t| t == "all" || node.points.iter().any(|i| data.matches(*i, t)))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pack_composite_extents(
+    node: &Instance<'_>,
+    style: BoxStyle,
+    local: BoxStyle,
+    children: &[BoxStyle],
+    ranges: &[std::ops::Range<usize>],
+    out: &mut [Placed<'_>],
+    work: &mut usize,
+) -> Result<(), &'static str> {
+    // A composite is a container, not an invisible spacing shape. Linear layout packs
+    // its actual children, so unused margins inside that container do not become gaps.
+    // Retain the existing constrained-size path for rotated/overflowing containers.
+    if node.alg == "lin" {
+        let mut occupied = children.to_vec();
+        let mut changed = false;
+        for ((child, bounds), range) in node.children.iter().zip(&mut occupied).zip(ranges) {
+            if child.alg != "composite" || range.is_empty() {
+                continue;
+            }
+            let shapes = out.get(range.clone()).unwrap_or(&[]);
+            charge(work, shapes.len())?;
+            if shapes.iter().any(|p| p.connector || p.rect.rot != 0.0) {
+                continue;
+            }
+            let mut box_rect: Option<Xfrm> = None;
+            for p in shapes {
+                box_rect = Some(match box_rect {
+                    None => p.rect,
+                    Some(b) => {
+                        let (x, y) = (b.x.min(p.rect.x), b.y.min(p.rect.y));
+                        Xfrm::new(x, y, (b.x + b.w).max(p.rect.x + p.rect.w) - x, (b.y + b.h).max(p.rect.y + p.rect.h) - y)
+                    }
+                });
+            }
+            if let Some(mut b) = box_rect.filter(|b| b.w > 0.0 && b.h > 0.0 && b.w <= bounds.rect.w && b.h <= bounds.rect.h) {
+                b.x -= style.rect.x;
+                b.y -= style.rect.y;
+                changed |= b != bounds.rect;
+                bounds.rect = b;
+            }
+        }
+        if changed {
+            let mut packed = occupied.clone();
+            pack_linear(node, local, &mut packed);
+            for ((before, after), range) in occupied.iter().zip(&packed).zip(ranges.iter().cloned()) {
+                for p in out.get_mut(range).unwrap_or(&mut []) {
+                    p.rect.x += after.rect.x - before.rect.x;
+                    p.rect.y += after.rect.y - before.rect.y;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn self_constraints(node: &Instance<'_>, style: &mut BoxStyle) {

@@ -165,6 +165,9 @@ impl Default for PictureMode {
 #[serde(default, rename_all = "camelCase")]
 pub struct PictureFill {
     pub media: MediaId,
+    /// DrawingML SVG source; `media` retains the authored raster fallback for older readers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub svg: Option<MediaId>,
     /// Source crop as fractions of the image (left, top, right, bottom); negative values pad.
     pub crop: [f64; 4],
     pub mode: PictureMode,

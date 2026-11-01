@@ -454,6 +454,8 @@ pub struct Chart {
     pub gap_width: f64,
     pub overlap: f64,
     pub vary_colors: bool,
+    /// Size and sign semantics of a bubble chart, independent of its retained XML.
+    pub bubbles: BubbleOptions,
     pub y_min: Option<f64>,
     pub y_max: Option<f64>,
     /// The value axis' major unit, when the chart fixes it.
@@ -577,6 +579,7 @@ impl Default for Chart {
             gap_width: 2.19,
             overlap: -0.27,
             vary_colors: false,
+            bubbles: BubbleOptions::default(),
             y_min: None,
             y_max: None,
             y_major: None,
@@ -600,6 +603,22 @@ impl Default for Chart {
             raw: None,
             kept: ChartKept::default(),
         }
+    }
+}
+
+/// OOXML bubble area/width scaling and optional negative-size data points.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct BubbleOptions {
+    /// Percentage of default bubble diameter, bounded to 0..=300.
+    pub scale: u16,
+    pub size_is_width: bool,
+    pub show_negative: bool,
+}
+
+impl Default for BubbleOptions {
+    fn default() -> Self {
+        Self { scale: 100, size_is_width: false, show_negative: false }
     }
 }
 
@@ -1414,16 +1433,32 @@ impl Chart {
     }
 
     /// The histogram's bins over the first series: by `bin_size`, else `bin_count`, else
-    /// Scott's rule (3.49·σ·n^(-1/3)). Empty without observations.
+    /// Scott's rule (3.49·σ·n^(-1/3)), rounded to two significant digits like native Office.
+    /// Empty without observations.
     pub fn histogram_bins(&self) -> Vec<Bin> {
         let mut v = self.observations();
         if v.is_empty() {
             return vec![];
         }
         v.sort_by(f64::total_cmp);
-        let lower = self.extended.underflow.filter(|n| n.is_finite());
-        let upper = self.extended.overflow.filter(|n| n.is_finite() && lower.is_none_or(|l| *n > l));
-        let left = self.extended.bin_closed_left;
+        let options = self.series.first().map(|s| s.extended_options(self)).unwrap_or(&self.extended);
+        // Office ignores bucket bounds outside the observations. Scott's rule still uses
+        // the full population, not just the points left after the end buckets are removed.
+        let min = v.first().copied().unwrap_or(0.0);
+        let max = v.last().copied().unwrap_or(min);
+        let lower = options.underflow.filter(|n| n.is_finite() && *n >= min && *n <= max);
+        let upper = options.overflow.filter(|n| n.is_finite() && *n >= min && *n <= max && lower.is_none_or(|l| *n > l));
+        let left = options.bin_closed_left;
+        let n = v.len() as f64;
+        let mean = v.iter().sum::<f64>() / n;
+        let sd = (v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0).max(1.0)).sqrt();
+        let end_buckets = usize::from(lower.is_some()) + usize::from(upper.is_some());
+        let max_inner = MAX_BINS - end_buckets;
+        let fixed = self
+            .bin_count
+            .filter(|k| *k > 0)
+            .filter(|_| self.bin_size.filter(|w| w.is_finite() && *w > 0.0).is_none())
+            .map(|k| (k as usize).saturating_sub(end_buckets).clamp(1, max_inner));
         let under = lower.map_or(0, |l| v.iter().filter(|x| if left { **x < l } else { **x <= l }).count());
         let over = upper.map_or(0, |u| v.iter().filter(|x| if left { **x >= u } else { **x > u }).count());
         let lo = lower.unwrap_or(v[0]);
@@ -1431,25 +1466,24 @@ impl Chart {
         let end = v.len().saturating_sub(over);
         v = v.get(under..end).unwrap_or_default().to_vec();
         let span = hi - lo;
-        let n = v.len().max(1) as f64;
         let width = if let Some(w) = self.bin_size.filter(|w| w.is_finite() && *w > 0.0) {
             w
-        } else if let Some(k) = self.bin_count.filter(|k| *k > 0) {
-            span / f64::from(k)
+        } else if let Some(k) = fixed {
+            span / k as f64
         } else {
-            let mean = v.iter().sum::<f64>() / n;
-            let sd = (v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0).max(1.0)).sqrt();
-            3.49 * sd / n.cbrt()
+            let scott = 3.49 * sd / n.cbrt();
+            let unit = 10_f64.powf(scott.log10().floor() - 1.0);
+            if unit.is_finite() && unit > 0.0 { (scott / unit).round() * unit } else { scott }
         };
-        let fixed = self.bin_count.filter(|k| *k > 0).filter(|_| self.bin_size.filter(|w| w.is_finite() && *w > 0.0).is_none());
         let count = if span <= 0.0 || !width.is_finite() || width <= 0.0 {
             1
         } else if let Some(k) = fixed {
-            (k as usize).clamp(1, MAX_BINS)
+            k
         } else {
-            ((span / width).ceil() as usize).clamp(1, MAX_BINS)
+            ((span / width).ceil() as usize).clamp(1, max_inner)
         };
-        let width = if count == 1 && (span <= 0.0 || !width.is_finite() || width <= 0.0) { span.max(1.0) } else { width.max(span / MAX_BINS as f64) };
+        let width =
+            if count == 1 && (span <= 0.0 || !width.is_finite() || width <= 0.0) { span.max(1.0) } else { width.max(span / max_inner as f64) };
         let mut bins: Vec<Bin> = (0..count).map(|i| Bin { lo: lo + width * i as f64, hi: lo + width * (i + 1) as f64, count: 0 }).collect();
         for x in v {
             // (lo, hi] bins, the first one also holding the minimum.
@@ -1485,12 +1519,9 @@ impl Chart {
     /// cumulative percentage as a line on a 0–100 % secondary axis.
     pub fn histogram_view(&self) -> Chart {
         let pareto = self.kind == ChartType::Pareto;
-        let fmt = |v: f64| {
-            let r = (v * 100.0).round() / 100.0;
-            if (r - r.round()).abs() < 1e-9 { format!("{}", r.round() as i64) } else { format!("{r}") }
-        };
+        let options = self.series.first().map(|s| s.extended_options(self)).unwrap_or(&self.extended);
         let mut entries: Vec<(String, f64)> = Vec::new();
-        if self.extended.aggregation {
+        if options.aggregation {
             let mut indices = std::collections::HashMap::new();
             if let Some(series) = self.series.first() {
                 for (i, value) in series.values.iter().enumerate() {
@@ -1507,14 +1538,29 @@ impl Chart {
             }
         } else {
             let bins = self.histogram_bins();
-            let left = self.extended.bin_closed_left;
+            // Keep labels compact, but retain enough decimal places to distinguish small
+            // intervals. Format directly: multiplying huge numbers or casting to i64 loses them.
+            let width = bins.iter().map(|b| b.hi - b.lo).filter(|w| w.is_finite() && *w > 0.0).reduce(f64::min).unwrap_or(1.0);
+            let precision = (1.0 - width.log10().floor()).clamp(2.0, 340.0) as usize;
+            let fmt = |v: f64| {
+                let value = format!("{v:.precision$}");
+                let value = value.trim_end_matches('0').trim_end_matches('.');
+                if value == "-0" { "0".to_string() } else { value.to_string() }
+            };
+            let left = options.bin_closed_left;
             for (i, b) in bins.iter().enumerate() {
                 let label = if b.lo.is_infinite() {
                     format!("{} {}", if left { "<" } else { "≤" }, fmt(b.hi))
                 } else if b.hi.is_infinite() {
                     format!("{} {}", if left { "≥" } else { ">" }, fmt(b.lo))
                 } else {
-                    format!("{}{}, {}{}", if left || i == 0 { "[" } else { "(" }, fmt(b.lo), fmt(b.hi), if left { ")" } else { "]" })
+                    format!(
+                        "{}{}, {}{}",
+                        if left || i == 0 { "[" } else { "(" },
+                        fmt(b.lo),
+                        fmt(b.hi),
+                        if left && i + 1 < bins.len() { ")" } else { "]" }
+                    )
                 };
                 entries.push((label, b.count as f64));
             }
@@ -1871,5 +1917,58 @@ mod extended_tests {
         assert_eq!(view.categories, ["A", "C", "B"]);
         assert_eq!(view.series[0].values, [Some(13.0), Some(12.0), Some(8.0)]);
         assert_eq!(view.series[1].values.last(), Some(&Some(1.0)));
+    }
+
+    #[test]
+    fn histogram_series_options_and_total_bin_count_include_end_buckets() {
+        let mut c = observed();
+        c.bin_size = None;
+        c.bin_count = Some(5);
+        c.series[0].extended = Some(ExtendedChartOptions { underflow: Some(2.0), overflow: Some(8.0), ..Default::default() });
+        let bins = c.histogram_bins();
+        assert_eq!(bins.len(), 5);
+        assert_eq!(bins.iter().map(|b| b.count).collect::<Vec<_>>(), [2, 2, 1, 1, 1]);
+        assert_eq!(bins[1].hi, 4.0);
+        assert_eq!(c.histogram_view().categories[0], "≤ 2");
+        c.extended.aggregation = true;
+        assert_ne!(c.histogram_view().categories, c.categories);
+        c.series[0].extended = Some(ExtendedChartOptions { underflow: Some(-10.0), overflow: Some(-5.0), ..Default::default() });
+        assert!(c.histogram_bins().iter().all(|b| b.lo.is_finite() && b.hi.is_finite()));
+    }
+
+    #[test]
+    fn histogram_bucket_budget_includes_tails_and_final_interval_includes_maximum() {
+        let mut c = observed();
+        c.extended = ExtendedChartOptions { underflow: Some(2.0), overflow: Some(8.0), bin_closed_left: true, ..Default::default() };
+        c.bin_size = Some(1e-15);
+        let bins = c.histogram_bins();
+        assert!(bins.len() <= MAX_BINS);
+        assert_eq!(bins.iter().map(|b| b.count).sum::<usize>(), 7);
+        c.bin_size = Some(5.0);
+        c.extended.underflow = None;
+        c.extended.overflow = None;
+        assert_eq!(c.histogram_view().categories, ["[0, 5)", "[5, 10]"]);
+        assert_eq!(c.histogram_bins().iter().map(|b| b.count).collect::<Vec<_>>(), [4, 3]);
+    }
+
+    #[test]
+    fn automatic_histogram_intervals_match_independent_native_observations_across_scales() {
+        let values = [12.0, 15.0, 17.0, 18.0, 21.0, 22.0, 22.0, 24.0, 25.0, 27.0, 28.0, 31.0, 33.0, 36.0, 41.0, 48.0];
+        for scale in [0.1, 1.0, 10.0] {
+            let mut c = observed();
+            c.bin_size = None;
+            c.series[0].values = values.iter().map(|v| Some(v * scale)).collect();
+            let bins = c.histogram_bins();
+            assert_eq!(bins.len(), 3);
+            assert!((bins[0].hi - 25.0 * scale).abs() < 1e-9);
+        }
+        let mut c = observed();
+        c.bin_size = None;
+        c.extended.bin_closed_left = true;
+        c.series[0].values = [1.1, 1.2, 1.2, 1.3, 1.4, 1.5, 1.9].into_iter().map(Some).collect();
+        assert_eq!(c.histogram_view().categories, ["[1.1, 1.59)", "[1.59, 2.08]"]);
+        c.bin_size = Some(0.0001);
+        c.series[0].values = [0.0001, 0.0003].into_iter().map(Some).collect();
+        assert_eq!(c.histogram_view().categories, ["[0.0001, 0.0002)", "[0.0002, 0.0003]"]);
     }
 }

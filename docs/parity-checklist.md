@@ -2,9 +2,9 @@
 
 > **Reviewed 2026-10-31:** Lock shapes remains D after partial restriction round-trip coverage. Edit chart data, Chart elements, Insert SmartArt and Text pane remain P: categorical data patches and flat process export improve fidelity but do not cover structural chart edits or the remaining diagram layouts.
 
-> **Extended rendering 2026-11-01:** MTX font decoding is independently verified; chartEx statistics/visibility and uncached SmartArt layout paths have regressions and schema checks. Native chartEx opening and the uncached custom-layout image comparison remain failed; chart and SmartArt scores stay P.
+> **Extended rendering 2026-11-01:** MTX font decoding is independently verified; chartEx statistics/visibility and uncached SmartArt layout paths have regressions and schema checks. Fresh chartEx native opening now passes with complete style parts and native scalar encoding; named uncached composite geometry/text defaults are validated. Embedded SVG and bubble semantics now have direct-render checks. Chart and SmartArt scores stay P.
 
-> **Direct-render coverage 2026-11-01:** manual chart rectangles/rotations/strokes, cached SmartArt root transforms, authored fallback selection and six-script font probes are exercised. Direct PowerPoint comparisons cover six cached diagram layouts and the chart/font pages. Native chartEx open/export failed; chart/SmartArt scores stay partial.
+> **Direct-render coverage 2026-11-01:** manual chart rectangles/rotations/strokes, cached SmartArt root transforms, authored fallback selection and six-script font probes are exercised. Direct PowerPoint comparisons cover six cached diagram layouts and the chart/font pages. The earlier native chartEx open/export failure is resolved; chart/SmartArt scores stay partial.
 
 > **Additional bounded coverage:** document-scoped fonts, actual-face diagnostics, per-role chart typography, secondary-axis rebuilds and nested SmartArt cached drawings now have synthetic regression tests. Font editing, charts and SmartArt retain their current partial scores; direct fixed-size XLSX ranges now synchronize and imported graph/text preservation is covered. Full rich chart labels, spreadsheet dependency edits and structural diagram relayout remain open.
 
@@ -16,7 +16,7 @@ The summary between `<!-- SUMMARY -->
 | Priority | Features | Done | Partial | Missing | Parity |
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
-| P1 | 65 | 45 | 16 | 4 | 82% |
+| P1 | 65 | 45 | 17 | 3 | 82% |
 | P2 | 54 | 18 | 24 | 12 | 56% |
 
 | Area | Parity |
@@ -33,7 +33,7 @@ The summary between `<!-- SUMMARY -->
 | Tables | 97% |
 | Charts | 65% |
 | SmartArt | 50% |
-| Pictures | 60% |
+| Pictures | 64% |
 | Media | 67% |
 | Transitions | 100% |
 | Animations | 85% |
@@ -44,7 +44,7 @@ The summary between `<!-- SUMMARY -->
 | Automation (✱) | 100% |
 | Platforms (✱) | 67% |
 
-Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layout, Chart Design), Export to PDF (slides, notes pages, handouts; text layer, links, bookmarks; vector artwork pending), Format Shape pane, Font, size, bold, italic, underline, strikethrough (only Regular/Bold/Italic faces, #69), Edit chart data, Crop (and crop to shape, aspect ratio), Paste image from clipboard (fails on Windows, #1414; Linux not re-checked), Audio/video playback in the show (WMA/WMV not decodable yet), Animation pane (reorder, timing), Presenter view (notes, next slide, timer), macOS, Windows, Linux builds.
+Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layout, Chart Design), Export to PDF (slides, notes pages, handouts; text layer, links, bookmarks; vector artwork pending), Format Shape pane, Font, size, bold, italic, underline, strikethrough (only Regular/Bold/Italic faces, #69), Edit chart data (same-series-count categorical edits preserve source formatting), Crop (and crop to shape, aspect ratio), Paste image from clipboard (fails on Windows, #1414; Linux not re-checked), Audio/video playback in the show (WMA/WMV not decodable yet), Animation pane (reorder, timing), Presenter view (notes, next slide, timer), macOS, Windows, Linux builds.
 
 ## Rows
 
@@ -187,7 +187,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | SmartArt | Insert SmartArt (flat default process export checked in PowerPoint; other layouts partial) | P1 | P |
 | SmartArt | Text pane and layout switching | P2 | P |
 | Pictures | Insert picture (PNG, JPEG, GIF, WebP, BMP, TIFF) | P0 | D |
-| Pictures | SVG pictures | P1 | M |
+| Pictures | SVG pictures | P1 | P |
 | Pictures | Crop (and crop to shape, aspect ratio) | P0 | P |
 | Pictures | Corrections, colour, transparency (recolor and Set Transparent Color done; sharpen/soften and colour temperature pending) | P1 | P |
 | Pictures | Artistic effects | P2 | P |

@@ -28,6 +28,9 @@ macro_rules! walkers {
 
         pub fn picture(p: &$($m)? PictureFill, f: &mut F) {
             f(&$($m)? p.media);
+            if let Some(svg) = &$($m)? p.svg {
+                f(svg);
+            }
             if let Some(a) = &$($m)? p.artistic {
                 f(&$($m)? a.original);
             }
@@ -392,6 +395,16 @@ mod tests {
         let mut got = slide_media(&s);
         got.sort();
         assert_eq!(got, (9101..=9108).map(MediaId).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn svg_and_preview_are_retained_and_remapped_together() {
+        let mut picture = PictureFill { media: MediaId(9001), svg: Some(MediaId(9002)), ..Default::default() };
+        let mut ids = vec![];
+        visit::picture(&picture, &mut |id| ids.push(*id));
+        assert_eq!(ids, vec![MediaId(9001), MediaId(9002)]);
+        visit_mut::picture(&mut picture, &mut |id| id.0 += 100);
+        assert_eq!((picture.media, picture.svg), (MediaId(9101), Some(MediaId(9102))));
     }
 
     /// SmartArt and OLE objects keep their parts as media items (#209); those count as used.

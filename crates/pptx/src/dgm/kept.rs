@@ -313,10 +313,26 @@ fn remove_drawing_reference(el: &mut El, depth: usize) {
     if depth > crate::xml::MAX_DEPTH {
         return;
     }
-    el.children.retain(|n| !matches!(n,crate::xml::Node::El(e) if e.is("dataModelExt")));
+    el.children.retain(|n| !matches!(n,crate::xml::Node::El(e) if e.is("dataModelExt") || (e.is("ext") && e.child("dataModelExt").is_some())));
     for c in el.elements_mut() {
         remove_drawing_reference(c, depth + 1);
     }
+}
+
+#[cfg(test)]
+#[test]
+fn removing_missing_drawing_keeps_other_extensions_without_empty_wrappers() {
+    let mut root = crate::xml::parse(
+        br#"<dataModel><extLst><ext uri="drawing"><dataModelExt relId="absent"/></ext>
+        <ext uri="other"><recolorImg val="1"/></ext></extLst></dataModel>"#,
+    )
+    .unwrap()
+    .root;
+    remove_drawing_reference(&mut root, 0);
+    let remaining: Vec<_> = root.child("extLst").unwrap().children_named("ext").collect();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].attr("uri"), Some("other"));
+    assert!(remaining[0].child("recolorImg").is_some());
 }
 
 /// Validate first, then publish under fresh names; no retained part can overwrite a slide.

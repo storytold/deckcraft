@@ -44,6 +44,7 @@ pub(crate) fn series_fill(ctx: &Ctx, c: &Chart, i: usize, s: Option<&deckcraft_m
 enum Paint {
     Color(Rgba),
     Line(Rgba),
+    Marker(Rgba),
     /// A preset pattern: name, foreground, background.
     Pattern(String, Rgba, Rgba),
     /// `a:noFill`: only the outline, if any, shows.
@@ -74,6 +75,11 @@ fn fill_with(ctx: &mut RenderContext, p: &Paint, r: Rect, m: Affine) {
             ctx.set_paint(color(*c, 1.0));
             ctx.set_stroke(kurbo::Stroke::new(1.5));
             ctx.stroke_path(&polyline(&[Point::new(r.x0, r.center().y), Point::new(r.x1, r.center().y)]));
+        }
+        Paint::Marker(c) => {
+            ctx.set_transform(m);
+            ctx.set_paint(color(*c, 1.0));
+            ctx.fill_path(&kurbo::Circle::new(r.center(), r.width().min(r.height()) * 0.5).to_path(0.1));
         }
         Paint::Pattern(name, fg, bg) => crate::pattern::fill(ctx, name, *fg, *bg, 1.0, &r.to_path(0.1), m),
         Paint::Nothing => {}
@@ -263,9 +269,38 @@ fn value_x_scale(c: &Chart, max_intervals: usize) -> Option<(f64, f64, f64)> {
     if c.series.is_empty() || !c.series.iter().all(|s| matches!(c.series_kind(s), ChartType::Scatter | ChartType::Bubble)) {
         return None;
     }
-    let xs = c.series.iter().flat_map(|s| s.x_values.iter().flatten().copied()).filter(|v| v.is_finite());
+    let xs =
+        c.series.iter().flat_map(|s| {
+            let n = if s.x_values.is_empty() { s.values.len() } else { s.x_values.len() };
+            (0..n).filter_map(move |i| {
+                if s.x_values.is_empty() { Some(i as f64 + 1.0) } else { s.x_values.get(i).copied().flatten().filter(|v| v.is_finite()) }
+            })
+        });
     let (lo, hi) = xs.fold(None, |r: Option<(f64, f64)>, v| Some(r.map_or((v, v), |(a, b)| (a.min(v), b.max(v)))))?;
+    let (lo, hi) = if c.kind == ChartType::Bubble { bubble_extent(lo.min(0.0), hi.max(0.0), 0.2) } else { (lo, hi) };
     Some(axis_scale(lo.min(0.0), hi, None, None, None, max_intervals, false))
+}
+
+/// Leave room for the glyph, rather than placing its centre on the plot border.
+fn bubble_extent(lo: f64, hi: f64, fraction: f64) -> (f64, f64) {
+    let pad = (hi - lo).abs().max(hi.abs() * 0.1).max(f64::MIN_POSITIVE) * fraction;
+    let padded = (if lo == 0.0 { 0.0 } else { lo - pad }, if hi == 0.0 { 0.0 } else { hi + pad });
+    if padded.0.is_finite() && padded.1.is_finite() { padded } else { (lo, hi) }
+}
+
+fn primary_scale(c: &Chart, max_intervals: usize) -> (f64, f64, f64) {
+    let scale = c.axis_scale(false, max_intervals).unwrap_or_else(|| axis_scale(0.0, 1.0, None, None, None, max_intervals, true));
+    if c.kind != ChartType::Bubble {
+        return scale;
+    }
+    let (lo, hi) = c
+        .series
+        .iter()
+        .flat_map(|s| s.values.iter().flatten().copied())
+        .filter(|v| v.is_finite())
+        .fold((0.0_f64, 0.0_f64), |(lo, hi), v| (lo.min(v), hi.max(v)));
+    let (lo, hi) = bubble_extent(lo, hi, 0.125);
+    axis_scale(lo, hi, c.y_min, c.y_max, c.y_major, max_intervals, false)
 }
 
 /// Where the legend goes for `c:legendPos`, and the plot area left over.
@@ -424,7 +459,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     let log = c.log_axis_scale(max_intervals).map(|sc| (c.y_log_base.unwrap_or(10.0), sc));
     let (min, max, step) = match log {
         Some((_, sc)) => sc,
-        None => c.axis_scale(false, max_intervals).unwrap_or_else(|| axis_scale(0.0, 1.0, None, None, None, max_intervals, true)),
+        None => primary_scale(c, max_intervals),
     };
     let to_e = |v: f64| match log {
         Some((b, _)) => v.max(f64::MIN_POSITIVE).log(b).max(min - 1.0),
@@ -746,7 +781,9 @@ fn build_legend_items(rctx: &Ctx, c: &Chart, pie: bool, waterfall: bool) -> Vec<
             .map(|(i, s)| {
                 let k = c.series_kind(s);
                 let line = !k.is_bar_like() && !matches!(k, ChartType::Area | ChartType::StackedArea | ChartType::FilledRadar);
-                if line {
+                if k == ChartType::Bubble {
+                    (s.name.clone(), Paint::Marker(series_fill(rctx, c, i, Some(s))), None)
+                } else if line {
                     (s.name.clone(), Paint::Line(series_line(rctx, c, i, s)), None)
                 } else if k.is_bar_like() {
                     let paint = if c.vary_colors && c.series.len() == 1 && s.fill.is_none() {
@@ -1045,6 +1082,7 @@ struct LineDrawing<'a, 'ctx> {
 }
 
 fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
+    draw_bubbles(ctx, draw);
     let c = draw.chart;
     let rctx = draw.rctx;
     let m = draw.transform;
@@ -1061,7 +1099,7 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
     let mut labels = vec![];
     for (si, s) in c.series.iter().enumerate() {
         let kind = c.series_kind(s);
-        if kind.is_bar_like() || kind == ChartType::Stock {
+        if kind.is_bar_like() || matches!(kind, ChartType::Stock | ChartType::Bubble) {
             continue;
         }
         let sec = c.on_secondary(s);
@@ -1137,6 +1175,67 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
             point_label_rect(q, base, plot),
             LabelStyle { size: base * 0.9, align: Align::Center, anchor: Anchor::Bottom, col: draw.text_color, bold: false },
         );
+    }
+}
+
+fn bubble_size(c: &Chart, s: &deckcraft_model::chart::Series, i: usize) -> Option<f64> {
+    let size = if s.sizes.is_empty() { Some(1.0) } else { s.sizes.get(i).copied().flatten() };
+    size.filter(|v| v.is_finite() && (*v > 0.0 || (c.bubbles.show_negative && *v < 0.0))).map(f64::abs)
+}
+
+fn bubble_point(c: &Chart, s: &deckcraft_model::chart::Series, i: usize) -> Option<(f64, f64, f64)> {
+    let y = s.values.get(i).copied().flatten().filter(|v| v.is_finite())?;
+    let x = if s.x_values.is_empty() { Some(i as f64 + 1.0) } else { s.x_values.get(i).copied().flatten().filter(|v| v.is_finite()) }?;
+    Some((x, y, bubble_size(c, s, i)?))
+}
+
+/// Bubble area encodes the third data value; bubbles never draw a connecting polyline.
+fn draw_bubbles(ctx: &mut RenderContext, draw: &LineDrawing<'_, '_>) {
+    let c = draw.chart;
+    let largest = c
+        .series
+        .iter()
+        .filter(|s| c.series_kind(s) == ChartType::Bubble)
+        .flat_map(|s| (0..s.values.len()).filter_map(move |i| bubble_point(c, s, i).map(|p| p.2)))
+        .reduce(f64::max);
+    let Some(largest) = largest else { return };
+    let radius = draw.plot.width().min(draw.plot.height()).max(0.0) * 0.125 * f64::from(c.bubbles.scale.min(300)) / 100.0;
+    for (si, s) in c.series.iter().enumerate().filter(|(_, s)| c.series_kind(s) == ChartType::Bubble) {
+        for i in 0..s.values.len() {
+            let Some((x, value, size)) = bubble_point(c, s, i) else { continue };
+            let x = (draw.to_x)(x).unwrap_or(draw.plot.x0 + draw.band * ((draw.slot)(i) + 0.5));
+            let center = Point::new(x, (draw.to_axis)(c.on_secondary(s), value));
+            let relative = size / largest;
+            let path = kurbo::Circle::new(center, radius * if c.bubbles.size_is_width { relative } else { relative.sqrt() }).to_path(0.1);
+            let fill = s.point_fills.iter().find(|(point, _)| *point == i).map(|(_, f)| f).or(s.fill.as_ref());
+            let fallback = series_fill(draw.rctx, c, si, Some(s));
+            let fill = fill.cloned().unwrap_or_else(|| Fill::solid(ColorRef::rgb(fallback)));
+            crate::paint::fill_path(
+                ctx,
+                draw.rctx,
+                &fill,
+                None,
+                &path,
+                path.bounding_box(),
+                draw.transform,
+                deckcraft_geom::preset::FillMode::Norm,
+                1.0,
+                draw.rctx.pres,
+            );
+            if let Some(line) = s.line.as_ref() {
+                chart_stroke(ctx, draw.rctx, draw.transform, &path, Some(line), fallback);
+            }
+            if let Some(text) = bar_data_label(c, s, i) {
+                label(
+                    ctx,
+                    draw.rctx,
+                    draw.transform,
+                    &text,
+                    point_label_rect(center, draw.base, draw.plot),
+                    LabelStyle { size: draw.base * 0.9, align: Align::Center, anchor: Anchor::Bottom, col: draw.text_color, bold: false },
+                );
+            }
+        }
     }
 }
 
@@ -1234,7 +1333,7 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
                     ctx.set_stroke(kurbo::Stroke::new(ow));
                     ctx.stroke_path(&r.abs().to_path(0.1));
                 }
-                if waterfall && c.extended.connector_lines && i + 1 < ncat && !horiz {
+                if waterfall && s.extended_options(c).connector_lines && i + 1 < ncat && !horiz {
                     let y = to_v(b);
                     let mut j = BezPath::new();
                     j.move_to((r.x1, y));
@@ -1630,6 +1729,28 @@ mod tests {
         c.series[0].x_values = vec![Some(0.5), Some(7.2), None];
         assert_eq!(value_x_scale(&c, 8), Some((0.0, 8.0, 1.0)));
         assert_eq!(value_x_scale(&Chart::sample(ChartType::Column), 8), None);
+    }
+
+    #[test]
+    fn bubble_axes_allow_glyph_room_but_keep_explicit_bounds() {
+        let mut c = Chart::sample(ChartType::Bubble);
+        let (lo, hi, _) = value_x_scale(&c, 8).unwrap();
+        assert_eq!((lo, hi), (0.0, 5.0));
+        let (lo, hi, _) = primary_scale(&c, 8);
+        assert_eq!((lo, hi), (0.0, 6.0));
+        c.y_min = Some(2.0);
+        c.y_max = Some(5.0);
+        c.y_major = Some(1.0);
+        assert_eq!(primary_scale(&c, 8), (2.0, 5.0, 1.0));
+        c.series[0].sizes = vec![Some(-2.0), Some(f64::NAN), Some(0.0), Some(4.0)];
+        assert!(bubble_point(&c, &c.series[0], 0).is_none());
+        assert!(bubble_point(&c, &c.series[0], 1).is_none());
+        assert!(bubble_point(&c, &c.series[0], 2).is_none());
+        assert_eq!(bubble_point(&c, &c.series[0], 3).unwrap().2, 4.0);
+        c.bubbles.show_negative = true;
+        assert_eq!(bubble_point(&c, &c.series[0], 0).unwrap().2, 2.0);
+        c.series[0].x_values = vec![None];
+        assert!(bubble_point(&c, &c.series[0], 0).is_none());
     }
 
     #[test]

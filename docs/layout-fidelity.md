@@ -1,6 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01: MTX decoding, chartEx statistics/visibility, and bounded uncached-diagram layout execution.
+Updated 2026-11-01: native chartEx interoperability, uncached composite geometry/text defaults,
+MTX failure caching, tighter bounded font-floor fitting, bubble semantics and embedded SVG rendering.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -16,7 +17,8 @@ Valid embedded TrueType/OpenType/EOT faces precede installed names inside their 
 presentation. They never replace the global family database. The cache is bounded to 16 source
 files and 64 MiB of retained source plus decoded bytes (individual source/decoded fonts at most
 40 MiB); callers may retain faces. Raw and EOT-wrapped MicroType Express TrueType subsets now
-decode to sfnt before face selection. Over-budget entries are used without cache retention.
+decode to sfnt before face selection. Failed decoding is negatively cached, so repeated runs do
+not repeatedly expand malformed input. Over-budget entries are used without cache retention.
 Synthetic bold/italic follows
 the face actually selected, including glyph fallback.
 
@@ -70,10 +72,33 @@ all stops. `layoutTarget` is emitted only for plot areas: putting it on a title/
 PowerPoint from opening the file even though the base schema admits the element.
 
 The chartEx reader/writer now carries per-role fonts and rotation, series paints, numeric bounds,
-number formats and axis/gridline styles into modeled state. Series axis references use element
-text (the chartEx schema), not the ordinary-chart `val` attribute. This closes specific lost-style
-paths, not all advanced chart parity: rich/mixed-run and per-point labels, chartEx offsets and
-complete native chartEx interoperability still need separate coverage.
+number formats and axis/gridline styles into modeled state. Fresh chartEx parts now include
+complete, original theme-relative style/color parts and rich-text literal titles. Black-box
+bisection found that missing styles and element-text axis IDs could hang native PowerPoint;
+its accepted scalar encoding is described below. Rich/mixed-run and per-point labels and
+chartEx offsets still need separate coverage.
+
+## Embedded SVG pictures
+
+Embedded SVG sources render directly through resvg 0.48.1 (MIT/Apache-2.0), including paths,
+gradients, clipping, transformed groups and text resolved through DeckCraft's font database.
+The `asvg:svgBlip` source and authored raster preview are retained separately. Rendering prefers
+the vector; decoding failure uses the original preview. SVG-only extension references also import.
+Both media IDs participate in copy/reuse/remapping; replacing the picture clears the old SVG.
+
+SVG decoding uses the existing size-bucket image cache. Source XML is capped at 8 MiB, 10,000
+elements and 64 levels; DTDs are rejected. Output is capped at 4096 pixels on its longest side.
+File/network image references and nested SVG data URLs are disabled; inline raster dimensions
+are checked before decoding. Font loading is bounded and does not enable resvg's system scan.
+This is an in-process renderer, not a browser or an external document converter. SVG picture text
+prioritizes presentation-scoped embedded faces, including MTX/EOT fonts. The image cache includes
+the font-source context and retains those sources within its byte budget, preventing the same SVG
+from reusing another document's typography. A two-document regression renders the same SVG bytes
+with different embedded faces, checks distinct pixels and verifies cache isolation and round trips.
+
+`svg_render` checks vector preference, retained fallback behavior, SVG-only references and repeat
+save/reopen pixels. Original native comparisons verify clipping, gradients and transformed text.
+No test artwork or native screenshots are checked in.
 
 ## SmartArt
 
@@ -151,13 +176,13 @@ must not be interpreted as proof that DeckCraft generates all SmartArt constrain
 | Missing diagram cache with an authored AlternateContent branch | Uses the authored fallback instead of an empty diagram | Without either representation, the bounded layout interpreter is used; see its limits below |
 | Named available/embedded sfnt and uncompressed EOT faces, six script probes | Faces selected and shaped; no missing glyphs in the probes | Missing font binaries still require substitution; MTX subsets are now decoded |
 | Manual dual-axis chart with rotated labels and styled gridlines | Direct renderer respects bounds, strokes and per-role typography | Automatic label spacing and every rich/per-point label case are not pixel-certified |
-| Nine chart-type render matrix | Owned import/render tests pass | Fresh chartEx native-open/export failed in the local PowerPoint check; this is a failed check, not a pass or an untested feature |
+| Nine chart-type render matrix | Owned import/render tests pass; all nine pages now open/export in PowerPoint without repair | Automatic plot spacing and all rich/per-point labels are not pixel-certified |
 
-A separate black-box attempt to insert Waterfall through PowerPoint's own menu also lost the
-application connection, so the local chartEx failure is not yet attributed solely to emitted XML.
-It remains an explicit interoperability investigation. No Office-generated files or screenshots
-are shipped. A consumer can use direct rendering for the validated representations above; an
-arbitrary-deck replacement claim requires the remaining named cases to pass too.
+The earlier native-open failures were reproduced and isolated by changing one property at a
+time. Complete chart styles and native scalar encoding resolve them; empty style placeholders
+and workbook-only changes do not. No Office-generated files, style assets or screenshots are
+shipped. A consumer can use direct rendering for these validated representations; successful
+native opening alone is not a claim of pixel-equivalent rendering on arbitrary decks.
 
 ## Extended rendering implementation and independent checks
 
@@ -189,15 +214,31 @@ contours, device metrics, truncation and hostile-input smoke. Optional ignored t
 Histogram interval closure, underflow/overflow buckets and categorical aggregation; Pareto
 cumulative sums; independent box-series quartiles, mean markers/lines, inner points and outliers;
 waterfall connector visibility; and treemap parent-label modes now affect rendering and survive
-model rebuilds. The writer distinguishes element-text scalars (`axisId`, `binCount`, `binSize`)
-from attribute scalars (`subtotals/idx/@val`). The reader also accepts legacy scalar encodings.
+model rebuilds. Histogram series options take precedence over chart defaults; a requested bin
+count includes underflow/overflow buckets, out-of-range tail bounds are ignored, and the full
+observation population determines automatic bin statistics; Scott widths round to two significant
+digits, verified with independent native probes across scales. Interval labels retain small finite
+values without an integer cast. All buckets share the 1,000-bin
+budget, including tails. A final left-closed interval includes the maximum observation.
+Waterfall connector overrides are evaluated per series.
 
-The original histogram, Pareto, box, waterfall and treemap probes pass the independent Open XML
-SDK 3.3.0 validator (Microsoft365 schema mode). Integration tests check independent series settings,
-statistical boundaries, rebuilt XML and changed pixels. This is schema and rendering evidence;
-it does not override the failed native PowerPoint chartEx open/export check above. Region-map
-geographic boundaries, every rich data-label layout and every automatic Office spacing rule are
-not added by this change.
+Bubble charts now render circles rather than connected scatter lines. Area/width size semantics,
+0–300% scale, negative-size visibility and per-point fills survive rebuilding. Numeric axes leave
+room for bubble glyphs; explicit y-axis bounds remain unchanged. Tests measure colored pixel areas
+and disconnected glyphs, including zero/missing/nonfinite sizes; three original bubble probes
+open/export natively. Automatic glyph sizing and plot spacing are not claimed pixel-identical.
+
+The writer emits `axisId`, `binCount` and `binSize` with `val` attributes. The reader accepts both
+attribute and element-text forms. This intentionally differs from the published Open XML SDK
+3.3.0 Microsoft 365 schema for those three elements: the SDK reports these scalar exceptions,
+but native PowerPoint for Mac 16.113.3 accepts them and hangs with element-text axis references.
+Original histogram, Pareto, box, waterfall and treemap probes now open/export independently,
+as does the combined nine-page chart matrix. Their style parts are original code derived from
+public MS-ODRAWXML definitions, not copied vendor styles. Literal chart and axis titles use rich
+text because the formula-less `txData/v` form did not display a title natively.
+Integration tests check independent series settings, statistical boundaries, rebuilt XML and
+changed pixels. Region-map geographic boundaries, every rich data-label layout and every
+automatic Office plot-spacing rule are not added by this change.
 
 ### Diagrams with no drawing cache
 
@@ -208,7 +249,14 @@ pyramid placement paths. Millimetre lengths, degree rotations, preset adjustment
 text anchors/bullets and subtree font constraints are interpreted. Transition connectors attach
 to the data nodes' boundaries; line/bent/curved routes and arrow ends are modeled. Snake layouts
 respect flow/growth/breakpoint/continuation settings. Hierarchies allocate space by subtree demand.
-A font-rule floor prevents autofit from silently shrinking below the declared minimum.
+A font-rule floor prevents autofit from silently shrinking below the declared minimum; a bounded
+search uses only the line compression needed at that floor. Explicit preset adjustments retain
+the defaults of unspecified adjustment slots.
+
+Linear parents pack the visible extent of unrotated, non-overflowing composite children, rather
+than their unused container padding. Diagram text defaults to 90% line spacing, 35% paragraph
+spacing and font-relative insets; explicitly authored spacing overrides those defaults. Paragraph
+percentage spacing uses the adjacent line's actual font metrics instead of an assumed 1.2 em.
 
 The layout compiler and geometry resolver have independent 200,000-operation budgets, at most
 10,000 instances and 64 recursive levels; ordered data has at most 16,000 points and 32,000
@@ -218,11 +266,27 @@ the source/preview path. Source data/layout/style/color graphs remain intact on 
 The integration fixture has no drawing member, dangling relationship or alternate picture: it
 executes a custom nested layout and preserves graph IDs, geometry and exact pixels on round trip.
 
-These paths do **not** establish equivalence to all of PowerPoint's SmartArt layouts. In the local
-PowerPoint for Mac 16.113.3 check, the custom uncached nested-card probe opens but renders as three
-bullet blocks instead of the specified six-shape layout. The exported package passes the SDK
-validator. The discrepancy remains a failed cross-renderer check. Cyclic/descendant reference
-solving, the complete width/height rule-search policy, accent-pyramid variants, automatic text
-rotation and all 2-D connector shapes are not exhaustively modeled or independently certified.
-Accordingly chart/SmartArt parity scores stay partial; a blanket arbitrary-deck replacement claim
-is not warranted. All implementation/tests above run without LibreOffice.
+The earlier three-block native result came from ambiguous child constraints in the synthetic
+fixture's composite container. Naming the intended children produces the declared six shapes
+in native PowerPoint; measured shape coordinates are now asserted independently in the test.
+The valid source and DeckCraft round trip both open/export; the fixture still contains no cached
+drawing or alternate preview. Font availability must match across renderers: the comparison
+installs the same permitted Inter face, rather than comparing against native font substitution.
+The uncached package passes the SDK validator. Native text observations at multiple font sizes
+also verify the default line/paragraph spacing and insets.
+
+These paths do **not** establish equivalence to all of PowerPoint's SmartArt layouts.
+Cyclic/descendant reference solving, the complete width/height rule-search policy,
+accent-pyramid variants, automatic text rotation and all 2-D connector shapes are not
+exhaustively modeled or independently certified. Accordingly chart/SmartArt parity scores stay
+partial; a blanket arbitrary-deck replacement claim is not warranted. All implementation/tests
+above run without LibreOffice; PowerPoint is used only as a private comparison oracle.
+
+### Private corpus export
+
+A local batch of 50 pages (two 20-page complex-layout presentations plus the nine-chart and
+one-diagram probes) exports directly at 3840 pixels wide with the source hashes unchanged.
+The two 20-page cases take approximately 5.0 and 4.4 seconds on the validation machine.
+Visual inspection covers every contact-sheet page and selected full-resolution source comparisons.
+This measures the tested corpus, not every PPTX representation. No private filenames or content
+are distributed upstream. The export process has no LibreOffice executable on its restricted PATH.

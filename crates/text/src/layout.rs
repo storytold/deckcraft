@@ -48,7 +48,7 @@ pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLay
         }
         // Binary search the largest scale that fits (steps like 90%, 80%… with line reduction).
         let (mut lo, mut hi) = (floor, scale0);
-        let mut best = Some(smallest);
+        let mut best = smallest;
         for _ in 0..12 {
             let mid = (lo + hi) / 2.0;
             let red: f64 = ((1.0 - mid) * 0.8_f64).min(0.2).max(reduce0);
@@ -57,12 +57,25 @@ pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLay
                 hi = mid;
             } else {
                 lo = mid;
-                best = Some(t);
+                best = t;
             }
         }
-        if let Some(b) = best {
-            l = b;
+        // A font-size floor can leave line spacing as the only usable degree of freedom.
+        // Keep the largest fitting font and find the least reduction at that size.
+        if bp.min_autofit_scale.is_some() && best.line_reduction > reduce0 {
+            let (mut low, mut high) = (reduce0, best.line_reduction);
+            for _ in 0..10 {
+                let mid = (low + high) / 2.0;
+                let candidate = layout_scaled(ctx, shape, body, &bp, opts, best.font_scale, mid);
+                if candidate.overflow {
+                    low = mid;
+                } else {
+                    high = mid;
+                    best = candidate;
+                }
+            }
         }
+        l = best;
     }
     l
 }
@@ -316,7 +329,13 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
         },
     );
     // The first paragraph's space before counts only when the body says so.
-    let before = if pi == 0 && !first_last { 0.0 } else { spacing_pts(props.space_before, p.lead_size) };
+    // Paragraph percentage spacing uses the adjacent line's natural height, not the font's
+    // em size or its already-reduced line pitch (ISO/IEC 29500 spcPct).
+    let natural = |line: &RawLine| {
+        let (asc, desc, size) = line_extent(p, line);
+        (asc + desc).max(size)
+    };
+    let before = if pi == 0 && !first_last { 0.0 } else { spacing_pts(props.space_before, raw.first().map_or(p.lead_size, natural)) };
     flow.y += before.max(0.0) + flow.prev_after;
     let first_line_idx = flow.lines.len();
     let env = ParaEnv { p, g, reduce, margin, indent, mr, bullet_w, first_x, rest_x, tabs: &tabs };
@@ -327,7 +346,7 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
         flow.lines.push(placed);
     }
     out.para_lines.push((first_line_idx, raw.len()));
-    flow.prev_after = spacing_pts(props.space_after, p.lead_size).max(0.0);
+    flow.prev_after = spacing_pts(props.space_after, raw.last().map_or(p.lead_size, natural)).max(0.0);
 }
 
 /// Max ascent / descent / size over the line's styles (or the lead style if empty).

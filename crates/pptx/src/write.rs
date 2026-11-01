@@ -2,6 +2,7 @@
 
 pub(crate) mod chart;
 mod chart_data;
+mod chart_style;
 pub(crate) mod dml;
 mod shapes;
 mod theme;
@@ -205,8 +206,11 @@ impl Exp<'_> {
         self.pkg.xml_part(&name, CT_CHARTEX, xml);
         if preserved {
             chart::write_kept(&mut self.pkg, &name, c, &mut self.n_kept);
-        } else if !c.kept.parts.is_empty() {
-            log::warn!("pptx: chart data changed; the embedded workbook was not written back");
+        } else {
+            chart_style::write(&mut self.pkg, &name, self.n_chartex);
+            if !c.kept.parts.is_empty() {
+                log::warn!("pptx: chart data changed; the embedded workbook was not written back");
+            }
         }
         Some(o.rels.add_new(RT_CHARTEX, &opc::relative(&o.name, &name), false))
     }

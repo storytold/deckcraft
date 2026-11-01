@@ -601,8 +601,9 @@ fn smartart_layout(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape) -> Option
             ..Default::default()
         };
         if let Some(adjustments) = p.shape.and_then(|shape| shape.child("adjLst"))
-            && let Geom::Preset { adj, .. } = &mut s.geom
+            && let Geom::Preset { name, adj } = &mut s.geom
         {
+            *adj = preset::info(name).map(|info| info.defaults.to_vec()).unwrap_or_default();
             for a in adjustments.children_named("adj").take(64) {
                 if let (Some(index), Some(value)) = (a.u32("idx"), a.f64("val"))
                     && (1..=64).contains(&index)
@@ -701,7 +702,7 @@ fn diagram_text_layout(
     p: &crate::dgm::layout::Placed<'_>,
     text_color: Option<&deckcraft_model::style::ColorRef>,
 ) {
-    use deckcraft_model::text::{Align, Anchor};
+    use deckcraft_model::text::{Align, Anchor, Spacing};
     body.body.anchor = Some(match p.params.get("txAnchorVert").map(String::as_str) {
         Some("t") => Anchor::Top,
         Some("b") => Anchor::Bottom,
@@ -724,6 +725,10 @@ fn diagram_text_layout(
             _ => Align::Center,
         };
         paragraph.props.align = paragraph.props.align.or(Some(align));
+        // Diagram text defaults differ from an ordinary text box. Explicit point/paragraph
+        // formatting wins. Measured against native rendering at several font sizes.
+        paragraph.props.line_spacing = paragraph.props.line_spacing.or(Some(Spacing::Pct(0.9)));
+        paragraph.props.space_after = paragraph.props.space_after.or(Some(Spacing::Pct(0.35)));
         if p.params.get("stBulletLvl").is_some_and(|v| v == "1") {
             paragraph.props.bullet = Some(deckcraft_model::text::Bullet::Char { char: "•".into() });
         }

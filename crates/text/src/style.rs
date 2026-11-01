@@ -242,9 +242,9 @@ pub(crate) fn requested_families(ctx: &Ctx, st: &Style, slot: FontSlot, script: 
 
 /// Space before or after a paragraph, points. Shrink-on-overflow's line spacing reduction
 /// doesn't apply to it (PowerPoint keeps it).
-pub(crate) fn spacing_pts(s: Option<Spacing>, size: f64) -> f64 {
+pub(crate) fn spacing_pts(s: Option<Spacing>, natural_line_height: f64) -> f64 {
     match s {
-        Some(Spacing::Pct(p)) => p * size * 1.2,
+        Some(Spacing::Pct(p)) => p * natural_line_height,
         Some(Spacing::Pts(v)) => v,
         None => 0.0,
     }

@@ -1,6 +1,6 @@
 # File-format parity with PowerPoint
 
-> **Update 2026-11-01:** raw/EOT-wrapped MTX fonts decode; chartEx statistical/display settings and uncached diagram layout execution are covered by original regressions. Native chartEx opening and custom uncached SmartArt visual parity remain unresolved. See [scope and evidence](layout-fidelity.md).
+> **Update 2026-11-01:** raw/EOT-wrapped MTX fonts decode; chartEx statistical/display settings and uncached diagram layout execution are covered by original regressions. Fresh chartEx opening is fixed; uncached named-composite geometry and text defaults have native evidence. SVG sources render with their raster fallback retained; bubble size/sign semantics survive rebuilds. Full automatic-layout/rich-label parity remains partial. See [scope and evidence](layout-fidelity.md).
 
 > **Update 2026-10-31:** complete imported diagram graphs and identity-bound text edits; fixed-size embedded XLSX data synchronization. See [scope and validation](layout-fidelity.md).
 
@@ -57,7 +57,7 @@ intermediate build that required inline `bytes` cannot read the new referenced r
 | Kind | PowerPoint | DeckCraft | Notes |
 |---|---|---|---|
 | PNG, JPEG, GIF (animated), BMP, TIFF, WebP | yes | yes | `image` 0.25; animated GIFs play since #39 |
-| SVG | yes (with PNG fallback) | **no** | The PNG fallback shows; SVG files can't be inserted |
+| SVG | yes (with PNG fallback) | yes, bounded | Direct paths/gradients/clips/text, document fonts and isolated cache; preserve source and fallback |
 | EMF / WMF | yes | partial | Drawn as vectors (paths, pens, pattern and hatch brushes, bitmaps, text in the document's fonts with the file's character advances). Rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ only pictures play every EMF+ drawing record (brushes incl. gradients and textures, pens, paths, curves, images, strings, transforms, clipping; see `crates/metafile/src/emfplus.rs` for the few exceptions). Legacy OLE objects (VML preview) and ActiveX controls show their pictures |
 | HEIC | yes (macOS) | no | |
 | Audio: MP3, AAC/M4A, ALAC, WAV, AIFF, CAF, FLAC, Ogg Vorbis, Opus | yes (Ogg/Opus partly) | yes | Pure-Rust decoders in `crates/media`, `crates/opus` |
@@ -117,13 +117,15 @@ the round trip even though DeckCraft doesn't model it.
    tables, charts, animations, media, sections and masters/layouts among them. Still needed:
    render checks and a PowerPoint reference render for each (owner runs PowerPoint).
 2. The round-trip losses above (#70, #74).
-3. SVG rendering. EMF+ records inside EMF/WMF are still not drawn.
+3. Remaining EMF+ coverage and unsupported SVG features outside resvg's static subset.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-31 | minor | Preserve complete imported diagram packages and identity-bound text edits through native saves. Synchronize fixed-size direct embedded XLSX ranges with chart caches, keeping unrelated cells/sheets. Native preservation checks use only original synthetic probes; outputs stay private |
+| 2026-11-01 | minor | Embedded SVG direct rendering/preview retention and bubble size/scale/sign semantics verified with pixels, round trips and native probes |
+| 2026-11-01 | minor | Native chartEx open/export fixed with original complete styles, scalar attributes and rich titles; histogram tail counts, series overrides, uncached composite packing/text defaults, invalid-font caching and bounded line compression corrected |
 | 2026-11-01 | minor | MTX TrueType reconstruction and embedded-font pixel oracle; chartEx bounds/statistics/visibility; bounded uncached SmartArt layout execution and graph retention. Native visual parity remains partial |
 | 2026-11-01 | minor | Manual chart layout/body rotations and full line styles reach rendering and rebuilds; chartEx typography/axis references modeled. Cached diagram root coordinates and authored missing-cache fallback fixed. Direct font/chart/six-layout comparisons added; native chartEx remains a failed check, not claimed parity |
 | 2026-10-31 | minor | Locale-aware East Asian theme fonts, isolated embedded font precedence and actual-face diagnostics; separate chart typography and secondary axes survive structural rebuilds; nested SmartArt cached transforms and picture nodes survive export. Four generated render probes assert pixel equality across DeckCraft export/import, not cross-renderer parity. Remaining limits: [layout fidelity](layout-fidelity.md) |

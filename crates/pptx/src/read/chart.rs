@@ -140,6 +140,11 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
         if name == "stockChart" {
             c.up_down_bars = g.child("upDownBars").is_some();
         }
+        if kind == ChartType::Bubble {
+            c.bubbles.scale = g.child_val("bubbleScale").and_then(|v| v.parse::<u16>().ok()).unwrap_or(100).min(300);
+            c.bubbles.size_is_width = g.child_val("sizeRepresents") == Some("w");
+            c.bubbles.show_negative = g.child("showNegBubbles").is_some_and(|e| e.bool("val").unwrap_or(true));
+        }
         let group_labels = read_group_settings(g, &mut c);
         kinds.push(kind);
         let val_axis = group_value_axis(&val_map, g);

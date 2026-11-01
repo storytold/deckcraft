@@ -4,8 +4,10 @@
 > explicit axis/grid strokes, cached SmartArt root coordinates and authored missing-cache
 > fallbacks. Six-script/embedded-font and six-layout cached-diagram probes were compared with
 > PowerPoint. MTX decoding, chartEx statistics/visibility and bounded no-cache SmartArt execution
-> are now implemented and tested. Native chartEx opening and the uncached custom-diagram visual
-> comparison remain failed interoperability checks. See [coverage](layout-fidelity.md).
+> are now implemented and tested. Complete style parts/native scalar encoding fix chartEx opening;
+> a valid named-composite uncached diagram now matches measured native geometry. Full automatic
+> layout and rich labels remain partial. SVG sources now render with retained raster fallback;
+> bubble area/width/sign semantics are covered by pixel tests. See [coverage](layout-fidelity.md).
 
 > **Update 2026-10-31:** imported SmartArt graphs and identity-bound Text Pane edits now preserve cached geometry; fixed-size direct XLSX sources synchronize transactionally. Structural diagram changes and unsupported workbook sources remain gaps.
 
@@ -31,7 +33,7 @@ revision history.
 | 1 | PPTX corpus is only decks we author (no PowerPoint reference renders) | File format | B | 20–35 | [file-format-parity.md](file-format-parity.md) |
 | 2 | Data loss and crashes on common paths (#60, #40, #59) | Stability | B | 6–12 | this file |
 | 3 | PPTX round trip drops media playback options (#74) | File format | B | 2–4 | [file-format-parity.md](file-format-parity.md) |
-| 4 | SVG pictures don't render (EMF/WMF do) | File format | B | 4–8 | [file-format-parity.md](file-format-parity.md) |
+| 4 | Remaining EMF+ coverage and unsupported SVG features | File format | | 2–4 | [file-format-parity.md](file-format-parity.md) |
 | 5 | No localization: English only | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
 | 6 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
 | 7 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
@@ -112,15 +114,6 @@ Detail in [file-format-parity.md](file-format-parity.md).
   the `p188` modern part next to the legacy one.
 - **Impact:** a deck opened and saved silently loses show behaviour.
 - **Estimate:** 2–4 h. **Beta blocker.**
-
-### SVG pictures don't render
-- **Evidence:** `crates/render/src/images.rs` decodes through `image` 0.25 (PNG, JPEG, WebP, GIF,
-  TIFF, BMP), and EMF/WMF through `deckcraft-metafile` (ported from WordCraft: paths, fills, pens,
-  pattern and hatch brushes, bitmaps and text; rectangle clip regions are applied, EMF+ only
-  pictures play their EMF+ records).
-  Nothing reads SVG; PowerPoint's Insert Icons stores SVG with a PNG fallback.
-- **Impact:** SVG icons show only their raster fallback, and SVG files can't be inserted.
-- **Estimate:** 4–8 h (an SVG renderer through `resvg`-style crates).
 
 ### Macro-enabled variants aren't recognized
 - **Evidence:** `.pptx`, `.potx` and `.ppsx` open and save with their own main content types
@@ -203,11 +196,11 @@ Detail in [file-format-parity.md](file-format-parity.md).
   weight, slant, language and fill. Label widths and legend row heights use text shaping.
   Histogram bounds/closure and aggregation, box-series statistics/visibility, waterfall connector
   visibility and treemap parent labels now survive rebuild and change pixels. The original
-  probes pass independent Open XML SDK validation. Mixed rich-text runs, per-point/per-series
-  label typography, chartEx offsets and complete
-  native chartEx interoperability remain open. Manual layouts and body rotations now render;
-  explicit axes/gridlines retain line width/dashes/paint. A fresh native chartEx probe did not
-  finish opening/exporting, so advanced-chart parity is not marked complete. See [layout fidelity](layout-fidelity.md).
+  probes now open/export in native PowerPoint. Fresh parts include complete original chart styles
+  and native-compatible scalar attributes; the latter differ from the SDK schema for three
+  elements. Mixed rich-text runs, per-point/per-series labels, chartEx offsets and automatic
+  plot spacing remain partial. Manual layouts and body rotations render; explicit axes/gridlines
+  retain line width/dashes/paint. See [layout fidelity](layout-fidelity.md).
 - **Impact:** most business decks have charts; editing their data is routine.
 - **Estimate:** 12–20 h. Data and elements are **beta blockers** (6–10 h).
 
@@ -232,8 +225,9 @@ Detail in [file-format-parity.md](file-format-parity.md).
   other generated layouts are simple and have not
   received the same native validation; PowerPoint has ~200 layouts, picture layouts and 3-D styles; editing an
   imported diagram's structure still redraws it with DeckCraft's layout; the full rule-search and
-  constraint language is incomplete. The custom uncached nested-card fixture renders differently
-  in PowerPoint despite schema-valid export, so native layout parity is not claimed.
+  constraint language is incomplete. The corrected uncached nested-card definition now renders
+  six shapes in PowerPoint; measured coordinates, text spacing and default insets are covered.
+  Full layout parity is not claimed.
 - **Impact:** structural or unmappable edits to an imported diagram still need explicit relayout or conversion to shapes.
 - **Estimate:** 6–10 h.
 
