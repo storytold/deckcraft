@@ -22,6 +22,7 @@ pub mod control;
 pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
+pub mod i18n;
 pub mod icons;
 pub mod media;
 pub mod menus;
@@ -157,6 +158,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.find", "Find…", Some("Cmd+F"), "{}"),
     ("app.replace", "Replace…", Some("Cmd+H"), "{}"),
     ("app.links", "Community Links", None, "{}"),
+    ("ui.language", "Language", None, "{language: auto|en|vi}"),
 ];
 
 pub struct Perf {

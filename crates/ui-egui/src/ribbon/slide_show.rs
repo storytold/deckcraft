@@ -32,20 +32,20 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
         let r = big_button(ui, Icon::Record, "Record", false);
-        let _ = r.on_hover_text("Recording narration needs audio capture (coming soon)");
+        let _ = r.on_hover_text(crate::tl!("Recording narration needs audio capture (coming soon)"));
     });
     group(ui, |ui| {
         rows(ui, |ui| {
             let mut use_t = app.session.active().is_none_or(|d| d.doc.show.use_timings);
-            if ui.checkbox(&mut use_t, "Use Timings").changed() {
+            if ui.checkbox(&mut use_t, crate::tl!("Use Timings")).changed() {
                 run(app, "show.setup", json!({"useTimings": use_t}));
             }
             let mut narr = app.session.active().is_none_or(|d| !d.doc.show.without_narration);
-            if ui.checkbox(&mut narr, "Play Narrations").changed() {
+            if ui.checkbox(&mut narr, crate::tl!("Play Narrations")).changed() {
                 run(app, "show.setup", json!({"noNarration": !narr}));
             }
             let mut mc = app.session.active().is_none_or(|d| d.doc.show.show_media_controls);
-            if ui.checkbox(&mut mc, "Show Media Controls").changed() {
+            if ui.checkbox(&mut mc, crate::tl!("Show Media Controls")).changed() {
                 run(app, "show.setup", json!({"showMediaControls": mc}));
             }
         });
@@ -55,7 +55,7 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
 pub(super) fn record(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let r = big_button(ui, Icon::Cameo, "Cameo", false);
-        let _ = r.on_hover_text("Camera capture is not available yet");
+        let _ = r.on_hover_text(crate::tl!("Camera capture is not available yet"));
         if big_button(ui, Icon::PlayFromStart, "From\nBeginning", true).clicked() {
             app.start_show(app.show_start_index(), false);
             if let Some(s) = app.show.as_mut() {

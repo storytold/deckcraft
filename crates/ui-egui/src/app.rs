@@ -208,6 +208,8 @@ impl SlideApp {
             log::debug!("ignoring SlideApp::logic for render-only viewport {:?}", ctx.viewport_id());
             return;
         }
+        let lang = crate::i18n::Lang::from_pref(&self.ui.language);
+        crate::i18n::set_current(lang);
         self.tick_hidden_show(ctx, web_time::Instant::now());
         // `raw_input_hook` runs before `App::logic`. In a full pass egui has already built
         // `PointerState` and `keys_down` from every injected event, so retracting the events after
@@ -263,6 +265,8 @@ impl SlideApp {
     /// no-document paths, reaches the same outer reset observation and finalizer below. No early
     /// route may publish or inspect IME output on its own.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        let lang = crate::i18n::Lang::from_pref(&self.ui.language);
+        crate::i18n::set_current(lang);
         let ctx = ui.ctx().clone();
         if !Self::root_viewport_admitted(&ctx) {
             log::debug!("ignoring SlideApp::ui for render-only viewport {:?}", ctx.viewport_id());
