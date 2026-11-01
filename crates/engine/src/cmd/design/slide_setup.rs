@@ -176,7 +176,12 @@ pub(super) fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                     (Some(pos), true) if k == PhType::Date && (date_given || format_given) => {
                         if let Some(sh) = sl.shapes.get_mut(pos) {
-                            set_date(sh, &hf.date_text, &hf.date_format);
+                            // Only a format the caller asked for. The dialog always sends
+                            // `dateText`, so an Apply with no format selection reached here and
+                            // rewrote a slide's own `datetime11` field to the deck's global
+                            // format, which the caller never mentioned (noted in review). No
+                            // format means the field keeps the one it has.
+                            set_date(sh, &hf.date_text, if format_given { &hf.date_format } else { "" });
                         }
                     }
                     _ => {}
@@ -296,6 +301,32 @@ mod header_footer_date_tests {
         assert_eq!(got[0].1.as_deref(), Some(kind));
         assert!(got[0].0 == before || got[0].0 == after, "{got:?} is neither {before:?} nor {after:?}");
         got[0].0.clone()
+    }
+
+    /// The dialog always sends `dateText`, so an Apply with no format selection reached
+    /// `set_date` with the deck's global format and rewrote a slide's own date field to it. The
+    /// format the caller did not mention is not a format the caller asked for (noted in review).
+    #[test]
+    fn an_apply_with_no_format_leaves_each_slides_own_format_alone() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).unwrap();
+        s.execute("design.headerFooter", &json!({"date": true, "dateFormat": "datetime11", "all": true})).unwrap();
+        let kinds = |s: &Session| dates(s).into_iter().map(|(_, k)| k).collect::<Vec<_>>();
+        assert_eq!(kinds(&s), vec![Some("datetime11".to_string()); 2], "both slides start on the time format");
+
+        // One slide alone takes a different format, which also becomes the deck's global one.
+        s.execute("design.headerFooter", &json!({"date": true, "dateFormat": "datetime5", "all": false})).unwrap();
+        assert_eq!(kinds(&s), vec![Some("datetime11".to_string()), Some("datetime5".to_string())]);
+        assert_eq!(s.doc().unwrap().doc.header_footer.date_format, "datetime5");
+
+        // Apply with no `dateFormat`: the first slide keeps datetime11 rather than being rewritten
+        // to the global datetime5.
+        s.execute("design.headerFooter", &json!({"date": true, "dateText": "", "all": true})).unwrap();
+        assert_eq!(kinds(&s), vec![Some("datetime11".to_string()), Some("datetime5".to_string())], "neither slide was rewritten");
+
+        // And a format that *is* given still reaches every slide, so the guard is not a block.
+        s.execute("design.headerFooter", &json!({"date": true, "dateFormat": "datetime2", "all": true})).unwrap();
+        assert_eq!(kinds(&s), vec![Some("datetime2".to_string()); 2], "a format the caller asked for still applies");
     }
 
     /// Header & Footer's automatic date takes the format it is given. `HeaderFooter::date_format`
