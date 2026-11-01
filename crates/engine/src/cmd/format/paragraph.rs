@@ -155,8 +155,21 @@ pub(super) fn paragraph(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
-const PARA_DIALOG_KEYS: &[&str] =
-    &["align", "indentLeft", "indentRight", "indentFirst", "special", "specialBy", "spaceBefore", "spaceAfter", "lineSpacing", "lineSpacingPt"];
+const PARA_DIALOG_KEYS: &[&str] = &[
+    "align",
+    "indentLeft",
+    "indentRight",
+    "indentFirst",
+    "special",
+    "specialBy",
+    "spaceBefore",
+    "spaceAfter",
+    "lineSpacing",
+    "lineSpacingPt",
+    "eastAsianLineBreak",
+    "hangingPunctuation",
+    "latinLineBreak",
+];
 
 fn para_dialog_has_fields(p: &Value) -> bool {
     PARA_DIALOG_KEYS.iter().any(|k| p.get(*k).is_some())
@@ -169,6 +182,14 @@ pub(super) fn finite_key(p: &Value, cmd: &str, key: &str) -> Result<Option<f64>>
             let n = v.as_f64().filter(|n| n.is_finite()).ok_or_else(|| bad(cmd, format!("`{key}` must be a finite number")))?;
             Ok(Some(n))
         }
+    }
+}
+
+fn bool_key(p: &Value, cmd: &str, key: &str) -> Result<Option<bool>> {
+    match p.get(key) {
+        None => Ok(None),
+        Some(Value::Bool(b)) => Ok(Some(*b)),
+        Some(_) => Err(bad(cmd, format!("`{key}` must be true or false"))),
     }
 }
 
@@ -237,6 +258,11 @@ fn paragraph_dialog_params(s: &Session) -> Value {
         "spaceAfterKind": after_kind,
         "lineKind": line_kind,
         "lineValue": line_value,
+        // The layout treats an absent `eaLnBrk` as on (PowerPoint's default), so the checkbox
+        // shows the effective value; a box that opened unchecked would write Some(false) on OK.
+        "eastAsianLineBreak": pp.east_asian_line_break.unwrap_or(true),
+        "hangingPunctuation": pp.hanging_punct.unwrap_or(false),
+        "latinLineBreak": pp.latin_line_break.unwrap_or(false),
         "tabs": tabs,
         "defaultTab": pp.default_tab.unwrap_or(72.0),
     })
@@ -284,6 +310,9 @@ pub(super) fn paragraph_dialog(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let line_mult = finite_key(p, CMD, "lineSpacing")?.map(|v| v.clamp(0.0, 9.99));
     let line_pt = finite_key(p, CMD, "lineSpacingPt")?.map(clamp_pt);
+    let east_asian_break = bool_key(p, CMD, "eastAsianLineBreak")?;
+    let hanging = bool_key(p, CMD, "hangingPunctuation")?;
+    let latin_break = bool_key(p, CMD, "latinLineBreak")?;
     format_para(s, &move |para| {
         if align.is_some() {
             para.props.align = align;
@@ -309,7 +338,36 @@ pub(super) fn paragraph_dialog(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(v) = line_pt {
             para.props.line_spacing = Some(Spacing::Pts(v));
         }
+        if let Some(v) = east_asian_break {
+            para.props.east_asian_line_break = Some(v);
+        }
+        if let Some(v) = hanging {
+            para.props.hanging_punct = Some(v);
+        }
+        if let Some(v) = latin_break {
+            para.props.latin_line_break = Some(v);
+        }
     })
+}
+
+/// 禁則処理 (`eaLnBrk`): East Asian line breaking rules (small kana, the prolonged sound mark and
+/// iteration marks never start a line).
+pub(super) fn east_asian_line_break(s: &mut Session, p: &Value) -> Result<Value> {
+    // Absent means on in the layout, so the first bare toggle turns it off.
+    let on = on_param(p, current_para(s).east_asian_line_break.or(Some(true)));
+    format_para(s, &move |para| para.props.east_asian_line_break = Some(on))
+}
+
+/// 句読点のぶら下げ (`hangingPunct`): closing East Asian punctuation may hang past the end of a line.
+pub(super) fn hanging_punctuation(s: &mut Session, p: &Value) -> Result<Value> {
+    let on = on_param(p, current_para(s).hanging_punct);
+    format_para(s, &move |para| para.props.hanging_punct = Some(on))
+}
+
+/// 英単語の途中で改行を許可 (`latinLnBrk`): Latin words may break inside, after `/` or `\`.
+pub(super) fn latin_line_break(s: &mut Session, p: &Value) -> Result<Value> {
+    let on = on_param(p, current_para(s).latin_line_break);
+    format_para(s, &move |para| para.props.latin_line_break = Some(on))
 }
 
 pub(super) fn tab_align(s: &str) -> Option<&'static str> {
