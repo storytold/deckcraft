@@ -859,7 +859,14 @@ fn a_word_does_not_break_after_a_slash_or_backslash() {
     // Nor before a symbol that only shares the letters' line-break class.
     let (allowed, _) = break_opportunities("ab!&cd", false);
     assert!(allowed[3], "break after ! before &: {allowed:?}");
-    // A slash followed by a space still breaks, and hyphens still break.
+    // Latin text before CJK still breaks after the mark: "ab?" fits, "日本" moves down.
+    let lines = wrapped("ab?日本", one_line("ab?") + 0.5, |_| {});
+    assert_eq!(lines[0], "ab?", "{lines:?}");
+    // A separator followed by a space still breaks, and hyphens still break.
+    for sep in ["/", "?", "!"] {
+        let lines = wrapped(&format!("alpha{sep} beta"), one_line(&format!("alpha{sep} b")) + 0.5, |_| {});
+        assert_eq!(lines.iter().map(|l| l.trim_end()).collect::<Vec<_>>(), [format!("alpha{sep}"), "beta".into()], "{lines:?}");
+    }
     let lines = wrapped("alpha-beta-gamma-delta-epsilon", one_line("alpha-beta-gamma-") + 1.0, |_| {});
     assert_eq!(lines[0], "alpha-beta-gamma-");
 }
