@@ -159,8 +159,13 @@ impl UiState {
             self.format_tab = d.format_tab;
         }
         self.pane = self.pane.filter(short);
-        // A code this build doesn't offer (a newer version's, a hand edit) follows the system.
-        self.language = crate::i18n::normalize_pref(&self.language).unwrap_or(crate::i18n::AUTO).into();
+        // A language code this build doesn't offer (a release's catalogs in a local build, a newer
+        // version's) is kept and follows the system until it is offered; anything else is reset.
+        self.language = match crate::i18n::normalize_pref(&self.language) {
+            Some(code) => code.into(),
+            None if crate::i18n::well_formed_code(&self.language) => self.language.to_ascii_lowercase(),
+            None => crate::i18n::AUTO.into(),
+        };
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
         self.recent.dedup();
         self.recent.truncate(RECENT_MAX);

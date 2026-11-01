@@ -206,6 +206,29 @@ pub fn tn(n: u64, one: &str, other: &str) -> String {
     lang.i18n().trn(lang.lang, n, one, other)
 }
 
+/// A ribbon caption whose line break was saved as a space (a Quick Access Toolbar label such as
+/// `New Slide`, from `New\nSlide`) in the current language, on one line.
+pub fn t_flat(s: &str) -> String {
+    let lang = current();
+    if has(lang, s) {
+        return t(s).replace('\n', " ");
+    }
+    // Try the break at each space: captions have one at most.
+    let found = s.match_indices(' ').map(|(i, _)| format!("{}\n{}", &s[..i], &s[i + 1..])).find(|k| has(lang, k));
+    found.map_or_else(|| s.to_string(), |k| t(&k).replace('\n', " "))
+}
+
+/// Whether `code` is shaped like a language code (`fr`, `pt-br`, `zh_Hans`), offered or not.
+/// A saved setting of that shape is kept when this build doesn't offer it, so switching between
+/// a release and a build without catalogs doesn't lose the choice.
+pub fn well_formed_code(code: &str) -> bool {
+    let mut parts = code.split(['-', '_']);
+    let primary = parts.next().unwrap_or("");
+    (2..=3).contains(&primary.len())
+        && primary.bytes().all(|b| b.is_ascii_alphabetic())
+        && parts.all(|p| (1..=8).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_alphanumeric()))
+}
+
 /// A ribbon location (`Home › Font`) in the current language, segment by segment.
 pub fn location(loc: &str) -> String {
     loc.split(" › ").map(t).collect::<Vec<_>>().join(" › ")

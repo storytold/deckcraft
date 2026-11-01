@@ -43,6 +43,10 @@ fn a_string_without_a_translation_stays_english() {
     set_current(de);
     assert_eq!(fmt(t("Slide {n} of {total}"), &[("n", "2"), ("total", "9")]), "Folie 2 von 9");
     assert_eq!(location("Home › Insert"), "Start › Einfügen");
+    // A Quick Access Toolbar label is a ribbon caption with its line break saved as a space.
+    assert_eq!(t_flat("New Slide"), "Neue Folie");
+    assert_eq!(t_flat("Insert"), "Einfügen");
+    assert_eq!(t_flat("Not in the catalog"), "Not in the catalog");
     set_current(Lang::EN);
 }
 
@@ -59,9 +63,17 @@ fn the_language_setting_is_auto_or_an_offered_code() {
     assert_eq!(Lang::from_pref("a code from a newer version"), Lang::EN);
     assert_eq!(Lang::all().next(), Some(Lang::EN), "English is first and always offered");
     // A damaged or hand-edited `ui.json` follows the system.
-    let ui = UiState { language: "klingon".into(), ..Default::default() }.sanitized();
-    assert_eq!(ui.language, AUTO);
+    for bad in ["klingon", "", "d", "de-", "<script>"] {
+        assert_eq!(UiState { language: bad.into(), ..Default::default() }.sanitized().language, AUTO, "{bad:?}");
+    }
     assert_eq!(UiState { language: "EN".into(), ..Default::default() }.sanitized().language, "en");
+    // A code this build doesn't offer (German saved by a release, read by a build without the
+    // catalogs) is kept, and the interface follows the system meanwhile.
+    for kept in ["fr", "PT-br", "zh_Hans"] {
+        let ui = UiState { language: kept.into(), ..Default::default() }.sanitized();
+        assert_eq!(ui.language, kept.to_ascii_lowercase());
+        assert_eq!(Lang::from_pref(&ui.language), Lang::EN);
+    }
 }
 
 #[test]
