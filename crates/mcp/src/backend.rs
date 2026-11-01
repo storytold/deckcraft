@@ -25,6 +25,10 @@ pub trait Backend {
 pub struct Remote {
     addr: String,
     token: String,
+    /// The token came from the app's own source (env or the token file), not from the caller,
+    /// so a reconnect re-reads it: an app that restarted wrote a fresh token file, and the
+    /// token from the first connection would authenticate nothing.
+    file_backed: bool,
     conn: Option<(BufReader<TcpStream>, TcpStream)>,
     next_id: u64,
 }
@@ -34,12 +38,14 @@ impl Remote {
     /// requires a token (#777): `DECKCRAFT_CONTROL_TOKEN`, else the file the app wrote for this port.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
         let token = crate::control_auth::client_token(addr).map_err(|e| std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))?;
-        Self::connect_with_token(addr, token)
+        let mut r = Self { addr: addr.to_string(), token, file_backed: true, conn: None, next_id: 1 };
+        r.reconnect()?;
+        Ok(r)
     }
 
-    /// Like [`Remote::connect`] with a token the caller already has.
+    /// Like [`Remote::connect`] with a token the caller already has (kept as given).
     pub fn connect_with_token(addr: &str, token: String) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), token, conn: None, next_id: 1 };
+        let mut r = Self { addr: addr.to_string(), token, file_backed: false, conn: None, next_id: 1 };
         r.reconnect()?;
         Ok(r)
     }
@@ -50,6 +56,14 @@ impl Remote {
 
     fn reconnect(&mut self) -> std::io::Result<()> {
         self.conn = None;
+        // A file-backed token is re-read before authenticating: the app may have restarted
+        // since the first connection and written a fresh token file. A lookup failure keeps
+        // the stored token and lets the handshake decide. A caller-supplied token stays.
+        if self.file_backed
+            && let Ok(token) = crate::control_auth::client_token(&self.addr)
+        {
+            self.token = token;
+        }
         let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, format!("cannot resolve {}", self.addr));
         for sa in self.addr.to_socket_addrs()? {
             match TcpStream::connect_timeout(&sa, Duration::from_millis(800)) {
@@ -260,6 +274,51 @@ mod tests {
         let error = refuse_once("authentication required").err().expect("the refusal refuses");
         assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
         assert!(error.to_string().contains("refused the control token"), "{error}");
+    }
+
+    /// A file-backed reconnect re-reads the token: the app restarted, wrote a fresh token
+    /// file, and the token from the first connection authenticates nothing.
+    #[test]
+    fn a_file_backed_reconnect_follows_the_apps_new_token() {
+        if std::env::var(crate::control_auth::TOKEN_ENV).is_ok_and(|t| !t.trim().is_empty()) {
+            eprintln!("skipped: DECKCRAFT_CONTROL_TOKEN is set (it wins over the token file)");
+            return;
+        }
+        let port = 40_000 + (std::process::id() % 20_000) as u16;
+        let (token_a, token_b) = ("file-token-a-0123456789", "file-token-b-0123456789");
+        let path = crate::control_auth::write_token_file(port, token_a).expect("write token file");
+        let addr = format!("127.0.0.1:{port}");
+        // Bound here so the client's fail-fast connect never races the peer thread.
+        let listener = TcpListener::bind(&addr).expect("bind");
+        let peer = std::thread::spawn(move || {
+            let check_auth = |stream: &TcpStream, expected: &str| {
+                stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+                stream.set_write_timeout(Some(Duration::from_secs(5))).expect("write timeout");
+                let mut line = String::new();
+                BufReader::new(stream).read_line(&mut line).expect("auth line");
+                let auth = serde_json::from_str::<Value>(&line).expect("auth JSON");
+                assert_eq!(auth["method"], "auth");
+                assert_eq!(auth["params"]["token"], expected, "the reconnect sends the fresh token");
+                let mut w = stream;
+                w.write_all(b"{\"id\":0,\"ok\":true,\"result\":{\"authenticated\":true}}\n").expect("auth reply");
+            };
+            // First app run: accepts the token from the file.
+            let (stream, _) = listener.accept().expect("accept 1");
+            check_auth(&stream, token_a);
+            drop(stream); // the app restarts
+            // The restarted app: the fresh token authenticates.
+            let (mut stream, _) = listener.accept().expect("accept 2");
+            check_auth(&stream, token_b);
+            let mut line = String::new();
+            BufReader::new(&stream).read_line(&mut line).expect("request");
+            stream.write_all(b"{\"id\":1,\"ok\":true,\"result\":null}\n").expect("request reply");
+        });
+        let mut remote = Remote::connect(&addr).expect("connect");
+        std::fs::write(&path, format!("{token_b}\n")).expect("rewrite token file");
+        let result = remote.call("engine.execute", json!({"command":"slide.new"}));
+        peer.join().expect("peer");
+        std::fs::remove_file(&path).ok();
+        assert!(result.is_ok(), "{result:?}");
     }
 
     #[test]
