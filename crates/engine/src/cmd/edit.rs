@@ -277,8 +277,9 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         }
         return paste_plain(s, t);
     }
-    let editing = s.doc()?.selection.text.is_some();
-    if editing {
+    let (editing, notes) = s.doc()?.selection.text.as_ref().map_or((false, false), |t| (true, t.notes));
+    // Copied shapes are pasted as shapes even while a text box is being edited (the caret leaves it), but never into the notes.
+    if editing && (notes || s.clipboard.text.is_some() || s.clipboard.shapes.is_empty()) {
         if let Some(body) = s.clipboard.text.clone() {
             return super::text::paste_body(s, &body);
         }
