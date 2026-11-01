@@ -752,6 +752,13 @@ fn morph_frame_morphs_the_outline_of_a_changed_geometry() {
     b.shapes = vec![group(2, 20, 21)];
     let f = morph_frame(&p, &a, &b, 0.5, &|_| false);
     assert_eq!(f.shapes.len(), 1, "matching groups move as one");
+    // A child that moved or changed colour is not the same content: the groups cross-fade.
+    let mut moved = group(2, 20, 21);
+    if let deckcraft_model::ShapeKind::Group { children, .. } = &mut moved.kind {
+        children[0].xfrm = Some(deckcraft_model::Xfrm::new(5.0, 5.0, 10.0, 10.0));
+    }
+    b.shapes = vec![moved];
+    assert_eq!(morph_frame(&p, &a, &b, 0.5, &|_| false).shapes.len(), 2, "a moved child cross-fades");
 }
 
 fn pres(n: usize) -> Presentation {

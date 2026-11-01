@@ -1227,6 +1227,55 @@ fn text_glow_and_shadow_are_drawn() {
 }
 
 #[test]
+fn table_cell_text_effects_need_filters() {
+    let mut table = Table::new(1, 1, 200.0, 40.0);
+    let plain =
+        Shape { id: ShapeId(741), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), kind: ShapeKind::Table(table.clone()), ..Default::default() };
+    let p = deck_with(vec![plain]);
+    assert!(!needs_filters(&p, &p.slides[0]));
+    table.rows[0].cells[0].text = TextBody::from_text("Cell");
+    table.rows[0].cells[0].text.paragraphs[0].runs[0].props.glow =
+        Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 8.0 });
+    let glow = Shape { id: ShapeId(742), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), kind: ShapeKind::Table(table), ..Default::default() };
+    let p = deck_with(vec![glow]);
+    assert!(needs_filters(&p, &p.slides[0]), "a glowing cell's text blurs");
+}
+
+#[test]
+fn blend_with_blurred_effects_does_not_panic_multithreaded() {
+    let shadow = deckcraft_model::style::Shadow {
+        color: ColorRef::rgb(deckcraft_color::Rgba { r: 0, g: 0, b: 0, a: 128 }),
+        blur: 6.0,
+        dist: 8.0,
+        dir: 45.0,
+        inner: false,
+        sx: 1.0,
+        sy: 1.0,
+        kx: 0.0,
+        ky: 0.0,
+        align: String::new(),
+        rotate_with_shape: false,
+    };
+    let mut sh = Shape {
+        id: ShapeId(743),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)),
+        ..Default::default()
+    };
+    sh.effects = Some(deckcraft_model::style::Effects { outer_shadow: Some(shadow), ..Default::default() });
+    let mut p = deck_with(vec![sh.clone()]);
+    p.slides.push(std::sync::Arc::new((*p.slides[0]).clone()));
+    let o = RenderOpts { scale: 0.5, threads: 4, ..Default::default() };
+    let shapes = vec![(sh, false)];
+    let before = super::panics_caught();
+    for mix in [0.0, 0.5, 1.0] {
+        let img = render_blend(&p, (0, 1), mix, &shapes, &[], &[], &o);
+        assert!(img.width > 0, "mix {mix}");
+    }
+    assert_eq!(super::panics_caught(), before, "no filter panic in multithreaded blend");
+}
+
+#[test]
 fn pattern_fills_draw_powerpoints_tiles() {
     // dkVert at one output pixel per pattern cell (0.75 pt): columns 11001100… across, as
     // PowerPoint's export draws it; pct50 is a checkerboard.

@@ -3,7 +3,7 @@ use super::geometry::{
 };
 use super::opts::{RenderOpts, ShapeState, SlideFields};
 use super::raster::Image;
-use super::slide::{SlidePart, needs_filters, output_size};
+use super::slide::{SlidePart, needs_filters, needs_text_filters, output_size};
 use super::stroke::{arrowheads, head_trims, stroke, trim_ends};
 use super::text_draw::{draw_layout_with, draw_text, line_bounds, preview_empty_bullets, prompt_body, text_transform, text_warp};
 use super::*;
@@ -216,8 +216,14 @@ impl Renderer {
         self.render_work = 0;
         self.shadow_work = 0;
         self.in_shadow_pass = false;
-        self.in_blend = true;
-        let (mut ctx, w, h, view) = Self::canvas(pres, opts, false);
+        // Only in-between frames skip blurs; the endpoints are drawn as the slides themselves.
+        self.in_blend = mix > 0.0 && mix < 1.0;
+        let filters = if self.in_blend {
+            needs_text_filters(pres, old.0) || needs_text_filters(pres, new.0)
+        } else {
+            needs_filters(pres, old.0) || needs_filters(pres, new.0)
+        };
+        let (mut ctx, w, h, view) = Self::canvas(pres, opts, filters);
         let (Some(co), Some(cn)) = (Ctx::for_slide(pres, old.0), Ctx::for_slide(pres, new.0)) else {
             self.in_blend = false;
             return self.finish(ctx, w, h);

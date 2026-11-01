@@ -168,11 +168,23 @@ fn box_of(ctx: Option<&Ctx>, s: &Shape) -> Option<Xfrm> {
 fn content(s: &Shape) -> Shape {
     let mut c = Shape { id: ShapeId(0), name: String::new(), xfrm: None, fill: None, ..s.clone() };
     if let ShapeKind::Group { children, .. } = &mut c.kind {
+        // Only a child's identity is ignored: a moved or recoloured child must cross-fade,
+        // since the group morphs as one unit.
         for child in children {
-            *child = content(child);
+            normalise_ids(child);
         }
     }
     c
+}
+
+fn normalise_ids(s: &mut Shape) {
+    s.id = ShapeId(0);
+    s.name.clear();
+    if let ShapeKind::Group { children, .. } = &mut s.kind {
+        for child in children {
+            normalise_ids(child);
+        }
+    }
 }
 
 /// Whether two shapes differ in their geometry only, and it is drawn as an outline (shapes,
