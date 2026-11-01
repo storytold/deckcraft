@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (print-preview tests use egui's emitted URL, and macOS removes its previews before exit; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** major (fix for a workflow-breaking regression: Ctrl+C/X/V use the system clipboard again, broken for all text and objects from 0.11.1 to 0.14.1; pasted and duplicated placeholders keep their look; stage and scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (progress log: read-only `slide.actions` lists shape and table text actions; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** trivial (progress log: Set Up Slide Show ▸ Keep mouse cursor visible, #1445; stage and scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (progress log: dragging several selected slides moves them all; previous: trivial, progress log: Edit Points handle drags with Shift, Ctrl/Cmd or Alt/Option set the point type; previous: trivial, progress log: scroll bars on the zoomed slide pane, #1157; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -148,6 +148,9 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-01 | Ctrl+V of a picture copied in a browser (Copy Image) pastes the picture, not a text box with its link and alt text; the link still pastes as text when no picture came with it |
+| 2026-11-01 | Copy, Cut, Paste and Duplicate of a title, body or other placeholder on a slide keep its look: the copy is a regular shape that takes the size, font, bullets, indents, autofit and box its layout and master gave it, instead of 18 pt unbulleted text |
+| 2026-11-01 | Clipboard: Ctrl+C, Ctrl+X and Ctrl+V use the system clipboard again, so text and pictures paste from other apps and in-app copies paste back. Since the egui 0.37 migration (#1350) the desktop build had a clipboard that only worked inside the app. On native Wayland, text goes through egui's Wayland clipboard; HTML stays on X11, macOS and Windows |
 | 2026-10-30 | Print-preview tests use the URL emitted by egui and its exact file path; previews are explicitly removed before the macOS process exits |
 | 2026-10-30 | `slide.actions` lists shape click and hover actions and text-run hyperlinks (including table cells and grouped shapes) for audit; listing never runs an action. The UI pane is a follow-up |
 | 2026-10-29 | Slide Show: going back to the previous slide plays the transition of the slide being left, reversed, as PowerPoint does, instead of the previous slide's own entrance transition (#1531); a jump (Go to Slide, links) still plays the target slide's transition |
@@ -318,6 +321,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | major | Workflow-breaking regression fixed: the desktop build uses the system clipboard again (eframe `clipboard` feature) |
 | 2026-10-30 | trivial | Progress log: read-only slide action inspection; parity scores unchanged |
 | 2026-10-29 | trivial | Progress log: going back in the slide show reverses the left slide's transition (#1531). Scores and milestone names unchanged |
 | 2026-10-29 | trivial | Progress log: the Picture Styles row leaves room for Crop and Size (#1232). Scores and milestone names unchanged |
