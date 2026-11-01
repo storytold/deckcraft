@@ -1949,3 +1949,18 @@ fn insets_wider_than_the_shape_scale_down_within_the_shape_bounds() {
     // The text center must remain inside the 14.17 pt wide shape, not pushed ~127.5 pt to the right.
     assert!((0.0..=14.17).contains(&mid), "line center {mid} should be within [0, 14.17]");
 }
+
+/// #1632: signed insets (e.g. negative left inset with positive right inset) are preserved when
+/// their sum fits within the shape bounds.
+#[test]
+fn signed_insets_are_preserved_when_they_fit() {
+    let (p, mut sh) = setup("Text", 100.0, 50.0);
+    sh.ph = None;
+    let bp = &mut sh.text.as_mut().unwrap().body;
+    bp.inset_l = Some(-10.0);
+    bp.inset_r = Some(10.0);
+    sh.text.as_mut().unwrap().paragraphs[0].props = deckcraft_model::text::ParaProps { align: Some(Align::Left), ..Default::default() };
+    let l = lay(&p, &sh, 100.0, 50.0);
+    assert_eq!(l.lines.len(), 1);
+    assert_eq!(l.inner.x0, -10.0);
+}

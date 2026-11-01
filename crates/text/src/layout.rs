@@ -94,18 +94,18 @@ impl BoxGeom {
             text_rect
         };
         // Insets wider than the shape scale down proportionally to fit inside it (#1632).
-        let (mut ins_l, mut ins_r) = (bp.inset_l.unwrap_or(7.2).max(0.0), bp.inset_r.unwrap_or(7.2).max(0.0));
-        let (mut ins_t, mut ins_b) = (bp.inset_t.unwrap_or(3.6).max(0.0), bp.inset_b.unwrap_or(3.6).max(0.0));
+        let (mut ins_l, mut ins_r) = (bp.inset_l.unwrap_or(7.2), bp.inset_r.unwrap_or(7.2));
+        let (mut ins_t, mut ins_b) = (bp.inset_t.unwrap_or(3.6), bp.inset_b.unwrap_or(3.6));
         let w = r.width().max(0.0);
         let total_x = ins_l + ins_r;
-        if total_x > w && total_x > 0.0 {
+        if ins_l >= 0.0 && ins_r >= 0.0 && total_x > w && total_x > 0.0 {
             let s = w / total_x;
             ins_l *= s;
             ins_r *= s;
         }
         let h = r.height().max(0.0);
         let total_y = ins_t + ins_b;
-        if total_y > h && total_y > 0.0 {
+        if ins_t >= 0.0 && ins_b >= 0.0 && total_y > h && total_y > 0.0 {
             let s = h / total_y;
             ins_t *= s;
             ins_b *= s;
