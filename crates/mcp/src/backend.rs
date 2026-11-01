@@ -77,15 +77,22 @@ impl Remote {
         writer.flush()?;
         let mut reply = String::new();
         let n = std::io::Read::take(reader, 64 * 1024).read_line(&mut reply)?;
-        let ok = n > 0 && serde_json::from_str::<Value>(reply.trim()).ok().and_then(|v| v.get("ok").and_then(Value::as_bool)) == Some(true);
-        if ok {
-            Ok(())
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "the app refused the control token (is DECKCRAFT_CONTROL_TOKEN or the app's token file for this port out of date?)",
-            ))
+        let parsed = if n > 0 { serde_json::from_str::<Value>(reply.trim()).ok() } else { None };
+        if parsed.as_ref().and_then(|v| v.get("ok")).and_then(Value::as_bool) == Some(true) {
+            return Ok(());
         }
+        // A `busy` refusal says the app is up and full, so retrying or freeing a slot is the fix —
+        // the token message would send the user to check the wrong thing. Every other refusal keeps
+        // the token hint, the app's own answer for a wrong or missing token.
+        if let Some(error) = parsed.as_ref().and_then(|v| v.get("error")).and_then(Value::as_str)
+            && error.starts_with("busy")
+        {
+            return Err(std::io::Error::new(std::io::ErrorKind::ConnectionRefused, error.to_string()));
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "the app refused the control token (is DECKCRAFT_CONTROL_TOKEN or the app's token file for this port out of date?)",
+        ))
     }
 
     /// Write one request line. A failure here means the app never got a complete line, so retrying is safe.
@@ -222,6 +229,37 @@ mod tests {
         let error = result.expect_err("an unrelated reply cannot confirm a mutation");
         assert!(error.contains("may or may not have run"), "{error}");
         assert!(remote.conn.is_none(), "discard the invalid connection without replaying");
+    }
+
+    /// A peer that refuses the handshake with a scripted error and closes.
+    fn refuse_once(error: &'static str) -> std::io::Result<Remote> {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr").to_string();
+        let peer = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+            stream.set_write_timeout(Some(Duration::from_secs(5))).expect("write timeout");
+            // The auth line still arrives (the client sends it first); the refusal answers it.
+            let _ = BufReader::new(&stream).read_line(&mut String::new());
+            let _ = stream.write_all(format!("{{\"id\":0,\"ok\":false,\"error\":\"{error}\"}}\n").as_bytes());
+        });
+        let result = Remote::connect_with_token(&addr, TEST_TOKEN.into());
+        peer.join().expect("peer");
+        result
+    }
+
+    #[test]
+    fn a_busy_refusal_reports_what_the_app_said_not_the_token() {
+        let error = refuse_once("busy: too many control connections").err().expect("busy refuses");
+        assert_eq!(error.kind(), std::io::ErrorKind::ConnectionRefused);
+        assert!(error.to_string().starts_with("busy"), "{error}");
+    }
+
+    #[test]
+    fn a_token_refusal_keeps_the_token_hint() {
+        let error = refuse_once("authentication required").err().expect("the refusal refuses");
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("refused the control token"), "{error}");
     }
 
     #[test]
