@@ -41,8 +41,9 @@ pub fn poll(inbox: &Inbox, app: &mut SlideApp, ctx: &egui::Context) {
             Event::Open(paths) => {
                 for p in paths.iter().filter_map(|p| p.to_str()) {
                     if let Err(e) = app.open_path(p) {
-                        log::error!("{p}: {e}");
-                        app.set_status(format!("Couldn't open {p}: {e}"));
+                        let safe_p = p.replace(['\r', '\n'], " ");
+                        log::error!("{safe_p}: {e}");
+                        app.set_status(format!("Couldn't open {safe_p}: {e}"));
                     }
                 }
             }

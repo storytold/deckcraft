@@ -248,6 +248,46 @@ pub enum TextBuild {
     ByLetter,
 }
 
+/// Most paragraphs a by-paragraph build animates separately; later ones follow the last of them.
+pub const MAX_BUILD_PARAGRAPHS: usize = 1_000;
+
+/// What a paragraph does in a by-paragraph build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuildRole {
+    /// Animated on its own: a filled paragraph at the shallowest filled level.
+    Top,
+    /// Follows the top paragraph with this index (deeper, empty or blank paragraphs after it).
+    Member(usize),
+    /// Before the first top paragraph: not animated.
+    Unowned,
+}
+
+/// Does the paragraph show any text? A by-paragraph build doesn't animate blank ones on their own.
+pub fn build_filled(p: &crate::text::Paragraph) -> bool {
+    p.runs.iter().any(|r| !r.text.trim().is_empty())
+}
+
+/// The role of every paragraph of `text` in a by-paragraph build, by paragraph index: what the
+/// timeline plays, and what the PPTX reader and writer map to one file effect per paragraph.
+pub fn paragraph_build_roles(text: &crate::text::TextBody) -> Vec<BuildRole> {
+    let top = text.paragraphs.iter().filter(|p| build_filled(p)).map(|p| p.level).min().unwrap_or(0);
+    let mut tops = 0;
+    let mut owner: Option<usize> = None;
+    text.paragraphs
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            if p.level <= top && build_filled(p) && tops < MAX_BUILD_PARAGRAPHS {
+                tops += 1;
+                owner = Some(i);
+                BuildRole::Top
+            } else {
+                owner.map_or(BuildRole::Unowned, BuildRole::Member)
+            }
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Animation {
@@ -327,37 +367,37 @@ pub static ANIMATIONS: &[(&str, &str, AnimClass, u32, u32, &[&str])] = &[
     ("shape", "Shape", AnimClass::Entrance, 6, 2000, &["circleIn", "circleOut", "boxIn", "boxOut", "diamondIn", "diamondOut", "plusIn", "plusOut"]),
     ("wheel", "Wheel", AnimClass::Entrance, 21, 2000, &["1", "2", "3", "4", "8"]),
     ("randomBars", "Random Bars", AnimClass::Entrance, 14, 500, &["horz", "vert"]),
-    ("grow", "Grow & Turn", AnimClass::Entrance, 31, 500, &[]),
+    ("grow", "Grow & Turn", AnimClass::Entrance, 31, 1000, &[]),
     ("zoom", "Zoom", AnimClass::Entrance, 53, 500, &["in", "out"]),
     ("swivel", "Swivel", AnimClass::Entrance, 45, 2000, &["horz", "vert"]),
     ("bounce", "Bounce", AnimClass::Entrance, 26, 2000, &[]),
     ("blinds", "Blinds", AnimClass::Entrance, 3, 500, &["horz", "vert"]),
-    ("box", "Box", AnimClass::Entrance, 4, 500, &["in", "out"]),
+    ("box", "Box", AnimClass::Entrance, 4, 2000, &["in", "out"]),
     ("checkerboard", "Checkerboard", AnimClass::Entrance, 5, 500, &["across", "down"]),
-    ("circle", "Circle", AnimClass::Entrance, 6, 500, &["in", "out"]),
-    ("diamond", "Diamond", AnimClass::Entrance, 8, 500, &["in", "out"]),
+    ("circle", "Circle", AnimClass::Entrance, 6, 2000, &["in", "out"]),
+    ("diamond", "Diamond", AnimClass::Entrance, 8, 2000, &["in", "out"]),
     ("dissolve", "Dissolve In", AnimClass::Entrance, 9, 500, &[]),
     ("peek", "Peek In", AnimClass::Entrance, 12, 500, &["b", "l", "t", "r"]),
     ("strips", "Strips", AnimClass::Entrance, 18, 500, &["lu", "ru", "ld", "rd"]),
-    ("expand", "Expand", AnimClass::Entrance, 55, 500, &[]),
+    ("expand", "Expand", AnimClass::Entrance, 55, 1000, &[]),
     ("rise", "Rise Up", AnimClass::Entrance, 37, 1000, &[]),
-    ("spinner", "Spinner", AnimClass::Entrance, 49, 1000, &[]),
+    ("spinner", "Spinner", AnimClass::Entrance, 49, 500, &[]),
     ("pulse", "Pulse", AnimClass::Emphasis, 26, 500, &[]),
-    ("colorPulse", "Color Pulse", AnimClass::Emphasis, 27, 500, &[]),
+    ("colorPulse", "Color Pulse", AnimClass::Emphasis, 27, 250, &[]),
     ("teeter", "Teeter", AnimClass::Emphasis, 32, 1000, &[]),
     ("spin", "Spin", AnimClass::Emphasis, 8, 2000, &["clockwise", "counterClockwise"]),
     ("growShrink", "Grow/Shrink", AnimClass::Emphasis, 6, 2000, &["both", "horz", "vert"]),
-    ("desaturate", "Desaturate", AnimClass::Emphasis, 35, 500, &[]),
-    ("darken", "Darken", AnimClass::Emphasis, 25, 500, &[]),
+    ("desaturate", "Desaturate", AnimClass::Emphasis, 25, 500, &[]),
+    ("darken", "Darken", AnimClass::Emphasis, 24, 500, &[]),
     ("lighten", "Lighten", AnimClass::Emphasis, 30, 500, &[]),
     ("transparency", "Transparency", AnimClass::Emphasis, 9, 500, &[]),
-    ("objectColor", "Object Color", AnimClass::Emphasis, 19, 2000, &[]),
+    ("objectColor", "Object Color", AnimClass::Emphasis, 19, 500, &[]),
     ("complementaryColor", "Complementary Color", AnimClass::Emphasis, 21, 500, &[]),
     ("lineColor", "Line Color", AnimClass::Emphasis, 7, 2000, &[]),
     ("fillColor", "Fill Color", AnimClass::Emphasis, 1, 2000, &[]),
     ("fontColor", "Font Color", AnimClass::Emphasis, 3, 2000, &[]),
     ("underline", "Underline", AnimClass::Emphasis, 18, 500, &[]),
-    ("boldFlash", "Bold Flash", AnimClass::Emphasis, 10, 500, &[]),
+    ("boldFlash", "Bold Flash", AnimClass::Emphasis, 10, 2000, &[]),
     ("wave", "Wave", AnimClass::Emphasis, 34, 500, &[]),
     ("disappear", "Disappear", AnimClass::Exit, 1, 0, &[]),
     ("fadeOut", "Fade", AnimClass::Exit, 10, 500, &[]),
@@ -368,20 +408,20 @@ pub static ANIMATIONS: &[(&str, &str, AnimClass, u32, u32, &[&str])] = &[
     ("shapeOut", "Shape", AnimClass::Exit, 6, 2000, &["circleIn", "circleOut"]),
     ("wheelOut", "Wheel", AnimClass::Exit, 21, 2000, &["1", "2", "3", "4", "8"]),
     ("randomBarsOut", "Random Bars", AnimClass::Exit, 14, 500, &["horz", "vert"]),
-    ("shrinkTurn", "Shrink & Turn", AnimClass::Exit, 31, 500, &[]),
+    ("shrinkTurn", "Shrink & Turn", AnimClass::Exit, 31, 1000, &[]),
     ("zoomOut", "Zoom", AnimClass::Exit, 53, 500, &["in", "out"]),
     ("swivelOut", "Swivel", AnimClass::Exit, 45, 2000, &["horz", "vert"]),
     ("bounceOut", "Bounce", AnimClass::Exit, 26, 2000, &[]),
     ("dissolveOut", "Dissolve Out", AnimClass::Exit, 9, 500, &[]),
     ("blindsOut", "Blinds", AnimClass::Exit, 3, 500, &["horz", "vert"]),
-    ("boxOut", "Box", AnimClass::Exit, 4, 500, &["in", "out"]),
+    ("boxOut", "Box", AnimClass::Exit, 4, 2000, &["in", "out"]),
     ("checkerboardOut", "Checkerboard", AnimClass::Exit, 5, 500, &["across", "down"]),
-    ("diamondOut", "Diamond", AnimClass::Exit, 8, 500, &["in", "out"]),
+    ("diamondOut", "Diamond", AnimClass::Exit, 8, 2000, &["in", "out"]),
     ("peekOut", "Peek Out", AnimClass::Exit, 12, 500, &["b", "l", "t", "r"]),
     ("stripsOut", "Strips", AnimClass::Exit, 18, 500, &["lu", "ru", "ld", "rd"]),
     ("sinkDown", "Sink Down", AnimClass::Exit, 37, 1000, &[]),
-    ("spinnerOut", "Spinner", AnimClass::Exit, 49, 1000, &[]),
-    ("contract", "Contract", AnimClass::Exit, 55, 500, &[]),
+    ("spinnerOut", "Spinner", AnimClass::Exit, 49, 500, &[]),
+    ("contract", "Contract", AnimClass::Exit, 55, 1000, &[]),
     ("lines", "Lines", AnimClass::Path, 64, 2000, &["down", "up", "right", "left"]),
     ("arcs", "Arcs", AnimClass::Path, 37, 2000, &["down", "up", "right", "left"]),
     ("turns", "Turns", AnimClass::Path, 43, 2000, &["down", "up", "right", "left"]),
@@ -604,5 +644,21 @@ mod option_label_tests {
                 assert!(!transition_option_label(id, o).is_empty(), "{id}/{o}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod build_role_tests {
+    use super::*;
+    use crate::text::TextBody;
+
+    #[test]
+    fn blank_and_deeper_paragraphs_follow_the_top_one_before_them() {
+        let mut t = TextBody::from_text("Before\nLead\n \nSub\nNext");
+        for (p, lvl) in t.paragraphs.iter_mut().zip([1, 0, 0, 1, 0]) {
+            p.level = lvl;
+        }
+        use BuildRole::*;
+        assert_eq!(paragraph_build_roles(&t), vec![Unowned, Top, Member(1), Member(1), Top]);
     }
 }

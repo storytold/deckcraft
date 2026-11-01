@@ -17,7 +17,11 @@ use crate::cdf::Cdfs;
 use crate::frame::FrameBuf;
 use crate::header::{FilmGrainParams, FrameHeader, HeaderState, LoopFilterDeltas, RefInfo, SegmentationFeatures, SequenceHeader, default_gm_params};
 use crate::par::Pool;
-use crate::spec_tables::*;
+use crate::spec_tables::{
+    ALTREF_FRAME, ALTREF2_FRAME, BWDREF_FRAME, DEFAULT_INTRA_FRAME_Y_MODE_CDF, DIV_MULT, GOLDEN_FRAME, INTRA_FRAME, INTRA_ONLY_FRAME, KEY_FRAME,
+    LAST_FRAME, LAST2_FRAME, MAX_FRAME_DISTANCE, MAX_OFFSET_HEIGHT, MAX_OFFSET_WIDTH, MFMV_STACK_SIZE, NUM_REF_FRAMES, PRIMARY_REF_NONE,
+    REFMVS_LIMIT, REFS_PER_FRAME,
+};
 use crate::state::{FrameShared, FrameState, TileState};
 use crate::stats::{DecodeStats, Stage, Timer};
 use crate::tile::TileDecoder;
@@ -61,7 +65,7 @@ impl<T: Clone> Slot<T> {
     }
 
     fn set(&self, v: Result<T>) {
-        let mut g = self.value.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.value.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         *g = Some(v);
         self.cv.notify_all();
     }
@@ -71,12 +75,12 @@ impl<T: Clone> Slot<T> {
     }
 
     fn wait(&self) -> Result<T> {
-        let mut g = self.value.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.value.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
             if let Some(v) = g.as_ref() {
                 return v.clone();
             }
-            g = self.cv.wait(g).unwrap_or_else(|e| e.into_inner());
+            g = self.cv.wait(g).unwrap_or_else(std::sync::PoisonError::into_inner);
         }
     }
 }
@@ -401,49 +405,35 @@ impl Decoder {
         r
     }
 
+    /// Whether an OBU belongs to the selected operating point (spec 7.5: OBUs of other layers are dropped).
+    fn in_operating_point(&self, obu: &ObuUnit) -> bool {
+        if obu.obu_type != OBU_SEQUENCE_HEADER_T
+            && obu.obu_type != OBU_TEMPORAL_DELIMITER_T
+            && obu.ext
+            && let Some(seq) = &self.seq
+            && seq.op_idc != 0
+        {
+            let idc = seq.op_idc;
+            let in_t = (idc >> obu.temporal_id) & 1;
+            let in_s = (idc >> (obu.spatial_id + 8)) & 1;
+            if in_t == 0 || in_s == 0 {
+                return false;
+            }
+        }
+        true
+    }
+
     fn parse_obus(&mut self, data: &[u8], out: &mut Vec<(Output, usize, u32)>) -> Result<()> {
         let mut tu = 0usize;
         let mut pos = 0;
         while pos < data.len() {
-            let h = data[pos];
-            if h & 0x80 != 0 {
-                return Err(Error::Invalid("obu_forbidden_bit"));
+            let obu = parse_obu_unit(data, pos)?;
+            pos = obu.end;
+            if !self.in_operating_point(&obu) {
+                continue;
             }
-            let obu_type = ((h >> 3) & 0xf) as u32;
-            let ext = h & 4 != 0;
-            let has_size = h & 2 != 0;
-            let mut p = pos + 1;
-            let (mut temporal_id, mut spatial_id) = (0, 0);
-            if ext {
-                let e = *data.get(p).ok_or(Error::Truncated)?;
-                temporal_id = (e >> 5) as u32;
-                spatial_id = ((e >> 3) & 3) as u32;
-                p += 1;
-            }
-            let size = if has_size {
-                let (v, n) = leb128(data.get(p..).ok_or(Error::Truncated)?)?;
-                p += n;
-                v as usize
-            } else {
-                data.len().checked_sub(p).ok_or(Error::Truncated)?
-            };
-            let end = p.checked_add(size).filter(|&e| e <= data.len()).ok_or(Error::Truncated)?;
-            let payload = &data[p..end];
-            pos = end;
-            if obu_type != OBU_SEQUENCE_HEADER_T
-                && obu_type != OBU_TEMPORAL_DELIMITER_T
-                && ext
-                && let Some(seq) = &self.seq
-                && seq.op_idc != 0
-            {
-                let idc = seq.op_idc;
-                let in_t = (idc >> temporal_id) & 1;
-                let in_s = (idc >> (spatial_id + 8)) & 1;
-                if in_t == 0 || in_s == 0 {
-                    continue;
-                }
-            }
-            match obu_type {
+            let (payload, spatial_id) = (obu.payload, obu.spatial_id);
+            match obu.obu_type {
                 OBU_SEQUENCE_HEADER_T => {
                     let s = SequenceHeader::parse(payload)?;
                     self.seq = Some(s);
@@ -453,24 +443,11 @@ impl Decoder {
                     tu += 1;
                 }
                 OBU_FRAME_HEADER_T | OBU_REDUNDANT_FRAME_HEADER_T | OBU_FRAME_T => {
-                    if self.seen_frame_header {
-                        // frame_header_copy(): identical to the active header
-                        if obu_type != OBU_FRAME_T {
-                            continue;
+                    if let Some(o) = self.frame_obu(&obu)? {
+                        if out.iter().filter(|(o, _, _)| matches!(o, Output::Existing { .. })).count() >= 32 {
+                            return Err(Error::Invalid("too many frame outputs in chunk"));
                         }
-                    }
-                    let mut r = BitReader::new(payload);
-                    let shown = self.frame_header(&mut r, temporal_id, spatial_id)?;
-                    if let Some(o) = shown {
                         out.push((o, tu, spatial_id));
-                        continue;
-                    }
-                    if obu_type == OBU_FRAME_T {
-                        r.byte_align();
-                        let rest = payload.get(r.byte_pos()..).ok_or(Error::Truncated)?;
-                        if let Some(o) = self.tile_group(rest)? {
-                            out.push((o, tu, spatial_id));
-                        }
                     }
                 }
                 OBU_TILE_GROUP_T => {
@@ -483,6 +460,22 @@ impl Decoder {
             }
         }
         Ok(())
+    }
+
+    /// A frame header or frame OBU: returns the picture it completes, if any.
+    fn frame_obu(&mut self, obu: &ObuUnit) -> Result<Option<Output>> {
+        // frame_header_copy(): identical to the active header
+        if self.seen_frame_header && obu.obu_type != OBU_FRAME_T {
+            return Ok(None);
+        }
+        let mut r = BitReader::new(obu.payload);
+        let shown = self.frame_header(&mut r, obu.temporal_id, obu.spatial_id)?;
+        if shown.is_some() || obu.obu_type != OBU_FRAME_T {
+            return Ok(shown);
+        }
+        r.byte_align();
+        let rest = obu.payload.get(r.byte_pos()..).ok_or(Error::Truncated)?;
+        self.tile_group(rest)
     }
 
     /// frame_header_obu( ): returns the output for show_existing_frame.
@@ -1008,6 +1001,43 @@ mod tests {
         assert!(check_tile_group_start(0, 1).is_err());
         assert!(check_tile_group_start(2, 3).is_err());
     }
+}
+
+/// One OBU: its header fields, payload and the position just past it.
+struct ObuUnit<'a> {
+    obu_type: u32,
+    ext: bool,
+    temporal_id: u32,
+    spatial_id: u32,
+    payload: &'a [u8],
+    end: usize,
+}
+
+fn parse_obu_unit(data: &[u8], pos: usize) -> Result<ObuUnit<'_>> {
+    let h = data[pos];
+    if h & 0x80 != 0 {
+        return Err(Error::Invalid("obu_forbidden_bit"));
+    }
+    let obu_type = ((h >> 3) & 0xf) as u32;
+    let ext = h & 4 != 0;
+    let has_size = h & 2 != 0;
+    let mut p = pos + 1;
+    let (mut temporal_id, mut spatial_id) = (0, 0);
+    if ext {
+        let e = *data.get(p).ok_or(Error::Truncated)?;
+        temporal_id = (e >> 5) as u32;
+        spatial_id = ((e >> 3) & 3) as u32;
+        p += 1;
+    }
+    let size = if has_size {
+        let (v, n) = leb128(data.get(p..).ok_or(Error::Truncated)?)?;
+        p += n;
+        v as usize
+    } else {
+        data.len().checked_sub(p).ok_or(Error::Truncated)?
+    };
+    let end = p.checked_add(size).filter(|&e| e <= data.len()).ok_or(Error::Truncated)?;
+    Ok(ObuUnit { obu_type, ext, temporal_id, spatial_id, payload: &data[p..end], end })
 }
 
 #[cfg(test)]

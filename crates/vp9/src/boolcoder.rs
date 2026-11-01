@@ -29,7 +29,7 @@ impl<'a> BoolDecoder<'a> {
     fn fill(&mut self) {
         // Room for whole bytes below the top 8 bits and the `count` valid bits.
         let mut shift = 48 - self.count;
-        if let Some(&bytes) = self.data.get(self.pos..).and_then(|d| d.first_chunk::<8>()) {
+        if let Some(&bytes) = self.data.get(self.pos..).and_then(<[_]>::first_chunk::<8>) {
             let v = u64::from_be_bytes(bytes);
             let n = ((shift + 8) / 8) as usize; // bytes that fit
             let n = n.min(7);
