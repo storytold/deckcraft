@@ -5572,7 +5572,7 @@ fn edit_points_conversion_is_one_undo_step() {
     assert!(preset(&s), "the only step was the conversion");
 }
 
-// #1621: No Fill changes hit-testing as well as rendering, even with a quick style.
+/// #1621: build overlapping objects with an ordinary quick style on the foreground shape.
 fn no_fill_overlap(s: &mut Session, text: bool) -> (ShapeId, ShapeId) {
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
     let under = s
@@ -5587,6 +5587,7 @@ fn no_fill_overlap(s: &mut Session, text: bool) -> (ShapeId, ShapeId) {
     (ShapeId(under as u32), ShapeId(over as u32))
 }
 
+/// No Fill passes interior clicks through while preserving outline and actual-fill targets.
 #[test]
 fn no_fill_shape_allows_selecting_and_editing_underlying_text() {
     let mut s = session();
@@ -5622,6 +5623,7 @@ fn no_fill_shape_allows_selecting_and_editing_underlying_text() {
     }
 }
 
+/// Rotation and pointer tolerance must preserve both pass-through interiors and outline hits.
 #[test]
 fn no_fill_shape_hit_testing_respects_rotation_and_pointer_tolerance() {
     let mut s = session();
@@ -5642,6 +5644,7 @@ fn no_fill_shape_hit_testing_respects_rotation_and_pointer_tolerance() {
     }
 }
 
+/// Style, theme and absent fills follow rendering, with explicit fill taking precedence.
 #[test]
 fn no_fill_hit_testing_resolves_style_and_theme_fills() {
     use std::sync::Arc;
@@ -5673,6 +5676,7 @@ fn no_fill_hit_testing_resolves_style_and_theme_fills() {
     }
 }
 
+/// Text on a foreground No Fill shape retains its selection and editing target.
 #[test]
 fn no_fill_text_shapes_keep_their_interior_text_target() {
     let mut s = session();
@@ -5684,6 +5688,52 @@ fn no_fill_text_shapes_keep_their_interior_text_target() {
     assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, text: true }) if id == over));
     s.pointer(tev(PointerKind::DoubleClick, p.x, p.y)).unwrap();
     assert_eq!(text_sel(&s).unwrap().shape, over);
+}
+
+/// A locked No Fill shape remains selectable on its outline, but dragging cannot move it.
+#[test]
+fn no_fill_locked_shape_keeps_outline_selection_without_moving() {
+    let mut s = session();
+    let (under, over) = no_fill_overlap(&mut s, true);
+    s.execute("shape.fill", &json!({"none": true})).unwrap();
+    s.execute("shape.lock", &json!({"locked": true})).unwrap();
+    let before = s.doc().unwrap().shape(over).unwrap().xfrm;
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let inside = deckcraft_geom::Point::new(200.0, 310.0);
+    assert!(matches!(s.hit_test(inside, 3.0), Some(tools::Hit::Shape { id, .. }) if id == under));
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        s.pointer(tev(kind, inside.x, inside.y)).unwrap();
+    }
+    assert_eq!(text_sel(&s).unwrap().shape, under);
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let edge = deckcraft_geom::Point::new(80.0, 330.0);
+    assert!(matches!(s.hit_test(edge, 3.0), Some(tools::Hit::Shape { id, .. }) if id == over));
+    s.pointer(tev(PointerKind::Down, edge.x, edge.y)).unwrap();
+    s.pointer(tev(PointerKind::Drag, edge.x + 40.0, edge.y + 20.0)).unwrap();
+    s.pointer(tev(PointerKind::Up, edge.x + 40.0, edge.y + 20.0)).unwrap();
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection.shapes, vec![over]);
+    assert_eq!(st.shape(over).unwrap().xfrm, before);
+    assert!(st.shape(over).unwrap().locked);
+}
+
+/// Removing both fill and outline leaves the empty interior transparent to clicks, locked or not.
+#[test]
+fn no_fill_shape_without_text_or_outline_passes_interior_clicks() {
+    for locked in [false, true] {
+        let mut s = session();
+        let (under, _) = no_fill_overlap(&mut s, false);
+        s.execute("shape.fill", &json!({"none": true})).unwrap();
+        s.execute("shape.line", &json!({"none": true})).unwrap();
+        s.execute("shape.lock", &json!({"locked": locked})).unwrap();
+        s.execute("edit.deselect", &json!({})).unwrap();
+        let p = deckcraft_geom::Point::new(200.0, 310.0);
+        assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == under));
+        for kind in [PointerKind::Down, PointerKind::Up] {
+            s.pointer(tev(kind, p.x, p.y)).unwrap();
+        }
+        assert_eq!(s.doc().unwrap().selection.shapes, vec![under]);
+    }
 }
 
 /// #931: while the text of a placeholder is being edited, a shape in front of it still takes a
