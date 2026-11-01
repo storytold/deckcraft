@@ -764,6 +764,26 @@ fn show_skips_hidden_slides() {
 }
 
 #[test]
+fn show_remembers_a_slide_was_reached_by_going_back() {
+    // #1531: the UI plays the left slide's transition reversed only for Back.
+    let p = pres(3);
+    let mut s = ShowState::new(&p);
+    assert_eq!(s.next(&p), ShowAction::Slide(1));
+    assert!(!s.backward);
+    assert_eq!(s.prev(&p), ShowAction::Slide(0));
+    assert!(s.backward);
+    assert_eq!(s.next(&p), ShowAction::Slide(1));
+    assert!(!s.backward);
+    assert_eq!(s.goto(&p, 0), ShowAction::Slide(0));
+    assert!(!s.backward, "a jump is not Back");
+    // Back from the end screen shows the last slide again, without a transition to reverse.
+    assert_eq!(s.goto(&p, 2), ShowAction::Slide(2));
+    assert_eq!(s.next(&p), ShowAction::End);
+    assert_eq!(s.prev(&p), ShowAction::Slide(2));
+    assert!(!s.backward);
+}
+
+#[test]
 fn show_loops() {
     let mut p = pres(3);
     p.show.loop_until_esc = true;

@@ -30,7 +30,7 @@ use editing::{edit, exit};
 pub(crate) use editing::{insert_field, insert_text, paste_body};
 pub use formatting::format_range;
 use formatting::{fonts_used, replace_font};
-pub(crate) use formatting::{format_body, format_para, format_run, link_text};
+pub(crate) use formatting::{format_body, format_para, format_run, format_run_levels, link_text};
 pub use ime::{IME_SURROUNDING_MAX_BYTES, ImeSurrounding, cell_range_underlines, composition_underlines, ime_surrounding, range_underlines};
 use ime::{commit, compose};
 pub(crate) use layout::ctx_for;

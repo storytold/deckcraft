@@ -88,6 +88,45 @@ fn mcp_automation_roots_confine_the_server() {
 }
 
 #[test]
+fn mcp_accepts_multiple_read_and_write_roots() {
+    let base = tmpdir("multiple-roots");
+    let read1 = base.join("read1");
+    let read2 = base.join("read2");
+    let write1 = base.join("write1");
+    let write2 = base.join("write2");
+    for dir in [&read1, &read2, &write1, &write2] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let (input1, input2) = (read1.join("one.txt"), read2.join("two.txt"));
+    std::fs::write(&input1, "one").unwrap();
+    std::fs::write(&input2, "two").unwrap();
+    let (output1, output2) = (write1.join("one.deckcraft"), write2.join("two.deckcraft"));
+    let args = [
+        "--automation-read-root".to_owned(),
+        read1.to_string_lossy().into_owned(),
+        format!("--automation-read-root={}", read2.display()),
+        "--automation-write-root".to_owned(),
+        write1.to_string_lossy().into_owned(),
+        format!("--automation-write-root={}", write2.display()),
+    ];
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let calls = [
+        ("open_presentation", serde_json::json!({"path": input1})),
+        ("open_presentation", serde_json::json!({"path": input2})),
+        ("save_presentation", serde_json::json!({"path": output1})),
+        ("save_presentation", serde_json::json!({"path": output2})),
+    ];
+    let (success, stderr, replies) = mcp_session(&args, &calls);
+    assert!(success, "{stderr}");
+    for reply in &replies {
+        assert_eq!(reply["result"]["isError"], false, "{reply}");
+    }
+    assert!(output1.exists());
+    assert!(output2.exists());
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
 fn mcp_automation_root_flags_are_checked_up_front() {
     let base = tmpdir("roots-args");
     let dir = base.to_str().unwrap();
@@ -103,8 +142,12 @@ fn mcp_automation_root_flags_are_checked_up_front() {
     // The flags confine the in-process server, so they cannot be combined with --connect.
     fails(&["--connect", "7979", "--automation-read-root", dir], "--connect");
     fails(&["--automation-write-root", dir, "--connect", "7979"], "--connect");
-    fails(&["--automation-read-root", dir, "--automation-read-root", dir], "given twice");
-    fails(&["--automation-write-root", dir, "--automation-write-root", dir], "given twice");
+    for flag in ["--automation-read-root", "--automation-write-root"] {
+        let mut full = vec!["mcp", flag, dir, flag];
+        full.push(dir);
+        let out = run(&full);
+        assert!(out.status.success(), "{flag}: {}", String::from_utf8_lossy(&out.stderr));
+    }
     fails(&["--automation-read-root"], "needs a folder");
     fails(&["--automation-write-root", "--sample"], "needs a folder");
     fails(&["--automation-read-root", missing.to_str().unwrap()], "cannot open the automation read root");

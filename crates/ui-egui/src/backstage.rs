@@ -389,7 +389,9 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         w.active.bg_stroke = Stroke::new(1.0, t.accent);
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             egui::Frame::NONE.inner_margin(egui::Margin { left: 48, right: 36, top: 22, bottom: 32 }).show(ui, |ui| {
-                ui.set_max_width(CONTENT_W);
+                // set_max_width can also widen: in a window narrower than CONTENT_W it would push the
+                // page past the right margin and clip the tiles (#1421).
+                ui.set_max_width(ui.available_width().min(CONTENT_W));
                 if bs.page != Page::Home {
                     ui.label(RichText::new(bs.page.label()).font(theme::bold(22.0)).color(t.text));
                     ui.add_space(16.0);

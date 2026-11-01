@@ -1,4 +1,6 @@
-use super::geometry::{Caster, blur, border_outside, camera_turn, color, fill_opacity, outside_line, scale_of, shadow_local, shape_geometry};
+use super::geometry::{
+    Caster, blur, border_outside, camera_turn, color, drawable, fill_opacity, outside_line, scale_of, shadow_local, shape_geometry,
+};
 use super::opts::{RenderOpts, ShapeState, SlideFields};
 use super::raster::Image;
 use super::slide::{SlidePart, needs_filters, output_size};
@@ -134,6 +136,10 @@ impl Renderer {
 
     /// Background plus the master and layout graphics the slide shows.
     fn backdrop(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, slide: &Slide, view: Affine) {
+        // Backdrop graphics never take shape states: their ids may clash with the slide's shapes.
+        let bopts = RenderOpts { state: None, date_text: f.opts.date_text.clone(), ..*f.opts };
+        let bf = Frame { pres: f.pres, opts: &bopts, fields: f.fields.clone() };
+        let f = &bf;
         self.background(ctx, f, rctx, Some(slide), view);
         let (show_layout, show_master) = resolve::show_master_shapes(slide, rctx.layout);
         if show_master {
@@ -209,14 +215,12 @@ impl Renderer {
         self.in_shadow_pass = false;
         let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, old.0) || needs_filters(pres, new.0));
         let (Some(co), Some(cn)) = (Ctx::for_slide(pres, old.0), Ctx::for_slide(pres, new.0)) else { return self.finish(ctx, w, h) };
-        // Backdrop graphics never take shape states: their ids may clash with the frame's shapes.
-        let bopts = RenderOpts { state: None, date_text: opts.date_text.clone(), ..*opts };
         if mix < 1.0 {
-            let f = Frame { pres, opts: &bopts, fields: Self::fields(pres, old.1, opts) };
+            let f = Frame { pres, opts, fields: Self::fields(pres, old.1, opts) };
             self.backdrop(&mut ctx, &f, &co, old.0, view);
         }
         if mix > 0.0 {
-            let f = Frame { pres, opts: &bopts, fields: Self::fields(pres, new.1, opts) };
+            let f = Frame { pres, opts, fields: Self::fields(pres, new.1, opts) };
             let layered = mix < 1.0;
             if layered {
                 ctx.push_layer(None, None, Some(mix as f32), None, None);
@@ -585,6 +589,10 @@ impl Renderer {
             Some(pm) => self.morphs.geometry(pm, s, w, h),
             None => (self.scaled_geometry(s, m, depth, w, h), Vec::new()),
         };
+        if !drawable(&geo, m, w, h) {
+            log::warn!("render: shape {} skipped: its outline is not finite or far larger than any screen", s.id.0);
+            return;
+        }
         let (fill, fill_ph) = resolve::fill(rctx, s);
         let (line, line_ph) = resolve::line(rctx, s);
         let (effects, fx_ph) = resolve::effects(rctx, s);

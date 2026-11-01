@@ -132,38 +132,60 @@ impl BoxGeom {
     }
 }
 
-/// Number shown for a paragraph at list level `lvl`, advancing the per-level counters.
-fn next_number(numbering: &mut [u32], lvl: usize, auto_num: bool, empty: bool) -> Option<u32> {
-    if auto_num && !empty {
-        if let Some(n) = numbering.get_mut(lvl) {
-            *n += 1;
-        }
-        for deeper in numbering.iter_mut().skip(lvl + 1) {
-            *deeper = 0;
-        }
-        numbering.get(lvl).copied()
-    } else if auto_num {
-        // Preview the next number without consuming it: empty paragraphs do not advance
-        // numbering in the saved document or affect later populated paragraphs.
-        numbering.get(lvl).map(|n| n.saturating_add(1))
-    } else {
-        if !empty {
-            for n in numbering.iter_mut().skip(lvl) {
+/// Number shown for a paragraph at list level `lvl`, advancing the per-level counters. `start_at`
+/// is the paragraph's numbering start (`None`: not numbered); `run_start` holds the start each
+/// level's current run of numbers began with, and a paragraph that changes it starts a new run
+/// (PowerPoint's "Start at").
+fn next_number(numbering: &mut [u32], run_start: &mut [u32], lvl: usize, start_at: Option<u32>, empty: bool) -> Option<u32> {
+    match start_at {
+        Some(start) if !empty => {
+            if let (Some(rs), Some(n)) = (run_start.get_mut(lvl), numbering.get_mut(lvl))
+                && *rs != start
+            {
+                *rs = start;
                 *n = 0;
             }
+            if let Some(n) = numbering.get_mut(lvl) {
+                *n += 1;
+            }
+            for deeper in numbering.iter_mut().skip(lvl + 1) {
+                *deeper = 0;
+            }
+            numbering.get(lvl).copied()
         }
-        None
+        // Preview the next number without consuming it: empty paragraphs do not advance
+        // numbering in the saved document or affect later populated paragraphs. A paragraph
+        // with its own start would begin a new run, so it previews that run's first number.
+        Some(start) => {
+            if run_start.get(lvl).is_some_and(|rs| *rs != start) {
+                Some(1)
+            } else {
+                numbering.get(lvl).map(|n| n.saturating_add(1))
+            }
+        }
+        None => {
+            if !empty {
+                for n in numbering.iter_mut().skip(lvl) {
+                    *n = 0;
+                }
+            }
+            None
+        }
     }
 }
 
 fn shape_paragraphs(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts, scale: f64, upright: Upright) -> Vec<ParaShaped> {
     let mut numbering: Vec<u32> = vec![0; 9];
+    let mut run_start: Vec<u32> = vec![0; 9];
     let mut shaped_paras: Vec<ParaShaped> = Vec::with_capacity(body.paragraphs.len());
     for (pi, para) in body.paragraphs.iter().enumerate() {
         let lvl = para.level.min(8) as usize;
         let pp = resolve::para(ctx, shape, para);
-        let auto_num = matches!(pp.bullet, Some(Bullet::AutoNum { .. }));
-        let number = next_number(&mut numbering, lvl, auto_num, para.is_empty());
+        let start_at = match &pp.bullet {
+            Some(Bullet::AutoNum { start_at, .. }) => Some(*start_at),
+            _ => None,
+        };
+        let number = next_number(&mut numbering, &mut run_start, lvl, start_at, para.is_empty());
         shaped_paras.push(shape_para(ctx, shape, body, pi, scale, opts, number, upright));
     }
     shaped_paras

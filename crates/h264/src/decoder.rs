@@ -216,26 +216,37 @@ impl Decoder {
     pub fn configure_avcc(&mut self, avcc: &[u8]) -> Result<()> {
         ensure!(avcc.len() >= 7, "avcC too short");
         ensure!(avcc[0] == 1, "unsupported avcC version {}", avcc[0]);
-        self.nal_length_size = Some((avcc[4] & 3) as usize + 1);
         let mut pos = 5;
-        let read_sets = |pos: &mut usize, count: usize, d: &mut Decoder| -> Result<()> {
+        let mut sets = Vec::new();
+        let read_sets = |pos: &mut usize, count: usize, sets: &mut Vec<(usize, usize)>| -> Result<()> {
             for _ in 0..count {
                 ensure!(*pos + 2 <= avcc.len(), "avcC truncated");
                 let len = u16::from_be_bytes([avcc[*pos], avcc[*pos + 1]]) as usize;
                 *pos += 2;
                 ensure!(*pos + len <= avcc.len(), "avcC truncated");
-                d.handle_nal(&avcc[*pos..*pos + len], 0)?;
+                sets.push((*pos, len));
                 *pos += len;
             }
             Ok(())
         };
         let nsps = (avcc[pos] & 0x1f) as usize;
         pos += 1;
-        read_sets(&mut pos, nsps, self)?;
+        read_sets(&mut pos, nsps, &mut sets)?;
         ensure!(pos < avcc.len(), "avcC truncated");
         let npps = avcc[pos] as usize;
         pos += 1;
-        read_sets(&mut pos, npps, self)
+        read_sets(&mut pos, npps, &mut sets)?;
+        for (i, (start, len)) in sets.iter().enumerate() {
+            let nal = &avcc[*start..*start + *len];
+            let header = nal.first().copied().ok_or_else(|| Error::Invalid("empty avcC parameter set".into()))?;
+            let expected = if i < nsps { nal_type::SPS } else { nal_type::PPS };
+            ensure!(header & 0x1f == expected, "avcC parameter set has NAL type {}, expected {expected}", header & 0x1f);
+        }
+        for (start, len) in sets {
+            self.handle_nal(&avcc[start..start + len], 0)?;
+        }
+        self.nal_length_size = Some((avcc[4] & 3) as usize + 1);
+        Ok(())
     }
 
     /// Length of NAL length prefixes (from avcC), or None for Annex-B input.
@@ -557,16 +568,16 @@ impl Decoder {
 
 /// Decode all slices of one picture and publish its rows.
 fn run_job(frame: FrameRef, slices: Vec<SliceJob>, shared: &Shared, draft: bool) {
-    let reuse = shared.pool.lock().ok().and_then(|mut p| p.pop());
-    let mut pic = match reuse {
-        Some(mut p) if p.mb_w == frame.mb_w && p.mb_h == frame.mb_h() => {
-            p.reset(frame.clone());
-            p
-        }
-        _ => PicState::new(frame.clone()),
-    };
-    pic.skip_deblock = draft;
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let reuse = shared.pool.lock().ok().and_then(|mut p| p.pop());
+        let mut pic = match reuse {
+            Some(mut p) if p.mb_w == frame.mb_w && p.mb_h == frame.mb_h() => {
+                p.reset(frame.clone());
+                p
+            }
+            _ => PicState::new(frame.clone()),
+        };
+        pic.skip_deblock = draft;
         let mut first_err = None;
         for s in &slices {
             if let Err(e) = decode_slice(s, &mut pic) {
@@ -574,10 +585,10 @@ fn run_job(frame: FrameRef, slices: Vec<SliceJob>, shared: &Shared, draft: bool)
             }
         }
         pic.flush_rows(true);
-        first_err
+        (pic, first_err)
     }));
-    let err = match result {
-        Ok(e) => e,
+    let (pic, err) = match result {
+        Ok((pic, err)) => (Some(pic), err),
         Err(_) => {
             // Make sure readers never block on this frame.
             let fallback = Planes::gray(frame.width, frame.height);
@@ -587,34 +598,35 @@ fn run_job(frame: FrameRef, slices: Vec<SliceJob>, shared: &Shared, draft: bool)
                     frame.publish(r, Frame::make_row(&fallback, r, &blank, &|_, _, _| u32::MAX));
                 }
             }
-            pic = PicState::new(frame.clone());
-            Some(Error::Invalid("internal error while decoding a picture".into()))
+            (None, Some(Error::Invalid("internal error while decoding a picture".into())))
         }
     };
     if let Ok(mut s) = shared.stats.lock() {
         s.pictures += 1;
         s.draft_pictures += draft as u64;
-        for st in &pic.mbs {
-            match st.kind {
-                MbKind::I4x4 => s.mb_i4x4 += 1,
-                MbKind::I8x8 => s.mb_i8x8 += 1,
-                MbKind::I16x16 => s.mb_i16x16 += 1,
-                MbKind::IPcm => s.mb_pcm += 1,
-                MbKind::PSkip => s.mb_p_skip += 1,
-                MbKind::BSkip => s.mb_b_skip += 1,
-                MbKind::BDirect16x16 => s.mb_b_direct16x16 += 1,
-                MbKind::Inter => s.mb_inter += 1,
-                MbKind::None => {}
-            }
-            if st.transform_8x8 && !st.kind.is_intra() {
-                s.mb_inter_8x8_transform += 1;
+        if let Some(pic) = &pic {
+            for st in &pic.mbs {
+                match st.kind {
+                    MbKind::I4x4 => s.mb_i4x4 += 1,
+                    MbKind::I8x8 => s.mb_i8x8 += 1,
+                    MbKind::I16x16 => s.mb_i16x16 += 1,
+                    MbKind::IPcm => s.mb_pcm += 1,
+                    MbKind::PSkip => s.mb_p_skip += 1,
+                    MbKind::BSkip => s.mb_b_skip += 1,
+                    MbKind::BDirect16x16 => s.mb_b_direct16x16 += 1,
+                    MbKind::Inter => s.mb_inter += 1,
+                    MbKind::None => {}
+                }
+                if st.transform_8x8 && !st.kind.is_intra() {
+                    s.mb_inter_8x8_transform += 1;
+                }
             }
         }
     }
     if let (Some(e), Ok(mut slot)) = (err, shared.error.lock()) {
         slot.get_or_insert(e);
     }
-    if let Ok(mut p) = shared.pool.lock()
+    if let (Some(pic), Ok(mut p)) = (pic, shared.pool.lock())
         && p.len() < 4
     {
         p.push(pic);

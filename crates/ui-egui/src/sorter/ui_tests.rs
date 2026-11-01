@@ -50,7 +50,8 @@ fn double_click(h: &mut Harness<'_, SlideApp>, p: Pos2) {
     h.run_steps(2);
 }
 
-fn drag(h: &mut Harness<'_, SlideApp>, from: Pos2, to: Pos2) {
+/// Presses at `from`, moves to `to` in a few steps and releases there.
+pub(crate) fn drag(h: &mut Harness<'_, SlideApp>, from: Pos2, to: Pos2) {
     h.hover_at(from);
     h.run_steps(1);
     h.drag_at(from);
@@ -168,6 +169,55 @@ fn dragging_a_section_moves_it_and_keeps_it_collapsed() {
     assert!(h.query_by_label("Slide 3").is_some() && h.query_by_label("Slide 4").is_some());
     let (beta, alpha) = (h.get_by_label("Beta").rect(), h.get_by_label("Alpha").rect());
     assert!(beta.top() < alpha.top());
+}
+
+fn slide_order(h: &Harness<'_, SlideApp>) -> Vec<u32> {
+    h.state().session.active().unwrap().doc.slides.iter().map(|s| s.id.0).collect()
+}
+
+fn selected_slides(h: &Harness<'_, SlideApp>) -> Vec<u32> {
+    h.state().session.active().unwrap().selection.slides.iter().map(|s| s.0).collect()
+}
+
+#[test]
+fn dragging_a_selected_slide_moves_the_whole_selection() {
+    let mut h = harness(false);
+    let ids = slide_order(&h);
+    h.state_mut().run("slide.selectSlides", json!({"ids": [ids[0], ids[2]]})).unwrap();
+    h.run_steps(2);
+    let (first, last) = (h.get_by_label("Slide 1").rect(), h.get_by_label("Slide 4").rect());
+    // The right half of the last slide: the gap after it.
+    drag(&mut h, first.center(), Pos2::new(last.right() - 10.0, last.center().y));
+    assert_eq!(slide_order(&h), [ids[1], ids[3], ids[0], ids[2]]);
+    assert_eq!(selected_slides(&h), [ids[0], ids[2]], "the moved slides stay selected");
+    assert!(h.state().thumb_drag.is_none());
+    h.state_mut().run("edit.undo", json!({})).unwrap();
+    assert_eq!(slide_order(&h), ids, "one undo puts both back");
+}
+
+#[test]
+fn dragging_an_unselected_slide_moves_only_it() {
+    let mut h = harness(false);
+    let ids = slide_order(&h);
+    h.state_mut().run("slide.selectSlides", json!({"ids": [ids[0], ids[2]]})).unwrap();
+    h.run_steps(2);
+    let (second, last) = (h.get_by_label("Slide 2").rect(), h.get_by_label("Slide 4").rect());
+    drag(&mut h, second.center(), Pos2::new(last.right() - 10.0, last.center().y));
+    assert_eq!(slide_order(&h), [ids[0], ids[2], ids[3], ids[1]]);
+    assert_eq!(selected_slides(&h), [ids[1]]);
+}
+
+#[test]
+fn dropping_a_selection_where_it_is_changes_nothing() {
+    let mut h = harness(false);
+    let ids = slide_order(&h);
+    h.state_mut().run("slide.selectSlides", json!({"ids": [ids[1], ids[2]]})).unwrap();
+    h.run_steps(2);
+    let steps = h.state().session.active().unwrap().history.undo.len();
+    let (second, third) = (h.get_by_label("Slide 2").rect(), h.get_by_label("Slide 3").rect());
+    drag(&mut h, second.center(), Pos2::new(third.right() - 10.0, third.center().y));
+    assert_eq!(slide_order(&h), ids);
+    assert_eq!(h.state().session.active().unwrap().history.undo.len(), steps, "a drop in place adds no undo step");
 }
 
 #[test]

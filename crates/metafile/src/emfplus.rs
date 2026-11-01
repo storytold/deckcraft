@@ -50,6 +50,8 @@ const MAX_CHARS: usize = 32_768;
 const MAX_OBJECT_BYTES: usize = 64 * 1024 * 1024;
 /// Nesting depth of region nodes.
 const MAX_REGION_DEPTH: usize = 32;
+/// Region nodes and path points parsed together, including nodes in sibling branches.
+const MAX_REGION_WORK: usize = MAX_POINTS;
 
 const TA_RIGHT: u32 = 2;
 const TA_CENTER: u32 = 6;
@@ -93,7 +95,7 @@ impl Fill {
                 if w == 0.0 || h == 0.0 {
                     return [0, 0, 0, 0];
                 }
-                if *wrap == 4 && !(0.0..w).contains(&p.0) || *wrap == 4 && !(0.0..h).contains(&p.1) {
+                if *wrap == 4 && !((0.0..w).contains(&p.0) && (0.0..h).contains(&p.1)) {
                     return [0, 0, 0, 0];
                 }
                 let x = (p.0.rem_euclid(w) as usize).min(img.w - 1);
@@ -1106,12 +1108,14 @@ fn path(r: Bytes) -> Option<Vec<Op>> {
 /// A region object as a convex area in world units (non-convex parts become their bounding
 /// rectangle).
 fn region(r: Bytes) -> Option<Obj> {
-    region_node(r, 8, 0).map(|(a, _)| Obj::Region(a))
+    let mut work = 0;
+    region_node(r, 8, 0, &mut work).map(|(a, _)| Obj::Region(a))
 }
 
 /// One region node at `off`: its area and its length in bytes.
-fn region_node(r: Bytes, off: usize, depth: usize) -> Option<(Area, usize)> {
-    if depth > MAX_REGION_DEPTH {
+fn region_node(r: Bytes, off: usize, depth: usize, work: &mut usize) -> Option<(Area, usize)> {
+    *work = work.checked_add(1)?;
+    if depth > MAX_REGION_DEPTH || *work > MAX_REGION_WORK {
         return None;
     }
     match r.u32(off)? {
@@ -1121,14 +1125,23 @@ fn region_node(r: Bytes, off: usize, depth: usize) -> Option<(Area, usize)> {
         }
         0x1000_0001 => {
             let size = r.u32(off + 4)? as usize;
-            let area = path(r.tail(off + 8)?).map(|ops| area_of_ops(&ops)).unwrap_or_default();
+            if size < 12 {
+                return None;
+            }
+            let data = Bytes(r.slice(off + 8, size)?);
+            let points = (data.u32(4)? as usize).min(MAX_POINTS);
+            *work = work.checked_add(points)?;
+            if *work > MAX_REGION_WORK {
+                return None;
+            }
+            let area = area_of_ops(&path(data)?);
             Some((Some(area), 8usize.checked_add(size)?))
         }
         0x1000_0002 => Some((Some(Vec::new()), 4)),
         0x1000_0003 => Some((None, 4)),
         mode @ 0..=5 => {
-            let (a, la) = region_node(r, off + 4, depth + 1)?;
-            let (b, lb) = region_node(r, off.checked_add(4 + la)?, depth + 1)?;
+            let (a, la) = region_node(r, off + 4, depth + 1, work)?;
+            let (b, lb) = region_node(r, off.checked_add(4 + la)?, depth + 1, work)?;
             let out = match mode {
                 0 => b,
                 1 => area_intersect(a, b),

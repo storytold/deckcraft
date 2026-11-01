@@ -164,12 +164,22 @@ impl SlideApp {
                     self.start_show(from, false);
                 }
             }
-            "show.presenter" => self.ui.presenter_view = self.flag(p, self.ui.presenter_view),
+            "show.presenter" => {
+                self.ui.presenter_view = self.flag(p, self.ui.presenter_view);
+                // The browser build has one viewport: presenter view is drawn inside the page.
+                return Ok(json!({"on": self.ui.presenter_view, "window": !cfg!(target_arch = "wasm32")}));
+            }
             "show.presenterStrip" => {
                 let on = self.flag(p, self.ui.presenter_strip);
                 self.ui.presenter_strip = on;
                 if let Some(show) = self.show.as_mut() {
                     show.strip = on;
+                }
+            }
+            "show.keepCursor" => {
+                self.ui.show_keep_cursor = self.flag(p, self.ui.show_keep_cursor);
+                if let Some(s) = self.show.as_mut() {
+                    s.keep_cursor = self.ui.show_keep_cursor;
                 }
             }
             "show.end" => {
