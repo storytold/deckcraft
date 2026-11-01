@@ -253,6 +253,10 @@ pub(crate) fn point_data_label(
     if let Some(explicit) = text_style {
         body.body.inherit(&explicit.body);
     }
+    let literal_column = spec.text.is_some() && chart.series_kind(series) == ChartType::Column;
+    if literal_column && body.body.wrap.is_none() {
+        body.body.wrap = Some(true);
+    }
     body.body.inherit(&automatic.body);
     let mut inherited = text_style.and_then(|b| b.paragraphs.first()).map(|p| p.def_props.clone()).unwrap_or_default();
     if let Some(p) = automatic.paragraphs.first().and_then(|p| p.runs.first()) {
@@ -275,15 +279,23 @@ pub(crate) fn point_data_label(
     }
     // Measure the complete body, not each run separately: soft breaks, bidi joining,
     // superscripts, mixed fonts and paragraph spacing all affect the label's bounds.
+    // Native automatic column labels cap wrapping at one fifth of chart width, regardless
+    // of gap width or inside/outside placement. Explicit no-wrap and manual widths win.
+    let wrap_width = if literal_column && body.body.wrap == Some(true) {
+        spec.layout.as_ref().filter(|l| l.w.is_some()).map_or(frame.0 * 0.2, |l| l.resolve(r, frame.0, frame.1).width())
+    } else {
+        1e6
+    };
+    let wrap_width = wrap_width.clamp(1., 1e6);
     let shape = Shape { text: Some(body.clone()), ..Default::default() };
     let measured = deckcraft_text::layout(
         rctx,
         &shape,
         &body,
-        &deckcraft_text::Opts { rect: Rect::new(0., 0., 1e6, 1e6), fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: true },
+        &deckcraft_text::Opts { rect: Rect::new(0., 0., wrap_width, 1e6), fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: true },
     );
     let h = (measured.content_height + body.body.inset_t.unwrap_or(0.) + body.body.inset_b.unwrap_or(0.)).max(1.);
-    let w = (measured.content_width + body.body.inset_l.unwrap_or(0.) + body.body.inset_r.unwrap_or(0.) + 4.).max(1.);
+    let w = (measured.content_width + body.body.inset_l.unwrap_or(0.) + body.body.inset_r.unwrap_or(0.) + 4.).clamp(1., wrap_width);
     let x = match align {
         Align::Left => r.x0,
         Align::Right => r.x1 - w,

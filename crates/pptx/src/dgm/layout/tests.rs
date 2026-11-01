@@ -240,8 +240,8 @@ fn coupled_cycles_edges_and_descendant_references_solve_together() {
     let other = shapes.iter().find(|s| s.name == "other").unwrap();
     let leaf = shapes.iter().find(|s| s.name == "leaf").unwrap();
     assert!((other.rect.w - 40. * 72. / 25.4).abs() < 1e-6);
-    assert!((leaf.rect.x - 5. * 72. / 25.4).abs() < 1e-6);
-    assert!((leaf.rect.x + leaf.rect.w - other.rect.w).abs() < 1e-6);
+    assert!((leaf.rect.x - other.rect.x - 5. * 72. / 25.4).abs() < 1e-6);
+    assert!((leaf.rect.x + leaf.rect.w - other.rect.x - other.rect.w).abs() < 1e-6);
 }
 
 #[test]
@@ -421,7 +421,7 @@ fn coupled_rules_cross_a_plateau_without_changing_an_unrelated_label() {
 }
 
 #[test]
-fn coupled_rules_can_move_along_an_equality_when_each_single_move_is_infeasible() {
+fn local_text_edges_do_not_constrain_independent_size_rules() {
     let data = source();
     let l = layout(
         "<layoutNode><alg type='composite'/><layoutNode name='a'><alg type='tx'/><shape type='rect'/>
@@ -433,7 +433,109 @@ fn coupled_rules_can_move_along_an_equality_when_each_single_move_is_infeasible(
     let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (90. - p.rect.w).max(0.)).collect());
     let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
     assert!((out[0].rect.w - 90.).abs() < 0.02);
-    assert!((out[0].rect.h - 2. * out[0].rect.w).abs() < 1e-6);
+    assert!((out[0].rect.h - 40. * 72. / 25.4).abs() < 1e-6);
+}
+
+#[test]
+fn composite_coordinates_belong_to_the_parent_and_flow_algorithms_replace_them() {
+    let data = source();
+    let unit = 72. / 25.4;
+    for (parent, local, separation) in [("composite", true, 0.), ("composite", false, 110.), ("lin", false, 40.)] {
+        let mut nodes = String::new();
+        let mut constraints = String::new();
+        for (name, left) in [("first", 10), ("second", 120)] {
+            let coord = format!("<constr type='l' val='{left}' {}/>", if local { String::new() } else { format!("for='ch' forName='{name}'") });
+            if !local {
+                constraints += &coord;
+            }
+            nodes += &format!(
+                "<layoutNode name='{name}'><alg type='tx'/><shape type='rect'/><constrLst>
+                <constr type='w' val='40'/><constr type='h' val='40'/>{}</constrLst></layoutNode>",
+                if local { coord.as_str() } else { "" }
+            );
+        }
+        let l = layout(&format!("<layoutNode><alg type='{parent}'/><constrLst>{constraints}</constrLst>{nodes}</layoutNode>"));
+        let out = evaluate(&l, &data, Xfrm::new(96., 151.2, 768., 324.)).unwrap();
+        assert!((out[1].rect.x - out[0].rect.x - separation * unit).abs() < 1e-6);
+        assert!((out[0].rect.x + out[1].rect.x + out[1].rect.w - 960.).abs() < 1e-6);
+        assert!(out.iter().all(|p| (p.rect.y - (313.2 - 20. * unit)).abs() < 1e-6));
+    }
+}
+
+#[test]
+fn redundant_composite_coordinates_have_stable_axis_priority() {
+    let data = source();
+    for (properties, width, separation) in [
+        (vec![("r", 80), ("l", 10), ("w", 40)], 40., 110.),
+        (vec![("w", 40), ("r", 80), ("ctrX", 40)], 40., 80.),
+        (vec![("ctrX", 40), ("r", 80), ("l", 10)], 70., 110.),
+        (vec![("ctrX", 40), ("r", 80)], 80., 120.),
+        (vec![("w", 40), ("ctrX", 40)], 40., 100.),
+    ] {
+        // The second node fixes a reference position, so global centring cannot hide a
+        // wrong start/end/centre priority. Check both axes with transposed constraints.
+        for vertical in [false, true] {
+            let prop = |p| {
+                if vertical {
+                    match p {
+                        "w" => "h",
+                        "l" => "t",
+                        "r" => "b",
+                        _ => "ctrY",
+                    }
+                } else {
+                    p
+                }
+            };
+            let mut constraints = String::new();
+            for (p, v) in &properties {
+                constraints += &format!("<constr type='{}' val='{v}' for='ch' forName='a'/>", prop(p));
+            }
+            constraints +=
+                &format!("<constr type='{}' val='120' for='ch' forName='b'/><constr type='{}' val='40' for='ch' forName='b'/>", prop("l"), prop("w"));
+            let other_size = if vertical { "w" } else { "h" };
+            constraints += &format!("<constr type='{other_size}' val='40' for='ch'/>");
+            let l = layout(&format!(
+                "<layoutNode><alg type='composite'/><constrLst>{constraints}</constrLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode><layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
+            ));
+            let out = evaluate(&l, &data, Xfrm::new(0., 0., 600., 600.)).unwrap();
+            let size = if vertical { out[0].rect.h } else { out[0].rect.w };
+            let distance = if vertical { out[1].rect.y - out[0].rect.y } else { out[1].rect.x - out[0].rect.x };
+            assert!((size - width * 72. / 25.4).abs() < 1e-6, "{properties:?}");
+            assert!((distance - separation * 72. / 25.4).abs() < 1e-6, "{properties:?}");
+        }
+    }
+}
+
+#[test]
+fn root_composite_fits_the_occupied_extent_without_scaling_fonts() {
+    let data = source();
+    let l = layout(
+        "<layoutNode><alg type='composite'/><layoutNode><alg type='tx'/><shape type='rect'/><constrLst><constr type='w' val='80'/><constr type='h' val='160'/><constr type='primFontSz' val='36'/></constrLst></layoutNode></layoutNode>",
+    );
+    let out = evaluate(&l, &data, Xfrm::new(96., 151.2, 768., 324.)).unwrap();
+    assert!((out[0].rect.w - 80. * 72. / 25.4).abs() < 1e-6);
+    assert!((out[0].rect.h - 324.).abs() < 1e-6);
+    assert!((out[0].rect.x - (480. - 40. * 72. / 25.4)).abs() < 1e-6);
+    assert!((out[0].rect.y - 151.2).abs() < 1e-6);
+    assert_eq!(out[0].font, Some(36.));
+}
+
+#[test]
+fn joint_rules_do_not_reintroduce_a_redundant_edge_equation() {
+    let data = source();
+    let l = layout(
+        "<layoutNode><alg type='composite'/><constrLst>
+        <constr type='w' for='ch' val='20'/><constr type='h' for='ch' val='20'/>
+        <constr type='l' for='ch' val='10'/><constr type='r' for='ch' val='100'/></constrLst>
+        <ruleLst><rule type='r' for='ch' val='200'/></ruleLst>
+        <layoutNode><alg type='tx'/><shape type='rect'/><ruleLst>
+        <rule type='w' val='60'/><rule type='h' val='60'/></ruleLst></layoutNode></layoutNode>",
+    );
+    let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (90. - p.rect.w.min(p.rect.h)).max(0.)).collect());
+    let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+    assert!((out[0].rect.w - 90.).abs() < 0.02);
+    assert!((out[0].rect.h - 90.).abs() < 0.02);
 }
 
 #[test]

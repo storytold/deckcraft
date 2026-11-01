@@ -148,6 +148,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-01 | PPTX.14: native composite coordinate ownership and axis priority; root occupied-bounds fitting; literal column-label wrapping with no-wrap/manual overrides; original geometry and pixel regressions |
 | 2026-11-01 | PPTX.13: native-validated linear/cycle container fitting; custom map stop interoperability; first-paragraph literal-label inheritance; bounded regression coverage and explicit schema/native discrepancy |
 | 2026-11-01 | PPTX.12: bounded joint trials for connected text rules; native constant-map colour behavior; per-level rich label inheritance and isolated literal bodies with intrinsic bounds; native layout differences remain documented |
 | 2026-11-01 | PPTX.11: interior measured-rule search; native first-row map binding, numeric colour scales and crop-stable projection; complete-body label measurement and styled hierarchy leaves; native interoperability limitations retained |

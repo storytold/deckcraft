@@ -33,6 +33,9 @@ fn controls<'a>(entries: &[constraints::Entry<'_, 'a>], data: &Data<'_>, work: &
             for target in constraints::selected(entries, owner, c.attr("for").unwrap_or("self"), c.attr("forName"), c.attr("ptType"), data) {
                 let ty = c.attr("type").unwrap_or("");
                 for property in if ty == "diam" { vec!["w", "h"] } else { vec![ty] } {
+                    if !constraints::applies(entries, owner, target, property) {
+                        continue;
+                    }
                     effective.insert((target, property.to_string()), *c);
                 }
             }
@@ -49,6 +52,9 @@ fn controls<'a>(entries: &[constraints::Entry<'_, 'a>], data: &Data<'_>, work: &
             }
             for target in constraints::selected(entries, owner, rule.attr("for").unwrap_or("self"), rule.attr("forName"), rule.attr("ptType"), data) {
                 for property in if ty == "diam" { vec!["w", "h"] } else { vec![ty] } {
+                    if !constraints::applies(entries, owner, target, property) {
+                        continue;
+                    }
                     out.push(Control {
                         target,
                         property: property.into(),
@@ -91,6 +97,9 @@ fn dependent_scope(
                 let refs = constraints::selected(entries, owner, c.attr("refFor").unwrap_or("self"), c.attr("refForName"), c.attr("refPtType"), data);
                 let targets = constraints::selected(entries, owner, c.attr("for").unwrap_or("self"), c.attr("forName"), c.attr("ptType"), data);
                 for (i, t) in targets.iter().enumerate() {
+                    if !constraints::applies(entries, owner, *t, c.attr("type").unwrap_or("")) {
+                        continue;
+                    }
                     let r = if refs.len() == targets.len() { refs.get(i) } else { refs.first() };
                     if r.is_some_and(|r| affected.contains(&(*r, "*".into())) || affected.contains(&(*r, c.attr("refType").unwrap_or("").into()))) {
                         let ty = c.attr("type").unwrap_or("");

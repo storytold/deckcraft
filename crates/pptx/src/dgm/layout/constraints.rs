@@ -45,6 +45,14 @@ pub(super) fn id(node: &Instance<'_>) -> usize {
 pub(super) fn lookup(solution: &Solution, node: &Instance<'_>) -> Option<BoxStyle> {
     solution.get(&id(node)).copied()
 }
+pub(super) fn position(property: &str) -> bool {
+    matches!(property, "l" | "r" | "ctrX" | "t" | "b" | "ctrY")
+}
+pub(super) fn applies(entries: &[Entry<'_, '_>], owner: usize, target: usize, property: &str) -> bool {
+    // A text node controls its text, not its position in the parent. Flow algorithms
+    // determine child positions themselves; only a composite consumes explicit coordinates.
+    !position(property) || (owner != target && entries[owner].node.alg == "composite")
+}
 pub(super) fn collect<'t, 'a>(
     node: &'t Instance<'a>,
     mut style: BoxStyle,
@@ -212,6 +220,9 @@ pub(super) fn resolve_adjusted(
             for (j, target) in targets.iter().enumerate() {
                 let reference = if refs.len() == targets.len() { refs.get(j) } else { refs.first() }.copied();
                 for property in if ty == "diam" { vec!["w", "h"] } else { vec![ty] } {
+                    if !applies(&entries, owner, *target, property) {
+                        continue;
+                    }
                     let mut adjusted = (*c).clone();
                     if let Some(change) = adjustments.get(&(id(entries[*target].node), property.into())) {
                         match change {
@@ -244,8 +255,8 @@ pub(super) fn resolve_adjusted(
             }
         }
     }
-    // Algorithm geometry supplies only unconstrained degrees of freedom. Relationships
-    // remain affine so children follow a resized container, rather than retaining its old size.
+    // Rules may supply values for otherwise implicit properties. Insert them before
+    // selecting axis equations so a changed redundant edge cannot re-enter the system.
     for (i, entry) in entries.iter().enumerate() {
         charge(work, adjustments.len())?;
         for ((node, property), change) in adjustments {
@@ -259,6 +270,11 @@ pub(super) fn resolve_adjusted(
                 equations.insert((i, property.clone()), row);
             }
         }
+    }
+    select_axes(&mut equations, entries.len(), work)?;
+    // Algorithm geometry supplies only unconstrained degrees of freedom. Relationships
+    // remain affine so children follow a resized container, rather than retaining its old size.
+    for (i, entry) in entries.iter().enumerate() {
         for (position, size, coords) in [("l", "w", ["l", "r", "ctrX"]), ("t", "h", ["t", "b", "ctrY"])] {
             let count = coords.iter().filter(|p| equations.contains_key(&(i, p.to_string()))).count();
             for property in [position, size] {
@@ -295,6 +311,28 @@ pub(super) fn resolve_adjusted(
         }
     }
     Ok(entries.into_iter().map(|e| (id(e.node), e.style)).collect())
+}
+
+fn select_axes(equations: &mut BTreeMap<Key, Row>, count: usize, work: &mut usize) -> Result<(), &'static str> {
+    // An axis has two degrees of freedom. Native composite layout prefers explicit
+    // size, then start, end, centre; redundant coordinates do not create extra equations.
+    // This priority is independent of XML order. Retain inequality bounds separately.
+    for i in 0..count {
+        charge(work, 8)?;
+        for properties in [["w", "l", "r", "ctrX"], ["h", "t", "b", "ctrY"]] {
+            let mut count = 0;
+            for property in properties {
+                let key = (i, property.to_string());
+                if equations.contains_key(&key) {
+                    count += 1;
+                    if count > 2 {
+                        equations.remove(&key);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn apply_bounds(rows: &mut Vec<Row>, bounds: Vec<Row>, entries: &[Entry<'_, '_>], work: &mut usize) -> Result<(), &'static str> {

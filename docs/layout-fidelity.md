@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.13): native container fitting, custom map-stop interoperability,
-and literal-label paragraph inheritance, with explicit native limits.
+Updated 2026-11-01 (PPTX.14): native composite coordinate semantics and literal column-label
+wrapping, extending container fitting, geographic caches and paragraph inheritance.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -614,3 +614,53 @@ without its diagram and reports the custom map as unsupported; the rich-label te
 Final validation: all eight `cargo xtask ci` gates pass (2,394 tests including doctests).
 Thirteen final label probes export directly at 3840px width with unchanged source hashes
 and no external converter on PATH. Private oracle outputs and toolchains remain excluded.
+
+
+## Composite coordinate ownership and automatic label widths (PPTX.14)
+
+A layout node's own text algorithm does not position that node within its parent. Explicit
+child coordinates are consumed by a composite parent's constraint block; linear and other flow
+algorithms supply their own positions. Size/font constraints remain supported on text nodes.
+This follows the public [custom SmartArt authoring guidance](https://learn.microsoft.com/en-us/archive/msdn-magazine/2007/february/create-custom-smartart-graphics-for-use-in-the-2007-office-system)
+and original two-node native comparisons, including swapped XML order and asymmetric controls.
+
+An axis has two independent quantities. Native composite layout chooses explicit size, start,
+end, centre in that priority order and ignores redundant equality coordinates. The solver now
+makes that selection before constructing its affine system; inequalities and genuine reference
+contradictions retain their bounded checks. Rule adjustments are inserted before axis selection,
+so a joint trial cannot accidentally restore an ignored redundant edge. A regression fails
+before this ordering fix and fits both dimensions afterwards. A root composite centres its occupied extent and
+fits overflowing axes to the containing frame without scaling font sizes. Named descendant
+relationships retain their relative offsets through this final placement.
+
+Eighteen original coordinate/rule probes export directly at 3840px width. Painted bounds differ
+from their native counterparts by at most 0.75pt, including unequal width/height rule limits,
+redundant coordinates, parent/local ownership and flow positioning. The earlier long-text
+example now also has the same word breaks. The prior test that treated local text-node edges
+as a required `height = 2 * width` relationship was invalid; it now verifies that those edges
+do not constrain independent size rules. These tests establish the stated semantics, not a
+proof of complete rule ownership or arbitrary recursive layout parity.
+
+Literal clustered-column data labels now enable automatic wrapping by default, using one fifth
+of chart width, independent of column gap width and inside/outside placement. This is a native
+black-box observation, not a schema requirement. Explicit no-wrap retains intrinsic width;
+explicit manual width supplies the measurement rectangle. Numeric labels and other chart kinds
+keep their existing behavior pending independent comparisons. Tests inspect actual painted
+text dimensions across chart widths, manual sizing and gap changes after export/reimport.
+
+Ten native label probes vary chart width, content, gap width, inside/outside placement and
+explicit wrapping. Long-label vertical ellipsis/overflow and exact automatic plot positioning
+remain distinct open work. Four representative original packages pass Open XML SDK validation.
+No reference documents, native screenshots, geographic assets or private paths are published.
+
+LibreOffice 26.8 exports the two representative uncached composites without their diagrams,
+while retaining the rich-label text. These are not counted as visual-parity passes.
+
+A separate ownership control moves the same size/font rule between the composite parent and
+its text child. Native output applies the child-local rules but leaves the tested parent-owned
+variants unchanged. The general selector evaluator still applies those parent-owned rules;
+that observed difference is retained as open work, not included in the geometry acceptance set.
+
+Final validation: all eight workspace CI gates pass, including 2,399 tests and doctests.
+The new geometry/label export set contains 28 original pages at 3840px width, with unchanged
+input hashes and no external converter on PATH. All upstream changes are source/tests/docs.

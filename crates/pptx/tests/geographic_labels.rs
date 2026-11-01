@@ -186,6 +186,61 @@ fn rich_point_labels_rebuild_and_render_mixed_run_colours_rotation_and_delete() 
 }
 
 #[test]
+fn literal_column_labels_wrap_at_chart_width_and_respect_no_wrap_and_manual_width() {
+    use deckcraft_model::chart::ChartLayout;
+    let mut dimensions = Vec::new();
+    for (width, wrap, manual, gap) in
+        [(960., None, false, 2.19), (960., Some(false), false, 2.19), (1440., None, false, 2.19), (960., None, true, 2.19), (960., None, false, 5.0)]
+    {
+        let mut c = base(ChartType::Column);
+        c.categories = vec!["A".into()];
+        c.gap_width = gap;
+        c.y_max = Some(10.);
+        let mut body = TextBody::from_text("Second 22");
+        body.body.wrap = wrap;
+        body.paragraphs[0].runs[0].props = RunProps {
+            font: Some("Inter".into()),
+            size: Some(44.),
+            fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(0, 0, 255)))),
+            ..Default::default()
+        };
+        let mut series = Series { values: vec![Some(5.)], fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(200, 200, 200)))), ..Default::default() };
+        series.point_labels.insert(
+            0,
+            DataLabel {
+                text: Some(body),
+                position: Some("ctr".into()),
+                layout: manual.then_some(ChartLayout { w: Some(0.4), ..Default::default() }),
+                ..Default::default()
+            },
+        );
+        c.series.push(series);
+        let mut p = original();
+        append(&mut p, c);
+        Arc::make_mut(&mut p.slides[0]).shapes[0].xfrm.as_mut().unwrap().w = width;
+        let back = rebuilt(&p);
+        let img = render_slide(&back, 0, &RenderOpts::default());
+        let (mut left, mut top, mut right, mut bottom) = (u32::MAX, u32::MAX, 0, 0);
+        for (i, px) in img.pixels.chunks_exact(4).enumerate() {
+            if px[2] > 200 && px[0] < 40 && px[1] < 40 {
+                let (x, y) = (i as u32 % img.width, i as u32 / img.width);
+                left = left.min(x);
+                top = top.min(y);
+                right = right.max(x);
+                bottom = bottom.max(y);
+            }
+        }
+        assert!(left < right && top < bottom);
+        dimensions.push((right - left, bottom - top));
+    }
+    assert!(dimensions[0].0 < 190 && dimensions[0].1 > 70, "{:?}", dimensions);
+    for d in &dimensions[1..4] {
+        assert!(d.0 > 210 && d.1 < 45, "{:?}", dimensions);
+    }
+    assert_eq!(dimensions[0], dimensions[4], "bar width must not set label wrapping");
+}
+
+#[test]
 fn sparse_manual_labels_keep_positions_and_percent_precision() {
     use deckcraft_model::chart::ChartLayout;
     let mut c = base(ChartType::Pie);

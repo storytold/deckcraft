@@ -119,7 +119,34 @@ pub(super) fn place_solved<'a>(
     work: &mut usize,
 ) -> Result<(), &'static str> {
     let style = super::constraints::lookup(solution, node).unwrap_or_else(|| BoxStyle::new(rect));
-    place_inner(node, style, data, out, depth, solution, work)
+    let start = out.len();
+    place_inner(node, style, data, out, depth, solution, work)?;
+    if depth == 0 && node.alg == "composite" {
+        fit_composite_frame(out.get_mut(start..).unwrap_or(&mut []), rect, work)?;
+    }
+    Ok(())
+}
+
+fn fit_composite_frame(out: &mut [Placed<'_>], frame: Xfrm, work: &mut usize) -> Result<(), &'static str> {
+    charge(work, out.len() * 2)?;
+    let shapes: Vec<_> = out.iter().filter(|p| !p.connector).collect();
+    let left = shapes.iter().map(|p| p.rect.x).fold(f64::INFINITY, f64::min);
+    let top = shapes.iter().map(|p| p.rect.y).fold(f64::INFINITY, f64::min);
+    let right = shapes.iter().map(|p| p.rect.x + p.rect.w).fold(f64::NEG_INFINITY, f64::max);
+    let bottom = shapes.iter().map(|p| p.rect.y + p.rect.h).fold(f64::NEG_INFINITY, f64::max);
+    let (width, height) = (right - left, bottom - top);
+    if width <= 0.0 || height <= 0.0 || !width.is_finite() || !height.is_finite() {
+        return Ok(());
+    }
+    let (sx, sy) = ((frame.w / width).min(1.0), (frame.h / height).min(1.0));
+    let (x, y) = (frame.x + (frame.w - width * sx) / 2.0, frame.y + (frame.h - height * sy) / 2.0);
+    for p in out {
+        p.rect.x = x + (p.rect.x - left) * sx;
+        p.rect.y = y + (p.rect.y - top) * sy;
+        p.rect.w *= sx;
+        p.rect.h *= sy;
+    }
+    Ok(())
 }
 
 fn charge(work: &mut usize, amount: usize) -> Result<(), &'static str> {
@@ -283,7 +310,9 @@ fn pack_composite_extents(
 }
 
 pub(super) fn self_constraints(node: &Instance<'_>, style: &mut BoxStyle) {
-    for constraint in node.constraints.iter().filter(|e| e.attr("for").unwrap_or("self") == "self") {
+    for constraint in
+        node.constraints.iter().filter(|e| e.attr("for").unwrap_or("self") == "self" && !super::constraints::position(e.attr("type").unwrap_or("")))
+    {
         if let Some(value) = constraint_value(constraint, style) {
             style.set(constraint.attr("type").unwrap_or(""), value, constraint.attr("op").unwrap_or("equ"));
         }

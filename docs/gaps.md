@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **PPTX.14 update 2026-11-01:** composite coordinate ownership, redundant-axis priority and occupied-frame fitting now match native probes; literal column labels wrap to chart width while retaining explicit no-wrap/manual sizing. Complex rule ownership, geographic viewport policy and label overflow remain partial.
+
 > **PPTX.13 update 2026-11-01:** oversized linear/cycle diagrams fit their containers; native map-stop element names fix custom-gradient open/export; literal rich labels follow observed first-paragraph styling. Native geometry and colour probes pass; full solver, viewport and text-layout parity remains partial.
 
 > **PPTX.12 update 2026-11-01:** connected numeric rules can move jointly after independent trials stall; constant maps use the observed native colour interval; rich labels use their own list levels and isolate literal text from generated-label styling. Full native search, viewport and label-layout parity remains partial.
