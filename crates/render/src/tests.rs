@@ -1227,6 +1227,144 @@ fn text_glow_and_shadow_are_drawn() {
 }
 
 #[test]
+fn table_cell_text_effects_need_filters() {
+    let mut table = Table::new(1, 1, 200.0, 40.0);
+    let plain =
+        Shape { id: ShapeId(741), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), kind: ShapeKind::Table(table.clone()), ..Default::default() };
+    let p = deck_with(vec![plain]);
+    assert!(!needs_filters(&p, &p.slides[0]));
+    table.rows[0].cells[0].text = TextBody::from_text("Cell");
+    table.rows[0].cells[0].text.paragraphs[0].runs[0].props.glow =
+        Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 8.0 });
+    let glow = Shape { id: ShapeId(742), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), kind: ShapeKind::Table(table), ..Default::default() };
+    let p = deck_with(vec![glow]);
+    assert!(needs_filters(&p, &p.slides[0]), "a glowing cell's text blurs");
+
+    // Master other_style glow inherited by a non-empty cell.
+    // Clear master and layout shapes to isolate the table cell from master background shapes.
+    let table_plain = Table::new(1, 1, 200.0, 40.0);
+    let shape_table =
+        Shape { id: ShapeId(744), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), kind: ShapeKind::Table(table_plain), ..Default::default() };
+    let mut p_inherited = deck_with(vec![shape_table]);
+    let m = std::sync::Arc::make_mut(&mut p_inherited.masters[0]);
+    m.shapes.clear();
+    for l in &mut m.layouts {
+        l.shapes.clear();
+    }
+    m.other_style.levels[0].as_mut().unwrap().run.glow =
+        Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 6.0 });
+    // An empty cell has no text paragraphs to inherit the glow.
+    assert!(!needs_filters(&p_inherited, &p_inherited.slides[0]), "empty cell does not need filters");
+    // Once the cell has text, it inherits the glow from master other_style.
+    if let ShapeKind::Table(t) = &mut std::sync::Arc::make_mut(&mut p_inherited.slides[0]).shapes[0].kind {
+        t.rows[0].cells[0].text = TextBody::from_text("Inherited");
+    }
+    assert!(needs_filters(&p_inherited, &p_inherited.slides[0]), "inherited cell text glow blurs");
+
+    // Paragraph def_props glow on cell text.
+    let mut table_def = Table::new(1, 1, 200.0, 40.0);
+    table_def.rows[0].cells[0].text = TextBody::from_text("Def");
+    table_def.rows[0].cells[0].text.paragraphs[0].def_props.glow =
+        Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 5.0 });
+    let shape_def =
+        Shape { id: ShapeId(745), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), kind: ShapeKind::Table(table_def), ..Default::default() };
+    let p_def = deck_with(vec![shape_def]);
+    assert!(needs_filters(&p_def, &p_def.slides[0]), "paragraph def_props glow blurs");
+
+    // Presentation default_text_style glow inherited by a non-empty cell.
+    let mut table_dts = Table::new(1, 1, 200.0, 40.0);
+    table_dts.rows[0].cells[0].text = TextBody::from_text("Dts");
+    let shape_dts =
+        Shape { id: ShapeId(746), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), kind: ShapeKind::Table(table_dts), ..Default::default() };
+    let mut p_dts = deck_with(vec![shape_dts]);
+    let m_dts = std::sync::Arc::make_mut(&mut p_dts.masters[0]);
+    m_dts.shapes.clear();
+    for l in &mut m_dts.layouts {
+        l.shapes.clear();
+    }
+    p_dts.default_text_style.levels[0].as_mut().unwrap().run.glow =
+        Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 4.0 });
+    assert!(needs_filters(&p_dts, &p_dts.slides[0]), "inherited default_text_style glow blurs");
+
+    // Dynamic field with empty saved text in a cell inherits master glow.
+    let mut table_field = Table::new(1, 1, 200.0, 40.0);
+    table_field.rows[0].cells[0].text = TextBody {
+        paragraphs: vec![deckcraft_model::text::Paragraph {
+            runs: vec![deckcraft_model::text::Run {
+                text: String::new(),
+                props: Default::default(),
+                kind: deckcraft_model::text::RunKind::Field { field: "slidenum".into() },
+            }],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let shape_field =
+        Shape { id: ShapeId(747), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), kind: ShapeKind::Table(table_field), ..Default::default() };
+    let mut p_field = deck_with(vec![shape_field]);
+    let m_field = std::sync::Arc::make_mut(&mut p_field.masters[0]);
+    m_field.shapes.clear();
+    for l in &mut m_field.layouts {
+        l.shapes.clear();
+    }
+    m_field.other_style.levels[0].as_mut().unwrap().run.glow =
+        Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 6.0 });
+    assert!(needs_filters(&p_field, &p_field.slides[0]), "dynamic field in cell inherits master glow");
+
+    // Chart shape without text body inherits default_text_style glow for its labels.
+    let chart_shape = Shape {
+        id: ShapeId(748),
+        xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 150.0)),
+        kind: ShapeKind::Chart(Box::new(Chart::default())),
+        ..Default::default()
+    };
+    let mut p_chart = deck_with(vec![chart_shape]);
+    let m_chart = std::sync::Arc::make_mut(&mut p_chart.masters[0]);
+    m_chart.shapes.clear();
+    for l in &mut m_chart.layouts {
+        l.shapes.clear();
+    }
+    assert!(!needs_filters(&p_chart, &p_chart.slides[0]), "plain chart without text glow needs no filters");
+    p_chart.default_text_style.levels[0].as_mut().unwrap().run.glow =
+        Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 4.0 });
+    assert!(needs_filters(&p_chart, &p_chart.slides[0]), "chart labels inherit default_text_style glow");
+}
+
+#[test]
+fn blend_with_blurred_effects_does_not_panic_multithreaded() {
+    let shadow = deckcraft_model::style::Shadow {
+        color: ColorRef::rgb(deckcraft_color::Rgba { r: 0, g: 0, b: 0, a: 128 }),
+        blur: 6.0,
+        dist: 8.0,
+        dir: 45.0,
+        inner: false,
+        sx: 1.0,
+        sy: 1.0,
+        kx: 0.0,
+        ky: 0.0,
+        align: String::new(),
+        rotate_with_shape: false,
+    };
+    let mut sh = Shape {
+        id: ShapeId(743),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)),
+        ..Default::default()
+    };
+    sh.effects = Some(deckcraft_model::style::Effects { outer_shadow: Some(shadow), ..Default::default() });
+    let mut p = deck_with(vec![sh.clone()]);
+    p.slides.push(std::sync::Arc::new((*p.slides[0]).clone()));
+    let o = RenderOpts { scale: 0.5, threads: 4, ..Default::default() };
+    let shapes = vec![(sh, false)];
+    let before = super::panics_caught();
+    for mix in [0.0, 0.5, 1.0] {
+        let img = render_blend(&p, (0, 1), mix, &shapes, &[], &[], &o);
+        assert!(img.width > 0, "mix {mix}");
+    }
+    assert_eq!(super::panics_caught(), before, "no filter panic in multithreaded blend");
+}
+
+#[test]
 fn pattern_fills_draw_powerpoints_tiles() {
     // dkVert at one output pixel per pattern cell (0.75 pt): columns 11001100… across, as
     // PowerPoint's export draws it; pct50 is a checkerboard.

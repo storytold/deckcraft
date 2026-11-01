@@ -34,7 +34,7 @@ slide. Prints each image's path and size.
     },
     Subcommand {
         name: "render-transition",
-        usage: "render-transition FILE --slide N --t T[,T...] [--width PX] OUT.png",
+        usage: "render-transition FILE --slide N --t T[,T...] [--width PX] [--threads N] OUT.png",
         summary: "draw frames of the transition into a slide as PNG images",
         details: "Draws the transition into slide N of FILE at each time T, from 0 (the slide before) to 1 (slide N),
 as PNG images. With one T, OUT.png is the image; with several, each frame is written next to it as
@@ -43,6 +43,7 @@ OUT-t0.250.png and so on. Prints each image's path, size, transition and time.
   --slide N    the slide the transition leads into; indices start at 0
   --t T,T...   the times to draw, comma-separated
   --width PX   the image width in pixels, twice the slide width in points by default
+  --threads N  worker threads for rendering (0 for single-threaded)
 
   deckcraft-cli render-transition deck.deckcraft --slide 1 --t 0.25,0.5,0.75 fade.png",
     },

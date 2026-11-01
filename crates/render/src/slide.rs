@@ -16,6 +16,16 @@ pub fn panics_caught() -> u64 {
 
 /// Does anything on this slide (or its layout/master graphics) use blur-based effects?
 pub fn needs_filters(pres: &Presentation, slide: &Slide) -> bool {
+    uses_filters(pres, slide, false)
+}
+
+/// [`needs_filters`] for a Morph frame in between, which skips the blur of shape effects and so
+/// only needs filters for blurred text.
+pub(crate) fn needs_text_filters(pres: &Presentation, slide: &Slide) -> bool {
+    uses_filters(pres, slide, true)
+}
+
+fn uses_filters(pres: &Presentation, slide: &Slide, text_only: bool) -> bool {
     let Some(rctx) = Ctx::for_slide(pres, slide) else { return false };
     let mut any = false;
     let mut check = |shapes: &[Shape]| {
@@ -24,7 +34,7 @@ pub fn needs_filters(pres: &Presentation, slide: &Slide) -> bool {
                 return;
             }
             let (e, _) = resolve::effects(&rctx, s);
-            if e.is_some_and(|e| !e.is_empty()) || text_has_effects(&rctx, s) {
+            if (!text_only && e.is_some_and(|e| !e.is_empty())) || text_has_effects(&rctx, s) {
                 any = true;
             }
         });
@@ -43,12 +53,32 @@ fn text_has_effects(rctx: &Ctx, s: &Shape) -> bool {
     use deckcraft_model::text::{ListStyle, RunProps};
     let fx = |r: &RunProps| r.shadow.as_ref().is_some_and(|s| !s.inner) || r.glow.as_ref().is_some_and(|g| g.radius > 0.0);
     let styled = |l: &ListStyle| l.levels.iter().flatten().any(|lv| fx(&lv.run));
-    let Some(t) = &s.text else { return false };
-    t.paragraphs.iter().any(|p| p.runs.iter().any(|r| fx(&r.props)) || fx(&p.end_props))
-        || styled(&t.list_style)
-        || styled(&rctx.master.title_style)
-        || styled(&rctx.master.body_style)
-        || styled(&rctx.master.other_style)
+    let body = |t: &deckcraft_model::text::TextBody| {
+        t.paragraphs.iter().any(|p| p.runs.iter().any(|r| fx(&r.props)) || fx(&p.def_props) || fx(&p.end_props)) || styled(&t.list_style)
+    };
+    let has_renderable_text = |t: &deckcraft_model::text::TextBody| {
+        !t.is_empty() || t.paragraphs.iter().any(|p| p.runs.iter().any(|r| matches!(r.kind, deckcraft_model::text::RunKind::Field { .. })))
+    };
+    // Table cells carry their own text bodies, whose runs can have shadows and glows too,
+    // or inherit them from the master's other-text style or presentation default text style.
+    let in_cells =
+        match &s.kind {
+            deckcraft_model::ShapeKind::Table(t) => t.rows.iter().flat_map(|r| &r.cells).any(|c| {
+                body(&c.text) || (has_renderable_text(&c.text) && (styled(&rctx.master.other_style) || styled(&rctx.pres.default_text_style)))
+            }),
+            _ => false,
+        };
+    // Charts draw labels that inherit master other_style or presentation default_text_style.
+    let in_chart =
+        matches!(s.kind, deckcraft_model::ShapeKind::Chart(_)) && (styled(&rctx.master.other_style) || styled(&rctx.pres.default_text_style));
+    in_cells
+        || in_chart
+        || s.text.as_ref().is_some_and(body)
+        || (s.text.is_some()
+            && (styled(&rctx.master.title_style)
+                || styled(&rctx.master.body_style)
+                || styled(&rctx.master.other_style)
+                || styled(&rctx.pres.default_text_style)))
 }
 
 /// Render slide `index` at `opts.scale` pixels per point. A panic inside the renderer becomes a
