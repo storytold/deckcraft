@@ -19,9 +19,22 @@ fn suggested_provider_name(title: &str, extension: &str) -> String {
 }
 
 impl SlideApp {
+    fn provider_save_host(&self) -> Option<Host> {
+        self.services.file_providers.clone().filter(|host| {
+            host.enabled() || self.session.active().is_some_and(|doc| host.bound(doc.uid) || host.pending_for(doc.uid))
+        })
+    }
+
     pub(crate) fn choose_provider_save(&mut self, save_as: bool, format: &str) -> bool {
-        let Some(host) = self.services.file_providers.clone().filter(|host| host.enabled()) else { return false };
+        let Some(host) = self.provider_save_host() else { return false };
         let Some(doc) = self.session.active() else { return true };
+        if !host.enabled() {
+            if self.provider_close.as_ref().is_some_and(|close| close.document == doc.uid) {
+                self.provider_close = None;
+            }
+            self.set_status("Provider storage is paused. Resume it before saving this presentation.");
+            return true;
+        }
         let extension = if format == "pptx" { "pptx" } else { "deckcraft" };
         let name = if save_as {
             suggested_provider_name(&doc.title(), extension)
@@ -36,9 +49,13 @@ impl SlideApp {
 
     /// The Close prompt's Save waits for this provider request, rather than a browser download.
     pub(crate) fn save_and_close_presentation(&mut self) {
-        if let Some(host) = self.services.file_providers.clone().filter(|host| host.enabled()) {
+        if let Some(host) = self.provider_save_host() {
             let Some(document) = self.session.active().map(|doc| doc.uid) else { return };
             self.provider_close = None;
+            if !host.enabled() {
+                self.notify("Provider storage is paused. Resume it before saving this presentation.");
+                return;
+            }
             if host.pending_for(document) {
                 self.notify("Finish the pending save before closing this presentation.");
                 return;
@@ -338,6 +355,89 @@ mod tests {
     }
 
     #[test]
+    fn paused_provider_saves_and_the_real_close_save_callback_never_download_or_arm_a_close() {
+        for initially_bound in [false, true] {
+            let (mut app, host) = app();
+            let document = app.session.active().unwrap().uid;
+            let old_request = if initially_bound {
+                let (request, _) = save(&mut app, &host);
+                host.result(request.clone(), "saved".into(), "resource-one".into()).unwrap();
+                app.provider_tick();
+                request
+            } else {
+                let request = close_choice(&mut app, &host);
+                host.resolve_dialog(&request, "provider", "Pending.deckcraft").unwrap();
+                app.provider_tick();
+                assert!(host.take_events().iter().any(|event| event.metadata["type"] == "save"));
+                assert!(app.provider_close.is_some());
+                request
+            };
+            host.set_enabled(false).unwrap();
+            app.session.execute("slide.new", &json!({})).unwrap();
+            let downloads = std::rc::Rc::new(std::cell::Cell::new(0));
+            let received = downloads.clone();
+            app.services.download = Some(Box::new(move |_, bytes| {
+                assert!(!bytes.is_empty());
+                received.set(received.get() + 1);
+            }));
+            let received = downloads.clone();
+            app.services.provider_download = Some(Box::new(move |_, bytes| {
+                assert!(!bytes.is_empty());
+                received.set(received.get() + 1);
+                Ok(())
+            }));
+
+            app.save();
+            app.save_as_dialog("deckcraft");
+            assert_eq!(downloads.get(), 0);
+            assert!(app.session.active().unwrap().is_dirty());
+            assert!(app.provider_close.is_none());
+            assert_eq!(host.bound(document), initially_bound);
+            assert_eq!(host.pending_for(document), !initially_bound);
+            assert!(host.take_events().is_empty());
+            app.close_presentation();
+            let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+                |ui, app: &mut SlideApp| {
+                    app.logic(ui.ctx());
+                    app.ui(ui);
+                },
+                app,
+            );
+            harness.run_steps(3);
+            harness.key_press(egui::Key::Enter);
+            harness.run_steps(3);
+            assert_eq!(harness.state().session.active().unwrap().uid, document);
+            assert!(harness.state().session.active().unwrap().is_dirty());
+            assert!(harness.state().provider_close.is_none());
+            assert_eq!(downloads.get(), 0, "the successful browser download callback must never be reached");
+            assert!(host.take_events().is_empty());
+
+            host.set_enabled(true).unwrap();
+            if !initially_bound {
+                host.result(old_request, "saved".into(), "resource-one".into()).unwrap();
+                harness.run_steps(3);
+                assert_eq!(harness.state().session.active().unwrap().uid, document);
+                assert!(harness.state().session.active().unwrap().is_dirty(), "the old capture excludes the later slide");
+                assert!(harness.state().provider_close.is_none(), "resuming cannot revive the refused close");
+            }
+            harness.state_mut().close_presentation();
+            harness.run_steps(3);
+            harness.key_press(egui::Key::Enter);
+            harness.run_steps(3);
+            let event = host.take_events().into_iter().find(|event| event.metadata["type"] == "saveDialog").unwrap();
+            let request = event.metadata["requestId"].as_str().unwrap().to_string();
+            host.resolve_dialog(&request, "provider", "Resumed.deckcraft").unwrap();
+            harness.run_steps(3);
+            assert!(host.take_events().iter().any(|event| event.metadata["type"] == "save" && event.bytes.is_some()));
+            assert_eq!(harness.state().session.documents().len(), 1, "resumed serialization still needs a durable ACK");
+            host.result(request, "saved".into(), "resource-one".into()).unwrap();
+            harness.run_steps(4);
+            assert!(harness.state().session.documents().is_empty());
+            assert_eq!(downloads.get(), 0);
+        }
+    }
+
+    #[test]
     fn cancelled_failed_or_downloaded_close_never_discards_the_document() {
         for destination in ["device", "cancel", "failed", "download"] {
             let (mut app, host) = app();
@@ -426,17 +526,36 @@ mod tests {
 
     #[test]
     fn provider_free_browser_close_keeps_the_original_download_route() {
-        let (mut app, _) = app();
-        app.services.file_providers = None;
-        let downloads = std::rc::Rc::new(std::cell::Cell::new(0));
-        let received = downloads.clone();
-        app.services.download = Some(Box::new(move |_, bytes| {
-            assert!(!bytes.is_empty());
-            received.set(received.get() + 1);
-        }));
-        app.save_and_close_presentation();
-        assert_eq!(downloads.get(), 1);
-        assert!(app.session.documents().is_empty());
+        for provider in ["absent", "default-off", "paused-unbound"] {
+            let (mut app, host) = app();
+            match provider {
+                "absent" => app.services.file_providers = None,
+                "default-off" => app.services.file_providers = Some(Host::default()),
+                _ => host.set_enabled(false).unwrap(),
+            }
+            let downloads = std::rc::Rc::new(std::cell::Cell::new(0));
+            let received = downloads.clone();
+            app.services.download = Some(Box::new(move |_, bytes| {
+                assert!(!bytes.is_empty());
+                received.set(received.get() + 1);
+            }));
+            app.save();
+            app.save_as_dialog("deckcraft");
+            assert_eq!(downloads.get(), 2);
+            app.close_presentation();
+            let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+                |ui, app: &mut SlideApp| {
+                    app.logic(ui.ctx());
+                    app.ui(ui);
+                },
+                app,
+            );
+            harness.run_steps(3);
+            harness.key_press(egui::Key::Enter);
+            harness.run_steps(3);
+            assert_eq!(downloads.get(), 3);
+            assert!(harness.state().session.documents().is_empty());
+        }
     }
 
     #[test]

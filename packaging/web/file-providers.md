@@ -28,6 +28,9 @@ while a chooser, serialization, upload acknowledgement or read is unresolved. Un
 clears resources and bindings without closing documents. `setEnabled(false)` stops new
 provider choices and hides provider Recents while allowing outstanding operations to settle;
 `setEnabled(true)` restores availability. There is no editor preference or end-user cloud switch.
+While paused, Save, Save As and the Close prompt's Save refuse a provider-bound presentation
+or one with a pending provider save. They neither download a device copy nor arm a later close.
+Unbound presentations without pending provider work retain their ordinary local save route.
 Never reuse an account namespace for a different account.
 
 ## Save protocol
