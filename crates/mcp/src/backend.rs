@@ -284,12 +284,13 @@ mod tests {
             eprintln!("skipped: DECKCRAFT_CONTROL_TOKEN is set (it wins over the token file)");
             return;
         }
-        let port = 40_000 + (std::process::id() % 20_000) as u16;
+        // The listener takes its port first: a PID-derived port could belong to a running
+        // app, whose token file write_token_file would replace before a bind failure.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
         let (token_a, token_b) = ("file-token-a-0123456789", "file-token-b-0123456789");
         let path = crate::control_auth::write_token_file(port, token_a).expect("write token file");
         let addr = format!("127.0.0.1:{port}");
-        // Bound here so the client's fail-fast connect never races the peer thread.
-        let listener = TcpListener::bind(&addr).expect("bind");
         let peer = std::thread::spawn(move || {
             let check_auth = |stream: &TcpStream, expected: &str| {
                 stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
