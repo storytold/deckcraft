@@ -41,6 +41,8 @@ pub struct Services {
     pub file_providers: Option<crate::file_providers::Host>,
     /// A device copy, separate from any provider persistence or acknowledgement.
     pub provider_download: Option<ReadWriteDownload>,
+    /// Browser-owned presenter popup; absent on native hosts.
+    pub presenter: Option<Box<dyn crate::presenter::Host>>,
     /// Open-file dialog for a purpose (`open`, `picture`, `audio`, `video`) → path.
     pub pick_open: Option<PickFn>,
     /// Save dialog with a suggested name → path.

@@ -12,6 +12,22 @@ pub(super) fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation,
             .filter_map(|e| if let egui::Event::Key { key, pressed: true, modifiers, .. } = e { Some((*key, *modifiers)) } else { None })
             .collect()
     });
+    let (keep, consumed) = handle_keys(show, doc, now, keys, presenter);
+    for (key, modifiers) in consumed {
+        ctx.input_mut(|i| i.consume_key(modifiers, key));
+        ctx.request_repaint_of(egui::ViewportId::ROOT);
+    }
+    keep
+}
+
+pub(super) fn handle_keys(
+    show: &mut Show,
+    doc: &Presentation,
+    now: f64,
+    keys: Vec<(egui::Key, egui::Modifiers)>,
+    presenter: bool,
+) -> (bool, Vec<(egui::Key, egui::Modifiers)>) {
+    let mut consumed = vec![];
     let mut keep = true;
     let mut actions = vec![];
     for (k, m) in keys {
@@ -31,15 +47,14 @@ pub(super) fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation,
         }
         // The same key must not also activate a focused presenter button or be handled again
         // by an embedded presenter viewport.
-        ctx.input_mut(|i| i.consume_key(m, k));
-        ctx.request_repaint_of(egui::ViewportId::ROOT);
+        consumed.push((k, m));
     }
     for action in actions {
         if !show.apply(action, doc, now) {
             keep = false;
         }
     }
-    keep
+    (keep, consumed)
 }
 
 /// Whether the grid that the presenter key G opens is showing in this viewport.
