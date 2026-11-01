@@ -79,6 +79,41 @@ The checks hold for every thread of the server process. A path is checked, then 
 program that swaps a link in between can still win that race, so the roots keep an agent to the
 files it was given rather than guarding against other software on the computer.
 
+## Confining commands
+
+```sh
+deckcraft-cli mcp --automation-read-root /work/project --automation-write-root /work/project/out \
+    --allow-commands "slide.*, text.*, format.*, insert.textBox, edit.select, document.inspect, file.new, file.save, file.export"
+deckcraft-cli mcp --allow-commands @allowed.txt   # one id or group.* per line, # comments
+```
+
+`--allow-commands` keeps the agent to the commands it was given, the way the roots keep it to
+folders. Use both together.
+
+- Every command a client asks for must be on the list: `run_command`, each command of `batch`
+  (which stops at the first one off the list, or skips it with `keepGoing`), `call_app`, and the
+  commands behind the dedicated tools (`new_presentation` is `file.new`, `open_presentation`
+  `file.open`, `save_presentation` `file.save`, `export` `file.export`, `inspect_document`
+  `document.inspect`, `add_slide` `slide.new`, `add_shape` `shape.insert`, `add_text_box`
+  `insert.textBox`…). A command off the list is an ordinary tool error:
+  `command `slide.delete` is not allowed: it is not on this session's --allow-commands list`.
+- Gestures (`pointer`, `key`, `type_text`, `select_tool`) are refused while a list is in force:
+  they change the deck without naming a command (a drag moves a shape, a shortcut runs whatever it
+  is bound to), so the list could not hold them. Use the commands behind them by name
+  (`text.insert`, `shape.insert`, `edit.select`…).
+- Commands a command runs itself (typing `* ` turning a paragraph into a list) are part of the
+  command that was allowed and aren't checked again. `render_slide` draws the deck without a
+  command and stays available.
+- `list_commands` shows only the commands the client may run.
+- A list names ids (`format.bold`) and groups (`format.*`: every command whose id starts with
+  `format.`), separated by commas, spaces or new lines. An unknown id, a group that matches no
+  command, an empty list, or the flag without a list or given twice stops the server at startup.
+- An `@FILE` list must be a regular file (or a link to one). A pipe, socket or device found at the
+  first check stops the server without being opened; the check and the open are not atomic, so
+  another program that swaps a FIFO in between can still make the open wait. It is read up to
+  256 KiB and no further, whatever the file claims to be; a longer one stops the server too.
+- Like the roots, the list holds the in-process server: `--connect` with it is an error.
+
 ## Tools
 
 | Tool | What it does |

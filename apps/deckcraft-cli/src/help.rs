@@ -136,7 +136,7 @@ and prints its answer as JSON. COMMAND [PARAMS] runs a command, as run --cmd doe
     },
     Subcommand {
         name: "mcp",
-        usage: "mcp [--connect PORT] [--sample] [--automation-read-root DIR]... [--automation-write-root DIR]...",
+        usage: "mcp [--connect PORT] [--sample] [--automation-read-root DIR]... [--automation-write-root DIR]... [--allow-commands LIST|@FILE]",
         summary: "serve the commands to an agent over MCP on stdio",
         details: "Runs a Model Context Protocol server on stdin and stdout. It works on its own presentation without a
 window, or with --connect PORT (or host:port) on the DeckCraft app started with --control PORT.
@@ -144,8 +144,15 @@ window, or with --connect PORT (or host:port) on the DeckCraft app started with 
 
 --automation-read-root DIR and --automation-write-root DIR confine every file the agent's commands read
 (open, pictures, audio, video) and write (save, export, PDF) to those folders, links followed. Repeat either
-flag to grant access to more folders; a root left out grants none of its access. They run the in-process
-server, so they conflict with --connect (a running app is not confined by them).",
+flag to grant access to more folders; a root left out grants none of its access.
+
+--allow-commands holds the agent to the commands listed: ids (format.bold), groups (format.*), separated
+by commas, spaces or new lines, or @FILE (a regular file, at most 256 KiB, # comments). Gestures (pointer,
+key, type_text, select_tool) are refused, since they change the presentation without naming a command. An
+unknown command, an empty list, or the flag without a list or given twice stops the server at startup.
+
+All three run the in-process server, so they conflict with --connect (a running app is not confined by
+them).",
     },
     Subcommand {
         name: "bench",
