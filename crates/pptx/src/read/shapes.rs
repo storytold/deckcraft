@@ -697,7 +697,7 @@ fn smartart_layout(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape) -> Option
     Some(group)
 }
 
-fn diagram_text_layout(
+pub(super) fn diagram_text_layout(
     body: &mut deckcraft_model::text::TextBody,
     p: &crate::dgm::layout::Placed<'_>,
     text_color: Option<&deckcraft_model::style::ColorRef>,
@@ -732,8 +732,10 @@ fn diagram_text_layout(
         if p.params.get("stBulletLvl").is_some_and(|v| v == "1") {
             paragraph.props.bullet = Some(deckcraft_model::text::Bullet::Char { char: "•".into() });
         }
+        let secondary = paragraph.props.bullet.as_ref().is_some_and(|b| !matches!(b, deckcraft_model::text::Bullet::None));
+        let paragraph_font = if secondary { p.secondary_font.unwrap_or(font * 0.78) } else { font };
         for run in &mut paragraph.runs {
-            run.props.size = Some(font);
+            run.props.size = Some(paragraph_font);
             if let Some(c) = text_color {
                 run.props.fill = Some(Fill::Solid { color: c.clone() });
             }

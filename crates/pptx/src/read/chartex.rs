@@ -235,11 +235,19 @@ pub(crate) fn chartex_from(root: &El) -> Option<Chart> {
 fn geography(g: &El, d: &Data) -> deckcraft_model::geography::Geography {
     use deckcraft_model::geography::{GeoRegion, Geography, MAX_GEO_POINTS, decode_ring};
     let mut map = Geography {
-        projection: g.attr("projectionType").unwrap_or("mercator").into(),
+        projection: g.attr("projectionType").unwrap_or("").into(),
         attribution: g.attr("attribution").unwrap_or("").into(),
         regions: vec![],
     };
-    let Some(clear) = g.path(&["geoCache", "clear"]) else { return map };
+    let decoded;
+    let clear = if let Some(clear) = g.path(&["geoCache", "clear"]) {
+        clear
+    } else {
+        let Some(binary) = g.path(&["geoCache", "binary"]) else { return map };
+        decoded = super::geo_cache::decode(&binary.text());
+        let Some(doc) = decoded.as_ref() else { return map };
+        &doc.root
+    };
     let mut budget = MAX_GEO_POINTS;
     let Some(results) = clear.child("geoDataEntityQueryResults") else { return map };
     for result in results.children_named("geoDataEntityQueryResult").take(4096) {
@@ -255,9 +263,9 @@ fn geography(g: &El, d: &Data) -> deckcraft_model::geography::Geography {
             .position(|id| !id.is_empty() && *id == region.entity_id)
             .or_else(|| d.categories.iter().position(|n| n.trim().eq_ignore_ascii_case(region.name.trim())));
         if let Some(polys) = data.child("geoPolygons") {
-            for poly in polys.children_named("geoPolygon").take(4096) {
+            for poly in polys.children_named("geoPolygon").take(deckcraft_model::geography::MAX_GEO_RINGS) {
                 let mut encoded = poly.attr("pcaRings").unwrap_or("").split(',');
-                if encoded.next() != Some("0") {
+                if !matches!(encoded.next(), Some("0" | "1")) {
                     continue;
                 }
                 let mut rings = Vec::new();

@@ -9,7 +9,7 @@ use deckcraft_model::text::{Align, Anchor};
 use kurbo::{Affine, BezPath, Point, Rect, Shape as _};
 use vello_cpu::RenderContext;
 
-use crate::chart::{label, series_color};
+use crate::chart::{label, point_data_label, series_color};
 use crate::color;
 
 /// Draw `c` inside `area` (the space left by the title and legend).
@@ -60,9 +60,13 @@ fn funnel(
         let w = v / max * plot.width();
         let y = plot.y0 + band * i as f64;
         let r = Rect::new(cx - w / 2.0, y + band * 0.05, cx + w / 2.0, y + band * 0.95);
-        ctx.set_transform(m);
-        ctx.set_paint(color(series_color(rctx, c, 0), 1.0));
-        ctx.fill_rect(&r);
+        if let Some(fill) = c.series.first().and_then(|s| s.fill.as_ref()) {
+            crate::paint::fill_path(ctx, rctx, fill, None, &r.to_path(0.1), r, m, deckcraft_geom::preset::FillMode::Norm, 1.0, rctx.pres);
+        } else {
+            ctx.set_transform(m);
+            ctx.set_paint(color(series_color(rctx, c, 0), 1.0));
+            ctx.fill_rect(&r);
+        }
         if let Some(name) = c.categories.get(i) {
             label(
                 ctx,
@@ -73,14 +77,21 @@ fn funnel(
                 crate::chart::LabelStyle { size: base, align: Align::Right, anchor: Anchor::Middle, col: text_col, bold: false },
             );
         }
-        label(
-            ctx,
-            rctx,
-            m,
-            &value_label(*v),
-            Rect::new(cx - 60.0, y, cx + 60.0, y + band),
-            crate::chart::LabelStyle { size: base, align: Align::Center, anchor: Anchor::Middle, col: Rgba::WHITE, bold: false },
-        );
+        if let Some(series) = c.series.first() {
+            let text =
+                c.point_label(series, i).or_else(|| (series.data_labels.is_none() && series.label(i).hidden != Some(true)).then(|| value_label(*v)));
+            if let Some(text) = text {
+                point_data_label(
+                    ctx,
+                    rctx,
+                    m,
+                    &text,
+                    Rect::new(cx - 60.0, y, cx + 60.0, y + band),
+                    crate::chart::LabelStyle { size: base, align: Align::Center, anchor: Anchor::Middle, col: Rgba::WHITE, bold: false },
+                    (c, series, i, r, (area.x1, area.y1)),
+                );
+            }
+        }
     }
 }
 

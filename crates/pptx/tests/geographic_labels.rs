@@ -235,3 +235,139 @@ fn partial_point_label_style_inherits_series_font_and_body_rotation() {
     assert_eq!(style.paragraphs[0].def_props.size, Some(22.));
     assert_eq!(style.paragraphs[0].def_props.bold, Some(true));
 }
+
+#[test]
+fn compressed_geographic_cache_matches_clear_geometry_and_render_after_rebuild() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use std::io::{Cursor, Read, Write};
+    let mut c = base(ChartType::RegionMap);
+    c.categories = vec!["Original region".into()];
+    c.series.push(Series {
+        values: vec![Some(12.)],
+        geography: Some(Geography {
+            regions: vec![GeoRegion {
+                name: "Original region".into(),
+                entity_id: "own-region".into(),
+                point: Some(0),
+                rings: vec![vec![[10., 10.], [20., 10.], [20., 20.], [10., 20.]]],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    let mut original = original();
+    append(&mut original, c);
+    let bytes = deckcraft_pptx::export(&original).unwrap();
+    let clear = deckcraft_pptx::import(&bytes).unwrap();
+    let expected = render_slide(&clear, 0, &RenderOpts::default());
+    for sync in [false, true] {
+        let mut input = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let mut replaced = false;
+        for i in 0..input.len() {
+            let mut f = input.by_index(i).unwrap();
+            let mut bytes = Vec::new();
+            f.read_to_end(&mut bytes).unwrap();
+            if let Ok(xml) = std::str::from_utf8(&bytes)
+                && let (Some(start), Some(end)) = (xml.find("<cx:clear>"), xml.find("</cx:clear>"))
+            {
+                let end = end + "</cx:clear>".len();
+                let clear = xml[start..end]
+                    .replace("<cx:clear>", "<cx:clear xmlns:cx=\"http://schemas.microsoft.com/office/drawing/2014/chartex\">")
+                    .replace("pcaRings=\"0,", "pcaRings=\"1,");
+                let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+                encoder.write_all(clear.as_bytes()).unwrap();
+                let compressed = if sync {
+                    encoder.flush().unwrap();
+                    encoder.get_ref().clone()
+                } else {
+                    encoder.finish().unwrap()
+                };
+                bytes = format!("{}<cx:binary>{}</cx:binary>{}", &xml[..start], STANDARD.encode(compressed), &xml[end..]).into_bytes();
+                replaced = true;
+            }
+            output.start_file(f.name(), zip::write::SimpleFileOptions::default()).unwrap();
+            output.write_all(&bytes).unwrap();
+        }
+        assert!(replaced);
+        let back = deckcraft_pptx::import(&output.finish().unwrap().into_inner()).unwrap();
+        assert_eq!(chart(&clear).series[0].geography, chart(&back).series[0].geography);
+        let actual = render_slide(&back, 0, &RenderOpts::default());
+        assert!(expected.pixels == actual.pixels, "binary and clear cache images differ");
+        assert_eq!(chart(&rebuilt(&back)).series[0].geography, chart(&clear).series[0].geography);
+    }
+}
+
+#[test]
+fn extended_funnel_labels_render_point_typography_after_rebuild() {
+    let mut c = base(ChartType::Funnel);
+    c.categories = vec!["First".into(), "Second".into(), "Third".into()];
+    c.data_labels = true;
+    let style = |rgb| {
+        let mut body = TextBody::from_text("");
+        body.body.rot = Some(-15.);
+        body.paragraphs[0].def_props = RunProps {
+            font: Some("Inter".into()),
+            size: Some(30.),
+            bold: Some(true),
+            fill: Some(Fill::solid(ColorRef::rgb(rgb))),
+            ..Default::default()
+        };
+        body
+    };
+    let mut s = Series {
+        values: vec![Some(100.), Some(65.), Some(40.)],
+        data_labels: Some(true),
+        label_defaults: DataLabel { style: Some(style(Rgba::rgb(255, 0, 0))), ..Default::default() },
+        fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(200, 200, 200)))),
+        ..Default::default()
+    };
+    s.point_labels.insert(1, DataLabel { hidden: Some(true), ..Default::default() });
+    s.point_labels.insert(2, DataLabel { style: Some(style(Rgba::rgb(0, 0, 255))), ..Default::default() });
+    c.series.push(s);
+    let mut p = original();
+    append(&mut p, c);
+    let back = rebuilt(&p);
+    assert_eq!(chart(&back).point_label(&chart(&back).series[0], 1), None);
+    let image = render_slide(&back, 0, &RenderOpts::default());
+    let mut colors = [0, 0];
+    for px in image.pixels.chunks_exact(4) {
+        if px[0] > 200 && px[1] < 80 && px[2] < 80 {
+            colors[0] += 1;
+        }
+        if px[2] > 200 && px[0] < 80 && px[1] < 80 {
+            colors[1] += 1;
+        }
+    }
+    assert!(colors[0] > 50 && colors[1] > 50, "rich chartEx label colours absent: {colors:?}");
+    assert!(
+        image.pixels.chunks_exact(4).filter(|px| px[0].abs_diff(200) < 3 && px[1].abs_diff(200) < 3 && px[2].abs_diff(200) < 3).count() > 5000,
+        "explicit funnel series fill must reach the renderer"
+    );
+    probe(&back, "rich-funnel-labels.pptx");
+}
+
+#[test]
+fn generated_labels_import_end_mark_typography_without_literal_runs() {
+    let mut c = base(ChartType::Funnel);
+    c.categories = vec!["Original".into()];
+    let mut style = TextBody::default();
+    style.paragraphs.push(deckcraft_model::text::Paragraph {
+        end_props: RunProps { size: Some(27.), bold: Some(true), fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 0, 0)))), ..Default::default() },
+        ..Default::default()
+    });
+    c.series.push(Series {
+        values: vec![Some(42.)],
+        data_labels: Some(true),
+        label_defaults: DataLabel { style: Some(style), ..Default::default() },
+        ..Default::default()
+    });
+    let mut p = original();
+    append(&mut p, c);
+    let back = rebuilt(&p);
+    let label = chart(&back).series[0].label(0);
+    assert_eq!(label.style.as_ref().unwrap().paragraphs[0].def_props.size, Some(27.));
+    let image = render_slide(&back, 0, &RenderOpts::default());
+    assert!(image.pixels.chunks_exact(4).filter(|p| p[0] > 200 && p[1] < 80 && p[2] < 80).count() > 50);
+}

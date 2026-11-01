@@ -2,7 +2,8 @@
 //! or network service are bundled. PCA is the public Bing point-compression wire format.
 use serde::{Deserialize, Serialize};
 
-pub const MAX_GEO_POINTS: usize = 200_000;
+pub const MAX_GEO_POINTS: usize = 2_000_000;
+pub const MAX_GEO_RINGS: usize = 100_000;
 const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -66,7 +67,11 @@ pub fn decode_ring(encoded: &str, budget: &mut usize) -> Option<Vec<[f64; 2]>> {
         if lat.abs() > 9_000_000 || lon.abs() > 54_000_000 {
             return None;
         }
-        out.push([(lon as f64 / 100_000.0 + 180.0).rem_euclid(360.0) - 180.0, lat as f64 / 100_000.0]);
+        let longitude = lon as f64 / 100_000.0;
+        // +180 and -180 identify opposite clipped boundaries in a world polygon. Do not
+        // fold the positive boundary onto the negative one and draw a chord across the map.
+        let longitude = if longitude.abs() <= 180.0 { longitude } else { (longitude + 180.0).rem_euclid(360.0) - 180.0 };
+        out.push([longitude, lat as f64 / 100_000.0]);
     }
     (out.len() >= 3).then_some(out)
 }
@@ -127,5 +132,17 @@ mod wire_vectors {
         for (actual, expected) in points.iter().zip(expected) {
             assert!((actual[0] - expected[0]).abs() < 1e-10 && (actual[1] - expected[1]).abs() < 1e-10);
         }
+    }
+}
+
+#[cfg(test)]
+mod meridian_tests {
+    use super::*;
+    #[test]
+    fn positive_world_boundary_stays_positive_after_pca_decode() {
+        let ring = vec![[170., 10.], [180., 10.], [180., 20.], [170., 20.], [170., 10.]];
+        let encoded = encode_ring(&ring).unwrap();
+        let actual = decode_ring(&encoded, &mut 100).unwrap();
+        assert_eq!(actual, ring);
     }
 }

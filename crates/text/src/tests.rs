@@ -2039,3 +2039,16 @@ fn diagram_at_full_font_floor_uses_only_needed_line_compression() {
     assert_eq!(result.font_scale, 1.0);
     assert!(result.line_reduction > 0.0 && result.line_reduction < 0.15, "{}", result.line_reduction);
 }
+
+#[test]
+fn forced_word_break_metric_distinguishes_spaces_words_and_cjk() {
+    for (text, width, forced) in
+        [("alpha beta gamma delta", 200.0, false), ("extraordinarilylongword", 50.0, true), ("中文中文中文中文中文中文", 80.0, false)]
+    {
+        let (p, mut sh) = setup(text, width, 1200.0);
+        sh.text.as_mut().unwrap().body.autofit = Some(AutoFit::None);
+        let result = lay(&p, &sh, width, 1200.0);
+        assert!(result.lines.len() > 1);
+        assert_eq!(result.forced_line_breaks(sh.text.as_ref().unwrap()) > 0, forced, "{text}: {:?}", result.lines);
+    }
+}

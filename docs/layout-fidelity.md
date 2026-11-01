@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01: sparse diagram constraint solving, document-owned geographic polygons,
-rich point labels, and native observations separating successful checks from remaining limits.
+Updated 2026-11-01 (PPTX.9): measured numeric diagram rules, circular placement, raw-DEFLATE
+geographic caches and extended label typography, with native observations and explicit limits.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -309,7 +309,7 @@ Original uncached forward-reference and cycle integration fixtures retain all si
 geometry across export/import. Native PowerPoint opens both; the forward-reference fixture uses the
 six-shape custom layout. The cyclic fixture falls back to three generic blocks in the tested native
 version. This is an explicit difference, **not** evidence of cyclic-layout pixel equivalence.
-Text-dependent width/height rule search and every native fallback policy remain unverified.
+PPTX.9 below adds measured rule search and corrects reference/value semantics; every native fallback policy remains unverified.
 
 Region maps now parse `cx:geography/cx:geoCache/cx:clear` entity polygons, decode PCA rings with
 checked integer arithmetic, bind regions to data by entity id/name (not XML order), and draw actual
@@ -324,8 +324,8 @@ The original polygon fixture reverses region/data order and has a hole; tests as
 assignment, the unpainted hole, dateline width, malformed-input limits and rebuild preservation.
 The public PCA numerical vector supplies an independent decoder check. The package passes SDK
 validation and opens in PowerPoint, but the synthetic non-service geography renders blank there;
-therefore this is **not** a native map visual-parity pass. Opaque provider-specific `binary` caches
-are retained but not decoded; missing/unusable boundaries still display explicitly labelled tiles.
+therefore this is **not** a native map visual-parity pass. PPTX.9 below decodes observed raw-DEFLATE `binary` caches; unknown encodings
+are still retained without decoding; missing/unusable boundaries still display explicitly labelled tiles.
 
 Classic data labels now retain default/point overrides, multiple rich runs/paragraphs, font slots,
 size, bold/italic/underline, baseline/spacing, fill, rotation, delete, manual layout, number formats,
@@ -353,3 +353,62 @@ Format/algorithm references (no vendor visual assets are included):
 - [PCA wire algorithm](https://learn.microsoft.com/en-us/bingmaps/rest-services/elevations/point-compression-algorithm)
 - [Geographic ring framing](https://learn.microsoft.com/en-us/bingmaps/spatial-data-services/geodata-api)
 - [Miller projection](https://proj.org/en/stable/operations/projections/mill.html)
+
+
+### Measured diagram rules and compressed maps (PPTX.9)
+
+Uncached numeric rules now run after presentation themes, embedded fonts and inheritance are
+available. Each candidate uses the actual text renderer's preset text rectangle, insets, shaping,
+Unicode line breaks, line/paragraph spacing and overflow. Rules execute in authored order and
+replace absolute constraint values or referenced factors; `max` is enforced. Every trial resolves
+the dependent constraints and connectors again. Search distinguishes forced word breaks from
+normal whitespace/CJK wrapping, stops at a fitting value, and recovers unnecessary box growth
+after later font reduction. Reference-linked labels participate in the fit decision; primary and
+secondary font constraints remain distinct. Ordinary slides and cached diagrams skip this pass.
+The solver/search share a finite operation budget; unknown/nonconverging cases retain the source.
+
+Native probes verify height-before-font versus font-before-height, factor versus absolute height,
+font floors, and invalid maxima. The constraints now give an explicit reference precedence over
+`val`, as observed natively: the two are alternatives, **not** reference plus an offset. Earlier
+additive-cycle tests were replaced with proper proportional cycles and independent bounds.
+Cycle layout uses clockwise angles from twelve o'clock, fits actual child sizes on a circle and
+centres the occupied bounds of partial arcs. Three original native cycle variants establish
+orientation, extent fitting and centring; this does not certify all compound-cycle heuristics.
+
+An independent, private native geographic-cache observation established base64-wrapped RFC1951
+raw DEFLATE containing `cx:clear` XML. Both final streams and native SYNC_FLUSH-terminated streams
+are decoded. Only a complete, bounded XML document with a `clear` root is accepted. Limits are
+16 MiB encoded input, 8 MiB compressed data and 32 MiB expanded XML, with depth/point/ring limits.
+Original synthetic tests cover final/flush streams, truncation, invalid XML, trailing input,
+expansion limits, version-1 PCA framing and exact clear-versus-binary render/rebuild equivalence.
+Source binary bytes remain preserved; no external service or document converter is invoked.
+
+The observed world cache has roughly 535,000 points, motivating a bounded two-million-point
+budget rather than truncating a valid map at 200,000. Native world-map comparisons confirm
+Robinson for automatic projection and the scope of explicit series fill. Positive and negative
+180-degree clipped polygon edges remain distinct, preventing transcontinental seam chords. Native cache boundary
+geometry now renders directly; provider hierarchy/geocoding metadata and all automatic viewport
+policies remain separate gaps. In particular, the original non-service synthetic cache still
+renders blank in PowerPoint despite successful schema/open checks. That is not a visual pass.
+No native cache coordinates, vendor assets or screenshots are published.
+
+Funnel point labels now use the shared rich-text renderer, including per-point font/fill,
+rotation and hidden labels. Export materializes inherited visibility and end-mark typography,
+which native generated labels require to retain font size/fill. End-mark-only imported styles
+also resolve correctly. Native funnel probes confirm 30pt red/blue values and a hidden middle
+label after this correction; its automatic plot spacing still differs, and native ignores the
+funnel text-body rotation attribute in this probe. A regression caught and fixes automatic run colors incorrectly
+winning over explicit label-default typography; classic labels share that correction. Import,
+forced rebuild and rendered-color checks cover the extended path. Other chartEx label/callout
+layout rules remain partial.
+
+Public definitions used here are ECMA-376 Part 1 §21.4 (diagram constraints/rules/parameters),
+MS-ODRAWXML `CT_GeoCache`/`CT_Clear`, RFC1951 DEFLATE and the public PCA framing linked above.
+Private native observations are interoperability evidence, never shipped assets.
+
+The PPTX.9 direct-export probe set contains nine pages at 3840 pixels wide, exported in about
+4.5 seconds locally with unchanged inputs and a PATH containing no document converter. This is a
+performance/success observation, not a claim of pixel equivalence for every probe.
+
+PPTX.9 final validation: all eight `cargo xtask ci` gates pass, including the complete workspace
+tests and WASM. All native observations above use original probes; native outputs stay private.

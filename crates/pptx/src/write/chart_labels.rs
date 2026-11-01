@@ -23,6 +23,11 @@ fn body(w: &mut W, tag: &str, body: &TextBody) {
             }
             w.close(tag);
         }
+        // Native generated chart labels inherit their end-mark properties, even when
+        // defRPr is present. Materialize them rather than losing size/fill in PowerPoint.
+        let mut end = p.end_props.clone();
+        end.inherit(&p.def_props);
+        chart_rpr(w, "a:endParaRPr", &end);
         w.close("a:p");
     }
     w.close(tag);
@@ -94,7 +99,9 @@ pub(super) fn write(w: &mut W, c: &Chart, s: &Series, cx: bool) {
         properties(w, &defaults, true, false);
         for (&i, l) in s.point_labels.iter().take(4096).filter(|(_, l)| l.hidden != Some(true)) {
             w.open("cx:dataLabel", A::new().a("idx", i).o("pos", l.position.as_deref()));
-            properties(w, l, true, true);
+            let mut effective = l.clone();
+            effective.inherit(&defaults);
+            properties(w, &effective, true, true);
             w.close("cx:dataLabel");
         }
         for (&i, _) in s.point_labels.iter().take(4096).filter(|(_, l)| l.hidden == Some(true)) {

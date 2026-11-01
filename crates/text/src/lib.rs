@@ -121,6 +121,31 @@ pub struct TextLayout {
     pub boundaries: Vec<Vec<bool>>,
 }
 
+impl TextLayout {
+    /// Emergency line breaks inside a normally unbreakable word. Diagram rule search uses
+    /// this independently of height overflow when font shrinking is permitted. The same
+    /// Unicode/language-sensitive opportunities are used by normal line breaking.
+    pub fn forced_line_breaks(&self, body: &TextBody) -> usize {
+        let allowed: Vec<_> = body
+            .paragraphs
+            .iter()
+            .map(|p| {
+                let text = p.text();
+                (breaking::break_opportunities(&text, p.props.latin_line_break.unwrap_or(false)).0, text.chars().collect::<Vec<_>>())
+            })
+            .collect();
+        self.lines
+            .iter()
+            .filter(|line| {
+                allowed.get(line.para).is_some_and(|(a, chars)| {
+                    // LineInfo excludes trailing spaces, whereas a Unicode opportunity follows them.
+                    !chars.get(line.end).is_some_and(|c| c.is_whitespace()) && a.get(line.end).is_some_and(|v| !v)
+                })
+            })
+            .count()
+    }
+}
+
 /// Which side of a boundary a caret belongs to: `Downstream` sticks to the character after it
 /// (the default), `Upstream` to the character before it, which differs at direction changes and
 /// at the end of a wrapped line.

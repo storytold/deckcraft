@@ -16,6 +16,7 @@ pub(super) fn body(e: &El) -> TextBody {
         para.props.align = p.child("pPr").and_then(|e| e.attr("algn")).and_then(Align::from_xml);
         para.def_props = p.path(&["pPr", "defRPr"]).map(label_run_props).unwrap_or_default();
         para.def_props.inherit(&list_default);
+        para.end_props = p.child("endParaRPr").map(label_run_props).unwrap_or_default();
         for run in p.elements().filter(|e| matches!(e.local(), "r" | "fld" | "br")).take(budget) {
             let mut props = run.child("rPr").map(label_run_props).unwrap_or_default();
             props.inherit(&para.def_props);
@@ -24,6 +25,10 @@ pub(super) fn body(e: &El) -> TextBody {
                 props,
                 kind: if run.is("br") { RunKind::Break } else { RunKind::Text },
             });
+        }
+        if para.runs.is_empty() {
+            // Office uses the end mark as the style of generated numeric label text.
+            para.def_props.inherit(&para.end_props);
         }
         budget = budget.saturating_sub(para.runs.len());
         body.paragraphs.push(para);

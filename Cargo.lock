@@ -1221,11 +1221,14 @@ dependencies = [
 name = "deckcraft-pptx"
 version = "0.13.1"
 dependencies = [
+ "base64 0.22.1",
  "deckcraft-color",
  "deckcraft-engine",
  "deckcraft-fonts",
  "deckcraft-geom",
  "deckcraft-model",
+ "deckcraft-text",
+ "flate2",
  "image",
  "log",
  "quick-xml 0.41.0",

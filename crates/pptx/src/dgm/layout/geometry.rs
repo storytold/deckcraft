@@ -7,13 +7,14 @@ use deckcraft_geom::Xfrm;
 pub(super) struct BoxStyle {
     pub(super) rect: Xfrm,
     pub(super) font: Option<f64>,
+    pub(super) secondary_font: Option<f64>,
     pub(super) min_font: Option<f64>,
     pub(super) margins: [Option<f64>; 4],
     pub(super) extra: [Option<f64>; 64],
 }
 impl BoxStyle {
     pub(super) fn new(rect: Xfrm) -> Self {
-        Self { rect, font: None, min_font: None, margins: [None; 4], extra: [None; 64] }
+        Self { rect, font: None, secondary_font: None, min_font: None, margins: [None; 4], extra: [None; 64] }
     }
     pub(super) fn get(&self, property: &str) -> Option<f64> {
         let r = self.rect;
@@ -27,7 +28,8 @@ impl BoxStyle {
             "b" => r.y + r.h,
             "ctrX" => r.x + r.w / 2.0,
             "ctrY" => r.y + r.h / 2.0,
-            "primFontSz" | "secFontSz" => self.font.unwrap_or(18.0),
+            "primFontSz" => self.font.unwrap_or(18.0),
+            "secFontSz" => self.secondary_font.unwrap_or(self.font.unwrap_or(18.0) * 0.78),
             "lMarg" => self.margins[0].unwrap_or(self.font.unwrap_or(18.0) * 0.56),
             "tMarg" => self.margins[1].unwrap_or(self.font.unwrap_or(18.0) * 0.56),
             "rMarg" => self.margins[2].unwrap_or(self.font.unwrap_or(18.0) * 0.56),
@@ -58,7 +60,8 @@ impl BoxStyle {
             "b" => self.rect.y = v - self.rect.h,
             "ctrX" => self.rect.x = v - self.rect.w / 2.0,
             "ctrY" => self.rect.y = v - self.rect.h / 2.0,
-            "primFontSz" | "secFontSz" => self.font = Some(v.clamp(1.0, 400.0)),
+            "primFontSz" => self.font = Some(v.clamp(1.0, 400.0)),
+            "secFontSz" => self.secondary_font = Some(v.clamp(1.0, 400.0)),
             "lMarg" => self.margins[0] = Some(v.max(0.0)),
             "tMarg" => self.margins[1] = Some(v.max(0.0)),
             "rMarg" => self.margins[2] = Some(v.max(0.0)),
@@ -102,8 +105,21 @@ fn extra_index(property: &str) -> Option<usize> {
 pub(super) fn place<'a>(node: &Instance<'a>, rect: Xfrm, data: &Data<'a>, out: &mut Vec<Placed<'a>>, depth: usize) -> Result<(), &'static str> {
     let mut work = 0;
     let solution = super::constraints::resolve(node, rect, data, &mut work)?;
-    let style = super::constraints::lookup(&solution, node).unwrap_or_else(|| BoxStyle::new(rect));
-    place_inner(node, style, data, out, depth, &solution, &mut work)
+    place_solved(node, rect, data, out, depth, &solution, &mut work)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn place_solved<'a>(
+    node: &Instance<'a>,
+    rect: Xfrm,
+    data: &Data<'a>,
+    out: &mut Vec<Placed<'a>>,
+    depth: usize,
+    solution: &super::constraints::Solution,
+    work: &mut usize,
+) -> Result<(), &'static str> {
+    let style = super::constraints::lookup(solution, node).unwrap_or_else(|| BoxStyle::new(rect));
+    place_inner(node, style, data, out, depth, solution, work)
 }
 
 fn charge(work: &mut usize, amount: usize) -> Result<(), &'static str> {
@@ -134,12 +150,14 @@ fn place_inner<'a>(
         let mut rect = style.rect;
         rect.rot += shape.f64("rot").unwrap_or(0.0).clamp(-36000.0, 36000.0);
         out.push(Placed {
+            node_key: super::constraints::id(node),
             shape: Some(shape),
             points: node.points.iter().filter_map(|i| data.points.get(*i).copied()).collect(),
             name: node.name.clone(),
             style: node.style.clone(),
             rect,
             font: style.font,
+            secondary_font: style.secondary_font,
             min_font: style.min_font,
             margins: style.margins.map(|m| m.unwrap_or(style.font.unwrap_or(18.0) * 0.56)),
             text_rotation: node.number("txRot", 0.0),
@@ -149,12 +167,14 @@ fn place_inner<'a>(
         });
     } else if node.alg == "tx" && !node.points.is_empty() {
         out.push(Placed {
+            node_key: super::constraints::id(node),
             shape: None,
             points: node.points.iter().filter_map(|i| data.points.get(*i).copied()).collect(),
             name: node.name.clone(),
             style: node.style.clone(),
             rect: style.rect,
             font: style.font,
+            secondary_font: style.secondary_font,
             min_font: style.min_font,
             margins: style.margins.map(|m| m.unwrap_or(style.font.unwrap_or(18.0) * 0.56)),
             text_rotation: node.number("txRot", 0.0),
@@ -174,6 +194,7 @@ fn place_inner<'a>(
         .map(|(child, rect)| {
             let mut resolved = super::constraints::lookup(solution, child).unwrap_or(BoxStyle { rect, ..local });
             resolved.font = resolved.font.or(local.font);
+            resolved.secondary_font = resolved.secondary_font.or(local.secondary_font);
             resolved.min_font = resolved.min_font.or(local.min_font);
             resolved
         })
@@ -181,6 +202,8 @@ fn place_inner<'a>(
     // Linear placement uses the constrained sizes, including invisible spacing nodes.
     if matches!(node.alg.as_str(), "lin" | "hierChild") {
         pack_linear(node, local, &mut children);
+    } else if node.alg == "cycle" {
+        pack_cycle(node, local, &mut children);
     }
     let iter: Box<dyn Iterator<Item = usize>> =
         if node.reverse { Box::new((0..node.children.len()).rev()) } else { Box::new(0..node.children.len()) };
@@ -274,11 +297,7 @@ fn constraint_value(c: &El, reference: &BoxStyle) -> Option<f64> {
         } else {
             72.0 / 25.4
         };
-    if ty.is_empty() {
-        c.f64("val").map(|v| v * scale)
-    } else {
-        reference.get(ty).map(|v| v * c.f64("fact").unwrap_or(1.0) + c.f64("val").unwrap_or(0.0) * scale)
-    }
+    if ty.is_empty() { c.f64("val").map(|v| v * scale) } else { reference.get(ty).map(|v| v * c.f64("fact").unwrap_or(1.0)) }
 }
 
 pub(super) fn initial(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
@@ -297,7 +316,7 @@ pub(super) fn initial(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
             })
             .collect(),
         "cycle" => {
-            let start = node.number("stAng", 0.0).to_radians();
+            let start = (node.number("stAng", 0.0) - 90.0).to_radians();
             let span = node.number("spanAng", 360.0).to_radians();
             let center = node.param("ctrShpMap", "none") != "none";
             let orbit = (count - usize::from(center)).max(1) as f64;
@@ -356,6 +375,57 @@ pub(super) fn initial(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
             .collect(),
         "hierRoot" => hierarchy(node, style),
         _ => vec![r; count],
+    }
+}
+
+// Cycle angles start at twelve o'clock and turn clockwise (ECMA-376 ST_ParameterId).
+// Fit a circle against the actual child extents; an incomplete arc is centred by its
+// occupied bounds, not the centre of the unoccupied remainder of the circle.
+fn pack_cycle(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle]) {
+    if children.is_empty() {
+        return;
+    }
+    let center = node.param("ctrShpMap", "none") != "none";
+    let orbit = children.len().saturating_sub(usize::from(center)).max(1);
+    let start = node.number("stAng", 0.0).to_radians();
+    let span = node.number("spanAng", 360.0).to_radians();
+    let divisor = if (span.abs() - std::f64::consts::TAU).abs() < 1e-6 { orbit } else { orbit.saturating_sub(1).max(1) } as f64;
+    let units: Vec<_> = (0..children.len())
+        .map(|i| {
+            if center && i == 0 {
+                (0., 0.)
+            } else {
+                let angle = start + i.saturating_sub(usize::from(center)) as f64 * span / divisor;
+                (angle.sin(), -angle.cos())
+            }
+        })
+        .collect();
+    let bounds = |radius: f64| {
+        let mut extents = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for (child, (x, y)) in children.iter().zip(&units) {
+            extents.0 = extents.0.min(x * radius - child.rect.w / 2.);
+            extents.1 = extents.1.min(y * radius - child.rect.h / 2.);
+            extents.2 = extents.2.max(x * radius + child.rect.w / 2.);
+            extents.3 = extents.3.max(y * radius + child.rect.h / 2.);
+        }
+        extents
+    };
+    let (mut low, mut high) = (0., style.rect.w.min(style.rect.h) / 2.);
+    for _ in 0..24 {
+        let r = (low + high) / 2.;
+        let b = bounds(r);
+        if b.2 - b.0 <= style.rect.w && b.3 - b.1 <= style.rect.h {
+            low = r;
+        } else {
+            high = r;
+        }
+    }
+    let b = bounds(low);
+    let cx = style.rect.x + (style.rect.w - b.0 - b.2) / 2.;
+    let cy = style.rect.y + (style.rect.h - b.1 - b.3) / 2.;
+    for (child, (x, y)) in children.iter_mut().zip(units) {
+        child.rect.x = cx + x * low - child.rect.w / 2.;
+        child.rect.y = cy + y * low - child.rect.h / 2.;
     }
 }
 

@@ -32,20 +32,20 @@ fn charge(work: &mut usize, n: usize) -> Result<(), &'static str> {
     *work = work.saturating_add(n);
     if *work > MAX_WORK { Err("diagram constraint budget exceeded") } else { Ok(()) }
 }
-struct Entry<'t, 'a> {
-    node: &'t Instance<'a>,
-    parent: Option<usize>,
-    style: BoxStyle,
-    end: usize,
+pub(super) struct Entry<'t, 'a> {
+    pub node: &'t Instance<'a>,
+    pub parent: Option<usize>,
+    pub style: BoxStyle,
+    pub end: usize,
 }
 pub(super) type Solution = HashMap<usize, BoxStyle>;
-fn id(node: &Instance<'_>) -> usize {
+pub(super) fn id(node: &Instance<'_>) -> usize {
     std::ptr::from_ref(node) as usize
 }
 pub(super) fn lookup(solution: &Solution, node: &Instance<'_>) -> Option<BoxStyle> {
     solution.get(&id(node)).copied()
 }
-fn collect<'t, 'a>(
+pub(super) fn collect<'t, 'a>(
     node: &'t Instance<'a>,
     mut style: BoxStyle,
     parent: Option<usize>,
@@ -66,7 +66,7 @@ fn collect<'t, 'a>(
     }
     Ok(())
 }
-fn selected(entries: &[Entry<'_, '_>], owner: usize, axis: &str, name: Option<&str>, point: Option<&str>, data: &Data<'_>) -> Vec<usize> {
+pub(super) fn selected(entries: &[Entry<'_, '_>], owner: usize, axis: &str, name: Option<&str>, point: Option<&str>, data: &Data<'_>) -> Vec<usize> {
     let Some(root) = entries.get(owner) else { return vec![] };
     (owner..root.end)
         .filter(|&i| {
@@ -82,10 +82,6 @@ fn selected(entries: &[Entry<'_, '_>], owner: usize, axis: &str, name: Option<&s
 }
 fn expr(entries: &[Entry<'_, '_>], node: usize, owner: usize, property: &str) -> Row {
     let mut row = Row::default();
-    let property = match property {
-        "primFontSz" | "secFontSz" => "primFontSz",
-        _ => property,
-    };
     let (position, extent, factor) = match property {
         "l" => ("l", "w", 0.),
         "r" => ("l", "w", 1.),
@@ -127,6 +123,9 @@ fn equation(
     let scale = if matches!(property, "primFontSz" | "secFontSz" | "pyraAcctRatio") || property.starts_with("user") { 1. } else { 72. / 25.4 };
     row.value = c.f64("val").unwrap_or(0.) * scale;
     if let Some(ref_type) = c.attr("refType").filter(|s| !matches!(*s, "" | "none")) {
+        // ECMA-376: val is an alternative to a reference, never an additive offset.
+        // Native PowerPoint gives an explicit refType precedence if both are present.
+        row.value = 0.;
         let reference = reference.ok_or("missing diagram constraint reference")?;
         let ref_type =
             if ref_type == "diam" { if entries[reference].style.rect.w < entries[reference].style.rect.h { "w" } else { "h" } } else { ref_type };
@@ -178,6 +177,25 @@ fn solve(rows: &[Row], entries: &[Entry<'_, '_>], work: &mut usize) -> Result<BT
     Ok(values)
 }
 pub(super) fn resolve(node: &Instance<'_>, rect: Xfrm, data: &Data<'_>, work: &mut usize) -> Result<Solution, &'static str> {
+    resolve_adjusted(node, rect, data, work, &HashMap::new())
+}
+
+/// A rule changes a constraint's absolute value or reference multiplier; it does not sever
+/// dependent equations. Node identity distinguishes repeated instances with the same name.
+#[derive(Clone, Copy)]
+pub(super) enum Adjustment {
+    Value(f64),
+    Factor(f64),
+}
+pub(super) type Adjustments = HashMap<(usize, String), Adjustment>;
+
+pub(super) fn resolve_adjusted(
+    node: &Instance<'_>,
+    rect: Xfrm,
+    data: &Data<'_>,
+    work: &mut usize,
+    adjustments: &Adjustments,
+) -> Result<Solution, &'static str> {
     let mut entries = Vec::new();
     collect(node, BoxStyle::new(rect), None, &mut entries, work)?;
     let mut equations: BTreeMap<Key, Row> = BTreeMap::new();
@@ -194,7 +212,17 @@ pub(super) fn resolve(node: &Instance<'_>, rect: Xfrm, data: &Data<'_>, work: &m
             for (j, target) in targets.iter().enumerate() {
                 let reference = if refs.len() == targets.len() { refs.get(j) } else { refs.first() }.copied();
                 for property in if ty == "diam" { vec!["w", "h"] } else { vec![ty] } {
-                    let row = equation(&entries, owner, *target, reference, c, property, work)?;
+                    let mut adjusted = (*c).clone();
+                    if let Some(change) = adjustments.get(&(id(entries[*target].node), property.into())) {
+                        match change {
+                            Adjustment::Value(value) => {
+                                adjusted.set_attr("refType", "none");
+                                adjusted.set_attr("val", &value.to_string());
+                            }
+                            Adjustment::Factor(factor) => adjusted.set_attr("fact", &factor.to_string()),
+                        }
+                    }
+                    let row = equation(&entries, owner, *target, reference, &adjusted, property, work)?;
                     if matches!(c.attr("op"), Some("gte" | "lte")) {
                         bounded.insert((*target, property.to_string()));
                     }
@@ -219,6 +247,18 @@ pub(super) fn resolve(node: &Instance<'_>, rect: Xfrm, data: &Data<'_>, work: &m
     // Algorithm geometry supplies only unconstrained degrees of freedom. Relationships
     // remain affine so children follow a resized container, rather than retaining its old size.
     for (i, entry) in entries.iter().enumerate() {
+        charge(work, adjustments.len())?;
+        for ((node, property), change) in adjustments {
+            if *node == id(entry.node)
+                && !equations.contains_key(&(i, property.clone()))
+                && let Adjustment::Value(value) = change
+            {
+                let mut c = El::default();
+                c.set_attr("val", &value.to_string());
+                let row = equation(&entries, i, i, None, &c, property, work)?;
+                equations.insert((i, property.clone()), row);
+            }
+        }
         for (position, size, coords) in [("l", "w", ["l", "r", "ctrX"]), ("t", "h", ["t", "b", "ctrY"])] {
             let count = coords.iter().filter(|p| equations.contains_key(&(i, p.to_string()))).count();
             for property in [position, size] {

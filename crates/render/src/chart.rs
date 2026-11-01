@@ -241,7 +241,8 @@ pub(crate) fn point_data_label(
     if spec.hidden == Some(true) {
         return;
     }
-    let mut default_props = chart.text_props(ChartTextRole::Default);
+    let mut default_props = spec.style.as_ref().and_then(|b| b.paragraphs.first()).map(|p| p.def_props.clone()).unwrap_or_default();
+    default_props.inherit(&chart.text_props(ChartTextRole::Default));
     default_props.size = default_props.size.or(chart.text_size);
     let automatic = label_body(text, style, &default_props);
     let mut body = spec.text.clone().unwrap_or_else(|| automatic.clone());

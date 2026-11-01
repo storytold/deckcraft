@@ -66,14 +66,23 @@ fn paths(map: &Geography) -> Vec<BezPath> {
             start = b;
         }
     }
-    let centre = start + (360.0 - gap) / 2.0;
+    let world = 360.0 - gap > 300.0;
+    let centre = if world {
+        start = -180.0;
+        0.0
+    } else {
+        start + (360.0 - gap) / 2.0
+    };
+    // Native automatic projection uses Robinson for a world extent. Keep an explicitly
+    // selected projection; small local extents retain a cylindrical default.
+    let projection = if map.projection.is_empty() && world { "robinson" } else { &map.projection };
     let mut budget = deckcraft_model::geography::MAX_GEO_POINTS;
     map.regions
         .iter()
         .take(4096)
         .map(|region| {
             let mut path = BezPath::new();
-            for ring in region.rings.iter().take(4096) {
+            for ring in region.rings.iter().take(deckcraft_model::geography::MAX_GEO_RINGS) {
                 if ring.len() < 3 || ring.len() > budget {
                     continue;
                 }
@@ -82,8 +91,8 @@ fn paths(map: &Geography) -> Vec<BezPath> {
                     continue;
                 }
                 for (i, &[lon, lat]) in ring.iter().enumerate() {
-                    let lon = (lon - start).rem_euclid(360.0) + start - centre;
-                    let point = project(lon, lat, &map.projection);
+                    let lon = if world { lon } else { (lon - start).rem_euclid(360.0) + start - centre };
+                    let point = project(lon, lat, projection);
                     if i == 0 {
                         path.move_to(point);
                     } else {
@@ -106,7 +115,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
     if bounds.width() < 1e-9 || bounds.height() < 1e-9 {
         return false;
     }
-    let plot = Rect::new(area.x0, area.y0, area.x1, area.y1 - base * 3.0).inset(-base);
+    let plot = area.inset(-base * 0.35);
     if plot.width() <= 0.0 || plot.height() <= 0.0 {
         return false;
     }
@@ -123,7 +132,11 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
         let path = transform * path;
         let value = region.point.and_then(|i| series.values.get(i)).copied().flatten().filter(|v| v.is_finite());
         let t = value.map(|v| if max > min { (v - min) / (max - min) } else { 0.5 });
-        let fill = t.map_or(Rgba::rgb(217, 217, 217), |t| crate::chartex::mix(lo, hi, t));
+        let fill = if matches!(series.fill, Some(deckcraft_model::Fill::Solid { .. })) {
+            hi
+        } else {
+            t.map_or(Rgba::rgb(224, 224, 224), |t| crate::chartex::mix(lo, hi, t))
+        };
         ctx.set_transform(m);
         ctx.set_fill_rule(vello_cpu::peniko::Fill::EvenOdd);
         ctx.set_paint(color(fill, 1.0));
@@ -194,5 +207,22 @@ mod tests {
         for kind in ["mercator", "miller", "albers", "robinson"] {
             assert!(project(180., 90., kind).is_finite());
         }
+    }
+    #[test]
+    fn clipped_world_meridian_does_not_draw_a_transcontinental_chord() {
+        use deckcraft_model::geography::GeoRegion;
+        let map = Geography {
+            projection: "robinson".into(),
+            regions: vec![
+                GeoRegion { rings: vec![vec![[170., 10.], [180., 10.], [180., 20.], [170., 20.]]], ..Default::default() },
+                GeoRegion { rings: vec![vec![[-180., -10.], [-170., -10.], [-170., 0.], [-180., 0.]]], ..Default::default() },
+                // Intermediate points establish a world extent rather than one local dateline island.
+                GeoRegion { rings: vec![(-180..=180).step_by(30).map(|x| [x as f64, -60.]).collect()], ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let p = paths(&map);
+        assert!(p[0].bounding_box().width() < 0.3);
+        assert!(p[1].bounding_box().width() < 0.3);
     }
 }

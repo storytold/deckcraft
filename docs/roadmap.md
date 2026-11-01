@@ -147,3 +147,6 @@ and rich point labels; provider/native-layout gaps remain documented, and beta s
 
 PDF writer consolidation preserves the current raster-artwork export and its selectable
 text layer, notes and handouts. It does not advance vector-PDF or printing parity.
+
+PPTX.9 (2026-11-01): measured diagram numeric-rule search, cycle extent fitting, observed raw-DEFLATE
+geographic caches and extended label typography. Remaining native/provider gaps are explicit.

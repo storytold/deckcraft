@@ -414,12 +414,14 @@ fn uncached_affine_cycle_renders_all_shapes_without_an_external_converter() {
             *bytes = xml
                 .replace(
                     "type=\"w\" for=\"ch\" forName=\"header\" refType=\"w\" fact=\"0.9\"",
-                    "type=\"w\" for=\"ch\" forName=\"header\" refFor=\"ch\" refForName=\"details\" refType=\"w\" fact=\"0.5\" val=\"15\"",
+                    "type=\"w\" for=\"ch\" forName=\"header\" refFor=\"ch\" refForName=\"details\" refType=\"w\" fact=\"1\"",
                 )
                 .replace(
                     "type=\"w\" for=\"ch\" forName=\"details\" refType=\"w\" fact=\"0.9\"",
-                    "type=\"w\" for=\"ch\" forName=\"details\" refFor=\"ch\" refForName=\"header\" refType=\"w\" fact=\"0.5\" val=\"15\"",
+                    "type=\"w\" for=\"ch\" forName=\"details\" refFor=\"ch\" refForName=\"header\" refType=\"w\" fact=\"1\"",
                 )
+                .replace("forName=\"details\" refFor=\"ch\" refForName=\"header\" refType=\"w\" fact=\"1\"/>",
+                    "forName=\"details\" refFor=\"ch\" refForName=\"header\" refType=\"w\" fact=\"1\"/><dgm:constr type=\"w\" for=\"ch\" forName=\"details\" op=\"gte\" val=\"30\"/><dgm:constr type=\"w\" for=\"ch\" forName=\"details\" op=\"lte\" val=\"30\"/>")
                 .into_bytes();
         }
     }
@@ -460,5 +462,64 @@ fn uncached_forward_reference_sizes_follow_the_named_sibling() {
     }
     if let Some(dir) = std::env::var_os("DECKCRAFT_RENDER_PROBES") {
         std::fs::write(std::path::PathBuf::from(dir).join("forward-reference.pptx"), bytes).unwrap();
+    }
+}
+
+fn numeric_rule_fixture(rules: &str, height: &str, long: bool) -> Vec<u8> {
+    let mut parts = files(&uncached_fixture());
+    let layout = format!(
+        r#"<dgm:layoutDef xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" uniqueId="urn:deckcraft:test:uncached-original" minVer="12.0">
+    <dgm:title val="Original numeric rule probe"/><dgm:desc val="Text-driven constraint changes"/><dgm:catLst><dgm:cat type="process" pri="99"/></dgm:catLst>
+    <dgm:layoutNode name="canvas"><dgm:alg type="lin"/><dgm:presOf/><dgm:shape type="none"/><dgm:constrLst/><dgm:ruleLst/>
+    <dgm:forEach axis="ch" ptType="node"><dgm:layoutNode name="card" styleLbl="node1"><dgm:alg type="tx"/><dgm:presOf axis="self"/><dgm:shape type="roundRect"/>
+    <dgm:constrLst><dgm:constr type="w" val="50"/>{height}<dgm:constr type="primFontSz" val="36"/></dgm:constrLst>
+    <dgm:ruleLst>{rules}</dgm:ruleLst></dgm:layoutNode></dgm:forEach></dgm:layoutNode></dgm:layoutDef>"#
+    );
+    for (_, bytes) in &mut parts {
+        let Ok(doc) = parse_xml(bytes) else { continue };
+        if doc.root.is("layoutDef") {
+            *bytes = layout.as_bytes().to_vec();
+        } else if doc.root.is("dataModel") {
+            let text = if long { "Observe changes in the landscape and record every result" } else { "OK" };
+            *bytes = String::from_utf8(bytes.clone()).unwrap().replace("Research", text).replace("Build", "Build a careful prototype").into_bytes();
+        }
+    }
+    zip(parts)
+}
+
+#[test]
+fn numeric_rules_measure_real_fonts_after_import_and_preserve_order_on_roundtrip() {
+    let grow = r#"<dgm:rule type="h" val="80"/>"#;
+    let shrink = r#"<dgm:rule type="primFontSz" val="12"/>"#;
+    let height = r#"<dgm:constr type="h" val="25"/>"#;
+    let a_bytes = numeric_rule_fixture(&format!("{grow}{shrink}"), height, true);
+    let b_bytes = numeric_rule_fixture(&format!("{shrink}{grow}"), height, true);
+    let a = deckcraft_pptx::import(&a_bytes).unwrap();
+    let b = deckcraft_pptx::import(&b_bytes).unwrap();
+    let first = |p: &deckcraft_model::Presentation| {
+        let s = &group(p).children()[0];
+        (s.xfrm.unwrap(), s.text.as_ref().unwrap().paragraphs[0].runs[0].props.size.unwrap())
+    };
+    let (ra, fa) = first(&a);
+    let (rb, fb) = first(&b);
+    assert!(ra.h > rb.h + 50.0 && fa > fb && fb >= 12.0, "grow first {ra:?}/{fa}, shrink first {rb:?}/{fb}");
+    let short = deckcraft_pptx::import(&numeric_rule_fixture(&format!("{grow}{shrink}"), height, false)).unwrap();
+    let (rs, fs) = first(&short);
+    assert!(rs.h < ra.h && fs >= fa);
+    let factor = deckcraft_pptx::import(&numeric_rule_fixture(
+        &format!(r#"<dgm:rule type="h" fact="1.6"/>{shrink}"#),
+        r#"<dgm:constr type="h" refType="w" fact="0.5"/>"#,
+        true,
+    ))
+    .unwrap();
+    assert!((first(&factor).0.h - ra.h).abs() < 0.05);
+    let back = deckcraft_pptx::import(&deckcraft_pptx::export(&a).unwrap()).unwrap();
+    assert_eq!(geometry(group(&a)), geometry(group(&back)));
+    assert_eq!(first(&a).1, first(&back).1);
+    if let Some(dir) = std::env::var_os("DECKCRAFT_RENDER_PROBES") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("rules-height-first.pptx"), a_bytes).unwrap();
+        std::fs::write(dir.join("rules-font-first.pptx"), b_bytes).unwrap();
     }
 }

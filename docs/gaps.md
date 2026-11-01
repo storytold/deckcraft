@@ -173,7 +173,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
   have their own layouts, histograms and Paretos bin their data (count, width or Scott's rule),
   and box & whisker charts use exclusive or inclusive quartiles with 1.5 IQR whiskers. Region maps
   with clear entity caches now decode PCA polygons, bind by entity id, and render boundaries/holes
-  offline. Opaque binary caches are retained; unusable caches still use explicitly labelled tiles.
+  offline. Observed raw-DEFLATE binary caches now decode; unknown encodings are retained and unusable caches still use explicitly labelled tiles.
   No map assets are bundled, and full native map viewport/provider parity remains open. Radar charts are drawn polar (filled
   or lines), stock charts as high-low lines with close dashes or up/down bars and saved as
   `c:stockChart`, and combo charts start as columns with a line. Trendlines round-trip
@@ -200,7 +200,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
   probes now open/export in native PowerPoint. Fresh parts include complete original chart styles
   and native-compatible scalar attributes; the latter differ from the SDK schema for three
   elements. Classic rich/point labels now read, rebuild and render mixed runs, rotation, hidden
-  points, manual positions and formatted visibility combinations. chartEx label rendering,
+  points, manual positions and formatted visibility combinations. Funnel typography also renders; remaining chartEx label rendering,
   leader/callout routing, offsets and automatic plot spacing remain partial. Manual layouts and body rotations render; explicit axes/gridlines
   retain line width/dashes/paint. See [layout fidelity](layout-fidelity.md).
 - **Impact:** most business decks have charts; editing their data is routine.
@@ -228,8 +228,8 @@ Detail in [file-format-parity.md](file-format-parity.md).
   received the same native validation; PowerPoint has ~200 layouts, picture layouts and 3-D styles; editing an
   imported diagram's structure still redraws it with DeckCraft's layout; the full rule-search and
   constraint language is incomplete. Named child/descendant affine references, cycles, paired
-  edges and bounds now use a bounded sparse solver rather than eight relaxation passes; text-dependent
-  rule search and native cycle fallback policy remain open. The corrected uncached nested-card definition now renders
+  edges and bounds now use a bounded sparse solver rather than eight relaxation passes. Ordered
+  text-measured rules and circular extent fitting are supported; all native search/fallback heuristics remain open. The corrected uncached nested-card definition now renders
   six shapes in PowerPoint; measured coordinates, text spacing and default insets are covered.
   Full layout parity is not claimed.
 - **Impact:** structural or unmappable edits to an imported diagram still need explicit relayout or conversion to shapes.
@@ -484,3 +484,7 @@ no global parity claim or score increase.
 | 2026-10-11 | minor | Animated GIF export landed (#171); the entry now covers video export and animating transitions in the GIF |
 | 2026-10-10 | minor | Noted that no gap blocks alpha (core-workflow gate passes) |
 | 2026-10-10 | major | Created: every gap from the 2026-10-10 re-measure and the 16 open GitHub issues, ranked, with beta blockers marked |
+
+PPTX.9 (2026-11-01): measured rule ordering, distinct primary/secondary fonts, reference-linked
+fit decisions, circular placement and observed compressed map caches close bounded cases.
+Provider hierarchy, all native viewport/search policies and remaining chartEx labels stay partial.

@@ -3,7 +3,9 @@
 pub(crate) mod chart;
 mod chart_labels;
 mod chartex;
+mod diagram_rules;
 pub(crate) mod dml;
+mod geo_cache;
 mod shapes;
 mod theme;
 mod timing;
@@ -474,6 +476,9 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
 
     inherit_placeholder_geometry(&mut p);
     default_text_anchor(&mut p);
+    p.embedded_fonts = read_embedded_fonts(&mut imp, &pres_part, pres_el);
+    p.media = std::mem::take(&mut imp.media);
+    diagram_rules::apply(&mut p);
     for master in &mut p.masters {
         let master = Arc::make_mut(master);
         crate::dgm::kept::seal(&mut master.shapes, 0);
@@ -485,8 +490,6 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         crate::dgm::kept::seal(&mut Arc::make_mut(slide).shapes, 0);
     }
     p.header_footer = header_footer(&p);
-    p.embedded_fonts = read_embedded_fonts(&mut imp, &pres_part, pres_el);
-    p.media = std::mem::take(&mut imp.media);
     p.next_id = imp.next;
     p.fix_next_id();
     Ok((p, lost_slides))

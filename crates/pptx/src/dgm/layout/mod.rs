@@ -3,6 +3,7 @@
 mod constraints;
 mod data;
 mod geometry;
+mod rules;
 #[cfg(test)]
 mod tests;
 use crate::xml::El;
@@ -14,12 +15,14 @@ const MAX_INSTANCES: usize = 10000;
 const MAX_WORK: usize = 200000;
 
 pub(crate) struct Placed<'a> {
+    pub node_key: usize,
     pub shape: Option<&'a El>,
     pub points: Vec<&'a El>,
     pub name: String,
     pub style: String,
     pub rect: Xfrm,
     pub font: Option<f64>,
+    pub secondary_font: Option<f64>,
     pub min_font: Option<f64>,
     pub margins: [f64; 4],
     pub text_rotation: f64,
@@ -80,6 +83,17 @@ struct Compiler<'a> {
 /// Returns an error on exhausted budgets or an unknown algorithm; callers keep the source
 /// object and its preview rather than silently substituting an unrelated layout.
 pub(crate) fn evaluate<'a>(layout: &'a El, source: &'a El, frame: Xfrm) -> Result<Vec<Placed<'a>>, &'static str> {
+    evaluate_measured(layout, source, frame, None)
+}
+
+/// Optional text measurement is supplied after the presentation's themes and embedded fonts
+/// have been loaded. The interpreter stays independent of any rendering backend.
+pub(crate) fn evaluate_measured<'a>(
+    layout: &'a El,
+    source: &'a El,
+    frame: Xfrm,
+    measure: Option<&mut rules::Measure<'_>>,
+) -> Result<Vec<Placed<'a>>, &'static str> {
     if !frame.is_finite() || frame.w <= 0.0 || frame.h <= 0.0 {
         return Err("invalid diagram frame");
     }
@@ -105,6 +119,9 @@ pub(crate) fn evaluate<'a>(layout: &'a El, source: &'a El, frame: Xfrm) -> Resul
     let context = Context { point: data.root, position: 1, count: 1, vars: HashMap::new() };
     let mut compiler = Compiler { data, refs, instances: 0, work };
     let tree = compiler.node(root, context, 0)?;
+    if let Some(measure) = measure {
+        return rules::search(&tree, frame, &compiler.data, measure);
+    }
     let mut out = Vec::new();
     geometry::place(&tree, frame, &compiler.data, &mut out, 0)?;
     geometry::connect(&mut out, &compiler.data);

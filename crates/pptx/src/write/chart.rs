@@ -1277,7 +1277,11 @@ fn write_geography(w: &mut W, g: &deckcraft_model::geography::Geography) {
     w.open0("cx:layoutPr");
     w.open(
         "cx:geography",
-        A::new().a("projectionType", &g.projection).a("cultureLanguage", "en-US").a("cultureRegion", "US").a("attribution", &g.attribution),
+        A::new()
+            .o("projectionType", (!g.projection.is_empty()).then_some(&g.projection))
+            .a("cultureLanguage", "en-US")
+            .a("cultureRegion", "US")
+            .a("attribution", &g.attribution),
     );
     w.open("cx:geoCache", A::new().a("provider", "DeckCraft"));
     w.open0("cx:clear");

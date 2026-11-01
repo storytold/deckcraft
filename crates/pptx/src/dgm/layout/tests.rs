@@ -228,8 +228,10 @@ fn coupled_cycles_edges_and_descendant_references_solve_together() {
       <layoutNode name="box"><alg type="composite"/><layoutNode name="leaf"><alg type="tx"/><shape type="rect"/></layoutNode></layoutNode>
       <layoutNode name="other"><alg type="tx"/><shape type="rect"/></layoutNode>
       <constrLst>
-        <constr type="w" for="ch" forName="box" refFor="ch" refForName="other" refType="w" fact="0.5" val="10"/>
-        <constr type="w" for="ch" forName="other" refFor="ch" refForName="box" refType="w" fact="0.5" val="20"/>
+        <constr type="w" for="ch" forName="box" refFor="ch" refForName="other" refType="w" fact="0.5"/>
+        <constr type="w" for="ch" forName="other" refFor="ch" refForName="box" refType="w" fact="2"/>
+        <constr type="w" for="ch" forName="other" op="gte" val="40"/>
+        <constr type="w" for="ch" forName="other" op="lte" val="40"/>
         <constr type="l" for="des" forName="leaf" val="5"/>
         <constr type="r" for="des" forName="leaf" refFor="ch" refForName="other" refType="w"/>
       </constrLst></layoutNode>"#,
@@ -237,7 +239,7 @@ fn coupled_cycles_edges_and_descendant_references_solve_together() {
     let shapes = evaluate(&layout, &data, frame()).unwrap();
     let other = shapes.iter().find(|s| s.name == "other").unwrap();
     let leaf = shapes.iter().find(|s| s.name == "leaf").unwrap();
-    assert!((other.rect.w - (100. / 3.) * 72. / 25.4).abs() < 1e-6);
+    assert!((other.rect.w - 40. * 72. / 25.4).abs() < 1e-6);
     assert!((leaf.rect.x - 5. * 72. / 25.4).abs() < 1e-6);
     assert!((leaf.rect.x + leaf.rect.w - other.rect.w).abs() < 1e-6);
 }
@@ -265,8 +267,105 @@ fn inconsistent_cycles_and_missing_named_references_fail_instead_of_guessing() {
     let data = source();
     for reference in ["a", "missing"] {
         let layout = layout(&format!(
-            "<layoutNode><alg type='composite'/><layoutNode name='a'><shape type='rect'/></layoutNode><constrLst><constr type='w' for='ch' forName='a' refFor='ch' refForName='{reference}' refType='w' val='1'/></constrLst></layoutNode>"
+            "<layoutNode><alg type='composite'/><layoutNode name='a'><shape type='rect'/></layoutNode><constrLst><constr type='w' for='ch' forName='a' refFor='ch' refForName='{reference}' refType='w' fact='2'/><constr type='w' for='ch' forName='a' op='gte' val='1'/></constrLst></layoutNode>"
         ));
         assert!(evaluate(&layout, &data, frame()).is_err());
+    }
+}
+
+#[test]
+fn measured_rules_are_ordered_stop_at_fit_and_recompute_dependencies() {
+    let data = source();
+    let run = |rules: &str| {
+        let l = layout(&format!(
+            r#"<layoutNode><alg type="composite"/><constrLst>
+          <constr type="w" for="ch" forName="text" val="50"/>
+          <constr type="h" for="ch" forName="text" val="10"/>
+          <constr type="h" for="ch" forName="mirror" refType="h" refFor="ch" refForName="text"/>
+          <constr type="primFontSz" for="ch" val="30"/></constrLst><ruleLst>{rules}</ruleLst>
+          <layoutNode name="text"><alg type="tx"/><presOf axis="ch" cnt="1"/><shape type="rect"/></layoutNode>
+          <layoutNode name="mirror"><alg type="sp"/><shape type="rect"/></layoutNode></layoutNode>"#
+        ));
+        let mut measure = |items: &[Placed<'_>], _: bool| {
+            Ok(items.iter().map(|p| if p.name == "text" { (p.font.unwrap_or(18.0) * 3.0 - p.rect.h).max(0.0) } else { 0.0 }).collect())
+        };
+        evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap().iter().map(|p| (p.rect.h, p.font)).collect::<Vec<_>>()
+    };
+    let grow = r#"<rule type="h" for="ch" forName="text" val="50"/>"#;
+    let shrink = r#"<rule type="primFontSz" for="ch" forName="text" val="5"/>"#;
+    let a = run(&format!("{grow}{shrink}"));
+    let b = run(&format!("{shrink}{grow}"));
+    assert!((a[0].0 - 90.0).abs() < 0.02 && a[0].1 == Some(30.0));
+    assert!((a[1].0 - a[0].0).abs() < 1e-6, "dependent height must be re-solved");
+    assert!((b[0].0 - 10.0 * 72.0 / 25.4).abs() < 1e-6 && b[0].1.unwrap() < 10.0);
+}
+
+#[test]
+fn measured_rules_resolve_factors_and_maximum_bounds_and_reject_bad_measurements() {
+    let data = source();
+    let l = layout(
+        r#"<layoutNode><alg type="composite"/><layoutNode name="text"><alg type="tx"/>
+      <presOf axis="ch" cnt="1"/><shape type="rect"/><constrLst><constr type="w" val="40"/>
+      <constr type="h" refType="w" fact="0.25"/></constrLst><ruleLst><rule type="h" fact="2" max="30"/>
+      </ruleLst></layoutNode></layoutNode>"#,
+    );
+    let mut measure = |items: &[Placed<'_>], _: bool| Ok(items.iter().map(|p| (150.0 - p.rect.h).max(0.0)).collect());
+    let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+    assert!((out[0].rect.h - 30.0 * 72.0 / 25.4).abs() < 1e-6);
+    let mut bad = |_: &[Placed<'_>], _: bool| Ok(vec![f64::NAN]);
+    assert!(evaluate_measured(&l, &data, frame(), Some(&mut bad)).is_err());
+}
+
+#[test]
+fn text_rules_measure_reference_linked_font_groups_and_keep_secondary_sizes_distinct() {
+    let data = source();
+    let layout = layout(
+        r#"<layoutNode name="root"><alg type="composite"/>
+      <layoutNode name="a"><alg type="tx"/><shape type="rect"/></layoutNode>
+      <layoutNode name="b"><alg type="tx"/><shape type="rect"/></layoutNode>
+      <constrLst><constr type="primFontSz" for="ch" forName="a" val="36"/>
+      <constr type="primFontSz" for="ch" forName="b" refFor="ch" refForName="a" refType="primFontSz"/>
+      <constr type="secFontSz" for="ch" refType="primFontSz" refFor="ch" fact="0.75"/></constrLst>
+      <ruleLst><rule type="primFontSz" for="ch" forName="a" val="8"/></ruleLst></layoutNode>"#,
+    );
+    let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if p.name == "b" { (p.font.unwrap() - 18.).max(0.) } else { 0. }).collect());
+    let shapes = evaluate_measured(&layout, &data, frame(), Some(&mut measure)).unwrap();
+    assert_eq!(shapes[0].font, shapes[1].font);
+    assert!((shapes[0].font.unwrap() - 18.).abs() <= 1.0);
+    for p in &shapes {
+        assert!((p.secondary_font.unwrap() - p.font.unwrap() * 0.75).abs() < 1e-6);
+    }
+}
+#[test]
+fn reference_constraint_ignores_absolute_value_instead_of_adding_an_offset() {
+    let data = source();
+    let layout = layout(
+        r#"<layoutNode><alg type="tx"/><shape type="rect"/><constrLst>
+      <constr type="w" val="50"/><constr type="h" refType="w" fact="0.5" val="10"/>
+      </constrLst></layoutNode>"#,
+    );
+    let p = evaluate(&layout, &data, frame()).unwrap();
+    assert!((p[0].rect.h - 25. * 72. / 25.4).abs() < 1e-6);
+}
+
+#[test]
+fn constrained_cycle_starts_at_twelve_oclock_and_centres_partial_arc() {
+    let data = source();
+    for span in [180., 360.] {
+        let l = layout(&format!(
+            r#"<layoutNode><alg type="cycle"><param type="spanAng" val="{span}"/></alg>
+          <forEach axis="ch"><layoutNode name="card"><alg type="tx"/><presOf/><shape type="rect"/>
+          <constrLst><constr type="w" val="25"/><constr type="h" val="25"/></constrLst>
+          </layoutNode></forEach></layoutNode>"#
+        ));
+        let shapes = evaluate(&l, &data, Xfrm::new(0., 0., 768., 324.)).unwrap();
+        assert_eq!(shapes.len(), 3);
+        assert!(shapes[0].rect.y < shapes[1].rect.y && shapes[1].rect.x > shapes[0].rect.x);
+        let left = shapes.iter().map(|p| p.rect.x).fold(f64::INFINITY, f64::min);
+        let right = shapes.iter().map(|p| p.rect.x + p.rect.w).fold(f64::NEG_INFINITY, f64::max);
+        let top = shapes.iter().map(|p| p.rect.y).fold(f64::INFINITY, f64::min);
+        let bottom = shapes.iter().map(|p| p.rect.y + p.rect.h).fold(f64::NEG_INFINITY, f64::max);
+        assert!((left + right - 768.).abs() < 1e-6 && (top + bottom - 324.).abs() < 1e-6);
+        assert!(top >= -1e-6 && bottom <= 324. + 1e-6);
     }
 }
