@@ -544,6 +544,31 @@ fn describe(id: Option<&str>) -> Result<(), String> {
 /// Takes the raw OS arguments (see `main`): a non-UTF-8 file name must reach
 /// the filesystem intact, and `main` never parses them as Unicode first.
 /// Tests drive this directly without touching the process's own arguments.
+///
+/// The raw file is capped before it is read: the audit's ZIP and
+/// decompressed limits only apply once the bytes are in memory, so an
+/// unbounded `read` could exhaust the process first (a sparse file's
+/// logical size is the tell). The cap is deliberately generous — stored
+/// media makes a legitimate raw package nearly as large as its decompressed
+/// total — and it bounds the read, not the audit: the audit's own limits
+/// still govern what is scanned.
+const MAX_AUDIT_RAW_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+fn read_file_capped(path: &std::path::Path, cap: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read as _;
+    let len = std::fs::metadata(path).map_err(|e| format!("{e}"))?.len();
+    if len > cap {
+        return Err(format!("file over the {cap}-byte raw input cap"));
+    }
+    let mut file = std::fs::File::open(path).map_err(|e| format!("{e}"))?;
+    let mut bytes = Vec::new();
+    (&mut file).take(cap + 1).read_to_end(&mut bytes).map_err(|e| format!("{e}"))?;
+    if bytes.len() as u64 > cap {
+        return Err(format!("file over the {cap}-byte raw input cap"));
+    }
+    Ok(bytes)
+}
+
 fn audit_args(raw: Vec<std::ffi::OsString>) -> ExitCode {
     use std::path::PathBuf;
     // The raw OS arguments, not the lossy `String` args `main` parsed: a
@@ -566,7 +591,7 @@ fn audit_args(raw: Vec<std::ffi::OsString>) -> ExitCode {
         return ExitCode::from(2);
     };
     let path = PathBuf::from(file);
-    let bytes = match std::fs::read(&path) {
+    let bytes = match read_file_capped(&path, MAX_AUDIT_RAW_BYTES) {
         Ok(bytes) => bytes,
         Err(e) => {
             eprintln!("deckcraft-cli: audit: cannot read {}: {e}", path.display());
@@ -924,6 +949,14 @@ mod audit_tests {
         assert_eq!(audit_args(vec![ospath("/nonexistent/deck.pptx")]), ExitCode::from(2));
         let path = write_temp("extra", &hidden_slide_package());
         assert_eq!(audit_args(vec![ospath(&path), ospath("extra")]), ExitCode::from(2));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn capped_read_rejects_over_cap_files() {
+        let path = write_temp("capped", b"0123456789ABCDEFGHIJ");
+        assert!(crate::read_file_capped(std::path::Path::new(&path), 10).is_err());
+        assert!(crate::read_file_capped(std::path::Path::new(&path), 20).is_ok());
         let _ = std::fs::remove_file(&path);
     }
 

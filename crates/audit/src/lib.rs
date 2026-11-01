@@ -14,6 +14,8 @@
 //!
 //! - Matching is by namespace URI, not by prefix, so a file that spells the
 //!   PresentationML namespace with an unusual prefix is still scanned.
+//! - Transitional and Strict namespaces are both recognized: a Strict
+//!   package is scanned, not silently passed over.
 //! - A hidden slide is `show="false"` (W3C boolean) on the `p:sld` root of a
 //!   slide part (`CT_Slide`, ECMA-376 Part 1 §19.3.1.38); omitted `show` means
 //!   shown.
@@ -42,10 +44,32 @@ use serde::Serialize;
 #[cfg(test)]
 mod tests;
 
-// ECMA-376 Part 1 namespaces the audit understands.
+// ECMA-376 Part 1 namespaces the audit understands, Transitional and Strict.
+// Strict packages spell the same vocabularies with purl.oclc.org URIs; a
+// Strict slide, comment or picture must be found, not silently skipped.
 const NS_P: &[u8] = b"http://schemas.openxmlformats.org/presentationml/2006/main";
+const NS_P_STRICT: &[u8] = b"http://purl.oclc.org/ooxml/presentationml/main";
 const NS_A: &[u8] = b"http://schemas.openxmlformats.org/drawingml/2006/main";
+const NS_A_STRICT: &[u8] = b"http://purl.oclc.org/ooxml/drawingml/main";
 const NS_R: &[u8] = b"http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const NS_R_STRICT: &[u8] = b"http://purl.oclc.org/ooxml/officeDocument/relationships";
+
+/// PresentationML namespace, Transitional or Strict.
+fn is_p(ns: &[u8]) -> bool {
+    ns == NS_P || ns == NS_P_STRICT
+}
+
+/// DrawingML namespace, Transitional or Strict.
+fn is_a(ns: &[u8]) -> bool {
+    ns == NS_A || ns == NS_A_STRICT
+}
+
+/// The value of a relationship attribute (`r:embed`, …), Transitional or Strict.
+/// The OPC `.rels` namespace (`NS_RELS`) is deliberately not covered here:
+/// rels files always use it, Strict or not.
+fn attr_rel<'a>(el: &'a Element, local: &str) -> Option<&'a str> {
+    attr(el, NS_R, local).or_else(|| attr(el, NS_R_STRICT, local))
+}
 const NS_DC: &[u8] = b"http://purl.org/dc/elements/1.1/";
 const NS_CP: &[u8] = b"http://schemas.openxmlformats.org/package/2006/metadata/core-properties";
 const NS_EP: &[u8] = b"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties";
@@ -204,9 +228,19 @@ pub fn audit_bytes(bytes: &[u8]) -> Result<Vec<AuditFinding>, AuditError> {
 
     let mut findings = Vec::new();
     validate_presentation(&parts)?;
-    scan_hidden_slides(&parts, &mut findings)?;
+    // Slides the presentation relationships point at, including valid slides
+    // outside the conventional `ppt/slides/` directory: load them so the
+    // slide scanners below see them, not just the conventional paths.
+    let slides = slide_targets(&parts)?;
+    for name in &slides {
+        if !parts.contains_key(name) && name.ends_with(".xml") && names.iter().any(|n| n == name) {
+            let data = read_part(&mut archive, name, &mut total)?;
+            parts.insert(name.clone(), data);
+        }
+    }
+    scan_hidden_slides(&parts, &slides, &mut findings)?;
     scan_notes(&names, &mut findings);
-    scan_cropped_images(&parts, &mut findings)?;
+    scan_cropped_images(&parts, &slides, &mut findings)?;
     scan_comments(&parts, &mut findings)?;
     scan_core_properties(&parts, &mut findings)?;
     scan_extended_properties(&parts, &mut findings)?;
@@ -258,22 +292,32 @@ fn part_names(archive: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Result<Vec<String
 }
 
 /// Read one part, capped against decompression bombs, and charge it against
-/// the cumulative budget. Fails closed: with a single archive for the whole
+/// the cumulative budget. The caps bind the read itself, not just the
+/// finished buffer: the reader takes at most the tighter of the remaining
+/// cumulative budget and the applicable per-part limit, plus one byte to
+/// detect overflow, so an oversized part cannot allocate its full size
+/// before the limit fires. Fails closed: with a single archive for the whole
 /// scan, a listed name that can't be read is an error, never a silent skip.
 fn read_part(archive: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str, total: &mut u64) -> Result<Vec<u8>, AuditError> {
+    // Every part the audit reads today is XML (`.xml` or `.rels`), so the
+    // XML-part limit is the applicable per-part limit; anything else keeps
+    // the general part limit.
+    let part_limit = if name.ends_with(".xml") || name.ends_with(".rels") { MAX_XML_PART_BYTES } else { MAX_PART_BYTES };
+    let remaining = MAX_TOTAL_BYTES.saturating_sub(*total);
+    let read_limit = remaining.min(part_limit).saturating_add(1);
     let mut data = Vec::new();
     {
         let mut file = archive.by_name(name).map_err(|e| AuditError::Zip(format!("{name}: {e}")))?;
-        let mut limited = (&mut file).take(MAX_PART_BYTES + 1);
+        let mut limited = (&mut file).take(read_limit);
         limited.read_to_end(&mut data).map_err(|e| AuditError::Zip(format!("{name}: {e}")))?;
     }
-    if data.len() as u64 > MAX_PART_BYTES {
+    if data.len() as u64 > part_limit {
         return Err(AuditError::Limit(format!("part too large: {name}")));
     }
-    *total = total.saturating_add(data.len() as u64);
-    if *total > MAX_TOTAL_BYTES {
+    if data.len() as u64 > remaining {
         return Err(AuditError::Limit(format!("package too large: {total} decompressed bytes over budget")));
     }
+    *total = total.saturating_add(data.len() as u64);
     Ok(data)
 }
 
@@ -538,15 +582,50 @@ fn rel_targets(parts: &BTreeMap<String, Vec<u8>>, rels_name: &str) -> Result<BTr
     Ok(map)
 }
 
+/// Relationship types that mark a presentation slide, Transitional and Strict.
+const RT_SLIDE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide";
+const RT_SLIDE_STRICT: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships/slide";
+
+/// Slide part names from the presentation relationships, sorted and deduped.
+/// PresentationML requires each slide to be an explicit relationship target;
+/// it does not require the `ppt/slides/` directory.
+fn slide_targets(parts: &BTreeMap<String, Vec<u8>>) -> Result<Vec<String>, AuditError> {
+    let mut targets: BTreeSet<String> = BTreeSet::new();
+    let Some(xml) = parts.get("ppt/_rels/presentation.xml.rels") else { return Ok(Vec::new()) };
+    for_each_element(xml, "ppt/_rels/presentation.xml.rels", &mut |el| {
+        if el.ns.as_slice() == NS_RELS
+            && el.local == "Relationship"
+            && attr(el, b"", "TargetMode") != Some("External")
+            && let (Some(target), Some(ty)) = (attr(el, b"", "Target"), attr(el, b"", "Type"))
+            && (ty == RT_SLIDE || ty == RT_SLIDE_STRICT)
+        {
+            targets.insert(resolve_target("ppt", target));
+        }
+        Ok(())
+    })?;
+    Ok(targets.into_iter().collect())
+}
+
+/// Slide parts to scan: conventional `ppt/slides/*.xml` parts plus any
+/// relationship-target slide, deduped and sorted.
+fn slide_parts<'a>(parts: &'a BTreeMap<String, Vec<u8>>, targets: &'a [String]) -> Vec<&'a String> {
+    let mut slides: BTreeSet<&String> = parts.keys().filter(|n| n.starts_with("ppt/slides/") && n.ends_with(".xml")).collect();
+    for target in targets {
+        if let Some(name) = parts.get_key_value(target).map(|(k, _)| k) {
+            slides.insert(name);
+        }
+    }
+    slides.into_iter().collect()
+}
+
 /// Slides hidden from the slide show: `show="false"` on the `p:sld` root
 /// (`CT_Slide`, ECMA-376 Part 1 §19.3.1.38). Omitted `show` means shown.
-fn scan_hidden_slides(parts: &BTreeMap<String, Vec<u8>>, findings: &mut Vec<AuditFinding>) -> Result<(), AuditError> {
-    let mut slides: Vec<&String> = parts.keys().filter(|n| n.starts_with("ppt/slides/") && n.ends_with(".xml")).collect();
-    slides.sort();
+fn scan_hidden_slides(parts: &BTreeMap<String, Vec<u8>>, targets: &[String], findings: &mut Vec<AuditFinding>) -> Result<(), AuditError> {
+    let slides = slide_parts(parts, targets);
     for name in slides {
         let Some(xml) = parts.get(name) else { continue };
         let root = root_element(xml, name)?;
-        if root.ns.as_slice() == NS_P && root.local == "sld" {
+        if is_p(root.ns.as_slice()) && root.local == "sld" {
             let hidden = match attr(&root, b"", "show") {
                 None => false,
                 Some(v) => matches!(v.to_ascii_lowercase().as_str(), "false" | "0" | "off" | "no" | "f"),
@@ -589,9 +668,8 @@ fn crop_description(el: &Element) -> Option<String> {
 /// Cropped pictures whose `a:blip` still references the full image part: the
 /// crop only hides pixels (ECMA-376 Part 1 §20.1.8.50/§20.1.8.51). Reported,
 /// never stripped.
-fn scan_cropped_images(parts: &BTreeMap<String, Vec<u8>>, findings: &mut Vec<AuditFinding>) -> Result<(), AuditError> {
-    let mut slides: Vec<&String> = parts.keys().filter(|n| n.starts_with("ppt/slides/") && n.ends_with(".xml")).collect();
-    slides.sort();
+fn scan_cropped_images(parts: &BTreeMap<String, Vec<u8>>, targets: &[String], findings: &mut Vec<AuditFinding>) -> Result<(), AuditError> {
+    let slides = slide_parts(parts, targets);
     for name in slides {
         let Some(xml) = parts.get(name) else { continue };
         let targets = rel_targets(parts, &rels_of_part(name).unwrap_or_default())?;
@@ -654,7 +732,7 @@ fn scan_slide_crops(xml: &[u8], part: &str, targets: &BTreeMap<String, String>, 
                     return Err(AuditError::Limit(format!("{part}: too many XML elements")));
                 }
                 let el = element_of(&mut reader, &ns, e, part)?;
-                if el.ns.as_slice() == NS_P && el.local == "pic" && !in_pic {
+                if is_p(el.ns.as_slice()) && el.local == "pic" && !in_pic {
                     in_pic = true;
                     pic_depth = depth;
                     embed = None;
@@ -670,7 +748,7 @@ fn scan_slide_crops(xml: &[u8], part: &str, targets: &BTreeMap<String, String>, 
                     return Err(AuditError::Limit(format!("{part}: too many XML elements")));
                 }
                 let el = element_of(&mut reader, &ns, e, part)?;
-                if el.ns.as_slice() == NS_P && el.local == "pic" && !in_pic {
+                if is_p(el.ns.as_slice()) && el.local == "pic" && !in_pic {
                     // An empty picture has no children: nothing to pair.
                 } else if in_pic && depth >= pic_depth {
                     // An empty child fires at its parent's depth + 0, so
@@ -724,11 +802,11 @@ fn scan_slide_crops(xml: &[u8], part: &str, targets: &BTreeMap<String, String>, 
 /// Inside a `p:pic`: remember the `a:blip` embed target and any `a:srcRect`
 /// crop. Called for both start and empty elements within the picture.
 fn observe_pic_child(el: &Element, embed: &mut Option<String>, crop: &mut Option<String>) {
-    if el.ns.as_slice() == NS_A && el.local == "blip" {
-        if let Some(rid) = attr(el, NS_R, "embed") {
+    if is_a(el.ns.as_slice()) && el.local == "blip" {
+        if let Some(rid) = attr_rel(el, "embed") {
             *embed = Some(rid.to_string());
         }
-    } else if el.ns.as_slice() == NS_A && el.local == "srcRect" && crop.is_none() {
+    } else if is_a(el.ns.as_slice()) && el.local == "srcRect" && crop.is_none() {
         *crop = crop_description(el);
     }
 }
@@ -740,7 +818,7 @@ fn scan_comments(parts: &BTreeMap<String, Vec<u8>>, findings: &mut Vec<AuditFind
     let mut authors: BTreeMap<String, (String, String)> = BTreeMap::new();
     if let Some(xml) = parts.get("ppt/commentAuthors.xml") {
         for_each_element(xml, "ppt/commentAuthors.xml", &mut |el| {
-            if el.ns.as_slice() == NS_P
+            if is_p(el.ns.as_slice())
                 && el.local == "cmAuthor"
                 && let (Some(id), Some(name)) = (attr(el, b"", "id"), attr(el, b"", "name"))
             {
@@ -755,7 +833,7 @@ fn scan_comments(parts: &BTreeMap<String, Vec<u8>>, findings: &mut Vec<AuditFind
     for name in comment_parts {
         let Some(xml) = parts.get(name) else { continue };
         for_each_element(xml, name, &mut |el| {
-            if el.ns.as_slice() == NS_P
+            if is_p(el.ns.as_slice())
                 && el.local == "cm"
                 && let Some(author_id) = attr(el, b"", "authorId")
             {
@@ -825,7 +903,9 @@ fn scan_media(names: &[String], findings: &mut Vec<AuditFinding>) {
 /// embedded objects/packages (ECMA-376 Part 2 §11, plus the Office VBA extension).
 const RT_VBA_PROJECT: &str = "http://schemas.microsoft.com/office/2006/relationships/vbaProject";
 const RT_OLE_OBJECT: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject";
+const RT_OLE_OBJECT_STRICT: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships/oleObject";
 const RT_PACKAGE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package";
+const RT_PACKAGE_STRICT: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships/package";
 
 /// Macro and embedded-object parts: reported as visibility, never blocked or
 /// removed. Detection is by relationship type first — a reachable VBA or OLE
@@ -858,7 +938,7 @@ fn scan_active_content(names: &[String], parts: &BTreeMap<String, Vec<u8>>, find
                 let resolved = resolve_target(&source_dir, target);
                 match attr(el, b"", "Type").unwrap_or("") {
                     RT_VBA_PROJECT => report(FindingKind::VbaProject, resolved, "VBA macro project present (relationship type)", findings),
-                    RT_OLE_OBJECT | RT_PACKAGE => {
+                    RT_OLE_OBJECT | RT_OLE_OBJECT_STRICT | RT_PACKAGE | RT_PACKAGE_STRICT => {
                         report(FindingKind::OleEmbedding, resolved, "embedded object present (relationship type)", findings)
                     }
                     _ => {}

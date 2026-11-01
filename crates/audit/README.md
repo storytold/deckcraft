@@ -28,9 +28,10 @@ is a separate, future step.
 - **Orphan reachability traversed from the package root** (`_rels/.rels`):
   only relationships in reachable parts count, so a `.rels` file inside an
   orphaned subtree cannot rescue its targets.
-- **Hostile-input caps:** a 100k entry limit, a 256 MiB per-part
-  decompressed cap, a 1 GiB cumulative decompressed budget, and a 2M XML
-  element cap per part.
+- **Hostile-input caps:** a 50k entry limit, a 512 MiB per-part
+  decompressed cap, a 2 GiB cumulative decompressed budget, and a 2M XML
+  element cap per part. These decompressed limits do not cap total process
+  memory: the CLI reads the complete raw package before it starts the audit.
 
 ## Finding classes
 

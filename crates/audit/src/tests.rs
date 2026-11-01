@@ -106,6 +106,143 @@ fn xml_deeper_than_importer_depth_is_an_error() {
     assert!(matches!(audit_bytes(&bytes), Err(AuditError::Limit(_))));
 }
 
+const P_STRICT: &str = "http://purl.oclc.org/ooxml/presentationml/main";
+const A_STRICT: &str = "http://purl.oclc.org/ooxml/drawingml/main";
+const R_STRICT: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships";
+const RT_SLIDE_STRICT: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships/slide";
+const RT_OLE_STRICT: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships/oleObject";
+
+#[test]
+fn strict_package_is_scanned_not_skipped() {
+    // Strict namespaces spell the same vocabularies with purl URIs: a hidden
+    // Strict slide and a Strict comment author must both be found.
+    let hidden = format!(r#"<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:p="{P_STRICT}" show="0"><p:cSld><p:spTree/></p:cSld></p:sld>"#);
+    let authors = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><p:cmAuthorLst xmlns:p="{P_STRICT}"><p:cmAuthor id="7" name="Wren Kessler" initials="WK"/></p:cmAuthorLst>"#
+    );
+    let comment = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><p:cmLst xmlns:p="{P_STRICT}"><p:cm authorId="7" dt="2026-11-01T00:00:00Z"><p:text>Note.</p:text></p:cm></p:cmLst>"#
+    );
+    let bytes = package(&[
+        ("[Content_Types].xml", &content_types()),
+        ("_rels/.rels", &root_rels()),
+        ("ppt/presentation.xml", &presentation()),
+        (
+            "ppt/_rels/presentation.xml.rels",
+            &pres_rels(
+                r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>"#,
+            ),
+        ),
+        ("ppt/slides/slide1.xml", hidden.as_bytes()),
+        ("ppt/slides/_rels/slide1.xml.rels", &slide_rels("")),
+        ("ppt/commentAuthors.xml", authors.as_bytes()),
+        ("ppt/comments/comment1.xml", comment.as_bytes()),
+    ]);
+    let ids = ids_of(&bytes);
+    assert!(ids.contains(&"hidden/slide".to_string()), "{ids:?}");
+    assert!(ids.contains(&"author-pii/comment".to_string()), "{ids:?}");
+}
+
+#[test]
+fn strict_cropped_image_is_found() {
+    let pic = format!(
+        r#"<p:pic xmlns:p="{P_STRICT}" xmlns:a="{A_STRICT}" xmlns:r="{R_STRICT}"><p:blipFill><a:blip r:embed="rId9"/><a:srcRect l="25000" t="0" r="0" b="0"/></p:blipFill></p:pic>"#
+    );
+    let slide_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:p="{P_STRICT}" xmlns:a="{A_STRICT}" xmlns:r="{R_STRICT}"><p:cSld><p:spTree>{pic}</p:spTree></p:cSld></p:sld>"#
+    );
+    let bytes = package(&[
+        ("[Content_Types].xml", &content_types()),
+        ("_rels/.rels", &root_rels()),
+        ("ppt/presentation.xml", &presentation()),
+        (
+            "ppt/_rels/presentation.xml.rels",
+            &pres_rels(
+                r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>"#,
+            ),
+        ),
+        ("ppt/slides/slide1.xml", slide_xml.as_bytes()),
+        (
+            "ppt/slides/_rels/slide1.xml.rels",
+            &slide_rels(
+                r#"<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/>"#,
+            ),
+        ),
+        ("ppt/media/image1.png", b"fake"),
+    ]);
+    let ids = ids_of(&bytes);
+    assert!(ids.contains(&"image/crop-retains-data".to_string()), "{ids:?}");
+}
+
+#[test]
+fn slide_outside_conventional_directory_is_scanned() {
+    let hidden = format!(r#"<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:p="{P}" show="0"><p:cSld><p:spTree/></p:cSld></p:sld>"#);
+    let bytes = package(&[
+        ("[Content_Types].xml", &content_types()),
+        ("_rels/.rels", &root_rels()),
+        ("ppt/presentation.xml", &presentation()),
+        (
+            "ppt/_rels/presentation.xml.rels",
+            &pres_rels(&format!(r#"<Relationship Id="rId2" Type="{RT_SLIDE_STRICT}" Target="custom/slide99.xml"/>"#)),
+        ),
+        ("ppt/custom/slide99.xml", hidden.as_bytes()),
+        ("ppt/slides/slide1.xml", &plain_slide()),
+        ("ppt/slides/_rels/slide1.xml.rels", &slide_rels("")),
+    ]);
+    let findings = findings_of(&bytes);
+    let hidden_slides: Vec<_> = findings.iter().filter(|f| f.id == "hidden/slide").collect();
+    assert_eq!(hidden_slides.len(), 1, "{findings:?}");
+    assert!(hidden_slides[0].location.contains("ppt/custom/slide99.xml"), "{hidden_slides:?}");
+}
+
+#[test]
+fn strict_ole_relationship_is_reported() {
+    let bytes = package(&[
+        ("[Content_Types].xml", &content_types()),
+        ("_rels/.rels", &root_rels()),
+        ("ppt/presentation.xml", &presentation()),
+        (
+            "ppt/_rels/presentation.xml.rels",
+            &pres_rels(
+                r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>"#,
+            ),
+        ),
+        ("ppt/slides/slide1.xml", &plain_slide()),
+        ("ppt/slides/_rels/slide1.xml.rels", &slide_rels(&format!(r#"<Relationship Id="rId9" Type="{RT_OLE_STRICT}" Target="other/thing.bin"/>"#))),
+        ("ppt/slides/other/thing.bin", b"fake"),
+    ]);
+    let findings = findings_of(&bytes);
+    assert!(findings.iter().any(|f| f.id == "active-content/ole" && f.location == "ppt/slides/other/thing.bin"), "{findings:?}");
+}
+
+#[test]
+fn oversized_xml_part_is_limited_at_read_time() {
+    // 100 MiB of one repeated byte, deflated so the ZIP stays small: the
+    // read must fail with Limit at the 96 MiB XML cap, not buffer the part
+    // and fail only later.
+    let big = "a".repeat(100 * 1024 * 1024);
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for (name, data) in [
+        ("[Content_Types].xml", content_types()),
+        ("_rels/.rels", root_rels()),
+        ("ppt/presentation.xml", presentation()),
+        (
+            "ppt/_rels/presentation.xml.rels",
+            pres_rels(
+                r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>"#,
+            ),
+        ),
+    ] {
+        writer.start_file(name, opts).unwrap();
+        writer.write_all(&data).unwrap();
+    }
+    writer.start_file("ppt/slides/slide1.xml", opts).unwrap();
+    writer.write_all(big.as_bytes()).unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+    assert!(matches!(audit_bytes(&bytes), Err(crate::AuditError::Limit(_))));
+}
+
 #[test]
 fn finding_ids_are_stable() {
     let kinds = [
