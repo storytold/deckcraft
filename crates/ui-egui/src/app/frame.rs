@@ -73,6 +73,7 @@ impl SlideApp {
                 self.perf.fps = self.perf.fps * 0.9 + (1.0 / dt).min(240.0) * 0.1;
             }
             self.last_time = now;
+            self.finish_provider_close(ctx);
         }
     }
 

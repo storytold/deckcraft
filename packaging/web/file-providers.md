@@ -56,6 +56,9 @@ Never reuse an account namespace for a different account.
 A device choice uses the browser's local download service. A device copy of a provider-bound
 project does not acknowledge provider persistence or replace that binding. As with the normal
 browser fallback, accepting a download does not prove the browser wrote it to physical disk.
+Device copies retain the presentation's unsaved-work state even without a provider binding.
+The Close prompt waits for its exact provider request and durable revision acknowledgement;
+cancel, failure, device copies, later edits or uncommitted notes retain the presentation.
 Exports remain local copies and never mark a provider project saved.
 
 Supported Save packages: **.deckcraft/.slidecraft, PPTX, POTX and PPSX**.
@@ -78,6 +81,9 @@ its correlated request ID. Read bytes from authorized storage and call
 an actual document, the editor emits `opened`; malformed/unsupported/password-required bytes
 emit `openFailed`. Bytes are not dropped into an uncorrelated general file-picker inbox.
 Resource identity comes from the outstanding read, not a filename sent by the host.
+Read-error text is normalized to remove control characters and capped at 1024 UTF-8 bytes
+before the read settles. Provider Recents follow the Home/Open search and result limits;
+refused opens use the persistent notice displayed over Backstage.
 
 ## Identity, limits and lifecycle
 

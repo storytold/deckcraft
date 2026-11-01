@@ -214,6 +214,14 @@ struct InputTarget {
     opening: Option<(egui::Id, u64)>,
 }
 
+/// A close confirmed by the user, still waiting for this exact provider save.
+struct ProviderClose {
+    request: String,
+    connection: String,
+    document: u64,
+    revision: Option<u64>,
+}
+
 pub struct SlideApp {
     /// Shape Fill's last colour (a command colour parameter): the button applies it again. Accent 1 until one is picked.
     pub last_fill: serde_json::Value,
@@ -229,6 +237,7 @@ pub struct SlideApp {
     /// Spelling squiggles, checked on a worker thread.
     pub squiggles: squiggles::Squiggles,
     pub dialog: Option<dialogs::Dialog>,
+    provider_close: Option<ProviderClose>,
     /// The word looked up in the Thesaurus pane.
     pub thesaurus_query: String,
     pub show: Option<show::Show>,

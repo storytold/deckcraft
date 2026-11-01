@@ -178,3 +178,40 @@ fn taking_a_choice_retains_account_and_document_ownership_until_serialization_fi
     assert!(!host.busy());
     host.disconnect().unwrap();
 }
+
+#[test]
+fn recent_provider_entries_obey_search_and_each_callers_limit() {
+    let (host, connection) = connected();
+    let resources = (0..12)
+        .map(|index| Resource { id: format!("file-{index}"), name: format!("Plan {index:02}.deckcraft"), updated_at: String::new() })
+        .collect();
+    host.set_resources(&connection, resources).unwrap();
+    assert_eq!(host.recent_entries("", 8).unwrap().1.len(), 8);
+    assert_eq!(host.recent_entries("", usize::MAX).unwrap().1.len(), 12);
+    let (_, matching) = host.recent_entries(" PLAN 0 ", 2).unwrap();
+    assert_eq!(matching.iter().map(|resource| resource.id.as_str()).collect::<Vec<_>>(), ["file-0", "file-1"]);
+    assert!(host.recent_entries("unmatched", usize::MAX).unwrap().1.is_empty());
+    assert!(host.recent_entries("", 0).unwrap().1.is_empty());
+    host.set_enabled(false).unwrap();
+    assert!(host.recent_entries("", usize::MAX).is_none());
+}
+
+#[test]
+fn cancelled_reads_settle_with_control_free_utf8_bounded_error_text() {
+    let (host, connection) = connected();
+    host.set_resources(&connection, vec![Resource { id: "one".into(), name: "One.deckcraft".into(), updated_at: String::new() }]).unwrap();
+    let request = host.request_open("one").unwrap();
+    host.take_events();
+    host.cancel_open(request.clone(), format!("\n{}\r\0tail", "界".repeat(800))).unwrap();
+    assert!(!host.busy());
+    let events = host.take_events();
+    let failed = events.iter().find(|event| event.metadata["type"] == "openFailed").unwrap();
+    assert_eq!(failed.metadata["requestId"], request);
+    assert_eq!(failed.metadata["resourceId"], "one");
+    let error = failed.metadata["error"].as_str().unwrap();
+    assert!(!error.is_empty());
+    assert!(error.len() <= 1024);
+    assert!(!error.chars().any(char::is_control));
+    assert!(host.cancel_open(request, "duplicate".into()).is_err());
+    host.disconnect().unwrap();
+}

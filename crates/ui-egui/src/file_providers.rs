@@ -58,7 +58,7 @@ struct Dialog {
 /// Owned requests consumed only on the application's logic frame (never in a JS callback).
 pub(crate) enum Command {
     Save { request: String, doc: u64, destination: String, name: String, save_as: bool },
-    Result { capture: Capture, resource: String, status: String },
+    Result { request: String, capture: Capture, resource: String, status: String },
     Open { request: String, name: String, bytes: Vec<u8> },
 }
 
@@ -233,6 +233,10 @@ impl Host {
         Ok(())
     }
 
+    pub(crate) fn dialog_request(&self, doc: u64) -> Option<String> {
+        self.state().dialogs.iter().find(|(_, dialog)| dialog.doc == doc).map(|(request, _)| request.clone())
+    }
+
     pub fn resolve_dialog(&self, request: &str, destination: &str, name: &str) -> Result<(), String> {
         if !matches!(destination, "provider" | "device" | "cancel") || (!name.is_empty() && !valid_name(name)) {
             return Err("invalid save destination or filename".into());
@@ -285,7 +289,7 @@ impl Host {
             return Err("file provider command queue is full".into());
         }
         s.captures.remove(&request);
-        s.commands.push(Command::Result { capture, resource, status });
+        s.commands.push(Command::Result { request, capture, resource, status });
         Ok(())
     }
 
@@ -354,9 +358,7 @@ impl Host {
     }
 
     pub fn cancel_open(&self, request: String, error: String) -> Result<(), String> {
-        if !valid_optional_text(&error, 1024) {
-            return Err("invalid provider read error".into());
-        }
+        let error = bounded_error(&error);
         let mut s = self.state();
         let resource = s.reads.get(&request).ok_or("unknown or completed provider read")?.clone();
         s.event(json!({"type":"openFailed", "requestId":request, "resourceId":resource, "error":error}), None)?;
@@ -375,7 +377,7 @@ impl Host {
                 None,
             );
         } else {
-            let error: String = error.chars().take(1024).collect();
+            let error = bounded_error(error);
             let _ = s.event(json!({"type":"openFailed", "requestId":request, "resourceId":resource, "error":error}), None);
         }
     }
@@ -383,7 +385,7 @@ impl Host {
     pub(crate) fn failed(&self, request: &str, message: &str) {
         let mut s = self.state();
         s.working.remove(request);
-        let message: String = message.chars().take(1024).collect();
+        let message = bounded_error(message);
         let _ = s.event(json!({"type":"saveFailed", "requestId":request, "error":message}), None);
     }
 
@@ -423,27 +425,44 @@ impl Host {
             "resources":s.resources, "documents":s.documents, "pending":s.busy()})
     }
 
-    /// Native Home/Open view, separate from paths belonging to this device.
-    pub(crate) fn recent_ui(&self, ui: &mut egui::Ui) {
-        let (label, resources) = {
-            let s = self.state();
-            let Some(identity) = s.identity.as_ref().filter(|_| s.enabled) else { return };
-            (identity.label.clone(), s.resources.clone())
-        };
+    pub(crate) fn recent_entries(&self, query: &str, limit: usize) -> Option<(String, Vec<Resource>)> {
+        let s = self.state();
+        let identity = s.identity.as_ref().filter(|_| s.enabled)?;
+        let query = query.trim().to_lowercase();
+        let resources = s.resources.iter().filter(|resource| resource.name.to_lowercase().contains(&query)).take(limit).cloned().collect();
+        Some((identity.label.clone(), resources))
+    }
+
+    /// Native Home/Open view. The caller presents a refusal persistently over Backstage.
+    pub(crate) fn recent_ui(&self, ui: &mut egui::Ui, query: &str, limit: usize) -> Option<String> {
+        let (label, resources) = self.recent_entries(query, limit)?;
+        let mut error = None;
         ui.heading(format!("Recent — {label}"));
         if resources.is_empty() {
             ui.weak("No recent provider files.");
         }
         for resource in resources {
             if ui.button(&resource.name).on_hover_text(&resource.updated_at).clicked()
-                && let Err(error) = self.request_open(&resource.id)
+                && let Err(message) = self.request_open(&resource.id)
             {
-                ui.colored_label(ui.visuals().error_fg_color, error);
+                error = Some(message);
             }
         }
         ui.separator();
         ui.weak("Recent on this device");
+        error
     }
+}
+
+fn bounded_error(message: &str) -> String {
+    let mut error = String::new();
+    for ch in message.chars().filter(|ch| !ch.is_control()) {
+        if error.len().saturating_add(ch.len_utf8()) > 1024 {
+            break;
+        }
+        error.push(ch);
+    }
+    error
 }
 
 fn valid_id(value: &str) -> bool {
