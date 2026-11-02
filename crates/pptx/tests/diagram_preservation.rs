@@ -407,6 +407,9 @@ fn presentation_point_associations_update_only_the_owned_node() {
 
 #[test]
 fn uncached_affine_cycle_renders_all_shapes_without_an_external_converter() {
+    // Exercise the general affine solver through an auxiliary property. Native
+    // width/height inequalities do not allocate dimensions. This is a solver
+    // regression, not a claim about native handling of the cyclic definition.
     let mut parts = files(&uncached_fixture());
     for (name, bytes) in &mut parts {
         if name.ends_with("layout1.xml") && name.contains("diagrams/") {
@@ -421,7 +424,7 @@ fn uncached_affine_cycle_renders_all_shapes_without_an_external_converter() {
                     "type=\"w\" for=\"ch\" forName=\"details\" refFor=\"ch\" refForName=\"header\" refType=\"w\" fact=\"1\"",
                 )
                 .replace("forName=\"details\" refFor=\"ch\" refForName=\"header\" refType=\"w\" fact=\"1\"/>",
-                    "forName=\"details\" refFor=\"ch\" refForName=\"header\" refType=\"w\" fact=\"1\"/><dgm:constr type=\"w\" for=\"ch\" forName=\"details\" op=\"gte\" val=\"30\"/><dgm:constr type=\"w\" for=\"ch\" forName=\"details\" op=\"lte\" val=\"30\"/>")
+                    "forName=\"details\" refFor=\"ch\" refForName=\"header\" refType=\"w\" fact=\"1\"/><dgm:constr type=\"userA\" for=\"ch\" forName=\"details\" refFor=\"ch\" refForName=\"details\" refType=\"w\"/><dgm:constr type=\"userA\" for=\"ch\" forName=\"details\" op=\"gte\" val=\"85.03937007874016\"/><dgm:constr type=\"userA\" for=\"ch\" forName=\"details\" op=\"lte\" val=\"85.03937007874016\"/>")
                 .into_bytes();
         }
     }

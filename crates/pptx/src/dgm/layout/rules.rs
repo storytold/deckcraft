@@ -32,6 +32,9 @@ fn controls<'a>(entries: &[constraints::Entry<'_, 'a>], data: &Data<'_>, work: &
     let mut effective = HashMap::new();
     for owner in (0..entries.len()).rev() {
         for c in &entries[owner].node.constraints {
+            if constraints::size_bound(c) {
+                continue;
+            }
             charge(work, entries[owner].end - owner)?;
             for target in constraints::selected(entries, owner, c.attr("for").unwrap_or("self"), c.attr("forName"), c.attr("ptType"), data) {
                 let ty = c.attr("type").unwrap_or("");
@@ -40,6 +43,9 @@ fn controls<'a>(entries: &[constraints::Entry<'_, 'a>], data: &Data<'_>, work: &
                         continue;
                     }
                     let key = (target, property.to_string());
+                    if constraints::unnamed_child_geometry_default(c, property) && effective.get(&key).is_some_and(|(prior, _)| *prior == owner) {
+                        continue;
+                    }
                     if matches!(property, "w" | "h") && effective.get(&key).is_some_and(|(prior, _)| *prior > owner && *prior != target) {
                         continue;
                     }

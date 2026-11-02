@@ -432,7 +432,7 @@ pub(super) fn self_constraints(node: &Instance<'_>, style: &mut BoxStyle, sizes:
         node.constraints.iter().filter(|e| e.attr("for").unwrap_or("self") == "self" && !super::constraints::position(e.attr("type").unwrap_or("")))
     {
         if super::constraints::font_bound(constraint)
-            || super::constraints::local_size_bound(constraint)
+            || super::constraints::size_bound(constraint)
             || (!sizes && matches!(constraint.attr("type"), Some("w" | "h" | "diam")))
         {
             continue;

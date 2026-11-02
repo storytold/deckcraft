@@ -232,14 +232,16 @@ fn coupled_cycles_respect_local_descendant_geometry() {
       <constrLst>
         <constr type="w" for="ch" forName="box" refFor="ch" refForName="other" refType="w" fact="0.5"/>
         <constr type="w" for="ch" forName="other" refFor="ch" refForName="box" refType="w" fact="2"/>
-        <constr type="w" for="ch" forName="other" op="gte" val="40"/>
-        <constr type="w" for="ch" forName="other" op="lte" val="40"/>
+        <constr type="userA" for="ch" forName="other" refFor="ch" refForName="other" refType="w"/>
+        <constr type="userA" for="ch" forName="other" op="gte" val="113.38582677165354"/>
+        <constr type="userA" for="ch" forName="other" op="lte" val="113.38582677165354"/>
         <constr type="l" for="des" forName="leaf" val="5"/>
         <constr type="r" for="des" forName="leaf" refFor="ch" refForName="other" refType="w"/>
       </constrLst></layoutNode>"#,
     );
-    // The size cycle and bounds constrain allocated frames. Descendant positional
-    // constraints do not cross the nested composite; its leaf inherits the local box.
+    // Exercise the general affine inequality solver via an auxiliary quantity.
+    // Native width/height inequalities do not allocate initial geometry. Descendant
+    // positions do not cross the composite; its leaf inherits the local box.
     let data = Data::new(&data).unwrap();
     let context = Context { point: data.root, position: 1, count: 1, vars: HashMap::new() };
     let mut compiler = Compiler { data, refs: HashMap::new(), instances: 0, work: 0 };
@@ -323,7 +325,7 @@ fn local_size_constraints_override_ancestor_defaults_and_composites_require_layo
 }
 
 #[test]
-fn longer_than_eight_reference_chain_and_tightening_bounds() {
+fn longer_than_eight_reference_chain_and_tightening_auxiliary_bounds() {
     let data = source();
     let mut xml = String::from("<layoutNode><alg type='composite'/>");
     for i in 0..24 {
@@ -333,11 +335,11 @@ fn longer_than_eight_reference_chain_and_tightening_bounds() {
     for i in 0..23 {
         xml += &format!("<constr type='w' for='ch' forName='n{i}' refFor='ch' refForName='n{}' refType='w'/>", i + 1);
     }
-    xml += "<constr type='w' for='ch' forName='n23' op='gte' val='30'/><constr type='w' for='ch' forName='n23' op='gte' val='40'/><constr type='w' for='ch' forName='n23' op='lte' val='50'/></constrLst></layoutNode>";
+    xml += "<constr type='w' for='ch' forName='n23' refFor='ch' refForName='n23' refType='userA'/><constr type='userA' for='ch' forName='n23' op='gte' val='30'/><constr type='userA' for='ch' forName='n23' op='gte' val='40'/><constr type='userA' for='ch' forName='n23' op='lte' val='50'/></constrLst></layoutNode>";
     let layout = layout(&xml);
     let shapes = evaluate(&layout, &data, frame()).unwrap();
     assert_eq!(shapes.len(), 24);
-    assert!(shapes.iter().all(|s| (s.rect.w - 50. * 72. / 25.4).abs() < 1e-6));
+    assert!(shapes.iter().all(|s| (s.rect.w - 50.).abs() < 1e-6), "{:?}", shapes.iter().map(|s| s.rect.w).collect::<Vec<_>>());
 }
 
 #[test]
@@ -345,7 +347,7 @@ fn inconsistent_cycles_and_missing_named_references_fail_instead_of_guessing() {
     let data = source();
     for reference in ["a", "missing"] {
         let layout = layout(&format!(
-            "<layoutNode><alg type='composite'/><layoutNode name='a'><shape type='rect'/></layoutNode><constrLst><constr type='w' for='ch' forName='a' refFor='ch' refForName='{reference}' refType='w' fact='2'/><constr type='w' for='ch' forName='a' op='gte' val='1'/></constrLst></layoutNode>"
+            "<layoutNode><alg type='composite'/><layoutNode name='a'><shape type='rect'/></layoutNode><constrLst><constr type='w' for='ch' forName='a' refFor='ch' refForName='{reference}' refType='w' fact='2'/><constr type='userA' for='ch' forName='a' refFor='ch' refForName='a' refType='w'/><constr type='userA' for='ch' forName='a' op='gte' val='1'/></constrLst></layoutNode>"
         ));
         assert!(evaluate(&layout, &data, frame()).is_err());
     }
@@ -1369,5 +1371,103 @@ fn linear_descendants_accept_ancestor_sizes_through_nested_containers() {
                 assert!((a.rect.w - (if allocated { 12. } else { 15. }) * mm).abs() < 1e-6);
             }
         }
+    }
+}
+
+#[test]
+fn late_unnamed_geometry_does_not_replace_existing_allocations() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for name in ["", " forName='' "] {
+        for op in ["", " op='equ' "] {
+            for property in ["w", "h", "l", "t"] {
+                let l = layout(&format!(
+                    "<layoutNode><alg type='composite'/><presOf/><constrLst>
+                    <constr type='w' for='ch' forName='a' val='20'/><constr type='h' for='ch' forName='a' val='20'/>
+                    <constr type='w' for='ch' forName='b' val='30'/><constr type='h' for='ch' forName='b' val='10'/>
+                    <constr type='l' for='ch' forName='a' val='0'/><constr type='l' for='ch' forName='b' val='40'/>
+                    <constr type='t' for='ch' forName='a' val='0'/><constr type='t' for='ch' forName='b' val='10'/>
+                    <constr type='{property}' for='ch' {name} {op} val='5'/></constrLst>
+                    <layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode>
+                    <layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
+                ));
+                let out = evaluate(&l, &data, frame()).unwrap();
+                assert!((out[0].rect.w - 20. * mm).abs() < 1e-6);
+                assert!((out[1].rect.w - 30. * mm).abs() < 1e-6);
+                assert!((out[0].rect.h - 20. * mm).abs() < 1e-6);
+                assert!((out[1].rect.h - 10. * mm).abs() < 1e-6);
+                assert!((out[1].rect.x - out[0].rect.x - 40. * mm).abs() < 1e-6);
+                assert!((out[1].rect.y - out[0].rect.y - 10. * mm).abs() < 1e-6);
+            }
+        }
+    }
+}
+
+#[test]
+fn size_inequalities_do_not_replace_initial_geometry_across_algorithms() {
+    let data = source();
+    for alg in ["composite", "lin", "sp", "cycle"] {
+        for property in ["w", "h", "diam"] {
+            for (op, value) in [("gte", 50.), ("lte", 15.)] {
+                let build = |bound: bool| {
+                    let extra =
+                        if bound { format!("<constr type='{property}' for='ch' forName='a' op='{op}' val='{value}'/>") } else { String::new() };
+                    layout(&format!(
+                        "<layoutNode><alg type='{alg}'/><presOf/><constrLst>
+                        <constr type='w' for='ch' forName='a' val='40'/><constr type='h' for='ch' forName='a' val='40'/>
+                        <constr type='w' for='ch' forName='b' val='20'/><constr type='h' for='ch' forName='b' val='20'/>{extra}</constrLst>
+                        <layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode>
+                        <layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
+                    ))
+                };
+                let baseline = build(false);
+                let bounded = build(true);
+                let a = evaluate(&baseline, &data, frame()).unwrap();
+                let b = evaluate(&bounded, &data, frame()).unwrap();
+                assert_eq!(a.iter().map(|p| p.rect).collect::<Vec<_>>(), b.iter().map(|p| p.rect).collect::<Vec<_>>(), "{alg}/{property}/{op}");
+            }
+        }
+    }
+}
+
+#[test]
+fn size_bounds_do_not_cap_text_driven_growth() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for op in ["gte", "lte"] {
+        for bound in [5., 20., 80.] {
+            let l = layout(&format!(
+                "<layoutNode><alg type='composite'/><presOf/><constrLst>
+                <constr type='w' for='ch' forName='a' val='12'/><constr type='h' for='ch' forName='a' val='10'/>
+                <constr type='w' for='ch' forName='a' op='{op}' val='{bound}'/></constrLst>
+                <layoutNode name='a'><alg type='tx'/><shape type='rect'/><presOf axis='ch' cnt='1'/>
+                <ruleLst><rule type='w' val='50'/></ruleLst></layoutNode></layoutNode>"
+            ));
+            let mut measure = |out: &[Placed<'_>], _: bool| Ok(out.iter().map(|p| (50. * mm - p.rect.w).max(0.)).collect());
+            let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+            assert!((out[0].rect.w - 50. * mm).abs() < 1e-5, "{op}/{bound}: {:?}", out[0].rect);
+        }
+    }
+}
+
+#[test]
+fn late_unnamed_size_does_not_rebind_a_factor_rule() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for name in ["", " forName='' "] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='composite'/><presOf/><constrLst>
+            <constr type='w' for='ch' forName='a' refFor='ch' refForName='b' refType='w' fact='0.5'/>
+            <constr type='w' for='ch' forName='b' val='20'/><constr type='h' for='ch' val='10'/>
+            <constr type='w' for='ch' {name} val='5'/></constrLst>
+            <layoutNode name='a'><alg type='tx'/><shape type='rect'/><presOf axis='ch' cnt='1'/>
+            <ruleLst><rule type='w' fact='1'/></ruleLst></layoutNode>
+            <layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
+        ));
+        let mut measure =
+            |out: &[Placed<'_>], _: bool| Ok(out.iter().map(|p| if p.name == "a" { (15. * mm - p.rect.w).max(0.) } else { 0. }).collect());
+        let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+        assert!((out[0].rect.w - 15. * mm).abs() < 1e-4);
+        assert!((out[1].rect.w - 20. * mm).abs() < 1e-6);
     }
 }

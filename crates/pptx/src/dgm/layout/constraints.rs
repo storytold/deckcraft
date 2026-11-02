@@ -98,9 +98,10 @@ pub(super) fn collect<'t, 'a>(
     });
     let self_sizes = ["w", "h"].map(|axis| {
         self_sizing
-            && node.constraints.iter().any(|c| {
-                c.attr("for").unwrap_or("self") == "self" && c.attr("type").is_some_and(|t| t == axis || t == "diam") && !local_size_bound(c)
-            })
+            && node
+                .constraints
+                .iter()
+                .any(|c| c.attr("for").unwrap_or("self") == "self" && c.attr("type").is_some_and(|t| t == axis || t == "diam") && !size_bound(c))
     });
     entries.push(Entry { node, parent, style, end: index + 1, geometry_scope, self_sizes });
     let local = BoxStyle { rect: Xfrm::new(0., 0., style.rect.w, style.rect.h), ..style };
@@ -261,9 +262,14 @@ pub(super) fn font_bound(c: &El) -> bool {
     matches!(c.attr("type"), Some("primFontSz" | "secFontSz")) && matches!(c.attr("op"), Some("gte" | "lte"))
 }
 
-/// Local geometry bounds do not override the initial parent allocation.
-pub(super) fn local_size_bound(c: &El) -> bool {
-    c.attr("for").unwrap_or("self") == "self" && matches!(c.attr("type"), Some("w" | "h" | "diam")) && matches!(c.attr("op"), Some("gte" | "lte"))
+/// Size inequalities do not allocate geometry or cap native size-rule trials.
+/// Keep general affine bounds for other numeric properties separate from them.
+pub(super) fn size_bound(c: &El) -> bool {
+    matches!(c.attr("type"), Some("w" | "h" | "diam")) && matches!(c.attr("op"), Some("gte" | "lte"))
+}
+
+pub(super) fn unnamed_child_geometry_default(c: &El, property: &str) -> bool {
+    (position(property) || matches!(property, "w" | "h")) && c.attr("for") == Some("ch") && c.attr("forName").is_none_or(str::is_empty)
 }
 
 pub(super) fn resolve_adjusted(
@@ -288,7 +294,7 @@ pub(super) fn resolve_adjusted(
         for c in &node.constraints {
             // Native font bounds participate in local fitting, not initial font selection.
             // Unconstrained nodes retain the diagram default until a rule is applied.
-            if font_bound(c) || local_size_bound(c) {
+            if font_bound(c) || size_bound(c) {
                 continue;
             }
             charge(work, entries[owner].end - owner)?;
@@ -302,6 +308,11 @@ pub(super) fn resolve_adjusted(
                         continue;
                     }
                     let key = (*target, property.to_string());
+                    // A later unnamed declaration does not replace dimensions or
+                    // positions already assigned at this layout node.
+                    if unnamed_child_geometry_default(c, property) && equation_owners.get(&key) == Some(&owner) {
+                        continue;
+                    }
                     if matches!(property, "w" | "h") && equation_owners.get(&key).is_some_and(|prior| *prior > owner && *prior != *target) {
                         continue;
                     }

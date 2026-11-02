@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **PPTX.29 update 2026-11-02:** Late unnamed child constraints retain existing allocations; size inequalities no longer allocate geometry or cap tested size-rule growth. A new 129-case matrix improves from nine to 46 geometry matches, with 54 flow/default-size differences and 29 native-fallback cases kept explicit. Forty paired bounds controls preserve native invariance. Scores are unchanged.
+
 > **PPTX.28 update 2026-11-01:** Child-bearing space containers centre their occupied children without resizing them; ancestor self-size defaults retain their allocation role, and nested linear layouts accept ancestor sizes. The prior 216-case matrix now has 207 matches and nine native-fallback exclusions. A new 94-case matrix improves from 44 to 93 matches, with one native fallback excluded. Scores are unchanged.
 
 > **PPTX.27 update 2026-11-01:** SmartArt parent allocations override self-size fallbacks; two parent coordinates determine the size before axis selection, and local size bounds do not allocate initial geometry. All 176 prior edge/self-size controls now pass. A new 216-case matrix improves from 53 to 202 matches, retaining five scope/space-placement failures and nine native-fallback exclusions. Scores are unchanged.
@@ -272,10 +274,11 @@ Detail in [file-format-parity.md](file-format-parity.md).
   Helper visibility, layout-order colours, connector/space allocation and recursive composite
   fitting, scaled-end clipping, disjoint-child placement and bounded algorithm-local geometry scope
   are covered. Implicit/signed edge references and zero-axis centring now match independent native controls.
-  Parent-size and paired-coordinate allocations now override self-size fallbacks; local size
-  bounds do not allocate initial geometry. Child-bearing spaces centre occupied children without
+  Parent-size and paired-coordinate allocations now override self-size fallbacks; size
+  inequalities do not allocate geometry or cap the tested size-rule growth. Child-bearing spaces centre occupied children without
   shrinking them; self-size defaults can cross composite scopes without becoming parent allocations,
-  and linear layout reopens ancestor sizing. Unnamed geometry selectors, automatic flow sizes,
+  and linear layout reopens ancestor sizing. Late unnamed child declarations retain prior
+  allocations. Descendant defaults, duplicate-definition fallback, automatic flow sizes,
   duplicate-point text ownership and full colour interpolation remain incomplete.
   Two extreme thin-text controls still differ in visible raster bounds despite matching geometry.
   Two further overlapped space/text controls have small visible-fill differences that disappear
@@ -454,6 +457,7 @@ no global parity claim or score increase.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.29 preserves existing child allocations and separates size bounds from affine inequalities; 46 new geometry matches, 40 bounds-invariance controls, and explicit flow/fallback limits |
 | 2026-11-01 | minor | PPTX.28 resolves tested space-container and ancestor-default cases; 207 prior and 93 new intended-layout controls match native geometry, with remaining selector/flow/fallback limits explicit |
 | 2026-11-01 | minor | PPTX.27 distinguishes parent allocation from self-size fallback; 176 prior controls and 195 new core controls match native geometry; ancestor-default and space-placement gaps remain |
 | 2026-11-01 | minor | PPTX.26 resolves implicit/signed edges and their references; zero-width frames centre safely, while local-size/parent-position and full search policies remain partial |

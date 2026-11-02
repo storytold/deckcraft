@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.28): SmartArt space containers and inherited size defaults,
+Updated 2026-11-02 (PPTX.29): SmartArt child-constraint priority and size-bound policy,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1346,3 +1346,59 @@ Unnamed selectors, automatic flow sizing, full rule/fallback search, cyclic font
 duplicate-point text ownership and colour interpolation remain partial. Geographic context,
 simplification/quantization and rich-label overflow/collision remain open. These checks neither
 raise global parity scores nor establish complete LibreOffice replacement.
+
+
+## Child defaults and size inequalities (PPTX.29)
+
+A later unnamed child (`for="ch"`, absent or empty `forName`) geometric declaration
+must not overwrite the dimensions or positions already assigned by the same layout node.
+Constraint resolution and numeric-rule binding now retain the same earlier assignment,
+including its reference and factor. Descendant (`for="des"`) constraints have distinct
+native behavior; this change deliberately does not generalize child precedence to them.
+No geometry policy is applied to font selectors.
+
+Width, height and diameter `gte`/`lte` constraints do not allocate initial geometry in
+the measured native cases. They also do not cap the tested width-growth rules. Treating
+these declarations as mandatory affine inequalities could reject a valid layout or
+change its sizes; they are now excluded from both allocation and rule binding. Other
+numeric properties retain the bounded affine inequality solver. Three solver unit tests
+and one cyclic import/round-trip test now express their mathematical bounds through an
+auxiliary property, preserving chain/cycle/contradiction coverage without asserting a
+native size-bound behavior contradicted by observation. These solver tests do not certify
+native handling of their cyclic definitions.
+
+Validation:
+
+- A new 129-case original matrix varies declaration order, absent/empty/named selectors,
+  default/explicit equality operators, existing/self dimensions, rules and four algorithms.
+  Geometry matches rise from nine to 46 at 0.025pt model-inspection tolerance, without a
+  prior match regressing. All 40 intended composite controls and six axis controls match.
+  Fifty-four linear/space/cycle controls retain automatic-size or finite-frame differences.
+  Twenty-nine definitions instead trigger native generic fallback and are excluded from
+  intended-layout matching, not counted as parity passes.
+- Forty paired controls compare bounds with otherwise identical unbounded definitions:
+  width under linear/space/cycle placement, and height/diameter under those algorithms plus
+  composite placement. All native pairs have identical path rectangles; all 40 direct pairs
+  now do too (previously five). This is bounds-invariance evidence, not full placement parity
+  for the flow controls. Native widths without explicit allocations still expose separate
+  intrinsic-size and rounding differences.
+- Eighteen size-bound/rule controls and all 18 non-fallback selector-priority controls pass
+  visible coloured bounds within 0.5pt at 4K. Representative native/direct images were
+  inspected, including the native generic fallback, narrow self sizing and text-driven
+  growth. Input hashes match native export receipts. Native fallback differs visibly from
+  the currently evaluated custom layout; open/export success alone is not a fidelity pass.
+- The older 186-case matrix improves from 152 to 155 matches, retaining 19 failures and
+  12 native-fallback exclusions. All 176 signed-edge controls and all 73 overflow controls
+  still match. The other prior matrices remain at 207/216 and 93/94, with their nine and one
+  native-fallback cases separated. All 154 earlier 2px/pt PNGs remain pixel-identical to the
+  PPTX.28 executable, with unchanged and native-matching font-size sets.
+- Four new unit tests cover 48 selector/operator, algorithm/bound and rule-binding variants.
+  Full `cargo xtask ci` passes all eight stages and 2,455 tests including doctests; all 21
+  diagram import/round-trip tests pass. Production paths remain bounded safe Rust, without
+  an external document converter.
+
+Native duplicate named definitions can trigger generic fallback even when both numeric
+values agree. Early unnamed declarations followed by named assignments have additional
+fallback behavior. These policies, descendant defaults, full rule/search and cyclic fonts
+remain incomplete. Geographic provider context, simplification/quantization, and rich-label
+overflow/collision remain open; complete LibreOffice replacement is not established.

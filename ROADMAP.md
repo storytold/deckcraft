@@ -1,5 +1,7 @@
 # DeckCraft roadmap
 
+> **PPTX.29 update 2026-11-02:** Late unnamed child constraints retain existing allocations; size inequalities no longer allocate geometry or cap tested size-rule growth. A new 129-case matrix improves from nine to 46 geometry matches, with 54 flow/default-size differences and 29 native-fallback cases kept explicit. Forty paired bounds controls preserve native invariance. Scores are unchanged.
+
 > **PPTX.28 update 2026-11-01:** Child-bearing space containers centre their occupied children without resizing them; ancestor self-size defaults retain their allocation role, and nested linear layouts accept ancestor sizes. The prior 216-case matrix now has 207 matches and nine native-fallback exclusions. A new 94-case matrix improves from 44 to 93 matches, with one native fallback excluded. Scores are unchanged.
 
 > **PPTX.27 update 2026-11-01:** SmartArt parent allocations override self-size fallbacks; two parent coordinates determine the size before axis selection, and local size bounds do not allocate initial geometry. All 176 prior edge/self-size controls now pass. A new 216-case matrix improves from 53 to 202 matches, retaining five scope/space-placement failures and nine native-fallback exclusions. Scores are unchanged.
@@ -166,6 +168,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-02 | PPTX.29: retain named allocations under later unnamed child constraints; ignore size bounds in allocation/rule binding, with 46 new native geometry matches and remaining differences explicit |
 | 2026-11-01 | PPTX.28: centre child-bearing spaces and retain ancestor self-size semantics; 93 new intended-layout controls match, while native fallback and text-occlusion differences remain explicit |
 | 2026-11-01 | PPTX.27: distinguish parent allocations from self-size fallbacks; all 176 prior edge controls pass and 202/216 broader controls match, with scope/space/fallback limits explicit |
 | 2026-11-01 | PPTX.26: preserve implicit/signed endpoints and positive display sizes; 140 edge/reference controls match native geometry, with remaining local-size/parent-position failures recorded |
