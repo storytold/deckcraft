@@ -620,7 +620,7 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
         painter.text(
             pos2(full.center().x, full.min.y + 40.0),
             Align2::CENTER_CENTER,
-            "End of slide show, click to exit.",
+            tl!("End of slide show, click to exit."),
             theme::font(18.0),
             Color32::from_gray(200),
         );
@@ -726,16 +726,16 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
                 .max_rect(Rect::from_min_max(pos2(bar.max.x - 260.0, bar.min.y), bar.max))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
-        if child.button("Close").clicked() {
+        if child.button(tl!("Close")).clicked() {
             out.keep = false;
         }
-        if child.button("▶").clicked() {
+        if child.button(tl!("▶")).clicked() {
             let a = show.state.next(doc);
             if !show.apply(a, doc, now) {
                 out.keep = false;
             }
         }
-        if child.button("◀").clicked() {
+        if child.button(tl!("◀")).clicked() {
             let a = show.state.prev(doc);
             show.apply(a, doc, now);
         }

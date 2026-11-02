@@ -72,7 +72,7 @@ pub(super) fn transitions(app: &mut SlideApp, ui: &mut Ui) {
         // Sound in its own column, so the timing column keeps its three rows.
         rows(ui, |ui| {
             ui.horizontal(|ui| {
-                let field = ui.label("Sound:");
+                let field = ui.label(tl!("Sound:"));
                 let stop = cur.as_ref().is_some_and(|t| t.stop_sound);
                 let name = cur
                     .as_ref()
@@ -96,11 +96,11 @@ pub(super) fn transitions(app: &mut SlideApp, ui: &mut Ui) {
                     }
                     ui.separator();
                     let can_pick = app.services.pick_open.is_some();
-                    let r = ui.add_enabled(can_pick, egui::Button::new("Other Sound…"));
+                    let r = ui.add_enabled(can_pick, egui::Button::new(tl!("Other Sound…")));
                     if r.clicked() {
                         app.pick_transition_sound();
                     }
-                    r.on_disabled_hover_text("Choosing a sound file needs the desktop app");
+                    r.on_disabled_hover_text(tl!("Choosing a sound file needs the desktop app"));
                     ui.separator();
                     let has = cur.as_ref().is_some_and(|t| t.sound.is_some());
                     let mut lp = cur.as_ref().is_some_and(|t| t.sound_loop);
@@ -113,7 +113,7 @@ pub(super) fn transitions(app: &mut SlideApp, ui: &mut Ui) {
         });
         rows(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Duration:");
+                ui.label(tl!("Duration:"));
                 let d = cur.as_ref().map(|t| t.duration_ms as f64 / 1000.0).unwrap_or(1.0);
                 if let Some(v) = widgets::spinner(ui, "tdur", "Duration", d, 0.25, "", 46.0) {
                     run(app, "transition.timing", json!({"duration": (v.max(0.0) * 1000.0).round() as u64}));
@@ -121,14 +121,14 @@ pub(super) fn transitions(app: &mut SlideApp, ui: &mut Ui) {
             });
             ui.horizontal(|ui| {
                 let mut click = cur.as_ref().is_none_or(|t| t.advance_on_click);
-                if ui.checkbox(&mut click, "On Mouse Click").changed() {
+                if ui.checkbox(&mut click, tl!("On Mouse Click")).changed() {
                     run(app, "transition.timing", json!({"onClick": click}));
                 }
             });
             ui.horizontal(|ui| {
                 let after = cur.as_ref().and_then(|t| t.advance_after_ms);
                 let mut on = after.is_some();
-                if ui.checkbox(&mut on, "After:").changed() {
+                if ui.checkbox(&mut on, tl!("After:")).changed() {
                     run(app, "transition.timing", json!({"after": if on { json!(after.unwrap_or(0)) } else { Value::Null }}));
                 }
                 if let Some(v) = widgets::spinner(ui, "tafter", "After", after.unwrap_or(0) as f64 / 1000.0, 1.0, "", 46.0) {
