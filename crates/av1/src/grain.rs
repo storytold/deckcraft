@@ -55,21 +55,79 @@ impl Rng {
     }
 }
 
-pub(crate) fn apply(pic: &mut Picture, g: &FilmGrainParams, seq: &SequenceHeader) {
-    let _ = seq;
-    let bd = pic.bit_depth as u32;
-    let mono = pic.mono_chrome;
-    let num_planes = if mono { 1 } else { 3 };
-    let (sub_x, sub_y) = (pic.subsampling_x as usize, pic.subsampling_y as usize);
-    let w = pic.width as usize;
-    let h = pic.height as usize;
-    let grain_center = 128i32 << (bd - 8);
-    let grain_min = -grain_center;
-    let grain_max = (256i32 << (bd - 8)) - 1 - grain_center;
+/// Picture-level parameters shared by the grain synthesis stages.
+struct GrainCtx<'a> {
+    g: &'a FilmGrainParams,
+    bd: u32,
+    mono: bool,
+    sub_x: usize,
+    sub_y: usize,
+    w: usize,
+    h: usize,
+    grain_min: i32,
+    grain_max: i32,
+}
 
-    // Generate grain (7.18.3.3).
-    let mut rng = Rng(g.grain_seed);
-    let shift = 12 - bd + g.grain_scale_shift;
+impl GrainCtx<'_> {
+    fn num_planes(&self) -> usize {
+        if self.mono { 1 } else { 3 }
+    }
+
+    fn grain_shift(&self) -> u32 {
+        12 - self.bd + self.g.grain_scale_shift
+    }
+
+    fn ar_shift(&self) -> u32 {
+        self.g.ar_coeff_shift_minus_6 + 6
+    }
+
+    fn lag(&self) -> i32 {
+        self.g.ar_coeff_lag as i32
+    }
+
+    fn stripe_w(&self) -> usize {
+        self.w + 64
+    }
+}
+
+type GrainTemplate = Vec<[i32; 82]>;
+
+/// The luma, Cb and Cr grain templates (7.18.3.3).
+struct Templates {
+    luma: GrainTemplate,
+    cb: GrainTemplate,
+    cr: GrainTemplate,
+}
+
+impl Templates {
+    fn plane(&self, plane: usize) -> &GrainTemplate {
+        match plane {
+            0 => &self.luma,
+            1 => &self.cb,
+            _ => &self.cr,
+        }
+    }
+}
+
+fn luma_ar_sum(g: &FilmGrainParams, luma: &[[i32; 82]], lag: i32, y: usize, x: usize) -> i32 {
+    let mut s = 0;
+    let mut pos = 0;
+    'outer: for dr in -lag..=0 {
+        for dc in -lag..=lag {
+            if dr == 0 && dc == 0 {
+                break 'outer;
+            }
+            let c = g.ar_coeffs_y_plus_128[pos] as i32 - 128;
+            s += luma[(y as i32 + dr) as usize][(x as i32 + dc) as usize] * c;
+            pos += 1;
+        }
+    }
+    s
+}
+
+fn luma_grain(c: &GrainCtx, rng: &mut Rng) -> GrainTemplate {
+    let g = c.g;
+    let shift = c.grain_shift();
     let mut luma = vec![[0i32; 82]; 73];
     for row in luma.iter_mut() {
         for v in row.iter_mut() {
@@ -77,77 +135,89 @@ pub(crate) fn apply(pic: &mut Picture, g: &FilmGrainParams, seq: &SequenceHeader
             *v = round2(gv, shift);
         }
     }
-    let ar_shift = g.ar_coeff_shift_minus_6 + 6;
-    let lag = g.ar_coeff_lag as i32;
+    let ar_shift = c.ar_shift();
+    let lag = c.lag();
     for y in 3..73 {
         for x in 3..82 - 3 {
-            let mut s = 0;
-            let mut pos = 0;
-            'outer: for dr in -lag..=0 {
-                for dc in -lag..=lag {
-                    if dr == 0 && dc == 0 {
-                        break 'outer;
-                    }
-                    let c = g.ar_coeffs_y_plus_128[pos] as i32 - 128;
-                    s += luma[(y as i32 + dr) as usize][(x as i32 + dc) as usize] * c;
-                    pos += 1;
-                }
-            }
-            luma[y][x] = (luma[y][x] + round2(s, ar_shift)).clamp(grain_min, grain_max);
+            let s = luma_ar_sum(g, &luma, lag, y, x);
+            luma[y][x] = (luma[y][x] + round2(s, ar_shift)).clamp(c.grain_min, c.grain_max);
         }
     }
-    let chroma_w = if sub_x != 0 { 44 } else { 82 };
-    let chroma_h = if sub_y != 0 { 38 } else { 73 };
-    let mut cb = vec![[0i32; 82]; 73];
-    let mut cr = vec![[0i32; 82]; 73];
-    if !mono {
-        for (arr, seed, on) in [(&mut cb, 0xb524u32, g.num_cb_points > 0), (&mut cr, 0x49d8, g.num_cr_points > 0)] {
-            rng.0 = g.grain_seed ^ seed;
-            for row in arr.iter_mut().take(chroma_h) {
-                for v in row.iter_mut().take(chroma_w) {
-                    let gv = if on || g.chroma_scaling_from_luma { GAUSSIAN_SEQUENCE[rng.next(11) as usize] as i32 } else { 0 };
-                    *v = round2(gv, shift);
-                }
-            }
-        }
-        for y in 3..chroma_h {
-            for x in 3..chroma_w - 3 {
-                let mut s0 = 0;
-                let mut s1 = 0;
-                let mut pos = 0;
-                'outer: for dr in -lag..=0 {
-                    for dc in -lag..=lag {
-                        let c0 = g.ar_coeffs_cb_plus_128[pos] as i32 - 128;
-                        let c1 = g.ar_coeffs_cr_plus_128[pos] as i32 - 128;
-                        if dr == 0 && dc == 0 {
-                            if g.num_y_points > 0 {
-                                let mut l = 0;
-                                let lx = ((x - 3) << sub_x) + 3;
-                                let ly = ((y - 3) << sub_y) + 3;
-                                for i in 0..=sub_y {
-                                    for j in 0..=sub_x {
-                                        l += luma[ly + i][lx + j];
-                                    }
-                                }
-                                let l = round2(l, (sub_x + sub_y) as u32);
-                                s0 += l * c0;
-                                s1 += l * c1;
-                            }
-                            break 'outer;
-                        }
-                        let (yy, xx) = ((y as i32 + dr) as usize, (x as i32 + dc) as usize);
-                        s0 += cb[yy][xx] * c0;
-                        s1 += cr[yy][xx] * c1;
-                        pos += 1;
-                    }
-                }
-                cb[y][x] = (cb[y][x] + round2(s0, ar_shift)).clamp(grain_min, grain_max);
-                cr[y][x] = (cr[y][x] + round2(s1, ar_shift)).clamp(grain_min, grain_max);
-            }
-        }
-    }
+    luma
+}
 
-    // Scaling lookup (7.18.3.4).
+/// The luma contribution to the chroma autoregressive filter at chroma position (y, x).
+fn chroma_luma_term(c: &GrainCtx, luma: &[[i32; 82]], y: usize, x: usize) -> i32 {
+    let mut l = 0;
+    let lx = ((x - 3) << c.sub_x) + 3;
+    let ly = ((y - 3) << c.sub_y) + 3;
+    for i in 0..=c.sub_y {
+        for j in 0..=c.sub_x {
+            l += luma[ly + i][lx + j];
+        }
+    }
+    round2(l, (c.sub_x + c.sub_y) as u32)
+}
+
+fn chroma_ar_sums(c: &GrainCtx, t: &Templates, y: usize, x: usize) -> (i32, i32) {
+    let g = c.g;
+    let lag = c.lag();
+    let mut s0 = 0;
+    let mut s1 = 0;
+    let mut pos = 0;
+    'outer: for dr in -lag..=0 {
+        for dc in -lag..=lag {
+            let c0 = g.ar_coeffs_cb_plus_128[pos] as i32 - 128;
+            let c1 = g.ar_coeffs_cr_plus_128[pos] as i32 - 128;
+            if dr == 0 && dc == 0 {
+                if g.num_y_points > 0 {
+                    let l = chroma_luma_term(c, &t.luma, y, x);
+                    s0 += l * c0;
+                    s1 += l * c1;
+                }
+                break 'outer;
+            }
+            let (yy, xx) = ((y as i32 + dr) as usize, (x as i32 + dc) as usize);
+            s0 += t.cb[yy][xx] * c0;
+            s1 += t.cr[yy][xx] * c1;
+            pos += 1;
+        }
+    }
+    (s0, s1)
+}
+
+/// Chroma grain templates; zero for monochrome pictures.
+fn chroma_grain(c: &GrainCtx, rng: &mut Rng, luma: GrainTemplate) -> Templates {
+    let g = c.g;
+    let mut t = Templates { luma, cb: vec![[0i32; 82]; 73], cr: vec![[0i32; 82]; 73] };
+    if c.mono {
+        return t;
+    }
+    let shift = c.grain_shift();
+    let ar_shift = c.ar_shift();
+    let chroma_w = if c.sub_x != 0 { 44 } else { 82 };
+    let chroma_h = if c.sub_y != 0 { 38 } else { 73 };
+    for (arr, seed, on) in [(&mut t.cb, 0xb524u32, g.num_cb_points > 0), (&mut t.cr, 0x49d8, g.num_cr_points > 0)] {
+        rng.0 = g.grain_seed ^ seed;
+        for row in arr.iter_mut().take(chroma_h) {
+            for v in row.iter_mut().take(chroma_w) {
+                let gv = if on || g.chroma_scaling_from_luma { GAUSSIAN_SEQUENCE[rng.next(11) as usize] as i32 } else { 0 };
+                *v = round2(gv, shift);
+            }
+        }
+    }
+    for y in 3..chroma_h {
+        for x in 3..chroma_w - 3 {
+            let (s0, s1) = chroma_ar_sums(c, &t, y, x);
+            t.cb[y][x] = (t.cb[y][x] + round2(s0, ar_shift)).clamp(c.grain_min, c.grain_max);
+            t.cr[y][x] = (t.cr[y][x] + round2(s1, ar_shift)).clamp(c.grain_min, c.grain_max);
+        }
+    }
+    t
+}
+
+/// Scaling lookup tables (7.18.3.4), one per plane.
+fn scaling_luts(g: &FilmGrainParams, num_planes: usize) -> [[i32; 256]; 3] {
     let mut lut = [[0i32; 256]; 3];
     for (plane, l) in lut.iter_mut().enumerate().take(num_planes) {
         let (n, xs, ys) = if plane == 0 || g.chroma_scaling_from_luma {
@@ -159,101 +229,141 @@ pub(crate) fn apply(pic: &mut Picture, g: &FilmGrainParams, seq: &SequenceHeader
         };
         *l = scaling_lut(n, xs, ys);
     }
-    let scale_lut = |plane: usize, index: i32| -> i32 {
-        let sh = bd - 8;
-        let x = index >> sh;
-        let rem = index - (x << sh);
-        if bd == 8 || x == 255 {
-            lut[plane][x as usize]
-        } else {
-            let start = lut[plane][x as usize];
-            let end = lut[plane][x as usize + 1];
-            start + round2((end - start) * rem, sh)
-        }
-    };
+    lut
+}
 
-    // Noise stripes (7.18.3.5).
-    let stripe_w = w + 64;
-    let n_stripes = (h.div_ceil(2)).div_ceil(16).max(1);
-    let mut stripes: Vec<[Vec<i32>; 3]> = (0..n_stripes).map(|_| [vec![0; 34 * stripe_w], vec![0; 34 * stripe_w], vec![0; 34 * stripe_w]]).collect();
-    let overlap = g.overlap_flag;
-    for (luma_num, stripe) in stripes.iter_mut().enumerate() {
-        let mut r = g.grain_seed;
-        r ^= (((luma_num * 37 + 178) & 255) << 8) as u32;
-        r ^= ((luma_num * 173 + 105) & 255) as u32;
-        rng.0 = r;
-        let mut x = 0;
-        while x < w.div_ceil(2) {
-            let rand = rng.next(8) as usize;
-            let off_x = rand >> 4;
-            let off_y = rand & 15;
-            for (plane, s) in stripe.iter_mut().enumerate().take(num_planes) {
-                let psx = if plane > 0 { sub_x } else { 0 };
-                let psy = if plane > 0 { sub_y } else { 0 };
-                let pox = if psx != 0 { 6 + off_x } else { 9 + off_x * 2 };
-                let poy = if psy != 0 { 6 + off_y } else { 9 + off_y * 2 };
-                let src = match plane {
-                    0 => &luma,
-                    1 => &cb,
-                    _ => &cr,
+fn scale_lookup(lut: &[[i32; 256]; 3], bd: u32, plane: usize, index: i32) -> i32 {
+    let sh = bd - 8;
+    let x = index >> sh;
+    let rem = index - (x << sh);
+    if bd == 8 || x == 255 {
+        lut[plane][x as usize]
+    } else {
+        let start = lut[plane][x as usize];
+        let end = lut[plane][x as usize + 1];
+        start + round2((end - start) * rem, sh)
+    }
+}
+
+/// Fills one plane of a noise stripe from the grain template at stripe column `x`.
+fn fill_stripe_plane(c: &GrainCtx, src: &GrainTemplate, s: &mut [i32], plane: usize, offsets: (usize, usize), x: usize) {
+    let (off_x, off_y) = offsets;
+    let stripe_w = c.stripe_w();
+    let overlap = c.g.overlap_flag;
+    let psx = if plane > 0 { c.sub_x } else { 0 };
+    let psy = if plane > 0 { c.sub_y } else { 0 };
+    let pox = if psx != 0 { 6 + off_x } else { 9 + off_x * 2 };
+    let poy = if psy != 0 { 6 + off_y } else { 9 + off_y * 2 };
+    for i in 0..(34 >> psy) {
+        for j in 0..(34 >> psx) {
+            let mut gv = src[poy + i][pox + j];
+            let (idx, blend) = if psx == 0 { (i * stripe_w + x * 2 + j, j < 2) } else { (i * stripe_w + x + j, j == 0) };
+            if blend && overlap && x > 0 {
+                let old = s[idx];
+                gv = if psx != 0 {
+                    old * 23 + gv * 22
+                } else if j == 0 {
+                    old * 27 + gv * 17
+                } else {
+                    old * 17 + gv * 27
                 };
-                for i in 0..(34 >> psy) {
-                    for j in 0..(34 >> psx) {
-                        let mut gv = src[poy + i][pox + j];
-                        if psx == 0 {
-                            let idx = i * stripe_w + x * 2 + j;
-                            if j < 2 && overlap && x > 0 {
-                                let old = s[idx];
-                                gv = if j == 0 { old * 27 + gv * 17 } else { old * 17 + gv * 27 };
-                                gv = round2(gv, 5).clamp(grain_min, grain_max);
-                            }
-                            s[idx] = gv;
-                        } else {
-                            let idx = i * stripe_w + x + j;
-                            if j == 0 && overlap && x > 0 {
-                                let old = s[idx];
-                                gv = round2(old * 23 + gv * 22, 5).clamp(grain_min, grain_max);
-                            }
-                            s[idx] = gv;
-                        }
-                    }
-                }
+                gv = round2(gv, 5).clamp(c.grain_min, c.grain_max);
             }
-            x += 16;
+            s[idx] = gv;
         }
     }
-    let noise_at = |plane: usize, y: usize, x: usize| -> i32 {
-        let psy = if plane > 0 { sub_y } else { 0 };
+}
+
+/// Noise stripes (7.18.3.5).
+struct Stripes {
+    data: Vec<[Vec<i32>; 3]>,
+    stripe_w: usize,
+    overlap: bool,
+    sub_y: usize,
+    grain_min: i32,
+    grain_max: i32,
+}
+
+impl Stripes {
+    fn build(c: &GrainCtx, t: &Templates, rng: &mut Rng) -> Stripes {
+        let g = c.g;
+        let stripe_w = c.stripe_w();
+        let n_stripes = (c.h.div_ceil(2)).div_ceil(16).max(1);
+        let mut data: Vec<[Vec<i32>; 3]> = (0..n_stripes).map(|_| [vec![0; 34 * stripe_w], vec![0; 34 * stripe_w], vec![0; 34 * stripe_w]]).collect();
+        for (luma_num, stripe) in data.iter_mut().enumerate() {
+            let mut r = g.grain_seed;
+            r ^= (((luma_num * 37 + 178) & 255) << 8) as u32;
+            r ^= ((luma_num * 173 + 105) & 255) as u32;
+            rng.0 = r;
+            let mut x = 0;
+            while x < c.w.div_ceil(2) {
+                let rand = rng.next(8) as usize;
+                let offsets = (rand >> 4, rand & 15);
+                for (plane, s) in stripe.iter_mut().enumerate().take(c.num_planes()) {
+                    fill_stripe_plane(c, t.plane(plane), s, plane, offsets, x);
+                }
+                x += 16;
+            }
+        }
+        Stripes { data, stripe_w, overlap: g.overlap_flag, sub_y: c.sub_y, grain_min: c.grain_min, grain_max: c.grain_max }
+    }
+
+    fn noise_at(&self, plane: usize, y: usize, x: usize) -> i32 {
+        let psy = if plane > 0 { self.sub_y } else { 0 };
         let luma_num = y >> (5 - psy);
         let i = y - (luma_num << (5 - psy));
-        let mut gv = stripes[luma_num][plane][i * stripe_w + x];
+        let mut gv = self.data[luma_num][plane][i * self.stripe_w + x];
         if psy == 0 {
-            if i < 2 && luma_num > 0 && overlap {
-                let old = stripes[luma_num - 1][plane][(i + 32) * stripe_w + x];
+            if i < 2 && luma_num > 0 && self.overlap {
+                let old = self.data[luma_num - 1][plane][(i + 32) * self.stripe_w + x];
                 gv = if i == 0 { old * 27 + gv * 17 } else { old * 17 + gv * 27 };
-                gv = round2(gv, 5).clamp(grain_min, grain_max);
+                gv = round2(gv, 5).clamp(self.grain_min, self.grain_max);
             }
-        } else if i < 1 && luma_num > 0 && overlap {
-            let old = stripes[luma_num - 1][plane][(i + 16) * stripe_w + x];
-            gv = round2(old * 23 + gv * 22, 5).clamp(grain_min, grain_max);
+        } else if i < 1 && luma_num > 0 && self.overlap {
+            let old = self.data[luma_num - 1][plane][(i + 16) * self.stripe_w + x];
+            gv = round2(old * 23 + gv * 22, 5).clamp(self.grain_min, self.grain_max);
         }
         gv
-    };
+    }
+}
 
-    // Blend (7.18.3.5).
-    let (min_value, max_luma, max_chroma) = if g.clip_to_restricted_range {
-        let ml = 235 << (bd - 8);
-        (16 << (bd - 8), ml, if pic.matrix_coefficients as usize == MC_IDENTITY { ml } else { 240 << (bd - 8) })
-    } else {
-        let m = (256 << (bd - 8)) - 1;
-        (0, m, m)
-    };
-    let pix_max = (1i32 << bd) - 1;
-    let scaling_shift = g.grain_scaling_minus_8 + 8;
-    if !mono {
+/// Output clipping range and scaling shift for the blend step (7.18.3.5).
+struct BlendRange {
+    min_value: i32,
+    max_luma: i32,
+    max_chroma: i32,
+    pix_max: i32,
+    scaling_shift: u32,
+}
+
+impl BlendRange {
+    fn new(c: &GrainCtx, matrix_coefficients: usize) -> BlendRange {
+        let bd = c.bd;
+        let (min_value, max_luma, max_chroma) = if c.g.clip_to_restricted_range {
+            let ml = 235 << (bd - 8);
+            (16 << (bd - 8), ml, if matrix_coefficients == MC_IDENTITY { ml } else { 240 << (bd - 8) })
+        } else {
+            let m = (256 << (bd - 8)) - 1;
+            (0, m, m)
+        };
+        BlendRange { min_value, max_luma, max_chroma, pix_max: (1i32 << bd) - 1, scaling_shift: c.g.grain_scaling_minus_8 + 8 }
+    }
+}
+
+struct BlendEnv<'a> {
+    c: &'a GrainCtx<'a>,
+    lut: &'a [[i32; 256]; 3],
+    stripes: &'a Stripes,
+    range: &'a BlendRange,
+}
+
+impl BlendEnv<'_> {
+    fn blend_chroma(&self, py: &[u16], pu: &mut [u16], pv: &mut [u16]) {
+        let c = self.c;
+        let g = c.g;
+        let (w, h, sub_x, sub_y, bd) = (c.w, c.h, c.sub_x, c.sub_y, c.bd);
         let cw = (w + sub_x) >> sub_x;
         let ch = (h + sub_y) >> sub_y;
-        let [py, pu, pv] = &mut pic.planes;
         for y in 0..ch {
             for x in 0..cw {
                 let lx = x << sub_x;
@@ -272,23 +382,59 @@ pub(crate) fn apply(pic: &mut Picture, g: &FilmGrainParams, seq: &SequenceHeader
                         avg
                     } else {
                         let combined = avg * (luma_mult as i32 - 128) + orig * (mult as i32 - 128);
-                        ((combined >> 6) + ((offset as i32 - 256) << (bd - 8))).clamp(0, pix_max)
+                        ((combined >> 6) + ((offset as i32 - 256) << (bd - 8))).clamp(0, self.range.pix_max)
                     };
-                    let noise = round2(scale_lut(plane, merged) * noise_at(plane, y, x), scaling_shift);
-                    out[y * cw + x] = (orig + noise).clamp(min_value, max_chroma) as u16;
+                    let noise = round2(scale_lookup(self.lut, bd, plane, merged) * self.stripes.noise_at(plane, y, x), self.range.scaling_shift);
+                    out[y * cw + x] = (orig + noise).clamp(self.range.min_value, self.range.max_chroma) as u16;
                 }
             }
         }
     }
-    if g.num_y_points > 0 {
-        let py = &mut pic.planes[0];
+
+    fn blend_luma(&self, py: &mut [u16]) {
+        let (w, h) = (self.c.w, self.c.h);
         for y in 0..h {
             for x in 0..w {
                 let orig = py[y * w + x] as i32;
-                let noise = round2(scale_lut(0, orig) * noise_at(0, y, x), scaling_shift);
-                py[y * w + x] = (orig + noise).clamp(min_value, max_luma) as u16;
+                let noise = round2(scale_lookup(self.lut, self.c.bd, 0, orig) * self.stripes.noise_at(0, y, x), self.range.scaling_shift);
+                py[y * w + x] = (orig + noise).clamp(self.range.min_value, self.range.max_luma) as u16;
             }
         }
+    }
+}
+
+pub(crate) fn apply(pic: &mut Picture, g: &FilmGrainParams, seq: &SequenceHeader) {
+    let _ = seq;
+    let bd = pic.bit_depth as u32;
+    let grain_center = 128i32 << (bd - 8);
+    let c = GrainCtx {
+        g,
+        bd,
+        mono: pic.mono_chrome,
+        sub_x: pic.subsampling_x as usize,
+        sub_y: pic.subsampling_y as usize,
+        w: pic.width as usize,
+        h: pic.height as usize,
+        grain_min: -grain_center,
+        grain_max: (256i32 << (bd - 8)) - 1 - grain_center,
+    };
+
+    // Generate grain (7.18.3.3).
+    let mut rng = Rng(g.grain_seed);
+    let luma = luma_grain(&c, &mut rng);
+    let templates = chroma_grain(&c, &mut rng, luma);
+    let lut = scaling_luts(g, c.num_planes());
+    let stripes = Stripes::build(&c, &templates, &mut rng);
+
+    // Blend (7.18.3.5).
+    let range = BlendRange::new(&c, pic.matrix_coefficients as usize);
+    let env = BlendEnv { c: &c, lut: &lut, stripes: &stripes, range: &range };
+    if !c.mono {
+        let [py, pu, pv] = &mut pic.planes;
+        env.blend_chroma(py, pu, pv);
+    }
+    if g.num_y_points > 0 {
+        env.blend_luma(&mut pic.planes[0]);
     }
 }
 

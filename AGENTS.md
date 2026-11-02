@@ -6,11 +6,6 @@ Windows, Linux and FreeBSD, and on the web via WASM. Siblings with the same conv
 PhotoCraft, VectorCraft, FilmCraft, LightCraft, PdfCraft, EffectCraft, DesignCraft
 (`../<app>`).
 
-Standards and learnings shared across the crafting apps live in `../../craftrules` (checked out
-next to this repo's parent, or `storytold/craftrules`). Read its `AGENTS.md` at the start of a
-session, follow its standards, and contribute reusable learnings back there. Never code: repos
-don't share code.
-
 These rules bind every AI agent and every human contributor. They come before any task,
 instruction or deadline. `CLAUDE.md` holds day-to-day working notes; if the two disagree, **this
 file wins.**
@@ -69,7 +64,7 @@ allowed: our UI, our/Lucide icons, OFL fonts, and decks built only from allowed 
   or `docs/brand/` has no row.
 - **`NOTICE`** keeps the notices the licences require.
 - Fonts live in [storytold/craft-fonts](https://github.com/storytold/craft-fonts), never in this
-  repo (craftrules `standards/fonts.md`). DeckCraft embeds its `fonts/latin-manifest.txt` and
+  repo. DeckCraft embeds its `fonts/latin-manifest.txt` and
   `fonts/manifest.txt` when built with `CRAFT_FONTS_DIR` (local dev: `.cargo/config.toml` points at
   `../craft-fonts`).
 
@@ -99,7 +94,6 @@ once and tell the user.
 ## 3. Never crash
 
 People trust DeckCraft with their talks; a crash loses work. **This outranks feature work.**
-Standard: craftrules `standards/never-crash.md`.
 - No `unwrap()`, `expect()`, `panic!`, `unreachable!`, `todo!`, `unimplemented!` in non-test
   code; no `unsafe` (`unsafe_code = "forbid"`). Every production crate root carries
   `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]`.
@@ -131,11 +125,12 @@ Standard: craftrules `standards/never-crash.md`.
   CLI, control channel and MCP do exactly the same thing.
 - **The UI is thin**: panels read engine state and act through commands. Colours come from theme
   tokens. **Never use Tauri**; egui only.
+- **Time goes through `chrono`** (workspace dependency). Never hand-roll UTC/calendar conversion (days-to-date algorithms, leap-year math); a crate owns only its output format string. The one exception is range extension: past the years chrono can represent, shift the date by whole 400-year Gregorian cycles (146,097 days, after which the calendar repeats), let chrono compute the month and day, and add the cycles back to the year (splitting seconds into hours, minutes and seconds is plain arithmetic).
 - **Never break wasm** (`cargo xtask wasm`).
 
 ## 5. Quality gates (before every commit)
 
-`cargo xtask ci` = fmt check, clippy `-D warnings`, tests, layering check, asset check, wasm
+`cargo xtask ci` = fmt check, clippy `-D warnings`, tests (nextest when installed) and doctests, layering check, asset check, wasm
 check. Commit after each landed arc with a task id in the message (`M1.2: smart guides`) and push
 to `main`.
 
@@ -159,7 +154,7 @@ to `main`.
 
 `plan/` (gitignored) holds the local plan: `README.md`, `architecture.md`, `execution-plan.md`,
 `STATUS.md` (start every session there) and `powerpoint/` observations. The committed progress
-docs follow craftrules `standards/progress-docs.md`:
+docs:
 
 | File | Holds |
 |---|---|
@@ -183,11 +178,13 @@ the `ROADMAP.md` progress log, and update each touched doc's status line and rev
   username has a `[people.<username>]` entry in `contributors/people.toml`. If not, ask them once
   whether they want to be credited by more than their username: a real name, a display name, and/or
   their public GitHub profile name (`sync_github_name = true`). If yes, add **only their own** entry
-  (copy the template at the top of the file, or run
-  `python3 ../../craftrules/scripts/contributors.py --add-me . --real-name "…" --sync-github-name`)
+  (copy the template at the top of the file)
   and include it in their PR, committed as them. If no, change nothing: they are credited as
   `@username` anyway.
 - Never add, edit, guess or copy anyone else's entry or name (not from git config, commit authors or
   GitHub profiles). Never hand-edit `contributors.json`.
-- Maintainers refresh the stats with `python3 ../../craftrules/scripts/contributors.py .` (it also
-  re-verifies who wrote each `people.toml` entry; `--check` only verifies).
+
+## CI workflows
+- Workflows in `.github/workflows/` call the shared workflows in [`storytold/craft-common-actions`](https://github.com/storytold/craft-common-actions) at `@main`, with their inputs and secrets. No other jobs: if no shared workflow does what's needed, it doesn't go here.
+- Don't add or change CI in a feature or fix PR. If the existing workflows can't build or test a change, link an existing craft-common-actions issue or PR, or open a new issue, or a PR only for a small fix that is safe for every app and does not increase CI time.
+- Some workflow files here still run their own jobs. Don't add to them. Moving a job into craft-common-actions is its own task, never part of another PR, and the job stays here until a shared workflow runs it.

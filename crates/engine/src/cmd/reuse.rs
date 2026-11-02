@@ -10,22 +10,41 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use deckcraft_model::text::{Action, Hyperlink, RunProps, TextBody};
-use deckcraft_model::{LayoutId, MasterId, MediaId, Presentation, ShapeId, ShapeKind, Slide, SlideId};
+use deckcraft_model::{LayoutId, Master, MasterId, MediaId, Presentation, ShapeId, ShapeKind, Slide, SlideId};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, cmd, has_doc, usize_param};
 use crate::{Result, Session, media_refs};
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![cmd!(
-        "slide.reuse",
-        "Reuse Slides…",
-        ["Home", "Slides", "New Slide"],
-        None,
-        "{path? | data: base64, name?, slides?: [index] (0-based, default all), keepFormatting?: bool (default false: use the destination theme), at?: index (default after the current slide)}",
-        has_doc,
-        reuse
-    )]
+    vec![
+        cmd!(
+            query "slide.reuseList",
+            "List Slides to Reuse",
+            [],
+            None,
+            "{path | data: base64, name?} → {name, slides: [{index, title, hidden}]}: the slides of another presentation, for choosing which ones `slide.reuse` brings in",
+            has_doc,
+            reuse_list
+        ),
+        cmd!(
+            "slide.reuse",
+            "Reuse Slides…",
+            ["Home", "Slides", "New Slide"],
+            None,
+            "{path? | data: base64, name?, slides?: [index] (0-based, default all), keepFormatting?: bool (default false: use the destination theme), at?: index (default after the current slide)}",
+            has_doc,
+            reuse
+        ),
+    ]
+}
+
+fn reuse_list(_s: &mut Session, p: &Value) -> Result<Value> {
+    let (name, bytes) = super::insert::media_bytes(p, "slide.reuseList")?;
+    let src = super::file::open_presentation(&name, &bytes)?;
+    let slides: Vec<Value> =
+        src.slides.iter().enumerate().map(|(index, sl)| json!({"index": index, "title": sl.title(), "hidden": sl.hidden})).collect();
+    Ok(json!({"name": name, "slides": slides}))
 }
 
 /// Point every media id under `x` at its copy in the destination (`map`: source → destination).
@@ -114,9 +133,9 @@ fn relink_shapes(shapes: &mut [deckcraft_model::Shape], map: &HashMap<SlideId, S
 }
 
 /// Fresh shape ids for `shapes`, and the old → new map.
-fn renumber(doc: &mut Presentation, shapes: &mut [deckcraft_model::Shape]) -> Result<HashMap<ShapeId, ShapeId>> {
+fn renumber(cmd: &str, doc: &mut Presentation, shapes: &mut [deckcraft_model::Shape]) -> Result<HashMap<ShapeId, ShapeId>> {
     let old = shape_ids(shapes);
-    super::edit::reid("slide.reuse", doc, shapes)?;
+    super::edit::reid(cmd, doc, shapes)?;
     let map: HashMap<ShapeId, ShapeId> = old.into_iter().zip(shape_ids(shapes)).collect();
     remap_connectors(shapes, &map, 0);
     Ok(map)
@@ -171,19 +190,7 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
                     continue;
                 }
                 masters_done.push(m.id);
-                let mut used = vec![];
-                media_refs::visit::master(m, &mut |id: &MediaId| used.push(*id));
-                copy_media(doc, &src, &used, &mut media_map)?;
-                let mut m = m.clone();
-                media_refs::visit_mut::master(&mut m, &mut remap(&media_map));
-                m.id = MasterId(doc.alloc_id().ok_or_else(|| bad("slide.reuse", NO_ID_SPACE))?);
-                renumber(doc, &mut m.shapes)?;
-                for l in &mut m.layouts {
-                    let new = LayoutId(doc.alloc_id().ok_or_else(|| bad("slide.reuse", NO_ID_SPACE))?);
-                    layout_map.insert(l.id, new);
-                    l.id = new;
-                    renumber(doc, &mut l.shapes)?;
-                }
+                let m = import_master("slide.reuse", doc, &src, m, &mut media_map, &mut layout_map)?;
                 doc.masters.push(Arc::new(m));
             }
         }
@@ -192,11 +199,11 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
         let mut slide_map: HashMap<SlideId, SlideId> = HashMap::new();
         for &i in &picked {
             let Some(from) = src.slides.get(i) else { continue };
-            copy_media(doc, &src, &media_refs::slide_media(from), &mut media_map)?;
+            copy_media("slide.reuse", doc, &src, &media_refs::slide_media(from), &mut media_map)?;
             let mut sl: Slide = from.as_ref().clone();
             media_refs::visit_mut::slide(&mut sl, &mut remap(&media_map));
             sl.id = SlideId(doc.alloc_id().ok_or_else(|| bad("slide.reuse", NO_ID_SPACE))?);
-            let map = renumber(doc, &mut sl.shapes)?;
+            let map = renumber("slide.reuse", doc, &mut sl.shapes)?;
             for a in &mut sl.animations {
                 a.shape = map.get(&a.shape).copied().unwrap_or(a.shape);
                 a.trigger = a.trigger.map(|t| map.get(&t).copied().unwrap_or(t));
@@ -227,9 +234,35 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// A copy of `src`'s master `m` ready to join `doc`: its media copied in, fresh master, layout and
+/// shape ids. `layouts` gains each source layout id → its copy's.
+pub(crate) fn import_master(
+    cmd: &str,
+    doc: &mut Presentation,
+    src: &Presentation,
+    m: &Master,
+    media_map: &mut HashMap<MediaId, MediaId>,
+    layouts: &mut HashMap<LayoutId, LayoutId>,
+) -> Result<Master> {
+    let mut used = vec![];
+    media_refs::visit::master(m, &mut |id: &MediaId| used.push(*id));
+    copy_media(cmd, doc, src, &used, media_map)?;
+    let mut m = m.clone();
+    media_refs::visit_mut::master(&mut m, &mut remap(media_map));
+    m.id = MasterId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
+    renumber(cmd, doc, &mut m.shapes)?;
+    for l in &mut m.layouts {
+        let new = LayoutId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
+        layouts.insert(l.id, new);
+        l.id = new;
+        renumber(cmd, doc, &mut l.shapes)?;
+    }
+    Ok(m)
+}
+
 /// Copy the source media `used` into `doc` under fresh ids, once each (identical bytes already in
 /// `doc` are shared; a linked item keeps its link).
-fn copy_media(doc: &mut Presentation, src: &Presentation, used: &[MediaId], map: &mut HashMap<MediaId, MediaId>) -> Result<()> {
+fn copy_media(cmd: &str, doc: &mut Presentation, src: &Presentation, used: &[MediaId], map: &mut HashMap<MediaId, MediaId>) -> Result<()> {
     for &id in used {
         if map.contains_key(&id) {
             continue;
@@ -237,12 +270,12 @@ fn copy_media(doc: &mut Presentation, src: &Presentation, used: &[MediaId], map:
         let Some(m) = src.media(id) else { continue };
         let new = if m.link.is_some() {
             let mut item = m.clone();
-            item.id = MediaId(doc.alloc_id().ok_or_else(|| bad("slide.reuse", NO_ID_SPACE))?);
+            item.id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
             let new = item.id;
             doc.media.push(item);
             new
         } else {
-            doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone()).ok_or_else(|| bad("slide.reuse", NO_ID_SPACE))?
+            doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone()).ok_or_else(|| bad(cmd, NO_ID_SPACE))?
         };
         map.insert(id, new);
     }
@@ -396,5 +429,35 @@ mod tests {
         assert_eq!(run_link, to(1), "text link follows the copy");
         assert_eq!(click(first.shapes.get(2)), Some(Action::Slide { slide: left_behind }), "a slide not reused keeps its link");
         assert_eq!(click(copy(1).shapes.first()), to(0), "a link back to an earlier copy follows too");
+    }
+
+    /// The list that lets a dialog offer the slides of the other file; picking from it brings in
+    /// exactly those.
+    #[test]
+    fn reuse_list_names_the_slides_and_the_picked_ones_come_in() {
+        let mut src = Session::with_new();
+        for t in ["Alpha", "Beta", "Gamma"] {
+            src.execute("slide.new", &json!({"layout": "titleAndContent", "title": t})).expect("new");
+        }
+        let last_slide = src.doc().expect("doc").doc.slides.len() - 1;
+        src.execute("slide.hide", &json!({"index": last_slide})).expect("hide");
+        let bytes = crate::cmd::file::save_bytes(&src.doc().expect("doc").doc, "deckcraft").expect("save");
+        let data = super::super::base64_encode(&bytes);
+
+        let mut s = Session::with_new();
+        let listed = s.execute("slide.reuseList", &json!({"data": data, "name": "src.deckcraft"})).expect("list");
+        let slides = listed["slides"].as_array().expect("slides");
+        let title = |i: usize| slides.iter().find(|x| x["index"] == i).and_then(|x| x["title"].as_str()).unwrap_or_default().to_string();
+        assert!(slides.len() >= 3);
+        let (a, b, g) = (title(slides.len() - 3), title(slides.len() - 2), title(slides.len() - 1));
+        assert_eq!((a.as_str(), b.as_str(), g.as_str()), ("Alpha", "Beta", "Gamma"));
+        assert_eq!(slides.last().map(|x| x["hidden"].clone()), Some(json!(true)));
+        assert_eq!(s.doc().expect("doc").doc.slides.len(), 1, "listing changes nothing");
+
+        let last = slides.len() - 1;
+        s.execute("slide.reuse", &json!({"data": data, "name": "src.deckcraft", "slides": [last - 2, last]})).expect("reuse");
+        let titles: Vec<String> = s.doc().expect("doc").doc.slides.iter().map(|x| x.title()).collect();
+        assert!(titles.iter().any(|t| t == "Alpha") && titles.iter().any(|t| t == "Gamma"));
+        assert!(!titles.iter().any(|t| t == "Beta"), "a slide that was not picked stays out");
     }
 }

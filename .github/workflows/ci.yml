@@ -1,55 +1,61 @@
-name: ci
+name: CI
 
-# Quality gates for every push to main and every pull request: rustfmt, clippy (-D warnings),
-# tests, asset attribution, crate layering and the wasm32 check — `cargo xtask ci`.
+# Quality gates for every push to main and every pull request (`cargo xtask ci`), through the
+# suite's shared gate workflow in craft-common-actions.
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+permissions:
+  contents: read
 
-env:
-  CARGO_TERM_COLOR: always
-  # Same craft-fonts commit as release.yml (Latin presentation fonts).
-  CRAFT_FONTS_REF: 43913056ce82a3fdad0ef69f6b88d1dc922a8104
+# A newer push to a PR branch cancels its older run; every push to main runs to the end.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  gates:
-    timeout-minutes: 60
-    name: gates (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        # No macOS on PRs or main: the org's 5 macOS slots are kept for release builds, and
-        # release.yml builds macOS (a failing release is fixed and rebuilt).
-        os: [ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+  # Keep the early manifest preflight separate from the reusable workflow. The shared gate
+  # also runs with require-craft-fonts: true, so the build script enforces actual required faces.
+  # Keep this pin identical to gate, freebsd.yml and release.yml.
+  font-pin:
+    runs-on: ubuntu-latest
+    env:
+      # Same craft-fonts commit as release.yml.
+      CRAFT_FONTS_REF: 37827adc41fd165f9a9234ac40f94dbad353aa69
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check out craft-fonts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: storytold/craft-fonts
           ref: ${{ env.CRAFT_FONTS_REF }}
           path: craft-fonts
-      - name: Linux build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev
-      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
-        with:
-          components: rustfmt, clippy
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: ci-${{ matrix.os }}
-      - name: cargo xtask ci
+      - name: Font pin gate
         env:
-          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
-        run: cargo xtask ci
+          # The only pin allowed to predate the reviewed Chinese manifest. It is a sentinel, not
+          # a proposed future SHA; update it together with all three workflow pins.
+          PENDING_CRAFT_FONTS_PIN: 43913056ce82a3fdad0ef69f6b88d1dc922a8104
+        run: |
+          manifest="$GITHUB_WORKSPACE/craft-fonts/fonts/simplified-chinese-manifest.txt"
+          if [ -f "$manifest" ]; then
+            echo "craft-fonts pin carries the reviewed simplified-Chinese manifest."
+          elif [ "$CRAFT_FONTS_REF" = "$PENDING_CRAFT_FONTS_PIN" ]; then
+            echo "::warning title=craft-fonts pin pending::The pinned craft-fonts commit has no fonts/simplified-chinese-manifest.txt, so CJK checks may skip. Advance ci.yml, freebsd.yml and release.yml together to the reviewed immutable SHA before claiming shipped Chinese fonts."
+          else
+            echo "::error title=craft-fonts pin missing Chinese manifest::CRAFT_FONTS_REF advanced past the known pending pin ($PENDING_CRAFT_FONTS_PIN) but still has no fonts/simplified-chinese-manifest.txt. Update the pin to the reviewed commit that carries it."
+            exit 1
+          fi
+
+  gate:
+    needs: font-pin
+    # Tracks @main so suite-wide CI fixes reach every app without a PR in each repository.
+    uses: storytold/craft-common-actions/.github/workflows/gate.yml@main
+    with:
+      # Same craft-fonts commit as release.yml.
+      craft-fonts-ref: 37827adc41fd165f9a9234ac40f94dbad353aa69
+      require-craft-fonts: true
+      packages: >-
+        libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev
+        libgl1-mesa-dev

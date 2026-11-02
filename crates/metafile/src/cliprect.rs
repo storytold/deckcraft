@@ -100,8 +100,14 @@ fn is_rect(clip: &[P]) -> bool {
 
 /// Sutherland–Hodgman: `poly` cut by convex `clip`.
 pub(crate) fn clip_polygon(poly: &[P], clip: &[P]) -> Vec<P> {
+    if poly.len().saturating_mul(clip.len()) > 1_000_000 {
+        return Vec::new();
+    }
     let mut poly = poly.to_vec();
     for i in 0..clip.len() {
+        if poly.len().saturating_mul(clip.len() - i) > 1_000_000 {
+            return Vec::new();
+        }
         let (a, b) = (clip[i], clip[(i + 1) % clip.len()]);
         let keep = |p: P| cross(a, b, p) >= 0.0;
         let cut = |p: P, q: P| {
@@ -307,6 +313,10 @@ fn crop(rect: [f64; 4], img: Rgba, clip: &[P]) -> Option<([f64; 4], Rgba)> {
         return None;
     }
     let mask = !is_rect(clip);
+    let total_pixels = (x1 - x0).saturating_mul(y1 - y0);
+    if mask && total_pixels.saturating_mul(clip.len()) > 5_000_000 {
+        return None;
+    }
     let mut px = Vec::with_capacity((x1 - x0) * (y1 - y0) * 4);
     for row in y0..y1 {
         // Rows are top-down unless the image says otherwise.
