@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **PPTX.42 update 2026-11-02:** Native-sized rule searches retain whole words and respect rule order; nested linear children preserve intrinsic cross extents after snake fitting. Map viewport normalization and chart axis visibility/spacing are refined. Independent controls and retained regressions are reported separately; remaining geometry, paint-order and chart-placement limits stay explicit. Feature scores are unchanged.
+
 > **PPTX.41 update 2026-11-02:** Same-direction centered snake packing and literal-linefeed semantics raise the retained geometry matrix to 458/491, with no prior match lost. Heavy map reduction matches 3,168 independent ring observations; rotated/manual column-label line counts improve on retained and new controls. Exact-boundary arithmetic, reverse/fit layouts, map viewport policy and chart placement remain partial; feature scores are unchanged.
 
 > **PPTX.40 update 2026-11-02:** Constrained snake packing reaches 433/491 native geometry matches. Recovered SmartArt uses distinct fine advance and typographic line metrics: all 326 retained font sets and 274 new font/line controls match. Map sampling passes 640 independent vertex controls, while supported rich-column labels reach 72/73 visible line-count matches. Centered layouts, heavier map simplification, rotated/manual labels and broader search remain partial; feature scores are unchanged.
@@ -235,7 +237,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
   with clear entity caches now decode PCA polygons, bind by entity id, and render boundaries/holes
   offline. Observed plain XML, finalized raw-DEFLATE and SYNC_FLUSH geographic cache envelopes decode. The inspected payload audit found no additional unsupported envelope; malformed or unsupported payloads remain retained, with explicitly labelled fallback tiles when geometry is unusable.
   Administrative lineage, common-ancestor selection and regional Albers are implemented; missing
-  ancestor geometry/extents, global plot fitting, heavy boundary reduction and full provider projection policy remain open. The initial 0.375pt Euclidean sampling stage is independently validated.
+  ancestor geometry/extents, regional threshold arithmetic, map paint order and full provider projection policy remain open. Initial and heavy boundary reduction and finite-size viewport construction have independent native controls; exact-threshold failures remain recorded.
   No map assets are bundled. Radar charts are drawn polar (filled
   or lines), stock charts as high-low lines with close dashes or up/down bars and saved as
   `c:stockChart`, and combo charts start as columns with a line. Trendlines round-trip
@@ -291,7 +293,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
   imported diagram's structure still redraws it with DeckCraft's layout; the full rule-search and
   constraint language is incomplete. Named child/descendant affine references, cycles, paired
   edges and bounds now use a bounded sparse solver rather than eight relaxation passes. Ordered
-  text-measured rules and circular extent fitting are supported; all native search/fallback heuristics remain open. The corrected uncached nested-card definition now renders
+  text-measured rules and circular extent fitting are supported. Successful width/height endpoint searches use the observed finite iterations; width growth accounts for forced word breaks. Coupled search away from the common rule parameter, repeated-control combinations and broader hierarchy/pyramid text interactions still need independent coverage. The corrected uncached nested-card definition now renders
   six shapes in PowerPoint; measured coordinates, text spacing and default insets are covered.
   Helper visibility, layout-order colours, connector/space allocation and recursive composite
   fitting, scaled-end clipping, disjoint-child placement and bounded algorithm-local geometry scope
@@ -306,6 +308,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
   rotation along the path and all nested/text-rule interactions are not certified. Eighteen
   cycle raster controls still fail visible bounds, with four more unmeasurable due to tiny
   exposed fills; geometric agreement does not certify glyph clipping.
+  Nested linear children now preserve intrinsic cross extents under snake fitting; reverse-centered rows and insufficient-capacity multi-wrapper arrangements retain known differences.
   Two extreme thin-text controls still differ in visible raster bounds despite matching geometry.
   Two further overlapped space/text controls have small visible-fill differences that disappear
   when text is cleared; typography/occlusion remains under investigation. Full layout
@@ -483,6 +486,7 @@ no global parity claim or score increase.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.42: finite size-rule search, intrinsic nested flows, map viewport and chart axis state; independent evidence and known limits retained |
 | 2026-11-02 | minor | PPTX.41: centered snake state, literal LF paragraph semantics, heavy map sampling and rotated/manual rich labels; bounded evidence and residuals retained |
 | 2026-11-02 | minor | PPTX.40: constrained snake packing, separate recovered-text metrics, native map sampling and rich-column overflow; partial bounds and visual results remain explicit |
 | 2026-11-02 | minor | PPTX.38: native static-font metrics and wrap boundaries; 321/326 recovery font matches, 58 improved text-position comparisons, remaining fit limits explicit |

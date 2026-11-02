@@ -121,7 +121,7 @@ pub(super) fn place_solved<'a>(
 ) -> Result<(), &'static str> {
     let style = super::constraints::lookup(solution, node).unwrap_or_else(|| BoxStyle::new(rect));
     let start = out.len();
-    place_inner(node, style, rect, data, out, depth, solution, text_refits, work)?;
+    place_inner(node, style, Some(rect), data, out, depth, solution, text_refits, work)?;
     if depth == 0 {
         super::orientation::apply(out.get_mut(start..).unwrap_or(&mut []), work)?;
         // Allocation-only nodes contribute to ancestor bounds, but are not drawing
@@ -209,7 +209,7 @@ fn charge(work: &mut usize, amount: usize) -> Result<(), &'static str> {
 fn place_inner<'a>(
     node: &Instance<'a>,
     style: BoxStyle,
-    capacity: Xfrm,
+    capacity: Option<Xfrm>,
     data: &Data<'a>,
     out: &mut Vec<Placed<'a>>,
     depth: usize,
@@ -318,7 +318,14 @@ fn place_inner<'a>(
             // A composite establishes the available cross-axis extent for nested
             // flows. Linear and space containers can expose their ancestor's
             // capacity beyond their own allocation; they do not clip it early.
-            let capacity = if node.alg == "composite" { style.rect } else { capacity };
+            // Snake fits the occupied children after their algorithms resolve.
+            // Its linear children therefore expose their intrinsic cross extent,
+            // including content larger than both their allocation and the canvas.
+            let capacity = match node.alg.as_str() {
+                "composite" => Some(style.rect),
+                "snake" => None,
+                _ => capacity,
+            };
             place_inner(child, global, capacity, data, out, depth + 1, solution, text_refits, work)?;
             if let Some(range) = ranges.get_mut(i) {
                 *range = start..out.len();
@@ -353,7 +360,7 @@ fn place_inner<'a>(
                     fitted.rect.y += style.rect.y;
                     fit.project(&mut fitted.rect);
                     let mut replacement = Vec::new();
-                    place_inner(child, fitted, style.rect, data, &mut replacement, depth + 1, solution, text_refits, work)?;
+                    place_inner(child, fitted, Some(style.rect), data, &mut replacement, depth + 1, solution, text_refits, work)?;
                     let target = out.get_mut(range.clone()).ok_or("invalid fitted diagram range")?;
                     if target.len() != replacement.len() {
                         return Err("fitted diagram changed its node count");
@@ -457,6 +464,9 @@ fn pack_composite_extents(
         }
         let mut packed = occupied.clone();
         super::snake::pack(node, local, &mut packed, text_refit, work)?;
+        if restore_linear_cross_extents(node, &occupied, &mut packed, work)? {
+            super::snake::repack(node, local, &mut packed, work)?;
+        }
         for ((before, after), range) in occupied.iter().zip(&packed).zip(ranges.iter().cloned()) {
             let (sx, sy) = (
                 if before.rect.w > 0. { after.rect.w / before.rect.w } else { 1. },
@@ -516,7 +526,7 @@ fn pack_composite_extents(
             if node.alg == "cycle" {
                 pack_cycle(node, local, &mut packed, text_refit, work)?;
             } else {
-                pack_linear(node, local, local.rect, &mut packed, false);
+                pack_linear(node, local, Some(local.rect), &mut packed, false);
             }
             for ((before, after), range) in occupied.iter().zip(&packed).zip(ranges.iter().cloned()) {
                 for p in out.get_mut(range).unwrap_or(&mut []) {
@@ -548,6 +558,28 @@ fn pack_composite_extents(
         }
     }
     Ok(())
+}
+
+fn restore_linear_cross_extents(node: &Instance<'_>, occupied: &[BoxStyle], packed: &mut [BoxStyle], work: &mut usize) -> Result<bool, &'static str> {
+    charge(work, node.children.len())?;
+    let mut restored = false;
+    for ((child, before), after) in node.children.iter().zip(occupied).zip(packed) {
+        if child.alg != "lin" {
+            continue;
+        }
+        let vertical = matches!(child.param("linDir", "fromL").as_str(), "fromT" | "fromB");
+        let (cross, flow) = if vertical { (&mut after.rect.w, &mut after.rect.h) } else { (&mut after.rect.h, &mut after.rect.w) };
+        let intrinsic = if vertical { before.rect.w } else { before.rect.h };
+        if *cross < intrinsic {
+            // The next linear pass keeps the already fitted flow geometry.
+            // Restoring the cross extent triggers its finite flow search at
+            // that allocation, rather than reloading the pre-fit constraints.
+            *flow *= flow_fit_scale(*flow, *flow);
+            *cross = intrinsic;
+            restored = true;
+        }
+    }
+    Ok(restored)
 }
 
 pub(super) fn self_constraints(node: &Instance<'_>, style: &mut BoxStyle, sizes: bool) {
@@ -882,7 +914,7 @@ fn cycle_fit_radius(
     Ok(low)
 }
 
-fn pack_linear(node: &Instance<'_>, style: BoxStyle, capacity: Xfrm, children: &mut [BoxStyle], root: bool) {
+fn pack_linear(node: &Instance<'_>, style: BoxStyle, capacity: Option<Xfrm>, children: &mut [BoxStyle], root: bool) {
     let r = style.rect;
     let default_dir = if node.alg == "hierChild" && node.param("chDir", "horz") == "vert" { "fromT" } else { "fromL" };
     let dir = node.param("linDir", default_dir);
@@ -914,13 +946,13 @@ fn pack_linear(node: &Instance<'_>, style: BoxStyle, capacity: Xfrm, children: &
     for child in children {
         let b = &mut child.rect;
         if vertical {
-            b.w = b.w.min(if node.alg == "lin" { capacity.w } else { r.w });
+            b.w = b.w.min(if node.alg == "lin" { capacity.map_or(b.w, |c| c.w) } else { r.w });
             b.h *= scale;
             b.y = r.y + if backwards { r.h - pos - b.h } else { pos };
             b.x = r.x + (r.w - b.w) / 2.0;
             pos += b.h + gap * scale;
         } else {
-            b.h = b.h.min(if node.alg == "lin" { capacity.h } else { r.h });
+            b.h = b.h.min(if node.alg == "lin" { capacity.map_or(b.h, |c| c.h) } else { r.h });
             b.w *= scale;
             b.x = r.x + if backwards { r.w - pos - b.w } else { pos };
             b.y = r.y + (r.h - b.h) / 2.0;

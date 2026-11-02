@@ -203,6 +203,45 @@ fn snake_repacking_uses_its_own_text_measurement_mode() {
 }
 
 #[test]
+fn snake_fitting_restores_linear_cross_extents_and_retains_fitted_flow() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for direction in ["fromL", "fromR", "fromT", "fromB"] {
+        let vertical = matches!(direction, "fromT" | "fromB");
+        let (flow, cross) = if vertical { ("h", "w") } else { ("w", "h") };
+        for (own_cross, total) in [(100., 14.9853515625), (20., 14.970717430114746)] {
+            let l = layout(&format!(
+                "<layoutNode><alg type='snake'/><constrLst>
+                 <constr type='{flow}' for='ch' forName='row' val='50'/><constr type='{cross}' for='ch' forName='row' val='{own_cross}'/>
+                 </constrLst><layoutNode name='row'><alg type='lin'><param type='linDir' val='{direction}'/></alg><constrLst>
+                 <constr type='{flow}' for='ch' forName='a' val='10'/><constr type='{cross}' for='ch' forName='a' val='80'/>
+                 <constr type='{flow}' for='ch' forName='b' val='30'/><constr type='{cross}' for='ch' forName='b' val='40'/>
+                 </constrLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode>
+                 <layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode></layoutNode>"
+            ));
+            let (w, h) = if vertical { (30., 25.) } else { (25., 30.) };
+            let out = evaluate(&l, &data, Xfrm::new(13. * mm, 17. * mm, w * mm, h * mm)).unwrap();
+            assert_eq!(out.len(), 2);
+            let start = (25. - total) / 2.;
+            for (i, p) in out.iter().enumerate() {
+                let length = total * if i == 0 { 0.25 } else { 0.75 };
+                let mut position = start + if i == 0 { 0. } else { total * 0.25 };
+                if matches!(direction, "fromR" | "fromB") {
+                    position = 25. - position - length;
+                }
+                let height = if i == 0 { 80. } else { 40. };
+                let expected =
+                    if vertical { [(30. - height) / 2., position, height, length] } else { [position, (30. - height) / 2., length, height] };
+                let actual = [p.rect.x / mm - 13., p.rect.y / mm - 17., p.rect.w / mm, p.rect.h / mm];
+                for (a, e) in actual.into_iter().zip(expected) {
+                    assert!((a - e).abs() < 1e-6, "{direction}/{own_cross}: {actual:?} != {expected:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn a_self_spacing_property_does_not_insert_linear_spacers() {
     let d = source();
     for property in ["sp", "sibSp"] {
@@ -421,7 +460,7 @@ fn measured_rules_are_ordered_stop_at_fit_and_recompute_dependencies() {
     let shrink = r#"<rule type="primFontSz" for="ch" forName="text" val="5"/>"#;
     let a = run(&format!("{grow}{shrink}"));
     let b = run(&format!("{shrink}{grow}"));
-    assert!((a[0].0 - 90.0).abs() < 0.02 && a[0].1 == Some(30.0));
+    assert!((a[0].0 - 32.5 * 72. / 25.4).abs() < 0.02 && a[0].1 == Some(30.0));
     assert!((a[1].0 - a[0].0).abs() < 1e-6, "dependent height must be re-solved");
     assert!((b[0].0 - 10.0 * 72.0 / 25.4).abs() < 1e-6 && b[0].1.unwrap() < 10.0);
 }
@@ -685,7 +724,7 @@ fn local_text_edges_do_not_constrain_independent_size_rules() {
     );
     let mut measure = |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| (90. - p.rect.w).max(0.)).collect());
     let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
-    assert!((out[0].rect.w - 90.).abs() < 0.02);
+    assert!((out[0].rect.w - 31.875 * 72. / 25.4).abs() < 0.02);
     assert!((out[0].rect.h - 40. * 72. / 25.4).abs() < 1e-6);
 }
 
@@ -1978,4 +2017,67 @@ fn zero_font_equalities_do_not_assign_or_declare_dependencies() {
             }
         }
     }
+}
+
+#[test]
+fn width_rules_keep_unbroken_words_but_height_rules_only_fit_lines() {
+    let data = source();
+    let l = layout(
+        "<layoutNode><alg type='tx'/><shape type='rect'/><constrLst>
+         <constr type='w' val='20'/><constr type='h' val='20'/></constrLst>
+         <ruleLst><rule type='w' val='60'/><rule type='h' val='60'/></ruleLst></layoutNode>",
+    );
+    let mm = 72. / 25.4;
+    let mut measure = |items: &[Placed<'_>], kind: MeasureKind| {
+        Ok(items.iter().map(|p| if kind == MeasureKind::WordWrap && p.rect.w < 42. * mm { 1. } else { 0. }).collect())
+    };
+    let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+    assert!((out[0].rect.w / mm - 42.5).abs() < 1e-6);
+    assert!((out[0].rect.h / mm - 20.).abs() < 1e-6);
+}
+
+#[test]
+fn font_before_growth_does_not_retroactively_reclaim_later_space() {
+    let data = source();
+    let l = layout(
+        "<layoutNode><alg type='tx'/><shape type='rect'/><constrLst>
+         <constr type='w' val='20'/><constr type='h' val='15'/><constr type='primFontSz' val='28'/></constrLst>
+         <ruleLst><rule type='primFontSz' val='12'/><rule type='h' val='70'/><rule type='w' val='50'/></ruleLst></layoutNode>",
+    );
+    let mut measure = |items: &[Placed<'_>], kind: MeasureKind| {
+        Ok(items
+            .iter()
+            .map(|p| {
+                let narrow = p.rect.w < 90.;
+                let height = (if narrow { 60. } else { 30. } - p.rect.h).max(0.);
+                height + if kind == MeasureKind::WordWrap { (p.font.unwrap_or(28.) - 12.).max(0.) + f64::from(narrow) } else { 0. }
+            })
+            .collect())
+    };
+    let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+    assert_eq!(out[0].font, Some(12.));
+    assert!((out[0].rect.h * 25.4 / 72. - 21.875).abs() < 1e-6);
+    assert!(out[0].rect.w >= 90.);
+}
+
+#[test]
+fn later_font_shrink_can_restore_the_exact_original_size() {
+    let data = source();
+    let l = layout(
+        "<layoutNode><alg type='tx'/><shape type='rect'/><constrLst>
+         <constr type='h' val='10'/><constr type='primFontSz' val='28'/></constrLst>
+         <ruleLst><rule type='h' val='50'/><rule type='primFontSz' val='8'/></ruleLst></layoutNode>",
+    );
+    let mut measure = |items: &[Placed<'_>], kind: MeasureKind| {
+        Ok(items
+            .iter()
+            .map(|p| {
+                let font = p.font.unwrap_or(28.);
+                (font * 3. - p.rect.h).max(0.) + if kind == MeasureKind::WordWrap { (font - 8.).max(0.) } else { 0. }
+            })
+            .collect())
+    };
+    let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+    assert_eq!(out[0].font, Some(8.));
+    assert!((out[0].rect.h - 10. * 72. / 25.4).abs() < 1e-6);
 }

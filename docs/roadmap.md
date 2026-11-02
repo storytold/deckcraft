@@ -1,5 +1,7 @@
 # DeckCraft roadmap: milestones and what's next
 
+> **PPTX.42 update 2026-11-02:** Native-sized rule searches retain whole words and respect rule order; nested linear children preserve intrinsic cross extents after snake fitting. Map viewport normalization and chart axis visibility/spacing are refined. Independent controls and retained regressions are reported separately; remaining geometry, paint-order and chart-placement limits stay explicit. Feature scores are unchanged.
+
 > **PPTX.41 update 2026-11-02:** Same-direction centered snake packing and literal-linefeed semantics raise the retained geometry matrix to 458/491, with no prior match lost. Heavy map reduction matches 3,168 independent ring observations; rotated/manual column-label line counts improve on retained and new controls. Exact-boundary arithmetic, reverse/fit layouts, map viewport policy and chart placement remain partial; feature scores are unchanged.
 
 > **PPTX.40 update 2026-11-02:** Constrained snake packing reaches 433/491 native geometry matches. Recovered SmartArt uses distinct fine advance and typographic line metrics: all 326 retained font sets and 274 new font/line controls match. Map sampling passes 640 independent vertex controls, while supported rich-column labels reach 72/73 visible line-count matches. Centered layouts, heavier map simplification, rotated/manual labels and broader search remain partial; feature scores are unchanged.
@@ -176,6 +178,7 @@ and rich point labels; provider/native-layout gaps remain documented, and beta s
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.42: finite size-rule search, intrinsic nested flows, map viewport and chart axis state; independent evidence and known limits retained |
 | 2026-11-02 | minor | PPTX.41: centered snake state, literal LF paragraph semantics, heavy map sampling and rotated/manual rich labels; bounded evidence and residuals retained |
 | 2026-11-02 | minor | PPTX.40: constrained snake packing, separate recovered-text metrics, native map sampling and rich-column overflow; partial bounds and visual results remain explicit |
 | 2026-11-02 | minor | PPTX.38: native static-font metrics and wrap boundaries; 321/326 recovery font matches, 58 improved text-position comparisons, remaining fit limits explicit |

@@ -480,6 +480,9 @@ pub struct ChartFormat {
     pub lines: std::collections::BTreeMap<ChartLineRole, Line>,
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub bodies: std::collections::BTreeMap<ChartTextRole, crate::text::BodyProps>,
+    /// Explicit paragraph line spacing in chart text, inherited from the default role.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub line_spacings: std::collections::BTreeMap<ChartTextRole, crate::text::Spacing>,
 }
 
 impl ChartFormat {
@@ -537,6 +540,13 @@ pub struct Chart {
     pub y_format: Option<String>,
     /// The value axis is deleted (`c:delete`): no labels, though gridlines may stay.
     pub y_hidden: bool,
+    /// `c:tickLblPos="none"`: hide the category labels while retaining its axis line.
+    pub cat_hidden: bool,
+    /// `c:delete`: remove the category axis line and its labels.
+    pub cat_deleted: bool,
+    /// `c:lblOffset`, from 0 to 1000. An absent value uses the DrawingML default, 100.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cat_label_offset: Option<u16>,
     /// The category axis runs backwards (`c:orientation val="maxMin"`): right to left, or on a
     /// horizontal bar chart top to bottom (the default puts the first category at the bottom).
     pub cat_reversed: bool,
@@ -657,6 +667,9 @@ impl Default for Chart {
             y_log_base: None,
             y_format: None,
             y_hidden: false,
+            cat_hidden: false,
+            cat_deleted: false,
+            cat_label_offset: None,
             cat_reversed: false,
             y2_min: None,
             y2_max: None,
@@ -753,6 +766,10 @@ impl Chart {
             props.lang = self.lang.clone();
         }
         props
+    }
+
+    pub fn line_spacing(&self, role: ChartTextRole) -> Option<&crate::text::Spacing> {
+        self.format.line_spacings.get(&role).or_else(|| self.format.line_spacings.get(&ChartTextRole::Default))
     }
 
     fn sample_treemap_sunburst(kind: ChartType) -> Self {

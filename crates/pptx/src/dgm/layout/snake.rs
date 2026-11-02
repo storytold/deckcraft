@@ -60,6 +60,21 @@ fn exceeds(value: f64, limit: f64) -> bool {
 }
 
 impl Policy {
+    fn new(node: &Instance<'_>, style: BoxStyle, count: usize) -> Self {
+        let count = match node.param("bkpt", "endCnv").as_str() {
+            "fixed" => Some((node.number("bkPtFixedVal", 1.).max(1.) as usize).min(count)),
+            "bal" => Some((count as f64).sqrt().ceil() as usize),
+            _ => None,
+        };
+        Self {
+            column: node.param("flowDir", "row") == "col",
+            count,
+            reverse: node.param("contDir", "sameDir") == "revDir",
+            center: node.param("off", "off") == "ctr",
+            gap: style.get("sp").unwrap_or(0.).max(0.),
+        }
+    }
+
     fn layout(&self, children: &[BoxStyle], available: f64, scale: f64, work: &mut usize) -> Result<Packing, &'static str> {
         charge(work, children.len().saturating_mul(3))?;
         let mut lines = Vec::<Line>::new();
@@ -133,18 +148,7 @@ pub(super) fn pack(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyl
     if children.is_empty() {
         return Ok(());
     }
-    let count = match node.param("bkpt", "endCnv").as_str() {
-        "fixed" => Some((node.number("bkPtFixedVal", 1.).max(1.) as usize).min(children.len())),
-        "bal" => Some((children.len() as f64).sqrt().ceil() as usize),
-        _ => None,
-    };
-    let policy = Policy {
-        column: node.param("flowDir", "row") == "col",
-        count,
-        reverse: node.param("contDir", "sameDir") == "revDir",
-        center: node.param("off", "off") == "ctr",
-        gap: style.get("sp").unwrap_or(0.).max(0.),
-    };
+    let policy = Policy::new(node, style, children.len());
     let frame = style.rect;
     let available = if policy.column { frame.h } else { frame.w };
     let fits = |packing: &Packing| !exceeds(packing.width, frame.w) && !exceeds(packing.height, frame.h);
@@ -168,6 +172,23 @@ pub(super) fn pack(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyl
             }
         }
     }
+    place(node, frame, children, packed);
+    Ok(())
+}
+
+/// Repack children after inner linear flows restore their intrinsic cross
+/// dimensions. Those dimensions may exceed the canvas; another uniform fitting
+/// pass would discard the linear algorithm's intrinsic dimensions again.
+pub(super) fn repack(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], work: &mut usize) -> Result<(), &'static str> {
+    let policy = Policy::new(node, style, children.len());
+    let frame = style.rect;
+    let available = if policy.column { frame.h } else { frame.w };
+    let packed = policy.layout(children, available, 1., work)?;
+    place(node, frame, children, packed);
+    Ok(())
+}
+
+fn place(node: &Instance<'_>, frame: Xfrm, children: &mut [BoxStyle], packed: Packing) {
     let grow = node.param("grDir", "tL");
     for (child, mut rect) in children.iter_mut().zip(packed.boxes) {
         if grow.ends_with('R') {
@@ -180,7 +201,6 @@ pub(super) fn pack(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyl
         rect.y += frame.y + (frame.h - packed.height) / 2.;
         child.rect = Xfrm { rot: child.rect.rot, flip_h: child.rect.flip_h, flip_v: child.rect.flip_v, ..rect };
     }
-    Ok(())
 }
 
 #[cfg(test)]

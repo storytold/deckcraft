@@ -83,9 +83,9 @@ fn project(lon: f64, lat: f64, kind: &str) -> Point {
             let rho = (c - 2.0 * n * y.sin()).max(0.0).sqrt() / n;
             Point::new(rho * (n * x).sin(), rho * (n * x).cos())
         }
-        // Robinson's 5-degree tabulation (Snyder, USGS PP1395, table 36). Native
-        // chart controls approach a 4/3 vertical normalization instead of Snyder's
-        // 1.3523 across chart sizes. Native finite-size quantization still differs.
+        // Robinson's tabulation (Snyder and Voxland, USGS PP1453, pp. 222–223).
+        // Native charts normalize Y to 90 degrees in the same angular units as X.
+        // This differs from the standard 1.3523 vertical factor in equation 68.
         "robinson" => {
             const X: [f64; 19] = [
                 1., 0.9986, 0.9954, 0.99, 0.9822, 0.973, 0.96, 0.9427, 0.9216, 0.8962, 0.8679, 0.835, 0.7986, 0.7597, 0.7186, 0.6732, 0.6213, 0.5722,
@@ -98,7 +98,10 @@ fn project(lon: f64, lat: f64, kind: &str) -> Point {
             let t = lat.abs().min(90.0) / 5.0;
             let i = (t as usize).min(17);
             let f = (t - i as f64).min(1.0);
-            Point::new(0.8487 * x * (X[i] + (X[i + 1] - X[i]) * f), -(4. / 3.) * lat.signum() * (Y[i] + (Y[i + 1] - Y[i]) * f))
+            Point::new(
+                0.8487 * x * (X[i] + (X[i + 1] - X[i]) * f),
+                -0.8487 * std::f64::consts::FRAC_PI_2 * lat.signum() * (Y[i] + (Y[i + 1] - Y[i]) * f),
+            )
         }
         _ => {
             // Web Mercator's finite square-world latitude, atan(sinh(pi)).
@@ -275,6 +278,22 @@ fn fit_bounds(map: &Geography, projected: &ProjectedMap) -> Option<Rect> {
     Some(bounds)
 }
 
+fn map_transform(bounds: Rect, plot: Rect) -> Affine {
+    // Native maps fit uniformly in a viewport expanded by 0.375pt on each edge,
+    // then map it into the visible plot. The two screen scales therefore differ
+    // with chart size and aspect ratio.
+    let fit_width = plot.width() + 0.75;
+    let fit_height = plot.height() + 0.75;
+    let scale = (fit_width / bounds.width()).min(fit_height / bounds.height());
+    Affine::translate(plot.center().to_vec2())
+        * Affine::scale_non_uniform(scale * plot.width() / fit_width, scale * plot.height() / fit_height)
+        * Affine::translate(-bounds.center().to_vec2())
+}
+
+fn region_contains(path: &BezPath, point: Point) -> bool {
+    path.winding(point) != 0
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, text_col: Rgba) -> bool {
     let Some(series) = c.series.first() else { return false };
@@ -290,8 +309,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
     if plot.width() <= 0.0 || plot.height() <= 0.0 {
         return false;
     }
-    let scale = (plot.width() / bounds.width()).min(plot.height() / bounds.height());
-    let transform = Affine::translate(plot.center().to_vec2()) * Affine::scale(scale) * Affine::translate(-bounds.center().to_vec2());
+    let transform = map_transform(bounds, plot);
     let (min, max) = series.values.iter().flatten().filter(|v| v.is_finite()).fold((f64::MAX, f64::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
     let hi = match &series.fill {
         Some(deckcraft_model::Fill::Solid { color }) => rctx.color(color, None),
@@ -318,10 +336,11 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
             value.map_or(Rgba::rgb(224, 224, 224), |v| ramp(v, &stops))
         };
         ctx.set_transform(m);
-        ctx.set_fill_rule(vello_cpu::peniko::Fill::EvenOdd);
+        // Cached ring directions carry hole semantics. Same-direction overlaps
+        // remain filled; opposite directions cancel, including between polygons.
+        ctx.set_fill_rule(vello_cpu::peniko::Fill::NonZero);
         ctx.set_paint(color(fill, 1.0));
         ctx.fill_path(&path);
-        ctx.set_fill_rule(vello_cpu::peniko::Fill::NonZero);
         if let Some(line) = &series.line {
             crate::stroke::stroke(ctx, rctx, line, None, &path, None, m, line.width.unwrap_or(0.75).clamp(0., 2000.), 1.);
         }
@@ -330,7 +349,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
             let bounds = path.bounding_box();
             let p = bounds.center();
             // Never put a label in a hole or outside a concave region.
-            if path.winding(p) % 2 != 0 && bounds.width() > base * 3.0 && bounds.height() > base * 1.5 {
+            if region_contains(&path, p) && bounds.width() > base * 3.0 && bounds.height() > base * 1.5 {
                 let text = point_label.unwrap_or_else(|| region.name.clone());
                 labels.push((
                     text,
@@ -379,6 +398,90 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rendered_regions_and_label_containment_share_nonzero_winding() {
+        use deckcraft_model::{ColorRef, Fill, Presentation, Shape, ShapeId, ShapeKind, chart::Series, geography::GeoRegion};
+        let rectangle = |left, bottom, right, top| vec![[left, bottom], [right, bottom], [right, top], [left, top]];
+        let outer = rectangle(-20., -10., 20., 10.);
+        let inner = rectangle(-10., -5., 10., 5.);
+        let hole: Vec<_> = inner.iter().copied().rev().collect();
+        let island = rectangle(-3., -2., 3., 2.);
+        let left = rectangle(-20., -10., 5., 10.);
+        let right = rectangle(-5., -10., 20., 10.);
+        for (rings, filled) in [
+            (vec![outer.clone(), inner], true),
+            (vec![outer.clone(), hole.clone()], false),
+            (vec![outer, hole, island], true),
+            (vec![left.clone(), right.clone()], true),
+            (vec![left, right.into_iter().rev().collect()], false),
+        ] {
+            let map = Geography {
+                projection: "mercator".into(),
+                viewed_region: "dataOnly".into(),
+                regions: vec![GeoRegion { point: Some(0), rings, ..Default::default() }],
+                ..Default::default()
+            };
+            assert_eq!(region_contains(&paths(&map).paths[0], Point::ZERO), filled);
+            let chart = Chart {
+                kind: deckcraft_model::chart::ChartType::RegionMap,
+                title: None,
+                legend: None,
+                series: vec![Series {
+                    values: vec![Some(1.)],
+                    geography: Some(map),
+                    fill: Some(Fill::solid(ColorRef::rgb(Rgba::BLACK))),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let mut presentation = Presentation { slide_size: kurbo::Size::new(128., 128.), ..Default::default() };
+            std::sync::Arc::make_mut(&mut presentation.slides[0]).shapes = vec![Shape {
+                id: ShapeId(1),
+                xfrm: Some(deckcraft_model::Xfrm::new(0., 0., 128., 128.)),
+                kind: ShapeKind::Chart(Box::new(chart)),
+                ..Default::default()
+            }];
+            let image = crate::render_slide(&presentation, 0, &crate::RenderOpts::default());
+            assert_eq!(image.straight_at(64, 64), Some(if filled { [0, 0, 0, 255] } else { [255, 255, 255, 255] }));
+        }
+    }
+
+    #[test]
+    fn robinson_chart_normalization_uses_the_same_angular_units_on_both_axes() {
+        let equator = project(180., 0., "robinson");
+        let pole = project(0., 90., "robinson");
+        assert!((equator.x + 2. * pole.y).abs() < 1e-12);
+        assert_eq!(project(0., -90., "robinson").y, -pole.y);
+        assert_eq!(project(0., 0., "robinson"), Point::ZERO);
+        let lower = project(0., 20., "robinson");
+        let upper = project(0., 25., "robinson");
+        let middle = project(0., 22.5, "robinson");
+        assert!((middle.y - (lower.y + upper.y) / 2.).abs() < 1e-12);
+    }
+
+    #[test]
+    fn viewport_fits_before_the_final_inset_and_preserves_centres_and_limits() {
+        let bounds = Rect::new(-3., -1., 5., 3.);
+        let wide = Rect::new(10., 20., 310., 120.);
+        let tall = Rect::new(10., 20., 110., 320.);
+        for plot in [wide, tall, Rect::new(0., 0., 0.01, 0.02)] {
+            let mapped = map_transform(bounds, plot).transform_rect_bbox(bounds);
+            assert!(mapped.is_finite());
+            assert!(mapped.center().distance(plot.center()) < 1e-12);
+            assert!(mapped.width() <= plot.width() + 1e-12 && mapped.height() <= plot.height() + 1e-12);
+            assert!((mapped.width() - plot.width()).abs().min((mapped.height() - plot.height()).abs()) < 1e-12);
+        }
+        let horizontal = map_transform(bounds, wide).transform_rect_bbox(bounds);
+        assert!((horizontal.height() - 100.).abs() < 1e-12);
+        assert!(horizontal.width() > 200.);
+        let vertical = map_transform(bounds, tall).transform_rect_bbox(bounds);
+        assert!((vertical.width() - 100.).abs() < 1e-12);
+        assert!(vertical.height() > 50.);
+        // The small aspect change is a finite-size effect, not a projection constant.
+        let larger = map_transform(bounds, Rect::new(0., 0., 3000., 1000.)).transform_rect_bbox(bounds);
+        assert!((larger.width() / larger.height() - 2.).abs() < (horizontal.width() / horizontal.height() - 2.).abs());
+    }
     #[test]
     fn numeric_colour_ramp_clamps_interpolates_and_handles_large_values() {
         use deckcraft_model::geography::ValueColorPosition as P;

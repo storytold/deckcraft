@@ -138,7 +138,9 @@ fn measure(ctx: &Ctx<'_>, source: &[Shape], placed: &[Placed<'_>], kind: Measure
             &deckcraft_text::Opts { rect: bounds, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: true },
             deckcraft_text::LayoutMetrics {
                 advance: if p.recovered { deckcraft_text::AdvanceMetrics::Diagram } else { deckcraft_text::AdvanceMetrics::DrawingMl },
-                line: if p.recovered { deckcraft_text::LineMetrics::Typographic } else { deckcraft_text::LineMetrics::Slide },
+                // Numeric diagram rules fit the font's typographic height, including
+                // valid authored layouts; the ordinary slide pitch underestimates it.
+                line: deckcraft_text::LineMetrics::Typographic,
             },
         );
         let w = result.inner.width().max(0.0);

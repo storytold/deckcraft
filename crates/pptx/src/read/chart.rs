@@ -218,6 +218,7 @@ pub(super) fn read_format(c: &mut Chart, ch: &El, pa: &El, val: Option<&El>, cat
     }
     let second = pa.children_named("valAx").find(|a| a.child_val("axPos") == Some("r"));
     for (role, axis) in [(ChartTextRole::CategoryAxis, cat), (ChartTextRole::ValueAxis, val), (ChartTextRole::SecondaryValueAxis, second)] {
+        read_line_spacing(c, role, axis.and_then(|a| a.child("txPr")));
         if let Some(body) = axis.and_then(|a| a.path(&["txPr", "bodyPr"])) {
             read_body(c, role, body);
         }
@@ -240,6 +241,19 @@ fn read_body(c: &mut Chart, role: ChartTextRole, e: &El) {
     if body != Default::default() {
         c.format.bodies.insert(role, body);
     }
+}
+
+fn read_line_spacing(c: &mut Chart, role: ChartTextRole, text: Option<&El>) {
+    use deckcraft_model::text::Spacing;
+    let Some(e) = text.and_then(|t| t.path(&["p", "pPr", "lnSpc"])) else { return };
+    let spacing = if let Some(n) = e.child("spcPct").and_then(|p| p.f64("val")) {
+        Spacing::Pct((n / 100_000.).clamp(0., 132.))
+    } else if let Some(n) = e.child("spcPts").and_then(|p| p.f64("val")) {
+        Spacing::Pts((n / 100.).clamp(0., 1584.))
+    } else {
+        return;
+    };
+    c.format.line_spacings.insert(role, spacing);
 }
 
 /// A group's value axis: its vertical one when it has two (scatter), else its one.
@@ -481,6 +495,9 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
         c.y_hidden = deleted(v);
     }
     if let Some(a) = cat_ax {
+        c.cat_hidden = a.child_val("tickLblPos") == Some("none");
+        c.cat_deleted = a.child("delete").and_then(|d| d.bool("val")) == Some(true);
+        c.cat_label_offset = a.child_val("lblOffset").and_then(|v| v.parse::<u16>().ok()).filter(|v| *v <= 1000);
         c.cat_reversed = a.child("scaling").and_then(|s| s.child_val("orientation")).is_some_and(|o| o == "maxMin");
         c.axis_titles.0 = a.child("title").map(|t| rich_text(t).unwrap_or_else(|| "Axis Title".into()));
     }
@@ -496,6 +513,7 @@ pub(super) fn read_text_styles(c: &mut Chart, root: &El, ch: &El, val_ax: Option
         (CategoryAxis, cat_ax.and_then(|e| e.child("txPr"))),
         (ValueAxis, val_ax.and_then(|e| e.child("txPr"))),
     ] {
+        read_line_spacing(c, role, element);
         if let Some(props) = chart_text_props(element) {
             c.text_styles.insert(role, props);
         }
@@ -504,6 +522,8 @@ pub(super) fn read_text_styles(c: &mut Chart, root: &El, ch: &El, val_ax: Option
         [(Title, ch.child("title")), (CategoryTitle, cat_ax.and_then(|e| e.child("title"))), (ValueTitle, val_ax.and_then(|e| e.child("title")))]
     {
         if let Some(t) = title {
+            read_line_spacing(c, role, t.child("txPr"));
+            read_line_spacing(c, role, t.path(&["tx", "rich"]));
             let mut props = chart_text_props(t.path(&["tx", "rich"])).unwrap_or_default();
             if let Some(parent) = chart_text_props(t.child("txPr")) {
                 props.inherit(&parent);
@@ -817,6 +837,26 @@ mod tests {
     fn log_base_is_read() {
         let xml = br#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:lineChart><c:axId val="1"/><c:axId val="2"/></c:lineChart><c:catAx><c:axId val="1"/></c:catAx><c:valAx><c:axId val="2"/><c:scaling><c:logBase val="10"/><c:orientation val="minMax"/></c:scaling></c:valAx></c:plotArea></c:chart></c:chartSpace>"#;
         assert_eq!(read_chart_xml(xml).unwrap().y_log_base, Some(10.0));
+    }
+
+    #[test]
+    fn category_visibility_offset_and_line_spacing_are_validated() {
+        use deckcraft_model::text::Spacing;
+        let xml = |offset: &str, spacing: &str| {
+            format!(
+                r#"<c:chartSpace xmlns:c="{NS_C}" xmlns:a="{NS_A}"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:axId val="1"/><c:axId val="2"/></c:barChart><c:catAx><c:axId val="1"/><c:tickLblPos val="none"/><c:lblOffset val="{offset}"/><c:txPr><a:bodyPr/><a:p><a:pPr><a:lnSpc>{spacing}</a:lnSpc></a:pPr></a:p></c:txPr></c:catAx><c:valAx><c:axId val="2"/></c:valAx></c:plotArea></c:chart></c:chartSpace>"#
+            )
+        };
+        for (value, expected) in [("0", Some(0)), ("1000", Some(1000)), ("1001", None), ("-1", None), ("NaN", None)] {
+            let c = read_chart_xml(xml(value, r#"<a:spcPct val="150000"/>"#).as_bytes()).unwrap();
+            assert!(c.cat_hidden);
+            assert_eq!(c.cat_label_offset, expected);
+            assert_eq!(c.line_spacing(ChartTextRole::CategoryAxis), Some(&Spacing::Pct(1.5)));
+        }
+        for (value, expected) in [("NaN", None), ("inf", None), ("4000", Some(Spacing::Pts(40.))), ("1e300", Some(Spacing::Pts(1584.)))] {
+            let c = read_chart_xml(xml("100", &format!(r#"<a:spcPts val="{value}"/>"#)).as_bytes()).unwrap();
+            assert_eq!(c.line_spacing(ChartTextRole::CategoryAxis), expected.as_ref());
+        }
     }
 
     #[test]

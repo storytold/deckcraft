@@ -308,13 +308,13 @@ struct Choice<'a> {
     low: f64,
 }
 fn choose<'a>(
-    prefer_words: bool,
+    endpoint_first: bool,
     mut probe: impl FnMut(f64) -> Result<Option<Choice<'a>>, &'static str>,
 ) -> Result<Option<Choice<'a>>, &'static str> {
     let mut best = probe(1.)?;
     // Geometry can trade width for height, so its endpoint need not be the best fit.
-    // Font endpoints keep the fast monotonic path; otherwise search the interior too.
-    if !prefer_words || best.as_ref().is_none_or(|c| c.score > 1e-6) {
+    // Font and size rules keep a fitting endpoint; failed endpoints still search inside.
+    if !endpoint_first || best.as_ref().is_none_or(|c| c.score > 1e-6) {
         for step in 1..16 {
             if let Some(mut candidate) = probe(step as f64 / 16.)? {
                 let fit = candidate.score <= 1e-6;
@@ -423,12 +423,15 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
     constraints::collect(tree, geometry::BoxStyle::new(frame), None, &mut entries, &mut work)?;
     let controls = controls(&entries, data, &mut work)?;
     let mut changes = constraints::Adjustments::new();
-    let mut grown = Vec::new();
-    let mut font_changed = HashSet::new();
+    let mut grown: Vec<(Range, HashSet<usize>, bool)> = Vec::new();
     let mut out = placed(tree, frame, data, &changes, measure, &mut work)?;
     for control in &controls {
         let scope = control_scope(&entries, data, control, &mut work)?;
-        let prefer_words = matches!(control.property.as_str(), "primFontSz" | "secFontSz");
+        let font_rule = matches!(control.property.as_str(), "primFontSz" | "secFontSz");
+        let size_rule = matches!(control.property.as_str(), "w" | "h");
+        // Width rules keep searching when an emergency word break hides overflow.
+        // Height rules fit the resulting lines without requiring every word intact.
+        let prefer_words = font_rule || control.property == "w";
         let before = score(&out, &scope, measure, prefer_words, &mut work)?;
         if before <= 1e-6 {
             continue;
@@ -437,7 +440,7 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
         let Some(range) = range(control, &entries, data, &solution, &changes)? else { continue };
         let (start, limit, is_factor) = (range.start, range.limit, range.is_factor);
         let old: Vec<_> = range.keys.iter().map(|k| (k.clone(), changes.get(k).copied())).collect();
-        let selected = choose(prefer_words, |t| {
+        let selected = choose(font_rule || size_rule, |t| {
             let value = start + (limit - start) * t;
             range.set_value(&mut changes, value);
             let Some(candidate) = trial(tree, frame, data, &changes, measure, &mut work)? else { return Ok(None) };
@@ -454,10 +457,13 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
             }
             continue;
         };
-        if prefer_words {
-            font_changed.extend(scope.iter().copied());
+        if font_rule {
+            for (_, grown_scope, refit) in &mut grown {
+                charge(&mut work, grown_scope.len().min(scope.len()).saturating_add(1))?;
+                *refit |= !scope.is_disjoint(grown_scope);
+            }
         } else if limit > start && matches!(control.property.as_str(), "w" | "h") {
-            grown.push((range.clone(), scope.clone()));
+            grown.push((range.clone(), scope.clone(), false));
         }
         out = candidate;
         let selected_value = start + (limit - start) * selected;
@@ -469,7 +475,10 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
         // Every trial is measured using the exact renderer's glyph/paragraph metrics.
         let (mut low, mut high) = (bracket, selected);
         let mut best = selected_value;
-        for _ in 0..18 {
+        // Native successful size-rule endpoints use five bisections over the
+        // authored range. Keep the existing interior search for rejected endpoints.
+        let steps = if size_rule && selected == 1. && bracket == 0. { 5 } else { 18 };
+        for _ in 0..steps {
             let t = (low + high) / 2.0;
             let value = start + (limit - start) * t;
             range.set_value(&mut changes, value);
@@ -483,26 +492,33 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
             } else {
                 low = t;
             }
-            // Native font searches stop at a one-point interval; geometry retains
-            // finer convergence. Keep the unrounded fitting endpoint for references.
-            if high - low < 1e-6 || prefer_words && !is_factor && (high - low) * (start - limit).abs() <= 1. {
+            // Font searches stop at a one-point interval. Keep the unrounded
+            // fitting endpoint for references.
+            if high - low < 1e-6 || font_rule && !is_factor && (high - low) * (start - limit).abs() <= 1. {
                 break;
             }
         }
         range.set_value(&mut changes, best);
     }
-    // A later font rule can make previously required box growth redundant. Keep the selected
+    // Only a later font rule makes earlier box growth redundant. Keep the selected
     // font and return space to neighbours, stopping at the first non-overflowing geometry.
-    for (range, scope) in grown {
+    for (range, scope, refit) in grown {
         let start = range.start;
-        if scope.is_disjoint(&font_changed) || score(&out, &scope, measure, true, &mut work)? > 1e-6 {
+        if !refit || score(&out, &scope, measure, true, &mut work)? > 1e-6 {
             continue;
         }
         let Some(change) = changes.get(&range.key).copied() else { continue };
         let (Value(limit) | Factor(limit)) = change else { continue };
+        range.set_value(&mut changes, start);
+        if let Some(candidate) = trial(tree, frame, data, &changes, measure, &mut work)?
+            && score(&candidate, &scope, measure, true, &mut work)? <= 1e-6
+        {
+            out = candidate;
+            continue;
+        }
         let (mut low, mut high) = (0.0, 1.0);
         let mut best = limit;
-        for _ in 0..18 {
+        for _ in 0..5 {
             let t = (low + high) / 2.0;
             let value = start + (limit - start) * t;
             range.set_value(&mut changes, value);

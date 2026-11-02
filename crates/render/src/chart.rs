@@ -217,15 +217,25 @@ fn chart_label(ctx: &mut RenderContext, rctx: &Ctx, m: Affine, text: &str, r: Re
     if let Some(explicit) = c.format.bodies.get(&role) {
         body.body = merged_chart_body(explicit, &body.body);
     }
+    for p in &mut body.paragraphs {
+        p.props.line_spacing = c.line_spacing(role).cloned();
+    }
     let tmp = Shape { text: Some(body.clone()), ..Default::default() };
-    crate::draw_text(
-        ctx,
+    let layout = deckcraft_text::layout_with_metrics(
         rctx,
         &tmp,
         &body,
-        m,
         &deckcraft_text::Opts { rect: r, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: true },
+        deckcraft_text::LayoutMetrics {
+            line: if matches!(role, ChartTextRole::CategoryAxis | ChartTextRole::ValueAxis | ChartTextRole::SecondaryValueAxis) {
+                deckcraft_text::LineMetrics::Typographic
+            } else {
+                deckcraft_text::LineMetrics::Slide
+            },
+            ..Default::default()
+        },
     );
+    crate::draw_layout(ctx, &layout, r, m);
 }
 
 /// Render a label through the same rich-text layout as native slide text.
@@ -501,6 +511,61 @@ fn label_width(ctx: &Ctx, text: &str, size: f64, props: &RunProps) -> f64 {
     .content_width
 }
 
+/// Authored category line spacing and label distance change the required gutter.
+/// The default gutter is still approximate; these deltas are independent of it.
+fn category_layout_adjustment(ctx: &Ctx, c: &Chart, base: f64, width: f64, horiz: bool) -> (f64, f64) {
+    if horiz || matches!(c.kind, ChartType::Scatter | ChartType::Bubble) || c.cat_hidden || c.cat_deleted || c.categories.is_empty() {
+        return (0., 0.);
+    }
+    let props = c.text_props(ChartTextRole::CategoryAxis);
+    let size = props.size.unwrap_or(base).clamp(1., 4000.);
+    let height = |text: &str, spacing: bool| {
+        let mut body = label_body(text, LabelStyle { size, align: Align::Left, anchor: Anchor::Top, col: Rgba::BLACK, bold: false }, &props);
+        if spacing {
+            for p in &mut body.paragraphs {
+                p.props.line_spacing = c.line_spacing(ChartTextRole::CategoryAxis).cloned();
+            }
+        }
+        // Exact line spacing reserves the whole last line, including its trailing
+        // part. Slide-text content_height ends at the last descent instead.
+        label_layout::measure(ctx, &body, 1e6, true).lines.iter().map(|l| l.bottom - l.top).sum::<f64>()
+    };
+    let natural = height("0", false);
+    let offset = (f64::from(c.cat_label_offset.unwrap_or(100).min(1000)) - 100.) * natural / 400.;
+    // Bound this additional measurement pass even when the chart cache is huge.
+    if c.categories.len() > 256 || c.categories.iter().try_fold(0usize, |n, text| n.checked_add(text.len())).is_none_or(|n| n > 65_536) {
+        return (offset, offset);
+    }
+    let count = c.categories.len().max(c.series.iter().map(|s| s.values.len()).max().unwrap_or(0)).max(1);
+    let (back, forward) = forecast_pad(c);
+    let band = width / (count as f64 + back + forward);
+    let wraps = c.categories.iter().any(|text| label_width(ctx, text, size, &props) > band);
+    let maximum = c.categories.iter().map(|text| height(&if wraps { split_label(text) } else { text.clone() }, true)).fold(0., f64::max);
+    (maximum - natural + offset, offset)
+}
+
+fn hidden_axis_plot(c: &Chart, area: Rect, w: f64, h: f64) -> Option<Rect> {
+    if c.kind != ChartType::Column
+        || !(c.cat_hidden || c.cat_deleted)
+        || !c.y_hidden
+        || c.title.is_some()
+        || c.legend.is_some()
+        || c.axis_titles != (None, None)
+    {
+        return None;
+    }
+    // With no axis labels or other chart decorations, native Column controls
+    // retain a fixed point margin across chart dimensions and axis fonts. A
+    // supplied outer plot already includes that frame and needs no reserve.
+    if c.format.plot_layout.as_ref().is_some_and(|l| !l.inner) {
+        Some(area)
+    } else {
+        let x = 11_f64.min(w / 2.);
+        let y = 11_f64.min(h / 2.);
+        Some(Rect::new(x, y, w - x, h - y))
+    }
+}
+
 fn fmt_num(v: f64) -> String {
     if (v - v.round()).abs() < 1e-9 { format!("{}", v.round() as i64) } else { format!("{v:.1}") }
 }
@@ -741,11 +806,13 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
         clamp_soft(label_w(false, (min, max, step)), base * 1.5, area.width() * 0.3)
     };
     let gutter_r = second.filter(|_| !c.y2_hidden).map(|sc| clamp_soft(label_w(true, sc), base * 1.5, area.width() * 0.3)).unwrap_or(0.0);
+    let (category_extra, category_offset) = category_layout_adjustment(rctx, c, base, area.width() - gutter - gutter_r, horiz);
     let plot = if horiz {
         Rect::new(area.x0 + gutter, area.y0, area.x1, area.y1 - base * 1.6)
     } else {
-        Rect::new(area.x0 + gutter, area.y0, area.x1 - gutter_r, area.y1 - base * 1.8)
+        Rect::new(area.x0 + gutter, area.y0, area.x1 - gutter_r, (area.y1 - base * 1.8 - category_extra).max(area.y0))
     };
+    let plot = hidden_axis_plot(c, area, w, h).unwrap_or(plot);
     let plot = c.format.plot_layout.as_ref().filter(|l| l.inner).map_or(plot, |l| l.resolve(plot, w, h));
     if let Some(f) = &c.plot_fill {
         crate::paint::fill_path(ctx, rctx, f, None, &plot.to_path(0.1), plot, m, deckcraft_geom::preset::FillMode::Norm, 1.0, rctx.pres);
@@ -801,7 +868,20 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     let to_x = |v: f64| xscale.map(|(lo, hi, _)| plot.x0 + (v - lo) / positive_span(hi - lo) * plot.width());
     draw_category_labels(
         ctx,
-        &CategoryLabelDrawing { rctx, chart: c, transform: m, area, plot, horiz, band, slot: &slot, xscale, base, text_color: text_col },
+        &CategoryLabelDrawing {
+            rctx,
+            chart: c,
+            transform: m,
+            area,
+            plot,
+            horiz,
+            band,
+            slot: &slot,
+            xscale,
+            base,
+            text_color: text_col,
+            offset: category_offset,
+        },
     );
     if let Some(b) = boxes {
         crate::chartex::draw_boxes(ctx, rctx, c, b, m, plot, band, horiz, &to_v);
@@ -892,7 +972,9 @@ fn draw_axes(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, plot: Re
         ax.move_to((plot.x0, zero));
         ax.line_to((plot.x1, zero));
     }
-    chart_stroke(ctx, rctx, m, &ax, c.format.lines.get(&ChartLineRole::CategoryAxis), Rgba::rgb(0xBF, 0xBF, 0xBF));
+    if !c.cat_deleted {
+        chart_stroke(ctx, rctx, m, &ax, c.format.lines.get(&ChartLineRole::CategoryAxis), Rgba::rgb(0xBF, 0xBF, 0xBF));
+    }
     for (role, secondary, hidden) in [(ChartLineRole::ValueAxis, false, c.y_hidden), (ChartLineRole::SecondaryValueAxis, true, c.y2_hidden)] {
         if !hidden && let Some(line) = c.format.lines.get(&role) {
             let points = if horiz {
@@ -1170,11 +1252,15 @@ struct CategoryLabelDrawing<'a, 'ctx> {
     xscale: Option<(f64, f64, f64)>,
     base: f64,
     text_color: Rgba,
+    offset: f64,
 }
 
 fn draw_category_labels(ctx: &mut RenderContext, draw: &CategoryLabelDrawing<'_, '_>) {
     let rctx = draw.rctx;
     let c = draw.chart;
+    if c.cat_hidden || c.cat_deleted {
+        return;
+    }
     let m = draw.transform;
     let area = draw.area;
     let plot = draw.plot;
@@ -1220,7 +1306,12 @@ fn draw_category_labels(ctx: &mut RenderContext, draw: &CategoryLabelDrawing<'_,
                 rctx,
                 m,
                 &text,
-                Rect::new(mid - band / 2.0, plot.y1 + 3.0, mid + band / 2.0, plot.y1 + base * if wraps { 2.8 } else { 1.6 }),
+                Rect::new(
+                    mid - band / 2.0,
+                    plot.y1 + 3.0 + draw.offset,
+                    mid + band / 2.0,
+                    plot.y1 + base * if wraps { 2.8 } else { 1.6 } + draw.offset,
+                ),
                 LabelStyle { size: base, align: Align::Center, anchor: Anchor::Top, col: text_col, bold: false },
                 (c, ChartTextRole::CategoryAxis),
             );
@@ -2073,6 +2164,23 @@ mod tests {
 #[cfg(test)]
 mod typography_tests {
     use super::*;
+
+    #[test]
+    fn category_measurement_has_a_work_budget_and_clamps_label_offset() {
+        let p = deckcraft_model::Presentation::default();
+        let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        let mut c = Chart::sample(ChartType::Column);
+        c.cat_label_offset = Some(u16::MAX);
+        c.text_styles.insert(ChartTextRole::CategoryAxis, RunProps { font: Some("Inter".into()), size: Some(20.), ..Default::default() });
+        for labels in [vec!["A\n".repeat(40_000)], vec!["A\nB".into(); 257]] {
+            c.categories = labels;
+            let (reserve, offset) = category_layout_adjustment(&ctx, &c, 20., 100., false);
+            assert_eq!(reserve, offset, "over-budget caches skip the additional text pass");
+            assert!(offset.is_finite() && (54. ..55.).contains(&offset), "{offset}");
+        }
+        c.cat_hidden = true;
+        assert_eq!(category_layout_adjustment(&ctx, &c, 20., 100., false), (0., 0.));
+    }
 
     #[test]
     fn point_labels_stay_inside_the_plot_at_its_edges() {

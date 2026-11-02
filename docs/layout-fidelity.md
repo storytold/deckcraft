@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.41): centered snake packing, literal linefeed semantics,
-heavy map sampling and rotated/manual rich-column labels.
+Updated 2026-11-02 (PPTX.42): finite size-rule searches, intrinsic nested flows,
+map viewport normalization and chart axis visibility/spacing.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -2119,3 +2119,87 @@ All eight final local `cargo xtask ci` stages pass (2,570 tests including doctes
 The final executable reproduces all 375 retained/new label renders, sixteen 4K map
 images and 75 LF/text-page renders from the validated results. These are integration
 checks, not additional claims of native pixel identity.
+
+
+## PPTX.42 — rule steps, nested flow, map viewports and chart axes
+
+Width rules keep searching when an emergency word break conceals overflow. Height
+rules fit the resulting lines without requiring every word intact. Successful size-rule
+endpoints use five bisections over the authored range, as observed across different
+initial values, endpoints, fonts and rule orders. Rejected endpoints retain the bounded
+interior search. Diagram rule measurement uses typographic line metrics. A later font
+change can release space grown by an earlier rule; an earlier font change does not
+retroactively release space grown afterward. An exactly fitting original extent is
+retained rather than approximated from above.
+
+All eighteen new composite controls and two independent twenty-four-case sets match
+native geometry within 0.025pt. The latter cover different initial/extreme dimensions
+and three open font families at four sizes. The eighteen paired linear-parent controls
+retain small packing differences, up to 0.143pt; they are not counted as strict matches.
+The primary thirty-six pages retain all native font-size sets, and matching extracted
+PDF line sequences improve from thirty to thirty-six. Representative native/before/after
+renderings were inspected, including the formerly narrow, forcibly broken long word.
+All programmatic packages pass SDK validation and hash-bound native open/export.
+
+A snake's linear children first expose their intrinsic cross-axis extent. After the
+parent fit, each retains its fitted flow size, restores that cross extent, and refits
+the flow at its current allocation. Repacking centers those restored dimensions without
+shrinking them again. All 107 new controls match, including a separately generated
+48-case holdout with one to three leaves and four directions. Sixteen visible-colour
+checks match within one pixel (0.295pt). Two twenty-case multi-wrapper sets retain
+16 and 15 matches; their insufficient-capacity failures remain explicit.
+
+Integration retains 458/491 snake geometry matches with no lost match, 632/632 older
+cycle matches and 506 unchanged inspection models. All 600 retained/new recovery
+font-size sets match. The older 111-case flow matrix remains 85/111: known differences
+include hierarchy defaults, root linear defaults and small nested-flow precision errors.
+These are distinct from untested rule branches. Off-diagonal coupled search and broader
+hierarchy/pyramid text-rule interactions remain coverage gaps, not invented failures.
+
+Map fitting now uses the observed viewport expansion before mapping into the visible
+plot, and Robinson uses the native chart's angular normalization. Thirty original
+projection/viewport controls, including independent dimensions, preserve 11,878 of
+11,880 retained-vertex sequences. Global coordinates differ by at most 0.000331pt;
+an Albers control retains a 0.001124pt difference and two vertex-sequence failures.
+The earlier seventeen exact-threshold failures are not reclassified as passes.
+
+Cached ring orientation now determines nonzero fill and label containment consistently:
+same-direction overlaps remain filled, opposite directions cancel, and islands inside
+holes remain filled. Thirteen original native fill controls pass, including five
+independent rotated/nonrectangular cases. Across the retained thirty-eight 4K map
+comparisons, the combined viewport/fill changes improve every foreground intersection
+over union, with no regression. Representative country and Albers scores improve from
+97.32% to 99.94% and from 98.18% to 99.89%. These are mask comparisons, not whole-slide
+pixel identity. A tall Miller case only improves from 84.03% to 84.06%; regional paint
+order remains unresolved. Three new sparse-world controls expose both an incorrect
+global extent and paint-order differences; they fail before and after this change.
+LibreOffice still exports the new map controls without their geographic graphics,
+so its ability to open them is not counted as visual parity.
+
+Category label visibility is separate from deletion of the category axis. Rebuilding
+a chart preserves both states, the authored label offset, and paragraph line spacing.
+Category offset and explicit spacing adjust the automatic plot reserve; a fixed inner
+plot remains fixed. Undecorated column charts with both axes' labels hidden retain
+their observed point margin. The extra measurement pass has explicit category-count
+and text-byte budgets. This does not replace the default visible-axis gutter model.
+
+All 102 new axis pages and six forcibly rebuilt packages pass schema validation;
+rebuilt chart parts retain the observed visibility, offset and spacing semantics.
+Among 95 comparable before/after plot cases, 36 improve, 57 are unchanged and two
+regress; mean four-edge RMS error falls from 18.045pt to 14.204pt. The two regressions
+increase from 19.035pt to 19.400pt and from 20.502pt to 21.546pt: corrected relative
+offsets expose the existing absolute-gutter error. Eleven double-hidden plot frames
+match native pixel bounds, and four additional controls distinguish hiding text from
+deleting the axis. All 375 retained data-label ink bounding boxes are unchanged;
+373 masks are identical and two differ by three/one pixels where axis ink overlaps.
+Default axis margins, long category wrapping, endpoint reserves and rich-label
+ellipsis alignment remain open.
+
+The integrated executable reproduces all forty final map images and all 477 chart
+pages from the separately verified implementations. This checks integration consistency,
+not native equivalence of the explicitly failing cases above. Final local `cargo xtask ci`
+passes all eight stages and 2,586 tests including doctests; this is not a hosted-CI claim.
+
+Only source, original programmatic tests and documentation are published. Native
+observations, provider data, fonts and private decks remain outside the commit. These
+improvements do not establish complete LibreOffice replacement.

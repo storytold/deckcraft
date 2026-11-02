@@ -142,7 +142,7 @@ fn tx_pr(w: &mut W, c: &Chart, role: ChartTextRole) {
 
 fn tx_pr_tag(w: &mut W, c: &Chart, role: ChartTextRole, tag: &str) {
     let props = c.text_props(role);
-    if props == deckcraft_model::text::RunProps::default() && !c.format.bodies.contains_key(&role) {
+    if props == deckcraft_model::text::RunProps::default() && !c.format.bodies.contains_key(&role) && !c.format.line_spacings.contains_key(&role) {
         return;
     }
     w.open0(tag);
@@ -150,10 +150,24 @@ fn tx_pr_tag(w: &mut W, c: &Chart, role: ChartTextRole, tag: &str) {
     w.empty0("a:lstStyle");
     w.open0("a:p");
     w.open0("a:pPr");
+    line_spacing(w, c, role);
     chart_rpr(w, "a:defRPr", &props);
     w.close("a:pPr");
     w.close("a:p");
     w.close(tag);
+}
+
+fn line_spacing(w: &mut W, c: &Chart, role: ChartTextRole) {
+    use deckcraft_model::text::Spacing;
+    let Some(spacing) = c.format.line_spacings.get(&role) else { return };
+    let (tag, value) = match *spacing {
+        Spacing::Pct(n) if n.is_finite() => ("a:spcPct", (n.clamp(0., 132.) * 100_000.).round() as i64),
+        Spacing::Pts(n) if n.is_finite() => ("a:spcPts", (n.clamp(0., 1584.) * 100.).round() as i64),
+        _ => return,
+    };
+    w.open0("a:lnSpc");
+    w.val(tag, value);
+    w.close("a:lnSpc");
 }
 
 fn title(w: &mut W, text: &str, c: &Chart, role: ChartTextRole) {
@@ -166,6 +180,7 @@ fn title(w: &mut W, text: &str, c: &Chart, role: ChartTextRole) {
     for line in text.split('\n') {
         w.open0("a:p");
         w.open0("a:pPr");
+        line_spacing(w, c, role);
         chart_rpr(w, "a:defRPr", &props);
         w.close("a:pPr");
         w.open0("a:r");
@@ -470,7 +485,7 @@ fn axes(w: &mut W, c: &Chart, g: Group, secondary: bool) {
         w.open0("c:scaling");
         w.val("c:orientation", "minMax");
         w.close("c:scaling");
-        w.val("c:delete", u8::from(secondary));
+        w.val("c:delete", u8::from(secondary || c.cat_deleted));
         w.val("c:axPos", "b");
         if let Some(t) = c.axis_titles.0.as_ref().filter(|_| !secondary) {
             title(w, t, c, ChartTextRole::CategoryTitle);
@@ -478,7 +493,7 @@ fn axes(w: &mut W, c: &Chart, g: Group, secondary: bool) {
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
         w.val("c:majorTickMark", "out");
         w.val("c:minorTickMark", "none");
-        w.val("c:tickLblPos", "nextTo");
+        w.val("c:tickLblPos", if c.cat_hidden { "none" } else { "nextTo" });
         sp_pr(w, None, c.format.lines.get(&ChartLineRole::CategoryAxis));
         tx_pr(w, c, ChartTextRole::CategoryAxis);
         w.val("c:crossAx", val_id);
@@ -491,7 +506,7 @@ fn axes(w: &mut W, c: &Chart, g: Group, secondary: bool) {
         w.open0("c:scaling");
         w.val("c:orientation", if c.cat_reversed { "maxMin" } else { "minMax" });
         w.close("c:scaling");
-        w.val("c:delete", u8::from(secondary));
+        w.val("c:delete", u8::from(secondary || c.cat_deleted));
         w.val("c:axPos", cat_pos);
         if let Some(t) = c.axis_titles.0.as_ref().filter(|_| !secondary) {
             title(w, t, c, ChartTextRole::CategoryTitle);
@@ -499,14 +514,16 @@ fn axes(w: &mut W, c: &Chart, g: Group, secondary: bool) {
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
         w.val("c:majorTickMark", "none");
         w.val("c:minorTickMark", "none");
-        w.val("c:tickLblPos", "nextTo");
+        w.val("c:tickLblPos", if c.cat_hidden { "none" } else { "nextTo" });
         sp_pr(w, None, c.format.lines.get(&ChartLineRole::CategoryAxis));
         tx_pr(w, c, ChartTextRole::CategoryAxis);
         w.val("c:crossAx", val_id);
         w.val("c:crosses", if secondary { "max" } else { "autoZero" });
         w.val("c:auto", 1);
         w.val("c:lblAlgn", "ctr");
-        w.val("c:lblOffset", 100);
+        if let Some(offset) = c.cat_label_offset {
+            w.val("c:lblOffset", offset.min(1000));
+        }
         w.val("c:noMultiLvlLbl", 0);
         w.close("c:catAx");
     }
