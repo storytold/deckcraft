@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.26): SmartArt implicit/signed edges and reference geometry,
+Updated 2026-11-01 (PPTX.27): SmartArt parent allocation and self-size fallbacks,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1241,4 +1241,56 @@ Validation:
 Native behavior for local self-size versus parent end/centre positioning remains unresolved,
 as do unnamed selectors and automatic flow dimensions. Full native rule search/fallback,
 cyclic-font policies, geographic context/simplification and rich-label overflow remain open.
+No global parity score or complete LibreOffice-replacement claim is raised.
+
+
+## Parent allocations versus self-size fallbacks (PPTX.27)
+
+A child's self width/height is not the same kind of constraint as a parent allocation.
+An explicit parent size wins over the child's self size. A local child allocation still
+wins over more distant defaults, so this does not globally reverse ancestor precedence.
+Two parent coordinates determine the allocated extent before axis-priority selection;
+the child's self size must not remove the second coordinate from that calculation.
+Local self-size `gte`/`lte` constraints do not allocate initial geometry, including when
+no explicit parent size exists.
+
+When the parent supplies only a start, a self size can supply the extent. When the parent
+supplies only an end or centre, that local fallback does not establish an allocation:
+native layout retains the authored end/centre reference but collapses the other coordinates
+and the displayed extent to zero. For example, a self width of 5mm with parent right=15mm
+retains a right reference of 15mm, but width, left and centre references are zero. Adding
+parent width=12mm instead produces left=3mm and width=12mm. Witness shapes verify these
+reference values independently of final centring and clipping.
+
+Equation ownership and numeric-rule binding now distinguish local self sizes from child
+allocations. Before choosing the two axis equations, local self sizes yield to parent
+coordinate pairs. Unallocated self sizes retain their authored positional reference without
+inventing a display rectangle. The additional pass is bounded by the shared work budget.
+
+Validation:
+
+- The previous 176-case edge/self-size matrix now passes in full at 0.025pt model-inspection
+  tolerance, resolving all 24 previously reported self-size/parent-position failures.
+- All 195 new intended-layout controls in the core parent-allocation, local-policy and vertical
+  matrices match native geometry within 0.009pt. Nine self-referential-size controls make native
+  PowerPoint choose its generic three-node fallback; they are excluded from intended-layout
+  comparisons, not counted as faithful renderings of their original definitions.
+- Including 12 further scope controls, the full 216-case matrix improves from 53 to 202 matches.
+  Five geometry differences remain: one cross-scope self-size default and four space-container
+  placement cases. Native/direct font-size sets match for all 207 non-fallback cases; the other
+  nine differ and remain explicit. Font agreement is not whole-slide equivalence.
+- All 72 horizontal policy controls match visible coloured bounds within 0.5pt at 4K.
+  Representative native/direct images were visually inspected, including collapsed extents
+  and retained end/centre references. Native source hashes match export receipts.
+- All 154 prior 2px/pt PNGs remain identical to the PPTX.26 executable, with unchanged/native-
+  matching fonts. All 73 prior overflow geometries still match within 0.009pt. The older
+  186-case matrix remains at 144 matches, 30 failures and 12 native-fallback exclusions.
+- Three new tests cover 136 parent/self-size, local-bound, paired-coordinate and witness-reference
+  variants across both axes. Final `cargo xtask ci` passes all eight stages and 2,448 tests
+  including doctests; the 21 diagram preservation/round-trip tests remain green.
+
+A self-size can expose an ancestor default through a composite scope in a further native
+control; space containers have distinct allocation/centred-placement behavior. Those cases
+are still open, together with unnamed selectors, automatic flow sizing, full native rule and
+fallback policies, cyclic fonts, geographic context/simplification and rich-label overflow.
 No global parity score or complete LibreOffice-replacement claim is raised.

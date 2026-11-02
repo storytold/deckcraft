@@ -235,6 +235,11 @@ pub(super) fn font_bound(c: &El) -> bool {
     matches!(c.attr("type"), Some("primFontSz" | "secFontSz")) && matches!(c.attr("op"), Some("gte" | "lte"))
 }
 
+/// Local geometry bounds do not override the initial parent allocation.
+pub(super) fn local_size_bound(c: &El) -> bool {
+    c.attr("for").unwrap_or("self") == "self" && matches!(c.attr("type"), Some("w" | "h" | "diam")) && matches!(c.attr("op"), Some("gte" | "lte"))
+}
+
 pub(super) fn resolve_adjusted(
     node: &Instance<'_>,
     rect: Xfrm,
@@ -248,14 +253,15 @@ pub(super) fn resolve_adjusted(
     let mut equation_owners = HashMap::new();
     let mut bounds = Vec::new();
     let mut bounded = BTreeSet::new();
-    // Inner defaults first. Local sizes take precedence over ancestor defaults;
-    // outer text constraints can still coordinate the same property across descendants.
+    // Inner defaults first. A local child allocation beats ancestor defaults, but
+    // a node's own size is a fallback to its parent's allocation. Text constraints
+    // can still coordinate the same property across descendants.
     for owner in (0..entries.len()).rev() {
         let node = entries[owner].node;
         for c in &node.constraints {
             // Native font bounds participate in local fitting, not initial font selection.
             // Unconstrained nodes retain the diagram default until a rule is applied.
-            if font_bound(c) {
+            if font_bound(c) || local_size_bound(c) {
                 continue;
             }
             charge(work, entries[owner].end - owner)?;
@@ -269,7 +275,7 @@ pub(super) fn resolve_adjusted(
                         continue;
                     }
                     let key = (*target, property.to_string());
-                    if matches!(property, "w" | "h") && equation_owners.get(&key).is_some_and(|prior| *prior > owner) {
+                    if matches!(property, "w" | "h") && equation_owners.get(&key).is_some_and(|prior| *prior > owner && *prior != *target) {
                         continue;
                     }
                     let mut adjusted = (*c).clone();
@@ -317,12 +323,12 @@ pub(super) fn resolve_adjusted(
                 let mut c = El::default();
                 c.set_attr("val", &value.to_string());
                 let row = equation(&entries, i, i, None, &c, property, work)?;
+                equation_owners.insert((i, property.clone()), i);
                 equations.insert((i, property.clone()), row);
             }
         }
     }
-    select_axes(&mut equations, entries.len(), work)?;
-    let extents = axes::complete(&mut equations, &entries, &bounded, work)?;
+    let extents = axes::complete(&mut equations, &equation_owners, &entries, &bounded, work)?;
     let rows: Vec<_> = equations.values().cloned().collect();
     let values = axes::solve_extents(&rows, &bounds, &extents, &entries, work)?;
     for ((index, property), value) in &values {

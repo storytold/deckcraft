@@ -40,7 +40,7 @@ fn controls<'a>(entries: &[constraints::Entry<'_, 'a>], data: &Data<'_>, work: &
                         continue;
                     }
                     let key = (target, property.to_string());
-                    if matches!(property, "w" | "h") && effective.get(&key).is_some_and(|(prior, _)| *prior > owner) {
+                    if matches!(property, "w" | "h") && effective.get(&key).is_some_and(|(prior, _)| *prior > owner && *prior != target) {
                         continue;
                     }
                     if matches!(c.attr("op"), Some("gte" | "lte")) {

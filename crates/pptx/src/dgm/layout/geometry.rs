@@ -420,7 +420,7 @@ pub(super) fn self_constraints(node: &Instance<'_>, style: &mut BoxStyle) {
     for constraint in
         node.constraints.iter().filter(|e| e.attr("for").unwrap_or("self") == "self" && !super::constraints::position(e.attr("type").unwrap_or("")))
     {
-        if super::constraints::font_bound(constraint) {
+        if super::constraints::font_bound(constraint) || super::constraints::local_size_bound(constraint) {
             continue;
         }
         if let Some(value) = constraint_value(constraint, style) {

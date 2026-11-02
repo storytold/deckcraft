@@ -1,6 +1,6 @@
 //! Constraint-space endpoints and nonnegative display extents are distinct.
 use super::{Entry, Key, Row, apply_bounds, charge, solve};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub(super) fn signed(size: &str) -> &str {
     match size {
@@ -26,14 +26,48 @@ fn default(entries: &[Entry<'_, '_>], i: usize, property: &str, size: &str) -> R
 
 pub(super) fn complete(
     equations: &mut BTreeMap<Key, Row>,
+    owners: &HashMap<Key, usize>,
     entries: &[Entry<'_, '_>],
     bounded: &BTreeSet<Key>,
     work: &mut usize,
 ) -> Result<Vec<(Key, Key)>, &'static str> {
+    // A node's own dimension is a fallback for its parent's allocation. Two
+    // parent coordinates already determine that allocation. A sole end/centre
+    // cannot position a local fallback size; native layout retains the authored
+    // reference but collapses the other coordinates and displayed extent.
+    let mut collapsed = BTreeSet::new();
+    for (i, entry) in entries.iter().enumerate() {
+        charge(work, 8)?;
+        for (start, end, center, size) in [("l", "r", "ctrX", "w"), ("t", "b", "ctrY", "h")] {
+            let key = (i, size.to_string());
+            if owners.get(&key) != Some(&i) || entry.parent.is_none() {
+                continue;
+            }
+            let coords = [start, end, center].map(|p| equations.contains_key(&(i, p.into())));
+            let count = coords.into_iter().filter(|v| *v).count();
+            if count >= 2 || (count == 1 && !coords[0]) {
+                equations.remove(&key);
+                if count == 1 {
+                    collapsed.insert(key);
+                }
+            }
+        }
+    }
+    super::select_axes(equations, entries.len(), work)?;
     let mut extents = Vec::new();
     for i in 0..entries.len() {
         charge(work, 16)?;
         for (start, end, center, size) in [("l", "r", "ctrX", "w"), ("t", "b", "ctrY", "h")] {
+            if collapsed.contains(&(i, size.into())) {
+                for property in [start, end, center, size] {
+                    equations.entry((i, property.into())).or_insert_with(|| {
+                        let mut row = Row::default();
+                        row.add((i, property.into()), 1.);
+                        row
+                    });
+                }
+                continue;
+            }
             let has = |p: &str| equations.contains_key(&(i, p.into()));
             let explicit_size = has(size);
             let bounded_size = bounded.contains(&(i, size.into()));

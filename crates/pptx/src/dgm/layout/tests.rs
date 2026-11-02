@@ -1162,3 +1162,102 @@ fn children_inherit_the_positive_size_of_a_negative_local_dimension() {
         assert!((extent - 5. * mm).abs() < 1e-6);
     }
 }
+
+fn resolved_children(l: &El, source: &El, rect: Xfrm) -> Vec<geometry::BoxStyle> {
+    let data = Data::new(source).unwrap();
+    let context = Context { point: data.root, position: 1, count: 1, vars: HashMap::new() };
+    let mut compiler = Compiler { data, refs: HashMap::new(), instances: 0, work: 0 };
+    let tree = compiler.node(l.child("layoutNode").unwrap(), context, 0).unwrap();
+    let solution = constraints::resolve(&tree, rect, &compiler.data, &mut 0).unwrap();
+    tree.children.iter().map(|child| constraints::lookup(&solution, child).unwrap()).collect()
+}
+
+#[test]
+fn parent_allocation_precedes_self_sizes_and_self_bounds_do_not_allocate() {
+    let d = source();
+    let mm = 72. / 25.4;
+    for vertical in [false, true] {
+        let (start, end, center, size) = if vertical { ("t", "b", "ctrY", "h") } else { ("l", "r", "ctrX", "w") };
+        for (edge, position) in [(start, 5.), (end, 15.), (center, 15.)] {
+            for local in [2., 10., 30.] {
+                for op in ["equ", "gte", "lte"] {
+                    for parent in [None, Some(12.)] {
+                        let allocation = parent.map(|v| format!("<constr type='{size}' for='ch' forName='subject' val='{v}'/>")).unwrap_or_default();
+                        let l = layout(&format!(
+                            "<layoutNode><alg type='composite'/><constrLst>{allocation}<constr type='{edge}' for='ch' forName='subject' val='{position}'/></constrLst>
+                            <layoutNode name='subject'><alg type='tx'/><shape type='rect'/><constrLst><constr type='{size}' val='{local}' op='{op}'/></constrLst></layoutNode></layoutNode>"
+                        ));
+                        let child = resolved_children(&l, &d, Xfrm::new(0., 0., 20. * mm, 20. * mm))[0];
+                        let (expected_start, expected_size) = if let Some(p) = parent {
+                            (
+                                if edge == start {
+                                    position
+                                } else if edge == end {
+                                    position - p
+                                } else {
+                                    position - p / 2.
+                                },
+                                p,
+                            )
+                        } else if op == "equ" {
+                            if edge == start { (position, local) } else { (0., 0.) }
+                        } else if edge == start {
+                            (position, 20. - position)
+                        } else if edge == end {
+                            (0., position)
+                        } else {
+                            (0., 0.)
+                        };
+                        assert!((child.get(size).unwrap() / mm - expected_size).abs() < 1e-6, "{edge}/{local}/{op}/{parent:?}");
+                        assert!((child.get(start).unwrap() / mm - expected_start).abs() < 1e-6, "{edge}/{local}/{op}/{parent:?}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn unallocated_self_size_retains_the_parent_end_or_center_reference() {
+    let d = source();
+    let mm = 72. / 25.4;
+    for vertical in [false, true] {
+        let (start, end, center, size) = if vertical { ("t", "b", "ctrY", "h") } else { ("l", "r", "ctrX", "w") };
+        for edge in [end, center] {
+            for reference in [start, end, center, size] {
+                let l = layout(&format!(
+                    "<layoutNode><alg type='composite'/><constrLst><constr type='{edge}' for='ch' forName='subject' val='15'/>
+                    <constr type='{start}' for='ch' forName='witness' refFor='ch' refForName='subject' refType='{reference}'/>
+                    <constr type='w' for='ch' forName='witness' val='4'/><constr type='h' for='ch' forName='witness' val='4'/>
+                    </constrLst><layoutNode name='subject'><alg type='tx'/><shape type='rect'/><constrLst><constr type='{size}' val='5'/></constrLst></layoutNode>
+                    <layoutNode name='witness'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
+                ));
+                let children = resolved_children(&l, &d, Xfrm::new(0., 0., 20. * mm, 20. * mm));
+                assert!(children[0].get(size).unwrap().abs() < 1e-6);
+                assert!(children[0].get(start).unwrap().abs() < 1e-6);
+                let expected = if reference == edge { 15. } else { 0. };
+                assert!((children[1].get(start).unwrap() / mm - expected).abs() < 1e-6, "{edge}/{reference}");
+            }
+        }
+    }
+}
+
+#[test]
+fn two_parent_coordinates_override_a_self_size_before_axis_priority() {
+    let d = source();
+    let mm = 72. / 25.4;
+    for vertical in [false, true] {
+        let (start, end, center, size) = if vertical { ("t", "b", "ctrY", "h") } else { ("l", "r", "ctrX", "w") };
+        for (a, b, expected_start, expected_size) in [(start, end, 5., 13.), (start, center, 5., 26.), (end, center, 31., 26.)] {
+            for local in [5., 20.] {
+                let l = layout(&format!(
+                    "<layoutNode><alg type='composite'/><constrLst><constr type='{a}' for='ch' val='5'/><constr type='{b}' for='ch' val='18'/></constrLst>
+                    <layoutNode><alg type='tx'/><shape type='rect'/><constrLst><constr type='{size}' val='{local}'/></constrLst></layoutNode></layoutNode>"
+                ));
+                let child = resolved_children(&l, &d, Xfrm::new(0., 0., 20. * mm, 20. * mm))[0];
+                assert!((child.get(size).unwrap() / mm - expected_size).abs() < 1e-6);
+                assert!((child.get(start).unwrap() / mm - expected_start).abs() < 1e-6);
+            }
+        }
+    }
+}
