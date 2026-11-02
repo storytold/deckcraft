@@ -415,7 +415,7 @@ fn alignment_center_and_right() {
 
 #[test]
 fn crossed_text_insets_collapse_at_midpoint_in_both_axes() {
-    for (left, right, top, bottom) in [(20., 20., 20., 20.), (30., 10., 10., 30.)] {
+    for (left, right, top, bottom) in [(20., 20., 20., 20.), (30., 10., 10., 30.), (-10., 50., 50., -10.), (60., 10., 10., 60.)] {
         for anchor in [Anchor::Top, Anchor::Middle, Anchor::Bottom] {
             let (p, mut sh) = setup("OK", 30., 30.);
             let body = sh.text.as_mut().unwrap();
@@ -947,19 +947,37 @@ fn one_line(text: &str) -> f64 {
 #[test]
 fn a_word_does_not_break_after_a_slash_or_backslash() {
     // PowerPoint (latinLnBrk off, its default) keeps "alpha/beta/gamma" whole and only breaks it
-    // where it no longer fits; Unicode line breaking would allow a break after each slash.
-    for sep in ["/", "\\"] {
+    // where it no longer fits; Unicode line breaking would allow a break after each slash. The
+    // same holds after ?, !, } and + (a URL's query, measured in PowerPoint 2016 for Windows).
+    for sep in ["/", "\\", "?", "!", "}", "+"] {
         let text = ["alpha", "beta", "gamma", "delta", "epsilon"].join(sep);
         let w = one_line(&text) * 0.6;
         let lines = wrapped(&text, w, |_| {});
         assert!(lines.len() >= 2, "{lines:?}");
         assert!(lines[0].chars().count() > "alpha/beta".len(), "filled to the edge, not cut at a separator: {lines:?}");
+        // The line breaks where the next character no longer fits, not at an earlier separator
+        // (it may still end with one when that is where the width runs out).
+        let next: String = lines[0].chars().chain(lines[1].chars().take(1)).collect();
+        assert!(one_line(&next) > w, "no break right after {sep:?} while more fits: {lines:?}");
     }
     // latinLnBrk on: Unicode's break after a slash is allowed again.
     let text = "alpha/beta/gamma/delta/epsilon";
     let lines = wrapped(text, one_line(text) * 0.6, |p| p.latin_line_break = Some(true));
     assert!(lines[0].ends_with('/'), "{lines:?}");
-    // A slash followed by a space still breaks, and hyphens still break.
+    // Outside a Latin word the Unicode break stays: "日本!" fits, "語" moves to the next line.
+    let lines = wrapped("日本!語", one_line("日本!") + 0.5, |_| {});
+    assert_eq!(lines[0], "日本!", "{lines:?}");
+    // Nor before a symbol that only shares the letters' line-break class.
+    let (allowed, _) = break_opportunities("ab!&cd", false);
+    assert!(allowed[3], "break after ! before &: {allowed:?}");
+    // Latin text before CJK still breaks after the mark: "ab?" fits, "日本" moves down.
+    let lines = wrapped("ab?日本", one_line("ab?") + 0.5, |_| {});
+    assert_eq!(lines[0], "ab?", "{lines:?}");
+    // A separator followed by a space still breaks, and hyphens still break.
+    for sep in ["/", "?", "!"] {
+        let lines = wrapped(&format!("alpha{sep} beta"), one_line(&format!("alpha{sep} b")) + 0.5, |_| {});
+        assert_eq!(lines.iter().map(|l| l.trim_end()).collect::<Vec<_>>(), [format!("alpha{sep}"), "beta".into()], "{lines:?}");
+    }
     let lines = wrapped("alpha-beta-gamma-delta-epsilon", one_line("alpha-beta-gamma-") + 1.0, |_| {});
     assert_eq!(lines[0], "alpha-beta-gamma-");
 }
@@ -2111,4 +2129,40 @@ fn forced_word_break_metric_distinguishes_spaces_words_and_cjk() {
         assert!(result.lines.len() > 1);
         assert_eq!(result.forced_line_breaks(sh.text.as_ref().unwrap()) > 0, forced, "{text}: {:?}", result.lines);
     }
+}
+
+/// Native PowerPoint keeps an asymmetric crossed interval's midpoint, even when
+/// it is outside the shape. Proportional inset scaling moves the text incorrectly.
+#[test]
+fn extreme_asymmetric_insets_preserve_the_native_text_midpoint() {
+    let (p, mut sh) = setup("Collaboration Hub", 14.17, 14.17);
+    sh.ph = None;
+    let bp = &mut sh.text.as_mut().unwrap().body;
+    bp.wrap = Some(false);
+    bp.inset_l = Some(127.5);
+    bp.inset_r = Some(11.33);
+    bp.inset_t = Some(11.33);
+    bp.inset_b = Some(11.33);
+    sh.text.as_mut().unwrap().paragraphs[0].props = deckcraft_model::text::ParaProps { align: Some(Align::Center), ..Default::default() };
+    let l = lay(&p, &sh, 14.17, 14.17);
+    assert_eq!(l.lines.len(), 1);
+    let line = &l.lines[0];
+    let mid = (line.caret_x[0] + *line.caret_x.last().unwrap()) / 2.0;
+    let expected = (14.17 + 127.5 - 11.33) / 2.0;
+    assert!((mid - expected).abs() < 1e-9, "line center {mid} should retain midpoint {expected}");
+}
+
+/// #1632: signed insets (e.g. negative left inset with positive right inset) are preserved when
+/// their sum fits within the shape bounds.
+#[test]
+fn signed_insets_are_preserved_when_they_fit() {
+    let (p, mut sh) = setup("Text", 100.0, 50.0);
+    sh.ph = None;
+    let bp = &mut sh.text.as_mut().unwrap().body;
+    bp.inset_l = Some(-10.0);
+    bp.inset_r = Some(10.0);
+    sh.text.as_mut().unwrap().paragraphs[0].props = deckcraft_model::text::ParaProps { align: Some(Align::Left), ..Default::default() };
+    let l = lay(&p, &sh, 100.0, 50.0);
+    assert_eq!(l.lines.len(), 1);
+    assert_eq!(l.inner.x0, -10.0);
 }

@@ -14,6 +14,7 @@ mod maps;
 mod opc;
 mod png;
 pub(crate) mod read;
+pub use read::MAX_TAG_BYTES;
 mod tables;
 mod write;
 mod xml;

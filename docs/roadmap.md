@@ -1,5 +1,7 @@
 # DeckCraft roadmap: milestones and what's next
 
+> **PPTX.36 update 2026-11-02:** Integrated current upstream changes while retaining native-verified crossed-inset positioning. Sixteen new text controls distinguish midpoint collapse from proportional inset scaling, including extreme and signed margins. Font-reference probes isolate remaining fallback failures; they do not establish complete fallback support. SmartArt, geographic and rich-label parity remain partial; scores are unchanged.
+
 > **PPTX.35 update 2026-11-02:** Nested text no longer inherits a parent’s own font sizes or margins. Nonpainting helpers and text-only shapes do not duplicate text onto enclosing shapes; only displayed text triggers cycle refitting. All 72 new visibility/font/wrapping controls match, and a 42-case font-scope set reaches 30 matches with 12 native-fallback differences retained. All previous geometry and pixel regressions remain stable. Full native fallback, text baselines, geography and rich-label parity remain incomplete; scores are unchanged.
 
 > **PPTX.34 update 2026-11-02:** Cycle leaves follow path rotation after their own shape fitting; measured text overflow selects radius refitting, and nested containers use occupied extents. Five original matrices improve from 47 to 144 strict geometry matches, with 36 native-blank cases excluded. All 632 prior cycle controls and 154 pixel-identical regression renders are retained. Nested text visibility, long-label clipping and broader SmartArt/map/label gaps remain open; parity scores are unchanged.
@@ -166,6 +168,7 @@ and rich point labels; provider/native-layout gaps remain documented, and beta s
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.36: integrate upstream, retain native asymmetric crossed-inset placement, and document bounded font-reference/fallback evidence; full converter parity remains open |
 | 2026-11-02 | minor | PPTX.35: isolate text-node typography and mapped visibility; 72 matching text controls, 102/114 strict geometries, 12 native fallback differences retained |
 | 2026-11-02 | minor | PPTX.34: measured cycle overflow, leaf path rotation and occupied-container packing; 144 strict matches, 36 blank-native exclusions, text visibility/clipping still partial |
 | 2026-11-02 | minor | PPTX.33 fits coupled cycle size/radius search and mapped-text refitting; 632 strict native matches, original raster failures explicit, no complete-converter-parity claim |

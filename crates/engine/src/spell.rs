@@ -709,7 +709,8 @@ pub fn paragraph_words(p: &deckcraft_model::Paragraph, default: &str) -> Vec<Wor
         chars.extend(r.content().chars().map(|c| (c, ri)));
     }
     let lang_of = |ri: usize| p.runs.get(ri).and_then(|r| r.props.lang.clone()).filter(|l| !l.is_empty()).unwrap_or_else(|| default.to_string());
-    let inside = |c: char| c.is_alphanumeric() || c == '\'' || c == '’' || c == '-';
+    // Combining marks (decomposed accents) belong to the letter before them.
+    let inside = |c: char| c.is_alphanumeric() || deckcraft_model::words::is_combining_mark(c) || c == '\'' || c == '’' || c == '-';
     let mut out = vec![];
     let mut i = 0;
     while i < chars.len() {
@@ -725,8 +726,14 @@ pub fn paragraph_words(p: &deckcraft_model::Paragraph, default: &str) -> Vec<Wor
         while a < b && !chars[a].0.is_alphanumeric() {
             a += 1;
         }
-        while b > a && !chars[b - 1].0.is_alphanumeric() {
-            b -= 1;
+        // Trim back to the last letter or digit, keeping only the marks that sit on it
+        // (a mark on a trailing apostrophe goes with the apostrophe).
+        while b > a {
+            let k = (a..b).rev().find(|&k| !deckcraft_model::words::is_combining_mark(chars[k].0)).unwrap_or(a);
+            if chars[k].0.is_alphanumeric() {
+                break;
+            }
+            b = k;
         }
         let text: String = chars[a..b].iter().map(|c| c.0).collect();
         if text.is_empty() || text.chars().any(|c| c.is_ascii_digit()) || !text.chars().any(char::is_alphabetic) {
@@ -817,6 +824,20 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
 
     fn d() -> Dictionary {
         Dictionary::parse(AFF.as_bytes(), DIC.as_bytes())
+    }
+
+    #[test]
+    fn nfd_word_not_split() {
+        let p = deckcraft_model::Paragraph::new("Das na\u{ef}ve Caf\u{e9} und cafe\u{301} na\u{308}ive");
+        let w: Vec<String> = paragraph_words(&p, "en-US").into_iter().map(|w| w.text).collect();
+        assert_eq!(w, ["Das", "na\u{ef}ve", "Caf\u{e9}", "und", "cafe\u{301}", "na\u{308}ive"]);
+    }
+
+    #[test]
+    fn a_mark_on_trailing_punctuation_is_trimmed_with_it() {
+        let p = deckcraft_model::Paragraph::new("word'\u{301} cafe\u{301}' x");
+        let w: Vec<String> = paragraph_words(&p, "en-US").into_iter().map(|w| w.text).collect();
+        assert_eq!(w, ["word", "cafe\u{301}", "x"]);
     }
 
     #[test]

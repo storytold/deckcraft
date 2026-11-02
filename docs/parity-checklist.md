@@ -1,5 +1,7 @@
 # PowerPoint feature checklist
 
+> **PPTX.36 update 2026-11-02:** Integrated current upstream changes while retaining native-verified crossed-inset positioning. Sixteen new text controls distinguish midpoint collapse from proportional inset scaling, including extreme and signed margins. Font-reference probes isolate remaining fallback failures; they do not establish complete fallback support. SmartArt, geographic and rich-label parity remain partial; scores are unchanged.
+
 > **PPTX.35 update 2026-11-02:** Nested text no longer inherits a parent’s own font sizes or margins. Nonpainting helpers and text-only shapes do not duplicate text onto enclosing shapes; only displayed text triggers cycle refitting. All 72 new visibility/font/wrapping controls match, and a 42-case font-scope set reaches 30 matches with 12 native-fallback differences retained. All previous geometry and pixel regressions remain stable. Full native fallback, text baselines, geography and rich-label parity remain incomplete; scores are unchanged.
 
 > **PPTX.34 update 2026-11-02:** Cycle leaves follow path rotation after their own shape fitting; measured text overflow selects radius refitting, and nested containers use occupied extents. Five original matrices improve from 47 to 144 strict geometry matches, with 36 native-blank cases excluded. All 632 prior cycle controls and 154 pixel-identical regression renders are retained. Nested text visibility, long-label clipping and broader SmartArt/map/label gaps remain open; parity scores are unchanged.
@@ -63,6 +65,8 @@
 > **Additional bounded coverage:** document-scoped fonts, actual-face diagnostics, per-role chart typography, secondary-axis rebuilds and nested SmartArt cached drawings now have synthetic regression tests. Font editing, charts and SmartArt retain their current partial scores; direct fixed-size XLSX ranges now synchronize and imported graph/text preservation is covered. Full rich chart labels, spreadsheet dependency edits and structural diagram relayout remain open.
 
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+
+> **Last updated:** 2026-11-01 · Locked-shape and no-outline regressions added for #1621; fill row re-assessed: remains D; No Fill hit-testing now follows resolved appearance. Scores unchanged.
 
 The summary between `<!-- SUMMARY -->
 **Weighted breadth parity: 84%** over 191 features.
@@ -180,7 +184,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Shapes | Text warp transforms | P2 | P |
 | Shapes | Shape quick styles | P1 | D |
 | Shapes | Set as default shape | P2 | D |
-| Format | Solid fill and transparency | P0 | D |
+| Format | Solid fill and transparency (No Fill interiors pass clicks through, #1621) | P0 | D |
 | Format | Gradient fill (linear, radial, rectangular, path) | P0 | D |
 | Format | Picture and texture fill | P1 | P |
 | Format | Pattern fill | P2 | P |
@@ -300,6 +304,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.36: integrate upstream, retain native asymmetric crossed-inset placement, and document bounded font-reference/fallback evidence; full converter parity remains open |
 | 2026-11-02 | minor | PPTX.35: isolate text-node typography and mapped visibility; 72 matching text controls, 102/114 strict geometries, 12 native fallback differences retained |
 | 2026-11-02 | minor | PPTX.34: measured cycle overflow, leaf path rotation and occupied-container packing; 144 strict matches, 36 blank-native exclusions, text visibility/clipping still partial |
 | 2026-11-02 | minor | PPTX.33 fits coupled cycle size/radius search and mapped-text refitting; 632 strict native matches, original raster failures explicit, no complete-converter-parity claim |
@@ -319,3 +324,4 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | 2026-11-01 | minor | Rotated diagram footprint fitting and independent mapped text orientation; crossed text insets and wrapped overflow alignment verified with original native controls |
 | 2026-11-01 | minor | Composite occupied geometry and mapped text ownership corrected; non-rotated native controls and round trips pass, rotation and selector/style interactions remain partial |
 | 2026-10-31 | minor | Clarified bounded chart-data, line-label, partial-lock and flat-process export coverage. Feature scores unchanged |
+| 2026-10-31 | trivial | No Fill interior hit-testing follows resolved fill (#1621); fill row remains D and summary scores are unchanged |

@@ -1,5 +1,7 @@
 # DeckCraft roadmap
 
+> **PPTX.36 update 2026-11-02:** Integrated current upstream changes while retaining native-verified crossed-inset positioning. Sixteen new text controls distinguish midpoint collapse from proportional inset scaling, including extreme and signed margins. Font-reference probes isolate remaining fallback failures; they do not establish complete fallback support. SmartArt, geographic and rich-label parity remain partial; scores are unchanged.
+
 > **PPTX.35 update 2026-11-02:** Nested text no longer inherits a parent’s own font sizes or margins. Nonpainting helpers and text-only shapes do not duplicate text onto enclosing shapes; only displayed text triggers cycle refitting. All 72 new visibility/font/wrapping controls match, and a 42-case font-scope set reaches 30 matches with 12 native-fallback differences retained. All previous geometry and pixel regressions remain stable. Full native fallback, text baselines, geography and rich-label parity remain incomplete; scores are unchanged.
 
 > **PPTX.34 update 2026-11-02:** Cycle leaves follow path rotation after their own shape fitting; measured text overflow selects radius refitting, and nested containers use occupied extents. Five original matrices improve from 47 to 144 strict geometry matches, with 36 native-blank cases excluded. All 632 prior cycle controls and 154 pixel-identical regression renders are retained. Nested text visibility, long-label clipping and broader SmartArt/map/label gaps remain open; parity scores are unchanged.
@@ -34,7 +36,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-10-31 · **Change:** minor (font diagnostics, chart typography, imported diagram graph/text retention and fixed-size embedded XLSX synchronization; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-02 · **Change:** minor (PPTX fidelity and upstream No Fill hit-testing integration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (progress log: read-only `slide.actions` lists shape and table text actions; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** trivial (progress log: Set Up Slide Show ▸ Keep mouse cursor visible, #1445; stage and scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (progress log: dragging several selected slides moves them all; previous: trivial, progress log: Edit Points handle drags with Shift, Ctrl/Cmd or Alt/Option set the point type; previous: trivial, progress log: scroll bars on the zoomed slide pane, #1157; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -180,6 +182,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-02 | PPTX.36: integrate upstream while retaining native-verified crossed-inset text positions; sixteen asymmetric/signed controls and explicit font-reference fallback limits |
 | 2026-11-02 | PPTX.35: isolate text-node typography and mapped visibility; 72 matching text controls, 102/114 strict geometries, 12 native fallback differences retained |
 | 2026-11-02 | PPTX.34: measured cycle overflow, leaf path rotation and occupied-container packing; 144 strict matches, 36 blank-native exclusions, text visibility/clipping still partial |
 | 2026-11-02 | PPTX.33: retain accepted cycle radius trials, fit arc capacity and distinguish mapped run text; 632 strict native matches with raster/text limits retained |
@@ -215,6 +218,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-31 | Imported SmartArt preserves its original package graph, IDs and geometry through no-op saves and identity-bound Text Pane edits; undo/redo and native save are tested. Categorical chart edits synchronize fixed-size direct XLSX ranges without changing unrelated cells/sheets. Native PowerPoint preservation probes render identically on no-op round trips; structural edits and unsupported spreadsheet sources remain partial |
 | 2026-10-31 | Font selection respects East Asian language/script mappings and document-scoped embedded faces. Read-only `font.inspect` reports actual faces, hashes and fallback reasons. Charts keep separate title/legend/axis typography and rebuilt secondary axes; label widths use text shaping, and logical series order survives plot grouping. Cached SmartArt retains nested transforms and image nodes. Four generated render probes compare exact pixels before/after PPTX round trip; these are not PowerPoint parity claims. See [layout fidelity](docs/layout-fidelity.md) |
 | 2026-10-31 | PPTX fidelity: data-only categorical chart edits keep unmodelled formatting and remove stale workbook dependencies; line data labels render; partial shape restrictions survive save; flat default process SmartArt derives export geometry and font size from its canvas. Paragraph defaults include proofing language, and CJK hanging punctuation follows explicit language. Native PowerPoint validation is bounded; full chart/SmartArt parity remains open |
+| 2026-10-31 | No Fill shape interiors allow selection and editing of underlying objects, even when a quick style remains; hit-testing uses the renderer’s fill resolution. Outlines, rotation, text targets and actual fills keep their hit behaviour (#1621) |
 | 2026-10-30 | Print-preview tests use the URL emitted by egui and its exact file path; previews are explicitly removed before the macOS process exits |
 | 2026-10-30 | `slide.actions` lists shape click and hover actions and text-run hyperlinks (including table cells and grouped shapes) for audit; listing never runs an action. The UI pane is a follow-up |
 | 2026-10-29 | Slide Show: going back to the previous slide plays the transition of the slide being left, reversed, as PowerPoint does, instead of the previous slide's own entrance transition (#1531); a jump (Go to Slide, links) still plays the target slide's transition |
@@ -385,6 +389,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.36: integrate upstream, retain native asymmetric crossed-inset placement, and document bounded font-reference/fallback evidence; full converter parity remains open |
 | 2026-11-01 | minor | PPTX.25 separates geometry/text scope and local size precedence; all eight prior cross-container cases pass, while broader selector/default-layout probes retain failures |
 | 2026-11-01 | minor | PPTX.24 fits overflowing composite end edges; 73 native geometry controls pass, with two thin-text raster differences and four ancestor-scope failures retained |
 | 2026-11-01 | minor | PPTX.23 separates allocated and painted geometry, fits nested composites recursively, and verifies 80 native allocation/colour controls plus 154 unchanged PNGs; cross-container scope/overflow remains partial |
@@ -392,6 +397,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-01 | minor | PPTX.21 separates authored-default rounding, displayed trial measurement and fractional local-font propagation; native font controls pass, full visual parity remains partial |
 | 2026-11-01 | minor | PPTX.19 geographic lineage, regional projection and explicit native viewport limits; scores unchanged |
 | 2026-10-31 | minor | Progress log: bounded PPTX editing/export fidelity fixes; overall parity scores and alpha stage unchanged |
+| 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-30 | trivial | Progress log: read-only slide action inspection; parity scores unchanged |
 | 2026-10-29 | trivial | Progress log: going back in the slide show reverses the left slide's transition (#1531). Scores and milestone names unchanged |
 | 2026-10-29 | trivial | Progress log: the Picture Styles row leaves room for Crop and Size (#1232). Scores and milestone names unchanged |

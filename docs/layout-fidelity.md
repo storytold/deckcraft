@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.35): independent nested typography and mapped text visibility,
+Updated 2026-11-02 (PPTX.36): upstream integration, crossed-inset validation and font-reference evidence,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1760,8 +1760,52 @@ Original black-box controls separate scope, visibility, frame size and rule beha
   and 23 diagram preservation tests pass. Full `cargo xtask ci` passes all eight stages
   and 2,477 tests including doctests.
 
-Full native fallback/search, circular font ownership, arbitrary nested mappings, duplicate
+Full native fallback/search, cyclic font references, arbitrary nested mappings, duplicate
 names, descendant defaults, baseline/overflow precision, hierarchy/snake fitting and nested
 flow precision remain incomplete. Geographic provider context, boundary simplification and
 rich-label overflow/collision remain open. No global parity score or complete LibreOffice
 replacement is claimed. Published changes contain source, tests and documentation only.
+
+
+## PPTX.36 — upstream integration and independent fallback controls
+
+The upstream text-inset change conflicts with the previously observed native midpoint
+behavior. A new contributor-original deck has sixteen controls: equal and unequal
+positive insets, extreme overrun, crossed signed insets and signed insets that still fit,
+each with wrapping on and off. The package passes Open XML SDK validation and opens
+and exports in PowerPoint for Mac 16.113.3 without a repair prompt being dismissed.
+The input hash is unchanged. Native glyph centres stay within 0.015pt of the crossed
+interval midpoint. Proportional scaling differs by up to 52.167pt in these controls.
+The merge retains midpoint collapse, the document-scoped embedded-font path, and the
+new upstream monospace fallback API. Tests cover the signed cases and an extreme
+asymmetric midpoint; upstream signed-inset and line-breaking coverage is retained.
+
+Additional SmartArt evidence separates previously conflated failure causes:
+
+- Thirty-six ownership controls still trigger native fallback whether the parent maps
+  text or not, and whether its shape is visible, hidden or absent. Duplicate mapped text
+  alone is not an established explanation for the twelve prior fallback differences.
+- Forty-eight reference-option controls vary names, explicit/default selectors, XML
+  order, equality operators, source defaults and factors. Six constant/local controls
+  retain the intended layout; the other 42 fall back.
+- Forty-eight source/target controls vary text/space/composite/linear source algorithms,
+  parent versus local declarations, and parent/sibling/self targets. All eight sibling
+  references declared at their common parent match font sets. The remaining 40 do not.
+  This supports investigating property scope and dependency validity; it does not justify
+  a blanket rejection of font references or claim a complete native-fallback algorithm.
+- Forty additional native fallback controls cover one through eight nodes and five
+  canvas aspect ratios. They are diagnostic inputs for grid fitting, not direct-render
+  parity passes. Generic fallback selection, geometry and typography remain unfinished.
+
+No public native render, document, font or private corpus asset is added. Full native
+SmartArt search/fallback, remaining map provider/viewport and rich-label overflow/collision
+work stays open. This integration does not raise parity scores or certify complete
+LibreOffice replacement.
+
+Integration validation: all eight `cargo xtask ci` stages pass, covering 2,520 tests
+including doctests. All sixteen new controls preserve text and line segmentation,
+with direct/native horizontal glyph-centre differences below 0.019pt. All 154 earlier
+PNG exports remain pixel-identical to PPTX.35 and retain native-matching font sets.
+All 632 earlier cycle geometries still pass the strict comparison (maximum 0.014pt),
+and the original 506 complete inspection models are unchanged. These regression
+results do not erase the earlier raster failures or unmeasurable cases.

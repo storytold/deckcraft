@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **PPTX.36 update 2026-11-02:** Integrated current upstream changes while retaining native-verified crossed-inset positioning. Sixteen new text controls distinguish midpoint collapse from proportional inset scaling, including extreme and signed margins. Font-reference probes isolate remaining fallback failures; they do not establish complete fallback support. SmartArt, geographic and rich-label parity remain partial; scores are unchanged.
+
 > **PPTX.35 update 2026-11-02:** Nested text no longer inherits a parent’s own font sizes or margins. Nonpainting helpers and text-only shapes do not duplicate text onto enclosing shapes; only displayed text triggers cycle refitting. All 72 new visibility/font/wrapping controls match, and a 42-case font-scope set reaches 30 matches with 12 native-fallback differences retained. All previous geometry and pixel regressions remain stable. Full native fallback, text baselines, geography and rich-label parity remain incomplete; scores are unchanged.
 
 > **PPTX.34 update 2026-11-02:** Cycle leaves follow path rotation after their own shape fitting; measured text overflow selects radius refitting, and nested containers use occupied extents. Five original matrices improve from 47 to 144 strict geometry matches, with 36 native-blank cases excluded. All 632 prior cycle controls and 154 pixel-identical regression renders are retained. Nested text visibility, long-label clipping and broader SmartArt/map/label gaps remain open; parity scores are unchanged.
@@ -63,7 +65,7 @@
 
 > **Earlier update 2026-10-31:** data-only categorical chart edits preserve source formatting, line labels render, partial shape locks survive saving, and default flat process SmartArt exports its canvas dimensions. These are bounded fixes; chart and SmartArt parity remain partial. See the evidence and limits below.
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-10-30 · **Change:** minor (slide-show hit testing follows each shape’s own animation state; scale and rotation covered; previous: trivial, AutoFormat lists run independently of Replace text as you type; previous: minor, slide-show click targets follow animated shapes and text links; previous: minor, Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-02 · **Change:** minor (PPTX fidelity and upstream No Fill hit-testing integration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -473,6 +475,7 @@ no global parity claim or score increase.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.36: integrate upstream, retain native asymmetric crossed-inset placement, and document bounded font-reference/fallback evidence; full converter parity remains open |
 | 2026-11-02 | minor | PPTX.35: isolate text-node typography and mapped visibility; 72 matching text controls, 102/114 strict geometries, 12 native fallback differences retained |
 | 2026-11-02 | minor | PPTX.34: measured cycle overflow, leaf path rotation and occupied-container packing; 144 strict matches, 36 blank-native exclusions, text visibility/clipping still partial |
 | 2026-11-02 | minor | PPTX.33 fits coupled cycle size/radius search and mapped-text refitting; 632 strict native matches, original raster failures explicit, no complete-converter-parity claim |
@@ -492,6 +495,7 @@ no global parity claim or score increase.
 | 2026-11-01 | minor | Rotated diagram footprint fitting and independent mapped text orientation; crossed text insets and wrapped overflow alignment verified with original native controls |
 | 2026-11-01 | minor | Composite occupied geometry and mapped text ownership corrected; non-rotated native controls and round trips pass, rotation and selector/style interactions remain partial |
 | 2026-10-31 | minor | Bounded chart data preservation, line labels, partial lock round trips and flat process export; paragraph defaults and proofing-language-sensitive CJK punctuation now imported/rendered. Chart and SmartArt scores remain partial |
+| 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-30 | minor | Slide-show click targets use each shape’s own animation state; scale and rotation test added |
 | 2026-10-28 | trivial | Automatic lists now run independently of Replace text as you type; proofing gap description updated |
 | 2026-10-27 | minor | Refreshed against merged PRs: removed the Morph alignment entry (#67 merged 2026-10-14); #77 (animation rewind, PR #83) is fixed, leaving #74 in the round-trip gap; #75 was closed unmerged, so #60 stays open with no fix PR; #53 is closed and the image-paste gap is now Windows #1414; Reuse Slides (#1103) and Compare reject (#850) noted in the smaller rows; the duplicate header line is gone |
