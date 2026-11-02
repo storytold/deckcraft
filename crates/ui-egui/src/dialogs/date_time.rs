@@ -30,7 +30,7 @@ pub(super) fn date_rows(lang: &str) -> Vec<(&'static str, String)> {
 /// whether the dialog should close.
 pub(super) fn date_time_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.set_min_width(440.0);
-    ui.label("Available formats:");
+    ui.label(crate::tl!("Available formats:"));
     let lang = d.get("language", "en-US");
     let rows = date_rows(&lang);
     if !rows.iter().any(|(k, _)| *k == d.get("format", "datetime1"))
@@ -46,12 +46,13 @@ pub(super) fn date_time_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
             }
         }
     });
-    let lang_label = DATE_LANGS.iter().find(|(k, _)| *k == lang).map(|(_, l)| *l).unwrap_or("English (United States)");
+    let raw_lang_label = DATE_LANGS.iter().find(|(k, _)| *k == lang).map(|(_, l)| *l).unwrap_or("English (United States)");
+    let lang_label = crate::i18n::t(raw_lang_label);
     ui.horizontal(|ui| {
-        ui.label("Language:");
+        ui.label(crate::tl!("Language:"));
         let opened = craft_ui::ComboBox::from_id_salt("date-lang").selected_text(lang_label).width(240.0).show_ui(ui, |ui| {
             for (k, l) in DATE_LANGS {
-                if ui.selectable_label(lang == *k, *l).clicked() {
+                if ui.selectable_label(lang == *k, crate::i18n::t(l)).clicked() {
                     d.fields.insert("language".into(), (*k).to_string());
                 }
             }
@@ -64,9 +65,11 @@ pub(super) fn date_time_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
         });
     });
     ui.label(
-        egui::RichText::new("Month names and AM/PM are listed for English. Other languages list the numeric date and 24-hour time.")
-            .size(11.0)
-            .color(Tokens::get(ui.ctx()).text_dim),
+        egui::RichText::new(crate::tl!(
+            "Month names and AM/PM are listed for English. Other languages list the numeric date and 24-hour time."
+        ))
+        .size(11.0)
+        .color(Tokens::get(ui.ctx()).text_dim),
     );
     let update = check(ui, d, "Update automatically", "update", true);
     let (ok, cancel) = buttons(ui, "OK");

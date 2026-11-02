@@ -87,7 +87,7 @@ pub fn dragged_duration(duration_ms: u32, dx: f32, pps: f32, factor: f64) -> u32
 
 /// Tooltip text for a bar: `Start: 0.5s, End: 2.5s`.
 pub fn label(bar: &Bar) -> String {
-    format!("Start: {:.2}s, End: {:.2}s", bar.start, bar.start + bar.span)
+    crate::tl!("Start: {}s, End: {}s", format!("{:.2}", bar.start), format!("{:.2}", bar.start + bar.span))
 }
 
 #[cfg(test)]

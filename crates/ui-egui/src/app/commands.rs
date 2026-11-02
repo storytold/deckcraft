@@ -18,7 +18,7 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
-        let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
+        let r = if UI_COMMANDS.iter().any(|c| c.0 == id) || id == "app.language" {
             self.run_ui(id, &params)
         } else {
             self.session.execute(id, &params).map_err(|e| e.to_string())
@@ -228,7 +228,7 @@ impl SlideApp {
                 return Err("updates are handled by the browser: reload the page".into());
             }
             "app.palette" => self.palette = Some((String::new(), 0)),
-            "app.preferences" => self.dialog = Some(dialogs::Dialog::new("preferences")),
+            "app.preferences" => self.dialog = Some(dialogs::Dialog::preferences(self)),
             "app.openDialog" => self.pick_and_open(),
             "app.insertPictureDialog" => self.pick_and_insert("picture", "insert.picture"),
             "app.smartArtPictureDialog" => {
@@ -252,7 +252,7 @@ impl SlideApp {
                     self.pick_and_insert("theme", "design.browseTheme");
                 } else {
                     // The browser's asynchronous picker would open the file as a new document.
-                    self.set_status("Browse for Themes needs the desktop app for now".to_string());
+                    self.set_status(crate::tl!("Browse for Themes needs the desktop app for now").to_string());
                 }
             }
             "app.qat" => return qat::command(self, p),
@@ -270,7 +270,7 @@ impl SlideApp {
                     self.pick_and_insert("open", "review.compare");
                 } else {
                     // The browser's asynchronous picker would open the file as a new document.
-                    self.set_status("Compare needs the desktop app for now".to_string());
+                    self.set_status(crate::tl!("Compare needs the desktop app for now").to_string());
                 }
             }
             "app.dialog" => {
@@ -280,6 +280,24 @@ impl SlideApp {
             "app.links" => {
                 use deckcraft_engine::links::{APP_PAGE, APPS, DISCORD, GITHUB, WEBSITE};
                 return Ok(json!({"discord": DISCORD, "website": WEBSITE, "apps": APPS, "appPage": APP_PAGE, "github": GITHUB}));
+            }
+            "ui.language" | "app.language" => {
+                if let Some(lang) = p
+                    .get("language")
+                    .or_else(|| p.get("lang"))
+                    .or_else(|| p.get("value"))
+                    .and_then(Value::as_str)
+                {
+                    let norm = crate::i18n::Lang::normalize_pref(lang);
+                    self.ui.language = norm.to_owned();
+                    crate::i18n::set_current(crate::i18n::Lang::from_pref(norm));
+                }
+                let active = crate::i18n::Lang::from_pref(&self.ui.language);
+                return Ok(json!({
+                    "language": self.ui.language,
+                    "resolved": active.code(),
+                    "nativeName": active.native_name(),
+                }));
             }
             _ => return Err(format!("unknown UI command `{id}`")),
         }

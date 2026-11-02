@@ -166,8 +166,9 @@ pub(super) fn ruler_markers(app: &mut SlideApp, ui: &mut Ui, p: &egui::Painter, 
         ui.data_mut(|d| d.insert_temp(kind_id, kind));
     }
     let (kind_align, kind_label) = KINDS[kind % KINDS.len()];
+    let kind_label = crate::i18n::t(kind_label);
     cr.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, kind_label));
-    let cr = cr.on_hover_text(format!("{kind_label} (click to change)"));
+    let cr = cr.on_hover_text(crate::tl!("{kind_label} (click to change)", kind_label = kind_label));
     p.rect_stroke(
         corner.shrink(2.0),
         CornerRadius::same(2),

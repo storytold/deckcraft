@@ -355,12 +355,12 @@ pub(super) fn paint_grid(painter: &egui::Painter, ctx: &egui::Context, show: &mu
     let aspect = slide_aspect(doc);
     let cells = see_all_cells(full, slides.len(), aspect);
     painter.rect_filled(full, CornerRadius::ZERO, Color32::from_gray(16));
-    painter.text(pos2(full.center().x, full.min.y + 28.0), Align2::CENTER_CENTER, "All slides", theme::font(20.0), Color32::WHITE);
+    painter.text(pos2(full.center().x, full.min.y + 28.0), Align2::CENTER_CENTER, crate::tl!("All slides"), theme::font(20.0), Color32::WHITE);
     if doc.slides.len() > GRID_CAP {
         painter.text(
             pos2(full.center().x, full.min.y + 50.0),
             Align2::CENTER_CENTER,
-            format!("First {GRID_CAP} slides"),
+            crate::tl!("First {cap} slides", cap = GRID_CAP),
             theme::font(13.0),
             Color32::from_gray(180),
         );
@@ -391,7 +391,7 @@ pub(super) fn paint_grid(painter: &egui::Painter, ctx: &egui::Context, show: &mu
             egui::StrokeKind::Inside,
         );
         let hidden = doc.slides.get(i).is_some_and(|s| s.hidden);
-        let label = if hidden { format!("{}  Hidden", i + 1) } else { format!("{}", i + 1) };
+        let label = if hidden { crate::tl!("{num}  Hidden", num = i + 1) } else { format!("{}", i + 1) };
         painter.text(
             pos2(rect.center().x, rect.max.y + 12.0),
             Align2::CENTER_CENTER,

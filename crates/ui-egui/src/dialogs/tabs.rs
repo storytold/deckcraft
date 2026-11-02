@@ -26,17 +26,21 @@ pub(super) fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         .collect();
     field(ui, d, "Default tab stops (in):", "default", "1");
     ui.add_space(6.0);
-    ui.label("Tab stops:");
+    ui.label(crate::tl!("Tab stops:"));
     let mut remove = None;
     egui::Grid::new("tab_stops").num_columns(3).spacing(vec2(12.0, 4.0)).show(ui, |ui| {
         if stops.is_empty() {
-            ui.label("(none)");
+            ui.label(crate::tl!("(none)"));
             ui.end_row();
         }
         for (i, (pos, align)) in stops.iter().enumerate() {
             ui.label(format!("{pos:.2}\""));
-            ui.label(TAB_KINDS.iter().find(|k| k.0 == align).map(|k| k.1).unwrap_or("Left"));
-            if ui.small_button("Clear").on_hover_text(format!("Clear the tab at {pos:.2}\"")).clicked() {
+            ui.label(crate::i18n::t(TAB_KINDS.iter().find(|k| k.0 == align).map(|k| k.1).unwrap_or("Left")));
+            if ui
+                .small_button(crate::tl!("Clear"))
+                .on_hover_text(crate::i18n::tf("Clear the tab at {pos}\"", &[("pos", &format!("{pos:.2}"))]))
+                .clicked()
+            {
                 remove = Some(i);
             }
             ui.end_row();
@@ -47,22 +51,22 @@ pub(super) fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     }
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        let l = ui.label("Tab stop position (in):");
+        let l = ui.label(crate::tl!("Tab stop position (in):"));
         let mut v = d.get("newpos", "");
         ui.add(egui::TextEdit::singleline(&mut v).desired_width(60.0)).labelled_by(l.id);
         d.fields.insert("newpos".into(), v);
     });
     let cur = d.get("newalign", "l");
     ui.horizontal(|ui| {
-        ui.label("Alignment:");
+        ui.label(crate::tl!("Alignment:"));
         for (k, label) in TAB_KINDS {
-            if ui.radio(cur == k, label).clicked() {
+            if ui.radio(cur == k, crate::i18n::t(label)).clicked() {
                 d.fields.insert("newalign".into(), k.into());
             }
         }
     });
     ui.horizontal(|ui| {
-        if ui.button("Set").clicked()
+        if ui.button(crate::tl!("Set")).clicked()
             && let Some(p) = Some(num(d, "newpos", f64::NAN)).filter(|v| v.is_finite() && *v >= 0.0 && *v <= 56.0)
         {
             stops.retain(|(q, _)| (q - p).abs() > 0.005);
@@ -70,7 +74,7 @@ pub(super) fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
             stops.sort_by(|a, b| a.0.total_cmp(&b.0));
             d.fields.insert("newpos".into(), String::new());
         }
-        if ui.button("Clear All").clicked() {
+        if ui.button(crate::tl!("Clear All")).clicked() {
             stops.clear();
         }
     });

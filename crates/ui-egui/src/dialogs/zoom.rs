@@ -23,8 +23,8 @@ pub(super) fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     }
     let mut mode = d.get("mode", "percent");
     let mut percent = d.get("percent", "100");
-    ui.label("Zoom to");
-    if ui.radio(mode == "fit", "Fit").clicked() {
+    ui.label(crate::tl!("Zoom to"));
+    if ui.radio(mode == "fit", crate::tl!("Fit")).clicked() {
         mode = "fit".into();
     }
     for pct in ZOOM_PRESETS {
@@ -35,7 +35,7 @@ pub(super) fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         }
     }
     ui.horizontal(|ui| {
-        let l = ui.label("Percent:");
+        let l = ui.label(crate::tl!("Percent:"));
         let edit = ui.add(egui::TextEdit::singleline(&mut percent).desired_width(72.0)).labelled_by(l.id);
         if edit.changed() {
             mode = "percent".into();
@@ -53,7 +53,7 @@ pub(super) fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         match parse_zoom_percent(&percent) {
             Some(scale) => app.ui.zoom = Some(scale),
             None => {
-                app.set_status("Enter a zoom percent");
+                app.set_status(crate::tl!("Enter a zoom percent"));
                 return false;
             }
         }

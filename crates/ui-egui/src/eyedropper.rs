@@ -106,15 +106,15 @@ pub fn tick(app: &mut SlideApp, ctx: &Context) {
 fn begin(app: &mut SlideApp, pick: Pick) {
     let Some(d) = app.session.active() else { return };
     if d.selection.target != deckcraft_engine::Target::Slides {
-        app.set_status("The Eyedropper takes colours from a slide");
+        app.set_status(crate::tl!("The Eyedropper takes colours from a slide"));
         return;
     }
     let slide = d.selection.slide;
     let image = deckcraft_render::render_slide(&d.doc, slide, &deckcraft_render::RenderOpts { scale: SCALE, ..Default::default() });
     app.eyedropper = Some(State { pick, slide, image });
     app.set_status(match pick {
-        Pick::Menu(_) => "Eyedropper: click the slide (Esc cancels)",
-        Pick::TransparentColor => "Set Transparent Color: click the colour in the picture (Esc cancels)",
+        Pick::Menu(_) => crate::tl!("Eyedropper: click the slide (Esc cancels)"),
+        Pick::TransparentColor => crate::tl!("Set Transparent Color: click the colour in the picture (Esc cancels)"),
     });
 }
 

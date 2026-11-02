@@ -119,7 +119,7 @@ impl SlideApp {
         };
         if timeline.is_empty() {
             self.anim_preview = None;
-            self.set_status("This slide has no animations");
+            self.set_status(crate::tl!("This slide has no animations"));
             return Ok(json!({"playing": false}));
         }
         let from_secs = match from {
@@ -132,7 +132,7 @@ impl SlideApp {
         self.close_backstage();
         let duration = timeline.total_duration();
         self.anim_preview = Some(AnimPreview { uid, slide, slide_ptr: ptr, started: None, from: from_secs, elapsed: from_secs, timeline });
-        self.set_status("Previewing animations");
+        self.set_status(crate::tl!("Previewing animations"));
         Ok(json!({"playing": true, "slide": slide, "duration": duration, "from": from_secs}))
     }
 

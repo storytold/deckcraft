@@ -148,7 +148,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
     };
     ctx.show_viewport_immediate(
         egui::ViewportId::from_hash_of("deckcraft_presenter"),
-        egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
+        egui::ViewportBuilder::default().with_title(crate::tl!("Presenter View — DeckCraft")).with_inner_size([1100.0, 700.0]),
         |ui, _| {
             if !keyboard(ui.ctx(), show, doc, now, true) {
                 *keep = false;
@@ -166,36 +166,44 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                     ui.add_space(12.0);
                     ui.label(egui::RichText::new(clock.clone()).size(16.0).color(Color32::from_gray(200)));
                     ui.add_space(20.0);
-                    ui.label(egui::RichText::new(format!("Slide {} of {}", cur + 1, doc.slides.len())).size(16.0).color(Color32::from_gray(200)));
+                    ui.label(
+                        egui::RichText::new(crate::tl!("Slide {current} of {total}", current = cur + 1, total = doc.slides.len()))
+                            .size(16.0)
+                            .color(Color32::from_gray(200)),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if button(ui, "End Show").clicked() {
+                        if button(ui, crate::tl!("End Show")).clicked() {
                             *keep = false;
                         }
-                        if button(ui, "Next ▶").clicked() {
+                        if button(ui, crate::tl!("Next ▶")).clicked() {
                             actions.push(show.state.next(doc));
                         }
-                        if button(ui, "◀ Previous").clicked() {
+                        if button(ui, crate::tl!("◀ Previous")).clicked() {
                             actions.push(show.state.prev(doc));
                         }
                     });
                 });
                 ui.horizontal(|ui| {
-                    if button(ui, if paused { "Resume" } else { "Pause" }).clicked() {
+                    let pause_lbl = if paused { crate::tl!("Resume") } else { crate::tl!("Pause") };
+                    if button(ui, pause_lbl).clicked() {
                         show.timer.toggle(now);
                     }
-                    if button(ui, "Reset").clicked() {
+                    if button(ui, crate::tl!("Reset")).clicked() {
                         show.timer.reset(now);
                     }
-                    if button(ui, if show.blank == Some(Color32::BLACK) { "Black on" } else { "Black" }).clicked() {
+                    let black_lbl = if show.blank == Some(Color32::BLACK) { crate::tl!("Black on") } else { crate::tl!("Black") };
+                    if button(ui, black_lbl).clicked() {
                         toggle_blank(show, Color32::BLACK);
                     }
-                    if button(ui, if show.blank == Some(Color32::WHITE) { "White on" } else { "White" }).clicked() {
+                    let white_lbl = if show.blank == Some(Color32::WHITE) { crate::tl!("White on") } else { crate::tl!("White") };
+                    if button(ui, white_lbl).clicked() {
                         toggle_blank(show, Color32::WHITE);
                     }
-                    if button(ui, if show.presenter_grid { "All slides on" } else { "All slides" }).clicked() {
+                    let grid_lbl = if show.presenter_grid { crate::tl!("All slides on") } else { crate::tl!("All slides") };
+                    if button(ui, grid_lbl).clicked() {
                         show.presenter_grid = !show.presenter_grid;
                     }
-                    if button(ui, show.zoom_label()).clicked() {
+                    if button(ui, crate::i18n::t(show.zoom_label())).clicked() {
                         show.zoom_key();
                     }
                 });
@@ -245,7 +253,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                     ui.painter().rect_filled(cr, CornerRadius::ZERO, c);
                 }
                 let nr = next_rect(right, doc);
-                ui.painter().text(right.min, Align2::LEFT_TOP, "Next", theme::font(13.0), Color32::from_gray(170));
+                ui.painter().text(right.min, Align2::LEFT_TOP, crate::tl!("Next"), theme::font(13.0), Color32::from_gray(170));
                 match &next_tex {
                     Some(t) => {
                         ui.painter().image(t.id(), nr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
@@ -254,14 +262,20 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                         ui.painter().rect_filled(nr, CornerRadius::ZERO, Color32::from_gray(40));
                         // A next slide whose preview is still on its way is not the end.
                         if next.is_none() {
-                            ui.painter().text(nr.center(), Align2::CENTER_CENTER, "End of slide show", theme::font(13.0), Color32::from_gray(170));
+                            ui.painter().text(
+                                nr.center(),
+                                Align2::CENTER_CENTER,
+                                crate::tl!("End of slide show"),
+                                theme::font(13.0),
+                                Color32::from_gray(170),
+                            );
                         }
                     }
                 }
                 let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
                 let mut head = ui.new_child(egui::UiBuilder::new().max_rect(notes_head));
                 head.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Notes").size(13.0).color(Color32::from_gray(170)));
+                    ui.label(egui::RichText::new(crate::tl!("Notes")).size(13.0).color(Color32::from_gray(170)));
                     if ui.button("A-").clicked() {
                         show.nudge_notes(-NOTES_STEP);
                     }
@@ -294,7 +308,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
 pub(super) fn presenter_notes(ui: &mut Ui, notes: &deckcraft_model::text::TextBody, px: f32) -> egui::Response {
     let color = Color32::from_gray(230);
     if notes.text().is_empty() {
-        ui.label(egui::RichText::new("No notes.").size(px).color(color))
+        ui.label(egui::RichText::new(crate::tl!("No notes.")).size(px).color(color))
     } else {
         crate::notes::view(ui, notes, &crate::notes::Look { size: px, color: Some(color) })
     }

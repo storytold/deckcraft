@@ -94,6 +94,13 @@ pub struct UiState {
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    /// UI display language (`"auto"`, `"en"`, `"vi"`).
+    #[serde(default = "default_language", alias = "interfaceLanguage")]
+    pub language: String,
+}
+
+fn default_language() -> String {
+    "auto".to_owned()
 }
 
 impl Default for UiState {
@@ -127,6 +134,7 @@ impl Default for UiState {
             grayscale: false,
             comment_focus: None,
             qat: qat::defaults(),
+            language: default_language(),
         }
     }
 }
@@ -159,6 +167,7 @@ impl UiState {
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
         self.recent.dedup();
         self.recent.truncate(RECENT_MAX);
+        self.language = crate::i18n::Lang::normalize_pref(&self.language).to_owned();
         self
     }
 }

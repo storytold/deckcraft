@@ -11,7 +11,7 @@ pub(super) fn chart_design(app: &mut SlideApp, ui: &mut Ui) {
                     ui.separator();
                     continue;
                 };
-                if ui.button(k.label()).clicked() {
+                if ui.button(crate::i18n::t(k.label())).clicked() {
                     // Replace the chart's type keeping its data.
                     if let Some(id) = app.session.active().and_then(|d| d.selection.shapes.first().copied()) {
                         let _ = app.run("chart.type", json!({"id": id.0, "type": format!("{k:?}")}));
