@@ -6,7 +6,7 @@ use deckcraft_model::style::{Effects, Reflection, Shadow};
 use deckcraft_model::{ColorRef, Geom, Line, Shape};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, always, bad, cmd, edit_shapes, has_selection, str_param};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {

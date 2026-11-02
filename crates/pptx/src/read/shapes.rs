@@ -338,6 +338,8 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
     if let Some(pr) = e.child("spPr") {
         sp_pr(imp, part, &mut s, pr);
     }
+    // A picture in a picture placeholder is cut into the layout's shape (a circle, say).
+    mark_inherited_geometry(&mut s, e.child("spPr"));
     s.style = e.child("style").map(style);
     let pf = e.child("blipFill").and_then(|b| dml::blip_fill(imp, part, b));
     let nvpr = e.path(&["nvPicPr", "nvPr"]);
@@ -447,6 +449,17 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
         pics.into_iter().find_map(|b| dml::media_ref(imp, part, b))
     }
     .or_else(|| gd.and_then(|g| g.find("oleObj")).and_then(|o| vml_preview(imp, part, o.attr("spid")?)));
+    // An embedded object's fallback picture (`p:oleObj/p:pic`) can carry a fill and an outline,
+    // which PowerPoint draws behind and around the preview (old equation objects on coloured
+    // boxes). The frame's own position stays.
+    if let Some(pr) = gd.and_then(|g| g.find("oleObj")).and_then(|o| o.find("pic")).and_then(|p| p.child("spPr")) {
+        if s.fill.is_none() {
+            s.fill = dml::fill_of(imp, part, pr);
+        }
+        if s.line.is_none() {
+            s.line = pr.child("ln").map(|ln| dml::line(imp, part, ln));
+        }
+    }
     let label = if let Some(o) = gd.and_then(|g| g.find("oleObj")) {
         o.attr("progId").or(o.attr("name")).unwrap_or("Object").to_string()
     } else if uri.ends_with("/diagram") {

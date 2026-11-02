@@ -4,7 +4,10 @@ use deckcraft_geom::{Point, Rect, Xfrm};
 use deckcraft_model::{Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{
+    CommandSpec, NO_ID_SPACE, bad, bool_or, cmd, edit_geometry, has_doc, has_selection, has_slide, has_two, id_param, ok, str_param, targets,
+    usize_param, with_param, xfrm_of,
+};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -171,6 +174,22 @@ pub(crate) fn union_bounds(xs: &[Xfrm]) -> Option<Rect> {
     Some(it.fold(first, |a, b| a.union(b)))
 }
 
+/// How deep groups may nest: as deep as the PPTX reader reads and the renderer draws. A saved
+/// .deckcraft file stops opening at about 39 (the JSON reader's recursion limit), and walks over
+/// the shape tree stop at 64.
+pub const MAX_GROUP_DEPTH: usize = 32;
+
+/// How many groups deep `shapes` nest (0 without groups).
+fn group_depth(shapes: &[Shape]) -> usize {
+    let mut d = 0;
+    deckcraft_model::walk(shapes, &mut |sh, depth| {
+        if sh.is_group() {
+            d = d.max(depth + 1);
+        }
+    });
+    d
+}
+
 fn group(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
     s.edit(|doc, sel| {
@@ -178,6 +197,9 @@ fn group(s: &mut Session, p: &Value) -> Result<Value> {
         let mut members: Vec<Shape> = current.iter().filter(|x| ids.contains(&x.id)).cloned().collect();
         if members.len() < 2 {
             return Err(bad("arrange.group", "select two or more objects on the slide"));
+        }
+        if group_depth(&members) + 1 > MAX_GROUP_DEPTH {
+            return Err(bad("arrange.group", format!("groups can be nested at most {MAX_GROUP_DEPTH} deep")));
         }
         for m in &mut members {
             if m.xfrm.is_none() {
@@ -205,6 +227,98 @@ fn group(s: &mut Session, p: &Value) -> Result<Value> {
         sel.shapes = vec![id];
         Ok(json!({"id": id}))
     })
+}
+
+/// After an edit: refit every group whose children's geometry changed to the union of its
+/// children (PowerPoint keeps a group's box on its children, so moving one child grows or
+/// shrinks the group). The children keep their place on the slide: the group's box and its child
+/// space change together. `old` is the presentation before the edit; only slides the edit
+/// touched are looked at, and a group whose own box changed (it was moved or resized) is left to
+/// that edit.
+pub(crate) fn refit_groups(old: &deckcraft_model::Presentation, new: &mut deckcraft_model::Presentation) {
+    // Each slide, master and layout is compared with its own earlier state, found by id: a move,
+    // insertion or deletion shifts the indices, and shape ids repeat across slides.
+    let old_slides: std::collections::HashMap<_, _> = old.slides.iter().map(|s| (s.id, s)).collect();
+    for slide in new.slides.iter_mut() {
+        let Some(before) = old_slides.get(&slide.id) else { continue };
+        if std::sync::Arc::ptr_eq(before, slide) {
+            continue;
+        }
+        let shapes = &mut std::sync::Arc::make_mut(slide).shapes;
+        refit_list(Some(&before.shapes), shapes, 0);
+    }
+    // A child edited in Slide Master, layout, notes or handout view refits its group there too.
+    for master in new.masters.iter_mut() {
+        if let Some(before) = old.masters.iter().find(|m| m.id == master.id)
+            && !std::sync::Arc::ptr_eq(before, master)
+        {
+            refit_master(before, std::sync::Arc::make_mut(master));
+        }
+    }
+    for (before, after) in [(old.notes_master.as_ref(), new.notes_master.as_mut()), (old.handout_master.as_ref(), new.handout_master.as_mut())] {
+        if let (Some(before), Some(after)) = (before, after)
+            && !std::sync::Arc::ptr_eq(before, after)
+        {
+            refit_master(before, std::sync::Arc::make_mut(after));
+        }
+    }
+}
+
+fn refit_master(old: &deckcraft_model::Master, new: &mut deckcraft_model::Master) {
+    refit_list(Some(&old.shapes), &mut new.shapes, 0);
+    for layout in new.layouts.iter_mut() {
+        refit_list(old.layouts.iter().find(|l| l.id == layout.id).map(|l| &l.shapes), &mut layout.shapes, 0);
+    }
+}
+
+fn refit_list(old: Option<&Vec<Shape>>, list: &mut [Shape], depth: usize) {
+    // Most edits touch a slide without groups: nothing to refit, and no per-shape lookup. Nesting
+    // is bounded like the model's other walks.
+    if depth > 64 || !list.iter().any(|sh| matches!(sh.kind, ShapeKind::Group { .. })) {
+        return;
+    }
+    let by_id: std::collections::HashMap<ShapeId, &Shape> = old.map(|o| o.iter().map(|x| (x.id, x)).collect()).unwrap_or_default();
+    for sh in list.iter_mut() {
+        let before = by_id.get(&sh.id).copied();
+        let old_children = before.and_then(|b| match &b.kind {
+            ShapeKind::Group { children, .. } => Some(children),
+            _ => None,
+        });
+        let own_before = before.map(|b| {
+            (
+                b.xfrm,
+                match &b.kind {
+                    ShapeKind::Group { child, .. } => Some(*child),
+                    _ => None,
+                },
+            )
+        });
+        let smart = sh.diagram.is_some();
+        let ShapeKind::Group { children, child } = &mut sh.kind else { continue };
+        refit_list(old_children, children, depth + 1);
+        if smart {
+            // A SmartArt graphic's box is its own; its shapes are regenerated inside it.
+            continue;
+        }
+        let (Some(old_children), Some((old_x, old_child))) = (old_children, own_before) else { continue };
+        if old_x != sh.xfrm || old_child != Some(*child) || children.is_empty() {
+            continue;
+        }
+        let same = old_children.len() == children.len() && old_children.iter().zip(children.iter()).all(|(a, b)| a.id == b.id && a.xfrm == b.xfrm);
+        if same {
+            continue;
+        }
+        let Some(group) = sh.xfrm else { continue };
+        let xs: Vec<Xfrm> = children.iter().filter_map(|c| c.xfrm).collect();
+        let Some(u) = union_bounds(&xs) else { continue };
+        if ![u.x0, u.y0, u.x1, u.y1].iter().all(|v| v.is_finite()) {
+            continue;
+        }
+        let union = Xfrm::new(u.x0, u.y0, u.width(), u.height());
+        let placed = child_to_parent(&group, child, &union);
+        sh.xfrm = Some(Xfrm { x: placed.x, y: placed.y, w: placed.w, h: placed.h, rot: group.rot, flip_h: group.flip_h, flip_v: group.flip_v });
+        *child = union;
+    }
 }
 
 /// A child's xfrm in slide space, given its group.
@@ -322,9 +436,9 @@ fn distribute(s: &mut Session, p: &Value) -> Result<Value> {
     let (start, end) = if to_slide {
         if horiz { (0.0, size.width) } else { (0.0, size.height) }
     } else {
-        let f = boxes.first().map(|b| b.1).unwrap_or_default();
-        let l = boxes.last().map(|b| b.1).unwrap_or_default();
-        if horiz { (f.x0, l.x1) } else { (f.y0, l.y1) }
+        let lo = |f: fn(&Rect) -> f64| boxes.iter().map(|b| f(&b.1)).fold(f64::INFINITY, f64::min);
+        let hi = |f: fn(&Rect) -> f64| boxes.iter().map(|b| f(&b.1)).fold(f64::NEG_INFINITY, f64::max);
+        if horiz { (lo(|r| r.x0), hi(|r| r.x1)) } else { (lo(|r| r.y0), hi(|r| r.y1)) }
     };
     let n = boxes.len();
     let gap = if n > 1 { ((end - start) - total) / (n - 1) as f64 } else { 0.0 };

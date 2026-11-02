@@ -64,6 +64,25 @@ pub fn is_date_field(kind: &str) -> bool {
     kind.starts_with("datetime")
 }
 
+/// The date and time field types PowerPoint's Header and Footer and Insert ▸ Date & Time offer,
+/// in the order the dialogs list them. `datetime` and `datetimeFigureOut` are read as `datetime1`
+/// (see [`field_text`]) but are not offered as a choice.
+pub const DATE_KINDS: [&str; 13] = [
+    "datetime1",
+    "datetime2",
+    "datetime3",
+    "datetime4",
+    "datetime5",
+    "datetime6",
+    "datetime7",
+    "datetime8",
+    "datetime9",
+    "datetime10",
+    "datetime11",
+    "datetime12",
+    "datetime13",
+];
+
 /// The text date/time field `kind` shows at `now` in a run of language `lang` (BCP 47, e.g.
 /// `en-US`). `None` when `kind` isn't a date/time type this knows, `now` isn't a real date, or
 /// the format needs names in a language other than English: the field keeps its saved text.
@@ -85,11 +104,20 @@ pub fn field_text(kind: &str, lang: Option<&str>, now: DateTime) -> Option<Strin
     let ampm = if now.hour < 12 { "AM" } else { "PM" };
     let (mi, s) = (now.minute, now.second);
     let short = short_date(&lang, now);
+    // British-style English writes the day before the month ("9 October 2026"). The punctuation
+    // follows PowerPoint on Windows per locale: Irish English has no comma after the weekday,
+    // British and Australian English put one after the month in `datetime3`, and South African
+    // English writes the weekday form day first too.
+    let day_first = matches!(lang.as_str(), "en-gb" | "en-au" | "en-nz" | "en-ie" | "en-in");
     let named = |text: String| english.then_some(text);
     match kind {
         "datetime" | "datetimeFigureOut" | "datetime1" => Some(short),
+        "datetime2" if lang == "en-ie" => named(format!("{day} {d} {month} {y}")),
+        "datetime2" if day_first || lang == "en-za" => named(format!("{day}, {d} {month} {y}")),
         "datetime2" => named(format!("{day}, {month} {d}, {y}")),
+        "datetime3" if matches!(lang.as_str(), "en-gb" | "en-au") => named(format!("{d} {month}, {y}")),
         "datetime3" => named(format!("{d} {month} {y}")),
+        "datetime4" if day_first => named(format!("{d} {month} {y}")),
         "datetime4" => named(format!("{month} {d}, {y}")),
         "datetime5" => named(format!("{d}-{mon}-{yy:02}")),
         "datetime6" => named(format!("{month} {yy:02}")),
@@ -164,7 +192,32 @@ mod tests {
         // Month names in another language: not computed (the field keeps its saved text).
         assert_eq!(field_text("datetime2", Some("de-DE"), FRI), None);
         assert_eq!(field_text("datetime12", Some("fr-FR"), FRI), None);
-        assert_eq!(field_text("datetime4", Some("en-GB"), FRI).as_deref(), Some("October 9, 2026"));
+        assert_eq!(field_text("datetime4", Some("en-GB"), FRI).as_deref(), Some("9 October 2026"));
+        assert_eq!(field_text("datetime2", Some("en-GB"), FRI).as_deref(), Some("Friday, 9 October 2026"));
+        assert_eq!(field_text("datetime4", Some("en-AU"), FRI).as_deref(), Some("9 October 2026"));
+        assert_eq!(field_text("datetime4", Some("en-US"), FRI).as_deref(), Some("October 9, 2026"));
+    }
+
+    /// The long English dates as PowerPoint on Windows shows them on Tuesday 27 October 2026, read
+    /// per run language (datetime2, datetime3, datetime4).
+    #[test]
+    fn long_english_dates_follow_each_locale() {
+        let tue = DateTime::new(2026, 10, 27, 9, 0, 0);
+        let rows = [
+            ("en-US", "Tuesday, October 27, 2026", "27 October 2026", "October 27, 2026"),
+            ("en-GB", "Tuesday, 27 October 2026", "27 October, 2026", "27 October 2026"),
+            ("en-AU", "Tuesday, 27 October 2026", "27 October, 2026", "27 October 2026"),
+            ("en-NZ", "Tuesday, 27 October 2026", "27 October 2026", "27 October 2026"),
+            ("en-IE", "Tuesday 27 October 2026", "27 October 2026", "27 October 2026"),
+            ("en-IN", "Tuesday, 27 October 2026", "27 October 2026", "27 October 2026"),
+            ("en-CA", "Tuesday, October 27, 2026", "27 October 2026", "October 27, 2026"),
+        ];
+        for (lang, d2, d3, d4) in rows {
+            assert_eq!(field_text("datetime2", Some(lang), tue).as_deref(), Some(d2), "{lang}");
+            assert_eq!(field_text("datetime3", Some(lang), tue).as_deref(), Some(d3), "{lang}");
+            assert_eq!(field_text("datetime4", Some(lang), tue).as_deref(), Some(d4), "{lang}");
+        }
+        assert_eq!(field_text("datetime2", Some("en-ZA"), tue).as_deref(), Some("Tuesday, 27 October 2026"));
     }
 
     #[test]

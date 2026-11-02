@@ -575,7 +575,7 @@ impl Pps {
         ensure!(sps_id < 32, "seq_parameter_set_id out of range");
         let sps = spss
             .get(sps_id as usize)
-            .and_then(|s| s.as_ref())
+            .and_then(Option::as_ref)
             .ok_or_else(|| crate::Error::MissingParameterSet(format!("SPS {sps_id} for PPS {id}")))?;
         let entropy_coding_mode = r.read_flag()?;
         let bottom_field_pic_order_in_frame_present = r.read_flag()?;

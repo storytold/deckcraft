@@ -9,7 +9,7 @@ use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, NO_ID_SPACE, bad, cmd, has_two, str_param, targets, xfrm_of};
 use crate::{Result, Session};
 
 /// Closed polygons (slide points) describing a filled area (non-zero winding).
@@ -255,7 +255,12 @@ fn merge(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use deckcraft_model::{ShapeId, ShapeKind};
+    use serde_json::json;
+
+    use super::{Area, area_of, area_size, letters_of, merge_areas};
+    use crate::Session;
+    use crate::cmd::base64_encode;
 
     fn square(x: f64, y: f64, s: f64) -> Area {
         vec![vec![[x, y], [x + s, y], [x + s, y + s], [x, y + s]]]

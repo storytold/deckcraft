@@ -288,10 +288,10 @@ impl MediaHost {
         self.videos.get(&id).and_then(|v| v.tex.as_ref())
     }
 
-    /// Per frame: run the clocks, upload due video frames, apply loop/rewind, and report state to
-    /// the engine. Returns whether anything is playing (the caller keeps repainting).
-    pub fn tick(&mut self, ctx: &egui::Context, session: &mut Session) -> bool {
-        let now = ctx.input(|i| i.time);
+    /// Run the media clocks, apply loop/rewind and report state to the engine. Called from
+    /// `logic` on every call (including hidden logic), with monotonic seconds, so playback does
+    /// not depend on a painted frame. Returns whether anything is playing.
+    pub fn tick_clock(&mut self, now: f64, session: &mut Session) -> bool {
         self.player.tick(now);
         let mut ended = vec![];
         for (id, owned) in &self.owners {
@@ -305,21 +305,6 @@ impl MediaHost {
         // Rewind after playing: back to the poster.
         for id in ended {
             self.stop(id);
-        }
-        for (id, v) in &mut self.videos {
-            let Some(st) = self.player.status(key(*id)) else { continue };
-            let Some(feed) = v.feed.as_mut() else { continue };
-            let f = feed.frame_at(st.position);
-            if let Some(f) = f
-                && v.frame.as_ref().is_none_or(|old| !Arc::ptr_eq(old, &f))
-            {
-                let img = egui::ColorImage::from_rgba_unmultiplied([f.width as usize, f.height as usize], &f.rgba);
-                match v.tex.as_mut() {
-                    Some(t) => crate::textures::replace(ctx, t, img),
-                    None => v.tex = Some(crate::textures::upload(ctx, format!("media-{id}"), img)),
-                }
-                v.frame = Some(f);
-            }
         }
         session.media_status = self
             .owners
@@ -338,16 +323,32 @@ impl MediaHost {
                 })
             })
             .collect();
-        let playing = self.owners.keys().any(|id| self.is_playing(*id));
-        if playing {
-            ctx.request_repaint_after(std::time::Duration::from_millis(15));
+        self.owners.keys().any(|id| self.is_playing(*id))
+    }
+
+    /// Upload due video frames for the pass that is about to draw them. Called only from the real
+    /// UI phase: a hidden window accumulates no texture uploads and catches up when it appears.
+    pub fn sync_video_textures(&mut self, ctx: &egui::Context) {
+        for (id, v) in &mut self.videos {
+            let Some(st) = self.player.status(key(*id)) else { continue };
+            let Some(feed) = v.feed.as_mut() else { continue };
+            let f = feed.frame_at(st.position);
+            if let Some(f) = f
+                && v.frame.as_ref().is_none_or(|old| !Arc::ptr_eq(old, &f))
+            {
+                let img = egui::ColorImage::from_rgba_unmultiplied([f.width as usize, f.height as usize], &f.rgba);
+                match v.tex.as_mut() {
+                    Some(t) => crate::textures::replace(ctx, t, img),
+                    None => v.tex = Some(crate::textures::upload(ctx, format!("media-{id}"), img)),
+                }
+                v.frame = Some(f);
+            }
         }
-        playing
     }
 
     /// Carry out a `media.*` request from the engine for presentation `doc_uid`.
     /// `slide` is the slide the request comes from: shape ids are only unique per slide.
-    pub fn request(&mut self, doc_uid: u64, doc: &Presentation, slide: usize, action: &str, id: ShapeId, ms: Option<u64>, owner: Owner) {
+    pub fn request(&mut self, doc_uid: u64, doc: &Presentation, slide: usize, action: &str, (id, ms): (ShapeId, Option<u64>), owner: Owner) {
         self.ensure_doc(doc_uid);
         let Some(clip) = find_clip(doc, id, Some(slide)) else { return };
         let t = ms.map(|v| v as f64 / 1000.0);
@@ -471,6 +472,9 @@ pub enum BarAction {
 pub fn control_bar(ui: &mut Ui, rect: Rect, status: Option<&VoiceStatus>, clip: &MediaClip) -> Option<BarAction> {
     let painter = ui.painter_at(rect.expand(2.0));
     painter.rect_filled(rect, CornerRadius::same(4), Color32::from_rgba_unmultiplied(28, 28, 32, 230));
+    // Sensing drags too keeps a press on the bar from reaching the editor canvas: there it would
+    // start a selection marquee, which hides the bar before the click lands.
+    ui.interact(rect, ui.scope_id().with("media_bar_back"), Sense::click_and_drag());
     let playing = status.is_some_and(|s| matches!(s.state, PlayState::Playing | PlayState::Loading));
     let duration = status.map(|s| s.duration).filter(|d| *d > 0.0).unwrap_or(clip.duration_ms as f64 / 1000.0);
     let pos = status.map(|s| s.position).unwrap_or(clip.trim_start_ms as f64 / 1000.0);
@@ -480,7 +484,14 @@ pub fn control_bar(ui: &mut Ui, rect: Rect, status: Option<&VoiceStatus>, clip: 
     let button = |ui: &mut Ui, x: &mut f32, id: &str, paint: &dyn Fn(&egui::Painter, Rect)| -> bool {
         let r = Rect::from_min_size(pos2(*x, rect.min.y + 2.0), vec2(h - 4.0, h - 4.0));
         *x += h - 2.0;
-        let resp = ui.interact(r, ui.id().with(("media_bar", id)), Sense::click());
+        let resp = ui.interact(r, ui.scope_id().with(("media_bar", id)), Sense::click_and_drag());
+        let name = match id {
+            "play" => "Play or pause media",
+            "back" => "Back 0.25 seconds",
+            "fwd" => "Forward 0.25 seconds",
+            _ => "Media control",
+        };
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
         if resp.hovered() {
             painter.rect_filled(r, CornerRadius::same(3), Color32::from_white_alpha(28));
         }
@@ -534,7 +545,8 @@ pub fn control_bar(ui: &mut Ui, rect: Rect, status: Option<&VoiceStatus>, clip: 
         }
         painter.circle_filled(pos2(done.max.x, track.center().y), 5.0, white);
         let hit = track.expand2(vec2(4.0, 8.0));
-        let resp = ui.interact(hit, ui.id().with("media_bar_track"), Sense::click_and_drag());
+        let resp = ui.interact(hit, ui.scope_id().with("media_bar_track"), Sense::click_and_drag());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, "Media position"));
         if (resp.clicked() || resp.dragged())
             && duration > 0.0
             && let Some(p) = resp.interact_pointer_pos()
@@ -725,6 +737,38 @@ mod tests {
         }
         b.push(0x3b);
         b
+    }
+
+    /// A video whose codec has no decoder (a VP8 WebM, #1237) still plays through the real
+    /// insert + play path: its audio track sounds, and the insert said the video won't show.
+    #[test]
+    fn a_webm_with_an_undecodable_video_codec_still_plays_its_audio() {
+        use deckcraft_engine::Session;
+        let bytes = include_bytes!("../../media/tests/fixtures/clip-vp8.webm");
+        let mut s = Session::with_new();
+        let _ = s.execute("slide.new", &serde_json::json!({"layout": "blank"}));
+        let r = s
+            .execute("insert.video", &serde_json::json!({"name": "clip.webm", "data": deckcraft_engine::cmd::base64_encode(bytes)}))
+            .expect("insert");
+        assert_eq!(r["playable"], true, "the Vorbis track plays: {r}");
+        let w = r["warning"].as_str().expect("the insert says the video won't show");
+        assert!(w.contains("VP8") && w.contains("only the audio plays"), "{w}");
+        let (uid, doc) = s.active().map(|d| (d.uid, d.doc.clone())).expect("document");
+        let id = ShapeId(r["id"].as_u64().expect("id") as u32);
+        let clip = find_clip(&doc, id, Some(0)).expect("clip");
+        let mut host = MediaHost::new(None);
+        host.play(uid, &doc, id, &clip, None, Owner::Show);
+        assert!(host.player.wait_loaded(key(id), std::time::Duration::from_secs(5)), "decode");
+        assert!(host.status(id).is_some_and(|s| s.error.is_none()), "Vorbis decodes");
+        let mut buf = vec![0.0f32; 22_050];
+        host.player.render(&mut buf, 1, 44_100);
+        // The fixture's sine is −21 dB, so a peak near 0.09 means it is sounding.
+        let peak = buf.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(peak > 0.04, "the audio track sounds: peak {peak}");
+        assert!(host.videos.get(&id).is_some_and(|v| v.feed.is_none()), "VP8 opens no video feed");
+        host.tick_clock(0.1, &mut s);
+        host.sync_video_textures(&egui::Context::default());
+        assert!(host.texture(id).is_none(), "no VP8 frame exists to show");
     }
 
     #[test]

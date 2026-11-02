@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Band, BezPath, CATALOG, Guide, Point, Rect, WarpLine, adjust_count, adjust_defaults, band_of_line, handles, is_follow, is_supported, warp,
+};
 
 const W: f64 = 420.0;
 const H: f64 = 200.0;

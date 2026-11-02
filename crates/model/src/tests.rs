@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    ColorRef, Fill, LayoutType, Paragraph, PhType, Placeholder, Presentation, Run, RunProps, SchemeSlot, Shape, ShapeId, ShapeKind, ShapeStyle,
+    Slide, Table, TextBody, Theme, Xfrm, defaults, ink_pressure_is_legacy, ink_sample_width, parent_of, resolve, sibling_list_mut, style, text,
+    theme, walk,
+};
 use crate::resolve::Ctx;
 
 #[test]
@@ -69,8 +73,13 @@ fn a_gradient_without_stops_takes_them_from_its_style() {
     let p = Presentation::default();
     let s = &p.slides[0];
     let ctx = Ctx::for_slide(&p, s).unwrap();
-    let own =
-        style::Gradient { tile: [0.0; 4], stops: vec![], shape: style::GradientShape::Linear { angle: 45.0, scaled: true }, rotate_with_shape: true };
+    let own = style::Gradient {
+        tile: [0.0; 4],
+        stops: vec![],
+        shape: style::GradientShape::Linear { angle: 45.0, scaled: true },
+        rotate_with_shape: true,
+        flip: None,
+    };
     let mut st = ShapeStyle::accent(SchemeSlot::Accent2);
     st.fill_ref.0 = 3;
     let sh = Shape { style: Some(st.clone()), fill: Some(Fill::Gradient(own.clone())), ..Default::default() };
@@ -293,4 +302,28 @@ fn table_text_takes_the_masters_other_style_and_shapes_the_default_text_style() 
     assert_eq!(pt(&in_placeholder), Some(14.0), "a table in a content placeholder");
     assert_eq!(pt(&Shape { text: Some(body.clone()), ..Default::default() }), Some(26.0), "a shape");
     assert_eq!(pt(&Shape { text: Some(body), text_box: true, ..Default::default() }), Some(26.0), "a text box");
+}
+
+#[test]
+fn only_web_and_mail_links_are_safe_to_open() {
+    use crate::text::safe_url;
+    for url in ["https://example.com", " HTTP://example.com/x", "mailto:someone@example.com"] {
+        assert!(safe_url(url), "{url}");
+    }
+    let refused = [
+        "https://",
+        "mailto:",
+        "file:///C:/notes.pdf",
+        "notes.pdf",
+        "javascript:alert(1)",
+        "ms-msdt:/id PCWDiagnostic",
+        "ldap://attacker.example/x",
+        "//attacker.example/share",
+        "\\\\attacker.example\\share",
+        "smb://attacker.example/share",
+        "search-ms:query=x",
+    ];
+    for url in refused {
+        assert!(!safe_url(url), "{url}");
+    }
 }
