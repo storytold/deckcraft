@@ -1535,9 +1535,6 @@ Tick at least one slide to insert	삽입할 슬라이드를 하나 이상 선택
 Replaced “{}” with “{}”.	“{}”을(를) “{}”(으)로 바꿨습니다.
 Number must be a whole number from 1 to 16	개수는 1에서 16 사이의 정수여야 합니다
 Spacing must be from 0 to 22 inches	간격은 0~22인치여야 합니다
-Checking for updates…	업데이트 확인 중…
-DeckCraft {} is up to date.	DeckCraft {}은(는) 최신 버전입니다.
-Could not check for updates: {}	업데이트를 확인할 수 없습니다: {}
 Set Transparent Color: click the colour in the picture (Esc cancels)	투명한 색 설정: 그림에서 색을 클릭하세요 (Esc로 취소)
 ▶ Play From	▶ 여기부터 재생
 Reject All ({})	모두 거부 ({})
