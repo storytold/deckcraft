@@ -148,7 +148,7 @@ pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
             .find(|n| n.starts_with("artistic"))
         && let Some(original) = media_ref(imp, part, layer)
     {
-        pf.artistic = Some(deckcraft_model::style::Artistic { effect, original });
+        pf.artistic = Some(deckcraft_model::style::Artistic { effect, original, svg: None });
     }
     if let Some(b) = blip {
         for e in b.elements() {

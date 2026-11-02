@@ -305,7 +305,7 @@ mod tests {
             let slide = Arc::make_mut(doc.slides.first_mut().ok_or_else(|| bad("test", "no slide"))?);
             let xfrm = Some(deckcraft_geom::Xfrm::new(0.0, 0.0, 72.0, 36.0));
             let with_effect =
-                PictureFill { media: shown, artistic: Some(Artistic { effect: "artisticBlur".into(), original }), ..Default::default() };
+                PictureFill { media: shown, artistic: Some(Artistic { effect: "artisticBlur".into(), original, svg: None }), ..Default::default() };
             slide.shapes.push(Shape { id: ShapeId(70_001), xfrm, kind: ShapeKind::Picture { fill: with_effect }, ..Default::default() });
             slide.shapes.push(Shape {
                 id: ShapeId(70_002),

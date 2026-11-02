@@ -314,7 +314,7 @@ mod tests {
                 kind: ShapeKind::Picture {
                     fill: PictureFill {
                         media: id(0),
-                        artistic: Some(Artistic { effect: "artisticBlur".into(), original: id(1) }),
+                        artistic: Some(Artistic { effect: "artisticBlur".into(), original: id(1), svg: None }),
                         ..Default::default()
                     },
                 },

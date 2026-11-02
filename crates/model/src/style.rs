@@ -193,6 +193,11 @@ pub struct PictureFill {
 pub struct Artistic {
     pub effect: String,
     pub original: MediaId,
+    /// The SVG the original picture carried (`PictureFill::svg`), set aside while the effect is
+    /// drawn on the raster and put back when the effect is removed. A saved file keeps only the
+    /// original raster: an artistic effect has no place for an SVG behind it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub svg: Option<MediaId>,
 }
 
 /// Picture corrections and colour (Picture Format ▸ Corrections / Color / Transparency).

@@ -3984,6 +3984,57 @@ fn artistic_effects_apply_change_remove_and_round_trip() {
     assert_eq!((fill(&s).media, fill(&s).artistic), (original, None));
 }
 
+/// An artistic effect is drawn on the raster picture, so a picture's SVG is set aside while the
+/// effect is applied; undo, removing the effect and Reset Picture each give the SVG back.
+#[test]
+fn an_artistic_effect_sets_a_pictures_svg_aside_and_gives_it_back() {
+    use deckcraft_model::{Shape, ShapeKind};
+    use std::sync::Arc;
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(8, 6, image::Rgba([200, 30, 30, 255])))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("insert.picture", &json!({"name": "a.png", "data": cmd::base64_encode(&png)})).unwrap();
+    let fill = |s: &Session| match &s.doc().unwrap().selected_shapes()[0].kind {
+        ShapeKind::Picture { fill } => fill.clone(),
+        k => panic!("{k:?}"),
+    };
+    // Give the picture an SVG, as Office's SVG extension (`asvg:svgBlip`) does.
+    let picture = s.doc().unwrap().selected_shapes()[0].id;
+    let svg = {
+        let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+        let svg = doc.add_media("a.svg", "image/svg+xml", br#"<svg xmlns="http://www.w3.org/2000/svg"/>"#.to_vec()).unwrap();
+        for slide in &mut doc.slides {
+            if let Some(Shape { kind: ShapeKind::Picture { fill }, .. }) = Arc::make_mut(slide).shapes.iter_mut().find(|x| x.id == picture) {
+                fill.svg = Some(svg);
+            }
+        }
+        svg
+    };
+    let original = fill(&s).media;
+    assert_eq!(fill(&s).svg, Some(svg));
+    // Applying an effect sets the SVG aside with the original picture.
+    s.execute("picture.artisticEffect", &json!({"effect": "artisticBlur"})).unwrap();
+    let f = fill(&s);
+    assert_eq!((f.svg, f.artistic.as_ref().and_then(|a| a.svg)), (None, Some(svg)));
+    // Undo gives it back; redo sets it aside again.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!((fill(&s).media, fill(&s).svg, fill(&s).artistic), (original, Some(svg), None));
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(fill(&s).artistic.as_ref().and_then(|a| a.svg), Some(svg));
+    // Changing the effect keeps it aside; removing the effect restores the original and its SVG.
+    s.execute("picture.artisticEffect", &json!({"effect": "artisticPencilGrayscale"})).unwrap();
+    assert_eq!((fill(&s).svg, fill(&s).artistic.as_ref().and_then(|a| a.svg)), (None, Some(svg)));
+    s.execute("picture.artisticEffect", &json!({"effect": "none"})).unwrap();
+    assert_eq!((fill(&s).media, fill(&s).svg, fill(&s).artistic), (original, Some(svg), None));
+    // So does Reset Picture.
+    s.execute("picture.artisticEffect", &json!({"effect": "artisticBlur"})).unwrap();
+    s.execute("picture.reset", &json!({})).unwrap();
+    assert_eq!((fill(&s).media, fill(&s).svg, fill(&s).artistic), (original, Some(svg), None));
+}
+
 #[test]
 fn handout_master_view_edits_and_round_trips() {
     use deckcraft_model::PhType;
