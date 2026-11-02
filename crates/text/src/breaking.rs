@@ -174,7 +174,7 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
                 let seg = tab_segment(&p.cells, i);
                 (tab_advance(x0 + x, tab_stops, default_tab, seg, max_x), seg)
             } else {
-                (p.cells.get(i).map(|c| c.adv).unwrap_or(0.0), (0.0, 0.0))
+                (p.cells.get(i).map(|c| c.adv).unwrap_or(0.0), (0.0, 0.0, 0.0))
             };
             let breakable = |j: usize| p.cells.get(j).is_none_or(|c| c.breakable(j));
             if i > start && allowed.get(i).copied().unwrap_or(false) && breakable(i) {
@@ -188,9 +188,10 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
                 break;
             }
             // A tab that runs past the end (or whose following aligned word fits on a fresh line
-            // but not in the remaining space) moves to the next line with its word.
-            let fresh_tab_adv = if seg.0 > 0.0 { tab_advance(x0_rest, tab_stops, default_tab, seg, x0_rest + rest_w) } else { 0.0 };
-            let tab_overflow = x + adv > avail + 0.01 || (seg.0 > 0.0 && x + adv + seg.0 > avail + 0.01 && fresh_tab_adv + seg.0 <= rest_w + 0.01);
+            // but not in the remaining space) moves to the next line with its word. Trailing spaces
+            // are excluded so trailing whitespace alone cannot cause a line break.
+            let fresh_tab_adv = if seg.2 > 0.0 { tab_advance(x0_rest, tab_stops, default_tab, seg, x0_rest + rest_w) } else { 0.0 };
+            let tab_overflow = x + adv > avail + 0.01 || (seg.2 > 0.0 && x + adv + seg.2 > avail + 0.01 && fresh_tab_adv + seg.2 <= rest_w + 0.01);
             if wrap && c == '\t' && tab_overflow && i > start {
                 end = i;
                 next = i;
@@ -276,11 +277,12 @@ pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
         .unwrap_or_default()
 }
 
-/// Width of the text after the tab at cell `i` up to the next tab or line break, and the width of
-/// that text before its first ".".
-pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64) {
+/// Width of the text after the tab at cell `i` up to the next tab or line break, the width of
+/// that text before its first ".", and the width excluding trailing whitespace.
+pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64, f64) {
     let mut w = 0.0;
     let mut dec = None;
+    let mut last_non_ws = 0.0;
     for c in cells.iter().skip(i + 1) {
         if matches!(c.ch, '\t'..='\u{b}') {
             break;
@@ -289,15 +291,18 @@ pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64) {
             dec = Some(w);
         }
         w += c.adv;
+        if !c.ch.is_whitespace() {
+            last_non_ws = w;
+        }
     }
-    (w, dec.unwrap_or(w))
+    (w, dec.unwrap_or(w), last_non_ws)
 }
 
 /// Advance of a tab at `x` (from the start edge) to the next stop, placing the text after it
 /// (`seg`: its width, and its width before the decimal point) as the stop aligns it but never
 /// moving back, as PowerPoint does; past the last stop, to the next default stop. Right, center,
 /// and decimal stops beyond `max_x` (the right margin) clamp to `max_x` (#1663).
-pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64), max_x: f64) -> f64 {
+pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64, f64), max_x: f64) -> f64 {
     for s in stops {
         if s.pos > x + 0.5 {
             let pos = if max_x > 0.0 && s.pos > max_x {

@@ -1456,6 +1456,14 @@ fn tab_moves_to_next_line_with_word_when_word_does_not_fit_remaining_space() {
     assert!((l.lines[1].extent.1 - l.inner.x1).abs() < 1.0, "Aligned should be right-aligned on line 2");
 }
 
+/// #1663: trailing spaces after a tabbed word do not force the tab to wrap to a new line
+/// if the visible word fits in the remaining space.
+#[test]
+fn trailing_spaces_after_tab_do_not_force_line_break() {
+    let l = tabbed("leading text here\tWord   ", &[(250.0, "r")], 200.0);
+    assert_eq!(l.lines.len(), 1, "trailing spaces do not force a line break; fits on one line");
+}
+
 /// Underline decorations of "ab cd" underlined `u` at 40 pt.
 fn underline_decos(u: &str) -> (TextLayout, Vec<Deco>) {
     let (p, mut sh) = setup("ab cd", 2000.0, 300.0);
