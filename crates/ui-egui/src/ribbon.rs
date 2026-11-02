@@ -154,7 +154,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             let w = ui.fonts_mut(|f| f.layout_no_wrap(tr(name).to_string(), font.clone(), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
             let resp = ui.interact(r, ui.scope_id().with(("tab", name)), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tr(name)));
             let active = app.ui.tab == name;
             if resp.hovered() && !active {
                 ui.painter().rect_filled(r.shrink2(vec2(2.0, 2.0)), CornerRadius::same(4), t.hover);

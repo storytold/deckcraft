@@ -195,7 +195,7 @@ Caps	대/소문자
 Captions under pictures	모든 그림 아래에 캡션 넣기
 Categories	범주
 Cell Margins	셀 여백
-Center	가운데 맞춤
+Center	가운데
 center	가운데
 Center Tab	가운데 탭
 Centered	가운데
@@ -1582,3 +1582,32 @@ Trellis	격자 울타리
 Zig zag	지그재그
 Slide title	슬라이드 제목
 Slide text	슬라이드 텍스트
+top left	왼쪽 위
+top right	오른쪽 위
+bottom left	왼쪽 아래
+bottom right	오른쪽 아래
+(dictionary)	(사전)
+Small (640 px wide)	작게(너비 640px)
+Medium (960 px wide)	보통(너비 960px)
+Large (1280 px wide)	크게(너비 1280px)
+Extra Large (1920 px wide)	아주 크게(너비 1920px)
+Custom width	너비 직접 지정
+Keep mouse cursor visible	마우스 포인터 계속 표시
+Keep Mouse Cursor Visible	마우스 포인터 계속 표시
+Inspect Slide Actions	슬라이드 동작 검사
+No shadow	그림자 없음
+Outer shadow	바깥쪽 그림자
+Bottom shadow	아래쪽 그림자
+Centered shadow	가운데 그림자
+Inner shadow	안쪽 그림자
+Perspective shadow	원근감 그림자
+No glow	네온 없음
+{} pt glow	{}pt 네온
+No soft edges	부드러운 가장자리 없음
+{} pt soft edges	{}pt 부드러운 가장자리
+Slide background fill	슬라이드 배경 채우기
+Scale Height	높이 배율
+Scale Width	너비 배율
+From	기준
+Top Left Corner	왼쪽 위 모서리
+More Picture Styles	다른 그림 스타일

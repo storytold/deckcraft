@@ -77,8 +77,8 @@ fn album_choice(ui: &mut Ui, d: &mut Dialog, id: &str, name: &str, key: &str, de
             }
         }
     });
-    let access = name.to_string();
-    let shown = label.to_string();
+    let access = tr(name).to_string();
+    let shown = tr(label).to_string();
     opened.response.widget_info(move || {
         let mut info = egui::WidgetInfo::labeled(egui::Role::ComboBox, true, access.clone());
         info.current_text_value = Some(shown.clone());

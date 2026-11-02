@@ -530,4 +530,14 @@ mod tests {
         };
         assert_eq!(gradient_json(&gradient).get("flip"), Some(&json!("xy")));
     }
+
+    /// The path-gradient buttons show their direction without "From " ("top left"), a key built at
+    /// run time, so the literal check in `i18n` can't see it.
+    #[test]
+    fn path_gradient_directions_have_korean() {
+        for (l, _) in DIRECTIONS_PATH {
+            assert!(crate::i18n::ko(l).is_some(), "{l}");
+            assert!(crate::i18n::ko(l.trim_start_matches("From ")).is_some(), "{l}");
+        }
+    }
 }

@@ -1120,8 +1120,8 @@ fn dlg_language(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             // the tag is the explicit fallback (egui 0.37 aborts on a missing glyph).
             let name = crate::squiggles::display_lang_name(ui.ctx(), &tag);
             let installed = deckcraft_engine::spell::dictionary(&tag).is_some();
-            let label = if installed { format!("{name}  (dictionary)") } else { name };
-            if ui.selectable_label(lang.eq_ignore_ascii_case(&tag), tr(&label)).clicked() {
+            let label = if installed { format!("{name}  {}", tr("(dictionary)")) } else { name };
+            if ui.selectable_label(lang.eq_ignore_ascii_case(&tag), label).clicked() {
                 d.fields.insert("lang".into(), tag);
             }
         }

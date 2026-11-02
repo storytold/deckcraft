@@ -36,7 +36,8 @@ fn new_tiles(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize, blank: 
     let q = query.trim().to_lowercase();
     let themes: Vec<deckcraft_model::Theme> =
         deckcraft_model::theme::builtin_themes().into_iter().filter(|th| q.is_empty() || th.name.to_lowercase().contains(&q)).collect();
-    let sample = q.is_empty() || "sample deck northern lights".contains(&q);
+    // The English name and the shown (translated) one both find the sample deck.
+    let sample = q.is_empty() || "sample deck northern lights".contains(&q) || tr("Sample deck: Northern Lights").to_lowercase().contains(&q);
     if themes.is_empty() && !sample {
         return false;
     }
