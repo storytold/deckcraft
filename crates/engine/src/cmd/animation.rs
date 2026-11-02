@@ -292,7 +292,9 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
         let sl = Arc::make_mut(sl);
         if let (Some(paras), [id]) = (&paras, ids.as_slice()) {
             split_builds(&mut sl.animations, *id, &built);
-            // Replace only these paragraphs' effects, in place; the shape's other effects stay.
+            // Replace only these paragraphs' effects, in place, each keeping when it starts
+            // (unless a delay is given); the shape's other effects stay.
+            let keep_delay = p.get("delay").is_none();
             let fresh = per_paragraph(&a, *id, paras);
             let mut out = vec![];
             let mut placed = vec![];
@@ -300,7 +302,7 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
                 match fresh.iter().find(|f| x.shape == *id && x.paragraph == f.paragraph) {
                     Some(f) if !placed.contains(&f.paragraph) => {
                         placed.push(f.paragraph);
-                        out.push(Animation { start: x.start, ..f.clone() });
+                        out.push(Animation { start: x.start, delay_ms: if keep_delay { x.delay_ms } else { f.delay_ms }, ..f.clone() });
                     }
                     Some(_) => {}
                     None => out.push(x),
@@ -388,13 +390,21 @@ fn paragraph_targets(s: &Session, p: &Value, ids: &[ShapeId]) -> Result<Option<V
         if ids != [t.shape] {
             return Ok(None);
         }
-        let ((p0, _), (p1, c1)) = t.ordered();
-        let last = if p1 > p0 && c1 == 0 { p1 - 1 } else { p1 };
-        // A script can set any selection; check it against the text before listing its paragraphs.
-        let n = text_of(t.shape)?.paragraphs.len();
-        if last >= n {
-            return Err(bad("animation", format!("the highlight ends at paragraph {last}, past the text ({n} paragraphs)")));
+        let ((p0, c0), (p1, c1)) = t.ordered();
+        // A script can set any selection; check both ends against the text before listing its
+        // paragraphs.
+        let paragraphs = &text_of(t.shape)?.paragraphs;
+        let n = paragraphs.len();
+        for (p, c) in [(p0, c0), (p1, c1)] {
+            let Some(para) = paragraphs.get(p) else {
+                return Err(bad("animation", format!("the highlight reaches paragraph {p}, past the text ({n} paragraphs)")));
+            };
+            let len = para.char_len();
+            if c > len {
+                return Err(bad("animation", format!("the highlight reaches character {c} of paragraph {p}, past its text ({len} characters)")));
+            }
         }
+        let last = if p1 > p0 && c1 == 0 { p1 - 1 } else { p1 };
         (t.shape, (p0..=last).collect())
     };
     let text = text_of(id)?;
@@ -456,8 +466,16 @@ fn build_paragraphs(s: &Session, id: ShapeId) -> Result<Vec<(u32, bool)>> {
         .collect())
 }
 
-/// Splits shape `id`'s by-paragraph builds into one effect per paragraph, in place and with the
-/// starts they play with, so one bullet's effect can be replaced without the others.
+/// Delay between the paragraphs of a by-paragraph build that isn't On Click, as the show's
+/// timeline plays it (`deckcraft_anim`'s `PARAGRAPH_STAGGER`; `splitting_a_build_keeps_its_timing`
+/// checks they agree).
+const PARAGRAPH_STAGGER_MS: u32 = 500;
+
+/// Splits shape `id`'s by-paragraph builds into one effect per paragraph, in place and timed as
+/// the build plays, so one bullet's effect can be replaced without moving the others: On Click
+/// gives a click per bullet; otherwise later bullets start With Previous, `PARAGRAPH_STAGGER_MS`
+/// apart, rather than waiting for the bullet before to finish. Deeper paragraphs start with their
+/// bullet.
 fn split_builds(anims: &mut Vec<Animation>, id: ShapeId, paras: &[(u32, bool)]) {
     if paras.is_empty() {
         return;
@@ -468,15 +486,18 @@ fn split_builds(anims: &mut Vec<Animation>, id: ShapeId, paras: &[(u32, bool)]) 
             out.push(a);
             continue;
         }
-        let mut tops = 0;
+        let mut tops: u32 = 0;
         for &(i, top) in paras {
-            let start = if top {
+            if top {
                 tops += 1;
-                step_start(a.start, tops - 1)
-            } else {
-                AnimStart::WithPrevious
+            }
+            let k = tops.saturating_sub(1);
+            let (start, delay_ms) = match (k, a.start) {
+                (0, first) => (if top { first } else { AnimStart::WithPrevious }, a.delay_ms),
+                (_, AnimStart::OnClick) => (if top { AnimStart::OnClick } else { AnimStart::WithPrevious }, a.delay_ms),
+                _ => (AnimStart::WithPrevious, a.delay_ms.saturating_add(k.saturating_mul(PARAGRAPH_STAGGER_MS))),
             };
-            out.push(Animation { paragraph: Some(i), text_build: TextBuild::AsOne, start, ..a.clone() });
+            out.push(Animation { paragraph: Some(i), text_build: TextBuild::AsOne, start, delay_ms, ..a.clone() });
         }
     }
     *anims = out;
@@ -1209,5 +1230,58 @@ mod tests {
         assert!(t.iter().all(|x| x.1 == t[0].1), "one step: {t:?}");
         assert_eq!(t[0].2, t[1].2, "the sub-bullet starts with its bullet");
         assert!(t[1].2 < t[2].2 && t[2].2 < t[3].2, "the bullets play one after another: {t:?}");
+    }
+
+    #[test]
+    fn splitting_a_build_keeps_its_timing() {
+        // Replacing one bullet of a By Paragraph build must not move the others: a build that
+        // isn't On Click starts its bullets PARAGRAPH_STAGGER apart, not each after the last ends.
+        for start in ["afterPrevious", "withPrevious", "onClick"] {
+            let mut s = Session::with_new();
+            let r = s.execute("insert.textBox", &json!({"rect": [50, 50, 400, 300], "text": "One\nOne a\nTwo\nThree"})).unwrap();
+            let tb = r.get("id").unwrap().as_u64().unwrap();
+            s.execute("text.edit", &json!({"id": tb, "at": [1, 0]})).unwrap();
+            s.execute("format.indent", &json!({})).unwrap();
+            s.execute("text.exit", &json!({})).unwrap();
+            s.execute("edit.select", &json!({"ids": [tb]})).unwrap();
+            s.execute("animation.set", &json!({"effect": "fade", "class": "entrance"})).unwrap();
+            s.execute("animation.options", &json!({"textBuild": "byParagraph"})).unwrap();
+            s.execute("animation.timing", &json!({"start": start, "duration": 2000, "delay": 300})).unwrap();
+            let timings = |s: &mut Session| {
+                let st = s.doc().unwrap();
+                let size = st.doc.slide_size;
+                let tl = deckcraft_anim::Timeline::new(st.current_slide().unwrap(), size.width, size.height);
+                let mut t = tl.effects().into_iter().map(|e| (e.paragraph, e.step, e.start)).collect::<Vec<_>>();
+                t.sort_by_key(|x| x.0);
+                t
+            };
+            // The sub-bullet plays as part of "One" here, not as its own effect.
+            let before = timings(&mut s);
+            assert_eq!(before.iter().map(|x| x.0).collect::<Vec<_>>(), vec![Some(0), Some(2), Some(3)], "{start}");
+            s.execute("text.edit", &json!({"id": tb})).unwrap();
+            s.execute("text.select", &json!({"anchor": [2, 0], "caret": [2, 3]})).unwrap();
+            s.execute("animation.set", &json!({"effect": "fly", "class": "entrance"})).unwrap();
+            assert_eq!(effects(&mut s).len(), 4, "{start}: split into one effect per paragraph");
+            let after = timings(&mut s);
+            let bullets_after = after.iter().filter(|x| x.0 != Some(1)).copied().collect::<Vec<_>>();
+            assert_eq!(bullets_after, before, "{start}: every bullet, the replaced one too, starts when it did");
+            assert_eq!(after[1].0, Some(1));
+            assert_eq!((after[1].1, after[1].2), (after[0].1, after[0].2), "{start}: the sub-bullet starts with its bullet");
+        }
+    }
+
+    #[test]
+    fn highlight_past_the_end_of_a_bullet_is_refused() {
+        let (mut s, tb, _) = bullets();
+        // "Two" has three characters: [1, 4]..[1, 5] holds no text.
+        s.execute("text.select", &json!({"anchor": [1, 4], "caret": [1, 5]})).unwrap();
+        assert!(s.execute("animation.add", &json!({"effect": "fade", "class": "entrance"})).is_err());
+        s.execute("text.select", &json!({"anchor": [1, 5], "caret": [2, 1]})).unwrap();
+        assert!(s.execute("animation.set", &json!({"effect": "fade", "class": "entrance"})).is_err());
+        assert!(effects(&mut s).is_empty());
+        // Both ends of the text are still fine.
+        s.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 3]})).unwrap();
+        s.execute("animation.add", &json!({"effect": "fade", "class": "entrance"})).unwrap();
+        assert_eq!(effects(&mut s), vec![(tb, Some(1), "fade".into(), "onClick".into())]);
     }
 }
