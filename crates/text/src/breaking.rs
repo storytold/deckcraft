@@ -260,20 +260,22 @@ pub(crate) struct Tab {
     align: TabAlign,
 }
 
-pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
+pub(crate) fn tabs_of(props: &ParaProps, edge: f64) -> Vec<Tab> {
     props
         .tabs
         .as_ref()
         .map(|t| {
             t.iter()
-                .map(|s| Tab {
-                    pos: s.pos,
-                    align: match s.align.as_str() {
+                .map(|s| {
+                    let align = match s.align.as_str() {
                         "ctr" => TabAlign::Center,
                         "r" => TabAlign::Right,
                         "dec" => TabAlign::Decimal,
                         _ => TabAlign::Left,
-                    },
+                    };
+                    // PowerPoint aligns a right stop past the right edge at the edge (#1663).
+                    let pos = if align == TabAlign::Right && s.pos > edge { edge } else { s.pos };
+                    Tab { pos, align }
                 })
                 .collect()
         })
