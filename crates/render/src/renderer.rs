@@ -436,7 +436,8 @@ impl Renderer {
                 // A group's own fill (a group filled with its parent's passes that on).
                 let own = match &s.fill {
                     Some(Fill::Group) | None => self.group_fill.clone(),
-                    Some(fl) => Some((fl.clone(), m, Rect::new(0.0, 0.0, x.w, x.h))),
+                    // A tile is given in points; this group's own space may be scaled by its parents.
+                    Some(fl) => Some((paint::tiled_per_point(fl, self.per_point_xy(m, depth)).into_owned(), m, Rect::new(0.0, 0.0, x.w, x.h))),
                 };
                 let outer = std::mem::replace(&mut self.group_fill, own);
                 // A group's outer shadow is cast by everything in it, as PowerPoint draws it: the
@@ -763,7 +764,8 @@ impl Renderer {
                 let bounds = Rect::new(0.0, 0.0, w, h);
                 ctx.push_clip_layer(outline);
                 let t = f.opts.gif_times.iter().find(|g| g.0 == s.id).map(|g| g.1);
-                paint::picture(ctx, f.pres, &paint::resolved(rctx, pf, None), bounds, m, t);
+                let pf = paint::tiled_picture_per_point(pf, pt_xy);
+                paint::picture(ctx, f.pres, &paint::resolved(rctx, &pf, None), bounds, m, t);
                 ctx.pop_layer();
             }
             // An object DeckCraft doesn't model (an embedded OLE object, an unknown graphic): its

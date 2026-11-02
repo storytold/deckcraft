@@ -274,13 +274,21 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
 /// returned as it is.
 pub fn tiled_per_point(fill: &Fill, per_point: (f64, f64)) -> std::borrow::Cow<'_, Fill> {
     let Fill::Picture(pf) = fill else { return std::borrow::Cow::Borrowed(fill) };
-    let PictureMode::Tile { tx, ty, sx, sy, flip, align } = &pf.mode else { return std::borrow::Cow::Borrowed(fill) };
+    match tiled_picture_per_point(pf, per_point) {
+        std::borrow::Cow::Borrowed(_) => std::borrow::Cow::Borrowed(fill),
+        std::borrow::Cow::Owned(p) => std::borrow::Cow::Owned(Fill::Picture(p)),
+    }
+}
+
+/// [`tiled_per_point`] for a picture fill itself (a picture shape's own fill is not a [`Fill`]).
+pub fn tiled_picture_per_point(pf: &PictureFill, per_point: (f64, f64)) -> std::borrow::Cow<'_, PictureFill> {
+    let PictureMode::Tile { tx, ty, sx, sy, flip, align } = &pf.mode else { return std::borrow::Cow::Borrowed(pf) };
     let (kx, ky) = per_point;
     if !(kx.is_finite() && ky.is_finite() && kx > 1e-12 && ky > 1e-12) || ((kx - 1.0).abs() < 1e-9 && (ky - 1.0).abs() < 1e-9) {
-        return std::borrow::Cow::Borrowed(fill);
+        return std::borrow::Cow::Borrowed(pf);
     }
     let mode = PictureMode::Tile { tx: tx * kx, ty: ty * ky, sx: sx * kx, sy: sy * ky, flip: flip.clone(), align: align.clone() };
-    std::borrow::Cow::Owned(Fill::Picture(PictureFill { mode, ..pf.clone() }))
+    std::borrow::Cow::Owned(PictureFill { mode, ..pf.clone() })
 }
 
 /// Where the first tile of a tiled picture fill goes in `bounds`: its corner, edge middle or

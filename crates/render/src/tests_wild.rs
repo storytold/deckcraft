@@ -506,6 +506,68 @@ fn a_tile_keeps_its_size_in_a_group_with_scaled_child_coordinates() {
     }
 }
 
+/// A slide with `shape` (built for a box of `w` x `h` child units) in a group at (100, 100) that is
+/// 240 x 60 pt on the slide and scaled `kx` x `ky` against its child space, drawn at 1 px per point.
+fn in_a_scaled_group(kx: f64, ky: f64, p: Presentation, shape: impl FnOnce(f64, f64) -> Shape) -> Image {
+    let (w, h) = (240.0 / kx, 60.0 / ky);
+    let group = Shape {
+        id: ShapeId(21),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 240.0, 60.0)),
+        kind: ShapeKind::Group { children: vec![shape(w, h)], child: Xfrm::new(0.0, 0.0, w, h) },
+        ..Default::default()
+    };
+    let mut p = p;
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![group];
+    render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() })
+}
+
+#[test]
+fn a_tile_a_group_passes_to_its_members_keeps_its_size_inside_a_scaled_group() {
+    use deckcraft_model::style::{PictureFill, PictureMode};
+    // The group that owns the tiled fill sits inside another group whose child space is scaled: the
+    // members that take it (`grpFill`) get tiles of 60 x 30 pt, as with no outer group.
+    let blue = Rgba::rgb(0, 0, 255);
+    for (kx, ky) in [(1.0, 1.0), (0.25, 0.25), (1600.0, 1600.0), (2.0, 0.5)] {
+        let mut p = Presentation::default();
+        let media = p.add_media("t.png", "image/png", half_red_half_blue()).expect("media");
+        let mode = PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 10.0, sy: 10.0, flip: "none".into(), align: "tl".into() };
+        let img = in_a_scaled_group(kx, ky, p, |w, h| {
+            let member =
+                Shape { id: ShapeId(23), xfrm: Some(Xfrm::new(0.0, 0.0, w, h)), fill: Some(Fill::Group), line: no_line(), ..Default::default() };
+            Shape {
+                id: ShapeId(22),
+                xfrm: Some(Xfrm::new(0.0, 0.0, w, h)),
+                fill: Some(Fill::Picture(PictureFill { media, mode, ..Default::default() })),
+                kind: ShapeKind::Group { children: vec![member], child: Xfrm::new(0.0, 0.0, w, h) },
+                ..Default::default()
+            }
+        });
+        let (a, b, c) = (img.pixel(115, 115), img.pixel(145, 115), img.pixel(175, 115));
+        assert!(close(a, RED, 30) && close(b, blue, 30) && close(c, RED, 30), "outer group {kx} x {ky}: {a:?} {b:?} {c:?}");
+    }
+}
+
+#[test]
+fn a_picture_shapes_own_tile_keeps_its_size_inside_a_scaled_group() {
+    use deckcraft_model::style::{PictureFill, PictureMode};
+    // A picture (`p:pic`) whose blip fill is a tile rather than a stretch.
+    let blue = Rgba::rgb(0, 0, 255);
+    for (kx, ky) in [(1.0, 1.0), (0.25, 0.25), (1600.0, 1600.0), (2.0, 0.5)] {
+        let mut p = Presentation::default();
+        let media = p.add_media("t.png", "image/png", half_red_half_blue()).expect("media");
+        let mode = PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 10.0, sy: 10.0, flip: "none".into(), align: "tl".into() };
+        let img = in_a_scaled_group(kx, ky, p, |w, h| Shape {
+            id: ShapeId(22),
+            xfrm: Some(Xfrm::new(0.0, 0.0, w, h)),
+            kind: ShapeKind::Picture { fill: PictureFill { media, mode, ..Default::default() } },
+            line: no_line(),
+            ..Default::default()
+        });
+        let (a, b, c) = (img.pixel(115, 115), img.pixel(145, 115), img.pixel(175, 115));
+        assert!(close(a, RED, 30) && close(b, blue, 30) && close(c, RED, 30), "group {kx} x {ky}: {a:?} {b:?} {c:?}");
+    }
+}
+
 #[test]
 fn an_upright_tile_in_a_turned_shape_keeps_its_size_in_points_at_any_zoom() {
     use deckcraft_model::style::{PictureFill, PictureMode};
