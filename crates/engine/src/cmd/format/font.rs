@@ -46,17 +46,22 @@ pub(super) fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// A typeface name from `key`: trimmed, and the length `format.fontDialog` allows.
+///
+/// Absent, as `opt_usize_param` and `id_param` read an absent key, so a call that leaves a script
+/// out keeps that typeface. Present but not a string is refused: `str_param` answers `None` to
+/// both, so `{"family": "Lato", "eastAsia": 42}` used to set the Latin typeface, leave the East
+/// Asian one alone and report success -- the one thing the caller asked for silently not done
+/// (noted in review).
 fn typeface_param(p: &Value, key: &str) -> Result<Option<String>> {
-    match str_param(p, key) {
-        None => Ok(None),
-        Some(v) => {
-            let t = v.trim();
-            if t.is_empty() || t.chars().count() > 200 {
-                return Err(bad("format.font", format!("`{key}` must be 1-200 characters")));
-            }
-            Ok(Some(t.to_string()))
-        }
+    let v = match p.get(key) {
+        None | Some(Value::Null) => return Ok(None),
+        Some(v) => v.as_str().ok_or_else(|| bad("format.font", format!("`{key}` is not a typeface name: {v}")))?,
+    };
+    let t = v.trim();
+    if t.is_empty() || t.chars().count() > 200 {
+        return Err(bad("format.font", format!("`{key}` must be 1-200 characters")));
     }
+    Ok(Some(t.to_string()))
 }
 
 pub(super) fn font(s: &mut Session, p: &Value) -> Result<Value> {

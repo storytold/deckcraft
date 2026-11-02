@@ -254,6 +254,30 @@ mod font_script_tests {
         for p in [json!({"family": "   "}), json!({"family": "Lato", "eastAsia": ""}), json!({"family": "Lato", "complexScript": "x".repeat(201)})] {
             assert!(s.execute("format.font", &p).is_err(), "{p} should be rejected");
         }
+
+        // A script key that is present but not a string is refused, not read as absent. It used
+        // to set `family` and report success with the script typeface untouched, so the one thing
+        // the call asked for was the one thing that did not happen (noted in review).
+        for p in [
+            json!({"family": "Lato", "eastAsia": 42}),
+            json!({"family": "Lato", "complexScript": true}),
+            json!({"family": "Lato", "eastAsia": ["Noto Sans CJK SC"]}),
+            json!({"family": "Lato", "complexScript": {"name": "Noto Sans Arabic"}}),
+            json!({"family": 42}),
+        ] {
+            let e = s.execute("format.font", &p).expect_err(&format!("{p} should be rejected"));
+            assert!(format!("{e}").contains("is not a typeface name"), "{p}: {e}");
+        }
+        // Nothing above changed a run: the first call in this test left `family` unset, and a
+        // refused call must not have set it on the way to the error.
+        assert_eq!(typefaces(&mut s), vec![(None, None, None)]);
+
+        // An explicit `null` reads as absent, as it does for an index or a shape id, so the
+        // script keeps whatever typeface it had.
+        s.execute("format.font", &json!({"family": "Lato", "eastAsia": "Noto Sans CJK SC"})).unwrap();
+        s.execute("format.font", &json!({"family": "Lato", "eastAsia": null})).unwrap();
+        assert_eq!(typefaces(&mut s), vec![(Some("Lato".into()), Some("Noto Sans CJK SC".into()), None)]);
+
         // A name with spaces around it is kept, trimmed.
         s.execute("format.font", &json!({"family": "  Lato  ", "eastAsia": " Noto Sans CJK SC "})).unwrap();
         assert_eq!(typefaces(&mut s), vec![(Some("Lato".into()), Some("Noto Sans CJK SC".into()), None)]);
