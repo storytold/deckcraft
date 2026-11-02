@@ -335,8 +335,13 @@ fn begin_slide(app: &mut SlideApp, show: &Show, f: &Fr, size: (u32, u32)) -> Sl 
     let plays = show.state.trigger_plays();
     let stamps = show.state.trigger_stamps();
     let media = crate::media::slide_media(doc, idx);
-    let hidden: Vec<ShapeId> =
-        media.iter().filter(|(id, _, clip)| clip.hide_while_not_playing && (!clip.video || !app.media.is_playing(*id))).map(|m| m.0).collect();
+    let hidden: Vec<ShapeId> = media
+        .iter()
+        .filter(|(id, _, clip)| {
+            clip.hide_while_not_playing && (!clip.video || !app.media.status(*id).is_some_and(|s| s.state != deckcraft_media::PlayState::Ended))
+        })
+        .map(|m| m.0)
+        .collect();
     let gifs = app.media.gifs(doc_uid, doc, idx, now, &app.session.gif_paused);
     let times: Vec<_> = gifs.iter().map(|g| (g.id, g.t)).collect();
     crate::media::gif_repaint(ctx, &gifs);
