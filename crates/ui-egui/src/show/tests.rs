@@ -1123,6 +1123,66 @@ fn input_state_tracks_the_modes_that_move_show_click_targets() {
     assert_ne!(show.input_state(), base, "a blank screen has no slide click targets");
 }
 
+#[test]
+fn remote_presenter_uses_the_audience_state_and_closes_with_the_show() {
+    use crate::presenter::{Command, Host, Snapshot};
+    use std::{cell::RefCell, rc::Rc};
+    #[derive(Default)]
+    struct Bridge {
+        opens: usize,
+        closes: usize,
+        commands: Vec<Command>,
+    }
+    struct Mock(Rc<RefCell<Bridge>>);
+    impl Host for Mock {
+        fn open(&mut self) -> Result<(), String> {
+            self.0.borrow_mut().opens += 1;
+            Ok(())
+        }
+        fn is_open(&self) -> bool {
+            true
+        }
+        fn commands(&mut self) -> Vec<Command> {
+            std::mem::take(&mut self.0.borrow_mut().commands)
+        }
+        fn update(&mut self, _: Snapshot) {}
+        fn close(&mut self) {
+            self.0.borrow_mut().closes += 1;
+        }
+    }
+    let bridge = Rc::new(RefCell::new(Bridge::default()));
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    session.execute("slide.new", &json!({})).unwrap();
+    let services = crate::Services { presenter: Some(Box::new(Mock(bridge.clone()))), ..Default::default() };
+    let mut app = SlideApp::new(session, services);
+    app.ui.presenter_view = true;
+    let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    h.state_mut().start_show(0, false);
+    h.run_steps(2);
+    assert_eq!(bridge.borrow().opens, 1);
+    for (key, slide) in [(egui::Key::ArrowRight, 1), (egui::Key::ArrowLeft, 0), (egui::Key::End, 2), (egui::Key::Home, 0)] {
+        bridge.borrow_mut().commands.push(Command::Key { name: key.name().into(), command: false, shift: false, alt: false, ctrl: false });
+        h.run_steps(2);
+        assert_eq!(h.state().show.as_ref().unwrap().state.slide, slide);
+    }
+    bridge.borrow_mut().commands.push(Command::End);
+    h.run_steps(2);
+    assert!(h.state().show.is_none());
+    assert_eq!(bridge.borrow().closes, 1);
+    h.state_mut().start_show(1, false);
+    h.run_steps(2);
+    assert_eq!(bridge.borrow().opens, 2);
+    assert_eq!(h.state().show.as_ref().unwrap().state.slide, 1);
+}
+
 /// #964: the next-slide preview renders on another thread; the presenter frame that asks for
 /// it doesn't wait, and the preview arrives on a later frame.
 #[test]

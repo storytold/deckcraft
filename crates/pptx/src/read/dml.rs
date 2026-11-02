@@ -3,8 +3,8 @@
 use deckcraft_color::{ColorTransform, Rgba, SchemeSlot};
 use deckcraft_geom::{Xfrm, emu_to_pt};
 use deckcraft_model::style::{
-    ColorBase, ColorRef, Compound, Dash, Effects, Fill, Glow, Gradient, GradientShape, GradientStop, Line, LineCap, LineEnd, LineJoin, PatternFill,
-    PictureFill, PictureMode, Reflection, Shadow,
+    ColorBase, ColorRef, Compound, Dash, Effects, Fill, Glow, Gradient, GradientFlip, GradientShape, GradientStop, Line, LineAlign, LineCap, LineEnd,
+    LineJoin, PatternFill, PictureFill, PictureMode, Reflection, Shadow,
 };
 use deckcraft_model::text::{
     Action, Align, Anchor, AutoFit, BodyProps, Bullet, Caps, Hyperlink, LevelStyle, ListStyle, ParaProps, Paragraph, Run, RunKind, RunProps, Spacing,
@@ -126,7 +126,13 @@ pub fn gradient(f: &El) -> Gradient {
         GradientShape::Linear { angle: 90.0, scaled: false }
     };
     let tile = f.child("tileRect").map(|r| [pct(r, "l"), pct(r, "t"), pct(r, "r"), pct(r, "b")].map(|v| v.unwrap_or(0.0).clamp(-10.0, 10.0)));
-    Gradient { tile: tile.unwrap_or_default(), stops, shape, rotate_with_shape: f.bool("rotWithShape").unwrap_or(true) }
+    Gradient {
+        tile: tile.unwrap_or_default(),
+        stops,
+        shape,
+        flip: f.attr("flip").and_then(GradientFlip::from_xml),
+        rotate_with_shape: f.bool("rotWithShape").unwrap_or(true),
+    }
 }
 
 /// `blipFill` (either `a:` or `p:`) → picture fill, registering the image as media.
@@ -226,6 +232,7 @@ pub fn line(imp: &mut Imp, part: &Part, ln: &El) -> Line {
         _ => LineCap::Flat,
     });
     l.compound = ln.attr("cmpd").map(Compound::from_xml);
+    l.align = ln.attr("algn").and_then(LineAlign::from_xml);
     l.fill = fill_of(imp, part, ln);
     for e in ln.elements() {
         match e.local() {
@@ -236,13 +243,27 @@ pub fn line(imp: &mut Imp, part: &Part, ln: &El) -> Line {
             }
             "round" => l.join = Some(LineJoin::Round),
             "bevel" => l.join = Some(LineJoin::Bevel),
-            "miter" => l.join = Some(LineJoin::Miter),
+            "miter" => {
+                l.join = Some(LineJoin::Miter);
+                l.miter_limit = e.attr("lim").and_then(parse_miter_limit);
+            }
             "headEnd" => l.head = line_end(e),
             "tailEnd" => l.tail = line_end(e),
             _ => {}
         }
     }
     l
+}
+
+fn parse_miter_limit(value: &str) -> Option<u32> {
+    const MAX: u32 = i32::MAX as u32;
+    let value = value.trim();
+    if let Some(percent) = value.strip_suffix('%') {
+        let units = percent.trim().parse::<f64>().ok()? * 1000.0;
+        (units.is_finite() && (0.0..=MAX as f64).contains(&units)).then(|| units.round() as u32)
+    } else {
+        value.parse::<u32>().ok().filter(|limit| *limit <= MAX)
+    }
 }
 
 fn line_end(e: &El) -> Option<LineEnd> {
@@ -435,14 +456,23 @@ pub fn ppr(imp: &mut Imp, part: &Part, p: &El) -> (Option<u8>, ParaProps, Option
                 }
             }
             "buFont" => pp.bullet_font = e.attr("typeface").map(String::from),
+            "buFontTx" => pp.bullet_font_follow_text = Some(true),
             "buClr" => pp.bullet_color = color(e),
             "buSzPct" => {
                 pp.bullet_size_points = None;
+                pp.bullet_size_follow_text = None;
                 pp.bullet_size = pct(e, "val").map(|v| v.clamp(0.25, 4.0));
             }
             "buSzPts" => {
                 pp.bullet_size = None;
+                pp.bullet_size_follow_text = None;
                 pp.bullet_size_points = bullet_size_points(e.attr("val"));
+            }
+            "buClrTx" => pp.bullet_color_follow_text = Some(true),
+            "buSzTx" => {
+                pp.bullet_size = None;
+                pp.bullet_size_points = None;
+                pp.bullet_size_follow_text = Some(true);
             }
             "tabLst" => {
                 pp.tabs = Some(
@@ -684,6 +714,16 @@ mod tests {
         let d = parse(br#"<a:buSzPts xmlns:a="x" val=" 1400 "/>"#).unwrap();
         assert_eq!(bullet_size_points(d.root.attr("val")), Some(14.0));
         assert_eq!(bullet_size_points(Some("1400")), Some(14.0));
+    }
+
+    #[test]
+    fn miter_limit_accepts_both_percentage_forms_with_schema_bounds() {
+        assert_eq!(parse_miter_limit("200000"), Some(200_000));
+        assert_eq!(parse_miter_limit("200%"), Some(200_000));
+        assert_eq!(parse_miter_limit("1000001"), Some(1_000_001));
+        assert_eq!(parse_miter_limit("malformed"), None);
+        assert_eq!(parse_miter_limit("2147483648"), None);
+        assert_eq!(parse_miter_limit("2147483.648%"), None);
     }
 
     #[test]
