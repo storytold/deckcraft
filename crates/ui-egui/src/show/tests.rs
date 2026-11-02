@@ -1359,14 +1359,17 @@ fn audio_with_hide_during_show_stays_hidden_in_presentation_mode() {
     let doc = session.active().unwrap().doc.clone();
     let on_bar = std::rc::Rc::new(std::cell::Cell::new(false));
     let seen = on_bar.clone();
+    let under_visible = std::rc::Rc::new(std::cell::Cell::new(true));
+    let under_seen = under_visible.clone();
     let mut app = SlideApp::new(session, crate::Services::default());
     app.ui.presenter_view = false;
     let mut harness = egui_kittest::Harness::builder().with_size(size).build_ui_state(
         move |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
-            if let (Some(show), Some(d)) = (app.show.as_ref(), app.session.active()) {
+            if let (Some(show), Some(d)) = (app.show.as_mut(), app.session.active()) {
                 let now = ui.input(|i| i.time);
                 seen.set(pointer_on_media_bar(ui.ctx(), ui, &d.doc, show, now));
+                under_seen.set(super::media::shapes_under_pointer(ui.ctx(), ui, show, &d.doc, now).is_some_and(|u| u.visible(id)));
             }
             app.ui(ui);
         },
@@ -1385,6 +1388,7 @@ fn audio_with_hide_during_show_stays_hidden_in_presentation_mode() {
     harness.run_steps(2);
     assert!(!on_bar.get(), "hidden audio has no active media bar under the cursor");
 
+    assert!(!under_visible.get(), "hidden audio must not be treated as visible in ordinary shape hit-testing");
     let preview = presenter::render_preview(&doc, 0, (480, 270), 0);
     assert_eq!(preview.size, [480, 270]);
 }

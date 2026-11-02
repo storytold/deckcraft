@@ -173,7 +173,7 @@ fn inverse_transform_point(p: (f64, f64), center: (f64, f64), state: AnimState) 
 }
 
 impl Under {
-    fn visible(&self, id: ShapeId) -> bool {
+    pub(super) fn visible(&self, id: ShapeId) -> bool {
         self.shapes.iter().zip(&self.visible).find(|(h, _)| h.id == id).is_none_or(|(_, v)| *v)
     }
 }
@@ -207,7 +207,8 @@ pub(super) fn shapes_under_pointer(ctx: &egui::Context, ui: &Ui, show: &mut Show
             HitShape { id: s.id, parent: s.parent, is_group: s.is_group, link: s.link.as_ref().map(|l| l.action.clone()), under_pointer }
         })
         .collect();
-    let visible: Vec<bool> = states.iter().map(|a| a.visible && a.opacity > 0.0).collect();
+    let hidden_media = super::render::hidden_on_entry(doc, i);
+    let visible: Vec<bool> = shapes.iter().zip(&states).map(|(s, a)| a.visible && a.opacity > 0.0 && !hidden_media.contains(&s.id)).collect();
     let mut under = Under { shapes: hits, visible, pick: None };
     let shown = |id: ShapeId| under.visible(id);
     // A hyperlink in text applies when its shape is the one on top.
