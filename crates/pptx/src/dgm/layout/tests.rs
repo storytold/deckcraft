@@ -223,7 +223,7 @@ fn forward_user_variable_dependencies_are_not_mistaken_for_convergence() {
 }
 
 #[test]
-fn coupled_cycles_edges_and_descendant_references_solve_together() {
+fn coupled_cycles_respect_local_descendant_geometry() {
     let data = source();
     let layout = layout(
         r#"<layoutNode name="root"><alg type="composite"/>
@@ -238,9 +238,8 @@ fn coupled_cycles_edges_and_descendant_references_solve_together() {
         <constr type="r" for="des" forName="leaf" refFor="ch" refForName="other" refType="w"/>
       </constrLst></layoutNode>"#,
     );
-    // These equations constrain allocated frames. A nested composite subsequently
-    // fits its children into its own frame, so their painted edges need not retain
-    // equations expressed in the enclosing frame's pre-fit coordinate system.
+    // The size cycle and bounds constrain allocated frames. Descendant positional
+    // constraints do not cross the nested composite; its leaf inherits the local box.
     let data = Data::new(&data).unwrap();
     let context = Context { point: data.root, position: 1, count: 1, vars: HashMap::new() };
     let mut compiler = Compiler { data, refs: HashMap::new(), instances: 0, work: 0 };
@@ -249,8 +248,78 @@ fn coupled_cycles_edges_and_descendant_references_solve_together() {
     let leaf = constraints::lookup(&solution, &tree.children[0].children[0]).unwrap().rect;
     let other = constraints::lookup(&solution, &tree.children[1]).unwrap().rect;
     assert!((other.w - 40. * 72. / 25.4).abs() < 1e-6);
-    assert!((leaf.x - other.x - 5. * 72. / 25.4).abs() < 1e-6);
-    assert!((leaf.x + leaf.w - other.x - other.w).abs() < 1e-6);
+    assert!(leaf.x.abs() < 1e-6);
+    assert!((leaf.w - other.w * 0.5).abs() < 1e-6);
+}
+
+#[test]
+fn descendant_geometry_respects_local_algorithms_but_fonts_cross_them() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for alg in ["composite", "sp", "lin"] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='composite'/><presOf/><constrLst>
+            <constr type='w' for='ch' forName='wrapper' val='40'/>
+            <constr type='h' for='ch' forName='wrapper' val='60'/>
+            <constr type='w' for='des' forName='label' val='15'/>
+            <constr type='h' for='des' forName='label' val='20'/>
+            <constr type='primFontSz' for='des' forName='label' val='18'/>
+            </constrLst><layoutNode name='wrapper'><alg type='{alg}'/><presOf/>
+            <layoutNode name='label'><alg type='tx'/><shape type='rect'/><presOf axis='ch' cnt='1'/></layoutNode>
+            </layoutNode></layoutNode>"
+        ));
+        let out = evaluate(&l, &data, frame()).unwrap();
+        let label = out.iter().find(|p| p.name == "label").unwrap();
+        let (w, h) = if alg == "lin" { (15., 20.) } else { (40., 60.) };
+        assert!((label.rect.w - w * mm).abs() < 1e-6, "{alg}: {:?}", label.rect);
+        assert!((label.rect.h - h * mm).abs() < 1e-6, "{alg}: {:?}", label.rect);
+        assert_eq!(label.font, Some(18.));
+    }
+}
+
+#[test]
+fn descendant_position_constraints_leave_composite_placement_to_children() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for property in ["l", "r", "ctrX", "t", "b", "ctrY"] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='composite'/><presOf/><constrLst>
+            <constr type='w' for='ch' val='20'/><constr type='h' for='ch' val='20'/>
+            <constr type='l' for='ch' forName='a' val='0'/><constr type='t' for='ch' forName='a' val='0'/>
+            <constr type='l' for='ch' forName='b' val='40'/><constr type='t' for='ch' forName='b' val='40'/>
+            <constr type='{property}' for='des' forName='b' val='5'/></constrLst>
+            <layoutNode name='a'><alg type='tx'/><shape type='rect'/><presOf axis='ch' st='1' cnt='1'/></layoutNode>
+            <layoutNode name='b'><alg type='tx'/><shape type='rect'/><presOf axis='ch' st='2' cnt='1'/></layoutNode>
+            </layoutNode>"
+        ));
+        let out = evaluate(&l, &data, frame()).unwrap();
+        assert!((out[1].rect.x - out[0].rect.x - 40. * mm).abs() < 1e-6, "{property}");
+        assert!((out[1].rect.y - out[0].rect.y - 40. * mm).abs() < 1e-6, "{property}");
+    }
+}
+
+#[test]
+fn local_size_constraints_override_ancestor_defaults_and_composites_require_layout_selectors() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for alg in ["composite", "sp", "lin"] {
+        for point in ["", "ptType='node'"] {
+            let l = layout(&format!(
+                "<layoutNode><alg type='composite'/><presOf/><constrLst>
+                <constr type='w' for='ch' forName='wrapper' val='40'/>
+                <constr type='h' for='ch' forName='wrapper' val='60'/>
+                <constr type='h' for='des' forName='label' val='20'/></constrLst>
+                <layoutNode name='wrapper'><alg type='{alg}'/><presOf/><constrLst>
+                <constr type='h' for='ch' forName='label' {point} val='50'/></constrLst>
+                <layoutNode name='label'><alg type='tx'/><shape type='rect'/><presOf axis='ch' cnt='1'/></layoutNode>
+                </layoutNode></layoutNode>"
+            ));
+            let out = evaluate(&l, &data, frame()).unwrap();
+            let label = out.iter().find(|p| p.name == "label").unwrap();
+            let expected = if alg == "composite" && !point.is_empty() { 60. } else { 50. };
+            assert!((label.rect.h - expected * mm).abs() < 1e-6, "{alg}/{point}: {:?}", label.rect);
+        }
+    }
 }
 
 #[test]
@@ -789,6 +858,8 @@ fn overflowing_composites_clip_scaled_end_edges_before_recentering() {
             (20., 40., 35., 20.),
             (20., 100., 35., 20.),
             (20., 100., 20., 20.),
+            (20., 15., 20., 20.),
+            (20., 25., 20., 20.),
         ] {
             let (axis, edge, other) = if vertical { ("h", "t", "w") } else { ("w", "l", "h") };
             let l = layout(&format!(

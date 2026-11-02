@@ -137,7 +137,10 @@ fn fit_composite_frame(out: &mut [Placed<'_>], frame: Xfrm, work: &mut usize) ->
     if width <= 0.0 || height <= 0.0 || !width.is_finite() || !height.is_finite() {
         return Ok(());
     }
-    let (sx, sy) = ((frame.w / width).min(1.0), (frame.h / height).min(1.0));
+    let scale = |limit: f64, occupied: f64| {
+        if occupied - limit <= 16. * f64::EPSILON * occupied.abs().max(limit.abs()).max(1.) { 1. } else { limit / occupied }
+    };
+    let (sx, sy) = (scale(frame.w, width), scale(frame.h, height));
     // In an overflowing axis, scale from the frame origin (or a negative occupied
     // origin), clip the end edge, then centre the resulting occupied bounds. Moving
     // positive leading space away before this clip incorrectly preserves that width.

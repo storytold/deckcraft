@@ -36,10 +36,13 @@ fn controls<'a>(entries: &[constraints::Entry<'_, 'a>], data: &Data<'_>, work: &
             for target in constraints::selected(entries, owner, c.attr("for").unwrap_or("self"), c.attr("forName"), c.attr("ptType"), data) {
                 let ty = c.attr("type").unwrap_or("");
                 for property in if ty == "diam" { vec!["w", "h"] } else { vec![ty] } {
-                    if !constraints::applies(entries, owner, target, property) {
+                    if !constraints::applies(entries, owner, target, property, c) {
                         continue;
                     }
                     let key = (target, property.to_string());
+                    if matches!(property, "w" | "h") && effective.get(&key).is_some_and(|(prior, _)| *prior > owner) {
+                        continue;
+                    }
                     if matches!(c.attr("op"), Some("gte" | "lte")) {
                         effective.entry(key).or_insert((owner, *c));
                     } else {
@@ -73,7 +76,7 @@ fn controls<'a>(entries: &[constraints::Entry<'_, 'a>], data: &Data<'_>, work: &
             }
             for &target in &targets {
                 for property in if ty == "diam" { vec!["w", "h"] } else { vec![ty] } {
-                    if !constraints::applies(entries, owner, target, property) {
+                    if !constraints::applies(entries, owner, target, property, rule) {
                         continue;
                     }
                     let binding = if remote && font {
@@ -152,7 +155,7 @@ fn dependent_scope(
                 let refs = constraints::selected(entries, owner, c.attr("refFor").unwrap_or("self"), c.attr("refForName"), c.attr("refPtType"), data);
                 let targets = constraints::selected(entries, owner, c.attr("for").unwrap_or("self"), c.attr("forName"), c.attr("ptType"), data);
                 for (i, t) in targets.iter().enumerate() {
-                    if !constraints::applies(entries, owner, *t, c.attr("type").unwrap_or("")) {
+                    if !constraints::applies(entries, owner, *t, c.attr("type").unwrap_or(""), c) {
                         continue;
                     }
                     let r = if refs.len() == targets.len() { refs.get(i) } else { refs.first() };

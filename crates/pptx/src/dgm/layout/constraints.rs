@@ -39,6 +39,8 @@ pub(super) struct Entry<'t, 'a> {
     pub parent: Option<usize>,
     pub style: BoxStyle,
     pub end: usize,
+    /// Nearest ancestor whose algorithm owns a local geometry constraint scope.
+    pub geometry_scope: usize,
 }
 pub(super) type Solution = HashMap<usize, BoxStyle>;
 pub(super) fn id(node: &Instance<'_>) -> usize {
@@ -50,10 +52,17 @@ pub(super) fn lookup(solution: &Solution, node: &Instance<'_>) -> Option<BoxStyl
 pub(super) fn position(property: &str) -> bool {
     matches!(property, "l" | "r" | "ctrX" | "t" | "b" | "ctrY")
 }
-pub(super) fn applies(entries: &[Entry<'_, '_>], owner: usize, target: usize, property: &str) -> bool {
+pub(super) fn applies(entries: &[Entry<'_, '_>], owner: usize, target: usize, property: &str, selector: &El) -> bool {
     // A text node controls its text, not its position in the parent. Flow algorithms
     // determine child positions themselves; only a composite consumes explicit coordinates.
-    !position(property) || (owner != target && entries[owner].node.alg == "composite")
+    if position(property) {
+        return selector.attr("for") == Some("ch") && entries[target].parent == Some(owner) && entries[owner].node.alg == "composite";
+    }
+    // Composite and space algorithms establish local size scopes. Flow algorithms
+    // can consume ancestor descendant-size constraints. Font constraints still
+    // reach text across both kinds of container.
+    !matches!(property, "w" | "h" | "diam")
+        || (owner >= entries[target].geometry_scope && (entries[owner].node.alg != "composite" || selector.attr("ptType").is_none_or(|t| t == "all")))
 }
 pub(super) fn collect<'t, 'a>(
     node: &'t Instance<'a>,
@@ -65,7 +74,8 @@ pub(super) fn collect<'t, 'a>(
     charge(work, 1 + node.constraints.len())?;
     self_constraints(node, &mut style);
     let index = entries.len();
-    entries.push(Entry { node, parent, style, end: index + 1 });
+    let geometry_scope = parent.map_or(0, |p| if matches!(entries[p].node.alg.as_str(), "composite" | "sp") { p } else { entries[p].geometry_scope });
+    entries.push(Entry { node, parent, style, end: index + 1, geometry_scope });
     let local = BoxStyle { rect: Xfrm::new(0., 0., style.rect.w, style.rect.h), ..style };
     for (child, rect) in node.children.iter().zip(initial(node, local)) {
         collect(child, BoxStyle { rect, ..local }, Some(index), entries, work)?;
@@ -232,9 +242,11 @@ pub(super) fn resolve_adjusted(
     let mut entries = Vec::new();
     collect(node, BoxStyle::new(rect), None, &mut entries, work)?;
     let mut equations: BTreeMap<Key, Row> = BTreeMap::new();
+    let mut equation_owners = HashMap::new();
     let mut bounds = Vec::new();
     let mut bounded = BTreeSet::new();
-    // Inner defaults first; outer explicit constraints take precedence for the same property.
+    // Inner defaults first. Local sizes take precedence over ancestor defaults;
+    // outer text constraints can still coordinate the same property across descendants.
     for owner in (0..entries.len()).rev() {
         let node = entries[owner].node;
         for c in &node.constraints {
@@ -250,7 +262,11 @@ pub(super) fn resolve_adjusted(
             for (j, target) in targets.iter().enumerate() {
                 let reference = if refs.len() == targets.len() { refs.get(j) } else { refs.first() }.copied();
                 for property in if ty == "diam" { vec!["w", "h"] } else { vec![ty] } {
-                    if !applies(&entries, owner, *target, property) {
+                    if !applies(&entries, owner, *target, property, c) {
+                        continue;
+                    }
+                    let key = (*target, property.to_string());
+                    if matches!(property, "w" | "h") && equation_owners.get(&key).is_some_and(|prior| *prior > owner) {
                         continue;
                     }
                     let mut adjusted = (*c).clone();
@@ -278,7 +294,8 @@ pub(super) fn resolve_adjusted(
                             bounds.push(row);
                         }
                         _ => {
-                            equations.insert((*target, property.into()), row);
+                            equation_owners.insert(key.clone(), owner);
+                            equations.insert(key, row);
                         }
                     }
                 }

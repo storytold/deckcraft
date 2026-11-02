@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.24): SmartArt overflowing end edges and disjoint-child fitting,
+Updated 2026-11-01 (PPTX.25): SmartArt local geometry scope and size precedence,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1132,3 +1132,54 @@ than geometry constraints in the tested contexts; a generalized scope rule is no
 Full native rule-search/fallback, cyclic-font policy, near-threshold wrapping, duplicate-point
 text ownership, colour interpolation, geographic provider/simplification policy and rich-label
 overflow/callouts remain open. It is not a claim of complete LibreOffice replacement.
+
+## Local geometry scope and size precedence (PPTX.25)
+
+The constraint language distinguishes layout relationships and data-point selectors; their
+public definitions are documented in the [constraint API](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.drawing.diagrams.constraint)
+and [point-type enumeration](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.drawing.diagrams.elementvalues).
+The native behavior below is established through independent original controls, rather than
+inferred from the schema alone.
+
+Composite and space algorithms establish local size scopes. An ancestor's descendant width
+or height constraint does not enter that scope, while descendant font constraints can still
+reach the text. Flow containers can consume ancestor size defaults, but an explicit local size
+takes precedence. Composite size constraints use layout selectors; adding a non-`all` point-type
+selector does not select their geometry in the measured cases. Positional constraints are
+consumed by composite parents through child relationships, not descendant relationships.
+The same applicability rules now govern numeric-rule binding and dependency tracking.
+
+The nearest local geometry scope is recorded during the existing tree walk, so applicability
+does not add an ancestor walk per candidate. The affine system retains each equation's owner
+to keep local size precedence without changing text-constraint precedence. Equal-size occupied
+bounds also tolerate floating-point roundoff before choosing the overflow branch; otherwise a
+translated child as wide as its frame could be clipped despite having no real overflow.
+
+Validation:
+
+- All eight original cross-container controls now match native visible coloured bounds within
+  0.25pt at 4K, resolving the four ancestor-scope failures remaining after PPTX.24. Representative
+  native/direct results were visually inspected.
+- All 48 new context, mapping, point-type and font controls match actual native geometry;
+  all 48 font-size sets also match. Direct versus iterator context and empty versus populated
+  presentation mappings are varied independently.
+- A broader 186-case matrix improves from 92 to 120 model-geometry matches, using a 0.025pt
+  tolerance for model inspection rounded to 0.01pt. It includes context selection, three
+  container algorithms, local-default binding and implicit versus explicit edge sizes.
+  **54 remain failures**; 12 native-fallback pages are separately excluded from intended-layout
+  comparisons. This is not a claim that the full selector/default-layout matrix passes.
+- The 73 prior overflow controls still match native model geometry within 0.009pt. All 154
+  earlier 2px/pt PNGs are identical to the PPTX.24 baseline, with unchanged/native-matching
+  font-size sets. All 80 earlier allocation/colour controls still pass. Source hashes are
+  checked against the native-export receipts.
+- Three new tests cover 15 scope/precedence variants; 12 more translated equal-size variants
+  protect the floating-point fix. The earlier cyclic-system test now checks that ignored
+  descendant positions leave the leaf in its local frame, while retaining the coupled size
+  cycle and inequality assertions.
+- Final `cargo xtask ci` passes all eight stages and 2,440 tests including doctests.
+
+Unspecified names and implicit/inverted edge sizes still differ in the expanded matrix.
+Unconstrained flow sizing and finite diagram quantization also need further native validation.
+Full native search/fallback and cyclic-font policies, colour interpolation, text ownership,
+geographic provider/simplification policy and rich-label overflow remain open. No global parity
+score or complete LibreOffice-replacement claim is raised.
