@@ -1,7 +1,7 @@
 use super::autonum::autonum;
 use super::run::{RunEffects, TextShadow};
 use super::style::{Cell, Opts, ParaShaped, Style, face_chain, make_style};
-use super::symbol::{covers_symbol, map_symbol_bullet, symbol_font_char, symbol_map_char};
+use super::symbol::{covers_symbol, is_symbol_font, map_symbol_bullet, symbol_font_char, symbol_map_char};
 use super::{
     Arc, Bullet, Caps, Ctx, Fill, FontDb, FontFace, FontSlot, HashMap, ParaProps, RunKind, RunProps, ScriptTag, Shape, ShapeParams, TextBody,
     UnicodeSegmentation, bidi, resolve, script,
@@ -93,9 +93,11 @@ pub(crate) fn shape_para(
                 Some(c) => c.to_string(),
                 None => map_symbol_bullet(char, props.bullet_font.as_deref()),
             };
-            if !st.face.covers(ch.chars().next().unwrap_or('•')) {
-                st.face = db.face("Inter", "Regular");
-            }
+            bullet_face(db, &mut st, &ch);
+            // A face the cascade still picks may lack the bullet: draw the dot rather than .notdef.
+            let chars: Vec<char> = ch.chars().collect();
+            let ch = if deckcraft_fonts::covers_cluster(&st.face, &chars) { ch } else { "•".into() };
+            bullet_face(db, &mut st, &ch);
             Some((ch, st))
         }
         Some(Bullet::AutoNum { scheme, start_at }) => {
@@ -183,7 +185,9 @@ fn shape_cells(
         let Some(st) = styles.get(si) else { continue };
         let (sc, slot) = scripts.get(a).copied().unwrap_or((None, FontSlot::Latin));
         // Spaces, digits and punctuation stay in the face of the text before them when it can
-        // draw them, so a phrase isn't cut into items at every space.
+        // draw them, so a phrase isn't cut into items at every space; not in a symbol font
+        // (`a:sym`), which PowerPoint uses for the symbol codes alone (Wingdings' space is about
+        // four times a text font's).
         // Emoji, and pictographs asked to look like text (U+FE0E), pick their own face.
         let neutral =
             cluster.iter().all(|c| script::script_of(*c).is_none()) && !deckcraft_fonts::is_emoji_cluster(cluster) && !cluster.contains(&'\u{FE0E}');
@@ -200,7 +204,11 @@ fn shape_cells(
         let face = match (sym_face, prev.as_ref()) {
             (Some(f), _) => f,
             (None, Some(p))
-                if neutral && !p.is_color() && deckcraft_fonts::covers_cluster(p, cluster) && char_style.get(a.wrapping_sub(1)) == Some(&si) =>
+                if neutral
+                    && !p.is_color()
+                    && !is_symbol_font(&p.family)
+                    && deckcraft_fonts::covers_cluster(p, cluster)
+                    && char_style.get(a.wrapping_sub(1)) == Some(&si) =>
             {
                 p.clone()
             }

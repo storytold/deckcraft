@@ -338,6 +338,8 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
     if let Some(pr) = e.child("spPr") {
         sp_pr(imp, part, &mut s, pr);
     }
+    // A picture in a picture placeholder is cut into the layout's shape (a circle, say).
+    mark_inherited_geometry(&mut s, e.child("spPr"));
     s.style = e.child("style").map(style);
     let pf = e.child("blipFill").and_then(|b| dml::blip_fill(imp, part, b));
     let nvpr = e.path(&["nvPicPr", "nvPr"]);

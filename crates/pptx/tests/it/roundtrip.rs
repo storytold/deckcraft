@@ -7,8 +7,8 @@ use deckcraft_geom::Xfrm;
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, TextBuild, Transition};
 use deckcraft_model::chart::{Chart, ChartType};
 use deckcraft_model::style::{
-    ColorRef, Dash, Effects, Fill, Glow, Gradient, GradientShape, GradientStop, Line, LineEnd, PatternFill, PictureAdjust, PictureFill, PictureMode,
-    Shadow,
+    ColorRef, Dash, Effects, Fill, Glow, Gradient, GradientFlip, GradientShape, GradientStop, Line, LineEnd, PatternFill, PictureAdjust, PictureFill,
+    PictureMode, Shadow,
 };
 use deckcraft_model::table::Table;
 use deckcraft_model::text::{
@@ -115,6 +115,8 @@ pub fn rich_deck() -> Presentation {
         ],
         shape: GradientShape::Linear { angle: 45.0, scaled: false },
         rotate_with_shape: true,
+
+        flip: Some(GradientFlip::Xy),
     }));
     a.line = Some(Line { width: Some(3.0), dash: Some(Dash::Preset { name: "dash".into() }), ..Line::solid(ColorRef::rgb(Rgba::rgb(0, 0, 0)), 3.0) });
     a.effects = Some(Effects {
@@ -486,6 +488,102 @@ fn shapes_fills_lines_effects_round_trip() {
     assert_eq!(c.line, by_name(&p.slides[1], "Connector").line);
     // Ids are kept.
     assert_eq!(by_name(&q.slides[1], "Group").id, by_name(&p.slides[1], "Group").id);
+}
+
+#[test]
+fn line_miter_limit_survives_two_pptx_round_trips() {
+    let mut p = Presentation::default();
+    let mut limited = shape(&mut p, "Limited miter", 20.0, 20.0, 100.0, 100.0);
+    limited.line = Some(Line { join: Some(deckcraft_model::style::LineJoin::Miter), miter_limit: Some(200_000), ..Default::default() });
+    let mut defaulted = shape(&mut p, "Default miter", 140.0, 20.0, 100.0, 100.0);
+    defaulted.line = Some(Line { join: Some(deckcraft_model::style::LineJoin::Miter), ..Default::default() });
+    let mut large = shape(&mut p, "Large miter", 260.0, 20.0, 100.0, 100.0);
+    large.line = Some(Line { join: Some(deckcraft_model::style::LineJoin::Miter), miter_limit: Some(1_000_001), ..Default::default() });
+    Arc::make_mut(&mut p.slides[0]).shapes.extend([limited, defaulted, large]);
+
+    let q = round(&round(&p));
+    assert_eq!(by_name(&q.slides[0], "Limited miter").line.as_ref().and_then(|line| line.miter_limit), Some(200_000));
+    assert_eq!(by_name(&q.slides[0], "Default miter").line.as_ref().and_then(|line| line.miter_limit), None);
+    assert_eq!(by_name(&q.slides[0], "Large miter").line.as_ref().and_then(|line| line.miter_limit), Some(1_000_001));
+}
+
+#[test]
+
+fn bullet_follow_text_resets_survive_two_pptx_round_trips() {
+    let mut p = Presentation::default();
+    let mut textbox = shape(&mut p, "Follow text bullets", 20.0, 20.0, 400.0, 100.0);
+    textbox.text = Some(TextBody {
+        paragraphs: vec![Paragraph {
+            props: deckcraft_model::text::ParaProps {
+                bullet: Some(Bullet::Char { char: "•".into() }),
+                bullet_color_follow_text: Some(true),
+                bullet_size_follow_text: Some(true),
+                bullet_font_follow_text: Some(true),
+                ..Default::default()
+            },
+            runs: vec![Run::with("Bullet text", RunProps::default())],
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    Arc::make_mut(&mut p.slides[0]).shapes.push(textbox);
+    let mut conflicting = shape(&mut p, "Explicit bullet values", 20.0, 140.0, 400.0, 100.0);
+    conflicting.text = Some(TextBody {
+        paragraphs: vec![Paragraph {
+            props: deckcraft_model::text::ParaProps {
+                bullet: Some(Bullet::Char { char: "•".into() }),
+                bullet_color: Some(deckcraft_model::style::ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0))),
+                bullet_color_follow_text: Some(true),
+                bullet_size: Some(1.5),
+                bullet_size_follow_text: Some(true),
+                bullet_font: Some("Inter".into()),
+                bullet_font_follow_text: Some(true),
+                ..Default::default()
+            },
+            runs: vec![Run::with("Explicit bullet text", RunProps::default())],
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    Arc::make_mut(&mut p.slides[0]).shapes.push(conflicting);
+
+    let q = round(&round(&p));
+    let props = &by_name(&q.slides[0], "Follow text bullets").text.as_ref().expect("text").paragraphs[0].props;
+    assert_eq!(props.bullet_color_follow_text, Some(true));
+    assert_eq!(props.bullet_size_follow_text, Some(true));
+    assert_eq!(props.bullet_font_follow_text, Some(true));
+    let explicit = &by_name(&q.slides[0], "Explicit bullet values").text.as_ref().expect("text").paragraphs[0].props;
+    assert_eq!(explicit.bullet_color_follow_text, None);
+    assert_eq!(explicit.bullet_size_follow_text, None);
+    assert_eq!(explicit.bullet_font_follow_text, None);
+    assert_eq!(explicit.bullet_size, Some(1.5));
+    assert_eq!(explicit.bullet_font.as_deref(), Some("Inter"));
+    assert_eq!(explicit.bullet_color, Some(deckcraft_model::style::ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0))));
+}
+
+#[test]
+
+fn line_alignment_survives_two_pptx_round_trips() {
+    let mut p = Presentation::default();
+    let mut inside = shape(&mut p, "Inset line", 20.0, 20.0, 100.0, 100.0);
+    inside.line = Some(Line { align: Some(deckcraft_model::style::LineAlign::Inside), ..Default::default() });
+    let mut centered = shape(&mut p, "Centered line", 140.0, 20.0, 100.0, 100.0);
+    centered.line = Some(Line { align: Some(deckcraft_model::style::LineAlign::Center), ..Default::default() });
+    Arc::make_mut(&mut p.slides[0]).shapes.extend([inside, centered]);
+
+    let q = round(&round(&p));
+    assert_eq!(by_name(&q.slides[0], "Inset line").line.as_ref().and_then(|line| line.align), Some(deckcraft_model::style::LineAlign::Inside));
+    assert_eq!(by_name(&q.slides[0], "Centered line").line.as_ref().and_then(|line| line.align), Some(deckcraft_model::style::LineAlign::Center));
+    assert_eq!(deckcraft_model::style::LineAlign::from_xml("out"), None);
+}
+
+#[test]
+
+fn gradient_flip_mode_survives_two_pptx_round_trips() {
+    let p = rich_deck();
+    let q = round(&round(&p));
+    let gradient = by_name(&q.slides[1], "Gradient Star").fill.as_ref();
+    assert!(matches!(gradient, Some(Fill::Gradient(g)) if g.flip == Some(GradientFlip::Xy)));
 }
 
 #[test]
@@ -1924,4 +2022,48 @@ fn zoom_inserts_linked_slide_pictures() {
     assert!(matches!(z.click.as_ref().unwrap().action, Action::Slide { .. }));
     assert!(s.execute("insert.zoom", &json!({"slides": [42]})).is_err());
     assert!(s.execute("insert.zoom", &json!({"kind": "slide"})).is_err());
+}
+
+#[test]
+fn darken_and_desaturate_write_powerpoints_hsl_shift() {
+    for (effect, preset, shift) in [("darken", 24, r#"s="0" l="-25098""#), ("desaturate", 25, r#"s="-70588" l="0""#)] {
+        let mut p = defaults::new_presentation(None);
+        let mut s = p.slides[0].as_ref().clone();
+        let sh = shape(&mut p, "Target", 100.0, 100.0, 100.0, 100.0);
+        let id = sh.id;
+        s.shapes.push(sh);
+        s.animations.push(Animation { shape: id, class: AnimClass::Emphasis, effect: effect.into(), duration_ms: 500, ..Default::default() });
+        p.slides[0] = Arc::new(s);
+        let bytes = deckcraft_pptx::export(&p).expect("export");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name("ppt/slides/slide1.xml").unwrap(), &mut xml).unwrap();
+        assert!(xml.contains(&format!(r#"presetID="{preset}""#)), "{effect}");
+        assert!(xml.contains(r#"clrSpc="hsl""#) && xml.contains(shift), "{effect}: {xml}");
+        assert_eq!(round(&p).slides[0].animations[0].effect, effect);
+    }
+}
+
+/// PowerPoint's default durations (COM `AddEffect`), which differ from the 0.5 s most effects get.
+#[test]
+fn default_durations_match_powerpoint() {
+    for (effect, ms) in [
+        ("grow", 1000),
+        ("shrinkTurn", 1000),
+        ("box", 2000),
+        ("circle", 2000),
+        ("diamond", 2000),
+        ("boxOut", 2000),
+        ("diamondOut", 2000),
+        ("expand", 1000),
+        ("contract", 1000),
+        ("spinner", 500),
+        ("spinnerOut", 500),
+        ("colorPulse", 250),
+        ("objectColor", 500),
+        ("boldFlash", 2000),
+    ] {
+        let a = deckcraft_model::anim::ANIMATIONS.iter().find(|a| a.0 == effect).unwrap();
+        assert_eq!(a.4, ms, "{effect}");
+    }
 }

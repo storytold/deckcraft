@@ -1,16 +1,18 @@
 //! Inspection for agents: the deck, slides and shapes as JSON (verify work without screenshots).
 
 use deckcraft_model::resolve::{self, Ctx};
+use deckcraft_model::text::Hyperlink;
 use deckcraft_model::{Shape, ShapeKind};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, always, bad, cmd, has_doc, id_param, str_param, usize_param, xfrm_of};
+use super::{CommandSpec, always, bad, cmd, has_doc, id_param, opt_usize_param, str_param, usize_param, xfrm_of};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "document.inspect", "Inspect Presentation", [], None, "{} → slides with titles, layouts, shape counts; selection; size; theme", has_doc, document),
         cmd!(query "slide.inspect", "Inspect Slide", [], None, "{index?} → the slide's shapes with ids, kinds, boxes, text, fills, animations, transition, notes (text, and notesBody with its formatting)", has_doc, slide),
+        cmd!(query "slide.actions", "Inspect Slide Actions", [], None, "{index?} → {index, slideId, actions: [{owner, event, type, target, hyperlink}]}; lists shape click/hover actions and text-run links/hover actions (including table cells) without executing them", has_doc, actions),
         cmd!(query "shape.inspect", "Inspect Shape", [], None, "{id} → full shape JSON plus its effective box", has_doc, shape),
         cmd!(query "commands.list", "List Commands", [], None, "{filter?: substring} → [{id, label, params, enabled}]", always, commands),
     ]
@@ -135,6 +137,70 @@ fn slide(s: &mut Session, p: &Value) -> Result<Value> {
     }))
 }
 
+fn actions(s: &mut Session, p: &Value) -> Result<Value> {
+    let st = s.doc()?;
+    let i = opt_usize_param(p, "index", "slide.actions")?.unwrap_or(st.selection.slide);
+    let sl = st.doc.slides.get(i).ok_or_else(|| bad("slide.actions", format!("no slide {i}")))?;
+    let mut found = Vec::new();
+    for sh in &sl.shapes {
+        collect_actions(sh, &mut Vec::new(), &mut found);
+    }
+    Ok(json!({"index": i, "slideId": sl.id, "actions": found}))
+}
+
+fn collect_actions(sh: &Shape, path: &mut Vec<Value>, found: &mut Vec<Value>) {
+    path.push(json!({"id": sh.id, "name": sh.name}));
+    let owner = json!({"shapeId": sh.id, "shapeName": sh.name, "path": path});
+    if let Some(link) = &sh.click {
+        found.push(action_entry(owner.clone(), "click", link));
+    }
+    if let Some(link) = &sh.hover {
+        found.push(action_entry(owner.clone(), "hover", link));
+    }
+    if let Some(text) = &sh.text {
+        collect_text_actions(text, &owner, found);
+    }
+    if let ShapeKind::Table(table) = &sh.kind {
+        for (row_index, row) in table.rows.iter().enumerate() {
+            for (cell_index, cell) in row.cells.iter().enumerate() {
+                let mut cell_owner = owner.clone();
+                cell_owner["tableRowIndex"] = json!(row_index);
+                cell_owner["tableCellIndex"] = json!(cell_index);
+                collect_text_actions(&cell.text, &cell_owner, found);
+            }
+        }
+    }
+    if let ShapeKind::Group { children, .. } = &sh.kind {
+        for child in children {
+            collect_actions(child, path, found);
+        }
+    }
+    path.pop();
+}
+
+fn collect_text_actions(text: &deckcraft_model::text::TextBody, owner: &Value, found: &mut Vec<Value>) {
+    for (paragraph_index, paragraph) in text.paragraphs.iter().enumerate() {
+        for (run_index, run) in paragraph.runs.iter().enumerate() {
+            for (event, link) in [("textLink", run.props.link.as_ref()), ("textHover", run.props.hover.as_ref())] {
+                if let Some(link) = link {
+                    let mut text_owner = owner.clone();
+                    text_owner["paragraphIndex"] = json!(paragraph_index);
+                    text_owner["runIndex"] = json!(run_index);
+                    text_owner["text"] = json!(run.content());
+                    found.push(action_entry(text_owner, event, link));
+                }
+            }
+        }
+    }
+}
+
+fn action_entry(owner: Value, event: &str, link: &Hyperlink) -> Value {
+    let action = serde_json::to_value(&link.action).unwrap_or_default();
+    let kind = action.get("kind").cloned().unwrap_or(Value::Null);
+    let target = ["url", "slide", "name", "path"].iter().find_map(|key| action.get(key).cloned()).unwrap_or(Value::Null);
+    json!({"owner": owner, "event": event, "type": kind, "target": target, "hyperlink": link})
+}
+
 fn shape(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let id =
@@ -153,4 +219,83 @@ fn commands(s: &mut Session, p: &Value) -> Result<Value> {
             .map(|c| serde_json::to_value(c).unwrap_or_default())
             .collect(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deckcraft_geom::Xfrm;
+    use deckcraft_model::table::Row;
+    use deckcraft_model::text::{Action, Paragraph, Run, RunProps, TextBody};
+    use deckcraft_model::{Cell, Shape, ShapeId, ShapeKind, Table};
+
+    fn link(action: Action) -> Hyperlink {
+        Hyperlink { action, tooltip: String::new(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None }
+    }
+
+    #[test]
+    fn slide_actions_lists_group_shape_and_text_actions() {
+        let mut s = Session::with_new();
+        let mut child = Shape { id: ShapeId(12), name: "Child".into(), ..Default::default() };
+        child.click = Some(link(Action::NextSlide));
+        child.hover = Some(link(Action::Url { url: "https://example.com/hover".into() }));
+        let run_props = RunProps { link: Some(link(Action::Slide { slide: deckcraft_model::SlideId(7) })), ..Default::default() };
+        let mut paragraph = Paragraph::new("linked");
+        paragraph.runs = vec![Run::with("linked", run_props)];
+        child.text = Some(TextBody { paragraphs: vec![paragraph], ..Default::default() });
+        let group = Shape {
+            id: ShapeId(11),
+            name: "Group".into(),
+            kind: ShapeKind::Group { children: vec![child], child: Xfrm::default() },
+            ..Default::default()
+        };
+        let st = s.doc_mut().unwrap();
+        let slide_index = st.selection.slide;
+        let presentation = std::sync::Arc::make_mut(&mut st.doc);
+        std::sync::Arc::make_mut(&mut presentation.slides[slide_index]).shapes = vec![group];
+
+        let v = s.execute("slide.actions", &json!({})).unwrap();
+        let actions = v["actions"].as_array().unwrap();
+        assert_eq!(actions.len(), 3, "{v}");
+        assert_eq!(actions[0]["event"], "click");
+        assert_eq!(actions[0]["type"], "nextSlide");
+        assert_eq!(actions[0]["owner"]["path"][0]["name"], "Group");
+        assert_eq!(actions[0]["owner"]["path"][1]["id"], 12);
+        assert_eq!(actions[1]["event"], "hover");
+        assert_eq!(actions[1]["target"], "https://example.com/hover");
+        assert_eq!(actions[2]["event"], "textLink");
+        assert_eq!(actions[2]["owner"]["runIndex"], 0);
+        assert_eq!(actions[2]["target"], 7);
+
+        let cell_props = RunProps { hover: Some(link(Action::Url { url: "https://example.com/cell".into() })), ..Default::default() };
+        let mut cell_text = TextBody::from_text("cell link");
+        cell_text.paragraphs[0].runs = vec![Run::with("cell link", cell_props)];
+        let table =
+            Table { rows: vec![Row { cells: vec![Cell { text: cell_text, ..Default::default() }], ..Default::default() }], ..Default::default() };
+        let table_shape = Shape { id: ShapeId(13), name: "Table".into(), kind: ShapeKind::Table(table), ..Default::default() };
+        let st = s.doc_mut().unwrap();
+        let presentation = std::sync::Arc::make_mut(&mut st.doc);
+        std::sync::Arc::make_mut(&mut presentation.slides[slide_index]).shapes.push(table_shape);
+        let v = s.execute("slide.actions", &json!({})).unwrap();
+        let table_action = v["actions"].as_array().unwrap().last().cloned().unwrap();
+        assert_eq!(table_action["event"], "textHover");
+        assert_eq!(table_action["owner"]["tableRowIndex"], 0);
+        assert_eq!(table_action["owner"]["tableCellIndex"], 0);
+        assert_eq!(table_action["target"], "https://example.com/cell");
+    }
+
+    #[test]
+    fn slide_actions_returns_empty_array_for_slide_without_actions() {
+        let mut s = Session::with_new();
+        let v = s.execute("slide.actions", &json!({})).unwrap();
+        assert_eq!(v["actions"], json!([]));
+    }
+
+    #[test]
+    fn slide_actions_refuses_a_bad_index_instead_of_using_the_selection() {
+        let mut s = Session::with_new();
+        for index in [json!(-1), json!("0"), json!(1.5)] {
+            assert!(s.execute("slide.actions", &json!({"index": index})).is_err(), "{index}");
+        }
+    }
 }

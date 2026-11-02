@@ -480,7 +480,7 @@ fn num(v: f64) -> String {
     if a == 0.0 {
         return "0".to_string();
     }
-    if a >= 1.0e6 || a < 1.0e-3 {
+    if !(1.0e-3..1.0e6).contains(&a) {
         return format!("{v:.2e}").replace('+', "");
     }
     let digits = if a >= 100.0 {

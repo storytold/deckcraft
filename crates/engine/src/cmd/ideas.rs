@@ -8,7 +8,7 @@ use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::{Fill, Presentation, Rgba, Shape, ShapeKind};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, bad, cmd, has_slide, str_param, usize_param, xfrm_of};
+use super::{CommandSpec, bad, cmd, has_slide, opt_usize_param, str_param, xfrm_of};
 use crate::{Result, Selection, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -245,13 +245,13 @@ pub fn apply_idea(doc: &mut Presentation, sel: &Selection, index: usize, id: &st
 
 fn ideas_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
+    let i = opt_usize_param(p, "slide", "design.ideas")?.unwrap_or(st.selection.slide);
     Ok(json!(ideas_for(&st.doc, i).iter().map(|(id, label)| json!({"id": id, "label": label})).collect::<Vec<_>>()))
 }
 
 fn apply_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let id = str_param(p, "id").ok_or_else(|| bad("design.applyIdea", "missing `id`"))?.to_string();
-    let slide = usize_param(p, "slide");
+    let slide = opt_usize_param(p, "slide", "design.applyIdea")?;
     s.edit(|doc, sel| {
         let i = slide.unwrap_or(sel.slide);
         apply_idea(doc, sel, i, &id)?;
@@ -370,6 +370,19 @@ mod tests {
         let mut s = deck(false);
         assert!(s.execute("design.applyIdea", &json!({"id": "fullBleed"})).is_err());
         assert!(s.execute("design.applyIdea", &json!({"id": "nope"})).is_err());
+    }
+
+    #[test]
+    fn an_invalid_slide_index_is_refused_not_replaced_by_the_selection() {
+        let mut s = deck(false);
+        let before = s.doc().unwrap().doc.clone();
+        for bad_slide in [json!(-1), json!(1.5), json!("0")] {
+            assert!(s.execute("design.applyIdea", &json!({"id": "centred", "slide": bad_slide})).is_err(), "{bad_slide}");
+            assert!(s.execute("design.ideas", &json!({"slide": bad_slide})).is_err(), "{bad_slide}");
+        }
+        assert!(Arc::ptr_eq(&before, &s.doc().unwrap().doc) || *before == *s.doc().unwrap().doc);
+        assert!(s.execute("design.applyIdea", &json!({"id": "centred", "slide": 0})).is_ok());
+        assert!(s.execute("design.ideas", &json!({})).is_ok());
     }
 
     #[test]

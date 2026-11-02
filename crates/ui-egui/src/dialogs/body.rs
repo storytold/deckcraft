@@ -259,6 +259,7 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let nn = check(ui, d, "Show without narration", "nn", sh.without_narration);
     let na = check(ui, d, "Show without animation", "na", sh.without_animation);
     let ut = check(ui, d, "Use timings, if present", "ut", sh.use_timings);
+    let kc = check(ui, d, "Keep mouse cursor visible", "kc", app.ui.show_keep_cursor);
     let names: Vec<String> = app.session.active().map(|s| s.doc.custom_shows.iter().map(|c| c.name.clone()).collect()).unwrap_or_default();
     let chosen = d.fields.entry("custom".into()).or_insert_with(|| sh.custom_show.clone().unwrap_or_default()).clone();
     let field = ui.label("Slides");
@@ -279,6 +280,7 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         let ty = d.get("type", "speaker");
         let custom = d.fields.get("custom").cloned().unwrap_or_default();
         run(app, "show.setup", json!({"type": ty, "loop": lp, "noNarration": nn, "noAnimation": na, "useTimings": ut, "custom": custom}));
+        run(app, "show.keepCursor", json!({"on": kc}));
     }
     ok || cancel
 }
