@@ -6,7 +6,8 @@ use deckcraft_model::Comment;
 use serde_json::{Value, json};
 
 use super::{
-    CommandSpec, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text, id_param, ok, str_param, usize_param,
+    CommandSpec, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text, id_param, ok, opt_usize_param,
+    str_param, usize_param,
 };
 use crate::{Result, Session, Target, UiRequest};
 
@@ -197,7 +198,7 @@ fn resolve(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn list(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
+    let i = opt_usize_param(p, "slide", "comment.list")?.unwrap_or(st.selection.slide);
     Ok(serde_json::to_value(st.doc.slides.get(i).map(|x| x.comments.clone()).unwrap_or_default()).unwrap_or_default())
 }
 
@@ -219,7 +220,7 @@ fn neighbour(s: &mut Session, p: &Value, forward: bool) -> Result<Value> {
     let cmd = if forward { "comment.next" } else { "comment.prev" };
     let (threads, slide, index) = {
         let st = s.doc()?;
-        (comment_threads(&st.doc), usize_param(p, "slide").unwrap_or(st.selection.slide), usize_param(p, "index"))
+        (comment_threads(&st.doc), opt_usize_param(p, "slide", cmd)?.unwrap_or(st.selection.slide), usize_param(p, "index"))
     };
     if threads.is_empty() {
         return Err(bad(cmd, "no comments"));
@@ -768,6 +769,18 @@ mod tests {
     use serde_json::json;
 
     use crate::Session;
+
+    #[test]
+    fn invalid_slide_index_is_an_error_not_the_selected_slide() {
+        let mut s = Session::with_new();
+        for bad in [json!(-1), json!(1.5), json!("x")] {
+            assert!(s.execute("slide.inspect", &json!({"index": bad})).is_err(), "slide.inspect {bad}");
+            assert!(s.execute("animation.get", &json!({"slide": bad})).is_err(), "animation.get {bad}");
+            assert!(s.execute("comment.list", &json!({"slide": bad})).is_err(), "comment.list {bad}");
+            assert!(s.execute("comment.next", &json!({"slide": bad})).is_err(), "comment.next {bad}");
+            assert!(s.execute("comment.prev", &json!({"slide": bad})).is_err(), "comment.prev {bad}");
+        }
+    }
 
     #[test]
     fn previous_and_next_comment_walk_the_deck() {
