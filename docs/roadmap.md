@@ -1,5 +1,7 @@
 # DeckCraft roadmap: milestones and what's next
 
+> **PPTX.44 update 2026-11-02:** Restored nested snake layouts retain partial placement on overflow, raising the original matrix to 490/491. Geographic paint order follows materialized regions, improving overlap in independent large caches. Explicit axis fonts govern chart geometry; supported column reserves use measured font metrics. Remaining text-rule state, small-frame and rotated-label limits stay explicit; feature scores are unchanged.
+
 > **PPTX.43 update 2026-11-02:** Text measurement gates root linear fitting; alternating centered snake packing raises the retained matrix to 489/491. Sparse geographic caches fit their actual painted extent, and automatic rich-label ellipses preserve marker style, direction and background alignment. Independent controls, error regressions and unresolved cases are recorded separately. Feature scores are unchanged.
 
 > **PPTX.42 update 2026-11-02:** Native-sized rule searches retain whole words and respect rule order; nested linear children preserve intrinsic cross extents after snake fitting. Map viewport normalization and chart axis visibility/spacing are refined. Independent controls and retained regressions are reported separately; remaining geometry, paint-order and chart-placement limits stay explicit. Feature scores are unchanged.
@@ -180,6 +182,7 @@ and rich point labels; provider/native-layout gaps remain documented, and beta s
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.44: restored-layout early exits, materialized geographic paint order and font-metric axis reserves; independent controls and unresolved failures retained |
 | 2026-11-02 | minor | PPTX.43: measured linear fitting, alternating snake centering, sparse map extents and rich-label ellipsis geometry; explicit incomplete cases retained |
 | 2026-11-02 | minor | PPTX.42: finite size-rule search, intrinsic nested flows, map viewport and chart axis state; independent evidence and known limits retained |
 | 2026-11-02 | minor | PPTX.41: centered snake state, literal LF paragraph semantics, heavy map sampling and rotated/manual rich labels; bounded evidence and residuals retained |

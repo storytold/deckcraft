@@ -468,8 +468,9 @@ fn pack_composite_extents(
         }
         let mut packed = occupied.clone();
         super::snake::pack(node, local, &mut packed, text_refit, work)?;
+        let allocations = packed.clone();
         if restore_linear_cross_extents(node, &occupied, &mut packed, work)? {
-            super::snake::repack(node, local, &mut packed, work)?;
+            super::snake::repack(node, local, &mut packed, &allocations, work)?;
         }
         for ((before, after), range) in occupied.iter().zip(&packed).zip(ranges.iter().cloned()) {
             let (sx, sy) = (

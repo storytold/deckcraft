@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **PPTX.44 update 2026-11-02:** Restored nested snake layouts retain partial placement on overflow, raising the original matrix to 490/491. Geographic paint order follows materialized regions, improving overlap in independent large caches. Explicit axis fonts govern chart geometry; supported column reserves use measured font metrics. Remaining text-rule state, small-frame and rotated-label limits stay explicit; feature scores are unchanged.
+
 > **PPTX.43 update 2026-11-02:** Text measurement gates root linear fitting; alternating centered snake packing raises the retained matrix to 489/491. Sparse geographic caches fit their actual painted extent, and automatic rich-label ellipses preserve marker style, direction and background alignment. Independent controls, error regressions and unresolved cases are recorded separately. Feature scores are unchanged.
 
 > **PPTX.42 update 2026-11-02:** Native-sized rule searches retain whole words and respect rule order; nested linear children preserve intrinsic cross extents after snake fitting. Map viewport normalization and chart axis visibility/spacing are refined. Independent controls and retained regressions are reported separately; remaining geometry, paint-order and chart-placement limits stay explicit. Feature scores are unchanged.
@@ -239,7 +241,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
   with clear entity caches now decode PCA polygons, bind by entity id, and render boundaries/holes
   offline. Observed plain XML, finalized raw-DEFLATE and SYNC_FLUSH geographic cache envelopes decode. The inspected payload audit found no additional unsupported envelope; malformed or unsupported payloads remain retained, with explicitly labelled fallback tiles when geometry is unusable.
   Administrative lineage, common-ancestor selection and regional Albers are implemented; missing
-  ancestor geometry/extents, regional threshold arithmetic, map paint order and full provider projection policy remain open. Initial and heavy boundary reduction and finite-size viewport construction have independent native controls; exact-threshold failures remain recorded.
+  ancestor geometry/extents, regional threshold arithmetic, longitude continuity and full provider projection policy remain open. Materialized-region paint order now matches independent large overlapping caches; exact RGB and boundary pixels remain partial. Initial and heavy boundary reduction and finite-size viewport construction have independent native controls; seventeen threshold sequences and two Albers sequences still fail with the final analytic viewport.
   No map assets are bundled. Radar charts are drawn polar (filled
   or lines), stock charts as high-low lines with close dashes or up/down bars and saved as
   `c:stockChart`, and combo charts start as columns with a line. Trendlines round-trip
@@ -267,7 +269,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
   and native-compatible scalar attributes; the latter differ from the SDK schema for three
   elements. Classic rich/point labels now read, rebuild and render mixed runs, rotation, hidden
   points, manual positions and formatted visibility combinations. Funnel typography also renders; remaining chartEx label rendering,
-  leader/callout routing, offsets and automatic plot spacing remain partial. Manual layouts and body rotations render; explicit axes/gridlines
+  leader/callout routing, offsets and broader automatic plot spacing remain partial. Explicit axis font sizes now govern tick geometry; supported undecorated column reserves use measured font metrics. Cramped frames, interior category axes, decorated charts and eighteen retained label-position regressions remain unresolved. Manual layouts and body rotations render; explicit axes/gridlines
   retain line width/dashes/paint. See [layout fidelity](layout-fidelity.md).
 - **Impact:** most business decks have charts; editing their data is routine.
 - **Estimate:** 12–20 h. Data and elements are **beta blockers** (6–10 h).
@@ -295,7 +297,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
   imported diagram's structure still redraws it with DeckCraft's layout; the full rule-search and
   constraint language is incomplete. Named child/descendant affine references, cycles, paired
   edges and bounds now use a bounded sparse solver rather than eight relaxation passes. Ordered
-  text-measured rules and circular extent fitting are supported. Successful width/height endpoint searches use the observed finite iterations; width growth accounts for forced word breaks. Coupled search away from the common rule parameter, repeated-control combinations and broader hierarchy/pyramid text interactions still need independent coverage. The corrected uncached nested-card definition now renders
+  text-measured rules and circular extent fitting are supported. Successful width/height endpoint searches use the observed finite iterations; width growth accounts for forced word breaks. Coupled search away from the common rule parameter, persistent allocations across sibling-rule stages, repeated-control combinations and broader hierarchy/pyramid text interactions still need independent coverage. Restored nested snake early exits retain partial placement; same-direction fitting-state positions remain unresolved. The corrected uncached nested-card definition now renders
   six shapes in PowerPoint; measured coordinates, text spacing and default insets are covered.
   Helper visibility, layout-order colours, connector/space allocation and recursive composite
   fitting, scaled-end clipping, disjoint-child placement and bounded algorithm-local geometry scope
@@ -488,6 +490,7 @@ no global parity claim or score increase.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.44: restored-layout early exits, materialized geographic paint order and font-metric axis reserves; independent controls and unresolved failures retained |
 | 2026-11-02 | minor | PPTX.43: measured linear fitting, alternating snake centering, sparse map extents and rich-label ellipsis geometry; explicit incomplete cases retained |
 | 2026-11-02 | minor | PPTX.42: finite size-rule search, intrinsic nested flows, map viewport and chart axis state; independent evidence and known limits retained |
 | 2026-11-02 | minor | PPTX.41: centered snake state, literal LF paragraph semantics, heavy map sampling and rotated/manual rich labels; bounded evidence and residuals retained |

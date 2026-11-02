@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.43): measured root fitting, alternating snake centers,
-sparse geographic extents and rich-label ellipsis alignment.
+Updated 2026-11-02 (PPTX.44): nested overflow placement, geographic painter ordering,
+and font-metric column-axis reserves.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -2285,3 +2285,120 @@ doctests; hosted CI is reported separately.
 Only source, original programmatic tests and documentation are published. Native
 observations, provider data, fonts and private decks remain outside the commit.
 This is a bounded fidelity improvement, not complete LibreOffice replacement.
+
+
+## PPTX.44 — nested early exits, map paint order and axis font metrics
+
+When nested linear children restore their intrinsic cross extents after snake
+fitting, a line can exceed the available frame. The layout now retains visited
+lines in working coordinates and centers unvisited children in their prior
+allocations. An early return skips column-axis swapping and growth reflection;
+a completed layout still performs both. This fixes one original case from
+122.788pt to 0.0081pt maximum error and leaves the other 490 models unchanged,
+raising the original matrix from 489/491 to 490/491. All sixteen new independent
+controls and six growth-direction controls match. The retained nested matrices
+remain matched. Ten selected 4K comparisons agree within one pixel in visible
+bounds; that does not establish whole-image equality.
+
+Same-direction fitting still has a stateful positioning gap. A separate frozen
+model predicts all 199 measured scales, but fitting trials leave placement state
+that is not yet reproduced. It is not part of the production change. Additional
+unequal-sibling text-rule controls also reject a simple interleaved-rule ordering
+fix: only four of eighteen match. Sixteen targeted invalidation controls show
+that width growth and later font release can preserve earlier allocations. The
+current production rule search is unchanged; coupled stage replay remains open.
+
+Geographic rendering now orders materialized projected paths before screen-space
+boundary reduction. Data regions follow point order, backgrounds follow lexical
+entity identifiers, and batches above 128 regions exchange the first and middle
+slots. Extent-only entries do not count; tiny paths that collapse during later
+reduction do. This is an observed ordering rule, not a claim about the native
+implementation's internal sorting algorithm. Projection and work limits remain
+unchanged.
+
+Twenty-nine complete native path sequences match the generic order, with three
+additional small causal controls. Independent 181-, 157- and 641-region predictions
+were recorded before native export. Both 641-region controls match the entire
+order, with absolute vertex error below 0.000188pt and no fitted coordinate
+transform. Two native-empty controls remain excluded, and an earlier duplicate-
+geometry construction is retained as invalid evidence rather than counted.
+
+Among 56 original-source 4K map comparisons, foreground-mask intersection over
+union improves on 39 and is unchanged on 17, with none worsening. The older
+38-case subset has 31 improvements and seven unchanged results. The heavy-world
+Robinson score improves from 82.5267% to 99.7725%; the old three overlap controls
+reach 99.9976%. Two independent 641-region foreground scores improve from
+19.0064% to 99.9012% and from 98.3718% to 99.9799%. Their full-colour class agreement
+reaches 99.8221% and 99.8150%. Exact RGB is not solved: colour rounding and edge
+pixels differ, two broad painted/gray masks worsen by roughly one pixel, and
+one large control's exact full-page pixel fraction decreases despite the corrected
+paint order. These measures are reported separately. LibreOffice still exports
+unsupported-chart text with no geographic foreground for the new large controls.
+
+Explicit category, value and secondary-value fonts now govern their own tick
+density, measurement and placement instead of inheriting the chart default's
+size for geometry. Supported undecorated column charts with horizontal axis text
+use natural typographic line height, ascent and measured widest value-label advance
+for axis reserves. Automatic frames retain 5pt outside padding and a 6pt minimum
+reserve; authored outer plots apply reserves directly. Fixed inner plots remain
+authoritative. Decorations, secondary series and unsupported axis directions keep
+the existing path. Frames whose reserves overlap use the existing approximate
+layout instead of collapsing the new plot to zero; exact cramped-frame native
+constraints remain unresolved.
+
+Eight independent font-role controls preserve geometry when only the chart default
+changes. Independent mixed-size/mixed-font controls cover automatic and manual
+outer frames; a third permitted font family confirms the same metric formula.
+The first native export after installing that font had a first-page discrepancy;
+a byte-identical source reopened under a new name matched, and both observations
+are retained. Twelve stable rendered holdout pages have plot-edge RMS error at
+most 0.354pt. Public tests contain only original generated cases and permitted fonts.
+
+Across 107 measurable retained/new axis pages, mean plot-edge RMS falls from
+14.776pt to 0.386pt, with 78 improvements, 29 unchanged comparisons and no
+regressions. Three plots extending outside the slide cannot supply complete
+visible edge measurements and remain excluded from this metric.
+
+Among 375 old label pages, 23 foreground/background masks are unchanged. The
+348 comparable changed text boxes improve mean four-edge RMS from 6.160pt to
+3.231pt: 320 improve, eighteen regress and ten are effectively equal at the
+0.1pt threshold. Their 283 comparable backgrounds improve from 5.936pt to
+2.715pt, with 262 improvements and twelve regressions. No formerly correct
+visible line-band count is lost. All seventeen text regressions recorded in
+PPTX.43 recover to PPTX.42 or better; this does not erase the eighteen new ones.
+
+Seventeen of those eighteen now have bar-geometry RMS at most 0.236pt: more
+accurate chart positions expose remaining text placement, clipping and sampling
+differences. The other case has an interior category-axis reserve error; its bar
+geometry improves from 15.977pt to 11.578pt while label error worsens by 0.333pt.
+The largest text regression is 2.355pt. Two genuine plot-collapse defects found
+in the intermediate implementation were fixed using the generic fallback;
+all three affected 40pt-high controls reproduce the earlier full-page pixels.
+The regressions, first-load font anomaly and existing 180-degree failures were
+visually inspected and remain failures. All 111 retained ellipsis pages are
+pixel-identical to the preceding revision.
+
+The final executable reproduces all 56 map images and 608 chart-page renders
+from the verified implementations. It retains all 632 cycle geometries, 506
+unchanged cycle inspection models and 600 recovery font-size sets. The wider
+1,534-case geometry check has 1,478 strict matches: its only changed prior
+pass count is the corrected nested case; new restored-flow controls also pass.
+Known earlier failures remain in that denominator. These checks establish
+integration consistency, not native equality for the explicitly failing pages.
+Local `cargo xtask ci` passes all eight stages and 2,600 tests including
+doctests. Hosted CI is tracked separately.
+
+The observed geographic cache audit covers 132 entries, including 121 binary
+and eleven clear entries; 27 unique binary payloads use supported raw-DEFLATE
+stream forms. No observed unknown binary envelope remains. Seventeen retained
+boundary-threshold sequence failures and two Albers sequence failures persist
+when rerun through the final analytic viewport; they are numerical/reduction
+gaps rather than the earlier fitted-transform artifact. A separate accepted
+native control reveals a longitude-continuity discrepancy for accumulated
+coordinates outside the usual range; it remains under investigation. No
+provider geometry is added to the code or tests.
+
+Only source, original programmatic tests and documentation are published. Private
+native observations, provider geometry and all document/font assets stay outside
+the commit. The remaining rule, small-frame, rotated-label and map-threshold gaps
+mean this is not blanket PowerPoint parity or complete LibreOffice replacement.

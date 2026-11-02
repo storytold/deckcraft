@@ -415,11 +415,24 @@ fn chart_axis_titles_are_drawn() {
         c.title = None;
         c.legend = None;
         c.axis_titles = titles;
+        // Isolate title ink from tick labels when automatic plot margins move.
+        for role in [deckcraft_model::chart::ChartTextRole::CategoryTitle, deckcraft_model::chart::ChartTextRole::ValueTitle] {
+            c.text_styles.insert(
+                role,
+                deckcraft_model::text::RunProps { fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(240, 0, 240)))), ..Default::default() },
+            );
+        }
         let sh = Shape { id: ShapeId(624), xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
         render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
     };
     let ink = |img: &Image, r: (u32, u32, u32, u32)| {
-        (r.0..r.2).flat_map(|x| (r.1..r.3).map(move |y| (x, y))).filter(|(x, y)| img.pixel(*x, *y)[0] < 160).count()
+        (r.0..r.2)
+            .flat_map(|x| (r.1..r.3).map(move |y| (x, y)))
+            .filter(|(x, y)| {
+                let p = img.pixel(*x, *y);
+                p[0] > 200 && p[1] < 80 && p[2] > 200
+            })
+            .count()
     };
     let bare = draw((None, None));
     let titled = draw((Some("Month".into()), Some("Revenue".into())));

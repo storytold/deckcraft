@@ -55,6 +55,101 @@ fn rebuild(p: &Presentation) -> Presentation {
 }
 
 #[test]
+fn explicit_axis_fonts_control_ticks_and_gutters_when_the_chart_default_changes() {
+    for fixed_plot in [false, true] {
+        let mut images = Vec::new();
+        for size in [8., 16., 30., 44.] {
+            let mut p = original();
+            let c = chart_mut(&mut p);
+            c.categories = vec!["A".into()];
+            c.y_major = None;
+            if !fixed_plot {
+                c.format.plot_layout = None;
+            }
+            c.text_styles.get_mut(&Role::Default).unwrap().size = Some(size);
+            c.text_styles.get_mut(&Role::CategoryAxis).unwrap().size = Some(16.);
+            c.text_styles.insert(Role::ValueAxis, RunProps { size: Some(16.), ..Default::default() });
+            images.push(render_slide(&rebuild(&p), 0, &RenderOpts::default()).pixels);
+        }
+        // Native controls retain identical plot bounds and axis ink: the explicit
+        // axis size governs tick density, geometry, and text placement together.
+        assert!(images.windows(2).all(|pair| pair[0] == pair[1]), "fixed plot: {fixed_plot}");
+    }
+}
+
+#[test]
+fn automatic_and_outer_plot_reserves_follow_axis_font_metrics() {
+    let cases = [
+        ("Inter", 6., 48., 740., 360., false, [100.8425, 34.0375, 729., 325.9625]),
+        ("Inter", 6., 48., 740., 360., true, [169.8425, 83.0375, 592., 258.9625]),
+        ("Open Sans", 8., 40., 1180., 620., false, [93.7291, 32.2375, 1169., 587.7625]),
+        ("Open Sans", 8., 40., 1180., 620., true, [206.7291, 120.2375, 944., 468.7625]),
+        ("Lato", 13., 21., 780., 420., false, [50.3683, 17.6, 769., 389.3468]),
+        ("Lato", 13., 21., 780., 420., true, [123.3683, 75.6, 624., 310.3468]),
+        ("Lato", 27., 9., 1120., 640., false, [25.3016, 11., 1109., 583.3334]),
+        ("Lato", 27., 9., 1120., 640., true, [132.3017, 101.4, 896., 460.3334]),
+    ];
+    for (font, category, value, w, h, outer, expected) in cases {
+        let mut p = original();
+        p.slide_size = deckcraft_geom::Size::new(1440., 900.);
+        Arc::make_mut(&mut p.slides[0]).shapes[0].xfrm = Some(Xfrm::new(0., 0., w, h));
+        let c = chart_mut(&mut p);
+        c.categories = vec!["A".into()];
+        c.plot_fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(0, 255, 0))));
+        c.format.plot_layout = outer.then_some(ChartLayout {
+            x: Some(0.1),
+            y: Some(0.15),
+            w: Some(0.7),
+            h: Some(0.65),
+            x_edge: true,
+            y_edge: true,
+            ..Default::default()
+        });
+        for (role, size) in [(Role::CategoryAxis, category), (Role::ValueAxis, value)] {
+            c.text_styles.insert(role, RunProps { font: Some(font.into()), size: Some(size), ..Default::default() });
+        }
+        let bounds = green_bounds(&rebuild(&p));
+        // Independent native controls include endpoint-dominated bottom margins,
+        // unequal axis fonts, and the absence of outer-frame padding in manual plots.
+        for (actual, expected) in bounds.into_iter().zip(expected) {
+            assert!((actual - expected).abs() <= 1., "{font}, {category}/{value}, outer={outer}: {bounds:?}");
+        }
+    }
+}
+
+fn green_bounds(p: &Presentation) -> [f64; 4] {
+    let img = render_slide(p, 0, &RenderOpts::default());
+    let mut bounds = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    for (i, px) in img.pixels.chunks_exact(4).enumerate() {
+        if px[0] < 20 && px[1] > 240 && px[2] < 20 {
+            let (x, y) = ((i as u32 % img.width) as f64, (i as u32 / img.width) as f64);
+            bounds = [bounds[0].min(x), bounds[1].min(y), bounds[2].max(x + 1.), bounds[3].max(y + 1.)];
+        }
+    }
+    bounds
+}
+
+#[test]
+fn overlapping_axis_reserves_keep_a_visible_plot_and_series() {
+    for (w, h) in [(960., 40.), (30., 400.)] {
+        let mut p = original();
+        Arc::make_mut(&mut p.slides[0]).shapes[0].xfrm = Some(Xfrm::new(0., 0., w, h));
+        let c = chart_mut(&mut p);
+        c.categories = vec!["A".into()];
+        c.format.plot_layout = None;
+        c.y_major = Some(10.);
+        c.text_styles.get_mut(&Role::Default).unwrap().size = Some(16.);
+        c.plot_fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(0, 255, 0))));
+        c.series[0].fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(0, 0, 255))));
+        let back = rebuild(&p);
+        let bounds = green_bounds(&back);
+        assert!(bounds.iter().all(|v| v.is_finite()) && bounds[2] > bounds[0] && bounds[3] > bounds[1], "{w}x{h}: {bounds:?}");
+        let img = render_slide(&back, 0, &RenderOpts::default());
+        assert!(img.pixels.chunks_exact(4).any(|px| px[0] < 20 && px[1] < 20 && px[2] > 240), "visible series: {w}x{h}");
+    }
+}
+
+#[test]
 fn category_axis_state_and_spacing_survive_forced_rebuild_and_old_json() {
     for offset in [None, Some(0), Some(50), Some(1000)] {
         let mut p = original();

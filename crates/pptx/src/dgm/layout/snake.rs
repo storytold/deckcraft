@@ -19,6 +19,12 @@ struct Packing {
     boxes: Vec<Xfrm>,
     width: f64,
     height: f64,
+    complete: bool,
+}
+
+struct Restored<'a> {
+    allocations: &'a [BoxStyle],
+    cross_limit: f64,
 }
 
 struct Policy {
@@ -191,6 +197,17 @@ impl Policy {
     }
 
     fn layout(&self, children: &[BoxStyle], available: f64, scale: f64, work: &mut usize) -> Result<Packing, &'static str> {
+        self.layout_inner(children, available, scale, None, work)
+    }
+
+    fn layout_inner(
+        &self,
+        children: &[BoxStyle],
+        available: f64,
+        scale: f64,
+        restored: Option<Restored<'_>>,
+        work: &mut usize,
+    ) -> Result<Packing, &'static str> {
         charge(work, children.len().saturating_mul(3))?;
         let mut lines = Vec::<Line>::new();
         let mut line = Line { range: 0..0, length: 0., thickness: 0., physical_width: 0. };
@@ -214,6 +231,12 @@ impl Policy {
         let mut centering = Centering { extent: lines.first().map_or(0., |line| line.length), offset: 0., pending: 0., next: 0. };
         let mut reverse_centering = ReverseCentering::new(centering.extent);
         let mut boxes = vec![Xfrm::new(0., 0., 0., 0.); children.len()];
+        if let Some(restored) = &restored {
+            for ((rect, child), allocation) in boxes.iter_mut().zip(children).zip(restored.allocations) {
+                let (w, h) = (child.rect.w, child.rect.h);
+                *rect = Xfrm::new((allocation.rect.w - w) / 2., (allocation.rect.h - h) / 2., w, h);
+            }
+        }
         let (mut cursor, mut cross, mut low, mut high) = (0., 0., 0_f64, 0_f64);
         for (i, line) in lines.iter().enumerate() {
             let reversed = self.reverse && i % 2 == 1;
@@ -243,23 +266,52 @@ impl Policy {
                     pos -= length;
                 }
                 let perpendicular = cross + (line.thickness - thickness) / 2.;
-                *rect = if self.column { Xfrm::new(perpendicular, pos, thickness, length) } else { Xfrm::new(pos, perpendicular, length, thickness) };
+                // Keep positions in flow coordinates until every line fits.
+                // An overflowing restored line returns before the column swap.
+                *rect = Xfrm::new(pos, perpendicular, child.rect.w * scale, child.rect.h * scale);
                 if !reversed {
                     pos += length;
                 }
             }
             cursor = pos;
             cross += line.thickness + self.gap * scale;
+            if restored.as_ref().is_some_and(|r| exceeds(high - low, available) || exceeds(cross - self.gap * scale, r.cross_limit)) {
+                // A restored intrinsic size can make fitting impossible. Lines
+                // already visited retain their working positions; later children
+                // stay centered within their previous, uniformly fitted slots.
+                return Ok(occupied_packing(boxes));
+            }
         }
         if !lines.is_empty() {
             cross -= self.gap * scale;
         }
         for rect in &mut boxes {
-            if self.column { rect.y -= low } else { rect.x -= low }
+            rect.x -= low;
+            if self.column {
+                std::mem::swap(&mut rect.x, &mut rect.y);
+            }
         }
         let (width, height) = if self.column { (cross, high - low) } else { (high - low, cross) };
-        Ok(Packing { boxes, width, height })
+        Ok(Packing { boxes, width, height, complete: true })
     }
+}
+
+fn occupied_packing(mut boxes: Vec<Xfrm>) -> Packing {
+    let (mut left, mut top, mut right, mut bottom) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for rect in &boxes {
+        left = left.min(rect.x);
+        top = top.min(rect.y);
+        right = right.max(rect.x + rect.w);
+        bottom = bottom.max(rect.y + rect.h);
+    }
+    if boxes.is_empty() {
+        return Packing { boxes, width: 0., height: 0., complete: false };
+    }
+    for rect in &mut boxes {
+        rect.x -= left;
+        rect.y -= top;
+    }
+    Packing { boxes, width: right - left, height: bottom - top, complete: false }
 }
 
 pub(super) fn pack(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], refit: bool, work: &mut usize) -> Result<(), &'static str> {
@@ -297,11 +349,18 @@ pub(super) fn pack(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyl
 /// Repack children after inner linear flows restore their intrinsic cross
 /// dimensions. Those dimensions may exceed the canvas; another uniform fitting
 /// pass would discard the linear algorithm's intrinsic dimensions again.
-pub(super) fn repack(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], work: &mut usize) -> Result<(), &'static str> {
+pub(super) fn repack(
+    node: &Instance<'_>,
+    style: BoxStyle,
+    children: &mut [BoxStyle],
+    allocations: &[BoxStyle],
+    work: &mut usize,
+) -> Result<(), &'static str> {
     let policy = Policy::new(node, style, children.len());
     let frame = style.rect;
     let available = if policy.column { frame.h } else { frame.w };
-    let packed = policy.layout(children, available, 1., work)?;
+    let cross_limit = if policy.column { frame.w } else { frame.h };
+    let packed = policy.layout_inner(children, available, 1., Some(Restored { allocations, cross_limit }), work)?;
     place(node, frame, children, packed);
     Ok(())
 }
@@ -309,10 +368,10 @@ pub(super) fn repack(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxSt
 fn place(node: &Instance<'_>, frame: Xfrm, children: &mut [BoxStyle], packed: Packing) {
     let grow = node.param("grDir", "tL");
     for (child, mut rect) in children.iter_mut().zip(packed.boxes) {
-        if grow.ends_with('R') {
+        if packed.complete && grow.ends_with('R') {
             rect.x = packed.width - rect.x - rect.w;
         }
-        if grow.starts_with('b') {
+        if packed.complete && grow.starts_with('b') {
             rect.y = packed.height - rect.y - rect.h;
         }
         rect.x += frame.x + (frame.w - packed.width) / 2.;
@@ -488,6 +547,48 @@ mod tests {
         assert!((low + high - 300.).abs() < 1e-7);
         for (rect, (w, h)) in actual.iter().zip(sizes) {
             assert!((rect.w - w).abs() < 1e-7 && (rect.h - h).abs() < 1e-7);
+        }
+    }
+
+    #[test]
+    fn restored_overflow_retains_completed_lines_and_unplaced_allocations() {
+        let xml = crate::xml::parse(b"<layoutNode/>").unwrap();
+        let mut node = Instance::new(&xml.root);
+        node.alg = "snake".into();
+        node.params = [("bkpt", "fixed"), ("bkPtFixedVal", "2"), ("flowDir", "col")].map(|(k, v)| (k.into(), v.into())).into_iter().collect();
+        let sizes = [(8., 12.), (15., 10.), (10., 28.), (20., 18.), (14., 22.)];
+        let slots = [(8.1, 6.), (15.1, 5.), (10.1, 14.), (20.1, 9.), (14.1, 11.)];
+        let allocations: Vec<_> = slots.into_iter().map(|(w, h)| BoxStyle::new(Xfrm::new(0., 0., w, h))).collect();
+        // The second column exceeds the flow limit after both children have
+        // been positioned. Its coordinates remain unswapped, while the last
+        // child retains the centering inside its old allocation. Returning
+        // before orientation also skips the requested growth reflection.
+        let positions = [(-1.5, 2.25), (10.5, -1.25), (-1.5, 18.75), (26.5, 13.75), (-1.45, -6.75)];
+        for grow in ["tL", "tR", "bL", "bR"] {
+            node.params.insert("grDir".into(), grow.into());
+            let mut children: Vec<_> = sizes.iter().map(|&(w, h)| BoxStyle::new(Xfrm::new(0., 0., w, h))).collect();
+            repack(&node, BoxStyle::new(Xfrm::new(0., 0., 45., 40.)), &mut children, &allocations, &mut 0).unwrap();
+            for ((child, (x, y)), (w, h)) in children.iter().zip(positions).zip(sizes) {
+                assert!((child.rect.x - x).abs() < 1e-7 && (child.rect.y - y).abs() < 1e-7);
+                assert_eq!((child.rect.w, child.rect.h), (w, h));
+            }
+        }
+    }
+
+    #[test]
+    fn restored_columns_complete_the_axis_swap_when_all_lines_fit() {
+        let xml = crate::xml::parse(b"<layoutNode/>").unwrap();
+        let mut node = Instance::new(&xml.root);
+        node.alg = "snake".into();
+        node.params = [("bkpt", "fixed"), ("bkPtFixedVal", "2"), ("flowDir", "col")].map(|(k, v)| (k.into(), v.into())).into_iter().collect();
+        let sizes = [(8., 12.), (15., 10.), (10., 28.), (20., 18.), (14., 22.)];
+        let mut children: Vec<_> = sizes.iter().map(|&(w, h)| BoxStyle::new(Xfrm::new(0., 0., w, h))).collect();
+        let allocations = children.clone();
+        repack(&node, BoxStyle::new(Xfrm::new(0., 0., 80., 80.)), &mut children, &allocations, &mut 0).unwrap();
+        let positions = [(19., 17.), (15.5, 29.), (35.5, 17.), (30.5, 45.), (50.5, 17.)];
+        for ((child, (x, y)), (w, h)) in children.iter().zip(positions).zip(sizes) {
+            assert!((child.rect.x - x).abs() < 1e-7 && (child.rect.y - y).abs() < 1e-7);
+            assert_eq!((child.rect.w, child.rect.h), (w, h));
         }
     }
 

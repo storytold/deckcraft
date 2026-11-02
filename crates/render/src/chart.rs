@@ -527,6 +527,78 @@ fn label_width(ctx: &Ctx, text: &str, size: f64, props: &RunProps) -> f64 {
     .content_width
 }
 
+fn axis_font_size(c: &Chart, role: ChartTextRole, base: f64) -> f64 {
+    c.text_props(role).size.unwrap_or(base).clamp(1., 4000.)
+}
+
+struct AxisMetrics {
+    height: f64,
+    ascent: f64,
+    spaced_height: f64,
+}
+
+fn axis_metrics(ctx: &Ctx, c: &Chart, role: ChartTextRole, base: f64) -> Option<AxisMetrics> {
+    let size = axis_font_size(c, role, base);
+    let mut body = label_body("0", LabelStyle { size, align: Align::Left, anchor: Anchor::Top, col: Rgba::BLACK, bold: false }, &c.text_props(role));
+    let natural = label_layout::measure(ctx, &body, 1e6, true);
+    let line = natural.lines.first()?;
+    let height = line.bottom - line.top;
+    let ascent = line.baseline - line.top;
+    let spaced_height = if let Some(spacing) = c.line_spacing(role) {
+        for p in &mut body.paragraphs {
+            p.props.line_spacing = Some(*spacing);
+        }
+        let spaced = label_layout::measure(ctx, &body, 1e6, true);
+        spaced.lines.first().map_or(height, |l| l.bottom - l.top)
+    } else {
+        height
+    };
+    [height, ascent, spaced_height].iter().all(|v| v.is_finite() && *v >= 0.).then_some(AxisMetrics { height, ascent, spaced_height })
+}
+
+/// Axis text reserves use font metrics, independently of the chart's dimensions or
+/// default font. These controls cover undecorated Columns with horizontal axis text.
+fn column_axis_plot(ctx: &Ctx, c: &Chart, area: Rect, frame: (f64, f64), base: f64, value_width: f64) -> Option<(Rect, f64)> {
+    let (w, h) = frame;
+    if c.kind != ChartType::Column
+        || c.title.is_some()
+        || c.legend.is_some()
+        || c.axis_titles != (None, None)
+        || c.series.iter().any(|s| c.on_secondary(s))
+        || ![w, h, value_width].iter().all(|v| v.is_finite() && *v >= 0.)
+        || [ChartTextRole::CategoryAxis, ChartTextRole::ValueAxis].iter().any(|role| {
+            c.format.bodies.get(role).is_some_and(|b| {
+                b.rot.unwrap_or(0.) != 0.
+                    || !matches!(b.vert, None | Some(deckcraft_model::text::TextDir::Horizontal))
+                    || b.columns.unwrap_or(1) > 1
+                    || b.warp.is_some()
+            })
+        })
+    {
+        return None;
+    }
+    let outer = c.format.plot_layout.as_ref().is_some_and(|l| !l.inner);
+    let rect = if outer { area } else { Rect::new(5_f64.min(w / 2.), 5_f64.min(h / 2.), (w - 5.).max(w / 2.), (h - 5.).max(h / 2.)) };
+    let floor = if outer { 0. } else { 6. };
+    let value = axis_metrics(ctx, c, ChartTextRole::ValueAxis, base)?;
+    let left = if c.y_hidden { 0. } else { 1.5 + value_width + value.height / 2. + value.ascent / 3. };
+    let top = if c.y_hidden { 0. } else { value.spaced_height / 2. };
+    let x0 = (rect.x0 + left.max(floor)).min(rect.x1);
+    let x1 = (rect.x1 - floor).max(x0);
+    let (extra, offset) = category_layout_adjustment(ctx, c, base, x1 - x0, false);
+    let category = axis_metrics(ctx, c, ChartTextRole::CategoryAxis, base)?;
+    let bottom = if c.cat_hidden || c.cat_deleted { 0. } else { 1.5 + category.height + 2. * category.ascent / 3. + extra };
+    let y0 = (rect.y0 + top.max(floor)).min(rect.y1);
+    let y1 = (rect.y1 - bottom.max(top).max(floor)).max(y0);
+    // Cramped native charts preserve a positive plot by compressing reserves.
+    // That constraint is not yet modeled: retain the approximate layout rather
+    // than making an existing series disappear when text reserves overlap.
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    Some((Rect::new(x0, y0, x1, y1), offset))
+}
+
 /// Authored category line spacing and label distance change the required gutter.
 /// The default gutter is still approximate; these deltas are independent of it.
 fn category_layout_adjustment(ctx: &Ctx, c: &Chart, base: f64, width: f64, horiz: bool) -> (f64, f64) {
@@ -780,9 +852,14 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     let bar_kind = c.series.iter().map(|s| c.series_kind(s)).find(|k| k.is_bar_like());
     let horiz = if combo { bar_kind.is_some_and(ChartType::horizontal) } else { c.kind.horizontal() };
     area = draw_axis_titles(ctx, rctx, &AxisTitleDrawing { chart: c, transform: m, base, text_color: text_col, horiz, width: w, height: h }, area);
+    // Once an axis has its own font size, the chart default no longer changes
+    // either its text or the space and tick density reserved for that text.
+    let value_size = axis_font_size(c, ChartTextRole::ValueAxis, base);
+    let category_size = axis_font_size(c, ChartTextRole::CategoryAxis, base);
+    let secondary_size = axis_font_size(c, ChartTextRole::SecondaryValueAxis, base);
     // As many major units as the value axis has room for labels (PowerPoint's automatic unit).
-    let axis_len = if horiz { area.width() - base * 4.5 } else { area.height() - base * 1.8 };
-    let max_intervals = (axis_len / if horiz { base * 6.0 } else { base * 1.9 }).floor().clamp(2.0, 12.0) as usize;
+    let axis_len = if horiz { area.width() - category_size * 4.5 } else { area.height() - category_size * 1.8 };
+    let max_intervals = (axis_len / if horiz { value_size * 6.0 } else { value_size * 1.9 }).floor().clamp(2.0, 12.0) as usize;
     // A logarithmic axis is scaled in exponents of its base.
     let log = c.log_axis_scale(max_intervals).map(|sc| (c.y_log_base.unwrap_or(10.0), sc));
     let (min, max, step) = match log {
@@ -800,35 +877,40 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     let primary_ticks: Vec<f64> = ticks((min, max, step)).map(|k| log.map_or(k, |(b, _)| b.powf(k))).collect();
     let label_w = |sec: bool, sc: (f64, f64, f64)| {
         let vals: Vec<f64> = if sec { ticks(sc).collect() } else { primary_ticks.clone() };
+        let size = if sec { secondary_size } else { value_size };
         vals.iter()
             .map(|v| {
                 label_width(
                     rctx,
                     &c.axis_label(sec, *v),
-                    base,
+                    size,
                     &c.text_props(if sec { ChartTextRole::SecondaryValueAxis } else { ChartTextRole::ValueAxis }),
                 )
             })
             .fold(0.0_f64, f64::max)
-            + base * 0.6
     };
     let gutter = if horiz {
         let measured =
-            c.categories.iter().map(|n| label_width(rctx, n, base, &c.text_props(ChartTextRole::CategoryAxis))).fold(0.0_f64, f64::max) + base * 0.6;
-        clamp_soft(measured, base * 1.5, area.width() * 0.4)
+            c.categories.iter().map(|n| label_width(rctx, n, category_size, &c.text_props(ChartTextRole::CategoryAxis))).fold(0.0_f64, f64::max)
+                + category_size * 0.6;
+        clamp_soft(measured, category_size * 1.5, area.width() * 0.4)
     } else if c.y_hidden {
-        base * 0.5
+        value_size * 0.5
     } else {
-        clamp_soft(label_w(false, (min, max, step)), base * 1.5, area.width() * 0.3)
+        clamp_soft(label_w(false, (min, max, step)) + value_size * 0.6, value_size * 1.5, area.width() * 0.3)
     };
-    let gutter_r = second.filter(|_| !c.y2_hidden).map(|sc| clamp_soft(label_w(true, sc), base * 1.5, area.width() * 0.3)).unwrap_or(0.0);
+    let gutter_r = second
+        .filter(|_| !c.y2_hidden)
+        .map(|sc| clamp_soft(label_w(true, sc) + secondary_size * 0.6, secondary_size * 1.5, area.width() * 0.3))
+        .unwrap_or(0.0);
     let (category_extra, category_offset) = category_layout_adjustment(rctx, c, base, area.width() - gutter - gutter_r, horiz);
     let plot = if horiz {
-        Rect::new(area.x0 + gutter, area.y0, area.x1, area.y1 - base * 1.6)
+        Rect::new(area.x0 + gutter, area.y0, area.x1, area.y1 - value_size * 1.6)
     } else {
-        Rect::new(area.x0 + gutter, area.y0, area.x1 - gutter_r, (area.y1 - base * 1.8 - category_extra).max(area.y0))
+        Rect::new(area.x0 + gutter, area.y0, area.x1 - gutter_r, (area.y1 - category_size * 1.8 - category_extra).max(area.y0))
     };
-    let plot = hidden_axis_plot(c, area, w, h).unwrap_or(plot);
+    let (plot, category_offset) = column_axis_plot(rctx, c, area, (w, h), base, label_w(false, (min, max, step)))
+        .unwrap_or_else(|| (hidden_axis_plot(c, area, w, h).unwrap_or(plot), category_offset));
     let plot = c.format.plot_layout.as_ref().filter(|l| l.inner).map_or(plot, |l| l.resolve(plot, w, h));
     if let Some(f) = &c.plot_fill {
         crate::paint::fill_path(ctx, rctx, f, None, &plot.to_path(0.1), plot, m, deckcraft_geom::preset::FillMode::Norm, 1.0, rctx.pres);
@@ -880,7 +962,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     let slot = |i: usize| if backwards { ncat.saturating_sub(i + 1) as f64 + fwd } else { i as f64 + back };
     // Scatter and bubble charts have a value x axis: one scale over every series' x values, with its
     // own tick labels in place of category names.
-    let xscale = if horiz { None } else { value_x_scale(c, (plot.width() / (base * 2.5)).floor().clamp(2.0, 12.0) as usize) };
+    let xscale = if horiz { None } else { value_x_scale(c, (plot.width() / (category_size * 2.5)).floor().clamp(2.0, 12.0) as usize) };
     let to_x = |v: f64| xscale.map(|(lo, hi, _)| plot.x0 + (v - lo) / positive_span(hi - lo) * plot.width());
     draw_category_labels(
         ctx,
@@ -1174,7 +1256,7 @@ fn draw_gridlines(ctx: &mut RenderContext, draw: &GridlineDrawing<'_, '_>) {
     let area = draw.area;
     let plot = draw.plot;
     let horiz = draw.horiz;
-    let base = draw.base;
+    let base = axis_font_size(c, ChartTextRole::ValueAxis, draw.base);
     let text_col = draw.text_color;
     let grid_col = draw.grid_color;
     let min = draw.min;
@@ -1241,6 +1323,7 @@ fn draw_gridlines(ctx: &mut RenderContext, draw: &GridlineDrawing<'_, '_>) {
     }
     // The secondary axis' labels, on the right, without gridlines of their own.
     if let Some(sc) = second.filter(|_| !c.y2_hidden) {
+        let base = axis_font_size(c, ChartTextRole::SecondaryValueAxis, draw.base);
         for v in ticks(sc) {
             let pos = to_axis(true, v);
             chart_label(

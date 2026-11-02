@@ -1,4 +1,5 @@
 //! Offline map rendering from document-owned geographic boundaries.
+mod order;
 mod scope;
 mod simplify;
 use crate::{
@@ -306,10 +307,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
     let stops = value_stops(rctx, c, series, (min, max));
     let mut labels = Vec::new();
     let mut copyrights = Vec::new();
-    for (region, path) in map.regions.iter().zip(projected.paths) {
-        if path.elements().is_empty() {
-            continue;
-        }
+    for (region, path) in order::regions(map, projected.paths) {
         for text in region.copyrights.iter().take(64) {
             if !copyrights.contains(text) {
                 copyrights.push(text.clone());
