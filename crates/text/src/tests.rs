@@ -1408,6 +1408,15 @@ fn a_tab_past_the_end_moves_to_the_next_line() {
     assert!((l.lines[1].edges[1].0 - l.inner.x0 - 72.0).abs() < 0.01);
 }
 
+/// #1663: a right-aligned tab stop past the right edge of the text area clamps to the edge
+/// and right-aligns the text there, instead of wrapping.
+#[test]
+fn right_tab_stop_past_right_edge_aligns_at_margin_without_wrapping() {
+    let l = tabbed("\tCorrie Ten Boom", &[(550.0, "r")], 500.0);
+    assert_eq!(l.lines.len(), 1, "must not wrap to a second line");
+    assert!((l.lines[0].extent.1 - l.inner.x1).abs() < 1.0, "text right edge {:?} should align with inner.x1 {}", l.lines[0].extent.1, l.inner.x1);
+}
+
 /// Underline decorations of "ab cd" underlined `u` at 40 pt.
 fn underline_decos(u: &str) -> (TextLayout, Vec<Deco>) {
     let (p, mut sh) = setup("ab cd", 2000.0, 300.0);

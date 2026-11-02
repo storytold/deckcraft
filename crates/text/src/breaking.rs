@@ -169,8 +169,9 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
                 next = i + 1;
                 break;
             }
+            let max_x = x0 + avail;
             let adv = if c == '\t' {
-                tab_advance(x0 + x, tab_stops, default_tab, tab_segment(&p.cells, i))
+                tab_advance(x0 + x, tab_stops, default_tab, tab_segment(&p.cells, i), max_x)
             } else {
                 p.cells.get(i).map(|c| c.adv).unwrap_or(0.0)
             };
@@ -290,11 +291,16 @@ pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64) {
 
 /// Advance of a tab at `x` (from the start edge) to the next stop, placing the text after it
 /// (`seg`: its width, and its width before the decimal point) as the stop aligns it but never
-/// moving back, as PowerPoint does; past the last stop, to the next default stop.
-pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64)) -> f64 {
+/// moving back, as PowerPoint does; past the last stop, to the next default stop. Right, center,
+/// and decimal stops beyond `max_x` (the right margin) clamp to `max_x` (#1663).
+pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64), max_x: f64) -> f64 {
     for s in stops {
-        if s.pos > x + 0.5 {
-            let to = s.pos - x;
+        let pos = match s.align {
+            TabAlign::Right | TabAlign::Center | TabAlign::Decimal if max_x > 0.0 => s.pos.min(max_x),
+            _ => s.pos,
+        };
+        if pos > x + 0.5 {
+            let to = pos - x;
             return match s.align {
                 TabAlign::Left => to,
                 TabAlign::Right => (to - seg.0).max(0.0),
