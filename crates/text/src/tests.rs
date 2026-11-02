@@ -1417,6 +1417,29 @@ fn right_tab_stop_past_right_edge_aligns_at_margin_without_wrapping() {
     assert!((l.lines[0].extent.1 - l.inner.x1).abs() < 1.0, "text right edge {:?} should align with inner.x1 {}", l.lines[0].extent.1, l.inner.x1);
 }
 
+/// #1663: center and decimal tab stops beyond the text area right edge clamp so their content
+/// remains bounded by the margin without wrapping onto a new line.
+#[test]
+fn center_and_decimal_tab_stops_past_right_edge_align_without_wrapping() {
+    let l_ctr = tabbed("\tCentered", &[(550.0, "ctr")], 500.0);
+    assert_eq!(l_ctr.lines.len(), 1, "center stop must not wrap to a second line");
+    assert!(
+        (l_ctr.lines[0].extent.1 - l_ctr.inner.x1).abs() < 1.0,
+        "text right edge {:?} should align with inner.x1 {}",
+        l_ctr.lines[0].extent.1,
+        l_ctr.inner.x1
+    );
+
+    let l_dec = tabbed("\t123.45", &[(550.0, "dec")], 500.0);
+    assert_eq!(l_dec.lines.len(), 1, "decimal stop must not wrap to a second line");
+    assert!(
+        (l_dec.lines[0].extent.1 - l_dec.inner.x1).abs() < 1.0,
+        "text right edge {:?} should align with inner.x1 {}",
+        l_dec.lines[0].extent.1,
+        l_dec.inner.x1
+    );
+}
+
 /// Underline decorations of "ab cd" underlined `u` at 40 pt.
 fn underline_decos(u: &str) -> (TextLayout, Vec<Deco>) {
     let (p, mut sh) = setup("ab cd", 2000.0, 300.0);

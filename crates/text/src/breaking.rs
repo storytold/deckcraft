@@ -296,7 +296,9 @@ pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64) {
 pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64), max_x: f64) -> f64 {
     for s in stops {
         let pos = match s.align {
-            TabAlign::Right | TabAlign::Center | TabAlign::Decimal if max_x > 0.0 => s.pos.min(max_x),
+            TabAlign::Right if max_x > 0.0 => s.pos.min(max_x),
+            TabAlign::Center if max_x > 0.0 => s.pos.min((max_x - seg.0 / 2.0).max(0.0)),
+            TabAlign::Decimal if max_x > 0.0 => s.pos.min((max_x - (seg.0 - seg.1).max(0.0)).max(0.0)),
             _ => s.pos,
         };
         if pos > x + 0.5 {
