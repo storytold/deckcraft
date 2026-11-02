@@ -148,7 +148,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
-| 2026-11-02 | Slide show on Linux: Presenter View opens only when a second display is connected, as in PowerPoint. On one display the presenter window covered the show, and the hidden window stalled every frame: slide changes took up to ~1.7 s under Hyprland (#1156) |
+| 2026-11-02 | Slide show on Linux and the BSDs: Presenter View stays off when winit lists exactly one display, as in PowerPoint; if it lists none, the setting is kept. On one display the presenter window covered the show, and the hidden window stalled every frame: slide changes took up to ~1.7 s under Hyprland (#1156) |
 | 2026-10-30 | Print-preview tests use the URL emitted by egui and its exact file path; previews are explicitly removed before the macOS process exits |
 | 2026-10-30 | `slide.actions` lists shape click and hover actions and text-run hyperlinks (including table cells and grouped shapes) for audit; listing never runs an action. The UI pane is a follow-up |
 | 2026-10-29 | Slide Show: going back to the previous slide plays the transition of the slide being left, reversed, as PowerPoint does, instead of the previous slide's own entrance transition (#1531); a jump (Go to Slide, links) still plays the target slide's transition |
