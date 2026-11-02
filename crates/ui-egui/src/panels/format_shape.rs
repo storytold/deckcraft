@@ -46,9 +46,39 @@ fn format_tabs(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
     });
 }
 
+/// The effects for a shape, resolved from the shape itself, its layout/master placeholder,
+/// or its inherited text shadow (#1661).
+pub(crate) fn resolved_effects(app: &SlideApp, sh: &deckcraft_model::Shape) -> deckcraft_model::style::Effects {
+    if let Some(fx) = &sh.effects {
+        return fx.clone();
+    }
+    if let Some(d) = app.session.active()
+        && let Some(slide) = d.current_slide()
+        && let Some(ctx) = deckcraft_model::resolve::Ctx::for_slide(&d.doc, slide)
+    {
+        if let (Some(fx), _) = deckcraft_model::resolve::effects(&ctx, sh) {
+            return fx;
+        }
+        if let Some(t) = &sh.text {
+            let def_p = deckcraft_model::text::Paragraph::default();
+            let p = t.paragraphs.first().unwrap_or(&def_p);
+            let def_r = deckcraft_model::text::RunProps::default();
+            let r = p.runs.first().map(|r| &r.props).unwrap_or(&def_r);
+            let resolved_r = deckcraft_model::resolve::run(&ctx, sh, p, r);
+            if let Some(s) = resolved_r.shadow {
+                return deckcraft_model::style::Effects { outer_shadow: Some(s), ..Default::default() };
+            }
+            if let Some(s) = resolved_r.inner_shadow {
+                return deckcraft_model::style::Effects { inner_shadow: Some(s), ..Default::default() };
+            }
+        }
+    }
+    deckcraft_model::style::Effects::default()
+}
+
 fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
     ui.label(egui::RichText::new("Shadow").font(theme::bold(13.0)));
-    let fx = sh.effects.clone().unwrap_or_default();
+    let fx = resolved_effects(app, sh);
     if let Some(v) = effect_presets::shadow_row(ui, effect_presets::shadow_preset_id(&fx)) {
         run(app, "shape.effects", json!({"shadow": v}));
     }
