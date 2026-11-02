@@ -1,5 +1,7 @@
 # DeckCraft roadmap
 
+> **PPTX.35 update 2026-11-02:** Nested text no longer inherits a parent’s own font sizes or margins. Nonpainting helpers and text-only shapes do not duplicate text onto enclosing shapes; only displayed text triggers cycle refitting. All 72 new visibility/font/wrapping controls match, and a 42-case font-scope set reaches 30 matches with 12 native-fallback differences retained. All previous geometry and pixel regressions remain stable. Full native fallback, text baselines, geography and rich-label parity remain incomplete; scores are unchanged.
+
 > **PPTX.34 update 2026-11-02:** Cycle leaves follow path rotation after their own shape fitting; measured text overflow selects radius refitting, and nested containers use occupied extents. Five original matrices improve from 47 to 144 strict geometry matches, with 36 native-blank cases excluded. All 632 prior cycle controls and 154 pixel-identical regression renders are retained. Nested text visibility, long-label clipping and broader SmartArt/map/label gaps remain open; parity scores are unchanged.
 
 > **PPTX.33 update 2026-11-02:** Coupled cycle fitting retains successful radius trials, fits continuous arc capacity and distinguishes mapped text from empty labels. All 506 original full/partial/reversed/shrinking controls now match native geometry within 0.025pt (previously 124); all 126 additional empty-text/mapping/whitespace controls pass. Raster validation remains separate: 484/506 pass visible bounds, with 18 failures and four unmeasurable cases retained. Other SmartArt, geographic and rich-label gaps remain open; scores are unchanged.
@@ -178,6 +180,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-02 | PPTX.35: isolate text-node typography and mapped visibility; 72 matching text controls, 102/114 strict geometries, 12 native fallback differences retained |
 | 2026-11-02 | PPTX.34: measured cycle overflow, leaf path rotation and occupied-container packing; 144 strict matches, 36 blank-native exclusions, text visibility/clipping still partial |
 | 2026-11-02 | PPTX.33: retain accepted cycle radius trials, fit arc capacity and distinguish mapped run text; 632 strict native matches with raster/text limits retained |
 | 2026-11-02 | PPTX.32: correct non-shrinking full-circle radii and sparse orbit capacity; bounded native validation retains unresolved partial arcs and coupled shrinking |

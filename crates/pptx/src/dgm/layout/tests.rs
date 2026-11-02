@@ -1787,3 +1787,61 @@ fn cycles_pack_container_occupied_frames_without_rotating_the_container() {
         }
     }
 }
+
+#[test]
+fn nested_typography_uses_selectors_instead_of_parent_inheritance() {
+    let data = source();
+    for alg in ["composite", "sp", "lin"] {
+        for scope in ["parent", "child", "self"] {
+            let child = if scope == "child" { " for='ch' forName='label'" } else { "" };
+            let own = if scope == "self" {
+                "<constrLst><constr type='primFontSz' val='18'/><constr type='secFontSz' val='12'/><constr type='lMarg' val='2'/></constrLst>"
+            } else {
+                ""
+            };
+            let l = layout(&format!(
+                "<layoutNode><alg type='{alg}'/><presOf axis='ch' ptType='node' cnt='1'/><shape type='rect'/>
+                <constrLst><constr type='primFontSz'{child} val='8'/><constr type='secFontSz'{child} val='10'/><constr type='lMarg'{child} val='0'/>
+                <constr type='w' for='ch' val='40'/><constr type='h' for='ch' val='30'/></constrLst>
+                <layoutNode name='label'><alg type='tx'/><presOf axis='ch' ptType='node' cnt='1'/><shape type='rect'/>{own}</layoutNode></layoutNode>"
+            ));
+            let out = evaluate(&l, &data, frame()).unwrap();
+            let label = out.iter().find(|p| p.name == "label").unwrap();
+            let (font, secondary, left) = match scope {
+                "child" => (8., Some(10.), 0.),
+                "self" => (18., Some(12.), 2. * 72. / 25.4),
+                _ => (36., None, 36. * 0.56),
+            };
+            assert_eq!((label.font, label.secondary_font), (Some(font), secondary));
+            assert!((label.margins[0] - left).abs() < 1e-6);
+        }
+    }
+}
+
+#[test]
+fn helper_visibility_controls_borrowing_and_cycle_refitting() {
+    let data = source();
+    for (shape, borrowed, painted) in [
+        ("", false, false),
+        ("<shape type='none'/>", false, false),
+        ("<shape type='rect' hideGeom='1'/>", false, true),
+        ("<shape type='rect'/>", true, true),
+    ] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='cycle'/><constrLst><constr type='w' for='ch' val='20'/><constr type='h' for='ch' val='20'/></constrLst>
+            <forEach axis='ch' ptType='node'><layoutNode name='outer'><alg type='composite'/><presOf axis='self'/><shape type='rect'/>
+            <constrLst><constr type='w' for='ch' val='10'/><constr type='h' for='ch' val='10'/></constrLst>
+            <layoutNode name='label'><alg type='tx'/><presOf axis='self'/>{shape}</layoutNode></layoutNode></forEach></layoutNode>"
+        ));
+        let mut fits = |p: &[Placed<'_>], _: bool| Ok(vec![0.; p.len()]);
+        let mut overflowing = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| f64::from(p.name == "label")).collect());
+        let frame = Xfrm::new(0., 0., 200. * 72. / 25.4, 120. * 72. / 25.4);
+        let initial = evaluate_measured(&l, &data, frame, Some(&mut fits)).unwrap();
+        let fitted = evaluate_measured(&l, &data, frame, Some(&mut overflowing)).unwrap();
+        let a = initial.iter().find(|p| p.name == "outer").unwrap();
+        let b = fitted.iter().find(|p| p.name == "outer").unwrap();
+        assert_eq!(b.text_enabled, borrowed);
+        assert_eq!(b.text_source.is_some(), borrowed);
+        assert_eq!(a.rect == b.rect, !painted);
+    }
+}

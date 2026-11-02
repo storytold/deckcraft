@@ -106,7 +106,15 @@ pub(super) fn collect<'t, 'a>(
     entries.push(Entry { node, parent, style, end: index + 1, geometry_scope, self_sizes });
     let local = BoxStyle { rect: Xfrm::new(0., 0., style.rect.w, style.rect.h), ..style };
     for (child, rect) in node.children.iter().zip(initial(node, local)) {
-        collect(child, BoxStyle { rect, ..local }, Some(index), entries, work)?;
+        // This node's typography is not a descendant default. Child/descendant
+        // selectors and explicit references establish links between text nodes.
+        collect(
+            child,
+            BoxStyle { rect, font: BoxStyle::new(rect).font, secondary_font: None, margins: [None; 4], ..local },
+            Some(index),
+            entries,
+            work,
+        )?;
     }
     let end = entries.len();
     if let Some(entry) = entries.get_mut(index) {

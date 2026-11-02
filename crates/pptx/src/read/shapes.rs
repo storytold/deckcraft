@@ -761,7 +761,7 @@ pub(super) fn diagram_text_layout(
         }
         let secondary = paragraph.props.bullet.as_ref().is_some_and(|b| !matches!(b, deckcraft_model::text::Bullet::None));
         paragraph.props.space_after = paragraph.props.space_after.or(Some(Spacing::Pct(if secondary { 0.15 } else { 0.35 })));
-        let paragraph_font = if secondary { p.secondary_font.unwrap_or(font * 0.78) } else { font };
+        let paragraph_font = if secondary { p.secondary_font.unwrap_or_else(|| (font * 0.78).round()) } else { font };
         for run in &mut paragraph.runs {
             run.props.size = Some(paragraph_font);
             if let Some(c) = text_color {

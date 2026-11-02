@@ -210,7 +210,8 @@ fn placed<'a>(
         if values.len() != out.len() || values.iter().any(|v| !v.is_finite() || *v < 0.) {
             return Err("invalid diagram text measurement");
         }
-        let overflowing: HashSet<_> = out.iter().zip(values).filter(|(_, v)| *v > 1e-6).map(|(p, _)| p.text_source.unwrap_or(p.node_key)).collect();
+        let overflowing: HashSet<_> =
+            out.iter().zip(values).filter(|(p, v)| p.shape.is_some() && *v > 1e-6).map(|(p, _)| p.text_source.unwrap_or(p.node_key)).collect();
         let mut refits = HashSet::new();
         collect_cycle_refits(tree, data, &overflowing, &mut refits, 0, work)?;
         if !refits.is_empty() {

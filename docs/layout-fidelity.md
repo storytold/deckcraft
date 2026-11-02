@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.34): measured SmartArt cycle refitting and path rotation,
+Updated 2026-11-02 (PPTX.35): independent nested typography and mapped text visibility,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1001,9 +1001,10 @@ No native output, provider asset, user content or oracle toolchain is distribute
 An uncached diagram's text algorithm can be a nonpainting layout helper, a text-only shape
 with `hideGeom`, or a visible shape. These cases now retain their distinct painting behaviour:
 
-- A missing shape or `type="none"` helper still supplies text measurements, bounds and mapped
-  text to its owning shape, but its own text does not paint a second time. Generated separate
-  text frames inherit the source shape's hidden state through export/reimport.
+- A missing shape or `type="none"` helper still supplies text measurements and bounds; its
+  own text does not paint. PPTX.35 below corrects the earlier assumption that an enclosing
+  shape should borrow this helper’s text. Generated separate text frames retain the source
+  shape’s hidden state through export/reimport.
 - A shape with `hideGeom="1"` keeps its text visible, uses colour-list index zero, and does
   not advance the style's colour sequence. Each style label retains its own sequence.
 - Connectors consume a colour slot in layout order. Moving connectors behind nodes for
@@ -1702,3 +1703,65 @@ remain explicit; these are not resolved by unchanged model geometry. Full search
 nested text ownership, duplicate definitions, descendant defaults, hierarchy/snake and finite
 nested-flow precision, geographic provider context/boundary simplification, and rich-label
 overflow/collision remain open. This does not establish complete LibreOffice replacement.
+
+
+## Independent typography and mapped visibility (PPTX.35)
+
+A layout node's own primary font, secondary font and margins are local to that node.
+They are not defaults for descendant text nodes. Child/descendant constraints, references
+and a child's own constraints still establish the supported explicit relationships.
+This distinction survives placement: an absent secondary font keeps its default meaning
+instead of silently taking the parent's secondary font. Default secondary display sizes
+round to whole points, as explicit displayed fonts already do.
+
+A visible enclosing shape can borrow a matching visible text shape's frame and typography.
+It does not borrow text from a missing/`none` shape or a `hideGeom` text-only shape. These
+helpers still occupy layout space and retain their underlying data; the text-only shape
+paints its own text. A hidden text helper's overflow does not trigger the cycle's extra
+radius pass. Ordinary visible and text-only labels can still trigger that pass. The change
+corrects the overly broad mapped-helper assumption recorded in PPTX.22 and the nested
+visibility differences exposed by PPTX.34.
+
+Original black-box controls separate scope, visibility, frame size and rule behavior:
+
+- A 72-page package varies composite/space/linear parents, small/large text frames,
+  parent/child/self/default font scope, and visible/absent/none shapes. Font-set agreement
+  improves from 18 to 72; concatenated text agreement improves from 21 to 72. All 72 also
+  match extracted line segmentation. Twenty-four pages have visible native labels and
+  48 intentionally suppress them; empty outputs are not confused with displayed-font tests.
+  Maximum matched glyph-origin differences are 0.280pt horizontally and 0.984pt vertically,
+  so this is not a pixel-equivalent baseline claim. Strict geometry improves from 57 to 72.
+- A separate 42-page package varies primary/secondary scope, explicit references and
+  text-only children. Font sets improve from 12 to 30 matches; strict geometry improves
+  from 24 to 30. Twelve parent-font-reference cases cause PowerPoint to use a different
+  fallback layout; direct rendering still evaluates the authored layout. Those are retained
+  failures, not removed from the denominator. Representative fallback output was inspected.
+  Bullet text is present in both raster outputs, but direct searchable PDF text omits the
+  separately painted bullet glyph; concatenated PDF strings do not certify its appearance.
+- Together the two packages improve from 81 to 102 strict geometry matches among 114 pages,
+  with no previously matched case lost. The same 102 pages pass independent 3840-by-2160
+  visible coloured bounds within 0.5pt; the 12 fallback cases fail the raster comparison too.
+  Both input packages have zero Open XML SDK errors and successful hash-bound native exports.
+  Representative direct/native pages cover suppression, wrapping, text-only children, bullets
+  and the retained fallback failure. No external converter is invoked by direct rendering.
+- The preceding 48 combined path/text controls now all match font/text presence, and 12 of
+  16 nested controls match where previously none did. Four native-blank text-container
+  controls remain different. All 144 measurable geometries in the preceding 180-page matrix
+  remain strict matches; its 36 native-blank exclusions remain explicit. Long-label clipping
+  and baseline differences in the earlier 40-case font/margin matrix are not claimed fixed.
+- All 632 preceding cycle geometries remain strict matches, and the original 506 complete
+  inspection models are unchanged. All 154 older PNGs remain pixel-identical to PPTX.34,
+  with unchanged, native-matching font-size sets. Earlier geometry matrices retain 83/132,
+  73/111, 82/129 (29 exclusions), 155/186 (12 exclusions), 176/176, 207/216 (nine exclusions),
+  93/94 (one exclusion), and 73/73 overflow matches without losing a matched case.
+- Two new unit tests cover scope/visibility variants and the hidden-versus-displayed refit
+  decision. A four-variant integration test preserves visibility, whole-point secondary
+  fonts, geometry and rendered pixels through an editable round trip. All 165 library tests
+  and 23 diagram preservation tests pass. Full `cargo xtask ci` passes all eight stages
+  and 2,477 tests including doctests.
+
+Full native fallback/search, circular font ownership, arbitrary nested mappings, duplicate
+names, descendant defaults, baseline/overflow precision, hierarchy/snake fitting and nested
+flow precision remain incomplete. Geographic provider context, boundary simplification and
+rich-label overflow/collision remain open. No global parity score or complete LibreOffice
+replacement is claimed. Published changes contain source, tests and documentation only.

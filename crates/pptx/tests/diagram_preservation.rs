@@ -1011,3 +1011,42 @@ fn measured_cycle_text_refitting_survives_editable_round_trip() {
     }
     assert!((radii[1] / radii[0] - 1023. / 1024.).abs() < 1e-5);
 }
+
+#[test]
+fn nested_helper_visibility_and_default_secondary_fonts_round_trip() {
+    for (shape, visible_per_card) in
+        [("", 0), ("<dgm:shape type='none'/>", 0), ("<dgm:shape type='rect' hideGeom='1'/>", 1), ("<dgm:shape type='rect'/>", 2)]
+    {
+        let layout = format!(
+            r#"<dgm:layoutDef xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" uniqueId="urn:deckcraft:test:helper-visibility" minVer="12.0">
+            <dgm:title val="Original nested typography"/><dgm:desc val="Independent text nodes"/><dgm:catLst><dgm:cat type="cycle" pri="99"/></dgm:catLst>
+            <dgm:layoutNode><dgm:alg type="cycle"/><dgm:presOf/><dgm:shape type="none"/>
+            <dgm:constrLst><dgm:constr type="w" for="ch" val="60"/><dgm:constr type="h" for="ch" val="45"/></dgm:constrLst>
+            <dgm:forEach axis="ch" ptType="node"><dgm:layoutNode name="outer"><dgm:alg type="composite"/><dgm:presOf axis="self"/><dgm:shape type="rect"/>
+            <dgm:constrLst><dgm:constr type="w" for="ch" val="40"/><dgm:constr type="h" for="ch" val="30"/>
+            <dgm:constr type="primFontSz" val="8"/><dgm:constr type="secFontSz" val="10"/><dgm:constr type="lMarg" val="0"/></dgm:constrLst>
+            <dgm:layoutNode name="label"><dgm:alg type="tx"><dgm:param type="stBulletLvl" val="1"/></dgm:alg><dgm:presOf axis="self"/>{shape}
+            <dgm:constrLst><dgm:constr type="primFontSz" val="30"/></dgm:constrLst></dgm:layoutNode></dgm:layoutNode></dgm:forEach></dgm:layoutNode></dgm:layoutDef>"#
+        );
+        let mut parts = files(&uncached_fixture());
+        for (_, bytes) in &mut parts {
+            if parse_xml(bytes).ok().is_some_and(|d| d.root.is("layoutDef")) {
+                *bytes = layout.as_bytes().to_vec();
+            }
+        }
+        let p = deckcraft_pptx::import(&zip(parts)).unwrap();
+        let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+        for doc in [&p, &back] {
+            let text: Vec<_> = group(doc).children().iter().filter(|s| !s.hidden).filter_map(|s| s.text.as_ref()).collect();
+            assert_eq!(text.len(), visible_per_card * 3, "{shape}");
+            for body in text {
+                assert!(body.paragraphs.iter().flat_map(|p| &p.runs).all(|r| r.props.size == Some(23.)));
+            }
+        }
+        assert_eq!(geometry(group(&p)), geometry(group(&back)));
+        assert_eq!(
+            deckcraft_engine::render::render_slide(&p, 0, &Default::default()).pixels,
+            deckcraft_engine::render::render_slide(&back, 0, &Default::default()).pixels
+        );
+    }
+}

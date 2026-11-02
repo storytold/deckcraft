@@ -287,7 +287,6 @@ fn place_inner<'a>(
         .map(|(child, rect)| {
             let mut resolved = super::constraints::lookup(solution, child).unwrap_or(BoxStyle { rect, ..local });
             resolved.font = resolved.font.or(local.font);
-            resolved.secondary_font = resolved.secondary_font.or(local.secondary_font);
             resolved.min_font = resolved.min_font.or(local.min_font);
             resolved
         })
@@ -406,7 +405,10 @@ fn fit_composite_shape(out: &mut [Placed<'_>], work: &mut usize) -> Result<(), &
     }
     // The text algorithm for the same data point owns typography and the text box,
     // even when the composite's visible shape encloses several different points.
-    for p in descendants.iter().filter(|p| p.text_enabled && !p.connector && !p.points.is_empty()) {
+    for p in descendants
+        .iter()
+        .filter(|p| p.text_enabled && p.shape.is_some_and(|s| s.bool("hideGeom") != Some(true)) && !p.connector && !p.points.is_empty())
+    {
         charge(work, own.points.len().saturating_mul(p.points.len()))?;
         if own.points.len() != p.points.len() || !own.points.iter().zip(&p.points).all(|(a, b)| std::ptr::eq(*a, *b)) {
             continue;
