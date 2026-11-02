@@ -369,6 +369,10 @@ pub fn fallback_effect(class: AnimClass) -> &'static str {
 
 /// The preset id to write for an animation.
 pub fn preset_for(a: &deckcraft_model::Animation) -> u32 {
+    // Preset 7 is Crawl in the current catalog; older decks used it for Fade.
+    if a.class == AnimClass::Entrance && a.effect == "fade" && a.preset_id == Some(7) {
+        return 10;
+    }
     // Float Down is PowerPoint's preset 47 (Float Up is 42).
     if matches!(a.effect.as_str(), "float" | "floatOut") && a.option == "d" {
         return 47;
