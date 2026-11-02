@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.30): intrinsic SmartArt flow sizing and finite linear fitting,
+Updated 2026-11-02 (PPTX.31): nested SmartArt capacity and parent-fit reflow,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1459,3 +1459,55 @@ allocation, cycle radius/scale precision, hierarchy/snake fitting, and rule-endp
 quantization. Native duplicate-definition fallback, descendant selectors, full text-driven
 search, cyclic fonts, geographic provider context/boundary simplification and rich-label
 overflow/collision remain partial. No complete LibreOffice replacement is established.
+
+
+## Nested flow capacity and parent-fit reflow (PPTX.31)
+
+A nested linear layout's allocated rectangle is not its cross-axis capacity. Linear and
+space containers can expose space from an ancestor; a composite establishes the next
+capacity boundary. Conflating allocation with capacity prematurely shrank intrinsic child
+sizes, with large errors in both orientations. Placement now carries the capacity separately.
+Nested overflow triggers finite primary-axis fitting; roundoff at an exactly full allocation
+does not spuriously trigger it.
+
+A composite that fits its occupied content changes the allocations of its children. A linear
+child must lay out again in the fitted allocation, rather than merely scale its previously
+painted rectangles. Reflow uses the retained constraint solution and restores permitted
+intrinsic cross sizes before the group is centred. It shares the existing recursion/work
+budgets and verifies that the replacement has the same node count. Rigid siblings still
+shrink; a reflowed child can extend slightly beyond the final frame, as the native controls do.
+This is not an implementation of every native repeated-fit/rounding policy.
+
+Validation:
+
+- A new 132-case original native matrix varies horizontal/vertical direction, one/two flow
+  children, primary and cross sizes, outer capacities and intermediate composite/space/linear
+  containers. Strict geometry matches improve from 39 to 83 at 0.025pt tolerance, without
+  losing any previous match. Maximum measured error drops from 311.8086pt to 0.2408pt.
+  Forty-nine finite-reflow precision differences remain explicit failures; this does not
+  certify the older hierarchy/cycle failures. All 132 native/direct font-size sets agree.
+- All three original packages open/export natively and validate with zero Open XML SDK
+  errors. Measurements bind to source hashes. The authoritative controls use a larger
+  square canvas so both orientations and the largest frames are fully visible. Earlier
+  narrow-canvas exports clip vertical shapes and are not counted as intended-layout results.
+- Direct 3840-by-3840 renders pass visible coloured bounds within 0.5pt for 131 of the
+  132 original controls. One narrow text-bearing child has a 0.75pt exposed-fill difference;
+  its previous and current direct bounds are identical, and its strict geometry matches.
+  An independently exported text-free control has identical native path geometry and passes
+  the visible-bound check, isolating text occlusion/rasterization from allocation. The
+  original failure remains recorded. Representative raster pairs and the enlarged failing
+  before/after/native detail were visually inspected.
+- All 154 earlier direct PNGs are pixel-identical to the PPTX.30 executable, with unchanged
+  and native-matching font sizes. Earlier matrices remain at 47/111, 64/129 (29 native
+  exclusions), 155/186 (19 failures, 12 exclusions), 176/176, 207/216 (nine exclusions),
+  93/94 (one exclusion) and 73/73 overflow geometries. No previously matched case is lost.
+- Three new unit tests cover 40 capacity-boundary, orientation, parent-fit reflow and exact-fit
+  variants. Full `cargo xtask ci` passes all eight stages and 2,460 tests including doctests;
+  all 21 diagram import/round-trip tests pass. No user content, native artifacts or fonts
+  are included in the source change.
+
+The remaining nested differences involve accumulation of finite scaling across repeated
+fits, especially multiple linear ancestors. They are distinct from the corrected capacity
+and parent-fit behavior. Full text-driven search/fallback, cyclic/hierarchy placement,
+provider-specific map context/boundaries and rich-label overflow/collision remain incomplete.
+Complete LibreOffice replacement is not established.

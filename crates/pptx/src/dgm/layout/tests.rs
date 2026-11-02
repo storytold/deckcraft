@@ -1542,3 +1542,98 @@ fn linear_fitting_matches_native_normalized_search_in_both_axes() {
         }
     }
 }
+
+#[test]
+fn nested_linear_cross_sizes_use_the_nearest_composite_capacity() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for outer in ["composite", "sp", "lin"] {
+        for vertical in [false, true] {
+            let (primary, cross, direction) = if vertical { ("h", "w", "fromT") } else { ("w", "h", "fromL") };
+            for available in [60., 120.] {
+                for requested in [20_f64, 60., 200.] {
+                    let l = layout(&format!(
+                        "<layoutNode><alg type='composite'/><constrLst>
+                        <constr type='{primary}' for='ch' forName='outer' val='20'/>
+                        <constr type='{cross}' for='ch' forName='outer' val='30'/></constrLst>
+                        <layoutNode name='outer'><alg type='{outer}'><param type='linDir' val='{direction}'/></alg><constrLst>
+                        <constr type='{primary}' for='ch' forName='inner' val='20'/>
+                        <constr type='{cross}' for='ch' forName='inner' val='10'/></constrLst>
+                        <layoutNode name='inner'><alg type='lin'><param type='linDir' val='{direction}'/></alg>
+                        <layoutNode name='card'><alg type='tx'/><shape type='rect'/><constrLst>
+                        <constr type='{primary}' val='15'/><constr type='{cross}' val='{requested}'/>
+                        </constrLst></layoutNode></layoutNode></layoutNode></layoutNode>"
+                    ));
+                    let frame = if vertical { Xfrm::new(0., 0., available * mm, 300. * mm) } else { Xfrm::new(0., 0., 300. * mm, available * mm) };
+                    let out = evaluate(&l, &data, frame).unwrap();
+                    assert_eq!(out.len(), 1);
+                    let actual = if vertical { out[0].rect.w } else { out[0].rect.h };
+                    let expected = requested.min(if outer == "composite" { 30. } else { available }) * mm;
+                    assert!((actual - expected).abs() < 1e-6, "{outer}/{direction}/{available}/{requested}: {actual}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn fitted_composite_reflows_linear_children_before_recentering() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for vertical in [false, true] {
+        let (primary, cross, along, across, direction) = if vertical { ("h", "w", "t", "l", "fromT") } else { ("w", "h", "l", "t", "fromL") };
+        let l = layout(&format!(
+            "<layoutNode><alg type='composite'/><constrLst>
+            <constr type='{primary}' for='ch' forName='anchor' val='40'/>
+            <constr type='{cross}' for='ch' forName='anchor' val='40'/>
+            <constr type='{along}' for='ch' forName='anchor' val='10'/>
+            <constr type='{across}' for='ch' forName='anchor' val='20'/>
+            <constr type='{primary}' for='ch' forName='flow' val='20'/>
+            <constr type='{cross}' for='ch' forName='flow' val='10'/>
+            <constr type='{along}' for='ch' forName='flow' val='180'/>
+            <constr type='{across}' for='ch' forName='flow' val='20'/></constrLst>
+            <layoutNode name='anchor'><alg type='tx'/><shape type='rect'/></layoutNode>
+            <layoutNode name='flow'><alg type='lin'><param type='linDir' val='{direction}'/></alg>
+            <layoutNode name='card'><alg type='tx'/><shape type='rect'/><constrLst>
+            <constr type='{primary}' val='15'/><constr type='{cross}' val='60'/>
+            </constrLst></layoutNode></layoutNode></layoutNode>"
+        ));
+        let frame = if vertical { Xfrm::new(0., 0., 60. * mm, 300. * mm) } else { Xfrm::new(0., 0., 300. * mm, 60. * mm) };
+        let out = evaluate(&l, &data, frame).unwrap();
+        let a = out.iter().find(|p| p.name == "anchor").unwrap().rect;
+        let b = out.iter().find(|p| p.name == "card").unwrap().rect;
+        let (start_a, size_a, start_b, size_b) = if vertical { (a.x, a.w, b.x, b.w) } else { (a.y, a.h, b.y, b.h) };
+        // Independent native controls: the rigid anchor shrinks, but the flow
+        // restores its child's intrinsic cross size, then the group is centred.
+        assert!((size_a - 36.92307692307692 * mm).abs() < 1e-6);
+        assert!((start_a - 24.23076923076923 * mm).abs() < 1e-6);
+        assert!((size_b - 60. * mm).abs() < 1e-6);
+        assert!((start_b - -1.153846153846154 * mm).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn exactly_fitting_nested_linear_children_do_not_trigger_a_fit_from_roundoff() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for vertical in [false, true] {
+        let (primary, cross, direction) = if vertical { ("h", "w", "fromT") } else { ("w", "h", "fromL") };
+        let l = layout(&format!(
+            "<layoutNode><alg type='composite'/><constrLst>
+            <constr type='{primary}' for='ch' forName='flow' val='20'/>
+            <constr type='{cross}' for='ch' forName='flow' val='10'/></constrLst>
+            <layoutNode name='flow'><alg type='lin'><param type='linDir' val='{direction}'/></alg>
+            <layoutNode name='a'><alg type='tx'/><shape type='rect'/><constrLst>
+            <constr type='{primary}' val='15'/><constr type='{cross}' val='5'/></constrLst></layoutNode>
+            <layoutNode name='b'><alg type='tx'/><shape type='rect'/><constrLst>
+            <constr type='{primary}' val='5'/><constr type='{cross}' val='2.5'/></constrLst></layoutNode>
+            </layoutNode></layoutNode>"
+        ));
+        let out = evaluate(&l, &data, frame()).unwrap();
+        assert_eq!(out.len(), 2);
+        for (p, expected) in out.iter().zip([15., 5.]) {
+            let actual = if vertical { p.rect.h } else { p.rect.w };
+            assert!((actual - expected * mm).abs() < 1e-6);
+        }
+    }
+}

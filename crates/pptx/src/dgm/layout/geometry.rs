@@ -120,7 +120,7 @@ pub(super) fn place_solved<'a>(
 ) -> Result<(), &'static str> {
     let style = super::constraints::lookup(solution, node).unwrap_or_else(|| BoxStyle::new(rect));
     let start = out.len();
-    place_inner(node, style, data, out, depth, solution, work)?;
+    place_inner(node, style, rect, data, out, depth, solution, work)?;
     if depth == 0 {
         super::orientation::apply(out.get_mut(start..).unwrap_or(&mut []), work)?;
         // Allocation-only nodes contribute to ancestor bounds, but are not drawing
@@ -130,21 +130,42 @@ pub(super) fn place_solved<'a>(
     Ok(())
 }
 
-fn fit_composite_frame(out: &mut [Placed<'_>], frame: Xfrm, work: &mut usize) -> Result<(), &'static str> {
+struct CompositeFit {
+    frame: Xfrm,
+    bounds: Xfrm,
+    sx: f64,
+    sy: f64,
+}
+
+fn fit_composite_frame(out: &mut [Placed<'_>], frame: Xfrm, work: &mut usize) -> Result<Option<CompositeFit>, &'static str> {
     charge(work, out.len() * 4)?;
-    let Some(bounds) = occupied_bounds(out) else { return Ok(()) };
+    let Some(bounds) = occupied_bounds(out) else { return Ok(None) };
     let (width, height) = (bounds.w, bounds.h);
     if width < 0.0 || height < 0.0 || !width.is_finite() || !height.is_finite() {
-        return Ok(());
+        return Ok(None);
     }
     let scale = |limit: f64, occupied: f64| {
         if occupied - limit <= 16. * f64::EPSILON * occupied.abs().max(limit.abs()).max(1.) { 1. } else { limit / occupied }
     };
     let (sx, sy) = (scale(frame.w, width), scale(frame.h, height));
+    if sx >= 1. && sy >= 1. {
+        return Ok(None);
+    }
+    let fit = CompositeFit { frame, bounds, sx, sy };
+    for p in out.iter_mut() {
+        fit.project(&mut p.rect);
+        if let Some(t) = &mut p.text_rect {
+            fit.project(t);
+        }
+    }
+    Ok(Some(fit))
+}
+
+impl CompositeFit {
     // In an overflowing axis, scale from the frame origin (or a negative occupied
     // origin), clip the end edge, then centre the resulting occupied bounds. Moving
     // positive leading space away before this clip incorrectly preserves that width.
-    let project = |r: &mut Xfrm| {
+    fn project(&self, r: &mut Xfrm) {
         let axis = |start: f64, size: f64, low: f64, origin: f64, limit: f64, scale: f64| {
             let base = if scale < 1. { origin.min(low) } else { low };
             let a = (start - base) * scale;
@@ -161,16 +182,9 @@ fn fit_composite_frame(out: &mut [Placed<'_>], frame: Xfrm, work: &mut usize) ->
                 (a, (b.min(limit) - a).max(0.))
             }
         };
-        (r.x, r.w) = axis(r.x, r.w, bounds.x, frame.x, frame.w, sx);
-        (r.y, r.h) = axis(r.y, r.h, bounds.y, frame.y, frame.h, sy);
-    };
-    for p in out.iter_mut() {
-        project(&mut p.rect);
-        if let Some(t) = &mut p.text_rect {
-            project(t);
-        }
+        (r.x, r.w) = axis(r.x, r.w, self.bounds.x, self.frame.x, self.frame.w, self.sx);
+        (r.y, r.h) = axis(r.y, r.h, self.bounds.y, self.frame.y, self.frame.h, self.sy);
     }
-    center_frame(out, frame, work)
 }
 
 fn occupied_bounds(out: &[Placed<'_>]) -> Option<Xfrm> {
@@ -194,6 +208,7 @@ fn charge(work: &mut usize, amount: usize) -> Result<(), &'static str> {
 fn place_inner<'a>(
     node: &Instance<'a>,
     style: BoxStyle,
+    capacity: Xfrm,
     data: &Data<'a>,
     out: &mut Vec<Placed<'a>>,
     depth: usize,
@@ -275,7 +290,7 @@ fn place_inner<'a>(
         .collect();
     // Linear placement uses the constrained sizes, including invisible spacing nodes.
     if matches!(node.alg.as_str(), "lin" | "hierChild") {
-        pack_linear(node, local, &mut children, depth == 0);
+        pack_linear(node, local, capacity, &mut children, depth == 0);
     } else if node.alg == "cycle" {
         pack_cycle(node, local, &mut children, work)?;
     }
@@ -288,7 +303,11 @@ fn place_inner<'a>(
             global.rect.x += style.rect.x;
             global.rect.y += style.rect.y;
             let start = out.len();
-            place_inner(child, global, data, out, depth + 1, solution, work)?;
+            // A composite establishes the available cross-axis extent for nested
+            // flows. Linear and space containers can expose their ancestor's
+            // capacity beyond their own allocation; they do not clip it early.
+            let capacity = if node.alg == "composite" { style.rect } else { capacity };
+            place_inner(child, global, capacity, data, out, depth + 1, solution, work)?;
             if let Some(range) = ranges.get_mut(i) {
                 *range = start..out.len();
             }
@@ -305,7 +324,33 @@ fn place_inner<'a>(
         if node.alg == "sp" {
             center_frame(out.get_mut(own..).unwrap_or(&mut []), style.rect, work)?;
         } else {
-            fit_composite_frame(out.get_mut(own..).unwrap_or(&mut []), style.rect, work)?;
+            if let Some(fit) = fit_composite_frame(out.get_mut(own..).unwrap_or(&mut []), style.rect, work)? {
+                // A fitted parent changes its child allocations. A linear child
+                // lays out again inside that allocation; scaling its old painted
+                // rectangles would incorrectly shrink intrinsic cross-axis sizes.
+                for ((child, bounds), range) in node.children.iter().zip(&children).zip(&ranges) {
+                    if child.alg != "lin" {
+                        continue;
+                    }
+                    let mut fitted = *bounds;
+                    fitted.rect.x += style.rect.x;
+                    fitted.rect.y += style.rect.y;
+                    fit.project(&mut fitted.rect);
+                    let mut replacement = Vec::new();
+                    place_inner(child, fitted, style.rect, data, &mut replacement, depth + 1, solution, work)?;
+                    let target = out.get_mut(range.clone()).ok_or("invalid fitted diagram range")?;
+                    if target.len() != replacement.len() {
+                        return Err("fitted diagram changed its node count");
+                    }
+                    for (target, value) in target.iter_mut().zip(replacement) {
+                        *target = value;
+                    }
+                }
+                if node.children.iter().any(|child| child.alg == "lin") && out.get(own).is_some_and(|p| p.node_key == super::constraints::id(node)) {
+                    fit_composite_shape(out.get_mut(own..).unwrap_or(&mut []), work)?;
+                }
+            }
+            center_frame(out.get_mut(own..).unwrap_or(&mut []), style.rect, work)?;
         }
     }
     Ok(())
@@ -412,7 +457,7 @@ fn pack_composite_extents(
         if changed {
             let mut packed = occupied.clone();
             // These are already painted extents, not another allocation trial.
-            pack_linear(node, local, &mut packed, false);
+            pack_linear(node, local, local.rect, &mut packed, false);
             for ((before, after), range) in occupied.iter().zip(&packed).zip(ranges.iter().cloned()) {
                 for p in out.get_mut(range).unwrap_or(&mut []) {
                     p.rect.x += after.rect.x - before.rect.x;
@@ -620,7 +665,7 @@ fn pack_cycle(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], w
     Ok(())
 }
 
-fn pack_linear(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], root: bool) {
+fn pack_linear(node: &Instance<'_>, style: BoxStyle, capacity: Xfrm, children: &mut [BoxStyle], root: bool) {
     let r = style.rect;
     let default_dir = if node.alg == "hierChild" && node.param("chDir", "horz") == "vert" { "fromT" } else { "fromL" };
     let dir = node.param("linDir", default_dir);
@@ -632,7 +677,9 @@ fn pack_linear(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], 
     let gaps = gap * children.len().saturating_sub(1) as f64;
     let sum: f64 = children.iter().map(|b| if vertical { b.rect.h } else { b.rect.w }).sum();
     let available = if vertical { r.h } else { r.w };
-    let scale = if root && node.alg == "lin" {
+    let exceeds = |size: f64, limit: f64| size - limit > 16. * f64::EPSILON * size.abs().max(limit.abs()).max(1.);
+    let cross_overflow = children.iter().any(|b| if vertical { exceeds(b.rect.w, r.w) } else { exceeds(b.rect.h, r.h) });
+    let scale = if node.alg == "lin" && (root || exceeds(sum + gaps, available) || cross_overflow) {
         flow_fit_scale(sum + gaps, available)
     } else if sum + gaps > available {
         available / (sum + gaps).max(0.01)
@@ -650,13 +697,13 @@ fn pack_linear(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], 
     for child in children {
         let b = &mut child.rect;
         if vertical {
-            b.w = b.w.min(r.w);
+            b.w = b.w.min(if node.alg == "lin" { capacity.w } else { r.w });
             b.h *= scale;
             b.y = r.y + if backwards { r.h - pos - b.h } else { pos };
             b.x = r.x + (r.w - b.w) / 2.0;
             pos += b.h + gap * scale;
         } else {
-            b.h = b.h.min(r.h);
+            b.h = b.h.min(if node.alg == "lin" { capacity.h } else { r.h });
             b.w *= scale;
             b.x = r.x + if backwards { r.w - pos - b.w } else { pos };
             b.y = r.y + (r.h - b.h) / 2.0;

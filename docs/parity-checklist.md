@@ -1,5 +1,7 @@
 # PowerPoint feature checklist
 
+> **PPTX.31 update 2026-11-02:** Nested linear layouts use the nearest composite capacity and reflow after a parent fit, preserving intrinsic cross-axis sizes. A new 132-case matrix improves from 39 to 83 strict matches; maximum geometry error falls from 311.81pt to 0.241pt. Forty-nine finite-reflow differences remain. Scores are unchanged.
+
 > **PPTX.30 update 2026-11-02:** Intrinsic linear/cycle dimensions no longer inherit later container allocation; root linear fitting reproduces measured finite scaling and bare spacing properties no longer add gaps. A new 111-case matrix improves from 12 to 47 strict geometry matches; the prior 129-case matrix improves from 46 to 64. Nested packing and cyclic precision remain incomplete. Scores are unchanged.
 
 > **PPTX.29 update 2026-11-02:** Late unnamed child constraints retain existing allocations; size inequalities no longer allocate geometry or cap tested size-rule growth. A new 129-case matrix improves from nine to 46 geometry matches, with 54 flow/default-size differences and 29 native-fallback cases kept explicit. Forty paired bounds controls preserve native invariance. Scores are unchanged.
@@ -290,6 +292,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.31 separates flow capacity from allocation and reflows fitted linear children; 83/132 strict native matches, 131/132 visible-bound matches, residual precision/occlusion explicit |
 | 2026-11-02 | minor | PPTX.30 reproduces intrinsic flow sizes and root-linear finite fitting; native geometry/raster regressions retain nested packing, cyclic precision and rule-endpoint gaps |
 | 2026-11-02 | minor | PPTX.29 preserves existing child allocations and separates size bounds from affine inequalities; 46 new geometry matches, 40 bounds-invariance controls, and explicit flow/fallback limits |
 | 2026-11-01 | minor | PPTX.28 resolves tested space-container and ancestor-default cases; 207 prior and 93 new intended-layout controls match native geometry, with remaining selector/flow/fallback limits explicit |
