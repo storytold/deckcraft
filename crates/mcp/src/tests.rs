@@ -62,6 +62,40 @@ fn handshake_and_tool_list() {
     assert!(s.handle_line("{}").is_some());
 }
 
+/// #1151: `insert_chart` takes x, y, w and h like `insert_picture` and `insert_table`.
+#[test]
+fn insert_chart_takes_a_box() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    let chart = json!({"type": "pie", "categories": ["A", "B"], "series": [{"name": "S", "values": [3, 5]}]});
+    let box_of = |s: &mut Server, id: u64| {
+        let sl = tool(s, "inspect_slide", json!({}));
+        let shape = sl["shapes"].as_array().unwrap().iter().find(|x| x["id"].as_u64() == Some(id)).unwrap().clone();
+        assert_eq!(shape["kind"], "chart");
+        shape["box"].clone()
+    };
+    let mut args = chart.clone();
+    for (k, v) in [("x", 50), ("y", 60), ("w", 300), ("h", 200)] {
+        args[k] = json!(v);
+    }
+    let placed = tool(&mut s, "insert_chart", args)["id"].as_u64().unwrap();
+    assert_eq!(box_of(&mut s, placed), json!([50.0, 60.0, 300.0, 200.0]));
+    // without a full box the chart keeps its default place, as for pictures and tables
+    let plain = tool(&mut s, "insert_chart", chart.clone())["id"].as_u64().unwrap();
+    let default_box = box_of(&mut s, plain);
+    let mut partial = chart.clone();
+    partial["x"] = json!(50);
+    let partial_id = tool(&mut s, "insert_chart", partial)["id"].as_u64().unwrap();
+    assert_eq!(box_of(&mut s, partial_id), default_box);
+    // a hostile box is answered, not a panic
+    let mut odd = chart;
+    for (k, v) in [("x", json!(-1e300)), ("y", json!(1e300)), ("w", json!(-5)), ("h", json!(0))] {
+        odd[k] = v;
+    }
+    let r = call(&mut s, 11, "tools/call", json!({"name": "insert_chart", "arguments": odd}));
+    assert!(r["result"].is_object(), "{r}");
+}
+
 #[test]
 fn agent_builds_a_deck() {
     let mut s = Server::new(Box::new(Headless::new()));
