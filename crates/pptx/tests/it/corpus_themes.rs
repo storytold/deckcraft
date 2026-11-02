@@ -148,10 +148,13 @@ fn effects_and_links_survive_a_round_trip() {
     assert!(matches!(&links[1].1, Some(Hyperlink { action: Action::Url { url }, .. }) if url.starts_with("mailto:")));
     let hover = get("Reflected").text.as_ref().and_then(|t| t.paragraphs[0].runs[0].props.hover.clone());
     assert!(matches!(hover, Some(Hyperlink { action: Action::Url { .. }, ref tooltip, .. }) if tooltip == "Preview"), "{hover:?}");
+    effects_and_links_survive_resave(&a);
+}
 
+fn effects_and_links_survive_resave(a: &Presentation) {
     // Saved and reopened: the same effects and links.
-    let b = round_trip(&a);
-    let (ga, gb) = (shapes_named(&a, 0), shapes_named(&b, 0));
+    let b = round_trip(a);
+    let (ga, gb) = (shapes_named(a, 0), shapes_named(&b, 0));
     for n in ["Shadowed", "Glowing", "Soft edged", "Reflected"] {
         assert_eq!(fx(ga(n)), fx(gb(n)), "effects of {n}");
         assert_eq!(ga(n).click, gb(n).click, "click of {n}");
@@ -203,24 +206,28 @@ fn two_masters() -> Presentation {
     p
 }
 
+fn same_master(ma: &deckcraft_model::Master, mb: &deckcraft_model::Master) {
+    assert_eq!(ma.name, mb.name);
+    assert_eq!(ma.theme.name, mb.theme.name);
+    // The writer adds PowerPoint's empty objectDefaults/extraClrSchemeLst, kept as raw XML.
+    let bare = |t: &deckcraft_model::theme::Theme| deckcraft_model::theme::Theme { raw_extra: None, ..t.clone() };
+    assert_eq!(bare(&ma.theme), bare(&mb.theme), "whole theme of {}", ma.name);
+    assert_eq!(ma.theme.colors, mb.theme.colors, "colour scheme of {}", ma.name);
+    assert_eq!(ma.theme.fonts.name, mb.theme.fonts.name);
+    assert_eq!(ma.theme.fonts.major.latin, mb.theme.fonts.major.latin);
+    assert_eq!(ma.theme.fonts.minor.latin, mb.theme.fonts.minor.latin);
+    assert_eq!(ma.background, mb.background, "background of {}", ma.name);
+    let names = |m: &deckcraft_model::Master| m.layouts.iter().map(|l| l.name.clone()).collect::<Vec<_>>();
+    assert_eq!(names(ma), names(mb));
+}
+
 #[test]
 fn themes_masters_and_layouts_survive_a_round_trip() {
     let a = two_masters();
     let b = round_trip(&a);
     assert_eq!(b.masters.len(), 2);
     for (ma, mb) in a.masters.iter().zip(&b.masters) {
-        assert_eq!(ma.name, mb.name);
-        assert_eq!(ma.theme.name, mb.theme.name);
-        // The writer adds PowerPoint's empty objectDefaults/extraClrSchemeLst, kept as raw XML.
-        let bare = |t: &deckcraft_model::theme::Theme| deckcraft_model::theme::Theme { raw_extra: None, ..t.clone() };
-        assert_eq!(bare(&ma.theme), bare(&mb.theme), "whole theme of {}", ma.name);
-        assert_eq!(ma.theme.colors, mb.theme.colors, "colour scheme of {}", ma.name);
-        assert_eq!(ma.theme.fonts.name, mb.theme.fonts.name);
-        assert_eq!(ma.theme.fonts.major.latin, mb.theme.fonts.major.latin);
-        assert_eq!(ma.theme.fonts.minor.latin, mb.theme.fonts.minor.latin);
-        assert_eq!(ma.background, mb.background, "background of {}", ma.name);
-        let names = |m: &deckcraft_model::Master| m.layouts.iter().map(|l| l.name.clone()).collect::<Vec<_>>();
-        assert_eq!(names(ma), names(mb));
+        same_master(ma, mb);
     }
     // Each slide stays on its master's layout.
     let layout_name =

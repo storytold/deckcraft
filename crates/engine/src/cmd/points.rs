@@ -658,6 +658,62 @@ pub fn vertex_at(doc: &deckcraft_model::Presentation, sel: &crate::Selection, sh
     None
 }
 
+/// The point at parameter `t` of segment `si`, scaled by `scale` into the shape's box.
+fn segment_point(segs: &[Seg], si: usize, p0: Point, t: f64, scale: (f64, f64)) -> Option<Point> {
+    let q = match segs.get(si)? {
+        Seg::L(p1) => p0.lerp(*p1, t),
+        Seg::Q(c, p1) => p0.lerp(*c, t).lerp(c.lerp(*p1, t), t),
+        Seg::C(c1, c2, p1) => {
+            let (a, b, c) = (p0.lerp(*c1, t), c1.lerp(*c2, t), c2.lerp(*p1, t));
+            a.lerp(b, t).lerp(b.lerp(c, t), t)
+        }
+        _ => return None,
+    };
+    Some(Point::new(q.x * scale.0, q.y * scale.1))
+}
+
+/// The vertex that ends segment `si` (a closing edge ends on the start).
+fn segment_end_vertex(segs: &[Seg], vs: &[usize], si: usize) -> Option<usize> {
+    if closes_onto_start(segs, si) {
+        let start = segs.get(..si).and_then(|s| s.iter().rposition(|x| matches!(x, Seg::M(_))));
+        start.and_then(|m| vs.iter().position(|v| *v == m))
+    } else {
+        vs.iter().position(|v| *v == si)
+    }
+}
+
+/// The distance and `t` of the point on segment `si` nearest `local`, if it lies within `tol`.
+fn nearest_on_segment(segs: &[Seg], si: usize, p0: Point, scale: (f64, f64), local: Point, tol: f64) -> Option<(f64, f64)> {
+    let at = |t: f64| segment_point(segs, si, p0, t, scale);
+    let mut near: Option<(f64, f64)> = None;
+    for k in 1..32 {
+        let t = k as f64 / 32.0;
+        if let Some(q) = at(t) {
+            let d = (q - local).hypot();
+            if d <= tol && near.is_none_or(|n| d < n.0) {
+                near = Some((d, t));
+            }
+        }
+    }
+    let (mut d, mut t) = near?;
+    // Narrow `t` down to the nearest place on the segment, where Add Point puts the point.
+    let mut step = 1.0 / 32.0;
+    for _ in 0..4 {
+        step /= 8.0;
+        let c = t;
+        for k in -8..=8 {
+            let u = (c + f64::from(k) * step).clamp(0.0, 1.0);
+            if let Some(q) = at(u) {
+                let e = (q - local).hypot();
+                if e < d {
+                    (d, t) = (e, u);
+                }
+            }
+        }
+    }
+    Some((d, t))
+}
+
 /// The segment of `sh`'s outline near slide point `p`: (path, index of the vertex ending it, t).
 pub fn segment_at(doc: &deckcraft_model::Presentation, sel: &crate::Selection, sh: &Shape, p: Point, tol: f64) -> Option<(usize, usize, f64)> {
     let Geom::Custom { paths } = &sh.geom else { return None };
@@ -665,57 +721,13 @@ pub fn segment_at(doc: &deckcraft_model::Presentation, sel: &crate::Selection, s
     let local = x.affine().inverse() * p;
     let mut best: Option<(f64, usize, usize, f64)> = None;
     for (pi, cp) in paths.iter().enumerate() {
-        let (sx, sy) = (if cp.w > 0.0 { x.w / cp.w } else { 1.0 }, if cp.h > 0.0 { x.h / cp.h } else { 1.0 });
+        let scale = (if cp.w > 0.0 { x.w / cp.w } else { 1.0 }, if cp.h > 0.0 { x.h / cp.h } else { 1.0 });
         let segs = parse(&cp.d);
         let vs = vertices(&segs);
         for si in 0..segs.len() {
             let Some(p0) = seg_start(&segs, si) else { continue };
-            let at = |t: f64| -> Option<Point> {
-                let q = match segs.get(si)? {
-                    Seg::L(p1) => p0.lerp(*p1, t),
-                    Seg::Q(c, p1) => p0.lerp(*c, t).lerp(c.lerp(*p1, t), t),
-                    Seg::C(c1, c2, p1) => {
-                        let (a, b, c) = (p0.lerp(*c1, t), c1.lerp(*c2, t), c2.lerp(*p1, t));
-                        a.lerp(b, t).lerp(b.lerp(c, t), t)
-                    }
-                    _ => return None,
-                };
-                Some(Point::new(q.x * sx, q.y * sy))
-            };
-            // The vertex that ends this segment (a closing edge ends on the start).
-            let end_vertex = if closes_onto_start(&segs, si) {
-                let start = segs.get(..si).and_then(|s| s.iter().rposition(|x| matches!(x, Seg::M(_))));
-                start.and_then(|m| vs.iter().position(|v| *v == m))
-            } else {
-                vs.iter().position(|v| *v == si)
-            };
-            let Some(ev) = end_vertex else { continue };
-            let mut near: Option<(f64, f64)> = None;
-            for k in 1..32 {
-                let t = k as f64 / 32.0;
-                if let Some(q) = at(t) {
-                    let d = (q - local).hypot();
-                    if d <= tol && near.is_none_or(|n| d < n.0) {
-                        near = Some((d, t));
-                    }
-                }
-            }
-            let Some((mut d, mut t)) = near else { continue };
-            // Narrow `t` down to the nearest place on the segment, where Add Point puts the point.
-            let mut step = 1.0 / 32.0;
-            for _ in 0..4 {
-                step /= 8.0;
-                let c = t;
-                for k in -8..=8 {
-                    let u = (c + f64::from(k) * step).clamp(0.0, 1.0);
-                    if let Some(q) = at(u) {
-                        let e = (q - local).hypot();
-                        if e < d {
-                            (d, t) = (e, u);
-                        }
-                    }
-                }
-            }
+            let Some(ev) = segment_end_vertex(&segs, &vs, si) else { continue };
+            let Some((d, t)) = nearest_on_segment(&segs, si, p0, scale, local, tol) else { continue };
             if best.is_none_or(|b| d < b.0) {
                 best = Some((d, pi, ev, t));
             }

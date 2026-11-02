@@ -73,8 +73,13 @@ fn a_gradient_without_stops_takes_them_from_its_style() {
     let p = Presentation::default();
     let s = &p.slides[0];
     let ctx = Ctx::for_slide(&p, s).unwrap();
-    let own =
-        style::Gradient { tile: [0.0; 4], stops: vec![], shape: style::GradientShape::Linear { angle: 45.0, scaled: true }, rotate_with_shape: true };
+    let own = style::Gradient {
+        tile: [0.0; 4],
+        stops: vec![],
+        shape: style::GradientShape::Linear { angle: 45.0, scaled: true },
+        rotate_with_shape: true,
+        flip: None,
+    };
     let mut st = ShapeStyle::accent(SchemeSlot::Accent2);
     st.fill_ref.0 = 3;
     let sh = Shape { style: Some(st.clone()), fill: Some(Fill::Gradient(own.clone())), ..Default::default() };

@@ -126,155 +126,216 @@ fn advance(rtf: &str, i: usize, n: usize) -> usize {
     if rtf.is_char_boundary(i + n) { i + n } else { i + rtf.get(i..).and_then(|r| r.chars().next()).map_or(1, char::len_utf8) }
 }
 
+/// Group state: whether the text is being skipped, and the `\uc` fallback count.
+#[derive(Clone, Copy)]
+struct St {
+    skip: bool,
+    uc: usize,
+}
+
+/// Parser state for [`rtf_to_outline`]: the cursor, the group stack and the outline so far.
+struct Outline<'a> {
+    rtf: &'a str,
+    b: &'a [u8],
+    i: usize,
+    stack: Vec<St>,
+    st: St,
+    level: Option<u32>,
+    indent: i64,
+    pending_skip: usize,
+    line: String,
+    out: String,
+}
+
 /// Read an RTF outline into tab-indented outline text: a paragraph's outline level (or its left
 /// indent in 0.25" steps) becomes its number of tabs.
 pub fn rtf_to_outline(rtf: &str) -> String {
-    #[derive(Clone, Copy)]
-    struct St {
-        skip: bool,
-        uc: usize,
-    }
-    let b = rtf.as_bytes();
-    let mut stack: Vec<St> = vec![];
-    let mut st = St { skip: false, uc: 1 };
-    let (mut level, mut indent): (Option<u32>, i64) = (None, 0);
-    let mut line = String::new();
-    let mut out = String::new();
-    let mut pending_skip = 0usize;
-    let mut i = 0;
-    let flush = |line: &mut String, level: Option<u32>, indent: i64, out: &mut String| {
-        let text = line.trim();
-        if !text.is_empty() {
-            let n = level.map(|l| l as i64).unwrap_or(indent.saturating_add(180) / 360).clamp(0, 9) as usize;
-            out.push_str(&"\t".repeat(n));
-            out.push_str(text);
-            out.push('\n');
-        }
-        line.clear();
+    let mut p = Outline {
+        rtf,
+        b: rtf.as_bytes(),
+        i: 0,
+        stack: vec![],
+        st: St { skip: false, uc: 1 },
+        level: None,
+        indent: 0,
+        pending_skip: 0,
+        line: String::new(),
+        out: String::new(),
     };
-    while i < b.len() {
-        let c = b[i];
-        match c {
-            b'{' => {
-                stack.push(st);
-                i += 1;
-                // `{\*\dest …}`: an ignorable destination.
-                if b[i..].starts_with(b"\\*") {
-                    st.skip = true;
-                }
-            }
-            b'}' => {
-                st = stack.pop().unwrap_or(St { skip: false, uc: 1 });
-                i += 1;
-            }
-            b'\\' => {
-                i += 1;
-                let Some(&n) = b.get(i) else { break };
-                if n.is_ascii_alphabetic() {
-                    let s = i;
-                    while i < b.len() && b[i].is_ascii_alphabetic() {
-                        i += 1;
-                    }
-                    let word = &rtf[s..i];
-                    let ns = i;
-                    if i < b.len() && (b[i] == b'-' || b[i].is_ascii_digit()) {
-                        i += 1;
-                        while i < b.len() && b[i].is_ascii_digit() {
-                            i += 1;
-                        }
-                    }
-                    let arg: Option<i64> = rtf[ns..i].parse().ok();
-                    if i < b.len() && b[i] == b' ' {
-                        i += 1;
-                    }
-                    if pending_skip > 0 {
-                        pending_skip -= 1;
-                        continue;
-                    }
-                    if SKIP.contains(&word) {
-                        st.skip = true;
-                    }
-                    if st.skip {
-                        continue;
-                    }
-                    match word {
-                        "par" => {
-                            flush(&mut line, level, indent, &mut out);
-                        }
-                        "pard" => {
-                            level = None;
-                            indent = 0;
-                        }
-                        "outlinelevel" => level = arg.map(|a| a.clamp(0, 9) as u32),
-                        "li" => indent = arg.unwrap_or(0),
-                        "tab" | "line" => line.push(' '),
-                        "uc" => st.uc = arg.unwrap_or(1).clamp(0, 8) as usize,
-                        "u" => {
-                            let v = arg.unwrap_or(0);
-                            // RTF writes UTF-16 units as signed 16-bit values.
-                            push_utf16(&mut line, (v & 0xffff) as u32);
-                            pending_skip = 0;
-                            // Skip the fallback characters.
-                            let mut k = st.uc;
-                            while k > 0 && i < b.len() {
-                                if b[i] == b'\\' && b.get(i + 1) == Some(&b'\'') {
-                                    i = advance(rtf, i, 4);
-                                } else if b[i] == b'{' || b[i] == b'}' || b[i] == b'\\' {
-                                    break;
-                                } else {
-                                    i = advance(rtf, i, 1);
-                                }
-                                k -= 1;
-                            }
-                        }
-                        "emdash" => line.push('—'),
-                        "endash" => line.push('–'),
-                        "bullet" => line.push('•'),
-                        "lquote" => line.push('‘'),
-                        "rquote" => line.push('’'),
-                        "ldblquote" => line.push('“'),
-                        "rdblquote" => line.push('”'),
-                        _ => {}
-                    }
-                } else if n == b'\'' {
-                    let hex = rtf.get(i + 1..i + 3).filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit())).and_then(|h| u8::from_str_radix(h, 16).ok());
-                    i = advance(rtf, i, 3);
-                    if !st.skip
-                        && let Some(h) = hex
-                        && h != 0
-                    {
-                        line.push(cp1252(h));
-                    }
-                } else {
-                    i += 1;
-                    if st.skip {
-                        continue;
-                    }
-                    match n {
-                        b'\\' | b'{' | b'}' => line.push(n as char),
-                        b'~' => line.push('\u{a0}'),
-                        b'_' => line.push('\u{2011}'),
-                        b'\n' | b'\r' => flush(&mut line, level, indent, &mut out),
-                        _ => {}
+    p.run();
+    p.flush();
+    finish_surrogates(p.out)
+}
+
+impl Outline<'_> {
+    fn run(&mut self) {
+        while self.i < self.b.len() {
+            match self.b[self.i] {
+                b'{' => self.open_group(),
+                b'}' => self.close_group(),
+                b'\\' => {
+                    self.i += 1;
+                    if !self.escape() {
+                        break;
                     }
                 }
-            }
-            b'\r' | b'\n' => i += 1,
-            _ => {
-                let s = i;
-                while i < b.len() && !matches!(b[i], b'{' | b'}' | b'\\' | b'\r' | b'\n') {
-                    i += 1;
-                }
-                if !st.skip
-                    && let Some(t) = rtf.get(s..i)
-                {
-                    line.push_str(&t.replace('\u{0}', ""));
-                }
+                b'\r' | b'\n' => self.i += 1,
+                _ => self.text(),
             }
         }
     }
-    flush(&mut line, level, indent, &mut out);
-    finish_surrogates(out)
+
+    /// `{`: push the group; `{\*\dest …}` is an ignorable destination.
+    fn open_group(&mut self) {
+        self.stack.push(self.st);
+        self.i += 1;
+        if self.b[self.i..].starts_with(b"\\*") {
+            self.st.skip = true;
+        }
+    }
+
+    fn close_group(&mut self) {
+        self.st = self.stack.pop().unwrap_or(St { skip: false, uc: 1 });
+        self.i += 1;
+    }
+
+    /// The character after a backslash: a control word, a hex escape or a symbol. False at the
+    /// end of the input.
+    fn escape(&mut self) -> bool {
+        let Some(&n) = self.b.get(self.i) else { return false };
+        if n.is_ascii_alphabetic() {
+            self.control_word();
+        } else if n == b'\'' {
+            self.hex_escape();
+        } else {
+            self.symbol(n);
+        }
+        true
+    }
+
+    fn control_word(&mut self) {
+        let rtf = self.rtf;
+        let s = self.i;
+        while self.i < self.b.len() && self.b[self.i].is_ascii_alphabetic() {
+            self.i += 1;
+        }
+        let word = &rtf[s..self.i];
+        let ns = self.i;
+        if self.i < self.b.len() && (self.b[self.i] == b'-' || self.b[self.i].is_ascii_digit()) {
+            self.i += 1;
+            while self.i < self.b.len() && self.b[self.i].is_ascii_digit() {
+                self.i += 1;
+            }
+        }
+        let arg: Option<i64> = rtf[ns..self.i].parse().ok();
+        if self.i < self.b.len() && self.b[self.i] == b' ' {
+            self.i += 1;
+        }
+        if self.pending_skip > 0 {
+            self.pending_skip -= 1;
+            return;
+        }
+        if SKIP.contains(&word) {
+            self.st.skip = true;
+        }
+        if !self.st.skip {
+            self.apply(word, arg);
+        }
+    }
+
+    fn apply(&mut self, word: &str, arg: Option<i64>) {
+        match word {
+            "par" => self.flush(),
+            "pard" => {
+                self.level = None;
+                self.indent = 0;
+            }
+            "outlinelevel" => self.level = arg.map(|a| a.clamp(0, 9) as u32),
+            "li" => self.indent = arg.unwrap_or(0),
+            "tab" | "line" => self.line.push(' '),
+            "uc" => self.st.uc = arg.unwrap_or(1).clamp(0, 8) as usize,
+            "u" => self.unicode(arg.unwrap_or(0)),
+            "emdash" => self.line.push('—'),
+            "endash" => self.line.push('–'),
+            "bullet" => self.line.push('•'),
+            "lquote" => self.line.push('‘'),
+            "rquote" => self.line.push('’'),
+            "ldblquote" => self.line.push('“'),
+            "rdblquote" => self.line.push('”'),
+            _ => {}
+        }
+    }
+
+    /// `\uN`: one UTF-16 unit, then the `\uc` fallback characters, which are skipped.
+    fn unicode(&mut self, v: i64) {
+        // RTF writes UTF-16 units as signed 16-bit values.
+        push_utf16(&mut self.line, (v & 0xffff) as u32);
+        self.pending_skip = 0;
+        let mut k = self.st.uc;
+        while k > 0 && self.i < self.b.len() {
+            if self.b[self.i] == b'\\' && self.b.get(self.i + 1) == Some(&b'\'') {
+                self.i = advance(self.rtf, self.i, 4);
+            } else if matches!(self.b[self.i], b'{' | b'}' | b'\\') {
+                break;
+            } else {
+                self.i = advance(self.rtf, self.i, 1);
+            }
+            k -= 1;
+        }
+    }
+
+    /// `\'hh`: one cp1252 byte.
+    fn hex_escape(&mut self) {
+        let hex =
+            self.rtf.get(self.i + 1..self.i + 3).filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit())).and_then(|h| u8::from_str_radix(h, 16).ok());
+        self.i = advance(self.rtf, self.i, 3);
+        if !self.st.skip
+            && let Some(h) = hex
+            && h != 0
+        {
+            self.line.push(cp1252(h));
+        }
+    }
+
+    /// A one-character control symbol (`\\`, `\{`, `\~`, ...).
+    fn symbol(&mut self, n: u8) {
+        self.i += 1;
+        if self.st.skip {
+            return;
+        }
+        match n {
+            b'\\' | b'{' | b'}' => self.line.push(n as char),
+            b'~' => self.line.push('\u{a0}'),
+            b'_' => self.line.push('\u{2011}'),
+            b'\n' | b'\r' => self.flush(),
+            _ => {}
+        }
+    }
+
+    /// Plain text up to the next special character.
+    fn text(&mut self) {
+        let s = self.i;
+        while self.i < self.b.len() && !matches!(self.b[self.i], b'{' | b'}' | b'\\' | b'\r' | b'\n') {
+            self.i += 1;
+        }
+        if !self.st.skip
+            && let Some(t) = self.rtf.get(s..self.i)
+        {
+            self.line.push_str(&t.replace('\u{0}', ""));
+        }
+    }
+
+    /// Ends the current line: a non-empty line becomes one outline entry, indented by its level.
+    fn flush(&mut self) {
+        let text = self.line.trim();
+        if !text.is_empty() {
+            let n = self.level.map(|l| l as i64).unwrap_or(self.indent.saturating_add(180) / 360).clamp(0, 9) as usize;
+            self.out.push_str(&"\t".repeat(n));
+            self.out.push_str(text);
+            self.out.push('\n');
+        }
+        self.line.clear();
+    }
 }
 
 /// Push a UTF-16 unit; surrogate halves are parked as private markers (NUL plus four hex digits)
