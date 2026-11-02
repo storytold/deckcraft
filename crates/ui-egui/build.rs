@@ -84,16 +84,19 @@ fn locales(dir: &std::path::Path) -> Result<Vec<Locale>, String> {
     if !dir.is_absolute() {
         return Err(format!("{} is not an absolute path", dir.display()));
     }
-    let list = std::fs::read_dir(dir).map_err(|e| format!("{} is not a craft-i18n checkout ({e})", dir.display()))?;
     println!("cargo::rerun-if-changed={}", dir.display());
+    let list = std::fs::read_dir(dir).map_err(|e| format!("{} is not a craft-i18n checkout ({e})", dir.display()))?;
     let mut out = Vec::new();
-    for entry in list.flatten() {
+    for entry in list {
+        let entry = entry.map_err(|e| format!("reading {}: {e}", dir.display()))?;
         let path = entry.path();
-        let Some(code) = path.file_name().and_then(std::ffi::OsStr::to_str).map(str::to_string) else { continue };
         let app = path.join(APP_CATALOG);
         if !app.is_file() {
             continue;
         }
+        let Some(code) = path.file_name().and_then(std::ffi::OsStr::to_str).map(str::to_string) else {
+            return Err(format!("{} has a non-UTF-8 locale name", path.display()));
+        };
         println!("cargo::rerun-if-changed={}", app.display());
         let shared = Some(path.join("common.tsv")).filter(|p| p.is_file());
         if let Some(p) = &shared {
