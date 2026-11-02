@@ -104,3 +104,10 @@ rect, text}`, `shape.connect {from, to, preset}`, `shape.freeform {points, close
 `chart.*` (`chart.options {textColor}` colours a chart's title, axes, legend and labels), `table.*`, `file.export {path, layout}` (PDF) or `{path, width, secondsPerSlide, loop}`
 (GIF). `deckcraft-cli describe COMMAND` prints any
 command's parameters.
+
+To check text after filling a slide, `text.fit {index?, ids?}` reports each text body as the slide
+draws it: the autofit in effect and where it is set (the shape, its layout or master placeholder, or
+the default), the font scale and line spacing reduction shrink-on-overflow applied, the smallest and
+largest drawn font size in points, the line count, and how far the text runs past its frame
+(`overflowPt`). A placeholder that inherits its shrink from the layout shows `autofit: null` in
+`shape.inspect`; `text.fit` shows the scale it is drawn at.

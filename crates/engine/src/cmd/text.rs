@@ -18,6 +18,9 @@ use crate::{DocState, HistoryEntry, Result, Selection, Session, Target, TextSel,
 mod autocorrect;
 mod caret;
 mod editing;
+mod fit;
+#[cfg(test)]
+mod fit_tests;
 mod formatting;
 mod ime;
 mod layout;
@@ -131,6 +134,15 @@ pub fn specs() -> Vec<CommandSpec> {
             set
         ),
         cmd!(query "text.get", "Get Text", [], None, "{id?} → {text, paragraphs}", has_slide, get),
+        cmd!(
+            query "text.fit",
+            "Text Fit",
+            [],
+            None,
+            "{index?: slide index (else the current slide), ids?: [shape id] (else every text body on the slide)} → {index, bodies: [{id, name, autofit: none|shrink|shape, autofitFrom: shape|layout|master|default, fontScale, lineReduction, minSize, maxSize, lines, contentHeight, frameHeight, overflows, overflowPt}]} — how each text body fits its shape as the slide draws it: the autofit in effect after placeholder inheritance, the font scale and line spacing reduction it applied, the drawn font sizes in pt, and how far the text runs past its frame (`overflows` is the drawing's own test, true past half a point; tables are left out: their rows grow to fit)",
+            has_slide,
+            fit::fit
+        ),
     ]
 }
 
