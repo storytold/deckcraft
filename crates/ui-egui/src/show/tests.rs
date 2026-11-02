@@ -1245,7 +1245,7 @@ fn a_preview_of_an_edited_presentation_is_rendered_again() {
 fn transition_preview_plays_from_the_previous_slide() {
     let mut s = deckcraft_engine::Session::with_new();
     s.execute("slide.new", &json!({})).unwrap();
-    s.execute("transition.set", &json!({"kind": "push", "index": 1, "duration": 1.0})).unwrap();
+    s.execute("transition.set", &json!({"kind": "push", "index": 1, "duration": 1000})).unwrap();
     let doc = s.active().unwrap().doc.clone();
     let mut show = Show::new(&doc, 1, true, false);
     show.start_transition_preview(&doc, 10.0);

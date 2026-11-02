@@ -10,7 +10,7 @@ use super::zoom::{
 };
 use super::{
     Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
-    SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
+    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -394,9 +394,10 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
             {
                 let threads =
                     if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
-                let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, ..Default::default() };
-                let img = deckcraft_render::render_slide(doc, prev, &opts);
-                tr.old = Some(crate::textures::upload(ctx, "trans-old", crate::textures::to_color_image(&img, false)));
+                let timeline = ShowState::timeline(doc, prev);
+                let step = timeline.steps();
+                let ci = render_frame(doc, prev, timeline, step, 0.0, size, vec![], &[], threads, &[], &[], None);
+                tr.old = Some(crate::textures::upload(ctx, "trans-old", ci));
             }
             let aspect = doc.slide_size.width / doc.slide_size.height.max(1.0);
             let part = |k: usize| tr.parts.as_ref().and_then(|p| p.get(k).cloned().flatten());
