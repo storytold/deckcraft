@@ -388,6 +388,16 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
             if tr.parts.is_none() && deckcraft_anim::uses_slide_parts(&tr.kind, &tr.option) {
                 tr.parts = Some(part_textures(ctx, doc, tr.from, idx, size));
             }
+            if tr.old.is_none()
+                && let Some(prev) = tr.from
+                && !deckcraft_anim::uses_slide_parts(&tr.kind, &tr.option)
+            {
+                let threads =
+                    if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
+                let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, ..Default::default() };
+                let img = deckcraft_render::render_slide(doc, prev, &opts);
+                tr.old = Some(crate::textures::upload(ctx, "trans-old", crate::textures::to_color_image(&img, false)));
+            }
             let aspect = doc.slide_size.width / doc.slide_size.height.max(1.0);
             let part = |k: usize| tr.parts.as_ref().and_then(|p| p.get(k).cloned().flatten());
             let parts = [part(0), part(1), part(2), part(3)];
