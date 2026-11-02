@@ -1125,12 +1125,15 @@ impl Renderer {
                 // see-through as its fill (none for an outline-only shape) …
                 None => {
                     if let Some(a) = fill_alpha {
-                        let mut filled = BezPath::new();
-                        for sp in geo.paths.iter().filter(|sp| sp.fill != FillMode::None) {
-                            filled.extend(sp.path.iter());
-                        }
                         ctx.set_paint(color(c.with_alpha(255), a));
-                        ctx.fill_path(&filled);
+                        // Each subpath under its own fill rule, as the shape itself is
+                        // drawn: one merged path filled NonZero fills the hole of an
+                        // even-odd shape (a donut, a frame) (#1596).
+                        for sp in geo.paths.iter().filter(|sp| sp.fill != FillMode::None) {
+                            ctx.set_fill_rule(if sp.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
+                            ctx.fill_path(&sp.path);
+                        }
+                        ctx.set_fill_rule(peniko::Fill::NonZero);
                     }
                 }
             }
@@ -1161,7 +1164,19 @@ impl Renderer {
             ctx.stroke_path(&silhouette);
             // A shape without a fill (an outline, a frame) glows along its line only (#225).
             if fill_alpha.is_some() || content.is_some() {
-                ctx.fill_path(&silhouette);
+                // Per subpath under its own fill rule, as in the shadow above: the
+                // merged silhouette filled NonZero fills an even-odd hole (#1596).
+                // When no subpath takes part the silhouette is the outline fallback.
+                let mut filled_any = false;
+                for sp in geo.paths.iter().filter(|sp| sp.fill != FillMode::None || fill.is_none()) {
+                    ctx.set_fill_rule(if sp.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
+                    ctx.fill_path(&sp.path);
+                    filled_any = true;
+                }
+                if !filled_any {
+                    ctx.fill_path(&silhouette);
+                }
+                ctx.set_fill_rule(peniko::Fill::NonZero);
             }
             ctx.pop_layer();
         }
@@ -1180,7 +1195,20 @@ impl Renderer {
                 }
                 None => {
                     if let Some(fl) = fill {
-                        paint::fill_path(ctx, rctx, fl, ph, &silhouette, Rect::new(0.0, 0.0, w, h), mm, FillMode::Norm, 1.0, rctx.pres);
+                        // Per subpath under its own fill rule, as in the shadow above:
+                        // the merged silhouette filled NonZero fills an even-odd hole
+                        // (#1596). The outline fallback covers shapes with no
+                        // participating subpath.
+                        let mut filled_any = false;
+                        for sp in geo.paths.iter().filter(|sp| sp.fill != FillMode::None || fill.is_none()) {
+                            ctx.set_fill_rule(if sp.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
+                            paint::fill_path(ctx, rctx, fl, ph, &sp.path, Rect::new(0.0, 0.0, w, h), mm, FillMode::Norm, 1.0, rctx.pres);
+                            filled_any = true;
+                        }
+                        if !filled_any {
+                            paint::fill_path(ctx, rctx, fl, ph, &silhouette, Rect::new(0.0, 0.0, w, h), mm, FillMode::Norm, 1.0, rctx.pres);
+                        }
+                        ctx.set_fill_rule(peniko::Fill::NonZero);
                     }
                 }
             }

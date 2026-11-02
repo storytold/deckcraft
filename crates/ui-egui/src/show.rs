@@ -63,6 +63,10 @@ pub struct Show {
     /// Preview renders started on another thread.
     #[cfg(test)]
     preview_spawns: usize,
+    remote_preview: Option<crate::presenter::Preview>,
+    remote_next: Option<(usize, crate::presenter::Preview)>,
+    remote_sent: f64,
+    remote_opened: bool,
     /// The next slide's first frame, rendered in the background while this one is shown so
     /// advancing only uploads it (#240).
     prefetch: Option<Prefetch>,
@@ -231,6 +235,10 @@ impl Show {
             next_job: None,
             #[cfg(test)]
             preview_spawns: 0,
+            remote_preview: None,
+            remote_next: None,
+            remote_sent: f64::NEG_INFINITY,
+            remote_opened: false,
             prefetch: None,
             backdrop: None,
             blank: None,
