@@ -16,9 +16,10 @@ fn with<T>(f: impl FnOnce(&mut arboard::Clipboard) -> T) -> Option<T> {
     use std::sync::{Mutex, OnceLock};
     static HANDLE: OnceLock<Mutex<arboard::Clipboard>> = OnceLock::new();
     if HANDLE.get().is_none() {
-        let _ = HANDLE.set(Mutex::new(arboard::Clipboard::new().ok()?));
+        let cb = arboard::Clipboard::new().map_err(|e| log::warn!("no system clipboard: {e}")).ok()?;
+        let _ = HANDLE.set(Mutex::new(cb));
     }
-    let mut cb = HANDLE.get()?.lock().ok()?;
+    let mut cb = HANDLE.get()?.lock().map_err(|_| log::warn!("the system clipboard handle is poisoned")).ok()?;
     Some(f(&mut cb))
 }
 

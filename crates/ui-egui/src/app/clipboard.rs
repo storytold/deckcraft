@@ -39,9 +39,12 @@ impl SlideApp {
         let carried = deckcraft_engine::clipboard::embed(html, text, &self.session.clipboard);
         let rich = carried.as_deref().or((!html.is_empty()).then_some(html));
         if let Some(rich) = rich
-            && self.services.clipboard_set_html.as_mut().is_some_and(|f| f(rich, &plain))
+            && let Some(f) = self.services.clipboard_set_html.as_mut()
         {
-            return None;
+            if f(rich, &plain) {
+                return None;
+            }
+            log::warn!("the system clipboard refused the HTML copy ({} bytes); offering the plain text only", rich.len());
         }
         Some(plain)
     }
