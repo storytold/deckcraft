@@ -671,7 +671,7 @@ pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
         || r.glow.is_some()
         || r.reflection.is_some()
         || r.soft_edge.is_some()
-        || r.no_effects == Some(true);
+        || r.own_effects == Some(true);
     let has_kids = r.outline.is_some()
         || r.fill.is_some()
         || has_fx

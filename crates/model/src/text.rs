@@ -511,9 +511,9 @@ pub struct RunProps {
     pub reflection: Option<crate::style::Reflection>,
     /// Soft-edge radius in points (`a:softEdge`).
     pub soft_edge: Option<f64>,
-    /// The run carries its own (possibly empty) `a:effectLst`, so no shadow, glow, reflection or
-    /// soft edge is inherited from the list styles: how text turns off an inherited shadow.
-    pub no_effects: Option<bool>,
+    /// The run carries its own (possibly empty) `a:effectLst`, which replaces the list styles' one:
+    /// no shadow, glow, reflection or soft edge is inherited. How text turns off an inherited shadow.
+    pub own_effects: Option<bool>,
     /// Spelling/grammar errors are not flagged.
     pub no_proof: Option<bool>,
     pub normalize_height: Option<bool>,
@@ -527,6 +527,8 @@ where
 }
 
 impl RunProps {
+    /// Fills what this run leaves unset from `p`, its paragraph or list style. The effects come as
+    /// one list: none of them when the run has its own ([`RunProps::own_effects`]).
     pub fn inherit(&mut self, p: &RunProps) {
         macro_rules! take {
             ($($f:ident),*) => { $( if self.$f.is_none() { self.$f.clone_from(&p.$f); } )* };
@@ -556,8 +558,8 @@ impl RunProps {
             no_proof,
             normalize_height
         );
-        if self.no_effects != Some(true) {
-            take!(shadow, inner_shadow, glow, reflection, soft_edge, no_effects);
+        if self.own_effects != Some(true) {
+            take!(shadow, inner_shadow, glow, reflection, soft_edge, own_effects);
         }
     }
 }
@@ -787,13 +789,13 @@ mod tests {
         let mut plain = RunProps::default();
         plain.inherit(&level);
         assert!(plain.shadow.is_some() && plain.soft_edge == Some(4.0));
-        let mut off = RunProps { no_effects: Some(true), ..Default::default() };
+        let mut off = RunProps { own_effects: Some(true), ..Default::default() };
         off.inherit(&level);
         assert!(off.shadow.is_none() && off.soft_edge.is_none());
         assert_eq!(off.bold, Some(true), "other formatting still inherits");
         // A list style's empty effect list hides the master's effects from the runs below it.
         let mut via_layout = RunProps::default();
-        via_layout.inherit(&RunProps { no_effects: Some(true), ..Default::default() });
+        via_layout.inherit(&RunProps { own_effects: Some(true), ..Default::default() });
         via_layout.inherit(&level);
         assert!(via_layout.shadow.is_none());
     }

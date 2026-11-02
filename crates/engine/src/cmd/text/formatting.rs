@@ -19,14 +19,43 @@ pub(crate) fn format_run_levels(
     f: &(dyn Fn(&mut RunProps) + Send + Sync),
     lf: &(dyn Fn(&mut RunProps, &RunProps) + Send + Sync),
 ) -> Result<Value> {
+    format_runs(s, &|r, _| f(r), lf, false)
+}
+
+/// Like [`format_run`], for a change that depends on what each run inherits: `f` gets the run's
+/// own props and what a run in its paragraph inherits (the paragraph's `defRPr` and the list
+/// styles above it, resolved before the edit), so the runs of different paragraphs, shapes and
+/// table cells each see their own. A layout or master level gets its effective props.
+pub(crate) fn format_run_inherited(s: &mut Session, f: &(dyn Fn(&mut RunProps, &RunProps) + Send + Sync)) -> Result<Value> {
+    format_runs(s, f, f, true)
+}
+
+/// [`format_run_levels`], with `f` given each run's inherited props when `inherited` is set (and
+/// empty props otherwise).
+fn format_runs(
+    s: &mut Session,
+    f: &(dyn Fn(&mut RunProps, &RunProps) + Send + Sync),
+    lf: &(dyn Fn(&mut RunProps, &RunProps) + Send + Sync),
+    inherited: bool,
+) -> Result<Value> {
+    let none = RunProps::default();
     let st = s.doc()?;
+    let ctx = if inherited { crate::cmd::text::ctx_for(&st.doc, &st.selection) } else { None };
     if let Some(t) = st.selection.text.clone() {
         let (a, b) = format_range(st, &t);
         // Only the levels of the paragraphs the selected range touches.
         let levels = if a == b { Vec::new() } else { master_levels(st, &t, t.ordered()) };
+        let inh = match (&ctx, body_of(st, &t)) {
+            (Some(ctx), Some(body)) => inherited_by_paragraph(ctx, &st.shape(t.shape).cloned().unwrap_or_default(), body),
+            _ => Vec::new(),
+        };
         edit_text(s, |body, _| {
             if levels.is_empty() {
-                ed::format(body, a, b, f);
+                if inherited {
+                    format_paragraphs(body, a, b, f, &inh);
+                } else {
+                    ed::format(body, a, b, &|r| f(r, &none));
+                }
             } else {
                 format_by_level(body, a, b, lf, &levels);
             }
@@ -43,6 +72,24 @@ pub(crate) fn format_run_levels(
         return Err(bad("format", SELECT_TEXT_OR_SHAPE));
     }
     let cells = st.selection.cells;
+    // What the runs of each selected shape (or table cell) inherit, paragraph by paragraph.
+    let mut inh: Vec<(ShapeId, Option<(usize, usize)>, Vec<RunProps>)> = Vec::new();
+    if let Some(ctx) = &ctx {
+        for sh in ids.iter().filter_map(|id| st.shape(*id)) {
+            match &sh.kind {
+                ShapeKind::Table(t) => {
+                    for (r, row) in t.rows.iter().enumerate() {
+                        for (c, cell) in row.cells.iter().enumerate() {
+                            inh.push((sh.id, Some((r, c)), inherited_by_paragraph(ctx, sh, &cell.text)));
+                        }
+                    }
+                }
+                _ => inh.push((sh.id, None, sh.text.as_ref().map(|b| inherited_by_paragraph(ctx, sh, b)).unwrap_or_default())),
+            }
+        }
+    }
+    let inh_of =
+        |id: ShapeId, cell: Option<(usize, usize)>| inh.iter().find(|(i, c, _)| *i == id && *c == cell).map_or(&[][..], |(_, _, v)| v.as_slice());
     // Effective run props of every level of the selected placeholders, resolved before editing.
     let effective: Vec<(ShapeId, Vec<RunProps>)> = if editing_master(st) {
         let ctx = crate::cmd::text::ctx_for(&st.doc, &st.selection);
@@ -65,7 +112,7 @@ pub(crate) fn format_run_levels(
                 for (r, row) in t.rows.iter_mut().enumerate() {
                     for (c, cell) in row.cells.iter_mut().enumerate() {
                         if crate::cmd::table::in_range(range, r, c) {
-                            ed::format_all(&mut cell.text, f);
+                            format_all(&mut cell.text, f, inh_of(id, Some((r, c))));
                         }
                     }
                 }
@@ -78,7 +125,7 @@ pub(crate) fn format_run_levels(
                         let levels: Vec<(u8, RunProps)> = (0..LIST_LEVELS).zip(eff.iter().cloned()).collect();
                         format_by_level(body, (0, 0), (usize::MAX, usize::MAX), lf, &levels);
                     }
-                    None => ed::format_all(body, f),
+                    None => format_all(body, f, inh_of(id, None)),
                 }
                 // The whole shape is selected: every level of its list style.
                 if let Some(eff) = eff {
@@ -114,6 +161,45 @@ fn format_by_level(body: &mut TextBody, a: Pos, b: Pos, lf: &(dyn Fn(&mut RunPro
         let lvl = p.level.min(LIST_LEVELS - 1);
         let Some((_, eff)) = levels.iter().find(|(l, _)| *l == lvl) else { continue };
         ed::format(body, (pi, from), (pi, to), &|r| lf(r, eff));
+    }
+}
+
+/// What a run in each paragraph of `body` (in `shape`) inherits: the paragraph's `defRPr` and the
+/// list styles above it.
+fn inherited_by_paragraph(ctx: &deckcraft_model::resolve::Ctx, shape: &deckcraft_model::Shape, body: &TextBody) -> Vec<RunProps> {
+    body.paragraphs.iter().map(|p| deckcraft_model::resolve::run(ctx, shape, p, &RunProps::default())).collect()
+}
+
+/// [`ed::format`] over [a, b), paragraph by paragraph, giving `f` each paragraph's entry of `inh`
+/// (empty props past its end). Formats the same runs and end marks as one `ed::format` call.
+fn format_paragraphs(body: &mut TextBody, a: Pos, b: Pos, f: &dyn Fn(&mut RunProps, &RunProps), inh: &[RunProps]) {
+    let Some(last) = body.paragraphs.len().checked_sub(1) else { return };
+    let (a, b) = if a <= b { (a, b) } else { (b, a) };
+    let a = if a.0 > last { (last, usize::MAX) } else { a };
+    let none = RunProps::default();
+    for pi in a.0..=b.0.min(last) {
+        let len = body.paragraphs.get(pi).map_or(0, |p| p.char_len());
+        let from = if pi == a.0 { a.1.min(len) } else { 0 };
+        let to = if pi == b.0 { b.1.min(len) } else { len };
+        // A range that ends at the start of a later paragraph leaves that paragraph alone.
+        if pi > a.0 && pi == b.0 && to == 0 && len > 0 {
+            continue;
+        }
+        let p_inh = inh.get(pi).unwrap_or(&none);
+        ed::format(body, (pi, from), (pi, to), &|r| f(r, p_inh));
+    }
+}
+
+/// [`ed::format_all`], giving `f` each paragraph's entry of `inh` (empty props past its end).
+fn format_all(body: &mut TextBody, f: &dyn Fn(&mut RunProps, &RunProps), inh: &[RunProps]) {
+    let none = RunProps::default();
+    for (pi, p) in body.paragraphs.iter_mut().enumerate() {
+        let p_inh = inh.get(pi).unwrap_or(&none);
+        for r in &mut p.runs {
+            f(&mut r.props, p_inh);
+        }
+        f(&mut p.end_props, p_inh);
+        p.normalize();
     }
 }
 

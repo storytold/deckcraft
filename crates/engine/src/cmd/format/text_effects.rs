@@ -1,21 +1,22 @@
 use super::{
-    Line, Result, Session, Value, bad, color_param, current_run, ed, edit_shapes, f64_or, format_body, format_run, json, ok, on_param, str_param,
+    Line, Result, Session, Value, bad, color_param, current_run, ed, edit_shapes, f64_or, format_body, format_run, format_run_inherited, json, ok,
+    on_param, str_param,
 };
 
+/// Text Shadow (Home › Font): toggles the outer shadow of the selected text, or sets it with
+/// `on`. A shadow the text inherits from its layout or master is turned off by the run's own
+/// effect list (as PowerPoint writes it), which keeps the other effects that run shows.
 pub(super) fn text_shadow(s: &mut Session, p: &Value) -> Result<Value> {
-    let cur = current_run(s);
-    let v = on_param(p, Some(cur.shadow.is_some()));
+    let v = on_param(p, Some(current_run(s).shadow.is_some()));
     if !v {
-        // A shadow from the layout or master is turned off by the run's own effect list, which
-        // keeps the other effects the text shows (as PowerPoint writes it).
-        return format_run(s, &move |r| {
+        return format_run_inherited(s, &|r, inh| {
             r.shadow = None;
-            if r.no_effects != Some(true) {
-                r.inner_shadow = r.inner_shadow.take().or_else(|| cur.inner_shadow.clone());
-                r.glow = r.glow.take().or_else(|| cur.glow.clone());
-                r.reflection = r.reflection.take().or_else(|| cur.reflection.clone());
-                r.soft_edge = r.soft_edge.or(cur.soft_edge);
-                r.no_effects = Some(true);
+            if r.own_effects != Some(true) && inh.shadow.is_some() {
+                r.inner_shadow = r.inner_shadow.take().or_else(|| inh.inner_shadow.clone());
+                r.glow = r.glow.take().or_else(|| inh.glow.clone());
+                r.reflection = r.reflection.take().or_else(|| inh.reflection.clone());
+                r.soft_edge = r.soft_edge.or(inh.soft_edge);
+                r.own_effects = Some(true);
             }
         });
     }
@@ -32,7 +33,7 @@ pub(super) fn text_shadow(s: &mut Session, p: &Value) -> Result<Value> {
         align: String::new(),
         rotate_with_shape: false,
     };
-    format_run(s, &move |r| r.shadow = if v { Some(sh.clone()) } else { None })
+    format_run(s, &move |r| r.shadow = Some(sh.clone()))
 }
 
 pub(super) fn text_outline(s: &mut Session, p: &Value) -> Result<Value> {
