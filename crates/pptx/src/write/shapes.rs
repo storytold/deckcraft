@@ -85,7 +85,9 @@ fn extra_guides(name: &str) -> &'static [(&'static str, i64)] {
     }
 }
 
-pub fn geometry(w: &mut W, g: &Geom) {
+/// `sites` and `ext` (the shape's extent in EMU) are the connection sites of a custom geometry
+/// and the space they are written in; a preset ignores them.
+pub fn geometry(w: &mut W, g: &Geom, sites: &[deckcraft_model::ConnectionSite], ext: (i64, i64)) {
     match g {
         Geom::Preset { name, adj } => {
             let name = preset_name(name);
@@ -122,7 +124,7 @@ pub fn geometry(w: &mut W, g: &Geom) {
                 w.empty0("a:avLst");
                 w.close("a:prstGeom");
             } else {
-                crate::custgeom::write_cust_geom(w, paths);
+                crate::custgeom::write_cust_geom(w, paths, sites, ext);
             }
         }
     }
@@ -243,7 +245,8 @@ fn sp_pr_tag(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape, geom: bool, tag: &s
         dml::xfrm(w, "a:xfrm", xf, None);
     }
     if geom && (s.xfrm.is_some() || s.ph.is_none() || !matches!(&s.geom, Geom::Preset { name, adj } if name == "rect" && adj.is_empty())) {
-        geometry(w, &s.geom);
+        let ext = s.xfrm.map(|xf| (deckcraft_geom::pt_to_emu(xf.w), deckcraft_geom::pt_to_emu(xf.h))).unwrap_or((0, 0));
+        geometry(w, &s.geom, &s.sites, ext);
     }
     if let Some(f) = &s.fill {
         dml::fill(w, x, o, f);
@@ -1007,16 +1010,16 @@ mod tests {
     #[test]
     fn preset_guides_are_complete() {
         let mut w = W::frag();
-        geometry(&mut w, &Geom::Preset { name: "star5".into(), adj: vec![20000.0] });
+        geometry(&mut w, &Geom::Preset { name: "star5".into(), adj: vec![20000.0] }, &[], (0, 0));
         assert_eq!(
             w.s,
             r#"<a:prstGeom prst="star5"><a:avLst><a:gd name="adj" fmla="val 20000"/><a:gd name="hf" fmla="val 105146"/><a:gd name="vf" fmla="val 110557"/></a:avLst></a:prstGeom>"#
         );
         let mut w = W::frag();
-        geometry(&mut w, &Geom::Preset { name: "rightArrow".into(), adj: vec![10000.0] });
+        geometry(&mut w, &Geom::Preset { name: "rightArrow".into(), adj: vec![10000.0] }, &[], (0, 0));
         assert!(w.s.contains(r#"name="adj1" fmla="val 10000""#) && w.s.contains(r#"name="adj2" fmla="val 50000""#), "{}", w.s);
         let mut w = W::frag();
-        geometry(&mut w, &Geom::Preset { name: "textBox".into(), adj: vec![] });
+        geometry(&mut w, &Geom::Preset { name: "textBox".into(), adj: vec![] }, &[], (0, 0));
         assert_eq!(w.s, r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#);
     }
 }

@@ -15,8 +15,8 @@ use deckcraft_model::text::{
     Action, Align, Anchor, AutoFit, BodyProps, Bullet, Caps, Hyperlink, Paragraph, Run, RunKind, RunProps, Spacing, Strike, TextBody,
 };
 use deckcraft_model::{
-    Background, Comment, CustomPath, CustomShow, Geom, InkStroke, MediaClip, Presentation, Section, Shape, ShapeId, ShapeKind, Slide, SlideId,
-    defaults,
+    Background, Comment, ConnectionSite, CustomPath, CustomShow, Geom, InkStroke, MediaClip, Presentation, Section, Shape, ShapeId, ShapeKind, Slide,
+    SlideId, defaults,
 };
 
 fn png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
@@ -177,6 +177,9 @@ pub fn rich_deck() -> Presentation {
         }],
     };
     c.fill = Some(Fill::solid(ColorRef::scheme(SchemeSlot::Accent4)));
+    // Connection sites of its own (a circuit symbol's pins): left middle, right middle, and one
+    // below the box.
+    c.sites = vec![ConnectionSite::new(0.0, 0.5), ConnectionSite::new(1.0, 0.5), ConnectionSite::new(0.5, 1.25)];
     let child1 = Shape { geom: Geom::preset("ellipse"), ..shape(&mut p, "Child 1", 0.0, 0.0, 50.0, 50.0) };
     let child2 = Shape { geom: Geom::preset("rect"), ..shape(&mut p, "Child 2", 60.0, 0.0, 50.0, 50.0) };
     let (c1, c2) = (child1.id, child2.id);
@@ -479,7 +482,9 @@ fn shapes_fills_lines_effects_round_trip() {
         assert_eq!(a.line, b.line, "{name}");
         assert_eq!(a.effects, b.effects, "{name}");
         assert_eq!(a.xfrm, b.xfrm, "{name}");
+        assert_eq!(a.sites, b.sites, "{name}: connection sites (a:cxnLst) survive");
     }
+    assert_eq!(by_name(&q.slides[1], "Freeform").sites.len(), 3);
     let g = by_name(&q.slides[1], "Group");
     assert!(matches!(&g.kind, ShapeKind::Group { children, child } if children.len() == 2 && child.w == 110.0));
     let c = by_name(&q.slides[1], "Connector");

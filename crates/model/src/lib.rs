@@ -223,6 +223,22 @@ impl Default for CustomPath {
     }
 }
 
+/// A connection site of a custom geometry (`a:cxnLst`): where a connector end glues. `x` and `y`
+/// are fractions of the shape's box (0 = left/top, 1 = right/bottom; outside that range is
+/// allowed), so the site keeps its place when the shape is resized.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ConnectionSite {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl ConnectionSite {
+    pub const fn new(x: f64, y: f64) -> Self {
+        ConnectionSite { x, y }
+    }
+}
+
 /// Embedded audio or video on a slide.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -335,6 +351,10 @@ pub struct Shape {
     pub xfrm: Option<Xfrm>,
     pub kind: ShapeKind,
     pub geom: Geom,
+    /// Connection sites of a custom geometry, in order (a connector's site index points into
+    /// this list). Empty: the four box midpoints; a preset has its own sites.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sites: Vec<ConnectionSite>,
     pub ph: Option<Placeholder>,
     /// `None`: inherited (placeholder chain or style); `Some(Fill::None)`: no fill.
     pub fill: Option<Fill>,
@@ -419,6 +439,7 @@ impl Default for Shape {
             xfrm: None,
             kind: ShapeKind::Shape,
             geom: Geom::default(),
+            sites: vec![],
             ph: None,
             fill: None,
             line: None,

@@ -339,3 +339,21 @@ fn colour_alpha_follows_alpha_mod_and_off() {
     let both = base().with(ColorTransform::Alpha(40000)).with(ColorTransform::AlphaMod(50000));
     assert!((both.alpha() - 0.2).abs() < 1e-9, "{}", both.alpha());
 }
+
+/// Connection sites of a custom geometry are saved as fractions of the box and left out when
+/// there are none; a file from before they existed loads with none.
+#[test]
+fn connection_sites_serialize_as_fractions_and_default_to_none() {
+    use super::ConnectionSite;
+    let mut sh = Shape { xfrm: Some(Xfrm::new(10.0, 20.0, 200.0, 100.0)), ..Default::default() };
+    let v = serde_json::to_value(&sh).unwrap();
+    assert!(v.get("sites").is_none(), "{v}");
+    sh.sites = vec![ConnectionSite::new(0.0, 0.5), ConnectionSite::new(1.0, 0.5)];
+    let v = serde_json::to_value(&sh).unwrap();
+    assert_eq!(v["sites"], serde_json::json!([{"x": 0.0, "y": 0.5}, {"x": 1.0, "y": 0.5}]));
+    let back: Shape = serde_json::from_value(v).unwrap();
+    assert_eq!(back.sites, sh.sites);
+    let old: Shape =
+        serde_json::from_str(r#"{"id": 7, "name": "Old", "geom": {"kind": "custom", "paths": [{"w": 10, "h": 10, "d": "M 0 0 L 10 10"}]}}"#).unwrap();
+    assert!(old.sites.is_empty());
+}

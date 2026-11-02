@@ -231,6 +231,7 @@ fn sp_pr(imp: &mut Imp, part: &Part, s: &mut Shape, pr: &El) {
         let paths = crate::custgeom::read_cust_geom(cg, w, h);
         if !paths.is_empty() {
             s.geom = Geom::Custom { paths };
+            s.sites = crate::custgeom::read_cxn_lst(cg, w, h);
         }
     }
     s.fill = dml::fill_of(imp, part, pr);
