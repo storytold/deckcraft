@@ -88,10 +88,41 @@ pub(super) fn apply(entries: &mut [Entry<'_, '_>], data: &Data<'_>, changes: &Ad
     }
     let (equalities, bounds) = activate(&relations, &fixed, work)?;
     rows.extend(equalities);
-    apply_bounds(&mut rows, bounds, entries, work)?;
-    for ((index, property), value) in solve(&rows, entries, work)? {
+    let base = rows.clone();
+    let mut active = Vec::new();
+    let mut pending = bounds;
+    let mut values = solve(&rows, entries, work)?;
+    while !pending.is_empty() {
+        let mut satisfied = Vec::new();
+        let previous = active.len();
+        for row in pending {
+            charge(work, row.terms.len())?;
+            let shown: f64 = row
+                .terms
+                .iter()
+                .map(|(key, c)| {
+                    c * values.get(key).copied().unwrap_or_else(|| entries.get(key.0).and_then(|e| e.style.get(&key.1)).unwrap_or(0.)).round()
+                })
+                .sum();
+            if shown + 1e-6 < row.value {
+                active.push(row);
+            } else {
+                satisfied.push(row);
+            }
+        }
+        if active.len() == previous {
+            break;
+        }
+        // Whole-point displayed sizes trigger a bound; an activated bound propagates
+        // the original fractional trial. Recheck others after a connected group moves.
+        charge(work, base.len() + active.len())?;
+        rows.clone_from(&base);
+        apply_bounds(&mut rows, active.clone(), entries, work)?;
+        values = solve(&rows, entries, work)?;
+        pending = satisfied;
+    }
+    for ((index, property), value) in values {
         if let Some(entry) = entries.get_mut(index) {
-            let value = if fixed.contains(&(index, property.clone())) { value } else { value.round() };
             entry.style.set(&property, value, "equ");
         }
     }

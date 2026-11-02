@@ -182,7 +182,14 @@ fn placed<'a>(
     changes: &constraints::Adjustments,
     work: &mut usize,
 ) -> Result<Vec<Placed<'a>>, &'static str> {
-    let solution = constraints::resolve_adjusted(tree, frame, data, work, changes)?;
+    let mut solution = constraints::resolve_adjusted(tree, frame, data, work, changes)?;
+    // Measure the fonts that would actually paint, while retaining fractional fitted
+    // values in `changes` for reference propagation and subsequent rule decisions.
+    charge(work, solution.len())?;
+    for style in solution.values_mut() {
+        style.font = style.font.map(f64::round);
+        style.secondary_font = style.secondary_font.map(f64::round);
+    }
     let mut out = Vec::new();
     geometry::place_solved(tree, frame, data, &mut out, 0, &solution, work)?;
     geometry::connect(&mut out, data);
@@ -283,6 +290,7 @@ fn range(
     let entry = &entries[control.target];
     let key = (constraints::id(entry.node), control.property.clone());
     let Some(current) = constraints::lookup(solution, entry.node).and_then(|s| s.get(&control.property)) else { return Ok(None) };
+    let current = if matches!(control.property.as_str(), "primFontSz" | "secFontSz") { current.round() } else { current };
     let scale = unit(&control.property);
     let local_font = control.rule.attr("for").unwrap_or("self") == "self" && matches!(control.property.as_str(), "primFontSz" | "secFontSz");
     let (start, limit, is_factor) = if let Some(value) = control.rule.f64("val") {
@@ -393,22 +401,10 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
             } else {
                 low = t;
             }
-            if high - low < 1e-6 {
+            // Native font searches stop at a one-point interval; geometry retains
+            // finer convergence. Keep the unrounded fitting endpoint for references.
+            if high - low < 1e-6 || prefer_words && !is_factor && (high - low) * (start - limit).abs() <= 1. {
                 break;
-            }
-        }
-        if prefer_words && !is_factor && start > limit {
-            // Binary search can stop just below an exactly fitting integer. Test the
-            // adjacent upper integer instead of losing a whole point to rounding noise.
-            for rounded in [best.ceil().min(start).max(limit), best.floor().max(limit)] {
-                range.set_value(&mut changes, rounded);
-                if let Some(candidate) = trial(tree, frame, data, &changes, &mut work)?
-                    && score(&candidate, &scope, measure, true, &mut work)? <= 1e-6
-                {
-                    best = rounded;
-                    out = candidate;
-                    break;
-                }
             }
         }
         range.set_value(&mut changes, best);
@@ -445,5 +441,5 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
         range.set_value(&mut changes, best);
     }
     coupled::search(tree, frame, data, &entries, &controls, measure, &mut changes, &mut out, &mut work)?;
-    Ok(out)
+    placed(tree, frame, data, &changes, &mut work)
 }

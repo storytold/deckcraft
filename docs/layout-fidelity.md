@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.20): global geographic framing and projection limits, extending
-document-owned regional scope, rotated diagram footprints and rich-label layout.
+Updated 2026-11-01 (PPTX.21): native-controlled SmartArt font search and reference rounding,
+extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -721,8 +721,8 @@ size before the reachability fix and retains both sizes afterwards.
 Children now apply their rules before the enclosing layout, preserving sibling and same-node
 XML order. Numeric endpoints are search limits, not inherited font floors for every child.
 A child that already fits therefore need not be enlarged to a parent's later rule endpoint.
-The search verifies the neighboring upper integer before rounding down, avoiding an extra
-point lost only because binary search ended immediately below an exactly fitting integer.
+The initial adjacent-integer search used in this stage was superseded by the displayed-font
+measurement and one-point stopping policy verified in PPTX.21 below.
 Local factor rules evaluate the selected reference size, including a zero initial multiplier.
 
 Ten native default/bound controls use 24pt and 48pt source labels: unspecified sibling fonts
@@ -733,8 +733,8 @@ The uncached diagram default is therefore 36pt; cached drawings retain their sto
 Ten real-text local-reference/order regressions preserve font sizes and geometry through
 export/reimport. The wider native comparison has forty-two controls: thirty-eight match
 font sizes exactly, all painted shape bounds differ by at most 0.75pt, and four scaled
-reverse-reference cases differ by one point in the dependent font. Those four integer-search
-or quantization differences remain open; they are not counted as exact font matches.
+reverse-reference cases differ by one point in the dependent font. Those four differences were not exact font matches at this stage; PPTX.21 below resolves
+them with independent font-search and reference-rounding controls.
 Mapped-composite own-text geometry, native fallback/search policies, automatic geographic
 viewport policy and long rich-label overflow remain separate work. No native outputs or
 user/private assets are included in this change.
@@ -942,3 +942,52 @@ the preceding sections are unchanged. Production rendering invokes no external d
 
 Final workspace CI passes all eight gates, including 2,429 tests and doctests. Parity scores
 remain partial; no native/provider/user assets are included.
+
+
+## Displayed font trials and fractional references (PPTX.21)
+
+Uncached SmartArt font fitting distinguishes authored defaults, temporary local font values,
+and displayed font sizes. Conflating these stages produced one-point differences in scaled
+reverse references even when the rule's own text displayed at the expected size.
+
+- Authored constant font sizes round before ordinary reference defaults are evaluated. Each
+  subsequent acyclic reference edge rounds its own result; a fractional chain is not rounded
+  only once at the end. Cyclic components retain their rounded affine solution rather than
+  repeatedly rounding around a cycle, which could drift or oscillate.
+- A local font search starts from the displayed whole-point size and stops when its remaining
+  absolute interval is at most one point. Geometry searches retain finer convergence. The
+  selected fractional endpoint remains available to connected local reference equations.
+- Every trial is measured using the whole-point fonts that will actually paint, including
+  secondary fonts and their recalculated text insets. Reference propagation itself retains
+  fractional values until that candidate is materialized.
+- A local inequality activates only if the displayed sizes violate it. An already satisfied
+  bound leaves its linked default unchanged. After a connected bound moves the group, remaining
+  bounds are checked again within the existing work budget. Activated constraints propagate
+  fractional values before the final display rounding.
+
+These policies are black-box observations, not promises made by the OOXML schema. They were
+checked with equality/lower/upper bounds, factors from 0.4 to 2, different text lengths and box
+sizes, source-versus-target rules, forced font floors and multi-edge fractional defaults. The
+forced-floor controls distinguish an actual 14pt endpoint from an intermediate trial that only
+*displays* at 14pt; dependent fonts can legitimately differ between those two cases.
+
+Validation:
+
+- All 108 new pages match native primary/secondary font-size sets: 60 reference/rule cases,
+  24 forced-floor cases and 24 fractional-default/secondary-font cases. This includes the four
+  previously failing scaled reverse-reference controls.
+- All 154 earlier diagram controls match native font-size sets and retain their previous
+  filled-path geometry exactly. Their source hashes are unchanged.
+- The current CLI directly exports the 60-page reference matrix as 3840x2160 PNGs with no
+  external converter on PATH. Selected direct images and native counterparts were visually
+  inspected; font-set agreement is not whole-slide or line-break agreement.
+- Original synthetic regressions failed before the correction and pass afterward. Full
+  workspace CI passes all eight gates, with 2,431 tests including doctests.
+- LibreOffice 26.8 exports the same 60-page uncached reference matrix without diagram content
+  (zero text characters). This is an explicit comparison failure, not a fidelity pass.
+
+Two visual differences remain visible in these controls: omitted-point-type/invisible-node
+colour assignment and some short-label word wrapping, even when font sizes agree. Complete
+native cyclic-font, search and fallback policies still need broader controls. Geographic
+simplification/incomplete provider context and rich-label overflow/callout limits are unchanged.
+No native output, provider asset, user content or oracle toolchain is distributed.

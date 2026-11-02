@@ -336,7 +336,7 @@ fn text_rules_measure_reference_linked_font_groups_and_keep_secondary_sizes_dist
     assert_eq!(shapes[0].font, shapes[1].font);
     assert!((shapes[0].font.unwrap() - 18.).abs() <= 1.0);
     for p in &shapes {
-        assert!((p.secondary_font.unwrap() - p.font.unwrap() * 0.75).abs() < 1e-6);
+        assert_eq!(p.secondary_font.unwrap(), (p.font.unwrap() * 0.75).round());
     }
 }
 #[test]
@@ -808,4 +808,42 @@ fn oversized_cycle_nodes_fit_without_overlap_and_keep_their_aspect_ratio() {
             }
         }
     }
+}
+
+#[test]
+fn fractional_font_trials_propagate_before_final_point_quantization() {
+    let data = source();
+    for (op, factor, floor, threshold, expected) in [
+        ("equ", 0.7, 5., 14.6, [21., 14.]),
+        ("equ", 1.25, 5., 14.6, [12., 14.]),
+        ("gte", 0.5, 5., 14.6, [27., 14.]),
+        ("gte", 0.75, 5., 14.6, [18., 14.]),
+        ("gte", 0.5, 5., 18.4, [36., 18.]),
+        ("equ", 0.7, 14., 0., [20., 14.]),
+        ("gte", 0.5, 14., 0., [28., 14.]),
+    ] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' for='ch' forName='a' val='36'/><constr type='primFontSz' for='ch' forName='b' refFor='ch' refForName='a' refType='primFontSz' op='{op}' fact='{factor}'/></constrLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode><layoutNode name='b'><alg type='tx'/><shape type='rect'/><ruleLst><rule type='primFontSz' val='{floor}'/></ruleLst></layoutNode></layoutNode>"
+        ));
+        let mut measure =
+            |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if p.name == "b" { (p.font.unwrap() - threshold).max(0.) } else { 0. }).collect());
+        let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+        assert_eq!(out.iter().map(|p| p.font.unwrap()).collect::<Vec<_>>(), expected, "{op}/{factor}/{floor}");
+        for p in out {
+            assert_eq!(p.margins, [p.font.unwrap() * 0.56; 4]);
+        }
+    }
+}
+
+#[test]
+fn authored_font_defaults_quantize_each_reference_before_fitting() {
+    let data = source();
+    let l = layout(
+        "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' for='ch' forName='a' val='24.5'/><constr type='primFontSz' for='ch' forName='b' refFor='ch' refForName='a' refType='primFontSz' fact='0.75'/><constr type='secFontSz' for='ch' forName='b' refFor='ch' refForName='b' refType='primFontSz' fact='0.5'/></constrLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode><layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>",
+    );
+    let mut measure = |p: &[Placed<'_>], _: bool| Ok(vec![0.; p.len()]);
+    let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+    assert_eq!(out[0].font, Some(25.));
+    assert_eq!(out[1].font, Some(19.));
+    assert_eq!(out[1].secondary_font, Some(10.));
 }

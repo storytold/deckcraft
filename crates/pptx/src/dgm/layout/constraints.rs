@@ -1,5 +1,6 @@
 //! Bounded sparse affine solver for diagram references. Unlike fixed-count relaxation,
 //! forward chains and solvable cycles are solved together; contradictions are reported.
+mod font_defaults;
 mod local_fonts;
 use super::geometry::{BoxStyle, initial, self_constraints};
 use super::{Data, Instance, MAX_WORK};
@@ -139,6 +140,10 @@ fn equation(
         let ref_type =
             if ref_type == "diam" { if entries[reference].style.rect.w < entries[reference].style.rect.h { "w" } else { "h" } } else { ref_type };
         row.subtract(&expr(entries, reference, owner, ref_type), c.f64("fact").unwrap_or(1.), work)?;
+    } else if matches!(property, "primFontSz" | "secFontSz") {
+        // Authored font defaults are whole-point sizes before reference defaults
+        // are evaluated. Local fitted values have their own unrounded propagation.
+        row.value = row.value.round();
     }
     if !row.value.is_finite() || row.terms.values().any(|v| !v.is_finite() || v.abs() > 1e6) {
         return Err("invalid diagram constraint coefficient");
@@ -324,7 +329,7 @@ pub(super) fn resolve_adjusted(
             }
         }
     }
-    let mut rows: Vec<_> = equations.into_values().collect();
+    let mut rows: Vec<_> = equations.values().cloned().collect();
     apply_bounds(&mut rows, bounds, &entries, work)?;
     let values = solve(&rows, &entries, work)?;
     for ((index, property), value) in values {
@@ -335,6 +340,7 @@ pub(super) fn resolve_adjusted(
             entry.style.set(&property, value, "equ");
         }
     }
+    font_defaults::apply(&mut entries, &equations, work)?;
     local_fonts::apply(&mut entries, data, adjustments, work)?;
     Ok(entries.into_iter().map(|e| (id(e.node), e.style)).collect())
 }
