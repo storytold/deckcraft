@@ -776,6 +776,85 @@ fn nested_composites_fit_in_their_allocated_frame_before_parent_placement() {
 }
 
 #[test]
+fn overflowing_composites_clip_scaled_end_edges_before_recentering() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for vertical in [false, true] {
+        for (frame_size, start, size, expected) in [
+            (20., 5., 35., 120. / 7.),
+            (35., 5., 35., 35.),
+            (20., -5., 45., 20.),
+            (20., 15., 25., 8.),
+            (20., 35., 35., 0.),
+            (20., 40., 35., 20.),
+            (20., 100., 35., 20.),
+            (20., 100., 20., 20.),
+        ] {
+            let (axis, edge, other) = if vertical { ("h", "t", "w") } else { ("w", "l", "h") };
+            let l = layout(&format!(
+                "<layoutNode><alg type='sp'/><presOf/><constrLst>
+                <constr type='{axis}' for='ch' val='{frame_size}'/><constr type='{other}' for='ch' val='60'/></constrLst>
+                <layoutNode name='box'><alg type='composite'/><shape type='none'/><presOf/>
+                <constrLst><constr type='{edge}' for='ch' val='{start}'/><constr type='{axis}' for='ch' val='{size}'/>
+                <constr type='{other}' for='ch' val='20'/></constrLst>
+                <layoutNode name='child'><alg type='tx'/><shape type='rect'/><presOf axis='ch' cnt='1'/></layoutNode>
+                </layoutNode></layoutNode>"
+            ));
+            for offset in [0., 180. * mm, 20.5] {
+                let out = evaluate(&l, &data, Xfrm::new(offset, offset, 600., 300.)).unwrap();
+                let r = out.iter().find(|p| p.name == "child").unwrap().rect;
+                let (position, extent) = if vertical { (r.y, r.h) } else { (r.x, r.w) };
+                assert!((extent - expected * mm).abs() < 1e-6, "{vertical}/{frame_size}/{start}/{size}/{offset}: {r:?}");
+                assert!((position - offset - (frame_size - expected) * mm / 2.).abs() < 1e-6);
+            }
+        }
+    }
+}
+
+#[test]
+fn composite_overflow_uses_shared_bounds_with_individual_end_edges() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for vertical in [false, true] {
+        // Independent two-shape native controls: positive leading space clips the
+        // trailing shape, whereas a negative occupied origin preserves its width.
+        for (left, second, expected, starts) in [
+            (5., 30., [40. / 9., 20. / 3.], [10. / 9., 110. / 9.]),
+            (-5., 30., [40. / 11., 80. / 11.], [0., 140. / 11.]),
+            (100., 130., [4., 8.], [10., 6.]),
+            (30., 55., [40. / 9., 80. / 9.], [70. / 9., 50. / 9.]),
+            (45., 55., [20. / 3., 40. / 3.], [10., 10. / 3.]),
+        ] {
+            let (edge, axis, other) = if vertical { ("t", "h", "w") } else { ("l", "w", "h") };
+            let l = layout(&format!(
+                "<layoutNode><alg type='sp'/><presOf/><constrLst>
+                <constr type='w' for='ch' val='20'/><constr type='h' for='ch' val='20'/></constrLst>
+                <layoutNode><alg type='composite'/><presOf/><constrLst>
+                <constr type='{edge}' for='ch' forName='a' val='{left}'/>
+                <constr type='{axis}' for='ch' forName='a' val='10'/>
+                <constr type='{edge}' for='ch' forName='b' val='{second}'/>
+                <constr type='{axis}' for='ch' forName='b' val='20'/>
+                <constr type='{other}' for='ch' val='20'/></constrLst>
+                <layoutNode name='a'><alg type='tx'/><shape type='rect'/><presOf axis='ch' st='1' cnt='1'/></layoutNode>
+                <layoutNode name='b'><alg type='tx'/><shape type='rect'/><presOf axis='ch' st='2' cnt='1'/></layoutNode>
+                </layoutNode></layoutNode>"
+            ));
+            let out = evaluate(&l, &data, frame()).unwrap();
+            for ((name, extent), position) in ["a", "b"].into_iter().zip(expected).zip(starts) {
+                let p = out.iter().find(|p| p.name == name).unwrap();
+                let r = p.rect;
+                let (start, size, unscaled) = if vertical { (r.y, r.h, r.w) } else { (r.x, r.w, r.h) };
+                assert!((size - extent * mm).abs() < 1e-6, "{vertical}/{left}/{name}: {r:?}");
+                assert!((start - position * mm).abs() < 1e-6, "{vertical}/{left}/{name}: {r:?}");
+                assert!((unscaled - 20. * mm).abs() < 1e-6);
+                assert!(start >= 0. && start + size <= 20. * mm + 1e-6);
+                assert_eq!(p.font, Some(36.));
+            }
+        }
+    }
+}
+
+#[test]
 fn joint_rules_do_not_reintroduce_a_redundant_edge_equation() {
     let data = source();
     let l = layout(

@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.23): SmartArt allocation bounds and recursive composite fitting,
+Updated 2026-11-01 (PPTX.24): SmartArt overflowing end edges and disjoint-child fitting,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1088,3 +1088,47 @@ excluded from intended-layout parity counts. Full native search/fallback and cyc
 near-threshold font wrapping, duplicate-point text ownership, colour interpolation, geographic
 provider/simplification policy and rich-label overflow/callouts remain open. No global parity
 score or complete LibreOffice-replacement claim is raised.
+
+## Overflowing composite end edges (PPTX.24)
+
+An overflowing composite axis scales from the frame origin, or from the occupied minimum
+when it is negative. Scaled end edges are fitted to the frame **before** the resulting occupied
+bounds are centered. Removing positive leading space before fitting changes the final size:
+for a 20mm frame and a child starting at 5mm with width 35mm, the native result is about
+17.142857mm wide, rather than 20mm. Equivalent start/end, start/size, size/end and size/center
+constraints agree. Non-overflowing axes translate without clipping or enlargement.
+
+A fully disjoint child retains its scaled extent and aligns its end to the frame. Multiple such
+children can therefore overlap. A child starting exactly at the boundary can instead have zero
+extent; the comparison tolerates floating-point evaluation noise so translated frames do not
+accidentally take the disjoint branch. Horizontal and vertical axes follow the same rule.
+Mapped text frames follow geometry while font sizes remain unchanged. Occupied bounds are
+computed without the previous temporary vector, and all passes count against the work budget.
+
+Validation uses contributor-original layout definitions and private native observations:
+
+- Forty edge-pair controls and 21 boundary/multiple-child controls match native visible
+  same-colour bounds at 4K. Twelve additional controls cover far-outside starts, exact-boundary
+  starts, negative positions and overlapping disjoint children.
+- All 73 controls match native coloured-path geometry within 0.009pt. This comparison reads
+  the actual imported model rectangles, including group offsets, against nonempty native PDF
+  paths; it does not compare two empty vector lists. Model inspection rounds to 0.01pt.
+- Seventy-one of the 73 visible coloured-pixel checks pass within 0.5pt. Two very thin text
+  shapes retain 0.75pt and 1pt visible-mask differences despite matching geometry; native text
+  obscures parts of their fill. They are retained raster failures, not whole-slide parity passes.
+- Fifty-eight unit variants cover individual and shared-axis geometry, actual positions,
+  disjoint overlap, unchanged perpendicular dimensions and unchanged font sizes.
+- The separate eight-case cross-container matrix improves from two to four passes: both inner
+  overflow differences are resolved. All four ancestor-to-descendant constraint-scope failures
+  remain explicit. Other native-fallback probes are excluded from intended-layout comparisons.
+- The 80 prior allocation/colour pages still pass; all 154 earlier direct PNGs are identical
+  to the PPTX.23 baseline, and their font-size sets remain unchanged and native-matching.
+  Source hashes are checked against native-export receipts. No external converter is on the
+  direct renderer's PATH. Full workspace CI passes all eight gates with 2,437 tests, including
+  doctests. Representative native/direct images were inspected, including both raster failures.
+
+This phase does not change descendant-selector semantics. Native font constraints reach deeper
+than geometry constraints in the tested contexts; a generalized scope rule is not yet established.
+Full native rule-search/fallback, cyclic-font policy, near-threshold wrapping, duplicate-point
+text ownership, colour interpolation, geographic provider/simplification policy and rich-label
+overflow/callouts remain open. It is not a claim of complete LibreOffice replacement.

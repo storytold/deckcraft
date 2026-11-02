@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **PPTX.24 update 2026-11-01:** overflowing SmartArt composites now fit scaled end edges before recentering, including fully disjoint children. All 73 new model-geometry comparisons agree with native paths within 0.009pt; 71 coloured-pixel checks pass, with two thin-text raster differences retained. Four ancestor-scope failures remain; parity scores are unchanged.
+
 > **PPTX.23 update 2026-11-01:** nonpainting space/text/connector allocations now contribute to bounds, and nested composites fit before parent placement. All 39 new and 41 prior allocation/colour pages match native visible bounds within 0.25pt; all 154 earlier direct PNGs are unchanged from PPTX.22. Six cross-container scope/overflow cases remain explicit failures; scores are unchanged.
 
 > **PPTX.22 update 2026-11-01:** SmartArt helpers retain layout participation without duplicate text; hidden geometry does not consume colours, and connector paint order no longer changes colour order. All 16 text-colour/visibility controls pass; 38 of 41 visible-bound comparisons are within 0.25pt. Three allocation cases remain explicit failures. Shared-part colour probes and empty-vector regression claims are corrected in `docs/layout-fidelity.md`; parity scores are unchanged.
@@ -260,8 +262,9 @@ Detail in [file-format-parity.md](file-format-parity.md).
   text-measured rules and circular extent fitting are supported; all native search/fallback heuristics remain open. The corrected uncached nested-card definition now renders
   six shapes in PowerPoint; measured coordinates, text spacing and default insets are covered.
   Helper visibility, layout-order colours, connector/space allocation and recursive composite
-  fitting are covered. Cross-container descendant constraints and overflowing inner frames,
-  duplicate-point text ownership and full colour interpolation remain incomplete. Full layout
+  fitting, scaled-end clipping and disjoint-child placement are covered. Cross-container descendant
+  constraints, duplicate-point text ownership and full colour interpolation remain incomplete.
+  Two extreme thin-text controls still differ in visible raster bounds despite matching geometry. Full layout
   parity is not claimed.
 - **Impact:** structural or unmappable edits to an imported diagram still need explicit relayout or conversion to shapes.
 - **Estimate:** 6–10 h.
@@ -436,6 +439,7 @@ no global parity claim or score increase.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | PPTX.24 fits overflowing composite end edges; 73 native geometry controls pass, with two thin-text raster differences and four ancestor-scope failures retained |
 | 2026-11-01 | minor | PPTX.23 separates allocated and painted geometry, fits nested composites recursively, and verifies 80 native allocation/colour controls plus 154 unchanged PNGs; cross-container scope/overflow remains partial |
 | 2026-11-01 | minor | PPTX.22 separates helper visibility and layout-order colour indexing; native pixel checks replace invalid empty-path comparisons, and three allocation differences remain open |
 | 2026-11-01 | minor | PPTX.21 separates authored-default rounding, displayed trial measurement and fractional local-font propagation; native font controls pass, full visual parity remains partial |

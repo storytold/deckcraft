@@ -131,31 +131,65 @@ pub(super) fn place_solved<'a>(
 }
 
 fn fit_composite_frame(out: &mut [Placed<'_>], frame: Xfrm, work: &mut usize) -> Result<(), &'static str> {
-    charge(work, out.len() * 2)?;
-    let shapes: Vec<_> = out.iter().filter(|p| p.rect.w > 0. || p.rect.h > 0.).collect();
-    let left = shapes.iter().map(|p| p.rect.x).fold(f64::INFINITY, f64::min);
-    let top = shapes.iter().map(|p| p.rect.y).fold(f64::INFINITY, f64::min);
-    let right = shapes.iter().map(|p| p.rect.x + p.rect.w).fold(f64::NEG_INFINITY, f64::max);
-    let bottom = shapes.iter().map(|p| p.rect.y + p.rect.h).fold(f64::NEG_INFINITY, f64::max);
-    let (width, height) = (right - left, bottom - top);
+    charge(work, out.len() * 4)?;
+    let Some(bounds) = occupied_bounds(out) else { return Ok(()) };
+    let (width, height) = (bounds.w, bounds.h);
     if width <= 0.0 || height <= 0.0 || !width.is_finite() || !height.is_finite() {
         return Ok(());
     }
     let (sx, sy) = ((frame.w / width).min(1.0), (frame.h / height).min(1.0));
-    let (x, y) = (frame.x + (frame.w - width * sx) / 2.0, frame.y + (frame.h - height * sy) / 2.0);
-    for p in out {
-        p.rect.x = x + (p.rect.x - left) * sx;
-        p.rect.y = y + (p.rect.y - top) * sy;
-        p.rect.w *= sx;
-        p.rect.h *= sy;
+    // In an overflowing axis, scale from the frame origin (or a negative occupied
+    // origin), clip the end edge, then centre the resulting occupied bounds. Moving
+    // positive leading space away before this clip incorrectly preserves that width.
+    let project = |r: &mut Xfrm| {
+        let axis = |start: f64, size: f64, low: f64, origin: f64, limit: f64, scale: f64| {
+            let base = if scale < 1. { origin.min(low) } else { low };
+            let a = (start - base) * scale;
+            let a = if (a - limit).abs() <= 16. * f64::EPSILON * a.abs().max(limit.abs()).max(1.) { limit } else { a };
+            let b = a + size * scale;
+            // Clipping is only meaningful when the start is inside the frame.
+            // A fully disjoint shape keeps its scaled extent and aligns its end
+            // with the frame, before the occupied group is recentered.
+            if scale >= 1. {
+                (a, size)
+            } else if a > limit {
+                (limit - size * scale, size * scale)
+            } else {
+                (a, (b.min(limit) - a).max(0.))
+            }
+        };
+        (r.x, r.w) = axis(r.x, r.w, bounds.x, frame.x, frame.w, sx);
+        (r.y, r.h) = axis(r.y, r.h, bounds.y, frame.y, frame.h, sy);
+    };
+    for p in out.iter_mut() {
+        project(&mut p.rect);
         if let Some(t) = &mut p.text_rect {
-            t.x = x + (t.x - left) * sx;
-            t.y = y + (t.y - top) * sy;
-            t.w *= sx;
-            t.h *= sy;
+            project(t);
+        }
+    }
+    let Some(fitted) = occupied_bounds(out) else { return Ok(()) };
+    let (dx, dy) = (frame.x + (frame.w - fitted.w) / 2. - fitted.x, frame.y + (frame.h - fitted.h) / 2. - fitted.y);
+    for p in out {
+        p.rect.x += dx;
+        p.rect.y += dy;
+        if let Some(t) = &mut p.text_rect {
+            t.x += dx;
+            t.y += dy;
         }
     }
     Ok(())
+}
+
+fn occupied_bounds(out: &[Placed<'_>]) -> Option<Xfrm> {
+    out.iter().filter(|p| p.rect.w > 0. || p.rect.h > 0.).fold(None, |bounds, p| {
+        Some(match bounds {
+            None => p.rect,
+            Some(b) => {
+                let (x, y) = (b.x.min(p.rect.x), b.y.min(p.rect.y));
+                Xfrm::new(x, y, (b.x + b.w).max(p.rect.x + p.rect.w) - x, (b.y + b.h).max(p.rect.y + p.rect.h) - y)
+            }
+        })
+    })
 }
 
 fn charge(work: &mut usize, amount: usize) -> Result<(), &'static str> {
