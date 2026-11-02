@@ -4294,6 +4294,38 @@ fn a_params_doc_spells_out_each_parameter() {
     );
 }
 
+/// `shape.fill`'s params doc names each key and kind its `gradient` takes.
+#[test]
+fn shape_fill_documents_each_gradient_key_and_kind() {
+    use deckcraft_model::style::GradientShape;
+    let params = cmd::parse_params(find_command("shape.fill").unwrap().params).unwrap();
+    let about = params.iter().find(|p| p.name == "gradient").unwrap().about;
+    assert_eq!(cmd::param_keys(about).unwrap(), ["stops", "kind", "angle", "focus", "rotateWithShape"]);
+    for kind in ["linear", "radial", "rectangular", "path"] {
+        assert!(about.contains(kind), "{kind}: {about}");
+        let g = cmd::shape::gradient_param(&json!({
+            "stops": [[0, "#ffffff"], [1, "#000000"]],
+            "kind": kind,
+            "angle": 30,
+            "focus": [0, 0, 1, 1],
+            "rotateWithShape": false
+        }))
+        .unwrap();
+        assert!(!g.rotate_with_shape, "{kind}");
+        match g.shape {
+            GradientShape::Linear { angle, .. } => assert_eq!((kind, angle), ("linear", 30.0)),
+            GradientShape::Path { path, focus } => {
+                let expected = match kind {
+                    "radial" => "circle",
+                    "rectangular" => "rect",
+                    _ => "shape",
+                };
+                assert_eq!((path.as_str(), focus), (expected, [0.0, 0.0, 1.0, 1.0]), "{kind}");
+            }
+        }
+    }
+}
+
 #[test]
 fn what_a_command_acts_on_names_only_keys_it_takes() {
     for c in command_specs() {
