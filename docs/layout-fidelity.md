@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.31): nested SmartArt capacity and parent-fit reflow,
+Updated 2026-11-02 (PPTX.32): finite SmartArt circle fitting and sparse orbit capacity,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1510,4 +1510,59 @@ The remaining nested differences involve accumulation of finite scaling across r
 fits, especially multiple linear ancestors. They are distinct from the corrected capacity
 and parent-fit behavior. Full text-driven search/fallback, cyclic/hierarchy placement,
 provider-specific map context/boundaries and rich-label overflow/collision remain incomplete.
+Complete LibreOffice replacement is not established.
+
+
+## Non-shrinking circle radius fitting (PPTX.32)
+
+A full-circle layout with one orbiting node or two opposite orbiting nodes does not occupy
+an entire disc. Limiting its radius to half the smaller frame dimension can compress node
+separation by tens of points. Such layouts now derive an upper radius from all pairwise
+occupied-width/height constraints, including a centre node when present. Non-shrinking
+full-circle controls use a finite radius fit; non-degenerate circles refine the feasible
+radius bracket once more. Minimum non-overlap separation remains enforced. Every radius
+trial charges the shared work budget, including the earlier partial-arc fit.
+
+The change is deliberately limited to non-shrinking full circles and the span-independent
+single orbiting node. A broader coupled-size/radius candidate improved the first matrix
+but regressed three earlier matches and failed independent narrow-arc controls by up to
+167.89pt. That candidate was rejected. Partial arcs, coupled shrinking, and the remaining
+sub-point radius differences are not solved by the accepted change.
+
+Validation:
+
+- Four contributor-original packages, 256 slides, validate with zero Open XML SDK errors
+  and open/export natively. Hash-bound measurements compare actual coloured native paths
+  with direct imported model rectangles at a strict 0.025pt threshold. There are no native
+  fallback exclusions in these four matrices.
+- The initial 136 controls cover node counts, square/mixed dimensions, frame sizes, start
+  angles, half/full spans and centre mapping. Matches improve from 9 to 46; maximum error
+  drops from 49.4861pt to 0.4059pt. Ninety failures remain explicit.
+- Sixty independent full-circle controls vary 2/3/4/6/8 nodes, fractional mixed rectangles,
+  fractional frames, negative/positive start angles and centre mapping. Matches improve
+  from 1 to 34; maximum error drops from 123.3133pt to 0.2201pt. Twenty-six remaining
+  differences, chiefly sparse-orbit precision and shrinking, are not counted as matches.
+- Sixty independent partial-arc controls include narrow, reversed and 270-degree spans.
+  Matches improve from 1 to 3 through span-independent single-node behavior. Fifty-seven
+  failures remain, including a 117.524pt error. No original strict match is lost across
+  any of the four matrices. All 256 direct/native font-size sets agree.
+- Direct 3840-by-2160 renders pass visible coloured bounds within 0.5pt for all 108
+  initial fitting controls, all 28 mixed controls and all 60 full-circle holdouts. The
+  partial-arc holdout passes 48/60 and retains 12 visible failures. This weaker raster
+  bound does not replace the strict geometry threshold above or certify text layout.
+  Representative before/after/native pairs, including an unchanged partial-arc failure,
+  were visually inspected.
+- All 154 earlier direct PNGs are pixel-identical to the preceding PPTX.31 executable,
+  with unchanged, native-matching font sizes. Earlier geometry matrices improve from
+  47/111 to 58/111 and from 64/129 to 82/129 (29 native exclusions); they retain their
+  other failures. Matrices at 83/132, 155/186 (12 exclusions), 176/176, 207/216 (nine
+  exclusions) and 93/94 (one exclusion) remain unchanged. Matched-case sets do not regress.
+- Three new unit tests cover independent native mixed-node observations under translation,
+  span invariance for a single orbiting node, and radius-trial budget exhaustion. Full
+  `cargo xtask ci` passes all eight stages and 2,463 tests including doctests; all 21 diagram
+  import/round-trip tests pass. The source change contains no user content or native assets.
+
+Full text-driven SmartArt search/fallback, native nested-fit precision, hierarchy/snake
+placement, partial arcs and coupled node shrinking remain incomplete. Geographic provider
+context, boundary simplification and rich-label overflow/collision are unchanged gaps.
 Complete LibreOffice replacement is not established.

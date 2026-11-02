@@ -1,5 +1,7 @@
 # DeckCraft roadmap
 
+> **PPTX.32 update 2026-11-02:** Non-shrinking full circles use measured finite radius fitting; degenerate circles use occupied-node bounds instead of an inscribed-circle cap. The new 136-case matrix improves from 9 to 46 strict matches, with maximum error falling from 49.49pt to 0.406pt. An independent full-circle matrix improves from 1/60 to 34/60. Partial-arc and coupled-shrink behavior remain incomplete. Scores are unchanged.
+
 > **PPTX.31 update 2026-11-02:** Nested linear layouts use the nearest composite capacity and reflow after a parent fit, preserving intrinsic cross-axis sizes. A new 132-case matrix improves from 39 to 83 strict matches; maximum geometry error falls from 311.81pt to 0.241pt. Forty-nine finite-reflow differences remain. Scores are unchanged.
 
 > **PPTX.30 update 2026-11-02:** Intrinsic linear/cycle dimensions no longer inherit later container allocation; root linear fitting reproduces measured finite scaling and bare spacing properties no longer add gaps. A new 111-case matrix improves from 12 to 47 strict geometry matches; the prior 129-case matrix improves from 46 to 64. Nested packing and cyclic precision remain incomplete. Scores are unchanged.
@@ -172,6 +174,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-02 | PPTX.32: correct non-shrinking full-circle radii and sparse orbit capacity; bounded native validation retains unresolved partial arcs and coupled shrinking |
 | 2026-11-02 | PPTX.31: propagate composite capacity and reflow fitted linear children; 83/132 strict native matches, large cross-axis errors removed, finite-reflow precision remains partial |
 | 2026-11-02 | PPTX.30: intrinsic flow sizing and observed finite root-linear fitting; 47/111 new strict matches, 64/129 prior matches, explicit nested/loop/text-rule limits |
 | 2026-11-02 | PPTX.29: retain named allocations under later unnamed child constraints; ignore size bounds in allocation/rule binding, with 46 new native geometry matches and remaining differences explicit |

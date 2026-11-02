@@ -1,5 +1,7 @@
 # DeckCraft roadmap: milestones and what's next
 
+> **PPTX.32 update 2026-11-02:** Non-shrinking full circles use measured finite radius fitting; degenerate circles use occupied-node bounds instead of an inscribed-circle cap. The new 136-case matrix improves from 9 to 46 strict matches, with maximum error falling from 49.49pt to 0.406pt. An independent full-circle matrix improves from 1/60 to 34/60. Partial-arc and coupled-shrink behavior remain incomplete. Scores are unchanged.
+
 > **PPTX.31 update 2026-11-02:** Nested linear layouts use the nearest composite capacity and reflow after a parent fit, preserving intrinsic cross-axis sizes. A new 132-case matrix improves from 39 to 83 strict matches; maximum geometry error falls from 311.81pt to 0.241pt. Forty-nine finite-reflow differences remain. Scores are unchanged.
 
 > **PPTX.30 update 2026-11-02:** Intrinsic linear/cycle dimensions no longer inherit later container allocation; root linear fitting reproduces measured finite scaling and bare spacing properties no longer add gaps. A new 111-case matrix improves from 12 to 47 strict geometry matches; the prior 129-case matrix improves from 46 to 64. Nested packing and cyclic precision remain incomplete. Scores are unchanged.
@@ -158,6 +160,7 @@ and rich point labels; provider/native-layout gaps remain documented, and beta s
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.32 corrects non-shrinking full-circle radius fitting; 256 new native controls retain explicit partial-arc/shrinking failures, with no previously matched case lost |
 | 2026-11-02 | minor | PPTX.31 separates flow capacity from allocation and reflows fitted linear children; 83/132 strict native matches, 131/132 visible-bound matches, residual precision/occlusion explicit |
 | 2026-11-02 | minor | PPTX.30 reproduces intrinsic flow sizes and root-linear finite fitting; native geometry/raster regressions retain nested packing, cyclic precision and rule-endpoint gaps |
 | 2026-11-02 | minor | PPTX.29 preserves existing child allocations and separates size bounds from affine inequalities; 46 new geometry matches, 40 bounds-invariance controls, and explicit flow/fallback limits |

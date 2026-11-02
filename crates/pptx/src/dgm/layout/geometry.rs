@@ -602,7 +602,8 @@ fn pack_cycle(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], w
     let orbit = children.len().saturating_sub(usize::from(center)).max(1);
     let start = node.number("stAng", 0.0).to_radians();
     let span = node.number("spanAng", 360.0).to_radians();
-    let divisor = if (span.abs() - std::f64::consts::TAU).abs() < 1e-6 { orbit } else { orbit.saturating_sub(1).max(1) } as f64;
+    let full_circle = (span.abs() - std::f64::consts::TAU).abs() < 1e-6;
+    let divisor = if full_circle { orbit } else { orbit.saturating_sub(1).max(1) } as f64;
     let units: Vec<_> = (0..children.len())
         .map(|i| {
             if center && i == 0 {
@@ -645,15 +646,52 @@ fn pack_cycle(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], w
         child.rect.w *= scale;
         child.rect.h *= scale;
     }
-    let (mut low, mut high) = (0., (style.rect.w.min(style.rect.h) / 2.).max(minimum_radius * scale));
-    for _ in 0..24 {
-        let r = (low + high) / 2.;
-        let b = bounds(children, r);
-        if b.2 - b.0 <= style.rect.w && b.3 - b.1 <= style.rect.h {
-            low = r;
-        } else {
-            high = r;
+    let finite_circle = scale == 1. && (full_circle || (center && orbit == 1));
+    let mut high = (style.rect.w.min(style.rect.h) / 2.).max(minimum_radius * scale);
+    if finite_circle && orbit <= 2 {
+        // One orbiting node, or an antipodal pair, does not occupy the whole
+        // circle. Its radius can exceed half the frame's smaller dimension.
+        // Solve the pairwise occupied-width/height bounds, including the centre
+        // node when present, rather than clipping an unoccupied circular area.
+        let mut limit = f64::INFINITY;
+        for (i, (a, (ax, ay))) in children.iter().zip(&units).enumerate() {
+            for (b, (bx, by)) in children.iter().zip(&units).take(i) {
+                charge(work, 1)?;
+                let (dx, dy) = ((ax - bx).abs(), (ay - by).abs());
+                if dx > 1e-9 {
+                    limit = limit.min((style.rect.w - (a.rect.w + b.rect.w) / 2.) / dx);
+                }
+                if dy > 1e-9 {
+                    limit = limit.min((style.rect.h - (a.rect.h + b.rect.h) / 2.) / dy);
+                }
+            }
         }
+        if limit.is_finite() {
+            high = limit.max(0.);
+        }
+    }
+    // Non-shrinking circle controls use a finite radius fit; a non-degenerate
+    // circle refines the first feasible bracket once more. Partial arcs and
+    // coupled node shrinking still retain their separate geometric fit.
+    let (passes, trials) = if finite_circle { (if orbit <= 2 { 1 } else { 2 }, 10) } else { (1, 24) };
+    let mut low = 0.;
+    for _ in 0..passes {
+        low = 0.;
+        for _ in 0..trials {
+            charge(work, children.len())?;
+            let r = (low + high) / 2.;
+            let b = bounds(children, r);
+            if b.2 - b.0 <= style.rect.w && b.3 - b.1 <= style.rect.h {
+                low = r;
+            } else {
+                high = r;
+            }
+        }
+        high = low;
+    }
+    if finite_circle {
+        // Finite precision must not turn a fitting layout into overlapping nodes.
+        low = low.max(minimum_radius);
     }
     let b = bounds(children, low);
     let cx = style.rect.x + (style.rect.w - b.0 - b.2) / 2.;
@@ -850,6 +888,79 @@ fn hierarchy(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
 #[cfg(test)]
 mod cycle_tests {
     use super::*;
+
+    #[test]
+    fn nonshrinking_circle_positions_match_independent_native_controls() {
+        // Mixed rectangular nodes, fractional frames, several rotations and
+        // centre mappings. Expected first/last rectangles are native observations
+        // in millimetres, not the output of the fit under test.
+        let controls = [
+            (2, true, -37., [95.34509, 81.95907, 13.7, 9.3], [34.65489, 0.04090, 17.8, 17.5]),
+            (3, false, -37., [27.65472, 1.83721, 13.7, 9.3], [33.17192, 80.16277, 21.9, 9.3]),
+            (4, false, 0., [63.97496, 0.07092, 13.7, 9.3], [23.04592, 36.90000, 13.7, 17.5]),
+            (4, true, 63., [62.78275, 32.70788, 13.7, 9.3], [24.57217, 3.79365, 13.7, 17.5]),
+            (6, false, 0., [64.99995, 0.06958, 13.7, 9.3], [27.22857, 15.40978, 21.9, 17.5]),
+            (6, true, 63., [66.89674, 42.89674, 13.7, 9.3], [56.65874, 0.04312, 21.9, 17.5]),
+            (8, false, 0., [62.94996, 0.07092, 13.7, 9.3], [31.95875, 7.95876, 17.8, 17.5]),
+            (8, true, 63., [66.68772, 41.18876, 13.7, 9.3], [72.22231, 0.04574, 17.8, 17.5]),
+        ];
+        let mm = 72. / 25.4;
+        let xml = crate::xml::parse(b"<layoutNode/>").unwrap();
+        for (count, center, angle, first, last) in controls {
+            for (x, y) in [(0., 0.), (11.3, 27.9)] {
+                let mut node = Instance::new(&xml.root);
+                node.params.insert("ctrShpMap".into(), if center { "fNode" } else { "none" }.into());
+                node.params.insert("stAng".into(), angle.to_string());
+                let style = BoxStyle::new(Xfrm::new(x, y, 143.7 * mm, 91.3 * mm));
+                let mut children: Vec<_> = (0..count)
+                    .map(|i| BoxStyle::new(Xfrm::new(0., 0., (13.7 + (i % 3) as f64 * 4.1) * mm, (9.3 + (i % 2) as f64 * 8.2) * mm)))
+                    .collect();
+                pack_cycle(&node, style, &mut children, &mut 0).unwrap();
+                for (index, expected) in [(0, first), (count - 1, last)] {
+                    let r = children[index].rect;
+                    for (actual, native) in [r.x - x, r.y - y, r.w, r.h].into_iter().zip(expected) {
+                        assert!((actual - native * mm).abs() < 0.025, "{count}/{center}/{angle}: {actual}, {native}");
+                    }
+                }
+                for (i, child) in children.iter().enumerate() {
+                    let a = child.rect;
+                    assert!(a.x >= x && a.y >= y && a.x + a.w <= x + style.rect.w && a.y + a.h <= y + style.rect.h);
+                    for other in &children[..i] {
+                        let b = other.rect;
+                        assert!(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_single_orbiting_node_uses_the_same_extent_for_every_span() {
+        let xml = crate::xml::parse(b"<layoutNode/>").unwrap();
+        let mm = 72. / 25.4;
+        for span in [-360., -30., 0., 90., 180., 360.] {
+            let mut node = Instance::new(&xml.root);
+            node.params.insert("ctrShpMap".into(), "fNode".into());
+            node.params.insert("spanAng".into(), span.to_string());
+            let style = BoxStyle::new(Xfrm::new(0., 0., 200. * mm, 120. * mm));
+            let mut children = vec![BoxStyle::new(Xfrm::new(0., 0., 25. * mm, 25. * mm)); 2];
+            pack_cycle(&node, style, &mut children, &mut 0).unwrap();
+            // Two independent native controls (full and half span): 94.90724 mm.
+            let radius = children[0].rect.y - children[1].rect.y;
+            assert!((radius - 94.90724 * mm).abs() < 0.025);
+        }
+    }
+
+    #[test]
+    fn cycle_radius_trials_share_the_constraint_work_budget() {
+        let xml = crate::xml::parse(b"<layoutNode/>").unwrap();
+        let node = Instance::new(&xml.root);
+        let style = BoxStyle::new(Xfrm::new(0., 0., 800., 400.));
+        let mut children = vec![BoxStyle::new(Xfrm::new(0., 0., 10., 8.)); 3];
+        let mut work = MAX_WORK - 4;
+        assert_eq!(pack_cycle(&node, style, &mut children, &mut work), Err("diagram constraint budget exceeded"));
+        assert_eq!(work, MAX_WORK + 2);
+    }
 
     #[test]
     fn dense_cycle_pair_search_obeys_the_shared_work_budget() {
