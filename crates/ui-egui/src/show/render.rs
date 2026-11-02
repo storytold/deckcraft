@@ -122,7 +122,7 @@ pub(super) fn below_playing_video(doc: &Presentation, idx: usize, videos: &[Shap
 
 /// Media on slide `idx` hidden until it plays, as it is when the slide is entered.
 fn hidden_on_entry(doc: &Presentation, idx: usize) -> Vec<ShapeId> {
-    crate::media::slide_media(doc, idx).into_iter().filter(|(_, _, clip)| clip.hide_while_not_playing).map(|m| m.0).collect()
+    crate::media::hide_during_show(doc, idx)
 }
 
 /// Start rendering slide `next`'s first frame on another thread. `None` on the web (no threads).
@@ -210,4 +210,25 @@ pub(super) fn render_thumb(ctx: &egui::Context, show: &mut Show, doc: &Presentat
     let tex = crate::textures::upload(ctx, format!("show-grid-{i}"), crate::textures::to_color_image(&img, false));
     show.thumbs.push((i, tex.clone()));
     Some(tex)
+}
+
+#[cfg(test)]
+mod tests {
+    use deckcraft_geom::Xfrm;
+    use deckcraft_model::{MediaClip, Shape, ShapeKind};
+
+    use super::*;
+
+    /// #1659: a "Hide During Show" clip inside a group stayed visible in the show.
+    #[test]
+    fn hide_during_show_clips_in_groups_are_hidden_on_entry() {
+        let clip = |hide| ShapeKind::Media(MediaClip { hide_while_not_playing: hide, ..Default::default() });
+        let shape = |id, kind| Shape { id: ShapeId(id), xfrm: Some(Xfrm::new(0.0, 0.0, 10.0, 10.0)), kind, ..Default::default() };
+        let mut doc = Presentation::default();
+        let group = ShapeKind::Group { children: vec![shape(2, clip(true)), shape(3, clip(false))], child: Xfrm::new(0.0, 0.0, 10.0, 10.0) };
+        doc.slides = vec![Default::default()];
+        let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+        slide.shapes = vec![shape(1, clip(true)), shape(4, group)];
+        assert_eq!(hidden_on_entry(&doc, 0), vec![ShapeId(1), ShapeId(2)]);
+    }
 }
