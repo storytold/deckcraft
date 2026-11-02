@@ -70,7 +70,7 @@ fn value_stops(rctx: &Ctx, c: &Chart, series: &deckcraft_model::chart::Series, r
 
 fn project(lon: f64, lat: f64, kind: &str) -> Point {
     let x = lon.to_radians();
-    let y = lat.clamp(-85.0, 85.0).to_radians();
+    let y = lat.clamp(-90.0, 90.0).to_radians();
     let q = std::f64::consts::FRAC_PI_4;
     match kind {
         "miller" => Point::new(x, -1.25 * (q + 0.4 * y).tan().ln()),
@@ -82,7 +82,9 @@ fn project(lon: f64, lat: f64, kind: &str) -> Point {
             let rho = (c - 2.0 * n * y.sin()).max(0.0).sqrt() / n;
             Point::new(rho * (n * x).sin(), rho * (n * x).cos())
         }
-        // Robinson's standard 5-degree tabulation (Snyder, USGS PP1395, table 36).
+        // Robinson's 5-degree tabulation (Snyder, USGS PP1395, table 36). Native
+        // chart controls approach a 4/3 vertical normalization instead of Snyder's
+        // 1.3523 across chart sizes. Native finite-size quantization still differs.
         "robinson" => {
             const X: [f64; 19] = [
                 1., 0.9986, 0.9954, 0.99, 0.9822, 0.973, 0.96, 0.9427, 0.9216, 0.8962, 0.8679, 0.835, 0.7986, 0.7597, 0.7186, 0.6732, 0.6213, 0.5722,
@@ -95,9 +97,13 @@ fn project(lon: f64, lat: f64, kind: &str) -> Point {
             let t = lat.abs().min(90.0) / 5.0;
             let i = (t as usize).min(17);
             let f = (t - i as f64).min(1.0);
-            Point::new(0.8487 * x * (X[i] + (X[i + 1] - X[i]) * f), -1.3523 * lat.signum() * (Y[i] + (Y[i + 1] - Y[i]) * f))
+            Point::new(0.8487 * x * (X[i] + (X[i + 1] - X[i]) * f), -(4. / 3.) * lat.signum() * (Y[i] + (Y[i + 1] - Y[i]) * f))
         }
-        _ => Point::new(x, -(q + y / 2.0).tan().ln()),
+        _ => {
+            // Web Mercator's finite square-world latitude, atan(sinh(pi)).
+            let y = lat.clamp(-85.05112878, 85.05112878).to_radians();
+            Point::new(x, -(q + y / 2.0).tan().ln())
+        }
     }
 }
 
@@ -125,7 +131,38 @@ impl RegionalAlbers {
     }
 }
 
-fn paths(map: &Geography) -> (Vec<BezPath>, bool) {
+fn world_longitude(lon: f64, bounds: Option<[f64; 4]>) -> f64 {
+    let Some([west, south, east, north]) = bounds else { return lon };
+    if ![west, south, east, north].iter().all(|v| v.is_finite())
+        || west.abs() > 180.
+        || east.abs() > 180.
+        || south < -90.
+        || north > 90.
+        || south > north
+        || west <= east
+    {
+        return lon;
+    }
+    // A world's regions retain their own dateline continuity. Do not split a country
+    // across the two edges just because its global central meridian is zero.
+    let centre = west + (east - west).rem_euclid(360.) / 2.;
+    let centre = if centre > 180. { centre - 360. } else { centre };
+    (lon - centre + 180.).rem_euclid(360.) - 180. + centre
+}
+
+fn world_latitude(lat: f64, projection: &str) -> f64 {
+    // Native global cylindrical views crop the southern cap at 79°S; regional
+    // views and Robinson retain their full cached latitude range.
+    if matches!(projection, "mercator" | "miller") { lat.max(-79.) } else { lat }
+}
+
+struct ProjectedMap {
+    paths: Vec<BezPath>,
+    world: bool,
+    global_coverage: bool,
+}
+
+fn paths(map: &Geography) -> ProjectedMap {
     let scope = scope::resolve(map);
     let mut longs: Vec<_> = map
         .regions
@@ -149,7 +186,8 @@ fn paths(map: &Geography) -> (Vec<BezPath>, bool) {
             start = b;
         }
     }
-    let world = scope.world || !scope.regional && 360.0 - gap > 300.0;
+    let global_coverage = 360.0 - gap > 300.0;
+    let world = scope.world || !scope.regional && global_coverage;
     let mut centre = if world { 0.0 } else { start + (360.0 - gap) / 2.0 };
     let (mut south, mut north) = (90f64, -90f64);
     for point in map
@@ -174,7 +212,7 @@ fn paths(map: &Geography) -> (Vec<BezPath>, bool) {
     }
     let projection = if scope.regional && matches!(map.projection.as_str(), "" | "robinson") {
         "albers"
-    } else if map.projection.is_empty() && world {
+    } else if world && matches!(map.projection.as_str(), "" | "albers") {
         "robinson"
     } else {
         &map.projection
@@ -203,7 +241,8 @@ fn paths(map: &Geography) -> (Vec<BezPath>, bool) {
                     // Extent metadata and compressed vertices have different precision. Wrap
                     // around the central meridian, not the west edge: a vertex just west of
                     // a rounded bound must not jump by 360 degrees.
-                    let lon = if world { lon } else { (lon - centre + 180.).rem_euclid(360.) - 180. };
+                    let lon = if world { world_longitude(lon, region.bounds) } else { (lon - centre + 180.).rem_euclid(360.) - 180. };
+                    let lat = if world { world_latitude(lat, projection) } else { lat };
                     let point = regional.as_ref().map_or_else(|| project(lon, lat, projection), |p| p.point(lon, lat));
                     if i == 0 {
                         path.move_to(point);
@@ -216,25 +255,33 @@ fn paths(map: &Geography) -> (Vec<BezPath>, bool) {
             path
         })
         .collect();
-    (paths, world)
+    ProjectedMap { paths, world, global_coverage }
+}
+
+fn fit_bounds(map: &Geography, projected: &ProjectedMap) -> Option<Rect> {
+    let mut bounds = projected.paths.iter().filter(|p| !p.elements().is_empty()).map(|p| p.bounding_box()).reduce(|a, b| a.union(b))?;
+    // With a complete global cache, fit the actual unwrapped regions. If an authored
+    // world view has only local geometry, retain a global frame instead of silently
+    // zooming that lone country to fill the chart. Data-only explicitly permits cropping.
+    if projected.world && !projected.global_coverage && map.viewed_region != "dataOnly" {
+        let kind = if matches!(map.projection.as_str(), "" | "albers") { "robinson" } else { &map.projection };
+        for lat in (-90..=90).step_by(5) {
+            for lon in (-180..=180).step_by(5) {
+                bounds = bounds.union_pt(project(lon as f64, world_latitude(lat as f64, kind), kind));
+            }
+        }
+    }
+    Some(bounds)
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, text_col: Rgba) -> bool {
     let Some(series) = c.series.first() else { return false };
     let Some(map) = series.geography.as_ref().filter(|g| !g.regions.is_empty()) else { return false };
-    let (paths, world) = paths(map);
-    let Some(mut bounds) = paths.iter().filter(|p| !p.elements().is_empty()).map(|p| p.bounding_box()).reduce(|a, b| a.union(b)) else {
+    let projected = paths(map);
+    let Some(bounds) = fit_bounds(map, &projected) else {
         return false;
     };
-    if world && map.viewed_region != "dataOnly" {
-        let kind = if map.projection.is_empty() { "robinson" } else { &map.projection };
-        for lat in (-90..=90).step_by(5) {
-            for lon in (-180..=180).step_by(5) {
-                bounds = bounds.union_pt(project(lon as f64, lat as f64, kind));
-            }
-        }
-    }
     if bounds.width() < 1e-9 || bounds.height() < 1e-9 {
         return false;
     }
@@ -252,7 +299,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
     let stops = value_stops(rctx, c, series, (min, max));
     let mut labels = Vec::new();
     let mut copyrights = Vec::new();
-    for (region, path) in map.regions.iter().zip(paths) {
+    for (region, path) in map.regions.iter().zip(projected.paths) {
         if path.elements().is_empty() {
             continue;
         }
@@ -366,9 +413,9 @@ mod tests {
             ],
             ..Default::default()
         };
-        let original = paths(&map).0;
+        let original = paths(&map).paths;
         map.viewed_region = "dataOnly".into();
-        let cropped = paths(&map).0;
+        let cropped = paths(&map).paths;
         assert_eq!(original[0], cropped[0]);
         assert!(cropped[1].elements().is_empty());
     }
@@ -381,7 +428,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let path = &paths(&map).0[0];
+        let path = &paths(&map).paths[0];
         assert!(path.bounding_box().width() < 0.04);
         for kind in ["mercator", "miller", "albers", "robinson"] {
             assert!(project(180., 90., kind).is_finite());
@@ -402,9 +449,9 @@ mod tests {
                 }],
                 ..Default::default()
             };
-            let (paths, world) = paths(&map);
-            assert!(!world);
-            let bounds = paths[0].bounding_box();
+            let projected = paths(&map);
+            assert!(!projected.world);
+            let bounds = projected.paths[0].bounding_box();
             assert!(bounds.width() < 0.6 && bounds.height() < 0.5, "regional seam: {bounds:?}");
         }
     }
@@ -437,9 +484,93 @@ mod tests {
             ],
             ..Default::default()
         };
-        let p = paths(&map).0;
+        let p = paths(&map).paths;
         assert!(p[0].bounding_box().width() < 0.3);
         assert!(p[1].bounding_box().width() < 0.3);
+    }
+    #[test]
+    fn world_view_keeps_a_document_owned_dateline_region_contiguous() {
+        use deckcraft_model::geography::GeoRegion;
+        let mut map = Geography {
+            viewed_region: "world".into(),
+            projection: "robinson".into(),
+            regions: vec![GeoRegion {
+                bounds: Some([175., -10., -175., -5.]),
+                rings: vec![vec![[175., -10.], [-175., -10.], [-175., -5.], [175., -5.]]],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let p = &paths(&map).paths[0];
+        assert!(p.bounding_box().width() < 0.2, "one region must not cross the entire world");
+        assert!(p.bounding_box().x1 > project(180., -5., "robinson").x);
+        map.regions[0].bounds = Some([f64::NAN, -10., -175., -5.]);
+        assert!(paths(&map).paths[0].bounding_box().is_finite());
+    }
+    #[test]
+    fn global_albers_uses_robinson_while_regional_robinson_uses_albers() {
+        use deckcraft_model::geography::{GeoEntity, GeoRegion};
+        let mut map = Geography {
+            viewed_region: "world".into(),
+            regions: vec![GeoRegion {
+                entity_id: "local".into(),
+                point: Some(0),
+                bounds: Some([-40., 10., 20., 50.]),
+                rings: vec![vec![[-40., 10.], [20., 10.], [20., 50.], [-40., 50.]]],
+                ..Default::default()
+            }],
+            entities: vec![GeoEntity { id: "local".into(), kind: "CountryRegion".into(), ..Default::default() }],
+            ..Default::default()
+        };
+        let world = paths(&map).paths;
+        map.projection = "albers".into();
+        assert_eq!(paths(&map).paths, world);
+        map.viewed_region.clear();
+        let region = paths(&map).paths;
+        assert_ne!(region, world);
+        map.projection = "robinson".into();
+        assert_eq!(paths(&map).paths, region);
+    }
+    #[test]
+    fn incomplete_world_cache_keeps_global_frame_but_data_only_can_crop() {
+        use deckcraft_model::geography::GeoRegion;
+        let mut map = Geography {
+            viewed_region: "world".into(),
+            projection: "robinson".into(),
+            regions: vec![GeoRegion { point: Some(0), rings: vec![vec![[10., 10.], [20., 10.], [20., 20.], [10., 20.]]], ..Default::default() }],
+            ..Default::default()
+        };
+        let projected = paths(&map);
+        assert!(projected.world && !projected.global_coverage);
+        assert!(fit_bounds(&map, &projected).unwrap().width() > 5.);
+        map.viewed_region = "dataOnly".into();
+        assert!(fit_bounds(&map, &paths(&map)).unwrap().width() < 0.2);
+    }
+    #[test]
+    fn world_cylindrical_cap_does_not_crop_regional_or_robinson_geometry() {
+        use deckcraft_model::geography::{GeoEntity, GeoRegion};
+        let mut map = Geography {
+            viewed_region: "world".into(),
+            entities: vec![GeoEntity { id: "polar".into(), kind: "CountryRegion".into(), ..Default::default() }],
+            regions: vec![GeoRegion {
+                entity_id: "polar".into(),
+                point: Some(0),
+                bounds: Some([-30., -85., 30., -70.]),
+                rings: vec![vec![[-30., -85.], [30., -85.], [30., -70.], [-30., -70.]]],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        for kind in ["mercator", "miller"] {
+            map.projection = kind.into();
+            let global = paths(&map).paths[0].bounding_box();
+            map.viewed_region.clear();
+            let regional = paths(&map).paths[0].bounding_box();
+            assert!(regional.height() > global.height());
+            map.viewed_region = "world".into();
+        }
+        map.projection = "robinson".into();
+        assert!((paths(&map).paths[0].bounding_box().y1 - project(0., -85., "robinson").y).abs() < 1e-12);
     }
     #[test]
     fn data_only_scope_excludes_unbound_background_without_mutating_cache() {
@@ -452,11 +583,11 @@ mod tests {
             ],
             ..Default::default()
         };
-        let p = paths(&map).0;
+        let p = paths(&map).paths;
         assert!(!p[0].elements().is_empty() && p[1].elements().is_empty());
         assert_eq!(map.regions[1].rings[0].len(), 3);
         let mut world = map.clone();
         world.viewed_region = "world".into();
-        assert!(paths(&world).0.iter().all(|p| !p.elements().is_empty()));
+        assert!(paths(&world).paths.iter().all(|p| !p.elements().is_empty()));
     }
 }

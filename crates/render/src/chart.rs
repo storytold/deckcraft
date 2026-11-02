@@ -540,7 +540,9 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     let title_size = c.text_props(ChartTextRole::Title).size.unwrap_or(base * 1.4);
     let mut area = Rect::new(w * 0.04, h * 0.04, w * 0.96, h * 0.96);
     if c.kind == ChartType::RegionMap {
-        area = Rect::new(6., 6., (w - 6.).max(6.), (h - 6.).max(6.));
+        // Native map controls retain this point inset across chart sizes and text sizes.
+        const INSET: f64 = 5.775;
+        area = Rect::new(INSET, INSET, (w - INSET).max(INSET), (h - INSET).max(INSET));
     }
     if let Some(t) = &c.title {
         let width = (label_width(rctx, t, title_size, &c.text_props(ChartTextRole::Title)) + title_size * 0.4).min(w);

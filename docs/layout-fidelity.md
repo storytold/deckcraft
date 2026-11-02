@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.19): document-owned geographic hierarchy and regional projections,
-extending rotated diagram footprints, independent text frames and rich-label layout.
+Updated 2026-11-01 (PPTX.20): global geographic framing and projection limits, extending
+document-owned regional scope, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -893,3 +893,52 @@ Validation and remaining differences:
 
 Final workspace CI passes all eight gates, including 2,425 tests and doctests. Chart/SmartArt
 parity scores remain partial. Production rendering still invokes neither Office nor LibreOffice.
+
+## Global map framing and projection limits (PPTX.20)
+
+A global view now preserves each cached region's crossing of the dateline using its valid
+west/east extent. It does not split that region across opposite edges of the world. Noncrossing
+and malformed extents leave the original longitudes alone. Complete global caches fit their
+actual projected bounds; an extra full-globe rectangle had incorrectly shifted and shrunk the
+painted geography. An explicitly global view with only local cached geometry retains a global
+frame as a bounded fallback. Explicit data-only cropping remains supported.
+
+Private native controls vary chart width, height, offset, font size and explicit projection.
+They show a consistent 5.775pt plot inset. Automatic/global Albers selections use Robinson,
+whereas regional automatic/Robinson selections use the regional Albers implementation. The
+native Robinson vertical normalization approaches 4/3 as chart size increases; this compatibility
+approximation replaces the standard 1.3523 factor, but does not reproduce native finite-size
+quantization exactly. Global Mercator and Miller views cap their southern geometry at 79°S;
+regional views and Robinson retain their full latitude range. Mercator's finite pole limit is
+atan(sinh(pi)), approximately 85.05112878°, independently of that chart-level southern cap.
+
+Validation and limits:
+
+- Twenty-one unchanged original/private-cache controls open/export in PowerPoint and export
+  directly at 3840px width. Default-world coloured-mask IoU is 95.67%; explicit global Mercator
+  and Miller reach 96.97% and 97.22%. Across sizes, coloured-mask IoU ranges from 92.83% to
+  99.18%, and all-land IoU from 94.93% to 99.08%. These are painted-mask intersections over
+  unions, not whole-slide equality or a general percentage of PowerPoint compatibility.
+- Eight cylindrical controls independently recover a southern limit within 0.00002° of 79°S
+  from native vector coordinates. The fitted retained-ring controls differ by less than
+  0.0006pt. This verifies the projection rule, not every native boundary vertex.
+- Source and native-saved global caches contain the same polygon data. The observed
+  change is rendering/framing, not a refreshed boundary dataset. No boundary assets are bundled.
+- Native simplification removes vertices and tiny rings. This still differs, especially on
+  small charts; a tiny faraway island can change a mask's bounding box by tens of points despite
+  high area overlap. Full painted bounding-box equality is therefore **not** claimed.
+- All 25 previous geographic controls also export with unchanged source hashes. Seven
+  single-country automatic views now have 96.86–99.76% coloured-mask IoU. The earlier
+  single-country global-view case improves from 46.32% to 95.67%. Three incomplete-ancestor
+  continental controls move from 59.601% to 59.585%; that missing-context failure remains
+  explicit and is not counted as a fidelity pass.
+- Original synthetic regressions cover dateline continuity, invalid extents, global/regional
+  projection selection, incomplete-cache framing and the scope of southern cropping. They use
+  contributor-created rectangles, not provider boundary assets.
+
+Missing ancestor geometry, provider viewport policy for incomplete caches, simplification and
+finite-size quantization remain open. SmartArt rule/fallback and rich-label overflow limits from
+the preceding sections are unchanged. Production rendering invokes no external document converter.
+
+Final workspace CI passes all eight gates, including 2,429 tests and doctests. Parity scores
+remain partial; no native/provider/user assets are included.

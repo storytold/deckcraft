@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **PPTX.20 update 2026-11-01:** global maps retain per-region dateline continuity and fit actual complete-cache bounds. Global projection fallback, cylindrical southern cropping and native plot insets have multi-size controls. Incomplete provider context, boundary simplification and finite-size quantization remain partial; scores are unchanged.
+
 > **PPTX.19 update 2026-11-01:** geographic parent/child lineage and extent-only ancestors survive rebuilds; administrative scopes share projection context with data-only views. Regional Albers and rounded-boundary dateline handling are covered by native controls and regressions. Missing provider context and global viewport placement remain partial; scores are unchanged.
 
 > **PPTX.18 update 2026-11-01:** rotated SmartArt shapes fit their allocated footprints; text algorithms own independent upright/gravity/follow-shape orientation, including mapped composite text. Crossed text insets and narrow wrapped alignment are corrected. Native probes and editable round trips cover these changes; scaled font rounding, selector colours, automatic map viewports and rich-label overflow remain partial. Scores are unchanged.
@@ -425,6 +427,7 @@ no global parity claim or score increase.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | Global dateline continuity, complete-cache framing, projection selection and cylindrical southern cap verified across independent chart sizes; simplification and missing-context gaps remain |
 | 2026-11-01 | minor | Rotated diagram footprint fitting and independent mapped text orientation; crossed text insets and wrapped overflow alignment verified with original native controls |
 | 2026-11-01 | minor | Composite occupied geometry and mapped text ownership corrected; non-rotated native controls and round trips pass, rotation and selector/style interactions remain partial |
 | 2026-10-31 | minor | Bounded chart data preservation, line labels, partial lock round trips and flat process export; paragraph defaults and proofing-language-sensitive CJK punctuation now imported/rendered. Chart and SmartArt scores remain partial |

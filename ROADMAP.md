@@ -1,5 +1,7 @@
 # DeckCraft roadmap
 
+> **PPTX.20 update 2026-11-01:** global maps retain per-region dateline continuity and fit actual complete-cache bounds. Global projection fallback, cylindrical southern cropping and native plot insets have multi-size controls. Incomplete provider context, boundary simplification and finite-size quantization remain partial; scores are unchanged.
+
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
 > **Last reviewed:** 2026-10-31 · **Last updated:** 2026-10-31 · **Change:** minor (font diagnostics, chart typography, imported diagram graph/text retention and fixed-size embedded XLSX synchronization; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -148,6 +150,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-01 | PPTX.20: complete-cache global maps fit continuous dateline regions; projection fallback, cylindrical southern cap and chart insets have multi-size native controls. Boundary simplification and incomplete-provider context remain partial |
 | 2026-11-01 | PPTX.19: retain geographic parent/child hierarchy and extent-only ancestors; choose administrative views, preserve data-only projection context, and render regional Albers with robust dateline wrapping; native global fitting remains partial |
 | 2026-11-01 | PPTX.18: maximum-area rotated diagram footprints, independently oriented editable text frames, and bounded fitting-failure fallback; narrow text alignment corrected with independent native probes |
 | 2026-11-01 | PPTX.17: occupied composite frames, mapped text-node typography, constrained root frames and empty-composite semantics; native controls and round-trip regressions, with rotation/selector limits explicit |
