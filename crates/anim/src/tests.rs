@@ -205,6 +205,16 @@ fn picker_support_only_effects_with_playback() {
     assert!(!supports_animation_playback("crawl", AnimClass::Entrance));
     assert!(!supports_animation_playback("changeFontSize", AnimClass::Emphasis));
     assert!(!supports_animation_playback("media", AnimClass::Media));
+    for (entrance, exit) in [
+        ("wheel", "wheelOut"),
+        ("randomBars", "randomBarsOut"),
+        ("blinds", "blindsOut"),
+        ("checkerboard", "checkerboardOut"),
+        ("dissolve", "dissolveOut"),
+    ] {
+        assert!(!supports_animation_playback(entrance, AnimClass::Entrance), "{entrance}");
+        assert!(!supports_animation_playback(exit, AnimClass::Exit), "{exit}");
+    }
 }
 
 #[test]
