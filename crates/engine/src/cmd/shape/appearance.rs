@@ -116,7 +116,13 @@ pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
             scaled: v.get("scaled").and_then(Value::as_bool).unwrap_or(false),
         },
     };
-    Some(Gradient { tile, stops, shape, rotate_with_shape: v.get("rotateWithShape").and_then(Value::as_bool).unwrap_or(true) })
+    Some(Gradient {
+        tile,
+        stops,
+        shape,
+        rotate_with_shape: v.get("rotateWithShape").and_then(Value::as_bool).unwrap_or(true),
+        flip: v.get("flip").and_then(Value::as_str).and_then(deckcraft_model::style::GradientFlip::from_xml),
+    })
 }
 
 /// Fill and outline apply to a group's visible members as well as its container. Other edits
@@ -562,4 +568,15 @@ pub(super) fn quick_style(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gradient_parameters_keep_flip_mode() {
+        let gradient = gradient_param(&json!({"stops": [[0, "#ff0000"], [1, "#0000ff"]], "flip": "xy"})).expect("gradient");
+        assert_eq!(gradient.flip, Some(deckcraft_model::style::GradientFlip::Xy));
+    }
 }

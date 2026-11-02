@@ -4,7 +4,7 @@
 
 use deckcraft_color::{ColorScheme, ColorTransform, SchemeSlot};
 use deckcraft_model::ColorRef;
-use deckcraft_model::style::{Gradient, GradientShape, GradientStop, PatternFill};
+use deckcraft_model::style::{Gradient, GradientFlip, GradientShape, GradientStop, PatternFill};
 use egui::{Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
@@ -21,15 +21,17 @@ pub fn default_gradient(base: ColorRef, angle: f64) -> Gradient {
         stops: vec![GradientStop { pos: 0.0, color: base }, GradientStop { pos: 1.0, color: dark }],
         shape: GradientShape::Linear { angle, scaled: false },
         rotate_with_shape: true,
+        flip: None,
     }
 }
 
 /// The command parameter for `g` (`shape.fill {gradient}` / `design.background {gradient}`).
 pub fn gradient_json(g: &Gradient) -> Value {
     let stops: Vec<Value> = g.stops.iter().map(|s| json!([s.pos, cref_param(&s.color)])).collect();
+    let flip = g.flip.map(GradientFlip::xml);
     match &g.shape {
-        GradientShape::Linear { angle, scaled } => {
-            json!({"stops": stops, "kind": "linear", "angle": angle, "scaled": scaled, "tile": g.tile, "rotateWithShape": g.rotate_with_shape})
+        GradientShape::Linear { angle, .. } => {
+            json!({"stops": stops, "kind": "linear", "angle": angle, "tile": g.tile, "rotateWithShape": g.rotate_with_shape, "flip": flip})
         }
         GradientShape::Path { path, focus } => {
             let kind = match path.as_str() {
@@ -37,7 +39,7 @@ pub fn gradient_json(g: &Gradient) -> Value {
                 "shape" => "path",
                 _ => "radial",
             };
-            json!({"stops": stops, "kind": kind, "focus": focus, "tile": g.tile, "rotateWithShape": g.rotate_with_shape})
+            json!({"stops": stops, "kind": kind, "focus": focus, "tile": g.tile, "rotateWithShape": g.rotate_with_shape, "flip": flip})
         }
     }
 }
@@ -182,6 +184,7 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
                 stops: vec![GradientStop { pos: 0.0, color: light }, GradientStop { pos: 1.0, color: dark }],
                 shape: GradientShape::Path { path: "circle".into(), focus: [0.5, 0.5, 0.5, 0.5] },
                 rotate_with_shape: true,
+                flip: None,
             },
             Gradient {
                 stops: vec![GradientStop { pos: 0.0, color: base.clone() }, GradientStop { pos: 1.0, color: with_alpha(base, 0.0) }],
@@ -562,4 +565,21 @@ pub fn pattern_editor(ui: &mut Ui, pt: &PatternFill, sc: &ColorScheme) -> Option
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gradient_json_retains_flip_mode() {
+        let gradient = Gradient {
+            stops: vec![],
+            shape: GradientShape::Linear { angle: 90.0, scaled: false },
+            flip: Some(GradientFlip::Xy),
+            rotate_with_shape: true,
+            tile: [0.0; 4],
+        };
+        assert_eq!(gradient_json(&gradient).get("flip"), Some(&json!("xy")));
+    }
 }

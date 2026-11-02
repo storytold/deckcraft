@@ -82,9 +82,18 @@ fn is_cj_nonstarter(c: char) -> bool {
     )
 }
 
+/// A character that continues a Latin-style word: a letter or digit that Unicode does not break
+/// between, as opposed to CJK ideographs, kana, spaces, punctuation and symbols such as `&` or `×`
+/// (which share the AL and AI line-break classes with letters).
+fn is_word_char(c: char) -> bool {
+    use unicode_linebreak::BreakClass::{Alphabetic, Ambiguous, HebrewLetter, Numeric};
+    matches!(unicode_linebreak::break_property(c as u32), Alphabetic | Ambiguous | HebrewLetter | Numeric) && c.is_alphanumeric()
+}
+
 /// Break opportunities: allowed[i] = a line may start at char i. Unicode line breaking, then
-/// PowerPoint's differences: without `latinLnBrk` a word doesn't break after `/` or `\`, and
-/// Korean breaks only between words.
+/// PowerPoint's differences: without `latinLnBrk` a word doesn't break after `/`, `\`, `?`, `!`, `}`
+/// or `+` inside a word (measured in PowerPoint 2016 for Windows; before an ideograph or a space
+/// the Unicode break stays), and Korean breaks only between words.
 pub(crate) fn break_opportunities(text: &str, latin_break: bool) -> (Vec<bool>, Vec<bool>) {
     let n = text.chars().count();
     let mut allowed = vec![false; n + 1];
@@ -113,7 +122,7 @@ pub(crate) fn break_opportunities(text: &str, latin_break: bool) -> (Vec<bool>, 
         let keep = if (is_hangul(prev) && is_hangul(next)) || prev == '\u{200B}' || next == '\u{2014}' || is_cj_nonstarter(next) {
             false
         } else {
-            latin_break || !matches!(prev, '/' | '\\') || next.is_whitespace()
+            latin_break || !matches!(prev, '/' | '\\' | '?' | '!' | '}' | '+') || !is_word_char(next)
         };
         if !keep
             && !mandatory.get(i + 1).copied().unwrap_or(false)
