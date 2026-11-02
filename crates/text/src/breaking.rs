@@ -170,11 +170,11 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
                 break;
             }
             let max_x = x0 + avail;
-            let (adv, seg_w) = if c == '\t' {
+            let (adv, seg) = if c == '\t' {
                 let seg = tab_segment(&p.cells, i);
-                (tab_advance(x0 + x, tab_stops, default_tab, seg, max_x), seg.0)
+                (tab_advance(x0 + x, tab_stops, default_tab, seg, max_x), seg)
             } else {
-                (p.cells.get(i).map(|c| c.adv).unwrap_or(0.0), 0.0)
+                (p.cells.get(i).map(|c| c.adv).unwrap_or(0.0), (0.0, 0.0))
             };
             let breakable = |j: usize| p.cells.get(j).is_none_or(|c| c.breakable(j));
             if i > start && allowed.get(i).copied().unwrap_or(false) && breakable(i) {
@@ -189,7 +189,8 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
             }
             // A tab that runs past the end (or whose following aligned word fits on a fresh line
             // but not in the remaining space) moves to the next line with its word.
-            let tab_overflow = x + adv > avail + 0.01 || (seg_w > 0.0 && x + adv + seg_w > avail + 0.01 && seg_w <= rest_w);
+            let fresh_tab_adv = if seg.0 > 0.0 { tab_advance(x0_rest, tab_stops, default_tab, seg, x0_rest + rest_w) } else { 0.0 };
+            let tab_overflow = x + adv > avail + 0.01 || (seg.0 > 0.0 && x + adv + seg.0 > avail + 0.01 && fresh_tab_adv + seg.0 <= rest_w + 0.01);
             if wrap && c == '\t' && tab_overflow && i > start {
                 end = i;
                 next = i;
