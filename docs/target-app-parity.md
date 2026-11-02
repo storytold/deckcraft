@@ -49,7 +49,7 @@ Calibration is the same as for the full number (see [Calibration](#calibration-h
   - The menu-bar dump `plan/powerpoint/menu-tree.txt` (491 lines, observed 2026-10-07, local and
     gitignored) and the ribbon/pane observations in `plan/powerpoint/01-observed-ui.md`.
 - **The code on `origin/main` at d556ff9:** 226 engine commands (`crates/engine/src/cmd/*`), 48
-  transitions and 173 animation effects (`crates/model/src/anim.rs`), 504 `#[test]` functions, the
+  transitions and 64 animation effects (`crates/model/src/anim.rs`), 504 `#[test]` functions, the
   PPTX reader/writer (`crates/pptx`, 9.0k lines), 27 dialogs and 10 ribbon tabs
   (`crates/ui-egui`).
 - **User reports:** 24 GitHub issues opened 2026-10-08 to 10-10 (16 still open), the best evidence
