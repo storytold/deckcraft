@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.27): SmartArt parent allocation and self-size fallbacks,
+Updated 2026-11-01 (PPTX.28): SmartArt space containers and inherited size defaults,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1294,3 +1294,55 @@ control; space containers have distinct allocation/centred-placement behavior. T
 are still open, together with unnamed selectors, automatic flow sizing, full native rule and
 fallback policies, cyclic fonts, geographic context/simplification and rich-label overflow.
 No global parity score or complete LibreOffice-replacement claim is raised.
+
+
+## Space containers and inherited size defaults (PPTX.28)
+
+A leaf space reserves its allocation. A space with children instead encloses their occupied
+bounds and centres the group in its allocated frame. It does not resize an overflowing child;
+its enclosing composite may subsequently fit that group. A painted space uses the children's
+occupied rectangle, rather than retaining a larger empty background. The space's allocation
+also takes precedence over a child's self dimensions, without suppressing its font defaults.
+
+A composite's local size scope can accept an ancestor replacement for an existing self-size
+fallback. Such a replacement must retain its fallback role: it cannot turn a parent end/centre
+coordinate into a sized allocation. Explicit local child allocations still win. A nested linear
+layout reopens ancestor size defaults even inside a composite or space container. Constraint
+applicability and rule binding use the same scope information. Extra scans and placement are
+charged to the existing shared work budget; no input-specific names or dimensions are used.
+
+Validation:
+
+- All 16 previously failing space-container controls now match native nonempty path geometry
+  at 0.025pt inspection tolerance. They vary child self sizes, parent allocations, painted and
+  nonpainting containers, and one/two children.
+- The prior 216-case matrix now has 207 geometry matches and nine native generic-fallback
+  exclusions, resolving its five scope/space failures. All 176 earlier edge controls still pass.
+- A new 94-case matrix covers root/nested containers, coordinate roles, overflow, negative sizes
+  and three-level allocation scopes. Geometry matches improve from 44 to 93 with no previous
+  match regressing. The other case makes native PowerPoint select its generic fallback and is
+  excluded; the intended layout is not reproduced natively. All 93 non-fallback font-size sets
+  match. The maximum geometry difference is 0.0224pt; small native flow quantization remains.
+- Six named native controls confirm centring of an already-fitted composite inside a space.
+  Their inspected geometry differs by at most 0.01pt. Three old unit tests had assumed that a
+  space did not centre its children; their position assertions now account for that operation,
+  while their existing expected dimensions remain unchanged.
+- At 4K, 14/16 original space controls match visible coloured bounds within 0.5pt. Two overlap
+  cases retain a 2.5pt difference in the first exposed pink pixel, despite matching model/path
+  geometry and the other colour bounds. Clearing text in 16 independently exported controls
+  removes the discrepancy: all 16 pass the same 4K colour-bound check. This isolates a remaining
+  typography/occlusion issue; the original two cases are not counted as raster-fidelity passes.
+  Representative native/direct images were visually inspected. Hash receipts bind each native
+  export to the unchanged input, and direct rendering has no document converter on PATH.
+- The older 186-case matrix improves from 144 to 152 geometry matches, with 22 failures and
+  12 native-fallback exclusions remaining. All 73 overflow geometries still match within 0.009pt.
+  All 154 previous direct PNGs remain identical to the PPTX.27 executable, with unchanged and
+  native-matching font-size sets.
+- Three new tests cover 96 space, fallback and nested-linear variants. Final `cargo xtask ci`
+  passes all eight stages and 2,451 tests including doctests; the 21 diagram preservation and
+  round-trip tests remain green.
+
+Unnamed selectors, automatic flow sizing, full rule/fallback search, cyclic font policies,
+duplicate-point text ownership and colour interpolation remain partial. Geographic context,
+simplification/quantization and rich-label overflow/collision remain open. These checks neither
+raise global parity scores nor establish complete LibreOffice replacement.

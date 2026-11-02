@@ -40,8 +40,11 @@ pub(super) struct Entry<'t, 'a> {
     pub parent: Option<usize>,
     pub style: BoxStyle,
     pub end: usize,
-    /// Nearest ancestor whose algorithm owns a local geometry constraint scope.
+    /// Local allocation scope. Linear placement reopens descendant-size defaults.
     pub geometry_scope: usize,
+    /// Authored self dimensions that an ancestor may replace as defaults, without
+    /// making them a parent allocation.
+    pub self_sizes: [bool; 2],
 }
 pub(super) type Solution = HashMap<usize, BoxStyle>;
 pub(super) fn id(node: &Instance<'_>) -> usize {
@@ -62,8 +65,20 @@ pub(super) fn applies(entries: &[Entry<'_, '_>], owner: usize, target: usize, pr
     // Composite and space algorithms establish local size scopes. Flow algorithms
     // can consume ancestor descendant-size constraints. Font constraints still
     // reach text across both kinds of container.
-    !matches!(property, "w" | "h" | "diam")
-        || (owner >= entries[target].geometry_scope && (entries[owner].node.alg != "composite" || selector.attr("ptType").is_none_or(|t| t == "all")))
+    if !matches!(property, "w" | "h" | "diam") {
+        return true;
+    }
+    let entry = &entries[target];
+    if owner == target && entry.parent.is_some_and(|p| entries[p].node.alg == "sp") {
+        return false;
+    }
+    let self_default = entries[entry.geometry_scope].node.alg == "composite"
+        && match property {
+            "w" => entry.self_sizes[0],
+            "h" => entry.self_sizes[1],
+            _ => entry.self_sizes.iter().all(|v| *v),
+        };
+    (owner >= entry.geometry_scope || self_default) && (entries[owner].node.alg != "composite" || selector.attr("ptType").is_none_or(|t| t == "all"))
 }
 pub(super) fn collect<'t, 'a>(
     node: &'t Instance<'a>,
@@ -72,11 +87,22 @@ pub(super) fn collect<'t, 'a>(
     entries: &mut Vec<Entry<'t, 'a>>,
     work: &mut usize,
 ) -> Result<(), &'static str> {
-    charge(work, 1 + node.constraints.len())?;
-    self_constraints(node, &mut style);
+    charge(work, node.constraints.len().saturating_mul(3).saturating_add(1))?;
+    let self_sizing = parent.is_none_or(|p| entries[p].node.alg != "sp");
+    self_constraints(node, &mut style, self_sizing);
     let index = entries.len();
-    let geometry_scope = parent.map_or(0, |p| if matches!(entries[p].node.alg.as_str(), "composite" | "sp") { p } else { entries[p].geometry_scope });
-    entries.push(Entry { node, parent, style, end: index + 1, geometry_scope });
+    let geometry_scope = parent.map_or(0, |p| match entries[p].node.alg.as_str() {
+        "composite" | "sp" => p,
+        "lin" | "hierChild" => 0,
+        _ => entries[p].geometry_scope,
+    });
+    let self_sizes = ["w", "h"].map(|axis| {
+        self_sizing
+            && node.constraints.iter().any(|c| {
+                c.attr("for").unwrap_or("self") == "self" && c.attr("type").is_some_and(|t| t == axis || t == "diam") && !local_size_bound(c)
+            })
+    });
+    entries.push(Entry { node, parent, style, end: index + 1, geometry_scope, self_sizes });
     let local = BoxStyle { rect: Xfrm::new(0., 0., style.rect.w, style.rect.h), ..style };
     for (child, rect) in node.children.iter().zip(initial(node, local)) {
         collect(child, BoxStyle { rect, ..local }, Some(index), entries, work)?;
@@ -251,6 +277,7 @@ pub(super) fn resolve_adjusted(
     collect(node, BoxStyle::new(rect), None, &mut entries, work)?;
     let mut equations: BTreeMap<Key, Row> = BTreeMap::new();
     let mut equation_owners = HashMap::new();
+    let mut size_fallbacks = BTreeSet::new();
     let mut bounds = Vec::new();
     let mut bounded = BTreeSet::new();
     // Inner defaults first. A local child allocation beats ancestor defaults, but
@@ -303,6 +330,13 @@ pub(super) fn resolve_adjusted(
                             bounds.push(row);
                         }
                         _ => {
+                            if matches!(property, "w" | "h") {
+                                if owner == *target || owner < entries[*target].geometry_scope {
+                                    size_fallbacks.insert(key.clone());
+                                } else {
+                                    size_fallbacks.remove(&key);
+                                }
+                            }
                             equation_owners.insert(key.clone(), owner);
                             equations.insert(key, row);
                         }
@@ -323,12 +357,14 @@ pub(super) fn resolve_adjusted(
                 let mut c = El::default();
                 c.set_attr("val", &value.to_string());
                 let row = equation(&entries, i, i, None, &c, property, work)?;
-                equation_owners.insert((i, property.clone()), i);
+                if matches!(property.as_str(), "w" | "h") {
+                    size_fallbacks.insert((i, property.clone()));
+                }
                 equations.insert((i, property.clone()), row);
             }
         }
     }
-    let extents = axes::complete(&mut equations, &equation_owners, &entries, &bounded, work)?;
+    let extents = axes::complete(&mut equations, &size_fallbacks, &entries, &bounded, work)?;
     let rows: Vec<_> = equations.values().cloned().collect();
     let values = axes::solve_extents(&rows, &bounds, &extents, &entries, work)?;
     for ((index, property), value) in &values {

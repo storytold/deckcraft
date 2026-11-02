@@ -1,5 +1,7 @@
 # DeckCraft roadmap: milestones and what's next
 
+> **PPTX.28 update 2026-11-01:** Child-bearing space containers centre their occupied children without resizing them; ancestor self-size defaults retain their allocation role, and nested linear layouts accept ancestor sizes. The prior 216-case matrix now has 207 matches and nine native-fallback exclusions. A new 94-case matrix improves from 44 to 93 matches, with one native fallback excluded. Scores are unchanged.
+
 > **PPTX.27 update 2026-11-01:** SmartArt parent allocations override self-size fallbacks; two parent coordinates determine the size before axis selection, and local size bounds do not allocate initial geometry. All 176 prior edge/self-size controls now pass. A new 216-case matrix improves from 53 to 202 matches, retaining five scope/space-placement failures and nine native-fallback exclusions. Scores are unchanged.
 
 > **PPTX.26 update 2026-11-01:** SmartArt preserves constraint endpoints separately from positive display sizes, including implicit edges and centre-only references. All 60 prior implicit-edge cases now pass; the older matrix improves to 144/186 with 30 failures and 12 native-fallback exclusions. A new 176-case matrix reaches 152 matches, retaining 24 local-size/parent-position failures. Scores are unchanged.
@@ -150,6 +152,7 @@ and rich point labels; provider/native-layout gaps remain documented, and beta s
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | PPTX.28 resolves tested space-container and ancestor-default cases; 207 prior and 93 new intended-layout controls match native geometry, with remaining selector/flow/fallback limits explicit |
 | 2026-11-01 | minor | PPTX.27 distinguishes parent allocation from self-size fallback; 176 prior controls and 195 new core controls match native geometry; ancestor-default and space-placement gaps remain |
 | 2026-11-01 | minor | PPTX.26 resolves implicit/signed edges and their references; zero-width frames centre safely, while local-size/parent-position and full search policies remain partial |
 | 2026-11-01 | minor | PPTX.25 separates geometry/text scope and local size precedence; all eight prior cross-container cases pass, while broader selector/default-layout probes retain failures |

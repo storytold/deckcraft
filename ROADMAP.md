@@ -1,5 +1,7 @@
 # DeckCraft roadmap
 
+> **PPTX.28 update 2026-11-01:** Child-bearing space containers centre their occupied children without resizing them; ancestor self-size defaults retain their allocation role, and nested linear layouts accept ancestor sizes. The prior 216-case matrix now has 207 matches and nine native-fallback exclusions. A new 94-case matrix improves from 44 to 93 matches, with one native fallback excluded. Scores are unchanged.
+
 > **PPTX.27 update 2026-11-01:** SmartArt parent allocations override self-size fallbacks; two parent coordinates determine the size before axis selection, and local size bounds do not allocate initial geometry. All 176 prior edge/self-size controls now pass. A new 216-case matrix improves from 53 to 202 matches, retaining five scope/space-placement failures and nine native-fallback exclusions. Scores are unchanged.
 
 > **PPTX.26 update 2026-11-01:** SmartArt preserves constraint endpoints separately from positive display sizes, including implicit edges and centre-only references. All 60 prior implicit-edge cases now pass; the older matrix improves to 144/186 with 30 failures and 12 native-fallback exclusions. A new 176-case matrix reaches 152 matches, retaining 24 local-size/parent-position failures. Scores are unchanged.
@@ -164,6 +166,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-01 | PPTX.28: centre child-bearing spaces and retain ancestor self-size semantics; 93 new intended-layout controls match, while native fallback and text-occlusion differences remain explicit |
 | 2026-11-01 | PPTX.27: distinguish parent allocations from self-size fallbacks; all 176 prior edge controls pass and 202/216 broader controls match, with scope/space/fallback limits explicit |
 | 2026-11-01 | PPTX.26: preserve implicit/signed endpoints and positive display sizes; 140 edge/reference controls match native geometry, with remaining local-size/parent-position failures recorded |
 | 2026-11-01 | PPTX.25: separate local geometry scope from descendant text constraints; all eight cross-container controls pass and expanded probes retain selector/default-layout failures |

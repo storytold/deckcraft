@@ -1,6 +1,6 @@
 //! Constraint-space endpoints and nonnegative display extents are distinct.
 use super::{Entry, Key, Row, apply_bounds, charge, solve};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn signed(size: &str) -> &str {
     match size {
@@ -26,7 +26,7 @@ fn default(entries: &[Entry<'_, '_>], i: usize, property: &str, size: &str) -> R
 
 pub(super) fn complete(
     equations: &mut BTreeMap<Key, Row>,
-    owners: &HashMap<Key, usize>,
+    size_fallbacks: &BTreeSet<Key>,
     entries: &[Entry<'_, '_>],
     bounded: &BTreeSet<Key>,
     work: &mut usize,
@@ -40,7 +40,7 @@ pub(super) fn complete(
         charge(work, 8)?;
         for (start, end, center, size) in [("l", "r", "ctrX", "w"), ("t", "b", "ctrY", "h")] {
             let key = (i, size.to_string());
-            if owners.get(&key) != Some(&i) || entry.parent.is_none() {
+            if !size_fallbacks.contains(&key) || entry.parent.is_none() {
                 continue;
             }
             let coords = [start, end, center].map(|p| equations.contains_key(&(i, p.into())));

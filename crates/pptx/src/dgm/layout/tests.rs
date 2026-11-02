@@ -821,7 +821,7 @@ fn nonpainting_allocations_and_connectors_reserve_composite_space() {
 }
 
 #[test]
-fn nested_composites_fit_in_their_allocated_frame_before_parent_placement() {
+fn nested_composites_keep_allocated_sizes_when_space_parent_centres_them() {
     let data = source();
     let mm = 72. / 25.4;
     for alg in ["sp", "tx", "conn"] {
@@ -836,8 +836,8 @@ fn nested_composites_fit_in_their_allocated_frame_before_parent_placement() {
         ));
         let out = evaluate(&l, &data, frame()).unwrap();
         let box_shape = out.iter().find(|p| p.name == "box").unwrap();
-        assert!((box_shape.rect.x - 40. * mm).abs() < 1e-6, "{alg}: {:?}", box_shape.rect);
-        assert!((box_shape.rect.y - 25. * mm).abs() < 1e-6);
+        assert!((box_shape.rect.x - (frame().w - 20. * mm) / 2.).abs() < 1e-6, "{alg}: {:?}", box_shape.rect);
+        assert!((box_shape.rect.y - (frame().h - 10. * mm) / 2.).abs() < 1e-6);
         assert!((box_shape.rect.w - 20. * mm).abs() < 1e-6);
         assert!((box_shape.rect.h - 10. * mm).abs() < 1e-6);
         assert_eq!(out.len(), 1, "allocation-only nodes do not escape the layout stage");
@@ -876,7 +876,8 @@ fn overflowing_composites_clip_scaled_end_edges_before_recentering() {
                 let r = out.iter().find(|p| p.name == "child").unwrap().rect;
                 let (position, extent) = if vertical { (r.y, r.h) } else { (r.x, r.w) };
                 assert!((extent - expected * mm).abs() < 1e-6, "{vertical}/{frame_size}/{start}/{size}/{offset}: {r:?}");
-                assert!((position - offset - (frame_size - expected) * mm / 2.).abs() < 1e-6);
+                let outer_size = if vertical { 300. } else { 600. };
+                assert!((position - offset - (outer_size - expected * mm) / 2.).abs() < 1e-6);
             }
         }
     }
@@ -911,14 +912,16 @@ fn composite_overflow_uses_shared_bounds_with_individual_end_edges() {
                 </layoutNode></layoutNode>"
             ));
             let out = evaluate(&l, &data, frame()).unwrap();
+            // The enclosing space also centres the already-fitted child group.
+            let base = ((if vertical { frame().h } else { frame().w }) - 20. * mm) / 2.;
             for ((name, extent), position) in ["a", "b"].into_iter().zip(expected).zip(starts) {
                 let p = out.iter().find(|p| p.name == name).unwrap();
                 let r = p.rect;
                 let (start, size, unscaled) = if vertical { (r.y, r.h, r.w) } else { (r.x, r.w, r.h) };
                 assert!((size - extent * mm).abs() < 1e-6, "{vertical}/{left}/{name}: {r:?}");
-                assert!((start - position * mm).abs() < 1e-6, "{vertical}/{left}/{name}: {r:?}");
+                assert!((start - base - position * mm).abs() < 1e-6, "{vertical}/{left}/{name}: {r:?}");
                 assert!((unscaled - 20. * mm).abs() < 1e-6);
-                assert!(start >= 0. && start + size <= 20. * mm + 1e-6);
+                assert!(start >= base && start + size <= base + 20. * mm + 1e-6);
                 assert_eq!(p.font, Some(36.));
             }
         }
@@ -1257,6 +1260,113 @@ fn two_parent_coordinates_override_a_self_size_before_axis_priority() {
                 let child = resolved_children(&l, &d, Xfrm::new(0., 0., 20. * mm, 20. * mm))[0];
                 assert!((child.get(size).unwrap() / mm - expected_size).abs() < 1e-6);
                 assert!((child.get(start).unwrap() / mm - expected_start).abs() < 1e-6);
+            }
+        }
+    }
+}
+
+#[test]
+fn spaces_with_children_enclose_and_centre_without_using_child_self_sizes() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for shape in ["none", "rect"] {
+        for second in [false, true] {
+            for self_size in [false, true] {
+                for allocation in [None, Some(12.), Some(30.)] {
+                    let size = allocation.map(|v| format!("<constr type='w' for='ch' forName='a' val='{v}'/>")).unwrap_or_default();
+                    let own_size = if self_size { "<constr type='w' val='5'/>" } else { "" };
+                    let other = if second { "<layoutNode name='b'><alg type='tx'/><presOf/><shape type='rect'/></layoutNode>" } else { "" };
+                    let l = layout(&format!(
+                        "<layoutNode name='space'><alg type='sp'/><presOf/><shape type='{shape}'/><constrLst>{size}
+                        <constr type='h' for='ch' forName='a' val='6'/><constr type='l' for='ch' forName='a' val='5'/>
+                        <constr type='t' for='ch' forName='a' val='10'/><constr type='w' for='ch' forName='b' val='4'/>
+                        <constr type='h' for='ch' forName='b' val='4'/></constrLst>
+                        <layoutNode name='a'><alg type='tx'/><presOf/><shape type='rect'/><constrLst>{own_size}
+                        <constr type='primFontSz' val='24'/></constrLst></layoutNode>{other}</layoutNode>"
+                    ));
+                    for offset in [0., 123.5] {
+                        let out = evaluate(&l, &data, Xfrm::new(offset, offset, 20. * mm, 20. * mm)).unwrap();
+                        let a = out.iter().find(|p| p.name == "a").unwrap();
+                        let w = allocation.unwrap_or(20.) * mm;
+                        let expected = Xfrm::new(offset + (20. * mm - w) / 2., offset + 7. * mm, w, 6. * mm);
+                        for (actual, expected) in [(a.rect.x, expected.x), (a.rect.y, expected.y), (a.rect.w, w), (a.rect.h, expected.h)] {
+                            assert!((actual - expected).abs() < 1e-6, "{shape}/{second}/{self_size}/{allocation:?}: {:?}", a.rect);
+                        }
+                        assert_eq!(a.font, Some(24.), "space allocation does not replace text defaults");
+                        if let Some(b) = out.iter().find(|p| p.name == "b") {
+                            assert!((b.rect.x - a.rect.x).abs() < 1e-6);
+                            assert!((b.rect.y - a.rect.y).abs() < 1e-6);
+                        }
+                        if let Some(own) = out.iter().find(|p| p.name == "space") {
+                            for (outer, inner) in [(own.rect.x, a.rect.x), (own.rect.y, a.rect.y), (own.rect.w, a.rect.w), (own.rect.h, a.rect.h)] {
+                                assert!((outer - inner).abs() < 1e-6);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn ancestor_self_size_defaults_keep_their_local_allocation_role() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for alg in ["composite", "sp", "lin"] {
+        for edge in ["l", "r", "ctrX"] {
+            for local in [false, true] {
+                for allocated in [false, true] {
+                    let size = if allocated { "<constr type='w' for='ch' forName='a' val='12'/>" } else { "" };
+                    let own = if local { "<constrLst><constr type='w' val='5'/></constrLst>" } else { "" };
+                    let l = layout(&format!(
+                        "<layoutNode><alg type='composite'/><presOf/><constrLst><constr type='w' for='des' forName='a' val='15'/>
+                        <constr type='w' for='ch' forName='box' val='20'/><constr type='h' for='ch' forName='box' val='20'/></constrLst>
+                        <layoutNode name='box'><alg type='{alg}'/><presOf/><constrLst>{size}<constr type='{edge}' for='ch' forName='a' val='15'/>
+                        <constr type='h' for='ch' forName='a' val='6'/></constrLst>
+                        <layoutNode name='a'><alg type='tx'/><shape type='rect'/><presOf/>{own}</layoutNode></layoutNode></layoutNode>"
+                    ));
+                    let out = evaluate(&l, &data, frame()).unwrap();
+                    let a = out.iter().find(|p| p.name == "a").unwrap();
+                    let expected = if allocated {
+                        12.
+                    } else if alg == "sp" {
+                        20.
+                    } else if alg == "lin" || (local && edge == "l") || (!local && edge == "r") {
+                        15.
+                    } else if !local && edge == "l" {
+                        5.
+                    } else {
+                        0.
+                    };
+                    assert!((a.rect.w - expected * mm).abs() < 1e-6, "{alg}/{edge}/{local}/{allocated}: {:?}", a.rect);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn linear_descendants_accept_ancestor_sizes_through_nested_containers() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for alg in ["composite", "sp", "lin"] {
+        for local in [false, true] {
+            for allocated in [false, true] {
+                let size = if allocated { "<constr type='w' for='ch' forName='a' val='12'/>" } else { "" };
+                let own = if local { "<constrLst><constr type='w' val='5'/></constrLst>" } else { "" };
+                let l = layout(&format!(
+                    "<layoutNode><alg type='composite'/><presOf/><constrLst><constr type='w' for='des' forName='a' val='15'/>
+                    <constr type='w' for='ch' forName='box' val='20'/><constr type='h' for='ch' forName='box' val='20'/></constrLst>
+                    <layoutNode name='box'><alg type='{alg}'/><presOf/><constrLst><constr type='w' for='ch' forName='flow' val='20'/>
+                    <constr type='h' for='ch' forName='flow' val='20'/></constrLst>
+                    <layoutNode name='flow'><alg type='lin'/><presOf/><constrLst>{size}<constr type='h' for='ch' val='6'/></constrLst>
+                    <layoutNode name='a'><alg type='tx'/><shape type='rect'/><presOf/>{own}</layoutNode>
+                    </layoutNode></layoutNode></layoutNode>"
+                ));
+                let out = evaluate(&l, &data, frame()).unwrap();
+                let a = out.iter().find(|p| p.name == "a").unwrap();
+                assert!((a.rect.w - (if allocated { 12. } else { 15. }) * mm).abs() < 1e-6);
             }
         }
     }

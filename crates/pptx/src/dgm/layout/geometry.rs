@@ -170,17 +170,7 @@ fn fit_composite_frame(out: &mut [Placed<'_>], frame: Xfrm, work: &mut usize) ->
             project(t);
         }
     }
-    let Some(fitted) = occupied_bounds(out) else { return Ok(()) };
-    let (dx, dy) = (frame.x + (frame.w - fitted.w) / 2. - fitted.x, frame.y + (frame.h - fitted.h) / 2. - fitted.y);
-    for p in out {
-        p.rect.x += dx;
-        p.rect.y += dy;
-        if let Some(t) = &mut p.text_rect {
-            t.x += dx;
-            t.y += dy;
-        }
-    }
-    Ok(())
+    center_frame(out, frame, work)
 }
 
 fn occupied_bounds(out: &[Placed<'_>]) -> Option<Xfrm> {
@@ -305,13 +295,34 @@ fn place_inner<'a>(
         }
     }
     pack_composite_extents(node, style, local, &children, &ranges, out, work)?;
-    if node.alg == "composite" {
+    if matches!(node.alg.as_str(), "composite" | "sp") {
         if out.get(own).is_some_and(|p| p.node_key == super::constraints::id(node)) {
             fit_composite_shape(out.get_mut(own..).unwrap_or(&mut []), work)?;
         }
-        // Every composite fits its occupied children in its allocated frame before
-        // its parent lays out that result, including nonpainting space/line nodes.
-        fit_composite_frame(out.get_mut(own..).unwrap_or(&mut []), style.rect, work)?;
+        // A child-bearing space encloses and centres its occupied children without
+        // shrinking them. A leaf space still reserves its entire allocation.
+        // Composites additionally fit overflowing children before parent placement.
+        if node.alg == "sp" {
+            center_frame(out.get_mut(own..).unwrap_or(&mut []), style.rect, work)?;
+        } else {
+            fit_composite_frame(out.get_mut(own..).unwrap_or(&mut []), style.rect, work)?;
+        }
+    }
+    Ok(())
+}
+
+fn center_frame(out: &mut [Placed<'_>], frame: Xfrm, work: &mut usize) -> Result<(), &'static str> {
+    charge(work, out.len() * 2)?;
+    let Some(bounds) = occupied_bounds(out) else { return Ok(()) };
+    let dx = frame.x + (frame.w - bounds.w) / 2. - bounds.x;
+    let dy = frame.y + (frame.h - bounds.h) / 2. - bounds.y;
+    for p in out {
+        p.rect.x += dx;
+        p.rect.y += dy;
+        if let Some(t) = &mut p.text_rect {
+            t.x += dx;
+            t.y += dy;
+        }
     }
     Ok(())
 }
@@ -416,11 +427,14 @@ fn pack_composite_extents(
     Ok(())
 }
 
-pub(super) fn self_constraints(node: &Instance<'_>, style: &mut BoxStyle) {
+pub(super) fn self_constraints(node: &Instance<'_>, style: &mut BoxStyle, sizes: bool) {
     for constraint in
         node.constraints.iter().filter(|e| e.attr("for").unwrap_or("self") == "self" && !super::constraints::position(e.attr("type").unwrap_or("")))
     {
-        if super::constraints::font_bound(constraint) || super::constraints::local_size_bound(constraint) {
+        if super::constraints::font_bound(constraint)
+            || super::constraints::local_size_bound(constraint)
+            || (!sizes && matches!(constraint.attr("type"), Some("w" | "h" | "diam")))
+        {
             continue;
         }
         if let Some(value) = constraint_value(constraint, style) {
