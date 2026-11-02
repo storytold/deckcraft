@@ -89,7 +89,18 @@ fn latin_text_draws_no_ligatures() {
 #[test]
 fn pairs_are_kerned_only_from_the_kern_size() {
     let kerns = |f: &FontFace| {
-        let w = |feat: &[deckcraft_fonts::Feature]| deckcraft_fonts::shape(f, "AVATAR", feat, |c| c).iter().map(|g| g.x_advance).sum::<i32>();
+        let w = |feat: &[deckcraft_fonts::Feature]| {
+            deckcraft_fonts::shape_range(
+                f,
+                "AVATAR",
+                0..6,
+                &deckcraft_fonts::ShapeParams { features: feat, drawingml_kerning: true, ..Default::default() },
+                |c| c,
+            )
+            .iter()
+            .map(|g| g.x_advance)
+            .sum::<i32>()
+        };
         w(&[]) != w(&deckcraft_fonts::feature("-kern").into_iter().collect::<Vec<_>>())
     };
     let Some(family) = first_family(LATIN_FAMILIES, kerns) else {
@@ -104,6 +115,52 @@ fn pairs_are_kerned_only_from_the_kern_size() {
     assert!(on < off - 2.0, "{family}: kerned {on} vs {off}");
     assert!((at - on).abs() < 0.01, "kerned at exactly the threshold size");
     assert!((above - off).abs() < 0.01, "40 pt is below a 48 pt threshold");
+}
+
+#[test]
+fn static_truetype_nominal_widths_match_native_quantization_and_wrap_boundary() {
+    let db = FontDb::global();
+    let face = db.face("Inter", "Regular");
+    if !face.family.eq_ignore_ascii_case("Inter") || !face.uses_legacy_drawingml_metrics() {
+        eprintln!("skipped: the native control uses static Inter Regular");
+        return;
+    }
+    // Independent native exports of original text boxes, using the same OFL face.
+    // The small PDF serialization differences are below 0.03 pt. No font asset is embedded.
+    for (size, positions) in [
+        (13.0, [0.0, 9.9996, 14.8772, 22.8748, 25.9974]),
+        (22.0, [0.0, 16.874, 25.124, 38.632, 44.0]),
+        (36.0, [0.0, 27.5004, 40.9968, 62.9892, 71.7336]),
+    ] {
+        let (p, mut sh) = setup("Orbit", 2000.0, 300.0);
+        let t = sh.text.as_mut().unwrap();
+        t.body.inset_l = Some(0.0);
+        t.body.inset_r = Some(0.0);
+        t.body.autofit = Some(AutoFit::None);
+        t.body.wrap = Some(true);
+        t.paragraphs[0].props.bullet = Some(Bullet::None);
+        for r in &mut t.paragraphs[0].runs {
+            r.props.font = Some("Inter".into());
+            r.props.size = Some(size);
+            r.props.kern = Some(12.0);
+        }
+        let l = lay(&p, &sh, 2000.0, 300.0);
+        let xs: Vec<_> = l.runs.iter().flat_map(|r| r.glyphs.iter().map(|g| g.1)).collect();
+        assert_eq!(xs.len(), 5);
+        for (x, expected) in xs.iter().zip(positions) {
+            assert!((x - xs[0] - expected).abs() < 0.03, "{size}: {xs:?}");
+        }
+        if size == 13.0 {
+            // Ideal widths total 30.196 pt, but native nominal widths total 30.25 pt.
+            assert_eq!(lay(&p, &sh, 30.19, 300.0).lines.len(), 2);
+            assert_eq!(lay(&p, &sh, 30.24, 300.0).lines.len(), 2);
+            assert_eq!(lay(&p, &sh, 30.25, 300.0).lines.len(), 1);
+            assert_eq!(lay(&p, &sh, 30.26, 300.0).lines.len(), 1);
+            sh.text.as_mut().unwrap().paragraphs[0].runs[0].text = "LongUnbreakableContentAcrossTheCard".into();
+            assert_eq!(lay(&p, &sh, 253.49, 300.0).lines.len(), 2);
+            assert_eq!(lay(&p, &sh, 253.50, 300.0).lines.len(), 1);
+        }
+    }
 }
 
 /// Width of the first paragraph "AVATAR WAVE" (kerned from 12 pt) when a second paragraph's run
@@ -129,7 +186,18 @@ fn kerned_width_beside_spacing(family: &str, spc: f64) -> f64 {
 #[test]
 fn character_spacing_in_the_body_keeps_kerning() {
     let kerns = |f: &FontFace| {
-        let w = |feat: &[deckcraft_fonts::Feature]| deckcraft_fonts::shape(f, "AVATAR", feat, |c| c).iter().map(|g| g.x_advance).sum::<i32>();
+        let w = |feat: &[deckcraft_fonts::Feature]| {
+            deckcraft_fonts::shape_range(
+                f,
+                "AVATAR",
+                0..6,
+                &deckcraft_fonts::ShapeParams { features: feat, drawingml_kerning: true, ..Default::default() },
+                |c| c,
+            )
+            .iter()
+            .map(|g| g.x_advance)
+            .sum::<i32>()
+        };
         w(&[]) != w(&deckcraft_fonts::feature("-kern").into_iter().collect::<Vec<_>>())
     };
     let Some(family) = first_family(LATIN_FAMILIES, kerns) else {

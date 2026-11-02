@@ -1,5 +1,7 @@
 # File-format parity with PowerPoint
 
+> **PPTX.38 update 2026-11-02:** Native static TrueType kerning, nominal advance quantization and exact wrap boundaries are now distinguished from modern variable-font shaping. Equivalent duplicate font candidates prefer the variable face without changing fallback order. Recovery font-set matches improve from 308 to 321 of 326 with no previously matching case lost; five fitting/default cases remain. All 632 earlier geometry controls and 154 native-matching font sets are retained. Full SmartArt, geography and rich-label parity remain partial; scores are unchanged.
+
 > **PPTX.37 update 2026-11-02:** Invalid font-reference graphs now recover into editable, measured card layouts. All 277 recovered geometries in a 326-case original matrix match native bounds within 0.025pt; font-set matches improve from 51 to 308, retaining 18 differences. All 106 recovery raster-bound checks and previous geometry/pixel regressions pass. Full SmartArt search, geographic and rich-label parity remain partial; scores are unchanged.
 
 > **PPTX.36 update 2026-11-02:** Integrated current upstream changes while retaining native-verified crossed-inset positioning. Sixteen new text controls distinguish midpoint collapse from proportional inset scaling, including extreme and signed margins. Font-reference probes isolate remaining fallback failures; they do not establish complete fallback support. SmartArt, geographic and rich-label parity remain partial; scores are unchanged.
@@ -181,6 +183,7 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.38: native static-font metrics and wrap boundaries; 321/326 recovery font matches, 58 improved text-position comparisons, remaining fit limits explicit |
 | 2026-11-02 | minor | PPTX.37: bounded font-graph recovery with editable data retention; 277 native geometry matches, 308/326 font matches, and explicit remaining text differences |
 | 2026-11-02 | minor | PPTX.36: integrate upstream, retain native asymmetric crossed-inset placement, and document bounded font-reference/fallback evidence; full converter parity remains open |
 | 2026-11-02 | minor | PPTX.35: isolate text-node typography and mapped visibility; 72 matching text controls, 102/114 strict geometries, 12 native fallback differences retained |

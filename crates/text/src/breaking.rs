@@ -201,13 +201,13 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
             }
             // Closing East Asian punctuation hangs past the end instead of wrapping
             // (`hangingPunct`); the line breaks after it.
-            if wrap && hang && ea_punct && x + adv > avail + 0.01 && x <= avail + 0.01 && is_hanging_punct(c) && i > start {
+            if wrap && hang && ea_punct && x + adv > avail + 1e-6 && x <= avail + 1e-6 && is_hanging_punct(c) && i > start {
                 end = i + 1;
                 next = i + 1;
                 break;
             }
             // A tab that would run past the end moves to the next line (and to its first stop there).
-            if wrap && c == '\t' && x + adv > avail + 0.01 && i > start {
+            if wrap && c == '\t' && x + adv > avail + 1e-6 && i > start {
                 end = i;
                 next = i;
                 while end > start && p.cells.get(end - 1).is_some_and(|c| c.ch == ' ') {
@@ -215,7 +215,7 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
                 }
                 break;
             }
-            if wrap && x + adv > avail + 0.01 && !c.is_whitespace() && i > start {
+            if wrap && x + adv > avail + 1e-6 && !c.is_whitespace() && i > start {
                 // Break at the last opportunity, or force mid-word (between clusters).
                 let b = last_break
                     .filter(|b| *b > start)

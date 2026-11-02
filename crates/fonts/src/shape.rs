@@ -5,11 +5,14 @@
 //! change inside a word, a bold letter) still take their joining forms. Glyphs come back in
 //! visual order, exactly as the shaper produced them: right-to-left items are not reversed.
 
-use std::ops::Range;
+use std::{borrow::Cow, ops::Range};
 
 use harfrust::{Direction, Feature, Language, Script, ShapeOptions, Tag, UnicodeBuffer};
 use skrifa::MetadataProvider;
 use skrifa::instance::Size;
+use skrifa::raw::TableProvider;
+use skrifa::raw::tables::kern::{Kern, Subtable, SubtableKind};
+use skrifa::raw::types::GlyphId;
 
 use crate::FontFace;
 use crate::script::ScriptTag;
@@ -35,6 +38,38 @@ pub struct ShapeParams<'a> {
     pub script: Option<ScriptTag>,
     /// BCP 47 language (`"ar"`, `"ar-MA"`); `None` = the script's default.
     pub language: Option<&'a str>,
+    /// DrawingML alphabetic text uses legacy pair kerning in static TrueType faces.
+    /// Variable/CFF fonts retain OpenType shaping; general font API callers default to it.
+    pub drawingml_kerning: bool,
+}
+
+impl FontFace {
+    /// Static TrueType DrawingML text uses legacy pairs and quantized nominal advances.
+    /// AAT, CFF and variable fonts retain their existing shaping path.
+    pub fn uses_legacy_drawingml_metrics(&self) -> bool {
+        self.skrifa().is_some_and(|font| font.glyf().is_ok() && font.axes().is_empty() && !matches!(font.kern(), Ok(Kern::Aat(_))))
+    }
+}
+
+fn apply_legacy_pairs(table: &Kern<'_>, glyphs: &mut [ShapedGlyph]) {
+    let first = table.subtables().take(64).find_map(|sub| match sub {
+        Ok(Subtable::Ot(sub)) if sub.coverage() & 7 == 1 => Some(sub),
+        _ => None,
+    });
+    let Some(first) = first else { return };
+    // The first horizontal subtable supplies the observed pair list, even when empty.
+    // Minimum-distance, cross-stream and vertical tables are not horizontal pairs.
+    if first.coverage() & 0xff07 != 1 {
+        return;
+    }
+    let Ok(SubtableKind::Format0(pairs)) = Subtable::Ot(first).kind() else { return };
+    for i in 1..glyphs.len() {
+        let (left, right) = glyphs.split_at_mut(i);
+        let (Some(a), Some(b)) = (left.last_mut(), right.first()) else { continue };
+        if let Some(value) = pairs.kerning(GlyphId::new(a.gid), GlyphId::new(b.gid)) {
+            a.x_advance = a.x_advance.saturating_add(value);
+        }
+    }
 }
 
 /// Shape `para[range]` with `face`, the rest of `para` as context. Glyphs are in visual order
@@ -45,6 +80,15 @@ pub fn shape_range(face: &FontFace, para: &str, range: Range<usize>, params: &Sh
         return Vec::new();
     };
     let mut out = Vec::with_capacity(text.len());
+    let legacy = params.drawingml_kerning && !params.rtl && face.uses_legacy_drawingml_metrics();
+    let enabled = !params.features.iter().any(|f| f.tag == Tag::new(b"kern") && f.value == 0);
+    let features: Cow<'_, [Feature]> = if legacy {
+        let mut features = params.features.to_vec();
+        features.push(Feature::new(Tag::new(b"kern"), 0, ..));
+        Cow::Owned(features)
+    } else {
+        Cow::Borrowed(params.features)
+    };
     let shaped = face.hb().map(|hb| {
         let shaper = face.shaper.shaper(&hb).instance(face.instance.as_ref()).build();
         let mut buf = UnicodeBuffer::new();
@@ -62,7 +106,7 @@ pub fn shape_range(face: &FontFace, para: &str, range: Range<usize>, params: &Sh
             buf.set_language(l);
         }
         buf.set_direction(if params.rtl { Direction::RightToLeft } else { Direction::LeftToRight });
-        let gb = shaper.shape(buf, ShapeOptions::new().features(params.features));
+        let gb = shaper.shape(buf, ShapeOptions::new().features(&features));
         for (info, pos) in gb.glyph_infos().iter().zip(gb.glyph_positions()) {
             out.push(ShapedGlyph {
                 gid: info.glyph_id,
@@ -88,6 +132,12 @@ pub fn shape_range(face: &FontFace, para: &str, range: Range<usize>, params: &Sh
             out.reverse();
         }
     }
+    if legacy
+        && enabled
+        && let Some(Ok(table)) = face.skrifa().map(|font| font.kern())
+    {
+        apply_legacy_pairs(&table, &mut out);
+    }
     out
 }
 
@@ -95,6 +145,57 @@ pub fn shape_range(face: &FontFace, para: &str, range: Range<usize>, params: &Sh
 mod tests {
     use super::*;
     use crate::{DEFAULT_FAMILY, FontDb};
+
+    #[test]
+    fn drawingml_legacy_pairs_use_first_horizontal_table_and_bound_malformed_input() {
+        use skrifa::raw::{FontData, FontRead};
+        let make = |subtables: &[(u16, Option<i16>)]| {
+            let mut data = Vec::new();
+            let mut put = |v: u16| data.extend(v.to_be_bytes());
+            put(0);
+            put(subtables.len() as u16);
+            for &(coverage, value) in subtables {
+                put(0);
+                put(if value.is_some() { 20 } else { 14 });
+                put(coverage);
+                put(u16::from(value.is_some()));
+                put(if value.is_some() { 6 } else { 0 });
+                put(0);
+                put(0);
+                if let Some(value) = value {
+                    put(1);
+                    put(2);
+                    put(value as u16);
+                }
+            }
+            data
+        };
+        let glyphs =
+            || (0..4).map(|i| ShapedGlyph { gid: 1 + i % 2, cluster: i as usize, x_advance: 600, x_offset: 0, y_offset: 0 }).collect::<Vec<_>>();
+        for (tables, expected) in [
+            (vec![(1, Some(-50)), (1, Some(-120))], [550, 600, 550, 600]),
+            (vec![(1, None), (1, Some(-120))], [600; 4]),
+            (vec![(0, Some(-50)), (1, Some(-120))], [480, 600, 480, 600]),
+            (vec![(1, Some(100))], [700, 600, 700, 600]),
+        ] {
+            let bytes = make(&tables);
+            let table = Kern::read(FontData::new(&bytes)).unwrap();
+            let mut out = glyphs();
+            apply_legacy_pairs(&table, &mut out);
+            assert_eq!(out.iter().map(|g| g.x_advance).collect::<Vec<_>>(), expected);
+            for end in 0..bytes.len() {
+                if let Ok(table) = Kern::read(FontData::new(&bytes[..end])) {
+                    apply_legacy_pairs(&table, &mut glyphs());
+                }
+            }
+        }
+        let bytes = make(&[(1, Some(100))]);
+        let table = Kern::read(FontData::new(&bytes)).unwrap();
+        let mut out = glyphs();
+        out[0].x_advance = i32::MAX;
+        apply_legacy_pairs(&table, &mut out);
+        assert_eq!(out[0].x_advance, i32::MAX);
+    }
 
     #[test]
     fn rtl_items_come_in_visual_order_and_mirror() {

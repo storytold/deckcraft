@@ -311,6 +311,10 @@ impl FontFace {
     pub fn is_variable(&self) -> bool {
         !self.coords.is_empty()
     }
+    /// Whether the file provides variation axes, including its default instance.
+    pub fn has_variation_axes(&self) -> bool {
+        self.skrifa().is_some_and(|font| !font.axes().is_empty())
+    }
     /// Face index within the font file (collections); 0 for plain fonts.
     pub fn index(&self) -> u32 {
         self.index
@@ -961,6 +965,21 @@ fn style_weight(style: &str) -> f32 {
     TABLE.iter().find(|(k, _)| s.contains(k)).map(|(_, w)| *w).unwrap_or(400.0)
 }
 
+// Resolve duplicate installed files within one atomic family load. Keep the original
+// fallback order and already-loaded faces; prefer a variable equivalent only at the
+// same weight/slant, rather than letting a filename decide the shaping path.
+fn prefer_font_candidate(faces: &mut Vec<Arc<FontFace>>, indices: &mut HashMap<(String, String), usize>, face: Arc<FontFace>) {
+    let key = (face.family.to_lowercase(), face.style.to_lowercase());
+    if let Some(old) = indices.get(&key).and_then(|i| faces.get_mut(*i)) {
+        if face.has_variation_axes() && !old.has_variation_axes() && face.weight == old.weight && face.italic == old.italic {
+            *old = face;
+        }
+    } else {
+        indices.insert(key, faces.len());
+        faces.push(face);
+    }
+}
+
 fn style_italic(style: &str) -> bool {
     let s = norm(style);
     s.contains("italic") || s.contains("oblique") || s == "it"
@@ -1068,6 +1087,7 @@ impl FontDb {
             faces.iter().any(|f| f.family.eq_ignore_ascii_case(family) && f.style.eq_ignore_ascii_case(style))
         };
         let mut new = Vec::new();
+        let mut candidates = HashMap::new();
         for bytes in files {
             let data = Arc::new(bytes);
             for (i, family, style, coords) in enumerate_faces(&data) {
@@ -1075,7 +1095,7 @@ impl FontDb {
                     continue;
                 }
                 if let Some(f) = make_face(FontBytes::Owned(data.clone()), i, family, style, coords) {
-                    new.push(Arc::new(f));
+                    prefer_font_candidate(&mut new, &mut candidates, Arc::new(f));
                 }
             }
         }
@@ -1632,6 +1652,48 @@ mod font_dir_tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
+
+    #[test]
+    fn duplicate_candidates_prefer_matching_variable_faces_without_reordering_families() {
+        // Minimal contributor-original sfnt headers, with an optional public-format
+        // fvar axis. No glyph/font asset is embedded in this selection test.
+        let bytes = |variable: bool| {
+            let mut b = vec![0, 1, 0, 0, 0, u8::from(variable), 0, 0, 0, 0, 0, 0];
+            if variable {
+                b.extend(b"fvar");
+                for v in [0u32, 28, 36] {
+                    b.extend(v.to_be_bytes());
+                }
+                for v in [1u16, 0, 16, 2, 1, 20, 0, 8] {
+                    b.extend(v.to_be_bytes());
+                }
+                b.extend(b"wght");
+                for v in [100i32 << 16, 400 << 16, 900 << 16] {
+                    b.extend(v.to_be_bytes());
+                }
+                b.extend([0, 0, 1, 0]);
+            }
+            FontBytes::Owned(Arc::new(b))
+        };
+        let face = |family: &str, variable: bool, weight: f32| {
+            let mut f = make_face(bytes(variable), 0, family.into(), "Regular".into(), vec![]).unwrap();
+            f.weight = weight;
+            Arc::new(f)
+        };
+        for reverse in [false, true] {
+            let (a, b) = (face("First", reverse, 400.), face("First", !reverse, 400.));
+            let mut out = vec![];
+            let mut indices = HashMap::new();
+            for f in [a, face("Second", false, 400.), b] {
+                prefer_font_candidate(&mut out, &mut indices, f);
+            }
+            assert_eq!(out.iter().map(|f| f.family.as_str()).collect::<Vec<_>>(), ["First", "Second"]);
+            assert!(out[0].has_variation_axes());
+            assert!(!out[1].has_variation_axes());
+            prefer_font_candidate(&mut out, &mut indices, face("Second", true, 200.));
+            assert!(!out[1].has_variation_axes(), "a different weight is not an equivalent replacement");
+        }
+    }
 
     #[test]
     fn duplicate_collection_offsets_do_not_consume_face_cap() {

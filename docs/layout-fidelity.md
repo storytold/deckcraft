@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.37): bounded font-reference recovery, editable cards and measured typography,
+Updated 2026-11-02 (PPTX.38): native kerning, nominal advances, wrap boundaries and bounded font-reference recovery,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1875,3 +1875,66 @@ visual bullet absence. Duplicate geometry constraints, arbitrary mapping/hierarc
 recovery and complete text-rule search remain unproven. Earlier raster failures remain
 open. Geographic provider/viewport/boundary behavior and rich-label overflow/collision are
 unchanged by this arc. Complete LibreOffice replacement is not established.
+
+
+## PPTX.38 — native static-font metrics and wrap boundaries
+
+Static TrueType alphabetic text now follows the independently observed legacy-kerning
+path. DrawingML shaping disables GPOS pair adjustments for these faces and applies the
+first eligible horizontal OpenType format-0 `kern` subtable, including the empty-first-table
+case. Vertical, minimum-distance and cross-stream tables are not horizontal pair lists.
+Parsing and iteration remain bounded; malformed data and overflow do not panic. An explicit
+kerning-off feature still wins. General font API callers, RTL/complex scripts, AAT, CFF and
+variable-font shaping retain their previous paths; those exclusions are not new parity claims.
+
+Nominal static-font advances round to eighth-points before continuous pair adjustments and
+character spacing. Rounding the already-kerned advance produces a different result. Line
+breaking no longer permits an extra 0.01pt of overrun: independent native boxes distinguish
+exactly fitting words from words 0.01pt too wide. This small tolerance otherwise moves an
+entire character to the wrong line. Duplicate static/variable font candidates at the same
+family, style, weight and slant prefer the variable candidate within one atomic load, without
+reordering families or replacing previously loaded faces. This avoids letting filesystem order
+choose a different shaping implementation.
+
+Contributor-original black-box evidence uses PowerPoint 16.113.3 and matched font files:
+
+- Seventy-two text/size/kerning controls, 28 static/variable/table controls, 48 GPOS pair/class/
+  extension/flag controls, eight legacy-table-order controls and an additional 84 size controls.
+  The static-font nominal/pair behavior is verified independently of SmartArt fitting. Variable
+  fonts remain on the modern path; their metric differences are not claimed solved.
+- Eighteen narrow text boxes validate both sides of two exact wrapping boundaries. Additional
+  21 width and 41 height controls isolate a remaining SmartArt fit discrepancy: ordinary text
+  wrapping and diagram font selection must not be treated as the same acceptance criterion.
+- Sixteen renamed-font diagnostics are not counted as metric-parity passes because native
+  variable weight selection differs. An initial export with font substitution was rejected;
+  font identity was verified before accepting its replacement export.
+- All new source packages are programmatic, SDK-valid and native-openable. Source hashes are
+  checked; original fonts, input files and native-generated outputs are not published here.
+
+The existing 326-case recovery matrix now matches 321 native font-size sets, up from 308;
+all 13 newly matching cases are additions, with no previous match lost. All 277 recovered
+geometries still match within 0.025pt (maximum 0.01320pt), and all 106 independent 3840px
+filled-bound checks remain within 0.5pt. Five font differences remain: a zero-factor equality
+with a missing source, three long-word fitting cases and one descendant-bullet height case.
+An intermediate candidate matched 323 font sets but retained inaccurate glyph spacing and
+wrap boundaries; that larger subtotal is not reported as the final result.
+
+All 632 earlier cycle geometry checks still pass, with 506 full inspection models unchanged.
+All 154 older native font-size sets and input hashes remain unchanged. Of those renders,
+three are pixel-identical to the previous build and 151 change with the text-metric correction;
+coloured shape bounds remain unchanged. Ignoring extraction-only whitespace, 151 cases have
+comparable native text sequences: 58 improve their glyph-origin RMS error by more than 0.01pt,
+none worsen by more than 0.01pt, and 93 are stable within that threshold. Three cases are not
+measurable by this text comparison and are not counted as text-position passes. These are
+position/geometry observations, not blanket pixel equivalence. Representative native/before/
+after renderings, including a remaining long-word failure, were visually inspected.
+
+All eight local `cargo xtask ci` gates pass (2,527 tests including doctests; 168 PPTX library,
+24 diagram preservation and 105 text tests). New regression tests cover legacy subtable
+order, truncated bytes and saturating arithmetic, duplicate-font selection, independently
+measured glyph positions and exact wrap boundaries. Hosted CI is reported separately.
+
+Complete text-driven diagram rule search, geometric duplicate/default recovery, hierarchy/
+snake/nested fitting, older cycle raster failures, geographic provider/context/viewport and
+boundary simplification, and rich-label vertical overflow/collision remain open. This arc
+does not establish full PowerPoint parity or complete LibreOffice replacement.

@@ -386,7 +386,14 @@ fn shape_item(
     let rtl = level % 2 == 1;
     let (Some(&b0), Some(&b1)) = (byte_of.get(range.start), byte_of.get(range.end)) else { return };
     let features = shaping_features(cells.get(range.clone()).unwrap_or(&[]), styles, script);
-    let params = ShapeParams { features: &features, rtl, script, language: lang };
+    let params = ShapeParams {
+        features: &features,
+        rtl,
+        script,
+        language: lang,
+        drawingml_kerning: matches!(script.as_ref(), Some(b"Latn" | b"Grek" | b"Cyrl")),
+    };
+    let quantized = params.drawingml_kerning && !rtl && face.uses_legacy_drawingml_metrics();
     let sym = styles.get(first.style).and_then(|st| st.sym.as_deref());
     let glyphs = deckcraft_fonts::shape_range(face, text, b0..b1, &params, |ch| {
         let ch = if upper { caps_char(ch) } else { ch };
@@ -418,7 +425,11 @@ fn shape_item(
         let s = scale_of(cell);
         let w = width.entry(h).or_insert(0.0);
         cell.glyphs.push((g.gid, *w + g.x_offset as f64 * s, -(g.y_offset as f64) * s));
-        *w += g.x_advance as f64 * s;
+        let advance = g.x_advance as f64 * s;
+        // Round the nominal width, before pair adjustments and character spacing.
+        // Rounding the kerned width instead loses the continuous legacy pair value.
+        let nominal = if quantized && g.x_advance != 0 { face.advance(g.gid) * s } else { 0.0 };
+        *w += advance + (nominal * 8.0).round() / 8.0 - nominal;
         let e = lig.entry(h).or_insert((g.gid, 0));
         e.1 += 1;
     }
