@@ -346,6 +346,14 @@ impl Renderer {
         if k.is_finite() && k > 1e-12 { 1.0 / k } else { 1.0 }
     }
 
+    /// [`Renderer::per_point`] along the shape's own x and y axes: a group can stretch its child
+    /// space unevenly, and a tiled fill keeps its size in points on the slide on both axes.
+    fn per_point_xy(&self, m: Affine, depth: usize) -> (f64, f64) {
+        let c = self.line_space(m, depth).1.as_coeffs();
+        let inv = |s: f64| if s.is_finite() && s > 1e-12 { 1.0 / s } else { 1.0 };
+        (inv(c[0].hypot(c[1])), inv(c[2].hypot(c[3])))
+    }
+
     /// The size and transform a shape's text is set in: inside a group whose child coordinates
     /// scale the shape, the shape's size in slide points and `m` with that scale taken out, so
     /// insets and font sizes stay in points; otherwise `w`, `h` and `m` themselves.
@@ -541,6 +549,7 @@ impl Renderer {
         geo: &Geometry,
         (w, h): (f64, f64),
         m: Affine,
+        per_point: (f64, f64),
         fade: &dyn Fn(usize) -> deckcraft_geom::morph::Fade,
     ) {
         for (i, sp) in geo.paths.iter().enumerate() {
@@ -566,7 +575,10 @@ impl Renderer {
                         paint::fill_path(ctx, rctx, gf, None, &path, *gbox, *gm, sp.fill, fade(i).fill, f.pres);
                     }
                 }
-                _ => paint::fill_path(ctx, rctx, fl, fill_ph, &sp.path, Rect::new(0.0, 0.0, w, h), m, sp.fill, fade(i).fill, f.pres),
+                _ => {
+                    let fl = paint::tiled_per_point(fl, per_point);
+                    paint::fill_path(ctx, rctx, &fl, fill_ph, &sp.path, Rect::new(0.0, 0.0, w, h), m, sp.fill, fade(i).fill, f.pres)
+                }
             }
             ctx.set_fill_rule(peniko::Fill::NonZero);
         }
@@ -736,6 +748,7 @@ impl Renderer {
         let fill = &d.fill;
         let outline = &d.outline;
         let fade = |i: usize| d.fade(i);
+        let pt_xy = self.per_point_xy(m, d.depth);
         // Fill.
         match &s.kind {
             ShapeKind::Picture { fill: pf } => {
@@ -744,7 +757,7 @@ impl Renderer {
                 if s.fill.as_ref().is_some_and(|f| !f.is_none())
                     && let Some(fl) = &fill
                 {
-                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, &fade);
+                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, pt_xy, &fade);
                 }
                 ctx.set_transform(m);
                 let bounds = Rect::new(0.0, 0.0, w, h);
@@ -761,7 +774,7 @@ impl Renderer {
                 if s.fill.as_ref().is_some_and(|f| !f.is_none())
                     && let Some(fl) = &fill
                 {
-                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, &fade);
+                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, pt_xy, &fade);
                 }
                 ctx.set_transform(m);
                 let pf = deckcraft_model::style::PictureFill { media: *media, ..Default::default() };
@@ -787,7 +800,7 @@ impl Renderer {
                 if let Some(fl) = &fill
                     && !(empty_ph && f.opts.edit && s.fill.is_none() && s.line.is_none() && s.style.is_none())
                 {
-                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, &fade);
+                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, pt_xy, &fade);
                 }
             }
         }
