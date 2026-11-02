@@ -12,7 +12,8 @@
 //! - **punctuation**: everything else that is not a symbol; a run of it is one token (`...`,
 //!   `?!`, `),`, `。。`). `_`, `@`, `/`, `#`, quotes and brackets are punctuation.
 //! - **symbol**: emoji and pictographs (a run of them is one token, `👍👍`), `©`, `®`, `™`.
-//! - **ideograph**: each CJK ideograph, kana or Hangul syllable is a token of its own.
+//! - **ideograph**: each CJK ideograph or kana is a token of its own. Hangul is a word: Korean
+//!   puts spaces between words, so `한국어 문장` is two tokens.
 //! - **tab** and **line break**: each is a token of its own, and spaces after one form their own
 //!   token instead of joining it.
 //! - **space**: U+0020, no-break space, ideographic space and the other fixed-width spaces. Spaces
@@ -48,25 +49,28 @@ pub fn is_space(c: char) -> bool {
     matches!(c, ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{202f}' | '\u{205f}' | '\u{3000}')
 }
 
-/// CJK ideographs, kana and Hangul: every one is a word of its own.
+/// Hangul syllables and jamo.
+pub fn is_hangul(c: char) -> bool {
+    matches!(c, '\u{1100}'..='\u{11ff}' | '\u{3130}'..='\u{318f}' | '\u{a960}'..='\u{a97f}' | '\u{ac00}'..='\u{d7ff}' | '\u{ffa0}'..='\u{ffdc}')
+}
+
+/// CJK ideographs and kana: every one is a word of its own. Hangul is not here: Korean puts
+/// spaces between words, so Hangul letters make words the way Latin letters do.
 fn is_ideo(c: char) -> bool {
     matches!(c,
-        '\u{1100}'..='\u{11ff}'
-        | '\u{2e80}'..='\u{2fdf}'
+        '\u{2e80}'..='\u{2fdf}'
         | '\u{3005}'..='\u{3007}'
         | '\u{3021}'..='\u{3029}'
         | '\u{3031}'..='\u{3035}'
         | '\u{3038}'..='\u{303c}'
         | '\u{3040}'..='\u{309f}'
         | '\u{30a0}'..='\u{30ff}'
-        | '\u{3100}'..='\u{318f}'
+        | '\u{3100}'..='\u{312f}'
         | '\u{31a0}'..='\u{31ff}'
         | '\u{3400}'..='\u{4dbf}'
         | '\u{4e00}'..='\u{9fff}'
-        | '\u{a960}'..='\u{a97f}'
-        | '\u{ac00}'..='\u{d7ff}'
         | '\u{f900}'..='\u{faff}'
-        | '\u{ff66}'..='\u{ffdc}'
+        | '\u{ff66}'..='\u{ff9f}'
         | '\u{20000}'..='\u{3134f}')
 }
 
@@ -340,7 +344,7 @@ mod tests {
     #[test]
     fn cjk_each_character() {
         let t = "日本語のテキストです。カタカナ漢字 abc 中文字符，标点。한국어 문장 a。。b";
-        assert_eq!(fwd(t), "|日|本|語|の|テ|キ|ス|ト|で|す|。|カ|タ|カ|ナ|漢|字 |abc |中|文|字|符|，|标|点|。|한|국|어 |문|장 |a|。。|b|");
+        assert_eq!(fwd(t), "|日|本|語|の|テ|キ|ス|ト|で|す|。|カ|タ|カ|ナ|漢|字 |abc |中|文|字|符|，|标|点|。|한국어 |문장 |a|。。|b|");
         assert_eq!(back(t), fwd(t));
     }
 
