@@ -1,6 +1,6 @@
 # DeckCraft roadmap
 
-> **PPTX.38 update 2026-11-02:** Native static TrueType kerning, nominal advance quantization and exact wrap boundaries are now distinguished from modern variable-font shaping. Equivalent duplicate font candidates prefer the variable face without changing fallback order. Recovery font-set matches improve from 308 to 321 of 326 with no previously matching case lost; five fitting/default cases remain. All 632 earlier geometry controls and 154 native-matching font sets are retained. Full SmartArt, geography and rich-label parity remain partial; scores are unchanged.
+> **PPTX.39 update 2026-11-02:** Explicit zero font equalities are inactive before SmartArt dependency, duplicate and rule evaluation. All 104 new native font controls match; the existing recovery matrix improves from 321 to 322 of 326 font-size sets with no prior match lost. All 277 recovery and 632 earlier cycle geometries remain within 0.025pt. Four recovery font-fit differences and broader SmartArt, geography and rich-label limits remain open; scores are unchanged.
 
 > **PPTX.37 update 2026-11-02:** Invalid font-reference graphs now recover into editable, measured card layouts. All 277 recovered geometries in a 326-case original matrix match native bounds within 0.025pt; font-set matches improve from 51 to 308, retaining 18 differences. All 106 recovery raster-bound checks and previous geometry/pixel regressions pass. Full SmartArt search, geographic and rich-label parity remain partial; scores are unchanged.
 
@@ -187,6 +187,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | Date | What landed |
 |---|---|
 | 2026-11-02 | PPTX.38: match native legacy kerning, quantized advances and wrap boundaries; retain explicit SmartArt font-fit limits |
+| 2026-11-02 | PPTX.39: preserve default/prior fonts for explicit zero equalities without creating missing-source or duplicate dependencies |
 | 2026-11-02 | PPTX.37: recover invalid SmartArt font graphs as editable cards; bounded fitting, native geometry validation and retained text limitations |
 | 2026-11-02 | PPTX.36: integrate upstream while retaining native-verified crossed-inset text positions; sixteen asymmetric/signed controls and explicit font-reference fallback limits |
 | 2026-11-02 | PPTX.35: isolate text-node typography and mapped visibility; 72 matching text controls, 102/114 strict geometries, 12 native fallback differences retained |
@@ -508,3 +509,4 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-10 | minor | Stage checked against the new core-workflow gate: passes, stays alpha |
 | 2026-10-10 | major | Restructured: stage, two numbers, dimensions, features, languages; parity estimate moved to docs/target-app-parity.md, "Working today" to its evidence section, the alpha checklist to docs/roadmap.md |
 | 2026-10-07 | major | Alpha checklist (~80% to a self-defined alpha), breadth ~80%, overall ~62%, ~190 h to full parity |
+| 2026-11-02 | minor | PPTX.39: distinguish inactive zero font equalities from zero assignments; 104 native font controls and retained recovery/cycle regressions |

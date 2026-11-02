@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.38): native kerning, nominal advances, wrap boundaries and bounded font-reference recovery,
+Updated 2026-11-02 (PPTX.39): inactive font equalities, native text metrics and bounded font-reference recovery,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1938,3 +1938,37 @@ Complete text-driven diagram rule search, geometric duplicate/default recovery, 
 snake/nested fitting, older cycle raster failures, geographic provider/context/viewport and
 boundary simplification, and rich-label vertical overflow/collision remain open. This arc
 does not establish full PowerPoint parity or complete LibreOffice replacement.
+
+## PPTX.39 — inactive zero font equalities
+
+An explicitly authored `op="equ"` font constraint with an exact zero constant or
+reference factor is inactive. It does not assign a one-point font, overwrite a prior
+font, declare a source for another reference, or create a duplicate dependency. The
+compiler excludes these constraints before graph analysis and rule evaluation, while
+preserving the original source XML. Ordinary zero assignments, negative values and
+small nonzero values retain their different behavior. Constraint collection remains
+bounded before filtering; no additional input-controlled search or allocation is added.
+
+Contributor-original native controls cover 34 primary-font cases, 34 secondary-font
+cases and 36 scope/declaration/reference cases. All 104 font-size sets match PowerPoint.
+The 70 primary/scope text sequences also agree. Secondary bullet text is omitted by
+DeckCraft's searchable PDF text extraction even though it is visibly rendered; the
+27 affected extraction comparisons are not counted as text-sequence passes. Native
+and direct renderings of representative secondary-bullet and reference-chain cases
+were visually checked. Programmatic source hashes match the native export receipts.
+
+The prior 326-case recovery matrix improves from 321 to 322 matching font-size sets,
+with no previously matching case lost. Its 277 recovered geometries remain within
+0.025pt, with maximum error 0.01320pt. All 632 earlier cycle geometries remain within
+0.025pt (maximum 0.01349pt); 506 complete inspection models are unchanged. Three
+long-word cases and one descendant-bullet height case still have font-fit differences.
+These results establish the zero-equality semantics, not general text-fitting parity.
+
+Complete text-driven search, remaining diagram layouts, geographic context and
+boundary simplification, and rich-label vertical overflow/collision remain open.
+No native-generated documents, images, fonts or provider data are distributed with
+this change. Full LibreOffice replacement is not established by this regression arc.
+
+All eight local `cargo xtask ci` gates pass (2,528 tests including doctests; 169 PPTX
+library and 24 diagram-preservation tests). The new regression covers primary/secondary
+fonts, local/child scope, constants, references, duplicates and prior declarations.

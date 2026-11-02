@@ -1899,3 +1899,47 @@ fn recovered_text_uses_a_shared_bounded_fit_and_rejects_bad_measurements() {
         assert!(evaluate_measured(&l, &data, frame(), Some(&mut measure)).is_err());
     }
 }
+
+#[test]
+fn zero_font_equalities_do_not_assign_or_declare_dependencies() {
+    let data = source();
+    let leaf = "<layoutNode name='a'><alg type='tx'/><presOf axis='ch' st='1' cnt='1'/><shape type='ellipse'/></layoutNode><layoutNode name='b'><alg type='tx'/><presOf axis='ch' st='2' cnt='1'/><shape type='ellipse'/></layoutNode>";
+    for property in ["primFontSz", "secFontSz"] {
+        let shown = |p: &Placed<'_>| {
+            if property == "primFontSz" { p.font.unwrap() } else { p.secondary_font.unwrap_or_else(|| (p.font.unwrap() * 0.78).round()) }
+        };
+        let default = if property == "primFontSz" { 36. } else { 28. };
+        for (op, value, expected) in [("equ", "0", default), ("none", "0", 1.), ("equ", "0.1", 1.), ("equ", "-1", 1.)] {
+            for selector in ["", "for='ch' forName='a'"] {
+                let declaration = format!("<constr type='{property}' {selector} op='{op}' val='{value}'/>");
+                let body = if selector.is_empty() {
+                    format!(
+                        "<layoutNode><alg type='tx'/><presOf axis='ch' st='1' cnt='1'/><shape type='ellipse'/><constrLst>{declaration}</constrLst></layoutNode>"
+                    )
+                } else {
+                    format!("<layoutNode><alg type='composite'/><constrLst>{declaration}</constrLst>{leaf}</layoutNode>")
+                };
+                let xml = layout(&body);
+                let out = evaluate(&xml, &data, frame()).unwrap();
+                assert!(!out[0].recovered, "{declaration}");
+                assert_eq!(shown(&out[0]), expected, "{declaration}");
+            }
+        }
+        let zero = format!("<constr type='{property}' for='ch' forName='a' op='equ' val='0'/>");
+        let prior = format!("<constr type='{property}' for='ch' forName='a' val='24'/>");
+        let reference = format!("<constr type='{property}' for='ch' forName='b' refFor='ch' refForName='a' refType='{property}' fact='0.5'/>");
+        for (body, recovered, sizes) in [
+            (format!("{zero}{zero}"), false, [default, default]),
+            (format!("{prior}{zero}{reference}"), false, [24., 12.]),
+            (format!("{zero}{reference}"), true, [65., 65.]),
+            (reference.replace("fact='0.5'", "fact='0' op='equ'"), false, [default, default]),
+        ] {
+            let xml = layout(&format!("<layoutNode><alg type='composite'/><constrLst>{body}</constrLst>{leaf}</layoutNode>"));
+            let out = evaluate(&xml, &data, frame()).unwrap();
+            assert!(out.iter().all(|p| p.recovered == recovered), "{body}");
+            if !recovered {
+                assert_eq!(out.iter().map(shown).collect::<Vec<_>>(), sizes, "{body}");
+            }
+        }
+    }
+}

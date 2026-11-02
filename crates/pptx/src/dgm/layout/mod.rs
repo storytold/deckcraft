@@ -88,6 +88,16 @@ struct Context {
     count: usize,
     vars: HashMap<String, String>,
 }
+
+// An explicit zero equality is inactive, rather than an assignment of a tiny
+// font. Remove it before dependency/duplicate analysis and rule selection too;
+// the retained source XML still contains the authored declaration.
+fn inactive_font_equality(c: &El) -> bool {
+    if c.attr("op") != Some("equ") || !matches!(c.attr("type"), Some("primFontSz" | "secFontSz")) {
+        return false;
+    }
+    if c.attr("refType").is_some_and(|r| !matches!(r, "" | "none")) { c.f64("fact") == Some(0.) } else { c.f64("val") == Some(0.) }
+}
 struct Compiler<'a> {
     data: Data<'a>,
     refs: HashMap<String, &'a El>,
@@ -210,7 +220,7 @@ impl<'a> Compiler<'a> {
                         }
                     }
                 }
-                "constrLst" => node.constraints.extend(child.children_named("constr").take(512)),
+                "constrLst" => node.constraints.extend(child.children_named("constr").take(512).filter(|c| !inactive_font_equality(c))),
                 "ruleLst" => node.rules.extend(child.children_named("rule").take(512)),
                 "layoutNode" => node.children.push(self.node(child, context.clone(), depth + 1)?),
                 "forEach" => {

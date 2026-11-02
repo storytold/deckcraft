@@ -1,6 +1,6 @@
 # PowerPoint feature checklist
 
-> **PPTX.38 update 2026-11-02:** Native static TrueType kerning, nominal advance quantization and exact wrap boundaries are now distinguished from modern variable-font shaping. Equivalent duplicate font candidates prefer the variable face without changing fallback order. Recovery font-set matches improve from 308 to 321 of 326 with no previously matching case lost; five fitting/default cases remain. All 632 earlier geometry controls and 154 native-matching font sets are retained. Full SmartArt, geography and rich-label parity remain partial; scores are unchanged.
+> **PPTX.39 update 2026-11-02:** Explicit zero font equalities are inactive before SmartArt dependency, duplicate and rule evaluation. All 104 new native font controls match; the existing recovery matrix improves from 321 to 322 of 326 font-size sets with no prior match lost. All 277 recovery and 632 earlier cycle geometries remain within 0.025pt. Four recovery font-fit differences and broader SmartArt, geography and rich-label limits remain open; scores are unchanged.
 
 > **PPTX.37 update 2026-11-02:** Invalid font-reference graphs now recover into editable, measured card layouts. All 277 recovered geometries in a 326-case original matrix match native bounds within 0.025pt; font-set matches improve from 51 to 308, retaining 18 differences. All 106 recovery raster-bound checks and previous geometry/pixel regressions pass. Full SmartArt search, geographic and rich-label parity remain partial; scores are unchanged.
 
@@ -331,3 +331,4 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | 2026-11-01 | minor | Composite occupied geometry and mapped text ownership corrected; non-rotated native controls and round trips pass, rotation and selector/style interactions remain partial |
 | 2026-10-31 | minor | Clarified bounded chart-data, line-label, partial-lock and flat-process export coverage. Feature scores unchanged |
 | 2026-10-31 | trivial | No Fill interior hit-testing follows resolved fill (#1621); fill row remains D and summary scores are unchanged |
+| 2026-11-02 | minor | PPTX.39: distinguish inactive zero font equalities from zero assignments; 104 native font controls and retained recovery/cycle regressions |
