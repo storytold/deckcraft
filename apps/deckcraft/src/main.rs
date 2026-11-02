@@ -137,15 +137,14 @@ fn services() -> Services {
     }
 }
 
-/// Displays winit lists for `window`, counting a display Wayland lists twice once. `None` when it
+/// Displays winit lists for `window`, counting an output Wayland lists twice once. `None` when it
 /// lists none: Presenter View then stays as it was.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn display_count(window: &winit::window::Window) -> Option<usize> {
     let mut seen = Vec::new();
     for m in window.available_monitors() {
-        let id = (m.name(), m.position(), m.size());
-        if !seen.contains(&id) {
-            seen.push(id);
+        if !seen.contains(&m) {
+            seen.push(m);
         }
     }
     (!seen.is_empty()).then_some(seen.len())
