@@ -6458,3 +6458,14 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
 }
+
+#[test]
+fn slide_master_view_rejects_invalid_indices() {
+    let mut s = Session::with_new();
+    for p in [json!({"master": -1}), json!({"master": 0.5}), json!({"master": 0, "layout": -1}), json!({"master": 0, "layout": 1.5})] {
+        let r = s.execute("view.slideMaster", &p);
+        assert!(r.is_err(), "invalid index accepted for {p}: {r:?}");
+    }
+    assert!(s.execute("view.slideMaster", &json!({})).is_ok());
+    assert!(s.execute("view.slideMaster", &json!({"master": 0})).is_ok());
+}
