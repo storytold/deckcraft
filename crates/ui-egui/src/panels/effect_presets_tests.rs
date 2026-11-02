@@ -130,4 +130,8 @@ fn inherited_text_shadow_is_shown_in_effects_tab() {
     // The shadow property sliders (Size, Blur, Angle, Distance) are displayed.
     assert!(h.query_all_by_label("Size").count() >= 2);
     assert!(h.query_all_by_label("Distance").count() >= 1);
+
+    // Clicking "No shadow" clears the text shadow and selects No shadow.
+    click(&mut h, "No shadow");
+    assert_eq!(h.get_by_label("No shadow").accesskit_node().toggled(), Some(Toggled::True));
 }
