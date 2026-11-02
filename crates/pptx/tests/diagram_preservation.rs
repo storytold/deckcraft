@@ -881,3 +881,49 @@ fn nonpainting_diagram_nodes_do_not_advance_colour_lists_or_duplicate_text() {
         assert_eq!(image.pixels, again.pixels, "{mode} round trip");
     }
 }
+
+#[test]
+fn allocation_only_nodes_affect_fit_without_becoming_exported_shapes() {
+    for alg in ["sp", "tx", "conn"] {
+        for shape in ["", "<dgm:shape type='none'/>"] {
+            let mut parts = files(&shared_font_fixture("none", None, "Alpha", "Beta"));
+            for (_, bytes) in &mut parts {
+                let Ok(mut doc) = parse_xml(bytes) else { continue };
+                if !doc.root.is("layoutDef") {
+                    continue;
+                }
+                let root = doc.root.elements_mut().find(|e| e.is("layoutNode")).unwrap();
+                let constraints = root.elements_mut().find(|e| e.is("constrLst")).unwrap();
+                for (kind, value) in [("w", 400), ("h", 40), ("l", -40), ("t", 20)] {
+                    constraints.children.extend(
+                        parse_xml(format!("<root><dgm:constr type='{kind}' for='ch' forName='space' val='{value}'/></root>").as_bytes())
+                            .unwrap()
+                            .root
+                            .children,
+                    );
+                }
+                root.children.extend(
+                    parse_xml(
+                        format!("<root><dgm:layoutNode name='space'><dgm:alg type='{alg}'/><dgm:presOf/>{shape}</dgm:layoutNode></root>").as_bytes(),
+                    )
+                    .unwrap()
+                    .root
+                    .children,
+                );
+                *bytes = doc.root.to_xml().into_bytes();
+            }
+            let p = deckcraft_pptx::import(&zip(parts)).unwrap();
+            let g = group(&p);
+            assert_eq!(g.children().len(), 2, "{alg}/{shape}: no phantom drawing node");
+            for s in g.children() {
+                assert!((s.xfrm.unwrap().w - g.xfrm.unwrap().w * 0.1).abs() < 1e-6);
+            }
+            let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+            assert_eq!(group(&back).children().len(), 2);
+            assert_eq!(geometry(g), geometry(group(&back)));
+            let image = deckcraft_engine::render::render_slide(&p, 0, &Default::default());
+            let again = deckcraft_engine::render::render_slide(&back, 0, &Default::default());
+            assert_eq!(image.pixels, again.pixels, "{alg}/{shape} round trip");
+        }
+    }
+}

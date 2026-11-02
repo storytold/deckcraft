@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.22): SmartArt helper visibility and layout-order colour indexing,
+Updated 2026-11-01 (PPTX.23): SmartArt allocation bounds and recursive composite fitting,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1041,3 +1041,50 @@ ownership when multiple text algorithms map the same data point, composite alloc
 nonpainting helpers/connectors, full cyclic-font/search/fallback policies, colour interpolation,
 map simplification/incomplete provider context and rich-label overflow remain open. This phase
 does not certify full LibreOffice replacement.
+
+## Allocation bounds and recursive composite fitting (PPTX.23)
+
+Layout allocation and painting are distinct. Space, text and connector algorithms can reserve
+a frame without emitting a shape. Their frames now survive until composite fitting finishes;
+pure allocation helpers are then removed before import/export produces drawing shapes. Text
+helpers with real data remain available for measured rules and mapped text ownership.
+
+A positive width **or** height contributes to occupied bounds, including a zero-width vertical
+allocation or a zero-height horizontal one. A point with both dimensions zero does not. Empty
+composites still occupy no space. Connector allocation contributes before endpoint routing,
+independently of connector paint order. Each nested composite fits its occupied children into
+its own allocated frame before its parent places the result; this was previously done only at
+the root. Public background on the separate algorithm roles and composite-local constraints
+is in the [DrawingML SmartArt authoring documentation](https://learn.microsoft.com/en-us/archive/msdn-magazine/2007/february/create-custom-smartart-graphics-for-use-in-the-2007-office-system).
+Exact fitting policies here are checked through independent native observations.
+
+Validation:
+
+- Thirty-nine new original allocation controls vary algorithm, missing/hidden/visible shape,
+  placement, zero dimensions, overflow, parent shape and nesting. Fourteen passed before this
+  phase; all 39 now match native visible same-colour bounds within 0.25pt at 3840px width.
+- All 41 prior visibility/colour controls now pass the same bounds comparison, including the
+  three allocation failures recorded in PPTX.22. This gives 80 passing allocation/colour pages;
+  it is not a whole-slide pixel-equality claim.
+- All 39 rebuilt PPTX pages reopen/export in PowerPoint without a script dismissing repair
+  prompts. The nonempty coloured-path bounds, font-size sets and extracted text match the
+  corresponding native exports of the original sources exactly at the recorded precision.
+- Against the PPTX.22 executable, all 154 earlier single-page controls produce pixel-identical
+  direct PNGs at 2px/pt. All 154 font-size sets are unchanged and match their native references.
+  This is a fresh image comparison, independent of the withdrawn empty-vector check.
+- Eighty allocated-frame unit variants and three nesting variants cover the new rules. Six
+  integration variants retain only the two real drawing shapes and preserve geometry and exact
+  render pixels after export/reimport. The coupled affine-reference test checks solved frames
+  before composite fitting, rather than incorrectly equating those with final painted edges.
+- Full workspace CI passes all eight gates with 2,435 tests including doctests. Direct exports
+  run without an external converter on PATH, with unchanged source hashes. Selected 4K native
+  and direct images were visually inspected. LibreOffice 26.8 exports the 39 uncached controls
+  without their diagram text (zero extracted characters), which remains a comparison failure.
+
+A separate eight-page cross-container constraint matrix improved from zero to two passing
+cases. Six remain explicit failures: four ancestor-to-descendant constraint-scope cases and
+two overflowing inner frames with differing scale. Probes rendered using native fallback are
+excluded from intended-layout parity counts. Full native search/fallback and cyclic-font rules,
+near-threshold font wrapping, duplicate-point text ownership, colour interpolation, geographic
+provider/simplification policy and rich-label overflow/callouts remain open. No global parity
+score or complete LibreOffice-replacement claim is raised.

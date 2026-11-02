@@ -238,12 +238,19 @@ fn coupled_cycles_edges_and_descendant_references_solve_together() {
         <constr type="r" for="des" forName="leaf" refFor="ch" refForName="other" refType="w"/>
       </constrLst></layoutNode>"#,
     );
-    let shapes = evaluate(&layout, &data, frame()).unwrap();
-    let other = shapes.iter().find(|s| s.name == "other").unwrap();
-    let leaf = shapes.iter().find(|s| s.name == "leaf").unwrap();
-    assert!((other.rect.w - 40. * 72. / 25.4).abs() < 1e-6);
-    assert!((leaf.rect.x - other.rect.x - 5. * 72. / 25.4).abs() < 1e-6);
-    assert!((leaf.rect.x + leaf.rect.w - other.rect.x - other.rect.w).abs() < 1e-6);
+    // These equations constrain allocated frames. A nested composite subsequently
+    // fits its children into its own frame, so their painted edges need not retain
+    // equations expressed in the enclosing frame's pre-fit coordinate system.
+    let data = Data::new(&data).unwrap();
+    let context = Context { point: data.root, position: 1, count: 1, vars: HashMap::new() };
+    let mut compiler = Compiler { data, refs: HashMap::new(), instances: 0, work: 0 };
+    let tree = compiler.node(layout.child("layoutNode").unwrap(), context, 0).unwrap();
+    let solution = constraints::resolve(&tree, frame(), &compiler.data, &mut 0).unwrap();
+    let leaf = constraints::lookup(&solution, &tree.children[0].children[0]).unwrap().rect;
+    let other = constraints::lookup(&solution, &tree.children[1]).unwrap().rect;
+    assert!((other.w - 40. * 72. / 25.4).abs() < 1e-6);
+    assert!((leaf.x - other.x - 5. * 72. / 25.4).abs() < 1e-6);
+    assert!((leaf.x + leaf.w - other.x - other.w).abs() < 1e-6);
 }
 
 #[test]
@@ -712,6 +719,60 @@ fn empty_composites_have_no_occupied_geometry_or_text_algorithm() {
     );
     let out = evaluate(&l, &data, frame()).unwrap();
     assert_eq!(out[0].rect, out[2].rect, "an empty child cannot enlarge the occupied extent");
+}
+
+#[test]
+fn nonpainting_allocations_and_connectors_reserve_composite_space() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for alg in ["sp", "tx", "conn", "composite"] {
+        for shape in ["", "<shape type='none'/>", "<shape type='rect'/>", "<shape type='rect' hideGeom='1'/>"] {
+            for (w, h) in [(10.0_f64, 20.), (0., 20.), (10., 0.), (0., 0.), (400., 20.)] {
+                let l = layout(&format!(
+                    "<layoutNode><alg type='composite'/><shape type='none'/><presOf/>
+                    <constrLst><constr type='l' for='ch' forName='visible' val='50'/>
+                    <constr type='w' for='ch' forName='visible' val='40'/><constr type='h' for='ch' forName='visible' val='20'/>
+                    <constr type='w' for='ch' forName='helper' val='{w}'/><constr type='h' for='ch' forName='helper' val='{h}'/>
+                    </constrLst><layoutNode name='visible'><alg type='tx'/><presOf axis='ch' cnt='1'/><shape type='rect'/></layoutNode>
+                    <layoutNode name='helper'><alg type='{alg}'/><presOf/>{shape}</layoutNode></layoutNode>"
+                ));
+                let out = evaluate(&l, &data, frame()).unwrap();
+                let visible = out.iter().find(|p| p.name == "visible").unwrap();
+                let occupied = alg != "composite" && (w > 0. || h > 0.);
+                let width = if occupied { w.max(90.) } else { 40. } * mm;
+                let scale = (frame().w / width).min(1.);
+                let x = (frame().w - width * scale) / 2. + if occupied { 50. * mm * scale } else { 0. };
+                assert!((visible.rect.x - x).abs() < 1e-6, "{alg}/{shape}/{w}/{h}: {:?} expected {x}", visible.rect);
+                assert!((visible.rect.w - 40. * mm * scale).abs() < 1e-6);
+                // Pure allocation helpers must not become exported/drawn shapes.
+                assert!(out.iter().all(|p| p.shape.is_some() || !p.points.is_empty()));
+            }
+        }
+    }
+}
+
+#[test]
+fn nested_composites_fit_in_their_allocated_frame_before_parent_placement() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for alg in ["sp", "tx", "conn"] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='sp'/><presOf/><constrLst>
+            <constr type='w' for='ch' val='100'/><constr type='h' for='ch' val='60'/></constrLst>
+            <layoutNode name='box'><alg type='composite'/><shape type='rect'/><presOf/>
+            <constrLst><constr type='l' for='ch' val='10'/><constr type='t' for='ch' val='20'/>
+            <constr type='w' for='ch' val='20'/><constr type='h' for='ch' val='10'/></constrLst>
+            <layoutNode name='helper'><alg type='{alg}'/><shape type='none'/><presOf/></layoutNode>
+            </layoutNode></layoutNode>"
+        ));
+        let out = evaluate(&l, &data, frame()).unwrap();
+        let box_shape = out.iter().find(|p| p.name == "box").unwrap();
+        assert!((box_shape.rect.x - 40. * mm).abs() < 1e-6, "{alg}: {:?}", box_shape.rect);
+        assert!((box_shape.rect.y - 25. * mm).abs() < 1e-6);
+        assert!((box_shape.rect.w - 20. * mm).abs() < 1e-6);
+        assert!((box_shape.rect.h - 10. * mm).abs() < 1e-6);
+        assert_eq!(out.len(), 1, "allocation-only nodes do not escape the layout stage");
+    }
 }
 
 #[test]

@@ -121,18 +121,18 @@ pub(super) fn place_solved<'a>(
     let style = super::constraints::lookup(solution, node).unwrap_or_else(|| BoxStyle::new(rect));
     let start = out.len();
     place_inner(node, style, data, out, depth, solution, work)?;
-    if depth == 0 && node.alg == "composite" {
-        fit_composite_frame(out.get_mut(start..).unwrap_or(&mut []), style.rect, work)?;
-    }
     if depth == 0 {
         super::orientation::apply(out.get_mut(start..).unwrap_or(&mut []), work)?;
+        // Allocation-only nodes contribute to ancestor bounds, but are not drawing
+        // shapes. Keep text helpers with real data for mapped text and rule fitting.
+        out.retain(|p| p.shape.is_some() || (p.text_enabled && p.points.iter().any(|pt| pt.attr("type") != Some("doc"))));
     }
     Ok(())
 }
 
 fn fit_composite_frame(out: &mut [Placed<'_>], frame: Xfrm, work: &mut usize) -> Result<(), &'static str> {
     charge(work, out.len() * 2)?;
-    let shapes: Vec<_> = out.iter().filter(|p| !p.connector && p.rect.w > 0. && p.rect.h > 0.).collect();
+    let shapes: Vec<_> = out.iter().filter(|p| p.rect.w > 0. || p.rect.h > 0.).collect();
     let left = shapes.iter().map(|p| p.rect.x).fold(f64::INFINITY, f64::min);
     let top = shapes.iter().map(|p| p.rect.y).fold(f64::INFINITY, f64::min);
     let right = shapes.iter().map(|p| p.rect.x + p.rect.w).fold(f64::NEG_INFINITY, f64::max);
@@ -204,7 +204,7 @@ fn place_inner<'a>(
             params: node.params.clone(),
             endpoints: node.points.iter().find_map(|i| data.endpoints(*i)),
         });
-    } else if node.alg == "tx" && node.points.iter().any(|i| data.points.get(*i).is_some_and(|p| p.attr("type") != Some("doc"))) {
+    } else if matches!(node.alg.as_str(), "tx" | "sp" | "conn") {
         out.push(Placed {
             node_key: super::constraints::id(node),
             shape: None,
@@ -216,13 +216,13 @@ fn place_inner<'a>(
             rect: style.rect,
             text_rect: None,
             text_source: None,
-            text_enabled: true,
+            text_enabled: node.alg == "tx",
             font: style.font,
             secondary_font: style.secondary_font,
             min_font: style.min_font,
             margins: style.margins.map(|m| m.unwrap_or(style.font.unwrap_or(18.0) * 0.56)),
             text_rotation: node.number("txRot", 0.0),
-            connector: false,
+            connector: node.alg == "conn",
             params: node.params.clone(),
             endpoints: None,
         });
@@ -268,8 +268,13 @@ fn place_inner<'a>(
         }
     }
     pack_composite_extents(node, style, local, &children, &ranges, out, work)?;
-    if node.alg == "composite" && out.get(own).is_some_and(|p| p.node_key == super::constraints::id(node)) {
-        fit_composite_shape(out.get_mut(own..).unwrap_or(&mut []), work)?;
+    if node.alg == "composite" {
+        if out.get(own).is_some_and(|p| p.node_key == super::constraints::id(node)) {
+            fit_composite_shape(out.get_mut(own..).unwrap_or(&mut []), work)?;
+        }
+        // Every composite fits its occupied children in its allocated frame before
+        // its parent lays out that result, including nonpainting space/line nodes.
+        fit_composite_frame(out.get_mut(own..).unwrap_or(&mut []), style.rect, work)?;
     }
     Ok(())
 }
@@ -278,7 +283,7 @@ fn fit_composite_shape(out: &mut [Placed<'_>], work: &mut usize) -> Result<(), &
     let Some((own, descendants)) = out.split_first_mut() else { return Ok(()) };
     charge(work, descendants.len())?;
     let mut bounds: Option<Xfrm> = None;
-    for p in descendants.iter().filter(|p| !p.connector && p.rect.w > 0. && p.rect.h > 0.) {
+    for p in descendants.iter().filter(|p| p.rect.w > 0. || p.rect.h > 0.) {
         bounds = Some(match bounds {
             None => p.rect,
             Some(b) => {
