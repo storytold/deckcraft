@@ -6769,6 +6769,20 @@ fn connector_default_sites_follow_the_dominant_direction() {
     let below = s.execute("shape.insert", &json!({"preset": "rect", "rect": [520, 155, 100, 50]})).unwrap()["id"].as_u64().unwrap();
     let r = s.execute("shape.connect", &json!({"from": tri, "to": below})).unwrap();
     assert_eq!(r["toSite"].as_u64(), Some(0), "centre to centre is mostly down: the box's top, not its left: {r}");
+    // An exact diagonal ties the bottom with the right side (and the top with the left): the lower
+    // site index wins, so bottom → top, and top → bottom back.
+    let p = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 300, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let q = s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 500, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let sites = |s: &mut Session, from: u64, to: u64| {
+        let r = s.execute("shape.connect", &json!({"from": from, "to": to})).unwrap();
+        (r["fromSite"].as_u64(), r["toSite"].as_u64())
+    };
+    assert_eq!(sites(&mut s, p, q), (Some(2), Some(0)));
+    assert_eq!(sites(&mut s, q, p), (Some(0), Some(2)));
+    // Shapes with one centre tie every site: site 0 on both.
+    let big = s.execute("shape.insert", &json!({"preset": "rect", "rect": [600, 300, 200, 100]})).unwrap()["id"].as_u64().unwrap();
+    let small = s.execute("shape.insert", &json!({"preset": "rect", "rect": [650, 325, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    assert_eq!(sites(&mut s, big, small), (Some(0), Some(0)));
 }
 
 /// A size (or colour, bold…) set on a shape before it has any text survives the text that is

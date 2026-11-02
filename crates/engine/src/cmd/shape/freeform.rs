@@ -29,20 +29,27 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
     // arrow; "the closest pair" chose a side site for a diagonal neighbour and crossed boxes.
     // The direction runs between the shapes' box centres: the mean of the sites is off-centre
     // for a shape whose sites are not symmetric (a triangle's lie mostly along its base).
-    let centre = |id| st.shape(id).map(|sh| xfrm_of(&st.doc, &st.selection, sh).center()).unwrap_or_default();
+    // In slide space, as the sites are: a shape inside a group is placed where the group draws it.
+    let centre = |id| {
+        crate::connect::locate(&st.doc, &st.selection, st.shapes(), id)
+            .map(|(sh, to_abs)| to_abs * xfrm_of(&st.doc, &st.selection, sh).center())
+            .unwrap_or_default()
+    };
     let (ca, cb) = (centre(from), centre(to));
+    // A tie goes to the lowest site index: an exact diagonal leaves a box from its bottom (site 2,
+    // before the right side, 3) and enters the other at its top (0, before the left side, 1), and
+    // shapes with one centre, where every direction is as good, both take site 0.
     let facing = |v: &[deckcraft_geom::Point], c: deckcraft_geom::Point, dx: f64, dy: f64| {
         let len = dx.hypot(dy).max(1e-9);
-        v.iter()
-            .enumerate()
-            .map(|(i, q)| {
+        let cos: Vec<f64> = v
+            .iter()
+            .map(|q| {
                 let (sx, sy) = (q.x - c.x, q.y - c.y);
-                let sl = sx.hypot(sy).max(1e-9);
-                (i, (sx * dx + sy * dy) / (sl * len))
+                (sx * dx + sy * dy) / (sx.hypot(sy).max(1e-9) * len)
             })
-            .max_by(|p, q| p.1.total_cmp(&q.1))
-            .map(|(i, _)| i)
-            .unwrap_or(0)
+            .collect();
+        let best = cos.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        cos.iter().position(|x| *x >= best - 1e-9).unwrap_or(0)
     };
     let ia = pick(&a, "fromSite").unwrap_or_else(|| facing(&a, ca, cb.x - ca.x, cb.y - ca.y));
     let ib = pick(&b, "toSite").unwrap_or_else(|| facing(&b, cb, ca.x - cb.x, ca.y - cb.y));
