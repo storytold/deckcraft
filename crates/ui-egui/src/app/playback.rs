@@ -40,10 +40,10 @@ impl SlideApp {
         // audience. It also keeps where the window was before the first show.
         let running = self.show.as_ref().and_then(|s| s.screens.map(|p| (p, s.window_before)));
         let (presenter, screens) = match wanted.then(|| self.services.screens.as_mut().and_then(|f| f())).flatten() {
-            Some(s) => match running
-                .map(|(p, _)| p)
-                .or_else(|| s.for_presenter_view().inspect(|p| log::info!("slide show on screen {} and Presenter View on {} of {s:?}", p.0, p.1)))
-            {
+            Some(s) => match running.map(|(p, _)| p).or_else(|| {
+                s.for_presenter_view_on(self.ui.show_display)
+                    .inspect(|p| log::info!("slide show on screen {} and Presenter View on {} of {s:?}", p.0, p.1))
+            }) {
                 Some(placed) => (true, Some(placed)),
                 None => (false, None),
             },

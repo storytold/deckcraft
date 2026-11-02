@@ -473,6 +473,11 @@ fn presenter_view_gets_a_screen_of_its_own() {
     assert_eq!(two(Some(7), Some(1)).for_presenter_view(), Some((0, 1)), "an unlisted current falls back to the main screen");
     let three = Screens { list: vec![0, 2, 3], current: Some(2), primary: None };
     assert_eq!(three.for_presenter_view(), Some((0, 2)));
+    // A chosen slide show screen: Presenter View stays where DeckCraft is, unless that is it.
+    assert_eq!(three.for_presenter_view_on(Some(3)), Some((3, 2)));
+    assert_eq!(three.for_presenter_view_on(Some(2)), Some((2, 0)));
+    assert_eq!(three.for_presenter_view_on(Some(9)), Some((0, 2)), "a disconnected screen means automatic");
+    assert_eq!(one.for_presenter_view_on(Some(0)), None);
 }
 
 /// A glowing full-slide picture in a layout made every animation frame re-render (and re-blur)
@@ -1374,4 +1379,18 @@ fn swapping_displays_exchanges_the_screens_and_survives_a_restart() {
     let mut one = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
     one.start_show(0, false);
     assert_eq!(one.show.as_mut().unwrap().swap_screens(), None);
+}
+
+/// The slide show monitor chosen in Set Up Slide Show decides where the slides go; a saved
+/// screen that is gone means automatic.
+#[test]
+fn the_chosen_slide_show_monitor_gets_the_slides() {
+    let mut app = app_on_screens(vec![0, 1, 2], 0);
+    app.ui.show_display = Some(2);
+    app.start_show(0, false);
+    assert_eq!(app.show.as_ref().unwrap().screens, Some((2, 0)));
+    let mut app = app_on_screens(vec![0, 1], 0);
+    app.ui.show_display = Some(5);
+    app.start_show(0, false);
+    assert_eq!(app.show.as_ref().unwrap().screens, Some((1, 0)));
 }

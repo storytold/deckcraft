@@ -80,12 +80,24 @@ impl Screens {
     /// another screen and Presenter View on the presenter's (the one DeckCraft is on). `None`
     /// with one screen: there, PowerPoint shows only the slides. Returns (slides, presenter).
     pub fn for_presenter_view(&self) -> Option<(usize, usize)> {
+        self.for_presenter_view_on(None)
+    }
+
+    /// As [`for_presenter_view`](Self::for_presenter_view), with the slides on `chosen` when that
+    /// screen is connected. Presenter View then goes to the screen DeckCraft is on, or when that
+    /// is `chosen` too, to the main screen or the first other one.
+    pub fn for_presenter_view_on(&self, chosen: Option<usize>) -> Option<(usize, usize)> {
         if self.list.len() < 2 {
             return None;
         }
         let listed = |i: &usize| self.list.contains(i);
-        let presenter = self.current.filter(listed).or(self.primary.filter(listed)).or_else(|| self.list.first().copied())?;
-        let slides = self.list.iter().copied().find(|i| *i != presenter)?;
+        let Some(slides) = chosen.filter(listed) else {
+            let presenter = self.current.filter(listed).or(self.primary.filter(listed)).or_else(|| self.list.first().copied())?;
+            let slides = self.list.iter().copied().find(|i| *i != presenter)?;
+            return Some((slides, presenter));
+        };
+        let presenter = [self.current, self.primary].into_iter().flatten().find(|i| listed(i) && *i != slides);
+        let presenter = presenter.or_else(|| self.list.iter().copied().find(|i| *i != slides))?;
         Some((slides, presenter))
     }
 }
