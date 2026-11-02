@@ -33,7 +33,8 @@ pub(super) fn restore_preferences(app: &mut SlideApp, d: &Dialog) {
 /// catalogs for, each named in itself. It applies at once, like the other controls here.
 pub(super) fn language_row(app: &mut SlideApp, ui: &mut egui::Ui) {
     let auto = crate::i18n::AUTO;
-    let name = |code: &str| if code == auto { tl!("System language").to_string() } else { crate::i18n::Lang::from_pref(code).name().to_string() };
+    // A saved code this build doesn't offer follows the system, so it shows as System language.
+    let name = |code: &str| crate::i18n::Lang::from_code(code).map_or_else(|| tl!("System language").to_string(), |l| l.name().to_string());
     let mut chosen = app.ui.language.clone();
     ui.horizontal(|ui| {
         ui.label(tl!("Interface language:"));

@@ -109,7 +109,7 @@ mod about_credits_tests {
             let mut block = egui::Rect::NOTHING;
             let mut whole = egui::Rect::NOTHING;
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
-                tabs = ui.label("About").rect;
+                tabs = ui.label(tl!("About")).rect;
                 block = credits_block(ui, models);
                 whole = ui.min_rect();
             });

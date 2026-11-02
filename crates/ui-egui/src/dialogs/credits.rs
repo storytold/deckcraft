@@ -236,10 +236,10 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
             v.ascending = !v.ascending;
         }
         ui.separator();
-        if ui.selectable_label(!v.table, "Grab bag").clicked() {
+        if ui.selectable_label(!v.table, tl!("Grab bag")).clicked() {
             v.table = false;
         }
-        if ui.selectable_label(v.table, "Table").clicked() {
+        if ui.selectable_label(v.table, tl!("Table")).clicked() {
             v.table = true;
         }
     });

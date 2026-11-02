@@ -123,13 +123,12 @@ pub fn run_index(app: &mut SlideApp, index: usize) -> bool {
 fn tip(q: &QatItem, index: usize, mac: bool) -> String {
     let sc =
         deckcraft_engine::find_command(&q.id).and_then(|c| c.shortcut).or_else(|| crate::UI_COMMANDS.iter().find(|c| c.0 == q.id).and_then(|c| c.2));
-    let label = tl!(&q.label);
     let qat_sc = if !mac && index < 9 { Some(format!("Alt+{}", index + 1)) } else { None };
     match (sc, qat_sc) {
-        (Some(s), Some(qsc)) => format!("{} ({}, {})", label, crate::ribbon::pretty_shortcut(s), qsc),
-        (Some(s), None) => format!("{} ({})", label, crate::ribbon::pretty_shortcut(s)),
-        (None, Some(qsc)) => format!("{} ({})", label, qsc),
-        (None, None) => label.to_string(),
+        (Some(s), Some(qsc)) => format!("{} ({}, {})", crate::i18n::t_flat(&q.label), crate::ribbon::pretty_shortcut(s), qsc),
+        (Some(s), None) => format!("{} ({})", crate::i18n::t_flat(&q.label), crate::ribbon::pretty_shortcut(s)),
+        (None, Some(qsc)) => format!("{} ({})", crate::i18n::t_flat(&q.label), qsc),
+        (None, None) => crate::i18n::t_flat(&q.label),
     }
 }
 
@@ -156,7 +155,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         ui.label(egui::RichText::new(tl!("Customize Quick Access Toolbar")).strong());
         for c in common() {
             let mut on = app.ui.qat.iter().any(|q| q.same(&c.id, &Value::Null));
-            if ui.checkbox(&mut on, tl!(&c.label)).changed() {
+            if ui.checkbox(&mut on, crate::i18n::t_flat(&c.label)).changed() {
                 let key = if on { "add" } else { "remove" };
                 let _ = command(app, &json!({key: c.id}));
             }
@@ -166,7 +165,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             ui.separator();
             for q in extra {
                 let mut on = true;
-                if ui.checkbox(&mut on, tl!(&q.label)).changed() {
+                if ui.checkbox(&mut on, crate::i18n::t_flat(&q.label)).changed() {
                     let _ = command(app, &json!({"remove": q.id, "params": q.params}));
                 }
             }
@@ -185,7 +184,7 @@ pub fn ribbon_menu(app: &mut SlideApp, r: &egui::Response, icon: Icon, label: &s
     r.context_menu(|ui| {
         let has = app.ui.qat.iter().any(|q| q.same(id, p));
         let text = if has { "Remove from Quick Access Toolbar" } else { "Add to Quick Access Toolbar" };
-        if ui.button(text).clicked() {
+        if ui.button(tl!(text)).clicked() {
             let label = label.replace('\n', " ");
             let key = if has { "remove" } else { "add" };
             let _ = command(app, &json!({key: id, "params": p, "label": label, "icon": icon.name()}));
