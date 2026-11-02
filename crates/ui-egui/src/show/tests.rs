@@ -1320,3 +1320,42 @@ fn a_preview_of_an_edited_presentation_is_rendered_again() {
     let tex = harness.state().1.next_tex.as_ref().map(|(d, k, _)| (std::sync::Arc::ptr_eq(d, &edited), *k));
     assert_eq!(tex, Some((true, 1)), "the preview comes from the edited presentation");
 }
+
+/// An app whose computer has `screens` and whose window is on `current`.
+fn app_on_screens(list: Vec<usize>, current: usize) -> SlideApp {
+    let screens = Some(Box::new(move || Some(crate::Screens { list: list.clone(), current: Some(current), primary: None }))
+        as Box<dyn FnMut() -> Option<crate::Screens>>);
+    let services = crate::Services { screens, ..Default::default() };
+    SlideApp::new(deckcraft_engine::Session::with_new(), services)
+}
+
+/// Starting a show over a running one must not swap the audience's and the presenter's screens:
+/// the window is then on the slides' screen, which would be taken for the presenter's.
+#[test]
+fn a_show_started_over_a_running_one_keeps_its_screens() {
+    let mut app = app_on_screens(vec![0, 1], 0);
+    app.start_show(0, false);
+    let first = app.show.as_ref().unwrap().screens;
+    assert_eq!(first, Some((1, 0)), "slides on the other screen, Presenter View here");
+    let before = Some((Rect::from_min_size(pos2(5.0, 6.0), vec2(100.0, 80.0)), Rect::from_min_size(pos2(7.0, 8.0), vec2(90.0, 70.0))));
+    app.show.as_mut().unwrap().window_before = before;
+    // The window moved to the slides' screen with the first show.
+    app.services.screens = Some(Box::new(|| Some(crate::Screens { list: vec![0, 1], current: Some(1), primary: None })));
+    app.start_show(0, false);
+    let second = app.show.as_ref().unwrap();
+    assert_eq!(second.screens, first, "the same screens, not swapped");
+    assert_eq!(second.window_before, before, "the window still goes back to where it was before the first show");
+}
+
+/// A show in a window (browsed) has no screen to place: Presenter View would open full screen
+/// over it.
+#[test]
+fn a_browsed_show_is_not_placed_on_screens() {
+    let mut app = app_on_screens(vec![0, 1], 0);
+    app.session.execute("show.setup", &json!({"type": "browsed"})).unwrap();
+    app.start_show(0, false);
+    assert_eq!(app.show.as_ref().unwrap().screens, None);
+    app.session.execute("show.setup", &json!({"type": "speaker"})).unwrap();
+    app.start_show(0, false);
+    assert_eq!(app.show.as_ref().unwrap().screens, Some((1, 0)));
+}

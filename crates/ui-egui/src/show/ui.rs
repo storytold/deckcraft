@@ -189,7 +189,7 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
         show.timer = PresenterTimer::start(now);
         show.last_move = now;
         if show_fills_screen(show.reading, &doc.show.show_type) && !(show.presenter && remote) {
-            if show.screens.is_some() {
+            if show.screens.is_some() && show.window_before.is_none() {
                 show.window_before = ctx.input(|i| i.viewport().outer_rect.zip(i.viewport().inner_rect));
             }
             ctx.send_viewport_cmd(match show.screens {

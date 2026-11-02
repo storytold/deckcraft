@@ -75,7 +75,7 @@ pub struct Show {
     pub screens: Option<(usize, usize)>,
     /// Where the window was (outside and inside, in points) before the slides were sent to
     /// another screen, to put it back after the show: X11 brings it back on the slides' screen.
-    window_before: Option<(Rect, Rect)>,
+    pub(crate) window_before: Option<(Rect, Rect)>,
     /// The current slide's backdrop, under its animation frames.
     backdrop: Option<Backdrop>,
     blank: Option<Color32>,
@@ -595,7 +595,7 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPl
 }
 
 /// Whether starting the show takes the whole screen. Reading view and "Browsed by an individual (window)" stay in the window.
-fn show_fills_screen(reading: bool, show_type: &str) -> bool {
+pub(crate) fn show_fills_screen(reading: bool, show_type: &str) -> bool {
     !reading && show_type != "browsed"
 }
 

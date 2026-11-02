@@ -35,8 +35,15 @@ impl SlideApp {
         let wanted = self.ui.presenter_view && !reading;
         // Presenter View needs a screen of its own: on one screen, PowerPoint shows only the
         // slides (two windows on one screen also hid one, and a hidden window stalled the show).
+        // A show started over a running one keeps its screens: the window is now on the slides'
+        // screen, so choosing again would swap them and put the speaker notes in front of the
+        // audience. It also keeps where the window was before the first show.
+        let running = self.show.as_ref().and_then(|s| s.screens.map(|p| (p, s.window_before)));
         let (presenter, screens) = match wanted.then(|| self.services.screens.as_mut().and_then(|f| f())).flatten() {
-            Some(s) => match s.for_presenter_view().inspect(|p| log::info!("slide show on screen {} and Presenter View on {} of {s:?}", p.0, p.1)) {
+            Some(s) => match running
+                .map(|(p, _)| p)
+                .or_else(|| s.for_presenter_view().inspect(|p| log::info!("slide show on screen {} and Presenter View on {} of {s:?}", p.0, p.1)))
+            {
                 Some(placed) => (true, Some(placed)),
                 None => (false, None),
             },
@@ -45,7 +52,12 @@ impl SlideApp {
         if let Some(d) = self.session.active() {
             self.show_instance = self.show_instance.wrapping_add(1).max(1);
             let mut show = show::Show::new(&d.doc, from, reading, presenter);
-            show.screens = screens;
+            // A show that stays in its window (browsed) has no screen to place: Presenter View
+            // would open full screen over it.
+            if show::show_fills_screen(reading, &d.doc.show.show_type) {
+                show.screens = screens;
+                show.window_before = running.and_then(|(_, w)| w);
+            }
             show.instance = self.show_instance;
             show.keep_cursor = self.ui.show_keep_cursor;
             self.show = Some(show);
