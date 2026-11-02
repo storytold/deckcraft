@@ -96,7 +96,11 @@ fn run(app: &mut SlideApp, q: &QatItem) {
         "review.spelling" => app.dialog = Some(crate::dialogs::Dialog::new("spelling")),
         id => {
             let mut p = if q.params.is_null() { json!({}) } else { q.params.clone() };
-            if let Some(m) = p.as_object_mut() { m.insert("toggle".into(), true.into()); }
+            if id == "view.pane"
+                && let Some(m) = p.as_object_mut()
+            {
+                m.insert("toggle".into(), true.into());
+            }
             let _ = app.run(id, p);
         }
     }
