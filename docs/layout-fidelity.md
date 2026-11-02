@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.18): rotated footprint geometry and independent mapped text orientation,
-extending local/shared font rules, geographic caches and rich-label layout.
+Updated 2026-11-01 (PPTX.19): document-owned geographic hierarchy and regional projections,
+extending rotated diagram footprints, independent text frames and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -836,3 +836,60 @@ unchanged sources; the same four scaled reverse-font cases retain their known on
 native differences.
 The four previously failing rotation controls now match native same-colour painted bounds
 exactly at the tested 4K raster resolution; this does not assert whole-image equality.
+
+## Administrative map scope and regional projection (PPTX.19)
+
+The geographic model now retains entity types, parent links and provider extents, including
+ancestors with an extent but no polygon. The reader joins both child-query and parent-query
+tables by entity identity, independently of table order. Rebuilding a chart writes legal
+`ST_EntityType` names and the parent-query table; an extent-only ancestor remains an extent,
+not invented boundary geometry. The lineage reader limits nodes, work and metadata bytes;
+scope traversal uses an iterative, budgeted graph walk, so cycles cannot recurse indefinitely.
+
+Automatic scope selects the nearest shared administrative ancestor of the bound data.
+An explicit scope imposes a minimum administrative level. In the public
+[mapping-level definition](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-odrawxml/4f06cf76-5e65-4c54-aa9b-f6996c7cbb8b),
+`countryRegionList` means continent. Only descendant regions paint; cached ancestor geometry
+provides projection context without overpainting its children. `dataOnly` hides background
+regions without changing that context. Missing, oversized or untyped singleton hierarchies
+retain the earlier bounded fallback rather than inventing a country or global view.
+
+Regional automatic/Robinson views use spherical Albers with secants at one-sixth and
+five-sixths of the selected latitude range, following the public
+[USGS projection guidance](https://pubs.usgs.gov/pp/1453/report.pdf).
+The symmetric-secant limit is cylindrical equal-area. Provider extents take precedence over
+the polygon union when available. Longitude wrapping is centred on the central meridian:
+rounding between extent metadata and compressed coordinates can otherwise send a vertex
+almost 360 degrees away. A contributor-original southern-hemisphere/dateline regression
+failed before this correction and passes afterwards. No country names, IDs, boundary assets
+or fitted per-country constants are embedded in the implementation.
+
+Validation and remaining differences:
+
+- Twenty-five private original-derived geographic controls cover one region, neighbouring
+  regions and regions on different continents across five viewport modes, four explicit
+  projections and six additional countries. All open/export in PowerPoint and export directly
+  at 3840px width with unchanged source hashes and no external converter on PATH. Four initially
+  blank native exports were retried after allowing native chart initialization; blank outputs
+  were not accepted as comparisons.
+- The seven automatic single-country cases have coloured-land-mask intersection-over-union
+  of 95.85–99.60% at 4K. This measures painted areas, not text, coastlines, tiny-island bounds or
+  whole-slide equality. Native simplification and rasterization still differ. A regional
+  projection-coordinate control agrees within 0.072pt after fitting scale and translation;
+  that fitted transform is an observation, not a production constant.
+- The original continental controls lack the common ancestor's provider extent. PowerPoint
+  fetches and saves additional geographic data; a descendant-only union is not equivalent.
+  The paired-country `dataOnly` control improves from 69.72% coloured-mask overlap to 98.38%
+  when both renderers receive the same saved, complete cache. The native cache is private
+  observation data and is never shipped. No network map provider is silently invoked.
+- Global viewport placement still differs by about 22pt in these controls. The selection
+  of countries is correct, but this is explicitly **not** world-map visual parity. Missing
+  ancestor context, all provider projection policies, simplification and global plot fitting
+  remain work items alongside the earlier SmartArt/font and rich-label limits.
+- An original synthetic hierarchy with an extent-only ancestor survives two forced rebuilds,
+  passes Open XML SDK validation with zero errors and opens/exports in PowerPoint without
+  dismissing a repair dialog. Source tests cover malformed extents, node budgets, cycles,
+  requested scope, untyped legacy caches, southern/equatorial Albers and the dateline seam.
+
+Final workspace CI passes all eight gates, including 2,425 tests and doctests. Chart/SmartArt
+parity scores remain partial. Production rendering still invokes neither Office nor LibreOffice.

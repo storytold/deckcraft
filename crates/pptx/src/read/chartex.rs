@@ -270,6 +270,7 @@ fn geography(g: &El, d: &Data, budget: &mut usize) -> deckcraft_model::geography
         viewed_region: g.attr("viewedRegionType").unwrap_or("").into(),
         attribution: g.attr("attribution").unwrap_or("").into(),
         regions: vec![],
+        entities: vec![],
     };
     if *budget < 3 {
         return map;
@@ -284,6 +285,10 @@ fn geography(g: &El, d: &Data, budget: &mut usize) -> deckcraft_model::geography
         &doc.root
     };
     let bindings = super::geo_binding::resolve(clear, &d.categories, &d.levels, &d.entities);
+    map.entities = super::geo_hierarchy::read(clear).unwrap_or_else(|| {
+        log::warn!("pptx: geographic hierarchy exceeds the work budget");
+        vec![]
+    });
     let Some(results) = clear.child("geoDataEntityQueryResults") else { return map };
     for result in results.children_named("geoDataEntityQueryResult").take(4096) {
         let Some(data) = result.child("geoData") else { continue };
@@ -293,6 +298,7 @@ fn geography(g: &El, d: &Data, budget: &mut usize) -> deckcraft_model::geography
             ..Default::default()
         };
         region.point = bindings.get(&region.entity_id).copied();
+        region.bounds = super::geo_hierarchy::bounds(data);
         if let Some(polys) = data.child("geoPolygons") {
             for poly in polys.children_named("geoPolygon").take(deckcraft_model::geography::MAX_GEO_RINGS) {
                 let mut encoded = poly.attr("pcaRings").unwrap_or("").split(',');
@@ -321,7 +327,7 @@ fn geography(g: &El, d: &Data, budget: &mut usize) -> deckcraft_model::geography
         if let Some(copyrights) = data.child("copyrights") {
             region.copyrights = copyrights.children_named("copyright").take(64).map(El::text).collect();
         }
-        if !region.rings.is_empty() {
+        if !region.rings.is_empty() || region.bounds.is_some() {
             map.regions.push(region);
         }
         if *budget == 0 {

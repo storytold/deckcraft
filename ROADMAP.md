@@ -148,6 +148,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-01 | PPTX.19: retain geographic parent/child hierarchy and extent-only ancestors; choose administrative views, preserve data-only projection context, and render regional Albers with robust dateline wrapping; native global fitting remains partial |
 | 2026-11-01 | PPTX.18: maximum-area rotated diagram footprints, independently oriented editable text frames, and bounded fitting-failure fallback; narrow text alignment corrected with independent native probes |
 | 2026-11-01 | PPTX.17: occupied composite frames, mapped text-node typography, constrained root frames and empty-composite semantics; native controls and round-trip regressions, with rotation/selector limits explicit |
 | 2026-11-01 | PPTX.16: separate local font fitting from default references, solve connected font equalities/bounds, run child rules first and retain native default fonts; real-text round-trip and isolation regressions |
@@ -336,6 +337,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | PPTX.19 geographic lineage, regional projection and explicit native viewport limits; scores unchanged |
 | 2026-10-31 | minor | Progress log: bounded PPTX editing/export fidelity fixes; overall parity scores and alpha stage unchanged |
 | 2026-10-30 | trivial | Progress log: read-only slide action inspection; parity scores unchanged |
 | 2026-10-29 | trivial | Progress log: going back in the slide show reverses the left slide's transition (#1531). Scores and milestone names unchanged |

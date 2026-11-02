@@ -66,6 +66,10 @@ fn geographic_polygons_survive_rebuild_match_ids_and_render_holes() {
         projection: "mercator".into(),
         viewed_region: "dataOnly".into(),
         attribution: "Original synthetic geography".into(),
+        entities: [("b", "Synthetic B"), ("a", "Synthetic A")]
+            .into_iter()
+            .map(|(id, name)| deckcraft_model::geography::GeoEntity { id: id.into(), name: name.into(), kind: "Region".into(), ..Default::default() })
+            .collect(),
         regions: vec![
             GeoRegion {
                 entity_id: "b".into(),
@@ -73,10 +77,12 @@ fn geographic_polygons_survive_rebuild_match_ids_and_render_holes() {
                 point: Some(1),
                 rings: vec![vec![[3., 0.], [8., 0.], [8., 4.], [3., 4.]], vec![[4., 1.], [7., 1.], [7., 3.], [4., 3.]]],
                 copyrights: vec!["Contributor original".into()],
+                bounds: Some([3., 0., 8., 4.]),
             },
             GeoRegion {
                 entity_id: "a".into(),
                 name: "Synthetic A".into(),
+                bounds: Some([-8., 0., -3., 4.]),
                 point: Some(0),
                 rings: vec![vec![[-8., 0.], [-3., 0.], [-5., 4.], [-8., 0.]]],
                 ..Default::default()
@@ -117,6 +123,51 @@ fn geographic_polygons_survive_rebuild_match_ids_and_render_holes() {
     assert!(count > 500);
     assert!(!red((minx + maxx) / 2, (miny + maxy) / 2), "map hole must remain unpainted");
     probe(&back, "geographic-polygons.pptx");
+}
+#[test]
+fn geographic_lineage_and_extent_only_ancestors_survive_forced_rebuild() {
+    use deckcraft_model::geography::GeoEntity;
+    let entities: Vec<_> = [
+        ("root", "Planet", ""),
+        ("group", "Continent", "root"),
+        ("one", "CountryRegion", "group"),
+        ("two", "CountryRegion", "group"),
+        ("outside", "CountryRegion", "root"),
+    ]
+    .into_iter()
+    .map(|(id, kind, parent)| GeoEntity {
+        id: id.into(),
+        name: format!("Original {id}"),
+        kind: kind.into(),
+        parents: if parent.is_empty() { vec![] } else { vec![parent.into()] },
+    })
+    .collect();
+    let regions = [("one", -30., Some(0)), ("two", -10., Some(1)), ("outside", 70., None)]
+        .into_iter()
+        .map(|(id, x, point)| GeoRegion {
+            entity_id: id.into(),
+            name: format!("Original {id}"),
+            point,
+            bounds: Some([x, 10., x + 10., 20.]),
+            rings: vec![vec![[x, 10.], [x + 10., 10.], [x + 10., 20.], [x, 20.]]],
+            ..Default::default()
+        })
+        .chain([GeoRegion { entity_id: "group".into(), name: "Original group".into(), bounds: Some([-45., 5., 15., 50.]), ..Default::default() }])
+        .collect();
+    let geography = Geography { viewed_region: "dataOnly".into(), entities: entities.clone(), regions, ..Default::default() };
+    let mut c = base(ChartType::RegionMap);
+    c.categories = vec!["First region".into(), "Second region".into()];
+    c.series = vec![Series { values: vec![Some(2.), Some(7.)], geography: Some(geography.clone()), ..Default::default() }];
+    let mut p = original();
+    append(&mut p, c);
+    let back = rebuilt(&p);
+    let actual = chart(&back).series[0].geography.as_ref().unwrap();
+    assert_eq!(actual.regions, geography.regions);
+    assert_eq!(actual.viewed_region, geography.viewed_region);
+    let index = |entities: Vec<GeoEntity>| entities.into_iter().map(|e| (e.id.clone(), e)).collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(index(actual.entities.clone()), index(entities));
+    assert!(actual.regions.last().unwrap().rings.is_empty(), "an extent is not an invented boundary");
+    probe(&back, "geographic-lineage.pptx");
 }
 #[test]
 fn rich_point_labels_rebuild_and_render_mixed_run_colours_rotation_and_delete() {

@@ -37,6 +37,16 @@ pub struct Geography {
     pub viewed_region: String,
     pub attribution: String,
     pub regions: Vec<GeoRegion>,
+    /// Document-owned administrative lineage, including ancestors without boundary polygons.
+    pub entities: Vec<GeoEntity>,
+}
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct GeoEntity {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub parents: Vec<String>,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -47,6 +57,8 @@ pub struct GeoRegion {
     pub point: Option<usize>,
     pub rings: Vec<Vec<[f64; 2]>>,
     pub copyrights: Vec<String>,
+    /// Provider's geographic extent: west, south, east, north (east < west crosses the seam).
+    pub bounds: Option<[f64; 4]>,
 }
 
 /// Decode one PCA ring with integer Cantor unpairing and checked accumulation. A global

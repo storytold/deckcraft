@@ -7,6 +7,7 @@ mod diagram_rules;
 pub(crate) mod dml;
 mod geo_binding;
 mod geo_cache;
+mod geo_hierarchy;
 mod shapes;
 mod theme;
 mod timing;

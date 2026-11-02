@@ -1,4 +1,5 @@
 //! Offline map rendering from document-owned geographic boundaries.
+mod scope;
 use crate::{
     chart::{LabelStyle, label, point_data_label, series_color},
     color,
@@ -100,14 +101,39 @@ fn project(lon: f64, lat: f64, kind: &str) -> Point {
     }
 }
 
+/// Spherical Albers with secants at one-sixth and five-sixths of the administrative
+/// latitude range (Snyder, USGS PP1453). Symmetric secants have a cylindrical limit.
+struct RegionalAlbers {
+    n: f64,
+    c: f64,
+    cosine: f64,
+}
+impl RegionalAlbers {
+    fn new(south: f64, north: f64) -> Self {
+        let span = north - south;
+        let (a, b) = ((south + span / 6.).to_radians(), (north - span / 6.).to_radians());
+        let n = (a.sin() + b.sin()) / 2.;
+        Self { n, c: a.cos().powi(2) + 2. * n * a.sin(), cosine: a.cos().abs().max(1e-6) }
+    }
+    fn point(&self, lon: f64, lat: f64) -> Point {
+        let (x, y) = (lon.to_radians(), lat.clamp(-90., 90.).to_radians());
+        if self.n.abs() < 1e-8 {
+            return Point::new(x * self.cosine, -y.sin() / self.cosine);
+        }
+        let radius = (self.c - 2. * self.n * y.sin()).max(0.).sqrt() / self.n;
+        Point::new(radius * (self.n * x).sin(), radius * (self.n * x).cos())
+    }
+}
+
 fn paths(map: &Geography) -> (Vec<BezPath>, bool) {
-    let included = |r: &&deckcraft_model::geography::GeoRegion| map.viewed_region != "dataOnly" || r.point.is_some();
+    let scope = scope::resolve(map);
     let mut longs: Vec<_> = map
         .regions
         .iter()
-        // Projection and central meridian belong to the cached geographic extent. A
-        // dataOnly viewport crops that map; it must not reproject its remaining regions.
-        .flat_map(|r| &r.rings)
+        // The administrative view owns the projection, even when only data regions paint.
+        .zip(&scope.reference)
+        .filter(|(_, include)| **include)
+        .flat_map(|(r, _)| &r.rings)
         .flatten()
         .take(deckcraft_model::geography::MAX_GEO_POINTS)
         .map(|p| p[0])
@@ -123,24 +149,46 @@ fn paths(map: &Geography) -> (Vec<BezPath>, bool) {
             start = b;
         }
     }
-    let world = map.viewed_region == "world" || 360.0 - gap > 300.0;
-    let centre = if world {
-        start = -180.0;
-        0.0
+    let world = scope.world || !scope.regional && 360.0 - gap > 300.0;
+    let mut centre = if world { 0.0 } else { start + (360.0 - gap) / 2.0 };
+    let (mut south, mut north) = (90f64, -90f64);
+    for point in map
+        .regions
+        .iter()
+        .zip(&scope.reference)
+        .filter(|(_, include)| **include)
+        .flat_map(|(r, _)| r.rings.iter().flatten())
+        .take(deckcraft_model::geography::MAX_GEO_POINTS)
+    {
+        if point[1].is_finite() && point[1].abs() <= 90. {
+            south = south.min(point[1]);
+            north = north.max(point[1]);
+        }
+    }
+    if let Some([west, low, east, high]) = scope.bounds {
+        south = low;
+        north = high;
+        if !world {
+            centre = west + (east - west).rem_euclid(360.) / 2.;
+        }
+    }
+    let projection = if scope.regional && matches!(map.projection.as_str(), "" | "robinson") {
+        "albers"
+    } else if map.projection.is_empty() && world {
+        "robinson"
     } else {
-        start + (360.0 - gap) / 2.0
+        &map.projection
     };
-    // Native automatic projection uses Robinson for a world extent. Keep an explicitly
-    // selected projection; small local extents retain a cylindrical default.
-    let projection = if map.projection.is_empty() && world { "robinson" } else { &map.projection };
+    let regional = (scope.regional && projection == "albers" && north >= south).then(|| RegionalAlbers::new(south, north));
     let mut budget = deckcraft_model::geography::MAX_GEO_POINTS;
     let paths = map
         .regions
         .iter()
         .take(4096)
-        .map(|region| {
+        .zip(&scope.visible)
+        .map(|(region, visible)| {
             let mut path = BezPath::new();
-            if !included(&region) {
+            if !visible {
                 return path;
             }
             for ring in region.rings.iter().take(deckcraft_model::geography::MAX_GEO_RINGS) {
@@ -152,8 +200,11 @@ fn paths(map: &Geography) -> (Vec<BezPath>, bool) {
                     continue;
                 }
                 for (i, &[lon, lat]) in ring.iter().enumerate() {
-                    let lon = if world { lon } else { (lon - start).rem_euclid(360.0) + start - centre };
-                    let point = project(lon, lat, projection);
+                    // Extent metadata and compressed vertices have different precision. Wrap
+                    // around the central meridian, not the west edge: a vertex just west of
+                    // a rounded bound must not jump by 360 degrees.
+                    let lon = if world { lon } else { (lon - centre + 180.).rem_euclid(360.) - 180. };
+                    let point = regional.as_ref().map_or_else(|| project(lon, lat, projection), |p| p.point(lon, lat));
                     if i == 0 {
                         path.move_to(point);
                     } else {
@@ -200,9 +251,15 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
     };
     let stops = value_stops(rctx, c, series, (min, max));
     let mut labels = Vec::new();
+    let mut copyrights = Vec::new();
     for (region, path) in map.regions.iter().zip(paths) {
         if path.elements().is_empty() {
             continue;
+        }
+        for text in region.copyrights.iter().take(64) {
+            if !copyrights.contains(text) {
+                copyrights.push(text.clone());
+            }
         }
         let path = transform * path;
         let value = region.point.and_then(|i| series.values.get(i)).copied().flatten().filter(|v| v.is_finite());
@@ -249,14 +306,6 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
             point_data_label(ctx, rctx, m, &text, r, style, (c, series, i, mark, (area.x1, area.y1)));
         } else {
             label(ctx, rctx, m, &text, r, style);
-        }
-    }
-    let mut copyrights = Vec::new();
-    for region in map.regions.iter().filter(|r| map.viewed_region != "dataOnly" || r.point.is_some()) {
-        for text in &region.copyrights {
-            if !copyrights.contains(text) {
-                copyrights.push(text.clone());
-            }
         }
     }
     copyrights.sort();
@@ -336,6 +385,43 @@ mod tests {
         assert!(path.bounding_box().width() < 0.04);
         for kind in ["mercator", "miller", "albers", "robinson"] {
             assert!(project(180., 90., kind).is_finite());
+        }
+    }
+    #[test]
+    fn rounded_extent_does_not_wrap_a_regional_vertex_around_the_globe() {
+        use deckcraft_model::geography::{GeoEntity, GeoRegion};
+        for (west, east) in [(-65., -35.), (170., -170.)] {
+            let map = Geography {
+                entities: vec![GeoEntity { id: "local".into(), kind: "countryRegion".into(), ..Default::default() }],
+                regions: vec![GeoRegion {
+                    entity_id: "local".into(),
+                    point: Some(0),
+                    bounds: Some([west, -30., east, -10.]),
+                    rings: vec![vec![[west - 0.000001, -30.], [east, -30.], [east, -10.], [west, -10.]]],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let (paths, world) = paths(&map);
+            assert!(!world);
+            let bounds = paths[0].bounding_box();
+            assert!(bounds.width() < 0.6 && bounds.height() < 0.5, "regional seam: {bounds:?}");
+        }
+    }
+    #[test]
+    fn regional_albers_is_finite_at_equator_and_symmetric_between_hemispheres() {
+        let north = RegionalAlbers::new(10., 60.);
+        let south = RegionalAlbers::new(-60., -10.);
+        for lon in [-120., -40., 0., 40., 120.] {
+            for lat in [10., 30., 60.] {
+                let a = north.point(lon, lat);
+                let b = south.point(lon, -lat);
+                assert!((a.x - b.x).abs() < 1e-12 && (a.y + b.y).abs() < 1e-12);
+            }
+        }
+        for (low, high) in [(-40., 40.), (-90., 90.), (0., 0.), (90., 90.), (-90., -90.)] {
+            let p = RegionalAlbers::new(low, high);
+            assert!(p.point(-180., -90.).is_finite() && p.point(180., 90.).is_finite());
         }
     }
     #[test]

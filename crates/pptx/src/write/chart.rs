@@ -1352,9 +1352,10 @@ fn write_geography(w: &mut W, g: &deckcraft_model::geography::Geography) {
     w.open0("cx:clear");
     w.open0("cx:geoDataEntityQueryResults");
     let mut budget = deckcraft_model::geography::MAX_GEO_POINTS;
+    let kinds: std::collections::HashMap<_, _> = g.entities.iter().take(4096).map(|e| (e.id.as_str(), e.kind.as_str())).collect();
     for region in g.regions.iter().take(4096) {
         let mut rings = Vec::new();
-        for ring in &region.rings {
+        for ring in region.rings.iter().take(deckcraft_model::geography::MAX_GEO_RINGS) {
             if ring.len() > budget {
                 break;
             }
@@ -1363,7 +1364,10 @@ fn write_geography(w: &mut W, g: &deckcraft_model::geography::Geography) {
                 rings.push((text, ring));
             }
         }
-        if rings.is_empty() {
+        let authored = region
+            .bounds
+            .filter(|b| b.iter().all(|v| v.is_finite()) && b[0].abs() <= 180. && b[2].abs() <= 180. && b[1] >= -90. && b[3] <= 90. && b[1] <= b[3]);
+        if rings.is_empty() && authored.is_none() {
             continue;
         }
         let (mut west, mut east, mut north, mut south) = (180f64, -180f64, -90f64, 90f64);
@@ -1376,7 +1380,11 @@ fn write_geography(w: &mut W, g: &deckcraft_model::geography::Geography) {
             }
         }
         w.open0("cx:geoDataEntityQueryResult");
-        w.empty("cx:geoDataEntityQuery", A::new().a("entityType", "Region").a("entityId", &region.entity_id));
+        let kind = geo_entity_kind(kinds.get(region.entity_id.as_str()).copied().unwrap_or(""));
+        w.empty("cx:geoDataEntityQuery", A::new().a("entityType", kind).a("entityId", &region.entity_id));
+        if let Some([w, s, e, n]) = authored {
+            (west, south, east, north) = (w, s, e, n);
+        }
         w.open(
             "cx:geoData",
             A::new()
@@ -1387,11 +1395,13 @@ fn write_geography(w: &mut W, g: &deckcraft_model::geography::Geography) {
                 .a("north", north)
                 .a("south", south),
         );
-        w.open0("cx:geoPolygons");
-        let count: usize = rings.iter().map(|(_, r)| r.len()).sum();
-        let encoded = format!("0,{}", rings.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join(","));
-        w.empty("cx:geoPolygon", A::new().a("polygonId", &region.entity_id).a("numPoints", count).a("pcaRings", encoded));
-        w.close("cx:geoPolygons");
+        if !rings.is_empty() {
+            w.open0("cx:geoPolygons");
+            let count: usize = rings.iter().map(|(_, r)| r.len()).sum();
+            let encoded = format!("0,{}", rings.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join(","));
+            w.empty("cx:geoPolygon", A::new().a("polygonId", &region.entity_id).a("numPoints", count).a("pcaRings", encoded));
+            w.close("cx:geoPolygons");
+        }
         if !region.copyrights.is_empty() {
             w.open0("cx:copyrights");
             for text in &region.copyrights {
@@ -1403,8 +1413,55 @@ fn write_geography(w: &mut W, g: &deckcraft_model::geography::Geography) {
         w.close("cx:geoDataEntityQueryResult");
     }
     w.close("cx:geoDataEntityQueryResults");
+    write_geo_lineage(w, &g.entities);
     w.close("cx:clear");
     w.close("cx:geoCache");
     w.close("cx:geography");
     w.close("cx:layoutPr");
+}
+
+fn write_geo_lineage(w: &mut W, entities: &[deckcraft_model::geography::GeoEntity]) {
+    if entities.is_empty() {
+        return;
+    }
+    w.open0("cx:geoParentEntitiesQueryResults");
+    let mut budget = 20000usize;
+    for entity in entities.iter().take(4096) {
+        let parents: Vec<_> = if entity.parents.is_empty() { vec![None] } else { entity.parents.iter().take(budget).map(Some).collect() };
+        for parent in parents {
+            if budget == 0 {
+                break;
+            }
+            budget -= 1;
+            w.open0("cx:geoParentEntitiesQueryResult");
+            w.empty("cx:geoParentEntitiesQuery", A::new().a("entityId", &entity.id));
+            w.empty("cx:geoEntity", A::new().a("entityName", &entity.name).a("entityType", geo_entity_kind(&entity.kind)));
+            if let Some(parent) = parent {
+                w.empty("cx:geoParentEntity", A::new().a("entityId", parent));
+            }
+            w.close("cx:geoParentEntitiesQueryResult");
+        }
+    }
+    w.close("cx:geoParentEntitiesQueryResults");
+}
+
+fn geo_entity_kind(kind: &str) -> &'static str {
+    // ST_EntityType is case-sensitive, unlike the authored viewport-level vocabulary.
+    [
+        "Address",
+        "AdminDistrict",
+        "AdminDistrict2",
+        "AdminDistrict3",
+        "Continent",
+        "CountryRegion",
+        "Locality",
+        "Ocean",
+        "Planet",
+        "PostalCode",
+        "Region",
+        "Unsupported",
+    ]
+    .into_iter()
+    .find(|name| name.eq_ignore_ascii_case(kind))
+    .unwrap_or("Region")
 }

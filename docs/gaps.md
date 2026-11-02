@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **PPTX.19 update 2026-11-01:** geographic parent/child lineage and extent-only ancestors survive rebuilds; administrative scopes share projection context with data-only views. Regional Albers and rounded-boundary dateline handling are covered by native controls and regressions. Missing provider context and global viewport placement remain partial; scores are unchanged.
+
 > **PPTX.18 update 2026-11-01:** rotated SmartArt shapes fit their allocated footprints; text algorithms own independent upright/gravity/follow-shape orientation, including mapped composite text. Crossed text insets and narrow wrapped alignment are corrected. Native probes and editable round trips cover these changes; scaled font rounding, selector colours, automatic map viewports and rich-label overflow remain partial. Scores are unchanged.
 
 > **PPTX.17 update 2026-11-01:** composite shapes fit occupied child bounds; mapped text retains its text-node geometry and fonts. Empty composites, constrained root frames and default style/mapping controls are covered. Rotated composites and omitted-point-type colour selection still differ; font quantization, map viewport and rich-label overflow gaps remain. Scores are unchanged.
@@ -190,7 +192,9 @@ Detail in [file-format-parity.md](file-format-parity.md).
   and box & whisker charts use exclusive or inclusive quartiles with 1.5 IQR whiskers. Region maps
   with clear entity caches now decode PCA polygons, bind by entity id, and render boundaries/holes
   offline. Observed raw-DEFLATE binary caches now decode; unknown encodings are retained and unusable caches still use explicitly labelled tiles.
-  No map assets are bundled, and full native map viewport/provider parity remains open. Radar charts are drawn polar (filled
+  Administrative lineage, common-ancestor selection and regional Albers are implemented; missing
+  ancestor geometry/extents, global plot fitting and full provider projection policy remain open.
+  No map assets are bundled. Radar charts are drawn polar (filled
   or lines), stock charts as high-low lines with close dashes or up/down bars and saved as
   `c:stockChart`, and combo charts start as columns with a line. Trendlines round-trip
   (`corpus_charts.rs`) and are drawn: linear, exponential, logarithmic, polynomial, power and
