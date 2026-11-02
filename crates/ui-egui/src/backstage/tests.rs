@@ -168,7 +168,7 @@ fn every_page_renders() {
         (Page::SaveAs, "Not saved yet"),
         (Page::Print, "Print Hidden Slides"),
         (Page::Export, "Create PDF Document"),
-        (Page::About, "About DeckCraft"),
+        (Page::About, "Credits"),
     ];
     for (p, marker) in checks {
         h.state_mut().run("app.backstage", json!({"page": p.id()})).unwrap();
@@ -721,7 +721,7 @@ fn about_has_product_links_and_credits_without_account_controls() {
     assert!(h.query_by_label("Source on GitHub").is_some());
     assert!(h.query_by_label("Join our community on Discord").is_some());
     assert!(h.query_all_by_label("Appearance").next().is_some());
-    click_on_page(&h, "About DeckCraft");
+    click_on_page(&h, "Credits");
     h.run_steps(3);
     assert!(h.state().dialog.is_some());
     assert!(h.query_by_label("Contributors").is_some());

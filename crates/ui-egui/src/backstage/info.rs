@@ -193,7 +193,7 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
 pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     // Side by side needs 480 + 40 + 340 points; stack the columns when the page is narrower.
-    let layout = if ui.available_width() >= 0.0 { egui::Layout::left_to_right(egui::Align::Min) } else { egui::Layout::top_down(egui::Align::Min) };
+    let layout = if ui.available_width() >= 860.0 { egui::Layout::left_to_right(egui::Align::Min) } else { egui::Layout::top_down(egui::Align::Min) };
     ui.with_layout(layout, |ui| {
         ui.vertical(|ui| {
             ui.set_width(480.0);
@@ -206,14 +206,7 @@ pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
             dim(ui, &crate::dialogs::version_line());
             dim(ui, "Open source under MIT OR Apache-2.0. Not affiliated with Microsoft.");
             ui.add_space(14.0);
-            if task(
-                ui,
-                Icon::Help,
-                "About DeckCraft",
-                "About DeckCraft",
-                "The version, the people and models who built it, and where to find us.",
-                true,
-            ) {
+            if task(ui, Icon::Help, "Credits", "Credits", "The people and models who built DeckCraft.", true) {
                 let _ = app.run("app.about", json!({}));
             }
             ui.hyperlink_to("Join our community on Discord", deckcraft_engine::links::DISCORD);

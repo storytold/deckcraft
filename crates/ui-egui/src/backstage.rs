@@ -99,7 +99,7 @@ impl Page {
             Page::SaveAs => Icon::SaveAs,
             Page::Print => Icon::Print,
             Page::Export => Icon::Export,
-            Page::About => Icon::Info,
+            Page::About => Icon::Help,
         }
     }
 
