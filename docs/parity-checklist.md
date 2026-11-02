@@ -240,5 +240,4 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-01 | trivial | No Fill tests cover locked outline selection without movement and click-through without an outline; fill row and parity scores unchanged (#1621) |
 | 2026-10-31 | trivial | No Fill interior hit-testing follows resolved fill (#1621); fill row remains D and summary scores are unchanged |
