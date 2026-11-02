@@ -6008,6 +6008,43 @@ fn style_commands_given_nothing_to_set_are_refused() {
     s.execute("format.paragraphDialog", &json!({"special": "hanging", "specialBy": 18})).unwrap();
 }
 
+/// A call whose keys are all null sets nothing and is refused like an empty one, changing
+/// nothing; one valid key is enough, nulls beside it ignored.
+#[test]
+fn style_commands_refuse_only_nulls_and_take_one_key() {
+    let mut png = vec![];
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(4, 2, image::Rgba([200, 30, 30, 255])))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let mut s = session();
+    let pic =
+        s.execute("insert.picture", &json!({"data": cmd::base64_encode(&png), "name": "a.png", "rect": [100, 100, 40, 20]})).unwrap()["id"].clone();
+    let text = s.execute("insert.textBox", &json!({"text": "Hi", "rect": [50, 300, 200, 100]})).unwrap()["id"].clone();
+    let nulls = |keys: &[&str]| serde_json::Value::Object(keys.iter().map(|k| ((*k).to_string(), serde_json::Value::Null)).collect());
+    for (cmd, id, keys, one) in [
+        (
+            "picture.adjust",
+            &pic,
+            &["brightness", "contrast", "saturation", "grayscale", "transparency", "reset"][..],
+            json!({"brightness": 0.3, "contrast": null}),
+        ),
+        (
+            "format.paragraph",
+            &text,
+            &["align", "indentLeft", "indentFirst", "spaceBefore", "spaceAfter", "lineSpacing", "lineSpacingPt"][..],
+            json!({"align": "center", "spaceBefore": null}),
+        ),
+    ] {
+        s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+        let rev = s.doc().unwrap().revision;
+        let e = s.execute(cmd, &nulls(keys)).unwrap_err().to_string();
+        assert!(e.contains("given nothing to set") && e.contains(cmd), "{cmd}: {e}");
+        assert_eq!(s.doc().unwrap().revision, rev, "{cmd}: only nulls changed the deck");
+        s.execute(cmd, &one).unwrap_or_else(|e| panic!("{cmd} {one}: {e}"));
+        assert_ne!(s.doc().unwrap().revision, rev, "{cmd}: one key set something");
+    }
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
