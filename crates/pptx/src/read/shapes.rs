@@ -736,12 +736,15 @@ pub(super) fn diagram_text_layout(
     let font = requested.max(p.min_font.unwrap_or(1.0));
     body.body.min_autofit_scale = p.min_font.map(|min| (min / font).clamp(0.1, 1.0));
     let mut levels = p.points.iter().enumerate().flat_map(|(i, point)| {
-        let count = point.child("t").map(|t| t.children_named("p").count()).unwrap_or(0);
-        std::iter::repeat_n(p.point_levels.get(i).copied().unwrap_or(0), count)
+        point
+            .child("t")
+            .into_iter()
+            .flat_map(|t| t.children_named("p"))
+            .map(move |paragraph| (p.point_levels.get(i).copied().unwrap_or(0), paragraph.child("pPr")))
     });
     let bullet_level = p.params.get("stBulletLvl").and_then(|v| v.parse::<usize>().ok()).unwrap_or(2);
     for paragraph in &mut body.paragraphs {
-        let level = levels.next().unwrap_or(0);
+        let (level, authored) = levels.next().unwrap_or((0, None));
         let align = match p.params.get("parTxLTRAlign").map(String::as_str) {
             Some("l") => Align::Left,
             Some("r") => Align::Right,
@@ -756,14 +759,30 @@ pub(super) fn diagram_text_layout(
             paragraph.props.bullet = Some(deckcraft_model::text::Bullet::Char { char: "•".into() });
             let indent_level = level.saturating_add(2).saturating_sub(bullet_level).clamp(1, 8);
             paragraph.level = paragraph.level.max(indent_level as u8);
-            paragraph.props.margin_left = paragraph.props.margin_left.or(Some(indent_level as f64 * 9.));
-            paragraph.props.indent = paragraph.props.indent.or(Some(-9.));
+            // Recovery uses primary-font-dependent 4.5pt steps, capped at five.
+            // Ordinary authored layouts keep their independent 9pt default.
+            let indent = if p.recovered { (font / 8.).round().clamp(1., 5.) * 4.5 } else { 9. };
+            paragraph.props.margin_left = paragraph.props.margin_left.or(Some(indent_level as f64 * indent));
+            paragraph.props.indent = paragraph.props.indent.or(Some(-indent));
+            // A measured recovery search changes this default with the font.
+            // Do not retain the previous trial's computed indent as authored.
+            if p.recovered {
+                if authored.and_then(|pr| pr.attr("marL")).is_none() {
+                    paragraph.props.margin_left = Some(indent_level as f64 * indent);
+                }
+                if authored.and_then(|pr| pr.attr("indent")).is_none() {
+                    paragraph.props.indent = Some(-indent);
+                }
+            }
         }
         let secondary = paragraph.props.bullet.as_ref().is_some_and(|b| !matches!(b, deckcraft_model::text::Bullet::None));
         paragraph.props.space_after = paragraph.props.space_after.or(Some(Spacing::Pct(if secondary { 0.15 } else { 0.35 })));
         let paragraph_font = if secondary { p.secondary_font.unwrap_or_else(|| (font * 0.78).round()) } else { font };
         for run in &mut paragraph.runs {
             run.props.size = Some(paragraph_font);
+            if p.recovered {
+                run.props.kern = run.props.kern.or(Some(12.));
+            }
             if let Some(c) = text_color {
                 run.props.fill = Some(Fill::Solid { color: c.clone() });
             }

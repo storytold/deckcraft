@@ -2,6 +2,7 @@
 //! Executes the document's layout tree rather than guessing a template from its display name.
 mod constraints;
 mod data;
+mod fallback;
 mod geometry;
 mod orientation;
 mod rules;
@@ -18,6 +19,8 @@ const MAX_WORK: usize = 200000;
 pub(crate) struct Placed<'a> {
     pub node_key: usize,
     pub shape: Option<&'a El>,
+    /// Recovery layouts supply their own text defaults independently of the authored tree.
+    pub recovered: bool,
     pub points: Vec<&'a El>,
     pub point_levels: Vec<usize>,
     pub name: String,
@@ -131,6 +134,9 @@ pub(crate) fn evaluate_measured<'a>(
     let context = Context { point: data.root, position: 1, count: 1, vars: HashMap::new() };
     let mut compiler = Compiler { data, refs, instances: 0, work };
     let tree = compiler.node(root, context, 0)?;
+    if fallback::required(&tree, &compiler.data, &mut compiler.work)? {
+        return fallback::place(&compiler.data, frame, measure, &mut compiler.work);
+    }
     if let Some(measure) = measure {
         return rules::search(&tree, frame, &compiler.data, measure);
     }

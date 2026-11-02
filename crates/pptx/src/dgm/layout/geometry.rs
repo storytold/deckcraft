@@ -230,6 +230,7 @@ fn place_inner<'a>(
         out.push(Placed {
             node_key: super::constraints::id(node),
             shape: Some(shape),
+            recovered: false,
             points: node.points.iter().filter_map(|i| data.points.get(*i).copied()).collect(),
             point_levels: node.point_levels.clone(),
             name: node.name.clone(),
@@ -253,6 +254,7 @@ fn place_inner<'a>(
         out.push(Placed {
             node_key: super::constraints::id(node),
             shape: None,
+            recovered: false,
             points: node.points.iter().filter_map(|i| data.points.get(*i).copied()).collect(),
             point_levels: node.point_levels.clone(),
             name: node.name.clone(),
@@ -919,7 +921,7 @@ fn pack_linear(node: &Instance<'_>, style: BoxStyle, capacity: Xfrm, children: &
 
 /// Reproduce the observed finite linear fit with a normalized ten-trial search.
 /// Normalizing the bracket preserves relative precision for very small scales.
-fn flow_fit_scale(occupied: f64, available: f64) -> f64 {
+pub(super) fn flow_fit_scale(occupied: f64, available: f64) -> f64 {
     if occupied <= 0. || available <= 0. {
         return if available > 0. { 1. } else { 0. };
     }

@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.36): upstream integration, crossed-inset validation and font-reference evidence,
+Updated 2026-11-02 (PPTX.37): bounded font-reference recovery, editable cards and measured typography,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1809,3 +1809,69 @@ PNG exports remain pixel-identical to PPTX.35 and retain native-matching font se
 All 632 earlier cycle geometries still pass the strict comparison (maximum 0.014pt),
 and the original 506 complete inspection models are unchanged. These regression
 results do not erase the earlier raster failures or unmeasurable cases.
+
+
+## PPTX.37 — invalid font graphs and measured recovery
+
+Uncached layouts now distinguish an invalid font-dependency graph from a failed numeric
+search. Declarations resolve at their owning layout node; a font computed inside a child
+is not automatically available as a sibling declaration at its parent. Duplicate initial
+font declarations, missing references, incompatible reference axes and dependency cycles
+trigger recovery for the observed cases. Local primary defaults and valid secondary-font
+references remain available. Selector overlap detects self-dependency even when the two
+selector strings differ. Malformed input and exhausted work budgets still return errors.
+
+Recovery preserves the original data and layout parts. It creates editable rectangular
+cards, maps each root node and its ordered descendants, and supplies native-style bullet
+paragraphs. A bounded grid search chooses the largest card capacity, preferring more
+columns for tied candidates and centring incomplete rows. Normalized integer ratios avoid
+misclassifying exact fractional fits after unit conversion. A shared measured font search
+uses whole-point sizes between 5 and 65, with rounded secondary fonts and proportional
+margins. Recovery bullet indents update with every trial rather than retaining the initial
+font's indent; explicit paragraph indentation remains authoritative. Bounded work, finite
+frames and malformed measurement checks apply to this path too.
+
+Independent contributor-original evidence (PowerPoint 16.113.3, private local outputs):
+
+| Matrix | Cases | Native font matches before → after | Recovered geometry matches |
+|---|---:|---:|---:|
+| Reference dependency graphs | 56 | 28 → 56 | 28/28 |
+| Defaults, missing sources and declaration ordering | 24 | 4 → 23 | 19/19 |
+| Selector overlap and duplicates | 8 | 2 → 8 | 6/6 |
+| Short/long/mixed text and descendant bullets | 26 | 3 → 21 | 26/26 |
+| Independent node counts and aspect ratios | 32 | 0 → 26 | 32/32 |
+| Bullet scaling controls | 8 | 0 → 8 | 8/8 |
+| Earlier reference target controls | 48 | 8 → 48 | 40/40 |
+| Earlier reference option controls | 48 | 6 → 48 | 42/42 |
+| Earlier fallback grid controls | 40 | 0 → 34 | 40/40 |
+| Earlier parent mapping/visibility controls | 36 | 0 → 36 | 36/36 |
+| **Total** | **326** | **51 → 308** | **277/277** |
+
+All 277 recovered geometries match within 0.025pt; the maximum measured difference is
+0.01320pt. No previously matching font set regresses. The 49 unrecovered controls are not
+counted as newly passing recovery geometries. Separate 3840-pixel-wide raster checks for
+the 40 grid, 32 independent-count, 26 mixed-text and eight bullet controls all match visible
+filled bounds within 0.5pt. This is shape-bound evidence, not pixel-identical typography.
+Representative direct/native renderings were visually inspected. Additional original
+bullet-boundary controls validate discrete indentation and saved DrawingML text defaults;
+these observations are not added to the 326-case pass count. Inputs validate with the
+Open XML SDK, native exports retain source hashes, and no native-produced asset is published.
+
+All eight `cargo xtask ci` stages pass, covering 2,524 tests including doctests (168 library
+and 24 diagram preservation tests). New tests cover declaration scopes/cycles, translated
+native grid positions, work/measurement rejection and editable export/reimport with retained
+data identities, layout XML and rendered pixels. All 632 prior cycle geometries remain
+passing and 506 complete models remain unchanged. All 154 earlier PNGs remain pixel-identical
+with native-matching font sets; these unaffected cases were checked before the final
+recovery-only indentation adjustment.
+
+Eighteen font-set differences remain: one missing-source equality with a zero factor,
+five mixed/long-text controls, six independent-count controls and six earlier grid controls.
+The latter 17 differ by 1–2pt. Matching shape bounds do not hide them. Identical installed
+and embedded open font bytes do not guarantee identical native text measurement; glyph
+advance and baseline differences still require investigation. Direct PDF text extraction
+also omits separately painted bullet glyphs, so extracted strings are not used to claim
+visual bullet absence. Duplicate geometry constraints, arbitrary mapping/hierarchy/snake
+recovery and complete text-rule search remain unproven. Earlier raster failures remain
+open. Geographic provider/viewport/boundary behavior and rich-label overflow/collision are
+unchanged by this arc. Complete LibreOffice replacement is not established.

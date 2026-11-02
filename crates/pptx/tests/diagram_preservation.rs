@@ -130,6 +130,53 @@ fn uncached_fixture() -> Vec<u8> {
 }
 
 #[test]
+fn invalid_font_graph_recovers_editable_cards_and_preserves_original_data() {
+    let mut parts = files(&uncached_fixture());
+    for (_, bytes) in &mut parts {
+        let Ok(doc) = parse_xml(bytes) else { continue };
+        if doc.root.is("layoutDef") {
+            let xml = doc.root.to_xml();
+            // A parent-owned font cannot supply a child's font declaration.
+            // Keep the original data graph, which includes nested bullet labels.
+            *bytes = xml.replacen(
+                "<dgm:constrLst>",
+                "<dgm:constrLst><dgm:constr type=\"primFontSz\" val=\"24\"/><dgm:constr type=\"primFontSz\" for=\"ch\" refType=\"primFontSz\" fact=\"0.5\"/>",
+                1,
+            ).into_bytes();
+        }
+    }
+    let input = zip(parts);
+    let p = deckcraft_pptx::import(&input).unwrap();
+    let g = group(&p);
+    assert_eq!(g.children().len(), 3);
+    let mut all_text = String::new();
+    for shape in g.children() {
+        assert!(shape.name.starts_with("Recovered diagram node"));
+        let text = shape.text.as_ref().unwrap();
+        assert_eq!(text.paragraphs.len(), 3);
+        assert!(text.paragraphs[1].props.bullet.is_some());
+        let primary = text.paragraphs[0].runs[0].props.size.unwrap();
+        let secondary = text.paragraphs[1].runs[0].props.size.unwrap();
+        assert!((5.0..=65.0).contains(&primary));
+        assert_eq!(secondary, (primary * 0.78).round());
+        let indent = (primary / 8.).round().clamp(1., 5.) * 4.5;
+        assert_eq!(text.paragraphs[1].props.margin_left, Some(indent));
+        all_text.push_str(&text.text());
+    }
+    for label in ["Research", "Observe", "Measure", "Build", "Prototype", "Test", "Deliver", "Review", "Ship"] {
+        assert!(all_text.contains(label), "{label}");
+    }
+    let output = deckcraft_pptx::export(&p).unwrap();
+    assert_eq!(ids(&by_root(&input, "dataModel")), ids(&by_root(&output, "dataModel")));
+    assert_eq!(by_root(&input, "layoutDef").to_xml(), by_root(&output, "layoutDef").to_xml());
+    let back = deckcraft_pptx::import(&output).unwrap();
+    assert_eq!(geometry(g), geometry(group(&back)));
+    let before = deckcraft_engine::render::render_slide(&p, 0, &Default::default());
+    let after = deckcraft_engine::render::render_slide(&back, 0, &Default::default());
+    assert_eq!(before.pixels, after.pixels);
+}
+
+#[test]
 fn uncached_custom_layout_executes_tree_constraints_and_retains_original_graph() {
     let input = uncached_fixture();
     let original_ids = ids(&by_root(&input, "dataModel"));

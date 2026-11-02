@@ -216,6 +216,7 @@ mod tests {
             color_index: 0,
             node_key: 1,
             shape: None,
+            recovered: false,
             points: vec![],
             point_levels: vec![],
             name: "probe".into(),

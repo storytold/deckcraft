@@ -418,7 +418,8 @@ fn text_rules_measure_reference_linked_font_groups_and_keep_secondary_sizes_dist
       <layoutNode name="b"><alg type="tx"/><shape type="rect"/></layoutNode>
       <constrLst><constr type="primFontSz" for="ch" forName="a" val="36"/>
       <constr type="primFontSz" for="ch" forName="b" refFor="ch" refForName="a" refType="primFontSz"/>
-      <constr type="secFontSz" for="ch" refType="primFontSz" refFor="ch" fact="0.75"/></constrLst>
+      <constr type="secFontSz" for="ch" forName="a" refType="primFontSz" refFor="ch" refForName="a" fact="0.75"/>
+      <constr type="secFontSz" for="ch" forName="b" refType="primFontSz" refFor="ch" refForName="b" fact="0.75"/></constrLst>
       <ruleLst><rule type="primFontSz" for="ch" forName="a" val="8"/></ruleLst></layoutNode>"#,
     );
     let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if p.name == "b" { (p.font.unwrap() - 18.).max(0.) } else { 0. }).collect());
@@ -560,7 +561,7 @@ fn local_font_factor_rules_use_the_reference_size_and_keep_defaults_separate() {
     let data = source();
     for (initial, expected) in [(1., 12.), (0., 1.)] {
         let l = layout(&format!(
-            "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' val='36'/><constr type='primFontSz' for='ch' refType='primFontSz' fact='{initial}'/></constrLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/><ruleLst><rule type='primFontSz' fact='0.25' max='12'/></ruleLst></layoutNode></layoutNode>"
+            "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' for='ch' forName='reference' val='36'/><constr type='primFontSz' for='ch' forName='a' refFor='ch' refForName='reference' refType='primFontSz' fact='{initial}'/></constrLst><layoutNode name='reference'><alg type='sp'/></layoutNode><layoutNode name='a'><alg type='tx'/><shape type='rect'/><ruleLst><rule type='primFontSz' fact='0.25' max='12'/></ruleLst></layoutNode></layoutNode>"
         ));
         let mut measure =
             |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if initial == 0. { 1. } else { (p.font.unwrap() - 12.).max(0.) }).collect());
@@ -1843,5 +1844,58 @@ fn helper_visibility_controls_borrowing_and_cycle_refitting() {
         assert_eq!(b.text_enabled, borrowed);
         assert_eq!(b.text_source.is_some(), borrowed);
         assert_eq!(a.rect == b.rect, !painted);
+    }
+}
+
+#[test]
+fn font_reference_recovery_distinguishes_declaration_scopes_and_cycles() {
+    let data = source();
+    let leaf = "<layoutNode name='a'><alg type='tx'/><presOf axis='ch' st='1' cnt='1'/><shape type='ellipse'/></layoutNode><layoutNode name='b'><alg type='tx'/><presOf axis='ch' st='2' cnt='1'/><shape type='ellipse'/></layoutNode>";
+    let decl = "<constr type='primFontSz' for='ch' forName='a' val='24'/>";
+    let reference = "<constr type='primFontSz' for='ch' forName='b' refFor='ch' refForName='a' refType='primFontSz' fact='0.5'/>";
+    for (body, recover) in [
+        (format!("{decl}{reference}"), false),
+        (format!("{reference}{decl}"), false),
+        (reference.to_string(), true),
+        (format!("{decl}{decl}"), true),
+        (format!("{decl}{}", reference.replace("refFor='ch' refForName='a'", "refFor='self'")), true),
+        (format!("{decl}{}", reference.replace("refForName='a'", "refForName='b'")), true),
+        (format!("{}{}", decl.replace("for='ch'", "for='des'"), reference), true),
+        (
+            format!("{}{}", decl.replace("for='ch'", "for='des'"), reference.replace("for='ch'", "for='des'").replace("refFor='ch'", "refFor='des'")),
+            false,
+        ),
+        (format!("{}{}", decl.replace("forName='a'", ""), reference.replace("refForName='a'", "")), true),
+    ] {
+        let l = layout(&format!("<layoutNode name='Unrelated title'><alg type='composite'/><constrLst>{body}</constrLst>{leaf}</layoutNode>"));
+        let out = evaluate(&l, &data, frame()).unwrap();
+        assert!(out.iter().all(|p| p.recovered == recover), "{body}");
+        assert_eq!(out.len(), if recover { 3 } else { 2 });
+        if recover {
+            assert!(out.iter().all(|p| p.shape.unwrap().attr("type") == Some("rect")));
+            assert_eq!(out[0].points.iter().map(|p| p.attr("modelId").unwrap()).collect::<Vec<_>>(), ["a", "a1", "a2"]);
+            assert_eq!(out[0].point_levels, [0, 1, 1]);
+        }
+    }
+}
+
+#[test]
+fn recovered_text_uses_a_shared_bounded_fit_and_rejects_bad_measurements() {
+    let data = source();
+    let l = layout("<layoutNode><constrLst><constr type='primFontSz' refType='primFontSz'/></constrLst></layoutNode>");
+    for ceiling in [0., 5., 23., 65., 100.] {
+        let mut calls = 0;
+        let mut measure = |items: &[Placed<'_>], words: bool| {
+            calls += 1;
+            assert!(words);
+            Ok(items.iter().enumerate().map(|(i, p)| if i == 1 { (p.font.unwrap() - ceiling).max(0.) } else { 0. }).collect())
+        };
+        let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+        assert!(calls <= 7);
+        assert!(out.iter().all(|p| p.font == Some(ceiling.clamp(5., 65.))));
+    }
+    for values in [vec![], vec![f64::NAN; 3], vec![-1.; 3], vec![f64::INFINITY; 3]] {
+        let mut measure = |_: &[Placed<'_>], _: bool| Ok(values.clone());
+        assert!(evaluate_measured(&l, &data, frame(), Some(&mut measure)).is_err());
     }
 }
