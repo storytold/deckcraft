@@ -153,8 +153,8 @@ impl Xfrm {
     }
     /// Rotation normalised to 0..360.
     pub fn rot_norm(&self) -> f64 {
-        let r = self.rot % 360.0;
-        if r < 0.0 { r + 360.0 } else { r }
+        let r = self.rot.rem_euclid(360.0);
+        if r >= 360.0 { 0.0 } else { r }
     }
 }
 
@@ -264,6 +264,14 @@ mod tests {
         let a = group_child_affine(&g, Rect::new(0.0, 0.0, 100.0, 50.0));
         let p = a * Point::new(100.0, 50.0);
         assert!((p.x - 300.0).abs() < 1e-9 && (p.y - 200.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rot_norm_stays_below_360() {
+        for rot in [-1e-15, -1e-13, -f64::EPSILON, -0.0, 360.0, 720.0, -360.0] {
+            let n = Xfrm { rot, ..Default::default() }.rot_norm();
+            assert!((0.0..360.0).contains(&n), "rot {rot} -> {n}");
+        }
     }
 
     #[test]
