@@ -4,7 +4,7 @@ use crate::tools::{Mods, PointerEvent, PointerKind};
 use crate::{
     DocState, History, Presentation, Session, Target, TextSel, ToolKind, Value, cmd, command_specs, connect, find_command, model, sample, tools,
 };
-use deckcraft_model::ShapeId;
+use deckcraft_model::{Shape, ShapeId};
 
 fn session() -> Session {
     Session::with_new()
@@ -902,6 +902,230 @@ fn double_click_edits_text_inside_group() {
     // Double-click the grouped text box: it becomes editable and targets that member.
     s.pointer(ev(PointerKind::DoubleClick, 160.0, 125.0)).unwrap();
     assert_eq!(s.doc().unwrap().selection.text.as_ref().map(|t| t.shape.0 as u64), Some(a));
+}
+
+#[test]
+fn grouped_text_editing_matches_rendered_text() {
+    use deckcraft_geom::{Point, Xfrm};
+    use deckcraft_model::{ShapeId, ShapeKind};
+
+    for nested in [false, true] {
+        for (rotation, flip_h, flip_v) in [(0.0, false, false), (27.0, false, false), (15.0, true, false), (0.0, false, true)] {
+            let mut s = session();
+            let id = ShapeId(
+                s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 20.0, 140.0, 60.0], "text": "Hello group"})).unwrap()["id"]
+                    .as_u64()
+                    .unwrap() as u32,
+            );
+            s.edit(|doc, sel| {
+                let group_id = ShapeId(doc.alloc_id().unwrap());
+                let outer_id = ShapeId(doc.alloc_id().unwrap());
+                let shapes = crate::shapes_mut(doc, sel).unwrap();
+                let child = shapes.remove(shapes.iter().position(|sh| sh.id == id).unwrap());
+                let group = Shape {
+                    id: group_id,
+                    xfrm: Some(Xfrm { rot: rotation, flip_h, flip_v, ..Xfrm::new(300.0, 100.0, 280.0, 120.0) }),
+                    kind: ShapeKind::Group { children: vec![child], child: Xfrm::new(0.0, 0.0, 140.0, 60.0) },
+                    ..Default::default()
+                };
+                shapes.push(if nested {
+                    Shape {
+                        id: outer_id,
+                        xfrm: Some(Xfrm { rot: -12.0, ..Xfrm::new(100.0, 60.0, 450.0, 200.0) }),
+                        kind: ShapeKind::Group { children: vec![group], child: Xfrm::new(250.0, 80.0, 350.0, 170.0) },
+                        ..Default::default()
+                    }
+                } else {
+                    group
+                });
+                sel.shapes.clear();
+                sel.text = None;
+                Ok(())
+            })
+            .unwrap();
+            let placed = deckcraft_render::place_slide(&s.doc().unwrap().doc, 0);
+            let drawn = placed.texts.iter().find(|t| t.body.text() == "Hello group").unwrap();
+            let t = TextSel { shape: id, caret: (0, 3), anchor: (0, 0), ..Default::default() };
+            let st = s.doc().unwrap();
+            let (_, editing) = cmd::text::text_frame(st, &t).unwrap();
+            for q in [Point::ZERO, Point::new(100.0, 40.0)] {
+                assert!(
+                    (editing * q - drawn.transform * q).hypot() < 1e-8,
+                    "editing transform differs from rendering (nested={nested}, rotation={rotation}, flips={flip_h}/{flip_v})"
+                );
+            }
+            let (cx, top, bot) = drawn.layout.caret_drawn(deckcraft_text::Pos { para: 0, ch: 3 }, deckcraft_text::Affinity::Downstream).unwrap();
+            let (a, b) = cmd::text::caret_line(st, &t).unwrap();
+            assert!((a - drawn.transform * Point::new(cx, top)).hypot() < 1e-8);
+            assert!((b - drawn.transform * Point::new(cx, bot)).hypot() < 1e-8);
+            let p = drawn.transform * Point::new(cx, (top + bot) / 2.0);
+            assert_eq!(cmd::text::text_pos_at(st, &t, p), (0, 3));
+            let ev = |kind| PointerEvent { kind, x: p.x, y: p.y, mods: Mods::default(), tol: 1.0, pressure: None };
+            s.pointer(ev(PointerKind::DoubleClick)).unwrap();
+            assert_eq!(s.doc().unwrap().selection.text.as_ref().unwrap().shape, id);
+            s.pointer(ev(PointerKind::Down)).unwrap();
+            s.pointer(ev(PointerKind::Up)).unwrap();
+            let t = s.doc().unwrap().selection.text.as_ref().unwrap();
+            assert_eq!(t.shape, id, "clicking the displayed text keeps editing its group member");
+            assert_eq!(t.caret, (0, 3));
+            s.pointer(ev(PointerKind::ContextClick)).unwrap();
+            assert_eq!(s.doc().unwrap().selection.text.as_ref().unwrap().shape, id);
+
+            // The displayed corner resizes in the member's own coordinates, and grabbing its
+            // displayed frame moves it by the pointer's page-space displacement.
+            let st = s.doc().unwrap();
+            let x = cmd::xfrm_of(&st.doc, &st.selection, st.shape(id).unwrap());
+            let parent = cmd::parent_transform(st, id);
+            let corner = parent * tools::box_handles(&x).0[4];
+            assert!(matches!(s.hit_test(corner, 1.0), Some(tools::Hit::Resize { id: hit, handle: 4 }) if hit == id));
+            let end = parent * Point::new(x.x + x.w + 16.0, x.y + x.h + 8.0);
+            let event =
+                |kind, p: Point| PointerEvent { kind, x: p.x, y: p.y, mods: Mods { cmd: true, ..Default::default() }, tol: 1.0, pressure: None };
+            s.pointer(event(PointerKind::Down, corner)).unwrap();
+            s.pointer(event(PointerKind::Drag, end)).unwrap();
+            s.pointer(event(PointerKind::Up, end)).unwrap();
+            let resized = s.doc().unwrap().shape(id).unwrap().xfrm.unwrap();
+            assert!((resized.w - x.w - 16.0).abs() < 1e-8);
+            assert!((resized.h - x.h - 8.0).abs() < 1e-8);
+            s.execute("edit.undo", &json!({})).unwrap();
+
+            let frame = parent * x.affine() * Point::new(20.0, 0.0);
+            assert!(matches!(s.hit_test(frame, 1.0), Some(tools::Hit::Frame { id: hit }) if hit == id));
+            let end = frame + deckcraft_geom::Vec2::new(30.0, 15.0);
+            s.pointer(event(PointerKind::Down, frame)).unwrap();
+            s.pointer(event(PointerKind::Drag, end)).unwrap();
+            s.pointer(event(PointerKind::Up, end)).unwrap();
+            let moved = s.doc().unwrap().shape(id).unwrap().xfrm.unwrap();
+            let displacement = parent * moved.center() - parent * x.center();
+            assert!((displacement - deckcraft_geom::Vec2::new(30.0, 15.0)).hypot() < 1e-8);
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert_eq!(s.doc().unwrap().shape(id).unwrap().xfrm, Some(x));
+        }
+    }
+}
+
+/// Build a two-member transformed group and place its sibling either over the rendered caret
+/// or over that point only in the stale, untransformed child coordinates.
+fn grouped_text_sibling_case(
+    group: deckcraft_geom::Xfrm,
+    nested: bool,
+    covers_text: bool,
+) -> (Session, deckcraft_model::ShapeId, deckcraft_geom::Point) {
+    use deckcraft_geom::{Point, Xfrm};
+    use deckcraft_model::{ShapeId, ShapeKind};
+    let mut s = session();
+    let id = ShapeId(
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 20, 140, 60], "text": "Hello group"})).unwrap()["id"].as_u64().unwrap()
+            as u32,
+    );
+    let sibling = ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 200, 20, 20]})).unwrap()["id"].as_u64().unwrap() as u32);
+    s.edit(|doc, sel| {
+        let group_id = ShapeId(doc.alloc_id().unwrap());
+        let outer_id = ShapeId(doc.alloc_id().unwrap());
+        let shapes = crate::shapes_mut(doc, sel).unwrap();
+        let children = std::mem::take(shapes).into_iter().filter(|sh| sh.id == id || sh.id == sibling).collect();
+        let group = Shape {
+            id: group_id,
+            xfrm: Some(group),
+            kind: ShapeKind::Group { children, child: Xfrm::new(0.0, 0.0, 140.0, 60.0) },
+            ..Default::default()
+        };
+        shapes.push(if nested {
+            Shape {
+                id: outer_id,
+                xfrm: Some(Xfrm { rot: -12.0, ..Xfrm::new(100.0, 60.0, 450.0, 200.0) }),
+                kind: ShapeKind::Group { children: vec![group], child: Xfrm::new(250.0, 80.0, 350.0, 170.0) },
+                ..Default::default()
+            }
+        } else {
+            group
+        });
+        sel.shapes.clear();
+        sel.text = None;
+        Ok(())
+    })
+    .unwrap();
+    let placed = deckcraft_render::place_slide(&s.doc().unwrap().doc, 0);
+    let drawn = placed.texts.iter().find(|t| t.body.text() == "Hello group").unwrap();
+    let (cx, top, bot) = drawn.layout.caret_drawn(deckcraft_text::Pos { para: 0, ch: 3 }, deckcraft_text::Affinity::Downstream).unwrap();
+    let p = drawn.transform * Point::new(cx, (top + bot) / 2.0);
+    let parent = cmd::parent_transform(s.doc().unwrap(), id);
+    let q = if covers_text { parent.inverse() * p } else { p };
+    let bounds = Xfrm::new(q.x - 5.0, q.y - 5.0, 10.0, 10.0);
+    // Assert the fixture distinguishes the rendered sibling from its stale child-space box.
+    assert_eq!(bounds.bounds().contains(parent.inverse() * p), covers_text);
+    s.edit(|doc, sel| {
+        deckcraft_model::find_shape_mut(crate::shapes_mut(doc, sel).unwrap(), sibling).unwrap().xfrm = Some(bounds);
+        Ok(())
+    })
+    .unwrap();
+    s.execute("text.edit", &json!({"id": id.0, "at": [0, 0]})).unwrap();
+    (s, id, p)
+}
+
+/// An uncovered click must keep editing and place the caret at the rendered character, even
+/// when a sibling's old child-space rectangle happens to contain the slide-space click.
+#[test]
+fn grouped_text_click_ignores_stale_sibling_bounds() {
+    use deckcraft_geom::Xfrm;
+    for nested in [false, true] {
+        for (rot, flip_h, flip_v, scale) in [(0.0, false, false, 1.0), (27.0, false, false, 2.0), (15.0, true, false, 0.5), (0.0, false, true, 2.0)] {
+            let group = Xfrm { rot, flip_h, flip_v, ..Xfrm::new(300.0, 100.0, 140.0 * scale, 60.0 * scale) };
+            let (mut s, id, p) = grouped_text_sibling_case(group, nested, false);
+            for kind in [PointerKind::Down, PointerKind::Up] {
+                s.pointer(PointerEvent { kind, x: p.x, y: p.y, tol: 1.0, ..Default::default() }).unwrap();
+            }
+            let t = s.doc().unwrap().selection.text.as_ref();
+            assert_eq!(t.map(|t| t.shape), Some(id), "uncovered text stopped editing: nested={nested}, group={group:?}");
+            assert_eq!(t.unwrap().caret, (0, 3));
+        }
+    }
+}
+
+/// A sibling actually drawn over the edited text must intercept the click (#931), including
+/// after movement, scaling, rotation, reflection and nesting.
+#[test]
+fn grouped_text_click_respects_covering_sibling() {
+    use deckcraft_geom::Xfrm;
+    for nested in [false, true] {
+        for (rot, flip_h, flip_v, scale) in [(0.0, false, false, 1.0), (27.0, false, false, 2.0), (15.0, true, false, 0.5), (0.0, false, true, 2.0)] {
+            let group = Xfrm { rot, flip_h, flip_v, ..Xfrm::new(300.0, 100.0, 140.0 * scale, 60.0 * scale) };
+            let (mut s, id, p) = grouped_text_sibling_case(group, nested, true);
+            for kind in [PointerKind::Down, PointerKind::Up] {
+                s.pointer(PointerEvent { kind, x: p.x, y: p.y, tol: 1.0, ..Default::default() }).unwrap();
+            }
+            assert!(
+                s.doc().unwrap().selection.text.as_ref().is_none_or(|t| t.shape != id),
+                "covered text kept the caret: nested={nested}, group={group:?}"
+            );
+        }
+    }
+}
+
+/// The one-point click tolerance stays in slide units when a group shrinks or grows.
+#[test]
+fn grouped_text_sibling_hit_tolerance_scales_with_group() {
+    use deckcraft_geom::Xfrm;
+    for scale in [0.5, 2.0] {
+        for (gap, occluded) in [(0.75, true), (1.5, false)] {
+            let group = Xfrm::new(300.0, 100.0, 140.0 * scale, 60.0 * scale);
+            let (mut s, id, p) = grouped_text_sibling_case(group, false, true);
+            let q = cmd::parent_transform(s.doc().unwrap(), id).inverse() * p;
+            s.edit(|doc, sel| {
+                let shapes = crate::shapes_mut(doc, sel).unwrap();
+                let deckcraft_model::ShapeKind::Group { children, .. } = &mut shapes[0].kind else { panic!("expected group") };
+                let sibling = children.iter_mut().find(|sh| sh.id != id).unwrap();
+                sibling.xfrm = Some(Xfrm::new(q.x + gap / scale, q.y - 5.0, 10.0, 10.0));
+                Ok(())
+            })
+            .unwrap();
+            for kind in [PointerKind::Down, PointerKind::Up] {
+                s.pointer(PointerEvent { kind, x: p.x, y: p.y, tol: 1.0, ..Default::default() }).unwrap();
+            }
+            let editing = s.doc().unwrap().selection.text.as_ref().is_some_and(|t| t.shape == id);
+            assert_eq!(editing, !occluded, "scale={scale}, slide-space gap={gap}");
+        }
+    }
 }
 
 #[test]

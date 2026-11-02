@@ -1,4 +1,4 @@
-use super::hit::{EditZone, edit_zone, edited_box, shape_in_front, text_member_at, text_pos};
+use super::hit::{EditZone, edited_box, shape_in_front, text_member_at, text_pos};
 use super::{Drag, Hit, Point, Result, Session, ShapeId, ShapeKind, TextSel, ToolKind, Value, cmd, json, xfrm_of};
 
 impl Session {
@@ -73,8 +73,7 @@ impl Session {
         if let Some(t) = &st.selection.text
             && !t.notes
             && t.cell.is_none()
-            && let Some(sh) = st.shape(t.shape)
-            && xfrm_of(&st.doc, &st.selection, sh).bounds().inflate(tol, tol).contains(p)
+            && edited_box(st).is_some_and(|e| e.zone(p, tol) != EditZone::Outside)
         {
             return Ok(json!({"hit": {"kind": "text", "id": t.shape}, "selected": [t.shape], "editing": true}));
         }
@@ -135,7 +134,7 @@ impl Session {
         // A text box: in its own (rotated) frame, short of the band that moves it (`Hit::Frame`).
         // A table cell: anywhere over the table.
         let inside = match t.cell {
-            None => edited_box(st).is_some_and(|e| edit_zone(&e.xfrm, p, tol) != EditZone::Outside),
+            None => edited_box(st).is_some_and(|e| e.zone(p, tol) != EditZone::Outside),
             Some(_) => xfrm_of(&st.doc, &st.selection, sh).bounds().inflate(tol, tol).contains(p),
         };
         // A shape in front of the edited text takes the click, as in PowerPoint (#931).

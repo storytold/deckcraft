@@ -41,8 +41,9 @@ impl Session {
                     continue;
                 }
                 let x = xfrm_of(&st.doc, &st.selection, sh);
+                let parent = cmd::parent_transform(st, *id);
                 if sh.is_line() {
-                    let a = x.affine();
+                    let a = parent * x.affine();
                     for (end, q) in [(0u8, a * Point::new(0.0, 0.0)), (1u8, a * Point::new(x.w, x.h))] {
                         if (q - p).hypot() <= tol * 1.6 {
                             return Some(Hit::LineEnd { id: *id, end });
@@ -52,21 +53,21 @@ impl Session {
                 }
                 let geo = deckcraft_render::shape_geometry(sh, x.w, x.h);
                 for hd in &geo.handles {
-                    if (x.affine() * hd.pos - p).hypot() <= tol * 1.6 {
+                    if (parent * x.affine() * hd.pos - p).hypot() <= tol * 1.6 {
                         return Some(Hit::Adjust { id: *id, index: hd.index });
                     }
                 }
                 for hd in wordart_handles(&st.doc, &st.selection, sh, x.w, x.h) {
-                    if (x.affine() * hd.pos - p).hypot() <= tol * 1.6 {
+                    if (parent * x.affine() * hd.pos - p).hypot() <= tol * 1.6 {
                         return Some(Hit::Warp { id: *id, index: hd.index });
                     }
                 }
                 let (pts, rot) = box_handles(&x);
-                if (rot - p).hypot() <= tol * 1.8 && st.selection.text.is_none() {
+                if (parent * rot - p).hypot() <= tol * 1.8 && st.selection.text.is_none() {
                     return Some(Hit::Rotate { id: *id });
                 }
                 for (i, q) in pts.iter().enumerate() {
-                    if (*q - p).hypot() <= tol * 1.6 {
+                    if (parent * *q - p).hypot() <= tol * 1.6 {
                         return Some(Hit::Resize { id: *id, handle: i as u8 });
                     }
                 }
@@ -76,7 +77,7 @@ impl Session {
         // of the text covers that spot (#931).
         if let Some(e) = edited_box(st)
             && e.movable
-            && edit_zone(&e.xfrm, p, tol) == EditZone::Frame
+            && e.zone(p, tol) == EditZone::Frame
             && !shape_in_front(st, st.shapes(), e.id, p, tol, 0)
         {
             return Some(Hit::Frame { id: e.id });
@@ -220,6 +221,7 @@ impl Session {
         }
     }
 
+    /// Start a gesture at a slide-space point, converting grouped resize and rotation origins.
     fn down(&mut self, p: Point, mods: Mods, tol: f64) -> Result<Value> {
         if let Some(Drag::Freeform { mode, mut points, .. }) = self.tool.drag.clone() {
             // Next click of a freeform: close on the start point, else add a vertex.
@@ -304,7 +306,8 @@ impl Session {
             Some(Hit::Resize { id, handle }) => {
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
                 self.begin("Size");
-                self.tool.drag = Some(Drag::Resize { id, handle, orig, start: p });
+                let start = cmd::parent_transform(self.doc()?, id).inverse() * p;
+                self.tool.drag = Some(Drag::Resize { id, handle, orig, start });
             }
             Some(Hit::LineEnd { id, end }) => {
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
@@ -315,7 +318,8 @@ impl Session {
                 let ids: Vec<ShapeId> = if st.selection.shapes.contains(&id) { st.selection.shapes.clone() } else { vec![id] };
                 let origs: Vec<(ShapeId, Xfrm)> = ids.iter().filter_map(|i| st.shape(*i).map(|s| (*i, xfrm_of(&st.doc, &st.selection, s)))).collect();
                 let center = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s).center()).unwrap_or(p);
-                let start = (p.y - center.y).atan2(p.x - center.x);
+                let local = cmd::parent_transform(st, id).inverse() * p;
+                let start = (local.y - center.y).atan2(local.x - center.x);
                 self.begin("Rotate");
                 self.tool.drag = Some(Drag::Rotate { ids, center, start, origs });
             }
