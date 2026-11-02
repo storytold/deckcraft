@@ -6595,6 +6595,30 @@ fn table_insert_column_with_keep_width_keeps_the_table_width_and_copies_the_neig
     assert!((x.w - 840.0).abs() < 1e-6, "frame {}", x.w);
 }
 
+/// A table near the slide's right edge, with no room for another column: by default an inserted
+/// column widens it past the edge, as PowerPoint's Insert Right does (the frame keeps its left and
+/// grows), and `keepWidth: true` keeps it on the slide.
+#[test]
+fn table_insert_column_near_the_slide_edge_grows_past_it_unless_it_keeps_its_width() {
+    let mut s = session();
+    let id = table_at(&mut s, &[280.0, 280.0, 280.0], json!([["a", "b", "c"]]));
+    let slide_w = s.doc().unwrap().doc.slide_size.width;
+    let frame = |s: &Session| s.doc().unwrap().shape(id).unwrap().xfrm.unwrap();
+    let before = frame(&s);
+    assert!(before.x + before.w <= slide_w && before.x + before.w + 280.0 > slide_w, "another column won't fit: {before:?}");
+    s.execute("table.insertColumnRight", &json!({"id": id.0, "col": 2})).unwrap();
+    assert_eq!(table_of(&s, id).n_cols(), 4);
+    let grown = frame(&s);
+    assert!((grown.x - before.x).abs() < 1e-6 && (grown.w - 1120.0).abs() < 1e-6, "{grown:?}");
+    assert!(grown.x + grown.w > slide_w, "past the edge");
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("table.insertColumnRight", &json!({"id": id.0, "col": 2, "keepWidth": true})).unwrap();
+    let kept = frame(&s);
+    assert_eq!(table_of(&s, id).n_cols(), 4);
+    assert!((kept.x - before.x).abs() < 1e-6 && (kept.w - before.w).abs() < 1e-6, "{kept:?}");
+    assert!(kept.x + kept.w <= slide_w, "still on the slide");
+}
+
 /// PowerPoint inserts a column as wide as its neighbour and widens the table by that amount; the
 /// other widths stay. Deleting a column narrows the table by its width, the others untouched.
 #[test]
