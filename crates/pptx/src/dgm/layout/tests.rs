@@ -34,10 +34,17 @@ fn nested_composite_constraints_and_conditional_data_mapping() {
     assert_eq!(placed.len(), 4);
     let detail = placed.iter().find(|p| p.name == "detail").unwrap();
     assert_eq!(detail.points.len(), 2);
-    assert_eq!(detail.rect, Xfrm::new(0.0, 75.0, 200.0, 225.0));
     assert!(placed.iter().all(|p| p.font == Some(16.0)));
     let titles: Vec<_> = placed.iter().filter(|p| p.name == "title").collect();
-    assert_eq!(titles.iter().map(|p| p.rect.x).collect::<Vec<_>>(), [0.0, 200.0, 400.0]);
+    // Mapping and fractional child dimensions are independent of the flow's
+    // intrinsic size and finite fit; do not assume that it fills the whole frame.
+    assert!((detail.rect.h - 75. * 72. / 25.4).abs() < 1e-6);
+    assert!((detail.rect.y - titles[0].rect.y - 25. * 72. / 25.4).abs() < 1e-6);
+    assert_eq!(detail.rect.w, titles[0].rect.w);
+    for pair in titles.windows(2) {
+        assert!((pair[1].rect.x - pair[0].rect.x - pair[0].rect.w).abs() < 1e-6);
+    }
+    assert!((titles[0].rect.x + titles[2].rect.x + titles[2].rect.w - 600.).abs() < 1e-6);
     assert_eq!(titles[2].points[0].attr("modelId"), Some("c"));
 }
 
@@ -131,7 +138,9 @@ fn transition_connectors_attach_to_the_correct_nodes() {
     let out = evaluate(&l, &d, frame()).unwrap();
     assert_eq!(out.len(), 3);
     assert!(out[0].connector);
-    assert_eq!(out[0].rect, Xfrm::new(240.0, 150.0, 120.0, 0.0));
+    let a = out.iter().find(|p| p.points.iter().any(|pt| pt.attr("modelId") == Some("a"))).unwrap();
+    let b = out.iter().find(|p| p.points.iter().any(|pt| pt.attr("modelId") == Some("b"))).unwrap();
+    assert_eq!(out[0].rect, Xfrm::new(a.rect.x + a.rect.w, a.rect.y + a.rect.h / 2., b.rect.x - a.rect.x - a.rect.w, 0.));
 }
 
 #[test]
@@ -161,15 +170,18 @@ fn snake_respects_breakpoint_flow_growth_and_alternation() {
 }
 
 #[test]
-fn absolute_spacing_survives_linear_pack() {
+fn a_self_spacing_property_does_not_insert_linear_spacers() {
     let d = source();
-    let l = layout(
-        r#"<layoutNode><alg type="lin"/><constrLst><constr type="sp" val="25.4"/></constrLst>
-    <forEach axis="ch" ptType="node"><layoutNode><presOf axis="self"/><alg type="tx"/><shape type="rect"/></layoutNode></forEach></layoutNode>"#,
-    );
-    let p = evaluate(&l, &d, frame()).unwrap();
-    assert_eq!(p[1].rect.x - p[0].rect.x - p[0].rect.w, 72.0);
-    assert_eq!(p[2].rect.x + p[2].rect.w, 600.0);
+    for property in ["sp", "sibSp"] {
+        let l = layout(&format!(
+            r#"<layoutNode><alg type="lin"/><constrLst><constr type="{property}" val="25.4"/></constrLst>
+            <forEach axis="ch" ptType="node"><layoutNode><presOf axis="self"/><alg type="tx"/><shape type="rect"/></layoutNode></forEach></layoutNode>"#,
+        ));
+        let p = evaluate(&l, &d, frame()).unwrap();
+        assert!((p[1].rect.x - p[0].rect.x - p[0].rect.w).abs() < 1e-6);
+        assert!((p[2].rect.x - p[1].rect.x - p[1].rect.w).abs() < 1e-6);
+        assert!((p[0].rect.x + p[2].rect.x + p[2].rect.w - 600.).abs() < 1e-6);
+    }
 }
 
 #[test]
@@ -644,7 +656,7 @@ fn local_text_edges_do_not_constrain_independent_size_rules() {
 fn composite_coordinates_belong_to_the_parent_and_flow_algorithms_replace_them() {
     let data = source();
     let unit = 72. / 25.4;
-    for (parent, local, separation) in [("composite", true, 0.), ("composite", false, 110.), ("lin", false, 40.)] {
+    for (parent, local, separation) in [("composite", true, 0.), ("composite", false, 110.), ("lin", false, 39.9609375)] {
         let mut nodes = String::new();
         let mut constraints = String::new();
         for (name, left) in [("first", 10), ("second", 120)] {
@@ -972,12 +984,14 @@ fn constrained_cycle_starts_at_twelve_oclock_and_centres_partial_arc() {
 #[test]
 fn linear_container_fits_both_axes_without_scaling_the_font() {
     let data = source();
+    let mm = 72. / 25.4;
+    // Independent native controls measure the finite fit in each direction.
     for (dir, count, w, h, expected_w, expected_h) in [
-        ("fromL", 1, 80., 160., 80. * 72. / 25.4, 324.),
-        ("fromR", 1, 500., 40., 768., 40. * 72. / 25.4),
-        ("fromL", 3, 150., 160., 256., 324.),
-        ("fromT", 3, 500., 60., 768., 108.),
-        ("fromB", 3, 500., 60., 768., 108.),
+        ("fromL", 1, 80., 160., 79.921875 * mm, 324.),
+        ("fromR", 1, 500., 40., 270.5078125 * mm, 40. * mm),
+        ("fromL", 3, 150., 160., 90.234375 * mm, 324.),
+        ("fromT", 3, 500., 60., 768., 38.0859375 * mm),
+        ("fromB", 3, 500., 60., 768., 38.0859375 * mm),
     ] {
         let l = layout(&format!(
             r#"<layoutNode><alg type="lin"><param type="linDir" val="{dir}"/></alg>
@@ -1469,5 +1483,62 @@ fn late_unnamed_size_does_not_rebind_a_factor_rule() {
         let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
         assert!((out[0].rect.w - 15. * mm).abs() < 1e-4);
         assert!((out[1].rect.w - 20. * mm).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn intrinsic_flow_sizes_do_not_scale_with_later_parent_allocations() {
+    let mm = 72. / 25.4;
+    for alg in ["lin", "cycle"] {
+        for (width, height) in [(20., 60.), (80., 30.), (200., 120.)] {
+            for own in [false, true] {
+                let source = source();
+                let data = Data::new(&source).unwrap();
+                let explicit = if own { "<constrLst><constr type='w' val='5'/><constr type='h' val='10'/></constrLst>" } else { "" };
+                let l = layout(&format!(
+                    "<layoutNode><alg type='composite'/><constrLst>
+                    <constr type='w' for='ch' forName='flow' val='{width}'/>
+                    <constr type='h' for='ch' forName='flow' val='{height}'/></constrLst>
+                    <layoutNode name='flow'><alg type='{alg}'/>
+                    <layoutNode name='card'><alg type='tx'/><shape type='rect'/>{explicit}</layoutNode>
+                    </layoutNode></layoutNode>"
+                ));
+                let context = Context { point: data.root, position: 1, count: 1, vars: HashMap::new() };
+                let mut compiler = Compiler { data, refs: HashMap::new(), instances: 0, work: 0 };
+                let tree = compiler.node(l.child("layoutNode").unwrap(), context, 0).unwrap();
+                let solution = constraints::resolve(&tree, frame(), &compiler.data, &mut 0).unwrap();
+                let rect = constraints::lookup(&solution, &tree.children[0].children[0]).unwrap().rect;
+                assert!((rect.w - if own { 5. } else { 100. } * mm).abs() < 1e-6, "{alg}/{width}/{height}: {rect:?}");
+                assert!((rect.h - if own { 10. } else { 100. } * mm).abs() < 1e-6, "{alg}/{width}/{height}: {rect:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn linear_fitting_matches_native_normalized_search_in_both_axes() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for (width, height, horizontal, vertical) in [
+        (40., 30., 15.99609375, 8.564453125),
+        (80., 60., 31.9921875, 17.12890625),
+        (200., 120., 39.9609375, 34.2578125),
+        (270.933333333, 114.3, 39.9609375, 32.65625),
+    ] {
+        for dir in ["fromL", "fromR", "fromT", "fromB"] {
+            let l = layout(&format!(
+                "<layoutNode><alg type='lin'><param type='linDir' val='{dir}'/></alg><constrLst>
+                <constr type='w' for='ch' forName='a' val='40'/><constr type='h' for='ch' forName='a' val='40'/>
+                <constr type='w' for='ch' forName='b' val='40'/><constr type='h' for='ch' forName='b' val='40'/>
+                <constr type='w' for='ch' forName='c' val='20'/><constr type='h' for='ch' forName='c' val='60'/></constrLst>
+                <layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode>
+                <layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode>
+                <layoutNode name='c'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
+            ));
+            let out = evaluate(&l, &data, Xfrm::new(0., 0., width * mm, height * mm)).unwrap();
+            let along = if matches!(dir, "fromL" | "fromR") { out[0].rect.w } else { out[0].rect.h };
+            let expected = if matches!(dir, "fromL" | "fromR") { horizontal } else { vertical };
+            assert!((along - expected * mm).abs() < 1e-6, "{dir}/{width}/{height}: {along}");
+        }
     }
 }

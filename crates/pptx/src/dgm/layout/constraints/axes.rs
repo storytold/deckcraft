@@ -15,6 +15,12 @@ fn default(entries: &[Entry<'_, '_>], i: usize, property: &str, size: &str) -> R
     let mut row = Row::default();
     row.add((i, property.into()), 1.);
     if let Some(parent) = entry.parent {
+        if property == size && matches!(entries[parent].node.alg.as_str(), "lin" | "cycle") {
+            // Flow nodes start with intrinsic dimensions, independent of the
+            // allocated container. Packing applies the eventual fit afterwards.
+            row.value = value;
+            return row;
+        }
         let parent_value = entries[parent].style.get(size).unwrap_or(0.);
         let ratio = if parent_value.abs() > 1e-9 { value / parent_value } else { 0. };
         row.add((parent, size.into()), -ratio);

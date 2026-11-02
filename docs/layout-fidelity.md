@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.29): SmartArt child-constraint priority and size-bound policy,
+Updated 2026-11-02 (PPTX.30): intrinsic SmartArt flow sizing and finite linear fitting,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1402,3 +1402,60 @@ values agree. Early unnamed declarations followed by named assignments have addi
 fallback behavior. These policies, descendant defaults, full rule/search and cyclic fonts
 remain incomplete. Geographic provider context, simplification/quantization, and rich-label
 overflow/collision remain open; complete LibreOffice replacement is not established.
+
+
+## Intrinsic flow sizing and finite linear fit (PPTX.30)
+
+Unconstrained children of linear and cycle layouts now begin with intrinsic 100 mm
+width/height instead of inheriting an equal share of a later parent allocation. Explicit
+child dimensions still participate in constraint resolution before placement. This policy
+is not generalized to hierarchy/snake layouts, whose packing remains different.
+
+For root linear layouts, a bounded normalized ten-trial search reproduces the observed
+finite scale across four directions, several frame sizes and one to three children. It
+models measured outputs; it is not a claim about PowerPoint's implementation. Cross-axis
+fitting stays independent of primary-axis scaling, and font sizes are not geometrically
+scaled. Bare self `sp` and `sibSp` properties do not insert gaps: a spacer is a participating
+child allocation. Repacking already painted composite bounds does not apply another root
+allocation search.
+
+Validation:
+
+- A new 111-case original native matrix covers missing/self sizes, four layout algorithms,
+  four flow directions, parent sizes, nested flow and extreme dimensions. Strict matches
+  improve from 12 to 47 at 0.025pt model-inspection tolerance, with no earlier match lost.
+  Breakdown: default-size controls 11/48, direction/fit controls 22/38, nested controls
+  9/20, and five extreme linear controls 5/5. The other 64 remain failures, including
+  large hierarchy/nested differences; all 111 native/direct font-size sets agree.
+- Twelve independent spacing controls vary one/two/three children, `sp`/`sibSp`, and
+  zero/nonzero values. Native geometry is invariant within each group, and all 12 direct
+  geometries match. Two new tests cover 28 intrinsic-allocation and direction/frame
+  variants. Existing spacing and geometry assertions were updated from exact-fill
+  assumptions using independent native controls. The abstract conditional-mapping unit
+  checks interpreter associations/fractions only: its corresponding native probe is blank
+  and is explicitly not native-layout parity evidence.
+- All 38 direction/fit controls, five extreme linear controls and one text-growth control
+  pass visible coloured bounds within 0.5pt at 4K. This is weaker than the strict geometry
+  test and does not certify whole-slide equality. The text-growth control retains about
+  0.22pt width error from combined rule-endpoint/flow fitting. A separate nested-composite
+  control shows approximately 135pt direct versus 121.38pt native card widths and remains
+  an explicit failure. Representative native/direct raster pairs were visually inspected.
+- The prior 129-case matrix improves from 46 to 64 matches, retaining 36 failures and
+  29 native-fallback exclusions. Earlier matrices remain at 176/176, 207/216 (nine native
+  exclusions), 93/94 (one exclusion), 155/186 (19 failures and 12 exclusions), and 73/73
+  overflow geometries. None of the previously matched cases in these matrices regresses.
+- Of 154 prior 2px/pt direct PNGs, 151 are pixel-identical to the preceding executable.
+  Three linear-rule controls have subpixel changes; their measured coloured bounds and
+  font sizes are unchanged. All 154 font-size sets remain equal to native. The three
+  before/after/native raster comparisons were inspected; this is not a pixel-equality
+  claim for those cases.
+- Full `cargo xtask ci` passes all eight stages and 2,457 tests including doctests; the
+  21 diagram import/round-trip tests pass. Input hashes bind native receipts to original
+  synthetic sources. One malformed experimental namespace triggered a repair dialog;
+  it was rejected, not repaired or counted. Corrected controls were exported separately.
+
+Remaining flow gaps include nested linear cross-axis extent, repeated parent/child
+allocation, cycle radius/scale precision, hierarchy/snake fitting, and rule-endpoint
+quantization. Native duplicate-definition fallback, descendant selectors, full text-driven
+search, cyclic fonts, geographic provider context/boundary simplification and rich-label
+overflow/collision remain partial. No complete LibreOffice replacement is established.

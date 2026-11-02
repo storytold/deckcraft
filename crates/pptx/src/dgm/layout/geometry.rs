@@ -275,7 +275,7 @@ fn place_inner<'a>(
         .collect();
     // Linear placement uses the constrained sizes, including invisible spacing nodes.
     if matches!(node.alg.as_str(), "lin" | "hierChild") {
-        pack_linear(node, local, &mut children);
+        pack_linear(node, local, &mut children, depth == 0);
     } else if node.alg == "cycle" {
         pack_cycle(node, local, &mut children, work)?;
     }
@@ -411,7 +411,8 @@ fn pack_composite_extents(
         }
         if changed {
             let mut packed = occupied.clone();
-            pack_linear(node, local, &mut packed);
+            // These are already painted extents, not another allocation trial.
+            pack_linear(node, local, &mut packed, false);
             for ((before, after), range) in occupied.iter().zip(&packed).zip(ranges.iter().cloned()) {
                 for p in out.get_mut(range).unwrap_or(&mut []) {
                     p.rect.x += after.rect.x - before.rect.x;
@@ -467,9 +468,9 @@ pub(super) fn initial(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
     let default_dir = if node.alg == "hierChild" && node.param("chDir", "horz") == "vert" { "fromT" } else { "fromL" };
     let dir = node.param("linDir", default_dir);
     let vertical = matches!(dir.as_str(), "fromT" | "fromB");
-    let gap = if node.alg == "composite" { 0.0 } else { style.get("sp").or(style.get("sibSp")).unwrap_or(0.0).max(0.0) };
+    let gap = if matches!(node.alg.as_str(), "composite" | "lin") { 0.0 } else { style.get("sp").or(style.get("sibSp")).unwrap_or(0.0).max(0.0) };
     let (w, h) = if vertical { (r.w, ((r.h - gap * (n - 1.0)) / n).max(0.0)) } else { (((r.w - gap * (n - 1.0)) / n).max(0.0), r.h) };
-    match node.alg.as_str() {
+    let mut rectangles: Vec<Xfrm> = match node.alg.as_str() {
         "lin" | "hierChild" => (0..count)
             .map(|i| {
                 Xfrm::new(r.x + if vertical { 0.0 } else { i as f64 * (w + gap) }, r.y + if vertical { i as f64 * (h + gap) } else { 0.0 }, w, h)
@@ -535,7 +536,14 @@ pub(super) fn initial(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
             .collect(),
         "hierRoot" => hierarchy(node, style),
         _ => vec![r; count],
+    };
+    if matches!(node.alg.as_str(), "lin" | "cycle") {
+        for rect in &mut rectangles {
+            rect.w = 100. * 72. / 25.4;
+            rect.h = 100. * 72. / 25.4;
+        }
     }
+    rectangles
 }
 
 // Cycle angles start at twelve o'clock and turn clockwise (ECMA-376 ST_ParameterId).
@@ -612,17 +620,25 @@ fn pack_cycle(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], w
     Ok(())
 }
 
-fn pack_linear(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle]) {
+fn pack_linear(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], root: bool) {
     let r = style.rect;
     let default_dir = if node.alg == "hierChild" && node.param("chDir", "horz") == "vert" { "fromT" } else { "fromL" };
     let dir = node.param("linDir", default_dir);
     let vertical = matches!(dir.as_str(), "fromT" | "fromB");
     let backwards = matches!(dir.as_str(), "fromR" | "fromB");
-    let gap = style.get("sp").or(style.get("sibSp")).unwrap_or(0.0).max(0.0);
+    // A linear spacer participates as a child allocation. A bare self `sp`
+    // property does not insert additional gaps between the children.
+    let gap = if node.alg == "lin" { 0.0 } else { style.get("sp").or(style.get("sibSp")).unwrap_or(0.0).max(0.0) };
     let gaps = gap * children.len().saturating_sub(1) as f64;
     let sum: f64 = children.iter().map(|b| if vertical { b.rect.h } else { b.rect.w }).sum();
     let available = if vertical { r.h } else { r.w };
-    let scale = if sum + gaps > available { available / (sum + gaps).max(0.01) } else { 1.0 };
+    let scale = if root && node.alg == "lin" {
+        flow_fit_scale(sum + gaps, available)
+    } else if sum + gaps > available {
+        available / (sum + gaps).max(0.01)
+    } else {
+        1.0
+    };
     let align = node.param(if vertical { "vertAlign" } else { "horzAlign" }, "ctr");
     let mut pos = if align == "ctr" {
         (available - (sum + gaps) * scale) / 2.0
@@ -647,6 +663,30 @@ fn pack_linear(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle]) 
             pos += b.w + gap * scale;
         }
     }
+}
+
+/// Reproduce the observed finite linear fit with a normalized ten-trial search.
+/// Normalizing the bracket preserves relative precision for very small scales.
+fn flow_fit_scale(occupied: f64, available: f64) -> f64 {
+    if occupied <= 0. || available <= 0. {
+        return if available > 0. { 1. } else { 0. };
+    }
+    let (mut low, mut high) = (0., 1.);
+    for _ in 0..64 {
+        if occupied * high * 0.5 <= available {
+            break;
+        }
+        high *= 0.5;
+    }
+    for _ in 0..10 {
+        let mid = (low + high) / 2.;
+        if occupied * mid <= available {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    low
 }
 
 /// Resolve transition identities after all node bounds are known. Connectors are kept behind

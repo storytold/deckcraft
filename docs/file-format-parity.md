@@ -1,5 +1,7 @@
 # File-format parity with PowerPoint
 
+> **PPTX.30 update 2026-11-02:** Intrinsic linear/cycle dimensions no longer inherit later container allocation; root linear fitting reproduces measured finite scaling and bare spacing properties no longer add gaps. A new 111-case matrix improves from 12 to 47 strict geometry matches; the prior 129-case matrix improves from 46 to 64. Nested packing and cyclic precision remain incomplete. Scores are unchanged.
+
 > **PPTX.29 update 2026-11-02:** Late unnamed child constraints retain existing allocations; size inequalities no longer allocate geometry or cap tested size-rule growth. A new 129-case matrix improves from nine to 46 geometry matches, with 54 flow/default-size differences and 29 native-fallback cases kept explicit. Forty paired bounds controls preserve native invariance. Scores are unchanged.
 
 > **PPTX.28 update 2026-11-01:** Child-bearing space containers centre their occupied children without resizing them; ancestor self-size defaults retain their allocation role, and nested linear layouts accept ancestor sizes. The prior 216-case matrix now has 207 matches and nine native-fallback exclusions. A new 94-case matrix improves from 44 to 93 matches, with one native fallback excluded. Scores are unchanged.
@@ -165,6 +167,7 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.30 reproduces intrinsic flow sizes and root-linear finite fitting; native geometry/raster regressions retain nested packing, cyclic precision and rule-endpoint gaps |
 | 2026-11-02 | minor | PPTX.29 preserves existing child allocations and separates size bounds from affine inequalities; 46 new geometry matches, 40 bounds-invariance controls, and explicit flow/fallback limits |
 | 2026-11-01 | minor | PPTX.28 resolves tested space-container and ancestor-default cases; 207 prior and 93 new intended-layout controls match native geometry, with remaining selector/flow/fallback limits explicit |
 | 2026-11-01 | minor | PPTX.27 distinguishes parent allocation from self-size fallback; 176 prior controls and 195 new core controls match native geometry; ancestor-default and space-placement gaps remain |
