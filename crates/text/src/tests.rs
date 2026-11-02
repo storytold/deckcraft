@@ -1417,6 +1417,18 @@ fn tab_stops_align_the_text_after_them() {
 }
 
 #[test]
+fn an_aligned_tab_stop_past_the_right_edge_aligns_at_the_edge() {
+    // PowerPoint treats a right stop beyond the text area as a stop at its edge (#1663):
+    // "\tCorrie Ten Boom" with a right stop 22.35 pt past the edge sits on one line,
+    // right-aligned at the margin.
+    let edge = tabbed("x", &[], 600.0);
+    let edge = edge.inner.x1 - edge.inner.x0;
+    let l = tabbed("\tCorrie Ten Boom", &[(edge + 22.35, "r")], 600.0);
+    assert_eq!(l.lines.len(), 1, "{:?}", l.lines.iter().map(|x| (x.start, x.end, x.extent)).collect::<Vec<_>>());
+    assert!((l.lines[0].extent.1 - l.inner.x1).abs() < 0.01, "{:?} vs {}", l.lines[0].extent, l.inner.x1);
+}
+
+#[test]
 fn a_tab_past_the_end_moves_to_the_next_line() {
     // PowerPoint: "abcdefghij\tk\tl\tm…" in a narrow box puts the tab that doesn't fit on the next
     // line, so the text after it lands on that line's first stop.

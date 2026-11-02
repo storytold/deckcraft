@@ -299,7 +299,7 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
     let bullet_w = p.bullet.as_ref().map(|(s, st)| measure_str(&st.face, st.size, s).0).unwrap_or(0.0);
     let first_x = first_line_start(p.bullet.is_some(), margin, indent, bullet_w);
     let rest_x = margin;
-    let tabs = tabs_of(props);
+    let tabs = tabs_of(props, (g.col_w - mr).max(0.0));
     let first_w = (g.col_w - first_x - mr).max(1.0);
     let rest_w = (g.col_w - rest_x - mr).max(1.0);
     let raw = break_lines(
