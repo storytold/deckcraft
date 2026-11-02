@@ -1,7 +1,7 @@
 //! Chart parts: a `c:chartSpace` with cached categories and values.
 //! An unchanged chart also keeps the embedded workbook and the other parts it points at.
 
-use deckcraft_model::chart::{Chart, ChartType, ErrorBars, Series, Trendline, TrendlineType};
+use deckcraft_model::chart::{Chart, ChartLayout, ChartLineRole, ChartTextRole, ChartType, ErrorBars, Series, Trendline, TrendlineType};
 use deckcraft_model::style::Fill;
 
 use crate::opc::{NS_A, NS_C, NS_R};
@@ -40,95 +40,143 @@ fn simple_fill(w: &mut W, f: &Fill) {
             w.close("a:bgClr");
             w.close("a:pattFill");
         }
-        Fill::Gradient(_) | Fill::Picture(_) | Fill::Group | Fill::Background => {
-            if let Fill::Gradient(g) = f
-                && let Some(s) = g.stops.first()
-            {
-                super::dml::solid(w, &s.color);
-            }
-        }
+        Fill::Gradient(g) => super::dml::gradient(w, g),
+        Fill::Picture(_) | Fill::Group | Fill::Background => {}
     }
 }
 
 fn sp_pr(w: &mut W, fill: Option<&Fill>, line: Option<&deckcraft_model::Line>) {
+    sp_pr_tag(w, fill, line, "c:spPr");
+}
+
+pub(super) fn sp_pr_tag(w: &mut W, fill: Option<&Fill>, line: Option<&deckcraft_model::Line>, tag: &str) {
     if fill.is_none() && line.is_none() {
         return;
     }
-    w.open0("c:spPr");
+    w.open0(tag);
     if let Some(f) = fill {
         simple_fill(w, f);
     }
     if let Some(l) = line {
-        w.open("a:ln", A::new().o("w", l.width.map(super::dml::emu_pos)));
-        if let Some(f) = &l.fill {
-            simple_fill(w, f);
-        }
-        w.close("a:ln");
+        super::dml::line_with_fill(w, "a:ln", l, simple_fill);
     }
-    w.close("c:spPr");
+    w.close(tag);
 }
 
-/// `a:defRPr` carrying the chart's text colour, where PowerPoint keeps it: the paragraph
-/// defaults of a title's rich text and of every `c:txPr`.
-fn def_rpr(w: &mut W, color: Option<&deckcraft_model::ColorRef>) {
-    match color {
-        Some(c) => {
-            w.open0("a:defRPr");
-            super::dml::solid(w, c);
-            w.close("a:defRPr");
-        }
-        None => w.empty0("a:defRPr"),
+pub(super) fn layout(w: &mut W, layout: Option<&ChartLayout>, plot: bool) {
+    let Some(l) = layout else { return };
+    w.open0("c:layout");
+    w.open0("c:manualLayout");
+    if plot {
+        w.val("c:layoutTarget", if l.inner { "inner" } else { "outer" });
     }
+    for (name, edge) in [("c:xMode", l.x_edge), ("c:yMode", l.y_edge), ("c:wMode", l.w_edge), ("c:hMode", l.h_edge)] {
+        w.val(name, if edge { "edge" } else { "factor" });
+    }
+    for (name, value) in [("c:x", l.x), ("c:y", l.y), ("c:w", l.w), ("c:h", l.h)] {
+        if let Some(value) = value.filter(|v| v.is_finite() && v.abs() <= 1.0) {
+            w.val(name, fmt_num(value));
+        }
+    }
+    w.close("c:manualLayout");
+    w.close("c:layout");
 }
 
-/// `c:txPr` with the chart's text colour (`Chart::text_color`) as the default run properties, on
-/// the axes, the legend, the data labels and the chart itself, as PowerPoint writes it. Nothing
-/// without a colour: the theme's default then applies on reading.
-fn tx_pr(w: &mut W, c: &Chart) {
-    let Some(color) = &c.text_color else { return };
-    w.open0("c:txPr");
-    w.empty0("a:bodyPr");
+/// The supported text properties, shared by rich title runs and label defaults.
+pub(super) fn chart_rpr(w: &mut W, tag: &str, p: &deckcraft_model::text::RunProps) {
+    w.open(
+        tag,
+        A::new()
+            .o("sz", p.size.filter(|s| s.is_finite()).map(|s| (s.clamp(1.0, 4000.0) * 100.0).round() as i64))
+            .o("b", p.bold.map(u8::from))
+            .o("i", p.italic.map(u8::from))
+            .o("u", p.underline.as_deref())
+            .o(
+                "strike",
+                p.strike.map(|v| match v {
+                    deckcraft_model::text::Strike::None => "noStrike",
+                    deckcraft_model::text::Strike::Single => "sngStrike",
+                    deckcraft_model::text::Strike::Double => "dblStrike",
+                }),
+            )
+            .o(
+                "cap",
+                p.caps.map(|v| match v {
+                    deckcraft_model::text::Caps::None => "none",
+                    deckcraft_model::text::Caps::Small => "small",
+                    deckcraft_model::text::Caps::All => "all",
+                }),
+            )
+            .o("kern", p.kern.filter(|v| v.is_finite()).map(|v| (v.clamp(0., 4000.) * 100.).round() as i64))
+            .o("noProof", p.no_proof.map(u8::from))
+            .o("baseline", p.baseline.filter(|n| n.is_finite()).map(|n| (n.clamp(-10., 10.) * 100000.).round() as i64))
+            .o("spc", p.spacing.filter(|n| n.is_finite()).map(|n| (n.clamp(-4000., 4000.) * 100.).round() as i64))
+            .o("lang", p.lang.as_deref()),
+    );
+    if let Some(fill) = &p.fill {
+        simple_fill(w, fill);
+    }
+    if let Some(color) = &p.highlight {
+        w.open0("a:highlight");
+        super::dml::color(w, color);
+        w.close("a:highlight");
+    }
+    if let Some(color) = &p.underline_color {
+        w.open0("a:uFill");
+        w.open0("a:solidFill");
+        super::dml::color(w, color);
+        w.close("a:solidFill");
+        w.close("a:uFill");
+    }
+    for (tag, family) in [("a:latin", &p.font), ("a:ea", &p.font_ea), ("a:cs", &p.font_cs), ("a:sym", &p.font_sym)] {
+        if let Some(family) = family {
+            w.empty(tag, A::new().a("typeface", family));
+        }
+    }
+    w.close(tag);
+}
+
+fn tx_pr(w: &mut W, c: &Chart, role: ChartTextRole) {
+    tx_pr_tag(w, c, role, "c:txPr");
+}
+
+fn tx_pr_tag(w: &mut W, c: &Chart, role: ChartTextRole, tag: &str) {
+    let props = c.text_props(role);
+    if props == deckcraft_model::text::RunProps::default() && !c.format.bodies.contains_key(&role) {
+        return;
+    }
+    w.open0(tag);
+    super::dml::body_pr(w, &c.format.bodies.get(&role).cloned().unwrap_or_default());
     w.empty0("a:lstStyle");
     w.open0("a:p");
     w.open0("a:pPr");
-    def_rpr(w, Some(color));
+    chart_rpr(w, "a:defRPr", &props);
     w.close("a:pPr");
-    w.empty("a:endParaRPr", A::new().a("lang", "en-US"));
     w.close("a:p");
-    w.close("c:txPr");
+    w.close(tag);
 }
 
-fn rich(w: &mut W, text: &str, color: Option<&deckcraft_model::ColorRef>) {
+fn title(w: &mut W, text: &str, c: &Chart, role: ChartTextRole) {
+    w.open0("c:title");
     w.open0("c:tx");
     w.open0("c:rich");
-    w.empty0("a:bodyPr");
+    super::dml::body_pr(w, &c.format.bodies.get(&role).cloned().unwrap_or_default());
     w.empty0("a:lstStyle");
+    let props = c.text_props(role);
     for line in text.split('\n') {
         w.open0("a:p");
-        if color.is_some() {
-            w.open0("a:pPr");
-            def_rpr(w, color);
-            w.close("a:pPr");
-        }
+        w.open0("a:pPr");
+        chart_rpr(w, "a:defRPr", &props);
+        w.close("a:pPr");
         w.open0("a:r");
-        if let Some(c) = color {
-            w.open("a:rPr", A::new().a("lang", "en-US"));
-            super::dml::solid(w, c);
-            w.close("a:rPr");
-        }
         w.elt("a:t", line);
         w.close("a:r");
         w.close("a:p");
     }
     w.close("c:rich");
     w.close("c:tx");
-}
-
-/// A title (the chart's or an axis's) in the chart's text colour.
-fn title(w: &mut W, text: &str, c: &Chart) {
-    w.open0("c:title");
-    rich(w, text, c.text_color.as_ref());
-    w.val("c:overlay", 0);
+    layout(w, c.format.layouts.get(&role), false);
+    w.val("c:overlay", u8::from(role == ChartTextRole::Title && c.format.title_overlay));
     w.close("c:title");
 }
 
@@ -229,7 +277,7 @@ fn error_bars(w: &mut W, e: &ErrorBars, g: Group) {
 
 /// Per-point fills of pie, doughnut and bar series.
 fn point_fills(w: &mut W, s: &Series, g: Group) {
-    if !matches!(g, Group::Pie | Group::Doughnut | Group::Bar) {
+    if !matches!(g, Group::Pie | Group::Doughnut | Group::Bar | Group::Bubble) {
         return;
     }
     for (idx, f) in s.point_fills.iter().take(1000) {
@@ -296,8 +344,8 @@ fn series(w: &mut W, c: &Chart, s: &Series, i: usize, kind: ChartType, g: Group)
         }
     }
     point_fills(w, s, g);
-    if let Some(d) = s.data_labels {
-        data_labels(w, c, d);
+    if s.data_labels.is_some() || !s.point_labels.is_empty() || s.label_defaults != Default::default() {
+        super::chart_labels::write(w, c, s, false);
     }
     // After labels, before the category and value caches (ECMA-376 series content order).
     if matches!(g, Group::Bar | Group::Line | Group::Area | Group::Scatter) {
@@ -388,7 +436,7 @@ fn trendline(w: &mut W, t: &Trendline) {
 
 fn data_labels(w: &mut W, c: &Chart, show: bool) {
     w.open0("c:dLbls");
-    tx_pr(w, c);
+    tx_pr(w, c, ChartTextRole::Default);
     for (n, v) in [
         ("c:showLegendKey", false),
         ("c:showVal", show),
@@ -405,47 +453,57 @@ fn data_labels(w: &mut W, c: &Chart, show: bool) {
 const AX_CAT: u32 = 50_001;
 const AX_VAL: u32 = 50_002;
 
-fn axes(w: &mut W, c: &Chart, g: Group) {
+fn axes(w: &mut W, c: &Chart, g: Group, secondary: bool) {
+    let (cat_id, val_id) = if secondary { (AX_CAT + 2, AX_VAL + 2) } else { (AX_CAT, AX_VAL) };
+    let (min, max, major, format, hidden) =
+        if secondary { (c.y2_min, c.y2_max, c.y2_major, &c.y2_format, c.y2_hidden) } else { (c.y_min, c.y_max, c.y_major, &c.y_format, c.y_hidden) };
     let horizontal = c.kind.horizontal() && g == Group::Bar;
-    let (cat_pos, val_pos) = if horizontal { ("l", "b") } else { ("b", "l") };
+    let (cat_pos, val_pos) = match (horizontal, secondary) {
+        (false, false) => ("b", "l"),
+        (false, true) => ("b", "r"),
+        (true, false) => ("l", "b"),
+        (true, true) => ("l", "t"),
+    };
     if g == Group::Scatter || g == Group::Bubble {
         w.open0("c:valAx");
-        w.val("c:axId", AX_CAT);
+        w.val("c:axId", cat_id);
         w.open0("c:scaling");
         w.val("c:orientation", "minMax");
         w.close("c:scaling");
-        w.val("c:delete", 0);
+        w.val("c:delete", u8::from(secondary));
         w.val("c:axPos", "b");
-        if let Some(t) = &c.axis_titles.0 {
-            title(w, t, c);
+        if let Some(t) = c.axis_titles.0.as_ref().filter(|_| !secondary) {
+            title(w, t, c, ChartTextRole::CategoryTitle);
         }
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
         w.val("c:majorTickMark", "out");
         w.val("c:minorTickMark", "none");
         w.val("c:tickLblPos", "nextTo");
-        tx_pr(w, c);
-        w.val("c:crossAx", AX_VAL);
-        w.val("c:crosses", "autoZero");
+        sp_pr(w, None, c.format.lines.get(&ChartLineRole::CategoryAxis));
+        tx_pr(w, c, ChartTextRole::CategoryAxis);
+        w.val("c:crossAx", val_id);
+        w.val("c:crosses", if secondary { "max" } else { "autoZero" });
         w.val("c:crossBetween", "midCat");
         w.close("c:valAx");
     } else {
         w.open0("c:catAx");
-        w.val("c:axId", AX_CAT);
+        w.val("c:axId", cat_id);
         w.open0("c:scaling");
         w.val("c:orientation", if c.cat_reversed { "maxMin" } else { "minMax" });
         w.close("c:scaling");
-        w.val("c:delete", 0);
+        w.val("c:delete", u8::from(secondary));
         w.val("c:axPos", cat_pos);
-        if let Some(t) = &c.axis_titles.0 {
-            title(w, t, c);
+        if let Some(t) = c.axis_titles.0.as_ref().filter(|_| !secondary) {
+            title(w, t, c, ChartTextRole::CategoryTitle);
         }
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
         w.val("c:majorTickMark", "none");
         w.val("c:minorTickMark", "none");
         w.val("c:tickLblPos", "nextTo");
-        tx_pr(w, c);
-        w.val("c:crossAx", AX_VAL);
-        w.val("c:crosses", "autoZero");
+        sp_pr(w, None, c.format.lines.get(&ChartLineRole::CategoryAxis));
+        tx_pr(w, c, ChartTextRole::CategoryAxis);
+        w.val("c:crossAx", val_id);
+        w.val("c:crosses", if secondary { "max" } else { "autoZero" });
         w.val("c:auto", 1);
         w.val("c:lblAlgn", "ctr");
         w.val("c:lblOffset", 100);
@@ -453,45 +511,53 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.close("c:catAx");
     }
     w.open0("c:valAx");
-    w.val("c:axId", AX_VAL);
+    w.val("c:axId", val_id);
     w.open0("c:scaling");
-    if let Some(b) = c.y_log_base {
+    if let Some(b) = c.y_log_base.filter(|_| !secondary) {
         w.val("c:logBase", fmt_num(b));
     }
     w.val("c:orientation", "minMax");
-    if let Some(m) = c.y_max.filter(|v| v.is_finite()) {
+    if let Some(m) = max.filter(|v| v.is_finite()) {
         w.val("c:max", fmt_num(m));
     }
-    if let Some(m) = c.y_min.filter(|v| v.is_finite()) {
+    if let Some(m) = min.filter(|v| v.is_finite()) {
         w.val("c:min", fmt_num(m));
     }
     w.close("c:scaling");
-    w.val("c:delete", 0);
+    w.val("c:delete", u8::from(hidden));
     w.val("c:axPos", val_pos);
-    if c.gridlines {
-        w.empty0("c:majorGridlines");
+    if c.gridlines && !secondary {
+        w.open0("c:majorGridlines");
+        sp_pr(w, None, c.format.lines.get(&ChartLineRole::MajorGrid));
+        w.close("c:majorGridlines");
     }
-    if c.minor_gridlines {
-        w.empty0("c:minorGridlines");
+    if c.minor_gridlines && !secondary {
+        w.open0("c:minorGridlines");
+        sp_pr(w, None, c.format.lines.get(&ChartLineRole::MinorGrid));
+        w.close("c:minorGridlines");
     }
-    if let Some(t) = &c.axis_titles.1 {
-        title(w, t, c);
+    if let Some(t) = c.axis_titles.1.as_ref().filter(|_| !secondary) {
+        title(w, t, c, ChartTextRole::ValueTitle);
     }
-    match c.y_format.as_deref().filter(|f| !f.is_empty()) {
+    match format.as_deref().filter(|f| !f.is_empty()) {
         Some(f) => w.empty("c:numFmt", A::new().a("formatCode", f).a("sourceLinked", 0)),
         None => w.empty("c:numFmt", A::new().a("formatCode", if c.kind.percent() { "0%" } else { "General" }).a("sourceLinked", 1)),
     }
     w.val("c:majorTickMark", "none");
     w.val("c:minorTickMark", "none");
     w.val("c:tickLblPos", "nextTo");
-    tx_pr(w, c);
-    w.val("c:crossAx", AX_CAT);
-    w.val("c:crosses", "autoZero");
+    sp_pr(w, None, c.format.lines.get(&if secondary { ChartLineRole::SecondaryValueAxis } else { ChartLineRole::ValueAxis }));
+    tx_pr(w, c, if secondary { ChartTextRole::SecondaryValueAxis } else { ChartTextRole::ValueAxis });
+    w.val("c:crossAx", cat_id);
+    w.val("c:crosses", if secondary { "max" } else { "autoZero" });
     w.val("c:crossBetween", if g == Group::Area || g == Group::Scatter { "midCat" } else { "between" });
+    if let Some(unit) = major.filter(|v| v.is_finite() && *v > 0.0) {
+        w.val("c:majorUnit", fmt_num(unit));
+    }
     w.close("c:valAx");
 }
 
-fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)]) {
+fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)], secondary: bool) {
     let g = group_of(kind);
     let grouping = if kind.percent() {
         "percentStacked"
@@ -544,6 +610,11 @@ fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)]) 
             }
         }
         Group::Line => w.val("c:marker", 1),
+        Group::Bubble => {
+            w.val("c:bubbleScale", c.bubbles.scale.min(300));
+            w.val("c:showNegBubbles", u8::from(c.bubbles.show_negative));
+            w.val("c:sizeRepresents", if c.bubbles.size_is_width { "w" } else { "area" });
+        }
         Group::Stock => {
             w.open0("c:hiLowLines");
             w.open0("c:spPr");
@@ -570,8 +641,8 @@ fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)]) 
         _ => {}
     }
     if !matches!(g, Group::Pie | Group::Doughnut) {
-        w.val("c:axId", AX_CAT);
-        w.val("c:axId", AX_VAL);
+        w.val("c:axId", AX_CAT + if secondary { 2 } else { 0 });
+        w.val("c:axId", AX_VAL + if secondary { 2 } else { 0 });
     }
     w.close(tag);
 }
@@ -610,6 +681,8 @@ fn kept_chartex(c: &Chart) -> Option<Vec<u8>> {
 
 /// The chart part XML, and whether it is the original part (so its relationships still apply).
 pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
+    let patched = super::chart_data::patched(c);
+    let c = patched.as_ref().unwrap_or(c);
     // Reuse the kept part when the chart is unchanged since it was read.
     if let Some(raw) = &c.raw
         && !raw.contains(NS_CX)
@@ -641,13 +714,13 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
     w.open0("c:chart");
     match &c.title {
         Some(t) => {
-            title(&mut w, t, c);
+            title(&mut w, t, c, ChartTextRole::Title);
             w.val("c:autoTitleDeleted", 0);
         }
         None => w.val("c:autoTitleDeleted", 1),
     }
     w.open0("c:plotArea");
-    w.empty0("c:layout");
+    layout(&mut w, c.format.plot_layout.as_ref(), true);
     let indexed: Vec<(usize, &Series)> = c.series.iter().enumerate().collect();
     let main = match c.kind {
         ChartType::Combo => c.series.first().and_then(|s| s.kind).unwrap_or(ChartType::Column),
@@ -655,28 +728,31 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
     };
     if c.kind == ChartType::Combo {
         // One plot group per series type, sharing the axes.
-        let mut kinds: Vec<ChartType> = vec![];
+        let mut kinds: Vec<(ChartType, bool)> = vec![];
         for s in &c.series {
             let k = s.kind.unwrap_or(main);
             let k = if matches!(group_of(k), Group::Pie | Group::Doughnut | Group::Scatter | Group::Bubble) { ChartType::Column } else { k };
-            if !kinds.contains(&k) {
-                kinds.push(k);
+            if !kinds.contains(&(k, s.secondary_axis)) {
+                kinds.push((k, s.secondary_axis));
             }
         }
-        for k in kinds {
+        for (k, secondary) in kinds {
             let list: Vec<(usize, &Series)> = indexed
                 .iter()
                 .filter(|(_, s)| {
                     let sk = s.kind.unwrap_or(main);
                     let sk =
                         if matches!(group_of(sk), Group::Pie | Group::Doughnut | Group::Scatter | Group::Bubble) { ChartType::Column } else { sk };
-                    sk == k
+                    sk == k && s.secondary_axis == secondary
                 })
                 .copied()
                 .collect();
-            plot_group(&mut w, c, k, &list);
+            plot_group(&mut w, c, k, &list, secondary);
         }
-        axes(&mut w, c, Group::Bar);
+        axes(&mut w, c, Group::Bar, false);
+        if c.series.iter().any(|s| s.secondary_axis) {
+            axes(&mut w, c, Group::Bar, true);
+        }
     } else {
         if !matches!(
             c.kind,
@@ -701,10 +777,10 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
         ) {
             log::warn!("pptx: {} chart written as a column chart", c.kind.label());
         }
-        plot_group(&mut w, c, main, &indexed);
+        plot_group(&mut w, c, main, &indexed, false);
         let g = group_of(main);
         if !matches!(g, Group::Pie | Group::Doughnut) {
-            axes(&mut w, c, g);
+            axes(&mut w, c, g, false);
         }
     }
     if let Some(f) = &c.plot_fill {
@@ -718,8 +794,9 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
         };
         w.open0("c:legend");
         w.val("c:legendPos", p);
+        layout(&mut w, c.format.layouts.get(&ChartTextRole::Legend), false);
         w.val("c:overlay", u8::from(c.legend_overlay));
-        tx_pr(&mut w, c);
+        tx_pr(&mut w, c, ChartTextRole::Legend);
         w.close("c:legend");
     }
     w.val("c:plotVisOnly", 1);
@@ -728,7 +805,7 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
     if let Some(f) = &c.chart_fill {
         sp_pr(&mut w, Some(f), None);
     }
-    tx_pr(&mut w, c);
+    tx_pr(&mut w, c, ChartTextRole::Default);
     w.close("c:chartSpace");
     (w.finish(), false)
 }
@@ -788,6 +865,9 @@ pub fn write_kept(pkg: &mut crate::opc::PackageOut, chart_name: &str, c: &Chart,
     use std::collections::HashMap;
 
     use crate::opc::{RelsOut, norm, relative, rels_path};
+
+    let patched = super::chart_data::patched(c);
+    let c = patched.as_ref().unwrap_or(c);
 
     if c.kept.rels.is_empty() {
         return;
@@ -856,6 +936,24 @@ fn cx_text(w: &mut W, t: &str) {
     w.close("cx:tx");
 }
 
+/// Literal titles use rich text. A formula-less `txData` cache is ignored by PowerPoint.
+fn cx_title_text(w: &mut W, c: &Chart, t: &str, role: ChartTextRole) {
+    w.open0("cx:tx");
+    w.open0("cx:rich");
+    super::dml::body_pr(w, &c.format.bodies.get(&role).cloned().unwrap_or_default());
+    w.empty0("a:lstStyle");
+    for line in t.split('\n') {
+        w.open0("a:p");
+        w.open0("a:r");
+        chart_rpr(w, "a:rPr", &c.text_props(role));
+        w.elt("a:t", line);
+        w.close("a:r");
+        w.close("a:p");
+    }
+    w.close("cx:rich");
+    w.close("cx:tx");
+}
+
 /// A `cx:lvl` of points.
 fn cx_level(w: &mut W, pts: &[String], format: Option<&str>) {
     let mut a = A::new().a("ptCount", pts.len());
@@ -900,6 +998,19 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
             }
             w.close("cx:strDim");
         }
+        if let Some(g) = &s.geography {
+            let mut ids = vec![String::new(); c.categories.len().max(s.values.len())];
+            for region in &g.regions {
+                if let Some(i) = region.point
+                    && let Some(id) = ids.get_mut(i)
+                {
+                    *id = region.entity_id.clone();
+                }
+            }
+            w.open("cx:strDim", A::new().a("type", "entityId"));
+            cx_level(&mut w, &ids, None);
+            w.close("cx:strDim");
+        }
         let ty = match c.kind {
             ChartType::Treemap | ChartType::Sunburst => "size",
             ChartType::RegionMap => "colorVal",
@@ -914,8 +1025,9 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
     w.close("cx:chartData");
     w.open0("cx:chart");
     if let Some(t) = &c.title {
-        w.open("cx:title", A::new().a("pos", "t").a("align", "ctr").a("overlay", "0"));
-        cx_text(&mut w, t);
+        w.open("cx:title", A::new().a("pos", "t").a("align", "ctr").a("overlay", u8::from(c.format.title_overlay)));
+        cx_title_text(&mut w, c, t, ChartTextRole::Title);
+        tx_pr_tag(&mut w, c, ChartTextRole::Title, "cx:txPr");
         w.close("cx:title");
     }
     w.open0("cx:plotArea");
@@ -931,17 +1043,19 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
     };
     let one = !matches!(c.kind, ChartType::BoxWhisker);
     for (i, s) in c.series.iter().enumerate().take(if one { 1 } else { usize::MAX }) {
+        let options = s.extended_options(c);
         w.open("cx:series", A::new().a("layoutId", layout).a("uniqueId", format!("{{DC00000{i}-0000-4000-8000-000000000000}}")));
         cx_text(&mut w, &s.name);
-        if c.series_data_labels(s) {
-            w.open("cx:dataLabels", A::new().a("pos", if c.kind == ChartType::Funnel { "ctr" } else { "outEnd" }));
-            w.empty("cx:visibility", A::new().a("seriesName", "0").a("categoryName", "0").a("value", "1"));
-            w.close("cx:dataLabels");
+        sp_pr_tag(&mut w, s.fill.as_ref(), s.line.as_ref(), "cx:spPr");
+        value_colors(&mut w, s.value_colors.as_ref());
+        if c.series_data_labels(s) || !s.point_labels.is_empty() || s.label_defaults != Default::default() {
+            super::chart_labels::write(&mut w, c, s, true);
         }
         w.empty("cx:dataId", A::new().a("val", i));
         match c.kind {
-            ChartType::Waterfall if !c.subtotals.is_empty() => {
+            ChartType::Waterfall => {
                 w.open0("cx:layoutPr");
+                w.empty("cx:visibility", A::new().a("connectorLines", u8::from(options.connector_lines)));
                 w.open0("cx:subtotals");
                 for t in &c.subtotals {
                     w.empty("cx:idx", A::new().a("val", t));
@@ -951,50 +1065,136 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
             }
             ChartType::Histogram | ChartType::Pareto => {
                 w.open0("cx:layoutPr");
-                w.open("cx:binning", A::new().a("intervalClosed", "r"));
-                if let Some(size) = c.bin_size {
-                    w.empty("cx:binSize", A::new().a("val", fmt_num(size)));
-                } else if let Some(n) = c.bin_count {
-                    w.empty("cx:binCount", A::new().a("val", n));
+                if options.aggregation {
+                    w.empty0("cx:aggregation");
+                } else {
+                    w.open(
+                        "cx:binning",
+                        A::new()
+                            .a("intervalClosed", if options.bin_closed_left { "l" } else { "r" })
+                            .o("underflow", options.underflow.filter(|v| v.is_finite()).map(fmt_num))
+                            .o("overflow", options.overflow.filter(|v| v.is_finite()).map(fmt_num)),
+                    );
+                    if let Some(size) = c.bin_size {
+                        w.val("cx:binSize", fmt_num(size));
+                    } else if let Some(n) = c.bin_count {
+                        w.val("cx:binCount", n);
+                    }
+                    w.close("cx:binning");
                 }
-                w.close("cx:binning");
                 w.close("cx:layoutPr");
             }
             ChartType::BoxWhisker => {
                 w.open0("cx:layoutPr");
-                w.empty("cx:visibility", A::new().a("meanLine", "0").a("meanMarker", "1").a("nonoutliers", "0").a("outliers", "1"));
-                w.empty("cx:statistics", A::new().a("quartileMethod", if c.inclusive_quartiles { "inclusive" } else { "exclusive" }));
+                w.empty(
+                    "cx:visibility",
+                    A::new()
+                        .a("meanLine", u8::from(options.mean_line))
+                        .a("meanMarker", u8::from(options.mean_marker))
+                        .a("nonoutliers", u8::from(options.inner_points))
+                        .a("outliers", u8::from(options.outliers)),
+                );
+                w.empty(
+                    "cx:statistics",
+                    A::new().a("quartileMethod", if s.inclusive_quartiles.unwrap_or(c.inclusive_quartiles) { "inclusive" } else { "exclusive" }),
+                );
+                w.close("cx:layoutPr");
+            }
+            ChartType::Treemap if options.parent_labels.is_some() => {
+                w.open0("cx:layoutPr");
+                w.empty("cx:parentLabelLayout", A::new().a("val", options.parent_labels.as_deref().unwrap_or("banner")));
                 w.close("cx:layoutPr");
             }
             ChartType::RegionMap => {
-                // The map's geography (projection, region level and the cached boundaries
-                // PowerPoint downloaded) is not modelled: carry it over from the part we read.
-                if let Some(lp) = c.raw.as_deref().and_then(kept_region_layout) {
+                let unchanged = c
+                    .raw
+                    .as_deref()
+                    .and_then(|raw| crate::read::read_chartex_xml(raw.as_bytes()))
+                    .is_some_and(|old| old.series.first().is_some_and(|old| old.geography == s.geography));
+                if unchanged && let Some(lp) = c.raw.as_deref().and_then(kept_region_layout) {
+                    w.raw(&lp);
+                } else if let Some(g) = s.geography.as_ref().filter(|g| !g.regions.is_empty()) {
+                    write_geography(&mut w, g);
+                } else if let Some(lp) = c.raw.as_deref().and_then(kept_region_layout) {
                     w.raw(&lp);
                 }
             }
             _ => {}
         }
+        if !matches!(c.kind, ChartType::Treemap | ChartType::Sunburst | ChartType::RegionMap) {
+            // Native Office reads `val`, despite the published schema's simple-text type.
+            // The text form hangs PowerPoint for Mac; the reader accepts both encodings.
+            w.val("cx:axisId", 0);
+            if c.kind != ChartType::Funnel {
+                w.val("cx:axisId", 1);
+            }
+        }
         w.close("cx:series");
     }
     if c.kind == ChartType::Pareto {
         w.open("cx:series", A::new().a("layoutId", "paretoLine").a("ownerIdx", "0").a("uniqueId", "{DC0000FF-0000-4000-8000-000000000000}"));
-        w.empty("cx:axisId", A::new().a("val", "2"));
+        w.val("cx:axisId", 2);
         w.close("cx:series");
     }
     w.close("cx:plotAreaRegion");
+    chartex_axes(&mut w, c);
+    sp_pr_tag(&mut w, c.plot_fill.as_ref(), None, "cx:spPr");
+    w.close("cx:plotArea");
+    if let Some(pos) = &c.legend {
+        w.open("cx:legend", A::new().a("pos", pos.as_str()).a("align", "ctr").a("overlay", u8::from(c.legend_overlay)));
+        tx_pr_tag(&mut w, c, ChartTextRole::Legend, "cx:txPr");
+        w.close("cx:legend");
+    }
+    w.close("cx:chart");
+    sp_pr_tag(&mut w, c.chart_fill.as_ref(), None, "cx:spPr");
+    tx_pr_tag(&mut w, c, ChartTextRole::Default, "cx:txPr");
+    w.close("cx:chartSpace");
+    w.finish()
+}
+
+fn chartex_axis_title(w: &mut W, c: &Chart, text: Option<&str>, role: ChartTextRole) {
+    if let Some(text) = text {
+        w.open0("cx:title");
+        cx_title_text(w, c, text, role);
+        tx_pr_tag(w, c, role, "cx:txPr");
+        w.close("cx:title");
+    }
+}
+
+fn chartex_axes(w: &mut W, c: &Chart) {
     if !matches!(c.kind, ChartType::Treemap | ChartType::Sunburst | ChartType::RegionMap) {
         w.open("cx:axis", A::new().a("id", "0"));
         w.empty("cx:catScaling", A::new().a("gapWidth", if matches!(c.kind, ChartType::Histogram | ChartType::Pareto) { "0" } else { "0.5" }));
+        chartex_axis_title(w, c, c.axis_titles.0.as_deref(), ChartTextRole::CategoryTitle);
         w.empty0("cx:tickLabels");
+        sp_pr_tag(w, None, c.format.lines.get(&ChartLineRole::CategoryAxis), "cx:spPr");
+        tx_pr_tag(w, c, ChartTextRole::CategoryAxis, "cx:txPr");
         w.close("cx:axis");
         if c.kind != ChartType::Funnel {
-            w.open("cx:axis", A::new().a("id", "1"));
-            w.empty0("cx:valScaling");
-            if c.gridlines {
-                w.empty0("cx:majorGridlines");
+            w.open("cx:axis", A::new().a("id", "1").a("hidden", u8::from(c.y_hidden)));
+            w.empty(
+                "cx:valScaling",
+                A::new()
+                    .o("min", c.y_min.filter(|v| v.is_finite()).map(fmt_num))
+                    .o("max", c.y_max.filter(|v| v.is_finite()).map(fmt_num))
+                    .o("majorUnit", c.y_major.filter(|v| v.is_finite() && *v > 0.0).map(fmt_num)),
+            );
+            chartex_axis_title(w, c, c.axis_titles.1.as_deref(), ChartTextRole::ValueTitle);
+            for (show, tag, role) in
+                [(c.gridlines, "cx:majorGridlines", ChartLineRole::MajorGrid), (c.minor_gridlines, "cx:minorGridlines", ChartLineRole::MinorGrid)]
+            {
+                if show {
+                    w.open0(tag);
+                    sp_pr_tag(w, None, c.format.lines.get(&role), "cx:spPr");
+                    w.close(tag);
+                }
             }
             w.empty0("cx:tickLabels");
+            if let Some(fmt) = c.y_format.as_deref() {
+                w.empty("cx:numFmt", A::new().a("formatCode", fmt).a("sourceLinked", "0"));
+            }
+            sp_pr_tag(w, None, c.format.lines.get(&ChartLineRole::ValueAxis), "cx:spPr");
+            tx_pr_tag(w, c, ChartTextRole::ValueAxis, "cx:txPr");
             w.close("cx:axis");
         }
         if c.kind == ChartType::Pareto {
@@ -1005,13 +1205,6 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
             w.close("cx:axis");
         }
     }
-    w.close("cx:plotArea");
-    if let Some(pos) = &c.legend {
-        w.empty("cx:legend", A::new().a("pos", pos.as_str()).a("align", "ctr").a("overlay", "0"));
-    }
-    w.close("cx:chart");
-    w.close("cx:chartSpace");
-    w.finish()
 }
 
 #[cfg(test)]
@@ -1109,4 +1302,166 @@ mod tests {
         c.cat_reversed = false;
         assert!(!crate::read::chart::read_chart_xml(&super::chart_xml(&c).0).unwrap().cat_reversed);
     }
+}
+
+fn value_colors(w: &mut W, scale: Option<&deckcraft_model::geography::ValueColorScale>) {
+    let Some(scale) = scale else { return };
+    use deckcraft_model::geography::ValueColorPosition;
+    let stops = [("min", &scale.minimum), ("mid", &scale.middle), ("max", &scale.maximum)];
+    w.open0("cx:valueColors");
+    for (name, stop) in stops {
+        if let Some(color) = &stop.color {
+            let tag = format!("cx:{name}Color");
+            w.open0(&tag);
+            super::dml::color(w, color);
+            w.close(&tag);
+        }
+    }
+    w.close("cx:valueColors");
+    w.open("cx:valueColorPositions", A::new().a("count", if scale.three_color { 3 } else { 2 }));
+    for (name, stop) in stops {
+        let Some(position) = stop.position else { continue };
+        let (kind, number) = match position {
+            ValueColorPosition::Extreme if name != "mid" => ("extremeValue", None),
+            ValueColorPosition::Number(v) if v.is_finite() => ("number", Some(v)),
+            ValueColorPosition::Percent(v) if v.is_finite() => ("percent", Some(v)),
+            _ => continue,
+        };
+        // Observed through native UI SaveAs: Office uses the Position suffix even
+        // though MS-ODRAWXML's schema lists min/mid/max. Short names fail native open.
+        let tag = format!("cx:{name}Position");
+        w.open0(&tag);
+        w.empty(&format!("cx:{kind}"), A::new().o("val", number.map(fmt_num)));
+        w.close(&tag);
+    }
+    w.close("cx:valueColorPositions");
+}
+
+fn write_geography(w: &mut W, g: &deckcraft_model::geography::Geography) {
+    w.open0("cx:layoutPr");
+    w.open(
+        "cx:geography",
+        A::new()
+            .o("projectionType", (!g.projection.is_empty()).then_some(&g.projection))
+            .o("viewedRegionType", (!g.viewed_region.is_empty()).then_some(&g.viewed_region))
+            .a("cultureLanguage", "en-US")
+            .a("cultureRegion", "US")
+            .a("attribution", &g.attribution),
+    );
+    w.open("cx:geoCache", A::new().a("provider", "DeckCraft"));
+    w.open0("cx:clear");
+    w.open0("cx:geoDataEntityQueryResults");
+    let mut budget = deckcraft_model::geography::MAX_GEO_POINTS;
+    let kinds: std::collections::HashMap<_, _> = g.entities.iter().take(4096).map(|e| (e.id.as_str(), e.kind.as_str())).collect();
+    for region in g.regions.iter().take(4096) {
+        let mut rings = Vec::new();
+        for ring in region.rings.iter().take(deckcraft_model::geography::MAX_GEO_RINGS) {
+            if ring.len() > budget {
+                break;
+            }
+            budget -= ring.len();
+            if let Some(text) = deckcraft_model::geography::encode_ring(ring) {
+                rings.push((text, ring));
+            }
+        }
+        let authored = region
+            .bounds
+            .filter(|b| b.iter().all(|v| v.is_finite()) && b[0].abs() <= 180. && b[2].abs() <= 180. && b[1] >= -90. && b[3] <= 90. && b[1] <= b[3]);
+        if rings.is_empty() && authored.is_none() {
+            continue;
+        }
+        let (mut west, mut east, mut north, mut south) = (180f64, -180f64, -90f64, 90f64);
+        for (_, ring) in &rings {
+            for &[x, y] in *ring {
+                west = west.min(x);
+                east = east.max(x);
+                north = north.max(y);
+                south = south.min(y);
+            }
+        }
+        w.open0("cx:geoDataEntityQueryResult");
+        let kind = geo_entity_kind(kinds.get(region.entity_id.as_str()).copied().unwrap_or(""));
+        w.empty("cx:geoDataEntityQuery", A::new().a("entityType", kind).a("entityId", &region.entity_id));
+        if let Some([w, s, e, n]) = authored {
+            (west, south, east, north) = (w, s, e, n);
+        }
+        w.open(
+            "cx:geoData",
+            A::new()
+                .a("entityName", &region.name)
+                .a("entityId", &region.entity_id)
+                .a("west", west)
+                .a("east", east)
+                .a("north", north)
+                .a("south", south),
+        );
+        if !rings.is_empty() {
+            w.open0("cx:geoPolygons");
+            let count: usize = rings.iter().map(|(_, r)| r.len()).sum();
+            let encoded = format!("0,{}", rings.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join(","));
+            w.empty("cx:geoPolygon", A::new().a("polygonId", &region.entity_id).a("numPoints", count).a("pcaRings", encoded));
+            w.close("cx:geoPolygons");
+        }
+        if !region.copyrights.is_empty() {
+            w.open0("cx:copyrights");
+            for text in &region.copyrights {
+                w.elt("cx:copyright", text);
+            }
+            w.close("cx:copyrights");
+        }
+        w.close("cx:geoData");
+        w.close("cx:geoDataEntityQueryResult");
+    }
+    w.close("cx:geoDataEntityQueryResults");
+    write_geo_lineage(w, &g.entities);
+    w.close("cx:clear");
+    w.close("cx:geoCache");
+    w.close("cx:geography");
+    w.close("cx:layoutPr");
+}
+
+fn write_geo_lineage(w: &mut W, entities: &[deckcraft_model::geography::GeoEntity]) {
+    if entities.is_empty() {
+        return;
+    }
+    w.open0("cx:geoParentEntitiesQueryResults");
+    let mut budget = 20000usize;
+    for entity in entities.iter().take(4096) {
+        let parents: Vec<_> = if entity.parents.is_empty() { vec![None] } else { entity.parents.iter().take(budget).map(Some).collect() };
+        for parent in parents {
+            if budget == 0 {
+                break;
+            }
+            budget -= 1;
+            w.open0("cx:geoParentEntitiesQueryResult");
+            w.empty("cx:geoParentEntitiesQuery", A::new().a("entityId", &entity.id));
+            w.empty("cx:geoEntity", A::new().a("entityName", &entity.name).a("entityType", geo_entity_kind(&entity.kind)));
+            if let Some(parent) = parent {
+                w.empty("cx:geoParentEntity", A::new().a("entityId", parent));
+            }
+            w.close("cx:geoParentEntitiesQueryResult");
+        }
+    }
+    w.close("cx:geoParentEntitiesQueryResults");
+}
+
+fn geo_entity_kind(kind: &str) -> &'static str {
+    // ST_EntityType is case-sensitive, unlike the authored viewport-level vocabulary.
+    [
+        "Address",
+        "AdminDistrict",
+        "AdminDistrict2",
+        "AdminDistrict3",
+        "Continent",
+        "CountryRegion",
+        "Locality",
+        "Ocean",
+        "Planet",
+        "PostalCode",
+        "Region",
+        "Unsupported",
+    ]
+    .into_iter()
+    .find(|name| name.eq_ignore_ascii_case(kind))
+    .unwrap_or("Region")
 }

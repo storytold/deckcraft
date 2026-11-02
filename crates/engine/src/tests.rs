@@ -3742,6 +3742,11 @@ fn smartart_round_trips_through_pptx_as_a_diagram() {
     let outline: Vec<(&str, u8)> = d.nodes.iter().map(|n| (n.text.as_str(), n.level)).collect();
     assert_eq!(outline, [("CEO", 0), ("CTO", 1), ("Dev", 2), ("CFO", 1)]);
     assert!(g.children().len() >= 4, "the cached drawing is read back as shapes");
+    let original = doc.slides[1].shapes.iter().find(|x| x.diagram.is_some()).unwrap();
+    let anchors = |sh: &deckcraft_model::Shape| -> Vec<_> {
+        sh.children().iter().filter_map(|c| c.text.as_ref().map(|t| t.body.anchor.unwrap_or(deckcraft_model::text::Anchor::Middle))).collect()
+    };
+    assert_eq!(anchors(g), anchors(original), "cached SmartArt text must not jump from the centre to the top on reopen");
 
     // The Text Pane works on the imported diagram, and a second round trip keeps the edit.
     let gid = g.id.0;
@@ -6063,4 +6068,21 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     s.execute("format.shrink", &json!({})).unwrap();
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
+}
+
+#[test]
+fn font_inspection_reports_actual_faces_without_leaking_text_or_paths() {
+    let mut s = Session::with_new();
+    s.execute("file.openBytes", &json!({"name": "a.pptx", "data": deck_in_font("Qqq Nonexistent Sans")})).unwrap();
+    let before = s.doc().unwrap().doc.clone();
+    let report = s.execute("font.inspect", &json!({})).unwrap();
+    let rows = report.as_array().unwrap();
+    assert!(!rows.is_empty());
+    let row = rows.iter().find(|r| r["requested"][0] == "Qqq Nonexistent Sans").unwrap();
+    assert_eq!(row["reason"], "family_unavailable");
+    assert_ne!(row["actual"], "Qqq Nonexistent Sans");
+    assert_eq!(row["start"], 0);
+    assert_eq!(row["end"], 5);
+    assert!(!report.to_string().contains("Hello"));
+    assert_eq!(s.doc().unwrap().doc, before);
 }

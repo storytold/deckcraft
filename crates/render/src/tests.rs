@@ -350,6 +350,65 @@ fn trendlines_draw_through_the_points_with_a_label() {
 }
 
 #[test]
+fn line_labels_render_and_respect_the_series_override() {
+    for kind in [ChartType::Line, ChartType::LineMarkers, ChartType::StackedLine] {
+        let draw = |labels: bool, override_labels: Option<bool>| {
+            let mut c = Chart::sample(kind);
+            c.title = None;
+            c.legend = None;
+            c.series.truncate(1);
+            c.data_labels = labels;
+            c.series[0].data_labels = override_labels;
+            c.series[0].values = vec![Some(12.0), None, Some(24.0)];
+            c.categories = vec!["A".into(), "B".into(), "C".into()];
+            let sh =
+                Shape { id: ShapeId(625), xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+            render_slide(&deck_with(vec![sh]), 0, &RenderOpts::default())
+        };
+        let bare = draw(false, None);
+        let labelled = draw(true, None);
+        assert!(bare.pixels.iter().zip(&labelled.pixels).filter(|(a, b)| a != b).count() > 60, "{kind:?}: value labels must draw ink");
+        assert_eq!(bare.pixels, draw(true, Some(false)).pixels, "series off overrides chart on");
+        assert_eq!(labelled.pixels, draw(false, Some(true)).pixels, "series on overrides chart off");
+    }
+}
+
+#[test]
+fn later_area_series_do_not_cover_value_labels() {
+    let draw = |labels| {
+        let mut c = Chart::sample(ChartType::Combo);
+        c.title = None;
+        c.legend = None;
+        c.series.truncate(2);
+        c.categories = vec!["A".into(), "B".into(), "C".into()];
+        c.y_min = Some(0.0);
+        c.y_max = Some(10.0);
+        c.text_color = Some(ColorRef::rgb(Rgba::BLACK));
+        c.series[0].kind = Some(ChartType::Line);
+        c.series[0].values = vec![Some(3.0); 3];
+        c.series[0].data_labels = Some(labels);
+        c.series[1].kind = Some(ChartType::Area);
+        c.series[1].values = vec![Some(8.0); 3];
+        c.series[1].data_labels = Some(false);
+        c.series[1].fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(240, 150, 60))));
+        let sh = Shape { id: ShapeId(626), xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts::default())
+    };
+    let bare = draw(false);
+    let labelled = draw(true);
+    let mut ink = 0;
+    for y in 200..440 {
+        for x in 400..550 {
+            let p = labelled.pixel(x, y);
+            if p[0] < 90 && p[1] < 90 && p[2] < 90 && bare.pixel(x, y)[0] > 180 {
+                ink += 1;
+            }
+        }
+    }
+    assert!(ink > 20, "value-label ink must remain above the later area fill: {ink}");
+}
+
+#[test]
 fn chart_axis_titles_are_drawn() {
     let draw = |titles: (Option<String>, Option<String>)| {
         let mut c = Chart::sample(ChartType::Column);

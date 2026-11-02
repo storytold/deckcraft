@@ -44,6 +44,7 @@ thiserror = "2"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
+sha2 = { version = "0.10", default-features = false }
 proptest = "1"
 rayon = "1"
 unicode-bidi = "0.3"
@@ -59,6 +60,7 @@ harfrust = "0.13"
 vello_cpu = "0.2"
 vello_common = { version = "0.2", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
+resvg = { version = "0.48", default-features = false, features = ["text", "raster-images"] }
 craft-media = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0", default-features = false }
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
 # craft-update: app-specific pretend versions apply to startup and manual checks.
@@ -67,6 +69,8 @@ craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9
 i_overlay = "9"
 quick-xml = "0.41"
 zip = { version = "3", default-features = false, features = ["deflate"] }
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+base64 = "0.22"
 
 # ui
 egui = { version = "0.37", default-features = false }

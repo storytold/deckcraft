@@ -240,6 +240,7 @@ pub fn body(ctx: &Ctx, shape: &Shape) -> BodyProps {
         anchor_ctr: Some(false),
         wrap: Some(true),
         autofit: Some(if shape.text_box { AutoFit::Shape } else { AutoFit::None }),
+        min_autofit_scale: None,
         vert: Some(crate::text::TextDir::Horizontal),
         rot: Some(0.0),
         columns: Some(1),

@@ -204,8 +204,13 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
     // Decode for the whole image's size on screen, not the box's: a cropped picture shows only part
     // of it, magnified (#762).
     let want = (dest.width().abs().max(dest.height().abs()) * px_scale).max(1.0);
+    let vector = pf
+        .svg
+        .filter(|_| pf.artistic.is_none())
+        .and_then(|id| pres.media(id))
+        .and_then(|m| images::decode_for_pres(&m.data, want, &pf.adjust, Some(pres)));
     let frame = gif_time.and_then(|t| images::gif_pixmap(&item.data, &pf.adjust, t));
-    let Some(pm) = frame.or_else(|| images::decode_for(&item.data, want, &pf.adjust)) else {
+    let Some(pm) = vector.or(frame).or_else(|| images::decode_for_pres(&item.data, want, &pf.adjust, Some(pres))) else {
         missing(ctx, bounds);
         return;
     };

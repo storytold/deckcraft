@@ -1,12 +1,12 @@
 //! Chart parts (`c:chartSpace`) → [`Chart`]. The original XML is kept in `Chart.raw`.
 
-use deckcraft_model::chart::{Chart, ChartType, ErrorBars, Series, Trendline, TrendlineType};
+use deckcraft_model::chart::{Chart, ChartLayout, ChartLineRole, ChartTextRole, ChartType, ErrorBars, Series, Trendline, TrendlineType};
 use deckcraft_model::style::Fill;
 
 use crate::xml::El;
 
 /// Fills of chart parts never reference images we keep; read colour and pattern fills only.
-fn simple_fill(sp: Option<&El>) -> Option<Fill> {
+pub(super) fn simple_fill(sp: Option<&El>) -> Option<Fill> {
     let sp = sp?;
     for e in sp.elements() {
         match e.local() {
@@ -20,9 +20,9 @@ fn simple_fill(sp: Option<&El>) -> Option<Fill> {
     None
 }
 
-fn simple_line(sp: Option<&El>) -> Option<deckcraft_model::Line> {
+pub(super) fn simple_line(sp: Option<&El>) -> Option<deckcraft_model::Line> {
     let ln = sp?.child("ln")?;
-    let mut l = deckcraft_model::Line { width: super::dml::pt(ln, "w"), ..Default::default() };
+    let mut l = super::dml::line_properties(ln);
     l.fill = simple_fill(Some(ln));
     Some(l)
 }
@@ -125,6 +125,7 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
     c.plot_fill = simple_fill(pa.child("spPr"));
 
     let mut kinds: Vec<ChartType> = vec![];
+    let mut ordered_series = Vec::new();
     // The value axis the first plot group uses is the primary one; a group on another value axis
     // (a combo chart's line on the right) is on the secondary axis.
     let val_map: std::collections::HashMap<&str, bool> =
@@ -139,21 +140,30 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
         if name == "stockChart" {
             c.up_down_bars = g.child("upDownBars").is_some();
         }
+        if kind == ChartType::Bubble {
+            c.bubbles.scale = g.child_val("bubbleScale").and_then(|v| v.parse::<u16>().ok()).unwrap_or(100).min(300);
+            c.bubbles.size_is_width = g.child_val("sizeRepresents") == Some("w");
+            c.bubbles.show_negative = g.child("showNegBubbles").is_some_and(|e| e.bool("val").unwrap_or(true));
+        }
         let group_labels = read_group_settings(g, &mut c);
         kinds.push(kind);
         let val_axis = group_value_axis(&val_map, g);
         let secondary = val_axis.is_some() && val_axis != primary_val;
         for s in g.children_named("ser").take(1000) {
             let ser = read_series(s, g, (kind, secondary, group_labels), &mut c.categories, &mut budget);
-            c.series.push(ser);
+            let order = s.child_val("order").or_else(|| s.child_val("idx")).and_then(|v| v.parse::<usize>().ok()).unwrap_or(ordered_series.len());
+            ordered_series.push((order, ser));
         }
     }
+    // Plot groups may interleave logical series. Preserve legend/palette order across a save.
+    ordered_series.sort_by_key(|(order, _)| *order);
+    c.series = ordered_series.into_iter().map(|(_, series)| series).collect();
     // `autoTitleDeleted val="0"` without `c:title`: PowerPoint and LibreOffice draw the series name as the title of a single-series chart.
     if ch.child("title").is_none() && ch.child("autoTitleDeleted").and_then(|a| a.bool("val")) == Some(false) && c.series.len() == 1 {
         c.title = c.series.first().map(|s| s.name.clone()).filter(|n| !n.is_empty());
     }
     let first = *kinds.first()?;
-    c.kind = if kinds.iter().any(|k| *k != first) { ChartType::Combo } else { first };
+    c.kind = if kinds.iter().any(|k| *k != first) || c.series.iter().any(|s| s.secondary_axis) { ChartType::Combo } else { first };
     if c.kind != ChartType::Combo {
         for s in &mut c.series {
             s.kind = None;
@@ -163,7 +173,73 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
     c.lang = root.child_val("lang").map(str::to_string);
     let (val_ax, cat_ax) = read_axes(&mut c, pa, &primary_val);
     read_text_styles(&mut c, root, ch, val_ax, cat_ax);
+    read_format(&mut c, ch, pa, val_ax, cat_ax);
     Some(c)
+}
+
+pub(super) fn manual_layout(e: Option<&El>) -> Option<ChartLayout> {
+    let e = e?.path(&["layout", "manualLayout"])?;
+    if ["x", "y", "w", "h"]
+        .into_iter()
+        .any(|k| e.child(k).is_some_and(|v| v.f64("val").is_none_or(|n| n.abs() > 1.0 || (matches!(k, "w" | "h") && n < 0.0))))
+    {
+        return None;
+    }
+    let value = |k| e.child(k).and_then(|v| v.f64("val"));
+    Some(ChartLayout {
+        inner: e.child_val("layoutTarget") == Some("inner"),
+        x: value("x"),
+        y: value("y"),
+        w: value("w"),
+        h: value("h"),
+        x_edge: e.child_val("xMode") == Some("edge"),
+        y_edge: e.child_val("yMode") == Some("edge"),
+        w_edge: e.child_val("wMode") == Some("edge"),
+        h_edge: e.child_val("hMode") == Some("edge"),
+    })
+}
+
+pub(super) fn read_format(c: &mut Chart, ch: &El, pa: &El, val: Option<&El>, cat: Option<&El>) {
+    c.format.plot_layout = manual_layout(Some(pa));
+    c.format.title_overlay = ch.path(&["title", "overlay"]).and_then(|e| e.bool("val")) == Some(true);
+    for (role, e) in [
+        (ChartTextRole::Title, ch.child("title")),
+        (ChartTextRole::Legend, ch.child("legend")),
+        (ChartTextRole::CategoryTitle, cat.and_then(|a| a.child("title"))),
+        (ChartTextRole::ValueTitle, val.and_then(|a| a.child("title"))),
+    ] {
+        if let Some(layout) = manual_layout(e) {
+            c.format.layouts.insert(role, layout);
+        }
+        let body = e.and_then(|e| e.path(&["tx", "rich", "bodyPr"]).or_else(|| e.path(&["txPr", "bodyPr"])));
+        if let Some(body) = body {
+            read_body(c, role, body);
+        }
+    }
+    let second = pa.children_named("valAx").find(|a| a.child_val("axPos") == Some("r"));
+    for (role, axis) in [(ChartTextRole::CategoryAxis, cat), (ChartTextRole::ValueAxis, val), (ChartTextRole::SecondaryValueAxis, second)] {
+        if let Some(body) = axis.and_then(|a| a.path(&["txPr", "bodyPr"])) {
+            read_body(c, role, body);
+        }
+    }
+    for (role, e) in [
+        (ChartLineRole::CategoryAxis, cat),
+        (ChartLineRole::ValueAxis, val),
+        (ChartLineRole::SecondaryValueAxis, second),
+        (ChartLineRole::MajorGrid, val.and_then(|a| a.child("majorGridlines"))),
+        (ChartLineRole::MinorGrid, val.and_then(|a| a.child("minorGridlines"))),
+    ] {
+        if let Some(line) = simple_line(e.and_then(|e| e.child("spPr"))) {
+            c.format.lines.insert(role, line);
+        }
+    }
+}
+
+fn read_body(c: &mut Chart, role: ChartTextRole, e: &El) {
+    let body = super::dml::body_pr(e);
+    if body != Default::default() {
+        c.format.bodies.insert(role, body);
+    }
 }
 
 /// A group's value axis: its vertical one when it has two (scatter), else its one.
@@ -266,7 +342,12 @@ fn label_number_format(s: &El, g: &El) -> Option<String> {
     let label_fmt = |d: Option<&El>| {
         d.and_then(|d| d.child("numFmt")).filter(|n| n.attr("sourceLinked") != Some("1")).and_then(|n| n.attr("formatCode")).map(str::to_string)
     };
-    let source = s.child("val").or_else(|| s.child("yVal")).and_then(|v| v.find("numCache")).and_then(|c| c.child("formatCode")).map(|f| f.text());
+    let source = s
+        .child("val")
+        .or_else(|| s.child("yVal"))
+        .and_then(|v| v.find("numCache").or_else(|| v.find("numLit")))
+        .and_then(|c| c.child("formatCode"))
+        .map(|f| f.text());
     label_fmt(s.child("dLbls")).or_else(|| label_fmt(g.child("dLbls"))).or(source).filter(|f| !f.is_empty())
 }
 
@@ -312,6 +393,8 @@ fn read_series(s: &El, g: &El, group: (ChartType, bool, Option<bool>), categorie
             ser.trendlines.push(t);
         }
     }
+    super::chart_labels::read(&mut ser, g.child("dLbls"), false);
+    super::chart_labels::read(&mut ser, s.child("dLbls"), false);
     ser.number_format = label_number_format(s, g);
     for dp in s.children_named("dPt") {
         if let (Some(i), Some(f)) = (dp.child("idx").and_then(|i| i.u32("val")), simple_fill(dp.child("spPr"))) {
@@ -352,7 +435,11 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
             .filter(|g| g.children_named("axId").any(|a| a.attr("val") == id))
             .flat_map(|g| g.children_named("ser"))
             .find_map(|s| {
-                s.child("val").or_else(|| s.child("yVal")).and_then(|v| v.find("numCache")).and_then(|c| c.child("formatCode")).map(|f| f.text())
+                s.child("val")
+                    .or_else(|| s.child("yVal"))
+                    .and_then(|v| v.find("numCache").or_else(|| v.find("numLit")))
+                    .and_then(|c| c.child("formatCode"))
+                    .map(|f| f.text())
             })
             .filter(|f| !f.is_empty() && f != "General")
     };
@@ -375,6 +462,9 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
             c.y2_major = num(a, "majorUnit");
             c.y2_format = format_code(a);
             c.y2_hidden = deleted(a);
+            if let Some(props) = chart_text_props(a.child("txPr")) {
+                c.text_styles.insert(ChartTextRole::SecondaryValueAxis, props);
+            }
         }
     }
     let cat_ax = pa.child("catAx").or_else(|| pa.child("dateAx")).or_else(|| pa.children_named("valAx").find(|a| !vertical(a)));
@@ -398,7 +488,31 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
 }
 
 /// Text sizes and colours as the file sets them.
-fn read_text_styles(c: &mut Chart, root: &El, ch: &El, val_ax: Option<&El>, cat_ax: Option<&El>) {
+pub(super) fn read_text_styles(c: &mut Chart, root: &El, ch: &El, val_ax: Option<&El>, cat_ax: Option<&El>) {
+    use ChartTextRole::*;
+    for (role, element) in [
+        (Default, root.child("txPr")),
+        (Legend, ch.child("legend").and_then(|e| e.child("txPr"))),
+        (CategoryAxis, cat_ax.and_then(|e| e.child("txPr"))),
+        (ValueAxis, val_ax.and_then(|e| e.child("txPr"))),
+    ] {
+        if let Some(props) = chart_text_props(element) {
+            c.text_styles.insert(role, props);
+        }
+    }
+    for (role, title) in
+        [(Title, ch.child("title")), (CategoryTitle, cat_ax.and_then(|e| e.child("title"))), (ValueTitle, val_ax.and_then(|e| e.child("title")))]
+    {
+        if let Some(t) = title {
+            let mut props = chart_text_props(t.path(&["tx", "rich"])).unwrap_or_default();
+            if let Some(parent) = chart_text_props(t.child("txPr")) {
+                props.inherit(&parent);
+            }
+            if props != deckcraft_model::text::RunProps::default() {
+                c.text_styles.insert(role, props);
+            }
+        }
+    }
     // Text sizes as the file sets them (PowerPoint draws chart text at these sizes, not scaled to
     // the chart): the axes' and legend's, else the whole chart's; the title's own.
     let chart_size = text_size(root.child("txPr"));
@@ -406,6 +520,56 @@ fn read_text_styles(c: &mut Chart, root: &El, ch: &El, val_ax: Option<&El>, cat_
     // Text colour likewise: the axes' and legend's, else the whole chart's.
     c.text_color = [val_ax, cat_ax, ch.child("legend"), Some(root)].into_iter().flatten().find_map(|e| text_color(e.child("txPr")));
     c.title_size = ch.child("title").and_then(|t| text_size(t.child("tx").and_then(|x| x.child("rich"))).or_else(|| text_size(t.child("txPr"))));
+}
+
+/// Run typography shared by chart styles and each rich data-label run.
+pub(super) fn label_run_props(e: &El) -> deckcraft_model::text::RunProps {
+    use deckcraft_model::text::RunProps;
+    let font = |tag: &str| e.child(tag).and_then(|f| f.attr("typeface")).filter(|f| !f.is_empty()).map(|f| f.chars().take(256).collect());
+    RunProps {
+        font: font("latin"),
+        font_ea: font("ea"),
+        font_cs: font("cs"),
+        font_sym: font("sym"),
+        size: e.f64("sz").filter(|s| s.is_finite()).map(|s| (s / 100.0).clamp(1.0, 4000.0)),
+        bold: e.bool("b"),
+        italic: e.bool("i"),
+        underline: e.attr("u").map(str::to_string),
+        strike: e.attr("strike").map(|s| match s {
+            "sngStrike" => deckcraft_model::text::Strike::Single,
+            "dblStrike" => deckcraft_model::text::Strike::Double,
+            _ => deckcraft_model::text::Strike::None,
+        }),
+        caps: e.attr("cap").map(|s| match s {
+            "small" => deckcraft_model::text::Caps::Small,
+            "all" => deckcraft_model::text::Caps::All,
+            _ => deckcraft_model::text::Caps::None,
+        }),
+        highlight: e.child("highlight").and_then(super::dml::color),
+        underline_color: e.path(&["uFill", "solidFill"]).and_then(super::dml::color),
+        kern: e.f64("kern").filter(|v| v.is_finite()).map(|v| (v / 100.).clamp(0., 4000.)),
+        no_proof: e.bool("noProof"),
+        baseline: e.f64("baseline").map(|n| (n / 100000.).clamp(-10., 10.)),
+        spacing: e.f64("spc").map(|n| (n / 100.).clamp(-4000., 4000.)),
+        lang: e.attr("lang").map(str::to_string),
+        fill: simple_fill(Some(e)),
+        ..Default::default()
+    }
+}
+fn chart_text_props(e: Option<&El>) -> Option<deckcraft_model::text::RunProps> {
+    use deckcraft_model::text::RunProps;
+    let e = e?;
+    let p = e.child("p");
+    let mut props = p.and_then(|p| p.child("r")).and_then(|r| r.child("rPr")).map(label_run_props).unwrap_or_default();
+    if let Some(default) = p.and_then(|p| p.child("pPr")).and_then(|p| p.child("defRPr")) {
+        props.inherit(&label_run_props(default));
+    }
+    for path in [["lstStyle", "lvl1pPr", "defRPr"], ["lstStyle", "defPPr", "defRPr"]] {
+        if let Some(default) = e.path(&path) {
+            props.inherit(&label_run_props(default));
+        }
+    }
+    (props != RunProps::default()).then_some(props)
 }
 
 fn trend_num(e: &El, k: &str) -> Option<f64> {

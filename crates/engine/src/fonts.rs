@@ -6,17 +6,13 @@ use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::text::{Bullet, TextBody};
 use deckcraft_model::{Presentation, Shape, ShapeKind};
 
-/// Load each embedded face into the font database, so text in that family draws with the file's
-/// font on a machine that doesn't have it. A face already loaded (bundled or installed) stays;
-/// the part bytes are kept either way. MicroType Express subsets have no TrueType or OpenType
-/// font to load and are left for the round trip.
+/// Warm the document-scoped font cache. Embedded faces take precedence only inside this
+/// presentation; they never replace the global installed/bundled family or another document's.
 pub fn install_embedded_fonts(p: &Presentation) {
-    let db = FontDb::global();
     for font in &p.embedded_fonts {
         for id in font.faces().into_iter().flatten() {
             let Some(item) = p.media(id) else { continue };
-            let Some(sfnt) = deckcraft_fonts::embedded_sfnt(&item.data) else { continue };
-            db.add_font(sfnt.to_vec());
+            let _ = deckcraft_fonts::embedded_face(item.data.clone(), &font.typeface, "Regular");
         }
     }
 }
@@ -29,7 +25,14 @@ pub fn missing_fonts(p: &Presentation) -> Vec<String> {
     let db = FontDb::global();
     let mut out: Vec<String> = Vec::new();
     for family in used_fonts(p) {
-        if !family.starts_with('.') && !db.has_family(&family) && !out.iter().any(|f| f.eq_ignore_ascii_case(&family)) {
+        let embedded = p.embedded_fonts.iter().filter(|f| f.typeface.eq_ignore_ascii_case(&family)).any(|f| {
+            f.faces()
+                .into_iter()
+                .flatten()
+                .filter_map(|id| p.media(id))
+                .any(|m| deckcraft_fonts::embedded_face(m.data.clone(), &family, "Regular").is_some())
+        });
+        if !family.starts_with('.') && !embedded && !db.has_family(&family) && !out.iter().any(|f| f.eq_ignore_ascii_case(&family)) {
             out.push(family);
         }
     }
@@ -57,20 +60,117 @@ pub fn used_fonts(p: &Presentation) -> Vec<String> {
                     body_fonts(&ctx, s, &cell.text, &mut add);
                 }
             }
+            if let ShapeKind::Chart(c) = &s.kind {
+                for (_, body, _) in chart_samples(c) {
+                    let shape = Shape { text: Some(body.clone()), ..Default::default() };
+                    body_fonts(&ctx, &shape, &body, &mut add);
+                }
+            }
         });
     }
     out
 }
 
+/// Read-only diagnostics from the renderer's font selection. Locations are source character
+/// ranges, never document text or local paths, so reports can be shared without either.
+pub fn inspect_fonts(p: &Presentation) -> serde_json::Value {
+    use serde_json::json;
+    let mut out = Vec::new();
+    for (slide_index, slide) in p.slides.iter().enumerate() {
+        let Some(ctx) = Ctx::for_slide(p, slide) else { continue };
+        deckcraft_model::walk(&slide.shapes, &mut |shape, _| {
+            let mut inspect = |body: &TextBody, cell: Option<(usize, usize)>, role: Option<deckcraft_model::chart::ChartTextRole>, sampled: bool| {
+                let label_shape = Shape { text: Some(body.clone()), ..Default::default() };
+                for f in deckcraft_text::font_usage(&ctx, if role.is_some() { &label_shape } else { shape }, body) {
+                    out.push(json!({ "slide": slide_index + 1, "shape": shape.id.0, "cell": cell,
+                        "component": role, "sampled": sampled,
+                        "paragraph": f.paragraph, "run": f.run, "start": f.start, "end": f.end,
+                        "requested": f.requested, "actual": f.actual.family, "style": f.actual.style,
+                        "faceIndex": f.actual.index(), "fontSha256": f.actual.sha256(), "variationCoordinates": f.actual.coords,
+                        "embedded": f.actual.embedded, "reason": f.reason, "missingGlyph": f.missing_glyph,
+                        "syntheticBold": f.synthetic_bold, "syntheticItalic": f.synthetic_italic }));
+                }
+            };
+            if let Some(body) = &shape.text {
+                inspect(body, None, None, false);
+            }
+            if let ShapeKind::Table(table) = &shape.kind {
+                for (row, r) in table.rows.iter().enumerate() {
+                    for (column, c) in r.cells.iter().enumerate() {
+                        inspect(&c.text, Some((row, column)), None, false);
+                    }
+                }
+            }
+            if let ShapeKind::Chart(c) = &shape.kind {
+                for (role, body, sampled) in chart_samples(c) {
+                    inspect(&body, None, Some(role), sampled);
+                }
+            }
+        });
+    }
+    json!(out)
+}
+
+/// Actual title/legend/category strings plus representative numeric axis labels. Tick values
+/// depend on the frame size, so those rows are explicitly marked as samples, not source ranges.
+fn chart_samples(c: &deckcraft_model::Chart) -> Vec<(deckcraft_model::chart::ChartTextRole, TextBody, bool)> {
+    use deckcraft_model::chart::{ChartTextRole as Role, ChartType};
+    let mut samples = Vec::new();
+    let mut add = |role, text: &str, sampled| {
+        let mut body = TextBody::from_text(text);
+        for para in &mut body.paragraphs {
+            para.props.bullet = Some(Bullet::None);
+            for run in &mut para.runs {
+                run.props = c.text_props(role);
+                if run.props.bold.is_none() {
+                    run.props.bold = Some(matches!(role, Role::CategoryTitle | Role::ValueTitle));
+                }
+            }
+        }
+        samples.push((role, body, sampled));
+    };
+    if let Some(title) = &c.title {
+        add(Role::Title, title, false);
+    }
+    for (role, title) in [(Role::CategoryTitle, &c.axis_titles.0), (Role::ValueTitle, &c.axis_titles.1)] {
+        if let Some(title) = title {
+            add(role, title, false);
+        }
+    }
+    let pie = matches!(c.kind, ChartType::Pie | ChartType::Doughnut);
+    for category in &c.categories {
+        if !pie {
+            add(Role::CategoryAxis, category, false);
+        }
+        if pie && c.legend.is_some() {
+            add(Role::Legend, category, false);
+        }
+    }
+    if !pie && c.legend.is_some() {
+        for series in &c.series {
+            add(Role::Legend, &series.name, false);
+        }
+    }
+    if !pie {
+        for (secondary, role, hidden) in [(false, Role::ValueAxis, c.y_hidden), (true, Role::SecondaryValueAxis, c.y2_hidden)] {
+            if !hidden && let Some((min, max, _)) = c.axis_scale(secondary, 6) {
+                for value in [min, max] {
+                    add(role, &c.axis_label(secondary, value), true);
+                }
+            }
+        }
+    }
+    samples
+}
+
 fn body_fonts(ctx: &Ctx, s: &Shape, body: &TextBody, add: &mut dyn FnMut(String)) {
+    for family in deckcraft_text::requested_fonts(ctx, s, body) {
+        add(family);
+    }
     for para in &body.paragraphs {
         let has_text = para.runs.iter().any(|r| !r.text.trim().is_empty());
         if !has_text {
             continue;
-        }
-        for run in para.runs.iter().filter(|r| !r.text.trim().is_empty()) {
-            let r = resolve::run(ctx, s, para, &run.props);
-            add(resolve::font_family(ctx, &r));
         }
         let pp = resolve::para(ctx, s, para);
         if matches!(pp.bullet, Some(Bullet::Char { .. }))
@@ -84,7 +184,7 @@ fn body_fonts(ctx: &Ctx, s: &Shape, body: &TextBody, add: &mut dyn FnMut(String)
 /// Replace the font family `from` with `to` everywhere it is named explicitly: text runs (and
 /// their east Asian, complex script and symbol faces), bullet fonts, paragraph end marks, list
 /// styles of shapes, layouts and masters, the master text styles, the deck default style, speaker
-/// notes, tables and the theme fonts. Names compare case-insensitively; theme references
+/// notes, tables, chart text roles and the theme fonts. Names compare case-insensitively; theme references
 /// (`+mn-lt`) are left alone. Returns how many names changed.
 pub fn replace_font(p: &mut Presentation, from: &str, to: &str) -> usize {
     use std::sync::Arc;
@@ -137,6 +237,11 @@ fn replace_shapes(shapes: &mut [Shape], fix: &mut dyn FnMut(&mut Option<String>)
         if let ShapeKind::Table(t) = &mut s.kind {
             for cell in t.rows.iter_mut().flat_map(|r| &mut r.cells) {
                 replace_body(&mut cell.text, fix);
+            }
+        }
+        if let ShapeKind::Chart(c) = &mut s.kind {
+            for props in c.text_styles.values_mut() {
+                replace_run(props, fix);
             }
         }
         if let Some(children) = s.children_mut() {

@@ -41,13 +41,14 @@ pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLay
         // Text that overflows even at the smallest scale gets that scale: every larger one
         // overflows too, so searching would only lay it out a dozen more times (seconds for a
         // body of tens of thousands of paragraphs, on every redraw of the slide).
-        let smallest = layout_scaled(ctx, shape, body, &bp, opts, 0.1, 0.2);
+        let floor = bp.min_autofit_scale.filter(|v| v.is_finite()).unwrap_or(0.1).clamp(0.1, 1.0);
+        let smallest = layout_scaled(ctx, shape, body, &bp, opts, floor, 0.2);
         if smallest.overflow {
             return smallest;
         }
         // Binary search the largest scale that fits (steps like 90%, 80%… with line reduction).
-        let (mut lo, mut hi) = (0.1_f64, scale0);
-        let mut best = Some(smallest);
+        let (mut lo, mut hi) = (floor, scale0);
+        let mut best = smallest;
         for _ in 0..12 {
             let mid = (lo + hi) / 2.0;
             let red: f64 = ((1.0 - mid) * 0.8_f64).min(0.2).max(reduce0);
@@ -56,12 +57,25 @@ pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLay
                 hi = mid;
             } else {
                 lo = mid;
-                best = Some(t);
+                best = t;
             }
         }
-        if let Some(b) = best {
-            l = b;
+        // A font-size floor can leave line spacing as the only usable degree of freedom.
+        // Keep the largest fitting font and find the least reduction at that size.
+        if bp.min_autofit_scale.is_some() && best.line_reduction > reduce0 {
+            let (mut low, mut high) = (reduce0, best.line_reduction);
+            for _ in 0..10 {
+                let mid = (low + high) / 2.0;
+                let candidate = layout_scaled(ctx, shape, body, &bp, opts, best.font_scale, mid);
+                if candidate.overflow {
+                    low = mid;
+                } else {
+                    high = mid;
+                    best = candidate;
+                }
+            }
         }
+        l = best;
     }
     l
 }
@@ -93,18 +107,18 @@ impl BoxGeom {
         } else {
             text_rect
         };
-        let inner = Rect::new(
-            r.x0 + bp.inset_l.unwrap_or(7.2),
-            r.y0 + bp.inset_t.unwrap_or(3.6),
-            (r.x1 - bp.inset_r.unwrap_or(7.2)).max(r.x0 + bp.inset_l.unwrap_or(7.2)),
-            (r.y1 - bp.inset_b.unwrap_or(3.6)).max(r.y0 + bp.inset_t.unwrap_or(3.6)),
-        );
+        // When opposing insets cross, Office collapses the available interval at its
+        // midpoint. Clamping only the trailing edge displaces text in narrow/rotated boxes.
+        let interval = |start: f64, end: f64| if end < start { ((start + end) / 2., (start + end) / 2.) } else { (start, end) };
+        let (left, right) = interval(r.x0 + bp.inset_l.unwrap_or(7.2), r.x1 - bp.inset_r.unwrap_or(7.2));
+        let (top, bottom) = interval(r.y0 + bp.inset_t.unwrap_or(3.6), r.y1 - bp.inset_b.unwrap_or(3.6));
+        let inner = Rect::new(left, top, right, bottom);
         // Text that follows a WordArt arch or circle is set on one line per paragraph.
         let follow = bp.warp.as_deref().is_some_and(deckcraft_geom::warp::is_follow);
         let wrap = bp.wrap.unwrap_or(true) && !follow && !matches!(bp.autofit, Some(AutoFit::Shape) if shape.text_box && !bp.wrap.unwrap_or(true));
         let ncols = bp.columns.unwrap_or(1).clamp(1, 16) as usize;
         let col_gap = bp.col_spacing.unwrap_or(0.0).max(0.0);
-        let col_w = ((inner.width() - col_gap * (ncols as f64 - 1.0)) / ncols as f64).max(1.0);
+        let col_w = ((inner.width() - col_gap * (ncols as f64 - 1.0)) / ncols as f64).max(0.0);
         let rtl_cols = bp.rtl_col.unwrap_or(false) && ncols > 1;
         BoxGeom { vert, rotation, inner, wrap, ncols, col_gap, col_w, rtl_cols }
     }
@@ -315,7 +329,13 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
         },
     );
     // The first paragraph's space before counts only when the body says so.
-    let before = if pi == 0 && !first_last { 0.0 } else { spacing_pts(props.space_before, p.lead_size) };
+    // Paragraph percentage spacing uses the adjacent line's natural height, not the font's
+    // em size or its already-reduced line pitch (ISO/IEC 29500 spcPct).
+    let natural = |line: &RawLine| {
+        let (asc, desc, size) = line_extent(p, line);
+        (asc + desc).max(size)
+    };
+    let before = if pi == 0 && !first_last { 0.0 } else { spacing_pts(props.space_before, raw.first().map_or(p.lead_size, natural)) };
     flow.y += before.max(0.0) + flow.prev_after;
     let first_line_idx = flow.lines.len();
     let env = ParaEnv { p, g, reduce, margin, indent, mr, bullet_w, first_x, rest_x, tabs: &tabs };
@@ -325,8 +345,22 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
         out.content_width = out.content_width.max(placed.content_w);
         flow.lines.push(placed);
     }
+    // A wrapped paragraph narrower than one glyph still emits that glyph. Office
+    // centres this overflow as a block, retaining positive per-line alignment slack;
+    // it does not shift each oversized line by a different negative amount.
+    if g.wrap && !p.rtl && props.align == Some(Align::Center) {
+        let lines = &mut flow.lines[first_line_idx..];
+        let width = lines.iter().map(|l| l.content_w).fold(g.col_w, f64::max);
+        let dx = (g.col_w - width) / 2.;
+        for line in lines {
+            line.info.shift_x(dx);
+            if let Some((_, x, _)) = &mut line.bullet {
+                *x += dx;
+            }
+        }
+    }
     out.para_lines.push((first_line_idx, raw.len()));
-    flow.prev_after = spacing_pts(props.space_after, p.lead_size).max(0.0);
+    flow.prev_after = spacing_pts(props.space_after, raw.last().map_or(p.lead_size, natural)).max(0.0);
 }
 
 /// Max ascent / descent / size over the line's styles (or the lead style if empty).
@@ -516,7 +550,10 @@ fn place_line(env: &ParaEnv, pi: usize, rl: &RawLine, li: usize, is_last: bool, 
     let line_w: f64 = adv.iter().sum();
     // The line box, in column coordinates: the start edge is the left one for LTR and the
     // right one (S = W - rIns) for RTL paragraphs.
-    let (box_l, box_r) = if p.rtl { (env.mr, g.col_w - x0) } else { (x0, g.col_w - env.mr) };
+    let (box_l, mut box_r) = if p.rtl { (env.mr, g.col_w - x0) } else { (x0, g.col_w - env.mr) };
+    if g.wrap && !p.rtl {
+        box_r = box_r.max(box_l + line_w);
+    }
     let left = line_left(align, filled, p.rtl, (box_l, box_r), line_w, slack, n);
     // Distance from the box's start edge to the text (bullets move with centred or
     // end-aligned text).
@@ -668,8 +705,8 @@ fn new_run(cell: &Cell, st: &Style, face: &Arc<FontFace>, para: usize, pos: &Cel
         color: st.color,
         glyphs: vec![],
         cells: vec![],
-        fake_bold: st.fake_bold,
-        fake_italic: st.fake_italic,
+        fake_bold: st.style_name.contains("Bold") && face.weight < 550.0,
+        fake_italic: st.style_name.contains("Italic") && !face.italic,
         outline: st.outline,
         para,
         chars: (pos.ci, pos.ci + 1),

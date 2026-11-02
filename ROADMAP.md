@@ -1,8 +1,12 @@
 # DeckCraft roadmap
 
+> **PPTX.21 update 2026-11-01:** SmartArt font search measures displayed whole-point sizes while retaining fractional local references. Authored defaults round at each reference edge; satisfied bounds do not move linked fonts. All 108 new font controls and 154 earlier font controls match PowerPoint. Short-label wrapping, omitted-point-type colours and full search/fallback policies remain partial; scores are unchanged.
+
+> **PPTX.20 update 2026-11-01:** global maps retain per-region dateline continuity and fit actual complete-cache bounds. Global projection fallback, cylindrical southern cropping and native plot insets have multi-size controls. Incomplete provider context, boundary simplification and finite-size quantization remain partial; scores are unchanged.
+
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (print-preview tests use egui's emitted URL, and macOS removes its previews before exit; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-10-31 · **Change:** minor (font diagnostics, chart typography, imported diagram graph/text retention and fixed-size embedded XLSX synchronization; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (progress log: read-only `slide.actions` lists shape and table text actions; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** trivial (progress log: Set Up Slide Show ▸ Keep mouse cursor visible, #1445; stage and scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (progress log: dragging several selected slides moves them all; previous: trivial, progress log: Edit Points handle drags with Shift, Ctrl/Cmd or Alt/Option set the point type; previous: trivial, progress log: scroll bars on the zoomed slide pane, #1157; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -132,7 +136,7 @@ Ranked; detail and the full beta plan in [docs/roadmap.md](docs/roadmap.md).
    shows, rotated groups, inherited placeholders, text effects and body layout, theme effects,
    fills, bevels, connectors, tables, charts, animations, media, sections, masters, 3-D models
    and animation bounce end. Still open: a corpus of real decks, #70, #74, EMF+ records,
-   MicroType Express font subsets and SVG. 36–64 h.
+   remaining font fidelity and SVG. 36–64 h.
 3. **Localization:** catalog, system language (#15), zh-Hans, es, fr, de, ja with IME. 27–46 h.
 4. **Output:** vector PDF, printing. 10–16 h.
 5. **Depth that users hit:** font weights (#69), chart data and elements, Animation Pane timeline,
@@ -148,6 +152,27 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-01 | PPTX.21: resolve scaled reverse-font differences through displayed trial measurement, one-point search convergence and fractional local references; 108 new and 154 prior native font controls pass without geometry regression |
+| 2026-11-01 | PPTX.20: complete-cache global maps fit continuous dateline regions; projection fallback, cylindrical southern cap and chart insets have multi-size native controls. Boundary simplification and incomplete-provider context remain partial |
+| 2026-11-01 | PPTX.19: retain geographic parent/child hierarchy and extent-only ancestors; choose administrative views, preserve data-only projection context, and render regional Albers with robust dateline wrapping; native global fitting remains partial |
+| 2026-11-01 | PPTX.18: maximum-area rotated diagram footprints, independently oriented editable text frames, and bounded fitting-failure fallback; narrow text alignment corrected with independent native probes |
+| 2026-11-01 | PPTX.17: occupied composite frames, mapped text-node typography, constrained root frames and empty-composite semantics; native controls and round-trip regressions, with rotation/selector limits explicit |
+| 2026-11-01 | PPTX.16: separate local font fitting from default references, solve connected font equalities/bounds, run child rules first and retain native default fonts; real-text round-trip and isolation regressions |
+| 2026-11-01 | PPTX.15: selector-bound SmartArt font rules, synchronized shared groups with local triggers, and explicit-font autofit control; real-text and round-trip regressions; native reference/fallback gaps remain explicit |
+| 2026-11-01 | PPTX.14: native composite coordinate ownership and axis priority; root occupied-bounds fitting; literal column-label wrapping with no-wrap/manual overrides; original geometry and pixel regressions |
+| 2026-11-01 | PPTX.13: native-validated linear/cycle container fitting; custom map stop interoperability; first-paragraph literal-label inheritance; bounded regression coverage and explicit schema/native discrepancy |
+| 2026-11-01 | PPTX.12: bounded joint trials for connected text rules; native constant-map colour behavior; per-level rich label inheritance and isolated literal bodies with intrinsic bounds; native layout differences remain documented |
+| 2026-11-01 | PPTX.11: interior measured-rule search; native first-row map binding, numeric colour scales and crop-stable projection; complete-body label measurement and styled hierarchy leaves; native interoperability limitations retained |
+| 2026-11-01 | PPTX.10: property-scoped font rules, measured-text reuse and hierarchical secondary text; offline geographic query joins, explicit viewport scopes and styled map labels; PowerPoint/LibreOffice black-box differences recorded |
+| 2026-11-01 | PPTX.9: font-measured ordered SmartArt rules, distinct font constraints and reference-linked fitting; corrected reference/value semantics and circular placement; bounded raw-DEFLATE geographic caches and native world projection/fill fixes; funnel rich-label typography. Native/provider gaps remain explicit |
+| 2026-11-01 | PPTX.8: bounded sparse diagram equations and half-space bounds; geographic clear-cache polygons/holes/dateline rendering; rich classic point labels with native visibility/rotation corrections. Original tests and native observations retain explicit limits for cyclic-layout fallback and provider map caches |
+| 2026-11-01 | PPTX.7: embedded SVG pictures render in-process with bounded XML/output, retained raster fallback and media remapping; bubble area/width/scale/sign semantics and disconnected glyphs have pixel regressions and native checks |
+| 2026-11-01 | PPTX.6: fresh chartEx native open/export now passes for the nine-page matrix; original style parts, native scalar encoding and literal rich titles resolve the blockers. Histogram tail/series semantics, valid uncached composite geometry/text defaults, malformed-font negative caching and font-floor fitting have regressions. Remaining automatic-layout/rich-label limits are documented; no global parity score increase |
+| 2026-11-01 | MTX compressed TrueType fonts now decode in safe Rust, checked against an independent encoder and embedded-font pixel oracle. chartEx statistical/display settings and bounded uncached SmartArt layout execution are modeled and tested; native chartEx open and custom uncached layout parity remain explicit failures, not completed parity |
+| 2026-11-01 | Direct rendering: manual chart rectangles, body rotation, axis/gridline styles and legend spacing; diagram root child coordinates and authored fallback selection. Original multi-script/embedded-font and six-layout diagram probes are compared with PowerPoint. Fresh chartEx native-open remains a failed interoperability check; global parity scores unchanged |
+| 2026-10-31 | Imported SmartArt preserves its original package graph, IDs and geometry through no-op saves and identity-bound Text Pane edits; undo/redo and native save are tested. Categorical chart edits synchronize fixed-size direct XLSX ranges without changing unrelated cells/sheets. Native PowerPoint preservation probes render identically on no-op round trips; structural edits and unsupported spreadsheet sources remain partial |
+| 2026-10-31 | Font selection respects East Asian language/script mappings and document-scoped embedded faces. Read-only `font.inspect` reports actual faces, hashes and fallback reasons. Charts keep separate title/legend/axis typography and rebuilt secondary axes; label widths use text shaping, and logical series order survives plot grouping. Cached SmartArt retains nested transforms and image nodes. Four generated render probes compare exact pixels before/after PPTX round trip; these are not PowerPoint parity claims. See [layout fidelity](docs/layout-fidelity.md) |
+| 2026-10-31 | PPTX fidelity: data-only categorical chart edits keep unmodelled formatting and remove stale workbook dependencies; line data labels render; partial shape restrictions survive save; flat default process SmartArt derives export geometry and font size from its canvas. Paragraph defaults include proofing language, and CJK hanging punctuation follows explicit language. Native PowerPoint validation is bounded; full chart/SmartArt parity remains open |
 | 2026-10-30 | Print-preview tests use the URL emitted by egui and its exact file path; previews are explicitly removed before the macOS process exits |
 | 2026-10-30 | `slide.actions` lists shape click and hover actions and text-run hyperlinks (including table cells and grouped shapes) for audit; listing never runs an action. The UI pane is a follow-up |
 | 2026-10-29 | Slide Show: going back to the previous slide plays the transition of the slide being left, reversed, as PowerPoint does, instead of the previous slide's own entrance transition (#1531); a jump (Go to Slide, links) still plays the target slide's transition |
@@ -318,6 +343,9 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | PPTX.21 separates authored-default rounding, displayed trial measurement and fractional local-font propagation; native font controls pass, full visual parity remains partial |
+| 2026-11-01 | minor | PPTX.19 geographic lineage, regional projection and explicit native viewport limits; scores unchanged |
+| 2026-10-31 | minor | Progress log: bounded PPTX editing/export fidelity fixes; overall parity scores and alpha stage unchanged |
 | 2026-10-30 | trivial | Progress log: read-only slide action inspection; parity scores unchanged |
 | 2026-10-29 | trivial | Progress log: going back in the slide show reverses the left slide's transition (#1531). Scores and milestone names unchanged |
 | 2026-10-29 | trivial | Progress log: the Picture Styles row leaves room for Crop and Size (#1232). Scores and milestone names unchanged |

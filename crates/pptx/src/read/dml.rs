@@ -135,8 +135,10 @@ pub fn gradient(f: &El) -> Gradient {
 pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
     let blip = bf.child("blip");
     let media = blip.and_then(|b| media_ref(imp, part, b));
-    let media = media?;
+    let svg = blip.and_then(|b| b.child("extLst")).and_then(|e| e.find("svgBlip")).and_then(|e| media_ref(imp, part, e));
+    let media = media.or(svg)?;
     let mut pf = PictureFill { media, upright: !bf.bool("rotWithShape").unwrap_or(true), ..Default::default() };
+    pf.svg = svg;
     if let Some(layer) = blip.and_then(|b| b.child("extLst")).and_then(|x| x.find("imgLayer"))
         && let Some(effect) = layer
             .elements()
@@ -221,6 +223,13 @@ pub fn media_ref(imp: &mut Imp, part: &Part, b: &El) -> Option<deckcraft_model::
 }
 
 pub fn line(imp: &mut Imp, part: &Part, ln: &El) -> Line {
+    let mut l = line_properties(ln);
+    l.fill = fill_of(imp, part, ln);
+    l
+}
+
+/// Line geometry without package-dependent picture fills (also used by charts).
+pub(super) fn line_properties(ln: &El) -> Line {
     let mut l = Line { width: pt(ln, "w").map(|w| w.clamp(0.0, 2000.0)), ..Default::default() };
     l.cap = ln.attr("cap").map(|c| match c {
         "rnd" => LineCap::Round,
@@ -229,7 +238,6 @@ pub fn line(imp: &mut Imp, part: &Part, ln: &El) -> Line {
     });
     l.compound = ln.attr("cmpd").map(Compound::from_xml);
     l.align = ln.attr("algn").and_then(LineAlign::from_xml);
-    l.fill = fill_of(imp, part, ln);
     for e in ln.elements() {
         match e.local() {
             "prstDash" => l.dash = Some(Dash::Preset { name: e.attr("val").unwrap_or("solid").to_string() }),
@@ -579,14 +587,30 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
 /// `a:lstStyle`, `p:titleStyle`, `a:defaultTextStyle`… → list style.
 pub fn list_style(imp: &mut Imp, part: &Part, ls: &El) -> ListStyle {
     let mut out = ListStyle::default();
+    // defPPr supplies defaults to every level (including the proofing language used by CJK
+    // line breaking). Materialise it in each level; an explicit lvlNpPr still takes precedence.
+    let default = ls.child("defPPr").map(|e| {
+        let (_, para, run) = ppr(imp, part, e);
+        LevelStyle { para, run: run.unwrap_or_default() }
+    });
+    if let Some(default) = &default {
+        for level in 0..9 {
+            out.set(level, default.clone());
+        }
+    }
     for e in ls.elements() {
         let n = e.local();
         let Some(l) = n.strip_prefix("lvl").and_then(|r| r.strip_suffix("pPr")).and_then(|d| d.parse::<u8>().ok()) else { continue };
         if !(1..=9).contains(&l) {
             continue;
         }
-        let (_, para, run) = ppr(imp, part, e);
-        out.set(l - 1, LevelStyle { para, run: run.unwrap_or_default() });
+        let (_, mut para, run) = ppr(imp, part, e);
+        let mut run = run.unwrap_or_default();
+        if let Some(default) = &default {
+            para.inherit(&default.para);
+            run.inherit(&default.run);
+        }
+        out.set(l - 1, LevelStyle { para, run });
     }
     out
 }

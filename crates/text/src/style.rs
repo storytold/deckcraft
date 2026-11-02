@@ -33,11 +33,10 @@ pub struct Opts<'a> {
 
 pub(crate) struct Style {
     pub(crate) face: Arc<FontFace>,
+    pub(crate) family: String,
     pub(crate) size: f64,
     pub(crate) color: Rgba,
     pub(crate) alpha: f64,
-    pub(crate) fake_bold: bool,
-    pub(crate) fake_italic: bool,
     pub(crate) baseline: f64,
     pub(crate) spacing: f64,
     pub(crate) caps: Caps,
@@ -123,9 +122,8 @@ pub(crate) fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgb
     let family = resolve::font_family(ctx, r);
     let bold = r.bold.unwrap_or(false);
     let italic = r.italic.unwrap_or(false);
-    let face = FontDb::global().document_face(&family, style_name(bold, italic));
-    let fake_bold = bold && face.weight < 550.0;
-    let fake_italic = italic && !face.italic;
+    let face =
+        embedded_face(ctx, &family, style_name(bold, italic)).unwrap_or_else(|| FontDb::global().document_face(&family, style_name(bold, italic)));
     let size = (r.size.unwrap_or(18.0) * scale).clamp(0.5, 4000.0);
     let (mut color, alpha, gradient) = match &r.fill {
         // The resolved colour carries the fill's transparency (`a:alpha`): it is applied once.
@@ -160,11 +158,10 @@ pub(crate) fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgb
     });
     Style {
         face,
+        family,
         size,
         color,
         alpha,
-        fake_bold,
-        fake_italic,
         baseline: r.baseline.unwrap_or(0.0),
         spacing: r.spacing.unwrap_or(0.0) * scale,
         caps: r.caps.unwrap_or(Caps::None),
@@ -192,23 +189,14 @@ pub(crate) fn face_chain(ctx: &Ctx, st: &Style, slot: FontSlot, script: Option<S
     let mut chain: Vec<Arc<FontFace>> = Vec::with_capacity(3);
     let mut push = |family: &str| {
         // Only families that exist: `FontDb::face` would substitute the default face.
-        if db.has_family(family) {
-            let f = db.face(family, st.style_name);
-            if !chain.iter().any(|c| Arc::ptr_eq(c, &f)) {
-                chain.push(f);
-            }
+        if let Some(f) = embedded_face(ctx, family, st.style_name).or_else(|| db.has_family(family).then(|| db.face(family, st.style_name)))
+            && !chain.iter().any(|c| Arc::ptr_eq(c, &f))
+        {
+            chain.push(f);
         }
     };
-    match slot {
-        FontSlot::EastAsian => st.ea.as_deref().into_iter().for_each(&mut push),
-        FontSlot::ComplexScript => st.cs.as_deref().into_iter().for_each(&mut push),
-        FontSlot::Latin => {}
-    }
-    if let Some(sc) = script.and_then(|t| std::str::from_utf8(&t).ok().map(String::from)) {
-        let set = if st.major { &ctx.master.theme.fonts.major } else { &ctx.master.theme.fonts.minor };
-        if let Some(f) = set.script(&sc) {
-            push(f);
-        }
+    for family in requested_families(ctx, st, slot, script) {
+        push(&family);
     }
     if !chain.iter().any(|c| Arc::ptr_eq(c, &st.face)) {
         chain.push(st.face.clone());
@@ -216,11 +204,47 @@ pub(crate) fn face_chain(ctx: &Ctx, st: &Style, slot: FontSlot, script: Option<S
     chain
 }
 
+pub(crate) fn embedded_face(ctx: &Ctx, family: &str, style: &str) -> Option<Arc<FontFace>> {
+    let font = ctx.pres.embedded_fonts.iter().find(|f| f.typeface.eq_ignore_ascii_case(family))?;
+    let preferred = match style {
+        "Bold Italic" => font.bold_italic,
+        "Bold" => font.bold,
+        "Italic" => font.italic,
+        _ => font.regular,
+    };
+    preferred.into_iter().chain(font.faces().into_iter().flatten()).find_map(|id| {
+        let item = ctx.pres.media(id)?;
+        deckcraft_fonts::embedded_face(item.data.clone(), family, style)
+    })
+}
+
+/// The document's requested cascade, including unavailable families, shared with diagnostics.
+pub(crate) fn requested_families(ctx: &Ctx, st: &Style, slot: FontSlot, script: Option<ScriptTag>) -> Vec<String> {
+    let mut out = Vec::with_capacity(3);
+    let explicit = match slot {
+        FontSlot::EastAsian => st.ea.as_deref(),
+        FontSlot::ComplexScript => st.cs.as_deref(),
+        FontSlot::Latin => None,
+    };
+    if let Some(family) = explicit {
+        out.push(family.to_string());
+    }
+    if let Some(sc) = script.and_then(|t| std::str::from_utf8(&t).ok().map(String::from)) {
+        let set = if st.major { &ctx.master.theme.fonts.major } else { &ctx.master.theme.fonts.minor };
+        if let Some(family) = set.script_for_language(&sc, st.lang.as_deref()) {
+            out.push(family.to_string());
+        }
+    }
+    out.push(st.family.clone());
+    out.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    out
+}
+
 /// Space before or after a paragraph, points. Shrink-on-overflow's line spacing reduction
 /// doesn't apply to it (PowerPoint keeps it).
-pub(crate) fn spacing_pts(s: Option<Spacing>, size: f64) -> f64 {
+pub(crate) fn spacing_pts(s: Option<Spacing>, natural_line_height: f64) -> f64 {
     match s {
-        Some(Spacing::Pct(p)) => p * size * 1.2,
+        Some(Spacing::Pct(p)) => p * natural_line_height,
         Some(Spacing::Pts(v)) => v,
         None => 0.0,
     }

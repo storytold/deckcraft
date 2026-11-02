@@ -8,6 +8,26 @@ use serde_json::{Value, json};
 
 const PART: &str = "ppt/embeddings/owned.xlsx";
 
+#[test]
+fn diagram_parts_share_the_native_binary_budget_and_restore() {
+    let mut p = Presentation::default();
+    let part = ChartPart { name: "ppt/diagrams/data.xml".into(), content_type: "application/xml".into(), bytes: vec![7; 600], native_entry: None };
+    Arc::make_mut(&mut p.slides[0]).shapes.push(Shape {
+        diagram: Some(deckcraft_model::Diagram {
+            kept: Some(deckcraft_model::DiagramKept {
+                fingerprint: "synthetic".into(),
+                package: deckcraft_model::chart::ChartKept { rels: vec![], parts: vec![part] },
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    let bytes = save(&p).unwrap();
+    assert_eq!(load(&bytes).unwrap(), p);
+    assert!(load_within(&bytes, Budget { total: 599, items: 1 }).is_err());
+    assert!(load_within(&bytes, Budget { total: 600, items: 0 }).is_err());
+}
+
 fn fixture(payload: Vec<u8>) -> Presentation {
     // Construct through the old manifest representation: this also exercises compatibility.
     let mut part: ChartPart = serde_json::from_value(json!({

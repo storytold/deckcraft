@@ -239,6 +239,7 @@ pub fn rich_deck() -> Presentation {
     pic.kind = ShapeKind::Picture {
         fill: PictureFill {
             media: img,
+            svg: None,
             crop: [0.1, 0.05, 0.2, 0.0],
             mode: PictureMode::Stretch { fill_rect: [0.0; 4] },
             alpha: Some(0.5),

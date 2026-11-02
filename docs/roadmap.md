@@ -1,5 +1,27 @@
 # DeckCraft roadmap: milestones and what's next
 
+> **PPTX.21 update 2026-11-01:** SmartArt font search measures displayed whole-point sizes while retaining fractional local references. Authored defaults round at each reference edge; satisfied bounds do not move linked fonts. All 108 new font controls and 154 earlier font controls match PowerPoint. Short-label wrapping, omitted-point-type colours and full search/fallback policies remain partial; scores are unchanged.
+
+> **PPTX.20 update 2026-11-01:** global maps retain per-region dateline continuity and fit actual complete-cache bounds. Global projection fallback, cylindrical southern cropping and native plot insets have multi-size controls. Incomplete provider context, boundary simplification and finite-size quantization remain partial; scores are unchanged.
+
+> **PPTX.19 update 2026-11-01:** geographic parent/child lineage and extent-only ancestors survive rebuilds; administrative scopes share projection context with data-only views. Regional Albers and rounded-boundary dateline handling are covered by native controls and regressions. Missing provider context and global viewport placement remain partial; scores are unchanged.
+
+> **PPTX.18 update 2026-11-01:** rotated SmartArt shapes fit their allocated footprints; text algorithms own independent upright/gravity/follow-shape orientation, including mapped composite text. Crossed text insets and narrow wrapped alignment are corrected. Native probes and editable round trips cover these changes; scaled font rounding, selector colours, automatic map viewports and rich-label overflow remain partial. Scores are unchanged.
+
+> **PPTX.17 update 2026-11-01:** composite shapes fit occupied child bounds; mapped text retains its text-node geometry and fonts. Empty composites, constrained root frames and default style/mapping controls are covered. Rotated composites and omitted-point-type colour selection still differ; font quantization, map viewport and rich-label overflow gaps remain. Scores are unchanged.
+
+> **PPTX.16 update 2026-11-01:** local font values preserve ordinary defaults while explicit equalities/bounds propagate through connected nodes; child-first rules and diagram font defaults have native controls. Four scaled reverse-reference probes retain a one-point font difference. Mapped composite, viewport and label overflow gaps remain; scores are unchanged.
+
+> **PPTX.15 update 2026-11-01:** font rules now retain selector/constraint ownership and synchronize shared groups without widening local fit triggers. Explicit diagram fonts no longer receive invented text-box autofit. Local reference-font propagation, recursive fallback, map viewport and label overflow remain partial; scores are unchanged.
+
+> **PPTX.14 update 2026-11-01:** composite coordinate ownership, redundant-axis priority and occupied-frame fitting now match native probes; literal column labels wrap to chart width while retaining explicit no-wrap/manual sizing. Complex rule ownership, geographic viewport policy and label overflow remain partial.
+
+> **PPTX.13 update 2026-11-01:** oversized linear/cycle diagrams fit their containers; native map-stop element names fix custom-gradient open/export; literal rich labels follow observed first-paragraph styling. Native geometry and colour probes pass; full solver, viewport and text-layout parity remains partial.
+
+> **PPTX.12 update 2026-11-01:** connected numeric rules can move jointly after independent trials stall; constant maps use the observed native colour interval; rich labels use their own list levels and isolate literal text from generated-label styling. Full native search, viewport and label-layout parity remains partial.
+
+> **PPTX.11 update 2026-11-01:** interior diagram-rule trials, native duplicate-map binding, two/three-stop map scales, stable cropped projection and richer paragraph/leaf-label typography are implemented. Native custom numeric map stops and full coupled-rule/native fallback parity remain open; scores are unchanged.
+
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (beta item 9 drops Play From, now in; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: PPTX corpus, presenter and show controls, review navigation, starter decks, Grid Options and New Window, WordArt gallery and handles, pen pressure; beta items 9 and 10 narrowed; duplicated rows and headers folded; previous: minor, core-workflow alpha gate added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Forward-looking: where DeckCraft is going and in what order. The one-page summary is
@@ -111,8 +133,14 @@ plan above.
 
 ## Revision history
 
+PPTX.8 (2026-11-01): direct rendering adds sparse diagram constraints, clear geographic caches
+and rich point labels; provider/native-layout gaps remain documented, and beta scope is unchanged.
+
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | PPTX.21 separates authored-default rounding, displayed trial measurement and fractional local-font propagation; native font controls pass, full visual parity remains partial |
+| 2026-11-01 | minor | Global dateline continuity, complete-cache framing, projection selection and cylindrical southern cap verified across independent chart sizes; simplification and missing-context gaps remain |
+| 2026-11-01 | minor | Rotated diagram footprint fitting and independent mapped text orientation; crossed text insets and wrapped overflow alignment verified with original native controls |
 | 2026-10-22 | trivial | Beta item 9: Animation Pane ▸ Play From landed, the item keeps effect options (3–6 h) |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native save/reopen retains imported chart workbooks and related parts; headless command tests cover a PPTX → native → PPTX cycle and stale-workbook rejection. Milestone scope and scores unchanged |
@@ -144,3 +172,11 @@ plan above.
 
 PDF writer consolidation preserves the current raster-artwork export and its selectable
 text layer, notes and handouts. It does not advance vector-PDF or printing parity.
+
+PPTX.9 (2026-11-01): measured diagram numeric-rule search, cycle extent fitting, observed raw-DEFLATE
+geographic caches and extended label typography. Remaining native/provider gaps are explicit.
+
+PPTX.10 (2026-11-01): hierarchical secondary text, property-scoped font fitting, measurement reuse,
+offline geographic joins, data/world scopes and map label typography implemented. Intermediate
+administrative viewport selection and native cyclic fallback remain
+explicit gaps. PowerPoint and LibreOffice comparisons are detailed in layout-fidelity.md.

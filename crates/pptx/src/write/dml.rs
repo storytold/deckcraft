@@ -112,6 +112,7 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
         || adj.clear_color.is_some()
         || adj.bilevel.is_some()
         || adj.alpha_inv
+        || pf.svg.is_some()
         || pf.artistic.is_some();
     let a = if linked { A::new().a("r:link", &rid) } else { A::new().a("r:embed", &rid) };
     if has_kids {
@@ -149,12 +150,25 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
         }
         // Artistic effect: the blip is the processed picture; the original rides in an
         // `a14:imgLayer` with the effect's name, as PowerPoint writes it.
+        if pf.svg.is_some() || pf.artistic.is_some() {
+            w.open0("a:extLst");
+        }
+        if let Some(svg) = pf.svg.and_then(|id| x.media_rel(o, id, "image")) {
+            w.open("a:ext", A::new().a("uri", "{96DAC541-7B7A-43D3-8B79-37D633B846F1}"));
+            let linked = pf.svg.and_then(|id| x.p.media(id)).is_some_and(|m| m.data.is_empty() && m.link.is_some());
+            w.empty(
+                "asvg:svgBlip",
+                A::new()
+                    .a("xmlns:asvg", "http://schemas.microsoft.com/office/drawing/2016/SVG/main")
+                    .a(if linked { "r:link" } else { "r:embed" }, svg),
+            );
+            w.close("a:ext");
+        }
         if let Some(art) = &pf.artistic
             && art.effect.starts_with("artistic")
             && art.effect.chars().all(|c| c.is_ascii_alphanumeric())
             && let Some(orig) = x.media_rel(o, art.original, "image")
         {
-            w.open0("a:extLst");
             w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
             w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
             w.open("a14:imgLayer", A::new().a("r:embed", &orig));
@@ -164,6 +178,8 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
             w.close("a14:imgLayer");
             w.close("a14:imgProps");
             w.close("a:ext");
+        }
+        if pf.svg.is_some() || pf.artistic.is_some() {
             w.close("a:extLst");
         }
         w.close("a:blip");
@@ -200,6 +216,11 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
 }
 
 pub fn line(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, l: &Line) {
+    line_with_fill(w, tag, l, |w, f| fill(w, x, o, f));
+}
+
+/// Write line geometry, delegating only its fill to the owning shape/chart writer.
+pub(super) fn line_with_fill(w: &mut W, tag: &str, l: &Line, paint: impl FnOnce(&mut W, &Fill)) {
     let a = A::new()
         .o("w", l.width.map(|v| emu(v.clamp(0.0, 1584.0))))
         .o(
@@ -215,7 +236,7 @@ pub fn line(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, l: &Line) {
     w.open(tag, a);
     if let Some(f) = &l.fill {
         match f {
-            Fill::None | Fill::Solid { .. } | Fill::Gradient(_) | Fill::Pattern(_) => fill(w, x, o, f),
+            Fill::None | Fill::Solid { .. } | Fill::Gradient(_) | Fill::Pattern(_) => paint(w, f),
             _ => {}
         }
     }
@@ -284,7 +305,7 @@ fn shadow(w: &mut W, tag: &str, s: &deckcraft_model::style::Shadow) {
     w.close(tag);
 }
 
-fn gradient(w: &mut W, g: &deckcraft_model::style::Gradient) {
+pub(super) fn gradient(w: &mut W, g: &deckcraft_model::style::Gradient) {
     w.open("a:gradFill", A::new().o("flip", g.flip.map(GradientFlip::xml)).a("rotWithShape", if g.rotate_with_shape { "1" } else { "0" }));
     // No stops: no `a:gsLst`, so the gradient keeps taking them from its style's fill.
     let mut stops = g.stops.clone();

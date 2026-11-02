@@ -198,8 +198,7 @@ fn shape_cells(
             .sym
             .as_deref()
             .filter(|_| cluster.first().is_some_and(|c| ('\u{F000}'..='\u{F0FF}').contains(c)))
-            .filter(|f| db.has_family(f))
-            .map(|f| db.face(f, st.style_name))
+            .and_then(|f| super::style::embedded_face(ctx, f, st.style_name).or_else(|| db.has_family(f).then(|| db.face(f, st.style_name))))
             .filter(|f| covers_symbol(f, cluster.first().copied().unwrap_or(' ')));
         let face = match (sym_face, prev.as_ref()) {
             (Some(f), _) => f,

@@ -1,5 +1,39 @@
 # PowerPoint feature checklist
 
+> **PPTX.21 update 2026-11-01:** SmartArt font search measures displayed whole-point sizes while retaining fractional local references. Authored defaults round at each reference edge; satisfied bounds do not move linked fonts. All 108 new font controls and 154 earlier font controls match PowerPoint. Short-label wrapping, omitted-point-type colours and full search/fallback policies remain partial; scores are unchanged.
+
+> **PPTX.20 update 2026-11-01:** global maps retain per-region dateline continuity and fit actual complete-cache bounds. Global projection fallback, cylindrical southern cropping and native plot insets have multi-size controls. Incomplete provider context, boundary simplification and finite-size quantization remain partial; scores are unchanged.
+
+> **PPTX.19 update 2026-11-01:** geographic parent/child lineage and extent-only ancestors survive rebuilds; administrative scopes share projection context with data-only views. Regional Albers and rounded-boundary dateline handling are covered by native controls and regressions. Missing provider context and global viewport placement remain partial; scores are unchanged.
+
+> **PPTX.18 update 2026-11-01:** rotated SmartArt shapes fit their allocated footprints; text algorithms own independent upright/gravity/follow-shape orientation, including mapped composite text. Crossed text insets and narrow wrapped alignment are corrected. Native probes and editable round trips cover these changes; scaled font rounding, selector colours, automatic map viewports and rich-label overflow remain partial. Scores are unchanged.
+
+> **PPTX.17 update 2026-11-01:** composite shapes fit occupied child bounds; mapped text retains its text-node geometry and fonts. Empty composites, constrained root frames and default style/mapping controls are covered. Rotated composites and omitted-point-type colour selection still differ; font quantization, map viewport and rich-label overflow gaps remain. Scores are unchanged.
+
+> **PPTX.16 update 2026-11-01:** local font values preserve ordinary defaults while explicit equalities/bounds propagate through connected nodes; child-first rules and diagram font defaults have native controls. Four scaled reverse-reference probes retain a one-point font difference. Mapped composite, viewport and label overflow gaps remain; scores are unchanged.
+
+> **PPTX.15 update 2026-11-01:** font rules now retain selector/constraint ownership and synchronize shared groups without widening local fit triggers. Explicit diagram fonts no longer receive invented text-box autofit. Local reference-font propagation, recursive fallback, map viewport and label overflow remain partial; scores are unchanged.
+
+> **PPTX.14 update 2026-11-01:** composite coordinate ownership, redundant-axis priority and occupied-frame fitting now match native probes; literal column labels wrap to chart width while retaining explicit no-wrap/manual sizing. Complex rule ownership, geographic viewport policy and label overflow remain partial.
+
+> **PPTX.13 update 2026-11-01:** oversized linear/cycle diagrams fit their containers; native map-stop element names fix custom-gradient open/export; literal rich labels follow observed first-paragraph styling. Native geometry and colour probes pass; full solver, viewport and text-layout parity remains partial.
+
+> **PPTX.12 update 2026-11-01:** connected numeric rules can move jointly after independent trials stall; constant maps use the observed native colour interval; rich labels use their own list levels and isolate literal text from generated-label styling. Full native search, viewport and label-layout parity remains partial.
+
+> **PPTX.11 update 2026-11-01:** interior diagram-rule trials, native duplicate-map binding, two/three-stop map scales, stable cropped projection and richer paragraph/leaf-label typography are implemented. Native custom numeric map stops and full coupled-rule/native fallback parity remain open; scores are unchanged.
+
+> **PPTX.10 update 2026-11-01:** hierarchical diagram text, property-scoped font rules, offline geographic query joins, explicit data/world scopes and styled map labels have regression coverage. Native cyclic-layout fallback and intermediate/automatic viewport policies remain partial; scores are unchanged.
+
+> **Reviewed 2026-10-31:** Lock shapes remains D after partial restriction round-trip coverage. Edit chart data, Chart elements, Insert SmartArt and Text pane remain P: categorical data patches and flat process export improve fidelity but do not cover structural chart edits or the remaining diagram layouts.
+
+> **PPTX.9 reviewed 2026-11-01:** ordered measured diagram rules, circular placement, raw-DEFLATE geographic caches and funnel label typography have regressions. Native rule ordering and projection/fill observations inform the implementation. All provider/search/viewport policies remain partial; scores unchanged.
+
+> **Extended rendering 2026-11-01:** MTX font decoding is independently verified; chartEx statistics/visibility and uncached SmartArt layout paths have regressions and schema checks. Fresh chartEx native opening now passes with complete style parts and native scalar encoding; named uncached composite geometry/text defaults are validated. Embedded SVG and bubble semantics now have direct-render checks. Chart and SmartArt scores stay P.
+
+> **Direct-render coverage 2026-11-01:** manual chart rectangles/rotations/strokes, cached SmartArt root transforms, authored fallback selection and six-script font probes are exercised. Direct PowerPoint comparisons cover six cached diagram layouts and the chart/font pages. The earlier native chartEx open/export failure is resolved; chart/SmartArt scores stay partial.
+
+> **Additional bounded coverage:** document-scoped fonts, actual-face diagnostics, per-role chart typography, secondary-axis rebuilds and nested SmartArt cached drawings now have synthetic regression tests. Font editing, charts and SmartArt retain their current partial scores; direct fixed-size XLSX ranges now synchronize and imported graph/text preservation is covered. Full rich chart labels, spreadsheet dependency edits and structural diagram relayout remain open.
+
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The summary between `<!-- SUMMARY -->
@@ -8,7 +42,7 @@ The summary between `<!-- SUMMARY -->
 | Priority | Features | Done | Partial | Missing | Parity |
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
-| P1 | 65 | 45 | 16 | 4 | 82% |
+| P1 | 65 | 45 | 17 | 3 | 82% |
 | P2 | 54 | 18 | 24 | 12 | 56% |
 
 | Area | Parity |
@@ -25,7 +59,7 @@ The summary between `<!-- SUMMARY -->
 | Tables | 97% |
 | Charts | 65% |
 | SmartArt | 50% |
-| Pictures | 60% |
+| Pictures | 64% |
 | Media | 67% |
 | Transitions | 100% |
 | Animations | 85% |
@@ -36,7 +70,7 @@ The summary between `<!-- SUMMARY -->
 | Automation (✱) | 100% |
 | Platforms (✱) | 67% |
 
-Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layout, Chart Design), Export to PDF (slides, notes pages, handouts; text layer, links, bookmarks; vector artwork pending), Format Shape pane, Font, size, bold, italic, underline, strikethrough (only Regular/Bold/Italic faces, #69), Edit chart data, Crop (and crop to shape, aspect ratio), Paste image from clipboard (fails on Windows, #1414; Linux not re-checked), Audio/video playback in the show (WMA/WMV not decodable yet), Animation pane (reorder, timing), Presenter view (notes, next slide, timer), macOS, Windows, Linux builds.
+Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layout, Chart Design), Export to PDF (slides, notes pages, handouts; text layer, links, bookmarks; vector artwork pending), Format Shape pane, Font, size, bold, italic, underline, strikethrough (only Regular/Bold/Italic faces, #69), Edit chart data (same-series-count categorical edits preserve source formatting), Crop (and crop to shape, aspect ratio), Paste image from clipboard (fails on Windows, #1414; Linux not re-checked), Audio/video playback in the show (WMA/WMV not decodable yet), Animation pane (reorder, timing), Presenter view (notes, next slide, timer), macOS, Windows, Linux builds.
 
 ## Rows
 
@@ -136,7 +170,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Arrange | Group, ungroup, regroup | P0 | D |
 | Arrange | Selection pane (names, visibility, order) | P1 | D |
 | Arrange | Nudge, duplicate with repeat offset | P1 | D |
-| Arrange | Lock shapes | P2 | D |
+| Arrange | Lock shapes (including imported partial restrictions on save) | P2 | D |
 | Arrange | Alt text | P1 | D |
 | Text | In-place text editing (caret, selection, mouse, keyboard) | P0 | D |
 | Text | Font, size, bold, italic, underline, strikethrough (only Regular/Bold/Italic faces, #69) | P0 | P |
@@ -173,13 +207,13 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Tables | Keyboard navigation between cells | P0 | D |
 | Charts | Insert chart (column, bar, line, area, pie, doughnut, scatter) | P0 | D |
 | Charts | Other chart types (radar, stock, combo, waterfall, funnel, treemap, sunburst, histogram, box) | P2 | P |
-| Charts | Edit chart data | P0 | P |
-| Charts | Chart elements (title, legend, labels, axes, gridlines) | P1 | P |
+| Charts | Edit chart data (same-series-count categorical edits preserve source formatting) | P0 | P |
+| Charts | Chart elements (title, legend, labels including line series, axes, gridlines) | P1 | P |
 | Charts | Chart styles and colours | P2 | P |
-| SmartArt | Insert SmartArt (lists, processes, cycles, hierarchy) | P1 | P |
+| SmartArt | Insert SmartArt (flat default process export checked in PowerPoint; other layouts partial) | P1 | P |
 | SmartArt | Text pane and layout switching | P2 | P |
 | Pictures | Insert picture (PNG, JPEG, GIF, WebP, BMP, TIFF) | P0 | D |
-| Pictures | SVG pictures | P1 | M |
+| Pictures | SVG pictures | P1 | P |
 | Pictures | Crop (and crop to shape, aspect ratio) | P0 | P |
 | Pictures | Corrections, colour, transparency (recolor and Set Transparent Color done; sharpen/soften and colour temperature pending) | P1 | P |
 | Pictures | Artistic effects | P2 | P |
@@ -233,3 +267,13 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Platforms (✱) | macOS, Windows, Linux builds | P0 | P |
 | Platforms (✱) | Web (WASM) build | P1 | D |
 | Platforms (✱) | BSD build | P2 | P |
+
+## Revision history
+
+| Date | Change | Summary |
+|---|---|---|
+| 2026-11-01 | minor | PPTX.21 separates authored-default rounding, displayed trial measurement and fractional local-font propagation; native font controls pass, full visual parity remains partial |
+| 2026-11-01 | minor | Global dateline continuity, complete-cache framing, projection selection and cylindrical southern cap verified across independent chart sizes; simplification and missing-context gaps remain |
+| 2026-11-01 | minor | Rotated diagram footprint fitting and independent mapped text orientation; crossed text insets and wrapped overflow alignment verified with original native controls |
+| 2026-11-01 | minor | Composite occupied geometry and mapped text ownership corrected; non-rotated native controls and round trips pass, rotation and selector/style interactions remain partial |
+| 2026-10-31 | minor | Clarified bounded chart-data, line-label, partial-lock and flat-process export coverage. Feature scores unchanged |

@@ -1,5 +1,35 @@
 # File-format parity with PowerPoint
 
+> **PPTX.21 update 2026-11-01:** SmartArt font search measures displayed whole-point sizes while retaining fractional local references. Authored defaults round at each reference edge; satisfied bounds do not move linked fonts. All 108 new font controls and 154 earlier font controls match PowerPoint. Short-label wrapping, omitted-point-type colours and full search/fallback policies remain partial; scores are unchanged.
+
+> **PPTX.20 update 2026-11-01:** global maps retain per-region dateline continuity and fit actual complete-cache bounds. Global projection fallback, cylindrical southern cropping and native plot insets have multi-size controls. Incomplete provider context, boundary simplification and finite-size quantization remain partial; scores are unchanged.
+
+> **PPTX.19 update 2026-11-01:** geographic parent/child lineage and extent-only ancestors survive rebuilds; administrative scopes share projection context with data-only views. Regional Albers and rounded-boundary dateline handling are covered by native controls and regressions. Missing provider context and global viewport placement remain partial; scores are unchanged.
+
+> **PPTX.18 update 2026-11-01:** rotated SmartArt shapes fit their allocated footprints; text algorithms own independent upright/gravity/follow-shape orientation, including mapped composite text. Crossed text insets and narrow wrapped alignment are corrected. Native probes and editable round trips cover these changes; scaled font rounding, selector colours, automatic map viewports and rich-label overflow remain partial. Scores are unchanged.
+
+> **PPTX.17 update 2026-11-01:** composite shapes fit occupied child bounds; mapped text retains its text-node geometry and fonts. Empty composites, constrained root frames and default style/mapping controls are covered. Rotated composites and omitted-point-type colour selection still differ; font quantization, map viewport and rich-label overflow gaps remain. Scores are unchanged.
+
+> **PPTX.16 update 2026-11-01:** local font values preserve ordinary defaults while explicit equalities/bounds propagate through connected nodes; child-first rules and diagram font defaults have native controls. Four scaled reverse-reference probes retain a one-point font difference. Mapped composite, viewport and label overflow gaps remain; scores are unchanged.
+
+> **PPTX.15 update 2026-11-01:** font rules now retain selector/constraint ownership and synchronize shared groups without widening local fit triggers. Explicit diagram fonts no longer receive invented text-box autofit. Local reference-font propagation, recursive fallback, map viewport and label overflow remain partial; scores are unchanged.
+
+> **PPTX.14 update 2026-11-01:** composite coordinate ownership, redundant-axis priority and occupied-frame fitting now match native probes; literal column labels wrap to chart width while retaining explicit no-wrap/manual sizing. Complex rule ownership, geographic viewport policy and label overflow remain partial.
+
+> **PPTX.13 update 2026-11-01:** oversized linear/cycle diagrams fit their containers; native map-stop element names fix custom-gradient open/export; literal rich labels follow observed first-paragraph styling. Native geometry and colour probes pass; full solver, viewport and text-layout parity remains partial.
+
+> **PPTX.12 update 2026-11-01:** connected numeric rules can move jointly after independent trials stall; constant maps use the observed native colour interval; rich labels use their own list levels and isolate literal text from generated-label styling. Full native search, viewport and label-layout parity remains partial.
+
+> **PPTX.11 update 2026-11-01:** interior diagram-rule trials, native duplicate-map binding, two/three-stop map scales, stable cropped projection and richer paragraph/leaf-label typography are implemented. Native custom numeric map stops and full coupled-rule/native fallback parity remain open; scores are unchanged.
+
+> **PPTX.10 update 2026-11-01:** hierarchical diagram text, property-scoped font rules, offline geographic query joins, explicit data/world scopes and styled map labels have regression coverage. Native cyclic-layout fallback and intermediate/automatic viewport policies remain partial; scores are unchanged.
+
+> **PPTX.9 update 2026-11-01:** measured SmartArt numeric rules, circular placement, observed DEFLATE map caches and funnel label typography are implemented. Remaining native/provider differences are detailed in [layout fidelity](layout-fidelity.md).
+
+> **Update 2026-11-01:** raw/EOT-wrapped MTX fonts decode; chartEx statistical/display settings and uncached diagram layout execution are covered by original regressions. Fresh chartEx opening is fixed; uncached named-composite geometry and text defaults have native evidence. SVG sources render with their raster fallback retained; bubble size/sign semantics survive rebuilds. Full automatic-layout/rich-label parity remains partial. See [scope and evidence](layout-fidelity.md).
+
+> **Update 2026-10-31:** complete imported diagram graphs and identity-bound text edits; fixed-size embedded XLSX data synchronization. See [scope and validation](layout-fidelity.md).
+
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every format PowerPoint reads or writes, DeckCraft's support, fidelity and how it is tested.
@@ -53,7 +83,7 @@ intermediate build that required inline `bytes` cannot read the new referenced r
 | Kind | PowerPoint | DeckCraft | Notes |
 |---|---|---|---|
 | PNG, JPEG, GIF (animated), BMP, TIFF, WebP | yes | yes | `image` 0.25; animated GIFs play since #39 |
-| SVG | yes (with PNG fallback) | **no** | The PNG fallback shows; SVG files can't be inserted |
+| SVG | yes (with PNG fallback) | yes, bounded | Direct paths/gradients/clips/text, document fonts and isolated cache; preserve source and fallback |
 | EMF / WMF | yes | partial | Drawn as vectors (paths, pens, pattern and hatch brushes, bitmaps, text in the document's fonts with the file's character advances). Rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ only pictures play every EMF+ drawing record (brushes incl. gradients and textures, pens, paths, curves, images, strings, transforms, clipping; see `crates/metafile/src/emfplus.rs` for the few exceptions). Legacy OLE objects (VML preview) and ActiveX controls show their pictures |
 | HEIC | yes (macOS) | no | |
 | Audio: MP3, AAC/M4A, ALAC, WAV, AIFF, CAF, FLAC, Ogg Vorbis, Opus | yes (Ogg/Opus partly) | yes | Pure-Rust decoders in `crates/media`, `crates/opus` |
@@ -63,7 +93,7 @@ intermediate build that required inline `bytes` cannot read the new referenced r
 | WMV | yes (Windows) | embedded, not playable | |
 | Online video (YouTube embeds) | yes | no | Cloud feature |
 | Embedded OLE objects | yes | kept on round trip (opaque), not insertable or editable | `ShapeKind::Opaque` |
-| Embedded fonts | yes | yes | `p:embeddedFontLst` read and written. TrueType, OpenType and Embedded OpenType faces are used to draw; MicroType Express subsets are kept and written back, not drawn |
+| Embedded fonts | yes | yes | `p:embeddedFontLst` read and written. TrueType, OpenType and Embedded OpenType faces are used to draw; MicroType Express TrueType subsets are decompressed and drawn |
 | 3-D models (`.glb`) | yes | kept | The model part round-trips (`p:contentPart`, including an `mc:AlternateContent` choice and its fallback picture). Not drawn as a mesh and not inserted from the ribbon |
 
 ## PPTX coverage (PresentationML / DrawingML)
@@ -88,9 +118,9 @@ the round trip even though DeckCraft doesn't model it.
 | Text warp (`prstTxWarp`) | yes | yes | All 40 presets rendered (`crates/geom/src/warp.rs`); adjust values (`avLst`) round-trip |
 | Pictures with crop, recolour, duotone, alpha, luminance | yes | yes | |
 | Tables with styles | yes | yes | Merges and both diagonal borders round-trip |
-| Charts (`c:chartSpace`) | yes | yes | Original XML kept in `Chart.raw`. Trendlines (type, order or period, forecast, intercept, equation and R²) are read, written and drawn. A combo chart's secondary value axis is read and is not written back when the chart is rebuilt. An unchanged chart also keeps its embedded workbook and the other parts its relationships point at, under fresh `keptN` names so they never replace a part DeckCraft writes (#335); editing the chart drops that workbook instead of writing a stale one |
-| Charts (`cx:` chartex: waterfall, funnel, treemap, sunburst, histogram, Pareto, box) | yes | yes | Unchanged parts kept, with their embedded workbook (#335); edited and new ones written from the model with a plain-chart fallback. Treemap and sunburst hierarchy levels kept; region maps kept, drawn as tiles (no map geometry) |
-| SmartArt (`dgm`) | the drawing part as a group (text laid out on its `dsp:txXfrm` rectangle), and the outline from the data model (Text Pane) | as a diagram: data model from the outline; layout, quick style and colour parts (the file's own kept until the layout is switched); the group as the cached drawing | DeckCraft's layout definitions are simple; a diagram without a cached drawing isn't drawn. SmartArt kept only as XML, without its relationship parts, still loses the drawing and data parts (#203) |
+| Charts (`c:chartSpace`) | yes | yes | Original XML kept in `Chart.raw`. Trendlines (type, order or period, forecast, intercept, equation and R²) are read, written and drawn. A combo chart's secondary value axis is read and rebuilt with its bounds, units, number format and independent typography. An unchanged chart also keeps its embedded workbook and the other parts its relationships point at, under fresh `keptN` names so they never replace a part DeckCraft writes (#335); fixed-size direct XLSX range edits synchronize chart caches and cells while preserving unrelated content. Unsupported sources/structural changes still drop stale workbook dependencies |
+| Charts (`cx:` chartex: waterfall, funnel, treemap, sunburst, histogram, Pareto, box, region map) | yes | yes | Unchanged parts kept, with their embedded workbook (#335); edited and new ones written from the model with a plain-chart fallback. Treemap and sunburst hierarchy levels kept; clear-cache region polygons, holes and dateline wrapping render offline. Observed raw-DEFLATE binary caches decode; unknown encodings are preserved and unusable geometry uses labelled tiles. Full native map and rich-label layout parity remains partial |
+| SmartArt (`dgm`) | Cached drawing as editable groups/text plus the data-model outline and bounded original package graph; uncached supported definitions evaluated | Imported unmodified graphs retain point/connection IDs, drawing bytes and internal relationships. Identity-bound Text Pane edits update data/drawing/model together; structural edits use generated layouts | Named affine references, chains, solvable cycles and inequality bounds use a bounded solver. Ordered measured rule search and circular placement are supported; all native fallback/search heuristics, ambiguous text bindings and structural relayout remain partial; [scope and validation](layout-fidelity.md) |
 | Equations (OMML, `a14:m`) | no | no | PR #55 open |
 | Audio / video (`p14:media`, trim, fades, bookmarks) | yes | partly | Playback options lost on save (#74) |
 | Ink (`contentPart`) | yes | as a group of freeform lines | PowerPoint sees shapes, not ink |
@@ -99,7 +129,7 @@ the round trip even though DeckCraft doesn't model it.
 | Comments: legacy | yes | yes | |
 | Comments: modern threaded (`p188`) | yes | yes | Written next to the flattened legacy part; replies and resolved state round-trip (`threads_and_resolved_round_trip`) |
 | Unknown slide-level elements (`graphicFrame` OLE, extensions, `mc:AlternateContent`) | kept | kept | Rendered as a labelled placeholder with the preview picture when present |
-| Embedded fonts | yes | yes | MicroType Express subsets kept, not drawn |
+| Embedded fonts | yes | yes | MicroType Express TrueType subsets decoded and drawn |
 | Tags (`p:custDataLst`) on the presentation, slides and shapes | yes | yes | Add-ins such as think-cell keep their identity; `tags_survive_round_trip` |
 | Custom XML data, sensitivity label (`docMetadata/LabelInfo.xml`), custom document properties | kept verbatim | yes | SharePoint metadata and the label survive a save; `custom_xml_label_and_custom_properties_survive_save` |
 | VBA | no | no | |
@@ -113,12 +143,22 @@ the round trip even though DeckCraft doesn't model it.
    tables, charts, animations, media, sections and masters/layouts among them. Still needed:
    render checks and a PowerPoint reference render for each (owner runs PowerPoint).
 2. The round-trip losses above (#70, #74).
-3. SVG rendering. EMF+ records inside EMF/WMF are still not drawn.
+3. Remaining EMF+ coverage and unsupported SVG features outside resvg's static subset.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | PPTX.21 separates authored-default rounding, displayed trial measurement and fractional local-font propagation; native font controls pass, full visual parity remains partial |
+| 2026-11-01 | minor | Global dateline continuity, complete-cache framing, projection selection and cylindrical southern cap verified across independent chart sizes; simplification and missing-context gaps remain |
+| 2026-11-01 | minor | Rotated diagram footprint fitting and independent mapped text orientation; crossed text insets and wrapped overflow alignment verified with original native controls |
+| 2026-11-01 | minor | Composite occupied geometry and mapped text ownership corrected; non-rotated native controls and round trips pass, rotation and selector/style interactions remain partial |
+| 2026-10-31 | minor | Preserve complete imported diagram packages and identity-bound text edits through native saves. Synchronize fixed-size direct embedded XLSX ranges with chart caches, keeping unrelated cells/sheets. Native preservation checks use only original synthetic probes; outputs stay private |
+| 2026-11-01 | minor | Embedded SVG direct rendering/preview retention and bubble size/scale/sign semantics verified with pixels, round trips and native probes |
+| 2026-11-01 | minor | Native chartEx open/export fixed with original complete styles, scalar attributes and rich titles; histogram tail counts, series overrides, uncached composite packing/text defaults, invalid-font caching and bounded line compression corrected |
+| 2026-11-01 | minor | MTX TrueType reconstruction and embedded-font pixel oracle; chartEx bounds/statistics/visibility; bounded uncached SmartArt layout execution and graph retention. Native visual parity remains partial |
+| 2026-11-01 | minor | Manual chart layout/body rotations and full line styles reach rendering and rebuilds; chartEx typography/axis references modeled. Cached diagram root coordinates and authored missing-cache fallback fixed. Direct font/chart/six-layout comparisons added; native chartEx remains a failed check, not claimed parity |
+| 2026-10-31 | minor | Locale-aware East Asian theme fonts, isolated embedded font precedence and actual-face diagnostics; separate chart typography and secondary axes survive structural rebuilds; nested SmartArt cached transforms and picture nodes survive export. Four generated render probes assert pixel equality across DeckCraft export/import, not cross-renderer parity. Remaining limits: [layout fidelity](layout-fidelity.md) |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native `.deckcraft` files serialize a nonempty chart `kept` sidecar (relationships, part names, content types and bytes). Older files without it still load; empty sidecars are omitted. Headless PPTX → edit → native save/reopen → PPTX checks keep the workbook and drawing bytes; editing chart data still drops the stale workbook |
 | 2026-10-15 | trivial | PPTX interactive timing sequences keep later On Click steps and paragraph click builds (`trigger_steps.rs`); mixed starts and independent buttons survive import/edit/save/reopen |

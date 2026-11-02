@@ -125,5 +125,6 @@ fn editing_chart_after_native_reopen_does_not_export_a_stale_workbook() {
     let bytes = save(&mut s, "pptx");
     let back = deckcraft_pptx::import(&bytes).expect("PPTX");
     assert_eq!(chart(&back).series[0].values[0], Some(99.0));
-    assert!(chart(&back).kept.parts.is_empty(), "stale source workbook must not be attached to edited chart data");
+    assert!(chart(&back).kept.parts.iter().all(|p| p.bytes != WORKBOOK), "stale source workbook must not be attached to edited chart data");
+    assert!(chart(&back).kept.parts.iter().any(|p| p.bytes == DRAWING), "an unrelated user drawing must survive a data-only edit");
 }

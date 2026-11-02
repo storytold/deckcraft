@@ -150,6 +150,9 @@ pub struct FontFace {
     bmp: std::sync::OnceLock<Box<[u64]>>,
     /// Colour glyph tables present (`is_color`), looked up on first use.
     color: std::sync::OnceLock<bool>,
+    /// Document-scoped face: never enters the global family/fallback catalog.
+    pub embedded: bool,
+    digest: std::sync::OnceLock<String>,
 }
 
 /// A cheap `Copy` handle to a face. Faces are never unloaded, so the handle lives for the rest of
@@ -208,6 +211,13 @@ impl std::fmt::Debug for FontFace {
 }
 
 impl FontFace {
+    /// Stable font-file identity for cross-machine rendering diagnostics (no filesystem path).
+    pub fn sha256(&self) -> &str {
+        self.digest.get_or_init(|| {
+            use sha2::{Digest, Sha256};
+            format!("{:x}", Sha256::digest(self.data()))
+        })
+    }
     pub fn data(&self) -> &[u8] {
         match &self.bytes {
             FontBytes::Static(b) => b,
@@ -760,7 +770,73 @@ fn make_face(bytes: FontBytes, index: u32, family: String, style: String, coords
         index,
         bmp: std::sync::OnceLock::new(),
         color: std::sync::OnceLock::new(),
+        embedded: false,
+        digest: std::sync::OnceLock::new(),
     })
+}
+
+/// Parse a document's embedded font without replacing a same-named installed face or leaking it
+/// into another document's fallback chain. Cache by the owning media allocation, not its name.
+/// The cache is bounded by both file count and byte size; callers may retain returned faces.
+pub fn embedded_face(source: Arc<Vec<u8>>, family: &str, style: &str) -> Option<Arc<FontFace>> {
+    struct Entry {
+        source: Arc<Vec<u8>>,
+        faces: Vec<Arc<FontFace>>,
+        retained_bytes: usize,
+    }
+    static CACHE: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
+    if source.len() > 40 << 20 {
+        return None;
+    }
+    let mut cache = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let index = if let Some(i) = cache.iter().position(|e| Arc::ptr_eq(&e.source, &source)) {
+        i
+    } else {
+        let bytes = match crate::decode_embedded_sfnt(&source) {
+            Some(std::borrow::Cow::Borrowed(b)) if b.len() == source.len() => source.clone(),
+            Some(other) => Arc::new(other.into_owned()),
+            // Failed decodes also occupy a bounded entry. Retrying the same damaged MTX
+            // subset for every text run otherwise repeats its decompression indefinitely.
+            None => source.clone(),
+        };
+        let retained_bytes = source.len() + if Arc::ptr_eq(&source, &bytes) { 0 } else { bytes.len() };
+        let faces: Vec<Arc<FontFace>> = enumerate_faces(&bytes)
+            .into_iter()
+            .filter_map(|(index, family, style, coords)| {
+                let mut face = make_face(FontBytes::Owned(bytes.clone()), index, family, style, coords)?;
+                face.embedded = true;
+                Some(Arc::new(face))
+            })
+            .collect();
+        if retained_bytes > 64 << 20 {
+            return choose_embedded(&faces, family, style);
+        }
+        while !cache.is_empty()
+            && (cache.len() >= 16 || cache.iter().map(|e| e.retained_bytes).sum::<usize>().saturating_add(retained_bytes) > 64 << 20)
+        {
+            cache.remove(0);
+        }
+        cache.push(Entry { source, faces, retained_bytes });
+        cache.len() - 1
+    };
+    let entry = cache.remove(index);
+    let face = choose_embedded(&entry.faces, family, style);
+    cache.push(entry);
+    face
+}
+
+fn choose_embedded(faces: &[Arc<FontFace>], family: &str, style: &str) -> Option<Arc<FontFace>> {
+    faces
+        .iter()
+        .min_by_key(|f| {
+            (
+                !f.family.eq_ignore_ascii_case(family),
+                !f.style.eq_ignore_ascii_case(style),
+                f.italic != style_italic(style),
+                (f.weight - style_weight(style)).abs() as u32,
+            )
+        })
+        .cloned()
 }
 
 /// The underline's top edge below the baseline and its thickness, font units, from the `post`

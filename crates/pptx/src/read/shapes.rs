@@ -115,7 +115,8 @@ fn remap_connectors(shapes: &mut [Shape], ctx: &IdCtx, depth: usize) {
                     *e = e.and_then(|(id, site)| ctx.lookup(id.0).map(|m| (m, site)));
                 }
             }
-            ShapeKind::Group { children, .. } => remap_connectors(children, ctx, depth + 1),
+            // A diagram drawing is a separate ID scope, already resolved on import.
+            ShapeKind::Group { children, .. } if s.diagram.is_none() => remap_connectors(children, ctx, depth + 1),
             _ => {}
         }
     }
@@ -147,6 +148,12 @@ fn base(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, nv: Option<&El>) -> Shape {
         s.decorative = c.find("decorative").and_then(|d| d.bool("val")).unwrap_or(false);
     }
     if let Some(nv) = nv {
+        // A partial restriction is not the Selection pane's full Lock, but must survive saving.
+        for l in nv.elements().flat_map(|e| e.elements()).filter(|l| l.local().ends_with("Locks")) {
+            if !is_locked(l) {
+                s.partial_locks = l.attrs.iter().filter_map(|(k, _)| l.bool(k).map(|v| (k.clone(), v))).collect();
+            }
+        }
         for e in nv.elements() {
             match e.local() {
                 "cNvSpPr" => {
@@ -560,6 +567,209 @@ fn diagram_data(imp: &mut Imp, target: &str) -> Option<deckcraft_model::MediaId>
 
 /// SmartArt: read the pre-drawn shapes of its drawing part as a group.
 fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) -> Option<Shape> {
+    smartart_cached(imp, part, gd, frame, depth).or_else(|| smartart_layout(imp, part, gd, frame))
+}
+
+fn smartart_layout(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape) -> Option<Shape> {
+    use deckcraft_model::style::Line;
+    let ids = gd.child("relIds")?;
+    let dm = part.rels.get(ids.attr("r:dm")?)?;
+    let doc = imp.pkg.xml(&dm.target)?;
+    let data_part = Part::new(imp.pkg, &dm.target, &doc);
+    let diagram = diagram_outline(imp, part, ids, &doc.root)?;
+    let layout = crate::xml::parse(diagram.layout_xml.as_ref()?.as_bytes()).ok()?;
+    let rect = frame.xfrm?;
+    let placed = match crate::dgm::layout::evaluate(&layout.root, &doc.root, Xfrm::new(0.0, 0.0, rect.w, rect.h)) {
+        Ok(p) => p,
+        Err(reason) => {
+            log::warn!("pptx: SmartArt layout could not be evaluated: {reason}");
+            return None;
+        }
+    };
+    let quick = diagram.style_xml.as_deref().and_then(|x| crate::xml::parse(x.as_bytes()).ok());
+    let colors = diagram.colors_xml.as_deref().and_then(|x| crate::xml::parse(x.as_bytes()).ok());
+    let mut counts = std::collections::HashMap::<String, usize>::new();
+    let mut children = Vec::new();
+    for p in placed {
+        let index = counts.entry(p.style.clone()).or_default();
+        let mut s = Shape {
+            id: ShapeId(imp.alloc()),
+            name: p.name.clone(),
+            xfrm: Some(p.rect),
+            geom: Geom::preset(p.shape.and_then(|e| e.attr("type")).unwrap_or("rect")),
+            text_box: p.shape.is_none(),
+            ..Default::default()
+        };
+        if let Some(adjustments) = p.shape.and_then(|shape| shape.child("adjLst"))
+            && let Geom::Preset { name, adj } = &mut s.geom
+        {
+            *adj = preset::info(name).map(|info| info.defaults.to_vec()).unwrap_or_default();
+            for a in adjustments.children_named("adj").take(64) {
+                if let (Some(index), Some(value)) = (a.u32("idx"), a.f64("val"))
+                    && (1..=64).contains(&index)
+                    && value.is_finite()
+                {
+                    adj.resize(adj.len().max(index as usize), 0.0);
+                    if let Some(v) = adj.get_mut(index as usize - 1) {
+                        *v = value * 100000.0;
+                    }
+                }
+            }
+        }
+        if p.connector {
+            s.geom = Geom::preset(match p.params.get("connRout").map(String::as_str) {
+                Some("bend") => "bentConnector3",
+                Some("curve") => "curvedConnector3",
+                _ => "line",
+            });
+        }
+        if let Some(label) = quick.as_ref().and_then(|d| {
+            d.root
+                .children_named("styleLbl")
+                .find(|e| e.attr("name") == Some(p.style.as_str()))
+                .or_else(|| d.root.children_named("styleLbl").find(|e| e.attr("name") == Some("node1")))
+        }) {
+            s.style = label.child("style").map(style);
+            if let Some(pr) = label.child("spPr") {
+                sp_pr(imp, &data_part, &mut s, pr);
+            }
+        }
+        let label = colors.as_ref().and_then(|d| d.root.children_named("styleLbl").find(|e| e.attr("name") == Some(p.style.as_str())));
+        let color = |name: &str| {
+            label.and_then(|l| l.child(name)).and_then(|l| {
+                let list: Vec<_> = l.elements().filter_map(dml::color_el).collect();
+                if list.is_empty() { None } else { list.get(*index % list.len()).cloned() }
+            })
+        };
+        if let Some(fill) = color("fillClrLst") {
+            s.fill = Some(Fill::Solid { color: fill });
+        }
+        if let Some(line) = color("linClrLst") {
+            s.line = Some(Line { fill: Some(Fill::Solid { color: line }), ..Default::default() });
+        }
+        let text_color = color("txFillClrLst");
+        if p.shape.is_none() || p.shape.is_some_and(|shape| shape.bool("hideGeom") == Some(true)) {
+            s.fill = Some(Fill::None);
+            s.line = Some(Line { fill: Some(Fill::None), ..Default::default() });
+        }
+        if p.connector {
+            use deckcraft_model::style::{ColorRef, LineEnd};
+            s.fill = Some(Fill::None);
+            let line = s.line.get_or_insert_with(|| Line::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(0x44, 0x44, 0x44)), 1.0));
+            let arrow = || LineEnd { kind: "triangle".into(), w: "med".into(), len: "med".into() };
+            if p.params.get("begSty").is_some_and(|v| v == "arr") {
+                line.head = Some(arrow());
+            }
+            if p.params.get("endSty").is_some_and(|v| v == "arr") {
+                line.tail = Some(arrow());
+            }
+        }
+        let mut body = deckcraft_model::text::TextBody::default();
+        for point in &p.points {
+            if s.diagram_node.is_none() {
+                s.diagram_node = point.attr("modelId").map(str::to_string);
+            }
+            if let Some(pr) = point.child("spPr") {
+                let (fill, line) = (s.fill.clone(), s.line.clone());
+                sp_pr(imp, &data_part, &mut s, pr);
+                s.fill = s.fill.or(fill);
+                s.line = s.line.or(line);
+            }
+            if let Some(tx) = point.child("t") {
+                body.paragraphs.extend(dml::text_body(imp, &data_part, tx).paragraphs);
+            }
+        }
+        if p.text_enabled && !body.paragraphs.is_empty() {
+            diagram_text_layout(&mut body, &p, text_color.as_ref());
+            s.text = Some(body);
+        }
+        // User point formatting may contain transforms from a stale cache; the layout owns
+        // geometry when no usable drawing exists.
+        s.xfrm = Some(p.rect);
+        *index += 1;
+        children.push(s);
+    }
+    if children.is_empty() {
+        return None;
+    }
+    let mut group = frame.clone();
+    group.kind = ShapeKind::Group { children, child: Xfrm::new(0.0, 0.0, rect.w, rect.h) };
+    group.diagram = Some(diagram);
+    let kept = crate::dgm::kept::capture(imp, part, ids, "", &group);
+    if let Some(d) = &mut group.diagram {
+        d.kept = kept;
+    }
+    Some(group)
+}
+
+pub(super) fn diagram_text_layout(
+    body: &mut deckcraft_model::text::TextBody,
+    p: &crate::dgm::layout::Placed<'_>,
+    text_color: Option<&deckcraft_model::style::ColorRef>,
+) {
+    use deckcraft_model::text::{Align, Anchor, Spacing};
+    // bulletEnabled is a layout variable used by choose/if, not a rendering switch.
+    // Native text layout defaults to bullets on child data points (start level two).
+    let bullet_layout = p.params.contains_key("stBulletLvl") || p.point_levels.iter().any(|level| *level > 0);
+    body.body.anchor = Some(match p.params.get("txAnchorVert").map(String::as_str) {
+        Some("t") => Anchor::Top,
+        Some("b") => Anchor::Bottom,
+        None if bullet_layout => Anchor::Top,
+        _ => Anchor::Middle,
+    });
+    body.body.wrap = Some(true);
+    // An explicit diagram font is final unless an authored numeric rule changes it.
+    // Ordinary text-box autofit must not invent a smaller font when no rule exists.
+    body.body.autofit = Some(if p.font.is_some() {
+        deckcraft_model::text::AutoFit::None
+    } else {
+        deckcraft_model::text::AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 }
+    });
+    body.body.inset_l = Some(p.margins[0]);
+    body.body.inset_t = Some(p.margins[1]);
+    body.body.inset_r = Some(p.margins[2]);
+    body.body.inset_b = Some(p.margins[3]);
+    body.body.rot = Some(p.text_rotation);
+    let requested = p.font.unwrap_or(18.0);
+    let font = requested.max(p.min_font.unwrap_or(1.0));
+    body.body.min_autofit_scale = p.min_font.map(|min| (min / font).clamp(0.1, 1.0));
+    let mut levels = p.points.iter().enumerate().flat_map(|(i, point)| {
+        let count = point.child("t").map(|t| t.children_named("p").count()).unwrap_or(0);
+        std::iter::repeat_n(p.point_levels.get(i).copied().unwrap_or(0), count)
+    });
+    let bullet_level = p.params.get("stBulletLvl").and_then(|v| v.parse::<usize>().ok()).unwrap_or(2);
+    for paragraph in &mut body.paragraphs {
+        let level = levels.next().unwrap_or(0);
+        let align = match p.params.get("parTxLTRAlign").map(String::as_str) {
+            Some("l") => Align::Left,
+            Some("r") => Align::Right,
+            None if bullet_layout => Align::Left,
+            _ => Align::Center,
+        };
+        paragraph.props.align = paragraph.props.align.or(Some(align));
+        // Diagram text defaults differ from an ordinary text box. Explicit point/paragraph
+        // formatting wins. Measured against native rendering at several font sizes.
+        paragraph.props.line_spacing = paragraph.props.line_spacing.or(Some(Spacing::Pct(0.9)));
+        if level.saturating_add(1) >= bullet_level {
+            paragraph.props.bullet = Some(deckcraft_model::text::Bullet::Char { char: "•".into() });
+            let indent_level = level.saturating_add(2).saturating_sub(bullet_level).clamp(1, 8);
+            paragraph.level = paragraph.level.max(indent_level as u8);
+            paragraph.props.margin_left = paragraph.props.margin_left.or(Some(indent_level as f64 * 9.));
+            paragraph.props.indent = paragraph.props.indent.or(Some(-9.));
+        }
+        let secondary = paragraph.props.bullet.as_ref().is_some_and(|b| !matches!(b, deckcraft_model::text::Bullet::None));
+        paragraph.props.space_after = paragraph.props.space_after.or(Some(Spacing::Pct(if secondary { 0.15 } else { 0.35 })));
+        let paragraph_font = if secondary { p.secondary_font.unwrap_or(font * 0.78) } else { font };
+        for run in &mut paragraph.runs {
+            run.props.size = Some(paragraph_font);
+            if let Some(c) = text_color {
+                run.props.fill = Some(Fill::Solid { color: c.clone() });
+            }
+        }
+    }
+}
+
+fn smartart_cached(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) -> Option<Shape> {
     if depth > 8 {
         return None;
     }
@@ -572,14 +782,20 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     let dpart = Part::new(imp.pkg, &drawing_rel, &d);
     let tree = d.root.child("spTree")?;
     let mut sub = IdCtx { fresh: true, ..Default::default() };
-    let children = sp_tree(imp, &dpart, &mut sub, tree, depth + 1);
+    let mut children = sp_tree(imp, &dpart, &mut sub, tree, depth + 1);
+    remap_connectors(&mut children, &sub, 0);
     if children.is_empty() {
         return None;
     }
     let children = smartart_text_rects(imp, &mut sub, tree, children, depth + 1);
     let mut g = frame.clone();
     let x = frame.xfrm.unwrap_or_default();
-    g.kind = ShapeKind::Group { children, child: Xfrm::new(0.0, 0.0, x.w, x.h) };
+    let child = tree
+        .path(&["grpSpPr", "xfrm"])
+        .and_then(|t| dml::xfrm(t).1)
+        .filter(|r| r.is_finite() && r.w > 0.0 && r.h > 0.0)
+        .unwrap_or_else(|| Xfrm::new(0.0, 0.0, x.w, x.h));
+    g.kind = ShapeKind::Group { children, child };
     g.diagram = diagram_outline(imp, part, rel_ids, &data.root);
     // Node pictures, from the blips of the data model's presentation points.
     if let Some(d) = &mut g.diagram {
@@ -591,6 +807,10 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
                 n.picture = media;
             }
         }
+    }
+    let kept = crate::dgm::kept::capture(imp, part, rel_ids, &drawing_rel, &g);
+    if let Some(d) = &mut g.diagram {
+        d.kept = kept;
     }
     Some(g)
 }
@@ -607,6 +827,7 @@ fn smartart_text_rects(imp: &mut Imp, ctx: &mut IdCtx, tree: &El, shapes: Vec<Sh
     // The same elements `sp_tree` turns into shapes.
     for e in tree.elements().filter(|e| matches!(e.local(), "sp" | "pic" | "grpSp" | "cxnSp" | "graphicFrame")) {
         let Some(mut s) = shapes.next() else { break };
+        s.diagram_node = e.attr("modelId").map(str::to_string);
         let mut text_box = None;
         match (e.local(), &mut s.kind) {
             ("grpSp", ShapeKind::Group { children, .. }) => {
@@ -632,7 +853,7 @@ fn smartart_text_rects(imp: &mut Imp, ctx: &mut IdCtx, tree: &El, shapes: Vec<Sh
 /// shape keeps its text with wider insets. Otherwise (a rectangle reaching outside the shape, or
 /// turned against it) the text moves to a new frameless text shape over `s`, which is returned:
 /// both export as plain DrawingML that any reader lays out the same way.
-fn text_on_rect(imp: &mut Imp, ctx: &mut IdCtx, s: &mut Shape, t: Xfrm) -> Option<Shape> {
+pub(super) fn text_on_rect(imp: &mut Imp, ctx: &mut IdCtx, s: &mut Shape, t: Xfrm) -> Option<Shape> {
     const EPS: f64 = 0.01;
     let x = s.xfrm?;
     if !x.is_finite() || !t.is_finite() || t.w <= EPS || t.h <= EPS {
@@ -656,7 +877,7 @@ fn text_on_rect(imp: &mut Imp, ctx: &mut IdCtx, s: &mut Shape, t: Xfrm) -> Optio
         let area = text_area(&s.geom, x.w, x.h);
         let extra = [l - area.x0, top - area.y0, area.x1 - r, area.y1 - b];
         if extra.iter().all(|v| v.is_finite() && *v >= -EPS) {
-            let [el, et, er, eb] = extra.map(|v| v.max(0.0));
+            let [el, et, er, eb] = extra.map(|v| if v <= 1e-9 { 0.0 } else { v });
             bp.inset_l = Some(bp.inset_l.unwrap_or(7.2) + el);
             bp.inset_t = Some(bp.inset_t.unwrap_or(3.6) + et);
             bp.inset_r = Some(bp.inset_r.unwrap_or(7.2) + er);
@@ -684,6 +905,7 @@ fn text_on_rect(imp: &mut Imp, ctx: &mut IdCtx, s: &mut Shape, t: Xfrm) -> Optio
         line: Some(deckcraft_model::style::Line { fill: Some(Fill::None), ..Default::default() }),
         style,
         text,
+        diagram_node: s.diagram_node.clone(),
         click: s.click.clone(),
         hover: s.hover.clone(),
         ..Default::default()
@@ -742,6 +964,7 @@ fn diagram_outline(imp: &Imp, part: &Part, rel_ids: &El, data: &El) -> Option<de
         layout_xml,
         style_xml: raw("r:qs"),
         colors_xml: raw("r:cs"),
+        kept: None,
     })
 }
 

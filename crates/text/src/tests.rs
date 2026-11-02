@@ -334,6 +334,29 @@ fn space_before_the_first_paragraph_with_spc_first_last_para() {
 }
 
 #[test]
+fn paragraph_percent_spacing_uses_natural_line_height_even_with_reduced_line_pitch() {
+    let (p, mut sh) = setup("First\nSecond", 600.0, 300.0);
+    let body = sh.text.as_mut().unwrap();
+    body.body.autofit = Some(AutoFit::None);
+    for para in &mut body.paragraphs {
+        para.props.line_spacing = Some(Spacing::Pct(1.0));
+        para.props.space_before = Some(Spacing::Pts(0.0));
+        para.props.space_after = Some(Spacing::Pts(0.0));
+    }
+    let natural = lay(&p, &sh, 600.0, 300.0);
+    let height = natural.lines[0].bottom - natural.lines[0].top;
+    let body = sh.text.as_mut().unwrap();
+    for para in &mut body.paragraphs {
+        para.props.line_spacing = Some(Spacing::Pct(0.9));
+        para.props.space_before = Some(Spacing::Pct(0.2));
+        para.props.space_after = Some(Spacing::Pct(0.35));
+    }
+    let spaced = lay(&p, &sh, 600.0, 300.0);
+    let gap = spaced.lines[1].top - spaced.lines[0].bottom;
+    assert!((gap - height * 0.55).abs() < 1e-6, "gap {gap}, natural {height}");
+}
+
+#[test]
 fn caret_and_hit_roundtrip() {
     let (p, sh) = setup("Hello world", 600.0, 100.0);
     let l = lay(&p, &sh, 600.0, 100.0);
@@ -388,6 +411,66 @@ fn alignment_center_and_right() {
     let cx = c.lines[0].caret_x[0];
     let rx = r.lines[0].caret_x[0];
     assert!(rx > cx && cx > 100.0, "center {cx} right {rx}");
+}
+
+#[test]
+fn crossed_text_insets_collapse_at_midpoint_in_both_axes() {
+    for (left, right, top, bottom) in [(20., 20., 20., 20.), (30., 10., 10., 30.)] {
+        for anchor in [Anchor::Top, Anchor::Middle, Anchor::Bottom] {
+            let (p, mut sh) = setup("OK", 30., 30.);
+            let body = sh.text.as_mut().unwrap();
+            body.body.autofit = Some(AutoFit::None);
+            body.body.anchor = Some(anchor);
+            body.body.inset_l = Some(left);
+            body.body.inset_r = Some(right);
+            body.body.inset_t = Some(top);
+            body.body.inset_b = Some(bottom);
+            let collapsed = lay(&p, &sh, 30., 30.);
+            let cx = (30. + left - right) / 2.;
+            let cy = (30. + top - bottom) / 2.;
+            assert_eq!(collapsed.inner, Rect::new(cx, cy, cx, cy));
+            let body = sh.text.as_mut().unwrap();
+            body.body.inset_l = Some(cx);
+            body.body.inset_r = Some(30. - cx);
+            body.body.inset_t = Some(cy);
+            body.body.inset_b = Some(30. - cy);
+            let explicit = lay(&p, &sh, 30., 30.);
+            assert_eq!(collapsed.lines.len(), explicit.lines.len());
+            for (a, b) in collapsed.lines.iter().zip(&explicit.lines) {
+                assert_eq!(a.caret_x, b.caret_x);
+                assert_eq!(a.baseline, b.baseline);
+            }
+        }
+    }
+}
+
+#[test]
+fn wrapped_oversized_glyphs_align_as_a_block_but_nowrap_keeps_signed_slack() {
+    let (p, mut sh) = setup("Wi.", 1., 200.);
+    let body = sh.text.as_mut().unwrap();
+    body.body.autofit = Some(AutoFit::None);
+    body.body.inset_l = Some(0.);
+    body.body.inset_r = Some(0.);
+    let para = &mut body.paragraphs[0];
+    para.props.bullet = Some(Bullet::None);
+    para.props.margin_left = Some(0.);
+    para.props.margin_right = Some(0.);
+    para.props.indent = Some(0.);
+    para.props.align = Some(Align::Center);
+    let centred = lay(&p, &sh, 1., 200.);
+    assert_eq!(centred.lines.len(), 3);
+    let largest = centred.lines.iter().map(|l| l.extent.1 - l.extent.0).fold(0., f64::max);
+    for line in &centred.lines {
+        assert!((line.caret_x[0] - (1. - largest) / 2.).abs() < 1e-6);
+    }
+    sh.text.as_mut().unwrap().paragraphs[0].props.align = Some(Align::Right);
+    let wrapped = lay(&p, &sh, 1., 200.);
+    assert!(wrapped.lines.iter().all(|l| l.caret_x[0].abs() < 1e-6));
+    sh.text.as_mut().unwrap().body.wrap = Some(false);
+    let unwrapped = lay(&p, &sh, 1., 200.);
+    assert_eq!(unwrapped.lines.len(), 1);
+    assert!(unwrapped.lines[0].caret_x[0] < -10.);
+    assert!((unwrapped.lines[0].extent.1 - 1.).abs() < 1e-6);
 }
 
 #[test]
@@ -837,10 +920,17 @@ fn single_spaced_lines_are_1_2_times_the_size_apart_whatever_the_font() {
 
 /// The lines of `text` in an Arial-free (whatever face resolves) box `w` wide, as strings.
 fn wrapped(text: &str, w: f64, set: impl Fn(&mut ParaProps)) -> Vec<String> {
+    wrapped_lang(text, w, None, set)
+}
+
+fn wrapped_lang(text: &str, w: f64, lang: Option<&str>, set: impl Fn(&mut ParaProps)) -> Vec<String> {
     let (p, mut sh) = bidi_setup(vec![Run::new(text)], w, false, Align::Left);
     let t = sh.text.as_mut().unwrap();
     t.body.inset_l = Some(0.0);
     t.body.inset_r = Some(0.0);
+    for run in &mut t.paragraphs[0].runs {
+        run.props.lang = lang.map(str::to_string);
+    }
     set(&mut t.paragraphs[0].props);
     let l = lay(&p, &sh, w, 600.0);
     let chars: Vec<char> = text.chars().collect();
@@ -901,6 +991,19 @@ fn korean_wraps_between_words() {
     // Japanese and Chinese still break between characters.
     let lines = wrapped("日本語の文章は空白なしで続きます", one_line("日本語の文章") + 0.5, |_| {});
     assert_eq!(lines[0], "日本語の文章");
+}
+
+#[test]
+fn explicit_english_does_not_hang_cjk_full_stops() {
+    let text = "白なしで続きます。";
+    let before = "白なしで続きます";
+    let w = one_line(before) + 0.5;
+    for hang in [true, false] {
+        let lines = wrapped_lang(text, w, Some("en-US"), |p| p.hanging_punct = Some(hang));
+        assert_eq!(lines, [before, "。"], "English proofing doesn't apply CJK punctuation rules");
+    }
+    let lines = wrapped_lang(text, w, Some("ja-JP"), |p| p.hanging_punct = Some(true));
+    assert_eq!(lines, [text], "Japanese retains hanging punctuation");
 }
 
 #[test]
@@ -1945,4 +2048,85 @@ fn a_paragraph_with_its_own_start_at_restarts_the_count_there() {
     check(&[3, 3, 3, 3], &[3, 4, 5, 6]);
     // A later paragraph with a new start begins a fresh run.
     check(&[1, 1, 7, 7], &[1, 2, 7, 8]);
+}
+
+#[test]
+fn locale_theme_font_selection_and_diagnostics_use_the_same_faces() {
+    use deckcraft_model::theme::ScriptFont;
+    let (mut p, mut sh) = setup("中文 ABC", 500.0, 300.0);
+    let master = Arc::make_mut(&mut p.masters[0]);
+    master.theme.fonts.minor.ea.clear();
+    master.theme.fonts.minor.scripts = vec![ScriptFont { script: "Hans".into(), typeface: "Qqq Missing Chinese".into() }];
+    let run = &mut sh.text.as_mut().unwrap().paragraphs[0].runs[0];
+    run.props.font = Some("Inter".into());
+    run.props.font_ea = Some("+mn-ea".into());
+    run.props.lang = Some("zh-CN".into());
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let uses = super::font_usage(&ctx, &sh, sh.text.as_ref().unwrap());
+    let han = uses.iter().find(|u| u.start == 0).unwrap();
+    assert_eq!(han.requested[0], "Qqq Missing Chinese");
+    assert!(matches!(han.reason, "family_unavailable" | "missing_glyph"));
+    let l = lay(&p, &sh, 500.0, 300.0);
+    let rendered = l.runs.iter().find(|r| r.cells.iter().any(|(_, c)| *c == '中')).unwrap();
+    assert_eq!(han.actual.id(), rendered.face.id());
+    assert!(super::requested_fonts(&ctx, &sh, sh.text.as_ref().unwrap()).contains(&"Qqq Missing Chinese".into()));
+    // Explicit slot fonts take precedence; an unused theme family is not reported missing.
+    sh.text.as_mut().unwrap().paragraphs[0].runs[0].props.font_ea = Some("Inter".into());
+    assert!(!super::requested_fonts(&ctx, &sh, sh.text.as_ref().unwrap()).contains(&"Qqq Missing Chinese".into()));
+}
+
+#[test]
+fn embedded_font_precedes_installed_names_without_changing_another_document() {
+    let db = FontDb::global();
+    let original = db.face("Inter", "Regular");
+    let (mut p, mut sh) = setup("\u{E000}", 400.0, 200.0);
+    let bytes = include_bytes!("../../render/tests/fixtures/colr-squares.ttf").to_vec();
+    let id = p.add_media("font.fntdata", "application/x-fontdata", bytes).unwrap();
+    p.embedded_fonts.push(deckcraft_model::EmbeddedFont { typeface: "Inter".into(), regular: Some(id), ..Default::default() });
+    sh.text.as_mut().unwrap().paragraphs[0].runs[0].props.font = Some("Inter".into());
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let usage = super::font_usage(&ctx, &sh, sh.text.as_ref().unwrap());
+    assert!(usage[0].actual.embedded);
+    assert_eq!(usage[0].reason, "embedded");
+    assert_eq!(usage[0].actual.sha256().len(), 64);
+    assert_ne!(usage[0].actual.sha256(), original.sha256());
+    assert_eq!(db.face("Inter", "Regular").id(), original.id());
+    let same = super::font_usage(&ctx, &sh, sh.text.as_ref().unwrap());
+    assert_eq!(same[0].actual.id(), usage[0].actual.id(), "cached face reused across inspections");
+}
+
+#[test]
+fn diagram_font_floor_prevents_unreadable_autofit() {
+    let (p, mut shape) = setup(&"A long paragraph repeated for constrained diagram text. ".repeat(40), 100.0, 40.0);
+    shape.text.as_mut().unwrap().body.autofit = Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
+    shape.text.as_mut().unwrap().body.min_autofit_scale = Some(0.7);
+    let result = lay(&p, &shape, 100.0, 40.0);
+    assert_eq!(result.font_scale, 0.7);
+    assert!(result.overflow);
+}
+
+#[test]
+fn diagram_at_full_font_floor_uses_only_needed_line_compression() {
+    let (p, mut shape) = setup("One\nTwo\nThree\nFour", 300.0, 400.0);
+    let natural = lay(&p, &shape, 300.0, 400.0);
+    let height = natural.content_height * 0.94 + 7.2;
+    shape.text.as_mut().unwrap().body.autofit = Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
+    shape.text.as_mut().unwrap().body.min_autofit_scale = Some(1.0);
+    let result = lay(&p, &shape, 300.0, height);
+    assert!(!result.overflow);
+    assert_eq!(result.font_scale, 1.0);
+    assert!(result.line_reduction > 0.0 && result.line_reduction < 0.15, "{}", result.line_reduction);
+}
+
+#[test]
+fn forced_word_break_metric_distinguishes_spaces_words_and_cjk() {
+    for (text, width, forced) in
+        [("alpha beta gamma delta", 200.0, false), ("extraordinarilylongword", 50.0, true), ("中文中文中文中文中文中文", 80.0, false)]
+    {
+        let (p, mut sh) = setup(text, width, 1200.0);
+        sh.text.as_mut().unwrap().body.autofit = Some(AutoFit::None);
+        let result = lay(&p, &sh, width, 1200.0);
+        assert!(result.lines.len() > 1);
+        assert_eq!(result.forced_line_breaks(sh.text.as_ref().unwrap()) > 0, forced, "{text}: {:?}", result.lines);
+    }
 }

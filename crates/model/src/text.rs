@@ -105,6 +105,10 @@ pub struct BodyProps {
     pub anchor_ctr: Option<bool>,
     pub wrap: Option<bool>,
     pub autofit: Option<AutoFit>,
+    /// Internal lower bound from a diagram font-size rule. Ordinary text leaves it unset.
+    /// Regenerated from the retained SmartArt layout on PPTX import; not an a:bodyPr attribute.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_autofit_scale: Option<f64>,
     pub vert: Option<TextDir>,
     /// Extra text rotation in degrees.
     pub rot: Option<f64>,
@@ -133,6 +137,7 @@ impl BodyProps {
         self.anchor_ctr = self.anchor_ctr.or(p.anchor_ctr);
         self.wrap = self.wrap.or(p.wrap);
         self.autofit = self.autofit.or(p.autofit);
+        self.min_autofit_scale = self.min_autofit_scale.or(p.min_autofit_scale);
         self.vert = self.vert.or(p.vert);
         self.rot = self.rot.or(p.rot);
         self.columns = self.columns.or(p.columns);
