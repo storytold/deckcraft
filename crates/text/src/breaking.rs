@@ -252,7 +252,7 @@ pub(crate) struct Tab {
 }
 
 pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
-    props
+    let mut tabs: Vec<Tab> = props
         .tabs
         .as_ref()
         .map(|t| {
@@ -268,7 +268,19 @@ pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // In a hanging-indent paragraph, PowerPoint treats the indent position (marL)
+    // as an implicit tab stop (#1683).
+    let margin = props.margin_left.unwrap_or(0.0).max(0.0);
+    let indent = props.indent.unwrap_or(0.0);
+    if indent < 0.0 && margin > 0.0 {
+        let stop = margin.max(-indent);
+        if !tabs.iter().any(|t| (t.pos - stop).abs() < 0.5) {
+            tabs.push(Tab { pos: stop, align: TabAlign::Left });
+            tabs.sort_by(|a, b| a.pos.partial_cmp(&b.pos).unwrap_or(std::cmp::Ordering::Equal));
+        }
+    }
+    tabs
 }
 
 /// Width of the text after the tab at cell `i` up to the next tab or line break, and the width of
