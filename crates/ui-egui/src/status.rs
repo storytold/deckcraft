@@ -440,7 +440,12 @@ mod tests {
         );
         h.run_steps(4);
         let _ = h.get_by_role_and_label(Role::Button, "Заметки");
-        let _ = h.get_by_role_and_label(Role::Button, "Комментарии");
+        let status_y = h.get_by_role_and_label(Role::Button, "Вписать слайд в окно").rect().center().y;
+        let comments_in_status = h
+            .get_all_by_role_and_label(Role::Button, "Комментарии")
+            .filter(|node| node.rect().y_range().contains(status_y))
+            .count();
+        assert_eq!(comments_in_status, 1, "one Comments button in the status row");
         let _ = h.get_by_role_and_label(Role::Slider, "Масштаб");
         let _ = h.get_by_value("Слайд 1 из 1");
         assert_eq!(h.state().session.active().map(|d| d.doc.slides.len()), Some(1));

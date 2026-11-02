@@ -21,13 +21,11 @@ pub(super) fn interface_language_row(app: &mut SlideApp, ui: &mut egui::Ui, d: &
     let language = app.ui.interface_language;
     ui.horizontal(|ui| {
         let label = ui.label(language.text("Interface language"));
-        let combo = craft_ui::ComboBox::from_id_salt("interface-language")
-            .selected_text(language.display_name())
-            .show_ui(ui, |ui| {
-                for option in [crate::i18n::Language::English, crate::i18n::Language::Russian] {
-                    ui.selectable_value(&mut app.ui.interface_language, option, option.display_name());
-                }
-            });
+        let combo = craft_ui::ComboBox::from_id_salt("interface-language").selected_text(language.display_name()).show_ui(ui, |ui| {
+            for option in [crate::i18n::Language::English, crate::i18n::Language::Russian] {
+                ui.selectable_value(&mut app.ui.interface_language, option, option.display_name());
+            }
+        });
         let _ = combo.response.labelled_by(label.id);
     });
     if app.ui.interface_language != language {
