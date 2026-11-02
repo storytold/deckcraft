@@ -228,9 +228,12 @@ fn animation_option_label(effect: &str, option: &str) -> String {
         "rb" => Some("From Bottom-Right"),
         _ => None,
     };
-    if matches!(effect, "fly" | "flyOut" | "wipe" | "wipeOut" | "peek" | "peekOut")
+    if matches!(effect, "fly" | "flyOut" | "wipe" | "wipeOut" | "peek" | "peekOut" | "crawl" | "crawlOut")
         && let Some(label) = direction
     {
+        if matches!(effect, "flyOut" | "peekOut" | "crawlOut") {
+            return label.replacen("From", "To", 1);
+        }
         return label.into();
     }
 
@@ -245,14 +248,14 @@ fn animation_option_label(effect: &str, option: &str) -> String {
         ("shape" | "shapeOut", o) if o.ends_with("Out") => format!("{} Out", title_first(shape_option_name(o))),
         ("wheel" | "wheelOut", "1") => "1 Spoke".into(),
         ("wheel" | "wheelOut", n) => format!("{n} Spokes"),
-        ("box" | "boxOut" | "circle" | "diamond", "in") => format!("{} In", title_first(effect.trim_end_matches("Out"))),
-        ("box" | "boxOut" | "circle" | "diamond", "out") => format!("{} Out", title_first(effect.trim_end_matches("Out"))),
+        ("box" | "boxOut" | "circle" | "diamond" | "diamondOut", "in") => format!("{} In", title_first(effect.trim_end_matches("Out"))),
+        ("box" | "boxOut" | "circle" | "diamond" | "diamondOut", "out") => format!("{} Out", title_first(effect.trim_end_matches("Out"))),
         ("zoom" | "zoomOut", "in") => "Zoom In".into(),
         ("zoom" | "zoomOut", "out") => "Zoom Out".into(),
-        (_, "lu") => "From Top-Left".into(),
-        (_, "ru") => "From Top-Right".into(),
-        (_, "ld") => "From Bottom-Left".into(),
-        (_, "rd") => "From Bottom-Right".into(),
+        ("strips" | "stripsOut", "lu") => "Left Up".into(),
+        ("strips" | "stripsOut", "ru") => "Right Up".into(),
+        ("strips" | "stripsOut", "ld") => "Left Down".into(),
+        ("strips" | "stripsOut", "rd") => "Right Down".into(),
         (_, "horz") => "Horizontal".into(),
         (_, "vert") => "Vertical".into(),
         (_, "across") => "Across".into(),
@@ -301,11 +304,29 @@ mod animation_option_label_tests {
             }
         }
         assert_eq!(animation_option_label("fly", "lb"), "From Bottom-Left");
-        assert_eq!(animation_option_label("flyOut", "rt"), "From Top-Right");
+        assert_eq!(animation_option_label("flyOut", "rt"), "To Top-Right");
+        assert_eq!(animation_option_label("flyOut", "b"), "To Bottom");
+        assert_eq!(animation_option_label("peekOut", "l"), "To Left");
         assert_eq!(animation_option_label("wipe", "b"), "From Bottom");
         assert_eq!(animation_option_label("wheel", "1"), "1 Spoke");
         assert_eq!(animation_option_label("split", "vertOut"), "Vertical Out");
         assert_eq!(animation_option_label("shape", "circleIn"), "Circle In");
         assert_eq!(animation_option_label("diamond", "out"), "Diamond Out");
+        assert_eq!(animation_option_label("diamondOut", "in"), "Diamond In");
+        assert_eq!(animation_option_label("diamondOut", "out"), "Diamond Out");
+        assert_eq!(animation_option_label("strips", "lu"), "Left Up");
+        assert_eq!(animation_option_label("strips", "ru"), "Right Up");
+        assert_eq!(animation_option_label("strips", "ld"), "Left Down");
+        assert_eq!(animation_option_label("strips", "rd"), "Right Down");
+        assert_eq!(animation_option_label("crawl", "b"), "From Bottom");
+        assert_eq!(animation_option_label("crawl", "l"), "From Left");
+        assert_eq!(animation_option_label("crawl", "t"), "From Top");
+        assert_eq!(animation_option_label("crawl", "r"), "From Right");
+        assert_eq!(animation_option_label("crawlOut", "l"), "To Left");
+        assert_eq!(animation_option_label("crawlOut", "r"), "To Right");
+        assert_eq!(animation_option_label("plus", "in"), "In");
+        assert_eq!(animation_option_label("plus", "out"), "Out");
+        assert_eq!(animation_option_label("changeFontSize", "increase"), "Increase");
+        assert_eq!(animation_option_label("changeFontSize", "decrease"), "Decrease");
     }
 }
