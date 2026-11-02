@@ -20,7 +20,7 @@ thiserror = { workspace = true }
 log = { workspace = true }
 
 [dev-dependencies]
-hayro-syntax = { version = "=0.7.2", default-features = false, features = ["std"] }
+hayro-syntax = { version = "=0.8.0", default-features = false, features = ["std"] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
