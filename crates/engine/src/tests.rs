@@ -6434,6 +6434,25 @@ fn a_slide_index_past_the_end_is_refused_by_every_slide_command() {
     }
     assert_eq!(s.doc().unwrap().doc, before, "a refused command changes nothing");
     assert!(!dir.exists(), "a refused export writes nothing");
+    // The last valid index (the count less one) is taken by each of them.
+    std::fs::create_dir_all(&dir).unwrap();
+    for (cmd, params) in [
+        ("slide.hide", json!({"index": 1, "hidden": true})),
+        ("slide.layout", json!({"index": 1, "layout": "blank"})),
+        ("slide.selectSlides", json!({"indices": [0, 1]})),
+        ("transition.set", json!({"index": 1, "kind": "fade"})),
+        ("transition.timing", json!({"index": 1, "duration": 500})),
+        ("animation.clear", json!({"index": 1})),
+        ("file.export", json!({"path": dir.join("deck.gif").to_string_lossy(), "format": "gif", "slides": [0, 1]})),
+        ("file.export", json!({"path": dir.join("deck.pdf").to_string_lossy(), "format": "pdf", "slides": [0, 1]})),
+        ("slide.duplicate", json!({"index": 1})),
+        // Three slides now: the last is index 2.
+        ("slide.delete", json!({"index": 2})),
+    ] {
+        s.execute(cmd, &params).unwrap_or_else(|e| panic!("{cmd} {params}: {e}"));
+    }
+    assert_eq!(s.doc().unwrap().doc.slides.len(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// An `index` (or `from`, `to`, `slide`, an entry of `slides` or `indices`) that is present but
