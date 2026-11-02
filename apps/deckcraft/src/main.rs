@@ -137,6 +137,20 @@ fn services() -> Services {
     }
 }
 
+/// Displays winit lists for `window`, counting a display Wayland lists twice once. `None` when it
+/// lists none: Presenter View then stays as it was.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn display_count(window: &winit::window::Window) -> Option<usize> {
+    let mut seen = Vec::new();
+    for m in window.available_monitors() {
+        let id = (m.name(), m.position(), m.size());
+        if !seen.contains(&id) {
+            seen.push(id);
+        }
+    }
+    (!seen.is_empty()).then_some(seen.len())
+}
+
 const APP_ID: &str = "ai.storyteller.deckcraft";
 
 const USAGE: &str = "\
@@ -269,6 +283,11 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
             let mut app = SlideApp::new(Session::new(), services());
+            // Presenter View asks winit how many displays there are when a show starts.
+            #[cfg(all(unix, not(target_os = "macos")))]
+            if let Some(window) = cc.winit_window().cloned() {
+                app.services.displays = Some(Box::new(move || display_count(&window)));
+            }
             load_prefs(&mut app);
             app.enable_update_checks();
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.
