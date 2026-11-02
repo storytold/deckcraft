@@ -1446,6 +1446,16 @@ fn center_and_decimal_tab_stops_past_right_edge_align_without_wrapping() {
     assert!(((s + e) / 2.0 - l_inside.inner.x0 - 300.0).abs() < 1.0, "center stop inside margin must stay at 300.0");
 }
 
+/// #1663: a tab whose following word fits on a fresh line but not in the remaining space
+/// moves to the next line with its word so alignment is preserved.
+#[test]
+fn tab_moves_to_next_line_with_word_when_word_does_not_fit_remaining_space() {
+    let l = tabbed("leading text here\tAligned", &[(250.0, "r")], 200.0);
+    assert_eq!(l.lines.len(), 2);
+    assert_eq!(l.lines[1].start, 17, "tab must start line 2");
+    assert!((l.lines[1].extent.1 - l.inner.x1).abs() < 1.0, "Aligned should be right-aligned on line 2");
+}
+
 /// Underline decorations of "ab cd" underlined `u` at 40 pt.
 fn underline_decos(u: &str) -> (TextLayout, Vec<Deco>) {
     let (p, mut sh) = setup("ab cd", 2000.0, 300.0);
