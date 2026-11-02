@@ -27,15 +27,54 @@ impl Session {
             Drag::Move { ids, start, origs, moved, duplicate, enter_text } => {
                 return self.drag_move(MoveDrag { ids, start, origs, moved, duplicate, enter_text }, p, mods, tol);
             }
-            Drag::Resize { id, handle, orig, start } => {
+            Drag::Resize { id, orig, ids, handle, origs, start } => {
                 let parent = cmd::parent_transform(self.doc()?, id);
                 let local = parent.inverse() * p;
-                let nx = resize_box(&orig, handle, local - start, mods.shift || self.is_picture(id), mods.alt);
-                let nx = if parent == Affine::IDENTITY { self.snap_resize(nx, &orig, handle, id, tol) } else { nx };
-                self.set_xfrm(id, nx)?;
+                let keep_aspect = mods.shift || self.is_picture(id);
+                let nx = resize_box(&orig, handle, local - start, keep_aspect, mods.alt);
+                let nx = if parent == Affine::IDENTITY { self.snap_resize(nx, handle, &ids, tol) } else { nx };
+                let sx = if orig.w > 1e-9 { (nx.w / orig.w) * if nx.flip_h != orig.flip_h { -1.0 } else { 1.0 } - 1.0 } else { 0.0 };
+                let sy = if orig.h > 1e-9 { (nx.h / orig.h) * if nx.flip_v != orig.flip_v { -1.0 } else { 1.0 } - 1.0 } else { 0.0 };
+                let div = if mods.alt { 2.0 } else { 1.0 };
+                let hx = match handle {
+                    0 | 6 | 7 => -1.0,
+                    2..=4 => 1.0,
+                    _ => 0.0,
+                };
+                let hy = match handle {
+                    0..=2 => -1.0,
+                    4..=6 => 1.0,
+                    _ => 0.0,
+                };
+                for (tid, o) in &origs {
+                    let target_nx = if *tid == id {
+                        nx
+                    } else {
+                        let picture = self.is_picture(*tid);
+                        let (sx, sy) = if picture && matches!(handle, 0 | 2 | 4 | 6) {
+                            // Use the axis with the larger relative change so an unchanged
+                            // dimension cannot cancel shrinking. Preserve each axis's flip.
+                            let scale_x = 1.0 + sx;
+                            let scale_y = 1.0 + sy;
+                            let scale = if sx.abs() >= sy.abs() { scale_x.abs() } else { scale_y.abs() };
+                            (scale.copysign(scale_x) - 1.0, scale.copysign(scale_y) - 1.0)
+                        } else {
+                            (sx, sy)
+                        };
+
+                        let lp = Affine::rotate(o.rot.to_radians())
+                            * Point::new(
+                                hx * sx * o.w / div * if o.flip_h { -1.0 } else { 1.0 },
+                                hy * sy * o.h / div * if o.flip_v { -1.0 } else { 1.0 },
+                            );
+                        resize_box(o, handle, Vec2::new(lp.x, lp.y), picture, mods.alt)
+                    };
+                    self.set_xfrm(*tid, target_nx)?;
+                }
             }
             Drag::LineEnd { id, end, orig } => {
-                let p = cmd::parent_transform(self.doc()?, id).inverse() * p;
+                let parent = cmd::parent_transform(self.doc()?, id);
+                let p = parent.inverse() * p;
                 let a = orig.affine();
                 let (p0, p1) = (a * Point::new(0.0, 0.0), a * Point::new(orig.w, orig.h));
                 let mut q = p;
@@ -43,9 +82,9 @@ impl Session {
                 if mods.shift {
                     q = constrain_45(other, q);
                 }
-                let glue = self.update_sites(q, tol, Some(id));
+                let glue = self.update_sites(parent * q, tol, Some(id));
                 if let Some((_, _, at)) = glue {
-                    q = at;
+                    q = parent.inverse() * at;
                 }
                 let (s0, s1) = if end == 0 { (q, p1) } else { (p0, q) };
                 self.set_xfrm(id, line_xfrm(s0, s1, orig.rot))?;
