@@ -824,3 +824,60 @@ fn diagram_bullet_start_uses_data_hierarchy_and_secondary_font_not_paragraph_ind
         assert_eq!(group(&back).children()[0].text, group(&p).children()[0].text);
     }
 }
+
+#[test]
+fn nonpainting_diagram_nodes_do_not_advance_colour_lists_or_duplicate_text() {
+    use deckcraft_color::SchemeSlot;
+    use deckcraft_model::style::{ColorBase, Fill};
+    for (mode, changed) in ["hidden", "none", "absent", "connector"].into_iter().flat_map(|m| [(m, 0), (m, 1)]) {
+        let mut parts = files(&shared_font_fixture("none", None, "Alpha", "Beta"));
+        for (_, bytes) in &mut parts {
+            let Ok(mut doc) = parse_xml(bytes) else { continue };
+            if doc.root.is("colorsDef") {
+                let xml = doc.root.to_xml();
+                *bytes = xml
+                    .replace(
+                        "<dgm:txFillClrLst/>",
+                        r#"<dgm:txFillClrLst meth="repeat"><a:schemeClr val="accent4"/><a:schemeClr val="accent5"/></dgm:txFillClrLst>"#,
+                    )
+                    .into_bytes();
+                continue;
+            }
+            if !doc.root.is("layoutDef") {
+                continue;
+            }
+            let root = doc.root.elements_mut().find(|e| e.is("layoutNode")).unwrap();
+            let name = format!("card{changed}");
+            let card = root.elements_mut().find(|e| e.attr("name") == Some(name.as_str())).unwrap();
+            let removed = if mode == "absent" { card.child("shape").map(|s| (card.to_xml(), s.to_xml())) } else { None };
+            if mode != "absent" {
+                let shape = card.elements_mut().find(|e| e.is("shape")).unwrap();
+                match mode {
+                    "hidden" => shape.set_attr("hideGeom", "1"),
+                    "none" => shape.set_attr("type", "none"),
+                    _ => shape.set_attr("type", "conn"),
+                }
+            }
+            let xml = doc.root.to_xml();
+            *bytes = removed.map_or_else(|| xml.clone(), |(card, shape)| xml.replacen(&card, &card.replacen(&shape, "", 1), 1)).into_bytes();
+        }
+        let bytes = zip(parts);
+        let p = deckcraft_pptx::import(&bytes).unwrap();
+        let shapes = group(&p).children();
+        let shape = |i: usize| shapes.iter().find(|s| s.name == format!("card{i}")).unwrap();
+        let expected = if mode == "connector" && changed == 0 { SchemeSlot::Accent2 } else { SchemeSlot::Accent1 };
+        assert!(
+            matches!(&shape(1 - changed).fill, Some(Fill::Solid { color }) if color.base == ColorBase::Scheme { slot: expected }),
+            "{mode}/{changed}"
+        );
+        assert_eq!(shape(changed).hidden, matches!(mode, "none" | "absent"), "{mode}/{changed}");
+        if mode == "hidden" {
+            let run = &shape(changed).text.as_ref().unwrap().paragraphs[0].runs[0];
+            assert!(matches!(&run.props.fill, Some(Fill::Solid { color }) if color.base == ColorBase::Scheme { slot: SchemeSlot::Accent4 }));
+        }
+        let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+        let image = deckcraft_engine::render::render_slide(&p, 0, &Default::default());
+        let again = deckcraft_engine::render::render_slide(&back, 0, &Default::default());
+        assert_eq!(image.pixels, again.pixels, "{mode} round trip");
+    }
+}

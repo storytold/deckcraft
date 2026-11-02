@@ -22,6 +22,8 @@ pub(crate) struct Placed<'a> {
     pub point_levels: Vec<usize>,
     pub name: String,
     pub style: String,
+    /// Colour-list position in layout order, before connectors move behind nodes.
+    pub color_index: usize,
     pub rect: Xfrm,
     /// A mapped text algorithm can own a different rectangle from its composite shape.
     pub text_rect: Option<Xfrm>,

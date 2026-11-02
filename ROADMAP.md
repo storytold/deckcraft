@@ -1,6 +1,8 @@
 # DeckCraft roadmap
 
-> **PPTX.21 update 2026-11-01:** SmartArt font search measures displayed whole-point sizes while retaining fractional local references. Authored defaults round at each reference edge; satisfied bounds do not move linked fonts. All 108 new font controls and 154 earlier font controls match PowerPoint. Short-label wrapping, omitted-point-type colours and full search/fallback policies remain partial; scores are unchanged.
+> **PPTX.22 update 2026-11-01:** SmartArt helpers retain layout participation without duplicate text; hidden geometry does not consume colours, and connector paint order no longer changes colour order. All 16 text-colour/visibility controls pass; 38 of 41 visible-bound comparisons are within 0.25pt. Three allocation cases remain explicit failures. Shared-part colour probes and empty-vector regression claims are corrected in `docs/layout-fidelity.md`; parity scores are unchanged.
+
+> **PPTX.21 update 2026-11-01:** SmartArt font search measures displayed whole-point sizes while retaining fractional local references. Authored defaults round at each reference edge; satisfied bounds do not move linked fonts. All 108 new font controls and 154 earlier font controls match PowerPoint. Short-label wrapping and full search/fallback policies remain partial. The colour-probe diagnosis is corrected in PPTX.22; scores are unchanged.
 
 > **PPTX.20 update 2026-11-01:** global maps retain per-region dateline continuity and fit actual complete-cache bounds. Global projection fallback, cylindrical southern cropping and native plot insets have multi-size controls. Incomplete provider context, boundary simplification and finite-size quantization remain partial; scores are unchanged.
 
@@ -152,7 +154,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
-| 2026-11-01 | PPTX.21: resolve scaled reverse-font differences through displayed trial measurement, one-point search convergence and fractional local references; 108 new and 154 prior native font controls pass without geometry regression |
+| 2026-11-01 | PPTX.22: preserve SmartArt helper visibility and colour order across connector sorting; 16 text-colour controls pass, 38/41 native visible-bound controls within 0.25pt; three allocation gaps remain |
+| 2026-11-01 | PPTX.21: resolve scaled reverse-font differences through displayed trial measurement, one-point search convergence and fractional local references; 108 new and 154 prior native font controls pass; geometry-regression evidence corrected in PPTX.22 |
 | 2026-11-01 | PPTX.20: complete-cache global maps fit continuous dateline regions; projection fallback, cylindrical southern cap and chart insets have multi-size native controls. Boundary simplification and incomplete-provider context remain partial |
 | 2026-11-01 | PPTX.19: retain geographic parent/child hierarchy and extent-only ancestors; choose administrative views, preserve data-only projection context, and render regional Albers with robust dateline wrapping; native global fitting remains partial |
 | 2026-11-01 | PPTX.18: maximum-area rotated diagram footprints, independently oriented editable text frames, and bounded fitting-failure fallback; narrow text alignment corrected with independent native probes |
@@ -343,6 +346,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | PPTX.22 separates helper visibility and layout-order colour indexing; native pixel checks replace invalid empty-path comparisons, and three allocation differences remain open |
 | 2026-11-01 | minor | PPTX.21 separates authored-default rounding, displayed trial measurement and fractional local-font propagation; native font controls pass, full visual parity remains partial |
 | 2026-11-01 | minor | PPTX.19 geographic lineage, regional projection and explicit native viewport limits; scores unchanged |
 | 2026-10-31 | minor | Progress log: bounded PPTX editing/export fidelity fixes; overall parity scores and alpha stage unchanged |

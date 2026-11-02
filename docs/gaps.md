@@ -1,6 +1,8 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **PPTX.21 update 2026-11-01:** SmartArt font search measures displayed whole-point sizes while retaining fractional local references. Authored defaults round at each reference edge; satisfied bounds do not move linked fonts. All 108 new font controls and 154 earlier font controls match PowerPoint. Short-label wrapping, omitted-point-type colours and full search/fallback policies remain partial; scores are unchanged.
+> **PPTX.22 update 2026-11-01:** SmartArt helpers retain layout participation without duplicate text; hidden geometry does not consume colours, and connector paint order no longer changes colour order. All 16 text-colour/visibility controls pass; 38 of 41 visible-bound comparisons are within 0.25pt. Three allocation cases remain explicit failures. Shared-part colour probes and empty-vector regression claims are corrected in `docs/layout-fidelity.md`; parity scores are unchanged.
+
+> **PPTX.21 update 2026-11-01:** SmartArt font search measures displayed whole-point sizes while retaining fractional local references. Authored defaults round at each reference edge; satisfied bounds do not move linked fonts. All 108 new font controls and 154 earlier font controls match PowerPoint. Short-label wrapping and full search/fallback policies remain partial. The colour-probe diagnosis is corrected in PPTX.22; scores are unchanged.
 
 > **PPTX.20 update 2026-11-01:** global maps retain per-region dateline continuity and fit actual complete-cache bounds. Global projection fallback, cylindrical southern cropping and native plot insets have multi-size controls. Incomplete provider context, boundary simplification and finite-size quantization remain partial; scores are unchanged.
 
@@ -255,7 +257,9 @@ Detail in [file-format-parity.md](file-format-parity.md).
   edges and bounds now use a bounded sparse solver rather than eight relaxation passes. Ordered
   text-measured rules and circular extent fitting are supported; all native search/fallback heuristics remain open. The corrected uncached nested-card definition now renders
   six shapes in PowerPoint; measured coordinates, text spacing and default insets are covered.
-  Full layout parity is not claimed.
+  Helper visibility and layout-order colour indexing are covered. Connector-first/empty-helper
+  composite allocation, duplicate-point text ownership and full colour interpolation remain
+  incomplete. Full layout parity is not claimed.
 - **Impact:** structural or unmappable edits to an imported diagram still need explicit relayout or conversion to shapes.
 - **Estimate:** 6–10 h.
 
@@ -429,6 +433,7 @@ no global parity claim or score increase.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | PPTX.22 separates helper visibility and layout-order colour indexing; native pixel checks replace invalid empty-path comparisons, and three allocation differences remain open |
 | 2026-11-01 | minor | PPTX.21 separates authored-default rounding, displayed trial measurement and fractional local-font propagation; native font controls pass, full visual parity remains partial |
 | 2026-11-01 | minor | Global dateline continuity, complete-cache framing, projection selection and cylindrical southern cap verified across independent chart sizes; simplification and missing-context gaps remain |
 | 2026-11-01 | minor | Rotated diagram footprint fitting and independent mapped text orientation; crossed text insets and wrapped overflow alignment verified with original native controls |

@@ -588,16 +588,19 @@ fn smartart_layout(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape) -> Option
     };
     let quick = diagram.style_xml.as_deref().and_then(|x| crate::xml::parse(x.as_bytes()).ok());
     let colors = diagram.colors_xml.as_deref().and_then(|x| crate::xml::parse(x.as_bytes()).ok());
-    let mut counts = std::collections::HashMap::<String, usize>::new();
     let mut children = Vec::new();
     for p in placed {
-        let index = counts.entry(p.style.clone()).or_default();
+        // Text-only shapes use the first colour and do not advance the sequence.
+        // Shape-less layout helpers still participate in fitting and mapped text,
+        // but do not produce a second painted copy of that text.
+        let has_geometry = p.shape.is_some_and(|shape| shape.bool("hideGeom") != Some(true));
         let mut s = Shape {
             id: ShapeId(imp.alloc()),
             name: p.name.clone(),
             xfrm: Some(p.rect),
             geom: Geom::preset(p.shape.and_then(|e| e.attr("type")).unwrap_or("rect")),
             text_box: p.shape.is_none(),
+            hidden: p.shape.is_none(),
             ..Default::default()
         };
         if let Some(adjustments) = p.shape.and_then(|shape| shape.child("adjLst"))
@@ -638,7 +641,7 @@ fn smartart_layout(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape) -> Option
         let color = |name: &str| {
             label.and_then(|l| l.child(name)).and_then(|l| {
                 let list: Vec<_> = l.elements().filter_map(dml::color_el).collect();
-                if list.is_empty() { None } else { list.get(*index % list.len()).cloned() }
+                if list.is_empty() { None } else { list.get(p.color_index % list.len()).cloned() }
             })
         };
         if let Some(fill) = color("fillClrLst") {
@@ -648,7 +651,7 @@ fn smartart_layout(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape) -> Option
             s.line = Some(Line { fill: Some(Fill::Solid { color: line }), ..Default::default() });
         }
         let text_color = color("txFillClrLst");
-        if p.shape.is_none() || p.shape.is_some_and(|shape| shape.bool("hideGeom") == Some(true)) {
+        if !has_geometry {
             s.fill = Some(Fill::None);
             s.line = Some(Line { fill: Some(Fill::None), ..Default::default() });
         }
@@ -686,7 +689,6 @@ fn smartart_layout(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape) -> Option
         // User point formatting may contain transforms from a stale cache; the layout owns
         // geometry when no usable drawing exists.
         s.xfrm = Some(p.rect);
-        *index += 1;
         children.push(s);
     }
     if children.is_empty() {
@@ -906,6 +908,7 @@ pub(super) fn text_on_rect(imp: &mut Imp, ctx: &mut IdCtx, s: &mut Shape, t: Xfr
         style,
         text,
         diagram_node: s.diagram_node.clone(),
+        hidden: s.hidden,
         click: s.click.clone(),
         hover: s.hover.clone(),
         ..Default::default()

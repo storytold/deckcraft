@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.21): native-controlled SmartArt font search and reference rounding,
+Updated 2026-11-01 (PPTX.22): SmartArt helper visibility and layout-order colour indexing,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -831,9 +831,10 @@ semantics, administrative/automatic map viewport selection, rich-label vertical 
 plot spacing and callout routing remain explicit limits. No global parity score is raised.
 
 Final workspace CI passes all eight gates, including 2,417 tests and doctests. Sixty-five
-previous reference-font/composite probes retain their font sizes and vector geometry with
-unchanged sources; the same four scaled reverse-font cases retain their known one-point
-native differences.
+previous reference-font/composite probes retain their font sizes with unchanged sources;
+the same four scaled reverse-font cases retain their known one-point native differences.
+The earlier regression claim about vector geometry was based on empty path lists from raster
+PDF output and is withdrawn; see the pixel-based recheck in PPTX.22 below.
 The four previously failing rotation controls now match native same-colour painted bounds
 exactly at the tested 4K raster resolution; this does not assert whole-image equality.
 
@@ -976,8 +977,10 @@ Validation:
 - All 108 new pages match native primary/secondary font-size sets: 60 reference/rule cases,
   24 forced-floor cases and 24 fractional-default/secondary-font cases. This includes the four
   previously failing scaled reverse-reference controls.
-- All 154 earlier diagram controls match native font-size sets and retain their previous
-  filled-path geometry exactly. Their source hashes are unchanged.
+- All 154 earlier diagram controls match native font-size sets. Their source hashes are
+  unchanged. The earlier claim that all filled-path geometry was identical is withdrawn:
+  the regression checker compared empty path lists from raster PDF artwork. PPTX.22 below
+  records the replacement pixel-bound measurements.
 - The current CLI directly exports the 60-page reference matrix as 3840x2160 PNGs with no
   external converter on PATH. Selected direct images and native counterparts were visually
   inspected; font-set agreement is not whole-slide or line-break agreement.
@@ -986,8 +989,55 @@ Validation:
 - LibreOffice 26.8 exports the same 60-page uncached reference matrix without diagram content
   (zero text characters). This is an explicit comparison failure, not a fidelity pass.
 
-Two visual differences remain visible in these controls: omitted-point-type/invisible-node
-colour assignment and some short-label word wrapping, even when font sizes agree. Complete
+Two visual differences were observed in these controls: colours and some short-label word
+wrapping, even when font sizes agree. PPTX.22 below separates the invalid shared-part colour
+probe from genuine helper-visibility and colour-index defects. Complete
 native cyclic-font, search and fallback policies still need broader controls. Geographic
 simplification/incomplete provider context and rich-label overflow/callout limits are unchanged.
 No native output, provider asset, user content or oracle toolchain is distributed.
+
+## Helper visibility and layout-order colours (PPTX.22)
+
+An uncached diagram's text algorithm can be a nonpainting layout helper, a text-only shape
+with `hideGeom`, or a visible shape. These cases now retain their distinct painting behaviour:
+
+- A missing shape or `type="none"` helper still supplies text measurements, bounds and mapped
+  text to its owning shape, but its own text does not paint a second time. Generated separate
+  text frames inherit the source shape's hidden state through export/reimport.
+- A shape with `hideGeom="1"` keeps its text visible, uses colour-list index zero, and does
+  not advance the style's colour sequence. Each style label retains its own sequence.
+- Connectors consume a colour slot in layout order. Moving connectors behind nodes for
+  painting no longer changes subsequent colours.
+
+The native probes also corrected an earlier diagnosis. The multi-page font matrix reused a
+single colours part. PowerPoint changed later diagrams' starting colour with that packaging;
+giving each diagram its own colours part removed the apparent omitted-point-type discrepancy.
+The public OOXML part constraints require one [Diagram Colors part per diagram](https://c-rex.net/samples/ooxml/e1/Part1/OOXML_P1_Fundamentals_Diagram_topic_ID0EJPMM.html)
+and one [Diagram Style part per diagram](https://c-rex.net/samples/ooxml/e1/Part1/OOXML_P1_Fundamentals_Diagram_topic_ID0EYNNM.html).
+The final controls use independent data, layout, colours and style parts. The invalid shared-part
+colour behaviour is not treated as a target rendering rule.
+
+Validation and limits:
+
+- Sixteen original hidden/absent/none/connector controls match native text-colour counts and
+  standalone text visibility; eight integration variants verify colours, hidden-state handling
+  and exact rendered pixels after export/reimport. The initial regression failed before the fix.
+- Forty-one original pages open/export in native PowerPoint and render directly to 3840x2160
+  PNG without an external converter on PATH, with unchanged source hashes. Thirty-eight have
+  visible same-colour bounds within 0.25pt of the native raster. Three explicit failures remain:
+  two connector-first composite allocation cases and one empty space-helper allocation case.
+  Fully occluded native paths are excluded from bounds measurement, not counted as matching
+  absent pixels. Colour/text-count agreement does not establish whole-slide equivalence.
+- The old 154-case regression was remeasured from raster pixels: 140 have unchanged nonempty
+  same-colour bounds at 0.5pt sampling, ten provide no measurable coloured region, and four
+  rotated composites differ from their pre-PPTX.18 baselines. Those four were independently
+  validated against native 4K painted bounds in PPTX.18. Empty masks are not geometry passes.
+- Full workspace CI passes all eight gates with 2,432 tests including doctests. Selected
+  before/after/native images were visually inspected; native output stays private and uncommitted.
+
+Some near-threshold short-label wrapping still differs with the same installed font. Controls
+that substituted a different font natively are excluded from font-metric conclusions. Global
+ownership when multiple text algorithms map the same data point, composite allocation involving
+nonpainting helpers/connectors, full cyclic-font/search/fallback policies, colour interpolation,
+map simplification/incomplete provider context and rich-label overflow remain open. This phase
+does not certify full LibreOffice replacement.

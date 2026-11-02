@@ -213,6 +213,7 @@ mod tests {
             ..Default::default()
         }];
         let mut placed = vec![Placed {
+            color_index: 0,
             node_key: 1,
             shape: None,
             points: vec![],

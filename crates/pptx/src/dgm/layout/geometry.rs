@@ -190,6 +190,7 @@ fn place_inner<'a>(
             point_levels: node.point_levels.clone(),
             name: node.name.clone(),
             style: node.style.clone(),
+            color_index: 0,
             rect,
             text_rect: None,
             text_source: None,
@@ -211,6 +212,7 @@ fn place_inner<'a>(
             point_levels: node.point_levels.clone(),
             name: node.name.clone(),
             style: node.style.clone(),
+            color_index: 0,
             rect: style.rect,
             text_rect: None,
             text_source: None,
@@ -589,6 +591,17 @@ fn pack_linear(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle]) 
 /// nodes, and use actual boundary attachment points rather than an arbitrary canvas diagonal.
 pub(super) fn connect(out: &mut [Placed<'_>], data: &Data<'_>) {
     use std::collections::HashMap;
+    let mut counts = HashMap::<&str, usize>::new();
+    for p in out.iter_mut() {
+        // Geometry-free text uses the first colour without consuming a slot.
+        // Connectors do consume one, in layout order rather than paint order.
+        p.color_index = 0;
+        if p.shape.is_some_and(|s| s.bool("hideGeom") != Some(true)) {
+            let next = counts.entry(&p.style).or_default();
+            p.color_index = *next;
+            *next += 1;
+        }
+    }
     let mut boxes = HashMap::new();
     for p in out.iter().filter(|p| !p.connector) {
         for point in &p.points {
