@@ -10,6 +10,7 @@ use super::grid_options::grid_options;
 use super::hyperlink::{hyperlink_command, hyperlink_seed_of, hyperlink_should_apply};
 use super::language::selected_language;
 use super::paragraph::paragraph_dialog;
+use super::password::password_dialog;
 use super::photo_album::photo_album_dialog;
 use super::preferences::{preferences_snapshot, restore_preferences};
 use super::size_position::size_position_dialog;
@@ -42,6 +43,7 @@ pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         "renameSection" | "renameShape" | "renameLayout" => dlg_rename_section(app, ui, d),
         "font" => font_dialog(app, ui, d),
         "paragraph" => paragraph_dialog(app, ui, d),
+        "password" => password_dialog(app, ui, d),
         "tabs" => tabs_dialog(app, ui, d),
         "export" => dlg_export(app, ui, d),
         "replaceFonts" => dlg_replace_fonts(app, ui, d),

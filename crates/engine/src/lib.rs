@@ -55,6 +55,10 @@ pub enum EngineError {
     NoDocument,
     #[error("{0}")]
     Other(String),
+    #[error("{0}: this file is password-protected")]
+    PasswordRequired(String),
+    #[error("{0}: incorrect password")]
+    WrongPassword(String),
     #[error("internal error in `{0}` (the presentation was kept as it was): {1}")]
     Internal(String, String),
 }

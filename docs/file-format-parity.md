@@ -1,6 +1,6 @@
 # File-format parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** minor (encrypted PPTX can now be read: standard and agile decryption, password dialog; the encryption row moves from "no" to "yes" for reading; previous: minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every format PowerPoint reads or writes, DeckCraft's support, fidelity and how it is tested.
 Gaps are itemized in [gaps.md](gaps.md#file-formats). Dimension score: **~58% ready**
@@ -103,7 +103,7 @@ the round trip even though DeckCraft doesn't model it.
 | Tags (`p:custDataLst`) on the presentation, slides and shapes | yes | yes | Add-ins such as think-cell keep their identity; `tags_survive_round_trip` |
 | Custom XML data, sensitivity label (`docMetadata/LabelInfo.xml`), custom document properties | kept verbatim | yes | SharePoint metadata and the label survive a save; `custom_xml_label_and_custom_properties_survive_save` |
 | VBA | no | no | |
-| Encryption (password to open) | no | no | |
+| Encryption (password to open) | yes | no | Standard (AES-128/192/256, SHA-1) and agile (AES-128/192/256, SHA-1/256/384/512); the password is asked for in a dialog and a wrong one is reported. Tested against msoffcrypto-tool fixtures: `crates/pptx/tests/crypt.rs` |
 
 ### What would move the PPTX number
 
@@ -148,4 +148,5 @@ the round trip even though DeckCraft doesn't model it.
 | 2026-10-11 | minor | Speaker notes: formatting shown in the notes pane and Notes Page and kept when they are edited |
 | 2026-10-11 | minor | Animated GIF of the deck: export yes (#171) |
 | 2026-10-10 | major | Created from PowerPoint 16.113.4's `CFBundleDocumentTypes`, `crates/pptx` reader/writer and tests, and the open round-trip issues |
+| 2026-11-01 | minor | Encrypted PPTX (password to open) is readable: MS-OFFCRYPTO standard and agile decryption in `crates/pptx/src/crypt.rs`, a password dialog in the UI, and `crates/pptx/tests/crypt.rs` with fixtures cross-validated by msoffcrypto-tool |
 | 2026-10-13 | minor | Comments: the writer emits the modern threaded part (`p188`) next to the flattened legacy one; the reader prefers the modern part and scales its EMU positions (#70) |

@@ -1,6 +1,6 @@
 # PowerPoint feature checklist
 
-> **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Generated:** 2026-11-01 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171; the password row re-scored 2026-11-01) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 > **Last updated:** 2026-11-01 · Locked-shape and no-outline regressions added for #1621; fill row re-assessed: remains D; No Fill hit-testing now follows resolved appearance. Scores unchanged.
 
@@ -11,12 +11,12 @@ The summary between `<!-- SUMMARY -->
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
 | P1 | 65 | 45 | 16 | 4 | 82% |
-| P2 | 54 | 18 | 24 | 12 | 56% |
+| P2 | 54 | 18 | 25 | 11 | 56% |
 
 | Area | Parity |
 |---|---|
 | Application shell | 81% |
-| Files | 76% |
+| Files | 78% |
 | Slides | 92% |
 | Views | 98% |
 | Masters & themes | 92% |
@@ -69,7 +69,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Files | Export outline / RTF | P2 | D |
 | Files | Export video (MP4) / animated GIF (GIF: one frame per slide, no transitions; no video) | P2 | P |
 | Files | Print (slides, handouts, notes, outline) | P1 | M |
-| Files | Password protection | P2 | M |
+| Files | Password protection (open only; no encryption on save) | P2 | P |
 | Files | Reuse slides from another file | P1 | P |
 | Files | Drag and drop files onto the window | P1 | D |
 | Files | OpenDocument .odp open/save | P2 | M |

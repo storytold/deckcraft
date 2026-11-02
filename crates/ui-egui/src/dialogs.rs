@@ -70,6 +70,7 @@ fn title(id: &str) -> &'static str {
         "smartart" => "Choose a SmartArt Graphic",
         "bullets" => "Bullets and Numbering",
         "action" => "Action Settings",
+        "password" => "Password",
         "quit" => "DeckCraft",
         "themeColors" => "Create New Theme Colors",
         "themeFonts" => "Create New Theme Fonts",
@@ -215,6 +216,7 @@ mod grid_options;
 mod hyperlink;
 mod language;
 mod paragraph;
+mod password;
 mod photo_album;
 mod preferences;
 mod size_position;
@@ -232,6 +234,7 @@ use hyperlink::{
     CurrentLink, HyperlinkSeed, common_click, hyperlink_command, hyperlink_seed_of, hyperlink_should_apply, link_covering, seed_from, seed_of_link,
 };
 pub use language::selected_language;
+pub(crate) use password::{drops_password_note, rejected_password};
 use preferences::restore_preferences;
 pub use zoom::parse_zoom_percent;
 

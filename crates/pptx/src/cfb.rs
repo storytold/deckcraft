@@ -118,6 +118,7 @@ mod tests {
         b[32..34].copy_from_slice(&6u16.to_le_bytes()); // mini sector shift
         b[44..48].copy_from_slice(&1u32.to_le_bytes()); // FAT sectors
         b[48..52].copy_from_slice(&1u32.to_le_bytes()); // first directory sector
+        b[56..60].copy_from_slice(&4096u32.to_le_bytes()); // mini stream cutoff
         b[60..64].copy_from_slice(&END_OF_CHAIN.to_le_bytes()); // no mini FAT
         b[68..72].copy_from_slice(&END_OF_CHAIN.to_le_bytes()); // no DIFAT sectors
         for i in 0..109 {
@@ -172,14 +173,15 @@ mod tests {
     }
 
     /// #346: opening a password-protected presentation says so instead of failing as an unknown
-    /// file.
+    /// file; since #435 the same call also names the deck for the password dialog.
     #[test]
     fn a_password_protected_presentation_is_named_as_such() {
         let locked = build(&["EncryptionInfo", "EncryptedPackage"]);
         let err = deckcraft_engine::cmd::file::open_presentation("Locked.pptx", &locked).unwrap_err().to_string();
-        assert!(err.contains("Locked.pptx is password-protected"), "{err}");
+        assert!(err.contains("Locked.pptx: this file is password-protected"), "{err}");
         let ppt = build(&["PowerPoint Document", "Current User"]);
         let err = deckcraft_engine::cmd::file::open_presentation("Old.ppt", &ppt).unwrap_err().to_string();
         assert!(!err.contains("password"), "{err}");
+        assert!(err.contains("legacy binary PowerPoint"), "{err}");
     }
 }

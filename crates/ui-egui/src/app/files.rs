@@ -306,7 +306,12 @@ impl SlideApp {
     }
 
     pub fn open_path(&mut self, path: &str) -> Result<(), String> {
-        self.session.execute("file.open", &json!({"path": path})).map_err(|e| e.to_string())?;
+        let r = self.session.execute("file.open", &json!({"path": path})).map(|_| ()).map_err(|e| e.to_string());
+        self.drain_requests();
+        if let Err(e) = &r {
+            self.report_error(e.clone());
+            return r;
+        }
         self.note_recent(path);
         Ok(())
     }
