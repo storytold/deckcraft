@@ -144,15 +144,21 @@ fn world_longitude(lon: f64, bounds: Option<[f64; 4]>) -> f64 {
         || south < -90.
         || north > 90.
         || south > north
-        || west <= east
     {
         return lon;
     }
-    // A world's regions retain their own dateline continuity. Do not split a country
-    // across the two edges just because its global central meridian is zero.
-    let centre = west + (east - west).rem_euclid(360.) / 2.;
+    // Explicit seam extents lift the folded side before choosing a longitude near
+    // the region's centre. Otherwise native world views preserve negative accumulated
+    // turns: signed remainder is intentional here, rather than Euclidean wrapping.
+    let seam = west > east;
+    let centre = if seam { west + (east - west).rem_euclid(360.) / 2. } else { (west + east) / 2. };
     let centre = if centre > 180. { centre - 360. } else { centre };
-    (lon - centre + 180.).rem_euclid(360.) - 180. + centre
+    let lon = if seam && lon < west { lon + 360. } else { lon };
+    // Both clipped world meridians are meaningful, including the positive edge.
+    if (lon - centre).abs() <= 180. {
+        return lon;
+    }
+    (lon - centre + 180.) % 360. - 180. + centre
 }
 
 fn world_latitude(lat: f64, projection: &str) -> f64 {
@@ -176,7 +182,8 @@ fn paths(map: &Geography) -> ProjectedMap {
         .flat_map(|(r, _)| &r.rings)
         .flatten()
         .take(deckcraft_model::geography::MAX_GEO_POINTS)
-        .map(|p| p[0])
+        // Coverage uses canonical angles; the actual path retains encoded turns.
+        .map(|p| (p[0] + 180.).rem_euclid(360.) - 180.)
         .filter(|v| v.is_finite())
         .collect();
     longs.sort_by(f64::total_cmp);
@@ -237,7 +244,9 @@ fn paths(map: &Geography) -> ProjectedMap {
                     continue;
                 }
                 budget -= ring.len();
-                if ring.iter().any(|p| !p[0].is_finite() || !p[1].is_finite() || p[0].abs() > 180.0 || p[1].abs() > 90.0) {
+                if ring.iter().any(|p| {
+                    !p[0].is_finite() || !p[1].is_finite() || p[0].abs() > deckcraft_model::geography::MAX_GEO_LONGITUDE || p[1].abs() > 90.0
+                }) {
                     continue;
                 }
                 for (i, &[lon, lat]) in ring.iter().enumerate() {
@@ -600,6 +609,55 @@ mod tests {
         assert!(p.bounding_box().x1 > project(180., -5., "robinson").x);
         map.regions[0].bounds = Some([f64::NAN, -10., -175., -5.]);
         assert!(paths(&map).paths[0].bounding_box().is_finite());
+    }
+
+    #[test]
+    fn world_longitudes_keep_encoded_turns_and_use_each_regions_extent() {
+        let world = Some([-180., -80., 180., 80.]);
+        assert_eq!(world_longitude(-208., world), -208.);
+        assert_eq!(world_longitude(-498., world), -498.);
+        assert_eq!(world_longitude(182., world), -178.);
+        assert_eq!(world_longitude(180., world), 180.);
+        assert_eq!(world_longitude(-180., world), -180.);
+        let western = Some([-150., -20., -130., 20.]);
+        assert_eq!(world_longitude(178., western), -182.);
+        let seam = Some([176., -20., -176., 20.]);
+        assert_eq!(world_longitude(-177., seam), 183.);
+        assert_eq!(world_longitude(183., seam), 183.);
+        let asymmetric = Some([178., -20., -174., 20.]);
+        assert_eq!(world_longitude(179., asymmetric), -181.);
+        assert_eq!(world_longitude(-175., asymmetric), -175.);
+    }
+
+    #[test]
+    fn accumulated_longitudes_survive_world_projection_but_regional_views_normalize_them() {
+        use deckcraft_model::geography::{GeoEntity, GeoRegion};
+        let raw = vec![[-208., 46.], [-204., 46.], [-204., 51.], [-208., 46.]];
+        for kind in ["robinson", "mercator", "miller", "albers"] {
+            let mut map = Geography {
+                viewed_region: "world".into(),
+                projection: kind.into(),
+                regions: vec![GeoRegion {
+                    entity_id: "original".into(),
+                    point: Some(0),
+                    bounds: Some([140., 40., 160., 55.]),
+                    rings: vec![raw.clone()],
+                    ..Default::default()
+                }],
+                entities: vec![GeoEntity { id: "original".into(), kind: "countryRegion".into(), ..Default::default() }],
+                ..Default::default()
+            };
+            let world = paths(&map).paths;
+            let effective = if kind == "albers" { "robinson" } else { kind };
+            assert_eq!(world[0].elements()[0], kurbo::PathEl::MoveTo(project(-208., 46., effective)));
+            assert!(world[0].bounding_box().width() < 0.4);
+            map.viewed_region = "dataOnly".into();
+            let regional = paths(&map).paths;
+            map.regions[0].rings = vec![raw.iter().map(|p| [p[0] + 360., p[1]]).collect()];
+            assert_eq!(regional, paths(&map).paths, "regional {kind} uses the same geographic location");
+            map.regions[0].rings = vec![vec![[541., 0.], [542., 0.], [541., 1.]]];
+            assert!(paths(&map).paths[0].elements().is_empty());
+        }
     }
     #[test]
     fn global_albers_uses_robinson_while_regional_robinson_uses_albers() {

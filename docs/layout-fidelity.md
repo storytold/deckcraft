@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.44): nested overflow placement, geographic painter ordering,
-and font-metric column-axis reserves.
+Updated 2026-11-02 (PPTX.45): accumulated map coordinates and centered half-turn
+column labels, with native round-trip failures retained explicitly.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -2402,3 +2402,56 @@ Only source, original programmatic tests and documentation are published. Privat
 native observations, provider geometry and all document/font assets stay outside
 the commit. The remaining rule, small-frame, rotated-label and map-threshold gaps
 mean this is not blanket PowerPoint parity or complete LibreOffice replacement.
+
+
+## PPTX.45 — accumulated map coordinates and centered half turns
+
+Geographic ring decoding now keeps accumulated longitudes rather than folding
+coordinates before the renderer can use region extents. Rebuilding preserves
+explicit coordinate deltas, including a deliberately long edge: shortest-path
+unwrapping would change the authored geometry. Coordinate, point, ring and
+exact-integer budgets remain bounded. World projection uses signed, region-relative
+continuity; regional views still canonicalize equivalent longitudes.
+
+The retained 56 map images are pixel-identical. Two historical chord failures
+improve foreground IoU from 36.718% to 98.804% and from 40.893% to 99.863%; a third
+historical control is unchanged. Fourteen independent controls have six improvements,
+eight unchanged results and no regressions. Twenty-one previously out-of-domain
+ring sequences now match native absolute coordinates. The seventeen threshold
+sequences and two Albers sequence failures remain unchanged and unresolved.
+
+Forced encoding/reopening preserves geographic rings, bounds, bindings, projection
+and rendered pixels on fourteen controls. This is not a native full-rebuild pass:
+PowerPoint still produces an empty geographic plot for a fully regenerated chart.
+The pre-change implementation produces identical package parts in a paired canonical
+control. Replacing only the polygon encoding in two original packages preserves
+native vertices and whole-image pixels, isolating the new encoding from the existing
+full-chart writer failure. Entity enum spelling is normalized on rebuilding; raw
+model JSON identity is not claimed.
+
+Centered automatic column labels at exactly +180 or -180 degrees now retain their
+full unwrapped text for default, clip, ellipsis and overflow policies. Stored text
+and authored policy remain unchanged. Wrapped bodies use capped-corner placement;
+explicit no-wrap overflow centers the complete body before chart clipping, including
+unrotated horizontal labels. Manual and non-centered half turns retain the previous
+path and remain unproved.
+
+Eighteen changed pages among 29 targeted controls improve text and background bounds;
+eleven are pixel-identical. All visible text-band counts match. Among 375 retained
+pages, 371 text/background masks are unchanged and four half-turn pages improve.
+The two half-turn regressions introduced by the previous axis-margin change recover,
+leaving sixteen of its eighteen text-box regressions. A separate wrapped-overflow
+background mismatch comes from line-break selection, not an accepted background-only
+sizing fix. Gridline appearance and other documented modes remain incomplete.
+
+The final integrated executable reproduces all 73 map images and all 628 chart-page
+renders from their frozen validated references. A separate source-integrity check
+confirms that all 64 retained linear-rule inspection models are unchanged, excluding
+the private staged-search experiments. Local full CI: all eight stages pass, with 2,605 tests including doctests. Hosted CI is
+tracked separately.
+
+The staged SmartArt rule-search experiments are not part of this revision. Independent
+controls support local rule evaluation followed by persistent parent allocation, but
+height endpoint and state-mutation differences remain. Only source, original code tests
+and documentation are published; native observations and document assets remain private.
+This is not blanket PowerPoint parity or complete LibreOffice replacement.

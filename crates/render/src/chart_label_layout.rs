@@ -22,7 +22,8 @@ pub(super) fn bounds(frame: (f64, f64), angle: f64, manual: Option<&ChartLayout>
     }
     // Raw angles outside this range do not have periodic native sizing behavior.
     // The two equivalent vertical quarter turns also have independent controls.
-    if !angle.is_finite() || (angle.abs() > 90. && angle.abs() != 270.) {
+    let half_turn = angle.abs() == 180.;
+    if !angle.is_finite() || (angle.abs() > 90. && angle.abs() != 270. && !half_turn) || (half_turn && manual.is_some()) {
         return None;
     }
     if let Some(l) = manual {
@@ -77,6 +78,7 @@ pub(super) fn position(
     frame: (f64, f64),
     manual: Option<&ChartLayout>,
     fixed: bool,
+    clamp_to_frame: bool,
 ) -> Rect {
     let (w, h) = size;
     let (outer_w, outer_h) = rotated_extent(w, h, angle);
@@ -99,9 +101,11 @@ pub(super) fn position(
             center.y = if l.y_edge { y * frame.1 + h / 2. } else { center.y + y * frame.1 };
         }
     }
-    let (clip_w, clip_h) = if fixed { (w, h) } else { (outer_w, outer_h) };
-    center.x = (center.x - clip_w / 2.).clamp(0., (frame.0 - clip_w).max(0.)) + clip_w / 2.;
-    center.y = (center.y - clip_h / 2.).clamp(0., (frame.1 - clip_h).max(0.)) + clip_h / 2.;
+    if clamp_to_frame {
+        let (clip_w, clip_h) = if fixed { (w, h) } else { (outer_w, outer_h) };
+        center.x = (center.x - clip_w / 2.).clamp(0., (frame.0 - clip_w).max(0.)) + clip_w / 2.;
+        center.y = (center.y - clip_h / 2.).clamp(0., (frame.1 - clip_h).max(0.)) + clip_h / 2.;
+    }
     Rect::new(center.x - w / 2., center.y - h / 2., center.x + w / 2., center.y + h / 2.)
 }
 
@@ -418,7 +422,7 @@ mod tests {
     #[test]
     fn rotated_budget_is_bounded_at_axes_and_diagonals() {
         for frame in [(800., 320.), (800., 600.), (600., 320.)] {
-            for angle in [0., 1e-10, 30., 44.9999999999, 45., 45.0000000001, 89.9999999999, 90., -90., 270.] {
+            for angle in [0., 1e-10, 30., 44.9999999999, 45., 45.0000000001, 89.9999999999, 90., -90., 180., -180., 270.] {
                 let b = bounds(frame, angle, None).unwrap();
                 let outer = rotated_extent(b.width, b.height, angle);
                 assert!(b.width > 0. && b.height > 0. && b.width.is_finite() && b.height.is_finite());
@@ -428,7 +432,7 @@ mod tests {
         for frame in [(0., 400.), (-1., 400.), (f64::NAN, 400.), (1e9, 400.)] {
             assert!(bounds(frame, 30., None).is_none());
         }
-        for angle in [91., 180., 360., f64::NAN, f64::INFINITY] {
+        for angle in [91., 179., 181., 360., f64::NAN, f64::INFINITY] {
             assert!(bounds((800., 400.), angle, None).is_none());
         }
     }
@@ -448,6 +452,7 @@ mod tests {
         assert_eq!((b.width, b.height), (0.8, 0.36));
         let invalid = ChartLayout { w: Some(f64::NAN), ..Default::default() };
         assert!(bounds((800., 360.), 0., Some(&invalid)).is_none());
+        assert!(bounds((800., 360.), 180., Some(&tiny)).is_none());
     }
 
     #[test]
@@ -457,8 +462,8 @@ mod tests {
             let size = (90., 30.);
             let outer = rotated_extent(size.0, size.1, angle);
             for negative in [false, true] {
-                let inside = position(size, angle, mark, Some("inEnd"), negative, (800., 500.), None, false);
-                let outside = position(size, angle, mark, Some("outEnd"), negative, (800., 500.), None, false);
+                let inside = position(size, angle, mark, Some("inEnd"), negative, (800., 500.), None, false, true);
+                let outside = position(size, angle, mark, Some("outEnd"), negative, (800., 500.), None, false, true);
                 if negative {
                     assert!((mark.y1 - inside.center().y - outer.1 / 2. - 3.).abs() < 1e-6);
                     assert!((outside.center().y - outer.1 / 2. - mark.y1 - 3.).abs() < 1e-6);

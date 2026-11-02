@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_GEO_POINTS: usize = 2_000_000;
 pub const MAX_GEO_RINGS: usize = 100_000;
+/// Compressed rings can accumulate longitude beyond one turn before projection.
+pub const MAX_GEO_LONGITUDE: f64 = 540.;
 const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
 
 /// chartEx's two/three-stop numeric colour scale. Positions are data values or percentages
@@ -55,6 +57,7 @@ pub struct GeoRegion {
     pub name: String,
     /// Data index is resolved by entity id, geocoding result or category name, never order.
     pub point: Option<usize>,
+    /// Preserve accumulated longitude; projection and extent metadata determine its seam.
     pub rings: Vec<Vec<[f64; 2]>>,
     pub copyrights: Vec<String>,
     /// Provider's geographic extent: west, south, east, north (east < west crosses the seam).
@@ -104,11 +107,9 @@ pub fn decode_ring(encoded: &str, budget: &mut usize) -> Option<Vec<[f64; 2]>> {
         if lat.abs() > 9_000_000 || lon.abs() > 54_000_000 {
             return None;
         }
-        let longitude = lon as f64 / 100_000.0;
-        // +180 and -180 identify opposite clipped boundaries in a world polygon. Do not
-        // fold the positive boundary onto the negative one and draw a chord across the map.
-        let longitude = if longitude.abs() <= 180.0 { longitude } else { (longitude + 180.0).rem_euclid(360.0) - 180.0 };
-        out.push([longitude, lat as f64 / 100_000.0]);
+        // Folding here loses both accumulated turns and the distinction between a
+        // long encoded edge and a seam crossing. The renderer owns that decision.
+        out.push([lon as f64 / 100_000.0, lat as f64 / 100_000.0]);
     }
     (out.len() >= 3).then_some(out)
 }
@@ -120,15 +121,19 @@ pub fn encode_ring(points: &[[f64; 2]]) -> Option<String> {
     let mut text = String::new();
     let (mut lat, mut lon) = (0i64, 0i64);
     for &[x, y] in points {
-        if !x.is_finite() || !y.is_finite() || x.abs() > 180.0 || y.abs() > 90.0 {
+        if !x.is_finite() || !y.is_finite() || x.abs() > MAX_GEO_LONGITUDE || y.abs() > 90.0 {
             return None;
         }
         let (next_lat, next_lon) = ((y * 100_000.0).round() as i64, (x * 100_000.0).round() as i64);
         let dy = next_lat - lat;
-        let dx = (next_lon - lon + 18_000_000).rem_euclid(36_000_000) - 18_000_000;
+        let dx = next_lon - lon;
         let zig = |v: i64| if v < 0 { (-v * 2 - 1) as u64 } else { (v * 2) as u64 };
         let (a, b) = (zig(dy), zig(dx));
-        let mut n = (a + b) * (a + b + 1) / 2 + a;
+        let sum = a.checked_add(b)?;
+        let mut n = (sum.checked_mul(sum.checked_add(1)?)? / 2).checked_add(a)?;
+        if n > (1u64 << 53) {
+            return None;
+        }
         loop {
             let digit = (n & 31) as usize;
             n >>= 5;
@@ -155,6 +160,38 @@ mod tests {
         }
         assert!(decode_ring(&encoded, &mut 2).is_none());
         assert!(encode_ring(&[[f64::NAN, 0.0]; 3]).is_none());
+    }
+
+    #[test]
+    fn pca_preserves_accumulated_turns_and_explicit_long_edges() {
+        for ring in [
+            vec![[-207.5, 12.], [-204.5, 14.], [-206., 17.], [-207.5, 12.]],
+            vec![[-497., -12.], [-495., -14.], [-492., -11.], [-497., -12.]],
+            vec![[178., 10.], [182., 10.], [182., 15.], [178., 10.]],
+            vec![[178., 10.], [-178., 10.], [-178., 15.], [178., 10.]],
+            vec![[-180., 10.], [180., 10.], [180., 15.], [-180., 10.]],
+        ] {
+            let encoded = encode_ring(&ring).unwrap();
+            assert_eq!(decode_ring(&encoded, &mut 100).unwrap(), ring);
+        }
+        let short = [[178., 10.], [182., 10.], [182., 15.]];
+        let long = [[178., 10.], [-178., 10.], [-178., 15.]];
+        assert_ne!(encode_ring(&short), encode_ring(&long));
+    }
+
+    #[test]
+    fn accumulated_coordinate_limits_and_wire_integer_budget_are_checked() {
+        for lon in [-540., 540.] {
+            let ring = [[lon, 90.]; 3];
+            let encoded = encode_ring(&ring).unwrap();
+            assert_eq!(decode_ring(&encoded, &mut 3).unwrap(), ring);
+        }
+        for lon in [-540.00001, 540.00001, f64::INFINITY] {
+            assert!(encode_ring(&[[lon, 0.]; 3]).is_none());
+        }
+        // A bounded coordinate still cannot create a delta outside the decoder's
+        // exactly representable wire-integer range.
+        assert!(encode_ring(&[[-540., 90.], [540., -90.], [-540., 90.]]).is_none());
     }
 }
 

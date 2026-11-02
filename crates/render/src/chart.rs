@@ -300,6 +300,7 @@ pub(crate) fn point_data_label(
     if literal_column
         && matches!(body.body.vert, None | Some(deckcraft_model::text::TextDir::Horizontal))
         && matches!(spec.position.as_deref(), None | Some("ctr" | "inBase" | "inEnd" | "outEnd"))
+        && (body.body.rot.unwrap_or(0.).abs() != 180. || spec.position.as_deref() == Some("ctr"))
         && let Some(bounds) = label_layout::bounds(frame, body.body.rot.unwrap_or(0.), spec.layout.as_ref())
     {
         body.body.anchor = Some(literal_anchor.unwrap_or(Anchor::Middle));
@@ -423,7 +424,15 @@ fn column_rich_label(
     // Chart dimensions describe the box before rotation, including quarter turns.
     // Slide text's quarter-turn dimension swap must not be applied a second time.
     body.body.rot = Some(0.);
-    let wrap_width = if body.body.wrap == Some(true) { bounds.width } else { 1e6 };
+    let wrap = body.body.wrap == Some(true);
+    let half_turn = angle.abs() == 180.;
+    if half_turn {
+        // Automatic half turns keep the complete unwrapped body. The authored
+        // wrap flag still controls whether positioning uses its capped corner.
+        body.body.wrap = Some(false);
+        body.body.vertical_overflow = Some(deckcraft_model::text::TextOverflow::Overflow);
+    }
+    let wrap_width = if wrap && !half_turn { bounds.width } else { 1e6 };
     let measured = label_layout::measure(rctx, &body, wrap_width, true);
     let (measured, marker_base) = label_layout::overflow(rctx, &mut body, wrap_width, bounds.height, measured);
     let overflow = body.body.vertical_overflow == Some(deckcraft_model::text::TextOverflow::Overflow);
@@ -442,13 +451,17 @@ fn column_rich_label(
             }
         }
     }
-    let mut r = label_layout::position((w, h), angle, mark, spec.position.as_deref(), negative, frame, spec.layout.as_ref(), bounds.fixed);
-    if !bounds.fixed && overflow {
+    // Explicit no-wrap overflow at a horizontal orientation centers the full
+    // body even when it extends outside the chart. The chart clip still applies.
+    let uncapped =
+        !bounds.fixed && spec.layout.is_none() && overflow && !wrap && (angle == 0. || half_turn) && spec.position.as_deref() == Some("ctr");
+    let mut r = label_layout::position((w, h), angle, mark, spec.position.as_deref(), negative, frame, spec.layout.as_ref(), bounds.fixed, !uncapped);
+    if !bounds.fixed && overflow && !uncapped {
         // Overflow keeps the full rotated box. Position its leading corner using the
         // capped outer bounds, then let the content extend toward the trailing edges.
         let outer = label_layout::rotated_extent(w, h, angle);
         let cap = (outer.0.min(frame.0 / 5.), outer.1.min(frame.1 / 2.));
-        let bounded = label_layout::position(cap, 0., mark, spec.position.as_deref(), negative, frame, spec.layout.as_ref(), false);
+        let bounded = label_layout::position(cap, 0., mark, spec.position.as_deref(), negative, frame, spec.layout.as_ref(), false, true);
         let center = Point::new(bounded.x0 + outer.0 / 2., bounded.y0 + outer.1 / 2.);
         r = Rect::new(center.x - w / 2., center.y - h / 2., center.x + w / 2., center.y + h / 2.);
     }

@@ -294,3 +294,55 @@ fn a_negative_quarter_turn_centers_the_unmarked_background_on_the_fixed_plot_bar
         }
     }
 }
+
+#[test]
+fn automatic_half_turns_keep_the_full_unwrapped_body_for_every_overflow_policy() {
+    for wrap in [false, true] {
+        let mut images = Vec::new();
+        for angle in [-180., 180.] {
+            for policy in [None, Some(TextOverflow::Clip), Some(TextOverflow::Ellipsis), Some(TextOverflow::Overflow)] {
+                let mut p = original(policy);
+                let shape = &mut Arc::make_mut(&mut p.slides[0]).shapes[0];
+                shape.xfrm = Some(Xfrm::new(0., 0., 400., 360.));
+                let ShapeKind::Chart(chart) = &mut shape.kind else { panic!("chart") };
+                chart.y_min = Some(0.);
+                chart.series[0].values = vec![Some(9.)];
+                chart.format.plot_layout = Some(ChartLayout {
+                    inner: true,
+                    x: Some(0.1),
+                    y: Some(0.15),
+                    w: Some(0.7),
+                    h: Some(0.65),
+                    x_edge: true,
+                    y_edge: true,
+                    ..Default::default()
+                });
+                let label = chart.series[0].point_labels.get_mut(&0).unwrap();
+                label.fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 255, 0))));
+                let body = label.text.as_mut().unwrap();
+                body.body.rot = Some(angle);
+                body.body.wrap = Some(wrap);
+                let back = rebuilt(&p);
+                let b = painted_bounds(&back, true).unwrap();
+                // Native controls ignore the overflow policy at a half turn and
+                // retain full row widths beyond the 80pt automatic wrap budget.
+                // Explicit no-wrap centers the full box; wrapping uses its cap.
+                let expected = if wrap { (140., 92.7, 246.15, 360.) } else { (126.925, 0., 233.075, 360.) };
+                for (actual, expected) in [(b.0, expected.0), (b.1, expected.1), (b.2 + 1, expected.2), (b.3 + 1, expected.3)] {
+                    assert!((actual as f64 - expected).abs() <= 1.5, "{angle}, wrap={wrap}, policy={policy:?}: {b:?}");
+                }
+                let ShapeKind::Chart(chart) = &back.slides[0].shapes[0].kind else { panic!("chart") };
+                let body = chart.series[0].point_labels[&0].text.as_ref().unwrap();
+                assert_eq!(body.body.vertical_overflow, policy);
+                assert_eq!(body.paragraphs.len(), 12);
+                images.push(render_slide(&back, 0, &RenderOpts::default()).pixels);
+                if angle == 180. && !wrap && policy == Some(TextOverflow::Overflow) {
+                    let ShapeKind::Chart(chart) = &mut Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("chart") };
+                    chart.series[0].point_labels.get_mut(&0).unwrap().text.as_mut().unwrap().body.rot = Some(0.);
+                    assert_eq!(painted_bounds(&rebuilt(&p), true), Some(b), "unrotated no-wrap overflow centers the same full box");
+                }
+            }
+        }
+        assert!(images.windows(2).all(|pair| pair[0] == pair[1]), "half-turn policy/sign invariance, wrap={wrap}");
+    }
+}

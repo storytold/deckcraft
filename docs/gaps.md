@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **PPTX.45 update 2026-11-02:** Geographic decoding and rebuilding retain accumulated longitudes and explicit long edges; world continuity follows per-region extents. Centered automatic half-turn column labels retain their full unwrapped body and use the authored wrap mode for placement. Stateful diagram search, geographic reduction thresholds and other label modes remain partial; feature scores are unchanged.
+
 > **PPTX.44 update 2026-11-02:** Restored nested snake layouts retain partial placement on overflow, raising the original matrix to 490/491. Geographic paint order follows materialized regions, improving overlap in independent large caches. Explicit axis fonts govern chart geometry; supported column reserves use measured font metrics. Remaining text-rule state, small-frame and rotated-label limits stay explicit; feature scores are unchanged.
 
 > **PPTX.43 update 2026-11-02:** Text measurement gates root linear fitting; alternating centered snake packing raises the retained matrix to 489/491. Sparse geographic caches fit their actual painted extent, and automatic rich-label ellipses preserve marker style, direction and background alignment. Independent controls, error regressions and unresolved cases are recorded separately. Feature scores are unchanged.
@@ -241,7 +243,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
   with clear entity caches now decode PCA polygons, bind by entity id, and render boundaries/holes
   offline. Observed plain XML, finalized raw-DEFLATE and SYNC_FLUSH geographic cache envelopes decode. The inspected payload audit found no additional unsupported envelope; malformed or unsupported payloads remain retained, with explicitly labelled fallback tiles when geometry is unusable.
   Administrative lineage, common-ancestor selection and regional Albers are implemented; missing
-  ancestor geometry/extents, regional threshold arithmetic, longitude continuity and full provider projection policy remain open. Materialized-region paint order now matches independent large overlapping caches; exact RGB and boundary pixels remain partial. Initial and heavy boundary reduction and finite-size viewport construction have independent native controls; seventeen threshold sequences and two Albers sequences still fail with the final analytic viewport.
+  ancestor geometry/extents, regional threshold arithmetic and full provider projection policy remain open. Accumulated longitude and explicit long-edge preservation now have independent native controls; per-region world continuity is distinct from regional canonicalization. Full generated ChartEx geographic rebuilds still have a retained native blank-output failure, reproduced with identical package parts before this change. Materialized-region paint order now matches independent large overlapping caches; exact RGB and boundary pixels remain partial. Initial and heavy boundary reduction and finite-size viewport construction have independent native controls; seventeen threshold sequences and two Albers sequences still fail with the final analytic viewport.
   No map assets are bundled. Radar charts are drawn polar (filled
   or lines), stock charts as high-low lines with close dashes or up/down bars and saved as
   `c:stockChart`, and combo charts start as columns with a line. Trendlines round-trip
@@ -269,7 +271,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
   and native-compatible scalar attributes; the latter differ from the SDK schema for three
   elements. Classic rich/point labels now read, rebuild and render mixed runs, rotation, hidden
   points, manual positions and formatted visibility combinations. Funnel typography also renders; remaining chartEx label rendering,
-  leader/callout routing, offsets and broader automatic plot spacing remain partial. Explicit axis font sizes now govern tick geometry; supported undecorated column reserves use measured font metrics. Cramped frames, interior category axes, decorated charts and eighteen retained label-position regressions remain unresolved. Manual layouts and body rotations render; explicit axes/gridlines
+  leader/callout routing, offsets and broader automatic plot spacing remain partial. Explicit axis font sizes now govern tick geometry; supported undecorated column reserves use measured font metrics. Cramped frames, interior category axes, decorated charts and sixteen retained label-position regressions remain unresolved. Centered automatic half turns retain unwrapped bodies; manual/non-centered half turns and wrapped-overflow break selection remain incomplete. Manual layouts and body rotations render; explicit axes/gridlines
   retain line width/dashes/paint. See [layout fidelity](layout-fidelity.md).
 - **Impact:** most business decks have charts; editing their data is routine.
 - **Estimate:** 12–20 h. Data and elements are **beta blockers** (6–10 h).
@@ -490,6 +492,7 @@ no global parity claim or score increase.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.45: accumulated geographic longitude/edge preservation and centered automatic half-turn label layout; existing native full-chart rebuild failure retained |
 | 2026-11-02 | minor | PPTX.44: restored-layout early exits, materialized geographic paint order and font-metric axis reserves; independent controls and unresolved failures retained |
 | 2026-11-02 | minor | PPTX.43: measured linear fitting, alternating snake centering, sparse map extents and rich-label ellipsis geometry; explicit incomplete cases retained |
 | 2026-11-02 | minor | PPTX.42: finite size-rule search, intrinsic nested flows, map viewport and chart axis state; independent evidence and known limits retained |
