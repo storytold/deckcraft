@@ -297,7 +297,7 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     let mut done = false;
     ui.horizontal(|ui| {
         let t = Tokens::get(ui.ctx());
-        if ui.add(egui::Button::new("Don't Save").min_size(vec2(84.0, 24.0))).clicked() {
+        if ui.add(egui::Button::new("Don't Save").stroke(egui::Stroke::new(1.0, t.border)).min_size(vec2(84.0, 24.0))).clicked() {
             let _ = app.session.execute("file.recovery.discard", &json!({}));
             app.quit_confirmed = true;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -312,7 +312,7 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
                 }
                 done = true;
             }
-            if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+            if ui.add(egui::Button::new("Cancel").stroke(egui::Stroke::new(1.0, t.border)).min_size(vec2(72.0, 24.0))).clicked() {
                 done = true;
             }
         });
