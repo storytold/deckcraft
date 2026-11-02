@@ -80,12 +80,20 @@ fn media_bar_rect(shape: Rect) -> Rect {
         Rect::from_min_size(pos2(shape.center().x - w / 2.0, shape.max.y + 4.0), vec2(w, h))
     }
 }
+fn current_hidden(show: &Show, doc: &Presentation, slide: usize) -> Vec<ShapeId> {
+    show.tex.as_ref().map(|(k, _)| k.hidden.clone()).unwrap_or_else(|| super::render::hidden_on_entry(doc, slide))
+}
 
-pub(super) fn slide_media_bars(srect: Rect, doc: &Presentation, slide: usize) -> Vec<(ShapeId, deckcraft_model::MediaClip, Rect, Rect)> {
+pub(super) fn slide_media_bars(
+    srect: Rect,
+    doc: &Presentation,
+    slide: usize,
+    hidden: &[ShapeId],
+) -> Vec<(ShapeId, deckcraft_model::MediaClip, Rect, Rect)> {
     let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
     crate::media::slide_media(doc, slide)
         .into_iter()
-        .filter(|(_, _, clip)| !clip.hide_while_not_playing || clip.video)
+        .filter(|(id, _, _)| !hidden.contains(id))
         .map(|(id, x, clip)| {
             let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));
             let bar = media_bar_rect(r);
@@ -105,7 +113,8 @@ pub(super) fn media_bar_target(
         return None;
     }
     let p = ctx.input(|i| i.pointer.hover_pos())?;
-    let items = slide_media_bars(srect, doc, show.state.slide);
+    let hidden = current_hidden(show, doc, show.state.slide);
+    let items = slide_media_bars(srect, doc, show.state.slide, &hidden);
     if let Some((id, clip, _, bar)) = items.iter().rev().find(|(_, _, _, bar)| bar.contains(p)) {
         return Some((*id, clip.clone(), *bar));
     }
@@ -120,7 +129,8 @@ pub(super) fn pointer_on_media_bar(ctx: &egui::Context, ui: &Ui, doc: &Presentat
     }
     let Some(p) = ctx.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos())) else { return false };
     let srect = shown_slide_rect(ui, show, doc);
-    slide_media_bars(srect, doc, show.state.slide).iter().any(|(_, _, _, bar)| bar.contains(p))
+    let hidden = current_hidden(show, doc, show.state.slide);
+    slide_media_bars(srect, doc, show.state.slide, &hidden).iter().any(|(_, _, _, bar)| bar.contains(p))
 }
 
 /// The media shape under the pointer on the shown slide.
@@ -130,12 +140,11 @@ pub(super) fn media_hit(ctx: &egui::Context, ui: &Ui, show: &Show, doc: &Present
     let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
     let srect = fit(avail, doc);
     let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
-    crate::media::slide_media(doc, show.state.slide).into_iter().rev().filter(|(_, _, clip)| !clip.hide_while_not_playing || clip.video).find_map(
-        |(id, x, clip)| {
-            let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));
-            r.contains(p).then_some((id, clip))
-        },
-    )
+    let hidden = current_hidden(show, doc, show.state.slide);
+    crate::media::slide_media(doc, show.state.slide).into_iter().rev().filter(|(id, _, _)| !hidden.contains(id)).find_map(|(id, x, clip)| {
+        let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));
+        r.contains(p).then_some((id, clip))
+    })
 }
 
 /// What a click on the pointer's spot acts on.
@@ -207,8 +216,8 @@ pub(super) fn shapes_under_pointer(ctx: &egui::Context, ui: &Ui, show: &mut Show
             HitShape { id: s.id, parent: s.parent, is_group: s.is_group, link: s.link.as_ref().map(|l| l.action.clone()), under_pointer }
         })
         .collect();
-    let hidden_media = super::render::hidden_on_entry(doc, i);
-    let visible: Vec<bool> = shapes.iter().zip(&states).map(|(s, a)| a.visible && a.opacity > 0.0 && !hidden_media.contains(&s.id)).collect();
+    let hidden = current_hidden(show, doc, i);
+    let visible: Vec<bool> = shapes.iter().zip(&states).map(|(s, a)| a.visible && a.opacity > 0.0 && !hidden.contains(&s.id)).collect();
     let mut under = Under { shapes: hits, visible, pick: None };
     let shown = |id: ShapeId| under.visible(id);
     // A hyperlink in text applies when its shape is the one on top.

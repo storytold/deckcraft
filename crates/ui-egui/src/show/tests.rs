@@ -220,7 +220,7 @@ fn show_with_clip() -> (egui_kittest::Harness<'static, SlideApp>, ShapeId, Pos2,
     harness.state_mut().start_show(0, false);
     harness.run_steps(2);
     let doc = harness.state().session.active().unwrap().doc.clone();
-    let bar = slide_media_bars(slide.get(), &doc, 0)[0].3;
+    let bar = slide_media_bars(slide.get(), &doc, 0, &[])[0].3;
     let track = pos2(bar.min.x + bar.width() * 0.8, bar.center().y);
     (harness, id, track, on_bar)
 }
