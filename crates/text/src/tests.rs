@@ -1438,6 +1438,12 @@ fn center_and_decimal_tab_stops_past_right_edge_align_without_wrapping() {
         l_dec.lines[0].extent.1,
         l_dec.inner.x1
     );
+
+    // Stops inside the margin remain untouched:
+    let l_inside = tabbed("\tCentered", &[(300.0, "ctr")], 500.0);
+    assert_eq!(l_inside.lines.len(), 1);
+    let (s, e) = (l_inside.lines[0].edges[1].0, l_inside.lines[0].edges[8].1);
+    assert!(((s + e) / 2.0 - l_inside.inner.x0 - 300.0).abs() < 1.0, "center stop inside margin must stay at 300.0");
 }
 
 /// Underline decorations of "ab cd" underlined `u` at 40 pt.

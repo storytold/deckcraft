@@ -295,13 +295,17 @@ pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64) {
 /// and decimal stops beyond `max_x` (the right margin) clamp to `max_x` (#1663).
 pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64), max_x: f64) -> f64 {
     for s in stops {
-        let pos = match s.align {
-            TabAlign::Right if max_x > 0.0 => s.pos.min(max_x),
-            TabAlign::Center if max_x > 0.0 => s.pos.min((max_x - seg.0 / 2.0).max(0.0)),
-            TabAlign::Decimal if max_x > 0.0 => s.pos.min((max_x - (seg.0 - seg.1).max(0.0)).max(0.0)),
-            _ => s.pos,
-        };
-        if pos > x + 0.5 {
+        if s.pos > x + 0.5 {
+            let pos = if max_x > 0.0 && s.pos > max_x {
+                match s.align {
+                    TabAlign::Right => max_x,
+                    TabAlign::Center => (max_x - seg.0 / 2.0).max(0.0),
+                    TabAlign::Decimal => (max_x - (seg.0 - seg.1).max(0.0)).max(0.0),
+                    TabAlign::Left => s.pos,
+                }
+            } else {
+                s.pos
+            };
             let to = pos - x;
             return match s.align {
                 TabAlign::Left => to,
