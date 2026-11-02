@@ -1,5 +1,7 @@
 # File-format parity with PowerPoint
 
+> **PPTX.18 update 2026-11-01:** rotated SmartArt shapes fit their allocated footprints; text algorithms own independent upright/gravity/follow-shape orientation, including mapped composite text. Crossed text insets and narrow wrapped alignment are corrected. Native probes and editable round trips cover these changes; scaled font rounding, selector colours, automatic map viewports and rich-label overflow remain partial. Scores are unchanged.
+
 > **PPTX.17 update 2026-11-01:** composite shapes fit occupied child bounds; mapped text retains its text-node geometry and fonts. Empty composites, constrained root frames and default style/mapping controls are covered. Rotated composites and omitted-point-type colour selection still differ; font quantization, map viewport and rich-label overflow gaps remain. Scores are unchanged.
 
 > **PPTX.16 update 2026-11-01:** local font values preserve ordinary defaults while explicit equalities/bounds propagate through connected nodes; child-first rules and diagram font defaults have native controls. Four scaled reverse-reference probes retain a one-point font difference. Mapped composite, viewport and label overflow gaps remain; scores are unchanged.
@@ -141,6 +143,7 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | Rotated diagram footprint fitting and independent mapped text orientation; crossed text insets and wrapped overflow alignment verified with original native controls |
 | 2026-11-01 | minor | Composite occupied geometry and mapped text ownership corrected; non-rotated native controls and round trips pass, rotation and selector/style interactions remain partial |
 | 2026-10-31 | minor | Preserve complete imported diagram packages and identity-bound text edits through native saves. Synchronize fixed-size direct embedded XLSX ranges with chart caches, keeping unrelated cells/sheets. Native preservation checks use only original synthetic probes; outputs stay private |
 | 2026-11-01 | minor | Embedded SVG direct rendering/preview retention and bubble size/scale/sign semantics verified with pixels, round trips and native probes |

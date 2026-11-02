@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.17): occupied composite geometry and mapped text ownership,
+Updated 2026-11-01 (PPTX.18): rotated footprint geometry and independent mapped text orientation,
 extending local/shared font rules, geographic caches and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -786,3 +786,53 @@ this change publishes source, generated-in-test XML and documentation only.
 
 LibreOffice exports the two representative mapped-text diagrams without diagram content
 (zero extracted text and only page-background drawings); these are not fidelity passes.
+
+
+## Rotated footprints and independent text frames (PPTX.18)
+
+Rotation is applied after constraint solving, flow placement and occupied-container fitting.
+A shape maximizes its local rectangle area inside its allocated axis-aligned footprint:
+`c*w+s*h <= W`, `s*w+c*h <= H`, where `c` and `s` are the absolute cosine and sine.
+The optimum can lie on either single active edge or their intersection; proportional
+shrinking does not reproduce the native narrow-rectangle controls. Parent packing continues
+to use the original allocated footprint, so a child's rotation does not move its siblings.
+
+Text algorithms retain a separate frame. `autoTxRot` supports follow-shape (`none`),
+upright (`upr`, the [Office default](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-oe376/526e0ee0-208f-42e5-97f0-3f272c1093c6)) and gravity (`grav`) behavior, including quarter-turn
+boundary ties and wrapped angles. Preset adjustments determine the text area before its
+orientation is resolved. A composite borrows its matched text algorithm's final frame and
+font, independently of the composite's own physical rotation. Rule measurements use that
+frame after theme/font resolution. Only after fitting are frames materialized as ordinary
+editable text: compatible insets on the physical shape, or a separate frameless text shape.
+A failed or budget-limited text search logs the failure and materializes the unmeasured
+layout instead of losing the independent frame; it does not claim successful fitting.
+
+Seven separate ordinary-text control pages exposed a related shared-layout error. Opposing
+insets that cross now collapse at their midpoint, preserving asymmetric margins on both
+axes. For LTR wrapped text narrower than one glyph, right alignment retains the start edge
+and centred overflow shifts the paragraph as a block while retaining positive line slack.
+Explicit no-wrap retains signed alignment slack. These fixes apply to regular text boxes,
+not to named diagrams or particular pages. The controls vary both axes, three anchors and
+alignments, widths, wrapping, glyph widths and spaces. Extracted glyph origins differ from
+native by at most 0.086pt horizontally and 0.452pt vertically in this set; this is not a
+claim of identical rasterisation or untested RTL overflow behavior.
+
+Forty-two original rotated/fit/mapped diagram controls match native font-size sets and
+same-colour painted bounds within 0.25pt at 4K. Four fitted mapped-text variants also pass
+Open XML SDK validation and retain editable text, font sizes and geometry after export and
+reimport. An invalid-rule variant verifies that the fallback retains orientation. Independent
+unit tests check area optimality against feasible samples and native angle-boundary cases.
+All 49 original pages export directly at 3840px width with unchanged source hashes and
+no external converter on PATH. Native-generated output remains private and uncommitted.
+
+The four rotation failures reported in PPTX.17 are addressed by this phase. Omitted-point-type
+colour assignment, four scaled reverse-font rounding cases, full native search/fallback
+semantics, administrative/automatic map viewport selection, rich-label vertical overflow,
+plot spacing and callout routing remain explicit limits. No global parity score is raised.
+
+Final workspace CI passes all eight gates, including 2,417 tests and doctests. Sixty-five
+previous reference-font/composite probes retain their font sizes and vector geometry with
+unchanged sources; the same four scaled reverse-font cases retain their known one-point
+native differences.
+The four previously failing rotation controls now match native same-colour painted bounds
+exactly at the tested 4K raster resolution; this does not assert whole-image equality.

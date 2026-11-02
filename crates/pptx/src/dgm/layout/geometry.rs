@@ -124,6 +124,9 @@ pub(super) fn place_solved<'a>(
     if depth == 0 && node.alg == "composite" {
         fit_composite_frame(out.get_mut(start..).unwrap_or(&mut []), style.rect, work)?;
     }
+    if depth == 0 {
+        super::orientation::apply(out.get_mut(start..).unwrap_or(&mut []), work)?;
+    }
     Ok(())
 }
 
@@ -189,6 +192,7 @@ fn place_inner<'a>(
             style: node.style.clone(),
             rect,
             text_rect: None,
+            text_source: None,
             text_enabled: node.alg == "tx",
             font: style.font,
             secondary_font: style.secondary_font,
@@ -209,6 +213,7 @@ fn place_inner<'a>(
             style: node.style.clone(),
             rect: style.rect,
             text_rect: None,
+            text_source: None,
             text_enabled: true,
             font: style.font,
             secondary_font: style.secondary_font,
@@ -293,7 +298,7 @@ fn fit_composite_shape(out: &mut [Placed<'_>], work: &mut usize) -> Result<(), &
         if own.points.len() != p.points.len() || !own.points.iter().zip(&p.points).all(|(a, b)| std::ptr::eq(*a, *b)) {
             continue;
         }
-        own.text_rect = Some(p.text_rect.unwrap_or_else(|| text_box(p)));
+        own.text_source = Some(p.text_source.unwrap_or(p.node_key));
         own.text_enabled = true;
         own.font = p.font;
         own.secondary_font = p.secondary_font;
@@ -304,17 +309,6 @@ fn fit_composite_shape(out: &mut [Placed<'_>], work: &mut usize) -> Result<(), &
         break;
     }
     Ok(())
-}
-
-fn text_box(p: &Placed<'_>) -> Xfrm {
-    let rect = p.rect;
-    let area = p
-        .shape
-        .and_then(|s| s.attr("type"))
-        .and_then(|name| deckcraft_geom::preset::build(name, rect.w, rect.h, &[]))
-        .map(|g| g.text_rect)
-        .unwrap_or_else(|| deckcraft_geom::Rect::new(0., 0., rect.w, rect.h));
-    Xfrm::new(rect.x + area.x0, rect.y + area.y0, area.width(), area.height())
 }
 
 #[allow(clippy::too_many_arguments)]

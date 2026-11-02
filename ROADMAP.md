@@ -148,6 +148,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-01 | PPTX.18: maximum-area rotated diagram footprints, independently oriented editable text frames, and bounded fitting-failure fallback; narrow text alignment corrected with independent native probes |
 | 2026-11-01 | PPTX.17: occupied composite frames, mapped text-node typography, constrained root frames and empty-composite semantics; native controls and round-trip regressions, with rotation/selector limits explicit |
 | 2026-11-01 | PPTX.16: separate local font fitting from default references, solve connected font equalities/bounds, run child rules first and retain native default fonts; real-text round-trip and isolation regressions |
 | 2026-11-01 | PPTX.15: selector-bound SmartArt font rules, synchronized shared groups with local triggers, and explicit-font autofit control; real-text and round-trip regressions; native reference/fallback gaps remain explicit |

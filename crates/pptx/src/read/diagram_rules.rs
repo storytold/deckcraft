@@ -4,49 +4,49 @@ use deckcraft_geom::{Rect, Xfrm, preset};
 use deckcraft_model::{Geom, Presentation, Shape, ShapeKind, resolve::Ctx};
 use std::sync::Arc;
 
-pub(super) fn apply(pres: &mut Presentation) {
+pub(super) fn apply(pres: &mut Presentation, imp: &mut super::Imp) {
     let snapshot = pres.clone();
     for (i, master) in pres.masters.iter_mut().enumerate() {
-        if !needs_rules(&master.shapes, 0) && !master.layouts.iter().any(|l| needs_rules(&l.shapes, 0)) {
+        if !needs_layout(&master.shapes, 0) && !master.layouts.iter().any(|l| needs_layout(&l.shapes, 0)) {
             continue;
         }
         let Some(source) = snapshot.masters.get(i) else { continue };
         let master = Arc::make_mut(master);
-        walk(&Ctx::for_master(&snapshot, source), &mut master.shapes, 0);
+        walk(&Ctx::for_master(&snapshot, source), &mut master.shapes, 0, imp);
         for (j, layout) in master.layouts.iter_mut().enumerate() {
             if let Some(source_layout) = source.layouts.get(j) {
-                walk(&Ctx::for_layout(&snapshot, source, source_layout), &mut layout.shapes, 0);
+                walk(&Ctx::for_layout(&snapshot, source, source_layout), &mut layout.shapes, 0, imp);
             }
         }
     }
     for slide in &mut pres.slides {
-        if !needs_rules(&slide.shapes, 0) {
+        if !needs_layout(&slide.shapes, 0) {
             continue;
         }
         if let Some(ctx) = Ctx::for_slide(&snapshot, slide) {
-            walk(&ctx, &mut Arc::make_mut(slide).shapes, 0);
+            walk(&ctx, &mut Arc::make_mut(slide).shapes, 0, imp);
         }
     }
 }
-fn needs_rules(shapes: &[Shape], depth: usize) -> bool {
+fn needs_layout(shapes: &[Shape], depth: usize) -> bool {
     depth <= 32
         && shapes.iter().any(|s| {
-            s.diagram.as_ref().is_some_and(|d| {
-                d.layout_xml.as_ref().is_some_and(|xml| xml.contains("rule"))
-                    && d.kept.as_ref().is_some_and(|k| !k.package.rels.iter().any(|r| r.id == "drawing"))
-            }) || needs_rules(s.children(), depth + 1)
+            s.diagram
+                .as_ref()
+                .is_some_and(|d| d.layout_xml.is_some() && d.kept.as_ref().is_some_and(|k| !k.package.rels.iter().any(|r| r.id == "drawing")))
+                || needs_layout(s.children(), depth + 1)
         })
 }
-fn walk(ctx: &Ctx<'_>, shapes: &mut [Shape], depth: usize) {
+fn walk(ctx: &Ctx<'_>, shapes: &mut [Shape], depth: usize, imp: &mut super::Imp) {
     if depth > 32 {
         return;
     }
     for shape in shapes {
-        if let Err(reason) = relayout(ctx, shape) {
+        if let Err(reason) = relayout(ctx, shape, imp) {
             log::warn!("pptx: diagram numeric rules could not be evaluated: {reason}");
         }
         if let Some(children) = shape.children_mut() {
-            walk(ctx, children, depth + 1);
+            walk(ctx, children, depth + 1, imp);
         }
     }
 }
@@ -110,7 +110,17 @@ fn measure(ctx: &Ctx<'_>, source: &[Shape], placed: &[Placed<'_>], prefer_words:
             scores.push(score[usize::from(prefer_words)]);
             continue;
         }
-        let s = adjusted(source, p);
+        let mut s = adjusted(source, p);
+        let bounds = if let Some(t) = p.text_rect {
+            s.xfrm = Some(t);
+            s.geom = Geom::preset("rect");
+            if let Some(body) = &mut s.text {
+                body.body.rot = Some(0.);
+            }
+            Rect::new(0., 0., t.w, t.h)
+        } else {
+            text_rect(&s, p.rect)
+        };
         let Some(body) = &s.text else {
             scores.push(0.0);
             *cached = Some((key, [0.0; 2]));
@@ -125,7 +135,7 @@ fn measure(ctx: &Ctx<'_>, source: &[Shape], placed: &[Placed<'_>], prefer_words:
             ctx,
             &s,
             body,
-            &deckcraft_text::Opts { rect: text_rect(&s, p.rect), fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: true },
+            &deckcraft_text::Opts { rect: bounds, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: true },
         );
         let w = result.inner.width().max(0.0);
         let h = result.inner.height().max(0.0);
@@ -136,16 +146,13 @@ fn measure(ctx: &Ctx<'_>, source: &[Shape], placed: &[Placed<'_>], prefer_words:
     }
     Ok(scores)
 }
-fn relayout(ctx: &Ctx<'_>, shape: &mut Shape) -> Result<(), &'static str> {
+fn relayout(ctx: &Ctx<'_>, shape: &mut Shape, imp: &mut super::Imp) -> Result<(), &'static str> {
     let Some(diagram) = &shape.diagram else { return Ok(()) };
     let Some(kept) = &diagram.kept else { return Ok(()) };
     if kept.package.rels.iter().any(|r| r.id == "drawing") {
         return Ok(());
     }
     let Some(layout) = diagram.layout_xml.as_ref().and_then(|s| crate::xml::parse(s.as_bytes()).ok()) else { return Ok(()) };
-    if layout.root.find("rule").is_none() {
-        return Ok(());
-    }
     let Some(data_rel) = kept.package.rels.iter().find(|r| r.id == "dm") else { return Ok(()) };
     let Some(data) = kept
         .package
@@ -159,10 +166,34 @@ fn relayout(ctx: &Ctx<'_>, shape: &mut Shape) -> Result<(), &'static str> {
     let ShapeKind::Group { children, child } = &shape.kind else { return Ok(()) };
     let mut cache = Measurements::default();
     let mut callback = |placed: &[Placed<'_>], prefer_words: bool| measure(ctx, children, placed, prefer_words, &mut cache);
-    let placed = evaluate_measured(&layout.root, &data.root, *child, Some(&mut callback))?;
-    let updated: Vec<_> = children.iter().zip(&placed).map(|(s, p)| adjusted(s, p)).collect();
-    if updated.len() != children.len() {
+    let placed = match evaluate_measured(&layout.root, &data.root, *child, Some(&mut callback)) {
+        Ok(placed) => placed,
+        Err(reason) => {
+            // A failed/budget-limited text search must not discard the successfully
+            // evaluated text frames. Keep the authored geometry and font defaults;
+            // report that fitting failed rather than claiming that the text fits.
+            log::warn!("pptx: diagram text fitting failed ({reason}); keeping unmeasured layout");
+            crate::dgm::layout::evaluate(&layout.root, &data.root, *child)?
+        }
+    };
+    if placed.len() != children.len() {
         return Err("diagram rule result shape count changed");
+    }
+    let mut updated = Vec::with_capacity(children.len());
+    let mut ids = super::shapes::IdCtx { fresh: true, count: children.len(), ..Default::default() };
+    for (source, p) in children.iter().zip(&placed) {
+        let mut s = adjusted(source, p);
+        let extra = if let Some(mut t) = p.text_rect {
+            if let Some(body) = &mut s.text {
+                body.body.rot = Some(0.);
+            }
+            t.rot = (t.rot - p.rect.rot).rem_euclid(360.);
+            super::shapes::text_on_rect(imp, &mut ids, &mut s, t)
+        } else {
+            None
+        };
+        updated.push(s);
+        updated.extend(extra);
     }
     shape.kind = ShapeKind::Group { children: updated, child: *child };
     Ok(())
@@ -190,6 +221,7 @@ mod tests {
             style: String::new(),
             rect: Xfrm::new(0., 0., 70., 40.),
             text_rect: None,
+            text_source: None,
             text_enabled: true,
             font: Some(32.),
             secondary_font: None,

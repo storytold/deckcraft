@@ -107,7 +107,9 @@ fn absolute_units_rotation_and_descendant_constraints() {
     let out = evaluate(&l, &data, frame()).unwrap();
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].font, Some(22.0));
-    assert_eq!((out[0].rect.w, out[0].rect.h, out[0].rect.rot), (72.0, 36.0, 90.0));
+    assert_eq!((out[0].rect.w, out[0].rect.h, out[0].rect.rot), (36.0, 72.0, 90.0));
+    assert!((out[0].rect.bounds().width() - 72.).abs() < 1e-6);
+    assert!((out[0].rect.bounds().height() - 36.).abs() < 1e-6);
 }
 
 #[test]

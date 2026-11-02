@@ -107,18 +107,18 @@ impl BoxGeom {
         } else {
             text_rect
         };
-        let inner = Rect::new(
-            r.x0 + bp.inset_l.unwrap_or(7.2),
-            r.y0 + bp.inset_t.unwrap_or(3.6),
-            (r.x1 - bp.inset_r.unwrap_or(7.2)).max(r.x0 + bp.inset_l.unwrap_or(7.2)),
-            (r.y1 - bp.inset_b.unwrap_or(3.6)).max(r.y0 + bp.inset_t.unwrap_or(3.6)),
-        );
+        // When opposing insets cross, Office collapses the available interval at its
+        // midpoint. Clamping only the trailing edge displaces text in narrow/rotated boxes.
+        let interval = |start: f64, end: f64| if end < start { ((start + end) / 2., (start + end) / 2.) } else { (start, end) };
+        let (left, right) = interval(r.x0 + bp.inset_l.unwrap_or(7.2), r.x1 - bp.inset_r.unwrap_or(7.2));
+        let (top, bottom) = interval(r.y0 + bp.inset_t.unwrap_or(3.6), r.y1 - bp.inset_b.unwrap_or(3.6));
+        let inner = Rect::new(left, top, right, bottom);
         // Text that follows a WordArt arch or circle is set on one line per paragraph.
         let follow = bp.warp.as_deref().is_some_and(deckcraft_geom::warp::is_follow);
         let wrap = bp.wrap.unwrap_or(true) && !follow && !matches!(bp.autofit, Some(AutoFit::Shape) if shape.text_box && !bp.wrap.unwrap_or(true));
         let ncols = bp.columns.unwrap_or(1).clamp(1, 16) as usize;
         let col_gap = bp.col_spacing.unwrap_or(0.0).max(0.0);
-        let col_w = ((inner.width() - col_gap * (ncols as f64 - 1.0)) / ncols as f64).max(1.0);
+        let col_w = ((inner.width() - col_gap * (ncols as f64 - 1.0)) / ncols as f64).max(0.0);
         let rtl_cols = bp.rtl_col.unwrap_or(false) && ncols > 1;
         BoxGeom { vert, rotation, inner, wrap, ncols, col_gap, col_w, rtl_cols }
     }
@@ -345,6 +345,20 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
         out.content_width = out.content_width.max(placed.content_w);
         flow.lines.push(placed);
     }
+    // A wrapped paragraph narrower than one glyph still emits that glyph. Office
+    // centres this overflow as a block, retaining positive per-line alignment slack;
+    // it does not shift each oversized line by a different negative amount.
+    if g.wrap && !p.rtl && props.align == Some(Align::Center) {
+        let lines = &mut flow.lines[first_line_idx..];
+        let width = lines.iter().map(|l| l.content_w).fold(g.col_w, f64::max);
+        let dx = (g.col_w - width) / 2.;
+        for line in lines {
+            line.info.shift_x(dx);
+            if let Some((_, x, _)) = &mut line.bullet {
+                *x += dx;
+            }
+        }
+    }
     out.para_lines.push((first_line_idx, raw.len()));
     flow.prev_after = spacing_pts(props.space_after, raw.last().map_or(p.lead_size, natural)).max(0.0);
 }
@@ -536,7 +550,10 @@ fn place_line(env: &ParaEnv, pi: usize, rl: &RawLine, li: usize, is_last: bool, 
     let line_w: f64 = adv.iter().sum();
     // The line box, in column coordinates: the start edge is the left one for LTR and the
     // right one (S = W - rIns) for RTL paragraphs.
-    let (box_l, box_r) = if p.rtl { (env.mr, g.col_w - x0) } else { (x0, g.col_w - env.mr) };
+    let (box_l, mut box_r) = if p.rtl { (env.mr, g.col_w - x0) } else { (x0, g.col_w - env.mr) };
+    if g.wrap && !p.rtl {
+        box_r = box_r.max(box_l + line_w);
+    }
     let left = line_left(align, filled, p.rtl, (box_l, box_r), line_w, slack, n);
     // Distance from the box's start edge to the text (bullets move with centred or
     // end-aligned text).

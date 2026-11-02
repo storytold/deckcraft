@@ -729,14 +729,6 @@ pub(super) fn diagram_text_layout(
     body.body.inset_t = Some(p.margins[1]);
     body.body.inset_r = Some(p.margins[2]);
     body.body.inset_b = Some(p.margins[3]);
-    if let Some(t) = p.text_rect {
-        let geom = Geom::preset(p.shape.and_then(|s| s.attr("type")).unwrap_or("rect"));
-        let area = text_area(&geom, p.rect.w, p.rect.h);
-        body.body.inset_l = Some(p.margins[0] + t.x - p.rect.x - area.x0);
-        body.body.inset_t = Some(p.margins[1] + t.y - p.rect.y - area.y0);
-        body.body.inset_r = Some(p.margins[2] + p.rect.x + area.x1 - t.x - t.w);
-        body.body.inset_b = Some(p.margins[3] + p.rect.y + area.y1 - t.y - t.h);
-    }
     body.body.rot = Some(p.text_rotation);
     let requested = p.font.unwrap_or(18.0);
     let font = requested.max(p.min_font.unwrap_or(1.0));
@@ -861,7 +853,7 @@ fn smartart_text_rects(imp: &mut Imp, ctx: &mut IdCtx, tree: &El, shapes: Vec<Sh
 /// shape keeps its text with wider insets. Otherwise (a rectangle reaching outside the shape, or
 /// turned against it) the text moves to a new frameless text shape over `s`, which is returned:
 /// both export as plain DrawingML that any reader lays out the same way.
-fn text_on_rect(imp: &mut Imp, ctx: &mut IdCtx, s: &mut Shape, t: Xfrm) -> Option<Shape> {
+pub(super) fn text_on_rect(imp: &mut Imp, ctx: &mut IdCtx, s: &mut Shape, t: Xfrm) -> Option<Shape> {
     const EPS: f64 = 0.01;
     let x = s.xfrm?;
     if !x.is_finite() || !t.is_finite() || t.w <= EPS || t.h <= EPS {
@@ -885,7 +877,7 @@ fn text_on_rect(imp: &mut Imp, ctx: &mut IdCtx, s: &mut Shape, t: Xfrm) -> Optio
         let area = text_area(&s.geom, x.w, x.h);
         let extra = [l - area.x0, top - area.y0, area.x1 - r, area.y1 - b];
         if extra.iter().all(|v| v.is_finite() && *v >= -EPS) {
-            let [el, et, er, eb] = extra.map(|v| v.max(0.0));
+            let [el, et, er, eb] = extra.map(|v| if v <= 1e-9 { 0.0 } else { v });
             bp.inset_l = Some(bp.inset_l.unwrap_or(7.2) + el);
             bp.inset_t = Some(bp.inset_t.unwrap_or(3.6) + et);
             bp.inset_r = Some(bp.inset_r.unwrap_or(7.2) + er);

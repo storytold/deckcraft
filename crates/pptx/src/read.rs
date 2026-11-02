@@ -479,7 +479,7 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
     default_text_anchor(&mut p);
     p.embedded_fonts = read_embedded_fonts(&mut imp, &pres_part, pres_el);
     p.media = std::mem::take(&mut imp.media);
-    diagram_rules::apply(&mut p);
+    diagram_rules::apply(&mut p, &mut imp);
     for master in &mut p.masters {
         let master = Arc::make_mut(master);
         crate::dgm::kept::seal(&mut master.shapes, 0);

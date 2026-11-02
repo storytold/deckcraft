@@ -3,6 +3,7 @@
 mod constraints;
 mod data;
 mod geometry;
+mod orientation;
 mod rules;
 #[cfg(test)]
 mod tests;
@@ -24,6 +25,7 @@ pub(crate) struct Placed<'a> {
     pub rect: Xfrm,
     /// A mapped text algorithm can own a different rectangle from its composite shape.
     pub text_rect: Option<Xfrm>,
+    pub text_source: Option<usize>,
     pub text_enabled: bool,
     pub font: Option<f64>,
     pub secondary_font: Option<f64>,

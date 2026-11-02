@@ -660,6 +660,68 @@ fn composite_shape_and_text_ownership_survive_import_and_export() {
 }
 
 #[test]
+fn rotated_mapped_text_is_editable_after_fitting_and_roundtrip() {
+    for (index, (parent, child, mode, invalid_rule)) in
+        [(0, 90, "upr", false), (30, 90, "upr", false), (0, 90, "none", false), (30, 180, "grav", false), (30, 90, "upr", true)]
+            .into_iter()
+            .enumerate()
+    {
+        let mut parts = files(&shared_font_fixture("none", Some(false), "Observe changes", "OK"));
+        for (_, bytes) in &mut parts {
+            let Ok(mut doc) = parse_xml(bytes) else { continue };
+            if !doc.root.is("layoutDef") {
+                continue;
+            }
+            let root = doc.root.elements_mut().find(|e| e.is("layoutNode")).unwrap();
+            *root.elements_mut().find(|e| e.is("presOf")).unwrap() = parse_xml(b"<dgm:presOf axis='ch' ptType='node' cnt='1'/>").unwrap().root;
+            let shape = root.elements_mut().find(|e| e.is("shape")).unwrap();
+            shape.set_attr("type", "rect");
+            shape.set_attr("rot", &parent.to_string());
+            let target = root.elements_mut().find(|e| e.attr("name") == Some("card0")).unwrap();
+            target.elements_mut().find(|e| e.is("shape")).unwrap().set_attr("rot", &child.to_string());
+            if invalid_rule {
+                // Search failure must retain independently rotated/mapped text, not
+                // return the provisional physical shape with text in the wrong box.
+                let rules = target.elements_mut().find(|e| e.is("ruleLst")).unwrap();
+                rules.elements_mut().find(|e| e.is("rule")).unwrap().set_attr("max", "1");
+            }
+            target
+                .elements_mut()
+                .find(|e| e.is("alg"))
+                .unwrap()
+                .children
+                .extend(parse_xml(format!("<root><dgm:param type='autoTxRot' val='{mode}'/></root>").as_bytes()).unwrap().root.children);
+            *bytes = doc.root.to_xml().into_bytes();
+        }
+        let bytes = zip(parts);
+        let p = deckcraft_pptx::import(&bytes).unwrap();
+        let labels: Vec<_> = group(&p).children().iter().filter_map(|s| s.text.as_ref().map(|b| (s, b))).collect();
+        assert_eq!(labels.len(), 3);
+        for (shape, body) in &labels {
+            let first = &body.paragraphs[0].runs[0];
+            assert_eq!(first.props.size, Some(if first.text == "OK" || invalid_rule { 36. } else { 21. }));
+            if first.text != "OK" {
+                assert_eq!(shape.xfrm.unwrap().rot.rem_euclid(360.), if mode == "none" { 90. } else { 0. });
+            }
+        }
+        assert!(group(&p).children().iter().filter(|s| s.text.is_none()).count() >= 1);
+        let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+        assert_eq!(geometry(group(&p)), geometry(group(&back)));
+        let labels_back: Vec<_> = group(&back).children().iter().filter_map(|s| s.text.as_ref()).collect();
+        assert_eq!(labels_back.len(), labels.len());
+        for ((_, a), b) in labels.iter().zip(labels_back) {
+            assert_eq!(a.paragraphs[0].runs[0].text, b.paragraphs[0].runs[0].text);
+            assert_eq!(a.paragraphs[0].runs[0].props.size, b.paragraphs[0].runs[0].props.size);
+        }
+        if let Some(dir) = std::env::var_os("DECKCRAFT_RENDER_PROBES").filter(|_| !invalid_rule) {
+            let dir = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(format!("rotated-text-{index}.pptx")), bytes).unwrap();
+        }
+    }
+}
+
+#[test]
 fn ordered_size_rules_ignore_local_edges_and_fit_real_text_to_the_container() {
     let rules = r#"<dgm:rule type="w" val="80"/><dgm:rule type="h" val="160"/>"#;
     let constraints = r#"<dgm:constr type="h" val="40"/><dgm:constr type="l" refType="w"/><dgm:constr type="r" refType="h"/>"#;

@@ -414,6 +414,66 @@ fn alignment_center_and_right() {
 }
 
 #[test]
+fn crossed_text_insets_collapse_at_midpoint_in_both_axes() {
+    for (left, right, top, bottom) in [(20., 20., 20., 20.), (30., 10., 10., 30.)] {
+        for anchor in [Anchor::Top, Anchor::Middle, Anchor::Bottom] {
+            let (p, mut sh) = setup("OK", 30., 30.);
+            let body = sh.text.as_mut().unwrap();
+            body.body.autofit = Some(AutoFit::None);
+            body.body.anchor = Some(anchor);
+            body.body.inset_l = Some(left);
+            body.body.inset_r = Some(right);
+            body.body.inset_t = Some(top);
+            body.body.inset_b = Some(bottom);
+            let collapsed = lay(&p, &sh, 30., 30.);
+            let cx = (30. + left - right) / 2.;
+            let cy = (30. + top - bottom) / 2.;
+            assert_eq!(collapsed.inner, Rect::new(cx, cy, cx, cy));
+            let body = sh.text.as_mut().unwrap();
+            body.body.inset_l = Some(cx);
+            body.body.inset_r = Some(30. - cx);
+            body.body.inset_t = Some(cy);
+            body.body.inset_b = Some(30. - cy);
+            let explicit = lay(&p, &sh, 30., 30.);
+            assert_eq!(collapsed.lines.len(), explicit.lines.len());
+            for (a, b) in collapsed.lines.iter().zip(&explicit.lines) {
+                assert_eq!(a.caret_x, b.caret_x);
+                assert_eq!(a.baseline, b.baseline);
+            }
+        }
+    }
+}
+
+#[test]
+fn wrapped_oversized_glyphs_align_as_a_block_but_nowrap_keeps_signed_slack() {
+    let (p, mut sh) = setup("Wi.", 1., 200.);
+    let body = sh.text.as_mut().unwrap();
+    body.body.autofit = Some(AutoFit::None);
+    body.body.inset_l = Some(0.);
+    body.body.inset_r = Some(0.);
+    let para = &mut body.paragraphs[0];
+    para.props.bullet = Some(Bullet::None);
+    para.props.margin_left = Some(0.);
+    para.props.margin_right = Some(0.);
+    para.props.indent = Some(0.);
+    para.props.align = Some(Align::Center);
+    let centred = lay(&p, &sh, 1., 200.);
+    assert_eq!(centred.lines.len(), 3);
+    let largest = centred.lines.iter().map(|l| l.extent.1 - l.extent.0).fold(0., f64::max);
+    for line in &centred.lines {
+        assert!((line.caret_x[0] - (1. - largest) / 2.).abs() < 1e-6);
+    }
+    sh.text.as_mut().unwrap().paragraphs[0].props.align = Some(Align::Right);
+    let wrapped = lay(&p, &sh, 1., 200.);
+    assert!(wrapped.lines.iter().all(|l| l.caret_x[0].abs() < 1e-6));
+    sh.text.as_mut().unwrap().body.wrap = Some(false);
+    let unwrapped = lay(&p, &sh, 1., 200.);
+    assert_eq!(unwrapped.lines.len(), 1);
+    assert!(unwrapped.lines[0].caret_x[0] < -10.);
+    assert!((unwrapped.lines[0].extent.1 - 1.).abs() < 1e-6);
+}
+
+#[test]
 fn empty_and_hostile_bodies_never_panic() {
     let (p, mut sh) = setup("", 10.0, 10.0);
     let _ = lay(&p, &sh, 10.0, 10.0);
