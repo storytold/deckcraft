@@ -218,6 +218,14 @@ pub(crate) fn viewport_visible(ctx: &egui::Context) -> bool {
 }
 
 impl Show {
+    /// Swap the slides' and Presenter View's screens; the new (slides, presenter) pair, or
+    /// `None` when DeckCraft didn't place them. A show restarted later keeps the swap.
+    pub(crate) fn swap_screens(&mut self) -> Option<(usize, usize)> {
+        let (slides, presenter) = self.screens?;
+        self.screens = Some((presenter, slides));
+        self.screens
+    }
+
     /// Initialise show state at the requested slide with reading/presenter modes; an out-of-range
     /// slide starts an ended show.
     pub fn new(doc: &Presentation, from: usize, reading: bool, presenter: bool) -> Self {

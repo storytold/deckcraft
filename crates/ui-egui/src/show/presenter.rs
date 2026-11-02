@@ -142,6 +142,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
     // The presenter clock only moves when this window is drawn again.
     ctx.request_repaint_after(std::time::Duration::from_millis(500));
     let mut actions = vec![];
+    let mut swap = false;
     // The presenter window is dark; default buttons draw dark text on it (#221).
     let button = |ui: &mut Ui, s: &str| {
         ui.add(egui::Button::new(egui::RichText::new(s).size(15.0).color(Color32::WHITE)).fill(Color32::from_gray(60)).min_size(vec2(0.0, 30.0)))
@@ -171,6 +172,10 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if button(ui, "End Show").clicked() {
                         *keep = false;
+                    }
+                    // As PowerPoint's Display Settings ▸ Swap Presenter View and Slide Show.
+                    if show.screens.is_some() && button(ui, "Swap Displays").clicked() {
+                        swap = true;
                     }
                     if button(ui, "Next ▶").clicked() {
                         actions.push(show.state.next(doc));
@@ -283,6 +288,10 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
             show.presenter_grid = false;
         }
     });
+    if swap && let Some((slides, presenter)) = show.swap_screens() {
+        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::SetMonitor(slides));
+        ctx.send_viewport_cmd_to(egui::ViewportId::from_hash_of("deckcraft_presenter"), egui::ViewportCommand::SetMonitor(presenter));
+    }
     for a in actions {
         if !show.apply(a, doc, now) {
             *keep = false;

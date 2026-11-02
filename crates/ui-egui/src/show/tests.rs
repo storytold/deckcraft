@@ -1359,3 +1359,19 @@ fn a_browsed_show_is_not_placed_on_screens() {
     app.start_show(0, false);
     assert_eq!(app.show.as_ref().unwrap().screens, Some((1, 0)));
 }
+
+/// Swap Displays puts the slides on Presenter View's screen and the other way round, and a show
+/// restarted afterwards keeps the swap. Without placed screens there is nothing to swap.
+#[test]
+fn swapping_displays_exchanges_the_screens_and_survives_a_restart() {
+    let mut app = app_on_screens(vec![0, 1], 0);
+    app.start_show(0, false);
+    assert_eq!(app.show.as_mut().unwrap().swap_screens(), Some((0, 1)));
+    assert_eq!(app.show.as_ref().unwrap().screens, Some((0, 1)));
+    app.start_show(0, false);
+    assert_eq!(app.show.as_ref().unwrap().screens, Some((0, 1)), "the restarted show keeps the swap");
+    assert_eq!(app.show.as_mut().unwrap().swap_screens(), Some((1, 0)), "and swaps back");
+    let mut one = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+    one.start_show(0, false);
+    assert_eq!(one.show.as_mut().unwrap().swap_screens(), None);
+}
