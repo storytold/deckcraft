@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.32): finite SmartArt circle fitting and sparse orbit capacity,
+Updated 2026-11-02 (PPTX.33): coupled SmartArt arc fitting and mapped-text refitting,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1566,3 +1566,75 @@ Full text-driven SmartArt search/fallback, native nested-fit precision, hierarch
 placement, partial arcs and coupled node shrinking remain incomplete. Geographic provider
 context, boundary simplification and rich-label overflow/collision are unchanged gaps.
 Complete LibreOffice replacement is not established.
+
+
+## Coupled cycle fitting and mapped-text refitting (PPTX.33)
+
+Cycle placement now preserves the state of successful size/radius trials. A failed size
+trial rolls back the radius; an accepted trial retains its fitted radius as the next
+upper bound. Recomputing the final radius from the original cap gives a different result,
+especially for narrow arcs and oversized nodes. The bounded search uses ten radius trials
+and ten size trials after at most 64 bracket probes. Exactly tangent rectangles trigger
+size fitting. All pair scans, text scans and radius trials share the work budget.
+
+The initial cap measures the continuous circular arc, including cardinal extrema between
+nodes. Full circles include the closing interval; partial arcs do not. Fewer than three
+intervals use a frame-perimeter cap. Reversed paths keep their authored winding while
+capacity uses the forward magnitude. Fraction-first angle arithmetic avoids unnecessary
+intermediate overflow; an empty cycle with a centre mapping cannot underflow its count.
+
+A successful unscaled layout is fitted again only when its mapped text algorithms contain
+substantive run content. Unconnected data, document labels and non-text composite mappings
+do not trigger this pass. Breakable spaces, formatting characters and standalone nonspacing
+marks differ from nonbreaking spaces and literal run tabs/newlines. An empty paragraph
+with an `a:br` is distinct from a newline inside an `a:t`. The predicate uses Unicode
+categories, not slide indices or language-specific labels. The mapping walk is bounded and
+includes nested text algorithms and fields. This is a tested cycle-refit policy, not a
+replacement for font shaping or a claim of complete text-driven rule-search equivalence.
+
+Validation uses original synthetic packages and hash-bound native observations:
+
+- The preceding 256 controls improve from 83 to 256 strict geometry matches. The 136
+  initial controls, 60 full-circle holdouts and 60 partial/reversed holdouts all pass.
+- Four new matrices add 250 controls: 90 continuous-arc caps, 72 data-identity/mapping
+  variants, 72 independently randomized mixed-size/frame/angle controls and 16 independent
+  reversed asymmetric paths. Matches improve from 41 to 250. Combined, these 506 controls
+  improve from 124 to 506 at 0.025pt tolerance; maximum error falls from 167.506pt to 0.01309pt.
+  No intended native paths are excluded as fallbacks, and all 506 font-size sets agree.
+- Seventy-two independently exported text-free versions, 18 mapped-text controls and 36
+  whitespace controls add 126 strict comparisons, improving from 15 to 126. The maximum
+  final error across all 632 controls is 0.01349pt. These eleven packages validate with
+  zero Open XML SDK errors. Unicode line/paragraph separators required correcting the
+  private JSON-log reader to split on LF only; no malformed records were silently skipped.
+- Removing text changes native geometry in 17 of the 72 text-free versions. Those images
+  cannot substitute for the original text-bearing acceptance checks. Additional multilingual,
+  hidden-shape and nested-mapping probes informed the predicate; they are not counted as
+  blanket geometry passes for unsupported mappings or fallback layouts.
+- At 3840 by 2160, the original 506 controls pass visible coloured bounds within 0.5pt
+  in 484 cases. Eighteen visible failures and four unmeasurable cases remain explicit.
+  Four failures involve tiny identity controls; the randomized set has fourteen visible
+  failures plus four cases without enough exposed fill pixels. All original 256 controls,
+  all 90 cap controls and all 16 reversed controls pass this weaker raster check.
+  Font clipping and occlusion are not certified by matching model rectangles. Representative
+  before/after/native pairs were visually inspected. The final mapped-text change preserves
+  all 506 complete imported inspection models, so these raster observations remain applicable.
+- All 154 earlier direct PNGs remain pixel-identical to the preceding executable, with
+  unchanged, native-matching font-size sets. The earlier 111-case matrix improves from
+  58 to 73 strict matches. Other matrices retain 83/132, 82/129 (29 native exclusions),
+  155/186 (12 exclusions), 176/176, 207/216 (nine exclusions), 93/94 (one exclusion), and
+  73/73 overflow matches. No previously matched case is lost.
+- LibreOffice's black-box export of the 72 randomized uncached definitions is blank on
+  every page, with no drawing, image or text objects. It is recorded as an unsupported
+  comparator result, not a fidelity pass. The direct Rust measurements do not call it.
+- Seven new tests cover native full/partial/reversed controls, exact tangency, empty centre
+  mapping, huge angles, mapped Unicode run content, nested field mappings and work limits.
+  Full `cargo xtask ci` passes all eight stages and 2,470 tests including doctests; all 21
+  diagram import/round-trip tests pass. Only source, dependencies, tests and documentation
+  are published; no user or native assets are included.
+
+The previously reported partial-arc and coupled-shrinking failures are resolved for these
+controls. Rotation along the path, arbitrary nested-cycle/text-rule interactions, full
+native search/fallback, duplicate definitions, descendant defaults, hierarchy/snake fitting
+and finite nested-flow precision remain open. Geographic provider context, boundary
+simplification and rich-label overflow/collision are unchanged gaps. This does not establish
+arbitrary-deck pixel equivalence or complete LibreOffice replacement.

@@ -21,6 +21,7 @@ thiserror = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+unicode-general-category = { workspace = true }
 
 [dev-dependencies]
 deckcraft-engine = { workspace = true }

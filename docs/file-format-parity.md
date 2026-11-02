@@ -1,5 +1,7 @@
 # File-format parity with PowerPoint
 
+> **PPTX.33 update 2026-11-02:** Coupled cycle fitting retains successful radius trials, fits continuous arc capacity and distinguishes mapped text from empty labels. All 506 original full/partial/reversed/shrinking controls now match native geometry within 0.025pt (previously 124); all 126 additional empty-text/mapping/whitespace controls pass. Raster validation remains separate: 484/506 pass visible bounds, with 18 failures and four unmeasurable cases retained. Other SmartArt, geographic and rich-label gaps remain open; scores are unchanged.
+
 > **PPTX.32 update 2026-11-02:** Non-shrinking full circles use measured finite radius fitting; degenerate circles use occupied-node bounds instead of an inscribed-circle cap. The new 136-case matrix improves from 9 to 46 strict matches, with maximum error falling from 49.49pt to 0.406pt. An independent full-circle matrix improves from 1/60 to 34/60. Partial-arc and coupled-shrink behavior remain incomplete. Scores are unchanged.
 
 > **PPTX.31 update 2026-11-02:** Nested linear layouts use the nearest composite capacity and reflow after a parent fit, preserving intrinsic cross-axis sizes. A new 132-case matrix improves from 39 to 83 strict matches; maximum geometry error falls from 311.81pt to 0.241pt. Forty-nine finite-reflow differences remain. Scores are unchanged.
@@ -171,6 +173,7 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.33 fits coupled cycle size/radius search and mapped-text refitting; 632 strict native matches, original raster failures explicit, no complete-converter-parity claim |
 | 2026-11-02 | minor | PPTX.32 corrects non-shrinking full-circle radius fitting; 256 new native controls retain explicit partial-arc/shrinking failures, with no previously matched case lost |
 | 2026-11-02 | minor | PPTX.31 separates flow capacity from allocation and reflows fitted linear children; 83/132 strict native matches, 131/132 visible-bound matches, residual precision/occlusion explicit |
 | 2026-11-02 | minor | PPTX.30 reproduces intrinsic flow sizes and root-linear finite fitting; native geometry/raster regressions retain nested packing, cyclic precision and rule-endpoint gaps |

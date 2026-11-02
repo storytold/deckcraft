@@ -1235,6 +1235,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 2.0.21",
+ "unicode-general-category",
  "zip 3.0.0",
 ]
 

@@ -1637,3 +1637,71 @@ fn exactly_fitting_nested_linear_children_do_not_trigger_a_fit_from_roundoff() {
         }
     }
 }
+
+#[test]
+fn cycle_refitting_depends_on_mapped_run_content_not_unrelated_data() {
+    // Native controls distinguish literal run newlines, nonbreaking spaces,
+    // standalone marks, paragraph breaks, and unconnected/document labels.
+    let controls = [
+        ("", false),
+        ("Read", true),
+        (" ", false),
+        ("&#x200B;", false),
+        ("&#10;", true),
+        ("&#13;", true),
+        ("&#9;", true),
+        ("&#xA0;", true),
+        ("&#x2003;", false),
+        ("&#x202F;", true),
+        ("&#x3000;", false),
+        ("&#xFEFF;", false),
+        ("&#x200C;", false),
+        ("&#x200D;", false),
+        ("&#x2060;", false),
+        ("&#x200E;", false),
+        ("&#x200F;", false),
+        ("&#xAD;", false),
+        ("&#x301;", false),
+        ("&#x2028;", false),
+        ("&#x2029;", false),
+        (" &#10; ", true),
+        ("  ", false),
+        ("例", true),
+        ("😀", true),
+        ("…", true),
+        ("م", true),
+        ("क", true),
+        ("ा", true),
+        ("e&#x301;", true),
+        ("&#x301;&#x302;", false),
+        ("&#x2002;", false),
+        ("&#x2007;", true),
+    ];
+    let mm = 72. / 25.4;
+    for span in [30., 360.] {
+        let l = layout(&format!(
+            r#"<layoutNode name="root"><alg type="cycle"><param type="spanAng" val="{span}"/></alg>
+            <forEach axis="ch" ptType="node"><layoutNode name="label"><presOf axis="self"/><alg type="tx"/><shape type="rect"/></layoutNode></forEach>
+            <constrLst><constr type="w" for="ch" forName="label" val="10"/><constr type="h" for="ch" forName="label" val="10"/></constrLst></layoutNode>"#
+        ));
+        for (text, refit) in controls {
+            let data = crate::xml::parse(format!(r#"<dataModel><ptLst>
+                <pt modelId="root" type="doc"><t><p><r><t>Document text</t></r></p></t></pt>
+                <pt modelId="a"><t><p><r><t>{text}</t></r><br/></p></t></pt><pt modelId="b"/><pt modelId="c"/>
+                <pt modelId="unmapped"><t><p><r><t>Unused</t></r></p></t></pt></ptLst>
+                <cxnLst><cxn srcId="root" destId="a" srcOrd="0"/><cxn srcId="root" destId="b" srcOrd="1"/><cxn srcId="root" destId="c" srcOrd="2"/></cxnLst></dataModel>"#).as_bytes()).unwrap().root;
+            let out = evaluate(&l, &data, Xfrm::new(0., 0., 200. * mm, 120. * mm)).unwrap();
+            assert_eq!(out.len(), 3);
+            let (a, b) = (out[0].rect, out[1].rect);
+            let angle = if span == 360. { 120_f64 } else { 15_f64 };
+            let radius = (a.x - b.x).hypot(a.y - b.y) / (2. * (angle.to_radians() / 2.).sin());
+            let native = match (span == 360., refit) {
+                (false, false) => 159.843735,
+                (false, true) => 159.687605,
+                (true, false) => 59.941396,
+                (true, true) => 59.882872,
+            };
+            assert!((radius - native * mm).abs() < 0.025, "{span}/{text}: {radius}");
+        }
+    }
+}

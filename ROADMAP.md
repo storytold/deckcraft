@@ -1,5 +1,7 @@
 # DeckCraft roadmap
 
+> **PPTX.33 update 2026-11-02:** Coupled cycle fitting retains successful radius trials, fits continuous arc capacity and distinguishes mapped text from empty labels. All 506 original full/partial/reversed/shrinking controls now match native geometry within 0.025pt (previously 124); all 126 additional empty-text/mapping/whitespace controls pass. Raster validation remains separate: 484/506 pass visible bounds, with 18 failures and four unmeasurable cases retained. Other SmartArt, geographic and rich-label gaps remain open; scores are unchanged.
+
 > **PPTX.32 update 2026-11-02:** Non-shrinking full circles use measured finite radius fitting; degenerate circles use occupied-node bounds instead of an inscribed-circle cap. The new 136-case matrix improves from 9 to 46 strict matches, with maximum error falling from 49.49pt to 0.406pt. An independent full-circle matrix improves from 1/60 to 34/60. Partial-arc and coupled-shrink behavior remain incomplete. Scores are unchanged.
 
 > **PPTX.31 update 2026-11-02:** Nested linear layouts use the nearest composite capacity and reflow after a parent fit, preserving intrinsic cross-axis sizes. A new 132-case matrix improves from 39 to 83 strict matches; maximum geometry error falls from 311.81pt to 0.241pt. Forty-nine finite-reflow differences remain. Scores are unchanged.
@@ -174,6 +176,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-02 | PPTX.33: retain accepted cycle radius trials, fit arc capacity and distinguish mapped run text; 632 strict native matches with raster/text limits retained |
 | 2026-11-02 | PPTX.32: correct non-shrinking full-circle radii and sparse orbit capacity; bounded native validation retains unresolved partial arcs and coupled shrinking |
 | 2026-11-02 | PPTX.31: propagate composite capacity and reflow fitted linear children; 83/132 strict native matches, large cross-axis errors removed, finite-reflow precision remains partial |
 | 2026-11-02 | PPTX.30: intrinsic flow sizing and observed finite root-linear fitting; 47/111 new strict matches, 64/129 prior matches, explicit nested/loop/text-rule limits |

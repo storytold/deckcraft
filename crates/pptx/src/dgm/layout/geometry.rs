@@ -292,7 +292,8 @@ fn place_inner<'a>(
     if matches!(node.alg.as_str(), "lin" | "hierChild") {
         pack_linear(node, local, capacity, &mut children, depth == 0);
     } else if node.alg == "cycle" {
-        pack_cycle(node, local, &mut children, work)?;
+        let has_text = cycle_has_text(node, data, depth, work)?;
+        pack_cycle(node, local, &mut children, has_text, work)?;
     }
     let iter: Box<dyn Iterator<Item = usize>> =
         if node.reverse { Box::new((0..node.children.len()).rev()) } else { Box::new(0..node.children.len()) };
@@ -525,16 +526,15 @@ pub(super) fn initial(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
             let start = (node.number("stAng", 0.0) - 90.0).to_radians();
             let span = node.number("spanAng", 360.0).to_radians();
             let center = node.param("ctrShpMap", "none") != "none";
-            let orbit = (count - usize::from(center)).max(1) as f64;
+            let orbit = count.saturating_sub(usize::from(center)).max(1) as f64;
             let diameter = (r.w.min(r.h) / (1.0 + orbit / std::f64::consts::PI)).min(r.w.min(r.h) * 0.42);
             (0..count)
                 .map(|i| {
                     if center && i == 0 {
                         return Xfrm::new(r.x + r.w / 2.0 - diameter / 2.0, r.y + r.h / 2.0 - diameter / 2.0, diameter, diameter);
                     }
-                    let angle = start
-                        + (i - usize::from(center)) as f64 * span
-                            / if (span.abs() - std::f64::consts::TAU).abs() < 1e-6 { orbit } else { (orbit - 1.0).max(1.0) };
+                    let intervals = if (span.abs() - std::f64::consts::TAU).abs() < 1e-6 { orbit } else { (orbit - 1.0).max(1.0) };
+                    let angle = start + ((i - usize::from(center)) as f64 / intervals) * span;
                     Xfrm::new(
                         r.x + r.w / 2.0 + (r.w - diameter) * 0.5 * angle.cos() - diameter / 2.0,
                         r.y + r.h / 2.0 + (r.h - diameter) * 0.5 * angle.sin() - diameter / 2.0,
@@ -591,10 +591,66 @@ pub(super) fn initial(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
     rectangles
 }
 
+// Only text algorithms map labels into the cycle. The data tree may also contain
+// unconnected labels, document text or a composite's non-text mappings.
+fn cycle_has_text(node: &Instance<'_>, data: &Data<'_>, depth: usize, work: &mut usize) -> Result<bool, &'static str> {
+    charge(work, 1)?;
+    if depth > 64 {
+        return Err("diagram layout depth exceeded");
+    }
+    if node.alg == "tx" {
+        for point in &node.points {
+            charge(work, 1)?;
+            if let Some(point) = data.points.get(*point) {
+                charge(work, point.children.len())?;
+                let Some(body) = point.child("t") else { continue };
+                charge(work, body.children.len())?;
+                for paragraph in body.children_named("p") {
+                    charge(work, paragraph.children.len())?;
+                    for run in paragraph.elements().filter(|r| matches!(r.local(), "r" | "fld")) {
+                        charge(work, run.children.len())?;
+                        if let Some(text) = run.child("t") {
+                            charge(work, text.children.len())?;
+                            for child in &text.children {
+                                if let crate::xml::Node::Text(value) = child {
+                                    charge(work, value.len())?;
+                                    if value.chars().any(cycle_text_character) {
+                                        return Ok(true);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for child in &node.children {
+        if cycle_has_text(child, data, depth + 1, work)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn cycle_text_character(c: char) -> bool {
+    use unicode_general_category::{GeneralCategory as G, get_general_category};
+    // Breakable spaces and standalone zero-advance marks do not start the text
+    // fitting pass. Nonbreaking spaces and run tabs/newlines do. An a:br without
+    // any run content is distinct from a literal newline inside a:t.
+    if matches!(c, '\t' | '\r' | '\n' | '\u{a0}' | '\u{2007}' | '\u{202f}') {
+        return true;
+    }
+    !matches!(
+        get_general_category(c),
+        G::SpaceSeparator | G::LineSeparator | G::ParagraphSeparator | G::NonspacingMark | G::EnclosingMark | G::Format | G::Control
+    )
+}
+
 // Cycle angles start at twelve o'clock and turn clockwise (ECMA-376 ST_ParameterId).
 // Fit a circle against the actual child extents; an incomplete arc is centred by its
 // occupied bounds, not the centre of the unoccupied remainder of the circle.
-fn pack_cycle(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], work: &mut usize) -> Result<(), &'static str> {
+fn pack_cycle(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], has_text: bool, work: &mut usize) -> Result<(), &'static str> {
     if children.is_empty() {
         return Ok(());
     }
@@ -609,7 +665,7 @@ fn pack_cycle(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], w
             if center && i == 0 {
                 (0., 0.)
             } else {
-                let angle = start + i.saturating_sub(usize::from(center)) as f64 * span / divisor;
+                let angle = start + (i.saturating_sub(usize::from(center)) as f64 / divisor) * span;
                 (angle.sin(), -angle.cos())
             }
         })
@@ -630,70 +686,51 @@ fn pack_cycle(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], w
             minimum_radius = minimum_radius.max(x.min(y));
         }
     }
-    let bounds = |children: &[BoxStyle], radius: f64| {
-        let mut extents = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
-        for (child, (x, y)) in children.iter().zip(&units) {
-            extents.0 = extents.0.min(x * radius - child.rect.w / 2.);
-            extents.1 = extents.1.min(y * radius - child.rect.h / 2.);
-            extents.2 = extents.2.max(x * radius + child.rect.w / 2.);
-            extents.3 = extents.3.max(y * radius + child.rect.h / 2.);
-        }
-        extents
+    let limit = cycle_radius_limit(style.rect, start, span, divisor);
+    let trial = |scale: f64, upper: f64, work: &mut usize| -> Result<(bool, f64), &'static str> {
+        let radius = cycle_fit_radius(children, &units, style.rect, scale, upper, work)?;
+        let fits = children.iter().all(|c| c.rect.w * scale <= style.rect.w && c.rect.h * scale <= style.rect.h);
+        // Tangency is not a successful size trial: native controls reduce exactly
+        // touching nodes. Coincident/zero-size nodes have no radial separation.
+        Ok((fits && (minimum_radius == 0. || radius > minimum_radius * scale), radius))
     };
-    let b = bounds(children, minimum_radius);
-    let scale = (style.rect.w / (b.2 - b.0).max(1e-9)).min(style.rect.h / (b.3 - b.1).max(1e-9)).clamp(0., 1.);
+    let (fits, first_radius) = trial(1., limit, work)?;
+    let (scale, radius) = if fits {
+        // Text fitting revisits successful geometry once. Empty mapped text does
+        // not trigger that pass; unrelated or unmapped data must not trigger it.
+        (1., if has_text { cycle_fit_radius(children, &units, style.rect, 1., first_radius, work)? } else { first_radius })
+    } else {
+        let (mut low, mut high) = (0., 1.);
+        // Bracket probes do not commit geometry. Accepted size trials below do:
+        // retain their radius as the upper bound of the next trial, and roll it
+        // back when a trial fails. Resetting it each time changes both node size
+        // and arc extent, particularly for short arcs and oversized nodes.
+        for _ in 0..64 {
+            if trial(high * 0.5, limit, work)?.0 {
+                break;
+            }
+            high *= 0.5;
+        }
+        let (mut upper, mut best_radius) = (limit, 0.);
+        for _ in 0..10 {
+            let mid = (low + high) / 2.;
+            let (fits, radius) = trial(mid, upper, work)?;
+            if fits {
+                low = mid;
+                upper = radius;
+                best_radius = radius;
+            } else {
+                high = mid;
+            }
+        }
+        (low, best_radius)
+    };
+    let low = radius.max(minimum_radius * scale);
     for child in children.iter_mut() {
         child.rect.w *= scale;
         child.rect.h *= scale;
     }
-    let finite_circle = scale == 1. && (full_circle || (center && orbit == 1));
-    let mut high = (style.rect.w.min(style.rect.h) / 2.).max(minimum_radius * scale);
-    if finite_circle && orbit <= 2 {
-        // One orbiting node, or an antipodal pair, does not occupy the whole
-        // circle. Its radius can exceed half the frame's smaller dimension.
-        // Solve the pairwise occupied-width/height bounds, including the centre
-        // node when present, rather than clipping an unoccupied circular area.
-        let mut limit = f64::INFINITY;
-        for (i, (a, (ax, ay))) in children.iter().zip(&units).enumerate() {
-            for (b, (bx, by)) in children.iter().zip(&units).take(i) {
-                charge(work, 1)?;
-                let (dx, dy) = ((ax - bx).abs(), (ay - by).abs());
-                if dx > 1e-9 {
-                    limit = limit.min((style.rect.w - (a.rect.w + b.rect.w) / 2.) / dx);
-                }
-                if dy > 1e-9 {
-                    limit = limit.min((style.rect.h - (a.rect.h + b.rect.h) / 2.) / dy);
-                }
-            }
-        }
-        if limit.is_finite() {
-            high = limit.max(0.);
-        }
-    }
-    // Non-shrinking circle controls use a finite radius fit; a non-degenerate
-    // circle refines the first feasible bracket once more. Partial arcs and
-    // coupled node shrinking still retain their separate geometric fit.
-    let (passes, trials) = if finite_circle { (if orbit <= 2 { 1 } else { 2 }, 10) } else { (1, 24) };
-    let mut low = 0.;
-    for _ in 0..passes {
-        low = 0.;
-        for _ in 0..trials {
-            charge(work, children.len())?;
-            let r = (low + high) / 2.;
-            let b = bounds(children, r);
-            if b.2 - b.0 <= style.rect.w && b.3 - b.1 <= style.rect.h {
-                low = r;
-            } else {
-                high = r;
-            }
-        }
-        high = low;
-    }
-    if finite_circle {
-        // Finite precision must not turn a fitting layout into overlapping nodes.
-        low = low.max(minimum_radius);
-    }
-    let b = bounds(children, low);
+    let b = cycle_bounds(children, &units, 1., low);
     let cx = style.rect.x + (style.rect.w - b.0 - b.2) / 2.;
     let cy = style.rect.y + (style.rect.h - b.1 - b.3) / 2.;
     for (child, (x, y)) in children.iter_mut().zip(units) {
@@ -701,6 +738,73 @@ fn pack_cycle(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], w
         child.rect.y = cy + y * low - child.rect.h / 2.;
     }
     Ok(())
+}
+
+/// The circular path includes its extrema between nodes, even where no node is
+/// painted. A closed path adds the closing interval. With fewer than three
+/// intervals the native search uses a perimeter-based initial radius instead.
+fn cycle_radius_limit(frame: Xfrm, start: f64, span: f64, intervals: f64) -> f64 {
+    if intervals < 3. {
+        return (frame.w + frame.h) / intervals.max(1.);
+    }
+    if span.abs() >= std::f64::consts::TAU {
+        return frame.w.min(frame.h) / 2.;
+    }
+    // Normalize before checking a bounded set of cardinal extrema. Authored
+    // angles may be huge or reversed; no loop count depends on their magnitude.
+    let start = start.rem_euclid(std::f64::consts::TAU);
+    // Radius capacity uses the forward arc magnitude; placement above keeps
+    // the authored winding. Reversed asymmetric native arcs distinguish these.
+    let end = start + span.abs();
+    let (lo, hi) = (start.min(end), start.max(end));
+    let (mut left, mut right) = (start.sin().min(end.sin()), start.sin().max(end.sin()));
+    let (mut top, mut bottom) = ((-start.cos()).min(-end.cos()), (-start.cos()).max(-end.cos()));
+    for quadrant in -4..=8 {
+        let angle = f64::from(quadrant) * std::f64::consts::FRAC_PI_2;
+        if angle >= lo && angle <= hi {
+            left = left.min(angle.sin());
+            right = right.max(angle.sin());
+            top = top.min(-angle.cos());
+            bottom = bottom.max(-angle.cos());
+        }
+    }
+    let x = if right - left > 1e-9 { frame.w / (right - left) } else { f64::INFINITY };
+    let y = if bottom - top > 1e-9 { frame.h / (bottom - top) } else { f64::INFINITY };
+    let radius = x.min(y);
+    if radius.is_finite() { radius.max(0.) } else { 0. }
+}
+
+fn cycle_bounds(children: &[BoxStyle], units: &[(f64, f64)], scale: f64, radius: f64) -> (f64, f64, f64, f64) {
+    let mut extents = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for (child, (x, y)) in children.iter().zip(units) {
+        extents.0 = extents.0.min(x * radius - child.rect.w * scale / 2.);
+        extents.1 = extents.1.min(y * radius - child.rect.h * scale / 2.);
+        extents.2 = extents.2.max(x * radius + child.rect.w * scale / 2.);
+        extents.3 = extents.3.max(y * radius + child.rect.h * scale / 2.);
+    }
+    extents
+}
+
+fn cycle_fit_radius(
+    children: &[BoxStyle],
+    units: &[(f64, f64)],
+    frame: Xfrm,
+    scale: f64,
+    mut high: f64,
+    work: &mut usize,
+) -> Result<f64, &'static str> {
+    let mut low = 0.;
+    for _ in 0..10 {
+        charge(work, children.len())?;
+        let radius = (low + high) / 2.;
+        let b = cycle_bounds(children, units, scale, radius);
+        if b.2 - b.0 <= frame.w && b.3 - b.1 <= frame.h {
+            low = radius;
+        } else {
+            high = radius;
+        }
+    }
+    Ok(low)
 }
 
 fn pack_linear(node: &Instance<'_>, style: BoxStyle, capacity: Xfrm, children: &mut [BoxStyle], root: bool) {
@@ -890,6 +994,134 @@ mod cycle_tests {
     use super::*;
 
     #[test]
+    fn cycle_text_mapping_walks_nested_algorithms_and_limits_empty_text_work() {
+        let xml = crate::xml::parse(b"<layoutNode/>").unwrap();
+        let source = crate::xml::parse(b"<dataModel><ptLst><pt type='doc' modelId='root'/><pt modelId='a'><t><p><fld><t>Label</t></fld></p></t></pt></ptLst><cxnLst/></dataModel>").unwrap();
+        let data = Data::new(&source.root).unwrap();
+        let mut node = Instance::new(&xml.root);
+        node.points = vec![1];
+        assert!(!cycle_has_text(&node, &data, 0, &mut 0).unwrap());
+        let mut child = Instance::new(&xml.root);
+        child.alg = "tx".into();
+        child.points = vec![1];
+        node.children.push(child);
+        assert!(cycle_has_text(&node, &data, 0, &mut 0).unwrap());
+        assert!(cycle_has_text(&node, &data, 64, &mut 0).is_err());
+        let mut work = MAX_WORK;
+        assert!(cycle_has_text(&node, &data, 0, &mut work).is_err());
+        let empty = " ".repeat(MAX_WORK + 1);
+        for body in [format!("<t><p><r><t>{empty}</t></r></p></t>"), "<spPr/>".repeat(MAX_WORK + 1)] {
+            let source = crate::xml::parse(
+                format!("<dataModel><ptLst><pt type='doc' modelId='root'/><pt modelId='a'>{body}</pt></ptLst><cxnLst/></dataModel>").as_bytes(),
+            )
+            .unwrap();
+            let data = Data::new(&source.root).unwrap();
+            assert!(cycle_has_text(&node, &data, 0, &mut 0).is_err());
+        }
+    }
+
+    #[test]
+    fn an_empty_cycle_with_a_center_mapping_has_no_allocations() {
+        let xml = crate::xml::parse(b"<layoutNode/>").unwrap();
+        let mut node = Instance::new(&xml.root);
+        node.alg = "cycle".into();
+        node.params.insert("ctrShpMap".into(), "fNode".into());
+        let style = BoxStyle::new(Xfrm::new(0., 0., 100., 80.));
+        assert!(initial(&node, style).is_empty());
+        pack_cycle(&node, style, &mut [], false, &mut 0).unwrap();
+    }
+
+    #[test]
+    fn partial_cycles_preserve_successful_radius_trials_across_size_search() {
+        // Independent native observations: several of these layouts retain empty
+        // space instead of maximizing the final radius after the size search.
+        let controls = [
+            (3, false, [77.3, 43.7], [18.838445, 10.148512, 10.194724, 6.920519], [42.164861, 26.630925, 16.296674, 6.920519]),
+            (3, false, [143.7, 91.3], [37.210135, 24.915935, 13.7, 9.3], [84.589844, 57.084008, 21.9, 9.3]),
+            (4, false, [143.7, 91.3], [2.753418, 0.053994, 13.7, 9.3], [127.246575, 73.745986, 13.7, 17.5]),
+            (6, false, [143.7, 91.3], [0.703415, 0.053994, 13.7, 9.3], [121.096563, 73.745986, 21.9, 17.5]),
+            (8, false, [143.7, 91.3], [1.547665, 0.038362, 12.950780, 8.791399], [125.325730, 74.718634, 16.826546, 16.542950]),
+            (8, true, [77.3, 43.7], [21.502058, 42.206740, 2.194136, 1.489455], [52.947127, 11.920906, 2.850795, 2.802747]),
+        ];
+        let mm = 72. / 25.4;
+        let xml = crate::xml::parse(b"<layoutNode/>").unwrap();
+        for (count, center, frame, first, last) in controls {
+            for (x, y) in [(0., 0.), (31., 17.)] {
+                let mut node = Instance::new(&xml.root);
+                node.params.insert("ctrShpMap".into(), if center { "fNode" } else { "none" }.into());
+                node.params.insert("stAng".into(), "17".into());
+                node.params.insert("spanAng".into(), "30".into());
+                let style = BoxStyle::new(Xfrm::new(x, y, frame[0] * mm, frame[1] * mm));
+                let mut children: Vec<_> = (0..count)
+                    .map(|i| BoxStyle::new(Xfrm::new(0., 0., (13.7 + (i % 3) as f64 * 4.1) * mm, (9.3 + (i % 2) as f64 * 8.2) * mm)))
+                    .collect();
+                pack_cycle(&node, style, &mut children, true, &mut 0).unwrap();
+                for (index, expected) in [(0, first), (count - 1, last)] {
+                    let r = children[index].rect;
+                    for (actual, native) in [r.x - x, r.y - y, r.w, r.h].into_iter().zip(expected) {
+                        assert!((actual - native * mm).abs() < 0.025, "{count}/{center}: {actual}, {native}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reversed_cycle_capacity_uses_magnitude_but_nodes_keep_their_winding() {
+        let xml = crate::xml::parse(b"<layoutNode/>").unwrap();
+        let mut node = Instance::new(&xml.root);
+        for (k, v) in [("ctrShpMap", "fNode"), ("stAng", "17"), ("spanAng", "-137")] {
+            node.params.insert(k.into(), v.into());
+        }
+        let mm = 72. / 25.4;
+        let sizes = [[57.166, 60.170], [83.982, 19.806], [55.932, 39.923], [57.984, 54.575], [12.621, 26.657], [96.400, 37.264]];
+        let mut children: Vec<_> = sizes.iter().map(|s| BoxStyle::new(Xfrm::new(0., 0., s[0] * mm, s[1] * mm))).collect();
+        pack_cycle(&node, BoxStyle::new(Xfrm::new(0., 0., 35.7 * mm, 21.9 * mm)), &mut children, true, &mut 0).unwrap();
+        for (index, expected) in [(0, [18.700332, 10.713734, 5.652390, 5.949422]), (5, [6.586778, 17.720046, 9.531721, 3.684551])] {
+            let r = children[index].rect;
+            for (actual, native) in [r.x, r.y, r.w, r.h].into_iter().zip(expected) {
+                assert!((actual - native * mm).abs() < 0.025);
+            }
+        }
+    }
+
+    #[test]
+    fn exactly_tangent_cycle_nodes_trigger_size_search() {
+        let xml = crate::xml::parse(b"<layoutNode/>").unwrap();
+        let mm = 72. / 25.4;
+        for span in ["180", "360"] {
+            let mut node = Instance::new(&xml.root);
+            node.params.insert("spanAng".into(), span.into());
+            let mut children = vec![BoxStyle::new(Xfrm::new(0., 0., 60. * mm, 60. * mm)); 2];
+            pack_cycle(&node, BoxStyle::new(Xfrm::new(0., 0., 200. * mm, 120. * mm)), &mut children, true, &mut 0).unwrap();
+            assert!((children[0].rect.w / mm - 59.94140625).abs() < 1e-6);
+            let radius = (children[1].rect.y - children[0].rect.y) / 2.;
+            assert!((radius - 30.0098715 * mm).abs() < 0.025);
+        }
+    }
+
+    #[test]
+    fn degenerate_and_huge_cycle_angles_keep_finite_bounded_geometry() {
+        let xml = crate::xml::parse(b"<layoutNode/>").unwrap();
+        for (start, span) in [(0., 0.), (1e308, 1e308), (-1e308, -1e308), (720., -360.)] {
+            for (w, h) in [(100., 80.), (0., 0.)] {
+                let mut node = Instance::new(&xml.root);
+                node.params.insert("stAng".into(), start.to_string());
+                node.params.insert("spanAng".into(), span.to_string());
+                let mut children = vec![BoxStyle::new(Xfrm::new(0., 0., 15., 12.)); 4];
+                let mut work = 0;
+                pack_cycle(&node, BoxStyle::new(Xfrm::new(0., 0., w, h)), &mut children, true, &mut work).unwrap();
+                assert!(work <= MAX_WORK);
+                for child in children {
+                    let r = child.rect;
+                    assert!([r.x, r.y, r.w, r.h].into_iter().all(f64::is_finite));
+                    assert!(r.x >= -1e-6 && r.y >= -1e-6 && r.x + r.w <= w + 1e-6 && r.y + r.h <= h + 1e-6);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn nonshrinking_circle_positions_match_independent_native_controls() {
         // Mixed rectangular nodes, fractional frames, several rotations and
         // centre mappings. Expected first/last rectangles are native observations
@@ -915,7 +1147,7 @@ mod cycle_tests {
                 let mut children: Vec<_> = (0..count)
                     .map(|i| BoxStyle::new(Xfrm::new(0., 0., (13.7 + (i % 3) as f64 * 4.1) * mm, (9.3 + (i % 2) as f64 * 8.2) * mm)))
                     .collect();
-                pack_cycle(&node, style, &mut children, &mut 0).unwrap();
+                pack_cycle(&node, style, &mut children, true, &mut 0).unwrap();
                 for (index, expected) in [(0, first), (count - 1, last)] {
                     let r = children[index].rect;
                     for (actual, native) in [r.x - x, r.y - y, r.w, r.h].into_iter().zip(expected) {
@@ -944,7 +1176,7 @@ mod cycle_tests {
             node.params.insert("spanAng".into(), span.to_string());
             let style = BoxStyle::new(Xfrm::new(0., 0., 200. * mm, 120. * mm));
             let mut children = vec![BoxStyle::new(Xfrm::new(0., 0., 25. * mm, 25. * mm)); 2];
-            pack_cycle(&node, style, &mut children, &mut 0).unwrap();
+            pack_cycle(&node, style, &mut children, true, &mut 0).unwrap();
             // Two independent native controls (full and half span): 94.90724 mm.
             let radius = children[0].rect.y - children[1].rect.y;
             assert!((radius - 94.90724 * mm).abs() < 0.025);
@@ -958,7 +1190,7 @@ mod cycle_tests {
         let style = BoxStyle::new(Xfrm::new(0., 0., 800., 400.));
         let mut children = vec![BoxStyle::new(Xfrm::new(0., 0., 10., 8.)); 3];
         let mut work = MAX_WORK - 4;
-        assert_eq!(pack_cycle(&node, style, &mut children, &mut work), Err("diagram constraint budget exceeded"));
+        assert_eq!(pack_cycle(&node, style, &mut children, true, &mut work), Err("diagram constraint budget exceeded"));
         assert_eq!(work, MAX_WORK + 2);
     }
 
@@ -969,7 +1201,7 @@ mod cycle_tests {
         let style = BoxStyle::new(Xfrm::new(0., 0., 800., 400.));
         let mut children = vec![BoxStyle::new(Xfrm::new(0., 0., 100., 80.)); 1000];
         let mut work = 0;
-        assert_eq!(pack_cycle(&node, style, &mut children, &mut work), Err("diagram constraint budget exceeded"));
+        assert_eq!(pack_cycle(&node, style, &mut children, true, &mut work), Err("diagram constraint budget exceeded"));
         assert_eq!(work, MAX_WORK + 1);
     }
 }

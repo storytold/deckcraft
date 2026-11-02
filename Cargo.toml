@@ -48,6 +48,7 @@ sha2 = { version = "0.10", default-features = false }
 proptest = "1"
 rayon = "1"
 unicode-bidi = "0.3"
+unicode-general-category = "1.1"
 unicode-segmentation = "1"
 unicode-linebreak = "0.1"
 # Base features are wasm-safe (`std` only). The non-wasm `clock` feature is requested
