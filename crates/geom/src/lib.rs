@@ -71,7 +71,10 @@ impl Unit {
     /// `2.08"` style text for a length in points.
     pub fn format(self, pt: f64) -> String {
         let v = pt / self.points_per_unit();
-        let s = format!("{v:.2}");
+        let mut s = format!("{v:.2}");
+        if s.starts_with('-') && s[1..].bytes().all(|b| b == b'0' || b == b'.') {
+            s.remove(0);
+        }
         format!("{s}{}", self.suffix())
     }
     /// Parses `2.5`, `2.5"`, `2.5 in`, `6 cm`, `30 pt`, `40px`, `5mm` into points. A bare number uses `self`.
@@ -221,6 +224,14 @@ pub fn preset_flatten(path: &BezPath, f: &mut dyn FnMut(PathEl)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_has_no_negative_zero() {
+        assert_eq!(Unit::Points.format(-0.001), "0.00 pt");
+        assert_eq!(Unit::Inches.format(-0.001), "0.00\"");
+        assert!(!Unit::Centimeters.format(-0.01).starts_with('-'));
+        assert_eq!(Unit::Points.format(-1.5), "-1.50 pt");
+    }
 
     #[test]
     fn emu_roundtrip_is_exact() {
