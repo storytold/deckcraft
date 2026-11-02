@@ -1705,3 +1705,85 @@ fn cycle_refitting_depends_on_mapped_run_content_not_unrelated_data() {
         }
     }
 }
+
+#[test]
+fn measured_cycle_refitting_uses_overflow_and_rejects_invalid_measurements() {
+    let l = layout(
+        r#"<layoutNode name="ring"><alg type="cycle"/><forEach axis="ch" ptType="node">
+        <layoutNode name="label"><alg type="tx"/><presOf axis="self"/><shape type="rect"/></layoutNode></forEach>
+        <constrLst><constr type="w" for="ch" forName="label" val="10"/><constr type="h" for="ch" forName="label" val="10"/>
+        <constr type="primFontSz" for="ch" val="8"/></constrLst></layoutNode>"#,
+    );
+    let data = source();
+    let mm = 72. / 25.4;
+    for (overflow, expected_radius) in [(0., 59.941396), (1., 59.882872)] {
+        let mut measure = |p: &[Placed<'_>], words: bool| {
+            assert!(words);
+            Ok(vec![overflow; p.len()])
+        };
+        let out = evaluate_measured(&l, &data, Xfrm::new(0., 0., 200. * mm, 120. * mm), Some(&mut measure)).unwrap();
+        let (a, b) = (out[0].rect, out[1].rect);
+        let radius = (a.x - b.x).hypot(a.y - b.y) / 3_f64.sqrt();
+        assert!((radius - expected_radius * mm).abs() < 0.025);
+    }
+    for invalid in [f64::NAN, f64::INFINITY, -1.] {
+        let mut measure = |p: &[Placed<'_>], _: bool| Ok(vec![invalid; p.len()]);
+        assert!(evaluate_measured(&l, &data, frame(), Some(&mut measure)).is_err());
+    }
+}
+
+#[test]
+fn cycle_path_rotation_follows_shape_fitting_and_preserves_center_nodes() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for center in ["none", "fNode"] {
+        for own_angle in [0., 30.] {
+            let l = layout(&format!(
+                r#"<layoutNode name="ring"><alg type="cycle"><param type="stAng" val="17"/>
+                <param type="rotPath" val="alongPath"/><param type="ctrShpMap" val="{center}"/></alg>
+                <forEach axis="ch" ptType="node"><layoutNode name="label"><alg type="tx"/><presOf axis="self"/><shape type="rect" rot="{own_angle}"/></layoutNode></forEach>
+                <constrLst><constr type="w" for="ch" forName="label" val="25"/><constr type="h" for="ch" forName="label" val="15"/>
+                <constr type="primFontSz" for="ch" val="8"/></constrLst></layoutNode>"#
+            ));
+            let mut fits = |p: &[Placed<'_>], _: bool| Ok(vec![0.; p.len()]);
+            let out = evaluate_measured(&l, &data, Xfrm::new(0., 0., 200. * mm, 120. * mm), Some(&mut fits)).unwrap();
+            for (i, p) in out.iter().enumerate() {
+                let path = if center == "fNode" && i == 0 {
+                    0.
+                } else {
+                    17. + (i - usize::from(center == "fNode")) as f64 * if center == "fNode" { 180. } else { 120. }
+                };
+                assert!((p.rect.rot - (own_angle + path).rem_euclid(360.)).abs() < 1e-6);
+                let (w, h) = if own_angle == 0. { (25., 15.) } else { (15., 8.660254) };
+                assert!((p.rect.w - w * mm).abs() < 0.025 && (p.rect.h - h * mm).abs() < 0.025);
+            }
+            if center == "none" && own_angle == 30. {
+                assert!((out[0].text_rect.unwrap().rot - 317.).abs() < 1e-6);
+            }
+        }
+    }
+}
+
+#[test]
+fn cycles_pack_container_occupied_frames_without_rotating_the_container() {
+    let mm = 72. / 25.4;
+    let data = source();
+    for alg in ["composite", "sp", "lin"] {
+        let l = layout(&format!(
+            r#"<layoutNode name="ring"><alg type="cycle"><param type="stAng" val="17"/>
+            <param type="spanAng" val="270"/><param type="rotPath" val="alongPath"/></alg>
+            <forEach axis="ch" ptType="node"><layoutNode name="card"><alg type="{alg}"/><presOf/><shape type="rect"/>
+            <constrLst><constr type="w" for="ch" forName="inner" val="12"/><constr type="h" for="ch" forName="inner" val="8"/>
+            <constr type="l" for="ch" forName="inner" val="4"/><constr type="t" for="ch" forName="inner" val="2"/></constrLst>
+            <layoutNode name="inner"><alg type="tx"/><presOf/><shape type="none"/></layoutNode></layoutNode></forEach>
+            <constrLst><constr type="w" for="ch" forName="card" val="25"/><constr type="h" for="ch" forName="card" val="15"/></constrLst></layoutNode>"#
+        ));
+        let mut fits = |p: &[Placed<'_>], _: bool| Ok(vec![0.; p.len()]);
+        let out = evaluate_measured(&l, &data, Xfrm::new(10. * mm, 10. * mm, 200. * mm, 120. * mm), Some(&mut fits)).unwrap();
+        let card = out.iter().find(|p| p.name == "card").unwrap();
+        assert_eq!(card.rect.rot, 0.);
+        for (actual, native) in [card.rect.x, card.rect.y, card.rect.w, card.rect.h].into_iter().zip([136.565857, 10.103948, 12., 8.]) {
+            assert!((actual - native * mm).abs() < 0.025, "{alg}: {actual} vs {native}");
+        }
+    }
+}

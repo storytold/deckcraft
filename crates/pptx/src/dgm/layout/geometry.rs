@@ -105,7 +105,7 @@ fn extra_index(property: &str) -> Option<usize> {
 pub(super) fn place<'a>(node: &Instance<'a>, rect: Xfrm, data: &Data<'a>, out: &mut Vec<Placed<'a>>, depth: usize) -> Result<(), &'static str> {
     let mut work = 0;
     let solution = super::constraints::resolve(node, rect, data, &mut work)?;
-    place_solved(node, rect, data, out, depth, &solution, &mut work)
+    place_solved(node, rect, data, out, depth, &solution, None, &mut work)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -116,11 +116,12 @@ pub(super) fn place_solved<'a>(
     out: &mut Vec<Placed<'a>>,
     depth: usize,
     solution: &super::constraints::Solution,
+    cycle_refits: Option<&std::collections::HashSet<usize>>,
     work: &mut usize,
 ) -> Result<(), &'static str> {
     let style = super::constraints::lookup(solution, node).unwrap_or_else(|| BoxStyle::new(rect));
     let start = out.len();
-    place_inner(node, style, rect, data, out, depth, solution, work)?;
+    place_inner(node, style, rect, data, out, depth, solution, cycle_refits, work)?;
     if depth == 0 {
         super::orientation::apply(out.get_mut(start..).unwrap_or(&mut []), work)?;
         // Allocation-only nodes contribute to ancestor bounds, but are not drawing
@@ -213,6 +214,7 @@ fn place_inner<'a>(
     out: &mut Vec<Placed<'a>>,
     depth: usize,
     solution: &super::constraints::Solution,
+    cycle_refits: Option<&std::collections::HashSet<usize>>,
     work: &mut usize,
 ) -> Result<(), &'static str> {
     if depth > 64 || out.len() >= MAX_INSTANCES {
@@ -234,6 +236,7 @@ fn place_inner<'a>(
             style: node.style.clone(),
             color_index: 0,
             rect,
+            path_rotation: 0.,
             text_rect: None,
             text_source: None,
             text_enabled: node.alg == "tx",
@@ -256,6 +259,7 @@ fn place_inner<'a>(
             style: node.style.clone(),
             color_index: 0,
             rect: style.rect,
+            path_rotation: 0.,
             text_rect: None,
             text_source: None,
             text_enabled: node.alg == "tx",
@@ -288,12 +292,16 @@ fn place_inner<'a>(
             resolved
         })
         .collect();
+    let mut cycle_text_refit = false;
     // Linear placement uses the constrained sizes, including invisible spacing nodes.
     if matches!(node.alg.as_str(), "lin" | "hierChild") {
         pack_linear(node, local, capacity, &mut children, depth == 0);
     } else if node.alg == "cycle" {
-        let has_text = cycle_has_text(node, data, depth, work)?;
-        pack_cycle(node, local, &mut children, has_text, work)?;
+        cycle_text_refit = match cycle_refits {
+            Some(refits) => refits.contains(&super::constraints::id(node)),
+            None => cycle_has_text(node, data, depth, work)?,
+        };
+        pack_cycle(node, local, &mut children, cycle_text_refit, work)?;
     }
     let iter: Box<dyn Iterator<Item = usize>> =
         if node.reverse { Box::new((0..node.children.len()).rev()) } else { Box::new(0..node.children.len()) };
@@ -308,13 +316,17 @@ fn place_inner<'a>(
             // flows. Linear and space containers can expose their ancestor's
             // capacity beyond their own allocation; they do not clip it early.
             let capacity = if node.alg == "composite" { style.rect } else { capacity };
-            place_inner(child, global, capacity, data, out, depth + 1, solution, work)?;
+            place_inner(child, global, capacity, data, out, depth + 1, solution, cycle_refits, work)?;
             if let Some(range) = ranges.get_mut(i) {
                 *range = start..out.len();
             }
         }
     }
-    pack_composite_extents(node, style, local, &children, &ranges, out, work)?;
+    rotate_cycle_leaves(node, &ranges, out, work)?;
+    pack_composite_extents(node, style, local, &children, &ranges, out, cycle_text_refit, work)?;
+    if node.alg == "lin" && out.get(own).is_some_and(|p| p.node_key == super::constraints::id(node)) {
+        fit_composite_shape(out.get_mut(own..).unwrap_or(&mut []), work)?;
+    }
     if matches!(node.alg.as_str(), "composite" | "sp") {
         if out.get(own).is_some_and(|p| p.node_key == super::constraints::id(node)) {
             fit_composite_shape(out.get_mut(own..).unwrap_or(&mut []), work)?;
@@ -338,7 +350,7 @@ fn place_inner<'a>(
                     fitted.rect.y += style.rect.y;
                     fit.project(&mut fitted.rect);
                     let mut replacement = Vec::new();
-                    place_inner(child, fitted, style.rect, data, &mut replacement, depth + 1, solution, work)?;
+                    place_inner(child, fitted, style.rect, data, &mut replacement, depth + 1, solution, cycle_refits, work)?;
                     let target = out.get_mut(range.clone()).ok_or("invalid fitted diagram range")?;
                     if target.len() != replacement.len() {
                         return Err("fitted diagram changed its node count");
@@ -420,21 +432,22 @@ fn pack_composite_extents(
     children: &[BoxStyle],
     ranges: &[std::ops::Range<usize>],
     out: &mut [Placed<'_>],
+    cycle_text_refit: bool,
     work: &mut usize,
 ) -> Result<(), &'static str> {
     // A composite is a container, not an invisible spacing shape. Linear layout packs
     // its actual children, so unused margins inside that container do not become gaps.
     // Retain the existing constrained-size path for rotated/overflowing containers.
-    if node.alg == "lin" {
+    if matches!(node.alg.as_str(), "lin" | "cycle") {
         let mut occupied = children.to_vec();
         let mut changed = false;
         for ((child, bounds), range) in node.children.iter().zip(&mut occupied).zip(ranges) {
-            if child.alg != "composite" || range.is_empty() {
+            if !(child.alg == "composite" || node.alg == "cycle" && matches!(child.alg.as_str(), "sp" | "lin")) || range.is_empty() {
                 continue;
             }
             let shapes = out.get(range.clone()).unwrap_or(&[]);
             charge(work, shapes.len())?;
-            if shapes.iter().any(|p| p.connector || p.rect.rot != 0.0) {
+            if shapes.iter().any(|p| p.connector || node.alg == "lin" && p.rect.rot != 0.0) {
                 continue;
             }
             let mut box_rect: Option<Xfrm> = None;
@@ -458,14 +471,35 @@ fn pack_composite_extents(
         if changed {
             let mut packed = occupied.clone();
             // These are already painted extents, not another allocation trial.
-            pack_linear(node, local, local.rect, &mut packed, false);
+            if node.alg == "cycle" {
+                pack_cycle(node, local, &mut packed, cycle_text_refit, work)?;
+            } else {
+                pack_linear(node, local, local.rect, &mut packed, false);
+            }
             for ((before, after), range) in occupied.iter().zip(&packed).zip(ranges.iter().cloned()) {
                 for p in out.get_mut(range).unwrap_or(&mut []) {
-                    p.rect.x += after.rect.x - before.rect.x;
-                    p.rect.y += after.rect.y - before.rect.y;
+                    if node.alg != "cycle" {
+                        p.rect.x += after.rect.x - before.rect.x;
+                        p.rect.y += after.rect.y - before.rect.y;
+                        if let Some(t) = &mut p.text_rect {
+                            t.x += after.rect.x - before.rect.x;
+                            t.y += after.rect.y - before.rect.y;
+                        }
+                        continue;
+                    }
+                    let (sx, sy) = (
+                        if before.rect.w > 0. { after.rect.w / before.rect.w } else { 1. },
+                        if before.rect.h > 0. { after.rect.h / before.rect.h } else { 1. },
+                    );
+                    let move_frame = |r: &mut Xfrm| {
+                        r.x = style.rect.x + after.rect.x + (r.x - style.rect.x - before.rect.x) * sx;
+                        r.y = style.rect.y + after.rect.y + (r.y - style.rect.y - before.rect.y) * sy;
+                        r.w *= sx;
+                        r.h *= sy;
+                    };
+                    move_frame(&mut p.rect);
                     if let Some(t) = &mut p.text_rect {
-                        t.x += after.rect.x - before.rect.x;
-                        t.y += after.rect.y - before.rect.y;
+                        move_frame(t);
                     }
                 }
             }
@@ -591,9 +625,36 @@ pub(super) fn initial(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
     rectangles
 }
 
+// The cycle's path direction rotates leaf shapes after allocation/shape fitting.
+// Containers run their own algorithms; rotating their subtree here would also
+// rotate independent text frames and change occupied bounds a second time.
+fn rotate_cycle_leaves(node: &Instance<'_>, ranges: &[std::ops::Range<usize>], out: &mut [Placed<'_>], work: &mut usize) -> Result<(), &'static str> {
+    if node.alg != "cycle" || node.param("rotPath", "none") != "alongPath" {
+        return Ok(());
+    }
+    let center = node.param("ctrShpMap", "none") != "none";
+    let orbit = node.children.len().saturating_sub(usize::from(center)).max(1);
+    let span = node.number("spanAng", 360.).to_radians();
+    let start = node.number("stAng", 0.).to_radians();
+    let divisor = if (span.abs() - std::f64::consts::TAU).abs() < 1e-6 { orbit } else { orbit.saturating_sub(1).max(1) } as f64;
+    for (i, (child, range)) in node.children.iter().zip(ranges).enumerate() {
+        charge(work, 1)?;
+        if !child.children.is_empty() || center && i == 0 || range.is_empty() {
+            continue;
+        }
+        if let Some(p) = out.get_mut(range.start).filter(|p| p.node_key == super::constraints::id(child) && !p.connector) {
+            // Convert bounded radians back to degrees so huge authored angles
+            // cannot overflow an intermediate sum in degrees.
+            let angle = start + (i.saturating_sub(usize::from(center)) as f64 / divisor) * span;
+            p.path_rotation = angle.rem_euclid(std::f64::consts::TAU).to_degrees();
+        }
+    }
+    Ok(())
+}
+
 // Only text algorithms map labels into the cycle. The data tree may also contain
 // unconnected labels, document text or a composite's non-text mappings.
-fn cycle_has_text(node: &Instance<'_>, data: &Data<'_>, depth: usize, work: &mut usize) -> Result<bool, &'static str> {
+pub(super) fn cycle_has_text(node: &Instance<'_>, data: &Data<'_>, depth: usize, work: &mut usize) -> Result<bool, &'static str> {
     charge(work, 1)?;
     if depth > 64 {
         return Err("diagram layout depth exceeded");

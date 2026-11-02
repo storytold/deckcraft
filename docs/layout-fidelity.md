@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.33): coupled SmartArt arc fitting and mapped-text refitting,
+Updated 2026-11-02 (PPTX.34): measured SmartArt cycle refitting and path rotation,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1638,3 +1638,67 @@ native search/fallback, duplicate definitions, descendant defaults, hierarchy/sn
 and finite nested-flow precision remain open. Geographic provider context, boundary
 simplification and rich-label overflow/collision are unchanged gaps. This does not establish
 arbitrary-deck pixel equivalence or complete LibreOffice replacement.
+
+
+## Measured cycle refitting and path rotation (PPTX.34)
+
+A cycle's `rotPath="alongPath"` now rotates leaf shapes by their actual orbit angle after
+fitting the authored shape rotation. It does not shrink the shape a second time, rotate
+a centre-mapped leaf, or rotate a child container's independently laid-out subtree.
+Text orientation uses the final combined shape angle. The public OOXML
+[rotation-path enumeration](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.drawing.diagrams.rotationpathvalues?view=openxml-3.0.1)
+and black-box original controls establish this bounded behavior.
+
+The PPTX.33 presence predicate was sufficient for its original corpus, but new controls
+show that text presence alone does not decide a second radius fit. Short labels at a small
+font can fit in one pass; longer labels at the same font, or the same label with larger
+margins, can overflow. The measured importer now places once, measures the displayed text,
+and selectively refits cycles whose mapped text overflows. The same resolved constraints
+are retained. Each rule trial recomputes this decision, and the existing text-measurement
+cache reuses unchanged translations. Unmeasured layout retains the conservative mapped-text
+predicate. This is not an exhaustive replacement for native text-driven search.
+
+Cycle packing uses the occupied extents of supported composite, space and linear children,
+rather than carrying unused allocation margins around the orbit. A painted linear container
+fits its child bounds before its parent packs it. Authored container rotation remains
+independent of the cycle's leaf-path rotation. All tree scans, geometry trials and measuring
+passes share bounded work; invalid measurement counts, nonfinite values and negative
+scores are rejected. No page numbers or label strings select production behavior.
+
+Validation uses five original, hash-bound packages, each with zero Open XML SDK errors:
+
+- Forty leaf/centre path-rotation controls improve from eight to 40 strict matches. They
+  vary counts, frames, positive/negative spans, start angles and empty/present labels.
+- Forty-eight combined rotation/text/container controls improve from six to 48 matches;
+  16 independent nested controls improve from zero to 12, with four native-blank cases
+  explicitly excluded. A separate 36-case algorithm probe improves from one to four
+  measurable matches, with 32 native-blank cases excluded. Blank native output does not
+  establish supported fallback or an equality pass.
+- Forty font/margin/label controls improve from 32 to 40 matches. Together, the 180 original
+  pages contain 144 measurable intended geometries: 47 become 144 matches within 0.025pt,
+  with no previously matched case lost. Maximum error falls from 26.1270pt to 0.01220pt.
+- Actual 3840-by-2160 painted raster bounds are checked independently of imported shape
+  names. This matters when the same name identifies both a painted shape and its transparent
+  text overlay. Direct PDF output uses raster graphics plus searchable text, so an empty
+  PDF path extraction is not treated as either missing graphics or a passing comparison.
+  Representative direct/native pages, including retained text-visibility differences, were
+  visually inspected. All 144 measurable controls pass visible coloured bounds within 0.5pt; the same
+  36 native-blank controls remain unmeasurable and are not counted as passes.
+- All prior 632 cycle geometries still pass. All 506 original complete inspection models
+  remain unchanged. All 154 earlier PNGs are pixel-identical to PPTX.33, and their font sets
+  remain unchanged and native-matching. Earlier matrices retain 83/132, 73/111, 82/129
+  (29 exclusions), 155/186 (12 exclusions), 176/176, 207/216 (nine exclusions), 93/94
+  (one exclusion), and 73/73 overflow matches, with no lost matched case.
+- Three new unit tests and one editable round-trip test cover independent native positions,
+  centre/leaf/container rotation, text-measurement validation, occupied frames and actual
+  short/long imported labels. All 163 layout/library tests and 22 diagram preservation
+  tests pass. Full `cargo xtask ci` passes all eight stages and 2,474 tests including doctests.
+
+Geometry agreement does not certify the nested text: some native nested controls are blank
+where direct rendering retains a label. The font/margin corpus retains long-label clipping
+and line-layout differences despite matching shape bounds and font-size sets. The previous
+18 visible raster failures and four unmeasurable cases in the original 506-control corpus
+remain explicit; these are not resolved by unchanged model geometry. Full search/fallback,
+nested text ownership, duplicate definitions, descendant defaults, hierarchy/snake and finite
+nested-flow precision, geographic provider context/boundary simplification, and rich-label
+overflow/collision remain open. This does not establish complete LibreOffice replacement.

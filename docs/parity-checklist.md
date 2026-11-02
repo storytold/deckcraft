@@ -1,5 +1,7 @@
 # PowerPoint feature checklist
 
+> **PPTX.34 update 2026-11-02:** Cycle leaves follow path rotation after their own shape fitting; measured text overflow selects radius refitting, and nested containers use occupied extents. Five original matrices improve from 47 to 144 strict geometry matches, with 36 native-blank cases excluded. All 632 prior cycle controls and 154 pixel-identical regression renders are retained. Nested text visibility, long-label clipping and broader SmartArt/map/label gaps remain open; parity scores are unchanged.
+
 > **PPTX.33 update 2026-11-02:** Coupled cycle fitting retains successful radius trials, fits continuous arc capacity and distinguishes mapped text from empty labels. All 506 original full/partial/reversed/shrinking controls now match native geometry within 0.025pt (previously 124); all 126 additional empty-text/mapping/whitespace controls pass. Raster validation remains separate: 484/506 pass visible bounds, with 18 failures and four unmeasurable cases retained. Other SmartArt, geographic and rich-label gaps remain open; scores are unchanged.
 
 > **PPTX.32 update 2026-11-02:** Non-shrinking full circles use measured finite radius fitting; degenerate circles use occupied-node bounds instead of an inscribed-circle cap. The new 136-case matrix improves from 9 to 46 strict matches, with maximum error falling from 49.49pt to 0.406pt. An independent full-circle matrix improves from 1/60 to 34/60. Partial-arc and coupled-shrink behavior remain incomplete. Scores are unchanged.
@@ -296,6 +298,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.34: measured cycle overflow, leaf path rotation and occupied-container packing; 144 strict matches, 36 blank-native exclusions, text visibility/clipping still partial |
 | 2026-11-02 | minor | PPTX.33 fits coupled cycle size/radius search and mapped-text refitting; 632 strict native matches, original raster failures explicit, no complete-converter-parity claim |
 | 2026-11-02 | minor | PPTX.32 corrects non-shrinking full-circle radius fitting; 256 new native controls retain explicit partial-arc/shrinking failures, with no previously matched case lost |
 | 2026-11-02 | minor | PPTX.31 separates flow capacity from allocation and reflows fitted linear children; 83/132 strict native matches, 131/132 visible-bound matches, residual precision/occlusion explicit |

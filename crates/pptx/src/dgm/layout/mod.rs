@@ -25,6 +25,8 @@ pub(crate) struct Placed<'a> {
     /// Colour-list position in layout order, before connectors move behind nodes.
     pub color_index: usize,
     pub rect: Xfrm,
+    /// Cycle path rotation is applied after the shape fits its allocation.
+    pub path_rotation: f64,
     /// A mapped text algorithm can own a different rectangle from its composite shape.
     pub text_rect: Option<Xfrm>,
     pub text_source: Option<usize>,

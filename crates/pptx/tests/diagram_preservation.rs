@@ -968,3 +968,46 @@ fn inverted_endpoints_keep_positive_editable_geometry_through_roundtrip() {
         deckcraft_engine::render::render_slide(&back, 0, &Default::default()).pixels
     );
 }
+
+#[test]
+fn measured_cycle_text_refitting_survives_editable_round_trip() {
+    let layout = r#"<dgm:layoutDef xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" uniqueId="urn:deckcraft:test:cycle-refit" minVer="12.0">
+      <dgm:title val="Original cycle measurement"/><dgm:desc val="Mapped labels and geometry"/><dgm:catLst><dgm:cat type="cycle" pri="99"/></dgm:catLst>
+      <dgm:layoutNode name="ring"><dgm:alg type="cycle"/><dgm:presOf/><dgm:shape type="none"/>
+      <dgm:constrLst><dgm:constr type="w" for="ch" forName="card" val="25"/><dgm:constr type="h" for="ch" forName="card" val="25"/></dgm:constrLst>
+      <dgm:forEach axis="ch" ptType="node"><dgm:layoutNode name="card"><dgm:alg type="tx"/><dgm:presOf axis="self"/><dgm:shape type="rect"/>
+      <dgm:constrLst><dgm:constr type="primFontSz" val="8"/></dgm:constrLst></dgm:layoutNode></dgm:forEach></dgm:layoutNode></dgm:layoutDef>"#;
+    let mut radii = Vec::new();
+    for label in ["OK".to_string(), "Long unbreakableLongWord ".repeat(16)] {
+        let mut parts = files(&uncached_fixture());
+        for (_, bytes) in &mut parts {
+            let Ok(doc) = parse_xml(bytes) else { continue };
+            if doc.root.is("layoutDef") {
+                *bytes = layout.as_bytes().to_vec();
+            } else if doc.root.is("dataModel") {
+                *bytes = String::from_utf8(bytes.clone())
+                    .unwrap()
+                    .replace("Research", &label)
+                    .replace("Build", &label)
+                    .replace("Deliver", &label)
+                    .into_bytes();
+            }
+        }
+        let p = deckcraft_pptx::import(&zip(parts)).unwrap();
+        let shapes = group(&p).children();
+        assert_eq!(shapes.len(), 3);
+        let a = shapes[0].xfrm.unwrap();
+        let b = shapes[1].xfrm.unwrap();
+        radii.push((a.x - b.x).hypot(a.y - b.y) / 3_f64.sqrt());
+        let saved = deckcraft_pptx::export(&p).unwrap();
+        let reopened = deckcraft_pptx::import(&saved).unwrap();
+        let restored = group(&reopened).children();
+        assert_eq!(restored.len(), shapes.len());
+        for (original, again) in shapes.iter().zip(restored) {
+            assert_eq!(original.text.as_ref().unwrap().text(), again.text.as_ref().unwrap().text());
+            let (a, b) = (original.xfrm.unwrap(), again.xfrm.unwrap());
+            assert!((a.x - b.x).abs() < 0.01 && (a.y - b.y).abs() < 0.01 && (a.w - b.w).abs() < 0.01 && (a.h - b.h).abs() < 0.01);
+        }
+    }
+    assert!((radii[1] / radii[0] - 1023. / 1024.).abs() < 1e-5);
+}

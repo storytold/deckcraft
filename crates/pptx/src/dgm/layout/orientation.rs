@@ -96,6 +96,9 @@ pub(super) fn apply(out: &mut [Placed<'_>], work: &mut usize) -> Result<(), &'st
     let mut text = HashMap::new();
     for p in out.iter_mut().filter(|p| !p.connector) {
         p.rect = inscribed(p.rect);
+        if p.path_rotation != 0. {
+            p.rect.rot = (p.rect.rot + p.path_rotation).rem_euclid(360.);
+        }
         if p.text_enabled && p.text_source.is_none() {
             *work = work.saturating_add(p.shape.and_then(|s| s.child("adjLst")).map_or(0, |l| l.children_named("adj").take(64).count()));
             if *work > MAX_WORK {

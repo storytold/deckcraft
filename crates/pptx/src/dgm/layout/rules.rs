@@ -189,6 +189,7 @@ fn placed<'a>(
     frame: Xfrm,
     data: &Data<'a>,
     changes: &constraints::Adjustments,
+    measure: &mut Measure<'_>,
     work: &mut usize,
 ) -> Result<Vec<Placed<'a>>, &'static str> {
     let mut solution = constraints::resolve_adjusted(tree, frame, data, work, changes)?;
@@ -200,9 +201,60 @@ fn placed<'a>(
         style.secondary_font = style.secondary_font.map(f64::round);
     }
     let mut out = Vec::new();
-    geometry::place_solved(tree, frame, data, &mut out, 0, &solution, work)?;
+    let empty = HashSet::new();
+    geometry::place_solved(tree, frame, data, &mut out, 0, &solution, Some(&empty), work)?;
     geometry::connect(&mut out, data);
+    if contains_cycle(tree, work)? {
+        charge(work, out.len())?;
+        let values = measure(&out, true)?;
+        if values.len() != out.len() || values.iter().any(|v| !v.is_finite() || *v < 0.) {
+            return Err("invalid diagram text measurement");
+        }
+        let overflowing: HashSet<_> = out.iter().zip(values).filter(|(_, v)| *v > 1e-6).map(|(p, _)| p.text_source.unwrap_or(p.node_key)).collect();
+        let mut refits = HashSet::new();
+        collect_cycle_refits(tree, data, &overflowing, &mut refits, 0, work)?;
+        if !refits.is_empty() {
+            out.clear();
+            geometry::place_solved(tree, frame, data, &mut out, 0, &solution, Some(&refits), work)?;
+            geometry::connect(&mut out, data);
+        }
+    }
     Ok(out)
+}
+
+fn contains_cycle(node: &Instance<'_>, work: &mut usize) -> Result<bool, &'static str> {
+    charge(work, 1)?;
+    if node.alg == "cycle" {
+        return Ok(true);
+    }
+    for child in &node.children {
+        if contains_cycle(child, work)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn collect_cycle_refits(
+    node: &Instance<'_>,
+    data: &Data<'_>,
+    overflowing: &HashSet<usize>,
+    refits: &mut HashSet<usize>,
+    depth: usize,
+    work: &mut usize,
+) -> Result<bool, &'static str> {
+    charge(work, 1)?;
+    if depth > 64 {
+        return Err("diagram layout depth exceeded");
+    }
+    let mut needs_fit = node.alg == "tx" && overflowing.contains(&constraints::id(node)) && geometry::cycle_has_text(node, data, depth, work)?;
+    for child in &node.children {
+        needs_fit |= collect_cycle_refits(child, data, overflowing, refits, depth + 1, work)?;
+    }
+    if node.alg == "cycle" && needs_fit {
+        refits.insert(constraints::id(node));
+    }
+    Ok(needs_fit)
 }
 /// An infeasible trial is a rejected candidate, not a failure of the whole diagram. Never
 /// swallow malformed-input, measurement or resource-budget errors while searching.
@@ -211,9 +263,10 @@ fn trial<'a>(
     frame: Xfrm,
     data: &Data<'a>,
     changes: &constraints::Adjustments,
+    measure: &mut Measure<'_>,
     work: &mut usize,
 ) -> Result<Option<Vec<Placed<'a>>>, &'static str> {
-    match placed(tree, frame, data, changes, work) {
+    match placed(tree, frame, data, changes, measure, work) {
         Ok(out) => Ok(Some(out)),
         Err("inconsistent diagram constraints" | "inconsistent diagram bounds" | "negative diagram extent" | "inconsistent diagram extent signs") => {
             Ok(None)
@@ -354,7 +407,7 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
     let mut changes = constraints::Adjustments::new();
     let mut grown = Vec::new();
     let mut font_changed = HashSet::new();
-    let mut out = placed(tree, frame, data, &changes, &mut work)?;
+    let mut out = placed(tree, frame, data, &changes, measure, &mut work)?;
     for control in &controls {
         let scope = control_scope(&entries, data, control, &mut work)?;
         let prefer_words = matches!(control.property.as_str(), "primFontSz" | "secFontSz");
@@ -369,7 +422,7 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
         let selected = choose(prefer_words, |t| {
             let value = start + (limit - start) * t;
             range.set_value(&mut changes, value);
-            let Some(candidate) = trial(tree, frame, data, &changes, &mut work)? else { return Ok(None) };
+            let Some(candidate) = trial(tree, frame, data, &changes, measure, &mut work)? else { return Ok(None) };
             let score = score(&candidate, &scope, measure, prefer_words, &mut work)?;
             Ok(Some(Choice { out: candidate, score, t, low: 0. }))
         })?;
@@ -402,7 +455,7 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
             let t = (low + high) / 2.0;
             let value = start + (limit - start) * t;
             range.set_value(&mut changes, value);
-            let candidate = trial(tree, frame, data, &changes, &mut work)?;
+            let candidate = trial(tree, frame, data, &changes, measure, &mut work)?;
             if let Some(candidate) = candidate
                 && score(&candidate, &scope, measure, prefer_words, &mut work)? <= 1e-6
             {
@@ -435,7 +488,7 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
             let t = (low + high) / 2.0;
             let value = start + (limit - start) * t;
             range.set_value(&mut changes, value);
-            let candidate = trial(tree, frame, data, &changes, &mut work)?;
+            let candidate = trial(tree, frame, data, &changes, measure, &mut work)?;
             if let Some(candidate) = candidate
                 && score(&candidate, &scope, measure, true, &mut work)? <= 1e-6
             {
@@ -452,5 +505,5 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
         range.set_value(&mut changes, best);
     }
     coupled::search(tree, frame, data, &entries, &controls, measure, &mut changes, &mut out, &mut work)?;
-    placed(tree, frame, data, &changes, &mut work)
+    placed(tree, frame, data, &changes, measure, &mut work)
 }

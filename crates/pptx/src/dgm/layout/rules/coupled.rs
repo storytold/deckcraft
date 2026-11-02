@@ -83,7 +83,7 @@ pub(super) fn search<'a>(
             for &i in &group {
                 ranges[i].set(changes, t);
             }
-            let Some(candidate) = trial(tree, frame, data, changes, work)? else { return Ok(None) };
+            let Some(candidate) = trial(tree, frame, data, changes, measure, work)? else { return Ok(None) };
             // Simultaneous reference-factor changes can alter one another's absolute max.
             if group.iter().any(|&i| ranges[i].maximum.is_some()) {
                 let solution = constraints::resolve_adjusted(tree, frame, data, work, changes)?;
