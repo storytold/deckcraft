@@ -768,7 +768,9 @@ pub fn text_body(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, tb: &TextBody, 
 }
 
 fn run_text(w: &mut W, x: &mut Exp, o: &mut Out, text: &str, props: &RunProps) {
-    for (i, piece) in text.split(['\n', '\u{b}']).enumerate() {
+    // Literal LF and a:br have different paragraph-spacing/list semantics.
+    // Only the vertical-tab soft break is represented by a:br.
+    for (i, piece) in text.split('\u{b}').enumerate() {
         if i > 0 {
             w.open0("a:br");
             rpr(w, x, o, "a:rPr", props);

@@ -1,5 +1,7 @@
 # DeckCraft roadmap
 
+> **PPTX.41 update 2026-11-02:** Same-direction centered snake packing and literal-linefeed semantics raise the retained geometry matrix to 458/491, with no prior match lost. Heavy map reduction matches 3,168 independent ring observations; rotated/manual column-label line counts improve on retained and new controls. Exact-boundary arithmetic, reverse/fit layouts, map viewport policy and chart placement remain partial; feature scores are unchanged.
+
 > **PPTX.40 update 2026-11-02:** Constrained snake packing reaches 433/491 native geometry matches. Recovered SmartArt uses distinct fine advance and typographic line metrics: all 326 retained font sets and 274 new font/line controls match. Map sampling passes 640 independent vertex controls, while supported rich-column labels reach 72/73 visible line-count matches. Centered layouts, heavier map simplification, rotated/manual labels and broader search remain partial; feature scores are unchanged.
 
 > **PPTX.39 update 2026-11-02:** Explicit zero font equalities are inactive before SmartArt dependency, duplicate and rule evaluation. All 104 new native font controls match; the existing recovery matrix improves from 321 to 322 of 326 font-size sets with no prior match lost. All 277 recovery and 632 earlier cycle geometries remain within 0.025pt. Four recovery font-fit differences and broader SmartArt, geography and rich-label limits remain open; scores are unchanged.
@@ -188,6 +190,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-02 | PPTX.41: native centered rows, authored LF semantics, regional map reduction and rotated/manual column-label layout; known geometric and visual limits retained |
+| 2026-11-02 | PPTX.40: constrained snake packing, recovered text metrics, initial geographic sampling and automatic rich-label overflow |
 | 2026-11-02 | PPTX.38: match native legacy kerning, quantized advances and wrap boundaries; retain explicit SmartArt font-fit limits |
 | 2026-11-02 | PPTX.39: preserve default/prior fonts for explicit zero equalities without creating missing-source or duplicate dependencies |
 | 2026-11-02 | PPTX.37: recover invalid SmartArt font graphs as editable cards; bounded fitting, native geometry validation and retained text limitations |
@@ -398,6 +402,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.41: centered snake state, literal LF paragraph semantics, heavy map sampling and rotated/manual rich labels; bounded evidence and residuals retained |
 | 2026-11-02 | minor | PPTX.40: constrained snake packing, separate recovered-text metrics, native map sampling and rich-column overflow; partial bounds and visual results remain explicit |
 | 2026-11-02 | minor | PPTX.38: native static-font metrics and wrap boundaries; 321/326 recovery font matches, 58 improved text-position comparisons, remaining fit limits explicit |
 | 2026-11-02 | minor | PPTX.37: bounded font-graph recovery with editable data retention; 277 native geometry matches, 308/326 font matches, and explicit remaining text differences |

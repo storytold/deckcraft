@@ -31,6 +31,7 @@ pub(crate) fn shape_para(
             lead_face: face.clone(),
             end_size: 18.0,
             end_face: face,
+            literal_end: false,
             bullet: None,
             level: 0,
             rtl: false,
@@ -115,7 +116,7 @@ pub(crate) fn shape_para(
         }
         _ => None,
     };
-    ParaShaped { cells, styles, faces, props, lead_size, lead_face, end_size, end_face, bullet, level: para.level, rtl }
+    ParaShaped { cells, styles, faces, props, lead_size, lead_face, end_size, end_face, literal_end: false, bullet, level: para.level, rtl }
 }
 
 /// A face that draws the bullet `label` when the bullet's own can't (circled numbers ①, arrows

@@ -261,7 +261,7 @@ fn literal_column_labels_wrap_at_chart_width_and_respect_no_wrap_and_manual_widt
             DataLabel {
                 text: Some(body),
                 position: Some("ctr".into()),
-                layout: manual.then_some(ChartLayout { w: Some(0.4), ..Default::default() }),
+                layout: manual.then_some(ChartLayout { w: Some(0.4), h: Some(0.5), ..Default::default() }),
                 ..Default::default()
             },
         );

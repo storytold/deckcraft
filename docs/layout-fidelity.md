@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.40): constrained snake packing, recovered-text metrics,
-initial map sampling and bounded rich-column overflow.
+Updated 2026-11-02 (PPTX.41): centered snake packing, literal linefeed semantics,
+heavy map sampling and rotated/manual rich-column labels.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -2039,3 +2039,83 @@ The final integrated build passes all eight local `cargo xtask ci` stages (2,551
 tests including doctests). Its 133 retained label-page renders and eight 4K map
 images are identical to the independently validated branch outputs. These checks
 verify integration; they do not turn the known native differences into passes.
+
+
+## PPTX.41 — centered packing, paragraph identity and rotated labels
+
+Same-direction centered snake rows carry two pending centering updates instead of
+independently centering against a single maximum row. A wider row absorbs pending
+offsets before their propagation; the final group centers its actual occupied bounds.
+This uses constant additional state within the existing bounded layout budget. The
+source matrix improves from 433 to 457 of 491 strict geometry matches before the
+shared text change, with no lost matches. All 217 full-size same-direction controls
+match, including a separate 24-case holdout. A separate 48-case size/fit set has 31
+matches, retaining 17 failures; a fit-only behavior is not inferred from the passing
+unscaled cases. Reverse-centered and nested-linear fit behavior remain open.
+
+Literal LF inside DrawingML run text restarts paragraph formatting, unlike `a:br`
+and vertical-tab soft breaks. The importer and exporter now preserve this distinction.
+Layout temporarily expands those segments for spacing, first-line indents, bullets
+and numbering, then maps line, glyph, decoration, caret and grapheme indices back to
+the authored paragraph. Expansion is capped at the importer's paragraph budget; over-budget text retains
+the ordinary line-break path and its source. The stored text and paragraph count
+are not modified. A styled
+literal separator contributes to its preceding line's metrics, including nonempty
+lines; an ordinary end-paragraph mark retains its existing semantics. The shared
+fix closes one more retained snake case, bringing the integrated matrix to 458/491.
+
+A separate 72-case original LF/soft-break/paragraph matrix improves from 64 to 72
+strict geometry matches. All 51 ordinary text controls retain their visible line
+counts; relative raster line-pitch matches within 0.5pt improve from 36 to 50. An
+existing empty soft-break case remains at 0.75pt. Twelve new mixed-separator, empty,
+trailing, split-run, numbering and RTL controls retain eleven matches within 0.5pt;
+the remaining mixed-size separator improves from 13.25pt to 1pt relative pitch error.
+It remains a failure at the stated tolerance. Native PDF text extraction omits some
+visible repeated glyphs, so these checks use rendered ink rather than treating text
+extraction as visual truth. Exact mixed-size baseline precision remains open.
+
+Maps add a second, regional complexity stage above 1,000 surviving nonclosing
+vertices after initial sampling. Collapsed single-point rings do not consume the
+budget; two-point lines do. Sampling retains the first edge, applies axis distances,
+and reduces near-collinear runs with two deferred area checks. Reversal cusps and
+closing edges survive. Scans and buffers remain bounded by the existing point count;
+curved paths retain the prior fallback. No geographical dataset is included.
+
+The compiled Rust reducer matches all 3,168 ring observations across eight new
+projection/size conditions: 96 new shapes plus 300 budget rings per condition,
+Robinson/Mercator/Miller/regional Albers at full and half sizes. An affine fit to
+native initial vertices isolates reduction semantics; it does not prove viewport
+identity. Sixteen end-to-end 4K blue-region comparisons have no IoU regressions;
+the retained country example improves from 95.82% to 97.32%. New global controls
+remain at 79.60–83.05%, with regional Albers at 96.70–98.18%. Seventeen earlier exact
+distance/area boundary cases remain failed, separately listed rather than hidden by
+an epsilon or input-specific rule. Four LibreOffice map exports still produce
+unsupported-chart placeholders and remain visual failures.
+
+Literal column-label layout now computes the maximum-area text budget before
+rotation, rotates background and text together, and places the rotated outer bounds
+with the observed fixed endpoint gap. Tested manual factor dimensions are fixed before
+rotation: a missing or zero partner makes the label empty, while small positive boxes
+retain fill and vertically clipped text. Explicit overflow and the literal body's own
+anchor are retained. Eight independent anchor controls confirm that a literal
+replacement does not inherit label/chart `txPr` anchoring. Unsupported angle/edge
+combinations keep their prior fallback rather than borrowing an unverified formula.
+
+In 133 retained label pages, visible line-band matches improve from 112 to 125 with
+no prior match lost. In 242 new pages, 229 match; the remaining cases include unusual
+raw angles, edge-mode dimensions and very thin clipping. Median red-ink bounding-box
+RMS errors improve from 108.44 to 5.74pt in the primary rotation set, 261.63 to 4.98pt
+in its independent rotation set, 106.99 to 5.78pt in manual controls, and 317.33 to
+3.92pt in independent wrapping controls. Two individual bounding-box errors regress
+slightly (3.767→3.913pt and 6.856→7.594pt); they remain recorded, even though line
+counts match. Chart plot offsets, exact marker widths and broader chart kinds are
+not declared solved by these improvements.
+
+Only original programmatic tests, source and documentation are included. Native
+observations, provider data and private decks remain outside the commit. This arc
+improves supported conversion and does not establish complete LibreOffice replacement.
+
+All eight final local `cargo xtask ci` stages pass (2,570 tests including doctests).
+The final executable reproduces all 375 retained/new label renders, sixteen 4K map
+images and 75 LF/text-page renders from the validated results. These are integration
+checks, not additional claims of native pixel identity.

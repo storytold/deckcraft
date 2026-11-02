@@ -102,6 +102,9 @@ pub(crate) struct ParaShaped {
     /// Size of the paragraph mark (`a:endParaRPr`): what an empty last line is sized by.
     pub(crate) end_size: f64,
     pub(crate) end_face: Arc<FontFace>,
+    /// A literal LF is styled text: unlike endParaRPr it contributes to the
+    /// preceding final line even when that line is nonempty.
+    pub(crate) literal_end: bool,
     pub(crate) bullet: Option<(String, Style)>,
     #[allow(dead_code)]
     pub(crate) level: u8,

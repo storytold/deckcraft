@@ -253,6 +253,7 @@ pub(crate) fn point_data_label(
     let (align, anchor) = (style.align, style.anchor);
     let automatic = label_body(text, style, &default_props);
     let mut body = spec.text.clone().unwrap_or_else(|| automatic.clone());
+    let literal_anchor = body.body.anchor;
     if let Some(explicit) = text_style {
         body.body.inherit(&explicit.body);
     }
@@ -285,6 +286,16 @@ pub(crate) fn point_data_label(
         for run in &mut p.runs {
             run.props.inherit(&p.def_props);
         }
+    }
+    if literal_column
+        && matches!(body.body.vert, None | Some(deckcraft_model::text::TextDir::Horizontal))
+        && matches!(spec.position.as_deref(), None | Some("ctr" | "inBase" | "inEnd" | "outEnd"))
+        && let Some(bounds) = label_layout::bounds(frame, body.body.rot.unwrap_or(0.), spec.layout.as_ref())
+    {
+        body.body.anchor = Some(literal_anchor.unwrap_or(Anchor::Middle));
+        let negative = series.values.get(index).copied().flatten().is_some_and(|v| v < 0.);
+        column_rich_label(ctx, rctx, m, body, &spec, bounds, mark, frame, negative);
+        return;
     }
     // Measure the complete body, not each run separately: soft breaks, bidi joining,
     // superscripts, mixed fonts and paragraph spacing all affect the label's bounds.
@@ -381,6 +392,79 @@ pub(crate) fn point_data_label(
     if automatic_column {
         ctx.pop_layer();
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn column_rich_label(
+    ctx: &mut RenderContext,
+    rctx: &Ctx,
+    m: Affine,
+    mut body: TextBody,
+    spec: &deckcraft_model::chart::DataLabel,
+    bounds: label_layout::Bounds,
+    mark: Rect,
+    frame: (f64, f64),
+    negative: bool,
+) {
+    if bounds.width <= 0. || bounds.height <= 0. {
+        return;
+    }
+    let angle = body.body.rot.take().unwrap_or(0.);
+    // Chart dimensions describe the box before rotation, including quarter turns.
+    // Slide text's quarter-turn dimension swap must not be applied a second time.
+    body.body.rot = Some(0.);
+    let wrap_width = if body.body.wrap == Some(true) { bounds.width } else { 1e6 };
+    let measured = label_layout::measure(rctx, &body, wrap_width, true);
+    let (measured, marker_base) = label_layout::overflow(rctx, &mut body, wrap_width, bounds.height, measured);
+    let overflow = body.body.vertical_overflow == Some(deckcraft_model::text::TextOverflow::Overflow);
+    let text_h = (measured.content_height + body.body.inset_t.unwrap_or(0.) + body.body.inset_b.unwrap_or(0.)).max(1.);
+    let text_w = (measured.content_width + body.body.inset_l.unwrap_or(0.) + body.body.inset_r.unwrap_or(0.)).clamp(1., wrap_width.max(1.));
+    let (w, h) = if bounds.fixed { (bounds.width, bounds.height) } else { (text_w, text_h) };
+    let mut r = label_layout::position((w, h), angle, mark, spec.position.as_deref(), negative, frame, spec.layout.as_ref(), bounds.fixed);
+    if !bounds.fixed && overflow {
+        // Overflow keeps the full rotated box. Position its leading corner using the
+        // capped outer bounds, then let the content extend toward the trailing edges.
+        let outer = label_layout::rotated_extent(w, h, angle);
+        let cap = (outer.0.min(frame.0 / 5.), outer.1.min(frame.1 / 2.));
+        let bounded = label_layout::position(cap, 0., mark, spec.position.as_deref(), negative, frame, spec.layout.as_ref(), false);
+        let center = Point::new(bounded.x0 + outer.0 / 2., bounded.y0 + outer.1 / 2.);
+        r = Rect::new(center.x - w / 2., center.y - h / 2., center.x + w / 2., center.y + h / 2.);
+    }
+    let center = r.center().to_vec2();
+    let transform = m * Affine::translate(center) * Affine::rotate(angle.to_radians()) * Affine::translate(-center);
+    ctx.set_transform(m);
+    ctx.push_clip_layer(&Rect::new(0., 0., frame.0, frame.1).to_path(0.1));
+    if let Some(fill) = &spec.fill {
+        crate::paint::fill_path(ctx, rctx, fill, None, &r.to_path(0.1), r, transform, deckcraft_geom::preset::FillMode::Norm, 1.0, rctx.pres);
+    }
+    if let Some(line) = &spec.line {
+        chart_stroke(ctx, rctx, transform, &r.to_path(0.1), Some(line), Rgba::BLACK);
+    }
+    if bounds.fixed && !overflow {
+        // Vertical clipping does not suppress horizontal glyph overflow in a narrow
+        // manual box. The outer chart clip bounds this strip even after rotation.
+        let reach = frame.0 + frame.1 + w;
+        ctx.set_transform(transform);
+        ctx.push_clip_layer(&Rect::new(r.x0 - reach, r.y0, r.x1 + reach, r.y1).to_path(0.1));
+    }
+    let mut text_rect = r;
+    if bounds.fixed && overflow && text_h > h {
+        // Overflow anchors the full text, including a negative top offset for center
+        // and bottom anchors. Ordinary slide layout clamps that offset to zero.
+        let extra = text_h - h;
+        let offset = match body.body.anchor {
+            Some(Anchor::Middle) => extra / 2.,
+            Some(Anchor::Bottom) => extra,
+            _ => 0.,
+        };
+        text_rect = Rect::new(r.x0, r.y0 - offset, r.x1, r.y0 - offset + text_h);
+    }
+    let layout = label_layout::placed(rctx, &body, text_rect, marker_base.as_ref(), true);
+    crate::draw_layout(ctx, &layout, text_rect, transform);
+    if bounds.fixed && !overflow {
+        ctx.pop_layer();
+    }
+    ctx.pop_layer();
 }
 
 fn merged_chart_body(explicit: &deckcraft_model::text::BodyProps, automatic: &deckcraft_model::text::BodyProps) -> deckcraft_model::text::BodyProps {

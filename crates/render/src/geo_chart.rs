@@ -309,7 +309,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
                 copyrights.push(text.clone());
             }
         }
-        let path = simplify::basic(&(transform * path));
+        let path = simplify::reduce(&(transform * path));
         let value = region.point.and_then(|i| series.values.get(i)).copied().flatten().filter(|v| v.is_finite());
         let t = value.map(|v| if max > min { (v - min) / (max - min) } else { 0.5 });
         let fill = if matches!(series.fill, Some(deckcraft_model::Fill::Solid { .. })) {

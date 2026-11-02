@@ -1482,7 +1482,7 @@ fn runs_of(p: &Presentation, needle: &str) -> Vec<(RunKind, String)> {
 }
 
 #[test]
-fn literal_line_ends_in_run_text_read_as_breaks_and_survive_save() {
+fn literal_line_ends_retain_paragraph_identity_and_survive_save() {
     let mut p = defaults::new_presentation(None);
     let mut s = shape(&mut p, "Code", 10.0, 10.0, 400.0, 100.0);
     s.text = Some(TextBody::from_text("CRLFHERE"));
@@ -1490,15 +1490,25 @@ fn literal_line_ends_in_run_text_read_as_breaks_and_survive_save() {
     p.slide_mut(first).expect("slide").shapes.push(s);
     let bytes = patch_slides(deckcraft_pptx::export(&p).expect("export"), "CRLFHERE", "one\r\n   two\rthree");
     let a = deckcraft_pptx::import(&bytes).expect("import");
-    let want = vec![
-        (RunKind::Text, "one".to_string()),
-        (RunKind::Break, String::new()),
-        (RunKind::Text, "   two".to_string()),
-        (RunKind::Break, String::new()),
-        (RunKind::Text, "three".to_string()),
-    ];
+    let want = vec![(RunKind::Text, "one\n   two\nthree".to_string())];
     assert_eq!(runs_of(&a, "one"), want);
     assert_eq!(runs_of(&round(&a), "one"), want, "save and reopen keep the runs");
+}
+
+#[test]
+fn literal_linefeeds_and_soft_breaks_remain_distinct_on_roundtrip() {
+    let mut p = defaults::new_presentation(None);
+    let mut s = shape(&mut p, "Break semantics", 10., 10., 400., 100.);
+    let mut para = Paragraph::new("First\nSecond");
+    para.runs.push(Run { text: String::new(), props: RunProps::default(), kind: RunKind::Break });
+    para.runs.push(Run::new("Third"));
+    s.text = Some(TextBody { paragraphs: vec![para], ..Default::default() });
+    let first = p.slides[0].id;
+    p.slide_mut(first).unwrap().shapes.push(s);
+    let expected = vec![(RunKind::Text, "First\nSecond".into()), (RunKind::Break, String::new()), (RunKind::Text, "Third".into())];
+    let q = round(&p);
+    assert_eq!(runs_of(&q, "First"), expected);
+    assert_eq!(runs_of(&round(&q), "First"), expected);
 }
 
 #[test]

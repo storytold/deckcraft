@@ -50,6 +50,102 @@ fn bullets_are_drawn_for_body_text() {
     assert_eq!(l.para_lines.len(), 2);
 }
 
+#[test]
+fn literal_linefeeds_restart_paragraph_spacing_indents_and_numbering() {
+    for bullet in [Bullet::None, Bullet::Char { char: "-".into() }, Bullet::AutoNum { scheme: "arabicPeriod".into(), start_at: 1 }] {
+        let (p, mut sh) = setup("A\nB\nC", 500., 400.);
+        let body = sh.text.as_mut().unwrap();
+        body.body.autofit = Some(AutoFit::None);
+        for para in &mut body.paragraphs {
+            para.props.bullet = Some(bullet.clone());
+            para.props.margin_left = Some(24.);
+            para.props.indent = Some(-18.);
+            para.props.space_before = Some(Spacing::Pts(7.));
+            para.props.space_after = Some(Spacing::Pts(3.));
+            para.props.line_spacing = Some(Spacing::Pct(0.9));
+            para.runs[0].props.size = Some(24.);
+            para.runs[0].props.font = Some("Inter".into());
+            para.end_props = para.runs[0].props.clone();
+        }
+        let separate = lay(&p, &sh, 500., 400.);
+        let body = sh.text.as_mut().unwrap();
+        body.paragraphs.truncate(1);
+        body.paragraphs[0].runs[0].text = "A\nB\nC".into();
+        let before = body.clone();
+        let literal = lay(&p, &sh, 500., 400.);
+        assert_eq!(sh.text.as_ref().unwrap(), &before, "layout must not alter source identity or text");
+        assert_eq!(literal.para_lines, vec![(0, 3)]);
+        assert_eq!(literal.boundaries, vec![vec![true; 6]]);
+        assert!((literal.content_height - separate.content_height).abs() < 1e-8);
+        for (i, (a, b)) in literal.lines.iter().zip(&separate.lines).enumerate() {
+            assert_eq!((a.para, a.start, a.end), (0, i * 2, i * 2 + 1));
+            assert!((a.baseline - b.baseline).abs() < 1e-8);
+            assert_eq!(a.caret_x, b.caret_x);
+        }
+        for (a, b) in literal.runs.iter().zip(&separate.runs) {
+            assert_eq!(a.glyphs, b.glyphs, "including repeated bullets and advancing numbers");
+        }
+        let body = sh.text.as_mut().unwrap();
+        body.paragraphs[0].runs[0].text = "A\u{b}B\u{b}C".into();
+        let soft = lay(&p, &sh, 500., 400.);
+        assert!((literal.lines[1].baseline - soft.lines[1].baseline - 10.).abs() < 1e-7);
+    }
+}
+
+#[test]
+fn literal_linefeed_maps_empty_lines_and_unicode_editing_to_authored_paragraphs() {
+    let (p, mut sh) = setup("placeholder", 500., 500.);
+    let body = sh.text.as_mut().unwrap();
+    body.body.autofit = Some(AutoFit::None);
+    body.paragraphs = vec![Paragraph::new("\nA\n\nאבe\u{301}\n"), Paragraph::new("Z")];
+    for para in &mut body.paragraphs {
+        para.props.bullet = Some(Bullet::None);
+        para.def_props.size = Some(24.);
+        para.def_props.font = Some("Inter".into());
+    }
+    let l = lay(&p, &sh, 500., 500.);
+    assert_eq!(
+        l.lines.iter().map(|l| (l.para, l.start, l.end)).collect::<Vec<_>>(),
+        [(0, 0, 0), (0, 1, 2), (0, 3, 3), (0, 4, 8), (0, 9, 9), (1, 0, 1)]
+    );
+    assert_eq!(l.para_lines, [(0, 5), (5, 1)]);
+    assert_eq!(l.boundaries[0].len(), 10);
+    assert!(!l.boundaries[0][7], "the combining mark remains inside its grapheme");
+    assert_eq!(l.move_caret(Pos { para: 0, ch: 6 }, Affinity::Downstream, true, MoveMode::Logical).0, Pos { para: 0, ch: 8 });
+    let glyph_chars: Vec<_> = l.runs.iter().flat_map(|r| r.cells.iter().map(move |&(ch, c)| (r.para, ch, c))).collect();
+    assert!(glyph_chars.contains(&(0, 1, 'A')));
+    assert!(glyph_chars.contains(&(0, 4, 'א')));
+    assert!(glyph_chars.contains(&(1, 0, 'Z')));
+    for pos in [Pos { para: 0, ch: 1 }, Pos { para: 0, ch: 4 }, Pos { para: 0, ch: 9 }, Pos { para: 1, ch: 0 }] {
+        let (_, y0, y1) = l.caret(pos).unwrap();
+        assert!(y1 > y0);
+    }
+    assert_eq!(l.forced_line_breaks(sh.text.as_ref().unwrap()), 0);
+}
+
+#[test]
+fn styled_literal_separator_contributes_to_the_preceding_line() {
+    let (p, mut sh) = setup("", 500., 300.);
+    let body = sh.text.as_mut().unwrap();
+    body.body.autofit = Some(AutoFit::None);
+    let props = |size| super::RunProps { font: Some("Inter".into()), size: Some(size), ..Default::default() };
+    body.paragraphs = vec![Paragraph {
+        props: ParaProps { bullet: Some(Bullet::None), ..Default::default() },
+        runs: vec![Run::with("A", props(14.)), Run::with("\n", props(30.)), Run::with("B", props(14.))],
+        end_props: props(12.),
+        ..Default::default()
+    }];
+    let marked = lay(&p, &sh, 500., 300.);
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    para.runs[0].props = props(30.);
+    para.runs[1].props = props(14.);
+    let large_glyph = lay(&p, &sh, 500., 300.);
+    assert_eq!(marked.lines.len(), 2);
+    assert!((marked.lines[0].baseline - large_glyph.lines[0].baseline).abs() < 1e-8);
+    assert!((marked.content_height - large_glyph.content_height).abs() < 1e-8);
+    assert!(marked.runs.iter().all(|r| (r.size - 14.).abs() < 1e-8), "the separator adds height, never a visible glyph");
+}
+
 /// Glyph count and width of `text` laid out in one line of `family` at 40 pt, kern threshold `kern`.
 fn glyphs_and_width(family: &str, text: &str, kern: Option<f64>) -> (usize, f64) {
     let (p, mut sh) = setup(text, 2000.0, 300.0);

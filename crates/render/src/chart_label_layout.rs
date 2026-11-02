@@ -2,9 +2,108 @@
 //! truncation belongs to the presentation of a label, never to its stored text.
 use deckcraft_geom::Rect;
 use deckcraft_model::Shape;
+use deckcraft_model::chart::ChartLayout;
 use deckcraft_model::resolve::Ctx;
 use deckcraft_model::text::{Anchor, Paragraph, Run, RunKind, RunProps, TextBody, TextOverflow};
 use deckcraft_text::{LayoutMetrics, LineMetrics, NoFields, Opts, TextLayout};
+
+/// The text box before rotation. Manual dimensions are fixed; automatic dimensions
+/// are a wrapping/overflow budget and shrink to the retained text.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Bounds {
+    pub width: f64,
+    pub height: f64,
+    pub fixed: bool,
+}
+
+pub(super) fn bounds(frame: (f64, f64), angle: f64, manual: Option<&ChartLayout>) -> Option<Bounds> {
+    if !frame.0.is_finite() || !frame.1.is_finite() || frame.0 <= 0. || frame.1 <= 0. || frame.0 > 1e6 || frame.1 > 1e6 {
+        return None;
+    }
+    // Raw angles outside this range do not have periodic native sizing behavior.
+    // The two equivalent vertical quarter turns also have independent controls.
+    if !angle.is_finite() || (angle.abs() > 90. && angle.abs() != 270.) {
+        return None;
+    }
+    if let Some(l) = manual {
+        if l.w_edge
+            || l.h_edge
+            || [l.x, l.y, l.w, l.h].into_iter().flatten().any(|v| !v.is_finite() || v.abs() > 1.)
+            || l.w.is_some_and(|v| v < 0.)
+            || l.h.is_some_and(|v| v < 0.)
+            || ((l.x_edge || l.y_edge) && (l.x.is_none() || l.y.is_none()))
+            || (l.x_edge && l.x.is_some_and(|v| v < 0.))
+            || (l.y_edge && l.y.is_some_and(|v| v < 0.))
+        {
+            return None;
+        }
+        if l.w.is_some() || l.h.is_some() {
+            // Specifying either dimension switches off automatic sizing. An absent
+            // partner is zero, while a small positive dimension must remain visible.
+            return Some(Bounds { width: l.w.unwrap_or(0.) * frame.0, height: l.h.unwrap_or(0.) * frame.1, fixed: true });
+        }
+    }
+    let (a, b) = (frame.0 / 5., frame.1 / 2.);
+    let (s, c) = angle.to_radians().sin_cos();
+    let (s, c) = (s.abs(), c.abs());
+    let (width, height) = if s < 1e-12 {
+        (a, b)
+    } else if c < 1e-12 {
+        (b, a)
+    } else if a.min(b) <= 2. * s * c * a.max(b) + 1e-12 * (a + b) {
+        // The area optimum touches only the shorter pair of bounding edges.
+        if a >= b { (b / (2. * s), b / (2. * c)) } else { (a / (2. * c), a / (2. * s)) }
+    } else {
+        // Both constraints are active: c*w+s*h=a and s*w+c*h=b.
+        let d = c * c - s * s;
+        ((a * c - b * s) / d, (b * c - a * s) / d)
+    };
+    (width.is_finite() && height.is_finite() && width > 0. && height > 0.).then_some(Bounds { width, height, fixed: false })
+}
+
+pub(super) fn rotated_extent(width: f64, height: f64, angle: f64) -> (f64, f64) {
+    let (s, c) = angle.to_radians().sin_cos();
+    (width * c.abs() + height * s.abs(), width * s.abs() + height * c.abs())
+}
+
+/// Place the rotated bounds, keeping the text box in its unrotated coordinates.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn position(
+    size: (f64, f64),
+    angle: f64,
+    mark: Rect,
+    position: Option<&str>,
+    negative: bool,
+    frame: (f64, f64),
+    manual: Option<&ChartLayout>,
+    fixed: bool,
+) -> Rect {
+    let (w, h) = size;
+    let (outer_w, outer_h) = rotated_extent(w, h, angle);
+    let mut center = mark.center();
+    match position {
+        Some("ctr") => {}
+        Some("inBase" | "inEnd") => {
+            let end = position == Some("inEnd");
+            center.y = if end != negative { mark.y0 + 3. + outer_h / 2. } else { mark.y1 - 3. - outer_h / 2. };
+        }
+        _ => center.y = if negative { mark.y1 + 3. + outer_h / 2. } else { mark.y0 - 3. - outer_h / 2. },
+    }
+    if let Some(l) = manual
+        && let Some(x) = l.x
+    {
+        center.x = if l.x_edge { x * frame.0 + w / 2. } else { center.x + x * frame.0 };
+        // Native factor positioning is enabled by the x coordinate. Missing y
+        // means zero offset; a lone factor y retains the automatic position.
+        if let Some(y) = l.y {
+            center.y = if l.y_edge { y * frame.1 + h / 2. } else { center.y + y * frame.1 };
+        }
+    }
+    let (clip_w, clip_h) = if fixed { (w, h) } else { (outer_w, outer_h) };
+    center.x = (center.x - clip_w / 2.).clamp(0., (frame.0 - clip_w).max(0.)) + clip_w / 2.;
+    center.y = (center.y - clip_h / 2.).clamp(0., (frame.1 - clip_h).max(0.)) + clip_h / 2.;
+    Rect::new(center.x - w / 2., center.y - h / 2., center.x + w / 2., center.y + h / 2.)
+}
 
 fn metrics(typographic: bool) -> LayoutMetrics {
     LayoutMetrics { line: if typographic { LineMetrics::Typographic } else { LineMetrics::Slide }, ..Default::default() }
@@ -182,6 +281,96 @@ mod tests {
     use super::*;
     use deckcraft_model::text::{Align, Bullet};
     use deckcraft_model::{LayoutType, Presentation, defaults};
+
+    #[test]
+    fn rotated_budget_matches_independent_native_height_controls() {
+        let cases = [
+            ((800., 360.), 7., [11, 7]),
+            ((800., 360.), 22., [10, 6]),
+            ((800., 360.), 38., [8, 5]),
+            ((800., 360.), 53., [6, 4]),
+            ((800., 360.), 77., [8, 5]),
+            ((420., 600.), 7., [20, 13]),
+            ((420., 600.), 22., [7, 5]),
+            ((420., 600.), 38., [4, 2]),
+            ((420., 600.), 53., [3, 2]),
+            ((420., 600.), 77., [2, 1]),
+            ((1100., 260.), 7., [7, 4]),
+            ((1100., 260.), 22., [4, 3]),
+            ((1100., 260.), 38., [5, 3]),
+            ((1100., 260.), 53., [7, 4]),
+            ((1100., 260.), 77., [13, 9]),
+        ];
+        let p = document();
+        let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        for (frame, angle, counts) in cases {
+            let b = bounds(frame, angle, None).unwrap();
+            for (size, expected) in [12., 18.].into_iter().zip(counts) {
+                let mut body = rows(size);
+                let row = body.paragraphs[0].clone();
+                body.paragraphs.resize(60, row);
+                body.body.wrap = Some(false);
+                let measured = measure(&ctx, &body, 1e6, true);
+                let (result, _) = overflow(&ctx, &mut body, 1e6, b.height, measured);
+                assert_eq!(result.lines.len(), expected, "{frame:?} at {angle}, {size}pt");
+            }
+        }
+    }
+
+    #[test]
+    fn rotated_budget_is_bounded_at_axes_and_diagonals() {
+        for frame in [(800., 320.), (800., 600.), (600., 320.)] {
+            for angle in [0., 1e-10, 30., 44.9999999999, 45., 45.0000000001, 89.9999999999, 90., -90., 270.] {
+                let b = bounds(frame, angle, None).unwrap();
+                let outer = rotated_extent(b.width, b.height, angle);
+                assert!(b.width > 0. && b.height > 0. && b.width.is_finite() && b.height.is_finite());
+                assert!(outer.0 <= frame.0 / 5. + 1e-6 && outer.1 <= frame.1 / 2. + 1e-6, "{frame:?}, {angle}: {outer:?}");
+            }
+        }
+        for frame in [(0., 400.), (-1., 400.), (f64::NAN, 400.), (1e9, 400.)] {
+            assert!(bounds(frame, 30., None).is_none());
+        }
+        for angle in [91., 180., 360., f64::NAN, f64::INFINITY] {
+            assert!(bounds((800., 400.), angle, None).is_none());
+        }
+    }
+
+    #[test]
+    fn manual_dimensions_do_not_rotate_or_invent_missing_extents() {
+        for angle in [0., 35., 90.] {
+            let l = ChartLayout { w: Some(0.15), h: Some(0.18), ..Default::default() };
+            let b = bounds((800., 360.), angle, Some(&l)).unwrap();
+            assert!(b.fixed);
+            assert!((b.width - 120.).abs() < 1e-6 && (b.height - 64.8).abs() < 1e-6);
+            let missing = ChartLayout { h: None, ..l };
+            assert_eq!(bounds((800., 360.), angle, Some(&missing)).unwrap().height, 0.);
+        }
+        let tiny = ChartLayout { w: Some(0.001), h: Some(0.001), ..Default::default() };
+        let b = bounds((800., 360.), 0., Some(&tiny)).unwrap();
+        assert_eq!((b.width, b.height), (0.8, 0.36));
+        let invalid = ChartLayout { w: Some(f64::NAN), ..Default::default() };
+        assert!(bounds((800., 360.), 0., Some(&invalid)).is_none());
+    }
+
+    #[test]
+    fn positions_use_rotated_edges_and_fixed_three_point_gap() {
+        let mark = Rect::new(200., 150., 400., 350.);
+        for angle in [0., 37., 90.] {
+            let size = (90., 30.);
+            let outer = rotated_extent(size.0, size.1, angle);
+            for negative in [false, true] {
+                let inside = position(size, angle, mark, Some("inEnd"), negative, (800., 500.), None, false);
+                let outside = position(size, angle, mark, Some("outEnd"), negative, (800., 500.), None, false);
+                if negative {
+                    assert!((mark.y1 - inside.center().y - outer.1 / 2. - 3.).abs() < 1e-6);
+                    assert!((outside.center().y - outer.1 / 2. - mark.y1 - 3.).abs() < 1e-6);
+                } else {
+                    assert!((inside.center().y - outer.1 / 2. - mark.y0 - 3.).abs() < 1e-6);
+                    assert!((mark.y0 - outside.center().y - outer.1 / 2. - 3.).abs() < 1e-6);
+                }
+            }
+        }
+    }
 
     fn document() -> Presentation {
         let mut p = defaults::new_presentation(None);

@@ -630,10 +630,10 @@ fn run_props(imp: &mut Imp, part: &Part, e: &El) -> RunProps {
     e.child("rPr").map(|r| rpr(imp, part, r)).unwrap_or_default()
 }
 
-/// Appends the runs of an `a:r` text, where a vertical tab or line feed is a line break, as it
-/// lays out and as export writes it.
+/// A vertical tab is a soft break. A literal linefeed restarts paragraph formatting
+/// when laid out, but must retain its authored paragraph identity and source text.
 fn push_text_runs(para: &mut Paragraph, props: RunProps, text: &str) {
-    for (i, piece) in text.split(['\u{b}', '\n']).enumerate() {
+    for (i, piece) in text.split('\u{b}').enumerate() {
         if para.runs.len() >= MAX_PARAGRAPH_RUNS {
             break;
         }

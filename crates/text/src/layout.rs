@@ -26,6 +26,16 @@ pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLay
 /// Lay out text with an explicit measurement policy. Ordinary slide rendering keeps
 /// its established metrics; chart/diagram callers can select their native policies.
 pub fn layout_with_metrics(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts, metrics: LayoutMetrics) -> TextLayout {
+    if let Some(expanded) = super::paragraphs::Expanded::new(body) {
+        let mut result = layout_body(ctx, shape, &expanded.body, opts, metrics, &expanded.literal_ends);
+        expanded.restore(&mut result);
+        result
+    } else {
+        layout_body(ctx, shape, body, opts, metrics, &[])
+    }
+}
+
+fn layout_body(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts, metrics: LayoutMetrics, literal_ends: &[bool]) -> TextLayout {
     let bp = resolve::body(ctx, shape);
     let autofit = bp.autofit.unwrap_or(AutoFit::None);
     // Shrink on overflow starts from the scale the file was saved with (`fontScale`,
@@ -38,7 +48,7 @@ pub fn layout_with_metrics(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opt
         ),
         _ => (1.0, 0.0, false),
     };
-    let mut l = layout_scaled_with_metrics(ctx, shape, body, &bp, opts, scale0, reduce0, metrics);
+    let mut l = layout_scaled_with_metrics(ctx, shape, body, &bp, opts, scale0, reduce0, metrics, literal_ends);
     // A scale PowerPoint saved is drawn as it is: PowerPoint fits the text again only when it
     // changes (and editing resets the saved scale), not when a file opens, even where our
     // metrics would call it overflowing (trailing empty paragraphs, substituted fonts).
@@ -53,7 +63,7 @@ pub fn layout_with_metrics(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opt
         // overflows too, so searching would only lay it out a dozen more times (seconds for a
         // body of tens of thousands of paragraphs, on every redraw of the slide).
         let floor = bp.min_autofit_scale.filter(|v| v.is_finite()).unwrap_or(0.1).clamp(0.1, 1.0);
-        let smallest = layout_scaled_with_metrics(ctx, shape, body, &bp, opts, floor, 0.2, metrics);
+        let smallest = layout_scaled_with_metrics(ctx, shape, body, &bp, opts, floor, 0.2, metrics, literal_ends);
         if smallest.overflow {
             return smallest;
         }
@@ -63,7 +73,7 @@ pub fn layout_with_metrics(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opt
         for _ in 0..12 {
             let mid = (lo + hi) / 2.0;
             let red: f64 = ((1.0 - mid) * 0.8_f64).min(0.2).max(reduce0);
-            let t = layout_scaled_with_metrics(ctx, shape, body, &bp, opts, mid, red, metrics);
+            let t = layout_scaled_with_metrics(ctx, shape, body, &bp, opts, mid, red, metrics, literal_ends);
             if t.overflow {
                 hi = mid;
             } else {
@@ -77,7 +87,7 @@ pub fn layout_with_metrics(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opt
             let (mut low, mut high) = (reduce0, best.line_reduction);
             for _ in 0..10 {
                 let mid = (low + high) / 2.0;
-                let candidate = layout_scaled_with_metrics(ctx, shape, body, &bp, opts, best.font_scale, mid, metrics);
+                let candidate = layout_scaled_with_metrics(ctx, shape, body, &bp, opts, best.font_scale, mid, metrics, literal_ends);
                 if candidate.overflow {
                     low = mid;
                 } else {
@@ -265,7 +275,7 @@ impl ParaEnv<'_> {
 
 #[cfg(test)]
 pub(crate) fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts: &Opts, scale: f64, reduce: f64) -> TextLayout {
-    layout_scaled_with_metrics(ctx, shape, body, bp, opts, scale, reduce, LayoutMetrics::default())
+    layout_scaled_with_metrics(ctx, shape, body, bp, opts, scale, reduce, LayoutMetrics::default(), &[])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -278,11 +288,15 @@ fn layout_scaled_with_metrics(
     scale: f64,
     reduce: f64,
     metrics: LayoutMetrics,
+    literal_ends: &[bool],
 ) -> TextLayout {
     #[cfg(test)]
     LAYOUT_PASSES.with(|n| n.set(n.get() + 1));
     let g = BoxGeom::new(shape, bp, opts.rect, metrics);
-    let shaped_paras = shape_paragraphs(ctx, shape, body, opts, scale, g.upright(), metrics.advance);
+    let mut shaped_paras = shape_paragraphs(ctx, shape, body, opts, scale, g.upright(), metrics.advance);
+    for (p, &literal_end) in shaped_paras.iter_mut().zip(literal_ends) {
+        p.literal_end = literal_end;
+    }
     let mut out = TextLayout { inner: g.inner, font_scale: scale, line_reduction: reduce, rotation: g.rotation, ..Default::default() };
     let first_last = bp.space_first_last.unwrap_or(false);
     let mut flow = Flow { y: 0.0, prev_after: 0.0, tail: 0.0, lines: vec![] };
@@ -405,6 +419,10 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
 /// Max ascent / descent / size over the line's styles (or the lead style if empty).
 fn line_extent(p: &ParaShaped, rl: &RawLine, metrics: LineMetrics) -> (f64, f64, f64) {
     let (mut asc, mut desc, mut size) = (0.0f64, 0.0f64, 0.0f64);
+    if p.literal_end && rl.end == p.cells.len() {
+        (asc, desc) = metric_line(&p.end_face, p.end_size, metrics);
+        size = p.end_size;
+    }
     for c in p.cells.get(rl.start..rl.end.max(rl.start)).unwrap_or(&[]) {
         if let (Some(st), Some(face)) = (p.styles.get(c.style), p.faces.get(c.face)) {
             let sz = st.size;

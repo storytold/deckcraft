@@ -28,6 +28,33 @@ struct Policy {
     gap: f64,
 }
 
+/// Same-direction rows carry their centering adjustment through the following
+/// line before it reaches the placement cursor. A newly wider line can absorb
+/// some of that outstanding adjustment. Keep the two pending boundaries apart:
+/// replacing the earlier one loses the partial adjustment on successive growth.
+struct Centering {
+    extent: f64,
+    offset: f64,
+    pending: f64,
+    next: f64,
+}
+
+impl Centering {
+    fn origin(&mut self, length: f64) -> f64 {
+        self.offset += self.pending;
+        self.extent += 2. * self.pending;
+        self.pending = self.next;
+        self.next = 0.;
+        if length > self.extent {
+            let expansion = length - self.extent;
+            self.pending = (self.pending - expansion / 2.).max(0.);
+            self.next = expansion / 4.;
+            self.extent = length;
+        }
+        self.offset - length / 2.
+    }
+}
+
 fn exceeds(value: f64, limit: f64) -> bool {
     value - limit > 16. * f64::EPSILON * value.abs().max(limit.abs()).max(1.)
 }
@@ -54,6 +81,7 @@ impl Policy {
             lines.push(line);
         }
         let longest = lines.iter().map(|line| line.length).fold(0., f64::max);
+        let mut centering = Centering { extent: lines.first().map_or(0., |line| line.length), offset: 0., pending: 0., next: 0. };
         let mut boxes = vec![Xfrm::new(0., 0., 0., 0.); children.len()];
         let (mut cursor, mut cross, mut low, mut high) = (0., 0., 0_f64, 0_f64);
         for (i, line) in lines.iter().enumerate() {
@@ -61,7 +89,9 @@ impl Policy {
             if !self.reverse {
                 cursor = 0.;
             }
-            let origin = if self.center {
+            let origin = if self.center && !self.reverse {
+                centering.origin(line.length)
+            } else if self.center {
                 (longest - line.length) / 2.
             } else if reversed {
                 cursor - line.length
@@ -236,6 +266,28 @@ mod tests {
             &packed(&sizes, (120., 80.), &[("bkpt", "fixed"), ("bkPtFixedVal", "3"), ("off", "ctr")], 0.),
             &[[30., 30., 20., 10.], [50., 30., 20., 10.], [70., 30., 20., 10.], [40., 40., 20., 10.], [60., 40., 20., 10.]],
         );
+    }
+
+    #[test]
+    fn centered_rows_propagate_pending_growth_and_center_the_occupied_bounds() {
+        let sizes = [(20., 10.), (40., 10.), (20., 10.), (20., 10.), (60., 10.), (20., 10.), (20., 10.), (20., 10.)];
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr")];
+        let actual = packed(&sizes, (300., 160.), &params, 0.);
+        for (rect, center) in actual.iter().zip([-5., -5., -5., 0., 0., 0., 2.5, 2.5]) {
+            assert!((rect.x + rect.w / 2. - 150. - center).abs() < 1e-7);
+        }
+        // Successive wider rows absorb only part of the earlier pending shift.
+        let sizes = [(45.965, 10.), (93.878, 10.), (105.660, 10.), (83.529, 10.), (49.940, 10.), (79.917, 10.), (77.901, 10.)];
+        let actual = packed(&sizes, (300., 160.), &params, 0.);
+        for (rect, center) in actual.iter().zip([0., 0., 0., 6.08725, 9.03275, 9.03275, 9.03275]) {
+            assert!((rect.x + rect.w / 2. - 150. - center).abs() < 1e-7);
+        }
+        let sizes: Vec<_> = sizes.iter().map(|&(w, h)| (h, w)).collect();
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr"), ("flowDir", "col"), ("grDir", "bR")];
+        let actual = packed(&sizes, (160., 300.), &params, 0.);
+        for (rect, center) in actual.iter().zip([0., 0., 0., 6.08725, 9.03275, 9.03275, 9.03275]) {
+            assert!((rect.y + rect.h / 2. - 150. + center).abs() < 1e-7);
+        }
     }
 
     #[test]
