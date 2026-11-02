@@ -249,6 +249,7 @@ enum TabAlign {
 pub(crate) struct Tab {
     pos: f64,
     align: TabAlign,
+    implicit: bool,
 }
 
 pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
@@ -265,6 +266,7 @@ pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
                         "dec" => TabAlign::Decimal,
                         _ => TabAlign::Left,
                     },
+                    implicit: false,
                 })
                 .collect()
         })
@@ -274,9 +276,9 @@ pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
     let margin = props.margin_left.unwrap_or(0.0).max(0.0);
     let indent = props.indent.unwrap_or(0.0);
     if indent < 0.0 && margin > 0.0 {
-        let stop = margin.max(-indent);
-        if !tabs.iter().any(|t| (t.pos - stop).abs() < 0.5) {
-            tabs.push(Tab { pos: stop, align: TabAlign::Left });
+        let stop = margin;
+        if !tabs.iter().any(|t| (t.pos - stop).abs() < 0.01) {
+            tabs.push(Tab { pos: stop, align: TabAlign::Left, implicit: true });
             tabs.sort_by(|a, b| a.pos.partial_cmp(&b.pos).unwrap_or(std::cmp::Ordering::Equal));
         }
     }
@@ -305,7 +307,8 @@ pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64) {
 /// moving back, as PowerPoint does; past the last stop, to the next default stop.
 pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64)) -> f64 {
     for s in stops {
-        if s.pos > x + 0.5 {
+        let thresh = if s.implicit { 0.01 } else { 0.5 };
+        if s.pos > x + thresh {
             let to = s.pos - x;
             return match s.align {
                 TabAlign::Left => to,
