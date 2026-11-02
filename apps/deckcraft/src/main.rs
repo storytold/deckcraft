@@ -141,13 +141,8 @@ fn services() -> Services {
 /// lists none: Presenter View then stays as it was.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn display_count(window: &winit::window::Window) -> Option<usize> {
-    let mut seen = Vec::new();
-    for m in window.available_monitors() {
-        if !seen.contains(&m) {
-            seen.push(m);
-        }
-    }
-    (!seen.is_empty()).then_some(seen.len())
+    let n = window.available_monitors().collect::<std::collections::BTreeSet<_>>().len();
+    (n > 0).then_some(n)
 }
 
 const APP_ID: &str = "ai.storyteller.deckcraft";
