@@ -1460,7 +1460,7 @@ fn tab_moves_to_next_line_with_word_when_word_does_not_fit_remaining_space() {
 /// if the visible word fits in the remaining space.
 #[test]
 fn trailing_spaces_after_tab_do_not_force_line_break() {
-    let l = tabbed("leading text here\tWord   ", &[(250.0, "r")], 200.0);
+    let l = tabbed("a\tWord   ", &[(150.0, "r")], 200.0);
     assert_eq!(l.lines.len(), 1, "trailing spaces do not force a line break; fits on one line");
 }
 
