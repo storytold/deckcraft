@@ -192,7 +192,9 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
 /// Product information, project links, credits and appearance preferences.
 pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    ui.horizontal_top(|ui| {
+    // Side by side needs 480 + 40 + 340 points; stack the columns when the page is narrower.
+    let layout = if ui.available_width() >= 0.0 { egui::Layout::left_to_right(egui::Align::Min) } else { egui::Layout::top_down(egui::Align::Min) };
+    ui.with_layout(layout, |ui| {
         ui.vertical(|ui| {
             ui.set_width(480.0);
             heading(ui, "Product Information");

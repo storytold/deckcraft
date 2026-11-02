@@ -42,11 +42,12 @@ Observed black-box in PowerPoint for Windows (Microsoft 365, Version 2609, Octob
 synthetic presentation. Clicking **File** (or Alt+F) replaces the ribbon, slides and status bar with
 a full-window view; the title bar stays. A side menu 160 points wide, a step darker than the page,
 lists Back (a circled arrow), Home, New, Open, Share, a rule, Info, Save, Save As, Print, Export,
-Close and, at the bottom under a rule, About and Options. Entries are 40 points tall with an
+Close and, at the bottom under a rule, Account and Options. Entries are 40 points tall with an
 outline icon; the current page is drawn in the accent colour and outlined. Esc goes back. Alt+F opens
 on Home with the keyboard in the side menu; Up and Down move through it and a page shows as soon as
 its entry has the focus. PowerPoint's start screen is the same Home page, with only Home, New and
-Open at the top. DeckCraft follows all of this (`crates/ui-egui/src/backstage.rs`), with the page and
+Open at the top. DeckCraft follows all of this (`crates/ui-egui/src/backstage.rs`), except that
+Account is About, with the page and
 menu colours taken from the theme tokens (menu `chrome`, page `card`).
 
 | Page | PowerPoint | DeckCraft |

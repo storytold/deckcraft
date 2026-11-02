@@ -727,3 +727,19 @@ fn about_has_product_links_and_credits_without_account_controls() {
     assert!(h.query_by_label("Contributors").is_some());
     assert!(h.query_by_label("Models").is_some());
 }
+
+/// At the 900-point minimum window width the About columns stack and Appearance stays on the page.
+#[test]
+fn about_appearance_stays_on_the_page_at_minimum_width() {
+    let mut h = Harness::builder().with_size(egui::vec2(900.0, 900.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        new_app(),
+    );
+    h.state_mut().run("app.backstage", json!({"page": "about"})).unwrap();
+    h.run_steps(3);
+    let r = h.query_all_by_role_and_label(Role::ComboBox, "Appearance").next().expect("Appearance selector").rect();
+    assert!(r.right() <= 900.0, "Appearance selector ends at {}, inside the window", r.right());
+}
