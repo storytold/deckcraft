@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (grouped spelling-underline regression coverage and slide-space line-end snapping; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (grouped spelling-underline coverage, slide-space line-end snapping and Shift angle constraints; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (progress log: read-only `slide.actions` lists shape and table text actions; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** trivial (progress log: Set Up Slide Show ▸ Keep mouse cursor visible, #1445; stage and scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -149,7 +149,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
-| 2026-11-02 | Grouped editing follow-up: spelling underlines are regression-tested against rendered text and table cells; line ends query slide-space connection sites and convert snapped points back into group space (#1095) |
+| 2026-11-02 | Grouped editing follow-up: spelling underlines are regression-tested against rendered text and table cells; line ends constrain Shift angles and query connection sites in slide space before converting back into group space (#1095) |
 | 2026-11-01 | Grouped text: editing outlines, caret/selection, hit tests and frame gestures follow moved, scaled, rotated, flipped and nested groups. Sibling hit tests map clicks and tolerance into group child space; regression coverage includes overlapping members (#1095) |
 | 2026-10-31 | No Fill shape interiors allow selection and editing of underlying objects, even when a quick style remains; hit-testing uses the renderer’s fill resolution. Outlines, rotation, text targets and actual fills keep their hit behaviour (#1621) |
 | 2026-10-30 | Print-preview tests use the URL emitted by egui and its exact file path; previews are explicitly removed before the macOS process exits |
@@ -322,7 +322,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-02 | minor | Renderer-based spelling-underline regressions for grouped/nested text and table cells; grouped line ends snap in slide space, with endpoint and undo coverage (#1095) |
+| 2026-11-02 | minor | Renderer-based spelling-underline regressions for grouped/nested text and table cells; grouped line ends snap and constrain Shift angles in slide space, with endpoint and undo coverage (#1095) |
 | 2026-11-01 | minor | Grouped-text editing coordinates, pointer gestures and sibling hit tests follow enclosing group transforms; synthetic regression coverage (#1095) |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-30 | trivial | Progress log: read-only slide action inspection; parity scores unchanged |

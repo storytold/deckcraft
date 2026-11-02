@@ -1062,6 +1062,121 @@ fn grouped_line_end_ignores_parent_space_decoy_site() {
     }
 }
 
+/// A selected line member and its displayed endpoints, ready for an endpoint drag.
+fn grouped_shift_line_fixture(
+    group: deckcraft_geom::Xfrm,
+    nested: bool,
+    end: u8,
+) -> (Session, ShapeId, deckcraft_geom::Point, deckcraft_geom::Point) {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout":"blank"})).unwrap();
+    let id = ShapeId(s.execute("shape.insert", &json!({"preset":"line", "rect":[10,20,80,40]})).unwrap()["id"].as_u64().unwrap() as u32);
+    wrap_test_member_in_group(&mut s, id, group, nested);
+    s.execute("edit.select", &json!({"ids":[id.0]})).unwrap();
+    let st = s.doc().unwrap();
+    let parent = cmd::parent_transform(st, id);
+    let (a, b) = connect::endpoints(&st.shape(id).unwrap().xfrm.unwrap());
+    let (grabbed, fixed) = if end == 0 { (parent * a, parent * b) } else { (parent * b, parent * a) };
+    assert!(matches!(s.hit_test(grabbed, 1.0), Some(tools::Hit::LineEnd { id: hit, end: hit_end }) if hit == id && hit_end == end));
+    (s, id, grabbed, fixed)
+}
+
+/// Check displayed geometry rather than the group's local angle, including the stationary end.
+fn assert_grouped_line_world_endpoints(st: &DocState, id: ShapeId, end: u8, expected: deckcraft_geom::Point, fixed: deckcraft_geom::Point) {
+    let parent = cmd::parent_transform(st, id);
+    let (a, b) = connect::endpoints(&st.shape(id).unwrap().xfrm.unwrap());
+    let (moved, stationary) = if end == 0 { (parent * a, parent * b) } else { (parent * b, parent * a) };
+    let delta = moved - stationary;
+    assert!(
+        (moved - expected).hypot() < 1e-8,
+        "displayed endpoint {moved:?} differs from {expected:?}; visible angle={} degrees",
+        delta.y.atan2(delta.x).to_degrees()
+    );
+    assert!((stationary - fixed).hypot() < 1e-8, "dragging one endpoint moved the other");
+}
+
+/// Shift follows slide axes through rotation, reflection, uneven scale and nested groups.
+/// The unmodified drag is a control; horizontal, vertical and diagonal cases cover multiple quadrants.
+#[test]
+fn grouped_line_end_shift_uses_slide_axes() {
+    use deckcraft_geom::{Vec2, Xfrm};
+    let diagonal = std::f64::consts::FRAC_1_SQRT_2;
+    let directions = [
+        (Vec2::new(120.0, 80.0), Vec2::new(diagonal, diagonal)),
+        (Vec2::new(120.0, 20.0), Vec2::new(1.0, 0.0)),
+        (Vec2::new(-80.0, 120.0), Vec2::new(-diagonal, diagonal)),
+        (Vec2::new(20.0, -120.0), Vec2::new(0.0, -1.0)),
+    ];
+    let groups = [
+        Xfrm::new(0.0, 0.0, 80.0, 40.0),
+        Xfrm::new(300.0, 100.0, 160.0, 80.0),
+        Xfrm { rot: 27.0, ..Xfrm::new(300.0, 100.0, 160.0, 80.0) },
+        Xfrm::new(300.0, 100.0, 240.0, 40.0),
+        Xfrm { rot: -17.0, flip_h: true, flip_v: true, ..Xfrm::new(300.0, 100.0, 160.0, 120.0) },
+    ];
+    for group in groups {
+        for nested in [false, true] {
+            for end in [0, 1] {
+                for shift in [false, true] {
+                    for (offset, axis) in directions {
+                        let (mut s, id, grabbed, fixed) = grouped_shift_line_fixture(group, nested, end);
+                        let orig = s.doc().unwrap().shape(id).unwrap().xfrm.unwrap();
+                        let pointer = fixed + offset;
+                        let expected = fixed + if shift { axis * offset.hypot() } else { offset };
+                        let ev = |kind, p: deckcraft_geom::Point| PointerEvent {
+                            kind,
+                            x: p.x,
+                            y: p.y,
+                            mods: Mods { shift, ..Default::default() },
+                            tol: 1.0,
+                            ..Default::default()
+                        };
+                        s.pointer(ev(PointerKind::Down, grabbed)).unwrap();
+                        s.pointer(ev(PointerKind::Drag, pointer)).unwrap();
+                        assert!(s.tool.glue.is_none(), "isolate angle constraints from connection-site snapping");
+                        assert_grouped_line_world_endpoints(s.doc().unwrap(), id, end, expected, fixed);
+                        s.pointer(ev(PointerKind::Up, pointer)).unwrap();
+                        assert_grouped_line_world_endpoints(s.doc().unwrap(), id, end, expected, fixed);
+                        s.execute("edit.undo", &json!({})).unwrap();
+                        assert_eq!(s.doc().unwrap().shape(id).unwrap().xfrm, Some(orig));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Shift first constrains in slide space, then a nearby slide-space connection site can take
+/// the snap. The raw pointer is deliberately too far from the site to snap without the constraint.
+#[test]
+fn grouped_line_end_shift_can_snap_to_slide_site() {
+    use deckcraft_geom::{Point, Vec2, Xfrm};
+    for nested in [false, true] {
+        for end in [0, 1] {
+            let group = Xfrm { rot: 27.0, flip_h: true, ..Xfrm::new(300.0, 100.0, 240.0, 80.0) };
+            let (mut s, id, grabbed, fixed) = grouped_shift_line_fixture(group, nested, end);
+            let target = fixed + Vec2::new(100.0, 100.0);
+            s.execute("shape.insert", &json!({"preset":"rect", "rect":[target.x,target.y-15.0,30,30]})).unwrap();
+            s.execute("edit.select", &json!({"ids":[id.0]})).unwrap();
+            let pointer = fixed + Vec2::new(120.0, 75.0);
+            assert!((pointer - target).hypot() > 6.0, "the raw pointer is outside the snap radius");
+            let ev = |kind, p: Point| PointerEvent {
+                kind,
+                x: p.x,
+                y: p.y,
+                mods: Mods { shift: true, ..Default::default() },
+                tol: 1.0,
+                ..Default::default()
+            };
+            s.pointer(ev(PointerKind::Down, grabbed)).unwrap();
+            s.pointer(ev(PointerKind::Drag, pointer)).unwrap();
+            assert_eq!(s.tool.glue, Some(target), "the constrained slide-space point should find the real site");
+            s.pointer(ev(PointerKind::Up, pointer)).unwrap();
+            assert_grouped_line_world_endpoints(s.doc().unwrap(), id, end, target, fixed);
+        }
+    }
+}
+
 #[test]
 fn grouped_text_editing_matches_rendered_text() {
     use deckcraft_geom::{Point, Xfrm};

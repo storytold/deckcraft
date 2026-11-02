@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (grouped spelling-underline regression coverage and slide-space line-end snapping; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (grouped spelling-underline coverage, slide-space line-end snapping and Shift angle constraints; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (dragging several selected slides moves them all; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (group fill and outline edits reach members, #1079; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -20,7 +20,7 @@ Sibling hit tests map the click and its tolerance into each containing group's c
 uncovered text keeps its caret and a member drawn over the text takes the click (#931).
 Synthetic engine tests compare editing coordinates with the renderer and cover caret placement,
 context clicks, frame movement, resizing, undo and overlapping group members. Feature and
-readiness scores are unchanged. Renderer-based regressions also cover spelling squiggles under grouped text and table cells. Grouped line-end gestures query connection sites in slide space and map the chosen site back into the member's group space; snapping markers, both endpoints and undo are covered.
+readiness scores are unchanged. Renderer-based regressions also cover spelling squiggles under grouped text and table cells. Grouped line-end gestures constrain Shift angles to visible 45-degree increments and query connection sites in slide space before mapping the final endpoint back into the member's group space. Regressions cover snapping markers, both endpoints, free dragging and undo through nested groups, rotation, reflection and uneven scaling.
 
 ## Empty list paragraphs
 

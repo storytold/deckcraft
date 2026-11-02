@@ -74,18 +74,18 @@ impl Session {
             }
             Drag::LineEnd { id, end, orig } => {
                 let parent = cmd::parent_transform(self.doc()?, id);
-                let p = parent.inverse() * p;
                 let a = orig.affine();
                 let (p0, p1) = (a * Point::new(0.0, 0.0), a * Point::new(orig.w, orig.h));
                 let mut q = p;
-                let other = if end == 0 { p1 } else { p0 };
+                let other = parent * if end == 0 { p1 } else { p0 };
                 if mods.shift {
                     q = constrain_45(other, q);
                 }
-                let glue = self.update_sites(parent * q, tol, Some(id));
+                let glue = self.update_sites(q, tol, Some(id));
                 if let Some((_, _, at)) = glue {
-                    q = parent.inverse() * at;
+                    q = at;
                 }
+                let q = parent.inverse() * q;
                 let (s0, s1) = if end == 0 { (q, p1) } else { (p0, q) };
                 self.set_xfrm(id, line_xfrm(s0, s1, orig.rot))?;
                 self.edit(|doc, sel| {
