@@ -189,33 +189,12 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
     }
 }
 
-/// Account: the interface's appearance and what DeckCraft is. DeckCraft has no accounts, so
-/// there is nothing to sign in to.
-pub(super) fn account(app: &mut SlideApp, ui: &mut Ui) {
+/// Product information, project links, credits and appearance preferences.
+pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
-            ui.set_width(340.0);
-            heading(ui, "Appearance");
-            let dark = app.ui.brightness == theme::Brightness::Dark;
-            craft_ui::ComboBox::from_id_salt("backstage_appearance")
-                .width(260.0)
-                .selected_text(if dark { "Dark" } else { "Light" })
-                .show_ui(ui, |ui| {
-                    for (on, label) in [(false, "Light"), (true, "Dark")] {
-                        if ui.selectable_label(dark == on, label).clicked() {
-                            let _ = app.run("view.dark", json!({"on": on}));
-                        }
-                    }
-                })
-                .response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Appearance"));
-            ui.add_space(16.0);
-            heading(ui, "User Information");
-            dim(ui, "DeckCraft has no accounts: there is nothing to sign in to, and your presentations stay on your device.");
-        });
-        ui.add_space(40.0);
-        ui.vertical(|ui| {
+            ui.set_width(480.0);
             heading(ui, "Product Information");
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
@@ -237,6 +216,24 @@ pub(super) fn account(app: &mut SlideApp, ui: &mut Ui) {
             }
             ui.hyperlink_to("Join our community on Discord", deckcraft_engine::links::DISCORD);
             ui.hyperlink_to("Source on GitHub", deckcraft_engine::links::GITHUB);
+        });
+        ui.add_space(40.0);
+        ui.vertical(|ui| {
+            ui.set_width(340.0);
+            heading(ui, "Appearance");
+            let dark = app.ui.brightness == theme::Brightness::Dark;
+            craft_ui::ComboBox::from_id_salt("backstage_appearance")
+                .width(260.0)
+                .selected_text(if dark { "Dark" } else { "Light" })
+                .show_ui(ui, |ui| {
+                    for (on, label) in [(false, "Light"), (true, "Dark")] {
+                        if ui.selectable_label(dark == on, label).clicked() {
+                            let _ = app.run("view.dark", json!({"on": on}));
+                        }
+                    }
+                })
+                .response
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Appearance"));
         });
     });
 }
