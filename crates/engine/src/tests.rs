@@ -6431,6 +6431,36 @@ fn master_layout_placeholder_format_inherits() {
     }
 }
 
+/// #1662: Home › Font's Text Shadow shows a shadow the text inherits from its layout, and
+/// turns it off (the run's own empty effect list) and on again.
+#[test]
+fn text_shadow_inherited_from_the_layout_shows_and_toggles() {
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let title_of = |shapes: &[model::Shape]| shapes.iter().find(|sh| sh.ph.as_ref().is_some_and(|p| p.kind.is_title())).map(|sh| sh.id.0).unwrap();
+    let title = title_of(&s.doc().unwrap().doc.slides[0].shapes);
+    s.execute("view.slideMaster", &json!({"master": 0, "layout": 0})).unwrap();
+    let layout_title = title_of(&s.doc().unwrap().doc.masters[0].layouts[0].shapes);
+    s.execute("edit.select", &json!({"ids": [layout_title]})).unwrap();
+    s.execute("format.textShadow", &json!({"on": true})).unwrap();
+    s.execute("view.closeMaster", &json!({})).unwrap();
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    s.execute("edit.select", &json!({"ids": [title]})).unwrap();
+    let shadow = |s: &mut Session| s.execute("format.state", &json!({})).unwrap()["shadow"].clone();
+    let own = |s: &mut Session| s.doc().unwrap().shape(ShapeId(title)).unwrap().text.clone().unwrap().paragraphs[0].runs[0].props.clone();
+    assert_eq!(shadow(&mut s), true, "inherited from the layout");
+    assert!(own(&mut s).shadow.is_none());
+    s.execute("format.textShadow", &json!({})).unwrap();
+    assert_eq!(shadow(&mut s), false, "turned off over the layout's shadow");
+    assert_eq!(own(&mut s).no_effects, Some(true));
+    s.execute("format.textShadow", &json!({})).unwrap();
+    assert_eq!(shadow(&mut s), true);
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(shadow(&mut s), true);
+    assert_eq!(own(&mut s), model::text::RunProps::default());
+}
+
 #[test]
 fn master_body_placeholder_format_keeps_per_level_formatting() {
     let mut s = Session::new();

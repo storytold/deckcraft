@@ -511,6 +511,9 @@ pub struct RunProps {
     pub reflection: Option<crate::style::Reflection>,
     /// Soft-edge radius in points (`a:softEdge`).
     pub soft_edge: Option<f64>,
+    /// The run carries its own (possibly empty) `a:effectLst`, so no shadow, glow, reflection or
+    /// soft edge is inherited from the list styles: how text turns off an inherited shadow.
+    pub no_effects: Option<bool>,
     /// Spelling/grammar errors are not flagged.
     pub no_proof: Option<bool>,
     pub normalize_height: Option<bool>,
@@ -550,14 +553,12 @@ impl RunProps {
             hover,
             lang,
             alt_lang,
-            shadow,
-            inner_shadow,
-            glow,
-            reflection,
-            soft_edge,
             no_proof,
             normalize_height
         );
+        if self.no_effects != Some(true) {
+            take!(shadow, inner_shadow, glow, reflection, soft_edge, no_effects);
+        }
     }
 }
 
@@ -765,6 +766,36 @@ mod tests {
         let props: RunProps = serde_json::from_value(json).expect("run props");
         assert_eq!(props.alt_lang.as_deref().map(str::len), Some(256));
         assert_eq!(serde_json::from_value::<RunProps>(serde_json::json!({})).expect("old run props"), RunProps::default());
+    }
+
+    #[test]
+    fn a_run_without_effects_inherits_no_shadow() {
+        let shadow = crate::style::Shadow {
+            color: ColorRef::rgb(Rgba::rgb(0, 0, 0)),
+            blur: 3.0,
+            dist: 2.0,
+            dir: 45.0,
+            inner: false,
+            sx: 1.0,
+            sy: 1.0,
+            kx: 0.0,
+            ky: 0.0,
+            align: String::new(),
+            rotate_with_shape: false,
+        };
+        let level = RunProps { shadow: Some(shadow), soft_edge: Some(4.0), bold: Some(true), ..Default::default() };
+        let mut plain = RunProps::default();
+        plain.inherit(&level);
+        assert!(plain.shadow.is_some() && plain.soft_edge == Some(4.0));
+        let mut off = RunProps { no_effects: Some(true), ..Default::default() };
+        off.inherit(&level);
+        assert!(off.shadow.is_none() && off.soft_edge.is_none());
+        assert_eq!(off.bold, Some(true), "other formatting still inherits");
+        // A list style's empty effect list hides the master's effects from the runs below it.
+        let mut via_layout = RunProps::default();
+        via_layout.inherit(&RunProps { no_effects: Some(true), ..Default::default() });
+        via_layout.inherit(&level);
+        assert!(via_layout.shadow.is_none());
     }
 
     #[test]

@@ -598,6 +598,10 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
                 p.glow = fx.glow;
                 p.reflection = fx.reflection;
                 p.soft_edge = fx.soft_edge;
+                // An empty list turns off the effects the list styles would give the text.
+                if e.elements().next().is_none() {
+                    p.no_effects = Some(true);
+                }
             }
             "highlight" => p.highlight = color(e),
             "uFill" => p.underline_color = e.child("solidFill").and_then(color),
