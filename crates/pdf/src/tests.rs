@@ -202,7 +202,8 @@ fn unsafe_url_links_are_not_exported() {
 /// memory. Its naming/shaping tables still parse, but its missing head table prevents PDF
 /// embedding. No font bytes or vendor assets are stored as test fixtures.
 fn font_without_head() -> Vec<u8> {
-    let mut bytes = FontDb::global().face("Ubuntu", "Regular").data().to_vec();
+    // The final bundled face is always Ubuntu Light; a system lookup may select a variable font.
+    let mut bytes = deckcraft_fonts::bundled().last().unwrap().to_vec();
     for (old, new) in [(b"Ubuntu".as_slice(), b"BadPDF".as_slice()), (b"\0U\0b\0u\0n\0t\0u".as_slice(), b"\0B\0a\0d\0P\0D\0F".as_slice())] {
         let mut offset = 0;
         while offset + old.len() <= bytes.len() {

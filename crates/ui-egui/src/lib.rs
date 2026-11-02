@@ -35,6 +35,7 @@ pub mod icons;
 pub mod media;
 pub mod menus;
 pub mod opening;
+pub mod presenter;
 pub mod ribbon;
 pub mod settings;
 pub mod show;
