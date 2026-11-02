@@ -1331,4 +1331,60 @@ fn transition_preview_for_first_slide_transitions_from_black() {
     assert_eq!(tr.kind, "fade");
     assert_eq!(tr.from, None, "slide 0 transitions from black (None)");
     assert_eq!(tr.dur, 0.5);
+/// #1659: an audio clip with "Hide during show" is hidden during the presentation,
+/// does not show a playback bar on hover, and stays hidden in presenter view previews.
+#[test]
+fn audio_with_hide_during_show_stays_hidden_in_presentation_mode() {
+    let size = vec2(1000.0, 700.0);
+    let mut session = deckcraft_engine::Session::with_new();
+    let id = ShapeId(5000);
+    session
+        .edit(|doc, _| {
+            let media = doc.add_media("audio.wav", "audio/wav", silent_wav(5)).unwrap();
+            let (w, h) = (doc.slide_size.width, doc.slide_size.height);
+            let clip = deckcraft_model::MediaClip {
+                media,
+                video: false,
+                hide_while_not_playing: true,
+                volume: 1.0,
+                duration_ms: 5000,
+                ..Default::default()
+            };
+            let xfrm = deckcraft_geom::Xfrm::new(w * 0.4, h * 0.4, 48.0, 48.0);
+            let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+            slide.shapes.push(deckcraft_model::Shape { id, xfrm: Some(xfrm), kind: deckcraft_model::ShapeKind::Media(clip), ..Default::default() });
+            Ok(())
+        })
+        .unwrap();
+    let doc = session.active().unwrap().doc.clone();
+    let on_bar = std::rc::Rc::new(std::cell::Cell::new(false));
+    let seen = on_bar.clone();
+    let mut app = SlideApp::new(session, crate::Services::default());
+    app.ui.presenter_view = false;
+    let mut harness = egui_kittest::Harness::builder().with_size(size).build_ui_state(
+        move |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            if let (Some(show), Some(d)) = (app.show.as_ref(), app.session.active()) {
+                let now = ui.input(|i| i.time);
+                seen.set(pointer_on_media_bar(ui.ctx(), ui, &d.doc, show, now));
+            }
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run_steps(3);
+    harness.state_mut().start_show(0, false);
+    harness.run_steps(2);
+
+    let show = harness.state().show.as_ref().unwrap();
+    let (key, _) = show.tex.as_ref().expect("frame rendered");
+    assert!(key.hidden.contains(&id), "audio clip must be hidden in the frame key");
+
+    let shape_pos = pos2(size.x * 0.4 + 24.0, size.y * 0.4 + 24.0);
+    harness.hover_at(shape_pos);
+    harness.run_steps(2);
+    assert!(!on_bar.get(), "hidden audio has no active media bar under the cursor");
+
+    let preview = presenter::render_preview(&doc, 0, (480, 270), 0);
+    assert_eq!(preview.size, [480, 270]);
 }

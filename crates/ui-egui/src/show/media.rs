@@ -85,6 +85,7 @@ pub(super) fn slide_media_bars(srect: Rect, doc: &Presentation, slide: usize) ->
     let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
     crate::media::slide_media(doc, slide)
         .into_iter()
+        .filter(|(_, _, clip)| !clip.hide_while_not_playing || clip.video)
         .map(|(id, x, clip)| {
             let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));
             let bar = media_bar_rect(r);
@@ -129,10 +130,12 @@ pub(super) fn media_hit(ctx: &egui::Context, ui: &Ui, show: &Show, doc: &Present
     let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
     let srect = fit(avail, doc);
     let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
-    crate::media::slide_media(doc, show.state.slide).into_iter().rev().find_map(|(id, x, clip)| {
-        let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));
-        r.contains(p).then_some((id, clip))
-    })
+    crate::media::slide_media(doc, show.state.slide).into_iter().rev().filter(|(_, _, clip)| !clip.hide_while_not_playing || clip.video).find_map(
+        |(id, x, clip)| {
+            let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));
+            r.contains(p).then_some((id, clip))
+        },
+    )
 }
 
 /// What a click on the pointer's spot acts on.
