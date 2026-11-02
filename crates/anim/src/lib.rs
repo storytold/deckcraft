@@ -44,6 +44,68 @@ pub use show::{LinkJump, ShowAction, ShowState, safe_url, show_order};
 pub use timeline::{EffectTiming, Sequence, StepStamp, Timeline, TriggerPlay};
 pub use transition::{DEFAULT_ASPECT, Layer, Source, transition_frame, transition_layers, uses_slide_parts};
 
+/// Whether the slide show evaluator has a real animation for this catalog entry.
+/// Unsupported imported effects remain in the model catalog for round trips, but are
+/// hidden from the animation pickers until playback is implemented.
+pub fn supports_animation_playback(effect: &str, class: deckcraft_model::AnimClass) -> bool {
+    use deckcraft_model::AnimClass;
+
+    match class {
+        AnimClass::Entrance | AnimClass::Exit => {
+            let effect = if class == AnimClass::Exit { effects::exit_base(effect) } else { effect };
+            matches!(
+                effect,
+                "appear"
+                    | "fade"
+                    | "fly"
+                    | "float"
+                    | "split"
+                    | "wipe"
+                    | "shape"
+                    | "wheel"
+                    | "randomBars"
+                    | "grow"
+                    | "zoom"
+                    | "swivel"
+                    | "bounce"
+                    | "blinds"
+                    | "box"
+                    | "checkerboard"
+                    | "circle"
+                    | "diamond"
+                    | "dissolve"
+                    | "peek"
+                    | "strips"
+                    | "expand"
+                    | "rise"
+                    | "spinner"
+            )
+        }
+        AnimClass::Emphasis => matches!(
+            effect,
+            "pulse"
+                | "colorPulse"
+                | "teeter"
+                | "spin"
+                | "growShrink"
+                | "desaturate"
+                | "darken"
+                | "lighten"
+                | "transparency"
+                | "objectColor"
+                | "complementaryColor"
+                | "lineColor"
+                | "fillColor"
+                | "fontColor"
+                | "underline"
+                | "boldFlash"
+                | "wave"
+        ),
+        AnimClass::Path => effect == "customPath" || !default_path(effect, "").is_empty(),
+        AnimClass::Media => false,
+    }
+}
+
 /// Animation state of one shape (or one paragraph of a shape's text) at one moment of the show.
 ///
 /// Same meaning as the renderer's `ShapeState`: translation in points, scale and rotation (degrees)

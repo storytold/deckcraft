@@ -15,6 +15,7 @@ deckcraft-model = { workspace = true }
 deckcraft-fonts = { workspace = true }
 deckcraft-text = { workspace = true }
 deckcraft-render = { workspace = true }
+deckcraft-anim = { workspace = true }
 deckcraft-pdf = { workspace = true }
 deckcraft-format = { workspace = true }
 deckcraft-pptx = { workspace = true }
@@ -28,7 +29,6 @@ image = { workspace = true }
 chrono = { workspace = true }
 
 [dev-dependencies]
-deckcraft-anim = { workspace = true }
 zip = { workspace = true }
 
 # The browser clock for comment timestamps (wasm has no std::time::SystemTime).

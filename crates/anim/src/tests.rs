@@ -195,6 +195,19 @@ fn every_animation_evaluates_finite() {
 }
 
 #[test]
+fn picker_support_only_effects_with_playback() {
+    use crate::supports_animation_playback;
+
+    assert!(supports_animation_playback("fade", AnimClass::Entrance));
+    assert!(supports_animation_playback("flyOut", AnimClass::Exit));
+    assert!(supports_animation_playback("spin", AnimClass::Emphasis));
+    assert!(supports_animation_playback("lines", AnimClass::Path));
+    assert!(!supports_animation_playback("crawl", AnimClass::Entrance));
+    assert!(!supports_animation_playback("changeFontSize", AnimClass::Emphasis));
+    assert!(!supports_animation_playback("media", AnimClass::Media));
+}
+
+#[test]
 fn fly_starts_off_slide() {
     let mut a = anim(1, AnimClass::Entrance, "fly", AnimStart::OnClick);
     a.option = "l".into();
