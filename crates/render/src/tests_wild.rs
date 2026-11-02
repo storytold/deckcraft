@@ -569,6 +569,36 @@ fn a_picture_shapes_own_tile_keeps_its_size_inside_a_scaled_group() {
 }
 
 #[test]
+fn a_tiled_pictures_reflection_keeps_the_tile_size_inside_a_scaled_group() {
+    use deckcraft_model::style::{PictureFill, PictureMode, Reflection};
+    // The reflection mirrors the picture's pixels, so its tiles must be the face's, 60 x 30 pt,
+    // whatever the group's child scale: just below the box it shows the same colours.
+    let reflected = |kx: f64, ky: f64| {
+        let mut p = Presentation::default();
+        let media = p.add_media("t.png", "image/png", half_red_half_blue()).expect("media");
+        let mode = PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 10.0, sy: 10.0, flip: "none".into(), align: "tl".into() };
+        let rf = Reflection { blur: 0.0, start_alpha: 1.0, end_alpha: 0.0, end_pos: 0.5, dist: 0.0 };
+        let img = in_a_scaled_group(kx, ky, p, |w, h| Shape {
+            id: ShapeId(22),
+            xfrm: Some(Xfrm::new(0.0, 0.0, w, h)),
+            kind: ShapeKind::Picture { fill: PictureFill { media, mode, ..Default::default() } },
+            line: no_line(),
+            effects: Some(deckcraft_model::Effects { reflection: Some(rf), ..Default::default() }),
+            ..Default::default()
+        });
+        [img.pixel(115, 163), img.pixel(145, 163), img.pixel(175, 163)]
+    };
+    let plain = reflected(1.0, 1.0);
+    assert!(plain[0][0] > plain[0][2] && plain[1][2] > plain[1][0] && plain[2][0] > plain[2][2], "red, blue, red in the reflection: {plain:?}");
+    for (kx, ky) in [(0.25, 0.25), (1600.0, 1600.0), (2.0, 0.5)] {
+        let got = reflected(kx, ky);
+        for (g, e) in got.iter().zip(&plain) {
+            assert!(close(*g, Rgba::rgb(e[0], e[1], e[2]), 40), "child scale {kx} x {ky}: {got:?} against {plain:?}");
+        }
+    }
+}
+
+#[test]
 fn an_upright_tile_in_a_turned_shape_keeps_its_size_in_points_at_any_zoom() {
     use deckcraft_model::style::{PictureFill, PictureMode};
     // `rotWithShape="0"` draws the tiles on the slide's axes, in device pixels: they were sized in

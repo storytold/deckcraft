@@ -668,9 +668,13 @@ impl Renderer {
         let line = &d.line;
         // Effects below the shape.
         if let Some(e) = &effects {
-            // A picture (or picture fill) casts its shadow from its pixels, not its frame.
+            // A picture (or picture fill) casts its shadow from its pixels, not its frame. A tile
+            // is sized in points on the slide, as the face's is, and so is its shadow and reflection.
             let content = match (&s.kind, &fill) {
-                (ShapeKind::Picture { fill: pf }, _) | (_, Some(Fill::Picture(pf))) => Some(paint::resolved(rctx, pf, None).into_owned()),
+                (ShapeKind::Picture { fill: pf }, _) | (_, Some(Fill::Picture(pf))) => {
+                    let pf = paint::tiled_picture_per_point(pf, self.per_point_xy(m, depth));
+                    Some(paint::resolved(rctx, &pf, None).into_owned())
+                }
                 _ => None,
             };
             // What casts the shadow: the fill as see-through as it is, and the outline.
