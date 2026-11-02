@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.25): SmartArt local geometry scope and size precedence,
+Updated 2026-11-01 (PPTX.26): SmartArt implicit/signed edges and reference geometry,
 extending global geographic framing, rotated diagram footprints and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -1183,3 +1183,62 @@ Unconstrained flow sizing and finite diagram quantization also need further nati
 Full native search/fallback and cyclic-font policies, colour interpolation, text ownership,
 geographic provider/simplification policy and rich-label overflow remain open. No global parity
 score or complete LibreOffice-replacement claim is raised.
+
+
+## Implicit endpoints and positive display extents (PPTX.26)
+
+For a composite child with only a start coordinate, the opposite edge defaults to the
+container's corresponding edge. With only an end coordinate, the start defaults to zero.
+A centre without a size allocates no extent and leaves its start at the default origin,
+but another node can still reference that authored centre value. Adding an explicit size
+changes this behavior: start, end or centre then positions that size normally.
+
+Endpoints and display sizes cannot share a single affine representation in inverted cases.
+For example, a 20mm frame with an authored left edge of 25mm retains a right-edge reference
+of 20mm and a centre reference of 22.5mm, while displaying a 5mm width starting at 25mm.
+Width references see the positive 5mm. Explicit negative sizes and negative-factor size
+references also display positive sizes; they do not mirror an asymmetric shape.
+Independent paired-coordinate and witness-shape probes establish these distinctions.
+
+The solver now keeps endpoint/centre variables separately, with signed spans and positive
+size relations. It resolves sign choices under the shared work budget and rejects repeated
+sign states. It does not claim exhaustive nonlinear/cyclic branch search. Rules treat a
+rejected sign state as an infeasible candidate. Font defaults read the resolved reference
+values, rather than reconstructing raw endpoints from display rectangles. Initial local
+sizes use the same absolute-size convention so nested children retain their proportions.
+
+Zero-width or zero-height occupied frames can still be centred without division by zero.
+Linear packing tolerates floating-point roundoff when checking whether a composite fits its
+allocation. This preserves an existing native-measured nested-card test whose arithmetic
+order exposed a false overflow during the solver change; its expected result is unchanged.
+
+Validation:
+
+- All 60 prior implicit/explicit edge cases now match native nonempty PDF paths. The older
+  186-case matrix improves from 120 to 144 matches at 0.025pt model-inspection tolerance;
+  30 failures remain, with 12 native-fallback pages separately excluded.
+- All 140 new edge-pair, signed-reference, witness-position and paired-coordinate cases match
+  native geometry within 0.009pt. The broader new matrix has 176 cases and improves from 56
+  to 152 matches, with no formerly matching case regressing. The other 24 failures concern
+  local self-sizing combined with parent end/centre positions; they are not parity passes.
+- All 60 new two-shape 4K visible-colour-bound comparisons pass within 0.5pt. Representative
+  native/direct images were visually inspected, including asymmetric inverted and zero-width
+  shapes. Geometry agreement alone is not a whole-slide pixel-equivalence claim.
+- All 73 earlier overflow geometry controls still pass within 0.009pt. All 154 earlier 2px/pt
+  PNGs remain identical to the PPTX.25 executable, with unchanged/native-matching font-size sets.
+  Source hashes are checked against native-export receipts; direct export has no document
+  converter on PATH.
+- Four new unit tests cover 72 variants of endpoint references, negative-factor positioning,
+  translation, zero-axis centring and inherited local dimensions. A new integration test retains
+  graph identities, positive unmirrored geometry and identical rendered pixels through export
+  and reimport. Existing cyclic-system and numerical-rule tests remain green.
+- All 176 new native/direct font-size sets match, including the cases whose geometry is still
+  unresolved. The 39 allocation, 16 helper-visibility and 60 unique-colour controls also pass
+  their 4K visible-bound comparisons; the earlier 25 colour-sequence controls also pass. These
+  metrics do not imply whole-slide equality.
+- Final `cargo xtask ci` passes all eight stages, including 2,445 tests and doctests.
+
+Native behavior for local self-size versus parent end/centre positioning remains unresolved,
+as do unnamed selectors and automatic flow dimensions. Full native rule search/fallback,
+cyclic-font policies, geographic context/simplification and rich-label overflow remain open.
+No global parity score or complete LibreOffice-replacement claim is raised.

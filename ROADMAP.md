@@ -1,5 +1,7 @@
 # DeckCraft roadmap
 
+> **PPTX.26 update 2026-11-01:** SmartArt preserves constraint endpoints separately from positive display sizes, including implicit edges and centre-only references. All 60 prior implicit-edge cases now pass; the older matrix improves to 144/186 with 30 failures and 12 native-fallback exclusions. A new 176-case matrix reaches 152 matches, retaining 24 local-size/parent-position failures. Scores are unchanged.
+
 > **PPTX.25 update 2026-11-01:** SmartArt geometry respects local algorithm scopes and local size constraints; text constraints retain deeper reach. All eight prior cross-container cases now pass. The broader 186-case probe matrix improves from 92 to 120 geometry matches; 54 failures and 12 native-fallback cases remain explicit. Parity scores are unchanged.
 
 > **PPTX.24 update 2026-11-01:** overflowing SmartArt composites now fit scaled end edges before recentering, including fully disjoint children. All 73 new model-geometry comparisons agree with native paths within 0.009pt; 71 coloured-pixel checks pass, with two thin-text raster differences retained. Four ancestor-scope failures remain; parity scores are unchanged.
@@ -160,6 +162,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-01 | PPTX.26: preserve implicit/signed endpoints and positive display sizes; 140 edge/reference controls match native geometry, with remaining local-size/parent-position failures recorded |
 | 2026-11-01 | PPTX.25: separate local geometry scope from descendant text constraints; all eight cross-container controls pass and expanded probes retain selector/default-layout failures |
 | 2026-11-01 | PPTX.24: fit overflowing composite end edges and disjoint children; 73 native geometry controls pass, two thin-text raster differences remain |
 | 2026-11-01 | PPTX.23: account for nonpainting allocations and recursively fit composites; 80 native visible-bound controls and 39 native rebuilds pass; six cross-container scope/overflow cases remain |

@@ -1,5 +1,6 @@
 //! Bounded sparse affine solver for diagram references. Unlike fixed-count relaxation,
 //! forward chains and solvable cycles are solved together; contradictions are reported.
+mod axes;
 mod font_defaults;
 mod local_fonts;
 use super::geometry::{BoxStyle, initial, self_constraints};
@@ -102,7 +103,7 @@ pub(super) fn selected(entries: &[Entry<'_, '_>], owner: usize, axis: &str, name
 }
 fn expr(entries: &[Entry<'_, '_>], node: usize, owner: usize, property: &str) -> Row {
     let mut row = Row::default();
-    let (position, extent, factor) = match property {
+    let (start, size, factor) = match property {
         "l" => ("l", "w", 0.),
         "r" => ("l", "w", 1.),
         "ctrX" => ("l", "w", 0.5),
@@ -114,22 +115,22 @@ fn expr(entries: &[Entry<'_, '_>], node: usize, owner: usize, property: &str) ->
             return row;
         }
     };
-    row.add((node, position.into()), 1.);
-    row.add((node, extent.into()), factor);
-    // Named descendant coordinates are relative to the owning layout, not their immediate
-    // container. The owner's own box is local (0,0,w,h).
+    // Keep edge values separate from display extents: inverted edges retain their
+    // authored endpoints, while references to width/height see positive sizes.
     if node == owner {
-        row.terms.remove(&(node, position.into()));
+        row.add((node, size.into()), factor);
     } else {
+        row.add((node, property.into()), 1.);
         let mut parent = entries.get(node).and_then(|e| e.parent);
         for _ in 0..64 {
             let Some(p) = parent.filter(|p| *p != owner) else { break };
-            row.add((p, position.into()), 1.);
+            row.add((p, start.into()), 1.);
             parent = entries.get(p).and_then(|e| e.parent);
         }
     }
     row
 }
+
 fn equation(
     entries: &[Entry<'_, '_>],
     owner: usize,
@@ -139,7 +140,9 @@ fn equation(
     property: &str,
     work: &mut usize,
 ) -> Result<Row, &'static str> {
-    let mut row = expr(entries, target, if target == owner { entries[owner].parent.unwrap_or(owner) } else { owner }, property);
+    let target_property =
+        if matches!(property, "w" | "h") && !matches!(c.attr("op"), Some("gte" | "lte")) { axes::signed(property) } else { property };
+    let mut row = expr(entries, target, if target == owner { entries[owner].parent.unwrap_or(owner) } else { owner }, target_property);
     let scale = if matches!(property, "primFontSz" | "secFontSz" | "pyraAcctRatio") || property.starts_with("user") { 1. } else { 72. / 25.4 };
     row.value = c.f64("val").unwrap_or(0.) * scale;
     if let Some(ref_type) = c.attr("refType").filter(|s| !matches!(*s, "" | "none")) {
@@ -319,45 +322,20 @@ pub(super) fn resolve_adjusted(
         }
     }
     select_axes(&mut equations, entries.len(), work)?;
-    // Algorithm geometry supplies only unconstrained degrees of freedom. Relationships
-    // remain affine so children follow a resized container, rather than retaining its old size.
-    for (i, entry) in entries.iter().enumerate() {
-        for (position, size, coords) in [("l", "w", ["l", "r", "ctrX"]), ("t", "h", ["t", "b", "ctrY"])] {
-            let count = coords.iter().filter(|p| equations.contains_key(&(i, p.to_string()))).count();
-            for property in [position, size] {
-                if bounded.contains(&(i, property.into()))
-                    || equations.contains_key(&(i, property.into()))
-                    || (property == size && count >= 2)
-                    || (property == position && count >= 1)
-                {
-                    continue;
-                }
-                let value = entry.style.get(property).unwrap_or(0.);
-                let mut row = Row::default();
-                row.add((i, property.into()), 1.);
-                if let Some(parent) = entry.parent {
-                    let parent_value = entries[parent].style.get(size).unwrap_or(0.);
-                    let ratio = if parent_value.abs() > 1e-9 { value / parent_value } else { 0. };
-                    row.add((parent, size.into()), -ratio);
-                } else {
-                    row.value = value;
-                }
-                equations.insert((i, property.into()), row);
-            }
+    let extents = axes::complete(&mut equations, &entries, &bounded, work)?;
+    let rows: Vec<_> = equations.values().cloned().collect();
+    let values = axes::solve_extents(&rows, &bounds, &extents, &entries, work)?;
+    for ((index, property), value) in &values {
+        // Edge/centre variables retain constraint-space values for references.
+        // Only starts and positive extents form the displayed rectangle.
+        if matches!(property.as_str(), "r" | "b" | "ctrX" | "ctrY") {
+            continue;
+        }
+        if let Some(entry) = entries.get_mut(*index) {
+            entry.style.set(property, *value, "equ");
         }
     }
-    let mut rows: Vec<_> = equations.values().cloned().collect();
-    apply_bounds(&mut rows, bounds, &entries, work)?;
-    let values = solve(&rows, &entries, work)?;
-    for ((index, property), value) in values {
-        if matches!(property.as_str(), "w" | "h") && value < -1e-6 {
-            return Err("negative diagram extent");
-        }
-        if let Some(entry) = entries.get_mut(index) {
-            entry.style.set(&property, value, "equ");
-        }
-    }
-    font_defaults::apply(&mut entries, &equations, work)?;
+    font_defaults::apply(&mut entries, &equations, &values, work)?;
     local_fonts::apply(&mut entries, data, adjustments, work)?;
     Ok(entries.into_iter().map(|e| (id(e.node), e.style)).collect())
 }

@@ -1,5 +1,7 @@
 # DeckCraft roadmap: milestones and what's next
 
+> **PPTX.26 update 2026-11-01:** SmartArt preserves constraint endpoints separately from positive display sizes, including implicit edges and centre-only references. All 60 prior implicit-edge cases now pass; the older matrix improves to 144/186 with 30 failures and 12 native-fallback exclusions. A new 176-case matrix reaches 152 matches, retaining 24 local-size/parent-position failures. Scores are unchanged.
+
 > **PPTX.25 update 2026-11-01:** SmartArt geometry respects local algorithm scopes and local size constraints; text constraints retain deeper reach. All eight prior cross-container cases now pass. The broader 186-case probe matrix improves from 92 to 120 geometry matches; 54 failures and 12 native-fallback cases remain explicit. Parity scores are unchanged.
 
 > **PPTX.24 update 2026-11-01:** overflowing SmartArt composites now fit scaled end edges before recentering, including fully disjoint children. All 73 new model-geometry comparisons agree with native paths within 0.009pt; 71 coloured-pixel checks pass, with two thin-text raster differences retained. Four ancestor-scope failures remain; parity scores are unchanged.
@@ -146,6 +148,7 @@ and rich point labels; provider/native-layout gaps remain documented, and beta s
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | PPTX.26 resolves implicit/signed edges and their references; zero-width frames centre safely, while local-size/parent-position and full search policies remain partial |
 | 2026-11-01 | minor | PPTX.25 separates geometry/text scope and local size precedence; all eight prior cross-container cases pass, while broader selector/default-layout probes retain failures |
 | 2026-11-01 | minor | PPTX.24 fits overflowing composite end edges; 73 native geometry controls pass, with two thin-text raster differences and four ancestor-scope failures retained |
 | 2026-11-01 | minor | PPTX.23 separates allocated and painted geometry, fits nested composites recursively, and verifies 80 native allocation/colour controls plus 154 unchanged PNGs; cross-container scope/overflow remains partial |

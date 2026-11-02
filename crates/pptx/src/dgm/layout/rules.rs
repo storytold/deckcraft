@@ -209,7 +209,9 @@ fn trial<'a>(
 ) -> Result<Option<Vec<Placed<'a>>>, &'static str> {
     match placed(tree, frame, data, changes, work) {
         Ok(out) => Ok(Some(out)),
-        Err("inconsistent diagram constraints" | "inconsistent diagram bounds" | "negative diagram extent") => Ok(None),
+        Err("inconsistent diagram constraints" | "inconsistent diagram bounds" | "negative diagram extent" | "inconsistent diagram extent signs") => {
+            Ok(None)
+        }
         Err(e) => Err(e),
     }
 }

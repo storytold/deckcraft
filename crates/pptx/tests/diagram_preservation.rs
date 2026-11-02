@@ -927,3 +927,40 @@ fn allocation_only_nodes_affect_fit_without_becoming_exported_shapes() {
         }
     }
 }
+
+#[test]
+fn inverted_endpoints_keep_positive_editable_geometry_through_roundtrip() {
+    let mut parts = files(&uncached_fixture());
+    for (name, bytes) in &mut parts {
+        if name.ends_with("layout1.xml") && name.contains("diagrams/") {
+            *bytes = br#"<dgm:layoutDef xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" uniqueId="urn:deckcraft:test:signed-edges" minVer="12.0">
+            <dgm:title val="Original signed endpoint witness"/><dgm:desc val="Separate an endpoint reference from the displayed width"/>
+            <dgm:layoutNode name="canvas"><dgm:alg type="composite"/><dgm:presOf/><dgm:shape type="none"/>
+            <dgm:constrLst><dgm:constr type="w" val="20"/><dgm:constr type="h" val="20"/>
+            <dgm:constr type="l" for="ch" forName="subject" val="25"/><dgm:constr type="h" for="ch" forName="subject" val="10"/>
+            <dgm:constr type="l" for="ch" forName="witness" refFor="ch" refForName="subject" refType="r"/>
+            <dgm:constr type="w" for="ch" forName="witness" val="4"/><dgm:constr type="h" for="ch" forName="witness" val="4"/>
+            </dgm:constrLst><dgm:layoutNode name="subject" styleLbl="node1"><dgm:alg type="tx"/><dgm:presOf axis="ch" ptType="node" st="1" cnt="1"/><dgm:shape type="rtTriangle"/></dgm:layoutNode>
+            <dgm:layoutNode name="witness" styleLbl="node1"><dgm:alg type="tx"/><dgm:presOf axis="ch" ptType="node" st="2" cnt="1"/><dgm:shape type="rect"/></dgm:layoutNode>
+            </dgm:layoutNode></dgm:layoutDef>"#.to_vec();
+        }
+    }
+    let input = zip(parts);
+    let p = deckcraft_pptx::import(&input).unwrap();
+    let g = group(&p);
+    assert_eq!(g.children().len(), 2);
+    let a = g.children()[0].xfrm.unwrap();
+    let b = g.children()[1].xfrm.unwrap();
+    let mm = 72. / 25.4;
+    assert!((a.w - 5. * mm).abs() < 1e-6);
+    assert!((a.x - b.x - 5. * mm).abs() < 1e-6);
+    assert!(!a.flip_h && !a.flip_v);
+    let output = deckcraft_pptx::export(&p).unwrap();
+    assert_eq!(ids(&by_root(&input, "dataModel")), ids(&by_root(&output, "dataModel")));
+    let back = deckcraft_pptx::import(&output).unwrap();
+    assert_eq!(geometry(g), geometry(group(&back)));
+    assert_eq!(
+        deckcraft_engine::render::render_slide(&p, 0, &Default::default()).pixels,
+        deckcraft_engine::render::render_slide(&back, 0, &Default::default()).pixels
+    );
+}

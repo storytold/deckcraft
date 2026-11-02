@@ -1058,3 +1058,107 @@ fn authored_font_defaults_quantize_each_reference_before_fitting() {
     assert_eq!(out[1].font, Some(19.));
     assert_eq!(out[1].secondary_font, Some(10.));
 }
+
+#[test]
+fn implicit_edges_keep_reference_values_separate_from_positive_display_sizes() {
+    let data_source = source();
+    let mm = 72. / 25.4;
+    for vertical in [false, true] {
+        let (start, end, center, size) = if vertical { ("t", "b", "ctrY", "h") } else { ("l", "r", "ctrX", "w") };
+        for (edge, value, explicit, expected) in [
+            (start, -5., None, [-5., 20., 7.5, 25.]),
+            (start, 25., None, [25., 20., 22.5, 5.]),
+            (end, -5., None, [0., -5., -2.5, 5.]),
+            (center, 5., None, [0., 0., 5., 0.]),
+            (start, 5., Some(-5.), [5., 10., 7.5, 5.]),
+            (end, 5., Some(-5.), [0., 5., 2.5, 5.]),
+            (center, 5., Some(-5.), [2.5, 7.5, 5., 5.]),
+        ] {
+            for (reference, reference_value) in [start, end, center, size].into_iter().zip(expected) {
+                let explicit = explicit.map(|v| format!("<constr type='{size}' for='ch' forName='subject' val='{v}'/>")).unwrap_or_default();
+                let l = layout(&format!(
+                    "<layoutNode><alg type='composite'/><constrLst>{explicit}
+                    <constr type='{edge}' for='ch' forName='subject' val='{value}'/>
+                    <constr type='{start}' for='ch' forName='witness' refFor='ch' refForName='subject' refType='{reference}'/>
+                    <constr type='w' for='ch' forName='witness' val='4'/><constr type='h' for='ch' forName='witness' val='4'/>
+                    </constrLst><layoutNode name='subject'><alg type='tx'/><shape type='rtTriangle'/></layoutNode>
+                    <layoutNode name='witness'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
+                ));
+                let data = Data::new(&data_source).unwrap();
+                let context = Context { point: data.root, position: 1, count: 1, vars: HashMap::new() };
+                let mut compiler = Compiler { data, refs: HashMap::new(), instances: 0, work: 0 };
+                let tree = compiler.node(l.child("layoutNode").unwrap(), context, 0).unwrap();
+                let solved = constraints::resolve(&tree, Xfrm::new(0., 0., 20. * mm, 20. * mm), &compiler.data, &mut 0).unwrap();
+                let subject = constraints::lookup(&solved, &tree.children[0]).unwrap();
+                let witness = constraints::lookup(&solved, &tree.children[1]).unwrap();
+                assert!((subject.get(start).unwrap() / mm - expected[0]).abs() < 1e-6, "{edge}/{value}/{reference}");
+                assert!((subject.get(size).unwrap() / mm - expected[3]).abs() < 1e-6, "{edge}/{value}/{reference}");
+                assert!(
+                    (witness.get(start).unwrap() / mm - reference_value).abs() < 1e-6,
+                    "{edge}/{value}/{reference}: {}",
+                    witness.get(start).unwrap() / mm
+                );
+                assert!(!subject.rect.flip_h && !subject.rect.flip_v);
+            }
+        }
+    }
+}
+
+#[test]
+fn negative_size_references_normalize_before_positioning_and_preserve_translation() {
+    let d = source();
+    let mm = 72. / 25.4;
+    for (edge, expected) in [("l", 5.), ("r", 0.), ("ctrX", 2.5)] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='composite'/><constrLst>
+            <constr type='w' for='ch' forName='a' refType='w' fact='-0.25'/>
+            <constr type='{edge}' for='ch' forName='a' val='5'/>
+            <constr type='l' for='ch' forName='b' refFor='ch' refForName='a' refType='w'/>
+            <constr type='w' for='ch' forName='b' val='4'/><constr type='h' for='ch' val='4'/>
+            </constrLst><layoutNode name='a'><alg type='tx'/><shape type='rtTriangle'/></layoutNode>
+            <layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
+        ));
+        for offset in [0., 100.3] {
+            let out = evaluate(&l, &d, Xfrm::new(offset, offset, 20. * mm, 20. * mm)).unwrap();
+            let a = &out[0].rect;
+            let b = &out[1].rect;
+            assert!((a.w / mm - 5.).abs() < 1e-6);
+            assert!((b.x - a.x - (5. - expected) * mm).abs() < 1e-6);
+            assert!(!a.flip_h && !a.flip_v);
+        }
+    }
+}
+
+#[test]
+fn one_dimensional_composites_center_their_zero_axis_without_dividing_by_zero() {
+    let d = source();
+    let mm = 72. / 25.4;
+    for edge in ["r", "ctrX", "b", "ctrY"] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='composite'/><constrLst><constr type='{edge}' for='ch' val='0'/></constrLst>
+            <layoutNode><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
+        ));
+        for offset in [0., 103.7] {
+            let out = evaluate(&l, &d, Xfrm::new(offset, offset, 20. * mm, 20. * mm)).unwrap();
+            let r = out[0].rect;
+            let (position, extent) = if matches!(edge, "r" | "ctrX") { (r.x, r.w) } else { (r.y, r.h) };
+            assert!(extent.abs() < 1e-6);
+            assert!((position - offset - 10. * mm).abs() < 1e-6, "{edge}: {r:?}");
+        }
+    }
+}
+
+#[test]
+fn children_inherit_the_positive_size_of_a_negative_local_dimension() {
+    let d = source();
+    let mm = 72. / 25.4;
+    for size in ["w", "h"] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='composite'/><constrLst><constr type='{size}' val='-5'/></constrLst>
+            <layoutNode><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
+        ));
+        let p = evaluate(&l, &d, Xfrm::new(0., 0., 20. * mm, 20. * mm)).unwrap();
+        let extent = if size == "w" { p[0].rect.w } else { p[0].rect.h };
+        assert!((extent - 5. * mm).abs() < 1e-6);
+    }
+}

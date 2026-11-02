@@ -6,7 +6,12 @@ fn font(key: &Key) -> bool {
     matches!(key.1.as_str(), "primFontSz" | "secFontSz")
 }
 
-pub(super) fn apply(entries: &mut [Entry<'_, '_>], equations: &BTreeMap<Key, Row>, work: &mut usize) -> Result<(), &'static str> {
+pub(super) fn apply(
+    entries: &mut [Entry<'_, '_>],
+    equations: &BTreeMap<Key, Row>,
+    values: &BTreeMap<Key, f64>,
+    work: &mut usize,
+) -> Result<(), &'static str> {
     charge(work, entries.len() + equations.len())?;
     for entry in entries.iter_mut() {
         entry.style.font = entry.style.font.map(f64::round);
@@ -38,7 +43,8 @@ pub(super) fn apply(entries: &mut [Entry<'_, '_>], equations: &BTreeMap<Key, Row
                 if other == &key {
                     continue;
                 }
-                let other_value = entries.get(other.0).and_then(|e| e.style.get(&other.1)).unwrap_or(0.);
+                let other_value =
+                    if font(other) { entries.get(other.0).and_then(|e| e.style.get(&other.1)) } else { values.get(other).copied() }.unwrap_or(0.);
                 value -= c * if font(other) { other_value.round() } else { other_value };
             }
             if let Some(entry) = entries.get_mut(key.0) {

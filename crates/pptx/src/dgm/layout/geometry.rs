@@ -134,7 +134,7 @@ fn fit_composite_frame(out: &mut [Placed<'_>], frame: Xfrm, work: &mut usize) ->
     charge(work, out.len() * 4)?;
     let Some(bounds) = occupied_bounds(out) else { return Ok(()) };
     let (width, height) = (bounds.w, bounds.h);
-    if width <= 0.0 || height <= 0.0 || !width.is_finite() || !height.is_finite() {
+    if width < 0.0 || height < 0.0 || !width.is_finite() || !height.is_finite() {
         return Ok(());
     }
     let scale = |limit: f64, occupied: f64| {
@@ -390,7 +390,8 @@ fn pack_composite_extents(
                     }
                 });
             }
-            if let Some(mut b) = box_rect.filter(|b| b.w > 0.0 && b.h > 0.0 && b.w <= bounds.rect.w && b.h <= bounds.rect.h) {
+            let fits = |size: f64, limit: f64| size - limit <= 16. * f64::EPSILON * size.abs().max(limit.abs()).max(1.);
+            if let Some(mut b) = box_rect.filter(|b| b.w > 0.0 && b.h > 0.0 && fits(b.w, bounds.rect.w) && fits(b.h, bounds.rect.h)) {
                 b.x -= style.rect.x;
                 b.y -= style.rect.y;
                 changed |= b != bounds.rect;
@@ -423,7 +424,12 @@ pub(super) fn self_constraints(node: &Instance<'_>, style: &mut BoxStyle) {
             continue;
         }
         if let Some(value) = constraint_value(constraint, style) {
-            style.set(constraint.attr("type").unwrap_or(""), value, constraint.attr("op").unwrap_or("equ"));
+            let property = constraint.attr("type").unwrap_or("");
+            let op = constraint.attr("op").unwrap_or("equ");
+            // Initial child proportions must use the same positive size as the
+            // final solver, including a negative authored local dimension.
+            let value = if matches!(property, "w" | "h" | "diam") && !matches!(op, "gte" | "lte") { value.abs() } else { value };
+            style.set(property, value, op);
         }
     }
 }
