@@ -7,7 +7,13 @@ use crate::xml::El;
 use deckcraft_geom::Xfrm;
 use std::collections::{HashMap, HashSet};
 
-pub(crate) type Measure<'m> = dyn FnMut(&[Placed<'_>], bool) -> Result<Vec<f64>, &'static str> + 'm;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MeasureKind {
+    Overflow,
+    WordWrap,
+    SnakeFit,
+}
+pub(crate) type Measure<'m> = dyn FnMut(&[Placed<'_>], MeasureKind) -> Result<Vec<f64>, &'static str> + 'm;
 
 fn charge(work: &mut usize, amount: usize) -> Result<(), &'static str> {
     *work = work.saturating_add(amount);
@@ -204,16 +210,21 @@ fn placed<'a>(
     let empty = HashSet::new();
     geometry::place_solved(tree, frame, data, &mut out, 0, &solution, Some(&empty), work)?;
     geometry::connect(&mut out, data);
-    if contains_cycle(tree, work)? {
-        charge(work, out.len())?;
-        let values = measure(&out, true)?;
-        if values.len() != out.len() || values.iter().any(|v| !v.is_finite() || *v < 0.) {
-            return Err("invalid diagram text measurement");
+    let mut overflowing = [HashSet::new(), HashSet::new()];
+    for ((alg, kind), overflowing) in [("cycle", MeasureKind::WordWrap), ("snake", MeasureKind::SnakeFit)].into_iter().zip(&mut overflowing) {
+        if contains_algorithm(tree, alg, work)? {
+            charge(work, out.len())?;
+            let values = measure(&out, kind)?;
+            if values.len() != out.len() || values.iter().any(|v| !v.is_finite() || *v < 0.) {
+                return Err("invalid diagram text measurement");
+            }
+            overflowing
+                .extend(out.iter().zip(values).filter(|(p, v)| p.shape.is_some() && *v > 1e-6).map(|(p, _)| p.text_source.unwrap_or(p.node_key)));
         }
-        let overflowing: HashSet<_> =
-            out.iter().zip(values).filter(|(p, v)| p.shape.is_some() && *v > 1e-6).map(|(p, _)| p.text_source.unwrap_or(p.node_key)).collect();
+    }
+    if overflowing.iter().any(|set| !set.is_empty()) {
         let mut refits = HashSet::new();
-        collect_cycle_refits(tree, data, &overflowing, &mut refits, 0, work)?;
+        collect_refits(tree, data, &overflowing, &mut refits, 0, work)?;
         if !refits.is_empty() {
             out.clear();
             geometry::place_solved(tree, frame, data, &mut out, 0, &solution, Some(&refits), work)?;
@@ -223,36 +234,42 @@ fn placed<'a>(
     Ok(out)
 }
 
-fn contains_cycle(node: &Instance<'_>, work: &mut usize) -> Result<bool, &'static str> {
+fn contains_algorithm(node: &Instance<'_>, alg: &str, work: &mut usize) -> Result<bool, &'static str> {
     charge(work, 1)?;
-    if node.alg == "cycle" {
+    if node.alg == alg {
         return Ok(true);
     }
     for child in &node.children {
-        if contains_cycle(child, work)? {
+        if contains_algorithm(child, alg, work)? {
             return Ok(true);
         }
     }
     Ok(false)
 }
 
-fn collect_cycle_refits(
+fn collect_refits(
     node: &Instance<'_>,
     data: &Data<'_>,
-    overflowing: &HashSet<usize>,
+    overflowing: &[HashSet<usize>; 2],
     refits: &mut HashSet<usize>,
     depth: usize,
     work: &mut usize,
-) -> Result<bool, &'static str> {
+) -> Result<[bool; 2], &'static str> {
     charge(work, 1)?;
     if depth > 64 {
         return Err("diagram layout depth exceeded");
     }
-    let mut needs_fit = node.alg == "tx" && overflowing.contains(&constraints::id(node)) && geometry::cycle_has_text(node, data, depth, work)?;
-    for child in &node.children {
-        needs_fit |= collect_cycle_refits(child, data, overflowing, refits, depth + 1, work)?;
+    let mut needs_fit = [false; 2];
+    if node.alg == "tx" && overflowing.iter().any(|set| set.contains(&constraints::id(node))) && geometry::cycle_has_text(node, data, depth, work)? {
+        needs_fit = overflowing.each_ref().map(|set| set.contains(&constraints::id(node)));
     }
-    if node.alg == "cycle" && needs_fit {
+    for child in &node.children {
+        let child_fit = collect_refits(child, data, overflowing, refits, depth + 1, work)?;
+        for (own, child) in needs_fit.iter_mut().zip(child_fit) {
+            *own |= child;
+        }
+    }
+    if node.alg == "cycle" && needs_fit[0] || node.alg == "snake" && needs_fit[1] {
         refits.insert(constraints::id(node));
     }
     Ok(needs_fit)
@@ -277,7 +294,7 @@ fn trial<'a>(
 }
 fn score(out: &[Placed<'_>], scope: &HashSet<usize>, measure: &mut Measure<'_>, prefer_words: bool, work: &mut usize) -> Result<f64, &'static str> {
     charge(work, out.len())?;
-    let values = measure(out, prefer_words)?;
+    let values = measure(out, if prefer_words { MeasureKind::WordWrap } else { MeasureKind::Overflow })?;
     if values.len() != out.len() || values.iter().any(|v| !v.is_finite() || *v < 0.0) {
         return Err("invalid diagram text measurement");
     }

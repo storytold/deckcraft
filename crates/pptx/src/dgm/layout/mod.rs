@@ -6,11 +6,13 @@ mod fallback;
 mod geometry;
 mod orientation;
 mod rules;
+mod snake;
 #[cfg(test)]
 mod tests;
 use crate::xml::El;
 use data::Data;
 use deckcraft_geom::Xfrm;
+pub(crate) use rules::MeasureKind;
 use std::collections::HashMap;
 
 const MAX_INSTANCES: usize = 10000;

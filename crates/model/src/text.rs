@@ -93,6 +93,34 @@ impl TextDir {
     }
 }
 
+/// Vertical overflow policy (`ST_TextVertOverflowType`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TextOverflow {
+    Overflow,
+    Clip,
+    Ellipsis,
+}
+
+impl TextOverflow {
+    pub fn xml(self) -> &'static str {
+        match self {
+            Self::Overflow => "overflow",
+            Self::Clip => "clip",
+            Self::Ellipsis => "ellipsis",
+        }
+    }
+
+    pub fn from_xml(s: &str) -> Option<Self> {
+        Some(match s {
+            "overflow" => Self::Overflow,
+            "clip" => Self::Clip,
+            "ellipsis" => Self::Ellipsis,
+            _ => return None,
+        })
+    }
+}
+
 /// `bodyPr`: insets in points, anchoring, wrapping, autofit, columns, direction, warp.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -104,6 +132,12 @@ pub struct BodyProps {
     pub anchor: Option<Anchor>,
     pub anchor_ctr: Option<bool>,
     pub wrap: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_overflow: Option<TextOverflow>,
+    /// Internal metrics for a recovered SmartArt text frame. Regenerated on diagram
+    /// import; this is not a DrawingML bodyPr attribute.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagram_recovery_metrics: Option<bool>,
     pub autofit: Option<AutoFit>,
     /// Internal lower bound from a diagram font-size rule. Ordinary text leaves it unset.
     /// Regenerated from the retained SmartArt layout on PPTX import; not an a:bodyPr attribute.
@@ -136,6 +170,8 @@ impl BodyProps {
         self.anchor = self.anchor.or(p.anchor);
         self.anchor_ctr = self.anchor_ctr.or(p.anchor_ctr);
         self.wrap = self.wrap.or(p.wrap);
+        self.vertical_overflow = self.vertical_overflow.or(p.vertical_overflow);
+        self.diagram_recovery_metrics = self.diagram_recovery_metrics.or(p.diagram_recovery_metrics);
         self.autofit = self.autofit.or(p.autofit);
         self.min_autofit_scale = self.min_autofit_scale.or(p.min_autofit_scale);
         self.vert = self.vert.or(p.vert);
@@ -668,6 +704,20 @@ impl TextBody {
 mod tests {
     use super::*;
     use deckcraft_color::Rgba;
+
+    #[test]
+    fn optional_overflow_inherits_without_replacing_explicit_policy() {
+        let parent = BodyProps { vertical_overflow: Some(TextOverflow::Ellipsis), ..Default::default() };
+        let mut inherited = BodyProps::default();
+        inherited.inherit(&parent);
+        assert_eq!(inherited.vertical_overflow, Some(TextOverflow::Ellipsis));
+        let mut explicit = BodyProps { vertical_overflow: Some(TextOverflow::Overflow), ..Default::default() };
+        explicit.inherit(&parent);
+        assert_eq!(explicit.vertical_overflow, Some(TextOverflow::Overflow));
+        let old: BodyProps = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.vertical_overflow, None);
+        assert!(!serde_json::to_string(&old).unwrap().contains("verticalOverflow"));
+    }
 
     #[test]
     fn explicit_bullet_follow_text_resets_block_inheritance() {

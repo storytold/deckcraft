@@ -1097,3 +1097,49 @@ fn nested_helper_visibility_and_default_secondary_fonts_round_trip() {
         );
     }
 }
+
+#[test]
+fn snake_packs_nested_occupied_frames_and_preserves_editability() {
+    for flow in ["row", "col"] {
+        let layout = format!(
+            r#"<dgm:layoutDef xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" uniqueId="urn:deckcraft:test:snake-occupied" minVer="12.0">
+            <dgm:title val="Original nested packing"/><dgm:desc val="Constrained nested cards"/><dgm:catLst><dgm:cat type="list" pri="99"/></dgm:catLst>
+            <dgm:layoutNode><dgm:alg type="snake"><dgm:param type="flowDir" val="{flow}"/><dgm:param type="bkpt" val="fixed"/><dgm:param type="bkPtFixedVal" val="2"/></dgm:alg>
+            <dgm:presOf/><dgm:shape type="none"/><dgm:constrLst><dgm:constr type="w" for="ch" val="40"/><dgm:constr type="h" for="ch" val="30"/></dgm:constrLst>
+            <dgm:forEach axis="ch" ptType="node"><dgm:layoutNode name="card"><dgm:alg type="composite"/><dgm:presOf/><dgm:shape type="none"/>
+            <dgm:constrLst><dgm:constr type="w" for="ch" val="20"/><dgm:constr type="h" for="ch" val="10"/></dgm:constrLst>
+            <dgm:layoutNode name="label"><dgm:alg type="tx"/><dgm:presOf axis="self"/><dgm:shape type="rect"/>
+            <dgm:constrLst><dgm:constr type="primFontSz" val="8"/><dgm:constr type="lMarg" val="0"/><dgm:constr type="rMarg" val="0"/></dgm:constrLst>
+            </dgm:layoutNode></dgm:layoutNode></dgm:forEach></dgm:layoutNode></dgm:layoutDef>"#
+        );
+        let mut parts = files(&uncached_fixture());
+        for (_, bytes) in &mut parts {
+            if parse_xml(bytes).ok().is_some_and(|doc| doc.root.is("layoutDef")) {
+                *bytes = layout.as_bytes().to_vec();
+            }
+        }
+        let p = deckcraft_pptx::import(&zip(parts)).unwrap();
+        let cards = group(&p).children();
+        assert_eq!(cards.len(), 3);
+        let (a, b, c) = (cards[0].xfrm.unwrap(), cards[1].xfrm.unwrap(), cards[2].xfrm.unwrap());
+        let (w, h) = (20. * 72. / 25.4, 10. * 72. / 25.4);
+        for card in cards {
+            let r = card.xfrm.unwrap();
+            assert!((r.w - w).abs() < 0.01 && (r.h - h).abs() < 0.01);
+            assert!(card.text.as_ref().is_some_and(|body| !body.text().is_empty()));
+        }
+        if flow == "row" {
+            assert!((b.x - a.x - w).abs() < 0.01 && (c.x - a.x).abs() < 0.01 && (c.y - a.y - h).abs() < 0.01);
+        } else {
+            assert!((b.y - a.y - h).abs() < 0.01 && (c.y - a.y).abs() < 0.01 && (c.x - a.x - w).abs() < 0.01);
+        }
+        let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+        assert_eq!(geometry(group(&p)), geometry(group(&back)));
+        assert_eq!(group(&p).diagram.as_ref().unwrap().nodes, group(&back).diagram.as_ref().unwrap().nodes);
+        assert_eq!(group(&p).diagram.as_ref().unwrap().layout_xml, group(&back).diagram.as_ref().unwrap().layout_xml);
+        assert_eq!(
+            deckcraft_engine::render::render_slide(&p, 0, &Default::default()).pixels,
+            deckcraft_engine::render::render_slide(&back, 0, &Default::default()).pixels
+        );
+    }
+}

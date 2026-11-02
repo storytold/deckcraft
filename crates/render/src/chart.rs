@@ -11,6 +11,9 @@ use vello_cpu::RenderContext;
 
 use crate::color;
 
+#[path = "chart_label_layout.rs"]
+mod label_layout;
+
 const SLOTS: [SchemeSlot; 6] =
     [SchemeSlot::Accent1, SchemeSlot::Accent2, SchemeSlot::Accent3, SchemeSlot::Accent4, SchemeSlot::Accent5, SchemeSlot::Accent6];
 
@@ -254,8 +257,14 @@ pub(crate) fn point_data_label(
         body.body.inherit(&explicit.body);
     }
     let literal_column = spec.text.is_some() && chart.series_kind(series) == ChartType::Column;
-    if literal_column && body.body.wrap.is_none() {
-        body.body.wrap = Some(true);
+    if literal_column {
+        body.body.wrap.get_or_insert(true);
+        // Chart-label text margins differ from ordinary slide text. Native filled-label
+        // controls retain 3pt horizontally and 1.5pt vertically at every font size.
+        body.body.inset_l.get_or_insert(3.);
+        body.body.inset_r.get_or_insert(3.);
+        body.body.inset_t.get_or_insert(1.5);
+        body.body.inset_b.get_or_insert(1.5);
     }
     body.body.inherit(&automatic.body);
     let mut inherited = text_style.and_then(|b| b.paragraphs.first()).map(|p| p.def_props.clone()).unwrap_or_default();
@@ -287,14 +296,23 @@ pub(crate) fn point_data_label(
         1e6
     };
     let wrap_width = wrap_width.clamp(1., 1e6);
-    let shape = Shape { text: Some(body.clone()), ..Default::default() };
-    let measured = deckcraft_text::layout(
-        rctx,
-        &shape,
-        &body,
-        &deckcraft_text::Opts { rect: Rect::new(0., 0., wrap_width, 1e6), fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: true },
-    );
+    let automatic_column = literal_column
+        && spec.layout.is_none()
+        && body.body.rot.unwrap_or(0.) == 0.
+        && matches!(body.body.vert, None | Some(deckcraft_model::text::TextDir::Horizontal));
+    let mut measured = label_layout::measure(rctx, &body, wrap_width, automatic_column);
+    let mut marker_base = None;
+    if automatic_column {
+        (measured, marker_base) = label_layout::overflow(rctx, &mut body, wrap_width, (frame.1 * 0.5).clamp(1., 1e6), measured);
+    }
     let h = (measured.content_height + body.body.inset_t.unwrap_or(0.) + body.body.inset_b.unwrap_or(0.)).max(1.);
+    // Explicit overflow retains the complete body, but automatic positioning still
+    // uses the bounded height. Its trailing lines are clipped by the chart frame.
+    let placement_h = if automatic_column && body.body.vertical_overflow == Some(deckcraft_model::text::TextOverflow::Overflow) {
+        h.min((frame.1 * 0.5).max(1.))
+    } else {
+        h
+    };
     let w = (measured.content_width + body.body.inset_l.unwrap_or(0.) + body.body.inset_r.unwrap_or(0.) + 4.).clamp(1., wrap_width);
     let x = match align {
         Align::Left => r.x0,
@@ -303,8 +321,8 @@ pub(crate) fn point_data_label(
     };
     let y = match anchor {
         Anchor::Top => r.y0,
-        Anchor::Bottom => r.y1 - h,
-        _ => r.center().y - h / 2.,
+        Anchor::Bottom => r.y1 - placement_h,
+        _ => r.center().y - placement_h / 2.,
     };
     r = Rect::new(x, y, x + w, y + h);
     match spec.position.as_deref() {
@@ -316,10 +334,10 @@ pub(crate) fn point_data_label(
                 if chart.series_kind(series).horizontal() {
                     p.x = if end != negative { mark.x1 - w / 2. - 2. } else { mark.x0 + w / 2. + 2. };
                 } else {
-                    p.y = if end != negative { mark.y0 + h / 2. + 2. } else { mark.y1 - h / 2. - 2. };
+                    p.y = if end != negative { mark.y0 + placement_h / 2. + 2. } else { mark.y1 - placement_h / 2. - 2. };
                 }
             }
-            r = Rect::new(p.x - w / 2.0, p.y - h / 2.0, p.x + w / 2.0, p.y + h / 2.0);
+            r = Rect::new(p.x - w / 2.0, p.y - placement_h / 2.0, p.x + w / 2.0, p.y - placement_h / 2.0 + h);
             body.body.anchor = Some(Anchor::Middle);
         }
         Some("b") => {
@@ -343,21 +361,26 @@ pub(crate) fn point_data_label(
     if let Some(layout) = &spec.layout {
         r = layout.resolve(r, frame.0, frame.1);
     }
+    if automatic_column {
+        // Automatic labels remain inside their chart even when outside-end placement
+        // would put the top above it. Author-positioned labels keep their coordinates.
+        let x = r.x0.clamp(0., (frame.0 - r.width()).max(0.));
+        let y = r.y0.clamp(0., (frame.1 - placement_h).max(0.));
+        r = r + kurbo::Vec2::new(x - r.x0, y - r.y0);
+        ctx.set_transform(m);
+        ctx.push_clip_layer(&Rect::new(0., 0., frame.0, frame.1).to_path(0.1));
+    }
     if let Some(fill) = &spec.fill {
         crate::paint::fill_path(ctx, rctx, fill, None, &r.to_path(0.1), r, m, deckcraft_geom::preset::FillMode::Norm, 1.0, rctx.pres);
     }
     if let Some(line) = &spec.line {
         chart_stroke(ctx, rctx, m, &r.to_path(0.1), Some(line), Rgba::BLACK);
     }
-    let tmp = Shape { text: Some(body.clone()), ..Default::default() };
-    crate::draw_text(
-        ctx,
-        rctx,
-        &tmp,
-        &body,
-        m,
-        &deckcraft_text::Opts { rect: r, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: true },
-    );
+    let layout = label_layout::placed(rctx, &body, r, marker_base.as_ref(), automatic_column);
+    crate::draw_layout(ctx, &layout, r, m);
+    if automatic_column {
+        ctx.pop_layer();
+    }
 }
 
 fn merged_chart_body(explicit: &deckcraft_model::text::BodyProps, automatic: &deckcraft_model::text::BodyProps) -> deckcraft_model::text::BodyProps {

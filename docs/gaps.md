@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **PPTX.40 update 2026-11-02:** Constrained snake packing reaches 433/491 native geometry matches. Recovered SmartArt uses distinct fine advance and typographic line metrics: all 326 retained font sets and 274 new font/line controls match. Map sampling passes 640 independent vertex controls, while supported rich-column labels reach 72/73 visible line-count matches. Centered layouts, heavier map simplification, rotated/manual labels and broader search remain partial; feature scores are unchanged.
+
 > **PPTX.39 update 2026-11-02:** Explicit zero font equalities are inactive before SmartArt dependency, duplicate and rule evaluation. All 104 new native font controls match; the existing recovery matrix improves from 321 to 322 of 326 font-size sets with no prior match lost. All 277 recovery and 632 earlier cycle geometries remain within 0.025pt. Four recovery font-fit differences and broader SmartArt, geography and rich-label limits remain open; scores are unchanged.
 
 > **PPTX.37 update 2026-11-02:** Invalid font-reference graphs now recover into editable, measured card layouts. All 277 recovered geometries in a 326-case original matrix match native bounds within 0.025pt; font-set matches improve from 51 to 308, retaining 18 differences. All 106 recovery raster-bound checks and previous geometry/pixel regressions pass. Full SmartArt search, geographic and rich-label parity remain partial; scores are unchanged.
@@ -229,9 +231,9 @@ Detail in [file-format-parity.md](file-format-parity.md).
   have their own layouts, histograms and Paretos bin their data (count, width or Scott's rule),
   and box & whisker charts use exclusive or inclusive quartiles with 1.5 IQR whiskers. Region maps
   with clear entity caches now decode PCA polygons, bind by entity id, and render boundaries/holes
-  offline. Observed raw-DEFLATE binary caches now decode; unknown encodings are retained and unusable caches still use explicitly labelled tiles.
+  offline. Observed plain XML, finalized raw-DEFLATE and SYNC_FLUSH geographic cache envelopes decode. The inspected payload audit found no additional unsupported envelope; malformed or unsupported payloads remain retained, with explicitly labelled fallback tiles when geometry is unusable.
   Administrative lineage, common-ancestor selection and regional Albers are implemented; missing
-  ancestor geometry/extents, global plot fitting and full provider projection policy remain open.
+  ancestor geometry/extents, global plot fitting, heavy boundary reduction and full provider projection policy remain open. The initial 0.375pt Euclidean sampling stage is independently validated.
   No map assets are bundled. Radar charts are drawn polar (filled
   or lines), stock charts as high-low lines with close dashes or up/down bars and saved as
   `c:stockChart`, and combo charts start as columns with a line. Trendlines round-trip
@@ -479,6 +481,7 @@ no global parity claim or score increase.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.40: constrained snake packing, separate recovered-text metrics, native map sampling and rich-column overflow; partial bounds and visual results remain explicit |
 | 2026-11-02 | minor | PPTX.38: native static-font metrics and wrap boundaries; 321/326 recovery font matches, 58 improved text-position comparisons, remaining fit limits explicit |
 | 2026-11-02 | minor | PPTX.37: bounded font-graph recovery with editable data retention; 277 native geometry matches, 308/326 font matches, and explicit remaining text differences |
 | 2026-11-02 | minor | PPTX.36: integrate upstream, retain native asymmetric crossed-inset placement, and document bounded font-reference/fallback evidence; full converter parity remains open |

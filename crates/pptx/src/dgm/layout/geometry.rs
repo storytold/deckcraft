@@ -116,12 +116,12 @@ pub(super) fn place_solved<'a>(
     out: &mut Vec<Placed<'a>>,
     depth: usize,
     solution: &super::constraints::Solution,
-    cycle_refits: Option<&std::collections::HashSet<usize>>,
+    text_refits: Option<&std::collections::HashSet<usize>>,
     work: &mut usize,
 ) -> Result<(), &'static str> {
     let style = super::constraints::lookup(solution, node).unwrap_or_else(|| BoxStyle::new(rect));
     let start = out.len();
-    place_inner(node, style, rect, data, out, depth, solution, cycle_refits, work)?;
+    place_inner(node, style, rect, data, out, depth, solution, text_refits, work)?;
     if depth == 0 {
         super::orientation::apply(out.get_mut(start..).unwrap_or(&mut []), work)?;
         // Allocation-only nodes contribute to ancestor bounds, but are not drawing
@@ -214,7 +214,7 @@ fn place_inner<'a>(
     out: &mut Vec<Placed<'a>>,
     depth: usize,
     solution: &super::constraints::Solution,
-    cycle_refits: Option<&std::collections::HashSet<usize>>,
+    text_refits: Option<&std::collections::HashSet<usize>>,
     work: &mut usize,
 ) -> Result<(), &'static str> {
     if depth > 64 || out.len() >= MAX_INSTANCES {
@@ -293,16 +293,18 @@ fn place_inner<'a>(
             resolved
         })
         .collect();
-    let mut cycle_text_refit = false;
+    let mut text_refit = false;
     // Linear placement uses the constrained sizes, including invisible spacing nodes.
     if matches!(node.alg.as_str(), "lin" | "hierChild") {
         pack_linear(node, local, capacity, &mut children, depth == 0);
     } else if node.alg == "cycle" {
-        cycle_text_refit = match cycle_refits {
+        text_refit = match text_refits {
             Some(refits) => refits.contains(&super::constraints::id(node)),
             None => cycle_has_text(node, data, depth, work)?,
         };
-        pack_cycle(node, local, &mut children, cycle_text_refit, work)?;
+        pack_cycle(node, local, &mut children, text_refit, work)?;
+    } else if node.alg == "snake" {
+        text_refit = text_refits.is_some_and(|refits| refits.contains(&super::constraints::id(node)));
     }
     let iter: Box<dyn Iterator<Item = usize>> =
         if node.reverse { Box::new((0..node.children.len()).rev()) } else { Box::new(0..node.children.len()) };
@@ -317,14 +319,14 @@ fn place_inner<'a>(
             // flows. Linear and space containers can expose their ancestor's
             // capacity beyond their own allocation; they do not clip it early.
             let capacity = if node.alg == "composite" { style.rect } else { capacity };
-            place_inner(child, global, capacity, data, out, depth + 1, solution, cycle_refits, work)?;
+            place_inner(child, global, capacity, data, out, depth + 1, solution, text_refits, work)?;
             if let Some(range) = ranges.get_mut(i) {
                 *range = start..out.len();
             }
         }
     }
     rotate_cycle_leaves(node, &ranges, out, work)?;
-    pack_composite_extents(node, style, local, &children, &ranges, out, cycle_text_refit, work)?;
+    pack_composite_extents(node, style, local, &children, &ranges, out, text_refit, work)?;
     if node.alg == "lin" && out.get(own).is_some_and(|p| p.node_key == super::constraints::id(node)) {
         fit_composite_shape(out.get_mut(own..).unwrap_or(&mut []), work)?;
     }
@@ -351,7 +353,7 @@ fn place_inner<'a>(
                     fitted.rect.y += style.rect.y;
                     fit.project(&mut fitted.rect);
                     let mut replacement = Vec::new();
-                    place_inner(child, fitted, style.rect, data, &mut replacement, depth + 1, solution, cycle_refits, work)?;
+                    place_inner(child, fitted, style.rect, data, &mut replacement, depth + 1, solution, text_refits, work)?;
                     let target = out.get_mut(range.clone()).ok_or("invalid fitted diagram range")?;
                     if target.len() != replacement.len() {
                         return Err("fitted diagram changed its node count");
@@ -436,9 +438,45 @@ fn pack_composite_extents(
     children: &[BoxStyle],
     ranges: &[std::ops::Range<usize>],
     out: &mut [Placed<'_>],
-    cycle_text_refit: bool,
+    text_refit: bool,
     work: &mut usize,
 ) -> Result<(), &'static str> {
+    if node.alg == "snake" {
+        // Each nested algorithm first resolves its own occupied size. Packing
+        // the enclosing allocations prematurely would wrap and shrink children
+        // before their unused space has been removed (or their overflow exposed).
+        let mut occupied = children.to_vec();
+        for (bounds, range) in occupied.iter_mut().zip(ranges) {
+            let shapes = out.get(range.clone()).unwrap_or_default();
+            charge(work, shapes.len())?;
+            if let Some(mut rect) = occupied_bounds(shapes) {
+                rect.x -= style.rect.x;
+                rect.y -= style.rect.y;
+                bounds.rect = rect;
+            }
+        }
+        let mut packed = occupied.clone();
+        super::snake::pack(node, local, &mut packed, text_refit, work)?;
+        for ((before, after), range) in occupied.iter().zip(&packed).zip(ranges.iter().cloned()) {
+            let (sx, sy) = (
+                if before.rect.w > 0. { after.rect.w / before.rect.w } else { 1. },
+                if before.rect.h > 0. { after.rect.h / before.rect.h } else { 1. },
+            );
+            for p in out.get_mut(range).unwrap_or_default() {
+                let project = |rect: &mut Xfrm| {
+                    rect.x = style.rect.x + after.rect.x + (rect.x - style.rect.x - before.rect.x) * sx;
+                    rect.y = style.rect.y + after.rect.y + (rect.y - style.rect.y - before.rect.y) * sy;
+                    rect.w *= sx;
+                    rect.h *= sy;
+                };
+                project(&mut p.rect);
+                if let Some(rect) = &mut p.text_rect {
+                    project(rect);
+                }
+            }
+        }
+        return Ok(());
+    }
     // A composite is a container, not an invisible spacing shape. Linear layout packs
     // its actual children, so unused margins inside that container do not become gaps.
     // Retain the existing constrained-size path for rotated/overflowing containers.
@@ -476,7 +514,7 @@ fn pack_composite_extents(
             let mut packed = occupied.clone();
             // These are already painted extents, not another allocation trial.
             if node.alg == "cycle" {
-                pack_cycle(node, local, &mut packed, cycle_text_refit, work)?;
+                pack_cycle(node, local, &mut packed, text_refit, work)?;
             } else {
                 pack_linear(node, local, local.rect, &mut packed, false);
             }
@@ -582,35 +620,7 @@ pub(super) fn initial(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
                 })
                 .collect()
         }
-        "snake" => {
-            let aspect = node.number("ar", 1.6).max(0.05);
-            let column = node.param("flowDir", "row") == "col";
-            let primary = if node.param("bkpt", "bal") == "fixed" {
-                (node.number("bkPtFixedVal", 1.0) as usize).clamp(1, count.max(1))
-            } else {
-                let ratio = if column { r.h / r.w.max(0.01) * aspect } else { r.w / r.h.max(0.01) / aspect };
-                ((n * ratio).sqrt().ceil() as usize).clamp(1, count.max(1))
-            };
-            let secondary = count.div_ceil(primary).max(1);
-            let (cols, rows) = if column { (secondary, primary) } else { (primary, secondary) };
-            let (w, h) = (r.w / cols as f64, r.h / rows as f64);
-            let reversed = node.param("contDir", "sameDir") == "revDir";
-            let grow = node.param("grDir", "tL");
-            (0..count)
-                .map(|i| {
-                    let minor = i / primary;
-                    let major = if reversed && minor % 2 == 1 { primary - 1 - i % primary } else { i % primary };
-                    let (mut col, mut row) = if column { (minor, major) } else { (major, minor) };
-                    if grow.ends_with('R') {
-                        col = cols - 1 - col;
-                    }
-                    if grow.starts_with('b') {
-                        row = rows - 1 - row;
-                    }
-                    Xfrm::new(r.x + col as f64 * w, r.y + row as f64 * h, w, h)
-                })
-                .collect()
-        }
+        "snake" => vec![r; count],
         "pyra" => (0..count)
             .map(|i| {
                 let width = r.w * (i + 1) as f64 / n;
@@ -620,7 +630,7 @@ pub(super) fn initial(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
         "hierRoot" => hierarchy(node, style),
         _ => vec![r; count],
     };
-    if matches!(node.alg.as_str(), "lin" | "cycle") {
+    if matches!(node.alg.as_str(), "lin" | "cycle" | "snake") {
         for rect in &mut rectangles {
             rect.w = 100. * 72. / 25.4;
             rect.h = 100. * 72. / 25.4;

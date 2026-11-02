@@ -2199,6 +2199,76 @@ fn forced_word_break_metric_distinguishes_spaces_words_and_cjk() {
     }
 }
 
+#[test]
+fn empty_paragraphs_and_paragraph_ends_are_not_forced_word_breaks() {
+    for text in ["", "\n", "\nI", "I\n", "I\n\nI"] {
+        let (p, mut sh) = setup(text, 200.0, 1200.0);
+        sh.text.as_mut().unwrap().body.autofit = Some(AutoFit::None);
+        let result = lay(&p, &sh, 200.0, 1200.0);
+        assert_eq!(result.forced_line_breaks(sh.text.as_ref().unwrap()), 0, "{text:?}");
+    }
+}
+
+#[test]
+fn diagram_measurement_is_distinct_from_ordinary_painted_advances() {
+    use super::{AdvanceMetrics, LayoutMetrics, LineMetrics, layout_with_metrics};
+    for (text, width, expected) in [("eeeeeeeeee", 128.30, 128.25), ("iiiiiiiiiiiiiiiiiiii", 106.599, 106.60)] {
+        let (p, mut sh) = setup(text, width, 400.);
+        sh.ph = None;
+        let body = sh.text.as_mut().unwrap();
+        body.body = BodyProps {
+            inset_l: Some(0.),
+            inset_t: Some(0.),
+            inset_r: Some(0.),
+            inset_b: Some(0.),
+            wrap: Some(true),
+            autofit: Some(AutoFit::None),
+            ..Default::default()
+        };
+        body.paragraphs[0].props.bullet = Some(Bullet::None);
+        for run in &mut body.paragraphs[0].runs {
+            run.props.font = Some("Inter".into());
+            run.props.size = Some(22.);
+        }
+        let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        let opts = Opts { rect: Rect::new(0., 0., width, 400.), fields: &NoFields, prompt_color: None, no_shrink: true };
+        let body = sh.text.as_ref().unwrap();
+        let painted = layout(&ctx, &sh, body, &opts);
+        let measured = layout_with_metrics(&ctx, &sh, body, &opts, LayoutMetrics { advance: AdvanceMetrics::Diagram, line: LineMetrics::Slide });
+        assert_eq!(painted.lines.len(), 2, "{text}");
+        assert_eq!(measured.lines.len(), 1, "{text}");
+        assert!((measured.content_width - expected).abs() < 1e-6, "{text}: {}", measured.content_width);
+        assert_eq!(layout(&ctx, &sh, body, &opts).content_width, painted.content_width, "measurement does not mutate painting");
+    }
+}
+
+#[test]
+fn recovered_diagram_paints_with_the_same_wrap_metrics_used_to_select_its_font() {
+    let (p, mut shape) = setup("eeeeeeeeee", 128.30, 400.);
+    shape.ph = None;
+    let body = shape.text.as_mut().unwrap();
+    body.body = BodyProps {
+        diagram_recovery_metrics: Some(true),
+        inset_l: Some(0.),
+        inset_t: Some(0.),
+        inset_r: Some(0.),
+        inset_b: Some(0.),
+        wrap: Some(true),
+        autofit: Some(AutoFit::None),
+        ..Default::default()
+    };
+    body.paragraphs[0].props.bullet = Some(Bullet::None);
+    for run in &mut body.paragraphs[0].runs {
+        run.props.font = Some("Inter".into());
+        run.props.size = Some(22.);
+    }
+    let recovered = lay(&p, &shape, 128.30, 400.);
+    assert_eq!(recovered.lines.len(), 1);
+    assert!((recovered.content_width - 128.25).abs() < 1e-6);
+    shape.text.as_mut().unwrap().body.diagram_recovery_metrics = None;
+    assert_eq!(lay(&p, &shape, 128.30, 400.).lines.len(), 2);
+}
+
 /// Native PowerPoint keeps an asymmetric crossed interval's midpoint, even when
 /// it is outside the shape. Proportional inset scaling moves the text incorrectly.
 #[test]

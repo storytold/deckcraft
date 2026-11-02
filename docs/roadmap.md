@@ -1,5 +1,7 @@
 # DeckCraft roadmap: milestones and what's next
 
+> **PPTX.40 update 2026-11-02:** Constrained snake packing reaches 433/491 native geometry matches. Recovered SmartArt uses distinct fine advance and typographic line metrics: all 326 retained font sets and 274 new font/line controls match. Map sampling passes 640 independent vertex controls, while supported rich-column labels reach 72/73 visible line-count matches. Centered layouts, heavier map simplification, rotated/manual labels and broader search remain partial; feature scores are unchanged.
+
 > **PPTX.39 update 2026-11-02:** Explicit zero font equalities are inactive before SmartArt dependency, duplicate and rule evaluation. All 104 new native font controls match; the existing recovery matrix improves from 321 to 322 of 326 font-size sets with no prior match lost. All 277 recovery and 632 earlier cycle geometries remain within 0.025pt. Four recovery font-fit differences and broader SmartArt, geography and rich-label limits remain open; scores are unchanged.
 
 > **PPTX.37 update 2026-11-02:** Invalid font-reference graphs now recover into editable, measured card layouts. All 277 recovered geometries in a 326-case original matrix match native bounds within 0.025pt; font-set matches improve from 51 to 308, retaining 18 differences. All 106 recovery raster-bound checks and previous geometry/pixel regressions pass. Full SmartArt search, geographic and rich-label parity remain partial; scores are unchanged.
@@ -172,6 +174,7 @@ and rich point labels; provider/native-layout gaps remain documented, and beta s
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.40: constrained snake packing, separate recovered-text metrics, native map sampling and rich-column overflow; partial bounds and visual results remain explicit |
 | 2026-11-02 | minor | PPTX.38: native static-font metrics and wrap boundaries; 321/326 recovery font matches, 58 improved text-position comparisons, remaining fit limits explicit |
 | 2026-11-02 | minor | PPTX.37: bounded font-graph recovery with editable data retention; 277 native geometry matches, 308/326 font matches, and explicit remaining text differences |
 | 2026-11-02 | minor | PPTX.36: integrate upstream, retain native asymmetric crossed-inset placement, and document bounded font-reference/fallback evidence; full converter parity remains open |

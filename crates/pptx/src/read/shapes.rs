@@ -720,6 +720,7 @@ pub(super) fn diagram_text_layout(
         _ => Anchor::Middle,
     });
     body.body.wrap = Some(true);
+    body.body.diagram_recovery_metrics = p.recovered.then_some(true);
     // An explicit diagram font is final unless an authored numeric rule changes it.
     // Ordinary text-box autofit must not invent a smaller font when no rule exists.
     body.body.autofit = Some(if p.font.is_some() {

@@ -8,7 +8,7 @@ use deckcraft_model::style::{
 };
 use deckcraft_model::text::{
     Action, Align, Anchor, AutoFit, BodyProps, Bullet, Caps, Hyperlink, LevelStyle, ListStyle, ParaProps, Paragraph, Run, RunKind, RunProps, Spacing,
-    Strike, TabStop, TextBody, TextDir,
+    Strike, TabStop, TextBody, TextDir, TextOverflow,
 };
 
 use super::{Imp, Part};
@@ -359,6 +359,7 @@ pub fn body_pr(b: &El) -> BodyProps {
         anchor: b.attr("anchor").and_then(Anchor::from_xml),
         anchor_ctr: b.bool("anchorCtr"),
         wrap: b.attr("wrap").map(|w| w != "none"),
+        vertical_overflow: b.attr("vertOverflow").and_then(TextOverflow::from_xml),
         vert: b.attr("vert").and_then(TextDir::from_xml),
         rot: ang(b, "rot"),
         columns: b.u32("numCol").map(|n| n.clamp(1, 16)),
@@ -737,6 +738,12 @@ mod tests {
         assert_eq!(b.columns, Some(2));
         assert_eq!(b.autofit, Some(AutoFit::Shrink { font_scale: Some(0.625), line_reduction: 0.2 }));
         assert_eq!(b.space_first_last, None);
+        assert_eq!(b.vertical_overflow, None);
+        for (value, expected) in [("overflow", TextOverflow::Overflow), ("clip", TextOverflow::Clip), ("ellipsis", TextOverflow::Ellipsis)] {
+            let xml = format!(r#"<a:bodyPr vertOverflow="{value}"/>"#);
+            let d = parse(xml.as_bytes()).unwrap();
+            assert_eq!(body_pr(&d.root).vertical_overflow, Some(expected));
+        }
         // A bare `<a:normAutofit/>` keeps no scale: the schema default 100 % is drawn as it is,
         // not the same as a saved 100 % (`fontScale="100000"`) (#724).
         let d = parse(br#"<a:bodyPr><a:normAutofit/></a:bodyPr>"#).unwrap();

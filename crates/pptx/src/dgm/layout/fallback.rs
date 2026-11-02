@@ -217,7 +217,7 @@ pub(super) fn place<'a>(
     if let Some(measure) = measure {
         let mut fits = |placed: &[Placed<'_>]| -> Result<bool, &'static str> {
             charge(work, placed.len())?;
-            let scores = measure(placed, true)?;
+            let scores = measure(placed, super::rules::MeasureKind::WordWrap)?;
             if scores.len() != placed.len() || scores.iter().any(|s| !s.is_finite() || *s < 0.) {
                 return Err("invalid diagram text measurement");
             }

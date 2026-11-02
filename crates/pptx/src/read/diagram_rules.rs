@@ -1,5 +1,5 @@
 //! Resolve uncached diagram numeric rules only after theme/font inheritance is available.
-use crate::dgm::layout::{Placed, evaluate_measured};
+use crate::dgm::layout::{MeasureKind, Placed, evaluate_measured};
 use deckcraft_geom::{Rect, Xfrm, preset};
 use deckcraft_model::{Geom, Presentation, Shape, ShapeKind, resolve::Ctx};
 use std::sync::Arc;
@@ -92,10 +92,10 @@ impl From<&Placed<'_>> for MeasureKey {
 // not all search candidates, and bound total shaped text independently of the solver budget.
 #[derive(Default)]
 struct Measurements {
-    last: Vec<Option<(MeasureKey, [f64; 2])>>,
+    last: Vec<Option<(MeasureKey, [f64; 3])>>,
     bytes: usize,
 }
-fn measure(ctx: &Ctx<'_>, source: &[Shape], placed: &[Placed<'_>], prefer_words: bool, cache: &mut Measurements) -> Result<Vec<f64>, &'static str> {
+fn measure(ctx: &Ctx<'_>, source: &[Shape], placed: &[Placed<'_>], kind: MeasureKind, cache: &mut Measurements) -> Result<Vec<f64>, &'static str> {
     if source.len() != placed.len() {
         return Err("diagram rule shape binding changed");
     }
@@ -107,7 +107,7 @@ fn measure(ctx: &Ctx<'_>, source: &[Shape], placed: &[Placed<'_>], prefer_words:
         }
         let key = MeasureKey::from(p);
         if let Some((_, score)) = cached.as_ref().filter(|(old, _)| *old == key) {
-            scores.push(score[usize::from(prefer_words)]);
+            scores.push(score[kind as usize]);
             continue;
         }
         let mut s = adjusted(source, p);
@@ -123,7 +123,7 @@ fn measure(ctx: &Ctx<'_>, source: &[Shape], placed: &[Placed<'_>], prefer_words:
         };
         let Some(body) = &s.text else {
             scores.push(0.0);
-            *cached = Some((key, [0.0; 2]));
+            *cached = Some((key, [0.0; 3]));
             continue;
         };
         let bytes = body.paragraphs.iter().flat_map(|p| &p.runs).map(|r| r.text.len()).sum::<usize>();
@@ -131,17 +131,29 @@ fn measure(ctx: &Ctx<'_>, source: &[Shape], placed: &[Placed<'_>], prefer_words:
         if bytes > 65536 || cache.bytes > 32 * 1024 * 1024 {
             return Err("diagram rule text budget exceeded");
         }
-        let result = deckcraft_text::layout(
+        let result = deckcraft_text::layout_with_metrics(
             ctx,
             &s,
             body,
             &deckcraft_text::Opts { rect: bounds, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: true },
+            deckcraft_text::LayoutMetrics {
+                advance: if p.recovered { deckcraft_text::AdvanceMetrics::Diagram } else { deckcraft_text::AdvanceMetrics::DrawingMl },
+                line: if p.recovered { deckcraft_text::LineMetrics::Typographic } else { deckcraft_text::LineMetrics::Slide },
+            },
         );
         let w = result.inner.width().max(0.0);
         let h = result.inner.height().max(0.0);
-        let overflow = (result.content_width - w - 0.01).max(0.0) / w.max(1.0) + (result.content_height - h - 0.01).max(0.0) / h.max(1.0);
-        let score = [overflow, overflow + result.forced_line_breaks(body) as f64];
-        scores.push(score[usize::from(prefer_words)]);
+        let horizontal = (result.content_width - w - 0.01).max(0.0) / w.max(1.0);
+        let vertical = (result.content_height - h - 0.01).max(0.0) / h.max(1.0);
+        let overflow = horizontal + vertical;
+        let broken_words = result.forced_line_breaks(body) as f64;
+        // A snake refits for width overflow and forced word breaks. Its native
+        // geometry search ignores height when each paragraph is a single line.
+        // Once a paragraph spans multiple lines, the whole body's height counts.
+        let multiline_paragraph = result.lines.windows(2).any(|pair| pair[0].para == pair[1].para);
+        let snake = horizontal + if multiline_paragraph { vertical } else { 0.0 } + broken_words;
+        let score = [overflow, overflow + broken_words, snake];
+        scores.push(score[kind as usize]);
         *cached = Some((key, score));
     }
     Ok(scores)
@@ -165,7 +177,7 @@ fn relayout(ctx: &Ctx<'_>, shape: &mut Shape, imp: &mut super::Imp) -> Result<()
     };
     let ShapeKind::Group { children, child } = &shape.kind else { return Ok(()) };
     let mut cache = Measurements::default();
-    let mut callback = |placed: &[Placed<'_>], prefer_words: bool| measure(ctx, children, placed, prefer_words, &mut cache);
+    let mut callback = |placed: &[Placed<'_>], kind: MeasureKind| measure(ctx, children, placed, kind, &mut cache);
     let placed = match evaluate_measured(&layout.root, &data.root, *child, Some(&mut callback)) {
         Ok(placed) => placed,
         Err(reason) => {
@@ -202,17 +214,8 @@ fn relayout(ctx: &Ctx<'_>, shape: &mut Shape, imp: &mut super::Imp) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn measured_text_is_reused_for_translation_but_not_width_or_font_changes() {
-        let pres = Presentation { slides: vec![Arc::new(deckcraft_model::Slide::default())], ..Default::default() };
-        let ctx = Ctx::for_slide(&pres, &pres.slides[0]).unwrap();
-        let source = vec![Shape {
-            name: "probe".into(),
-            geom: Geom::preset("rect"),
-            text: Some(deckcraft_model::text::TextBody::from_text("LongUnbreakableWord and several other words")),
-            ..Default::default()
-        }];
-        let mut placed = vec![Placed {
+    fn probe() -> Placed<'static> {
+        Placed {
             color_index: 0,
             node_key: 1,
             shape: None,
@@ -234,20 +237,60 @@ mod tests {
             connector: false,
             params: Default::default(),
             endpoints: None,
+        }
+    }
+
+    #[test]
+    fn measured_text_is_reused_for_translation_but_not_width_or_font_changes() {
+        let pres = Presentation { slides: vec![Arc::new(deckcraft_model::Slide::default())], ..Default::default() };
+        let ctx = Ctx::for_slide(&pres, &pres.slides[0]).unwrap();
+        let source = vec![Shape {
+            name: "probe".into(),
+            geom: Geom::preset("rect"),
+            text: Some(deckcraft_model::text::TextBody::from_text("LongUnbreakableWord and several other words")),
+            ..Default::default()
         }];
+        let mut placed = vec![probe()];
         let mut cache = Measurements::default();
-        let overflow = measure(&ctx, &source, &placed, false, &mut cache).unwrap();
+        let overflow = measure(&ctx, &source, &placed, MeasureKind::Overflow, &mut cache).unwrap();
         let bytes = cache.bytes;
         placed[0].rect.x = 500.;
-        let words = measure(&ctx, &source, &placed, true, &mut cache).unwrap();
+        let words = measure(&ctx, &source, &placed, MeasureKind::WordWrap, &mut cache).unwrap();
         assert_eq!(cache.bytes, bytes, "moving a shape or requesting word breaks does not reshape text");
         assert!(words[0] >= overflow[0] && overflow[0] > 0.);
         placed[0].rect.w = 600.;
         placed[0].rect.h = 400.;
-        assert_eq!(measure(&ctx, &source, &placed, true, &mut cache).unwrap(), vec![0.]);
+        assert_eq!(measure(&ctx, &source, &placed, MeasureKind::WordWrap, &mut cache).unwrap(), vec![0.]);
         assert_eq!(cache.bytes, bytes * 2);
         placed[0].font = Some(24.);
-        measure(&ctx, &source, &placed, true, &mut cache).unwrap();
+        measure(&ctx, &source, &placed, MeasureKind::WordWrap, &mut cache).unwrap();
         assert_eq!(cache.bytes, bytes * 3);
+    }
+    #[test]
+    fn snake_height_gate_distinguishes_paragraphs_from_wrapped_lines() {
+        use deckcraft_model::text::TextBody;
+        let pres = Presentation { slides: vec![Arc::new(deckcraft_model::Slide::default())], ..Default::default() };
+        let ctx = Ctx::for_slide(&pres, &pres.slides[0]).unwrap();
+        for (text, width, height, fits) in [
+            ("I", 20., 10., true),
+            ("Read", 80., 10., true),
+            ("Read", 20., 80., false),
+            ("I\nI", 20., 10., true),
+            ("I\n\nI", 20., 10., true),
+            ("I I", 20., 10., false),
+            ("I I", 20., 50., true),
+            ("I I\nI I", 20., 50., false),
+            ("I I\nI I", 20., 80., true),
+        ] {
+            let source =
+                vec![Shape { name: "probe".into(), geom: Geom::preset("rect"), text: Some(TextBody::from_text(text)), ..Default::default() }];
+            let mut p = probe();
+            p.rect = Xfrm::new(0., 0., width * 72. / 25.4, height * 72. / 25.4);
+            p.font = Some(36.);
+            p.margins = [36. * 0.56; 4];
+            let mut cache = Measurements::default();
+            let scores = measure(&ctx, &source, &[p], MeasureKind::SnakeFit, &mut cache).unwrap();
+            assert_eq!(scores[0] <= 1e-6, fits, "{text:?}, {width}x{height}");
+        }
     }
 }

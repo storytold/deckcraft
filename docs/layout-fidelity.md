@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.39): inactive font equalities, native text metrics and bounded font-reference recovery,
-extending global geographic framing, rotated diagram footprints and rich-label layout.
+Updated 2026-11-02 (PPTX.40): constrained snake packing, recovered-text metrics,
+initial map sampling and bounded rich-column overflow.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -1972,3 +1972,70 @@ this change. Full LibreOffice replacement is not established by this regression 
 All eight local `cargo xtask ci` gates pass (2,528 tests including doctests; 169 PPTX
 library and 24 diagram-preservation tests). The new regression covers primary/secondary
 fonts, local/child scope, constants, references, duplicates and prior declarations.
+
+
+## PPTX.40 — parallel layout, geographic and label improvements
+
+These changes execute document-owned rules and data. They do not identify a diagram
+by a vendor template name, bundle geographic assets, or certify arbitrary PPTX files.
+
+Snake packing uses resolved child sizes and recomputes end-of-canvas breaks during
+bounded fit trials. Balanced and fixed breakpoints, row spacing, traversal direction
+and nested occupied bounds have independent native controls. Text refitting has its
+own measurement mode: horizontal overflow and forced word splits count; total body
+height counts once an authored paragraph spans multiple lines. An empty paragraph
+is no longer incorrectly classified as a forced word split.
+
+The new original snake matrix improves from 0 to 433 of 491 strict geometry matches.
+The 58 retained failures comprise 56 uneven centered-row cases, one nested linear
+case and one literal-linefeed height case. The earlier flow matrix improves from
+73 to 85 of 111 with no prior match lost. All 632 prior cycle geometries still match,
+and 506 previously retained inspection models are unchanged. Twenty sampled 4K
+visible-bound checks have 17 matches and three known layout failures; this is not
+whole-deck pixel equivalence or complete hierarchy/rule-search coverage.
+
+Recovered SmartArt selects and lays out text using nominal glyph advances and
+available widths rounded to 1/200pt, with typographic ascent/descent-based line
+metrics. Ordinary slide text retains its existing metrics. The policies are explicit
+in the text API; an internal recovered-frame marker regenerates on diagram import
+and is not written as a nonstandard DrawingML attribute. Cross-size original-font
+controls distinguish this policy from both continuous metrics and ordinary 1/8pt
+painted advances. All 274 new native controls match font sets and whitespace-normalized
+line sequences; the retained 326-case font matrix improves from 322 to 326 without
+losing a previous match. Its geometry snapshots remain unchanged. PDF bullet
+extraction differences are not counted as missing visible bullets or a text pass.
+
+Maps now apply the initial Euclidean 0.375pt screen-space sampling stage. Ring
+sampling resets independently; closing edges remain closed without forcing a rejected
+last vertex back into tiny islands. Original Robinson/Mercator/Miller controls at two
+sizes match all 576 retained-vertex results; 64 independent threshold/direction cases
+also match. Eight 3840×2160 raster comparisons improve blue-region IoU, but viewport
+and heavier simplification differences remain visible. The country example improves
+95.67% to 95.82% IoU; this does not establish complete map fidelity. LibreOffice opens
+three map controls but emits unsupported-chart placeholders, retained as failed visual
+controls. An inspection of 27 distinct geographic payloads found the already handled
+plain-XML, finalized raw-DEFLATE and SYNC_FLUSH envelopes; no additional encoding is
+claimed missing without concrete evidence. Native geographic comparisons isolate
+application processes because source hashes alone do not prevent stale provider-cache
+reuse between documents.
+
+Automatic unrotated literal column labels now distinguish ellipsis, clip and explicit
+overflow, retain native insets and oversized first lines, and cap the automatic box
+at half the chart height. Truncation does not alter stored chart text; the ellipsis
+inherits the first omitted run's style while the original line metrics remain intact.
+The typographic line policy is opt-in and respects mixed fonts and authored spacing.
+Visible line-count controls improve from 10 to 72 of 73; the remaining negative-column
+case retains a plot-position difference. Both earlier long-label examples now show
+five lines with ellipsis, and all ten retained label bounding-box RMS comparisons
+improve. These are visible raster diagnostics, not extracted chart-text comparisons.
+Exact marker width, plot positions, rotated/manual labels, other chart kinds and
+collision/callout behavior remain separate gaps.
+
+All evidence uses original generated inputs and private native observations. No
+native-generated documents, provider data, fonts, screenshots or user decks are
+included. Full replacement of LibreOffice remains unproven while these gaps remain.
+
+The final integrated build passes all eight local `cargo xtask ci` stages (2,551
+tests including doctests). Its 133 retained label-page renders and eight 4K map
+images are identical to the independently validated branch outputs. These checks
+verify integration; they do not turn the known native differences into passes.

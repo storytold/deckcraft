@@ -62,7 +62,7 @@ pub fn font_usage(ctx: &Ctx, shape: &Shape, body: &TextBody) -> Vec<FontUse> {
     let opts = Opts { rect: Rect::new(0.0, 0.0, 1000.0, 1000.0), fields: &SavedFields, prompt_color: None, no_shrink: true };
     let mut out: Vec<FontUse> = Vec::new();
     for paragraph in 0..body.paragraphs.len() {
-        let p = shape_para(ctx, shape, body, paragraph, 1.0, &opts, None, Upright::None);
+        let p = shape_para(ctx, shape, body, paragraph, 1.0, &opts, None, Upright::None, super::AdvanceMetrics::DrawingMl);
         let chars: Vec<_> = p.cells.iter().map(|c| c.ch).collect();
         let scripts = script::resolve(&chars);
         for (i, cell) in p.cells.iter().enumerate() {

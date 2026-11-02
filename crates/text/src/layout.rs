@@ -3,8 +3,8 @@ use super::run::{Deco, DecoLine, GlyphRun};
 use super::shape::{SUB_SUPER, Upright, shape_para};
 use super::style::{Cell, Opts, ParaShaped, Style, spacing_pts};
 use super::{
-    Align, Anchor, Arc, AutoFit, BodyProps, Bullet, Caps, Ctx, FontFace, LineInfo, Rect, Shape, Spacing, Strike, TextBody, TextDir, TextLayout, bidi,
-    joins_following, joins_preceding, resolve,
+    AdvanceMetrics, Align, Anchor, Arc, AutoFit, BodyProps, Bullet, Caps, Ctx, FontFace, LayoutMetrics, LineInfo, LineMetrics, Rect, Shape, Spacing,
+    Strike, TextBody, TextDir, TextLayout, bidi, joins_following, joins_preceding, resolve,
 };
 
 #[cfg(test)]
@@ -15,6 +15,17 @@ thread_local! {
 
 /// Lay out a shape's text body.
 pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLayout {
+    let metrics = if resolve::body(ctx, shape).diagram_recovery_metrics == Some(true) {
+        LayoutMetrics { advance: AdvanceMetrics::Diagram, line: LineMetrics::Typographic }
+    } else {
+        LayoutMetrics::default()
+    };
+    layout_with_metrics(ctx, shape, body, opts, metrics)
+}
+
+/// Lay out text with an explicit measurement policy. Ordinary slide rendering keeps
+/// its established metrics; chart/diagram callers can select their native policies.
+pub fn layout_with_metrics(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts, metrics: LayoutMetrics) -> TextLayout {
     let bp = resolve::body(ctx, shape);
     let autofit = bp.autofit.unwrap_or(AutoFit::None);
     // Shrink on overflow starts from the scale the file was saved with (`fontScale`,
@@ -27,7 +38,7 @@ pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLay
         ),
         _ => (1.0, 0.0, false),
     };
-    let mut l = layout_scaled(ctx, shape, body, &bp, opts, scale0, reduce0);
+    let mut l = layout_scaled_with_metrics(ctx, shape, body, &bp, opts, scale0, reduce0, metrics);
     // A scale PowerPoint saved is drawn as it is: PowerPoint fits the text again only when it
     // changes (and editing resets the saved scale), not when a file opens, even where our
     // metrics would call it overflowing (trailing empty paragraphs, substituted fonts).
@@ -42,7 +53,7 @@ pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLay
         // overflows too, so searching would only lay it out a dozen more times (seconds for a
         // body of tens of thousands of paragraphs, on every redraw of the slide).
         let floor = bp.min_autofit_scale.filter(|v| v.is_finite()).unwrap_or(0.1).clamp(0.1, 1.0);
-        let smallest = layout_scaled(ctx, shape, body, &bp, opts, floor, 0.2);
+        let smallest = layout_scaled_with_metrics(ctx, shape, body, &bp, opts, floor, 0.2, metrics);
         if smallest.overflow {
             return smallest;
         }
@@ -52,7 +63,7 @@ pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLay
         for _ in 0..12 {
             let mid = (lo + hi) / 2.0;
             let red: f64 = ((1.0 - mid) * 0.8_f64).min(0.2).max(reduce0);
-            let t = layout_scaled(ctx, shape, body, &bp, opts, mid, red);
+            let t = layout_scaled_with_metrics(ctx, shape, body, &bp, opts, mid, red, metrics);
             if t.overflow {
                 hi = mid;
             } else {
@@ -66,7 +77,7 @@ pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLay
             let (mut low, mut high) = (reduce0, best.line_reduction);
             for _ in 0..10 {
                 let mid = (low + high) / 2.0;
-                let candidate = layout_scaled(ctx, shape, body, &bp, opts, best.font_scale, mid);
+                let candidate = layout_scaled_with_metrics(ctx, shape, body, &bp, opts, best.font_scale, mid, metrics);
                 if candidate.overflow {
                     low = mid;
                 } else {
@@ -82,6 +93,7 @@ pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLay
 
 /// Geometry of the text box shared by every line: rotation, inner rectangle, wrapping and columns.
 struct BoxGeom {
+    metrics: LayoutMetrics,
     vert: TextDir,
     rotation: f64,
     inner: Rect,
@@ -93,7 +105,7 @@ struct BoxGeom {
 }
 
 impl BoxGeom {
-    fn new(shape: &Shape, bp: &BodyProps, text_rect: Rect) -> Self {
+    fn new(shape: &Shape, bp: &BodyProps, text_rect: Rect, metrics: LayoutMetrics) -> Self {
         let vert = bp.vert.unwrap_or(TextDir::Horizontal);
         let rotation = match vert {
             TextDir::Vertical | TextDir::EaVertical | TextDir::Stacked | TextDir::StackedRtl | TextDir::MongolianVertical => 90.0,
@@ -120,7 +132,7 @@ impl BoxGeom {
         let col_gap = bp.col_spacing.unwrap_or(0.0).max(0.0);
         let col_w = ((inner.width() - col_gap * (ncols as f64 - 1.0)) / ncols as f64).max(0.0);
         let rtl_cols = bp.rtl_col.unwrap_or(false) && ncols > 1;
-        BoxGeom { vert, rotation, inner, wrap, ncols, col_gap, col_w, rtl_cols }
+        BoxGeom { metrics, vert, rotation, inner, wrap, ncols, col_gap, col_w, rtl_cols }
     }
 
     /// East Asian vertical text: CJK stands upright in text turned a quarter turn; stacked text
@@ -188,7 +200,15 @@ fn next_number(numbering: &mut [u32], run_start: &mut [u32], lvl: usize, start_a
     }
 }
 
-fn shape_paragraphs(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts, scale: f64, upright: Upright) -> Vec<ParaShaped> {
+fn shape_paragraphs(
+    ctx: &Ctx,
+    shape: &Shape,
+    body: &TextBody,
+    opts: &Opts,
+    scale: f64,
+    upright: Upright,
+    advance: AdvanceMetrics,
+) -> Vec<ParaShaped> {
     let mut numbering: Vec<u32> = vec![0; 9];
     let mut run_start: Vec<u32> = vec![0; 9];
     let mut shaped_paras: Vec<ParaShaped> = Vec::with_capacity(body.paragraphs.len());
@@ -200,7 +220,7 @@ fn shape_paragraphs(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts, scal
             _ => None,
         };
         let number = next_number(&mut numbering, &mut run_start, lvl, start_at, para.is_empty());
-        shaped_paras.push(shape_para(ctx, shape, body, pi, scale, opts, number, upright));
+        shaped_paras.push(shape_para(ctx, shape, body, pi, scale, opts, number, upright, advance));
     }
     shaped_paras
 }
@@ -243,11 +263,26 @@ impl ParaEnv<'_> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts: &Opts, scale: f64, reduce: f64) -> TextLayout {
+    layout_scaled_with_metrics(ctx, shape, body, bp, opts, scale, reduce, LayoutMetrics::default())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_scaled_with_metrics(
+    ctx: &Ctx,
+    shape: &Shape,
+    body: &TextBody,
+    bp: &BodyProps,
+    opts: &Opts,
+    scale: f64,
+    reduce: f64,
+    metrics: LayoutMetrics,
+) -> TextLayout {
     #[cfg(test)]
     LAYOUT_PASSES.with(|n| n.set(n.get() + 1));
-    let g = BoxGeom::new(shape, bp, opts.rect);
-    let shaped_paras = shape_paragraphs(ctx, shape, body, opts, scale, g.upright());
+    let g = BoxGeom::new(shape, bp, opts.rect, metrics);
+    let shaped_paras = shape_paragraphs(ctx, shape, body, opts, scale, g.upright(), metrics.advance);
     let mut out = TextLayout { inner: g.inner, font_scale: scale, line_reduction: reduce, rotation: g.rotation, ..Default::default() };
     let first_last = bp.space_first_last.unwrap_or(false);
     let mut flow = Flow { y: 0.0, prev_after: 0.0, tail: 0.0, lines: vec![] };
@@ -314,8 +349,12 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
     let first_x = first_line_start(p.bullet.is_some(), margin, indent, bullet_w);
     let rest_x = margin;
     let tabs = tabs_of(props);
-    let first_w = (g.col_w - first_x - mr).max(1.0);
-    let rest_w = (g.col_w - rest_x - mr).max(1.0);
+    let width = |v: f64| {
+        let v = v.max(1.);
+        if g.metrics.advance == AdvanceMetrics::Diagram { (v * 200.).round() / 200. } else { v }
+    };
+    let first_w = width(g.col_w - first_x - mr);
+    let rest_w = width(g.col_w - rest_x - mr);
     let raw = break_lines(
         p,
         &BreakParams {
@@ -332,7 +371,7 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
     // Paragraph percentage spacing uses the adjacent line's natural height, not the font's
     // em size or its already-reduced line pitch (ISO/IEC 29500 spcPct).
     let natural = |line: &RawLine| {
-        let (asc, desc, size) = line_extent(p, line);
+        let (asc, desc, size) = line_extent(p, line, g.metrics.line);
         (asc + desc).max(size)
     };
     let before = if pi == 0 && !first_last { 0.0 } else { spacing_pts(props.space_before, raw.first().map_or(p.lead_size, natural)) };
@@ -364,7 +403,7 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
 }
 
 /// Max ascent / descent / size over the line's styles (or the lead style if empty).
-fn line_extent(p: &ParaShaped, rl: &RawLine) -> (f64, f64, f64) {
+fn line_extent(p: &ParaShaped, rl: &RawLine, metrics: LineMetrics) -> (f64, f64, f64) {
     let (mut asc, mut desc, mut size) = (0.0f64, 0.0f64, 0.0f64);
     for c in p.cells.get(rl.start..rl.end.max(rl.start)).unwrap_or(&[]) {
         if let (Some(st), Some(face)) = (p.styles.get(c.style), p.faces.get(c.face)) {
@@ -373,7 +412,7 @@ fn line_extent(p: &ParaShaped, rl: &RawLine) -> (f64, f64, f64) {
             // script the run's fonts lack) does not move the baseline in PowerPoint.
             let own = Arc::ptr_eq(face, &st.face)
                 || [st.ea.as_deref(), st.cs.as_deref(), st.sym.as_deref()].into_iter().flatten().any(|f| face.family.eq_ignore_ascii_case(f));
-            let (a, d) = line_metrics(if own { face } else { &st.face }, sz);
+            let (a, d) = metric_line(if own { face } else { &st.face }, sz, metrics);
             asc = asc.max(a);
             desc = desc.max(d);
             size = size.max(sz);
@@ -391,10 +430,21 @@ fn line_extent(p: &ParaShaped, rl: &RawLine) -> (f64, f64, f64) {
             // Anything else empty (a line of tabs alone) keeps the old measure.
             None => (&p.lead_face, p.lead_size),
         };
-        let (a, d) = line_metrics(face, sz);
+        let (a, d) = metric_line(face, sz, metrics);
         return (a, d, sz);
     }
     (asc, desc, size)
+}
+
+fn metric_line(face: &FontFace, size: f64, metrics: LineMetrics) -> (f64, f64) {
+    if metrics == LineMetrics::Typographic {
+        let ascent = size * face.ascent / face.upem.max(1.);
+        let descent = size * face.descent / face.upem.max(1.);
+        if ascent.is_finite() && descent.is_finite() && ascent >= 0. && descent >= 0. && ascent + descent > 0. {
+            return (ascent, descent);
+        }
+    }
+    line_metrics(face, size)
 }
 
 /// Logical advance of each cell on the line (tabs measure from the start edge) and their sum.
@@ -521,7 +571,7 @@ fn line_bullet(env: &ParaEnv, align: Align, content_shift: f64, baseline: f64) -
 fn place_line(env: &ParaEnv, pi: usize, rl: &RawLine, li: usize, is_last: bool, flow: &mut Flow) -> PlacedLine {
     let (p, g) = (env.p, env.g);
     let props = &p.props;
-    let (asc, desc, size) = line_extent(p, rl);
+    let (asc, desc, size) = line_extent(p, rl, g.metrics.line);
     let natural = (asc + desc).max(size * 1.0);
     let lh = match props.line_spacing {
         // The reduction comes off the percentage (90 % less 20 % is 70 %), as PowerPoint
@@ -896,4 +946,80 @@ fn kashida_opportunities(p: &ParaShaped, start: usize, end: usize) -> Vec<usize>
         }
     }
     out
+}
+
+#[cfg(test)]
+mod metric_tests {
+    use super::*;
+    use deckcraft_model::text::RunProps;
+    use deckcraft_model::{LayoutType, Presentation, defaults};
+
+    fn document() -> Presentation {
+        let mut p = defaults::new_presentation(None);
+        let layout = defaults::layout_of_kind(&p, LayoutType::Blank).unwrap();
+        let slide = defaults::new_slide(&mut p, layout).unwrap();
+        p.slides = vec![Arc::new(slide)];
+        p
+    }
+
+    fn body() -> TextBody {
+        let mut body = TextBody::from_text("First\nSecond");
+        body.body.inset_l = Some(0.);
+        body.body.inset_t = Some(0.);
+        body.body.inset_r = Some(0.);
+        body.body.inset_b = Some(0.);
+        body.body.anchor = Some(Anchor::Top);
+        for (p, (font, size)) in body.paragraphs.iter_mut().zip([("Inter", 30.), ("Open Sans", 20.)]) {
+            p.props.bullet = Some(Bullet::None);
+            p.def_props = RunProps { font: Some(font.into()), size: Some(size), ..Default::default() };
+        }
+        body
+    }
+
+    fn measure(body: &TextBody, metrics: LayoutMetrics) -> TextLayout {
+        let p = document();
+        let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        let shape = Shape { text: Some(body.clone()), ..Default::default() };
+        layout_with_metrics(
+            &ctx,
+            &shape,
+            body,
+            &Opts { rect: Rect::new(0., 0., 300., 500.), fields: &crate::NoFields, prompt_color: None, no_shrink: true },
+            metrics,
+        )
+    }
+
+    #[test]
+    fn typographic_lines_use_each_fonts_metrics_and_leave_default_pitch_unchanged() {
+        let body = body();
+        let slide = measure(&body, LayoutMetrics::default());
+        let native = measure(&body, LayoutMetrics { line: LineMetrics::Typographic, ..Default::default() });
+        assert!((slide.content_height - 60.).abs() < 1e-8);
+        // Independent filled-label controls yield Inter 36.295pt at30pt, and
+        // Open Sans 40.855pt at30pt (typographic, not its larger Win metrics).
+        let expected = 30. * 2478. / 2048. + 20. * 2789. / 2048.;
+        assert!((native.content_height - expected).abs() < 0.02, "{} vs {expected}", native.content_height);
+        assert_eq!(
+            slide.lines.iter().map(|l| (l.start, l.end)).collect::<Vec<_>>(),
+            native.lines.iter().map(|l| (l.start, l.end)).collect::<Vec<_>>()
+        );
+        assert_eq!(body.paragraphs[0].props.line_spacing, None, "measuring does not rewrite author spacing");
+    }
+
+    #[test]
+    fn typographic_policy_preserves_percentage_and_exact_line_spacing() {
+        let mut body = body();
+        for p in &mut body.paragraphs {
+            p.props.line_spacing = Some(Spacing::Pct(1.5));
+        }
+        let metrics = LayoutMetrics { line: LineMetrics::Typographic, ..Default::default() };
+        let percent = measure(&body, metrics);
+        assert!((percent.content_height - (30. * 2478. / 2048. + 20. * 2789. / 2048.) * 1.5).abs() < 0.02);
+        for p in &mut body.paragraphs {
+            p.props.line_spacing = Some(Spacing::Pts(40.));
+        }
+        let exact = measure(&body, metrics);
+        assert!((exact.lines[0].baseline - 32.).abs() < 1e-8);
+        assert!((exact.lines[1].baseline - exact.lines[0].baseline - 40.).abs() < 1e-8);
+    }
 }

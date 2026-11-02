@@ -51,9 +51,9 @@ use breaking::{LINE_PITCH, break_opportunities, measure_str};
 pub use font_usage::{FontUse, font_usage, requested_fonts};
 #[cfg(test)]
 pub(crate) use layout::LAYOUT_PASSES;
-pub use layout::layout;
 #[cfg(test)]
 use layout::layout_scaled;
+pub use layout::{layout, layout_with_metrics};
 pub use run::{Dash, Deco, DecoLine, GlyphRun, RunEffects, TextShadow, UPRIGHT_CENTRE};
 #[cfg(test)]
 use shape::{SUB_SUPER, caps_char, is_upright, shaping_features};
@@ -63,6 +63,29 @@ pub use style::{Fields, NoFields, Opts};
 #[cfg(test)]
 use symbol::{covers_symbol, is_symbol_font, symbol_font_char, symbol_font_draw, symbol_unicode, symbol_unicode_alts};
 pub use symbol::{map_symbol_bullet, symbol_char};
+
+/// Nominal advances used for layout. Diagram font selection uses finer metrics
+/// than ordinary DrawingML painting; selecting a font must not change its paint.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AdvanceMetrics {
+    #[default]
+    DrawingMl,
+    Diagram,
+}
+
+/// Line sizing policy, separate from glyph advances and authored line spacing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LineMetrics {
+    #[default]
+    Slide,
+    Typographic,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LayoutMetrics {
+    pub advance: AdvanceMetrics,
+    pub line: LineMetrics,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct LineInfo {
@@ -139,7 +162,10 @@ impl TextLayout {
             .filter(|line| {
                 allowed.get(line.para).is_some_and(|(a, chars)| {
                     // LineInfo excludes trailing spaces, whereas a Unicode opportunity follows them.
-                    !chars.get(line.end).is_some_and(|c| c.is_whitespace()) && a.get(line.end).is_some_and(|v| !v)
+                    line.start < line.end
+                        && line.end < chars.len()
+                        && !chars.get(line.end).is_some_and(|c| c.is_whitespace())
+                        && a.get(line.end).is_some_and(|v| !v)
                 })
             })
             .count()

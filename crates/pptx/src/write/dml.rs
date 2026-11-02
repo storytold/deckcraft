@@ -479,6 +479,7 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
         .o("rot", b.rot.map(|r| (r * 60_000.0).round().clamp(-21_600_000.0, 21_600_000.0) as i64))
         .o("vert", b.vert.map(|v| v.xml()))
         .o("wrap", b.wrap.map(|v| if v { "square" } else { "none" }))
+        .o("vertOverflow", b.vertical_overflow.map(|v| v.xml()))
         .o("lIns", b.inset_l.map(emu))
         .o("tIns", b.inset_t.map(emu))
         .o("rIns", b.inset_r.map(emu))

@@ -3,8 +3,8 @@ use super::run::{RunEffects, TextShadow};
 use super::style::{Cell, Opts, ParaShaped, Style, face_chain, make_style};
 use super::symbol::{covers_symbol, is_symbol_font, map_symbol_bullet, symbol_font_char, symbol_map_char};
 use super::{
-    Arc, Bullet, Caps, Ctx, Fill, FontDb, FontFace, FontSlot, HashMap, ParaProps, RunKind, RunProps, ScriptTag, Shape, ShapeParams, TextBody,
-    UnicodeSegmentation, bidi, resolve, script,
+    AdvanceMetrics, Arc, Bullet, Caps, Ctx, Fill, FontDb, FontFace, FontSlot, HashMap, ParaProps, RunKind, RunProps, ScriptTag, Shape, ShapeParams,
+    TextBody, UnicodeSegmentation, bidi, resolve, script,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -17,6 +17,7 @@ pub(crate) fn shape_para(
     opts: &Opts,
     number: Option<u32>,
     vertical: Upright,
+    advances: AdvanceMetrics,
 ) -> ParaShaped {
     let db = FontDb::global();
     let Some(para) = body.paragraphs.get(pi) else {
@@ -56,7 +57,7 @@ pub(crate) fn shape_para(
         char_style.extend(std::iter::repeat_n(si, t.chars().count()));
         text.push_str(&t);
     }
-    let cells = shape_cells(ctx, &text, &char_style, &styles, &mut faces, rtl, vertical);
+    let cells = shape_cells(ctx, &text, &char_style, &styles, &mut faces, rtl, vertical, advances);
     let lead = para.runs.first().map(|r| resolve::run(ctx, shape, para, &r.props)).unwrap_or_else(|| resolve::run(ctx, shape, para, &para.end_props));
     let lead_style = make_style(ctx, &lead, scale, opts.prompt_color);
     let lead_size = lead_style.size;
@@ -147,6 +148,7 @@ fn shape_cells(
     faces: &mut Vec<Arc<FontFace>>,
     rtl: bool,
     vertical: Upright,
+    advances: AdvanceMetrics,
 ) -> Vec<Cell> {
     let db = FontDb::global();
     let chars: Vec<char> = text.chars().collect();
@@ -264,7 +266,7 @@ fn shape_cells(
     // Upright glyphs keep their horizontal forms: PowerPoint turns "、", "。" and "「" as they are
     // (no `vert` alternates).
     for (a, b) in items {
-        shape_item(&mut cells, styles, faces, text, &byte_of, &char_at_byte, a..b, scripts.get(a).and_then(|s| s.0), lang(a), upper(a));
+        shape_item(&mut cells, styles, faces, text, &byte_of, &char_at_byte, a..b, scripts.get(a).and_then(|s| s.0), lang(a), upper(a), advances);
     }
     // Stacked text: each character takes one em down the line, centred across it (PowerPoint
     // stacks 18 pt Latin letters about 18 pt apart, a space only its own width).
@@ -379,6 +381,7 @@ fn shape_item(
     script: Option<ScriptTag>,
     lang: Option<&str>,
     upper: bool,
+    advances: AdvanceMetrics,
 ) {
     let Some(first) = cells.get(range.start) else { return };
     let (fi, level) = (first.face, first.level);
@@ -429,7 +432,11 @@ fn shape_item(
         // Round the nominal width, before pair adjustments and character spacing.
         // Rounding the kerned width instead loses the continuous legacy pair value.
         let nominal = if quantized && g.x_advance != 0 { face.advance(g.gid) * s } else { 0.0 };
-        *w += advance + (nominal * 8.0).round() / 8.0 - nominal;
+        let precision = match advances {
+            AdvanceMetrics::DrawingMl => 8.0,
+            AdvanceMetrics::Diagram => 200.0,
+        };
+        *w += advance + (nominal * precision).round() / precision - nominal;
         let e = lig.entry(h).or_insert((g.gid, 0));
         e.1 += 1;
     }

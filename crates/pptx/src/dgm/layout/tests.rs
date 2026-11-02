@@ -166,7 +166,40 @@ fn snake_respects_breakpoint_flow_growth_and_alternation() {
     <forEach axis="ch" ptType="node"><layoutNode><presOf axis="self"/><alg type="tx"/><shape type="rect"/></layoutNode></forEach></layoutNode>"#,
     );
     let p = evaluate(&l, &d, frame()).unwrap();
-    assert_eq!(p.iter().map(|p| (p.rect.x, p.rect.y)).collect::<Vec<_>>(), [(300.0, 150.0), (300.0, 0.0), (0.0, 0.0)]);
+    // Unconstrained children begin at 100mm square. The column pair is fitted
+    // with the same finite search as explicit sizes, rather than filling cells.
+    let side = 100. * 72. / 25.4 * 541. / 1024.;
+    let expected = [(300., 150.), (300., 150. - side), (300. - side, 150. - side)];
+    for (p, (x, y)) in p.iter().zip(expected) {
+        assert!((p.rect.x - x).abs() < 1e-7 && (p.rect.y - y).abs() < 1e-7);
+        assert!((p.rect.w - side).abs() < 1e-7 && (p.rect.h - side).abs() < 1e-7);
+    }
+}
+
+#[test]
+fn snake_repacking_uses_its_own_text_measurement_mode() {
+    let data = source();
+    let layout = layout(
+        r#"<layoutNode><alg type="snake"/><constrLst>
+        <constr type="w" for="ch" val="20"/><constr type="h" for="ch" val="10"/></constrLst>
+        <forEach axis="ch" ptType="node"><layoutNode><presOf axis="self"/><alg type="tx"/><shape type="rect"/></layoutNode></forEach></layoutNode>"#,
+    );
+    for fits in [true, false] {
+        let mut modes = Vec::new();
+        let mut measure = |placed: &[Placed<'_>], mode: MeasureKind| {
+            modes.push(mode);
+            Ok(vec![f64::from(mode != MeasureKind::SnakeFit || !fits); placed.len()])
+        };
+        let p = evaluate_measured(&layout, &data, frame(), Some(&mut measure)).unwrap();
+        let width = 20. * 72. / 25.4 * if fits { 1. } else { 1023. / 1024. };
+        assert!(p.iter().all(|p| (p.rect.w - width).abs() < 1e-6));
+        assert!(modes.contains(&MeasureKind::SnakeFit));
+        assert!(!modes.contains(&MeasureKind::WordWrap));
+    }
+    for bad in [f64::NAN, f64::INFINITY, -1.] {
+        let mut measure = |placed: &[Placed<'_>], _: MeasureKind| Ok(vec![bad; placed.len()]);
+        assert!(evaluate_measured(&layout, &data, frame(), Some(&mut measure)).is_err());
+    }
 }
 
 #[test]
@@ -379,7 +412,7 @@ fn measured_rules_are_ordered_stop_at_fit_and_recompute_dependencies() {
           <layoutNode name="text"><alg type="tx"/><presOf axis="ch" cnt="1"/><shape type="rect"/><ruleLst>{rules}</ruleLst></layoutNode>
           <layoutNode name="mirror"><alg type="sp"/><shape type="rect"/></layoutNode></layoutNode>"#
         ));
-        let mut measure = |items: &[Placed<'_>], _: bool| {
+        let mut measure = |items: &[Placed<'_>], _: MeasureKind| {
             Ok(items.iter().map(|p| if p.name == "text" { (p.font.unwrap_or(18.0) * 3.0 - p.rect.h).max(0.0) } else { 0.0 }).collect())
         };
         evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap().iter().map(|p| (p.rect.h, p.font)).collect::<Vec<_>>()
@@ -402,10 +435,10 @@ fn measured_rules_resolve_factors_and_maximum_bounds_and_reject_bad_measurements
       <constr type="h" refType="w" fact="0.25"/></constrLst><ruleLst><rule type="h" fact="2" max="30"/>
       </ruleLst></layoutNode></layoutNode>"#,
     );
-    let mut measure = |items: &[Placed<'_>], _: bool| Ok(items.iter().map(|p| (150.0 - p.rect.h).max(0.0)).collect());
+    let mut measure = |items: &[Placed<'_>], _: MeasureKind| Ok(items.iter().map(|p| (150.0 - p.rect.h).max(0.0)).collect());
     let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
     assert!((out[0].rect.h - 30.0 * 72.0 / 25.4).abs() < 1e-6);
-    let mut bad = |_: &[Placed<'_>], _: bool| Ok(vec![f64::NAN]);
+    let mut bad = |_: &[Placed<'_>], _: MeasureKind| Ok(vec![f64::NAN]);
     assert!(evaluate_measured(&l, &data, frame(), Some(&mut bad)).is_err());
 }
 
@@ -422,7 +455,8 @@ fn text_rules_measure_reference_linked_font_groups_and_keep_secondary_sizes_dist
       <constr type="secFontSz" for="ch" forName="b" refType="primFontSz" refFor="ch" refForName="b" fact="0.75"/></constrLst>
       <ruleLst><rule type="primFontSz" for="ch" forName="a" val="8"/></ruleLst></layoutNode>"#,
     );
-    let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if p.name == "b" { (p.font.unwrap() - 18.).max(0.) } else { 0. }).collect());
+    let mut measure =
+        |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| if p.name == "b" { (p.font.unwrap() - 18.).max(0.) } else { 0. }).collect());
     let shapes = evaluate_measured(&layout, &data, frame(), Some(&mut measure)).unwrap();
     assert_eq!(shapes[0].font, shapes[1].font);
     assert!((shapes[0].font.unwrap() - 18.).abs() <= 1.0);
@@ -453,7 +487,8 @@ fn font_rule_does_not_shrink_to_floor_because_of_an_unrelated_geometry_dependenc
       <constr type="w" for="ch" forName="b" refFor="ch" refForName="a" refType="w"/></constrLst>
       </layoutNode>"#,
     );
-    let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if p.name == "a" { (p.font.unwrap() - 24.).max(0.) } else { 50. }).collect());
+    let mut measure =
+        |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| if p.name == "a" { (p.font.unwrap() - 24.).max(0.) } else { 50. }).collect());
     let shapes = evaluate_measured(&layout, &data, frame(), Some(&mut measure)).unwrap();
     assert!((shapes[0].font.unwrap() - 24.).abs() <= 1.);
     assert_eq!(shapes[1].font, Some(36.));
@@ -473,7 +508,7 @@ fn text_search_finds_interior_fit_when_endpoints_are_worse_or_infeasible() {
             <constr type='r' for='ch' forName='b' val='100'/></constrLst>
             </layoutNode>"
         ));
-        let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (40. * 72. / 25.4 - p.rect.w).max(0.)).collect());
+        let mut measure = |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| (40. * 72. / 25.4 - p.rect.w).max(0.)).collect());
         let out = evaluate_measured(&layout, &data, frame(), Some(&mut measure)).unwrap();
         assert!((out[0].rect.w - 40. * 72. / 25.4).abs() < 0.02, "{limit}");
         assert!(out[1].rect.w >= 40. * 72. / 25.4);
@@ -488,7 +523,7 @@ fn native_text_rule_can_override_a_same_property_bound() {
       <constr type='primFontSz' val='36'/><constr type='primFontSz' op='gte' val='20'/></constrLst>
       <ruleLst><rule type='primFontSz' val='5'/></ruleLst></layoutNode>",
     );
-    let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (p.font.unwrap() - 12.).max(0.)).collect());
+    let mut measure = |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| (p.font.unwrap() - 12.).max(0.)).collect());
     let out = evaluate_measured(&layout, &data, frame(), Some(&mut measure)).unwrap();
     assert!((11. ..=12.).contains(&out[0].font.unwrap()));
 }
@@ -508,7 +543,7 @@ fn font_rule_binding_retains_selector_identity_and_schema_defaults() {
         let l = layout(&format!(
             "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' {constraint} val='36'/></constrLst><ruleLst><rule type='primFontSz' {rule} val='5'/></ruleLst><layoutNode name='a'><presOf axis='ch' cnt='1'/><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
         ));
-        let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (p.font.unwrap() - 14.).max(0.)).collect());
+        let mut measure = |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| (p.font.unwrap() - 14.).max(0.)).collect());
         let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
         assert!((out[0].font.unwrap() - if fits { 14. } else { 36. }).abs() <= 1., "{constraint} / {rule}");
     }
@@ -525,7 +560,7 @@ fn shared_font_rules_fit_the_whole_group_but_unrelated_defaults_stay_independent
             "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' for='ch' op='{op}' val='36'/></constrLst><ruleLst>{parent_rule}</ruleLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/><ruleLst>{local_rule}</ruleLst></layoutNode><layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
         ));
         let mut measure =
-            |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if p.name == "a" { (p.font.unwrap() - 14.).max(0.) } else { 0. }).collect());
+            |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| if p.name == "a" { (p.font.unwrap() - 14.).max(0.) } else { 0. }).collect());
         let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
         assert!((out[0].font.unwrap() - 14.).abs() <= 1., "{op}/{parent}");
         assert!((out[1].font.unwrap() - expected_second).abs() <= 1., "{op}/{parent}");
@@ -550,7 +585,7 @@ fn local_font_references_distinguish_defaults_from_bidirectional_equalities() {
             "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' for='ch' forName='a' val='36'/><constr type='primFontSz' for='ch' forName='b' refFor='ch' refForName='a' refType='primFontSz' op='{op}' fact='{factor}'/></constrLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/><ruleLst>{a}</ruleLst></layoutNode><layoutNode name='b'><alg type='tx'/><shape type='rect'/><ruleLst>{b}</ruleLst></layoutNode></layoutNode>"
         ));
         let mut measure =
-            |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (p.font.unwrap() - if p.name == "a" { 21. } else { 14. }).max(0.)).collect());
+            |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| (p.font.unwrap() - if p.name == "a" { 21. } else { 14. }).max(0.)).collect());
         let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
         assert_eq!(out.iter().map(|p| p.font.unwrap()).collect::<Vec<_>>(), expected, "{op}/{factor}/{target}");
     }
@@ -564,7 +599,7 @@ fn local_font_factor_rules_use_the_reference_size_and_keep_defaults_separate() {
             "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' for='ch' forName='reference' val='36'/><constr type='primFontSz' for='ch' forName='a' refFor='ch' refForName='reference' refType='primFontSz' fact='{initial}'/></constrLst><layoutNode name='reference'><alg type='sp'/></layoutNode><layoutNode name='a'><alg type='tx'/><shape type='rect'/><ruleLst><rule type='primFontSz' fact='0.25' max='12'/></ruleLst></layoutNode></layoutNode>"
         ));
         let mut measure =
-            |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if initial == 0. { 1. } else { (p.font.unwrap() - 12.).max(0.) }).collect());
+            |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| if initial == 0. { 1. } else { (p.font.unwrap() - 12.).max(0.) }).collect());
         let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
         assert_eq!(out[0].font, Some(expected));
     }
@@ -576,7 +611,8 @@ fn local_font_fit_does_not_activate_disconnected_bounds() {
     let l = layout(
         "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' for='ch' forName='b' refFor='ch' refForName='a' refType='primFontSz' op='lte' fact='0.5'/></constrLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode><layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode><layoutNode name='c'><alg type='tx'/><shape type='rect'/><ruleLst><rule type='primFontSz' val='5'/></ruleLst></layoutNode></layoutNode>",
     );
-    let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if p.name == "c" { (p.font.unwrap() - 14.).max(0.) } else { 0. }).collect());
+    let mut measure =
+        |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| if p.name == "c" { (p.font.unwrap() - 14.).max(0.) } else { 0. }).collect());
     let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
     assert_eq!(out.iter().map(|p| p.font.unwrap()).collect::<Vec<_>>(), [36., 36., 14.]);
 }
@@ -589,7 +625,7 @@ fn child_font_rules_run_before_parent_rules_and_font_bounds_do_not_set_defaults(
             "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' for='ch' forName='a' val='36'/><constr type='primFontSz' for='ch' forName='b' refFor='ch' refForName='a' refType='primFontSz' op='{op}'/></constrLst><ruleLst><rule type='primFontSz' for='ch' forName='a' val='20'/></ruleLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/><ruleLst><rule type='primFontSz' val='5'/></ruleLst></layoutNode><layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
         ));
         let mut measure =
-            |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if p.name == "a" { (p.font.unwrap() - 14.).max(0.) } else { 0. }).collect());
+            |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| if p.name == "a" { (p.font.unwrap() - 14.).max(0.) } else { 0. }).collect());
         let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
         assert_eq!(out[0].font, Some(14.));
         assert_eq!(out[1].font, Some(if op == "none" { 36. } else { 14. }));
@@ -610,7 +646,7 @@ fn parent_size_rules_and_unmapped_inherited_font_rules_do_not_fit_child_text() {
     let l = layout(
         "<layoutNode><alg type='composite'/><constrLst><constr type='w' for='ch' forName='a' val='20'/><constr type='primFontSz' val='36'/></constrLst><ruleLst><rule type='w' for='ch' forName='a' val='80'/><rule type='primFontSz' val='5'/></ruleLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>",
     );
-    let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (100. - p.rect.w).max(0.) + (p.font.unwrap() - 14.).max(0.)).collect());
+    let mut measure = |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| (100. - p.rect.w).max(0.) + (p.font.unwrap() - 14.).max(0.)).collect());
     let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
     assert!((out[0].rect.w - 20. * 72. / 25.4).abs() < 1e-6);
     assert_eq!(out[0].font, Some(36.));
@@ -628,7 +664,7 @@ fn coupled_rules_cross_a_plateau_without_changing_an_unrelated_label() {
         <constr type='w' val='20'/><constr type='primFontSz' val='30'/></constrLst>
         <ruleLst><rule type='primFontSz' val='8'/></ruleLst></layoutNode></layoutNode>",
     );
-    let mut measure = |p: &[Placed<'_>], _: bool| {
+    let mut measure = |p: &[Placed<'_>], _: MeasureKind| {
         Ok(p.iter().map(|p| if p.name == "a" { (40. * 72. / 25.4 - p.rect.w.min(p.rect.h)).max(0.) } else { 0. }).collect())
     };
     let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
@@ -647,7 +683,7 @@ fn local_text_edges_do_not_constrain_independent_size_rules() {
         <ruleLst><rule type='w' val='40'/><rule type='h' val='80'/></ruleLst>
         </layoutNode></layoutNode>",
     );
-    let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (90. - p.rect.w).max(0.)).collect());
+    let mut measure = |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| (90. - p.rect.w).max(0.)).collect());
     let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
     assert!((out[0].rect.w - 90.).abs() < 0.02);
     assert!((out[0].rect.h - 40. * 72. / 25.4).abs() < 1e-6);
@@ -954,7 +990,7 @@ fn joint_rules_do_not_reintroduce_a_redundant_edge_equation() {
         <layoutNode><alg type='tx'/><shape type='rect'/><ruleLst>
         <rule type='w' val='60'/><rule type='h' val='60'/></ruleLst></layoutNode></layoutNode>",
     );
-    let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (90. - p.rect.w.min(p.rect.h)).max(0.)).collect());
+    let mut measure = |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| (90. - p.rect.w.min(p.rect.h)).max(0.)).collect());
     let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
     assert!((out[0].rect.w - 90.).abs() < 0.02);
     assert!((out[0].rect.h - 90.).abs() < 0.02);
@@ -1057,7 +1093,7 @@ fn fractional_font_trials_propagate_before_final_point_quantization() {
             "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' for='ch' forName='a' val='36'/><constr type='primFontSz' for='ch' forName='b' refFor='ch' refForName='a' refType='primFontSz' op='{op}' fact='{factor}'/></constrLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode><layoutNode name='b'><alg type='tx'/><shape type='rect'/><ruleLst><rule type='primFontSz' val='{floor}'/></ruleLst></layoutNode></layoutNode>"
         ));
         let mut measure =
-            |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if p.name == "b" { (p.font.unwrap() - threshold).max(0.) } else { 0. }).collect());
+            |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| if p.name == "b" { (p.font.unwrap() - threshold).max(0.) } else { 0. }).collect());
         let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
         assert_eq!(out.iter().map(|p| p.font.unwrap()).collect::<Vec<_>>(), expected, "{op}/{factor}/{floor}");
         for p in out {
@@ -1072,7 +1108,7 @@ fn authored_font_defaults_quantize_each_reference_before_fitting() {
     let l = layout(
         "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' for='ch' forName='a' val='24.5'/><constr type='primFontSz' for='ch' forName='b' refFor='ch' refForName='a' refType='primFontSz' fact='0.75'/><constr type='secFontSz' for='ch' forName='b' refFor='ch' refForName='b' refType='primFontSz' fact='0.5'/></constrLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode><layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>",
     );
-    let mut measure = |p: &[Placed<'_>], _: bool| Ok(vec![0.; p.len()]);
+    let mut measure = |p: &[Placed<'_>], _: MeasureKind| Ok(vec![0.; p.len()]);
     let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
     assert_eq!(out[0].font, Some(25.));
     assert_eq!(out[1].font, Some(19.));
@@ -1458,7 +1494,7 @@ fn size_bounds_do_not_cap_text_driven_growth() {
                 <layoutNode name='a'><alg type='tx'/><shape type='rect'/><presOf axis='ch' cnt='1'/>
                 <ruleLst><rule type='w' val='50'/></ruleLst></layoutNode></layoutNode>"
             ));
-            let mut measure = |out: &[Placed<'_>], _: bool| Ok(out.iter().map(|p| (50. * mm - p.rect.w).max(0.)).collect());
+            let mut measure = |out: &[Placed<'_>], _: MeasureKind| Ok(out.iter().map(|p| (50. * mm - p.rect.w).max(0.)).collect());
             let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
             assert!((out[0].rect.w - 50. * mm).abs() < 1e-5, "{op}/{bound}: {:?}", out[0].rect);
         }
@@ -1480,7 +1516,7 @@ fn late_unnamed_size_does_not_rebind_a_factor_rule() {
             <layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
         ));
         let mut measure =
-            |out: &[Placed<'_>], _: bool| Ok(out.iter().map(|p| if p.name == "a" { (15. * mm - p.rect.w).max(0.) } else { 0. }).collect());
+            |out: &[Placed<'_>], _: MeasureKind| Ok(out.iter().map(|p| if p.name == "a" { (15. * mm - p.rect.w).max(0.) } else { 0. }).collect());
         let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
         assert!((out[0].rect.w - 15. * mm).abs() < 1e-4);
         assert!((out[1].rect.w - 20. * mm).abs() < 1e-6);
@@ -1718,8 +1754,8 @@ fn measured_cycle_refitting_uses_overflow_and_rejects_invalid_measurements() {
     let data = source();
     let mm = 72. / 25.4;
     for (overflow, expected_radius) in [(0., 59.941396), (1., 59.882872)] {
-        let mut measure = |p: &[Placed<'_>], words: bool| {
-            assert!(words);
+        let mut measure = |p: &[Placed<'_>], words: MeasureKind| {
+            assert_eq!(words, MeasureKind::WordWrap);
             Ok(vec![overflow; p.len()])
         };
         let out = evaluate_measured(&l, &data, Xfrm::new(0., 0., 200. * mm, 120. * mm), Some(&mut measure)).unwrap();
@@ -1728,7 +1764,7 @@ fn measured_cycle_refitting_uses_overflow_and_rejects_invalid_measurements() {
         assert!((radius - expected_radius * mm).abs() < 0.025);
     }
     for invalid in [f64::NAN, f64::INFINITY, -1.] {
-        let mut measure = |p: &[Placed<'_>], _: bool| Ok(vec![invalid; p.len()]);
+        let mut measure = |p: &[Placed<'_>], _: MeasureKind| Ok(vec![invalid; p.len()]);
         assert!(evaluate_measured(&l, &data, frame(), Some(&mut measure)).is_err());
     }
 }
@@ -1746,7 +1782,7 @@ fn cycle_path_rotation_follows_shape_fitting_and_preserves_center_nodes() {
                 <constrLst><constr type="w" for="ch" forName="label" val="25"/><constr type="h" for="ch" forName="label" val="15"/>
                 <constr type="primFontSz" for="ch" val="8"/></constrLst></layoutNode>"#
             ));
-            let mut fits = |p: &[Placed<'_>], _: bool| Ok(vec![0.; p.len()]);
+            let mut fits = |p: &[Placed<'_>], _: MeasureKind| Ok(vec![0.; p.len()]);
             let out = evaluate_measured(&l, &data, Xfrm::new(0., 0., 200. * mm, 120. * mm), Some(&mut fits)).unwrap();
             for (i, p) in out.iter().enumerate() {
                 let path = if center == "fNode" && i == 0 {
@@ -1779,7 +1815,7 @@ fn cycles_pack_container_occupied_frames_without_rotating_the_container() {
             <layoutNode name="inner"><alg type="tx"/><presOf/><shape type="none"/></layoutNode></layoutNode></forEach>
             <constrLst><constr type="w" for="ch" forName="card" val="25"/><constr type="h" for="ch" forName="card" val="15"/></constrLst></layoutNode>"#
         ));
-        let mut fits = |p: &[Placed<'_>], _: bool| Ok(vec![0.; p.len()]);
+        let mut fits = |p: &[Placed<'_>], _: MeasureKind| Ok(vec![0.; p.len()]);
         let out = evaluate_measured(&l, &data, Xfrm::new(10. * mm, 10. * mm, 200. * mm, 120. * mm), Some(&mut fits)).unwrap();
         let card = out.iter().find(|p| p.name == "card").unwrap();
         assert_eq!(card.rect.rot, 0.);
@@ -1834,8 +1870,8 @@ fn helper_visibility_controls_borrowing_and_cycle_refitting() {
             <constrLst><constr type='w' for='ch' val='10'/><constr type='h' for='ch' val='10'/></constrLst>
             <layoutNode name='label'><alg type='tx'/><presOf axis='self'/>{shape}</layoutNode></layoutNode></forEach></layoutNode>"
         ));
-        let mut fits = |p: &[Placed<'_>], _: bool| Ok(vec![0.; p.len()]);
-        let mut overflowing = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| f64::from(p.name == "label")).collect());
+        let mut fits = |p: &[Placed<'_>], _: MeasureKind| Ok(vec![0.; p.len()]);
+        let mut overflowing = |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| f64::from(p.name == "label")).collect());
         let frame = Xfrm::new(0., 0., 200. * 72. / 25.4, 120. * 72. / 25.4);
         let initial = evaluate_measured(&l, &data, frame, Some(&mut fits)).unwrap();
         let fitted = evaluate_measured(&l, &data, frame, Some(&mut overflowing)).unwrap();
@@ -1885,9 +1921,9 @@ fn recovered_text_uses_a_shared_bounded_fit_and_rejects_bad_measurements() {
     let l = layout("<layoutNode><constrLst><constr type='primFontSz' refType='primFontSz'/></constrLst></layoutNode>");
     for ceiling in [0., 5., 23., 65., 100.] {
         let mut calls = 0;
-        let mut measure = |items: &[Placed<'_>], words: bool| {
+        let mut measure = |items: &[Placed<'_>], words: MeasureKind| {
             calls += 1;
-            assert!(words);
+            assert_eq!(words, MeasureKind::WordWrap);
             Ok(items.iter().enumerate().map(|(i, p)| if i == 1 { (p.font.unwrap() - ceiling).max(0.) } else { 0. }).collect())
         };
         let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
@@ -1895,7 +1931,7 @@ fn recovered_text_uses_a_shared_bounded_fit_and_rejects_bad_measurements() {
         assert!(out.iter().all(|p| p.font == Some(ceiling.clamp(5., 65.))));
     }
     for values in [vec![], vec![f64::NAN; 3], vec![-1.; 3], vec![f64::INFINITY; 3]] {
-        let mut measure = |_: &[Placed<'_>], _: bool| Ok(values.clone());
+        let mut measure = |_: &[Placed<'_>], _: MeasureKind| Ok(values.clone());
         assert!(evaluate_measured(&l, &data, frame(), Some(&mut measure)).is_err());
     }
 }
