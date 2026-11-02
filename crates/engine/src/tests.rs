@@ -6536,6 +6536,34 @@ fn chart_options_axis_bounds_set_clear_and_refuse() {
     assert_eq!(bounds(&s), (Some(1.0), None));
 }
 
+/// Fixed value-axis bounds are written as `c:min` and `c:max` and read back; a cleared one is
+/// written as nothing, so it comes back automatic.
+#[test]
+fn chart_axis_bounds_survive_pptx() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let id = s.execute("insert.chart", &json!({"type": "column"})).unwrap()["id"].clone();
+    let round = |s: &Session| {
+        let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let name = z.file_names().find(|n| n.starts_with("ppt/charts/chart") && n.ends_with(".xml")).unwrap().to_string();
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut z.by_name(&name).unwrap(), &mut xml).unwrap();
+        let back = deckcraft_pptx::import(&bytes).unwrap();
+        let c = back.slides[1].shapes.iter().find_map(|x| if let deckcraft_model::ShapeKind::Chart(c) = &x.kind { Some(c.clone()) } else { None });
+        let c = c.unwrap();
+        (xml, c.y_min, c.y_max)
+    };
+    s.execute("chart.options", &json!({"id": id, "axisMin": 10, "axisMax": 70.5})).unwrap();
+    let (xml, lo, hi) = round(&s);
+    assert!(xml.contains("<c:min val=\"10\"/>") && xml.contains("<c:max val=\"70.5\"/>"), "{xml}");
+    assert_eq!((lo, hi), (Some(10.0), Some(70.5)));
+    s.execute("chart.options", &json!({"id": id, "axisMax": null})).unwrap();
+    let (xml, lo, hi) = round(&s);
+    assert!(!xml.contains("<c:max "), "{xml}");
+    assert_eq!((lo, hi), (Some(10.0), None));
+}
+
 #[test]
 fn slide_master_view_rejects_invalid_indices() {
     let mut s = Session::with_new();

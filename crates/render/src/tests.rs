@@ -3192,3 +3192,41 @@ fn a_short_value_axis_takes_fewer_than_four_labels() {
     assert!((2..=4).contains(&starts.len()), "{} value labels on a 60 pt tall chart (bars from x={first_bar}): {inked:?}", starts.len());
     assert!(closest >= 13, "value labels {closest} pt apart: {starts:?}");
 }
+
+/// Data from 0 to 97 does not end its value axis at 100: Office adds a twentieth of the range
+/// above the maximum (101.85) before rounding up to the major unit, so the axis ends at 120 by
+/// twenties, or at 110 by tens where there is room for eleven intervals, as in PowerPoint.
+#[test]
+fn data_up_to_97_takes_powerpoints_headroom_past_100() {
+    let mut c = Chart::sample(ChartType::Column);
+    c.series.truncate(1);
+    c.categories = vec!["A".into(), "B".into(), "C".into(), "D".into()];
+    c.series[0].values = vec![Some(0.0), Some(30.0), Some(60.0), Some(97.0)];
+    for n in 6..=10 {
+        assert_eq!(c.axis_scale(false, n), Some((0.0, 120.0, 20.0)), "{n} intervals");
+    }
+    for n in 11..=12 {
+        assert_eq!(c.axis_scale(false, n), Some((0.0, 110.0, 10.0)), "{n} intervals");
+    }
+}
+
+/// A stacked chart's axis ends near its tallest stack, not near the sum of every value or the
+/// largest single one: stacks of up to 59.7 fill most of the plot.
+#[test]
+fn a_stacked_value_axis_ends_near_the_tallest_stack() {
+    for (kind, horiz) in [(ChartType::StackedBar, true), (ChartType::StackedColumn, false)] {
+        let mut c = Chart::sample(kind);
+        c.title = None;
+        c.legend = None;
+        c.gridlines = true;
+        c.categories = vec!["A".into(), "B".into(), "C".into()];
+        c.series.truncate(2);
+        c.series[0].values = vec![Some(10.0), Some(20.0), Some(30.0)];
+        c.series[1].values = vec![Some(10.0), Some(25.5), Some(29.7)];
+        let sh =
+            Shape { id: ShapeId(632), xfrm: Some(Xfrm::new(40.0, 40.0, 400.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        let img = render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 2.0, ..Default::default() });
+        let ratio = plot_fill_ratio(&img, horiz);
+        assert!((0.8..=1.0).contains(&ratio), "{kind:?}: the tallest stack reaches {ratio:.3} of the plot");
+    }
+}
