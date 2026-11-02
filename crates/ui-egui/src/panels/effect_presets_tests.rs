@@ -131,7 +131,6 @@ fn inherited_text_shadow_is_shown_in_effects_tab() {
     assert!(h.query_all_by_label("Size").count() >= 2);
     assert!(h.query_all_by_label("Distance").count() >= 1);
 
-    // Clicking "No shadow" clears the text shadow and selects No shadow.
-    click(&mut h, "No shadow");
-    assert_eq!(h.get_by_label("No shadow").accesskit_node().toggled(), Some(Toggled::True));
+    // The inherited text shadow controls are presented read-only so shape-level edits cannot contradict the text style.
+    assert!(h.get_by_label("No shadow").accesskit_node().is_disabled());
 }

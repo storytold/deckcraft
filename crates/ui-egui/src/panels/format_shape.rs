@@ -91,34 +91,38 @@ pub(crate) fn resolved_effects(app: &SlideApp, sh: &deckcraft_model::Shape) -> (
 }
 
 fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
-    ui.label(egui::RichText::new("Shadow").font(theme::bold(13.0)));
     let (fx, from_text) = resolved_effects(app, sh);
-    if let Some(v) = effect_presets::shadow_row(ui, effect_presets::shadow_preset_id(&fx)) {
-        if v == "none" && from_text {
-            run(app, "format.textShadow", json!({"on": false}));
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Shadow").font(theme::bold(13.0)));
+        if from_text {
+            ui.label(egui::RichText::new("(inherited from text style)").weak().small());
         }
-        run(app, "shape.effects", json!({"shadow": v}));
-    }
-    let shadow = fx.inner_shadow.as_ref().or(fx.outer_shadow.as_ref());
-    if let Some(sw) = shadow {
-        color_button(app, ui, "Color", None, |c| ("shape.effects".into(), json!({"shadowProps": {"color": c.as_ref().map(cref_param)}})));
-        fx_slider(
-            app,
-            ui,
-            ("shadow", sh.id.0, "t"),
-            "Transparency",
-            (1.0 - sw.color.alpha()) * 100.0,
-            0.0..=100.0,
-            "%",
-            "shadowProps",
-            "transparency",
-            0.01,
-        );
-        fx_slider(app, ui, ("shadow", sh.id.0, "s"), "Size", sw.sx * 100.0, 1.0..=200.0, "%", "shadowProps", "size", 0.01);
-        fx_slider(app, ui, ("shadow", sh.id.0, "b"), "Blur", sw.blur, 0.0..=100.0, " pt", "shadowProps", "blur", 1.0);
-        fx_slider(app, ui, ("shadow", sh.id.0, "a"), "Angle", sw.dir, 0.0..=359.0, "°", "shadowProps", "dir", 1.0);
-        fx_slider(app, ui, ("shadow", sh.id.0, "d"), "Distance", sw.dist, 0.0..=200.0, " pt", "shadowProps", "dist", 1.0);
-    }
+    });
+    ui.add_enabled_ui(!from_text, |ui| {
+        if let Some(v) = effect_presets::shadow_row(ui, effect_presets::shadow_preset_id(&fx)) {
+            run(app, "shape.effects", json!({"shadow": v}));
+        }
+        let shadow = fx.inner_shadow.as_ref().or(fx.outer_shadow.as_ref());
+        if let Some(sw) = shadow {
+            color_button(app, ui, "Color", None, |c| ("shape.effects".into(), json!({"shadowProps": {"color": c.as_ref().map(cref_param)}})));
+            fx_slider(
+                app,
+                ui,
+                ("shadow", sh.id.0, "t"),
+                "Transparency",
+                (1.0 - sw.color.alpha()) * 100.0,
+                0.0..=100.0,
+                "%",
+                "shadowProps",
+                "transparency",
+                0.01,
+            );
+            fx_slider(app, ui, ("shadow", sh.id.0, "s"), "Size", sw.sx * 100.0, 1.0..=200.0, "%", "shadowProps", "size", 0.01);
+            fx_slider(app, ui, ("shadow", sh.id.0, "b"), "Blur", sw.blur, 0.0..=100.0, " pt", "shadowProps", "blur", 1.0);
+            fx_slider(app, ui, ("shadow", sh.id.0, "a"), "Angle", sw.dir, 0.0..=359.0, "°", "shadowProps", "dir", 1.0);
+            fx_slider(app, ui, ("shadow", sh.id.0, "d"), "Distance", sw.dist, 0.0..=200.0, " pt", "shadowProps", "dist", 1.0);
+        }
+    });
     ui.add_space(6.0);
     ui.label(egui::RichText::new("Reflection").font(theme::bold(13.0)));
     ui.horizontal_wrapped(|ui| {
