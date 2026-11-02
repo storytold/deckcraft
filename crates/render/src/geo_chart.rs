@@ -162,8 +162,6 @@ fn world_latitude(lat: f64, projection: &str) -> f64 {
 
 struct ProjectedMap {
     paths: Vec<BezPath>,
-    world: bool,
-    global_coverage: bool,
 }
 
 fn paths(map: &Geography) -> ProjectedMap {
@@ -259,23 +257,13 @@ fn paths(map: &Geography) -> ProjectedMap {
             path
         })
         .collect();
-    ProjectedMap { paths, world, global_coverage }
+    ProjectedMap { paths }
 }
 
-fn fit_bounds(map: &Geography, projected: &ProjectedMap) -> Option<Rect> {
-    let mut bounds = projected.paths.iter().filter(|p| !p.elements().is_empty()).map(|p| p.bounding_box()).reduce(|a, b| a.union(b))?;
-    // With a complete global cache, fit the actual unwrapped regions. If an authored
-    // world view has only local geometry, retain a global frame instead of silently
-    // zooming that lone country to fill the chart. Data-only explicitly permits cropping.
-    if projected.world && !projected.global_coverage && map.viewed_region != "dataOnly" {
-        let kind = if matches!(map.projection.as_str(), "" | "albers") { "robinson" } else { &map.projection };
-        for lat in (-90..=90).step_by(5) {
-            for lon in (-180..=180).step_by(5) {
-                bounds = bounds.union_pt(project(lon as f64, world_latitude(lat as f64, kind), kind));
-            }
-        }
-    }
-    Some(bounds)
+fn fit_bounds(projected: &ProjectedMap) -> Option<Rect> {
+    // Administrative bounds establish projection context in paths(). The viewport
+    // fits the geometry that paints, even when a world cache is incomplete.
+    projected.paths.iter().filter(|p| !p.elements().is_empty()).map(|p| p.bounding_box()).reduce(|a, b| a.union(b))
 }
 
 fn map_transform(bounds: Rect, plot: Rect) -> Affine {
@@ -299,7 +287,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
     let Some(series) = c.series.first() else { return false };
     let Some(map) = series.geography.as_ref().filter(|g| !g.regions.is_empty()) else { return false };
     let projected = paths(map);
-    let Some(bounds) = fit_bounds(map, &projected) else {
+    let Some(bounds) = fit_bounds(&projected) else {
         return false;
     };
     if bounds.width() < 1e-9 || bounds.height() < 1e-9 {
@@ -399,9 +387,33 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
 mod tests {
     use super::*;
 
+    fn render_map(map: Geography) -> crate::Image {
+        use deckcraft_model::{ColorRef, Fill, Presentation, Shape, ShapeId, ShapeKind, chart::Series};
+        let chart = Chart {
+            kind: deckcraft_model::chart::ChartType::RegionMap,
+            title: None,
+            legend: None,
+            series: vec![Series {
+                values: vec![Some(1.)],
+                geography: Some(map),
+                fill: Some(Fill::solid(ColorRef::rgb(Rgba::BLACK))),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut presentation = Presentation { slide_size: kurbo::Size::new(128., 128.), ..Default::default() };
+        std::sync::Arc::make_mut(&mut presentation.slides[0]).shapes = vec![Shape {
+            id: ShapeId(1),
+            xfrm: Some(deckcraft_model::Xfrm::new(0., 0., 128., 128.)),
+            kind: ShapeKind::Chart(Box::new(chart)),
+            ..Default::default()
+        }];
+        crate::render_slide(&presentation, 0, &crate::RenderOpts::default())
+    }
+
     #[test]
     fn rendered_regions_and_label_containment_share_nonzero_winding() {
-        use deckcraft_model::{ColorRef, Fill, Presentation, Shape, ShapeId, ShapeKind, chart::Series, geography::GeoRegion};
+        use deckcraft_model::geography::GeoRegion;
         let rectangle = |left, bottom, right, top| vec![[left, bottom], [right, bottom], [right, top], [left, top]];
         let outer = rectangle(-20., -10., 20., 10.);
         let inner = rectangle(-10., -5., 10., 5.);
@@ -423,26 +435,7 @@ mod tests {
                 ..Default::default()
             };
             assert_eq!(region_contains(&paths(&map).paths[0], Point::ZERO), filled);
-            let chart = Chart {
-                kind: deckcraft_model::chart::ChartType::RegionMap,
-                title: None,
-                legend: None,
-                series: vec![Series {
-                    values: vec![Some(1.)],
-                    geography: Some(map),
-                    fill: Some(Fill::solid(ColorRef::rgb(Rgba::BLACK))),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            };
-            let mut presentation = Presentation { slide_size: kurbo::Size::new(128., 128.), ..Default::default() };
-            std::sync::Arc::make_mut(&mut presentation.slides[0]).shapes = vec![Shape {
-                id: ShapeId(1),
-                xfrm: Some(deckcraft_model::Xfrm::new(0., 0., 128., 128.)),
-                kind: ShapeKind::Chart(Box::new(chart)),
-                ..Default::default()
-            }];
-            let image = crate::render_slide(&presentation, 0, &crate::RenderOpts::default());
+            let image = render_map(map);
             assert_eq!(image.straight_at(64, 64), Some(if filled { [0, 0, 0, 255] } else { [255, 255, 255, 255] }));
         }
     }
@@ -554,7 +547,6 @@ mod tests {
                 ..Default::default()
             };
             let projected = paths(&map);
-            assert!(!projected.world);
             let bounds = projected.paths[0].bounding_box();
             assert!(bounds.width() < 0.6 && bounds.height() < 0.5, "regional seam: {bounds:?}");
         }
@@ -636,19 +628,38 @@ mod tests {
         assert_eq!(paths(&map).paths, region);
     }
     #[test]
-    fn incomplete_world_cache_keeps_global_frame_but_data_only_can_crop() {
+    fn sparse_world_view_fits_painted_geometry_without_expanding_to_administrative_bounds() {
         use deckcraft_model::geography::GeoRegion;
-        let mut map = Geography {
-            viewed_region: "world".into(),
-            projection: "robinson".into(),
-            regions: vec![GeoRegion { point: Some(0), rings: vec![vec![[10., 10.], [20., 10.], [20., 20.], [10., 20.]]], ..Default::default() }],
-            ..Default::default()
-        };
-        let projected = paths(&map);
-        assert!(projected.world && !projected.global_coverage);
-        assert!(fit_bounds(&map, &projected).unwrap().width() > 5.);
-        map.viewed_region = "dataOnly".into();
-        assert!(fit_bounds(&map, &paths(&map)).unwrap().width() < 0.2);
+        for projection in ["robinson", "mercator", "miller"] {
+            let mut map = Geography {
+                viewed_region: "world".into(),
+                projection: projection.into(),
+                regions: vec![GeoRegion {
+                    point: Some(0),
+                    bounds: Some([30., 30., 40., 40.]),
+                    rings: vec![vec![[30., 30.], [40., 30.], [40., 40.], [30., 40.]]],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let image = render_map(map.clone());
+            for x in [32, 64, 96] {
+                assert_eq!(image.straight_at(x, 64), Some([0, 0, 0, 255]), "{projection}");
+            }
+            map.regions[0].bounds = Some([-180., -90., 180., 90.]);
+            assert_eq!(render_map(map.clone()).pixels, image.pixels);
+            let mut missing = map.clone();
+            missing.regions[0].point = None;
+            missing.regions.insert(0, GeoRegion { point: Some(0), bounds: Some([-170., -80., -150., -60.]), ..Default::default() });
+            // A data region may retain its extent while its boundary is absent.
+            // The remaining background geometry still owns the visible fit.
+            assert_eq!(render_map(missing).pixels, image.pixels);
+            map.regions.push(GeoRegion { rings: vec![vec![[-60., -20.], [-50., -20.], [-50., -10.], [-60., -10.]]], ..Default::default() });
+            // A distant painted region changes the fit; metadata alone does not.
+            assert_eq!(render_map(map.clone()).straight_at(64, 64), Some([255, 255, 255, 255]));
+            map.viewed_region = "dataOnly".into();
+            assert_eq!(render_map(map).straight_at(64, 64), Some([0, 0, 0, 255]));
+        }
     }
     #[test]
     fn world_cylindrical_cap_does_not_crop_regional_or_robinson_geometry() {

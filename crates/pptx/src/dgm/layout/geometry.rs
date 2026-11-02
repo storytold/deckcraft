@@ -296,7 +296,11 @@ fn place_inner<'a>(
     let mut text_refit = false;
     // Linear placement uses the constrained sizes, including invisible spacing nodes.
     if matches!(node.alg.as_str(), "lin" | "hierChild") {
-        pack_linear(node, local, capacity, &mut children, depth == 0);
+        // With real text measurement, a fitting root retains its exact size.
+        // Forced word breaks or overflow request the finite fit through this scope.
+        // The geometry-only evaluator retains its conservative root-fit fallback.
+        let refit = text_refits.map_or(depth == 0, |refits| refits.contains(&super::constraints::id(node)));
+        pack_linear(node, local, capacity, &mut children, refit);
     } else if node.alg == "cycle" {
         text_refit = match text_refits {
             Some(refits) => refits.contains(&super::constraints::id(node)),
@@ -914,7 +918,7 @@ fn cycle_fit_radius(
     Ok(low)
 }
 
-fn pack_linear(node: &Instance<'_>, style: BoxStyle, capacity: Option<Xfrm>, children: &mut [BoxStyle], root: bool) {
+fn pack_linear(node: &Instance<'_>, style: BoxStyle, capacity: Option<Xfrm>, children: &mut [BoxStyle], force_fit: bool) {
     let r = style.rect;
     let default_dir = if node.alg == "hierChild" && node.param("chDir", "horz") == "vert" { "fromT" } else { "fromL" };
     let dir = node.param("linDir", default_dir);
@@ -928,7 +932,7 @@ fn pack_linear(node: &Instance<'_>, style: BoxStyle, capacity: Option<Xfrm>, chi
     let available = if vertical { r.h } else { r.w };
     let exceeds = |size: f64, limit: f64| size - limit > 16. * f64::EPSILON * size.abs().max(limit.abs()).max(1.);
     let cross_overflow = children.iter().any(|b| if vertical { exceeds(b.rect.w, r.w) } else { exceeds(b.rect.h, r.h) });
-    let scale = if node.alg == "lin" && (root || exceeds(sum + gaps, available) || cross_overflow) {
+    let scale = if node.alg == "lin" && (force_fit || exceeds(sum + gaps, available) || cross_overflow) {
         flow_fit_scale(sum + gaps, available)
     } else if sum + gaps > available {
         available / (sum + gaps).max(0.01)

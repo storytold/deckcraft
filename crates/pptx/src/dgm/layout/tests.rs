@@ -203,6 +203,36 @@ fn snake_repacking_uses_its_own_text_measurement_mode() {
 }
 
 #[test]
+fn measured_linear_fit_changes_the_root_but_not_an_allocated_nested_flow() {
+    let data = source();
+    let mm = 72. / 25.4;
+    let flow = r#"<layoutNode name="flow"><alg type="lin"/><constrLst>
+        <constr type="w" for="ch" val="47"/><constr type="h" for="ch" val="19"/></constrLst>
+        <forEach axis="ch" cnt="2"><layoutNode><presOf axis="self"/><alg type="tx"/><shape type="rect"/></layoutNode></forEach>
+        </layoutNode>"#;
+    for nested in [false, true] {
+        let xml = if nested {
+            format!(
+                "<layoutNode><alg type='composite'/><constrLst><constr type='w' for='ch' val='200'/><constr type='h' for='ch' val='90'/></constrLst>{flow}</layoutNode>"
+            )
+        } else {
+            flow.to_owned()
+        };
+        let l = layout(&xml);
+        for overflow in [false, true] {
+            let mut measure = |placed: &[Placed<'_>], mode: MeasureKind| Ok(vec![f64::from(overflow && mode == MeasureKind::WordWrap); placed.len()]);
+            let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+            assert_eq!(out.len(), 2);
+            let expected = 47. * mm * if overflow && !nested { 1023. / 1024. } else { 1. };
+            for p in out {
+                assert!((p.rect.w - expected).abs() < 1e-6, "{nested}/{overflow}: {:?}", p.rect);
+                assert!((p.rect.h - 19. * mm).abs() < 1e-6);
+            }
+        }
+    }
+}
+
+#[test]
 fn snake_fitting_restores_linear_cross_extents_and_retains_fitted_flow() {
     let data = source();
     let mm = 72. / 25.4;

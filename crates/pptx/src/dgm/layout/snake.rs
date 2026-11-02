@@ -12,6 +12,7 @@ struct Line {
     range: std::ops::Range<usize>,
     length: f64,
     thickness: f64,
+    physical_width: f64,
 }
 
 struct Packing {
@@ -55,6 +56,120 @@ impl Centering {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct CenterAdjustment {
+    shift: f64,
+    growth: f64,
+    advance: f64,
+    extent_floor: f64,
+    early_extent: f64,
+}
+
+/// Alternating lines keep the flow extent separate from the right boundary of
+/// children that have not yet been placed. That boundary uses physical widths,
+/// including for a column flow. Growth and alignment reach subsequent lines at
+/// different stages; merging their pending adjustments loses cancellations.
+struct ReverseCentering {
+    extent: f64,
+    boundary: f64,
+    offset: f64,
+    last_growth: f64,
+    first_reverse: bool,
+    pending: [CenterAdjustment; 4],
+}
+
+impl ReverseCentering {
+    fn new(extent: f64) -> Self {
+        Self { extent, boundary: extent, offset: 0., last_growth: 0., first_reverse: true, pending: [CenterAdjustment::default(); 4] }
+    }
+
+    fn origin(&mut self, line: &Line, following: f64, first_width: f64, reversed: bool) -> f64 {
+        let current = self.pending[0];
+        self.offset += current.shift;
+        self.extent += 2. * current.growth;
+        let origin = self.offset - line.length / 2.;
+        self.extent = self.extent.max(current.early_extent);
+        if reversed {
+            self.reverse(line, following, first_width);
+        } else if exceeds(line.length, self.extent) {
+            self.forward(line.length, current.early_extent > 0.);
+        }
+        self.extent = self.extent.max(current.extent_floor);
+        self.pending.rotate_left(1);
+        self.pending[3] = CenterAdjustment::default();
+        origin
+    }
+
+    fn reverse(&mut self, line: &Line, following: f64, first_width: f64) {
+        let prior_negative = (-self.pending[1].shift).max(0.);
+        self.extent += 2. * self.pending[0].advance;
+        self.boundary += 2. * self.pending[0].advance;
+        let old_extent = self.extent;
+        let future = self.pending[2].growth;
+        let reference = old_extent - 2. * future;
+        let equal = !exceeds(line.length, old_extent) && !exceeds(old_extent, line.length);
+        let expansion = if equal { 0. } else { (line.physical_width.max(first_width) - self.boundary).max(0.) };
+        self.boundary += expansion;
+        let shift = expansion - ((line.length - reference) / 2.).max(0.);
+        self.pending[1].shift += shift;
+        if self.first_reverse || expansion == 0. || exceeds(line.length, reference) {
+            self.carry_reverse(line.length, following, reference, expansion, shift);
+        } else {
+            self.widen_boundary(line.length, following, old_extent);
+        }
+        self.pending[1].shift += prior_negative.min(((line.length - old_extent) / 2.).max(0.));
+        self.last_growth = self.extent - old_extent;
+        self.first_reverse = false;
+    }
+
+    fn carry_reverse(&mut self, length: f64, following: f64, reference: f64, expansion: f64, shift: f64) {
+        let boundary_extent = reference + expansion;
+        let grows = exceeds(following, self.extent);
+        if grows {
+            self.pending[1].extent_floor = self.extent + 2. * shift;
+        }
+        let advance = if grows { (expansion - (length - following).max(0.)).max(0.) / 2. } else { 0. };
+        self.pending[2].advance = advance;
+        self.pending[2].shift += if grows { advance - (boundary_extent - reference.max(length)).max(0.) } else { 0. };
+        let retreat = (boundary_extent.min(length) - reference).max(0.) / 2.;
+        let cancelled = retreat.min(self.pending[2].growth);
+        self.pending[2].shift -= cancelled;
+        self.pending[2].growth -= cancelled;
+        self.pending[3].shift -= retreat - cancelled;
+        self.extent = self.extent.max(length);
+    }
+
+    fn widen_boundary(&mut self, length: f64, following: f64, old_extent: f64) {
+        let future = self.pending[2].growth;
+        self.extent = self.extent.max(length + 2. * future);
+        let alignment = old_extent - self.last_growth + 2. * future;
+        let step = if exceeds(following, old_extent) { (self.boundary - alignment - (length - following).max(0.)) / 2. } else { 0. };
+        self.pending[2].advance = step.max(0.);
+        let shift = step - (self.boundary - self.extent).max(0.);
+        self.pending[2].shift += shift;
+        self.pending[3].shift -= ((self.boundary.min(self.extent) - alignment) / 2.).max(shift + future).max(0.);
+        // A boundary exposed by a shorter reverse line is available to the next
+        // forward line before its growth trial, unlike a deferred flow extent.
+        self.pending[1].early_extent = self.extent + 2. * (self.boundary - self.extent.max(alignment)).max(0.);
+    }
+
+    fn forward(&mut self, length: f64, early_extent: bool) {
+        let expansion = length - self.extent;
+        if !early_extent {
+            let cancelled = self.pending[1].growth.min(expansion / 2.);
+            self.pending[1].shift -= cancelled;
+            self.pending[1].growth -= cancelled;
+        }
+        self.boundary += expansion / 2.;
+        let growth = expansion / 4.;
+        let cancelled = growth.min((-self.pending[2].shift).max(0.));
+        self.pending[2].shift += cancelled;
+        self.pending[3].shift += growth - cancelled;
+        self.pending[3].growth += growth - cancelled;
+        self.extent = length;
+    }
+}
+
 fn exceeds(value: f64, limit: f64) -> bool {
     value - limit > 16. * f64::EPSILON * value.abs().max(limit.abs()).max(1.)
 }
@@ -78,7 +193,7 @@ impl Policy {
     fn layout(&self, children: &[BoxStyle], available: f64, scale: f64, work: &mut usize) -> Result<Packing, &'static str> {
         charge(work, children.len().saturating_mul(3))?;
         let mut lines = Vec::<Line>::new();
-        let mut line = Line { range: 0..0, length: 0., thickness: 0. };
+        let mut line = Line { range: 0..0, length: 0., thickness: 0., physical_width: 0. };
         for (i, child) in children.iter().enumerate() {
             let (length, thickness) = if self.column { (child.rect.h, child.rect.w) } else { (child.rect.w, child.rect.h) };
             let length = length * scale;
@@ -86,17 +201,18 @@ impl Policy {
             let full = self.count.map_or_else(|| exceeds(line.length + length, available), |count| line.range.len() >= count);
             if !line.range.is_empty() && full {
                 lines.push(line);
-                line = Line { range: i..i, length: 0., thickness: 0. };
+                line = Line { range: i..i, length: 0., thickness: 0., physical_width: 0. };
             }
             line.range.end = i + 1;
             line.length += length;
             line.thickness = line.thickness.max(thickness);
+            line.physical_width = line.physical_width.max(child.rect.w * scale);
         }
         if !line.range.is_empty() {
             lines.push(line);
         }
-        let longest = lines.iter().map(|line| line.length).fold(0., f64::max);
         let mut centering = Centering { extent: lines.first().map_or(0., |line| line.length), offset: 0., pending: 0., next: 0. };
+        let mut reverse_centering = ReverseCentering::new(centering.extent);
         let mut boxes = vec![Xfrm::new(0., 0., 0., 0.); children.len()];
         let (mut cursor, mut cross, mut low, mut high) = (0., 0., 0_f64, 0_f64);
         for (i, line) in lines.iter().enumerate() {
@@ -107,7 +223,9 @@ impl Policy {
             let origin = if self.center && !self.reverse {
                 centering.origin(line.length)
             } else if self.center {
-                (longest - line.length) / 2.
+                let next = lines.get(i + 1);
+                let first_width = next.and_then(|line| children.get(line.range.start)).map_or(0., |c| c.rect.w * scale);
+                reverse_centering.origin(line, next.map_or(0., |line| line.length), first_width, reversed)
             } else if reversed {
                 cursor - line.length
             } else {
@@ -307,6 +425,69 @@ mod tests {
         let actual = packed(&sizes, (160., 300.), &params, 0.);
         for (rect, center) in actual.iter().zip([0., 0., 0., 6.08725, 9.03275, 9.03275, 9.03275]) {
             assert!((rect.y + rect.h / 2. - 150. + center).abs() < 1e-7);
+        }
+    }
+
+    fn relative_line_centers(rects: &[Xfrm], count: usize, column: bool) -> Vec<f64> {
+        let centers: Vec<_> = rects
+            .chunks(count)
+            .map(|line| {
+                let low = line.iter().map(|r| if column { r.y } else { r.x }).fold(f64::INFINITY, f64::min);
+                let high = line.iter().map(|r| if column { r.y + r.h } else { r.x + r.w }).fold(f64::NEG_INFINITY, f64::max);
+                (low + high) / 2.
+            })
+            .collect();
+        centers.iter().map(|v| v - centers[0]).collect()
+    }
+
+    #[test]
+    fn reverse_centering_keeps_child_boundaries_and_pending_growth_separate() {
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "2"), ("off", "ctr"), ("contDir", "revDir")];
+        for (first, expected) in [(80., [0., 0., -10., -10., 30., 40., 40., 40., 40.]), (100., [0., 0., -10., -10., 50., 50., 50., 50., 50.])] {
+            // Equal total line widths have different pending boundaries when
+            // their first child is wider. The following growth cancels an older
+            // adjustment without moving the already placed lines.
+            let widths = [10., 10., 20., 20., 20., 60., 10., 10., first, 120. - first, 10., 10., 10., 10., 10., 10., 10., 10.];
+            let sizes: Vec<_> = widths.into_iter().map(|w| (w, 10.)).collect();
+            let actual = packed(&sizes, (300., 200.), &params, 0.);
+            for (center, expected) in relative_line_centers(&actual, 2, false).into_iter().zip(expected) {
+                assert!((center - expected).abs() < 1e-7, "{first}: {center} != {expected}");
+            }
+            for (rect, &(w, h)) in actual.iter().zip(&sizes) {
+                assert!((rect.w - w).abs() < 1e-7 && (rect.h - h).abs() < 1e-7);
+            }
+        }
+    }
+
+    #[test]
+    fn reverse_column_boundaries_use_physical_child_widths() {
+        let sizes = [
+            (11., 17.5),
+            (11., 14.583),
+            (9., 2.917),
+            (8., 2.615),
+            (10., 5.231),
+            (11., 9.154),
+            (12., 8.333),
+            (11., 6.667),
+            (12., 5.),
+            (12., 46.154),
+            (8., 18.462),
+            (10., 55.384),
+            (11., 15.),
+            (11., 15.),
+            (8., 10.),
+        ];
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "3"), ("off", "ctr"), ("contDir", "revDir"), ("flowDir", "col")];
+        let actual = packed(&sizes, (200., 300.), &params, 0.);
+        for (center, expected) in relative_line_centers(&actual, 3, true).into_iter().zip([0., 0., 0., 0., -42.5]) {
+            assert!((center - expected).abs() < 1e-7, "{center} != {expected}");
+        }
+        let low = actual.iter().map(|r| r.y).fold(f64::INFINITY, f64::min);
+        let high = actual.iter().map(|r| r.y + r.h).fold(f64::NEG_INFINITY, f64::max);
+        assert!((low + high - 300.).abs() < 1e-7);
+        for (rect, (w, h)) in actual.iter().zip(sizes) {
+            assert!((rect.w - w).abs() < 1e-7 && (rect.h - h).abs() < 1e-7);
         }
     }
 

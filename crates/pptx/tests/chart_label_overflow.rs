@@ -5,7 +5,7 @@ use std::sync::Arc;
 use deckcraft_color::Rgba;
 use deckcraft_engine::render::{RenderOpts, render_slide};
 use deckcraft_model::chart::{Chart, ChartLayout, ChartTextRole, ChartType, DataLabel, Series};
-use deckcraft_model::text::{Anchor, RunProps, TextBody, TextOverflow};
+use deckcraft_model::text::{Align, Anchor, Run, RunProps, TextBody, TextOverflow};
 use deckcraft_model::{ColorRef, Fill, Presentation, Shape, ShapeId, ShapeKind, Slide, Xfrm};
 
 fn original(policy: Option<TextOverflow>) -> Presentation {
@@ -173,4 +173,124 @@ fn manual_overflow_centers_the_complete_body_across_the_fixed_box() {
         }
     }
     assert!(tops[1] + 100 < tops[0]);
+}
+
+fn ellipsis_control(align: Align, rtl: bool, marker_size: f64) -> Presentation {
+    let mut p = original(None);
+    let shape = &mut Arc::make_mut(&mut p.slides[0]).shapes[0];
+    shape.xfrm = Some(Xfrm::new(0., 0., 1000., 260.));
+    let ShapeKind::Chart(chart) = &mut shape.kind else { panic!("chart") };
+    chart.y_min = Some(0.);
+    chart.format.plot_layout =
+        Some(ChartLayout { inner: true, x: Some(0.1), y: Some(0.15), w: Some(0.7), h: Some(0.65), x_edge: true, y_edge: true, ..Default::default() });
+    let label = chart.series[0].point_labels.get_mut(&0).unwrap();
+    label.fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 255, 0))));
+    let mut body = TextBody::from_text("I\nI\nWWWWWW\nZ");
+    body.body.inset_l = Some(3.);
+    body.body.inset_r = Some(3.);
+    body.body.inset_t = Some(1.5);
+    body.body.inset_b = Some(1.5);
+    body.body.wrap = Some(true);
+    for (i, para) in body.paragraphs.iter_mut().enumerate() {
+        para.props.align = Some(align);
+        para.props.rtl = Some(rtl);
+        para.runs[0].props = RunProps {
+            font: Some("Inter".into()),
+            size: Some(if i == 3 { marker_size } else { 30. }),
+            fill: Some(Fill::solid(ColorRef::rgb(if i == 3 { Rgba::rgb(0, 0, 255) } else { Rgba::rgb(255, 0, 0) }))),
+            ..Default::default()
+        };
+    }
+    label.text = Some(body);
+    p
+}
+
+fn rebuilt(p: &Presentation) -> Presentation {
+    let mut back = deckcraft_pptx::import(&deckcraft_pptx::export(p).unwrap()).unwrap();
+    let ShapeKind::Chart(chart) = &mut Arc::make_mut(&mut back.slides[0]).shapes[0].kind else { panic!("chart") };
+    chart.raw = None;
+    chart.kept = Default::default();
+    deckcraft_pptx::import(&deckcraft_pptx::export(&back).unwrap()).unwrap()
+}
+
+#[test]
+fn automatic_marker_reservation_and_background_bounds_are_distinct_in_ltr_and_rtl() {
+    for rtl in [false, true] {
+        for align in [Align::Left, Align::Center, Align::Right] {
+            for marker_size in [30., 60.] {
+                let p = rebuilt(&ellipsis_control(align, rtl, marker_size));
+                let b = painted_bounds(&p, true).unwrap();
+                // Independent native controls with a fixed inner plot. The automatic
+                // marker participates in alignment, but is excluded from background bounds.
+                let full = (!rtl && align == Align::Right) || (rtl && align == Align::Left);
+                let expected = match (full, marker_size == 60.) {
+                    (false, false) => 153.8,
+                    (false, true) => 124.24,
+                    (true, false) => 179.73,
+                    (true, true) => 176.095,
+                };
+                assert!(((b.2 - b.0 + 1) as f64 - expected).abs() <= 2., "{align:?} rtl={rtl} marker={marker_size}: {b:?}");
+                assert!(((b.0 + b.2 + 1) as f64 / 2. - 450.).abs() <= 0.5);
+                let img = render_slide(&p, 0, &RenderOpts::default());
+                assert!(!img.pixels.chunks_exact(4).any(|px| px[2] > 200 && px[0] < 40 && px[1] < 40), "paint uses the removed W's red style");
+                let ShapeKind::Chart(chart) = &p.slides[0].shapes[0].kind else { panic!("chart") };
+                assert_eq!(chart.series[0].point_labels[&0].text.as_ref().unwrap().text(), "I\nI\nWWWWWW\nZ");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_marker_takes_the_first_removed_runs_style_without_refitting_its_reserved_width() {
+    let mut p = ellipsis_control(Align::Center, false, 60.);
+    let ShapeKind::Chart(chart) = &mut Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("chart") };
+    let body = chart.series[0].point_labels.get_mut(&0).unwrap().text.as_mut().unwrap();
+    body.paragraphs[2].runs[0].text = "AAAAAA".into();
+    let props = RunProps { fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(0, 255, 0)))), ..body.paragraphs[2].runs[0].props.clone() };
+    body.paragraphs[2].runs.push(Run::with("B", props));
+    let p = rebuilt(&p);
+    let img = render_slide(&p, 0, &RenderOpts::default());
+    let green_rows: Vec<_> =
+        img.pixels.chunks_exact(4).enumerate().filter(|(_, px)| px[1] > 200 && px[0] < 40 && px[2] < 40).map(|(i, _)| i as u32 / img.width).collect();
+    let height = green_rows.iter().max().unwrap() - green_rows.iter().min().unwrap() + 1;
+    assert!(height <= 5, "only the green ellipsis remains, not the removed B: height {height}");
+    assert!(!img.pixels.chunks_exact(4).any(|px| px[2] > 200 && px[0] < 40 && px[1] < 40));
+    let b = painted_bounds(&p, true).unwrap();
+    assert!(((b.2 - b.0 + 1) as f64 - 130.2).abs() <= 1.5);
+}
+
+#[test]
+fn a_negative_quarter_turn_centers_the_unmarked_background_on_the_fixed_plot_bar() {
+    for (w, h, expected) in
+        [(960., 400., (340., 144., 524., 262.)), (720., 240., (268., 67.5, 379.5, 176.)), (500., 720., (187.5, 308., 262.5, 422.5))]
+    {
+        for angle in [-90., 270.] {
+            let mut p = original(None);
+            let shape = &mut Arc::make_mut(&mut p.slides[0]).shapes[0];
+            shape.xfrm = Some(Xfrm::new(0., 0., w, h));
+            let ShapeKind::Chart(chart) = &mut shape.kind else { panic!("chart") };
+            chart.y_min = Some(0.);
+            chart.series[0].values = vec![Some(9.)];
+            chart.format.plot_layout = Some(ChartLayout {
+                inner: true,
+                x: Some(0.1),
+                y: Some(0.15),
+                w: Some(0.7),
+                h: Some(0.65),
+                x_edge: true,
+                y_edge: true,
+                ..Default::default()
+            });
+            let label = chart.series[0].point_labels.get_mut(&0).unwrap();
+            label.fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 255, 0))));
+            let body = label.text.as_mut().unwrap();
+            body.body.rot = Some(angle);
+            body.body.wrap = Some(true);
+            let b = painted_bounds(&rebuilt(&p), true).unwrap();
+            // Native controls keep the automatic marker outside this background.
+            for (actual, expected) in [(b.0, expected.0), (b.1, expected.1), (b.2 + 1, expected.2), (b.3 + 1, expected.3)] {
+                assert!((actual as f64 - expected).abs() <= 1.5, "{w}x{h} at {angle}: {b:?}");
+            }
+        }
+    }
 }

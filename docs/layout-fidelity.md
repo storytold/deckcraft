@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.42): finite size-rule searches, intrinsic nested flows,
-map viewport normalization and chart axis visibility/spacing.
+Updated 2026-11-02 (PPTX.43): measured root fitting, alternating snake centers,
+sparse geographic extents and rich-label ellipsis alignment.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -2203,3 +2203,85 @@ passes all eight stages and 2,586 tests including doctests; this is not a hosted
 Only source, original programmatic tests and documentation are published. Native
 observations, provider data, fonts and private decks remain outside the commit. These
 improvements do not establish complete LibreOffice replacement.
+
+
+## PPTX.43 — measured fitting, alternating lines, sparse maps and ellipses
+
+A measured root linear layout retains its exact geometry when text fits. Forced
+word breaks or overflow request the finite fitting pass. A nested linear layout
+allocated by a composite keeps that allocation unless its geometry overflows;
+it does not inherit the root-only text trigger. Twenty-four original root/nested
+controls and twenty-four independent cross-font/reverse-flow controls match native
+geometry within 0.025pt. The trigger set has twenty-four informative controls;
+sixteen generator duplicates are explicitly excluded from that count.
+
+The prior thirty-six size-rule controls improve from 18 to 32 strict matches. A
+new forty-eight-case linear/text-rule set improves from 16 to 37. Eleven of sixteen
+unequal-sibling/rule controls match. Cumulative finite fits and earlier heights
+retained after later sibling growth remain unresolved; these results do not establish
+complete coupled rule replay. The old 111-case flow matrix retains 85 matches.
+
+Alternating centered snake lines now carry separate flow extent, physical child
+boundary, delayed alignment and growth. Column flow retains the physical-width
+boundary observed in native rendering. The same-direction path, ten fitting trials
+and bounded work budget remain in place. The original 491-case matrix improves
+from 458 to 489, without losing a prior pass. All 447 retained reverse controls
+match, and an independent 48-case set improves from 18 to 42. That last set was
+used to refine the general rule after an initial frozen model matched 41 cases;
+it is not presented as entirely unseen validation. Three already-failing pages
+have worse maximum or mean coordinate error even though the overall mean
+coordinate error falls from 12.813pt to 0.992pt. A separate, post-freeze thirty-two
+case set improves from 6 to 29 without losing a pass or worsening those metrics.
+The two original and nine newer failing cases remain recorded. Fifteen inspected
+4K raster comparisons contain nine matches and six known failures; geometry
+matching is not a claim of whole-image pixel parity.
+
+Sparse map caches now fit the actual painted geographic extent instead of forcing
+a synthetic full-globe frame. Administrative bounds still supply projection and
+dateline context, including fallback when selected geometry is absent. All thirty-eight
+older 4K map images remain pixel-identical. Twelve new source-bound native controls
+have a maximum absolute vertex error of 0.000135pt, without affine fitting. Seven
+diagnostic/independent foreground masks have 99.9817–99.9974% intersection over union;
+two missing-selected-geometry gray masks reach 99.9603%. Three overlapping-region
+controls retain correct overall extent but wrong paint order: whole-painted-area
+scores near 99.917% conceal selected-colour scores of only 30.62–40.46%. They remain
+failures. The four corresponding LibreOffice exports omit geographic graphics;
+opening the package is not visual parity.
+
+Automatic column-label ellipses reserve width using the first vertically omitted
+character's style. If that reservation removes more characters, the painted marker
+takes the first removed character's style without re-fitting the reserved width.
+Markers follow the paragraph's trailing side, including RTL paragraphs. Alignment
+uses the reserved line, while the automatic background encloses the aligned retained
+prefixes; the marker is excluded. Authored ellipsis text remains ordinary text,
+and manually fixed backgrounds keep their authored dimensions.
+
+The 102 new horizontal controls reduce mean background horizontal-edge RMS error
+from 6.771pt to 0.125pt and text horizontal-edge RMS from 5.919pt to 0.150pt, with
+no regression in either measure. A further nine independent rotation controls
+separate six negative-quarter-turn improvements (3.666pt to 0.322pt) from three
+unchanged, pre-existing 180-degree wrapping/overflow failures. All 111 new pages
+pass schema validation and hash-bound native open/export. Among 375 old pages,
+191 retain identical foreground/background masks; the other 184 reduce mean text
+four-edge RMS error from 7.919pt to 4.516pt. Their 140 comparable backgrounds improve
+from 6.860pt to 3.627pt without regression. Seventeen text bounding boxes worsen;
+several previously compensated an incorrect plot center. Fixed-inner controls
+isolate the corrected marker geometry, but the remaining small-angle/inset and
+absolute-gutter differences are not dismissed or counted as passes. Previously
+matching line-band counts remain 181/184. Native/before/after images, including
+visible regressions and the 180-degree failures, were inspected.
+
+The final integrated executable retains all 632 older cycle geometries, 506 unchanged
+inspection models, all 600 recovery font-size sets and all 107 nested-flow controls.
+It reproduces all fifty final map images and all 588 chart-page renders from the
+verified implementations. The 102 retained axis pages include three long-label
+pages intentionally changed by this ellipsis correction; their text RMS errors
+improve from 2.560/5.715/7.550pt to 2.160/3.559/5.916pt, while the plot geometry
+remains unchanged. The other ninety-nine are pixel-identical to the prior revision.
+These are integration-consistency checks, not native equivalence for the failing
+cases above. Local `cargo xtask ci` passes all eight stages and 2,592 tests including
+doctests; hosted CI is reported separately.
+
+Only source, original programmatic tests and documentation are published. Native
+observations, provider data, fonts and private decks remain outside the commit.
+This is a bounded fidelity improvement, not complete LibreOffice replacement.

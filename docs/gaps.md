@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **PPTX.43 update 2026-11-02:** Text measurement gates root linear fitting; alternating centered snake packing raises the retained matrix to 489/491. Sparse geographic caches fit their actual painted extent, and automatic rich-label ellipses preserve marker style, direction and background alignment. Independent controls, error regressions and unresolved cases are recorded separately. Feature scores are unchanged.
+
 > **PPTX.42 update 2026-11-02:** Native-sized rule searches retain whole words and respect rule order; nested linear children preserve intrinsic cross extents after snake fitting. Map viewport normalization and chart axis visibility/spacing are refined. Independent controls and retained regressions are reported separately; remaining geometry, paint-order and chart-placement limits stay explicit. Feature scores are unchanged.
 
 > **PPTX.41 update 2026-11-02:** Same-direction centered snake packing and literal-linefeed semantics raise the retained geometry matrix to 458/491, with no prior match lost. Heavy map reduction matches 3,168 independent ring observations; rotated/manual column-label line counts improve on retained and new controls. Exact-boundary arithmetic, reverse/fit layouts, map viewport policy and chart placement remain partial; feature scores are unchanged.
@@ -486,6 +488,7 @@ no global parity claim or score increase.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.43: measured linear fitting, alternating snake centering, sparse map extents and rich-label ellipsis geometry; explicit incomplete cases retained |
 | 2026-11-02 | minor | PPTX.42: finite size-rule search, intrinsic nested flows, map viewport and chart axis state; independent evidence and known limits retained |
 | 2026-11-02 | minor | PPTX.41: centered snake state, literal LF paragraph semantics, heavy map sampling and rotated/manual rich labels; bounded evidence and residuals retained |
 | 2026-11-02 | minor | PPTX.40: constrained snake packing, separate recovered-text metrics, native map sampling and rich-column overflow; partial bounds and visual results remain explicit |

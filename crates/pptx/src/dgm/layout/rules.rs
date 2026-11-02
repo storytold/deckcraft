@@ -210,8 +210,10 @@ fn placed<'a>(
     let empty = HashSet::new();
     geometry::place_solved(tree, frame, data, &mut out, 0, &solution, Some(&empty), work)?;
     geometry::connect(&mut out, data);
-    let mut overflowing = [HashSet::new(), HashSet::new()];
-    for ((alg, kind), overflowing) in [("cycle", MeasureKind::WordWrap), ("snake", MeasureKind::SnakeFit)].into_iter().zip(&mut overflowing) {
+    let mut overflowing = [HashSet::new(), HashSet::new(), HashSet::new()];
+    for ((alg, kind), overflowing) in
+        [("cycle", MeasureKind::WordWrap), ("snake", MeasureKind::SnakeFit), ("lin", MeasureKind::WordWrap)].into_iter().zip(&mut overflowing)
+    {
         if contains_algorithm(tree, alg, work)? {
             charge(work, out.len())?;
             let values = measure(&out, kind)?;
@@ -250,16 +252,16 @@ fn contains_algorithm(node: &Instance<'_>, alg: &str, work: &mut usize) -> Resul
 fn collect_refits(
     node: &Instance<'_>,
     data: &Data<'_>,
-    overflowing: &[HashSet<usize>; 2],
+    overflowing: &[HashSet<usize>; 3],
     refits: &mut HashSet<usize>,
     depth: usize,
     work: &mut usize,
-) -> Result<[bool; 2], &'static str> {
+) -> Result<[bool; 3], &'static str> {
     charge(work, 1)?;
     if depth > 64 {
         return Err("diagram layout depth exceeded");
     }
-    let mut needs_fit = [false; 2];
+    let mut needs_fit = [false; 3];
     if node.alg == "tx" && overflowing.iter().any(|set| set.contains(&constraints::id(node))) && geometry::cycle_has_text(node, data, depth, work)? {
         needs_fit = overflowing.each_ref().map(|set| set.contains(&constraints::id(node)));
     }
@@ -269,7 +271,7 @@ fn collect_refits(
             *own |= child;
         }
     }
-    if node.alg == "cycle" && needs_fit[0] || node.alg == "snake" && needs_fit[1] {
+    if node.alg == "cycle" && needs_fit[0] || node.alg == "snake" && needs_fit[1] || node.alg == "lin" && depth == 0 && needs_fit[2] {
         refits.insert(constraints::id(node));
     }
     Ok(needs_fit)

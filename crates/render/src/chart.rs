@@ -429,7 +429,19 @@ fn column_rich_label(
     let overflow = body.body.vertical_overflow == Some(deckcraft_model::text::TextOverflow::Overflow);
     let text_h = (measured.content_height + body.body.inset_t.unwrap_or(0.) + body.body.inset_b.unwrap_or(0.)).max(1.);
     let text_w = (measured.content_width + body.body.inset_l.unwrap_or(0.) + body.body.inset_r.unwrap_or(0.)).clamp(1., wrap_width.max(1.));
-    let (w, h) = if bounds.fixed { (bounds.width, bounds.height) } else { (text_w, text_h) };
+    let (mut w, h) = if bounds.fixed { (bounds.width, bounds.height) } else { (text_w, text_h) };
+    let marked_w = w;
+    let mut background_x = 0.;
+    if !bounds.fixed && marker_base.is_some() {
+        let preview = label_layout::placed(rctx, &body, Rect::new(0., 0., w, h), marker_base.as_ref(), true);
+        if let Some((left, right)) = label_layout::background_extent(&preview) {
+            let width = right - left + body.body.inset_l.unwrap_or(0.) + body.body.inset_r.unwrap_or(0.);
+            if width.is_finite() && width > 0. && width <= wrap_width {
+                background_x = left - body.body.inset_l.unwrap_or(0.);
+                w = width.max(1.);
+            }
+        }
+    }
     let mut r = label_layout::position((w, h), angle, mark, spec.position.as_deref(), negative, frame, spec.layout.as_ref(), bounds.fixed);
     if !bounds.fixed && overflow {
         // Overflow keeps the full rotated box. Position its leading corner using the
@@ -458,6 +470,10 @@ fn column_rich_label(
         ctx.push_clip_layer(&Rect::new(r.x0 - reach, r.y0, r.x1 + reach, r.y1).to_path(0.1));
     }
     let mut text_rect = r;
+    if !bounds.fixed && marker_base.is_some() {
+        text_rect.x0 -= background_x;
+        text_rect.x1 = text_rect.x0 + marked_w;
+    }
     if bounds.fixed && overflow && text_h > h {
         // Overflow anchors the full text, including a negative top offset for center
         // and bottom anchors. Ordinary slide layout clamps that offset to zero.

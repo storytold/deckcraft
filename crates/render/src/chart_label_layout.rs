@@ -4,7 +4,7 @@ use deckcraft_geom::Rect;
 use deckcraft_model::Shape;
 use deckcraft_model::chart::ChartLayout;
 use deckcraft_model::resolve::Ctx;
-use deckcraft_model::text::{Anchor, Paragraph, Run, RunKind, RunProps, TextBody, TextOverflow};
+use deckcraft_model::text::{Align, Anchor, Bullet, Paragraph, Run, RunKind, RunProps, TextBody, TextOverflow};
 use deckcraft_text::{LayoutMetrics, LineMetrics, NoFields, Opts, TextLayout};
 
 /// The text box before rotation. Manual dimensions are fixed; automatic dimensions
@@ -171,7 +171,12 @@ fn prefix(body: &TextBody, para: usize, mut end: usize, marker: Option<&RunProps
 /// Native automatic column labels cap their height at half the chart frame, including
 /// explicit no-wrap labels. Keep complete lines; an ellipsis takes the first omitted
 /// character's style. Its width can require removing graphemes from the last kept line.
-pub(super) fn overflow(ctx: &Ctx, body: &mut TextBody, width: f64, height: f64, measured: TextLayout) -> (TextLayout, Option<TextBody>) {
+pub(super) struct Marker {
+    base: TextBody,
+    paint: RunProps,
+}
+
+pub(super) fn overflow(ctx: &Ctx, body: &mut TextBody, width: f64, height: f64, measured: TextLayout) -> (TextLayout, Option<Marker>) {
     let policy = body.body.vertical_overflow.unwrap_or(TextOverflow::Ellipsis);
     if policy == TextOverflow::Overflow {
         return (measured, None);
@@ -187,13 +192,13 @@ pub(super) fn overflow(ctx: &Ctx, body: &mut TextBody, width: f64, height: f64, 
     let clipped = prefix(body, last.para, last.end, marker.as_ref());
     let candidate = measure(ctx, &clipped, width, true);
     if marker.is_none() || candidate.lines.len() <= first_hidden {
-        let base = marker.as_ref().map(|_| prefix(body, last.para, last.end, None));
+        let marker = marker.as_ref().map(|paint| Marker { base: prefix(body, last.para, last.end, None), paint: paint.clone() });
         let mut candidate = candidate;
-        if let Some(base) = &base {
-            marker_metrics(&mut candidate, &measure(ctx, base, width, true));
+        if let Some(marker) = &marker {
+            marker_metrics(&mut candidate, &measure(ctx, &marker.base, width, true));
         }
         *body = clipped;
-        return (candidate, base);
+        return (candidate, marker);
     }
     // Search only legal grapheme boundaries from the shaped line. This never cuts a
     // surrogate, combining sequence or joined emoji, and requires logarithmic layouts.
@@ -226,9 +231,13 @@ pub(super) fn overflow(ctx: &Ctx, body: &mut TextBody, width: f64, height: f64, 
         }
     }
     let base = prefix(body, last.para, best_cut, None);
+    // Width reservation keeps the initially hidden line's style. If fitting that
+    // reservation removes more text, the painted marker takes the first removed
+    // character's style without changing the reservation or fitting again.
+    let paint = if best_cut < last.end { props_at(body, last.para, best_cut) } else { marker.unwrap_or_default() };
     marker_metrics(&mut best_layout, &measure(ctx, &base, width, true));
     *body = best;
-    (best_layout, Some(base))
+    (best_layout, Some(Marker { base, paint }))
 }
 
 /// Native truncation inserts the marker on the retained baseline; a larger hidden
@@ -263,17 +272,106 @@ fn marker_metrics(marked: &mut TextLayout, base: &TextLayout) {
     marked.content_height = base.content_height;
 }
 
-pub(super) fn placed(ctx: &Ctx, body: &TextBody, rect: Rect, marker_base: Option<&TextBody>, typographic: bool) -> TextLayout {
+pub(super) fn placed(ctx: &Ctx, body: &TextBody, rect: Rect, marker: Option<&Marker>, typographic: bool) -> TextLayout {
     let shape = Shape { text: Some(body.clone()), ..Default::default() };
     let opts = Opts { rect, fields: &NoFields, prompt_color: None, no_shrink: true };
-    let mut layout = deckcraft_text::layout_with_metrics(ctx, &shape, body, &opts, metrics(typographic));
-    if let Some(base) = marker_base {
-        let mut base = base.clone();
-        base.body = body.body.clone();
-        let shape = Shape { text: Some(base.clone()), ..Default::default() };
-        marker_metrics(&mut layout, &deckcraft_text::layout_with_metrics(ctx, &shape, &base, &opts, metrics(typographic)));
+    let reserved = deckcraft_text::layout_with_metrics(ctx, &shape, body, &opts, metrics(typographic));
+    let Some(marker) = marker else { return reserved };
+    let mut base = marker.base.clone();
+    base.body = body.body.clone();
+    let shape = Shape { text: Some(base.clone()), ..Default::default() };
+    let mut layout = deckcraft_text::layout_with_metrics(ctx, &shape, &base, &opts, metrics(typographic));
+    if layout.lines.len() != reserved.lines.len() {
+        return reserved;
     }
+    let (Some(line), Some(full)) = (layout.lines.last().cloned(), reserved.lines.last()) else { return reserved };
+    let width = line.extent.1 - line.extent.0;
+    let left = if line.rtl { full.extent.1 - width } else { full.extent.0 };
+    let dx = left - line.extent.0;
+    shift_last_line(&mut layout, dx);
+    // A marker is a drawing attachment at the paragraph's trailing side. It does
+    // not acquire the adjacent Latin run's direction in an RTL paragraph.
+    let mut mark = marker_layout(ctx, &marker.paint, typographic);
+    let mx = if line.rtl { left - mark.content_width } else { left + width };
+    let my = line.baseline - mark.lines.first().map_or(0., |l| l.baseline);
+    for run in &mut mark.runs {
+        run.para = line.para;
+        run.chars = (line.end, line.end.saturating_add(1));
+        for cell in &mut run.cells {
+            cell.0 = line.end;
+        }
+        for (_, x, y) in &mut run.glyphs {
+            *x += mx;
+            *y += my;
+        }
+    }
+    for deco in &mut mark.decos {
+        deco.para = line.para;
+        deco.rect = deco.rect + kurbo::Vec2::new(mx, my);
+    }
+    layout.runs.extend(mark.runs);
+    layout.decos.extend(mark.decos);
+    layout.content_width = reserved.content_width;
     layout
+}
+
+fn marker_layout(ctx: &Ctx, paint: &RunProps, typographic: bool) -> TextLayout {
+    let mut body = TextBody::from_text("…");
+    body.body.inset_l = Some(0.);
+    body.body.inset_r = Some(0.);
+    body.body.inset_t = Some(0.);
+    body.body.inset_b = Some(0.);
+    body.body.wrap = Some(false);
+    for p in &mut body.paragraphs {
+        p.props.align = Some(Align::Left);
+        p.props.rtl = Some(false);
+        p.props.bullet = Some(Bullet::None);
+        p.props.margin_left = Some(0.);
+        p.props.margin_right = Some(0.);
+        p.props.indent = Some(0.);
+        p.def_props = paint.clone();
+        for run in &mut p.runs {
+            run.props = paint.clone();
+        }
+    }
+    measure(ctx, &body, 1e6, typographic)
+}
+
+fn shift_last_line(layout: &mut TextLayout, dx: f64) {
+    let Some(line) = layout.lines.last() else { return };
+    for run in &mut layout.runs {
+        if run.para == line.para {
+            for (i, (_, x, _)) in run.glyphs.iter_mut().enumerate() {
+                if run.cells.get(i).is_some_and(|&(at, _)| at >= line.start && at < line.end) {
+                    *x += dx;
+                }
+            }
+        }
+    }
+    for deco in &mut layout.decos {
+        if deco.para == line.para && deco.rect.center().y >= line.top {
+            deco.rect = deco.rect + kurbo::Vec2::new(dx, 0.);
+        }
+    }
+    if let Some(line) = layout.lines.last_mut() {
+        line.extent.0 += dx;
+        line.extent.1 += dx;
+        line.start_offset += dx;
+        for x in &mut line.caret_x {
+            *x += dx;
+        }
+        for (a, b) in &mut line.edges {
+            *a += dx;
+            *b += dx;
+        }
+    }
+}
+
+/// Automatic markers affect line alignment but not the background's bounds. A
+/// placed marked layout retains only the prefix in its line geometry, so mixed
+/// alignment and RTL use the union of the aligned prefix extents.
+pub(super) fn background_extent(layout: &TextLayout) -> Option<(f64, f64)> {
+    layout.lines.iter().filter(|l| l.end > l.start).map(|l| l.extent).reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
 }
 
 #[cfg(test)]
