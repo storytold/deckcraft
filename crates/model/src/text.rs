@@ -288,7 +288,7 @@ impl ParaProps {
                 self.bullet_color.clone_from(&p.bullet_color);
             }
         }
-        if self.bullet_size_follow_text == Some(false) {
+        if self.bullet_size_follow_text == Some(false) || self.bullet_size.is_some() || self.bullet_size_points.is_some() {
             self.bullet_size_follow_text = None;
         }
         if self.bullet_size.is_none() && self.bullet_size_points.is_none() && self.bullet_size_follow_text.is_none() {
