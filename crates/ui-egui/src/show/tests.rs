@@ -818,9 +818,64 @@ fn ctrl_wheel_zooms_the_show_and_the_plain_wheel_turns_the_page() {
         assert_eq!(show.state.slide, 0, "{held:?}: zooming out does not go back a page either");
         assert!(show.zoom_view().is_none(), "{held:?}: back to the whole slide");
 
-        show_wheel(&mut h, centre, -3.0, egui::Modifiers::NONE);
+        show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
         assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 1, "the plain wheel turns the page");
     }
+}
+
+fn show_slide(harness: &egui_kittest::Harness<'static, SlideApp>) -> usize {
+    harness.state().show.as_ref().expect("still showing").state.slide
+}
+
+/// #1724: every wheel notch turns one page, as → does, even when notches come quickly.
+#[test]
+fn each_wheel_notch_turns_one_page_in_the_show() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert_eq!(show_slide(&h), 1, "one notch is one page");
+    show_wheel(&mut h, centre, 1.0, egui::Modifiers::NONE);
+    assert_eq!(show_slide(&h), 0, "one notch up is one page back");
+
+    // Two notches in consecutive frames, well inside the trackpad swipe cooldown.
+    for _ in 0..2 {
+        h.input_mut().events.push(egui::Event::PointerMoved(centre));
+        h.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(0.0, -1.0),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_steps(1);
+    }
+    h.run_steps(40);
+    assert_eq!(show_slide(&h), 2, "a quick notch is not swallowed");
+}
+
+/// #1724: a high-resolution wheel sends fractions of a line; a whole line is one page.
+#[test]
+fn wheel_fractions_add_up_to_one_page_in_the_show() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    for _ in 0..7 {
+        show_wheel(&mut h, centre, -0.125, egui::Modifiers::NONE);
+    }
+    assert_eq!(show_slide(&h), 0, "seven eighths of a line do not turn the page");
+    show_wheel(&mut h, centre, -0.125, egui::Modifiers::NONE);
+    assert_eq!(show_slide(&h), 1);
+}
+
+/// #1724: notches past the last slide stop at the end-of-show screen; one more notch leaves it.
+#[test]
+fn quick_wheel_notches_stop_at_the_end_of_the_show() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    show_wheel(&mut h, centre, -6.0, egui::Modifiers::NONE);
+    let show = h.state().show.as_ref().expect("the end screen is still the show");
+    assert!(show.ended, "past the last slide is the end-of-show screen");
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert!(h.state().show.is_none(), "the next notch leaves the show");
 }
 
 #[test]

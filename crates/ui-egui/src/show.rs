@@ -96,8 +96,10 @@ pub struct Show {
     notes_px: f32,
     timings: Vec<(usize, f64)>,
     last_move: f64,
-    /// The last trackpad flick or mouse-wheel notch, so one gesture turns one page.
+    /// The last trackpad flick, so one gesture turns one page.
     last_swipe: f64,
+    /// The part of a mouse-wheel line not yet turned into a step (high-resolution wheels).
+    wheel_carry: f32,
     pub ended: bool,
     /// The slide whose media was last started (auto-play runs once per visit).
     media_slide: Option<usize>,
@@ -259,6 +261,7 @@ impl Show {
             timings: vec![],
             last_move: 0.0,
             last_swipe: f64::NEG_INFINITY,
+            wheel_carry: 0.0,
             ended: false,
             media_slide: None,
             last_viewed: None,

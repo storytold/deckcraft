@@ -1,6 +1,6 @@
 # Slide show and presenter view: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** minor (Set Up Slide Show ▸ Keep mouse cursor visible, #1445; previous: minor, Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-03 · **Change:** minor (each mouse-wheel notch turns one page, #1724; previous: minor, Set Up Slide Show ▸ Keep mouse cursor visible, #1445; previous: minor, Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Presenting is the job PowerPoint is hired for. This doc covers the show window, presenter view,
 rehearsal and recording. Transition and animation playback are in
@@ -15,7 +15,7 @@ ready** (estimated), **10–16 h** to parity.
 | Play from Start / from Current Slide (F5, Shift+F5, Cmd+Enter) | yes | yes | |
 | Next/previous by click, arrows, Space, Page Up/Down, Enter, Backspace | yes | yes | #17 reported arrows not working in v0.3.0 AppImage; recheck |
 | Go to slide (number + Enter), first/last | yes | yes: the digits show as "Go to slide …" until Enter, Backspace, Esc, or 3 seconds | Slide numbers are 1-based; 0 and a number past the end do not move |
-| Next/previous by trackpad swipe or mouse wheel | yes | yes | One flick turns one page. The pen ignores the flick |
+| Next/previous by trackpad swipe or mouse wheel | yes | yes | One flick turns one page; each wheel notch is one step, as → is. The pen ignores both |
 | Go to slide (number + Enter), first/last | yes | yes | |
 | Black / white screen (B / W) | yes | yes | |
 | End screen, Esc to leave | yes | yes | |
