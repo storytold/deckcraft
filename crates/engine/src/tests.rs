@@ -866,6 +866,19 @@ fn a_group_offers_its_members_connection_sites() {
     assert!(matches!(sh.kind, deckcraft_model::ShapeKind::Connector { end: Some((x, 0)), .. } if x.0 == g as u32), "{:?}", sh.kind);
     let (_, p1) = line_ends(&s, c);
     assert!((p1 - deckcraft_geom::Point::new(100.0, 150.0)).hypot() < 1e-6, "{p1:?}");
+    // Moving the group moves the pin, and the connector's end with it.
+    s.execute("edit.select", &json!({"ids": [g]})).unwrap();
+    s.execute("shape.move", &json!({"dx": 30, "dy": -10})).unwrap();
+    let (_, q1) = line_ends(&s, c);
+    assert!((q1 - deckcraft_geom::Point::new(130.0, 140.0)).hypot() < 1e-6, "{q1:?}");
+    // A hidden member offers no pin.
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+        deckcraft_model::find_shape_mut(&mut slide.shapes, deckcraft_model::ShapeId(lead as u32)).unwrap().hidden = true;
+    }
+    assert!(sites(&mut s, g).is_empty());
 }
 
 #[test]

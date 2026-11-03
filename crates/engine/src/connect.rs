@@ -1,7 +1,7 @@
 //! Connectors glued to shapes: connection sites, snapping line ends to them, and rerouting attached
 //! connectors whenever the shapes they connect move, resize or rotate.
 
-use deckcraft_geom::{Affine, Point, Xfrm};
+use deckcraft_geom::{Point, Xfrm};
 use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind};
 
 use crate::Selection;
@@ -12,7 +12,9 @@ use crate::cmd::xfrm_of;
 /// A preset's sites come from its geometry, a custom geometry's from its own list (`a:cxnLst`,
 /// `Shape::sites`), and a shape without any offers its box midpoints. A group has none of its
 /// own: it offers its members' own sites (a grouped circuit symbol's pins; groups within
-/// included), so a connector can glue to those; a group whose members have none stays without.
+/// included, hidden members not), so a connector can glue to those by the site's position in
+/// that list (`deckcraft_model::group_site_targets` names the member and its own index, which
+/// is what a file stores); a group whose members have none stays without.
 pub fn sites(doc: &Presentation, sel: &Selection, s: &Shape) -> Vec<Point> {
     if s.is_line() || matches!(s.kind, ShapeKind::Ink { .. }) {
         return vec![];
@@ -20,7 +22,7 @@ pub fn sites(doc: &Presentation, sel: &Selection, s: &Shape) -> Vec<Point> {
     let x = xfrm_of(doc, sel, s);
     if let ShapeKind::Group { children, child } = &s.kind {
         let mut out = vec![];
-        member_sites(children, deckcraft_geom::group_child_affine(&x, child.rect()), &mut out, 0);
+        deckcraft_model::group_member_sites(children, deckcraft_geom::group_child_affine(&x, child.rect()), &mut |_, _, p| out.push(p));
         return out;
     }
     let mut local = deckcraft_render::shape_geometry(s, x.w, x.h).sites;
@@ -29,25 +31,6 @@ pub fn sites(doc: &Presentation, sel: &Selection, s: &Shape) -> Vec<Point> {
     }
     let a = x.affine();
     local.into_iter().map(|p| a * p).collect()
-}
-
-/// The members' own sites (`Shape::sites`), in walk order, through `a` (child space to slide).
-fn member_sites(children: &[Shape], a: Affine, out: &mut Vec<Point>, depth: usize) {
-    if depth > 64 {
-        return;
-    }
-    for c in children {
-        let Some(cx) = c.xfrm else { continue };
-        match &c.kind {
-            ShapeKind::Group { children, child } => member_sites(children, a * deckcraft_geom::group_child_affine(&cx, child.rect()), out, depth + 1),
-            ShapeKind::Ink { .. } => {}
-            _ if c.is_line() => {}
-            _ => {
-                let m = a * cx.affine();
-                out.extend(c.sites.iter().map(|q| m * Point::new(q.x * cx.w, q.y * cx.h)));
-            }
-        }
-    }
 }
 
 /// The nearest connection site within `radius` of `p` on any visible shape except `exclude`.

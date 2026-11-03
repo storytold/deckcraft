@@ -357,3 +357,35 @@ fn connection_sites_serialize_as_fractions_and_default_to_none() {
         serde_json::from_str(r#"{"id": 7, "name": "Old", "geom": {"kind": "custom", "paths": [{"w": 10, "h": 10, "d": "M 0 0 L 10 10"}]}}"#).unwrap();
     assert!(old.sites.is_empty());
 }
+
+/// A group's sites are its members' own, in walk order (groups within too), without hidden
+/// members, lines or ink; `group_site_targets` names the member and its index for each.
+#[test]
+fn group_site_targets_follow_the_members_in_order_and_skip_hidden_ones() {
+    use super::{ConnectionSite, group_member_sites, group_site_targets};
+    let member = |id: u32, x: f64, sites: Vec<ConnectionSite>, hidden: bool| Shape {
+        id: ShapeId(id),
+        xfrm: Some(Xfrm::new(x, 0.0, 10.0, 10.0)),
+        sites,
+        hidden,
+        ..Default::default()
+    };
+    let a = member(1, 0.0, vec![ConnectionSite::new(0.0, 0.5), ConnectionSite::new(1.0, 0.5)], false);
+    let hidden = member(2, 20.0, vec![ConnectionSite::new(0.5, 0.5)], true);
+    let none = member(3, 40.0, vec![], false);
+    let inner = member(4, 0.0, vec![ConnectionSite::new(0.5, 1.0)], false);
+    let nested = Shape {
+        id: ShapeId(5),
+        xfrm: Some(Xfrm::new(60.0, 0.0, 20.0, 20.0)),
+        kind: ShapeKind::Group { children: vec![inner], child: Xfrm::new(0.0, 0.0, 10.0, 10.0) },
+        ..Default::default()
+    };
+    let line =
+        Shape { id: ShapeId(6), geom: super::Geom::preset("line"), sites: vec![ConnectionSite::new(0.0, 0.0)], ..member(6, 90.0, vec![], false) };
+    let children = vec![a, hidden, none, nested, line];
+    assert_eq!(group_site_targets(&children), vec![(ShapeId(1), 0), (ShapeId(1), 1), (ShapeId(4), 0)]);
+    let mut pts = vec![];
+    group_member_sites(&children, deckcraft_geom::Affine::IDENTITY, &mut |_, _, p| pts.push((p.x, p.y)));
+    // The nested group's child space (10×10) maps onto its 20×20 box at x = 60.
+    assert_eq!(pts, vec![(0.0, 5.0), (10.0, 5.0), (70.0, 20.0)]);
+}

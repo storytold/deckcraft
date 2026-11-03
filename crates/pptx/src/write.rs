@@ -273,7 +273,7 @@ fn csld(w: &mut W, x: &mut Exp, o: &mut Out, name: &str, bg: Option<&Background>
     shapes::tree_header(w);
     let mut ids = shapes::IdMap::build(list);
     {
-        let mut cx = shapes::Ctx { ids: &mut ids, written: Default::default() };
+        let mut cx = shapes::Ctx { ids: &mut ids, written: Default::default(), group_sites: Default::default() };
         shapes::shapes(w, x, o, &mut cx, list, 0);
     }
     w.close("p:spTree");

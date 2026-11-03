@@ -360,9 +360,14 @@ pub fn parse_path(d: &str) -> Vec<(char, Vec<f64>)> {
     out
 }
 
+/// The extent a shape without a transform of its own (a placeholder) is read and written with,
+/// in EMU: its sites keep their fractions through a round trip.
+pub const INHERITED_EXTENT_EMU: f64 = 21600.0;
+
 /// `a:cxnLst`: the connection sites as fractions of the shape's box, in file order (connectors
-/// refer to them by index). Positions are in the shape's own coordinate space, `w_emu` × `h_emu`
-/// (the extent, where the guides are evaluated), not in a path's `w`/`h` space.
+/// refer to them by index, so a `cxn` without a `pos` keeps its place as the box's corner).
+/// Positions are in the shape's own coordinate space, `w_emu` × `h_emu` (the extent, where the
+/// guides are evaluated), not in a path's `w`/`h` space.
 pub fn read_cxn_lst(cg: &El, w_emu: f64, h_emu: f64) -> Vec<ConnectionSite> {
     let Some(list) = cg.child("cxnLst") else { return vec![] };
     let mut g = Guides::new(w_emu, h_emu);
@@ -371,10 +376,13 @@ pub fn read_cxn_lst(cg: &El, w_emu: f64, h_emu: f64) -> Vec<ConnectionSite> {
     let frac = |v: f64, size: f64| if size > 0.0 { finite(v / size) } else { 0.0 };
     list.children_named("cxn")
         .take(1000)
-        .filter_map(|c| c.child("pos"))
-        .map(|pos| {
-            let (x, y) = pt(&g, pos);
-            ConnectionSite::new(frac(x, w_emu), frac(y, h_emu))
+        .map(|c| {
+            c.child("pos")
+                .map(|pos| {
+                    let (x, y) = pt(&g, pos);
+                    ConnectionSite::new(frac(x, w_emu), frac(y, h_emu))
+                })
+                .unwrap_or_default()
         })
         .collect()
 }
@@ -537,19 +545,23 @@ mod tests {
         let x = br#"<a:custGeom xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
             <a:avLst/><a:gdLst><a:gd name="mid" fmla="*/ h 1 2"/></a:gdLst><a:ahLst/>
             <a:cxnLst><a:cxn ang="0"><a:pos x="0" y="mid"/></a:cxn><a:cxn ang="5400000"><a:pos x="r" y="mid"/></a:cxn>
-              <a:cxn ang="0"><a:pos x="500" y="625"/></a:cxn></a:cxnLst>
+              <a:cxn ang="0"/><a:cxn ang="0"><a:pos x="500" y="625"/></a:cxn></a:cxnLst>
             <a:rect l="0" t="0" r="r" b="b"/>
             <a:pathLst><a:path w="100" h="50"><a:moveTo><a:pt x="0" y="25"/></a:moveTo><a:lnTo><a:pt x="100" y="25"/></a:lnTo></a:path></a:pathLst>
         </a:custGeom>"#;
         let d = parse(x).unwrap();
         let sites = read_cxn_lst(&d.root, 1000.0, 500.0);
-        assert_eq!(sites, vec![ConnectionSite::new(0.0, 0.5), ConnectionSite::new(1.0, 0.5), ConnectionSite::new(0.5, 1.25)]);
+        assert_eq!(
+            sites,
+            vec![ConnectionSite::new(0.0, 0.5), ConnectionSite::new(1.0, 0.5), ConnectionSite::new(0.0, 0.0), ConnectionSite::new(0.5, 1.25)],
+            "a cxn without a pos keeps its index (a connector may point past it)"
+        );
         assert!(read_cxn_lst(&d.root, 0.0, 0.0).iter().all(|s| s.x == 0.0 && s.y == 0.0), "a zero extent gives no division by zero");
         let paths = read_cust_geom(&d.root, 1000.0, 500.0);
         let mut w = W::new();
         write_cust_geom(&mut w, &paths, &sites, (1000, 500));
         let out = String::from_utf8(w.finish()).unwrap();
-        assert!(out.contains(r#"<a:cxnLst><a:cxn ang="0"><a:pos x="0" y="250"/></a:cxn><a:cxn ang="0"><a:pos x="1000" y="250"/></a:cxn><a:cxn ang="0"><a:pos x="500" y="625"/></a:cxn></a:cxnLst>"#), "{out}");
+        assert!(out.contains(r#"<a:cxnLst><a:cxn ang="0"><a:pos x="0" y="250"/></a:cxn><a:cxn ang="0"><a:pos x="1000" y="250"/></a:cxn><a:cxn ang="0"><a:pos x="0" y="0"/></a:cxn><a:cxn ang="0"><a:pos x="500" y="625"/></a:cxn></a:cxnLst>"#), "{out}");
         let mut w = W::new();
         write_cust_geom(&mut w, &paths, &[], (1000, 500));
         assert!(String::from_utf8(w.finish()).unwrap().contains("<a:cxnLst/>"), "no sites: the empty list as before");

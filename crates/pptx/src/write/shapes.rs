@@ -54,6 +54,17 @@ pub struct Ctx<'a> {
     pub ids: &'a mut IdMap,
     /// The shape id written for the shape currently being written (duplicate model ids get fresh ones).
     pub written: HashSet<u32>,
+    /// For each top-level group, the member and the member's own site index behind each site the
+    /// group offers (`group_site_targets`): a connector glued to a group is written to the member,
+    /// which is what Open XML's `stCxn`/`endCxn` can name.
+    pub group_sites: HashMap<ShapeId, Vec<(ShapeId, u32)>>,
+}
+
+/// The shape's extent in EMU, the space a custom geometry's connection sites are written in; a
+/// shape without a transform of its own uses the extent the reader assumes for it.
+fn extent_emu(s: &Shape) -> (i64, i64) {
+    let inherited = crate::custgeom::INHERITED_EXTENT_EMU as i64;
+    s.xfrm.map(|xf| (deckcraft_geom::pt_to_emu(xf.w), deckcraft_geom::pt_to_emu(xf.h))).unwrap_or((inherited, inherited))
 }
 
 impl Ctx<'_> {
@@ -245,8 +256,7 @@ fn sp_pr_tag(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape, geom: bool, tag: &s
         dml::xfrm(w, "a:xfrm", xf, None);
     }
     if geom && (s.xfrm.is_some() || s.ph.is_none() || !matches!(&s.geom, Geom::Preset { name, adj } if name == "rect" && adj.is_empty())) {
-        let ext = s.xfrm.map(|xf| (deckcraft_geom::pt_to_emu(xf.w), deckcraft_geom::pt_to_emu(xf.h))).unwrap_or((0, 0));
-        geometry(w, &s.geom, &s.sites, ext);
+        geometry(w, &s.geom, &s.sites, extent_emu(s));
     }
     if let Some(f) = &s.fill {
         dml::fill(w, x, o, f);
@@ -269,6 +279,15 @@ fn sp_pr_tag(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape, geom: bool, tag: &s
 pub fn shapes(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, list: &[Shape], depth: usize) {
     if depth > 32 {
         return;
+    }
+    if depth == 0 {
+        cx.group_sites = list
+            .iter()
+            .filter_map(|s| match &s.kind {
+                ShapeKind::Group { children, .. } => Some((s.id, deckcraft_model::group_site_targets(children))),
+                _ => None,
+            })
+            .collect();
     }
     for s in list {
         shape(w, x, o, cx, s, depth);
@@ -348,8 +367,10 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             w.open0("p:cxnSp");
             w.open0("p:nvCxnSpPr");
             cnvpr(w, x, o, id, s);
-            let st = start.and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
-            let en = end.and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
+            // A site of a group is one of a member's: the file names the member.
+            let member = |(sid, site): (ShapeId, u32)| cx.group_sites.get(&sid).and_then(|t| t.get(site as usize)).copied().unwrap_or((sid, site));
+            let st = start.map(member).and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
+            let en = end.map(member).and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
             if st.is_none() && en.is_none() && !s.locked {
                 w.empty0("p:cNvCxnSpPr");
             } else {
@@ -1005,6 +1026,16 @@ pub fn tree_header(w: &mut W) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A placeholder (no transform of its own) writes its sites in the extent the reader assumes
+    /// for it, so they keep their fractions; a transform gives the extent in EMU.
+    #[test]
+    fn site_extent_of_a_shape_without_a_transform_matches_the_reader() {
+        let inherited = crate::custgeom::INHERITED_EXTENT_EMU as i64;
+        assert_eq!(extent_emu(&Shape::default()), (inherited, inherited));
+        let s = Shape { xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, 100.0, 50.0)), ..Default::default() };
+        assert_eq!(extent_emu(&s), (1_270_000, 635_000));
+    }
 
     /// PowerPoint asks to repair a `star5` whose guide list lacks `hf`/`vf` (found black-box).
     #[test]

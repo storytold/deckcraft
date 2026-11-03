@@ -525,6 +525,44 @@ pub fn walk<'a>(shapes: &'a [Shape], f: &mut dyn FnMut(&'a Shape, usize)) {
     rec(shapes, 0, f);
 }
 
+/// The connection sites a group offers, in a fixed order: its members' own sites
+/// (`Shape::sites`, groups within walked too), skipping lines, ink and hidden members. `f` gets
+/// the member, the index of the site in the member's own list, and the site mapped through `a`
+/// (the group's child space to wherever the caller works). A connector glued to a group refers
+/// to a position in this walk; a file names the member and its own index
+/// ([`group_site_targets`]).
+pub fn group_member_sites(children: &[Shape], a: deckcraft_geom::Affine, f: &mut dyn FnMut(&Shape, u32, deckcraft_geom::Point)) {
+    fn rec(children: &[Shape], a: deckcraft_geom::Affine, f: &mut dyn FnMut(&Shape, u32, deckcraft_geom::Point), depth: usize) {
+        if depth > 64 {
+            return;
+        }
+        for c in children.iter().filter(|c| !c.hidden) {
+            let Some(cx) = c.xfrm else { continue };
+            match &c.kind {
+                ShapeKind::Group { children, child } => rec(children, a * deckcraft_geom::group_child_affine(&cx, child.rect()), f, depth + 1),
+                ShapeKind::Ink { .. } => {}
+                _ if c.is_line() => {}
+                _ => {
+                    let m = a * cx.affine();
+                    for (i, q) in c.sites.iter().enumerate() {
+                        f(c, i as u32, m * deckcraft_geom::Point::new(q.x * cx.w, q.y * cx.h));
+                    }
+                }
+            }
+        }
+    }
+    rec(children, a, f, 0);
+}
+
+/// `(member id, the member's own site index)` for every site a group offers, in the order of
+/// [`group_member_sites`]: position `k` is what a connector glued to the group with site `k`
+/// means, and what a file writes as the connector's end.
+pub fn group_site_targets(children: &[Shape]) -> Vec<(ShapeId, u32)> {
+    let mut v = vec![];
+    group_member_sites(children, deckcraft_geom::Affine::IDENTITY, &mut |s, i, _| v.push((s.id, i)));
+    v
+}
+
 pub fn find_shape(shapes: &[Shape], id: ShapeId) -> Option<&Shape> {
     fn rec(shapes: &[Shape], id: ShapeId, depth: usize) -> Option<&Shape> {
         if depth > 64 {
