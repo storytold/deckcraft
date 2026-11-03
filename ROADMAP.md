@@ -1,6 +1,6 @@
 # DeckCraft roadmap
 
-> **PPTX.63 update 2026-11-03:** Independent linear SmartArt rules reconsider cross dimensions and fonts after capacity allocation changes wrapping. Twenty-four original native controls all pass; a 2,566-case matrix gains 13 strict matches with no lost or worse result. Broader archive replay changes one already-verified page. Full SmartArt, map, chart and LibreOffice parity remains open; feature scores are unchanged.
+> **PPTX.64 update 2026-11-03:** Nominal reverse SmartArt placement retains deferred physical boundaries across neutral rows and consumes intervening shifts before applying exposed center targets. The complete 1,109-page reverse ledger gains 47 strict native matches without a loss or larger error. Integrated replay changes only 49 expected pages out of 6,844. Forty-seven reverse cases and broader text-rule, cycle, map and chart limits remain open; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
 
@@ -445,6 +445,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 |---|---|---|
 | 2026-11-02 | minor | PPTX.53: retain scoped fitting checkpoints and correct diagram glyph/bullet origins; remaining failures retained |
 | 2026-11-03 | minor | PPTX.54: preserve intermediate reversed-flow alignment and bounded pending corrections |
+| 2026-11-03 | minor | PPTX.64: retain deferred boundaries and exposed center targets |
 | 2026-11-03 | minor | PPTX.63: replay text rules after linear capacity allocation |
 | 2026-11-03 | minor | PPTX.62: preserve ordered unresolved dimension growth |
 | 2026-11-03 | minor | PPTX.61: separate reverse fitting capacity from painted bounds |
@@ -1045,3 +1046,54 @@ cache coverage, map reduction and projection precision, and rich chart labels
 remain incomplete. Complete PowerPoint equivalence and LibreOffice replacement
 are not claimed. Only original Rust, programmatic tests and documentation are
 published.
+
+### PPTX.64: retain deferred boundaries and exposed center targets
+
+Nominal reverse snake placement now keeps a physical boundary until its deferred
+arrival. The arrival is a maximum boundary, so an intervening wider row absorbs
+it instead of adding it twice. A forward row consumes previously retained physical
+extent after accounting for projected growth. Neutral rows do not clear that
+state. When an early extent actually expands the entering logical extent, the
+later center is a target after intervening shifts; only its resulting movement
+contributes deferred logical growth. Fitted/restored and same-direction paths
+retain their preceding behavior. No fixture, page, size or input-name branch
+selects the new policy.
+
+Fifty new original source-bound native controls cover pending-growth profiles,
+neutral prefixes, independent subdivisions and paired longer terminal rows.
+Strict matches improve from 3 to 48. The final independent four-page holdout has
+two strict passes and two improved failures: an earlier row-center error and a
+later logical-reference error remain. Those failures are not waived by accurate
+intermediate steps. Three programmatic tests cover deferred boundary lifetime,
+exposed center targets and delayed logical growth; the preceding production
+implementation fails all three.
+
+The complete 1,109-page reverse ledger improves from 1,015 to 1,062 strict native
+matches. All 47 residual pages remain recorded. Integrated replay against the
+preceding published build preserves 6,795 of 6,844 model snapshots exactly and
+changes only the 49 independently predicted pages. Forty-seven become strict
+matches; the two remaining changed pages improve. No prior match is lost and
+neither maximum nor mean raw-box error increases. All 2,566 cases in the retained
+combined matrix remain exact, including previous text-rule and fitting fixes.
+
+Actual 4x painted comparisons cover 18 pages: 16 have at most one pixel of
+colored-bound error. The two unresolved holdouts improve from 117 to 6 pixels and
+245 to 85 pixels; both remain failures. Three integrated renders are byte-exact
+to the isolated candidate, including the larger residual, and native/baseline/
+candidate images were visually reviewed without aligning their contents.
+All 13,622 nonempty text bodies retain their full properties. The unchanged
+661-page PDF-text and 90-raster checks remain valid for the isolated rendering
+scope and were reused after integrated model and pixel checks.
+
+All eight integrated CI stages pass: 2,743 tests including doctests, zero failures
+and eight existing ignored tests. An initial isolated CI run accidentally used a
+cached launcher bound to another workspace; that run was rejected, retained and
+replaced by source-bound CI. It is not acceptance evidence.
+
+Seventy historical pages still lack their original source bytes, two native
+observations conflict, and 2,852 replayable pages lack the supported unique-color
+geometry mapping. None are counted as native passes. Full text-driven SmartArt
+search, remaining center/cyclic layouts, geographic cache coverage and numeric
+projection/reduction, and rich chart-label fidelity remain incomplete. Complete
+PowerPoint equivalence and LibreOffice replacement are not claimed. Publication
+contains only original Rust, programmatic tests and documentation.

@@ -90,6 +90,7 @@ struct CenterAdjustment {
     early_extent: f64,
     reference_correction_limit: f64,
     capacity: f64,
+    boundary_floor: Option<f64>,
 }
 
 /// Alternating lines keep the flow extent separate from the right boundary of
@@ -124,11 +125,15 @@ impl ReverseCentering {
         self.offset += current.shift;
         self.extent += 2. * current.growth;
         let origin = self.offset - line.length / 2.;
+        if let Some(boundary) = current.boundary_floor {
+            self.boundary = self.boundary.max(boundary);
+        }
+        let entering_extent = self.extent;
         self.extent = self.extent.max(current.early_extent);
         if reversed {
             self.reverse(line, following, first_width);
         } else if exceeds(line.length, self.extent) {
-            self.forward(line.length, current.early_extent > 0.);
+            self.forward(line.length, entering_extent, current.early_extent > 0.);
         }
         self.extent = self.extent.max(current.extent_floor);
         self.pending.rotate_left(1);
@@ -215,8 +220,9 @@ impl ReverseCentering {
         self.pending[1].early_extent = self.extent + 2. * (self.boundary - self.extent.max(alignment)).max(0.);
     }
 
-    fn forward(&mut self, length: f64, early_extent: bool) {
+    fn forward(&mut self, length: f64, entering_extent: f64, early_extent: bool) {
         let expansion = length - self.extent;
+        let (boundary_growth, growth) = self.forward_growth(length, entering_extent);
         if let Some(reference) = &mut self.reference {
             // Fitting sees this growth on the second following line. Physical
             // extent retained from a reverse line absorbs part of the increase,
@@ -230,13 +236,36 @@ impl ReverseCentering {
             self.pending[1].shift -= cancelled;
             self.pending[1].growth -= cancelled;
         }
-        self.boundary += expansion / 2.;
-        let growth = expansion / 4.;
+        self.boundary += boundary_growth / 2.;
         let cancelled = growth.min((-self.pending[2].shift).max(0.));
         self.pending[2].shift += cancelled;
         self.pending[3].shift += growth - cancelled;
         self.pending[3].growth += growth - cancelled;
         self.extent = length;
+    }
+
+    fn forward_growth(&mut self, length: f64, entering_extent: f64) -> (f64, f64) {
+        let expansion = length - self.extent;
+        let Some(reference) = self.reference else { return (expansion, expansion / 4.) };
+        let projected = 2. * (self.pending[1].advance + self.pending[1].growth);
+        let retained = (self.boundary - reference - projected).max(0.);
+        let mut boundary_growth = (expansion - retained).max(0.);
+        let mut growth = boundary_growth / 4.;
+        let mut boundary = self.boundary + boundary_growth;
+        if exceeds(self.extent, entering_extent) {
+            // An exposed boundary supplies space before the forward line grows.
+            // Its later center is a target, after shifts already due on the
+            // intervening lines, rather than another independent translation.
+            let raw_growth = length - entering_extent;
+            let pending = self.pending[1].shift + self.pending[2].shift + self.pending[3].shift;
+            growth = (raw_growth / 4. - (self.boundary - reference) / 2. - pending).max(0.);
+            boundary = self.boundary + raw_growth;
+            boundary_growth = expansion;
+        }
+        // The physical boundary reaches the third following line. An earlier
+        // wider boundary absorbs this floor instead of receiving it again.
+        self.pending[3].boundary_floor = Some(self.pending[3].boundary_floor.map_or(boundary, |old| old.max(boundary)));
+        (boundary_growth, growth)
     }
 }
 
@@ -1159,6 +1188,77 @@ mod tests {
             })
             .collect();
         centers.iter().map(|v| v - centers[0]).collect()
+    }
+
+    #[test]
+    fn reverse_deferred_boundary_retains_history_after_neutral_lines() {
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "3"), ("off", "ctr"), ("contDir", "revDir")];
+        for pairs in 0..=2 {
+            let mut parts = vec![[12., 12., 11.], [3., 3., 3.], [3., 3., 3.], [30., 30., 41.], [9., 9., 9.], [3., 3., 3.]];
+            for _ in 0..pairs {
+                parts.extend([[9., 9., 9.], [3., 3., 3.]]);
+            }
+            parts.extend([[37., 37., 37.], [9., 9., 9.], [9., 9., 9.], [28., 29., 59.], [10., 31., 32.]]);
+            let sizes: Vec<_> = parts.into_iter().flatten().map(|w| (w, 10.)).collect();
+            let actual = packed(&sizes, (600., 240.), &params, 0.);
+            let centers = relative_line_centers(&actual, 3, false);
+            let event = 6 + 2 * pairs;
+            for (index, expected) in [(event, -30.), (event + 2, -30.), (event + 3, -29.), (event + 4, -16.5)] {
+                assert!((centers[index] - expected).abs() < 1e-7, "{pairs}: {centers:?}");
+            }
+            for (rect, &(w, h)) in actual.iter().zip(&sizes) {
+                assert!((rect.w - w).abs() < 1e-7 && (rect.h - h).abs() < 1e-7);
+            }
+        }
+    }
+
+    #[test]
+    fn reverse_deferred_boundary_and_exposed_center_have_separate_targets() {
+        // Native controls include two independent pending-growth profiles and a
+        // further subdivision holdout. A wider intervening boundary absorbs an
+        // older floor instead of adding the same physical growth twice.
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "2"), ("off", "ctr"), ("contDir", "revDir")];
+        let cases = [
+            (
+                [[12., 24.], [15., 27.], [34., 50.], [13., 19.], [106., 26.], [15., 15.], [14., 16.], [15., 15.], [180., 20.]],
+                [0., 0., -3., -3., 46., 38., 38., 47., 73.],
+            ),
+            (
+                [[13., 19.], [17., 28.], [36., 52.], [12., 22.], [104., 28.], [15., 15.], [14., 16.], [15., 15.], [180., 20.]],
+                [0., 0., -2.5, -0.5, 42., 42.5, 42.5, 46., 82.],
+            ),
+            (
+                [[11., 17.], [14., 24.], [31., 43.], [12., 18.], [91., 25.], [15., 15.], [14., 16.], [15., 15.], [160., 20.]],
+                [0., 0., -2., -0.5, 38.5, 36.5, 36.5, 41.25, 71.25],
+            ),
+        ];
+        for (parts, expected) in cases {
+            let sizes: Vec<_> = parts.into_iter().flatten().map(|w| (w, 10.)).collect();
+            let actual = packed(&sizes, (600., 240.), &params, 0.);
+            for (center, expected) in relative_line_centers(&actual, 2, false).into_iter().zip(expected) {
+                assert!((center - expected).abs() < 1e-7, "{center} != {expected}");
+            }
+        }
+    }
+
+    #[test]
+    fn reverse_deferred_logical_growth_follows_the_exposed_center_target() {
+        // Paired long reverse rows expose the logical reference independently
+        // from the shorter-row physical-boundary observation.
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "2"), ("off", "ctr"), ("contDir", "revDir")];
+        for (mut parts, center, following) in [
+            ([[12., 24.], [15., 27.], [34., 50.], [13., 19.], [106., 26.], [15., 15.], [14., 16.], [115., 115.], [180., 20.]], 47., 47.),
+            ([[13., 19.], [17., 28.], [36., 52.], [12., 22.], [104., 28.], [15., 15.], [14., 16.], [115., 115.], [180., 20.]], 46., 49.),
+        ] {
+            for increase in [0., 20.] {
+                parts[7] = [(230. + increase) / 2.; 2];
+                let sizes: Vec<_> = parts.into_iter().flatten().map(|w| (w, 10.)).collect();
+                let actual = packed(&sizes, (600., 240.), &params, 0.);
+                let centers = relative_line_centers(&actual, 2, false);
+                assert!((centers[7] - center).abs() < 1e-7);
+                assert!((centers[8] - following + increase / 2.).abs() < 1e-7, "{centers:?}");
+            }
+        }
     }
 
     #[test]
