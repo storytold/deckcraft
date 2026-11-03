@@ -798,4 +798,8 @@ fn a_tiny_dash_on_a_huge_shape_draws_without_running_out_of_memory() {
     p.line_to((4.0e6, 0.0));
     let pat = limit_dash_count(&p, vec![1.0, 1.0]);
     assert!((4.0e6 / (pat[0] + pat[1]) - MAX_DASHES).abs() < 1.0, "{pat:?}");
+    // A custom pattern of 1,000 dashes counts each of them: the limit is on dashes drawn.
+    let pat = limit_dash_count(&p, vec![1.0; 2000]);
+    let period: f64 = pat.iter().sum();
+    assert!((4.0e6 / period * 1000.0 - MAX_DASHES).abs() < 1.0, "{}", period);
 }
