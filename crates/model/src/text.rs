@@ -558,9 +558,19 @@ impl RunProps {
             no_proof,
             normalize_height
         );
-        if self.own_effects != Some(true) {
-            take!(shadow, inner_shadow, glow, reflection, soft_edge, own_effects);
+        self.inherit_effects(p);
+    }
+
+    /// Takes `p`'s effect list (shadow, glow, reflection, soft edge) unless this run has its own,
+    /// which replaces it as a whole. Split out of [`RunProps::inherit`] to keep that one simple.
+    fn inherit_effects(&mut self, p: &RunProps) {
+        if self.own_effects == Some(true) {
+            return;
         }
+        macro_rules! take {
+            ($($f:ident),*) => { $( if self.$f.is_none() { self.$f.clone_from(&p.$f); } )* };
+        }
+        take!(shadow, inner_shadow, glow, reflection, soft_edge, own_effects);
     }
 }
 
