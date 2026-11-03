@@ -1,6 +1,6 @@
 # PowerPoint feature checklist
 
-> **PPTX.58 update 2026-11-03:** Generated SmartArt hanging defaults now follow the resolved font-size intervals while preserving fractional custom advances and authored paragraph sides. All 180 measurable native margin observations match, up from 95; retained geometry is unchanged. Complete text-rule, chart, map and LibreOffice parity remains open; feature scores are unchanged.
+> **PPTX.59 update 2026-11-03:** PDF text extraction now preserves the source character index across authored hard breaks. All eight retained multiline identity failures are fixed; 661 unique rendered pages remain pixel-identical, and all 253 diagnostic text identities now match native output. Broader SmartArt, chart, map and LibreOffice parity remains open; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
 
@@ -340,6 +340,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 |---|---|---|
 | 2026-11-02 | minor | PPTX.53: retain scoped fitting checkpoints and correct diagram glyph/bullet origins; remaining failures retained |
 | 2026-11-03 | minor | PPTX.54: preserve intermediate reversed-flow alignment and bounded pending corrections |
+| 2026-11-03 | minor | PPTX.59: preserve authored break character indices in PDF text extraction |
 | 2026-11-03 | minor | PPTX.58: resolve generated SmartArt hanging defaults by effective font interval |
 | 2026-11-03 | minor | PPTX.57: derive the automatic chart bound from its single authored end |
 | 2026-11-03 | minor | PPTX.56: preserve root dimension-rule fitting without repeating capacity reduction |
@@ -640,3 +641,34 @@ origins, PDF extraction defects, chart layout or the 17 map-threshold and two Al
 precision cases. The separate automatic-axis and chart-layout candidates are not
 included. Only original source, programmatic tests and documentation are published;
 native observations and source decks remain private.
+
+### PPTX.59: keep hard-break positions in the PDF text layer
+
+An authored break contributes one character to layout even when its run stores
+an empty string. The PDF text layer previously joined raw run strings, then used
+layout's character indices to select glyph text. After a break, those indices
+selected the next character or an empty range, corrupting copying and extraction
+while the rasterized word still looked correct. Export now obtains the canonical
+paragraph text, including break positions, before slicing it for each glyph run.
+The source model, layout and painted glyph positions are unchanged.
+
+The regression decodes the actual exported PDF's text-showing operators through
+its ToUnicode map. It covers multibyte text, leading and repeated breaks, literal
+line feeds combined with authored breaks, and a break run containing an ignored
+stored string. The old production code fails because a displayed glyph has no
+text mapping; the corrected exporter passes all 19 PDF tests.
+
+The final candidate was rendered against the actual preceding version on 661
+unique pages in 53 original packages. The 485-page retained set and 253-page
+diagnostic set overlap by 77 pages, which are counted once. Every page is
+pixel-identical. Only eight text records change, and all eight now preserve the
+complete native character sequence: diagnostic identity improves from 245/253
+to 253/253 with no lost identity. The preceding exclusion for these eight
+multiline PDF extraction failures is therefore resolved. Full eight-stage CI
+passes with 2,727 tests including doctests; eight existing tests remain ignored.
+
+This fixes source-index mapping in PDF export, not the remaining text-layout
+differences. Fractional painting, vertical origins, the broader raw-box and
+rule-search mismatches, chart layout and dense-axis behavior, and map reduction
+and projection precision remain open. No general LibreOffice-replacement claim
+is made. Only original Rust, programmatic tests and documentation are published.
