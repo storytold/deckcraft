@@ -543,6 +543,7 @@ pub fn ppr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, level: Option<u8>, p:
         || p.bullet_color.is_some()
         || p.bullet_color_follow_text.is_some()
         || p.bullet_size.is_some()
+        || p.bullet_size_points.is_some()
         || p.bullet_size_follow_text.is_some()
         || p.tabs.is_some()
         || def.is_some();
@@ -567,8 +568,10 @@ pub fn ppr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, level: Option<u8>, p:
         color(w, c);
         w.close("a:buClr");
     }
-    if p.bullet_size.is_none() && p.bullet_size_follow_text == Some(true) {
+    if p.bullet_size.is_none() && p.bullet_size_points.is_none() && p.bullet_size_follow_text == Some(true) {
         w.empty0("a:buSzTx");
+    } else if let Some(s) = p.bullet_size_points.filter(|s| s.is_finite() && (1.0..=4000.0).contains(s)) {
+        w.val("a:buSzPts", ((s * 100.0).round() as u32).to_string());
     } else if let Some(s) = p.bullet_size {
         w.val("a:buSzPct", pct(s.clamp(0.25, 4.0)));
     }
