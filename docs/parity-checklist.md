@@ -6,6 +6,9 @@
 > **Last updated:** 2026-11-03 · Reuse Slides transfers referenced custom table styles; feature status and summary scores unchanged.
 >
 > **Previously (2026-11-02):** Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P. Scores unchanged.
+> **Last updated:** 2026-11-02 · Reused slides fit their geometry, tables and text to the destination size; reuse remains partial because the picker has no thumbnails. Scores unchanged.
+>
+> **Previously (2026-11-02):** Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P. Scores unchanged.
 >
 > **Previously (2026-11-01):** Locked-shape and no-outline regressions added for #1621; fill row re-assessed: remains D; No Fill hit-testing now follows resolved appearance. Scores unchanged.
 > **Last updated:** 2026-11-02 · Picture compression now measures displayed dimensions through nested group transforms; Compress pictures remains D. Scores unchanged.

@@ -4,6 +4,7 @@
 
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (PPTX and native saves retain optional RTL table direction; feature scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (Reuse Slides brings along referenced custom table styles, remapping conflicting style ids; previous: tiled picture fills keep their size in scaled groups and upright tiles (#1693); parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (reused slides scale to the destination size, including kept masters, layouts, groups, tables and text; reuse remains partial because picker thumbnails are not implemented; previous: File › About replaces Account) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (progress log: read-only `slide.actions` lists shape and table text actions; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** trivial (progress log: Set Up Slide Show ▸ Keep mouse cursor visible, #1445; stage and scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -154,6 +155,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
 | 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |
 | 2026-11-02 | Deleting slides removes their IDs from every custom show; the cleanup is undoable and survives native save/reopen |
+| 2026-11-02 | Reused slides scale their geometry and content dimensions to the destination slide, including kept source masters and layouts; the reuse picker still lacks thumbnails |
 | 2026-11-02 | File › About replaces the unused Account page, with version, project links, contributor/model credits and appearance preferences |
 | 2026-11-02 | PPTX reflection effects keep their authored start position, affine scale/skew, direction and fade, alignment, and rotation flag through native and PPTX saves |
 | 2026-11-03 | Reuse Slides brings along referenced custom table styles, including grouped tables, and remaps conflicting style ids without changing destination tables |
