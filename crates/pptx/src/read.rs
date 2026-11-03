@@ -46,6 +46,9 @@ pub struct Imp<'a> {
     pub tag_bytes: usize,
     /// The tag budget ran out and the warning was given.
     pub tags_capped: bool,
+    /// Whether a part has relationships of its own, by normalized part name: looked up once
+    /// however many embedded objects point at the part.
+    pub has_rels: HashMap<String, bool>,
 }
 
 impl Imp<'_> {
@@ -446,6 +449,7 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
+        has_rels: HashMap::new(),
     };
     let part = Part::new(&pkg, &theme_path, &doc);
     let theme = theme::read_theme(&mut imp, &part, &doc.root);
@@ -487,6 +491,7 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
+        has_rels: HashMap::new(),
     };
     // Slide ids first so hyperlinks anywhere can point at slides.
     let slide_ids = register_slides(&mut imp, &docs, &slide_entries, &mut lost_slides);
