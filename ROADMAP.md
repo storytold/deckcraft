@@ -1,6 +1,6 @@
 # DeckCraft roadmap
 
-> **PPTX.68 integration 2026-11-03:** Current upstream text metadata and save changes are reconciled with the fidelity branch. Vertical overflow uses one canonical property with backward-compatible native-document input; both sides' regression tests are retained. Broader SmartArt, map and chart gaps remain open; feature scores are unchanged.
+> **PPTX.69 update 2026-11-03:** Alternating centered SmartArt distinguishes deferred physical-boundary advances from logical-extent advances, bounds cancellation by scheduled growth and returns consumed growth in two stages. Independent native controls and a full integrated replay retain unresolved cases. Wider diagram, map and chart fidelity remains partial; feature scores are unchanged.
 
 > **PPTX.67 update 2026-11-03:** Centered same-direction SmartArt retains fitted reference changes and distinguishes logical overflow from painted overflow and failed-trial placement. New native diagnostics improve from 48 to 165 strict matches out of 166; one off-page identity discrepancy remains, with its visible geometry corrected. The final independent 24-page set passes completely. Integrated replay changes only the expected original page out of 6,908, while all retained text and raster checks remain exact. Broader SmartArt, map and chart limits remain open; feature scores are unchanged.
 
@@ -454,6 +454,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 |---|---|---|
 | 2026-11-02 | minor | PPTX.53: retain scoped fitting checkpoints and correct diagram glyph/bullet origins; remaining failures retained |
 | 2026-11-03 | minor | PPTX.54: preserve intermediate reversed-flow alignment and bounded pending corrections |
+| 2026-11-03 | minor | PPTX.69: preserve deferred reverse growth and retreat |
 | 2026-11-03 | minor | PPTX.68: integrate upstream text metadata with legacy overflow compatibility |
 | 2026-11-03 | minor | PPTX.67: retain fitted centering references and partial placement |
 | 2026-11-03 | minor | PPTX.66: retain physical growth against the current reverse reference |
@@ -1261,3 +1262,41 @@ of complete native fidelity.
 
 Full `cargo xtask ci` passes all eight stages and 2,778 tests including
 doctests, with eight existing ignored tests.
+
+### PPTX.69: preserve deferred reverse growth and retreat
+
+An alternating row can borrow the following child's physical width before its
+logical flow extent catches up. A later growing row must carry those two advances
+separately. Pending growth cancellation is bounded by the advance actually
+scheduled; cancelled growth returns on the next line and retains half its effect
+after the following retreat. Keeping these stages apart fixes both ordinary
+borrowed-width cases and an independently discovered regression in an earlier,
+unpublished candidate.
+
+The native-backed tests cover two and three children per line, mirrored flow,
+zero or partial pending advances, changed tail widths and multiple growth sizes.
+Both preceding implementations fail the two new physical-retreat tests. The
+independent eight-page return holdout passes with maximum error below 0.0006pt.
+
+The isolated candidate improves 48 strict matches in 6,940 original replayable
+pages without losing a prior match or increasing measured maximum/mean error.
+The reverse subset reaches 1,176 of 1,205 strict matches, leaving 28 geometry
+failures and one off-page identity discrepancy. Its selected 13 painted pages all
+improve, ten within one pixel at 4x; three visible residuals remain. An earlier
+candidate's counterexample improves from 238 pixels of bound error to one pixel
+at 4x (the preceding published baseline was 210 pixels). No coordinate warp or
+relaxed tolerance is used. Broader text-driven search, cycles, map projection and
+binary-cache coverage, and rich-label placement remain incomplete. Seventy old
+archived pages without original sources and two conflicting native observations
+remain excluded from pass counts. This does not establish full LibreOffice replacement.
+
+Parent integration verifies all 6,940 expected models from the accepted parent
+baseline plus the candidate's 51 changed-page deltas. Each changed page's before
+state must match before applying its expected result; ten already-published
+parent dimension-rule fixes remain intact despite the worker's older base. All
+166 same-direction controls, 13,622 text bodies, 661 PDF text pages and 90
+retained 4x rasters remain exact. The final integrated executable reproduces all
+13 selected worker/native paint comparisons pixel-for-pixel.
+
+Full integrated `cargo xtask ci` passes all eight stages and 2,782 tests
+including doctests, with eight existing ignored tests.

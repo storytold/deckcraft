@@ -86,6 +86,11 @@ struct CenterAdjustment {
     shift: f64,
     growth: f64,
     advance: f64,
+    // Physical-boundary and logical-extent advances if the following line grows.
+    carry_advance: Option<(f64, f64)>,
+    // Cancelled growth returned when the intervening forward line grows.
+    forward_return: Option<f64>,
+    boundary_advance: Option<f64>,
     extent_floor: f64,
     early_extent: f64,
     reference_correction_limit: f64,
@@ -144,7 +149,7 @@ impl ReverseCentering {
     fn reverse(&mut self, line: &Line, following: f64, first_width: f64) {
         let prior_negative = (-self.pending[1].shift).max(0.);
         self.extent += 2. * self.pending[0].advance;
-        self.boundary += 2. * self.pending[0].advance;
+        self.boundary += 2. * self.pending[0].boundary_advance.unwrap_or(self.pending[0].advance);
         if let Some(reference) = &mut self.reference {
             *reference += 2. * self.pending[0].advance;
         }
@@ -177,15 +182,29 @@ impl ReverseCentering {
     }
 
     fn carry_reverse(&mut self, length: f64, following: f64, reference: f64, expansion: f64, shift: f64) {
-        let boundary_extent = reference + expansion;
         let grows = exceeds(following, self.extent);
+        let physical_reference = self.boundary - expansion;
         if grows {
             self.pending[1].extent_floor = self.extent + 2. * shift;
         }
-        let advance = if grows { (expansion - (length - following).max(0.)).max(0.) / 2. } else { 0. };
+        // A logical floor may already exceed the physical boundary. Deferred
+        // alignment and retreat still start at that boundary before expansion.
+        let advance_grows = exceeds(following, physical_reference);
+        let advance = if advance_grows { (expansion - (length - following).max(0.)).max(0.) / 2. } else { 0. };
         self.pending[2].advance = advance;
-        self.pending[2].shift += if grows { advance - (boundary_extent - reference.max(length)).max(0.) } else { 0. };
-        let retreat = (boundary_extent.min(length) - reference).max(0.) / 2.;
+        // Borrowed following-child width supplies immediate alignment, but a
+        // growing forward line separates the deferred physical and flow extents.
+        // Each deferred amount remains bounded by the advance already scheduled.
+        self.pending[2].carry_advance = self.reference.map(|_| {
+            let physical = advance.min((length - reference).max(0.) / 2.);
+            let logical = advance.min(physical + (following - self.boundary).max(0.) / 2.);
+            (physical, logical)
+        });
+        // Prior forward growth consumes only advance that was actually queued.
+        let cancelled_advance = if self.reference.is_some() && advance_grows { self.pending[2].growth.min(advance / 2.) } else { 0. };
+        self.pending[2].shift += if advance_grows { advance - 2. * cancelled_advance - (self.boundary - reference.max(length)).max(0.) } else { 0. };
+        self.pending[2].forward_return = Some(cancelled_advance);
+        let retreat = (self.boundary.min(length) - physical_reference).max(0.) / 2.;
         let cancelled = retreat.min(self.pending[2].growth);
         self.pending[2].shift -= cancelled;
         self.pending[2].growth -= cancelled;
@@ -235,6 +254,17 @@ impl ReverseCentering {
     fn forward(&mut self, length: f64, entering_extent: f64, early_extent: bool) {
         let expansion = length - self.extent;
         let (boundary_growth, growth) = self.forward_growth(length, entering_extent);
+        // Forward growth returns the cancelled adjustment on the next line;
+        // half remains after the following line completes the retreat.
+        let returned = self.pending[1].forward_return.take().unwrap_or(0.);
+        self.pending[1].shift += returned;
+        self.pending[2].shift -= returned / 2.;
+        // Keep the gross advance while computing this line's growth; only its
+        // deferred state changes after the forward growth calculation.
+        if let Some((physical, logical)) = self.pending[1].carry_advance {
+            self.pending[1].advance = logical;
+            self.pending[1].boundary_advance = Some(physical);
+        }
         if let Some(reference) = &mut self.reference {
             // Fitting sees this growth on the second following line. Physical
             // extent retained from a reverse line absorbs part of the increase,
@@ -1490,6 +1520,190 @@ mod tests {
             })
             .collect();
         centers.iter().map(|v| v - centers[0]).collect()
+    }
+
+    #[test]
+    fn reverse_physical_retreat_bounds_pending_growth() {
+        // Independent native controls cover an advance smaller than pending growth and no advance.
+        let controls = [
+            (
+                2_usize,
+                "tL",
+                (790., 350.),
+                9.,
+                vec![14., 15., 23., 24., 75., 20., 180., 1., 70., 50., 10., 11., 10., 11., 10., 11., 10., 11.],
+                vec![0., 0., 37., 32., 72., 72., 43.5, 43.5, 43.5],
+            ),
+            (
+                2_usize,
+                "tL",
+                (790., 350.),
+                9.,
+                vec![14., 15., 23., 24., 75., 20., 90., 91., 70., 50., 10., 11., 10., 11., 10., 11., 10., 11.],
+                vec![0., 0., 37., 32., 9., 12., 12., 12., 12.],
+            ),
+            (
+                3_usize,
+                "tR",
+                (880., 340.),
+                6.,
+                vec![
+                    17., 18., 18., 27., 28., 28., 113., 21., 21., 259., 2., 2., 91., 47., 47., 11., 12., 12., 11., 12., 12., 11., 12., 12., 11., 12.,
+                    12.,
+                ],
+                vec![0., 0., -45., -45., -98., -98., -61., -61., -61.],
+            ),
+            (
+                3_usize,
+                "tR",
+                (880., 340.),
+                6.,
+                vec![
+                    17., 18., 18., 27., 28., 28., 113., 21., 21., 87., 88., 88., 91., 47., 47., 11., 12., 12., 11., 12., 12., 11., 12., 12., 11.,
+                    12., 12.,
+                ],
+                vec![0., 0., -45., -45., -18., -21., -21., -21., -21.],
+            ),
+        ];
+        for (count, direction, frame, height, widths, expected) in controls {
+            let count_param = count.to_string();
+            let params = [("bkpt", "fixed"), ("bkPtFixedVal", count_param.as_str()), ("off", "ctr"), ("contDir", "revDir"), ("grDir", direction)];
+            let sizes: Vec<_> = widths.into_iter().map(|width| (width, height)).collect();
+            let actual = packed(&sizes, frame, &params, 0.);
+            let centers = relative_line_centers(&actual, count, false);
+            assert_eq!(centers.len(), expected.len());
+            assert!(centers.iter().zip(expected).all(|(a, b)| (a - b).abs() < 1e-7), "{count} {direction}: {centers:?}");
+        }
+    }
+    #[test]
+    fn reverse_physical_retreat_returns_growth_in_two_stages() {
+        // Independent native controls vary forward growth, tail widths and pending growth in mirrored flows.
+        let controls = [
+            (
+                2_usize,
+                "bL",
+                (840., 350.),
+                8.,
+                vec![15., 16., 26., 27., 83., 22., 210., 1., 121., 56., 10., 11., 10., 11., 10., 11., 10., 11.],
+                vec![0., 0., 41., 37., 87., 105.5, 68., 68., 68.],
+            ),
+            (
+                2_usize,
+                "bL",
+                (840., 350.),
+                8.,
+                vec![15., 16., 26., 27., 83., 22., 210., 1., 167., 86., 10., 11., 10., 11., 10., 11., 10., 11.],
+                vec![0., 0., 41., 37., 87., 124.5, 96.5, 96.5, 96.5],
+            ),
+            (
+                2_usize,
+                "bL",
+                (840., 350.),
+                8.,
+                vec![15., 16., 26., 27., 83., 22., 210., 1., 167., 86., 35., 36., 35., 36., 35., 36., 35., 36.],
+                vec![0., 0., 41., 37., 87., 124.5, 96.5, 96.5, 96.5],
+            ),
+            (
+                2_usize,
+                "bL",
+                (840., 350.),
+                8.,
+                vec![15., 16., 26., 27., 83., 14., 210., 1., 167., 86., 10., 11., 10., 11., 10., 11., 10., 11.],
+                vec![0., 0., 41., 37., 89., 130.5, 99.5, 99.5, 99.5],
+            ),
+            (
+                3_usize,
+                "tR",
+                (920., 360.),
+                9.,
+                vec![
+                    19., 20., 20., 30., 30., 31., 127., 22., 22., 279., 2., 2., 163., 44., 44., 11., 12., 12., 11., 12., 12., 11., 12., 12., 11.,
+                    12., 12.,
+                ],
+                vec![0., 0., -52., -50., -104., -120., -84., -84., -84.],
+            ),
+            (
+                3_usize,
+                "tR",
+                (920., 360.),
+                9.,
+                vec![
+                    19., 20., 20., 30., 30., 31., 127., 22., 22., 279., 2., 2., 211., 59., 59., 11., 12., 12., 11., 12., 12., 11., 12., 12., 11.,
+                    12., 12.,
+                ],
+                vec![0., 0., -52., -50., -104., -140., -113.5, -113.5, -113.5],
+            ),
+            (
+                3_usize,
+                "tR",
+                (920., 360.),
+                9.,
+                vec![
+                    19., 20., 20., 30., 30., 31., 127., 22., 22., 279., 2., 2., 211., 59., 59., 29., 30., 30., 29., 30., 30., 29., 30., 30., 29.,
+                    30., 30.,
+                ],
+                vec![0., 0., -52., -50., -104., -140., -113.5, -113.5, -113.5],
+            ),
+            (
+                3_usize,
+                "tR",
+                (920., 360.),
+                9.,
+                vec![
+                    19., 20., 20., 30., 30., 31., 127., 14., 14., 279., 2., 2., 211., 59., 59., 11., 12., 12., 11., 12., 12., 11., 12., 12., 11.,
+                    12., 12.,
+                ],
+                vec![0., 0., -52., -50., -108., -152., -119.5, -119.5, -119.5],
+            ),
+        ];
+        for (count, direction, frame, height, widths, expected) in controls {
+            let count_param = count.to_string();
+            let params = [("bkpt", "fixed"), ("bkPtFixedVal", count_param.as_str()), ("off", "ctr"), ("contDir", "revDir"), ("grDir", direction)];
+            let sizes: Vec<_> = widths.into_iter().map(|width| (width, height)).collect();
+            let actual = packed(&sizes, frame, &params, 0.);
+            let centers = relative_line_centers(&actual, count, false);
+            assert_eq!(centers.len(), expected.len());
+            assert!(centers.iter().zip(expected).all(|(a, b)| (a - b).abs() < 1e-7), "{count} {direction}: {centers:?}");
+        }
+    }
+
+    #[test]
+    fn reverse_borrowed_advance_separates_physical_and_logical_extents() {
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "2"), ("off", "ctr"), ("contDir", "revDir"), ("grDir", "tR")];
+        // Independent native controls keep total row lengths fixed and vary the
+        // following first child's width. Both produce the same retained centers.
+        for following in [[48., 49.], [83., 14.]] {
+            let parts = [[11., 12.], [17., 24.], [61., 12.], [60., 61.], following, [9., 10.], [9., 10.], [9., 10.], [9., 10.]];
+            let sizes: Vec<_> = parts.into_iter().flatten().map(|w| (w, 13.)).collect();
+            let actual = packed(&sizes, (720., 330.), &params, 0.);
+            let centers = relative_line_centers(&actual, 2, false);
+            let expected = [0., 0., -29., -28., -23., -23., -23., -23., -23.];
+            assert!(centers.iter().zip(expected).all(|(a, b)| (a - b).abs() < 1e-7), "{following:?}: {centers:?}");
+        }
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "2"), ("off", "ctr"), ("contDir", "revDir")];
+        let parts = [[18., 19.], [26., 27.], [73., 16.], [63., 64.], [53., 54.], [10., 11.], [10., 11.], [10., 11.], [10., 11.]];
+        let sizes: Vec<_> = parts.into_iter().flatten().map(|w| (w, 8.)).collect();
+        let actual = packed(&sizes, (730., 310.), &params, 0.);
+        let centers = relative_line_centers(&actual, 2, false);
+        let expected = [0., 0., 28., 26., 24., 25., 25., 25., 25.];
+        assert!(centers.iter().zip(expected).all(|(a, b)| (a - b).abs() < 1e-7), "{centers:?}");
+    }
+
+    #[test]
+    fn reverse_borrowed_advance_preserves_no_growth_and_three_child_phase() {
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "3"), ("off", "ctr"), ("contDir", "revDir"), ("grDir", "bL")];
+        for (following, own, after, expected) in [
+            ([19., 20., 20.], [55., 56., 56.], [43., 44., 44.], vec![0., 0., -12., -12., -49., -49., -55.5, -55.5, -55.5]),
+            // This independently observed phase ends after the next forward row.
+            // Later reverse retreat remains a separate known full-page residual.
+            ([89., 11., 13.], [165., 1., 1.], [99., 15., 17.], vec![0., 0., 34., 35., 60.]),
+        ] {
+            let parts = [[14., 14., 15.], [22., 22., 23.], following, own, after, [9., 10., 10.], [9., 10., 10.], [9., 10., 10.], [9., 10., 10.]];
+            let sizes: Vec<_> = parts.into_iter().flatten().map(|w| (w, 9.)).collect();
+            let actual = packed(&sizes, (780., 340.), &params, 0.);
+            let centers = relative_line_centers(&actual, 3, false);
+            assert!(centers.iter().zip(expected).all(|(a, b)| (a - b).abs() < 1e-7), "{following:?}: {centers:?}");
+        }
     }
 
     #[test]
