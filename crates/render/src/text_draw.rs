@@ -35,22 +35,30 @@ pub(crate) fn prompt_body(rctx: &Ctx, s: &Shape, kind: PhType) -> TextBody {
     t
 }
 
+/// Most path elements this thread's glyph cache retains. Its entries are shared with the font
+/// cache, but they stay alive here after that cache evicts them, so they are bounded by elements.
+const GLYPH_CACHE_MAX_ELEMENTS: usize = 1 << 22;
+
 thread_local! {
-    static GLYPH_CACHE: std::cell::RefCell<HashMap<(u32, u32), Arc<BezPath>>> = std::cell::RefCell::new(HashMap::new());
+    /// The cached outlines, and the path elements they hold.
+    static GLYPH_CACHE: std::cell::RefCell<(HashMap<(u32, u32), Arc<BezPath>>, usize)> = std::cell::RefCell::new((HashMap::new(), 0));
 }
 
 pub(crate) fn glyph(face: &deckcraft_fonts::FontFace, gid: u32) -> Arc<BezPath> {
     let key = (face.id(), gid);
-    if let Some(p) = GLYPH_CACHE.with(|c| c.borrow().get(&key).cloned()) {
+    if let Some(p) = GLYPH_CACHE.with(|c| c.borrow().0.get(&key).cloned()) {
         return p;
     }
     let p = FontDb::global().outline(face, gid);
     GLYPH_CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if c.len() > 200_000 {
-            c.clear();
+        let n = p.elements().len();
+        if c.0.len() > 200_000 || c.1.saturating_add(n) > GLYPH_CACHE_MAX_ELEMENTS {
+            c.0.clear();
+            c.1 = 0;
         }
-        c.insert(key, p.clone());
+        c.1 += n;
+        c.0.insert(key, p.clone());
     });
     p
 }
