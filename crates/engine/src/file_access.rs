@@ -85,14 +85,20 @@ impl AutomationRoots {
 
     /// May the file or folder at `path` be read (or written)? `Err` says why not.
     pub fn check(&self, path: &str, access: Access) -> Result<(), String> {
+        self.check_path(Path::new(path), access)
+    }
+
+    /// [`Self::check`] for a path that may not be UTF-8: the checked path is the one opened.
+    pub fn check_path(&self, path: &Path, access: Access) -> Result<(), String> {
+        let path_text = path.display();
         let roots = match access {
             Access::Read => &self.read,
             Access::Write => &self.write,
         };
         if roots.is_empty() {
             return match access {
-                Access::Read => Err(format!("automation filesystem access is not granted: read authority is absent: {path}")),
-                Access::Write => Err(format!("automation filesystem access is not granted: write authority is absent: {path}")),
+                Access::Read => Err(format!("automation filesystem access is not granted: read authority is absent: {path_text}")),
+                Access::Write => Err(format!("automation filesystem access is not granted: write authority is absent: {path_text}")),
             };
         }
         let resolved = resolve(path)?;
@@ -101,8 +107,8 @@ impl AutomationRoots {
         }
         let roots = roots.iter().map(|root| root.shown.display().to_string()).collect::<Vec<_>>().join(", ");
         match access {
-            Access::Read => Err(format!("automation path rejected: outside the read roots {roots}: {path}")),
-            Access::Write => Err(format!("automation path rejected: outside the write roots {roots}: {path}")),
+            Access::Read => Err(format!("automation path rejected: outside the read roots {roots}: {path_text}")),
+            Access::Write => Err(format!("automation path rejected: outside the write roots {roots}: {path_text}")),
         }
     }
 }
@@ -191,17 +197,23 @@ pub fn check_write(path: &str) -> Result<(), String> {
     current().map_or(Ok(()), |r| r.check(path, Access::Write))
 }
 
+/// May `path` be written here? Always, without roots in force. For a path that may not be UTF-8.
+pub fn check_write_path(path: &Path) -> Result<(), String> {
+    current().map_or(Ok(()), |r| r.check_path(path, Access::Write))
+}
+
 /// `path` made absolute with its links followed; for a path that doesn't exist (yet), its nearest
 /// existing folder's links followed and the rest appended.
-fn resolve(path: &str) -> Result<PathBuf, String> {
-    if path.is_empty() {
+fn resolve(path: &Path) -> Result<PathBuf, String> {
+    if path.as_os_str().is_empty() {
         return Err("automation path rejected: path is empty".into());
     }
+    let shown = path.display();
     // Checked as given: making `…\NUL` absolute gives the device path `\\.\NUL` on Windows.
-    if cfg!(windows) && Path::new(path).components().any(|c| matches!(c, Component::Normal(n) if is_device_name(&n.to_string_lossy()))) {
-        return Err(format!("automation path rejected: reserved device names are not allowed: {path}"));
+    if cfg!(windows) && path.components().any(|c| matches!(c, Component::Normal(n) if is_device_name(&n.to_string_lossy()))) {
+        return Err(format!("automation path rejected: reserved device names are not allowed: {shown}"));
     }
-    let absolute = std::path::absolute(path).map_err(|e| format!("automation path rejected: cannot resolve {path}: {e}"))?;
+    let absolute = std::path::absolute(path).map_err(|e| format!("automation path rejected: cannot resolve {shown}: {e}"))?;
     // The names below the nearest existing folder, last first.
     let mut missing: Vec<OsString> = vec![];
     let mut at = absolute.as_path();
@@ -212,11 +224,11 @@ fn resolve(path: &str) -> Result<PathBuf, String> {
                 return Ok(found);
             }
             Err(e) => match std::fs::symlink_metadata(at) {
-                Ok(m) if m.file_type().is_symlink() => return Err(format!("automation path rejected: a link that leads nowhere: {path}")),
+                Ok(m) if m.file_type().is_symlink() => return Err(format!("automation path rejected: a link that leads nowhere: {shown}")),
                 // There, yet its real path can't be had (no permission): nothing to compare.
-                Ok(_) => return Err(format!("automation path rejected: cannot resolve {path}: {e}")),
+                Ok(_) => return Err(format!("automation path rejected: cannot resolve {shown}: {e}")),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(format!("automation path rejected: cannot resolve {path}: {e}")),
+                Err(e) => return Err(format!("automation path rejected: cannot resolve {shown}: {e}")),
             },
         }
         let parent = at.parent();
@@ -226,12 +238,12 @@ fn resolve(path: &str) -> Result<PathBuf, String> {
                 at = parent;
             }
             (Some(Component::ParentDir), _) => {
-                return Err(format!("automation path rejected: parent traversal below a folder that doesn't exist: {path}"));
+                return Err(format!("automation path rejected: parent traversal below a folder that doesn't exist: {shown}"));
             }
             // Down to the root (or drive) and it doesn't exist either.
             _ => {
                 let e = std::io::Error::from(std::io::ErrorKind::NotFound);
-                return Err(format!("automation path rejected: cannot resolve {path}: {e}"));
+                return Err(format!("automation path rejected: cannot resolve {shown}: {e}"));
             }
         }
     }
