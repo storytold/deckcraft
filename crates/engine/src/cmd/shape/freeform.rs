@@ -1,4 +1,4 @@
-use super::*;
+use super::{ColorRef, Fill, Geom, Line, NO_ID_SPACE, Result, Session, Value, bad, bool_or, id_param, json, str_param, usize_param};
 
 pub(super) fn sites(s: &mut Session, p: &Value) -> Result<Value> {
     let id = id_param(p, "id", "shape.sites")?.ok_or_else(|| bad("shape.sites", "missing `id`"))?;

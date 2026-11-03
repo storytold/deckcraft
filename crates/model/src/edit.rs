@@ -418,6 +418,8 @@ fn pos_of_char(body: &TextBody, mut n: usize) -> Pos {
 /// keeps its run and paragraph formatting and new text takes the formatting where it lands. Text
 /// that shares nothing with the old text replaces it as plain text.
 pub fn replace_text(body: &mut TextBody, text: &str) {
+    // Normalise line endings first so the common prefix/suffix cannot split a `\r\n` pair.
+    let text = &text.replace("\r\n", "\n").replace('\r', "\n");
     let old: Vec<char> = body.text().chars().collect();
     let new: Vec<char> = text.chars().collect();
     if old == new {
@@ -467,6 +469,9 @@ pub fn change_case(s: &str, mode: &str) -> String {
 /// piece is the changed form of the matching input piece, even where a character changes length.
 pub fn change_case_parts(parts: &[&str], mode: &str) -> Vec<String> {
     let mut start = true;
+    // All characters of all pieces, so word-final sigma sees neighbours across piece boundaries.
+    let all: Vec<char> = parts.iter().flat_map(|s| s.chars()).collect();
+    let mut base = 0;
     parts
         .iter()
         .map(|s| match mode {
@@ -477,10 +482,14 @@ pub fn change_case_parts(parts: &[&str], mode: &str) -> Vec<String> {
                 // `title` restarts after whitespace, sentence case after sentence punctuation.
                 let title = mode == "title";
                 let mut out = String::new();
-                for c in s.chars() {
+                for (j, c) in s.chars().enumerate() {
+                    let i = base + j;
                     if start && c.is_alphabetic() {
                         out.extend(c.to_uppercase());
                         start = false;
+                    } else if c == 'Σ' && i > 0 && all[i - 1].is_alphabetic() && !all.get(i + 1).is_some_and(|n| n.is_alphabetic()) {
+                        // Word-final capital sigma lowercases to ς, as `str::to_lowercase` does.
+                        out.push('ς');
                     } else {
                         out.extend(c.to_lowercase());
                     }
@@ -488,6 +497,7 @@ pub fn change_case_parts(parts: &[&str], mode: &str) -> Vec<String> {
                         start = true;
                     }
                 }
+                base += s.chars().count();
                 out
             }
         })
@@ -500,6 +510,20 @@ mod tests {
 
     fn body(t: &str) -> TextBody {
         TextBody::from_text(t)
+    }
+
+    #[test]
+    fn title_and_sentence_final_sigma() {
+        assert_eq!(change_case("ΟΔΟΣ", "title"), "Οδος");
+        assert_eq!(change_case("ΟΔΟΣ ΜΟΥ.", "sentence"), "Οδος μου.");
+        assert_eq!(change_case("ΟΔΟΣ", "lower"), "οδος");
+    }
+
+    #[test]
+    fn title_sigma_across_runs_is_not_final() {
+        assert_eq!(change_case_parts(&["ΟΔΟΣ", "ΑΣ"], "title"), ["Οδοσ", "ας"]);
+        assert_eq!(change_case_parts(&["ΟΔΟ", "ΣΑ"], "title"), ["Οδο", "σα"]);
+        assert_eq!(change_case_parts(&["ΟΔΟΣ", " ΜΟΥ"], "title"), ["Οδος", " Μου"]);
     }
 
     #[test]
@@ -721,6 +745,22 @@ mod tests {
                 ParaProps { margin_left: Some(36.0), indent: Some(-18.0), bullet: Some(Bullet::Char { char: "•".into() }), ..Default::default() };
         }
         b
+    }
+
+    #[test]
+    fn replace_text_crlf_matches_from_text() {
+        // The kept suffix must not start inside a `\r\n` pair.
+        let mut b = TextBody::from_text("x\ny");
+        replace_text(&mut b, "z\r\ny");
+        assert_eq!(b.text(), "z\ny");
+        // CRLF in the kept prefix, and the same text with CRLF changes nothing.
+        let before = notes();
+        let mut b = before.clone();
+        replace_text(&mut b, "Overview\r\nFirst point\r\nSecond point");
+        assert_eq!(b, before);
+        replace_text(&mut b, "Overview\r\nFirst point\r\nSecond\rpoint");
+        assert_eq!(b.text(), "Overview\nFirst point\nSecond\npoint");
+        assert_eq!(b.paragraphs[0].runs[0].props.bold, Some(true));
     }
 
     #[test]

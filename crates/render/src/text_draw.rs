@@ -1,6 +1,8 @@
 use super::geometry::{blur, color, pre_translate, scale_of};
 use super::opts::ParaState;
-use super::*;
+use super::{
+    Affine, Arc, BezPath, Ctx, FontDb, HashMap, Opts, PhType, Rect, RenderContext, Rgba, Shape, TextBody, Vec2, colr, paint, peniko, resolve,
+};
 
 /// The prompt shown in an empty placeholder, formatted like its content would be.
 pub(crate) fn prompt_body(rctx: &Ctx, s: &Shape, kind: PhType) -> TextBody {
@@ -53,10 +55,10 @@ pub(crate) fn glyph(face: &deckcraft_fonts::FontFace, gid: u32) -> Arc<BezPath> 
     p
 }
 
-/// Draw a text body into shape space `m` within the text rect.
-pub fn draw_text(ctx: &mut RenderContext, rctx: &Ctx, s: &Shape, body: &TextBody, tr: Rect, m: Affine, fields: &dyn Fields, prompt: Option<Rgba>) {
-    let l = deckcraft_text::layout(rctx, s, body, &Opts { rect: tr, fields, prompt_color: prompt, no_shrink: false });
-    draw_layout(ctx, &l, tr, m);
+/// Draw a text body into shape space `m` within the text rect `opts.rect`.
+pub fn draw_text(ctx: &mut RenderContext, rctx: &Ctx, s: &Shape, body: &TextBody, m: Affine, opts: &Opts) {
+    let l = deckcraft_text::layout(rctx, s, body, opts);
+    draw_layout(ctx, &l, opts.rect, m);
 }
 
 /// Add transient list markers to an editor layout, using the document's own bullet glyphs.

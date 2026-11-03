@@ -1,6 +1,9 @@
 use super::arrange::arrange_group;
 use super::galleries::cref_param;
-use super::*;
+use super::{
+    Color32, CornerRadius, Icon, Rect, Sense, ShapeKind, SlideApp, Stroke, Ui, Value, big, big_button, big_button_ex, color_split, group, json,
+    menu_item, pos2, rows, run, scheme, small, theme, toggle, vec2, widgets,
+};
 
 pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
     let tbl = app

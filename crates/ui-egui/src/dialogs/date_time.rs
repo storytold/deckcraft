@@ -1,4 +1,4 @@
-use super::*;
+use super::{DATE_KINDS, Dialog, SlideApp, Tokens, Ui, buttons, check, json};
 
 const DATE_LANGS: &[(&str, &str)] = &[
     ("en-US", "English (United States)"),
@@ -49,7 +49,7 @@ pub(super) fn date_time_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) 
     let lang_label = DATE_LANGS.iter().find(|(k, _)| *k == lang).map(|(_, l)| *l).unwrap_or("English (United States)");
     ui.horizontal(|ui| {
         ui.label("Language:");
-        let opened = egui::ComboBox::from_id_salt("date-lang").selected_text(lang_label).width(240.0).show_ui(ui, |ui| {
+        let opened = craft_ui::ComboBox::from_id_salt("date-lang").selected_text(lang_label).width(240.0).show_ui(ui, |ui| {
             for (k, l) in DATE_LANGS {
                 if ui.selectable_label(lang == *k, *l).clicked() {
                     d.fields.insert("language".into(), (*k).to_string());

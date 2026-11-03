@@ -1,6 +1,6 @@
 use super::run::{RunEffects, Underline};
 use super::shape::run_effects;
-use super::*;
+use super::{Arc, Caps, Ctx, Fill, FontDb, FontFace, FontSlot, ParaProps, Rect, Rgba, RunProps, ScriptTag, Spacing, Strike, resolve};
 
 /// Values for fields (`slidenum`, `datetime…`, `footer`). `None` keeps the field's saved text.
 pub trait Fields {

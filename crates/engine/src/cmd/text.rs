@@ -24,15 +24,13 @@ mod layout;
 
 use autocorrect::autocorrect_options;
 pub use autocorrect::{AUTOCORRECT, AutoList, correct_word};
-#[cfg(test)]
-use caret::count_param;
 pub(crate) use caret::{apply_leading_tabs, delete_dir};
 use caret::{delete, delete_surrounding, get, insert, move_caret, select, select_all, select_para, select_word, set};
 use editing::{edit, exit};
 pub(crate) use editing::{insert_field, insert_text, paste_body};
 pub use formatting::format_range;
 use formatting::{fonts_used, replace_font};
-pub(crate) use formatting::{format_body, format_para, format_run, link_text};
+pub(crate) use formatting::{format_body, format_para, format_run, format_run_levels, link_text};
 pub use ime::{IME_SURROUNDING_MAX_BYTES, ImeSurrounding, cell_range_underlines, composition_underlines, ime_surrounding, range_underlines};
 use ime::{commit, compose};
 pub(crate) use layout::ctx_for;

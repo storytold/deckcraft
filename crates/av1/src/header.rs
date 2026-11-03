@@ -429,6 +429,38 @@ pub struct FrameHeader {
     pub spatial_id: u32,
 }
 
+/// mark_ref_frames( idLen ): invalidates reference slots whose frame id is too far from the current one.
+fn mark_ref_frames(st: &mut HeaderState, cur: u32, id_len: u32) {
+    let diff_len = st.seq.delta_frame_id_length_minus_2 + 2;
+    for rs in st.refs.iter_mut() {
+        if cur > (1 << diff_len) {
+            if rs.frame_id > cur || rs.frame_id < cur - (1 << diff_len) {
+                rs.valid = false;
+            }
+        } else if rs.frame_id > cur && rs.frame_id < (1 << id_len) + cur - (1 << diff_len) {
+            rs.valid = false;
+        }
+    }
+}
+
+/// Skips buffer_removal_time for every operating point that includes this layer.
+fn skip_buffer_removal_times(r: &mut BitReader, seq: &SequenceHeader, temporal_id: u32, spatial_id: u32) -> Result<()> {
+    if !(seq.decoder_model_info_present && r.flag()?) {
+        return Ok(());
+    }
+    for op in 0..=seq.operating_points_cnt_minus_1 {
+        if seq.decoder_model_present_for_this_op[op] {
+            let idc = seq.operating_point_idc[op];
+            let in_t = (idc >> temporal_id) & 1;
+            let in_s = (idc >> (spatial_id + 8)) & 1;
+            if idc == 0 || (in_t == 1 && in_s == 1) {
+                r.f(seq.buffer_removal_time_length_minus_1 + 1)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 impl FrameHeader {
     pub fn get_relative_dist(&self, seq: &SequenceHeader, a: u32, b: u32) -> i32 {
         relative_dist(seq, a, b)
@@ -494,35 +526,10 @@ impl FrameHeader {
         } else {
             h.show_existing_frame = r.flag()?;
             if h.show_existing_frame {
-                h.frame_to_show_map_idx = r.f(3)? as usize;
-                if seq.decoder_model_info_present && !seq.equal_picture_interval {
-                    r.f(seq.frame_presentation_time_length_minus_1 + 1)?;
-                }
-                if seq.frame_id_numbers_present {
-                    r.f(id_len)?;
-                }
-                let rs = &st.refs[h.frame_to_show_map_idx];
-                if !rs.valid {
-                    return Err(Error::Invalid("show_existing_frame of an empty slot"));
-                }
-                h.frame_type = rs.frame_type;
-                if h.frame_type == KEY_FRAME as u8 {
-                    h.refresh_frame_flags = all_frames;
-                }
-                if seq.film_grain_params_present {
-                    h.film_grain = rs.grain.clone();
-                }
+                h.parse_show_existing_frame(r, st, id_len)?;
                 return Ok(h);
             }
-            h.frame_type = r.f(2)? as u8;
-            h.frame_is_intra = h.frame_type == INTRA_ONLY_FRAME as u8 || h.frame_type == KEY_FRAME as u8;
-            h.show_frame = r.flag()?;
-            if h.show_frame && seq.decoder_model_info_present && !seq.equal_picture_interval {
-                r.f(seq.frame_presentation_time_length_minus_1 + 1)?;
-            }
-            h.showable_frame = if h.show_frame { h.frame_type != KEY_FRAME as u8 } else { r.flag()? };
-            h.error_resilient_mode =
-                if h.frame_type == SWITCH_FRAME as u8 || (h.frame_type == KEY_FRAME as u8 && h.show_frame) { true } else { r.flag()? };
+            h.parse_frame_type_and_flags(r, seq)?;
         }
         if h.frame_type == KEY_FRAME as u8 && h.show_frame {
             for rs in st.refs.iter_mut() {
@@ -533,33 +540,11 @@ impl FrameHeader {
                 h.order_hints[LAST_FRAME + i] = 0;
             }
         }
-        h.disable_cdf_update = r.flag()?;
-        h.allow_screen_content_tools = if seq.seq_force_screen_content_tools == SELECT_SCREEN_CONTENT_TOOLS as u32 {
-            r.flag()?
-        } else {
-            seq.seq_force_screen_content_tools != 0
-        };
-        if h.allow_screen_content_tools {
-            h.force_integer_mv = if seq.seq_force_integer_mv == SELECT_INTEGER_MV as u32 { r.flag()? } else { seq.seq_force_integer_mv != 0 };
-        }
-        if h.frame_is_intra {
-            h.force_integer_mv = true;
-        }
+        h.parse_screen_content_flags(r, seq)?;
         if seq.frame_id_numbers_present {
             h.current_frame_id = r.f(id_len)?;
-            // mark_ref_frames( idLen )
-            let diff_len = seq.delta_frame_id_length_minus_2 + 2;
-            let cur = h.current_frame_id;
-            for rs in st.refs.iter_mut() {
-                if cur > (1 << diff_len) {
-                    if rs.frame_id > cur || rs.frame_id < cur - (1 << diff_len) {
-                        rs.valid = false;
-                    }
-                } else if rs.frame_id > cur && rs.frame_id < (1 << id_len) + cur - (1 << diff_len) {
-                    rs.valid = false;
-                }
-            }
-            st.current_frame_id = cur;
+            mark_ref_frames(st, h.current_frame_id, id_len);
+            st.current_frame_id = h.current_frame_id;
         }
         h.frame_size_override_flag = if h.frame_type == SWITCH_FRAME as u8 {
             true
@@ -570,18 +555,7 @@ impl FrameHeader {
         };
         h.order_hint = r.f(seq.order_hint_bits)?;
         h.primary_ref_frame = if h.frame_is_intra || h.error_resilient_mode { PRIMARY_REF_NONE } else { r.f(3)? as usize };
-        if seq.decoder_model_info_present && r.flag()? {
-            for op in 0..=seq.operating_points_cnt_minus_1 {
-                if seq.decoder_model_present_for_this_op[op] {
-                    let idc = seq.operating_point_idc[op];
-                    let in_t = (idc >> temporal_id) & 1;
-                    let in_s = (idc >> (spatial_id + 8)) & 1;
-                    if idc == 0 || (in_t == 1 && in_s == 1) {
-                        r.f(seq.buffer_removal_time_length_minus_1 + 1)?;
-                    }
-                }
-            }
-        }
+        skip_buffer_removal_times(r, seq, temporal_id, spatial_id)?;
         h.refresh_frame_flags =
             if h.frame_type == SWITCH_FRAME as u8 || (h.frame_type == KEY_FRAME as u8 && h.show_frame) { all_frames } else { r.f(8)? };
         if (!h.frame_is_intra || h.refresh_frame_flags != all_frames) && h.error_resilient_mode && seq.enable_order_hint {
@@ -599,126 +573,16 @@ impl FrameHeader {
                 h.allow_intrabc = r.flag()?;
             }
         } else {
-            let mut short = false;
-            if seq.enable_order_hint {
-                short = r.flag()?;
-                if short {
-                    let last = r.f(3)? as usize;
-                    let gold = r.f(3)? as usize;
-                    h.set_frame_refs(seq, st.refs, last, gold);
-                }
-            }
-            for i in 0..REFS_PER_FRAME {
-                if !short {
-                    h.ref_frame_idx[i] = r.f(3)? as usize;
-                }
-                if seq.frame_id_numbers_present {
-                    r.f(seq.delta_frame_id_length_minus_2 + 2)?;
-                }
-            }
-            for i in 0..REFS_PER_FRAME {
-                if !st.refs[h.ref_frame_idx[i]].valid {
-                    return Err(Error::Invalid("reference to an empty slot"));
-                }
-            }
-            if h.frame_size_override_flag && !h.error_resilient_mode {
-                // frame_size_with_refs( )
-                let mut found = false;
-                for i in 0..REFS_PER_FRAME {
-                    if r.flag()? {
-                        let rs = &st.refs[h.ref_frame_idx[i]];
-                        h.upscaled_width = rs.upscaled_width;
-                        h.frame_width = h.upscaled_width;
-                        h.frame_height = rs.frame_height;
-                        h.render_width = rs.render_width;
-                        h.render_height = rs.render_height;
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    h.frame_size(r, seq)?;
-                    h.render_size(r)?;
-                } else {
-                    h.superres_params(r, seq)?;
-                    h.compute_image_size();
-                }
-            } else {
-                h.frame_size(r, seq)?;
-                h.render_size(r)?;
-            }
-            h.allow_high_precision_mv = if h.force_integer_mv { false } else { r.flag()? };
-            h.interpolation_filter = if r.flag()? { SWITCHABLE } else { r.f(2)? as u8 };
-            h.is_motion_mode_switchable = r.flag()?;
-            h.use_ref_frame_mvs = if h.error_resilient_mode || !seq.enable_ref_frame_mvs { false } else { r.flag()? };
-            for i in 0..REFS_PER_FRAME {
-                let rf = LAST_FRAME + i;
-                let hint = st.refs[h.ref_frame_idx[i]].order_hint;
-                h.order_hints[rf] = hint;
-                h.ref_frame_sign_bias[rf] = seq.enable_order_hint && relative_dist(seq, hint, h.order_hint) > 0;
-            }
+            h.parse_inter_frame_refs(r, st)?;
         }
         h.disable_frame_end_update_cdf = if seq.reduced_still_picture_header || h.disable_cdf_update { true } else { r.flag()? };
-        if h.primary_ref_frame == PRIMARY_REF_NONE {
-            // setup_past_independence( )
-            st.seg_features = SegmentationFeatures::default();
-            st.prev_gm_params = default_gm_params();
-            st.lf_deltas = LoopFilterDeltas::defaults();
-            h.lf.delta_enabled = true;
-        } else {
-            // load_previous( )
-            let prev = &st.refs[h.ref_frame_idx[h.primary_ref_frame]];
-            st.prev_gm_params = prev.gm_params;
-            st.lf_deltas = prev.lf_deltas;
-            st.seg_features = prev.seg_features;
-        }
+        h.setup_or_load_previous(st);
         h.prev_gm_params = st.prev_gm_params;
         h.tile_info(r, seq)?;
         h.quantization_params(r, seq)?;
         h.segmentation_params(r, st)?;
-        // delta_q_params( )
-        if h.quant.base_q_idx > 0 {
-            h.delta_q_present = r.flag()?;
-        }
-        if h.delta_q_present {
-            h.delta_q_res = r.f(2)?;
-        }
-        // delta_lf_params( )
-        if h.delta_q_present {
-            if !h.allow_intrabc {
-                h.delta_lf_present = r.flag()?;
-            }
-            if h.delta_lf_present {
-                h.delta_lf_res = r.f(2)?;
-                h.delta_lf_multi = r.flag()?;
-            }
-        }
-        h.coded_lossless = true;
-        for seg_id in 0..MAX_SEGMENTS {
-            let q = h.get_qindex(true, seg_id, 0);
-            let ll = q == 0
-                && h.quant.delta_q_y_dc == 0
-                && h.quant.delta_q_u_ac == 0
-                && h.quant.delta_q_u_dc == 0
-                && h.quant.delta_q_v_ac == 0
-                && h.quant.delta_q_v_dc == 0;
-            h.lossless_array[seg_id] = ll;
-            if !ll {
-                h.coded_lossless = false;
-            }
-            if h.quant.using_qmatrix {
-                if ll {
-                    h.seg_qm_level[0][seg_id] = 15;
-                    h.seg_qm_level[1][seg_id] = 15;
-                    h.seg_qm_level[2][seg_id] = 15;
-                } else {
-                    h.seg_qm_level[0][seg_id] = h.quant.qm_y;
-                    h.seg_qm_level[1][seg_id] = h.quant.qm_u;
-                    h.seg_qm_level[2][seg_id] = h.quant.qm_v;
-                }
-            }
-        }
-        h.all_lossless = h.coded_lossless && h.frame_width == h.upscaled_width;
+        h.delta_q_lf_params(r)?;
+        h.compute_lossless();
         h.loop_filter_params(r, seq, st)?;
         h.cdef_params(r, seq)?;
         h.lr_params(r, seq)?;
@@ -737,6 +601,182 @@ impl FrameHeader {
         h.global_motion_params(r)?;
         h.film_grain_params(r, seq, st.refs)?;
         Ok(h)
+    }
+
+    /// The show_existing_frame branch: picks the slot to show and inherits its frame type and grain.
+    fn parse_show_existing_frame(&mut self, r: &mut BitReader, st: &HeaderState, id_len: u32) -> Result<()> {
+        let seq = st.seq;
+        self.frame_to_show_map_idx = r.f(3)? as usize;
+        if seq.decoder_model_info_present && !seq.equal_picture_interval {
+            r.f(seq.frame_presentation_time_length_minus_1 + 1)?;
+        }
+        if seq.frame_id_numbers_present {
+            r.f(id_len)?;
+        }
+        let rs = &st.refs[self.frame_to_show_map_idx];
+        if !rs.valid {
+            return Err(Error::Invalid("show_existing_frame of an empty slot"));
+        }
+        self.frame_type = rs.frame_type;
+        if self.frame_type == KEY_FRAME as u8 {
+            self.refresh_frame_flags = (1u32 << NUM_REF_FRAMES) - 1;
+        }
+        if seq.film_grain_params_present {
+            self.film_grain = rs.grain.clone();
+        }
+        Ok(())
+    }
+
+    /// frame_type, show_frame, showable_frame and error_resilient_mode.
+    fn parse_frame_type_and_flags(&mut self, r: &mut BitReader, seq: &SequenceHeader) -> Result<()> {
+        self.frame_type = r.f(2)? as u8;
+        self.frame_is_intra = self.frame_type == INTRA_ONLY_FRAME as u8 || self.frame_type == KEY_FRAME as u8;
+        self.show_frame = r.flag()?;
+        if self.show_frame && seq.decoder_model_info_present && !seq.equal_picture_interval {
+            r.f(seq.frame_presentation_time_length_minus_1 + 1)?;
+        }
+        self.showable_frame = if self.show_frame { self.frame_type != KEY_FRAME as u8 } else { r.flag()? };
+        self.error_resilient_mode =
+            if self.frame_type == SWITCH_FRAME as u8 || (self.frame_type == KEY_FRAME as u8 && self.show_frame) { true } else { r.flag()? };
+        Ok(())
+    }
+
+    /// disable_cdf_update, allow_screen_content_tools and force_integer_mv.
+    fn parse_screen_content_flags(&mut self, r: &mut BitReader, seq: &SequenceHeader) -> Result<()> {
+        self.disable_cdf_update = r.flag()?;
+        self.allow_screen_content_tools = if seq.seq_force_screen_content_tools == SELECT_SCREEN_CONTENT_TOOLS as u32 {
+            r.flag()?
+        } else {
+            seq.seq_force_screen_content_tools != 0
+        };
+        if self.allow_screen_content_tools {
+            self.force_integer_mv = if seq.seq_force_integer_mv == SELECT_INTEGER_MV as u32 { r.flag()? } else { seq.seq_force_integer_mv != 0 };
+        }
+        if self.frame_is_intra {
+            self.force_integer_mv = true;
+        }
+        Ok(())
+    }
+
+    /// Reference selection, frame size, motion vector precision and filter flags of an inter frame.
+    fn parse_inter_frame_refs(&mut self, r: &mut BitReader, st: &HeaderState) -> Result<()> {
+        let seq = st.seq;
+        let mut short = false;
+        if seq.enable_order_hint {
+            short = r.flag()?;
+            if short {
+                let last = r.f(3)? as usize;
+                let gold = r.f(3)? as usize;
+                self.set_frame_refs(seq, st.refs, last, gold);
+            }
+        }
+        for i in 0..REFS_PER_FRAME {
+            if !short {
+                self.ref_frame_idx[i] = r.f(3)? as usize;
+            }
+            if seq.frame_id_numbers_present {
+                r.f(seq.delta_frame_id_length_minus_2 + 2)?;
+            }
+        }
+        for i in 0..REFS_PER_FRAME {
+            if !st.refs[self.ref_frame_idx[i]].valid {
+                return Err(Error::Invalid("reference to an empty slot"));
+            }
+        }
+        if self.frame_size_override_flag && !self.error_resilient_mode {
+            self.frame_size_with_refs(r, seq, st.refs)?;
+        } else {
+            self.frame_size(r, seq)?;
+            self.render_size(r)?;
+        }
+        self.allow_high_precision_mv = if self.force_integer_mv { false } else { r.flag()? };
+        self.interpolation_filter = if r.flag()? { SWITCHABLE } else { r.f(2)? as u8 };
+        self.is_motion_mode_switchable = r.flag()?;
+        self.use_ref_frame_mvs = if self.error_resilient_mode || !seq.enable_ref_frame_mvs { false } else { r.flag()? };
+        for i in 0..REFS_PER_FRAME {
+            let rf = LAST_FRAME + i;
+            let hint = st.refs[self.ref_frame_idx[i]].order_hint;
+            self.order_hints[rf] = hint;
+            self.ref_frame_sign_bias[rf] = seq.enable_order_hint && relative_dist(seq, hint, self.order_hint) > 0;
+        }
+        Ok(())
+    }
+
+    /// frame_size_with_refs( ).
+    fn frame_size_with_refs(&mut self, r: &mut BitReader, seq: &SequenceHeader, refs: &[RefInfo; NUM_REF_FRAMES]) -> Result<()> {
+        for i in 0..REFS_PER_FRAME {
+            if r.flag()? {
+                let rs = &refs[self.ref_frame_idx[i]];
+                self.upscaled_width = rs.upscaled_width;
+                self.frame_width = self.upscaled_width;
+                self.frame_height = rs.frame_height;
+                self.render_width = rs.render_width;
+                self.render_height = rs.render_height;
+                self.superres_params(r, seq)?;
+                self.compute_image_size();
+                return Ok(());
+            }
+        }
+        self.frame_size(r, seq)?;
+        self.render_size(r)
+    }
+
+    /// setup_past_independence( ) or load_previous( ), depending on primary_ref_frame.
+    fn setup_or_load_previous(&mut self, st: &mut HeaderState) {
+        if self.primary_ref_frame == PRIMARY_REF_NONE {
+            st.seg_features = SegmentationFeatures::default();
+            st.prev_gm_params = default_gm_params();
+            st.lf_deltas = LoopFilterDeltas::defaults();
+            self.lf.delta_enabled = true;
+        } else {
+            let prev = &st.refs[self.ref_frame_idx[self.primary_ref_frame]];
+            st.prev_gm_params = prev.gm_params;
+            st.lf_deltas = prev.lf_deltas;
+            st.seg_features = prev.seg_features;
+        }
+    }
+
+    /// delta_q_params( ) and delta_lf_params( ).
+    fn delta_q_lf_params(&mut self, r: &mut BitReader) -> Result<()> {
+        if self.quant.base_q_idx > 0 {
+            self.delta_q_present = r.flag()?;
+        }
+        if self.delta_q_present {
+            self.delta_q_res = r.f(2)?;
+            if !self.allow_intrabc {
+                self.delta_lf_present = r.flag()?;
+            }
+            if self.delta_lf_present {
+                self.delta_lf_res = r.f(2)?;
+                self.delta_lf_multi = r.flag()?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Per-segment lossless flags, quantizer matrix levels and the frame-wide lossless flags.
+    fn compute_lossless(&mut self) {
+        self.coded_lossless = true;
+        for seg_id in 0..MAX_SEGMENTS {
+            let q = self.get_qindex(true, seg_id, 0);
+            let ll = q == 0
+                && self.quant.delta_q_y_dc == 0
+                && self.quant.delta_q_u_ac == 0
+                && self.quant.delta_q_u_dc == 0
+                && self.quant.delta_q_v_ac == 0
+                && self.quant.delta_q_v_dc == 0;
+            self.lossless_array[seg_id] = ll;
+            if !ll {
+                self.coded_lossless = false;
+            }
+            if self.quant.using_qmatrix {
+                let levels = if ll { [15; 3] } else { [self.quant.qm_y, self.quant.qm_u, self.quant.qm_v] };
+                for (plane, level) in levels.into_iter().enumerate() {
+                    self.seg_qm_level[plane][seg_id] = level;
+                }
+            }
+        }
+        self.all_lossless = self.coded_lossless && self.frame_width == self.upscaled_width;
     }
 
     fn superres_params(&mut self, r: &mut BitReader, seq: &SequenceHeader) -> Result<()> {
