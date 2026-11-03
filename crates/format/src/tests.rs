@@ -48,6 +48,38 @@ fn native_save_keeps_chart_relationships_and_payloads() {
     }
 }
 
+#[test]
+fn native_table_direction_and_column_text_survive_two_saves() {
+    use deckcraft_model::table::{Cell, Table};
+    use deckcraft_model::{Shape, ShapeId, ShapeKind};
+    use std::sync::Arc;
+
+    for rtl in [Some(true), Some(false), None] {
+        let mut p = defaults::new_presentation(None);
+        let mut table = Table::new(1, 2, 200.0, 30.0);
+        table.rtl = rtl;
+        table.rows[0].cells[0] = Cell::new("Left column");
+        table.rows[0].cells[1] = Cell::new("Right column");
+        let shape = Shape { id: ShapeId(p.alloc_id().expect("id")), kind: ShapeKind::Table(table), ..Default::default() };
+        Arc::make_mut(&mut p.slides[0]).shapes.push(shape);
+        let mut q = load(&save(&p).expect("save")).expect("load");
+        for _ in 0..2 {
+            let table = q.slides[0]
+                .shapes
+                .iter()
+                .find_map(|s| match &s.kind {
+                    ShapeKind::Table(table) => Some(table),
+                    _ => None,
+                })
+                .expect("table shape");
+            assert_eq!(table.rtl, rtl);
+            assert_eq!(table.rows[0].cells[0].text.paragraphs[0].runs[0].text, "Left column");
+            assert_eq!(table.rows[0].cells[1].text.paragraphs[0].runs[0].text, "Right column");
+            q = load(&save(&q).expect("save again")).expect("load again");
+        }
+    }
+}
+
 /// The same package without the entries `drop` names.
 fn without(bytes: &[u8], drop: &str) -> Vec<u8> {
     let mut z = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();

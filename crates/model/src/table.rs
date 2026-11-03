@@ -55,6 +55,9 @@ pub struct Table {
     pub last_col: bool,
     pub band_row: bool,
     pub band_col: bool,
+    /// Whether columns are ordered right-to-left (`a:tblPr/@rtl`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rtl: Option<bool>,
     /// `a:tblPr` fill: a fill behind the whole table (over the style's own background).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub background: Option<Fill>,
@@ -72,6 +75,7 @@ impl Default for Table {
             last_col: false,
             band_row: true,
             band_col: false,
+            rtl: None,
             background: None,
         }
     }
