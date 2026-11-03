@@ -255,6 +255,30 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
     ui.data_mut(|d| d.insert_temp(id, (sh.descr.clone(), alt)));
 }
 
+fn picture_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
+    let adj = if let ShapeKind::Picture { fill } = &sh.kind { fill.adjust.clone() } else { Default::default() };
+    let mut b = adj.brightness as f32;
+    if ui.add(egui::Slider::new(&mut b, -1.0..=1.0).text("Brightness")).drag_stopped() {
+        run(app, "picture.adjust", json!({"brightness": b}));
+    }
+    let mut c = adj.contrast as f32;
+    if ui.add(egui::Slider::new(&mut c, -1.0..=1.0).text("Contrast")).drag_stopped() {
+        run(app, "picture.adjust", json!({"contrast": c}));
+    }
+    let mut s = adj.saturation.unwrap_or(1.0) as f32;
+    if ui.add(egui::Slider::new(&mut s, 0.0..=4.0).text("Saturation")).drag_stopped() {
+        run(app, "picture.adjust", json!({"saturation": s}));
+    }
+    let alpha = if let ShapeKind::Picture { fill } = &sh.kind { fill.alpha.unwrap_or(1.0) } else { 1.0 };
+    let mut tr = (1.0 - alpha) as f32;
+    if ui.add(egui::Slider::new(&mut tr, 0.0..=1.0).text("Transparency")).drag_stopped() {
+        run(app, "picture.adjust", json!({"transparency": tr}));
+    }
+    if ui.button("Reset Picture").clicked() {
+        run(app, "picture.reset", json!({}));
+    }
+}
+
 /// Render the shape-format pane with fill/line, effects, size/properties, text, and picture tabs.
 pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
@@ -328,29 +352,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
         }
-        "picture" => {
-            let adj = if let ShapeKind::Picture { fill } = &sh.kind { fill.adjust.clone() } else { Default::default() };
-            let mut b = adj.brightness as f32;
-            if ui.add(egui::Slider::new(&mut b, -1.0..=1.0).text("Brightness")).drag_stopped() {
-                run(app, "picture.adjust", json!({"brightness": b}));
-            }
-            let mut c = adj.contrast as f32;
-            if ui.add(egui::Slider::new(&mut c, -1.0..=1.0).text("Contrast")).drag_stopped() {
-                run(app, "picture.adjust", json!({"contrast": c}));
-            }
-            let mut s = adj.saturation.unwrap_or(1.0) as f32;
-            if ui.add(egui::Slider::new(&mut s, 0.0..=4.0).text("Saturation")).drag_stopped() {
-                run(app, "picture.adjust", json!({"saturation": s}));
-            }
-            let alpha = if let ShapeKind::Picture { fill } = &sh.kind { fill.alpha.unwrap_or(1.0) } else { 1.0 };
-            let mut tr = (1.0 - alpha) as f32;
-            if ui.add(egui::Slider::new(&mut tr, 0.0..=1.0).text("Transparency")).drag_stopped() {
-                run(app, "picture.adjust", json!({"transparency": tr}));
-            }
-            if ui.button("Reset Picture").clicked() {
-                run(app, "picture.reset", json!({}));
-            }
-        }
+        "picture" => picture_tab(app, ui, &sh),
         _ => {
             // Fill & Line.
             ui.label(egui::RichText::new("Fill").font(theme::bold(13.0)));
