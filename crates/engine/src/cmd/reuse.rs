@@ -224,6 +224,8 @@ fn import_table_styles(cmd: &str, doc: &mut Presentation, src: &Presentation, us
                     break candidate;
                 }
             };
+            // The definition's own XML names it too, and PPTX export writes that XML as is.
+            imported.raw = imported.raw.replacen(&format!("styleId=\"{}\"", source.id), &format!("styleId=\"{candidate}\""), 1);
             imported.id.clone_from(&candidate);
             map.insert(key, candidate);
         } else {
@@ -481,7 +483,11 @@ mod tests {
         assert_eq!(first_table_style(&doc.slides.first().expect("destination slide").shapes).as_deref(), Some(CUSTOM_STYLE));
         let imported_style = first_table_style(&doc.slides.get(1).expect("reused slide").shapes).expect("grouped table style");
         assert_ne!(imported_style, CUSTOM_STYLE);
-        assert!(doc.table_styles.iter().any(|style| style.id == imported_style && style.raw.contains("FF0000")));
+        assert!(
+            doc.table_styles.iter().any(|style| style.id == imported_style
+                && style.raw.contains("FF0000")
+                && style.raw.contains(&format!("styleId=\"{imported_style}\"")))
+        );
         assert!(doc.table_styles.iter().any(|style| style.id == CUSTOM_STYLE && style.raw.contains("0000FF")));
     }
 
