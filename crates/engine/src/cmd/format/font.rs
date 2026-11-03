@@ -282,6 +282,7 @@ impl FontEdits {
             && self.shadow.is_none()
             && self.baseline.is_none()
             && self.caps.is_none()
+            && self.spacing.is_none()
     }
 
     fn write(&self, r: &mut RunProps) {

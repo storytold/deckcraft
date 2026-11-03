@@ -140,3 +140,37 @@ fn inherited_shadow_is_reflected_in_ribbon_and_dialog() {
     assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("font"));
     assert_eq!(h.get_by_label("Shadow").accesskit_node().toggled(), Some(Toggled::True));
 }
+
+#[test]
+fn font_dialog_preserves_custom_shadow_when_shadow_checkbox_not_touched() {
+    let mut h = harness();
+    // Turn shadow on and give it custom blur (10.0 pt).
+    h.state_mut().session.execute("format.textShadow", &json!({"on": true})).unwrap();
+    let sid = h.state().session.active().unwrap().selection.shapes[0];
+    h.state_mut()
+        .session
+        .edit(|doc, _| {
+            let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+            let sh = deckcraft_model::find_shape_mut(&mut slide.shapes, sid).unwrap();
+            let r = &mut sh.text.as_mut().unwrap().paragraphs[0].runs[0].props;
+            if let Some(s) = &mut r.shadow {
+                s.blur = 10.0;
+            }
+            Ok(())
+        })
+        .unwrap();
+    // Open font dialog and change bold, without touching shadow.
+    h.get_by_label("Font…").click();
+    h.run_steps(2);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("font"));
+    h.get_by_label("Bold").click_accesskit();
+    h.run_steps(1);
+    h.get_by_label("OK").click();
+    h.run_steps(1);
+    assert!(h.state().dialog.is_none());
+    assert_eq!(bold_of(&h), Some(true));
+    // The custom shadow blur must remain 10.0 pt, not replaced by the default 3.0 pt.
+    let st = h.state().session.active().unwrap();
+    let blur = st.selected_shapes()[0].text.as_ref().unwrap().paragraphs[0].runs[0].props.shadow.as_ref().unwrap().blur;
+    assert_eq!(blur, 10.0);
+}

@@ -420,6 +420,16 @@ mod tests {
     }
 
     #[test]
+    fn font_dialog_with_spacing_applies_without_opening_dialog() {
+        let mut s = shape();
+        s.ui_requests.clear();
+        s.execute("format.fontDialog", &json!({"spacing": 3.0})).unwrap();
+        assert!(s.ui_requests.is_empty(), "spacing edit must not open dialog");
+        let r = props(&s);
+        assert_eq!(r.spacing, Some(3.0));
+    }
+
+    #[test]
     fn font_dialog_rejects_bad_fields_without_editing() {
         let mut s = shape();
         let n = s.doc().unwrap().history.undo.len();

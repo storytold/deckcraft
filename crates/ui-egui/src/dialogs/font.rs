@@ -5,7 +5,9 @@ fn seed_font_fields(d: &mut Dialog) {
     seed_once(d, "size", json_text(d.params.get("size"), "18"));
     seed_once(d, "bold", json_text(d.params.get("bold"), "0"));
     seed_once(d, "italic", json_text(d.params.get("italic"), "0"));
-    seed_once(d, "shadow", json_text(d.params.get("shadow"), "0"));
+    let shadow_seed = json_text(d.params.get("shadow"), "0");
+    seed_once(d, "shadow", shadow_seed.clone());
+    seed_once(d, "shadowSeed", shadow_seed);
     seed_once(d, "underline", json_text(d.params.get("underline"), "none"));
     seed_once(d, "strike", json_text(d.params.get("strike"), "none"));
     seed_once(d, "baseline", json_text(d.params.get("baseline"), "none"));
@@ -144,12 +146,14 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
             "bold": d.get("bold", "0") == "1",
             "italic": d.get("italic", "0") == "1",
             "underline": d.get("underline", "none"),
-            "shadow": d.get("shadow", "0") == "1",
             "strike": d.get("strike", "none"),
             "baseline": d.get("baseline", "none"),
             "caps": d.get("caps", "none"),
             "spacing": spacing,
         });
+        if d.get("shadow", "0") != d.get("shadowSeed", "0") {
+            params["shadow"] = json!(d.get("shadow", "0") == "1");
+        }
         let color = d.get("color", "");
         let seed = d.get("colorSeed", "");
         if color == seed {
