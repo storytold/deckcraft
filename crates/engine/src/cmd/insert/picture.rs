@@ -75,12 +75,7 @@ pub fn content_type(name: &str, bytes: &[u8]) -> &'static str {
 
 /// Natural size of an image in points (96 dpi), fitted inside the slide.
 fn fitted(s: &Session, bytes: &[u8]) -> (f64, f64) {
-    let (w, h) = image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .ok()
-        .and_then(|r| r.into_dimensions().ok())
-        .map(|(w, h)| (w as f64 * 0.75, h as f64 * 0.75))
-        .unwrap_or((288.0, 216.0));
+    let (w, h) = deckcraft_render::natural_image_size(bytes).map(|(w, h)| (w * 0.75, h * 0.75)).unwrap_or((288.0, 216.0));
     let size = s.active().map(|d| d.doc.slide_size).unwrap_or(deckcraft_model::defaults::WIDE);
     let k = (size.width * 0.9 / w.max(1.0)).min(size.height * 0.9 / h.max(1.0)).min(1.0);
     (w * k, h * k)
@@ -92,7 +87,7 @@ pub(super) fn picture(s: &mut Session, p: &Value) -> Result<Value> {
     if !ct.starts_with("image/") {
         return Err(bad("insert.picture", format!("{name} is not a picture")));
     }
-    if ct != "image/svg+xml" && deckcraft_render::decode_image(&bytes).is_none() {
+    if deckcraft_render::decode_image(&bytes).is_none() {
         return Err(EngineError::Other(format!("{name}: the picture can't be read")));
     }
     let (w, h) = fitted(s, &bytes);

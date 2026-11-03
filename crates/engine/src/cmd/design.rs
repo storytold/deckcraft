@@ -266,7 +266,7 @@ fn remap_media_ids(theme: &deckcraft_model::theme::Theme, map: &std::collections
         match v {
             Value::Object(o) => {
                 for (k, x) in o.iter_mut() {
-                    if k == "media"
+                    if matches!(k.as_str(), "media" | "svg")
                         && let Some(n) = x.as_u64().and_then(|n| u32::try_from(n).ok())
                         && let Some(new) = map.get(&n)
                     {

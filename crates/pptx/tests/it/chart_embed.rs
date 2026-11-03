@@ -297,22 +297,22 @@ fn an_unchanged_chartex_keeps_its_embedded_workbook() {
     p.slides.push(Arc::new(slide));
     let base = deckcraft_pptx::export(&p).expect("export");
     assert!(parts(&base).iter().any(|(n, _)| n == "ppt/charts/chartEx1.xml"));
-    let rels = format!(
-        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{RT}/package" Target="../embeddings/Microsoft_Excel_Worksheet1.xlsx"/></Relationships>"#
-    );
+    let workbook_rel = format!(r#"<Relationship Id="rIdWorkbook" Type="{RT}/package" Target="../embeddings/Microsoft_Excel_Worksheet1.xlsx"/>"#);
     let src = rewrite(
         &base,
         |name, data| {
             if name == "ppt/charts/chartEx1.xml" {
                 String::from_utf8(data)
                     .expect("chartex")
-                    .replacen("<cx:chartData>", r#"<cx:chartData><cx:externalData r:id="rId1" cx:autoUpdate="0"/>"#, 1)
+                    .replacen("<cx:chartData>", r#"<cx:chartData><cx:externalData r:id="rIdWorkbook" cx:autoUpdate="0"/>"#, 1)
                     .into_bytes()
+            } else if name == "ppt/charts/_rels/chartEx1.xml.rels" {
+                String::from_utf8(data).expect("relationships").replace("</Relationships>", &format!("{workbook_rel}</Relationships>")).into_bytes()
             } else {
                 data
             }
         },
-        &[("ppt/charts/_rels/chartEx1.xml.rels", rels.as_bytes()), (EMBED, WORKBOOK)],
+        &[(EMBED, WORKBOOK)],
     );
     let chart = chart_of(&src);
     assert_eq!(chart.kind, ChartType::Waterfall);
@@ -323,8 +323,10 @@ fn an_unchanged_chartex_keeps_its_embedded_workbook() {
     let xml = text_of(&saved, "ppt/charts/chartEx1.xml");
     assert!(xml.contains("externalData"), "{xml}");
     let rels = text_of(&saved, "ppt/charts/_rels/chartEx1.xml.rels");
-    assert!(rels.contains("../embeddings/kept1.xlsx"), "{rels}");
-    assert!(saved.iter().any(|(n, d)| n == "ppt/embeddings/kept1.xlsx" && d.as_slice() == WORKBOOK));
+    let workbook = saved.iter().find(|(n, d)| n.starts_with("ppt/embeddings/kept") && n.ends_with(".xlsx") && d.as_slice() == WORKBOOK).unwrap();
+    let target = workbook.0.strip_prefix("ppt/").unwrap();
+    assert!(rels.contains(&format!("../{target}")), "{rels}");
+    assert!(rels.contains("chartStyle") && rels.contains("chartColorStyle"), "preserve generated style parts alongside the workbook");
     assert!(saved.iter().all(|(n, _)| n != "ppt/charts/_rels/chart1.xml.rels"), "the fallback chart has no workbook");
     assert!(!text_of(&saved, "ppt/charts/chart1.xml").contains("externalData"));
 }

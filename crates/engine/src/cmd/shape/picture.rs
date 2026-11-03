@@ -64,6 +64,7 @@ pub(super) fn picture_change(s: &mut Session, p: &Value) -> Result<Value> {
     edit_shapes(s, p, "picture.change", |sh| {
         if let deckcraft_model::ShapeKind::Picture { fill } = &mut sh.kind {
             fill.media = media;
+            fill.svg = None;
             fill.crop = [0.0; 4];
             fill.artistic = None;
         }

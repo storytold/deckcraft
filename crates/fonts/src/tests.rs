@@ -5,6 +5,16 @@ fn any_face() -> std::sync::Arc<FontFace> {
 }
 
 #[test]
+fn invalid_embedded_subsets_are_not_decoded_for_every_text_run() {
+    let bytes = std::sync::Arc::new(vec![1, 0, 0, 12, 0, 0, 10, 0, 0, 10]);
+    EMBEDDED_DECODE_ATTEMPTS.with(|n| n.set(0));
+    for _ in 0..8 {
+        assert!(embedded_face(bytes.clone(), "Missing subset", "Regular").is_none());
+    }
+    EMBEDDED_DECODE_ATTEMPTS.with(|n| assert_eq!(n.get(), 1));
+}
+
+#[test]
 fn emoji_clusters_are_recognised() {
     let c = |s: &str| s.chars().collect::<Vec<char>>();
     // As PowerPoint draws them: emoji-presentation characters (⭐ ✅ ☔ ⌚ ⏩) in colour even

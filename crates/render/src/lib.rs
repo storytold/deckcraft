@@ -13,6 +13,7 @@ mod chart;
 mod chartex;
 mod colr;
 mod extrude;
+mod geo_chart;
 mod light;
 
 mod compound;
@@ -23,6 +24,7 @@ mod morph_path;
 mod morph_text;
 mod paint;
 mod pattern;
+mod svg;
 
 mod pathgrad;
 mod placed;
@@ -50,7 +52,7 @@ use vello_cpu::{RenderContext, Resources, peniko};
 
 pub use deckcraft_anim::{transition_frame, transition_layers, uses_slide_parts};
 pub use extent::{Region, TILE, layout_extent, pasteboard_region, slide_extent};
-pub use images::{decode as decode_image, gif_frame};
+pub use images::{decode as decode_image, gif_frame, natural_size as natural_image_size};
 pub use morph_path::PathMorph;
 pub use morph_text::TextMorph;
 pub use pattern::{is_fg as pattern_is_fg, presets as pattern_presets, tile as pattern_tile};
