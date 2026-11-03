@@ -1008,7 +1008,7 @@ checksum = "0c87e182de0887fd5361989c677c4e8f5000cd9491d6d563161a8f3a5519fc7f"
 
 [[package]]
 name = "deckcraft"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "arboard",
  "chrono",
@@ -1030,7 +1030,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-anim"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "deckcraft-geom",
  "deckcraft-model",
@@ -1039,7 +1039,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-av1"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1048,14 +1048,14 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-bitstream"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "craft-media",
 ]
 
 [[package]]
 name = "deckcraft-cli"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "deckcraft-engine",
  "deckcraft-mcp",
@@ -1065,14 +1065,14 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-color"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "deckcraft-engine"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "deckcraft-anim",
@@ -1098,7 +1098,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-fonts"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "epaint_default_fonts",
  "harfrust 0.13.3",
@@ -1110,7 +1110,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-format"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "deckcraft-model",
  "serde",
@@ -1121,7 +1121,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-geom"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "kurbo",
  "serde",
@@ -1129,7 +1129,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-h264"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1138,7 +1138,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-hevc"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1147,21 +1147,21 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-isobmff"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "craft-media",
 ]
 
 [[package]]
 name = "deckcraft-matroska"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "craft-media",
 ]
 
 [[package]]
 name = "deckcraft-mcp"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "deckcraft-engine",
  "deckcraft-render",
@@ -1171,7 +1171,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-media"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "deckcraft-av1",
  "deckcraft-h264",
@@ -1189,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-metafile"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "image",
  "kurbo",
@@ -1198,7 +1198,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-model"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "deckcraft-color",
  "deckcraft-geom",
@@ -1210,15 +1210,15 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-ogg"
-version = "0.14.1"
+version = "0.15.0"
 
 [[package]]
 name = "deckcraft-opus"
-version = "0.14.1"
+version = "0.15.0"
 
 [[package]]
 name = "deckcraft-pdf"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "craft-pdf",
  "deckcraft-fonts",
@@ -1236,7 +1236,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-pptx"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "deckcraft-color",
  "deckcraft-engine",
@@ -1252,7 +1252,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-render"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "deckcraft-anim",
  "deckcraft-color",
@@ -1271,7 +1271,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-text"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "chrono",
  "deckcraft-color",
@@ -1285,7 +1285,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-ui-egui"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "craft-ui",
  "craft-update",
@@ -1310,7 +1310,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-vp9"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1319,7 +1319,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-web"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "deckcraft-engine",
  "deckcraft-ui-egui",
@@ -6269,7 +6269,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "xtask"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "serde_json",
 ]

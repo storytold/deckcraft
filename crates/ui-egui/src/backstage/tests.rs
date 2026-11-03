@@ -85,11 +85,13 @@ fn page_ids_round_trip_and_unknown_ids_are_refused() {
         assert_eq!(Page::parse(p.id()), Some(p));
     }
     assert_eq!(Page::parse(" SAVEAS "), Some(Page::SaveAs));
+    assert_eq!(Page::parse("account"), Some(Page::About));
+    assert_eq!(Page::parse("about"), Some(Page::About));
     assert_eq!(Page::parse("share"), None);
     assert_eq!(Page::parse(""), None);
     let (top, bottom) = entries(false);
     assert_eq!(top, vec![Nav::Page(Page::Home), Nav::Page(Page::New), Nav::Page(Page::Open)], "the start screen has no presentation pages");
-    assert_eq!(bottom, vec![Nav::Page(Page::Account), Nav::Options]);
+    assert_eq!(bottom, vec![Nav::Page(Page::About), Nav::Options]);
     assert_eq!(entries(true).0.len(), 9);
     assert_eq!(split_path("/home/me/Talk.pptx"), ("Talk.pptx".into(), "/home/me".into()));
     assert_eq!(format_bytes(512), "512 bytes");
@@ -166,7 +168,7 @@ fn every_page_renders() {
         (Page::SaveAs, "Not saved yet"),
         (Page::Print, "Print Hidden Slides"),
         (Page::Export, "Create PDF Document"),
-        (Page::Account, "About DeckCraft"),
+        (Page::About, "Credits"),
     ];
     for (p, marker) in checks {
         h.state_mut().run("app.backstage", json!({"page": p.id()})).unwrap();
@@ -703,4 +705,41 @@ fn options_in_backstage_opens_preferences_and_cancel_closes_it() {
     h.run_steps(3);
     assert!(h.state().dialog.is_none(), "Cancel closes Preferences dialog");
     assert!(h.state().backstage_open(), "Backstage remains open");
+}
+
+/// About replaces the account entry and still opens the credits dialog.
+#[test]
+fn about_has_product_links_and_credits_without_account_controls() {
+    let mut h = harness(new_app());
+    h.get_by_label("File").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Account").is_none());
+    click_nav(&h, "About");
+    h.run_steps(3);
+    assert_eq!(page(&h), Some(Page::About));
+    assert!(h.query_by_label("User Information").is_none());
+    assert!(h.query_by_label("Source on GitHub").is_some());
+    assert!(h.query_by_label("Join our community on Discord").is_some());
+    assert!(h.query_all_by_label("Appearance").next().is_some());
+    click_on_page(&h, "Credits");
+    h.run_steps(3);
+    assert!(h.state().dialog.is_some());
+    assert!(h.query_by_label("Contributors").is_some());
+    assert!(h.query_by_label("Models").is_some());
+}
+
+/// At the 900-point minimum window width the About columns stack and Appearance stays on the page.
+#[test]
+fn about_appearance_stays_on_the_page_at_minimum_width() {
+    let mut h = Harness::builder().with_size(egui::vec2(900.0, 900.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        new_app(),
+    );
+    h.state_mut().run("app.backstage", json!({"page": "about"})).unwrap();
+    h.run_steps(3);
+    let r = h.query_all_by_role_and_label(Role::ComboBox, "Appearance").next().expect("Appearance selector").rect();
+    assert!(r.right() <= 900.0, "Appearance selector ends at {}, inside the window", r.right());
 }
