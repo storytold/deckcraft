@@ -1,12 +1,83 @@
 //! The slide thumbnail pane (Normal view): numbered thumbnails grouped by section, selection,
 //! drag-to-reorder, and the slide context menu.
 
+use std::collections::HashSet;
+
 use deckcraft_engine::Target;
-use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
+use deckcraft_model::SlideId;
+use egui::{Align2, Color32, CornerRadius, Rect, Role, Sense, Stroke, Ui, WidgetInfo, pos2, vec2};
 use serde_json::json;
 
 use crate::SlideApp;
 use crate::theme::{self, Tokens};
+
+/// A slide drag in the thumbnail pane or the Slide Sorter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SlideDrag {
+    /// The presentation the drag started in; it is dropped, not applied, anywhere else.
+    pub uid: u64,
+    /// The dragged slides, in deck order.
+    pub ids: Vec<SlideId>,
+    /// The gap under the pointer: 0 is before the first slide, the slide count after the last.
+    pub slot: usize,
+}
+
+/// Starts dragging slide `i`: the whole slide selection when `i` is part of it, else `i` alone,
+/// which then becomes the selection, as in PowerPoint.
+pub(crate) fn start_slide_drag(app: &mut SlideApp, i: usize) {
+    let Some(st) = app.session.active() else { return };
+    let Some(id) = st.doc.slides.get(i).map(|s| s.id) else { return };
+    let selected: HashSet<SlideId> = st.selection.slides.iter().copied().collect();
+    let ids: Vec<SlideId> =
+        if selected.contains(&id) { st.doc.slides.iter().map(|s| s.id).filter(|x| selected.contains(x)).collect() } else { vec![id] };
+    let uid = st.uid;
+    if !selected.contains(&id) {
+        let _ = app.run("slide.go", json!({"index": i}));
+    }
+    app.thumb_drag = Some(SlideDrag { uid, ids, slot: i });
+}
+
+/// Whether a slide drag is under way in the active presentation. `button` is whether the
+/// primary button is held or was released this frame. A drag begun in another presentation, or
+/// one whose release this view never saw (the view changed under it), is discarded, so it never
+/// moves slides on some later, unrelated release.
+pub(crate) fn slide_drag_live(app: &mut SlideApp, button: bool) -> bool {
+    let uid = app.session.active().map(|st| st.uid);
+    if !button || app.thumb_drag.as_ref().is_some_and(|d| Some(d.uid) != uid) {
+        app.thumb_drag = None;
+    }
+    app.thumb_drag.is_some()
+}
+
+/// Whether the primary button is held or was released this frame: a slide drag is still alive.
+pub(crate) fn drag_button(ui: &Ui) -> bool {
+    ui.input(|i| i.pointer.primary_down() || i.pointer.any_released())
+}
+
+/// `slide.move`'s `to` for slides at `moving` (ascending indices) dropped at gap `slot`: the gap
+/// counted without them. `None` when the drop leaves the deck as it is.
+pub(crate) fn slides_move_dest(moving: &[usize], slot: usize) -> Option<usize> {
+    let first = *moving.first()?;
+    let dest = slot.saturating_sub(moving.iter().filter(|&&i| i < slot).count());
+    let one_run = moving.iter().enumerate().all(|(k, &i)| first.checked_add(k) == Some(i));
+    if one_run && dest == first { None } else { Some(dest) }
+}
+
+/// Ends the slide drag: one `slide.move` (one undo step) for all the dragged slides, unless the
+/// drop leaves them where they are, the drag began in another presentation, or one of them is gone.
+pub(crate) fn drop_slide_drag(app: &mut SlideApp) {
+    let Some(drag) = app.thumb_drag.take() else { return };
+    let Some(st) = app.session.active().filter(|st| st.uid == drag.uid) else { return };
+    let dragged: HashSet<SlideId> = drag.ids.iter().copied().collect();
+    let moving: Vec<usize> = st.doc.slides.iter().enumerate().filter(|(_, s)| dragged.contains(&s.id)).map(|(i, _)| i).collect();
+    if moving.len() != dragged.len() {
+        return;
+    }
+    if let Some(to) = slides_move_dest(&moving, drag.slot) {
+        let ids: Vec<u32> = drag.ids.iter().map(|id| id.0).collect();
+        let _ = app.run("slide.move", json!({"ids": ids, "to": to}));
+    }
+}
 
 /// Render the slide thumbnail pane, including section headers, selection, and scroll state.
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
@@ -108,6 +179,8 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
             });
         }
         let (row, resp) = ui.allocate_exact_size(vec2(width, th + 16.0), Sense::click_and_drag());
+        let label = format!("Slide {}", i + 1);
+        resp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &label));
         let img = crate::textures::device_pixel_rect(Rect::from_min_size(pos2(row.min.x + 30.0, row.min.y + 6.0), vec2(tw, th)), ppp);
         rects.push((i, row));
         let p = ui.painter();
@@ -174,7 +247,7 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
             app.start_show(i, false);
         }
         if resp.drag_started() {
-            app.thumb_drag = Some((i, i));
+            start_slide_drag(app, i);
         }
         resp.context_menu(|ui| slide_menu(app, ui, i));
     }
@@ -186,7 +259,7 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
         ui.scroll_to_rect(*row_rect, None);
     }
     // Drag reorder: insertion line.
-    if let Some((from, _)) = app.thumb_drag {
+    if slide_drag_live(app, drag_button(ui)) {
         if let Some(pp) = ui.input(|i| i.pointer.interact_pos()) {
             let mut to = doc.slides.len();
             for (i, r) in &rects {
@@ -195,19 +268,14 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
                     break;
                 }
             }
-            app.thumb_drag = Some((from, to));
+            if let Some(d) = app.thumb_drag.as_mut() {
+                d.slot = to;
+            }
             let y = rects.iter().find(|(i, _)| *i == to).map(|(_, r)| r.min.y + 2.0).or_else(|| rects.last().map(|(_, r)| r.max.y)).unwrap_or(0.0);
             ui.painter().line_segment([pos2(26.0, y), pos2(width, y)], Stroke::new(2.0, t.accent));
         }
         if ui.input(|i| i.pointer.any_released()) {
-            if let Some((from, to)) = app.thumb_drag.take()
-                && to != from
-                && to != from + 1
-            {
-                let dest = if to > from { to - 1 } else { to };
-                let _ = app.run("slide.move", json!({"from": from, "to": dest}));
-            }
-            app.thumb_drag = None;
+            drop_slide_drag(app);
         }
     }
     // Click on empty space below: new slide prompt.
@@ -348,6 +416,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
 
     use super::*;
     use crate::Services;
@@ -395,5 +464,125 @@ mod tests {
         h.run_steps(120);
         let held = thumbs_scroll(&h);
         assert!((held - jumped).abs() < 1.0, "no re-scroll for a visible slide: {jumped} -> {held}");
+    }
+
+    /// A tall window, so every thumbnail of a small deck is on screen.
+    fn tall_harness(slides: usize) -> (Harness<'static, SlideApp>, Vec<u32>) {
+        let mut s = Session::with_new();
+        while s.doc().unwrap().doc.slides.len() < slides {
+            s.execute("slide.new", &json!({})).unwrap();
+        }
+        let mut h = Harness::builder().with_size(egui::vec2(1200.0, 1600.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(s, Services::default()),
+        );
+        h.run_steps(3);
+        let ids = order(&h);
+        (h, ids)
+    }
+
+    fn order(h: &Harness<'_, SlideApp>) -> Vec<u32> {
+        h.state().session.active().unwrap().doc.slides.iter().map(|s| s.id.0).collect()
+    }
+
+    #[test]
+    fn slides_move_dest_counts_without_the_moved_slides() {
+        // One slide: the gaps on either side of it leave it where it is.
+        assert_eq!(slides_move_dest(&[1], 1), None);
+        assert_eq!(slides_move_dest(&[1], 2), None);
+        assert_eq!(slides_move_dest(&[1], 0), Some(0));
+        assert_eq!(slides_move_dest(&[1], 4), Some(3));
+        // A run: any gap inside or around it is a no-op.
+        for slot in 2..=5 {
+            assert_eq!(slides_move_dest(&[2, 3, 4], slot), None, "slot {slot}");
+        }
+        assert_eq!(slides_move_dest(&[2, 3, 4], 0), Some(0));
+        assert_eq!(slides_move_dest(&[2, 3, 4], 6), Some(3));
+        // Scattered slides always gather, even at a gap between them.
+        assert_eq!(slides_move_dest(&[0, 2], 1), Some(0));
+        assert_eq!(slides_move_dest(&[0, 2], 0), Some(0));
+        assert_eq!(slides_move_dest(&[1, 3], 5), Some(3));
+        assert_eq!(slides_move_dest(&[], 3), None);
+        assert_eq!(slides_move_dest(&[usize::MAX], usize::MAX), None);
+    }
+
+    #[test]
+    fn dragging_selected_thumbnails_moves_them_together() {
+        let (mut h, ids) = tall_harness(4);
+        h.state_mut().run("slide.selectSlides", json!({"ids": [ids[0], ids[2]]})).unwrap();
+        h.run_steps(2);
+        let (first, last) = (h.get_by_label("Slide 1").rect(), h.get_by_label("Slide 4").rect());
+        // Below the middle of the last thumbnail: the gap after it.
+        crate::sorter::ui_tests::drag(&mut h, first.center(), egui::pos2(last.center().x, last.bottom() - 4.0));
+        assert_eq!(order(&h), [ids[1], ids[3], ids[0], ids[2]]);
+        let sel: Vec<u32> = h.state().session.active().unwrap().selection.slides.iter().map(|s| s.0).collect();
+        assert_eq!(sel, [ids[0], ids[2]], "the moved slides stay selected");
+        h.state_mut().run("edit.undo", json!({})).unwrap();
+        assert_eq!(order(&h), ids, "one undo puts both back");
+    }
+
+    #[test]
+    fn dragging_an_unselected_thumbnail_moves_only_it() {
+        let (mut h, ids) = tall_harness(4);
+        h.state_mut().run("slide.selectSlides", json!({"ids": [ids[0], ids[2]]})).unwrap();
+        h.run_steps(2);
+        let (second, first) = (h.get_by_label("Slide 2").rect(), h.get_by_label("Slide 1").rect());
+        crate::sorter::ui_tests::drag(&mut h, second.center(), egui::pos2(first.center().x, first.top() + 4.0));
+        assert_eq!(order(&h), [ids[1], ids[0], ids[2], ids[3]]);
+        let sel: Vec<u32> = h.state().session.active().unwrap().selection.slides.iter().map(|s| s.0).collect();
+        assert_eq!(sel, [ids[1]]);
+    }
+
+    /// A drag whose release no view saw (a double-click in the Slide Sorter opens Normal view
+    /// mid-gesture) is dropped, not left to move slides on the next unrelated release.
+    #[test]
+    fn a_slide_drag_without_a_held_button_is_dropped() {
+        let (mut h, ids) = tall_harness(3);
+        let app = h.state_mut();
+        app.run("slide.selectSlides", json!({"ids": [ids[0], ids[1]]})).unwrap();
+        start_slide_drag(app, 0);
+        if let Some(d) = app.thumb_drag.as_mut() {
+            d.slot = 3;
+        }
+        h.run_steps(2);
+        assert!(h.state().thumb_drag.is_none(), "no button held: the drag is over");
+        let last = h.get_by_label("Slide 3").rect();
+        h.hover_at(last.center());
+        h.run_steps(1);
+        h.event(egui::Event::PointerButton {
+            pos: last.center(),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_steps(2);
+        assert_eq!(order(&h), ids, "a later release moves nothing");
+    }
+
+    /// A drag begun in one presentation never moves slides in another (switching mid-drag).
+    #[test]
+    fn a_slide_drag_does_not_follow_into_another_presentation() {
+        let (mut h, ids) = tall_harness(3);
+        let app = h.state_mut();
+        app.run("slide.selectSlides", json!({"ids": [ids[0], ids[1]]})).unwrap();
+        start_slide_drag(app, 0);
+        let drag = app.thumb_drag.clone().unwrap();
+        assert_eq!(drag.ids.iter().map(|s| s.0).collect::<Vec<_>>(), [ids[0], ids[1]]);
+        app.thumb_drag = Some(SlideDrag { slot: 3, ..drag.clone() });
+        app.run("file.new", json!({})).unwrap();
+        while app.session.active().unwrap().doc.slides.len() < 3 {
+            app.run("slide.new", json!({})).unwrap();
+        }
+        let other = app.session.active().unwrap().doc.slides.iter().map(|s| s.id.0).collect::<Vec<_>>();
+        assert!(!slide_drag_live(app, true), "the drag belongs to the first presentation");
+        app.thumb_drag = Some(SlideDrag { slot: 3, ..drag });
+        drop_slide_drag(app);
+        assert!(app.thumb_drag.is_none());
+        assert_eq!(app.session.active().unwrap().doc.slides.iter().map(|s| s.id.0).collect::<Vec<_>>(), other);
+        app.session.set_active(0);
+        assert_eq!(order(&h), ids, "and the first presentation is untouched");
     }
 }

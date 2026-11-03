@@ -1,4 +1,5 @@
 mod anchor;
+mod anim_auto_reverse;
 mod chart_embed;
 mod comments;
 mod corpus;
@@ -13,9 +14,11 @@ mod kept_parts;
 mod locks;
 mod malformed;
 mod math_ns;
+mod media_timing;
 mod notes;
 mod ole;
 mod ole_vml;
+mod parent_delays;
 mod placeholders;
 mod roundtrip;
 mod sample;
