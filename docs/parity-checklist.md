@@ -1,5 +1,7 @@
 # PowerPoint feature checklist
 
+> **PPTX.48 update 2026-11-02:** Centered snake fitting retains nominal and fitted alignment state and distinguishes its early-exit phases. The deduplicated 1,921-case geometry matrix improves from 1,681 to 1,837 strict matches, with no lost match. Centered column labels constrain their position at the bar baseline before authored offsets. Partial snake, hierarchy, map precision and label-layout differences remain explicit; feature scores are unchanged.
+
 > **PPTX.47 update 2026-11-02:** Geographic readers preserve valid rings despite advisory point-count differences, with global decoded-work limits. Fixed manual column labels center retained text independently of automatic ellipses and honor explicit edge anchoring. Linear height reclaim uses the height-overflow metric at the font-rule stage, before later dimension changes. Native controls and integrated renders retain their unresolved cases; full SmartArt, map and chart parity remains partial and feature scores are unchanged.
 
 > **PPTX.46 update 2026-11-02:** Independent linear text rules now resolve around sibling allocation and retain cross-axis capacity for later font searches. The original 1,619-case geometry matrix improves from 1,499 to 1,552 matches without losing a prior match. Rich column labels use fine advances and rounded fit comparisons. Geographic rebuilds preserve provider identity, binary query vocabulary, child-query states and large polygon groups. Coupled rule state, snake abort paths, geographic reduction and other label placement remain partial; feature scores are unchanged.
@@ -324,6 +326,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.48: centered snake fit-state recovery and rich-column baseline constraints; integrated native comparisons and explicit residual cases |
 | 2026-11-02 | minor | PPTX.47: advisory geographic counts, retained-block label anchoring and property-specific height reclaim; native and resource-budget checks |
 | 2026-11-02 | minor | PPTX.46: staged linear rules, fine label advances and bounded native geographic cache rebuilding; residual native failures retained |
 | 2026-11-02 | minor | PPTX.45: accumulated geographic longitude/edge preservation and centered automatic half-turn label layout; existing native full-chart rebuild failure retained |

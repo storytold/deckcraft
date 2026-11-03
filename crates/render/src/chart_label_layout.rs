@@ -84,7 +84,13 @@ pub(super) fn position(
     let (outer_w, outer_h) = rotated_extent(w, h, angle);
     let mut center = mark.center();
     match position {
-        Some("ctr") => {}
+        Some("ctr") => {
+            // Centered labels stay inside the bar's baseline. Automatic labels
+            // constrain their capped rotated bounds; manual dimensions describe
+            // the box before rotation. Authored offsets are applied afterwards.
+            let reserved_h = if fixed { h } else { outer_h.min(frame.1 / 2.) };
+            center.y = if negative { center.y.max(mark.y0 + 3. + reserved_h / 2.) } else { center.y.min(mark.y1 - 3. - reserved_h / 2.) };
+        }
         Some("inBase" | "inEnd") => {
             let end = position == Some("inEnd");
             center.y = if end != negative { mark.y0 + 3. + outer_h / 2. } else { mark.y1 - 3. - outer_h / 2. };
@@ -504,6 +510,33 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn centered_labels_respect_the_baseline_before_authored_offsets_and_frame_clipping() {
+        let positive = Rect::new(326., 294., 538., 320.);
+        let negative = Rect::new(326., 60., 538., 86.);
+        for (mark, sign, expected) in [(positive, false, 224.7625), (negative, true, 155.2375)] {
+            let r = position((118.325, 184.475), 0., mark, Some("ctr"), sign, (960., 400.), None, false, true);
+            assert!((r.center().y - expected).abs() < 1e-6);
+        }
+        // No-wrap overflow keeps the full body centered, but uses the automatic
+        // height cap to constrain that center. It may still extend past the frame.
+        for (mark, sign, expected) in [(positive, false, 217.), (negative, true, 163.)] {
+            let r = position((66.095, 264.3), 0., mark, Some("ctr"), sign, (960., 400.), None, false, false);
+            assert!((r.center().y - expected).abs() < 1e-6);
+        }
+        let manual = ChartLayout { x: Some(0.), y: Some(0.1), w: Some(0.15), h: Some(0.18), ..Default::default() };
+        let r = position((144., 72.), 0., positive, Some("ctr"), false, (960., 400.), Some(&manual), true, true);
+        assert_eq!((r.y0, r.y1), (285., 357.));
+        let r = position((144., 320.), 0., positive, Some("ctr"), false, (960., 400.), None, true, true);
+        assert_eq!((r.y0, r.y1), (0., 320.));
+        let r = position((144., 320.), 0., negative, Some("ctr"), true, (960., 400.), None, true, true);
+        assert_eq!((r.y0, r.y1), (63., 383.));
+        // A wide rotated manual box still positions its unrotated 72pt height.
+        let r = position((480., 72.), 37., positive, Some("ctr"), false, (960., 400.), None, true, true);
+        assert_eq!(r.center().y, 281.);
+        assert!(r.center().y + rotated_extent(480., 72., 37.).1 / 2. > 450.);
     }
 
     fn document() -> Presentation {

@@ -39,6 +39,7 @@ struct Policy {
 /// line before it reaches the placement cursor. A newly wider line can absorb
 /// some of that outstanding adjustment. Keep the two pending boundaries apart:
 /// replacing the earlier one loses the partial adjustment on successive growth.
+#[derive(Clone, Copy)]
 struct Centering {
     extent: f64,
     offset: f64,
@@ -47,18 +48,29 @@ struct Centering {
 }
 
 impl Centering {
+    fn new(extent: f64) -> Self {
+        Self { extent, offset: 0., pending: 0., next: 0. }
+    }
+
     fn origin(&mut self, length: f64) -> f64 {
+        self.advance(length);
+        self.offset - length / 2.
+    }
+
+    fn advance(&mut self, length: f64) -> (f64, f64) {
+        let drained = self.pending;
         self.offset += self.pending;
         self.extent += 2. * self.pending;
         self.pending = self.next;
         self.next = 0.;
+        let mut expansion = 0.;
         if length > self.extent {
-            let expansion = length - self.extent;
+            expansion = length - self.extent;
             self.pending = (self.pending - expansion / 2.).max(0.);
             self.next = expansion / 4.;
             self.extent = length;
         }
-        self.offset - length / 2.
+        (drained, expansion)
     }
 }
 
@@ -200,15 +212,7 @@ impl Policy {
         self.layout_inner(children, available, scale, None, work)
     }
 
-    fn layout_inner(
-        &self,
-        children: &[BoxStyle],
-        available: f64,
-        scale: f64,
-        restored: Option<Restored<'_>>,
-        work: &mut usize,
-    ) -> Result<Packing, &'static str> {
-        charge(work, children.len().saturating_mul(3))?;
+    fn lines(&self, children: &[BoxStyle], available: f64, scale: f64) -> Vec<Line> {
         let mut lines = Vec::<Line>::new();
         let mut line = Line { range: 0..0, length: 0., thickness: 0., physical_width: 0. };
         for (i, child) in children.iter().enumerate() {
@@ -228,6 +232,19 @@ impl Policy {
         if !line.range.is_empty() {
             lines.push(line);
         }
+        lines
+    }
+
+    fn layout_inner(
+        &self,
+        children: &[BoxStyle],
+        available: f64,
+        scale: f64,
+        restored: Option<Restored<'_>>,
+        work: &mut usize,
+    ) -> Result<Packing, &'static str> {
+        charge(work, children.len().saturating_mul(3))?;
+        let lines = self.lines(children, available, scale);
         let mut centering = Centering { extent: lines.first().map_or(0., |line| line.length), offset: 0., pending: 0., next: 0. };
         let mut reverse_centering = ReverseCentering::new(centering.extent);
         let mut boxes = vec![Xfrm::new(0., 0., 0., 0.); children.len()];
@@ -314,12 +331,420 @@ fn occupied_packing(mut boxes: Vec<Xfrm>) -> Packing {
     Packing { boxes, width: right - left, height: bottom - top, complete: false }
 }
 
+#[derive(Clone, Copy)]
+enum CenterFitPhase {
+    Fits,
+    RawOverflow,
+    CenterOverflow(usize),
+    CrossOverflow,
+}
+
+struct CenterTrial {
+    lines: Vec<Line>,
+    centers: Vec<Centering>,
+    phase: CenterFitPhase,
+}
+
+#[derive(Default)]
+struct CenterExit {
+    stop: Option<usize>,
+    cross_failed: bool,
+    raw_failed: bool,
+}
+
+struct CenterSearch {
+    initial: CenterTrial,
+    best: CenterTrial,
+    scale: f64,
+    exit: CenterExit,
+}
+
+impl CenterExit {
+    fn observe(&mut self, phase: CenterFitPhase) {
+        self.raw_failed = matches!(phase, CenterFitPhase::RawOverflow);
+        match phase {
+            CenterFitPhase::Fits => {
+                self.stop = None;
+                self.cross_failed = false;
+            }
+            CenterFitPhase::CenterOverflow(index) => {
+                self.stop = Some(index);
+                self.cross_failed = false;
+            }
+            CenterFitPhase::CrossOverflow => self.cross_failed = true,
+            CenterFitPhase::RawOverflow => {}
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct FittedLine {
+    nominal: Centering,
+    fitted: Centering,
+    reference: f64,
+    length: f64,
+    largest: f64,
+    largest_offset: f64,
+    correction: f64,
+    expansion: f64,
+}
+
+/// Fitting retains the nominal alignment references while dimensions change.
+/// Keep both centering cursors: an alignment correction moves the fitted cursor,
+/// and its portion not consumed by line growth becomes pending for the next line.
+struct FittedCentering {
+    nominal: Centering,
+    fitted: Centering,
+    nominal_refs: [f64; 2],
+    fitted_refs: [f64; 2],
+    held: [bool; 2],
+    balance: f64,
+    reference_origin: f64,
+    corrected: bool,
+    previous: Option<f64>,
+    largest: f64,
+    largest_offset: f64,
+    rebound: Option<f64>,
+}
+
+impl FittedCentering {
+    fn new(first: f64, scale: f64) -> Self {
+        Self {
+            nominal: Centering::new(first),
+            fitted: Centering::new(first * scale),
+            nominal_refs: [first; 2],
+            fitted_refs: [first * scale; 2],
+            held: [false; 2],
+            balance: 0.,
+            reference_origin: 0.,
+            corrected: false,
+            previous: None,
+            largest: 0.,
+            largest_offset: 0.,
+            rebound: None,
+        }
+    }
+
+    fn advance(&mut self, length: f64, scale: f64, index: usize, nominal_balance: Option<f64>) -> FittedLine {
+        let pending_before = self.fitted.next;
+        let rebound = self.rebound.take();
+        let (nominal_growth, nominal_expansion) = self.nominal.advance(length);
+        let (fitted_growth, expansion) = self.fitted.advance(length * scale);
+        for ((nominal, fitted), held) in self.nominal_refs.iter_mut().zip(&mut self.fitted_refs).zip(self.held) {
+            *nominal += 2. * nominal_growth;
+            if !held {
+                *fitted += 2. * fitted_growth;
+            }
+        }
+        // The slot is internal parity, never an input-derived index.
+        let slot = index % 2;
+        let reference = self.nominal_refs[slot];
+        let mut alignment = self.fitted_refs[slot];
+        let origin = if self.held[slot] { self.reference_origin } else { 0. };
+        self.held[slot] = false;
+        let mut correction = 0.;
+        if let Some(previous) = self.previous.filter(|_| index >= 2 && exceeds(length, reference)) {
+            let previous = previous * scale;
+            if exceeds(previous, alignment) || exceeds(alignment, previous) {
+                // A held boundary that grows replaces the following line's
+                // reference. Its nominal correction is scaled once; retaining
+                // an earlier fitted correction would suppress later growth.
+                if let Some((boundary, nominal)) = rebound.zip(nominal_balance) {
+                    alignment = boundary;
+                    self.balance = nominal * scale;
+                }
+                let candidate = (length - reference - (alignment - previous).max(0.)) / 2.;
+                let consumed = if exceeds(previous, alignment) { self.balance.max(expansion / 2.) } else { self.balance };
+                correction = (candidate - consumed - origin).max(0.);
+                if exceeds(correction, 0.) {
+                    // Correcting the left boundary can release pending growth
+                    // consumed by this line's expansion. Recompute that balance
+                    // from its value before expansion, including partial release.
+                    let pending = (pending_before + (correction - expansion) / 2.).max(0.) - self.fitted.pending;
+                    self.fitted.offset -= correction;
+                    self.fitted.pending += pending;
+                    self.reference_origin += pending * (2. * scale - 1.);
+                    self.balance += correction - 2. * pending.min(self.nominal.pending);
+                    self.corrected = true;
+                } else if self.corrected {
+                    self.held[slot] = true;
+                }
+            }
+        }
+        if !self.held[slot] {
+            self.nominal_refs[slot] = reference.max(length);
+        }
+        self.fitted_refs[slot] = 2. * self.fitted.extent - reference * scale;
+        if exceeds(length, self.largest) {
+            self.largest = length;
+            self.largest_offset = self.nominal.offset;
+        }
+        self.previous = Some(length);
+        if self.held[slot] && exceeds(nominal_expansion, 0.) {
+            self.rebound = Some(self.fitted.extent - expansion);
+        }
+        FittedLine {
+            nominal: self.nominal,
+            fitted: self.fitted,
+            reference,
+            length,
+            largest: self.largest,
+            largest_offset: self.largest_offset,
+            correction,
+            expansion,
+        }
+    }
+}
+
+impl Policy {
+    fn center_trial(&self, children: &[BoxStyle], flow: f64, cross: f64, scale: f64, work: &mut usize) -> Result<CenterTrial, &'static str> {
+        charge(work, children.len().saturating_mul(3))?;
+        let lines = self.lines(children, flow, scale);
+        let mut centering = Centering::new(lines.first().map_or(0., |line| line.length));
+        let mut centers = Vec::with_capacity(lines.len());
+        let (mut cross_extent, mut raw_overflow, mut stop) = (0., false, None);
+        for (index, line) in lines.iter().enumerate() {
+            centering.origin(line.length);
+            centers.push(centering);
+            raw_overflow |= exceeds(line.length, flow);
+            if stop.is_none() && exceeds(centering.extent + 2. * centering.pending, flow) {
+                stop = Some(index);
+            }
+            cross_extent += line.thickness;
+            if index > 0 {
+                cross_extent += self.gap * scale;
+            }
+        }
+        let phase = if raw_overflow {
+            CenterFitPhase::RawOverflow
+        } else if exceeds(centering.extent + 2. * centering.pending, flow) {
+            CenterFitPhase::CenterOverflow(stop.unwrap_or(0))
+        } else if exceeds(cross_extent, cross) {
+            CenterFitPhase::CrossOverflow
+        } else {
+            CenterFitPhase::Fits
+        };
+        Ok(CenterTrial { lines, centers, phase })
+    }
+
+    fn fit_centered(&self, children: &[BoxStyle], frame: Xfrm, grow: &str, refit: bool, work: &mut usize) -> Result<Packing, &'static str> {
+        let (flow, cross) = if self.column { (frame.h, frame.w) } else { (frame.w, frame.h) };
+        let initial = self.center_trial(children, flow, cross, 1., work)?;
+        if !refit && matches!(initial.phase, CenterFitPhase::Fits) {
+            return self.layout(children, flow, 1., work);
+        }
+        let (mut low, mut high) = (0., 1.);
+        let mut exit = CenterExit::default();
+        loop {
+            let trial = self.center_trial(children, flow, cross, high * 0.5, work)?;
+            exit.observe(trial.phase);
+            if matches!(trial.phase, CenterFitPhase::Fits) {
+                break;
+            }
+            high *= 0.5;
+        }
+        let mut best = self.center_trial(children, flow, cross, 0., work)?;
+        for _ in 0..10 {
+            let scale = (low + high) / 2.;
+            let trial = self.center_trial(children, flow, cross, scale, work)?;
+            exit.observe(trial.phase);
+            if matches!(trial.phase, CenterFitPhase::Fits) {
+                low = scale;
+                best = trial;
+            } else {
+                high = scale;
+            }
+        }
+        // Raw length rejection precedes placement. The accepted dimensions can
+        // use an ordinary layout without retaining intermediate alignment state.
+        if exit.raw_failed {
+            return self.layout(children, flow, low, work);
+        }
+        self.finish_centered(children, CenterSearch { initial, best, scale: low, exit }, flow, grow, work)
+    }
+
+    fn nominal_seed(&self, children: &[BoxStyle], trial: &CenterTrial, grow: &str) -> Vec<Xfrm> {
+        let mut boxes: Vec<_> = children.iter().map(|c| Xfrm::new(0., 0., c.rect.w, c.rect.h)).collect();
+        let first = trial.lines.first().map_or(0., |line| line.length);
+        let mut cross = 0.;
+        for (index, (line, center)) in trial.lines.iter().zip(&trial.centers).enumerate() {
+            let mut pos = first / 2. + center.offset - line.length / 2.;
+            for (child, rect) in
+                children.get(line.range.clone()).unwrap_or_default().iter().zip(boxes.get_mut(line.range.clone()).unwrap_or_default())
+            {
+                let (length, thickness) = if self.column { (child.rect.h, child.rect.w) } else { (child.rect.w, child.rect.h) };
+                rect.x = pos;
+                rect.y = cross + (line.thickness - thickness) / 2.;
+                pos += length;
+            }
+            cross += line.thickness + self.gap;
+            if matches!(trial.phase, CenterFitPhase::CenterOverflow(stop) if index == stop) {
+                return boxes;
+            }
+        }
+        if self.column {
+            for rect in &mut boxes {
+                std::mem::swap(&mut rect.x, &mut rect.y);
+            }
+        }
+        let left = boxes.iter().map(|r| r.x).fold(f64::INFINITY, f64::min);
+        let right = boxes.iter().map(|r| r.x + r.w).fold(f64::NEG_INFINITY, f64::max);
+        let top = boxes.iter().map(|r| r.y).fold(f64::INFINITY, f64::min);
+        let bottom = boxes.iter().map(|r| r.y + r.h).fold(f64::NEG_INFINITY, f64::max);
+        for rect in &mut boxes {
+            if grow.ends_with('R') {
+                rect.x = left + right - rect.x - rect.w;
+            }
+            if grow.starts_with('b') {
+                rect.y = top + bottom - rect.y - rect.h;
+            }
+        }
+        boxes
+    }
+
+    fn aborted_seed(&self, children: &[BoxStyle], lines: &[Line], states: &[FittedLine], stop: usize) -> Vec<Xfrm> {
+        let mut boxes: Vec<_> = children.iter().map(|c| Xfrm::new(0., 0., c.rect.w, c.rect.h)).collect();
+        let first = states.first().map_or(0., |s| s.length);
+        let (mut cross, mut origin) = (0., 0.);
+        for (index, (line, state)) in lines.iter().zip(states).enumerate() {
+            let members = children.get(line.range.clone()).unwrap_or_default();
+            let thickness = members.iter().map(|c| if self.column { c.rect.w } else { c.rect.h }).fold(0_f64, f64::max);
+            let mut pos = if index == stop { origin } else { first / 2. + state.nominal.offset - state.length / 2. };
+            origin = pos;
+            for (child, rect) in members.iter().zip(boxes.get_mut(line.range.clone()).unwrap_or_default()) {
+                let (length, cross_size) = if self.column { (child.rect.h, child.rect.w) } else { (child.rect.w, child.rect.h) };
+                rect.x = pos;
+                rect.y = cross + (thickness - cross_size) / 2.;
+                pos += length;
+            }
+            cross += thickness + self.gap;
+            if index == stop {
+                break;
+            }
+        }
+        boxes
+    }
+
+    fn finish_centered(&self, children: &[BoxStyle], search: CenterSearch, flow: f64, grow: &str, work: &mut usize) -> Result<Packing, &'static str> {
+        charge(work, children.len().saturating_mul(10))?;
+        let CenterSearch { initial, best, scale, exit } = search;
+        let nominal_length = |line: &Line| {
+            children.get(line.range.clone()).unwrap_or_default().iter().map(|c| if self.column { c.rect.h } else { c.rect.w }).sum::<f64>()
+        };
+        let first = best.lines.first().map_or(0., &nominal_length);
+        let mut centering = FittedCentering::new(first, scale);
+        let mut nominal = FittedCentering::new(initial.lines.first().map_or(0., &nominal_length), 1.);
+        let mut nominal_balance = 0.;
+        let mut nominal_balances = Vec::with_capacity(initial.lines.len());
+        for (index, line) in initial.lines.iter().enumerate() {
+            nominal_balances.push(nominal_balance);
+            nominal_balance += nominal.advance(nominal_length(line), 1., index, None).correction;
+        }
+        let mut states = Vec::with_capacity(best.lines.len());
+        for (index, line) in best.lines.iter().enumerate() {
+            let length = nominal_length(line);
+            let balance = nominal_balances.get(index).copied().unwrap_or(nominal_balance);
+            states.push(centering.advance(length, scale, index, Some(balance)));
+        }
+        // A failed center trial stops before orientation and leaves unvisited
+        // children at their original origin. It must not seed a completed layout.
+        let mut boxes = if let Some(stop) = exit.stop {
+            self.aborted_seed(children, &best.lines, &states, stop)
+        } else {
+            self.nominal_seed(children, &initial, grow)
+        };
+        for rect in &mut boxes {
+            rect.w *= scale;
+            rect.h *= scale;
+        }
+        let (mut cross, mut origin, mut low, mut high) = (0., 0., f64::INFINITY, f64::NEG_INFINITY);
+        let mut previous: Option<FittedLine> = None;
+        for (index, ((line, normal), &state)) in best.lines.iter().zip(&best.centers).zip(&states).enumerate() {
+            let ordinary = (self.column || grow.ends_with('R')) && !exit.cross_failed && exit.stop.is_none();
+            let proper = if ordinary { normal.offset } else { state.fitted.offset };
+            let mut anchor = proper;
+            if let Some(prior) = previous.filter(|p| exceeds(p.length, p.reference)) {
+                anchor = (first - prior.largest) / 2. + prior.largest_offset + (4. * state.nominal.offset - prior.largest_offset) * scale
+                    - 2. * (prior.fitted.next - prior.nominal.next * scale);
+            }
+            let mut tail = proper - anchor;
+            let mut pos = origin;
+            if exit.stop.is_some() && exceeds(high - low, flow) {
+                return Ok(occupied_packing(boxes));
+            }
+            for (child, rect) in
+                children.get(line.range.clone()).unwrap_or_default().iter().zip(boxes.get_mut(line.range.clone()).unwrap_or_default())
+            {
+                let (length, thickness) = if self.column { (child.rect.h, child.rect.w) } else { (child.rect.w, child.rect.h) };
+                rect.x = pos;
+                rect.y = cross + (line.thickness - thickness * scale) / 2.;
+                pos += length * scale;
+            }
+            // Fitting can overflow its logical extent before this row reaches
+            // final centering. Growing rows still use the carried boundary;
+            // following children retain their nominal positions.
+            if exit.stop.is_none() && !ordinary && exceeds(state.fitted.extent + 2. * state.fitted.pending, flow) {
+                let adjustment = if exceeds(state.expansion, 0.) {
+                    first * scale / 2. + proper - line.length / 2. + state.expansion / 2. - origin
+                } else {
+                    -state.correction
+                };
+                for rect in boxes.get_mut(line.range.clone()).unwrap_or_default() {
+                    rect.x += adjustment;
+                }
+                return Ok(occupied_packing(boxes));
+            }
+            // The current row has working positions before the earlier painted
+            // extent is checked. An abort leaves later nominal positions intact.
+            if exceeds(high - low, flow) {
+                return Ok(occupied_packing(boxes));
+            }
+            if exit.stop == Some(index) {
+                tail += state.correction;
+                if let Some(prior) = previous {
+                    tail -= prior.fitted.pending - prior.nominal.pending * scale;
+                }
+                for rect in boxes.get_mut(line.range.clone()).unwrap_or_default() {
+                    rect.x -= tail;
+                }
+                return Ok(occupied_packing(boxes));
+            }
+            let wanted = first * scale / 2. + proper - line.length / 2.;
+            let tail = if exit.cross_failed && index + 1 == best.lines.len() { tail } else { 0. };
+            for rect in boxes.get_mut(line.range.clone()).unwrap_or_default() {
+                rect.x += wanted - origin - tail;
+            }
+            origin = wanted;
+            low = low.min(wanted - tail);
+            high = high.max(wanted - tail + line.length);
+            cross += line.thickness + self.gap * scale;
+            previous = Some(state);
+        }
+        if exceeds(high - low, flow) {
+            return Ok(occupied_packing(boxes));
+        }
+        if self.column {
+            for rect in &mut boxes {
+                std::mem::swap(&mut rect.x, &mut rect.y);
+            }
+        }
+        let mut packed = occupied_packing(boxes);
+        packed.complete = true;
+        Ok(packed)
+    }
+}
+
 pub(super) fn pack(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], refit: bool, work: &mut usize) -> Result<(), &'static str> {
     if children.is_empty() {
         return Ok(());
     }
     let policy = Policy::new(node, style, children.len());
     let frame = style.rect;
+    if policy.center && !policy.reverse {
+        let packed = policy.fit_centered(children, frame, &node.param("grDir", "tL"), refit, work)?;
+        place(node, frame, children, packed);
+        return Ok(());
+    }
     let available = if policy.column { frame.h } else { frame.w };
     let fits = |packing: &Packing| !exceeds(packing.width, frame.w) && !exceeds(packing.height, frame.h);
     let mut packed = policy.layout(children, available, 1., work)?;
@@ -497,6 +922,120 @@ mod tests {
             })
             .collect();
         centers.iter().map(|v| v - centers[0]).collect()
+    }
+
+    #[test]
+    fn centered_fitting_uses_logical_extent_and_retains_a_failed_tail_anchor() {
+        let sizes = [(11., 31.), (28., 12.), (17., 24.), (29., 18.), (14., 22.)];
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "2"), ("off", "ctr")];
+        let actual = packed(&sizes, (43., 51.), &params, 0.);
+        for (rect, (w, h)) in actual.iter().zip(sizes) {
+            assert!((rect.w / w - 678. / 1024.).abs() < 1e-7);
+            assert!((rect.h / h - 678. / 1024.).abs() < 1e-7);
+        }
+        for (center, expected) in relative_line_centers(&actual, 2, false).into_iter().zip([0., 0., -3.5]) {
+            assert!((center - expected).abs() < 1e-7, "{center} != {expected}");
+        }
+    }
+
+    #[test]
+    fn fitted_centering_retains_extent_until_new_growth_exceeds_it() {
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr")];
+        for (middle, advance) in [(58.3, 4.755859375), (58.4, 4.739013671875)] {
+            let sizes = [20., 40., 30., 20., middle, 20., 90., 20., 20., 20.].map(|w| (w, 9.));
+            let actual = packed(&sizes, (200., 99. * 615.25 / 1024.), &params, 1.);
+            let centers = relative_line_centers(&actual, 1, false);
+            assert!((centers[8] - centers[6] - advance).abs() < 1e-7);
+            assert!((centers[2] + 5.).abs() < 1e-7);
+            assert!((actual[0].w / 20. - 615. / 1024.).abs() < 1e-7);
+        }
+    }
+
+    #[test]
+    fn low_scale_alignment_carries_only_correction_not_consumed_by_growth() {
+        let widths = [23.4, 46.8, 34.9, 17.3, 61.2, 18.1, 103.7, 14.8, 133.3, 22.6];
+        let sizes: Vec<_> = widths.into_iter().enumerate().map(|(i, w)| (w, 7.3 + 1.9 * (i % 4) as f64)).collect();
+        let cross = sizes.iter().map(|s| s.1).sum::<f64>() + 1.3 * 9.;
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr")];
+        let actual = packed(&sizes, (200., cross * 359.75 / 1024.), &params, 1.3);
+        let centers = relative_line_centers(&actual, 1, false);
+        assert!((actual[0].w / widths[0] - 719. / 2048.).abs() < 1e-7);
+        assert!((centers[6] + 14.6219482421875).abs() < 1e-7);
+        assert!((centers[7] - centers[6] - 1.8410888671875).abs() < 1e-7);
+        assert!((centers[8] - centers[7] - 2.529638671875).abs() < 1e-7);
+    }
+
+    #[test]
+    fn centering_flow_abort_precedes_pending_drain_and_orientation() {
+        let sizes = [20., 40., 20., 20., 80., 20.].map(|w| (w, 10.));
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr")];
+        let actual = packed(&sizes, (43., 100.), &params, 0.);
+        let centers = relative_line_centers(&actual, 1, false);
+        assert!((actual[0].w / 20. - 463. / 1024.).abs() < 1e-7);
+        assert!((centers[4] + 11.435546875).abs() < 1e-7);
+        assert!((centers[5] + 31.7822265625).abs() < 1e-7);
+        let mut reflected = params.to_vec();
+        reflected.push(("grDir", "bR"));
+        let mirrored = packed(&sizes, (43., 100.), &reflected, 0.);
+        assert_eq!(actual, mirrored);
+    }
+
+    #[test]
+    fn fitted_held_reference_rebinds_and_releases_cancelled_pending_growth() {
+        let widths = [41., 33., 76., 18., 42., 90., 49., 108., 122., 57., 27., 69.];
+        let sizes: Vec<_> = widths.into_iter().enumerate().map(|(i, w)| (w, 5. + (i * 7 % 13) as f64)).collect();
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr")];
+        let actual = packed(&sizes, (200., 57.397395859375), &params, 2.9);
+        let expected = [
+            0.,
+            0.,
+            -16.099609375,
+            -14.176513671875,
+            -11.1131591796875,
+            -11.1131591796875,
+            -11.1131591796875,
+            -11.1131591796875,
+            -20.6368408203125,
+            -18.01812744140625,
+            -16.79278564453125,
+            -16.79278564453125,
+        ];
+        for (center, expected) in relative_line_centers(&actual, 1, false).into_iter().zip(expected) {
+            assert!((center - expected).abs() < 1e-7, "{center} != {expected}");
+        }
+        for (rect, size) in actual.iter().zip(sizes) {
+            assert!((rect.w / size.0 - 717. / 2048.).abs() < 1e-7);
+        }
+    }
+
+    #[test]
+    fn fitted_logical_abort_uses_carried_extent_and_preserves_following_nominal_positions() {
+        let widths = [47., 39., 84., 21., 49., 98., 55., 116., 138., 65., 29., 73.];
+        let sizes: Vec<_> = widths.into_iter().enumerate().map(|(i, w)| (w, 5. + (i * 7 % 13) as f64)).collect();
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr")];
+        let actual = packed(&sizes, (43.42291259765625, 43.952473984375), &params, 2.9);
+        let centers = relative_line_centers(&actual, 1, false);
+        assert!((centers[8] + 22.1077880859375).abs() < 1e-7);
+        assert!((centers[9] - 2.66259765625).abs() < 1e-7);
+        assert!((actual[9].y - actual[0].y - 115.1).abs() < 1e-7);
+        assert!((actual[10].y - actual[9].y - 18.9).abs() < 1e-7);
+        assert!((actual[11].y - actual[10].y - 12.9).abs() < 1e-7);
+        for (rect, size) in actual.iter().zip(sizes) {
+            assert!((rect.h / size.1 - 549. / 2048.).abs() < 1e-7);
+        }
+    }
+
+    #[test]
+    fn failed_center_seed_leaves_unvisited_children_at_the_original_origin() {
+        let sizes = [18., 112., 29., 17., 77., 21., 93., 19.].map(|w| (w, 9.));
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr")];
+        let actual = packed(&sizes, (39., 200.), &params, 1.3);
+        assert!((actual[2].x - actual[0].x + 58.5205078125).abs() < 1e-7);
+        for rect in &actual[3..] {
+            assert!((rect.x - actual[0].x).abs() < 1e-7);
+            assert!((rect.y - actual[0].y).abs() < 1e-7);
+        }
+        assert!((actual[2].y - actual[1].y - 2.52470703125).abs() < 1e-7);
     }
 
     #[test]

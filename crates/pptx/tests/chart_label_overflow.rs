@@ -454,3 +454,98 @@ fn manual_labels_center_the_retained_block_and_keep_authored_anchor_ctr() {
         assert_eq!(body.text(), "WWWW\nI\nI\nI");
     }
 }
+
+fn baseline_control(value: f64, size: f64) -> Presentation {
+    let mut p = original(None);
+    let ShapeKind::Chart(chart) = &mut Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("chart") };
+    chart.y_min = Some(if value < 0. { -10. } else { 0. });
+    chart.y_max = Some(if value < 0. { 0. } else { 10. });
+    chart.series[0].values = vec![Some(value)];
+    chart.format.plot_layout =
+        Some(ChartLayout { inner: true, x: Some(0.1), y: Some(0.15), w: Some(0.7), h: Some(0.65), x_edge: true, y_edge: true, ..Default::default() });
+    let label = chart.series[0].point_labels.get_mut(&0).unwrap();
+    label.fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 255, 0))));
+    for para in &mut label.text.as_mut().unwrap().paragraphs {
+        para.runs[0].props.size = Some(size);
+    }
+    p
+}
+
+#[test]
+fn centered_labels_keep_their_background_inside_the_positive_or_negative_baseline() {
+    for (value, top, bottom) in [
+        (1., 132.525, 317.),
+        (3., 132.525, 317.),
+        (7., 132.525, 317.),
+        (9., 110.7625, 295.2375),
+        (-1., 63., 247.475),
+        (-3., 63., 247.475),
+        (-7., 63., 247.475),
+        (-9., 84.7625, 269.2375),
+    ] {
+        let back = rebuilt(&baseline_control(value, 30.));
+        let bg = painted_bounds(&back, true).unwrap();
+        assert!((bg.1 as f64 - top).abs() <= 1.5 && (bg.3 as f64 + 1. - bottom).abs() <= 1.5, "value={value}: {bg:?}");
+        assert!(painted_bounds(&back, false).is_some());
+    }
+}
+
+#[test]
+fn baseline_placement_preserves_wrapped_and_unwrapped_overflow_policies() {
+    for value in [1., -1.] {
+        for (angle, wrap) in [(0., true), (37., true), (180., true), (0., false)] {
+            let mut p = baseline_control(value, 18.);
+            let ShapeKind::Chart(chart) = &mut Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("chart") };
+            let body = chart.series[0].point_labels.get_mut(&0).unwrap().text.as_mut().unwrap();
+            body.body.wrap = Some(wrap);
+            body.body.rot = Some(angle);
+            body.body.vertical_overflow = Some(TextOverflow::Overflow);
+            let back = rebuilt(&p);
+            let bg = painted_bounds(&back, true).unwrap();
+            let expected_top = if wrap {
+                if value > 0. { 117. } else { 63. }
+            } else if value > 0. {
+                84.85
+            } else {
+                30.85
+            };
+            assert!((bg.1 as f64 - expected_top).abs() <= 1.5, "value={value}, angle={angle}, wrap={wrap}: {bg:?}");
+            assert!(bg.3 - bg.1 > 240, "overflow retains the complete body after positioning its cap");
+            let ShapeKind::Chart(chart) = &back.slides[0].shapes[0].kind else { panic!("chart") };
+            let body = chart.series[0].point_labels[&0].text.as_ref().unwrap();
+            assert_eq!(body.body.wrap, Some(wrap));
+            assert_eq!(body.body.vertical_overflow, Some(TextOverflow::Overflow));
+            assert_eq!(body.paragraphs.len(), 12);
+        }
+    }
+}
+
+#[test]
+fn an_oversized_first_line_extends_from_the_positioned_cap_for_every_overflow_policy() {
+    for (font, size, angle, policy, value) in [
+        ("Inter", 48., 0., None, 7.),
+        ("Inter", 48., 0., Some(TextOverflow::Clip), 7.),
+        ("Lato", 44., 0., None, 7.),
+        ("Inter", 48., 37., None, 7.),
+        ("Inter", 48., 37., None, -7.),
+        ("Inter", 48., 0., Some(TextOverflow::Overflow), 7.),
+    ] {
+        let mut p = baseline_control(value, size);
+        let shape = &mut Arc::make_mut(&mut p.slides[0]).shapes[0];
+        shape.xfrm = Some(Xfrm::new(0., 0., 800., 100.));
+        let ShapeKind::Chart(chart) = &mut shape.kind else { panic!("chart") };
+        let body = chart.series[0].point_labels.get_mut(&0).unwrap().text.as_mut().unwrap();
+        body.body.rot = Some(angle);
+        body.body.vertical_overflow = policy;
+        body.paragraphs.truncate(2);
+        for (i, p) in body.paragraphs.iter_mut().enumerate() {
+            p.runs[0].text = "I".into();
+            p.runs[0].props.font = Some(font.into());
+            p.runs[0].props.size = Some(if i == 0 { size } else { 12. });
+        }
+        let bg = painted_bounds(&rebuilt(&p), true).unwrap();
+        let expected_top = if value > 0. { 27. } else { 18. };
+        assert!((bg.1 as f64 - expected_top).abs() <= 1.5, "{font}, {angle}, {policy:?}, value={value}: {bg:?}");
+        assert!(bg.3 - bg.1 > 50, "the retained first line is taller than the cap");
+    }
+}

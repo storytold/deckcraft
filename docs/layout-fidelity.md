@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.46): staged independent linear text rules, fine chart-label
-advances and bounded geographic cache rebuilding; remaining native differences stay explicit.
+Updated 2026-11-02 (PPTX.48): centered snake fitting and rich-column baseline
+constraints; integrated native comparisons retain unresolved differences.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -2639,3 +2639,80 @@ All new published material is Rust source, contributor-original programmatic tes
 technical documentation. Native documents, vendor/provider geometry, screenshots, fonts,
 user content and evidence paths remain private. Final local `cargo xtask ci` passes all eight stages with 2,631 tests including doctests.
 Hosted CI is tracked separately. The earlier interrupted run is not counted as a pass.
+
+
+## PPTX.48 — centered snake fitting and column-label baselines
+
+### Keep fitting and placement state separate
+
+Centered same-direction snake fitting now measures logical extents after pending
+alignment changes, using a bounded normalized search. Nominal and fitted alignment
+references remain separate. A growing held boundary replaces the following reference;
+its nominal correction is scaled once. A leftward correction restores the portion of
+pending growth consumed by line expansion. Raw-length rejection, centered-flow overflow,
+cross-axis overflow and final logical overflow stop at different stages. Unvisited
+children retain zero or nominal placement seeds as appropriate, and partial exits do
+not incorrectly apply the completed layout's transpose or reflection.
+
+The worker's 1,425-case, 61-source geometry matrix improves from 1,254 to 1,410 strict
+matches, with no lost match or increased measured error. All 334 comparisons with an
+independent private geometry model agree within 0.025pt; the largest difference is
+0.013405pt, including rounded inspection coordinates. An initial candidate lost eight
+prior matches and is rejected. Independent reference tests include a six-case holdout
+that initially predicted five correctly; the corrected model explains all six, and a
+subsequent four-case holdout predicts all four. The retrospective correction is not
+counted as an original successful prediction.
+
+Integration deduplicates those sources with the preceding text-rule matrix: 1,921
+cases in 80 groups improve from 1,681 to 1,837 strict matches. No prior match is lost,
+and no common-box maximum or mean error worsens by more than 0.025pt. All 1,425 shared
+worker geometries are reproduced exactly. These are geometric comparisons, not a
+claim of complete pixel equivalence or coverage of every SmartArt algorithm.
+
+Visible-bound checks initially pass nine of fourteen cases at 4K. Of the five large-canvas
+failures rechecked at eight pixels per point, four meet the same 0.35pt threshold; one
+remains at 0.375pt. Those higher-resolution observations do not rewrite the original
+nine-of-fourteen result. Fifteen worker cases still fail strict geometry: six
+same-direction cases, including four clipping-only mismatches, and nine pre-existing
+reverse cases. Hierarchy defaults, coupled text-rule allocation and broader reverse
+abort behavior remain incomplete.
+
+### Centered column labels stop at the bar baseline
+
+Centered labels constrain their center to leave three points inside the bar baseline.
+Automatic labels use their capped rotated extent; fixed manual labels use the unrotated
+height. Authored offsets are applied afterwards, followed by the existing chart-frame
+clipping. Explicit wrapped overflow and a retained oversized first line expand from
+the positioned cap. No-wrap overflow keeps the full body centered on the constrained
+center. Stored label text and authored properties are preserved.
+
+Thirty-four new original pages in five packages pass schema validation and native
+open/export. An initially transient native rotation result is retained, while two
+subsequent exports of identical source bytes agree on all six affected pages. A package
+with invalid XML ordering is excluded and replaced with an independently validated
+source; neither the invalid run nor the transient is silently counted as a pass.
+
+Across 733 pages, 621 retain identical pixels and 112 change. The standard text-bound
+metric improves on 107 changed pages, worsens on two at coarse resolution and is unchanged
+on three. Mean RMS over changed comparable pages falls from 10.917 to 0.988pt. Background
+bounds improve on 105 of 108 comparable changed pages, with no regression. Both coarse
+text regressions improve when separately measured at eight pixels per point, but remain
+reported in the coarse counts. Line-band matches increase from 104 to 109 among the 112
+changed pages, without losing an earlier match.
+
+The retained 699 pages contain 619 identical pages, 78 text-bound improvements and the
+two coarse regressions. Among the 34 new pages, two are identical, 29 improve the text
+metric, three have equal bounds despite changed pixels, and none regress. Some asymmetric
+inset controls still wrap to four lines where native uses three. Native category-axis
+ink can appear over a label where the renderer currently paints the label over the axis.
+Manual edge coordinates, axis geometry, glyph hinting and marker attachment also remain
+open. This is a bounded column-label repair, not complete chart-label parity.
+
+### Integration and publication
+
+The integrated build reproduces all 733 frozen label pages and all 140 geographic
+reference images exactly. Local `cargo xtask ci` passes all eight stages, with 2,642
+tests including doctests; hosted CI is tracked separately. Native
+screenshots, source decks, provider geometry, fonts and local evidence paths remain
+private; publication includes only Rust source, original programmatic tests and these
+documents. Complete external-converter replacement is not claimed.
