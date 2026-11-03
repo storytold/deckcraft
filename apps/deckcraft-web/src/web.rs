@@ -223,6 +223,8 @@ mod wasm_smoke_tests {
     fn malformed_commands_return_errors_and_the_session_remains_usable() {
         let mut session = Session::new();
 
+        assert!(session.execute("file.new", &serde_json::json!({})).is_ok(), "a presentation must be active before shape commands");
+
         let bad_font = session.execute("font.add", &serde_json::json!({"data": "%%%"}));
         assert!(bad_font.is_err(), "invalid font data must return an error");
 
