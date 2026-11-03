@@ -451,17 +451,19 @@ impl Decoder {
             chroma_planes: if chroma == 0 { 0 } else { 2 },
             bytes_per_sample: 1,
         };
-        // Pictures waiting for output that already left the DPB are held too (one decode call may
-        // carry many access units). A buffer shared with a DPB entry is counted once.
-        let queued = self.out_queue.iter().filter(|o| !self.dpb.entries.iter().any(|e| Arc::ptr_eq(&e.frame, &o.frame))).count();
-        let dpb = sps.max_dpb_frames().max(self.dpb.entries.len());
-        let pictures = (dpb + 1 + self.max_in_flight.max(queued)) as u64;
-        ensure!(
-            shape.fits(pictures, self.memory_budget),
-            "{}x{} pictures with {pictures} in the decoder exceed the memory budget",
-            sps.width(),
-            sps.height()
-        );
+        // Pictures already held count at their own size, not the incoming SPS's: after a
+        // resolution change, larger pictures of the old size can still be in the DPB or waiting
+        // for output (one decode call may carry many access units). A buffer shared with a DPB
+        // entry is counted once.
+        let pic = shape.bytes().unwrap_or(u64::MAX);
+        let held = |frames: &mut dyn Iterator<Item = &Arc<Frame>>| frames.fold(0u64, |n, f| n.saturating_add(f.bytes()));
+        let queued = held(&mut self.out_queue.iter().filter(|o| !self.dpb.entries.iter().any(|e| Arc::ptr_eq(&e.frame, &o.frame))).map(|o| &o.frame));
+        let in_dpb = held(&mut self.dpb.entries.iter().map(|e| &e.frame));
+        let dpb = sps.max_dpb_frames().max(self.dpb.entries.len()) as u64;
+        // The DPB (the larger of its new slots and what it holds now), the picture being decoded,
+        // and what is in flight or queued.
+        let bytes = pic.saturating_mul(dpb).max(in_dpb).saturating_add(pic).saturating_add(pic.saturating_mul(self.max_in_flight as u64).max(queued));
+        ensure!(bytes <= self.memory_budget, "{}x{} pictures with {bytes} bytes in the decoder exceed the memory budget", sps.width(), sps.height());
         Ok(())
     }
 

@@ -715,3 +715,11 @@ fn output_queue_counts_against_the_memory_budget() {
     let err = dec.decode(&[head, ps.concat()].concat(), 0).expect_err("output queue is over budget");
     assert!(err.to_string().contains("memory budget"), "{err}");
 }
+
+/// A held picture is charged at its own size (luma and both 4:2:0 chroma planes), the same
+/// count the budget uses for the incoming SPS's pictures.
+#[test]
+fn a_held_frame_is_charged_at_its_own_size() {
+    let f = crate::picture::Frame::new(0, 0, 2, 3);
+    assert_eq!(f.bytes(), (2 * 3 * 256 + 2 * 2 * 3 * 64) as u64);
+}
