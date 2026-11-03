@@ -220,7 +220,8 @@ mod tests {
             let outside = path.with_extension("outside.ttf");
             std::fs::create_dir(path.join("fonts")).unwrap();
             std::fs::write(path.join("fonts/fixture.ttf"), b"build-input path fixture").unwrap();
-            std::fs::write(&outside, b"owned path fixture outside root").unwrap();
+            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&outside).unwrap();
+            std::io::Write::write_all(&mut file, b"owned path fixture outside root").unwrap();
             std::fs::write(
                 path.join("fonts/manifest.txt"),
                 "BIZ UDPGothic | Regular | fonts/fixture.ttf | Jpan,Latn | OFL-1.1 | OFL.txt | fixture | https://example.invalid\n\
