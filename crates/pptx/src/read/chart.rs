@@ -39,6 +39,14 @@ pub(crate) fn rich_text(t: &El) -> Option<String> {
 /// Most category/value/size slots one chart may decode across all its series and caches, so
 /// sparse `ptCount`/`idx` declarations can't expand far beyond the XML they came from.
 pub(crate) const MAX_CHART_POINTS: usize = 1_000_000;
+/// Data slots (values and categories) the charts of one presentation may hold in all; a chart past
+/// it is read as a placeholder frame. Each frame that references a chart decodes its own copy.
+pub(crate) const MAX_PRESENTATION_CHART_POINTS: usize = 4_000_000;
+
+/// Slots a decoded chart holds, counting the chart itself as at least one.
+pub(crate) fn point_count(c: &Chart) -> usize {
+    1 + c.categories.len() + c.series.iter().map(|s| s.values.len()).sum::<usize>()
+}
 
 /// Most slots one cache may hold.
 const MAX_CACHE_POINTS: usize = 100_000;
@@ -466,6 +474,13 @@ pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_
 
     let key = crate::opc::norm(chart_part);
     if let Some(cached) = imp.kept_charts.get(&key) {
+        // Every frame that shows this chart gets its own copy, so each copy is charged like the first.
+        let bytes: usize = cached.parts.iter().map(|p| p.bytes.len()).sum();
+        if imp.kept_sidecar_bytes.saturating_add(bytes) > MAX_KEPT_TOTAL_BYTES {
+            log::warn!("pptx: chart sidecar retained byte budget exceeded for {chart_part}");
+            return ChartKept::default();
+        }
+        imp.kept_sidecar_bytes += bytes;
         return cached.clone();
     }
 
