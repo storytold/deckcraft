@@ -495,6 +495,9 @@ fn sane_shadow(s: &mut deckcraft_model::style::Shadow) {
 fn sane_reflection(r: &mut deckcraft_model::style::Reflection) {
     r.blur = effect_size(r.blur, MAX_REFLECTION);
     r.dist = effect_size(r.dist, MAX_REFLECTION);
+    if r.align.as_deref().is_some_and(|v| !matches!(v, "tl" | "t" | "tr" | "l" | "ctr" | "r" | "bl" | "b" | "br")) {
+        r.align = None;
+    }
 }
 
 /// Run properties a list style hands down to the text that inherits it.
