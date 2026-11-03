@@ -149,6 +149,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-02 | Deleting slides removes their IDs from every custom show; the cleanup is undoable and survives native save/reopen |
 | 2026-11-02 | File › About replaces the unused Account page, with version, project links, contributor/model credits and appearance preferences |
 | 2026-11-02 | Tiled picture fills in groups: a tile (`a:blipFill` with `a:tile`) keeps its size, offset and anchor in slide points whatever the group's child-coordinate scale, uniform or stretched unevenly, nested or flipped (also a group's own tile fill passed to its members, and a picture shape's own tile, with its shadow and reflection), and tiles with `rotWithShape="0"` keep their size in points at any zoom, as PowerPoint draws them (measured on its own PNG export of a synthetic probe deck: every grouped case within ~3/255 of the ungrouped control's own difference from PowerPoint, which is ~13/255 from resampling). Before, a group whose child space was ~1800 times smaller than its box showed one flat texel of the texture (a Venn diagram with paper-textured circles and a hatched intersection) |
 | 2026-10-31 | No Fill shape interiors allow selection and editing of underlying objects, even when a quick style remains; hit-testing uses the renderer’s fill resolution. Outlines, rotation, text targets and actual fills keep their hit behaviour (#1621) |
