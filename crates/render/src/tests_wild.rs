@@ -1060,13 +1060,18 @@ fn a_reveal_of_a_turned_shape_is_measured_on_its_box_on_the_slides_axes() {
 #[test]
 fn a_reveal_includes_the_outline_in_the_boxs_bounds() {
     use deckcraft_anim::{Reveal, RevealShape};
-    // At the end of the effect the front has left the bounds just as far as the ramp is wide. An
-    // 8 pt outline reaches 4 pt past the geometry; measured on the geometry alone its outer edge
-    // would be at 1.04 and still be partly hidden; PowerPoint shows it whole.
+    // An 8 pt outline reaches 4 pt past the geometry. At the very end of the effect the front has
+    // left the bounds by a whole ramp, so a point just outside the geometry shows whole whichever
+    // bounds are used; look just before the end, at 99.5 %: the front is at 1.134, which leaves the
+    // outline's outer edge (0.99 of the bounds that include the outline) fully shown, but the
+    // geometry's own edge (1.00, what pixels outside a box that leaves the outline out would take)
+    // only 96 % shown.
     let line = Line { fill: solid(Rgba::rgb(0, 0, 0)), width: Some(8.0), ..Default::default() };
-    let img = revealed_rect(100.0, 100.0, 220.0, 120.0, 0.0, Some(line), Reveal::new(RevealShape::Box, false, 1.0));
-    assert!(shown(&img, 100 - 3, 160) > 0.99, "the outline just outside the geometry is fully shown: {}", shown(&img, 97, 160));
-    assert!(shown(&img, 320 + 3, 160) > 0.99);
+    let img = revealed_rect(100.0, 100.0, 220.0, 120.0, 0.0, Some(line.clone()), Reveal::new(RevealShape::Box, false, 1.0));
+    assert!(shown(&img, 100 - 3, 160) > 0.99 && shown(&img, 320 + 3, 160) > 0.99, "the outline is whole at the end");
+    let near_end = revealed_rect(100.0, 100.0, 220.0, 120.0, 0.0, Some(line), Reveal::new(RevealShape::Box, false, 0.995));
+    assert!(shown(&near_end, 97, 160) > 0.99, "the outline just outside the geometry is whole just before the end: {}", shown(&near_end, 97, 160));
+    assert!(shown(&near_end, 322, 160) > 0.99, "and on the other side: {}", shown(&near_end, 322, 160));
 }
 
 #[test]
