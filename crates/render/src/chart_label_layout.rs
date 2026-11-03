@@ -384,6 +384,31 @@ pub(super) fn background_extent(layout: &TextLayout) -> Option<(f64, f64)> {
     layout.lines.iter().filter(|l| l.end > l.start).map(|l| l.extent).reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
 }
 
+/// Fixed chart labels take their horizontal alignment from the first paragraph.
+/// The chart's default block centering includes the retained text, but excludes an
+/// automatic marker. Defer it until the marker reservation has positioned the lines;
+/// centering the reserved and unmarked bodies independently moves different lines.
+/// This mutates only the renderer's working copy, preserving authored properties.
+pub(super) fn manual_alignment(body: &mut TextBody) -> bool {
+    if body.body.columns.is_some_and(|n| n > 1) {
+        return false;
+    }
+    let Some(align @ (Align::Left | Align::Center | Align::Right)) = body.paragraphs.first().and_then(|p| p.props.align) else { return false };
+    let center = body.body.anchor_ctr.unwrap_or(true) || align == Align::Center;
+    body.body.anchor_ctr = Some(false);
+    for p in &mut body.paragraphs {
+        p.props.align = Some(align);
+    }
+    center
+}
+
+pub(super) fn centering_offset(layout: &TextLayout, body: &TextBody, rect: Rect) -> f64 {
+    let Some((left, right)) = background_extent(layout) else { return 0. };
+    let inner_center = (rect.x0 + body.body.inset_l.unwrap_or(0.) + rect.x1 - body.body.inset_r.unwrap_or(0.)) / 2.;
+    let dx = inner_center - (left + right) / 2.;
+    if dx.is_finite() { dx } else { 0. }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -506,6 +531,66 @@ mod tests {
             }
         }
         body
+    }
+
+    #[test]
+    fn manual_alignment_centers_retained_text_without_its_attached_marker() {
+        let p = document();
+        let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        let rect = Rect::new(300., 150., 420., 214.8);
+        for (align, anchor_ctr, expected) in [
+            (Align::Left, None, [330.2775, 330.2775]),
+            (Align::Left, Some(false), [303., 303.]),
+            (Align::Left, Some(true), [330.2775, 330.2775]),
+            (Align::Center, None, [336.91, 327.305]),
+            (Align::Center, Some(false), [336.91, 327.305]),
+            (Align::Right, None, [341.715, 322.5]),
+            (Align::Right, Some(false), [361.215, 342.]),
+        ] {
+            let mut body = rows(18.);
+            body.paragraphs.truncate(4);
+            body.paragraphs[0].props.align = Some(align);
+            body.body.anchor_ctr = anchor_ctr;
+            let center = manual_alignment(&mut body);
+            let measured = measure(&ctx, &body, rect.width(), true);
+            let (_, marker) = overflow(&ctx, &mut body, rect.width(), rect.height(), measured);
+            let layout = placed(&ctx, &body, rect, marker.as_ref(), true);
+            assert!(marker.is_some());
+            assert_eq!(layout.lines.len(), 2);
+            let dx = if center { centering_offset(&layout, &body, rect) } else { 0. };
+            for (line, expected) in layout.lines.iter().zip(expected) {
+                assert!((line.extent.0 + dx - expected).abs() < 0.005, "{align:?}, anchorCtr={anchor_ctr:?}: {line:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn manual_alignment_uses_the_first_paragraph_and_preserves_explicit_edge_anchoring() {
+        let p = document();
+        let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        for (first, rest, expected) in [
+            (Align::Center, Align::Left, [324.53, 349.805]),
+            (Align::Center, Align::Right, [324.53, 349.805]),
+            (Align::Left, Align::Center, [303., 303.]),
+        ] {
+            let mut body = rows(18.);
+            body.paragraphs.truncate(4);
+            for (i, para) in body.paragraphs.iter_mut().enumerate() {
+                para.props.align = Some(if i == 0 { first } else { rest });
+                para.runs[0].text = if i == 0 { "WWWW" } else { "I" }.into();
+            }
+            body.body.anchor_ctr = Some(false);
+            let center = manual_alignment(&mut body);
+            let measured = measure(&ctx, &body, 120., true);
+            let (_, marker) = overflow(&ctx, &mut body, 120., 64.8, measured);
+            let rect = Rect::new(300., 150., 420., 214.8);
+            let layout = placed(&ctx, &body, rect, marker.as_ref(), true);
+            let dx = if center { centering_offset(&layout, &body, rect) } else { 0. };
+            assert_eq!(layout.lines.len(), 2);
+            for (line, expected) in layout.lines.iter().zip(expected) {
+                assert!((line.extent.0 + dx - expected).abs() < 0.005, "{first:?}/{rest:?}");
+            }
+        }
     }
 
     #[test]

@@ -398,3 +398,59 @@ fn rich_column_advances_control_wrapping_and_painted_width_after_rebuild() {
         assert_eq!(chart.series[0].point_labels[&0].text.as_ref().unwrap().text(), text);
     }
 }
+
+#[test]
+fn manual_labels_center_the_retained_block_and_keep_authored_anchor_ctr() {
+    for (first, rest, anchor_ctr, inset, expected_x) in [
+        (Align::Center, Align::Left, Some(false), 3., 324.53),
+        (Align::Center, Align::Right, Some(false), 3., 324.53),
+        (Align::Left, Align::Center, Some(false), 3., 303.),
+        (Align::Left, Align::Center, None, 3., 324.53),
+        (Align::Right, Align::Center, Some(false), 3., 346.06),
+        (Align::Right, Align::Center, Some(true), 3., 324.53),
+        (Align::Center, Align::Left, None, 13., 329.53),
+    ] {
+        let mut p = original(None);
+        let shape = &mut Arc::make_mut(&mut p.slides[0]).shapes[0];
+        shape.xfrm = Some(Xfrm::new(0., 0., 800., 360.));
+        let ShapeKind::Chart(chart) = &mut shape.kind else { panic!("chart") };
+        chart.y_min = Some(0.);
+        chart.series[0].values = vec![Some(9.)];
+        chart.format.plot_layout = Some(ChartLayout {
+            inner: true,
+            x: Some(0.1),
+            y: Some(0.15),
+            w: Some(0.7),
+            h: Some(0.65),
+            x_edge: true,
+            y_edge: true,
+            ..Default::default()
+        });
+        let label = chart.series[0].point_labels.get_mut(&0).unwrap();
+        label.layout = Some(ChartLayout { w: Some(0.15), h: Some(0.18), ..Default::default() });
+        label.fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 255, 0))));
+        let body = label.text.as_mut().unwrap();
+        body.body.anchor_ctr = anchor_ctr;
+        body.body.inset_l = Some(inset);
+        body.paragraphs.truncate(4);
+        for (i, para) in body.paragraphs.iter_mut().enumerate() {
+            para.props.align = Some(if i == 0 { first } else { rest });
+            para.runs[0].text = if i == 0 { "WWWW" } else { "I" }.into();
+            para.runs[0].props.size = Some(18.);
+            para.runs[0].props.fill = Some(Fill::solid(ColorRef::rgb(if i == 0 { Rgba::rgb(255, 0, 0) } else { Rgba::rgb(0, 0, 255) })));
+        }
+        let back = rebuilt(&p);
+        let red = painted_bounds(&back, false).unwrap();
+        // First-line ink, independently of the blue last line and attached marker.
+        assert!((red.0 as f64 - expected_x).abs() <= 1.5, "{first:?}/{rest:?}, anchorCtr={anchor_ctr:?}: {red:?}");
+        let bg = painted_bounds(&back, true).unwrap();
+        assert!((bg.0 as f64 - 300.).abs() <= 1. && (bg.2 as f64 + 1. - 420.).abs() <= 1.);
+        let ShapeKind::Chart(chart) = &back.slides[0].shapes[0].kind else { panic!("chart") };
+        let body = chart.series[0].point_labels[&0].text.as_ref().unwrap();
+        assert_eq!(body.body.anchor_ctr, anchor_ctr);
+        assert_eq!(body.paragraphs[0].props.align, Some(first));
+        // The chart reader already resolves the literal first-paragraph alignment.
+        assert!(body.paragraphs[1..].iter().all(|p| p.props.align == Some(first)));
+        assert_eq!(body.text(), "WWWW\nI\nI\nI");
+    }
+}

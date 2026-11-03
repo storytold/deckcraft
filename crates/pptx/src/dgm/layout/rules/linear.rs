@@ -178,6 +178,8 @@ pub(super) fn search<'a>(
     let mut grown: Vec<(Range, HashSet<usize>, bool)> = Vec::new();
     let mut out = placed(tree, frame, data, &changes, &flow, work)?;
     for step in steps {
+        // Apply the previous font rule before later dimensions change its fit budget.
+        out = reclaim(tree, frame, data, &mut changes, &flow, &mut grown, measure, work, out)?;
         let Some(control) = step else {
             // Persist capacity allocation only. Measuring/refitting text here
             // and again at the final placement would shrink the flow twice.
@@ -276,17 +278,40 @@ pub(super) fn search<'a>(
             remembered.limit = best;
         }
     }
-    // Only a later font rule makes earlier box growth redundant. Keep the selected
-    // font and return space to neighbours, stopping at the first non-overflowing geometry.
+    reclaim(tree, frame, data, &mut changes, &flow, &mut grown, measure, work, out)?;
+    // Final text-aware placement sees the reclaimed dimensions in rule order.
+    Ok(Some(super::placed(tree, frame, data, &changes, measure, work)?))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reclaim<'a>(
+    tree: &Instance<'a>,
+    frame: Xfrm,
+    data: &Data<'a>,
+    changes: &mut constraints::Adjustments,
+    flow: &Flow,
+    grown: &mut [(Range, HashSet<usize>, bool)],
+    measure: &mut Measure<'_>,
+    work: &mut usize,
+    mut out: Vec<Placed<'a>>,
+) -> Result<Vec<Placed<'a>>, &'static str> {
     for (range, scope, refit) in grown {
+        charge(work, 1)?;
+        if !*refit {
+            continue;
+        }
+        *refit = false;
         let start = range.start;
-        if !refit || score(&out, &scope, measure, true, work)? > 1e-6 {
+        // Reclaim with the same metric as growth: emergency word wrapping
+        // does not prevent returning height that the smaller font no longer needs.
+        let prefer_words = range.key.1 == "w";
+        if score(&out, scope, measure, prefer_words, work)? > 1e-6 {
             continue;
         }
         let limit = range.limit;
-        range.set_value(&mut changes, start);
-        if let Some(candidate) = trial(tree, frame, data, &changes, &flow, work)?
-            && score(&candidate, &scope, measure, true, work)? <= 1e-6
+        range.set_value(changes, start);
+        if let Some(candidate) = trial(tree, frame, data, changes, flow, work)?
+            && score(&candidate, scope, measure, prefer_words, work)? <= 1e-6
         {
             out = candidate;
             continue;
@@ -296,10 +321,10 @@ pub(super) fn search<'a>(
         for _ in 0..5 {
             let t = (low + high) / 2.0;
             let value = start + (limit - start) * t;
-            range.set_value(&mut changes, value);
-            let candidate = trial(tree, frame, data, &changes, &flow, work)?;
+            range.set_value(changes, value);
+            let candidate = trial(tree, frame, data, changes, flow, work)?;
             if let Some(candidate) = candidate
-                && score(&candidate, &scope, measure, true, work)? <= 1e-6
+                && score(&candidate, scope, measure, prefer_words, work)? <= 1e-6
             {
                 high = t;
                 best = value;
@@ -311,9 +336,9 @@ pub(super) fn search<'a>(
                 break;
             }
         }
-        range.set_value(&mut changes, best);
+        range.set_value(changes, best);
     }
-    Ok(Some(super::placed(tree, frame, data, &changes, measure, work)?))
+    Ok(out)
 }
 
 #[cfg(test)]

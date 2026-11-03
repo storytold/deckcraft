@@ -424,6 +424,7 @@ fn column_rich_label(
     // Chart dimensions describe the box before rotation, including quarter turns.
     // Slide text's quarter-turn dimension swap must not be applied a second time.
     body.body.rot = Some(0.);
+    let center_manual = bounds.fixed && label_layout::manual_alignment(&mut body);
     let wrap = body.body.wrap == Some(true);
     let half_turn = angle.abs() == 180.;
     if half_turn {
@@ -499,7 +500,9 @@ fn column_rich_label(
         text_rect = Rect::new(r.x0, r.y0 - offset, r.x1, r.y0 - offset + text_h);
     }
     let layout = label_layout::placed(rctx, &body, text_rect, marker_base.as_ref(), true);
-    crate::draw_layout(ctx, &layout, text_rect, transform);
+    let text_transform =
+        if center_manual { transform * Affine::translate((label_layout::centering_offset(&layout, &body, text_rect), 0.)) } else { transform };
+    crate::draw_layout(ctx, &layout, text_rect, text_transform);
     if bounds.fixed && !overflow {
         ctx.pop_layer();
     }

@@ -2553,3 +2553,89 @@ including the upstream About-page integration. Renderer source is unchanged by t
 The final executable reproduces all 102 frozen map images and 656 chart pages. Eighty selected
 linear/boundary geometries exactly match the full-matrix candidate; its production rule logic
 is unchanged. Native and renderer comparisons retain their distinct acceptance criteria.
+
+
+## PPTX.47 — geographic counts, manual labels and height reclaim
+
+### Geographic point counts are advisory
+
+A valid encoded polygon is no longer discarded when its declared `numPoints` differs
+from its decoded point count. Independent original controls vary that declaration from
+zero through values below and above the actual count, including a ring with a hole.
+Native PowerPoint keeps the geometry in every case. Decoder validity follows the actual
+payload; the declaration never drives an allocation. Shared chart-wide limits cap decoded
+points, attempted rings and visited polygons. Empty/invalid polygons consume work, and a
+truncated or over-budget polygon is rejected atomically instead of keeping a valid prefix.
+
+This restores 805 nonempty rings that were incorrectly filtered from a complex cache.
+Changing only the cache prefix or polygon partition did not repair the mismatch; restoring
+the valid decoded rings did. Eight fresh native source/rebuild pairs, including the complex
+Robinson case and seven independent controls, have identical pixels and all vector paths.
+The Robinson case now retains all 249 paths; the previous rebuild retained 248.
+
+Thirty-one forced rebuilds pass schema validation and retain geometry, bindings and query
+states. Existing entity ordering and empty-kind normalization are unchanged. Integrated
+rendering reproduces all 140 frozen candidate images: 102 retained inputs, seven new
+controls and 31 new rebuilds. Among the 102 retained inputs, 36 improve toward native and
+66 are pixel-identical, with no measured mask regressions. New rebuilds render exactly like
+their candidate source inputs. Files saved earlier with already-dropped geometry cannot
+recover those absent rings. Sparse controls still have the inherited attribution-text
+mismatch; their whole-image gray-mask score is not relabeled as a pass. Seventeen threshold
+sequences and two Albers precision sequences remain unresolved.
+
+### Fixed manual rich-label anchoring
+
+Supported fixed single-column labels take horizontal alignment from the first paragraph.
+Default or true `anchorCtr` centers the retained line union inside the authored insets;
+explicit false retains left/right edges. Centered paragraphs remain centered. Automatic
+ellipsis width is excluded from the centered union, and the displacement is applied in
+text coordinates before rotation. Background and clip rectangles retain their dimensions.
+Only the renderer's working body is normalized; stored text and authored anchor properties
+remain intact. An unconditional recentering approach was falsified and is not used.
+
+Seven new original packages provide 43 native controls covering explicit anchors, mixed
+paragraph alignment, insets, rotation, RTL and fonts. The final integration reproduces all
+699 frozen pages in 50 packages. Compared with the previous candidate, 654 pages retain
+identical pixels, 43 improve the standard text bounding-box metric, and two thin clipping
+strips improve separately; no new regression is found. Mean text-box RMS on the 43 changed
+comparable pages improves from 8.688 to 0.375pt. Yellow background outer bounds are unchanged;
+this does not mean every background-colored pixel is unchanged, since moving text changes
+its occlusion. Existing fractional baselines, hinting, marker attachment, automatic baseline
+clamping, justified text, multiple columns and manual half turns remain outside this fix.
+
+### Reclaim height in rule order using its growth metric
+
+After a later font rule, height reclaim tests ordinary line overflow rather than requiring
+an unbroken word. Otherwise a long word that legitimately wraps prevents returning height
+the smaller font no longer needs. Width reclaim retains the word-preservation metric. Pending reclaim runs immediately after the
+font stage, before a later width rule can change the wrapping budget. Delaying reclaim until
+the end incorrectly uses that future width to reduce the height of earlier wrapped lines.
+Original evaluator tests distinguish the two measurements and retain the unresolved word
+wrap while checking that the original height is restored. A separate test widens the text
+after font fitting and verifies that the preceding multi-line height remains intact.
+
+The 1,619 retained native geometry cases are unchanged. A separate 16-case long-word/font
+matrix improves from ten to twelve strict matches: four height errors fall from 14.094 or
+23.484pt to at most 0.127pt, with two still above the 0.025pt tolerance because of width.
+Twenty-four additional original order controls improve from fourteen to seventeen matches;
+eight errors shrink, including font-before-width cases. Together the 1,659 cases improve
+from 1,576 to 1,581 matches, with no lost prior match and no error increase above 0.025pt.
+
+A subsequent independent eight-case holdout freezes predictions before native export and
+changes dimensions, font limits and text boundaries. Strict matches improve from two to
+seven; the one remaining root-width discrepancy is 0.137pt. All eight predicted heights
+match within 0.025pt. This group is additional to the 1,659-case matrix.
+
+Rejected steps remain explicit. Property-specific reclaim without correcting its timing
+worsened two newly measured height errors from 6.648 to 62.012pt; immediate stage-local
+reclaim corrects both. An emergency-word-break allocation candidate gains fifteen matches
+but loses five existing ones; it remains an experiment, not part of this change. Broader
+allocation, coupled rules and snake abort paths remain open. No complete external-converter
+replacement is claimed.
+
+### Integration and publication
+
+All new published material is Rust source, contributor-original programmatic tests and
+technical documentation. Native documents, vendor/provider geometry, screenshots, fonts,
+user content and evidence paths remain private. Final local `cargo xtask ci` passes all eight stages with 2,631 tests including doctests.
+Hosted CI is tracked separately. The earlier interrupted run is not counted as a pass.

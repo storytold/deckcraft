@@ -117,7 +117,7 @@ pub(crate) fn chartex_from(root: &El) -> Option<Chart> {
     c.legend = ch.child("legend").map(|l| l.attr("pos").unwrap_or("t").to_string());
     let mut kind = None;
     let mut output_budget = MAX_CHARTEX_POINTS;
-    let mut geo_budget = deckcraft_model::geography::MAX_GEO_POINTS;
+    let mut geo_budget = GeoBudget::default();
     let mut categories_set = false;
     for s in region.children_named("series").take(1000) {
         let layout = s.attr("layoutId").unwrap_or("");
@@ -263,8 +263,44 @@ fn value_colors(series: &El) -> Option<deckcraft_model::geography::ValueColorSca
     })
 }
 
-fn geography(g: &El, d: &Data, budget: &mut usize) -> deckcraft_model::geography::Geography {
-    use deckcraft_model::geography::{GeoRegion, Geography, decode_ring};
+struct GeoBudget {
+    points: usize,
+    rings: usize,
+    polygons: usize,
+}
+impl Default for GeoBudget {
+    fn default() -> Self {
+        use deckcraft_model::geography::{MAX_GEO_POINTS, MAX_GEO_RINGS};
+        Self { points: MAX_GEO_POINTS, rings: MAX_GEO_RINGS, polygons: MAX_GEO_RINGS }
+    }
+}
+impl GeoBudget {
+    fn exhausted(&self) -> bool {
+        self.points == 0 || self.rings == 0 || self.polygons == 0
+    }
+}
+
+fn geo_polygon(poly: &El, budget: &mut GeoBudget) -> Option<Vec<Vec<[f64; 2]>>> {
+    budget.polygons = budget.polygons.checked_sub(1)?;
+    let mut encoded = poly.attr("pcaRings").unwrap_or("").split(',');
+    if !matches!(encoded.next(), Some("0" | "1")) {
+        return None;
+    }
+    let mut rings = Vec::new();
+    for ring in encoded {
+        budget.rings = budget.rings.checked_sub(1)?;
+        if rings.len() == deckcraft_model::geography::MAX_GEO_POLYGON_RINGS {
+            return None;
+        }
+        rings.push(deckcraft_model::geography::decode_ring(ring, &mut budget.points)?);
+    }
+    // Native caches can declare a different numPoints, including zero. The decoded
+    // payload and shared work budgets determine validity, not that advisory count.
+    Some(rings)
+}
+
+fn geography(g: &El, d: &Data, budget: &mut GeoBudget) -> deckcraft_model::geography::Geography {
+    use deckcraft_model::geography::{GeoRegion, Geography};
     let mut map = Geography {
         provider: g
             .child("geoCache")
@@ -279,7 +315,7 @@ fn geography(g: &El, d: &Data, budget: &mut usize) -> deckcraft_model::geography
         entities: vec![],
         child_queries: vec![],
     };
-    if *budget < 3 {
+    if budget.points < 3 || budget.exhausted() {
         return map;
     }
     let decoded;
@@ -308,26 +344,11 @@ fn geography(g: &El, d: &Data, budget: &mut usize) -> deckcraft_model::geography
         region.point = bindings.get(&region.entity_id).copied();
         region.bounds = super::geo_hierarchy::bounds(data);
         if let Some(polys) = data.child("geoPolygons") {
-            for poly in polys.children_named("geoPolygon").take(deckcraft_model::geography::MAX_GEO_RINGS) {
-                let mut encoded = poly.attr("pcaRings").unwrap_or("").split(',');
-                if !matches!(encoded.next(), Some("0" | "1")) {
-                    continue;
-                }
-                let mut rings = Vec::new();
-                let mut valid = true;
-                for ring in encoded.take(deckcraft_model::geography::MAX_GEO_POLYGON_RINGS) {
-                    if let Some(points) = decode_ring(ring, budget) {
-                        rings.push(points);
-                    } else {
-                        valid = false;
-                        break;
-                    }
-                }
-                let count: usize = rings.iter().map(Vec::len).sum();
-                if valid && poly.u32("numPoints").is_none_or(|n| n as usize == count) {
+            for poly in polys.children_named("geoPolygon") {
+                if let Some(rings) = geo_polygon(poly, budget) {
                     region.rings.extend(rings);
                 }
-                if *budget == 0 {
+                if budget.exhausted() {
                     break;
                 }
             }
@@ -338,7 +359,7 @@ fn geography(g: &El, d: &Data, budget: &mut usize) -> deckcraft_model::geography
         if !region.rings.is_empty() || region.bounds.is_some() {
             map.regions.push(region);
         }
-        if *budget == 0 {
+        if budget.exhausted() {
             break;
         }
     }
@@ -411,17 +432,111 @@ mod tests {
     use super::*;
     use deckcraft_model::geography::ValueColorPosition as Position;
 
+    fn original_rings() -> Vec<Vec<[f64; 2]>> {
+        vec![
+            vec![[-26., -22.], [23., -22.], [23., 26.], [-26., 26.], [-26., -22.]],
+            vec![[-13., -10.], [-13., 12.], [11., 12.], [11., -10.], [-13., -10.]],
+        ]
+    }
+
+    fn polygon_xml(rings: &[Vec<[f64; 2]>], declared: u32) -> String {
+        let encoded = rings.iter().map(|r| deckcraft_model::geography::encode_ring(r).unwrap()).collect::<Vec<_>>().join(",");
+        format!(r#"<geoPolygon numPoints="{declared}" pcaRings="0,{encoded}"/>"#)
+    }
+
+    #[test]
+    fn geographic_declared_point_count_does_not_discard_closed_rings_or_holes() {
+        let rings = original_rings();
+        for declared in [0, 1, 4, 5, 9, 10, 12, 47, u32::MAX] {
+            for prefix in ["0,", "1,"] {
+                let xml = polygon_xml(&rings, declared).replace("0,", prefix);
+                let doc = crate::xml::parse(xml.as_bytes()).unwrap();
+                let mut budget = GeoBudget::default();
+                assert_eq!(geo_polygon(&doc.root, &mut budget), Some(rings.clone()));
+                assert_eq!(budget.points, deckcraft_model::geography::MAX_GEO_POINTS - 10);
+                assert_eq!(budget.rings, deckcraft_model::geography::MAX_GEO_RINGS - 2);
+            }
+        }
+    }
+
+    #[test]
+    fn geographic_actual_point_and_ring_limits_reject_whole_polygons() {
+        let rings = original_rings();
+        let xml = polygon_xml(&rings, 0);
+        let doc = crate::xml::parse(xml.as_bytes()).unwrap();
+        for (points, count) in [(9, 2), (10, 1)] {
+            let mut budget = GeoBudget { points, rings: count, polygons: 1 };
+            assert!(geo_polygon(&doc.root, &mut budget).is_none());
+            assert!(budget.exhausted());
+        }
+        let mut budget = GeoBudget { points: 10, rings: 2, polygons: 1 };
+        assert_eq!(geo_polygon(&doc.root, &mut budget), Some(rings));
+        assert_eq!((budget.points, budget.rings, budget.polygons), (0, 0, 0));
+    }
+
+    #[test]
+    fn geographic_truncated_and_oversized_polygons_never_keep_a_valid_prefix() {
+        let ring = original_rings().remove(0);
+        let encoded = deckcraft_model::geography::encode_ring(&ring).unwrap();
+        for payload in [format!("0,{encoded},_"), format!("0,{encoded},AA"), format!("0,{encoded},!")] {
+            let xml = format!(r#"<geoPolygon numPoints="0" pcaRings="{payload}"/>"#);
+            let doc = crate::xml::parse(xml.as_bytes()).unwrap();
+            assert!(geo_polygon(&doc.root, &mut GeoBudget::default()).is_none());
+        }
+        let limit = deckcraft_model::geography::MAX_GEO_POLYGON_RINGS;
+        for (count, valid) in [(limit, true), (limit + 1, false)] {
+            let xml = polygon_xml(&vec![ring.clone(); count], 0);
+            let doc = crate::xml::parse(xml.as_bytes()).unwrap();
+            let mut budget = GeoBudget::default();
+            let parsed = geo_polygon(&doc.root, &mut budget);
+            assert_eq!(parsed.is_some(), valid);
+            assert_eq!(budget.points, deckcraft_model::geography::MAX_GEO_POINTS - limit * ring.len());
+            assert_eq!(budget.rings, deckcraft_model::geography::MAX_GEO_RINGS - count);
+        }
+    }
+
+    #[test]
+    fn geographic_work_budgets_span_regions_and_repeated_cache_reads() {
+        let ring = original_rings().remove(0);
+        let polygon = polygon_xml(std::slice::from_ref(&ring), u32::MAX);
+        let entry = |id: &str, polygons: &str| {
+            format!("<geoDataEntityQueryResult><geoData entityId='{id}'><geoPolygons>{polygons}</geoPolygons></geoData></geoDataEntityQueryResult>")
+        };
+        let geography_xml = |entries: String| {
+            format!("<geography><geoCache><clear><geoDataEntityQueryResults>{entries}</geoDataEntityQueryResults></clear></geoCache></geography>")
+        };
+        let xml = geography_xml(entry("a", &polygon) + &entry("b", &polygon));
+        let doc = crate::xml::parse(xml.as_bytes()).unwrap();
+        for mut budget in [
+            GeoBudget { points: 5, rings: 10, polygons: 10 },
+            GeoBudget { points: 100, rings: 1, polygons: 10 },
+            GeoBudget { points: 100, rings: 10, polygons: 1 },
+        ] {
+            let map = geography(&doc.root, &Data::default(), &mut budget);
+            assert_eq!(map.regions.len(), 1);
+            assert_eq!(map.regions[0].rings, vec![ring.clone()]);
+            assert!(geography(&doc.root, &Data::default(), &mut budget).regions.is_empty());
+        }
+        // Invalid prefixes and empty polygons still consume the shared visit budget.
+        for invalid in ["<geoPolygon pcaRings='invalid'/>", "<geoPolygon pcaRings='1'/>"] {
+            let xml = geography_xml(entry("bad", invalid) + &entry("good", &polygon));
+            let doc = crate::xml::parse(xml.as_bytes()).unwrap();
+            let mut budget = GeoBudget { polygons: 1, ..Default::default() };
+            assert!(geography(&doc.root, &Data::default(), &mut budget).regions.is_empty());
+        }
+    }
+
     #[test]
     fn geographic_provider_identity_is_document_owned_and_bounded() {
         let limit = deckcraft_model::geography::MAX_GEO_PROVIDER_BYTES;
         for (provider, kept) in [("original-cache".to_string(), true), ("p".repeat(limit), true), ("p".repeat(limit + 1), false)] {
             let xml = format!(r#"<geography><geoCache provider="{provider}"><clear/></geoCache></geography>"#);
             let doc = crate::xml::parse(xml.as_bytes()).unwrap();
-            let map = geography(&doc.root, &Data::default(), &mut 100);
+            let map = geography(&doc.root, &Data::default(), &mut GeoBudget::default());
             assert_eq!(map.provider, if kept { provider.as_str() } else { "" });
         }
         let doc = crate::xml::parse(br#"<geography><geoCache provider="bad&#10;identity"><clear/></geoCache></geography>"#).unwrap();
-        assert!(geography(&doc.root, &Data::default(), &mut 100).provider.is_empty());
+        assert!(geography(&doc.root, &Data::default(), &mut GeoBudget::default()).provider.is_empty());
     }
 
     #[test]

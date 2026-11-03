@@ -497,6 +497,66 @@ fn document_provider_and_binary_query_keys_survive_forced_rebuild() {
 }
 
 #[test]
+fn advisory_geographic_counts_preserve_holes_through_import_and_forced_rebuild() {
+    use std::io::{Cursor, Read, Write};
+    let map = Geography {
+        projection: "mercator".into(),
+        viewed_region: "dataOnly".into(),
+        entities: vec![deckcraft_model::geography::GeoEntity {
+            id: "own-count".into(),
+            name: "Original count region".into(),
+            kind: "CountryRegion".into(),
+            ..Default::default()
+        }],
+        regions: vec![GeoRegion {
+            entity_id: "own-count".into(),
+            name: "Original count region".into(),
+            point: Some(0),
+            bounds: Some([-26., -22., 23., 26.]),
+            rings: vec![
+                vec![[-26., -22.], [23., -22.], [23., 26.], [-26., 26.], [-26., -22.]],
+                vec![[-13., -10.], [-13., 12.], [11., 12.], [11., -10.], [-13., -10.]],
+            ],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let mut c = base(ChartType::RegionMap);
+    c.categories = vec!["Original count region".into()];
+    c.series = vec![Series { values: vec![Some(1.)], geography: Some(map), ..Default::default() }];
+    let mut p = original();
+    append(&mut p, c);
+    let bytes = deckcraft_pptx::export(&p).unwrap();
+    let baseline = deckcraft_pptx::import(&bytes).unwrap();
+    let expected = render_slide(&baseline, 0, &RenderOpts::default());
+    for declared in [0, 1, 8, 12, 47, u32::MAX] {
+        let mut input = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let mut replaced = false;
+        for i in 0..input.len() {
+            let mut f = input.by_index(i).unwrap();
+            let mut part = Vec::new();
+            f.read_to_end(&mut part).unwrap();
+            if let Ok(xml) = std::str::from_utf8(&part)
+                && xml.contains("<cx:geoPolygon ")
+            {
+                assert_eq!(xml.matches("numPoints=\"10\"").count(), 1);
+                part = xml.replace("numPoints=\"10\"", &format!("numPoints=\"{declared}\"")).into_bytes();
+                replaced = true;
+            }
+            output.start_file(f.name(), zip::write::SimpleFileOptions::default()).unwrap();
+            output.write_all(&part).unwrap();
+        }
+        assert!(replaced);
+        let imported = deckcraft_pptx::import(&output.finish().unwrap().into_inner()).unwrap();
+        for actual in [imported.clone(), rebuilt(&imported)] {
+            assert_eq!(chart(&actual).series[0].geography, chart(&baseline).series[0].geography);
+            assert!(render_slide(&actual, 0, &RenderOpts::default()).pixels == expected.pixels);
+        }
+    }
+}
+
+#[test]
 fn many_island_rings_survive_polygon_chunking_and_forced_rebuild() {
     use deckcraft_model::geography::{GeoEntity, MAX_GEO_POLYGON_RINGS};
     let rings = vec![vec![[0., 0.], [1., 0.], [0., 1.], [0., 0.]]; MAX_GEO_POLYGON_RINGS + 1];
