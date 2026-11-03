@@ -270,7 +270,7 @@ impl SlideApp {
         let preview_path = match self.print_previews.create(&title) {
             Ok(path) => path,
             Err(e) => {
-                self.set_status(format!("Couldn't create a private print preview: {e}"));
+                self.set_status(crate::i18n::fmt(tl!("Couldn't create a private print preview: {e}"), &[("e", &e.to_string())]));
                 return false;
             }
         };

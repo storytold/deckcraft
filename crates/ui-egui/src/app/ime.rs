@@ -18,6 +18,20 @@ impl SlideApp {
                 .collect()
         });
         self.ui_fonts.note(ctx, &typed);
+        // The interface's own labels: a Chinese UI needs CJK faces even before a presentation
+        // with Chinese text is open. Done once per language, not once per frame.
+        let language = crate::i18n::current();
+        if self.ui_fonts.language != Some(language.code()) {
+            self.ui_fonts.language = Some(language.code());
+            if language != crate::i18n::Lang::EN {
+                let mut text = String::new();
+                for translation in crate::i18n::translations(language) {
+                    text.push_str(translation);
+                    text.push('\n');
+                }
+                self.ui_fonts.note(ctx, &text);
+            }
+        }
         for d in self.session.documents() {
             self.ui_fonts.note(ctx, &d.title());
         }

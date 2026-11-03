@@ -1,6 +1,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 use super::updates_ui;
 use super::{SlideApp, UI_COMMANDS, Value, ViewMode, backstage, dialogs, doc_window, json, media, qat, theme};
+use crate::i18n;
 
 fn grid_options_touched(p: &Value) -> bool {
     ["spacing", "snap", "smartGuides", "gridlines", "guides"].iter().any(|k| p.get(*k).is_some())
@@ -36,6 +37,13 @@ impl SlideApp {
         }
         self.drain_requests();
         r
+    }
+
+    /// The `language` setting, the language the interface is drawn in, and every one it can be
+    /// (`app.language`).
+    fn language_state(&self) -> Value {
+        let available: Vec<Value> = i18n::Lang::all().map(|l| json!({"code": l.code(), "name": l.name()})).collect();
+        json!({"language": self.ui.language, "current": i18n::Lang::from_pref(&self.ui.language).code(), "available": available})
     }
 
     fn flag(&mut self, params: &Value, cur: bool) -> bool {
@@ -229,6 +237,16 @@ impl SlideApp {
             }
             "app.palette" => self.palette = Some((String::new(), 0)),
             "app.preferences" => self.dialog = Some(dialogs::Dialog::new("preferences")),
+            "app.language" => {
+                if let Some(v) = p.get("language") {
+                    let code = v.as_str().and_then(i18n::normalize_pref).ok_or_else(|| {
+                        let offered: Vec<&str> = std::iter::once(i18n::AUTO).chain(i18n::Lang::all().map(i18n::Lang::code)).collect();
+                        format!("`language` must be one of {}", offered.join(", "))
+                    })?;
+                    self.ui.language = code.to_string();
+                }
+                return Ok(self.language_state());
+            }
             "app.openDialog" => self.pick_and_open(),
             "app.insertPictureDialog" => self.pick_and_insert("picture", "insert.picture"),
             "app.smartArtPictureDialog" => {

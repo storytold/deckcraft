@@ -120,10 +120,10 @@ fn small_icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> egu
 
 fn toolbar(app: &mut SlideApp, ui: &mut Ui, t: &Tokens, has_sel: bool) {
     ui.horizontal(|ui| {
-        if ui.add(egui::Button::new("Show All").stroke(Stroke::new(1.0, t.border))).clicked() {
+        if ui.add(egui::Button::new(tl!("Show All")).stroke(Stroke::new(1.0, t.border))).clicked() {
             run(app, "selection.showAll", json!({}));
         }
-        if ui.add(egui::Button::new("Hide All").stroke(Stroke::new(1.0, t.border))).clicked() {
+        if ui.add(egui::Button::new(tl!("Hide All")).stroke(Stroke::new(1.0, t.border))).clicked() {
             run(app, "selection.hideAll", json!({}));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -205,8 +205,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let renaming = app.selpane.renaming.as_ref().filter(|(id, _)| *id == row.id).map(|(_, s)| s.clone());
         if let Some(mut buf) = renaming {
             let edit_id = ui.scope_id().with(("rename", row.id));
-            let out =
-                ui.put(name_rect, egui::TextEdit::singleline(&mut buf).id(edit_id).hint_text("Name").font(theme::font(12.5)).margin(vec2(2.0, 1.0)));
+            let out = ui.put(
+                name_rect,
+                egui::TextEdit::singleline(&mut buf).id(edit_id).hint_text(tl!("Name")).font(theme::font(12.5)).margin(vec2(2.0, 1.0)),
+            );
             if !app.selpane.rename_started {
                 out.request_focus();
                 if let Some(mut s) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
@@ -398,7 +400,7 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response, row: &Row) {
             }
         }
         ui.separator();
-        if ui.button("Rename").clicked() {
+        if ui.button(tl!("Rename")).clicked() {
             app.selpane.renaming = Some((row.id, row.name.clone()));
             app.selpane.rename_started = false;
             ui.close();

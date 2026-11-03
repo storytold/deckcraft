@@ -1033,7 +1033,7 @@ fn the_language_dialog_marks_the_whole_presentation() {
     harness.run_steps(4);
     harness.get_by_label("Whole presentation").click();
     harness.run_steps(2);
-    harness.get_by_label("Español (España)").click();
+    harness.query_by_label_contains("Español (España)").expect("the Spanish row").click();
     harness.run_steps(2);
     harness.get_by_label("OK").click();
     harness.run_steps(2);
@@ -1068,7 +1068,7 @@ fn the_language_dialog_marks_the_whole_presentation_with_nothing_selected() {
     harness.state_mut().run("app.dialog", json!({"id": "language"})).unwrap();
     harness.run_steps(4);
     assert!(harness.get_by_label("Selected text").accesskit_node().is_disabled());
-    harness.get_by_label("Español (España)").click();
+    harness.query_by_label_contains("Español (España)").expect("the Spanish row").click();
     harness.run_steps(2);
     harness.get_by_label("OK").click();
     harness.run_steps(2);

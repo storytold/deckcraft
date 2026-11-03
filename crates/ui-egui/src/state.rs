@@ -94,6 +94,8 @@ pub struct UiState {
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    /// Interface language: [`crate::i18n::AUTO`] (follow the system) or a language code (`de`).
+    pub language: String,
 }
 
 impl Default for UiState {
@@ -127,6 +129,7 @@ impl Default for UiState {
             grayscale: false,
             comment_focus: None,
             qat: qat::defaults(),
+            language: crate::i18n::AUTO.into(),
         }
     }
 }
@@ -156,6 +159,13 @@ impl UiState {
             self.format_tab = d.format_tab;
         }
         self.pane = self.pane.filter(short);
+        // A language code this build doesn't offer (a release's catalogs in a local build, a newer
+        // version's) is kept and follows the system until it is offered; anything else is reset.
+        self.language = match crate::i18n::normalize_pref(&self.language) {
+            Some(code) => code.into(),
+            None if crate::i18n::well_formed_code(&self.language) => self.language.to_ascii_lowercase(),
+            None => crate::i18n::AUTO.into(),
+        };
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
         self.recent.dedup();
         self.recent.truncate(RECENT_MAX);

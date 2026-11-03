@@ -289,6 +289,8 @@ impl SlideApp {
             self.requeue_injected_synthetic();
             return;
         }
+        // The language every label this pass draws is looked up in (Preferences › Language).
+        crate::i18n::set_current(crate::i18n::Lang::from_pref(&self.ui.language));
         let t0 = now_ms();
         let t = theme::Tokens::get(&ctx);
         self.note_ui_text(&ctx);

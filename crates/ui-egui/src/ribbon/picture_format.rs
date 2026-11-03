@@ -39,7 +39,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
                 }
             }
             ui.separator();
-            ui.label("Recolor");
+            ui.label(tl!("Recolor"));
             let sc = scheme(app);
             let presets = deckcraft_engine::cmd::recolor::presets();
             let names: Vec<String> = presets.iter().map(|(_, l)| l.clone()).collect();
@@ -61,14 +61,14 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
             ui.separator();
             // As in PowerPoint, the pointer picks the colour in the picture itself: a colour
             // chosen from a grid almost never matches a photo's pixels.
-            if ui.button("Set Transparent Color").on_hover_text("Click a colour in the picture to make it transparent").clicked() {
+            if ui.button(tl!("Set Transparent Color")).on_hover_text(tl!("Click a colour in the picture to make it transparent")).clicked() {
                 crate::eyedropper::request_transparent_color(ui.ctx());
                 ui.close();
             }
         });
         let r = big_button(ui, Icon::ArtisticEffects, "Artistic\nEffects", enabled(app, "picture.artisticEffect"));
         egui::Popup::menu(&r).show(|ui| {
-            if ui.button("None").clicked() {
+            if ui.button(tl!("None")).clicked() {
                 run(app, "picture.artisticEffect", json!({"effect": "none"}));
             }
             for (e, l) in deckcraft_engine::cmd::artistic::EFFECTS {
@@ -113,7 +113,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
         let mut picked = tiles(ui, inline_styles(ui));
         // Every style, in rows, behind the gallery's arrow (PowerPoint's More).
         let more = widgets::drop_button(ui, "", vec2(14.0, 52.0), true);
-        more.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "More Picture Styles"));
+        more.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("More Picture Styles")));
         // Six to a row: the 24 styles in four rows.
         egui::Popup::menu(&more).width(6.0 * (STYLE_TILE.x + 2.0) + 16.0).show(|ui| {
             ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
@@ -164,7 +164,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
         });
-        if ui.small_button("Reset Style").on_hover_text("Remove the picture style").clicked() {
+        if ui.small_button(tl!("Reset Style")).on_hover_text(tl!("Remove the picture style")).clicked() {
             run(app, "picture.style", json!({"style": "none"}));
         }
         big(app, ui, Icon::AltText, "Alt\nText", "app.dialog", json!({"id": "altText"}));
@@ -173,7 +173,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let r = big_button(ui, Icon::Crop, "Crop", true);
         egui::Popup::menu(&r).show(|ui| {
-            ui.label("Crop to Shape");
+            ui.label(tl!("Crop to Shape"));
             if let Some(p) = shapes_gallery(ui) {
                 run(app, "shape.change", json!({"preset": p}));
             }
@@ -290,11 +290,11 @@ fn paint_recolor(p: &egui::Painter, r: Rect, id: &str, sc: &deckcraft_color::Col
 fn compress_menu(app: &mut SlideApp, ui: &mut Ui) {
     let id = egui::Id::unique("compress_pictures_opts");
     let (mut ppi, mut only_selected, mut delete_cropped): (u32, bool, bool) = ui.data_mut(|d| d.get_temp(id).unwrap_or((220, true, true)));
-    ui.label(egui::RichText::new("Compression options").strong());
-    ui.checkbox(&mut only_selected, "Apply only to this picture");
-    ui.checkbox(&mut delete_cropped, "Delete cropped areas of pictures");
+    ui.label(egui::RichText::new(tl!("Compression options")).strong());
+    ui.checkbox(&mut only_selected, tl!("Apply only to this picture"));
+    ui.checkbox(&mut delete_cropped, tl!("Delete cropped areas of pictures"));
     ui.separator();
-    ui.label(egui::RichText::new("Resolution").strong());
+    ui.label(egui::RichText::new(tl!("Resolution")).strong());
     for (v, label) in [
         (330, "HD (330 ppi): good quality for high-definition displays"),
         (220, "Print (220 ppi): excellent quality on most printers and screens"),
@@ -305,7 +305,7 @@ fn compress_menu(app: &mut SlideApp, ui: &mut Ui) {
     }
     ui.data_mut(|d| d.insert_temp(id, (ppi, only_selected, delete_cropped)));
     ui.separator();
-    if ui.button("Compress").clicked() {
+    if ui.button(tl!("Compress")).clicked() {
         let p = json!({"ppi": ppi, "deleteCropped": delete_cropped, "all": !only_selected});
         match app.session.execute("picture.compress", &p) {
             Ok(r) => {
