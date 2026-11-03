@@ -180,14 +180,14 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
             );
         }
         ui.label(egui::RichText::new("Soft Edges").font(theme::bold(13.0)));
-        let mut s = sh.effects.as_ref().and_then(|e| e.soft_edge).unwrap_or(0.0);
+        let mut s = fx.soft_edge.unwrap_or(0.0);
         if let Some(r) = effect_presets::soft_edge_row(ui, s) {
             run(app, "shape.effects", json!({"softEdges": r}));
         }
         if ui.add(egui::Slider::new(&mut s, 0.0..=50.0).text("size (pt)")).drag_stopped() {
             run(app, "shape.effects", json!({"softEdges": s}));
         }
-        let raw3d = sh.effects.as_ref().and_then(|e| e.raw3d.clone());
+        let raw3d = fx.raw3d.clone();
         three_d_options(app, ui, sh.id.0, raw3d.as_deref());
         if ui.button("Reset Effects").clicked() {
             run(app, "shape.effects", json!({"reset": true}));
