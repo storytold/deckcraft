@@ -93,9 +93,60 @@ fn media_budget_is_cumulative() {
     p.add_media("b.bin", "application/octet-stream", vec![2; 600]);
     let bytes = save(&p).unwrap();
     // Exactly at the limit opens; one byte under is refused, though each item fits.
-    assert!(load_within(&bytes, Budget { total: 1200, items: 2 }).is_ok());
-    assert!(load_within(&bytes, Budget { total: 1199, items: 2 }).is_err());
-    assert!(load_within(&bytes, Budget { total: 1200, items: 1 }).is_err());
+    assert!(load_within(&bytes, Budget::media(1200, 2)).is_ok());
+    assert!(load_within(&bytes, Budget::media(1199, 2)).is_err());
+    assert!(load_within(&bytes, Budget::media(1200, 1)).is_err());
+}
+
+#[test]
+fn corrupt_media_is_charged_for_what_it_inflated() {
+    let mut p = Presentation::default();
+    p.add_media("a.png", "image/png", b"PICTURE-AAAAAAAAAAAA".to_vec());
+    p.add_media("b.png", "image/png", b"PICTURE-BBBBBBBBBBBB".to_vec());
+    let mut bytes = save(&p).unwrap();
+    // Corrupt both stored members, so each fails its CRC only after inflating all its bytes.
+    for tag in [b"PICTURE-AAAA", b"PICTURE-BBBB"] {
+        let at = bytes.windows(tag.len()).position(|w| w == tag).unwrap();
+        bytes[at] ^= 0xff;
+    }
+    // Each member fits the budget on its own; the second must not reuse what the first spent.
+    let result = load_within(&bytes, Budget::media(20, 2));
+    assert!(result.is_err(), "two corrupt 20-byte members must not share a 20-byte budget");
+    // With room for both, the file opens and reports both.
+    let (_, damaged) = load_within(&bytes, Budget::media(40, 2)).unwrap();
+    assert_eq!(damaged.len(), 2, "{damaged:?}");
+}
+
+#[test]
+fn oversized_manifest_is_refused_before_inflating() {
+    let bytes = save(&Presentation::default()).unwrap();
+    let mut z = zip::ZipArchive::new(Cursor::new(bytes.as_slice())).unwrap();
+    let size = z.by_name("presentation.json").unwrap().size();
+    assert!(load_within(&bytes, Budget { total: 0, items: 0, manifest: size }).is_ok());
+    let err = load_within(&bytes, Budget { total: 0, items: 0, manifest: size - 1 }).unwrap_err();
+    assert!(err.to_string().contains("too large"), "{err}");
+}
+
+#[test]
+fn many_slides_on_missing_layouts_are_repaired() {
+    let mut p = Presentation::default();
+    let template = p.slides[0].clone();
+    let good = template.layout;
+    p.slides = (0..2000u32)
+        .map(|i| {
+            let mut s = (*template).clone();
+            s.id = deckcraft_model::SlideId(10_000 + i);
+            if i % 2 == 1 {
+                s.layout = deckcraft_model::LayoutId(900_000 + i);
+            }
+            Arc::new(s)
+        })
+        .collect();
+    p.next_id = 20_000;
+    repair(&mut p);
+    assert!(p.validate().is_empty(), "{:?}", p.validate().first());
+    assert!(p.slides.iter().all(|s| p.layout(s.layout).is_some()));
+    assert_eq!(p.slides[0].layout, good);
 }
 
 #[test]
@@ -124,7 +175,7 @@ fn repeated_media_ids_are_read_once() {
     }
     let bytes = out.finish().unwrap().into_inner();
     // 51 references to one 1000-byte member fit a 1000-byte budget: it's inflated once.
-    let q = load_within(&bytes, Budget { total: 1000, items: 51 }).unwrap().0;
+    let q = load_within(&bytes, Budget::media(1000, 51)).unwrap().0;
     assert_eq!(q.media.len(), 1);
     assert_eq!(q.media[0].data.len(), 1000);
     // And the deck saves again.
