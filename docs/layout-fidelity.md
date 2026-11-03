@@ -2767,9 +2767,12 @@ Zero-area identities and genuine visible residuals are tracked separately.
 
 ### Integration and publication
 
-Full local `cargo xtask ci` passes all eight stages, with 2,660 tests including doctests.
-The integrated binary reproduces all 733 frozen chart pages and all 140 map reference
-images exactly. Hosted CI is tracked separately.
+The feature passes all eight local `cargo xtask ci` stages with 2,660 tests including
+doctests. Synchronizing upstream bounded font shaping adds six tests: the merged tree
+passes all eight stages with 2,666 tests. DrawingML kerning suppression and legacy
+pairs remain intact across shaping-piece boundaries, with an explicit regression test.
+The merged binary retains all 2,096 geometry results and reproduces all 733 frozen
+chart pages and all 140 map reference images exactly. Hosted CI is tracked separately.
 Publication is limited to Rust source, contributor-original programmatic tests and
 technical documentation. Native documents, screenshots, fonts, user content, provider
 geometry and private evidence paths remain unpublished. Complete external-converter
