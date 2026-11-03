@@ -206,6 +206,7 @@ pub(super) fn text_fill(s: &mut Session, p: &Value) -> Result<Value> {
                     stops: vec![GradientStop { pos: 0.0, color: base }, GradientStop { pos: 1.0, color: accent }],
                     shape: GradientShape::Linear { angle: angle.unwrap_or(0.0), scaled: false },
                     rotate_with_shape: true,
+                    flip: None,
                     tile: [0.0; 4],
                 })
             }
