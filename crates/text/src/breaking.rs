@@ -260,12 +260,15 @@ pub(crate) struct Tab {
     align: TabAlign,
 }
 
+/// The paragraph's tab stops in position order (a stop at no finite position is left out), so
+/// [`tab_advance`] finds the next one by binary search instead of a scan per tab.
 pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
-    props
+    let mut tabs: Vec<Tab> = props
         .tabs
         .as_ref()
         .map(|t| {
             t.iter()
+                .filter(|s| s.pos.is_finite())
                 .map(|s| Tab {
                     pos: s.pos,
                     align: match s.align.as_str() {
@@ -277,7 +280,9 @@ pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    tabs.sort_by(|a, b| a.pos.total_cmp(&b.pos));
+    tabs
 }
 
 /// Width of the text after the tab at cell `i` up to the next tab or line break, and the width of
@@ -301,16 +306,15 @@ pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64) {
 /// (`seg`: its width, and its width before the decimal point) as the stop aligns it but never
 /// moving back, as PowerPoint does; past the last stop, to the next default stop.
 pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64)) -> f64 {
-    for s in stops {
-        if s.pos > x + 0.5 {
-            let to = s.pos - x;
-            return match s.align {
-                TabAlign::Left => to,
-                TabAlign::Right => (to - seg.0).max(0.0),
-                TabAlign::Center => (to - seg.0 / 2.0).max(0.0),
-                TabAlign::Decimal => (to - seg.1).max(0.0),
-            };
-        }
+    // `stops` is in position order (`tabs_of`): the next stop is the first past x.
+    if let Some(s) = stops.get(stops.partition_point(|s| s.pos <= x + 0.5)) {
+        let to = s.pos - x;
+        return match s.align {
+            TabAlign::Left => to,
+            TabAlign::Right => (to - seg.0).max(0.0),
+            TabAlign::Center => (to - seg.0 / 2.0).max(0.0),
+            TabAlign::Decimal => (to - seg.1).max(0.0),
+        };
     }
     let d = if default_tab > 1.0 { default_tab } else { 72.0 };
     let next = ((x / d).floor() + 1.0) * d;
