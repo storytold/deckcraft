@@ -60,6 +60,8 @@ impl eframe::App for App {
         // nothing after it is needed: the preferences are saved and the log file is unbuffered.
         // `on_exit` only runs once the app exists, never on a failed start. Same as GridCraft #117.
         #[cfg(target_os = "macos")]
+        self.0.cleanup_print_previews();
+        #[cfg(target_os = "macos")]
         std::process::exit(0);
     }
 }

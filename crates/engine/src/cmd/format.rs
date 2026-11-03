@@ -8,7 +8,7 @@ use deckcraft_model::{ColorRef, ColorTransform, Effects, Fill, Line, SchemeSlot,
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-use super::text::{format_body, format_para, format_run};
+use super::text::{format_body, format_para, format_run, format_run_levels};
 use super::{
     CommandSpec, always, bad, base64_decode, bool_or, bool_param, cmd, color_param, edit_shapes, f64_or, f64_param, has_doc, has_text,
     has_text_or_shapes, ids_param, ok, str_param,
