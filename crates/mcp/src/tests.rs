@@ -87,6 +87,7 @@ fn atomic_batch_makes_every_change_or_none() {
     // atomic and keepGoing together are refused before anything runs.
     let r = call(&mut s, 2, "tools/call", json!({"name": "batch", "arguments": {"commands": [rect(20)], "atomic": true, "keepGoing": true}}));
     assert_eq!(r["result"]["isError"], true, "{r}");
+    assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("leaves the presentation as it was"), "{r}");
     assert_eq!(count(&mut s), before);
     // Without atomic, the commands before the failing one stay.
     let r = call(&mut s, 3, "tools/call", json!({"name": "batch", "arguments": {"commands": [rect(20), rect(140), bad]}}));

@@ -81,7 +81,7 @@ fn a_failing_step_leaves_the_presentation_and_selection_as_they_were() {
     let journal = s.journal.len();
     let e = s.execute("edit.batch", &json!({"commands": [rect(20.0), rect(140.0), bad_rename()]})).unwrap_err().to_string();
     assert!(e.contains("step 2 (`shape.rename`)"), "{e}");
-    assert!(e.contains("nothing changed"), "{e}");
+    assert!(e.contains("failed, so the presentation was left as it was"), "{e}");
     assert_eq!(snapshot(&s), before);
     assert_eq!(depth(&mut s), steps);
     assert_eq!(s.journal.len(), journal);
@@ -124,6 +124,67 @@ fn a_failing_batch_puts_the_list_of_missing_fonts_back() {
     let fix = json!({"command": "font.replace", "params": {"from": "Qqq Nonexistent Sans", "to": have}});
     s.execute("edit.batch", &json!({"commands": [fix]})).unwrap();
     assert!(s.doc().unwrap().missing_fonts.is_empty());
+}
+
+/// Duplicating the copies of the last Duplicate again repeats how far they were moved (#966). A
+/// batch that duplicates the latest copy and then fails leaves that record as it was, so the next
+/// Duplicate repeats the step as it would have without the batch.
+#[test]
+fn a_failing_batch_leaves_the_offset_duplicate_repeats() {
+    let mut s = blank();
+    let pos = |s: &mut Session, id: &Value| {
+        let b = s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"].clone();
+        (b["x"].as_f64().unwrap(), b["y"].as_f64().unwrap())
+    };
+    let duplicate = |s: &mut Session, id: &Value| s.execute("edit.duplicate", &json!({"ids": [id]})).unwrap()["ids"][0].clone();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 80, 80]})).unwrap()["id"].clone();
+    let b = duplicate(&mut s, &a);
+    // The copy moved to 60 pt right of and 40 pt below the original: Duplicate repeats that step.
+    let ((ax, ay), (bx, by)) = (pos(&mut s, &a), pos(&mut s, &b));
+    s.execute("shape.move", &json!({"ids": [b], "dx": ax + 60.0 - bx, "dy": ay + 40.0 - by})).unwrap();
+    let c = duplicate(&mut s, &b);
+    let (cx, cy) = pos(&mut s, &c);
+    assert!((cx - ax - 120.0).abs() < 1e-6 && (cy - ay - 80.0).abs() < 1e-6, "{:?}", (cx - ax, cy - ay));
+    let steps = json!([{"command": "edit.duplicate", "params": {"ids": [c]}}, bad_rename()]);
+    let e = s.execute("edit.batch", &json!({"commands": steps})).unwrap_err().to_string();
+    assert!(e.contains("step 1 (`shape.rename`)"), "{e}");
+    let d = duplicate(&mut s, &c);
+    let (dx, dy) = pos(&mut s, &d);
+    assert!((dx - ax - 180.0).abs() < 1e-6 && (dy - ay - 120.0).abs() < 1e-6, "copy at {:?} from the original", (dx - ax, dy - ay));
+}
+
+/// The open deck saved as base64 `.deckcraft` bytes, to compare it with later (Review ▸ Compare).
+fn saved_copy(s: &mut Session) -> Value {
+    s.execute("file.saveBytes", &json!({})).unwrap()["data"].clone()
+}
+
+/// Starting a comparison is not an undo step. A batch that starts one and then fails leaves no
+/// comparison open: `review.revisions` refuses, as before the batch.
+#[test]
+fn a_failing_batch_that_starts_a_comparison_leaves_none_open() {
+    let mut s = blank();
+    let saved = saved_copy(&mut s);
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80], "text": "Added"})).unwrap();
+    assert!(s.execute("review.revisions", &json!({})).is_err());
+    let steps = json!([{"command": "review.compare", "params": {"name": "saved.deckcraft", "data": saved}}, bad_rename()]);
+    let e = s.execute("edit.batch", &json!({"commands": steps})).unwrap_err().to_string();
+    assert!(e.contains("step 1 (`shape.rename`)"), "{e}");
+    let open = s.execute("review.revisions", &json!({})).ok();
+    assert_eq!(open, None, "a comparison is open after the failed batch");
+}
+
+/// Ending a comparison is not an undo step either. A batch that ends one and then fails leaves the
+/// same comparison open.
+#[test]
+fn a_failing_batch_that_ends_a_comparison_leaves_it_open() {
+    let mut s = blank();
+    let saved = saved_copy(&mut s);
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80], "text": "Added"})).unwrap();
+    let opened = s.execute("review.compare", &json!({"name": "saved.deckcraft", "data": saved})).unwrap();
+    let steps = json!([{"command": "review.endCompare"}, bad_rename()]);
+    let e = s.execute("edit.batch", &json!({"commands": steps})).unwrap_err().to_string();
+    assert!(e.contains("step 1 (`shape.rename`)"), "{e}");
+    assert_eq!(s.execute("review.revisions", &json!({})).ok(), Some(opened));
 }
 
 #[test]

@@ -379,7 +379,9 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
             };
             if atomic {
                 if keep {
-                    return ToolResult::error("`atomic` and `keepGoing` together: an atomic batch stops at the first error and changes nothing");
+                    return ToolResult::error(
+                        "`atomic` and `keepGoing` together: an atomic batch stops at the first error and leaves the presentation as it was",
+                    );
                 }
                 let commands = a.get("commands").cloned().unwrap_or_else(|| json!([]));
                 return match exec(b, "edit.batch", json!({"commands": commands})) {
