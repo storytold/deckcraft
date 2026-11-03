@@ -72,7 +72,7 @@ use geometry::shade;
 pub use geometry::{camera_turn, crop_dest, parse_path, shape_geometry};
 pub(crate) use geometry::{color, scale_of};
 use opts::SlideFields;
-pub use opts::{ParaState, RenderOpts, ShapeState};
+pub use opts::{ParaState, RenderOpts, ShapeState, slide_fields};
 pub use raster::{Image, MAX_SIDE, dpi_for_scale, image_dpi};
 #[cfg(test)]
 use renderer::RENDERER;

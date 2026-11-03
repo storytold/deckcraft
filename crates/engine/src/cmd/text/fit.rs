@@ -29,8 +29,8 @@ pub(crate) struct Fit {
     pub font_scale: f64,
     /// Line spacing reduction the layout applied (0 = none).
     pub line_reduction: f64,
-    /// Smallest and largest font size drawn, in points, after the scale; `None` for a body with
-    /// no drawn text.
+    /// Smallest and largest font size of the drawn text, in points, after the scale (bullets are
+    /// left out); `None` for a body with no drawn text.
     pub sizes: Option<(f64, f64)>,
     pub lines: usize,
     /// Height of the laid-out text and of the frame it sits in (insets applied), in points.
@@ -64,9 +64,10 @@ impl Fit {
     }
 }
 
-/// The fit of `sh`'s text on the page `sel` names, as the slide draws it. `None` for a shape with
-/// no text body and for tables, whose rows grow to fit their text.
-pub(crate) fn fit_of(doc: &Presentation, sel: &Selection, sh: &Shape) -> Option<Fit> {
+/// The fit of `sh`'s text on the page `sel` names, as the slide draws it: `fields` are the field
+/// values the page draws (slide number, date, footer). `None` for a shape with no text body and for
+/// tables, whose rows grow to fit their text.
+pub(crate) fn fit_of(doc: &Presentation, sel: &Selection, fields: &dyn deckcraft_text::Fields, sh: &Shape) -> Option<Fit> {
     if matches!(sh.kind, ShapeKind::Table(_)) {
         return None;
     }
@@ -75,7 +76,7 @@ pub(crate) fn fit_of(doc: &Presentation, sel: &Selection, sh: &Shape) -> Option<
     let bp = resolve::body(&ctx, sh);
     let x = xfrm_of(doc, sel, sh);
     let rect = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
-    let opts = deckcraft_text::Opts { rect, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false };
+    let opts = deckcraft_text::Opts { rect, fields, prompt_color: None, no_shrink: false };
     let l = deckcraft_text::layout(&ctx, sh, body, &opts);
     let autofit = match bp.autofit {
         None | Some(AutoFit::None) => "none",
@@ -123,9 +124,11 @@ pub(crate) fn fit_of(doc: &Presentation, sel: &Selection, sh: &Shape) -> Option<
 pub(crate) fn slide_fits(doc: &Presentation, index: usize) -> Vec<Fit> {
     let Some(slide) = doc.slides.get(index) else { return vec![] };
     let sel = Selection { slide: index, target: Target::Slides, ..Default::default() };
+    // The slide number, date and footer text the renderer puts in this slide's fields.
+    let fields = deckcraft_render::slide_fields(doc, index);
     let mut out = vec![];
     deckcraft_model::walk(&slide.shapes, &mut |sh, _| {
-        if let Some(f) = fit_of(doc, &sel, sh) {
+        if let Some(f) = fit_of(doc, &sel, &fields, sh) {
             out.push(f);
         }
     });

@@ -1,7 +1,8 @@
 //! `text.fit`: how text bodies fit their shapes as the slide draws them. An agent filling a
 //! placeholder sees `autofit: null` in `shape.inspect` while the layout's shrink-on-overflow draws
 //! the text at a fraction of its size; these tests pin what the query reports for that case, for
-//! text that fits, for text that overflows a shape that does not shrink, and for bad params.
+//! text that fits, for text that overflows a shape that does not shrink, for a slide number field
+//! and for bad params.
 
 use serde_json::{Value, json};
 
@@ -143,4 +144,36 @@ fn bad_slide_indexes_and_shape_ids_are_refused() {
         assert!(s.execute("text.fit", &p).is_err(), "{p}");
     }
     assert!(s.execute("text.fit", &json!({"ids": [99_999]})).unwrap_err().to_string().contains("no shape"));
+}
+
+/// A slide number field is measured with the number the slide draws. Numbered from 9999, slide 2
+/// draws "10000", which wraps onto a line of its own where a one-digit number fits.
+#[test]
+fn a_slide_number_field_is_measured_with_the_number_the_slide_draws() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 164, 120], "text": "Slide number"})).unwrap()["id"].clone();
+    s.execute("text.edit", &json!({"id": id})).unwrap();
+    s.execute("text.insert", &json!({"text": " "})).unwrap();
+    s.execute("insert.slideNumber", &json!({})).unwrap();
+    // text.fit's report and the layout the renderer places for the same body.
+    let measure = |s: &mut Session| {
+        let b = fit(s, json!({"ids": [id]}))["bodies"][0].clone();
+        let placed = deckcraft_render::place_slide(&s.doc().unwrap().doc, 1);
+        let drawn = placed.texts.into_iter().find(|t| t.body.text().starts_with("Slide number")).expect("the slide draws the body");
+        (b, drawn.layout.lines.len(), (drawn.layout.content_height * 10.0).round() / 10.0)
+    };
+    let (b, lines, height) = measure(&mut s);
+    assert_eq!(lines, 1, "slide 2 draws one line");
+    assert_eq!(b["lines"], lines, "{b}");
+    s.edit(|doc, _| {
+        doc.first_slide_number = 9999;
+        Ok(())
+    })
+    .unwrap();
+    let (b, wrapped, wrapped_height) = measure(&mut s);
+    assert_eq!(wrapped, 2, "slide 10000 draws its number on a second line");
+    assert!(wrapped_height > height, "{wrapped_height} after {height}");
+    assert_eq!(b["lines"], wrapped, "text.fit {b} against the drawn layout");
+    assert_eq!(num(&b, "contentHeight"), wrapped_height, "{b}");
 }
