@@ -451,7 +451,11 @@ impl Decoder {
             chroma_planes: if chroma == 0 { 0 } else { 2 },
             bytes_per_sample: 1,
         };
-        let pictures = (sps.max_dpb_frames() + 1 + self.max_in_flight) as u64;
+        // Pictures waiting for output that already left the DPB are held too (one decode call may
+        // carry many access units). A buffer shared with a DPB entry is counted once.
+        let queued = self.out_queue.iter().filter(|o| !self.dpb.entries.iter().any(|e| Arc::ptr_eq(&e.frame, &o.frame))).count();
+        let dpb = sps.max_dpb_frames().max(self.dpb.entries.len());
+        let pictures = (dpb + 1 + self.max_in_flight.max(queued)) as u64;
         ensure!(
             shape.fits(pictures, self.memory_budget),
             "{}x{} pictures with {pictures} in the decoder exceed the memory budget",
