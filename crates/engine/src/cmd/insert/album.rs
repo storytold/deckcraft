@@ -592,9 +592,16 @@ fn infer_album(slides: &[&deckcraft_model::Slide], theme_now: &str) -> (String, 
     (layout, frame.into(), captions, any && gray, theme_now.to_string())
 }
 
+/// The album's items for the dialog, within the limits `insert.photoAlbum` itself takes (items,
+/// bytes per picture and in all), checked before a picture is encoded: an album slide set can
+/// name one large picture many times.
 fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_model::Slide]) -> Vec<Value> {
     let mut items = Vec::new();
-    for slide in slides {
+    let mut total = 0usize;
+    'slides: for slide in slides {
+        if items.len() >= ALBUM_MAX_ITEMS {
+            break;
+        }
         let pics: Vec<&deckcraft_model::Shape> = slide.shapes.iter().filter(|sh| matches!(sh.kind, ShapeKind::Picture { .. })).collect();
         if pics.is_empty() {
             let text = slide
@@ -612,6 +619,11 @@ fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_m
         for sh in pics {
             let ShapeKind::Picture { fill } = &sh.kind else { continue };
             let media = doc.media(fill.media);
+            let size = media.map_or(0, |m| m.data.len());
+            if items.len() >= ALBUM_MAX_ITEMS || size > ALBUM_MAX_BYTES || total.saturating_add(size) > ALBUM_MAX_TOTAL {
+                break 'slides;
+            }
+            total += size;
             let name = if !sh.descr.is_empty() {
                 sh.descr.clone()
             } else {
@@ -721,4 +733,29 @@ fn insert_album(s: &mut Session, items: Vec<AlbumItem>, opts: &AlbumOpts, at: Op
     }
     s.execute("slide.go", &json!({"index": first}))?;
     Ok(json!({"slides": slides, "first": first, "pictures": pictures, "album": album_id}))
+}
+
+#[cfg(test)]
+mod seed_tests {
+    use std::sync::Arc;
+
+    use deckcraft_model::style::PictureFill;
+    use deckcraft_model::{Shape, ShapeId, defaults};
+
+    use super::*;
+
+    #[test]
+    fn reopening_an_album_seeds_at_most_the_items_an_album_takes() {
+        // One picture named by 500 shapes: the dialog gets 48 items, not 500 encoded copies.
+        let mut p = defaults::new_presentation(None);
+        let img = p.add_media("a.png", "image/png", vec![1; 64 * 1024]).unwrap();
+        let pic = |k: u32| Shape {
+            id: ShapeId(10_000 + k),
+            kind: ShapeKind::Picture { fill: PictureFill { media: img, ..Default::default() } },
+            ..Default::default()
+        };
+        Arc::make_mut(&mut p.slides[0]).shapes = (0..500).map(pic).collect();
+        let slides: Vec<&deckcraft_model::Slide> = p.slides.iter().map(|s| s.as_ref()).collect();
+        assert_eq!(items_from_slides(&p, &slides).len(), ALBUM_MAX_ITEMS);
+    }
 }
