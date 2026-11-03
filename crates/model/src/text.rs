@@ -121,6 +121,7 @@ pub struct BodyProps {
     pub upright: Option<bool>,
     /// Space before the first paragraph and after the last count too (`spcFirstLastPara`).
     pub space_first_last: Option<bool>,
+    pub compat_ln_spc: Option<bool>,
 }
 
 impl BodyProps {
@@ -144,6 +145,7 @@ impl BodyProps {
         self.rtl_col = self.rtl_col.or(p.rtl_col);
         self.upright = self.upright.or(p.upright);
         self.space_first_last = self.space_first_last.or(p.space_first_last);
+        self.compat_ln_spc = self.compat_ln_spc.or(p.compat_ln_spc);
     }
 }
 

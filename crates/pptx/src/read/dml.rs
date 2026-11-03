@@ -358,6 +358,7 @@ pub fn body_pr(b: &El) -> BodyProps {
         rtl_col: b.bool("rtlCol"),
         upright: b.bool("upright"),
         space_first_last: b.bool("spcFirstLastPara"),
+        compat_ln_spc: b.bool("compatLnSpc"),
         ..Default::default()
     };
     for e in b.elements() {

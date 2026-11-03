@@ -469,6 +469,27 @@ fn text_and_formatting_round_trip() {
 }
 
 #[test]
+fn compatible_line_spacing_mode_survives_two_pptx_round_trips() {
+    let mut p = Presentation::default();
+    let mut slide = new_slide(&mut p, "Compatible line spacing");
+    let mut enabled = shape(&mut p, "Enabled", 10.0, 10.0, 200.0, 80.0);
+    let mut enabled_body = TextBody::from_text("enabled");
+    enabled_body.body.compat_ln_spc = Some(true);
+    enabled.text = Some(enabled_body);
+    let mut disabled = shape(&mut p, "Disabled", 10.0, 100.0, 200.0, 80.0);
+    let mut disabled_body = TextBody::from_text("disabled");
+    disabled_body.body.compat_ln_spc = Some(false);
+    disabled.text = Some(disabled_body);
+    slide.shapes = vec![enabled, disabled];
+    p.slides.push(Arc::new(slide));
+
+    let twice = round(&round(&p));
+    let slide = twice.slides.last().expect("added slide");
+    assert_eq!(by_name(slide, "Enabled").text.as_ref().expect("text").body.compat_ln_spc, Some(true));
+    assert_eq!(by_name(slide, "Disabled").text.as_ref().expect("text").body.compat_ln_spc, Some(false));
+}
+
+#[test]
 fn shapes_fills_lines_effects_round_trip() {
     let p = rich_deck();
     let q = round(&p);
