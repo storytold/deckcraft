@@ -345,6 +345,7 @@ pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
         "rtf" => Ok(deckcraft_format::rtf::slides_to_rtf(doc).into_bytes()),
         "pdf" => deckcraft_pdf::export(doc, &Default::default()).map_err(|e| EngineError::Other(e.to_string())),
         "gif" => gif_bytes(doc, &Value::Null),
+        "png" | "jpeg" | "jpg" => Err(EngineError::Other("saving a presentation as a single image isn't supported; use file.export".into())),
         _ => deckcraft_format::save(doc).map_err(|e| EngineError::Other(e.to_string())),
     }
 }
@@ -359,7 +360,13 @@ pub fn pdf_options(p: &Value, count: usize) -> Result<deckcraft_pdf::PdfOptions>
     let mut o = deckcraft_pdf::PdfOptions { layout: deckcraft_pdf::PageLayout::Slides, ..Default::default() };
     o.layout = match str_param(p, "layout").unwrap_or("slides") {
         "notes" => deckcraft_pdf::PageLayout::Notes,
-        "handouts" => deckcraft_pdf::PageLayout::Handouts { per_page: usize_param(p, "perPage").unwrap_or(6).clamp(1, 9) as u8 },
+        "handouts" => {
+            let per_page = opt_usize_param(p, "perPage", "file.export")?.unwrap_or(6);
+            if ![1, 2, 3, 4, 6, 9].contains(&per_page) {
+                return Err(bad("file.export", format!("perPage {per_page} isn't one of 1, 2, 3, 4, 6, 9")));
+            }
+            deckcraft_pdf::PageLayout::Handouts { per_page: per_page as u8 }
+        }
         _ => deckcraft_pdf::PageLayout::Slides,
     };
     o.dpi = f64_or(p, "dpi", o.dpi).clamp(36.0, 600.0);
