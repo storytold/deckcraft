@@ -249,6 +249,8 @@ pub fn body(ctx: &Ctx, shape: &Shape) -> BodyProps {
         rtl_col: Some(false),
         upright: Some(false),
         space_first_last: Some(false),
+        vert_overflow: None,
+        horz_overflow: None,
     });
     b
 }

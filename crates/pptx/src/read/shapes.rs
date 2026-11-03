@@ -805,6 +805,7 @@ fn cell(imp: &mut Imp, part: &Part, tc: &El) -> Cell {
             ]);
         }
         c.anchor = pr.attr("anchor").and_then(Anchor::from_xml);
+        c.horz_overflow = pr.attr("horzOverflow").and_then(deckcraft_model::text::TextOverflow::from_xml);
         c.vertical = pr.attr("vert").and_then(TextDir::from_xml);
         for (i, n) in ["lnL", "lnR", "lnT", "lnB"].iter().enumerate() {
             if let Some(ln) = pr.child(n)

@@ -23,6 +23,7 @@ pub struct Cell {
     pub h_merge: bool,
     pub v_merge: bool,
     pub vertical: Option<crate::text::TextDir>,
+    pub horz_overflow: Option<crate::text::TextOverflow>,
 }
 
 impl Cell {

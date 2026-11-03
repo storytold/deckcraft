@@ -121,6 +121,35 @@ pub struct BodyProps {
     pub upright: Option<bool>,
     /// Space before the first paragraph and after the last count too (`spcFirstLastPara`).
     pub space_first_last: Option<bool>,
+    pub vert_overflow: Option<TextOverflow>,
+    pub horz_overflow: Option<TextOverflow>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TextOverflow {
+    Overflow,
+    Clip,
+    Ellipsis,
+}
+
+impl TextOverflow {
+    pub fn xml(self) -> &'static str {
+        match self {
+            Self::Overflow => "overflow",
+            Self::Clip => "clip",
+            Self::Ellipsis => "ellipsis",
+        }
+    }
+
+    pub fn from_xml(value: &str) -> Option<Self> {
+        Some(match value {
+            "overflow" => Self::Overflow,
+            "clip" => Self::Clip,
+            "ellipsis" => Self::Ellipsis,
+            _ => return None,
+        })
+    }
 }
 
 impl BodyProps {
@@ -144,6 +173,8 @@ impl BodyProps {
         self.rtl_col = self.rtl_col.or(p.rtl_col);
         self.upright = self.upright.or(p.upright);
         self.space_first_last = self.space_first_last.or(p.space_first_last);
+        self.vert_overflow = self.vert_overflow.or(p.vert_overflow);
+        self.horz_overflow = self.horz_overflow.or(p.horz_overflow);
     }
 }
 
