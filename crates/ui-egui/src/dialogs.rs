@@ -15,11 +15,15 @@ pub struct Dialog {
     /// Field values while the dialog is open.
     #[serde(skip)]
     pub fields: std::collections::HashMap<String, String>,
+    /// The Spelling dialog's findings and what they were computed from; checking a whole deck is
+    /// too slow to repeat every frame.
+    #[serde(skip)]
+    spelling: Option<(u64, std::sync::Arc<Vec<Value>>)>,
 }
 
 impl Dialog {
     pub fn new(id: &str) -> Self {
-        Dialog { id: id.into(), params: Value::Null, fields: Default::default() }
+        Dialog { id: id.into(), params: Value::Null, fields: Default::default(), spelling: None }
     }
     pub fn modal(&self) -> bool {
         true

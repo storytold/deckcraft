@@ -150,6 +150,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-03 | Review › Spelling no longer freezes on a deck in a language whose dictionary has tens of thousands of affix rules (pt-BR): affixes are looked up by the text they add, suggestions stop at five, a word is judged once per check, and the dialog keeps its findings until the deck changes; parity scores unchanged |
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
 | 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
 | 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |

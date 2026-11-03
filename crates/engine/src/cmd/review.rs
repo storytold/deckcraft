@@ -357,6 +357,7 @@ fn spelling(s: &mut Session, p: &Value) -> Result<Value> {
     let ignore: Vec<String> =
         p.get("ignore").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_lowercase).collect()).unwrap_or_default();
     let mut dicts: std::collections::HashMap<String, Option<Arc<crate::spell::Dictionary>>> = Default::default();
+    let mut verdicts: std::collections::HashMap<(String, String), (bool, Vec<String>)> = Default::default();
     let mut out = vec![];
     // Each misspelt word of `para`, reported with `at` (where the paragraph is) merged in.
     let mut check = |para: &deckcraft_model::Paragraph, at: Value, out: &mut Vec<Value>| {
@@ -372,13 +373,20 @@ fn spelling(s: &mut Session, p: &Value) -> Result<Value> {
             if ignore.contains(&w.text.to_lowercase()) || rep.contains(&w.start) {
                 continue;
             }
-            let dict = dicts.entry(w.lang.clone()).or_insert_with(|| crate::spell::dictionary(&w.lang)).clone();
-            let bad = match &dict {
-                Some(d) => !crate::spell::is_correct(d, &w.text),
-                None => COMMON.contains(&w.text.to_lowercase().as_str()),
-            };
+            // A word comes up on many slides; it is judged, and corrections found, once.
+            let (bad, sug) = verdicts
+                .entry((w.lang.clone(), w.text.clone()))
+                .or_insert_with(|| {
+                    let dict = dicts.entry(w.lang.clone()).or_insert_with(|| crate::spell::dictionary(&w.lang)).clone();
+                    let bad = match &dict {
+                        Some(d) => !crate::spell::is_correct(d, &w.text),
+                        None => COMMON.contains(&w.text.to_lowercase().as_str()),
+                    };
+                    let sug = if bad { dict.as_ref().map(|d| d.suggest(&w.text, 5)).unwrap_or_default() } else { vec![] };
+                    (bad, sug)
+                })
+                .clone();
             if bad {
-                let sug = dict.as_ref().map(|d| d.suggest(&w.text, 5)).unwrap_or_default();
                 let mut v = json!({"start": w.start, "end": w.end, "word": w.text, "lang": w.lang, "suggestions": sug});
                 if let (Some(o), Some(a)) = (v.as_object_mut(), at.as_object()) {
                     o.extend(a.clone());

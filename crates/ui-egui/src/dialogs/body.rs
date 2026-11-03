@@ -922,8 +922,23 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     // Words skipped with Ignore All while the dialog is open, one per line.
     let ignored = d.get("ignore", "");
     let ignore: Vec<&str> = ignored.lines().filter(|l| !l.is_empty()).collect();
-    let v = app.session.execute("review.spelling", &json!({"ignore": ignore})).unwrap_or_default();
-    let list = v.as_array().cloned().unwrap_or_default();
+    // The check reads every slide, so it runs again only when the deck, the ignored words or the
+    // user dictionary changed since the last frame.
+    let key = app.session.active().map(|st| {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (std::sync::Arc::as_ptr(&st.doc) as usize, st.revision, &ignored, deckcraft_engine::spell::user_generation()).hash(&mut h);
+        h.finish()
+    });
+    let list = match (&d.spelling, key) {
+        (Some((k, list)), Some(key)) if *k == key => list.clone(),
+        _ => {
+            let v = app.session.execute("review.spelling", &json!({"ignore": ignore})).unwrap_or_default();
+            let list = std::sync::Arc::new(v.as_array().cloned().unwrap_or_default());
+            d.spelling = key.map(|k| (k, list.clone()));
+            list
+        }
+    };
     let info = app.session.execute("review.dictionary", &json!({})).unwrap_or_default();
     let available = info.get("available").and_then(Value::as_bool).unwrap_or(false);
     match info.get("found").and_then(Value::as_str) {
@@ -950,7 +965,7 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     }
     let mut add_ignore = None;
     egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-        for item in &list {
+        for item in list.iter() {
             let w = item.get("word").and_then(Value::as_str).unwrap_or("");
             let slide = item.get("slide").cloned().unwrap_or_default();
             let shape = item.get("shape").cloned().unwrap_or_default();
