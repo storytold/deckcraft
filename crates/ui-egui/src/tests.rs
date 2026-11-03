@@ -2361,3 +2361,47 @@ fn overdue_visible_logic_does_not_reanchor_a_later_hidden_show() {
     let _ = ctx.run_logic(&raw_at(12.0, true, false), |ctx| app.tick_hidden_show(ctx, visible_anchor + std::time::Duration::from_secs(3)));
     assert_eq!(app.show.as_ref().unwrap().state.slide, 1, "time from the full visible frame is preserved through the logic-only pass");
 }
+
+/// #1431: a comment card's reply row was wider than the pane, so the Comments pane grew every
+/// frame until it stuck at its widest and dragging its edge did nothing.
+#[test]
+fn comments_pane_keeps_its_width_and_resizes() {
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        SlideApp::new(Session::with_new(), Services::default()),
+    );
+    h.run_steps(3);
+    h.state_mut().run("comment.add", json!({"text": "Check the figures on this slide"})).unwrap();
+    h.state_mut().run("comment.add", json!({"text": "Resolved one"})).unwrap();
+    h.state_mut().run("comment.resolve", json!({"index": 1, "resolved": true})).unwrap();
+    h.state_mut().run("view.pane", json!({"pane": "comments"})).unwrap();
+    h.run_steps(30);
+    let width = h.state().ui.pane_width;
+    assert!(width < 320.0, "the pane keeps its default width, not {width}");
+    // The cards stay compact: the second one starts near the top, not below a stretched first.
+    let second = h.get_by_label("Resolved one").rect();
+    assert!(second.top() < 450.0, "the second comment sits near the top, at {second:?}");
+
+    // Drag the pane's left edge: right narrows it, left widens it.
+    let drag = |h: &mut egui_kittest::Harness<'_, SlideApp>, dx: f32| {
+        let start = egui::pos2(1200.0 - h.state().ui.pane_width - 1.0, 500.0);
+        let end = start + egui::vec2(dx, 0.0);
+        h.event(egui::Event::PointerMoved(start));
+        h.run_steps(1);
+        h.event(egui::Event::PointerButton { pos: start, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+        for i in 1..=6 {
+            h.event(egui::Event::PointerMoved(start + (end - start) * (i as f32 / 6.0)));
+            h.run_steps(1);
+        }
+        h.event(egui::Event::PointerButton { pos: end, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+        h.run_steps(10);
+        h.state().ui.pane_width
+    };
+    let narrow = drag(&mut h, 50.0);
+    assert!(narrow < width - 40.0, "dragging right narrows the pane: {width} -> {narrow}");
+    let wide = drag(&mut h, -150.0);
+    assert!(wide > narrow + 140.0, "dragging left widens the pane: {narrow} -> {wide}");
+}
