@@ -2421,6 +2421,10 @@ fn pdf_options_reject_unsupported_per_page() {
         let e = cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": n}), 1).unwrap_err();
         assert!(e.to_string().contains("1, 2, 3, 4, 6, 9"), "perPage {n}: {e}");
     }
+    // Not a count at all: refused too, instead of falling back to 6.
+    for v in [json!(-1), json!(5.5), json!("6")] {
+        assert!(cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": v}), 1).is_err(), "perPage {v}");
+    }
 }
 
 #[test]

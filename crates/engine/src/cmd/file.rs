@@ -360,7 +360,7 @@ pub fn pdf_options(p: &Value, count: usize) -> Result<deckcraft_pdf::PdfOptions>
     o.layout = match str_param(p, "layout").unwrap_or("slides") {
         "notes" => deckcraft_pdf::PageLayout::Notes,
         "handouts" => {
-            let per_page = usize_param(p, "perPage").unwrap_or(6);
+            let per_page = opt_usize_param(p, "perPage", "file.export")?.unwrap_or(6);
             if ![1, 2, 3, 4, 6, 9].contains(&per_page) {
                 return Err(bad("file.export", format!("perPage {per_page} isn't one of 1, 2, 3, 4, 6, 9")));
             }
