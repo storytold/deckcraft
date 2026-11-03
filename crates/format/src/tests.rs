@@ -208,6 +208,54 @@ fn a_file_saved_with_non_finite_numbers_reopens() {
     assert_eq!(load(&save(&back).unwrap()).unwrap(), back);
 }
 
+#[test]
+fn reflection_transform_survives_two_native_saves_and_absent_fields_stay_absent() {
+    use deckcraft_model::style::Reflection;
+    use deckcraft_model::{Effects, Shape};
+    let mut p = Presentation::default();
+    let reflection = Reflection {
+        blur: 1.0,
+        start_alpha: 0.5,
+        end_alpha: 0.0,
+        end_pos: 0.75,
+        dist: 2.0,
+        st_pos: Some(20_000),
+        fade_dir: Some(0),
+        sx: Some(75_000),
+        sy: Some(-50_000),
+        kx: Some(600_000),
+        align: Some("bl".into()),
+        rotate_with_shape: Some(false),
+        ..Default::default()
+    };
+    let shape = Shape { effects: Some(Effects { reflection: Some(reflection.clone()), ..Default::default() }), ..Default::default() };
+    Arc::make_mut(&mut p.slides[0]).shapes.push(shape);
+    let once = load(&save(&p).expect("save")).expect("load");
+    let twice = load(&save(&once).expect("save again")).expect("load again");
+    assert_eq!(twice.slides[0].shapes.last().and_then(|s| s.effects.as_ref()).and_then(|e| e.reflection.as_ref()), Some(&reflection));
+
+    let absent = Reflection {
+        blur: 1.0,
+        start_alpha: 1.0,
+        end_alpha: 0.0,
+        end_pos: 1.0,
+        dist: 0.0,
+        st_pos: None,
+        dir: None,
+        fade_dir: None,
+        sx: None,
+        sy: None,
+        kx: None,
+        ky: None,
+        align: None,
+        rotate_with_shape: None,
+    };
+    let shape = Shape { effects: Some(Effects { reflection: Some(absent.clone()), ..Default::default() }), ..Default::default() };
+    Arc::make_mut(&mut p.slides[0]).shapes = vec![shape];
+    let reopened = load(&save(&p).expect("save absent values")).expect("load absent values");
+    assert_eq!(reopened.slides[0].shapes.last().and_then(|s| s.effects.as_ref()).and_then(|e| e.reflection.as_ref()), Some(&absent));
+}
+
 /// Files written before [`finite::Finite`] (plain serde_json: NaN as `null`) open too,
 /// including a `null` inside a tagged enum, where serde reports only the enclosing object.
 #[test]

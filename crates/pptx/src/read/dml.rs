@@ -322,6 +322,15 @@ pub fn effects(el: &El) -> Effects {
                     end_alpha: pct(e, "endA").unwrap_or(0.0),
                     end_pos: pct(e, "endPos").unwrap_or(1.0),
                     dist: pt(e, "dist").unwrap_or(0.0),
+                    st_pos: e.i64("stPos").and_then(|v| i32::try_from(v).ok()),
+                    dir: e.i64("dir").and_then(|v| i32::try_from(v).ok()),
+                    fade_dir: e.i64("fadeDir").and_then(|v| i32::try_from(v).ok()),
+                    sx: e.i64("sx").and_then(|v| i32::try_from(v).ok()),
+                    sy: e.i64("sy").and_then(|v| i32::try_from(v).ok()),
+                    kx: e.i64("kx").and_then(|v| i32::try_from(v).ok()),
+                    ky: e.i64("ky").and_then(|v| i32::try_from(v).ok()),
+                    align: e.attr("algn").filter(|v| matches!(*v, "tl" | "t" | "tr" | "l" | "ctr" | "r" | "bl" | "b" | "br")).map(str::to_owned),
+                    rotate_with_shape: e.bool("rotWithShape"),
                 })
             }
             _ => {}

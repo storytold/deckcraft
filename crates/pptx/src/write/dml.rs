@@ -357,10 +357,15 @@ pub fn effects(w: &mut W, fx: &Effects) {
                 .a("endA", pct(r.end_alpha.clamp(0.0, 1.0)))
                 .a("endPos", pct(r.end_pos.clamp(0.0, 1.0)))
                 .a("dist", emu(r.dist).max(0))
-                .a("dir", 5_400_000)
-                .a("sy", -100_000)
-                .a("algn", "bl")
-                .a("rotWithShape", "0"),
+                .o("stPos", r.st_pos)
+                .o("dir", r.dir)
+                .o("fadeDir", r.fade_dir)
+                .o("sx", r.sx)
+                .o("sy", r.sy)
+                .o("kx", r.kx)
+                .o("ky", r.ky)
+                .o("algn", r.align.as_deref())
+                .b("rotWithShape", r.rotate_with_shape),
         );
     }
     if let Some(r) = fx.soft_edge {
