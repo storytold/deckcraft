@@ -27,6 +27,13 @@ struct Restored<'a> {
     cross_limit: f64,
 }
 
+#[derive(Clone, Copy)]
+enum PackingPhase {
+    Nominal,
+    Fitted,
+    Restored,
+}
+
 struct Policy {
     column: bool,
     count: Option<usize>,
@@ -90,6 +97,7 @@ struct CenterAdjustment {
 struct ReverseCentering {
     extent: f64,
     boundary: f64,
+    reference: Option<f64>,
     offset: f64,
     last_growth: f64,
     first_reverse: bool,
@@ -97,8 +105,16 @@ struct ReverseCentering {
 }
 
 impl ReverseCentering {
-    fn new(extent: f64) -> Self {
-        Self { extent, boundary: extent, offset: 0., last_growth: 0., first_reverse: true, pending: [CenterAdjustment::default(); 4] }
+    fn new(extent: f64, phase: PackingPhase) -> Self {
+        Self {
+            extent,
+            boundary: extent,
+            reference: matches!(phase, PackingPhase::Nominal).then_some(extent),
+            offset: 0.,
+            last_growth: 0.,
+            first_reverse: true,
+            pending: [CenterAdjustment::default(); 4],
+        }
     }
 
     fn origin(&mut self, line: &Line, following: f64, first_width: f64, reversed: bool) -> f64 {
@@ -122,6 +138,9 @@ impl ReverseCentering {
         let prior_negative = (-self.pending[1].shift).max(0.);
         self.extent += 2. * self.pending[0].advance;
         self.boundary += 2. * self.pending[0].advance;
+        if let Some(reference) = &mut self.reference {
+            *reference += 2. * self.pending[0].advance;
+        }
         let old_extent = self.extent;
         let future = self.pending[2].growth;
         let reference = old_extent - 2. * future;
@@ -160,7 +179,14 @@ impl ReverseCentering {
     fn widen_boundary(&mut self, length: f64, following: f64, old_extent: f64) {
         let future = self.pending[2].growth;
         self.extent = self.extent.max(length + 2. * future);
-        let alignment = old_extent - self.last_growth + 2. * future;
+        let mut alignment = old_extent - self.last_growth + 2. * future;
+        // A shorter line can drain the visible shift without replacing the
+        // nominal alignment reference. Reuse it when the following line crosses
+        // its reflected boundary. Fitting and restored placement have separate
+        // reference lifetimes and retain their existing centering state.
+        if let Some(reference) = self.reference.filter(|&reference| exceeds(following, 2. * old_extent - reference)) {
+            alignment = alignment.min(2. * reference - old_extent + 2. * future);
+        }
         let step = if exceeds(following, old_extent) { (self.boundary - alignment - (length - following).max(0.)) / 2. } else { 0. };
         self.pending[2].advance = step.max(0.);
         let shift = step - (self.boundary - self.extent).max(0.);
@@ -173,6 +199,9 @@ impl ReverseCentering {
 
     fn forward(&mut self, length: f64, early_extent: bool) {
         let expansion = length - self.extent;
+        if let Some(reference) = &mut self.reference {
+            *reference = reference.max(length);
+        }
         if !early_extent {
             let cancelled = self.pending[1].growth.min(expansion / 2.);
             self.pending[1].shift -= cancelled;
@@ -208,8 +237,8 @@ impl Policy {
         }
     }
 
-    fn layout(&self, children: &[BoxStyle], available: f64, scale: f64, work: &mut usize) -> Result<Packing, &'static str> {
-        self.layout_inner(children, available, scale, None, work)
+    fn layout(&self, children: &[BoxStyle], available: f64, scale: f64, phase: PackingPhase, work: &mut usize) -> Result<Packing, &'static str> {
+        self.layout_inner(children, available, scale, phase, None, work)
     }
 
     fn lines(&self, children: &[BoxStyle], available: f64, scale: f64) -> Vec<Line> {
@@ -240,13 +269,14 @@ impl Policy {
         children: &[BoxStyle],
         available: f64,
         scale: f64,
+        phase: PackingPhase,
         restored: Option<Restored<'_>>,
         work: &mut usize,
     ) -> Result<Packing, &'static str> {
         charge(work, children.len().saturating_mul(3))?;
         let lines = self.lines(children, available, scale);
         let mut centering = Centering { extent: lines.first().map_or(0., |line| line.length), offset: 0., pending: 0., next: 0. };
-        let mut reverse_centering = ReverseCentering::new(centering.extent);
+        let mut reverse_centering = ReverseCentering::new(centering.extent, phase);
         let mut boxes = vec![Xfrm::new(0., 0., 0., 0.); children.len()];
         if let Some(restored) = &restored {
             for ((rect, child), allocation) in boxes.iter_mut().zip(children).zip(restored.allocations) {
@@ -531,7 +561,7 @@ impl Policy {
         let (flow, cross) = if self.column { (frame.h, frame.w) } else { (frame.w, frame.h) };
         let initial = self.center_trial(children, flow, cross, 1., work)?;
         if !refit && matches!(initial.phase, CenterFitPhase::Fits) {
-            return self.layout(children, flow, 1., work);
+            return self.layout(children, flow, 1., PackingPhase::Nominal, work);
         }
         let (mut low, mut high) = (0., 1.);
         let mut exit = CenterExit::default();
@@ -558,7 +588,7 @@ impl Policy {
         // Raw length rejection precedes placement. The accepted dimensions can
         // use an ordinary layout without retaining intermediate alignment state.
         if exit.raw_failed {
-            return self.layout(children, flow, low, work);
+            return self.layout(children, flow, low, PackingPhase::Fitted, work);
         }
         self.finish_centered(children, CenterSearch { initial, best, scale: low, exit }, flow, grow, work)
     }
@@ -747,18 +777,18 @@ pub(super) fn pack(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyl
     }
     let available = if policy.column { frame.h } else { frame.w };
     let fits = |packing: &Packing| !exceeds(packing.width, frame.w) && !exceeds(packing.height, frame.h);
-    let mut packed = policy.layout(children, available, 1., work)?;
+    let mut packed = policy.layout(children, available, 1., PackingPhase::Nominal, work)?;
     if refit || !fits(&packed) {
         let (mut low, mut high) = (0., 1.);
         // Normalize the bracket before the observed ten fitting trials. Each
         // attempt consumes the shared work budget, including extreme extents.
-        while !fits(&policy.layout(children, available, high * 0.5, work)?) {
+        while !fits(&policy.layout(children, available, high * 0.5, PackingPhase::Fitted, work)?) {
             high *= 0.5;
         }
-        packed = policy.layout(children, available, 0., work)?;
+        packed = policy.layout(children, available, 0., PackingPhase::Fitted, work)?;
         for _ in 0..10 {
             let mid = (low + high) / 2.;
-            let candidate = policy.layout(children, available, mid, work)?;
+            let candidate = policy.layout(children, available, mid, PackingPhase::Fitted, work)?;
             if fits(&candidate) {
                 low = mid;
                 packed = candidate;
@@ -785,7 +815,7 @@ pub(super) fn repack(
     let frame = style.rect;
     let available = if policy.column { frame.h } else { frame.w };
     let cross_limit = if policy.column { frame.w } else { frame.h };
-    let packed = policy.layout_inner(children, available, 1., Some(Restored { allocations, cross_limit }), work)?;
+    let packed = policy.layout_inner(children, available, 1., PackingPhase::Restored, Some(Restored { allocations, cross_limit }), work)?;
     place(node, frame, children, packed);
     Ok(())
 }
@@ -1036,6 +1066,71 @@ mod tests {
             assert!((rect.y - actual[0].y).abs() < 1e-7);
         }
         assert!((actual[2].y - actual[1].y - 2.52470703125).abs() < 1e-7);
+    }
+
+    #[test]
+    fn reverse_nominal_reference_survives_intervening_short_lines() {
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr"), ("contDir", "revDir")];
+        for first in [18., 30.] {
+            for pairs in 0..=2 {
+                let mut widths = vec![first, 66., 12.];
+                for _ in 0..pairs {
+                    widths.extend([42., 42.]);
+                }
+                widths.extend([6., 126., 12.]);
+                let sizes: Vec<_> = widths.into_iter().map(|w| (w, 10.)).collect();
+                let actual = packed(&sizes, (400., 180.), &params, 0.);
+                let centers = relative_line_centers(&actual, 1, false);
+                let half_growth = (66. - first) / 2.;
+                let mut expected = vec![0., 0., half_growth];
+                for pair in 0..pairs {
+                    expected.extend([if pair == 0 { half_growth } else { 0. }, 0.]);
+                }
+                expected.extend([if pairs == 0 { half_growth } else { 0. }, 60., 96. - first]);
+                for (center, expected) in centers.into_iter().zip(expected) {
+                    assert!((center - expected).abs() < 1e-7, "{first}/{pairs}: {center} != {expected}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reverse_fitted_tail_survives_repacking_unchanged_dimensions() {
+        let xml = crate::xml::parse(b"<layoutNode/>").unwrap();
+        let mut node = Instance::new(&xml.root);
+        node.alg = "snake".into();
+        node.params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr"), ("contDir", "revDir"), ("grDir", "bR")]
+            .map(|(k, v)| (k.into(), v.into()))
+            .into_iter()
+            .collect();
+        let style = BoxStyle::new(Xfrm::new(0., 0., 90., 65.));
+        for first in [22., 38.] {
+            let mut children: Vec<_> =
+                [first, 74., 18., 44., 44., 10., 158., 22.].into_iter().map(|w| BoxStyle::new(Xfrm::new(0., 0., w, 10.))).collect();
+            pack(&node, style, &mut children, false, &mut 0).unwrap();
+            let fitted: Vec<_> = children.iter().map(|c| c.rect).collect();
+            // In this fitting counterexample, reusing the nominal reference
+            // moves only the tail and worsens mean error while maximum error
+            // stays unchanged. Preserve the fitted slot, not just its score.
+            let tail = fitted.last().unwrap();
+            assert!((tail.x - 49.4970703125).abs() < 1e-7);
+            assert!((tail.y - 14.51171875).abs() < 1e-7);
+            assert!((tail.w - 9.8935546875).abs() < 1e-7);
+            assert!((tail.h - 4.4970703125).abs() < 1e-7);
+
+            // Repacking uses unit scale even when its dimensions came from a
+            // fitting pass. With no intrinsic dimensions changed, every node
+            // must retain its fitted position rather than start nominal history.
+            let allocations = children.clone();
+            repack(&node, style, &mut children, &allocations, &mut 0).unwrap();
+            for (child, before) in children.iter().zip(fitted) {
+                for (after, before) in
+                    [child.rect.x, child.rect.y, child.rect.w, child.rect.h].into_iter().zip([before.x, before.y, before.w, before.h])
+                {
+                    assert!((after - before).abs() < 1e-7);
+                }
+            }
+        }
     }
 
     #[test]

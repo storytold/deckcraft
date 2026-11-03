@@ -2,6 +2,9 @@
 //! Rules replace constraint values/factors, then the entire dependent layout is solved again.
 mod coupled;
 mod linear;
+mod progress;
+#[cfg(test)]
+mod progress_tests;
 
 use super::{Data, Instance, MAX_WORK, Placed, constraints, geometry};
 use crate::xml::El;
@@ -461,7 +464,13 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
             let score = score(&candidate, &scope, measure, prefer_words, &mut work)?;
             Ok(Some(Choice { out: candidate, score, t, low: 0. }))
         })?;
-        let Some(Choice { out: candidate, score: after, t: selected, low: bracket }) = selected.filter(|c| c.score < before - 1e-6) else {
+        // A growing layout footprint can leave its rotated text rectangle unchanged.
+        // Retain that endpoint so a later dimension or font rule sees the new budget.
+        let retain_endpoint =
+            selected.as_ref().map(|c| progress::retain_endpoint(&range, c, before, &out, &scope, &mut work)).transpose()?.unwrap_or(false);
+        let Some(Choice { out: candidate, score: after, t: selected, low: bracket }) =
+            selected.filter(|c| c.score < before - 1e-6 || retain_endpoint)
+        else {
             for (key, value) in old {
                 if let Some(value) = value {
                     changes.insert(key, value);

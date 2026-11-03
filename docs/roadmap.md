@@ -1,5 +1,7 @@
 # DeckCraft roadmap: milestones and what's next
 
+> **PPTX.51 update 2026-11-02:** Nominal reverse snake placement retains its alignment reference across short rows, with fitted and restored phases kept separate. General growing dimension rules retain a non-worsening endpoint only when the measured text budget is unchanged. The 2,225-case matrix improves from 2,069 to 2,078 strict matches without a lost prior match or measured error regression. Native point-label indices survive tagged-shape reload. Rotation-corrected checks and remaining layout/map/chart failures are reported separately; feature scores are unchanged.
+
 > **PPTX.50 update 2026-11-02:** Root linear flows pack occupied child output and refit actual cross overflow. Shrinking font rules can retain a valid endpoint when the forced-break score is unchanged. The 2,168-case geometry matrix improves from 2,000 to 2,052 strict matches without losing a prior match. Rich column labels use resolved vertical margins and bounded custom half-turn measurement. One coarse label-bound regression and broader layout/map/chart gaps remain explicit; feature scores are unchanged.
 
 > **PPTX.49 update 2026-11-02:** Uncached hierarchy rows use occupied extents, uniform bounded fitting and explicit parent/child attachment. Linear height reclaim retains its authored search interval and accepted fallback. The deduplicated 2,096-case geometry matrix improves from 1,854 to 1,980 strict matches, with no prior match lost. Zero-area identities and remaining text-rule, map and chart-label differences stay explicit; feature scores are unchanged.
@@ -194,6 +196,7 @@ and rich point labels; provider/native-layout gaps remain documented, and beta s
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.51: phase-aware reverse alignment, unchanged-budget dimension progress and native rich-label reload; independent controls and explicit remaining failures |
 | 2026-11-02 | minor | PPTX.50: occupied root flow fitting, font-score plateaus and custom rich-label insets; independent native controls and disclosed remaining differences |
 | 2026-11-02 | minor | PPTX.49: measured hierarchy attachment and authored height reclaim; independent controls, environment diagnostics and explicit residuals |
 | 2026-11-02 | minor | PPTX.48: centered snake fit-state recovery and rich-column baseline constraints; integrated native comparisons and explicit residual cases |

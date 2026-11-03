@@ -255,3 +255,37 @@ fn duplicate_physical_zip_names_are_indexed_and_inflated_once() {
     assert_eq!(chart.kept.parts[0].bytes, vec![4; 10]);
     assert!(chart.kept.parts[1].bytes.is_empty());
 }
+
+#[test]
+fn rich_point_labels_survive_the_native_manifest_and_tagged_shape() {
+    use deckcraft_model::chart::DataLabel;
+    use deckcraft_model::text::TextBody;
+    let mut chart = Chart::sample(ChartType::Column);
+    for index in [0, 2] {
+        chart.series[0].point_labels.insert(
+            index,
+            DataLabel {
+                text: Some(TextBody::from_text(&format!("Original point {index}\nSecond line"))),
+                position: Some("ctr".into()),
+                ..Default::default()
+            },
+        );
+    }
+    let shape = Shape { kind: ShapeKind::Chart(Box::new(chart)), ..Default::default() };
+    let mut presentation = Presentation::default();
+    Arc::make_mut(&mut presentation.slides[0]).shapes = vec![shape];
+    let bytes = save(&presentation).unwrap();
+    assert_eq!(load(&bytes).unwrap(), presentation);
+}
+
+#[test]
+fn invalid_or_aliased_point_label_indices_are_rejected() {
+    use deckcraft_model::chart::Series;
+    for key in ["-1", "bad", "1.5", "18446744073709551616"] {
+        let value = json!({"pointLabels": {key: {}}});
+        assert!(serde_json::from_value::<Series>(value).is_err(), "invalid index {key}");
+    }
+    assert!(serde_json::from_value::<Series>(json!({"pointLabels": {"0": {}, "00": {}}})).is_err());
+    assert!(serde_json::from_value::<Series>(json!({})).unwrap().point_labels.is_empty());
+    assert_eq!(serde_json::from_value::<Series>(json!({"pointLabels": {"0": {}, "2": {}}})).unwrap().point_labels.len(), 2);
+}

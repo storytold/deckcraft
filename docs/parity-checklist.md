@@ -1,5 +1,7 @@
 # PowerPoint feature checklist
 
+> **PPTX.51 update 2026-11-02:** Nominal reverse snake placement retains its alignment reference across short rows, with fitted and restored phases kept separate. General growing dimension rules retain a non-worsening endpoint only when the measured text budget is unchanged. The 2,225-case matrix improves from 2,069 to 2,078 strict matches without a lost prior match or measured error regression. Native point-label indices survive tagged-shape reload. Rotation-corrected checks and remaining layout/map/chart failures are reported separately; feature scores are unchanged.
+
 > **PPTX.50 update 2026-11-02:** Root linear flows pack occupied child output and refit actual cross overflow. Shrinking font rules can retain a valid endpoint when the forced-break score is unchanged. The 2,168-case geometry matrix improves from 2,000 to 2,052 strict matches without losing a prior match. Rich column labels use resolved vertical margins and bounded custom half-turn measurement. One coarse label-bound regression and broader layout/map/chart gaps remain explicit; feature scores are unchanged.
 
 > **PPTX.49 update 2026-11-02:** Uncached hierarchy rows use occupied extents, uniform bounded fitting and explicit parent/child attachment. Linear height reclaim retains its authored search interval and accepted fallback. The deduplicated 2,096-case geometry matrix improves from 1,854 to 1,980 strict matches, with no prior match lost. Zero-area identities and remaining text-rule, map and chart-label differences stay explicit; feature scores are unchanged.
@@ -92,7 +94,9 @@
 
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-> **Last updated:** 2026-11-01 · Locked-shape and no-outline regressions added for #1621; fill row re-assessed: remains D; No Fill hit-testing now follows resolved appearance. Scores unchanged.
+> **Last updated:** 2026-11-02 · Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row re-assessed: remains P, since only how tiles are sized changed. Scores unchanged.
+>
+> **Previously (2026-11-01):** Locked-shape and no-outline regressions added for #1621; fill row re-assessed: remains D; No Fill hit-testing now follows resolved appearance. Scores unchanged.
 
 The summary between `<!-- SUMMARY -->
 **Weighted breadth parity: 84%** over 191 features.
@@ -330,6 +334,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.51: phase-aware reverse alignment, unchanged-budget dimension progress and native rich-label reload; independent controls and explicit remaining failures |
 | 2026-11-02 | minor | PPTX.50: occupied root flow fitting, font-score plateaus and custom rich-label insets; independent native controls and disclosed remaining differences |
 | 2026-11-02 | minor | PPTX.49: measured hierarchy attachment and authored height reclaim; independent controls, environment diagnostics and explicit residuals |
 | 2026-11-02 | minor | PPTX.48: centered snake fit-state recovery and rich-column baseline constraints; integrated native comparisons and explicit residual cases |
@@ -363,5 +368,6 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | 2026-11-01 | minor | Rotated diagram footprint fitting and independent mapped text orientation; crossed text insets and wrapped overflow alignment verified with original native controls |
 | 2026-11-01 | minor | Composite occupied geometry and mapped text ownership corrected; non-rotated native controls and round trips pass, rotation and selector/style interactions remain partial |
 | 2026-10-31 | minor | Clarified bounded chart-data, line-label, partial-lock and flat-process export coverage. Feature scores unchanged |
+| 2026-11-02 | trivial | Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P and summary scores are unchanged |
 | 2026-10-31 | trivial | No Fill interior hit-testing follows resolved fill (#1621); fill row remains D and summary scores are unchanged |
 | 2026-11-02 | minor | PPTX.39: distinguish inactive zero font equalities from zero assignments; 104 native font controls and retained recovery/cycle regressions |

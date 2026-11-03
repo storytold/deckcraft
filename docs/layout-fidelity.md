@@ -2846,3 +2846,84 @@ doctests; hosted checks remain separate.
 Private native images and synthetic observation files are not distributed. Publication
 contains source, original programmatic tests and documentation only. Complete external
 converter replacement remains unproven.
+
+
+## PPTX.51 — reverse alignment phases and measured dimension progress
+
+### Retained reverse-flow reference
+
+Nominal reverse snake placement preserves its alignment reference when intervening
+short rows consume the visible offset. Forward growth updates that reference and
+scheduled advances translate it. A following row crossing the reflected boundary can
+therefore use the surviving reference rather than incorrectly resetting its origin.
+Nominal, fitted and restored placement are explicit phases; unit scale alone cannot
+identify them. Work remains bounded by the shared layout budget.
+
+Independent histories and holdouts distinguish different first-row widths, zero to
+two neutral pairs, boundary positions and fitting. The 593-case reverse subset improves
+from 572 to 581 strict matches without losing a match or increasing measured maximum
+or mean error beyond 0.025pt. An original 153.072pt error falls to 0.0081pt. Its visible
+bounds improve from a 277-pixel difference to zero in the 4K comparison. Two independent
+controls improve from 427/463 pixels to one pixel. These are colored visible-bound
+measurements, not full-image pixel equivalence.
+
+An observable pack/repack regression protects the fitted tail and all unchanged
+repacked rectangles. Removing the phase distinction or substituting a scale-only test
+makes this regression fail. The native fitting counterexample itself remains unresolved;
+its old error is retained rather than widened by the nominal repair. Twelve cases in
+the reverse subset still fail strict comparison.
+
+### Progress without changing the measured text budget
+
+General growing absolute width/height rules can change an allocation while rotation or
+inscribed text geometry leaves the measured text budget unchanged. Such an endpoint is
+retained only when its score does not worsen and the affected node identities, placed
+sizes, text rectangles, fonts, margins and text rotation remain equivalent. Comparisons
+allow only floating-point roundoff. Factor rules, shrinking dimensions and changed
+budgets retain the preceding search path. Earlier score-only candidates failed existing
+coupled-size tests and were rejected; those tests were not weakened.
+
+Forty-one new original controls retain thirteen strict matches, with no lost match or
+measured regression. The general-rule delta changes two retained and four new geometries.
+Three selected rotated cases match painted colored bounds within 0.0081pt and have exact
+colored-fill bounds at eight pixels per point. The original model-box checker compares
+unrotated boxes with native painted bounds; its failures remain in the original tally.
+Rotation-corrected measurements are separate: two original painted-bound errors fall
+from 101.728pt to 0.0081pt, and an independent error from 107.718pt to 0.0071pt.
+
+Of 14,096 inspected shapes in the general-rule matrix, five font-property sets change,
+all toward native sizes. Three become exact; two remain 17pt against native 16pt.
+Ellipse allocation/order, that remaining font difference, and broader rule sequencing
+are not resolved by this change.
+
+### Native point-label persistence
+
+A chart's numeric point-label indices serialize as JSON object keys. Internally tagged
+shape deserialization buffers those keys as strings, which previously made a native
+file with point labels fail to reopen. The reader now accepts string and numeric index
+representations without changing the serialized format. Invalid and aliased indices
+are rejected. An original save/load test failed before the fix; the format test suite
+passes afterward. Two original packages totaling seven pages preserve rendered pixels
+through native save/reload.
+
+### Integration and remaining scope
+
+The combined geometry matrix has 2,225 unique cases: 2,069 to 2,078 strict matches within
+0.025pt, no lost match and no common-box maximum/mean increase beyond 0.025pt. All final
+geometries exactly reproduce the accepted isolated changes. The remaining 147 strict
+failures include rotated model-versus-painted bounds and nonpainted identities; they
+remain explicit rather than being removed from the denominator.
+
+The upstream synchronization preserves absolute-point bullet metadata, image-fill and
+export validation improvements, alongside these import changes. Its new optional bullet
+size field is defaulted to null when comparing the older inspection schema; no non-null
+property is discarded. All 14,096 text-property sets match the isolated candidate after
+this schema default, and all 326 recovery pages preserve geometry and PDF text/font
+positions. The final binary reproduces all 814 frozen chart pages, 140 map images and
+six selected high-resolution layout images exactly. Full local `cargo xtask ci` passes
+all eight stages with 2,707 tests including doctests; hosted checks remain separate.
+
+The existing seventeen map-reduction sequences, two Albers precision sequences and
+rich-label/axis paint limitations remain open. Only source, original programmatic tests
+and documentation are published; private native output and observation decks are not.
+Complete external converter replacement is not established.

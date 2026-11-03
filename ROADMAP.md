@@ -1,5 +1,7 @@
 # DeckCraft roadmap
 
+> **PPTX.51 update 2026-11-02:** Nominal reverse snake placement retains its alignment reference across short rows, with fitted and restored phases kept separate. General growing dimension rules retain a non-worsening endpoint only when the measured text budget is unchanged. The 2,225-case matrix improves from 2,069 to 2,078 strict matches without a lost prior match or measured error regression. Native point-label indices survive tagged-shape reload. Rotation-corrected checks and remaining layout/map/chart failures are reported separately; feature scores are unchanged.
+
 > **PPTX.50 update 2026-11-02:** Root linear flows pack occupied child output and refit actual cross overflow. Shrinking font rules can retain a valid endpoint when the forced-break score is unchanged. The 2,168-case geometry matrix improves from 2,000 to 2,052 strict matches without losing a prior match. Rich column labels use resolved vertical margins and bounded custom half-turn measurement. One coarse label-bound regression and broader layout/map/chart gaps remain explicit; feature scores are unchanged.
 
 > **PPTX.49 update 2026-11-02:** Uncached hierarchy rows use occupied extents, uniform bounded fitting and explicit parent/child attachment. Linear height reclaim retains its authored search interval and accepted fallback. The deduplicated 2,096-case geometry matrix improves from 1,854 to 1,980 strict matches, with no prior match lost. Zero-area identities and remaining text-rule, map and chart-label differences stay explicit; feature scores are unchanged.
@@ -210,6 +212,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-02 | PPTX.51: preserve reverse alignment phases, dimension-rule progress and native point-label reload |
 | 2026-11-02 | PPTX.50: fit occupied root flows, preserve font endpoint progress and normalize rich-label margins |
 | 2026-11-02 | PPTX.49: attach hierarchy roots by occupied child bounds and reclaim authored height intervals |
 | 2026-11-02 | PPTX.48: recover centered snake fitting state and constrain rich labels at bar baselines |
@@ -261,6 +264,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-31 | Font selection respects East Asian language/script mappings and document-scoped embedded faces. Read-only `font.inspect` reports actual faces, hashes and fallback reasons. Charts keep separate title/legend/axis typography and rebuilt secondary axes; label widths use text shaping, and logical series order survives plot grouping. Cached SmartArt retains nested transforms and image nodes. Four generated render probes compare exact pixels before/after PPTX round trip; these are not PowerPoint parity claims. See [layout fidelity](docs/layout-fidelity.md) |
 | 2026-10-31 | PPTX fidelity: data-only categorical chart edits keep unmodelled formatting and remove stale workbook dependencies; line data labels render; partial shape restrictions survive save; flat default process SmartArt derives export geometry and font size from its canvas. Paragraph defaults include proofing language, and CJK hanging punctuation follows explicit language. Native PowerPoint validation is bounded; full chart/SmartArt parity remains open |
 | 2026-11-02 | File › About replaces the unused Account page, with version, project links, contributor/model credits and appearance preferences |
+| 2026-11-02 | Tiled picture fills in groups: a tile (`a:blipFill` with `a:tile`) keeps its size, offset and anchor in slide points whatever the group's child-coordinate scale, uniform or stretched unevenly, nested or flipped (also a group's own tile fill passed to its members, and a picture shape's own tile, with its shadow and reflection), and tiles with `rotWithShape="0"` keep their size in points at any zoom, as PowerPoint draws them (measured on its own PNG export of a synthetic probe deck: every grouped case within ~3/255 of the ungrouped control's own difference from PowerPoint, which is ~13/255 from resampling). Before, a group whose child space was ~1800 times smaller than its box showed one flat texel of the texture (a Venn diagram with paper-textured circles and a hatched intersection) |
 | 2026-10-31 | No Fill shape interiors allow selection and editing of underlying objects, even when a quick style remains; hit-testing uses the renderer’s fill resolution. Outlines, rotation, text targets and actual fills keep their hit behaviour (#1621) |
 | 2026-10-30 | Print-preview tests use the URL emitted by egui and its exact file path; previews are explicitly removed before the macOS process exits |
 | 2026-10-30 | `slide.actions` lists shape click and hover actions and text-run hyperlinks (including table cells and grouped shapes) for audit; listing never runs an action. The UI pane is a follow-up |
@@ -432,6 +436,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.51: phase-aware reverse alignment, unchanged-budget dimension progress and native rich-label reload; independent controls and explicit remaining failures |
 | 2026-11-02 | minor | PPTX.50: occupied root flow fitting, font-score plateaus and custom rich-label insets; independent native controls and disclosed remaining differences |
 | 2026-11-02 | minor | PPTX.49: measured hierarchy attachment and authored height reclaim; independent controls, environment diagnostics and explicit residuals |
 | 2026-11-02 | minor | PPTX.48: centered snake fit-state recovery and rich-column baseline constraints; integrated native comparisons and explicit residual cases |
@@ -454,6 +459,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-01 | minor | PPTX.19 geographic lineage, regional projection and explicit native viewport limits; scores unchanged |
 | 2026-10-31 | minor | Progress log: bounded PPTX editing/export fidelity fixes; overall parity scores and alpha stage unchanged |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
+| 2026-11-02 | trivial | Progress log: tiled picture fills keep their size in scaled groups. Scores and milestone names unchanged |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-30 | trivial | Progress log: read-only slide action inspection; parity scores unchanged |
 | 2026-10-29 | trivial | Progress log: going back in the slide show reverses the left slide's transition (#1531). Scores and milestone names unchanged |

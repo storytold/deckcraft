@@ -55,6 +55,7 @@ pub(super) fn bullets(s: &mut Session, p: &Value) -> Result<Value> {
             }
             if size.is_some() {
                 para.props.bullet_size = size;
+                para.props.bullet_size_points = None;
                 para.props.bullet_size_follow_text = None;
             }
             if para.props.indent.is_none_or(|i| i >= 0.0) && para.props.margin_left.is_none_or(|m| m == 0.0) {
@@ -85,6 +86,7 @@ pub(super) fn numbering(s: &mut Session, p: &Value) -> Result<Value> {
             }
             if size.is_some() {
                 para.props.bullet_size = size;
+                para.props.bullet_size_points = None;
                 para.props.bullet_size_follow_text = None;
             }
             para.props.margin_left = Some(27.0 + 36.0 * para.level as f64);

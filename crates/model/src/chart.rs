@@ -217,6 +217,33 @@ impl Default for Trendline {
     }
 }
 
+// Internally tagged shapes buffer their JSON content before reading the chart.
+// Numeric JSON object keys then arrive as strings rather than a map-key adapter.
+// Accept either representation without changing the stored index or JSON format.
+fn deserialize_point_labels<'de, D>(deserializer: D) -> Result<std::collections::BTreeMap<usize, DataLabel>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+    #[serde(untagged)]
+    enum Index {
+        Number(usize),
+        Text(String),
+    }
+    let encoded = std::collections::BTreeMap::<Index, DataLabel>::deserialize(deserializer)?;
+    let mut labels = std::collections::BTreeMap::new();
+    for (index, label) in encoded {
+        let index = match index {
+            Index::Number(index) => index,
+            Index::Text(text) => text.parse::<usize>().map_err(serde::de::Error::custom)?,
+        };
+        if labels.insert(index, label).is_some() {
+            return Err(serde::de::Error::custom("duplicate chart point-label index"));
+        }
+    }
+    Ok(labels)
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Series {
@@ -225,6 +252,7 @@ pub struct Series {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub geography: Option<crate::geography::Geography>,
     pub label_defaults: DataLabel,
+    #[serde(deserialize_with = "deserialize_point_labels")]
     pub point_labels: std::collections::BTreeMap<usize, DataLabel>,
     pub name: String,
     pub values: Vec<Option<f64>>,
