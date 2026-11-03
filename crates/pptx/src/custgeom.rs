@@ -156,6 +156,8 @@ pub fn read_cust_geom(cg: &El, w_emu: f64, h_emu: f64) -> Vec<CustomPath> {
     let mut out = vec![];
     let Some(pl) = cg.child("pathLst") else { return out };
     let mut spaces: HashMap<(u64, u64), Guides> = HashMap::new();
+    // The cap on cached spaces saves guide evaluation: a geometry without guides has none to save.
+    let guided = ["avLst", "gdLst"].iter().any(|n| cg.child(n).is_some_and(|l| l.elements().next().is_some()));
     for p in pl.children_named("path").take(1000) {
         let pw = p.f64("w").unwrap_or(0.0);
         let ph = p.f64("h").unwrap_or(0.0);
@@ -164,7 +166,7 @@ pub fn read_cust_geom(cg: &El, w_emu: f64, h_emu: f64) -> Vec<CustomPath> {
         // The guide lists are evaluated once per coordinate space, not once per path.
         let key = (gw.to_bits(), gh.to_bits());
         if !spaces.contains_key(&key) {
-            if spaces.len() >= MAX_SPACES {
+            if guided && spaces.len() >= MAX_SPACES {
                 continue;
             }
             let mut g = Guides::new(gw, gh);
@@ -497,6 +499,14 @@ mod tests {
         assert_eq!(out.len(), MAX_SPACES + 1, "16 spaces plus the repeat of the first");
         assert!(out[0].d.starts_with("M 5 1"), "{}", out[0].d);
         assert!(out[MAX_SPACES].d.starts_with("M 5 1"), "{}", out[MAX_SPACES].d);
+    }
+
+    #[test]
+    fn guide_free_geometries_are_not_capped_by_space() {
+        let paths: String = (1..=40).map(|i| format!(r#"<a:path w="{}" h="10"><a:moveTo><a:pt x="1" y="1"/></a:moveTo></a:path>"#, 10 * i)).collect();
+        let x = format!(r#"<a:custGeom xmlns:a="x"><a:avLst/><a:gdLst/><a:pathLst>{paths}</a:pathLst></a:custGeom>"#);
+        let d = parse(x.as_bytes()).unwrap();
+        assert_eq!(read_cust_geom(&d.root, 1.0, 1.0).len(), 40);
     }
 
     #[test]
