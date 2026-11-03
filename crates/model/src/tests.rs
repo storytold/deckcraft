@@ -358,10 +358,11 @@ fn connection_sites_serialize_as_fractions_and_default_to_none() {
     assert!(old.sites.is_empty());
 }
 
-/// A group's sites are its members' own, in walk order (groups within too), without hidden
-/// members, lines or ink; `group_site_targets` names the member and its index for each.
+/// A group's sites are its members' own, in walk order (groups within too), lines and ink left
+/// out; a hidden member keeps its place (its sites are just not visible), so a connector glued
+/// to a later site keeps meaning it. `group_site_targets` names the member and its index.
 #[test]
-fn group_site_targets_follow_the_members_in_order_and_skip_hidden_ones() {
+fn group_site_targets_follow_the_members_in_order_and_keep_hidden_ones_in_place() {
     use super::{ConnectionSite, group_member_sites, group_site_targets};
     let member = |id: u32, x: f64, sites: Vec<ConnectionSite>, hidden: bool| Shape {
         id: ShapeId(id),
@@ -383,9 +384,14 @@ fn group_site_targets_follow_the_members_in_order_and_skip_hidden_ones() {
     let line =
         Shape { id: ShapeId(6), geom: super::Geom::preset("line"), sites: vec![ConnectionSite::new(0.0, 0.0)], ..member(6, 90.0, vec![], false) };
     let children = vec![a, hidden, none, nested, line];
-    assert_eq!(group_site_targets(&children), vec![(ShapeId(1), 0), (ShapeId(1), 1), (ShapeId(4), 0)]);
+    assert_eq!(group_site_targets(&children), vec![(ShapeId(1), 0), (ShapeId(1), 1), (ShapeId(2), 0), (ShapeId(4), 0)]);
     let mut pts = vec![];
-    group_member_sites(&children, deckcraft_geom::Affine::IDENTITY, &mut |_, _, p| pts.push((p.x, p.y)));
-    // The nested group's child space (10×10) maps onto its 20×20 box at x = 60.
-    assert_eq!(pts, vec![(0.0, 5.0), (10.0, 5.0), (70.0, 20.0)]);
+    group_member_sites(&children, deckcraft_geom::Affine::IDENTITY, &mut |_, _, p, visible| pts.push((p.x, p.y, visible)));
+    // The nested group's child space (10×10) maps onto its 20×20 box at x = 60; the hidden
+    // member's site is there, flagged.
+    assert_eq!(pts, vec![(0.0, 5.0, true), (10.0, 5.0, true), (25.0, 5.0, false), (70.0, 20.0, true)]);
+    // Hiding a member changes no other site's position in the list.
+    let mut shown = children.clone();
+    shown[1].hidden = false;
+    assert_eq!(group_site_targets(&shown), group_site_targets(&children));
 }

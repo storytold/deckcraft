@@ -130,7 +130,7 @@ pub fn geometry(w: &mut W, g: &Geom, sites: &[deckcraft_model::ConnectionSite], 
             w.close("a:prstGeom");
         }
         Geom::Custom { paths } => {
-            if paths.is_empty() {
+            if paths.is_empty() && sites.is_empty() {
                 w.open("a:prstGeom", A::new().a("prst", "rect"));
                 w.empty0("a:avLst");
                 w.close("a:prstGeom");

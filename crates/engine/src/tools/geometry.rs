@@ -31,7 +31,9 @@ impl Session {
                 let near = crate::connect::site_shape_at(&st.doc, &st.selection, shapes, p, tol * 3.0, exclude);
                 let sites = near
                     .and_then(|id| shapes.iter().find(|s| s.id == id))
-                    .map(|s| crate::connect::sites(&st.doc, &st.selection, s))
+                    .map(|s| {
+                        crate::connect::snap_sites(&st.doc, &st.selection, s).into_iter().filter(|(_, offered)| *offered).map(|(p, _)| p).collect()
+                    })
                     .unwrap_or_default();
                 (sites, crate::connect::nearest_site(&st.doc, &st.selection, shapes, p, (tol * 2.0).max(6.0), exclude))
             }

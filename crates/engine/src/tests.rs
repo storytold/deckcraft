@@ -871,14 +871,62 @@ fn a_group_offers_its_members_connection_sites() {
     s.execute("shape.move", &json!({"dx": 30, "dy": -10})).unwrap();
     let (_, q1) = line_ends(&s, c);
     assert!((q1 - deckcraft_geom::Point::new(130.0, 140.0)).hypot() < 1e-6, "{q1:?}");
-    // A hidden member offers no pin.
+    // A hidden member's pin is not offered for snapping or by `shape.connect`, but it keeps its
+    // place in the list, so the connector glued to it stays glued and keeps following.
     {
         let st = s.doc_mut().unwrap();
         let doc = std::sync::Arc::make_mut(&mut st.doc);
         let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
         deckcraft_model::find_shape_mut(&mut slide.shapes, deckcraft_model::ShapeId(lead as u32)).unwrap().hidden = true;
     }
-    assert!(sites(&mut s, g).is_empty());
+    assert_eq!(sites(&mut s, g).len(), 1);
+    {
+        let st = s.doc().unwrap();
+        let near = deckcraft_geom::Point::new(130.0, 140.0);
+        assert!(connect::nearest_site(&st.doc, &st.selection, st.shapes(), near, 20.0, None).is_none(), "not snapped to");
+    }
+    let c2 = s.execute("shape.insert", &json!({"preset": "straightConnector1", "rect": [0, 0, 10, 10]})).unwrap()["id"].as_u64().unwrap();
+    assert!(s.execute("shape.connect", &json!({"id": c2, "from": b, "to": g})).is_err(), "nothing to glue to");
+    s.execute("edit.select", &json!({"ids": [g]})).unwrap();
+    s.execute("shape.move", &json!({"dx": 5, "dy": 5})).unwrap();
+    let (_, q1) = line_ends(&s, c);
+    assert!((q1 - deckcraft_geom::Point::new(135.0, 145.0)).hypot() < 1e-6, "{q1:?}");
+}
+
+/// Hiding one member of a group leaves a connector glued to another member's pin on that pin:
+/// the sites keep their numbering (the hidden one is only not offered), in the engine and in
+/// what the file names.
+#[test]
+fn hiding_a_group_member_keeps_other_connectors_on_their_pins() {
+    use deckcraft_model::ConnectionSite;
+    let mut s = session();
+    let first = s.execute("shape.freeform", &json!({"points": [[100, 120], [200, 130]], "closed": false})).unwrap()["id"].as_u64().unwrap();
+    let second = s.execute("shape.freeform", &json!({"points": [[300, 120], [400, 130]], "closed": false})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [first, second]})).unwrap();
+    let g = s.execute("arrange.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+    let set = |s: &mut Session, id: u64, hidden: bool| {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+        let sh = deckcraft_model::find_shape_mut(&mut slide.shapes, deckcraft_model::ShapeId(id as u32)).unwrap();
+        sh.sites = vec![ConnectionSite::new(1.0, 0.5)];
+        sh.hidden = hidden;
+    };
+    set(&mut s, first, false);
+    set(&mut s, second, false);
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [500, 100, 40, 50]})).unwrap()["id"].as_u64().unwrap();
+    let c = s.execute("shape.connect", &json!({"from": g, "to": b, "fromSite": 1})).unwrap()["id"].as_u64().unwrap();
+    let (p0, _) = line_ends(&s, c);
+    assert!((p0 - deckcraft_geom::Point::new(400.0, 125.0)).hypot() < 1e-6, "the second lead's pin: {p0:?}");
+    set(&mut s, first, true);
+    s.execute("edit.select", &json!({"ids": [g]})).unwrap();
+    s.execute("shape.move", &json!({"dx": 10, "dy": 0})).unwrap();
+    let (q0, _) = line_ends(&s, c);
+    assert!((q0 - deckcraft_geom::Point::new(410.0, 125.0)).hypot() < 1e-6, "still the second lead's pin: {q0:?}");
+    let st = s.doc().unwrap();
+    let group = st.shape(deckcraft_model::ShapeId(g as u32)).unwrap();
+    let deckcraft_model::ShapeKind::Group { children, .. } = &group.kind else { panic!("not a group") };
+    assert_eq!(deckcraft_model::group_site_targets(children).get(1), Some(&(deckcraft_model::ShapeId(second as u32), 0)), "what the file names");
 }
 
 #[test]

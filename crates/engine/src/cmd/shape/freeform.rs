@@ -12,28 +12,41 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("shape.connect", "missing `from` / `to`"));
     };
     let st = s.doc()?;
-    let site_list = |id| st.shape(id).map(|sh| crate::connect::sites(&st.doc, &st.selection, sh)).unwrap_or_default();
+    // Sites with their index (a hidden member's are not offered, but keep the numbering).
+    let site_list = |id| -> Vec<(usize, deckcraft_geom::Point)> {
+        st.shape(id)
+            .map(|sh| {
+                crate::connect::snap_sites(&st.doc, &st.selection, sh)
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(_, (_, o))| *o)
+                    .map(|(i, (q, _))| (i, q))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
     let (a, b) = (site_list(from), site_list(to));
     if a.is_empty() || b.is_empty() {
-        return Err(bad("shape.connect", "both shapes need connection sites (lines and groups have none)"));
+        return Err(bad("shape.connect", "both shapes need connection sites (lines have none, nor a group of shapes without any or hidden)"));
     }
-    let pick = |v: &[deckcraft_geom::Point], key: &str| usize_param(p, key).filter(|i| *i < v.len());
+    let pick = |v: &[(usize, deckcraft_geom::Point)], key: &str| usize_param(p, key).filter(|i| v.iter().any(|(k, _)| k == i));
     let (ia, ib) = match (pick(&a, "fromSite"), pick(&b, "toSite")) {
         (Some(i), Some(j)) => (i, j),
         (fi, fj) => {
             let mut best = (f64::MAX, 0, 0);
-            for (i, pa) in a.iter().enumerate().filter(|(i, _)| fi.is_none_or(|f| f == *i)) {
-                for (j, pb) in b.iter().enumerate().filter(|(j, _)| fj.is_none_or(|f| f == *j)) {
+            for (i, pa) in a.iter().filter(|(i, _)| fi.is_none_or(|f| f == *i)) {
+                for (j, pb) in b.iter().filter(|(j, _)| fj.is_none_or(|f| f == *j)) {
                     let d = (*pa - *pb).hypot();
                     if d < best.0 {
-                        best = (d, i, j);
+                        best = (d, *i, *j);
                     }
                 }
             }
             (best.1, best.2)
         }
     };
-    let (p0, p1) = (a[ia], b[ib]);
+    let at = |v: &[(usize, deckcraft_geom::Point)], i: usize| v.iter().find(|(k, _)| *k == i).map(|(_, q)| *q).unwrap_or_default();
+    let (p0, p1) = (at(&a, ia), at(&b, ib));
     let id = match id_param(p, "id", "shape.connect")? {
         Some(id) => id,
         None => {

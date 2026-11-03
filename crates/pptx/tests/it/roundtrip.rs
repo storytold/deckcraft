@@ -441,6 +441,21 @@ fn rich_deck_writes_to_dir() {
     assert!(bytes.len() > 1000);
 }
 
+/// A custom geometry with no path but with connection sites (a pin marker) keeps them: it is
+/// written as a `custGeom` with an empty path list, not as a rectangle preset.
+#[test]
+fn an_empty_custom_geometry_keeps_its_connection_sites() {
+    let mut p = defaults::new_presentation(None);
+    let mut pin = shape(&mut p, "Pin", 100.0, 100.0, 1.0, 1.0);
+    pin.geom = Geom::Custom { paths: vec![] };
+    pin.sites = vec![ConnectionSite::new(0.5, 0.5)];
+    Arc::make_mut(&mut p.slides[0]).shapes.push(pin);
+    let q = round(&p);
+    let back = by_name(&q.slides[0], "Pin");
+    assert_eq!(back.geom, Geom::Custom { paths: vec![] });
+    assert_eq!(back.sites, vec![ConnectionSite::new(0.5, 0.5)]);
+}
+
 #[test]
 fn deck_level_round_trip() {
     let p = rich_deck();

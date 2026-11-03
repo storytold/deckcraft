@@ -526,32 +526,37 @@ pub fn walk<'a>(shapes: &'a [Shape], f: &mut dyn FnMut(&'a Shape, usize)) {
 }
 
 /// The connection sites a group offers, in a fixed order: its members' own sites
-/// (`Shape::sites`, groups within walked too), skipping lines, ink and hidden members. `f` gets
-/// the member, the index of the site in the member's own list, and the site mapped through `a`
-/// (the group's child space to wherever the caller works). A connector glued to a group refers
-/// to a position in this walk; a file names the member and its own index
-/// ([`group_site_targets`]).
-pub fn group_member_sites(children: &[Shape], a: deckcraft_geom::Affine, f: &mut dyn FnMut(&Shape, u32, deckcraft_geom::Point)) {
-    fn rec(children: &[Shape], a: deckcraft_geom::Affine, f: &mut dyn FnMut(&Shape, u32, deckcraft_geom::Point), depth: usize) {
+/// (`Shape::sites`, groups within walked too), lines and ink left out. `f` gets the member, the
+/// index of the site in the member's own list, the site mapped through `a` (the group's child
+/// space to wherever the caller works), and whether it is visible (neither the member nor a
+/// group above it hidden). A hidden member keeps its place in the walk, so a connector glued to
+/// a later member's site keeps meaning that site; the caller leaves hidden sites out of what it
+/// offers for snapping. A connector glued to a group refers to a position in this walk; a file
+/// names the member and its own index ([`group_site_targets`]).
+pub fn group_member_sites(children: &[Shape], a: deckcraft_geom::Affine, f: &mut dyn FnMut(&Shape, u32, deckcraft_geom::Point, bool)) {
+    fn rec(children: &[Shape], a: deckcraft_geom::Affine, visible: bool, f: &mut dyn FnMut(&Shape, u32, deckcraft_geom::Point, bool), depth: usize) {
         if depth > 64 {
             return;
         }
-        for c in children.iter().filter(|c| !c.hidden) {
+        for c in children {
             let Some(cx) = c.xfrm else { continue };
+            let visible = visible && !c.hidden;
             match &c.kind {
-                ShapeKind::Group { children, child } => rec(children, a * deckcraft_geom::group_child_affine(&cx, child.rect()), f, depth + 1),
+                ShapeKind::Group { children, child } => {
+                    rec(children, a * deckcraft_geom::group_child_affine(&cx, child.rect()), visible, f, depth + 1)
+                }
                 ShapeKind::Ink { .. } => {}
                 _ if c.is_line() => {}
                 _ => {
                     let m = a * cx.affine();
                     for (i, q) in c.sites.iter().enumerate() {
-                        f(c, i as u32, m * deckcraft_geom::Point::new(q.x * cx.w, q.y * cx.h));
+                        f(c, i as u32, m * deckcraft_geom::Point::new(q.x * cx.w, q.y * cx.h), visible);
                     }
                 }
             }
         }
     }
-    rec(children, a, f, 0);
+    rec(children, a, true, f, 0);
 }
 
 /// `(member id, the member's own site index)` for every site a group offers, in the order of
@@ -559,7 +564,7 @@ pub fn group_member_sites(children: &[Shape], a: deckcraft_geom::Affine, f: &mut
 /// means, and what a file writes as the connector's end.
 pub fn group_site_targets(children: &[Shape]) -> Vec<(ShapeId, u32)> {
     let mut v = vec![];
-    group_member_sites(children, deckcraft_geom::Affine::IDENTITY, &mut |s, i, _| v.push((s.id, i)));
+    group_member_sites(children, deckcraft_geom::Affine::IDENTITY, &mut |s, i, _, _| v.push((s.id, i)));
     v
 }
 

@@ -235,9 +235,11 @@ fn sp_pr(imp: &mut Imp, part: &Part, s: &mut Shape, pr: &El) {
             .map(|x| (deckcraft_geom::pt_to_emu(x.w) as f64, deckcraft_geom::pt_to_emu(x.h) as f64))
             .unwrap_or((crate::custgeom::INHERITED_EXTENT_EMU, crate::custgeom::INHERITED_EXTENT_EMU));
         let paths = crate::custgeom::read_cust_geom(cg, w, h);
-        if !paths.is_empty() {
+        let sites = crate::custgeom::read_cxn_lst(cg, w, h);
+        // A custom geometry without a path but with sites is still that (nothing drawn, pins).
+        if !paths.is_empty() || !sites.is_empty() {
             s.geom = Geom::Custom { paths };
-            s.sites = crate::custgeom::read_cxn_lst(cg, w, h);
+            s.sites = sites;
         }
     }
     s.fill = dml::fill_of(imp, part, pr);

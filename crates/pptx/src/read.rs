@@ -978,12 +978,15 @@ fn default_text_anchor(p: &mut Presentation) {
 /// layout's picture placeholder cut into a shape keeps that shape on the slide. Anything left
 /// is a rectangle.
 fn inherit_placeholder_geometry(p: &mut Presentation) {
-    let unset = |g: &Geom| matches!(g, Geom::Custom { paths } if paths.is_empty());
+    // The marker is an empty custom geometry on a placeholder (`mark_inherited_geometry`); a
+    // custom geometry without a path on any other shape is its own (its connection sites stay).
+    let empty_custom = |g: &Geom| matches!(g, Geom::Custom { paths } if paths.is_empty());
+    let unset = |s: &deckcraft_model::Shape| s.ph.is_some() && empty_custom(&s.geom);
     // Masters first, then layouts (from their masters), then slides (from layouts and masters).
     for m in &mut p.masters {
         let m = Arc::make_mut(m);
         walk_shapes_mut(&mut m.shapes, &mut |s| {
-            if unset(&s.geom) {
+            if unset(s) {
                 s.geom = Geom::default();
             }
         });
@@ -993,9 +996,9 @@ fn inherit_placeholder_geometry(p: &mut Presentation) {
         for l in &m.layouts {
             let ctx = deckcraft_model::resolve::Ctx::for_layout(p, m, l);
             for (i, s) in l.shapes.iter().enumerate() {
-                if unset(&s.geom) {
+                if unset(s) {
                     let (_, mp) = deckcraft_model::resolve::parents(&ctx, s);
-                    layout_geoms.push((l.id, i, mp.map(|m| m.geom.clone()).filter(|g| !unset(g)).unwrap_or_default()));
+                    layout_geoms.push((l.id, i, mp.map(|m| m.geom.clone()).filter(|g| !empty_custom(g)).unwrap_or_default()));
                 }
             }
         }
@@ -1015,9 +1018,9 @@ fn inherit_placeholder_geometry(p: &mut Presentation) {
     for (si, sl) in p.slides.iter().enumerate() {
         let Some(ctx) = deckcraft_model::resolve::Ctx::for_slide(p, sl) else { continue };
         for (i, s) in sl.shapes.iter().enumerate() {
-            if unset(&s.geom) {
+            if unset(s) {
                 let (lp, mp) = deckcraft_model::resolve::parents(&ctx, s);
-                let g = lp.map(|l| l.geom.clone()).filter(|g| !unset(g)).or_else(|| mp.map(|m| m.geom.clone()).filter(|g| !unset(g)));
+                let g = lp.map(|l| l.geom.clone()).filter(|g| !empty_custom(g)).or_else(|| mp.map(|m| m.geom.clone()).filter(|g| !empty_custom(g)));
                 slide_geoms.push((si, i, g.unwrap_or_default()));
             }
         }
@@ -1032,7 +1035,7 @@ fn inherit_placeholder_geometry(p: &mut Presentation) {
     // Placeholders inside groups (rare) and anything still unset: rectangles.
     for sl in &mut p.slides {
         walk_shapes_mut(&mut Arc::make_mut(sl).shapes, &mut |s| {
-            if unset(&s.geom) {
+            if unset(s) {
                 s.geom = Geom::default();
             }
         });
@@ -1040,7 +1043,7 @@ fn inherit_placeholder_geometry(p: &mut Presentation) {
     for m in &mut p.masters {
         for l in &mut Arc::make_mut(m).layouts {
             walk_shapes_mut(&mut l.shapes, &mut |s| {
-                if unset(&s.geom) {
+                if unset(s) {
                     s.geom = Geom::default();
                 }
             });

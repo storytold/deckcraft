@@ -12,17 +12,26 @@ use crate::cmd::xfrm_of;
 /// A preset's sites come from its geometry, a custom geometry's from its own list (`a:cxnLst`,
 /// `Shape::sites`), and a shape without any offers its box midpoints. A group has none of its
 /// own: it offers its members' own sites (a grouped circuit symbol's pins; groups within
-/// included, hidden members not), so a connector can glue to those by the site's position in
-/// that list (`deckcraft_model::group_site_targets` names the member and its own index, which
-/// is what a file stores); a group whose members have none stays without.
+/// included), so a connector can glue to those by the site's position in that list
+/// (`deckcraft_model::group_site_targets` names the member and its own index, which is what a
+/// file stores); a group whose members have none stays without. A hidden member's sites keep
+/// their place here, so glued connectors keep their targets; [`snap_sites`] leaves them out.
 pub fn sites(doc: &Presentation, sel: &Selection, s: &Shape) -> Vec<Point> {
+    snap_sites(doc, sel, s).into_iter().map(|(p, _)| p).collect()
+}
+
+/// [`sites`] with, for each, whether it is offered for snapping: a hidden member's sites are
+/// not (nor shown), while they keep their index for connectors already glued to them.
+pub fn snap_sites(doc: &Presentation, sel: &Selection, s: &Shape) -> Vec<(Point, bool)> {
     if s.is_line() || matches!(s.kind, ShapeKind::Ink { .. }) {
         return vec![];
     }
     let x = xfrm_of(doc, sel, s);
     if let ShapeKind::Group { children, child } = &s.kind {
         let mut out = vec![];
-        deckcraft_model::group_member_sites(children, deckcraft_geom::group_child_affine(&x, child.rect()), &mut |_, _, p| out.push(p));
+        deckcraft_model::group_member_sites(children, deckcraft_geom::group_child_affine(&x, child.rect()), &mut |_, _, p, visible| {
+            out.push((p, visible))
+        });
         return out;
     }
     let mut local = deckcraft_render::shape_geometry(s, x.w, x.h).sites;
@@ -30,7 +39,7 @@ pub fn sites(doc: &Presentation, sel: &Selection, s: &Shape) -> Vec<Point> {
         local = vec![Point::new(x.w / 2.0, 0.0), Point::new(0.0, x.h / 2.0), Point::new(x.w / 2.0, x.h), Point::new(x.w, x.h / 2.0)];
     }
     let a = x.affine();
-    local.into_iter().map(|p| a * p).collect()
+    local.into_iter().map(|p| (a * p, true)).collect()
 }
 
 /// The nearest connection site within `radius` of `p` on any visible shape except `exclude`.
@@ -44,7 +53,10 @@ pub fn nearest_site(
 ) -> Option<(ShapeId, u32, Point)> {
     let mut best: Option<(f64, ShapeId, u32, Point)> = None;
     for s in shapes.iter().filter(|s| Some(s.id) != exclude && !s.hidden) {
-        for (i, q) in sites(doc, sel, s).into_iter().enumerate() {
+        for (i, (q, offered)) in snap_sites(doc, sel, s).into_iter().enumerate() {
+            if !offered {
+                continue;
+            }
             let d = (q - p).hypot();
             if d <= radius && best.is_none_or(|b| d < b.0) {
                 best = Some((d, s.id, i as u32, q));
