@@ -162,6 +162,16 @@ fn restore_missing_chart_title_state(p: &mut Presentation) {
     for slide in &mut p.slides {
         restore_chart_title_state_in_shapes(&mut Arc::make_mut(slide).shapes, 0);
     }
+    for master in &mut p.masters {
+        let master = Arc::make_mut(master);
+        restore_chart_title_state_in_shapes(&mut master.shapes, 0);
+        for layout in &mut master.layouts {
+            restore_chart_title_state_in_shapes(&mut layout.shapes, 0);
+        }
+    }
+    for master in [&mut p.notes_master, &mut p.handout_master].into_iter().flatten() {
+        restore_chart_title_state_in_shapes(&mut Arc::make_mut(master).shapes, 0);
+    }
 }
 
 fn restore_chart_title_state_in_shapes(shapes: &mut [Shape], depth: usize) {
@@ -798,7 +808,7 @@ mod color_at_tests;
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::{parse_slide_range, restore_chart_title_state_in_shapes, write_file};
+    use super::{parse_slide_range, restore_chart_title_state_in_shapes, restore_missing_chart_title_state, write_file};
     use deckcraft_model::chart::{Chart, ChartType, Series};
     use deckcraft_model::{Shape, ShapeKind};
 
@@ -861,5 +871,56 @@ mod tests {
         let ShapeKind::Chart(chart) = &shapes[0].kind else { panic!("chart") };
         assert_eq!(chart.auto_title, Some(true));
         assert_eq!(chart.title.as_deref(), Some("Old"));
+    }
+
+    #[test]
+    fn missing_native_auto_title_state_is_recovered_for_every_chart_owner() {
+        use deckcraft_model::{Layout, Master, Presentation, Slide};
+        use std::sync::Arc;
+
+        fn shape(auto: bool, title: &str) -> Shape {
+            let raw = format!(
+                r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:autoTitleDeleted val="{}"/><c:plotArea><c:barChart><c:ser><c:tx><c:v>Series</c:v></c:tx></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#,
+                if auto { 0 } else { 1 }
+            );
+            let chart = Chart {
+                kind: ChartType::Column,
+                title: Some(title.into()),
+                raw: Some(raw),
+                series: vec![Series { name: "Series".into(), ..Default::default() }],
+                ..Default::default()
+            };
+            let mut value = serde_json::to_value(chart).unwrap();
+            value.as_object_mut().unwrap().remove("autoTitle");
+            Shape { kind: ShapeKind::Chart(Box::new(serde_json::from_value(value).unwrap())), ..Default::default() }
+        }
+
+        fn recovered(shapes: &[Shape]) -> &Chart {
+            let ShapeKind::Chart(chart) = &shapes[0].kind else { panic!("chart") };
+            chart
+        }
+
+        let mut p = Presentation::default();
+        p.slides = vec![Arc::new(Slide { shapes: vec![shape(true, "Series"), shape(false, "User title")], ..Default::default() })];
+        p.masters = vec![Arc::new(Master {
+            shapes: vec![shape(true, "Series")],
+            layouts: vec![Layout { shapes: vec![shape(true, "Series")], ..Default::default() }],
+            ..Default::default()
+        })];
+        p.notes_master = Some(Arc::new(Master { shapes: vec![shape(true, "Series")], ..Default::default() }));
+        p.handout_master = Some(Arc::new(Master { shapes: vec![shape(true, "Series")], ..Default::default() }));
+
+        restore_missing_chart_title_state(&mut p);
+        restore_missing_chart_title_state(&mut p);
+
+        assert_eq!(recovered(&p.slides[0].shapes).auto_title, Some(true));
+        let master = &p.masters[0];
+        assert_eq!(recovered(&master.shapes).auto_title, Some(true));
+        assert_eq!(recovered(&master.layouts[0].shapes).auto_title, Some(true));
+        assert_eq!(recovered(&p.notes_master.as_ref().unwrap().shapes).auto_title, Some(true));
+        assert_eq!(recovered(&p.handout_master.as_ref().unwrap().shapes).auto_title, Some(true));
+        let explicit = recovered(&p.slides[0].shapes[1..]);
+        assert_eq!(explicit.auto_title, Some(false));
+        assert_eq!(explicit.title.as_deref(), Some("User title"));
     }
 }

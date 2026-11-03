@@ -150,7 +150,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
-| 2026-10-28 | Automatic chart titles stay linked after `chart.data` renames a sole series, survive temporary multi-series edits, and recover from older native files; explicit titles stay fixed and PPTX save/reopen retains the automatic marker (PowerPoint COM, Linux and Windows regressions) |
+| 2026-10-28 | Automatic chart titles stay linked after `chart.data` renames a sole series, survive temporary multi-series edits, and recover from older native files across slides, masters, layouts, notes masters and handout masters; explicit titles stay fixed and PPTX save/reopen retains the automatic marker (PowerPoint COM, Linux and Windows regressions) |
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
 | 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
 | 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |
@@ -331,6 +331,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | trivial | Older native chart-title state recovery now covers every chart owner, including layouts and notes/handout masters; existing parity scope and headline scores are unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
 | 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
