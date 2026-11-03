@@ -404,7 +404,9 @@ impl Decoder {
             chroma_planes: if chroma == 0 { 0 } else { 2 },
             bytes_per_sample: 2,
         };
-        let pictures = u64::from(sps.max_dec_pic_buffering) + 1 + self.max_in_flight as u64;
+        // Output frames waiting to be returned stay allocated after they leave the DPB.
+        let queued = self.out_queue.iter().filter(|o| !self.dpb.entries.iter().any(|e| Arc::ptr_eq(&e.frame, &o.frame))).count();
+        let pictures = u64::from(sps.max_dec_pic_buffering) + 1 + self.max_in_flight as u64 + queued as u64;
         ensure!(
             shape.fits(pictures, self.memory_budget),
             "{}x{} pictures with {pictures} in the decoder exceed the memory budget",
