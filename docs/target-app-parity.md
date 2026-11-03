@@ -1,6 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
-> **PPTX.57 update 2026-11-03:** A single fixed chart-axis end now determines the opposite automatic bound before tick rounding. The candidate improves 19 of 1,119 rendered chart pages; 1,100 remain pixel-identical, and all 140 retained map renders remain unchanged. Complete chart, SmartArt, map and LibreOffice parity remains open; feature scores are unchanged.
+> **PPTX.58 update 2026-11-03:** Generated SmartArt hanging defaults now follow the resolved font-size intervals while preserving fractional custom advances and authored paragraph sides. All 180 measurable native margin observations match, up from 95; retained geometry is unchanged. Complete text-rule, chart, map and LibreOffice parity remains open; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
 
@@ -542,3 +542,45 @@ remaining map coordinate/projection differences also remain open. The separate
 combined chart-layout candidate is not included in this change. Only original
 Rust, tests and documentation are published; private native observations and
 source decks remain excluded.
+
+### PPTX.58: resolve generated SmartArt hanging defaults by font interval
+
+Uncached valid-layout SmartArt can choose the correct font but still indent its
+paragraph incorrectly. The former uniform size formula gives a generated 9pt
+margin at 11pt and 22.5pt at a customized 27.75pt; native controls require 4.5pt
+and 18pt respectively. The generated lookup now uses the effective secondary
+font, or the first customized run, with boundaries at 12, 16, 20 and 28 points.
+Customized fractional run sizes and advances remain intact. An authored margin
+or indent still wins independently, and recovered layouts keep their separate
+policy. This is an empirically validated compatibility policy, not a claim that
+OOXML specifies those intervals.
+
+Twelve fractional/integer pairs and 24 independent boundary controls distinguish
+font painting, logical advances and generated sides. The boundary controls vary
+font family, frame geometry and customized versus automatic sizes; all 24 pass.
+Across 253 diagnostic pages, all 180 directly measurable margin/indent observations
+match native output, improving from 95. Of 245 pages with strict glyph identity,
+87 improve absolute origin RMS, 158 are unchanged and none worsen. Absolute,
+relative, horizontal and vertical maximum-error comparisons also have no worsening.
+Eight preexisting invisible-PDF-text identity failures remain separate: visible
+text and the editable model retain the full word, but PDF extraction substitutes
+a control character after a hard break. Their source-order and raster comparisons
+improve on six pages and remain unchanged on two; they are not counted as strict
+identity passes.
+
+The candidate retains all 2,462 geometry and 15,598 text-property records exactly.
+Of 485 retained rendered text pages, 471 are unchanged and all 14 changed pages
+retain strict text identity and improve native absolute origin RMS. All 326 recovery
+pages remain exact. Of 42 retained raster samples, 39 are identical and all three
+changed samples reduce the error within the complete native target region.
+Actual before/candidate/native images were reviewed. The old production formula
+fails the native-backed 11pt regression. Full eight-stage CI passes, with 2,726
+tests including doctests and eight existing ignored tests.
+
+This closes the previously recorded 11pt, 21pt and customized 27.75pt generated-side
+defects. It does not close the remaining 92 raw-box mismatches, arbitrary text-driven
+rule search, reverse/cyclic layout differences, fractional painting and vertical
+origins, PDF extraction defects, chart layout or the 17 map-threshold and two Albers
+precision cases. The separate automatic-axis and chart-layout candidates are not
+included. Only original source, programmatic tests and documentation are published;
+native observations and source decks remain private.

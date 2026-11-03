@@ -769,11 +769,8 @@ pub(super) fn diagram_text_layout(
             paragraph.level = paragraph.level.max(indent_level as u8);
             // Generated hanging defaults use the secondary font, or the first run
             // for customized text. Independently authored marL and indent still win.
-            let indent = if p.recovered {
-                (font / 8.).round().clamp(1., 5.) * 4.5
-            } else {
-                (custom_font.unwrap_or(secondary_font).max(0.) / 6. - 0.5).ceil().clamp(1., 5.) * 4.5
-            };
+            let indent =
+                if p.recovered { (font / 8.).round().clamp(1., 5.) * 4.5 } else { diagram_hanging_default(custom_font.unwrap_or(secondary_font)) };
             paragraph.props.margin_left = paragraph.props.margin_left.or(Some(indent_level as f64 * indent));
             paragraph.props.indent = paragraph.props.indent.or(Some(-indent));
             // A font search changes these defaults for valid and recovered layouts.
@@ -798,6 +795,24 @@ pub(super) fn diagram_text_layout(
                 run.props.fill = Some(Fill::Solid { color: c.clone() });
             }
         }
+    }
+}
+
+fn diagram_hanging_default(font: f64) -> f64 {
+    // Native valid-layout controls use these integer-point intervals for generated
+    // paragraph sides. Customized runs keep their fractional advances; only this
+    // default lookup uses whole points. Recovered layouts retain their own policy.
+    let size = font.max(0.).floor();
+    if size < 12. {
+        4.5
+    } else if size < 16. {
+        9.
+    } else if size < 20. {
+        13.5
+    } else if size < 28. {
+        18.
+    } else {
+        22.5
     }
 }
 

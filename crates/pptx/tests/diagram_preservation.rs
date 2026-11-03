@@ -937,12 +937,20 @@ fn diagram_hanging_defaults_follow_the_final_secondary_font_and_preserve_authore
         (11., None, None, None, 9., 4.5, -4.5),
         (12., None, None, None, 9., 4.5, -4.5),
         (49., Some(9.), None, None, 9., 4.5, -4.5),
+        (49., Some(11.), None, None, 11., 4.5, -4.5),
+        (49., Some(12.), None, None, 12., 9., -9.),
+        (49., Some(16.), None, None, 16., 13.5, -13.5),
+        (49., Some(19.), None, None, 19., 13.5, -13.5),
+        (49., Some(20.), None, None, 20., 18., -18.),
+        (49., Some(21.), None, None, 21., 18., -18.),
         (24., Some(27.), None, None, 27., 18., -18.),
         (49., Some(28.), None, None, 28., 22.5, -22.5),
         (24., Some(38.), None, None, 38., 22.5, -22.5),
         (24., Some(27.), Some(9.), None, 27., 9., -18.),
         (24., Some(27.), None, Some(-9.), 27., 18., -9.),
         (24., Some(27.), None, Some(0.), 27., 18., 0.),
+        (49., Some(20.), Some(0.), None, 20., 0., -18.),
+        (49., Some(20.), None, Some(0.), 20., 18., 0.),
     ] {
         let mut parts = files(&numeric_rule_fixture("", r#"<dgm:constr type="h" val="80"/>"#, false));
         for (_, bytes) in &mut parts {
@@ -997,9 +1005,15 @@ fn customized_diagram_runs_keep_sizes_and_first_run_hanging_defaults_through_fon
         (false, vec![Some(14.)], None, 27., false, false, vec![27.], Some(18.)),
         (true, vec![Some(14.)], None, 27., false, false, vec![14.], Some(9.)),
         (true, vec![Some(27.), Some(11.)], None, 11., false, false, vec![27., 11.], Some(18.)),
-        // The known native 11pt default-margin residual is separate from preserving
-        // these authored run sizes; do not codify it as native-equivalent here.
-        (true, vec![Some(11.), Some(27.)], None, 27., false, false, vec![11., 27.], None),
+        (true, vec![Some(11.), Some(27.)], None, 27., false, false, vec![11., 27.], Some(4.5)),
+        // Independent native boundary pairs retain fractional custom advances and
+        // lower hanging defaults, while automatic fonts resolve to the next point.
+        (true, vec![Some(15.75)], None, 27., false, false, vec![15.75], Some(9.)),
+        (false, vec![Some(15.75)], None, 15.75, false, false, vec![16.], Some(13.5)),
+        (true, vec![Some(19.75)], None, 27., false, false, vec![19.75], Some(13.5)),
+        (false, vec![Some(19.75)], None, 19.75, false, false, vec![20.], Some(18.)),
+        (true, vec![Some(27.75)], None, 27., false, false, vec![27.75], Some(18.)),
+        (false, vec![Some(27.75)], None, 27.75, false, false, vec![28.], Some(22.5)),
         (true, vec![None], None, 27., false, false, vec![36.], Some(22.5)),
         (true, vec![None], Some(27.), 11., false, false, vec![36.], Some(22.5)),
         (true, vec![Some(14.)], None, 27., false, true, vec![14.], Some(25.)),
@@ -1066,8 +1080,8 @@ fn customized_diagram_runs_keep_sizes_and_first_run_hanging_defaults_through_fon
 #[test]
 fn diagram_font_rules_refresh_unauthored_hanging_defaults_without_rewriting_authored_sides() {
     // Native rule/direct endpoint pairs agree after shrinking primary35 to14 (secondary11),
-    // including independently authored marL and indent. The exact small-font native default
-    // remains a separate gap; this regression checks that a previous trial cannot persist.
+    // including independently authored marL and indent. The final generated side is4.5pt;
+    // a previous trial's larger margin must not persist.
     let fixture = |rule: bool, margin: Option<f64>, indent: Option<f64>| {
         let rules = if rule { r#"<dgm:rule type="primFontSz" val="14"/>"# } else { "" };
         let primary = if rule { 35 } else { 14 };
@@ -1110,12 +1124,8 @@ fn diagram_font_rules_refresh_unauthored_hanging_defaults_without_rewriting_auth
         assert!(a.runs.iter().chain(&b.runs).all(|r| r.props.size == Some(11.)));
         assert_eq!(a.props.margin_left, b.props.margin_left, "font trial retained a previous margin");
         assert_eq!(a.props.indent, b.props.indent, "font trial retained a previous indent");
-        if let Some(margin) = margin {
-            assert_eq!(a.props.margin_left, Some(margin));
-        }
-        if let Some(indent) = indent {
-            assert_eq!(a.props.indent, Some(indent));
-        }
+        assert_eq!(a.props.margin_left, Some(margin.unwrap_or(4.5)));
+        assert_eq!(a.props.indent, Some(indent.unwrap_or(-4.5)));
     }
 }
 
