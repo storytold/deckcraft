@@ -1,6 +1,6 @@
 # File-format parity with PowerPoint
 
-> **PPTX.53 update 2026-11-02:** Text-size searches retain fitting local and allocated checkpoints; nested flows retain allocation history while any sibling remains unresolved. The 2,364-case geometry matrix improves from 2,174 to 2,227 strict matches with no lost match or increased measured error. Materialized SmartArt uses fine glyph advances independently of line pitch, and bullet origins honor authored hanging margins. The 137 remaining strict raw-box mismatches and map/chart/text limits stay open; feature scores are unchanged.
+> **PPTX.54 update 2026-11-03:** Reversed centered flows advance a retained nominal reference through intermediate widths and cap the deferred correction. The 2,430-case geometry matrix improves from 2,239 to 2,295 strict matches; all 56 changed cases pass, with no lost match or measured error increase. The 135 remaining strict raw-box mismatches and map/chart/text limits stay open; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
 
@@ -212,6 +212,7 @@ the round trip even though DeckCraft doesn't model it.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-11-02 | minor | PPTX.53: retain scoped fitting checkpoints and correct diagram glyph/bullet origins; remaining failures retained |
+| 2026-11-03 | minor | PPTX.54: preserve intermediate reversed-flow alignment and bounded pending corrections |
 | 2026-11-02 | minor | PPTX.52: preserve local text footprints, fine numeric font fitting and final reverse-search phase; native controls and residual metrics retained |
 | 2026-11-02 | minor | PPTX.51: phase-aware reverse alignment, unchanged-budget dimension progress and native rich-label reload; independent controls and explicit remaining failures |
 | 2026-11-02 | minor | PPTX.50: occupied root flow fitting, font-score plateaus and custom rich-label insets; independent native controls and disclosed remaining differences |
@@ -350,4 +351,34 @@ remove stale defaults introduced by the initial candidate; the static 11pt gap r
 Final integration preserves all 2,364 accepted geometry results, 485 isolated text-page
 records and 42 selected rasters, plus all 814 chart pages and 140 map images. All eight
 local CI stages and 2,720 tests including doctests pass. Hosted checks are
+reported separately.
+
+### PPTX.54: intermediate reversed-flow alignment
+
+A retained nominal reference can move the next reversed line before the following
+width crosses the final reflected boundary. Preserve that intermediate advance and
+carry a bounded correction amount to the next forward line. An ordinary reference
+that already equals the flow extent keeps its existing pending growth; fitted and
+restored placement retain their separate reference lifetimes. No document, font,
+page-number or dimension-specific branch is introduced.
+
+Sixty-six new diagnostic pages include 36 independently parameterized holdout pages
+covering both sides of the intermediate boundary, equality at the reflected limit
+and an already-pending advance. All 66 pass the actual importer geometry check. A
+standalone mutation using the preceding centering code fails the native-bound test;
+the updated code passes. The full 2,430-case geometry comparison improves from
+2,239 to 2,295 strict matches within 0.025pt, with 2,374 unchanged. All 56 changed
+cases pass, with no prior match lost and no maximum or mean error increase.
+
+The remaining 135 strict raw-box mismatches, small-font bullet defaults, text metrics,
+geographic threshold/projection differences and chart-layout limits remain open.
+Rejected variants and failed hypotheses remain recorded. No complete PowerPoint
+equivalence or LibreOffice replacement is claimed.
+
+PPTX.54 validation: all eight local CI stages and 2,722 tests including doctests
+pass. The final binary preserves all 485 text-page records, 42 selected text rasters,
+814 chart pages and 140 map images. Four direct raster comparisons at a shared 4K
+point scale reduce colored-bound errors from 134–294px to 1–2px. Native PDF color
+quantization and page-box rounding are recorded separately; content is not realigned.
+The actual before/candidate/native contact was visually reviewed. Hosted checks are
 reported separately.

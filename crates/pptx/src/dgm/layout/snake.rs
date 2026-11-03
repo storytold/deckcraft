@@ -88,7 +88,7 @@ struct CenterAdjustment {
     advance: f64,
     extent_floor: f64,
     early_extent: f64,
-    reference_changed: bool,
+    reference_correction_limit: f64,
 }
 
 /// Alternating lines keep the flow extent separate from the right boundary of
@@ -156,12 +156,11 @@ impl ReverseCentering {
             self.widen_boundary(line.length, following, old_extent);
         }
         self.pending[1].shift += prior_negative.min(((line.length - old_extent) / 2.).max(0.));
-        if self.pending[0].reference_changed && exceeds(self.pending[0].advance, 0.) && expansion == 0. && following > 0. {
-            // A changed nominal reference still owes half of its boundary
-            // adjustment to the following forward line. An ordinary deferred
-            // advance has no such outstanding correction.
+        if exceeds(self.pending[0].reference_correction_limit, 0.) && exceeds(self.pending[0].advance, 0.) && expansion == 0. && following > 0. {
+            // The retained reference reaches the next forward line in stages.
+            // A partial advance cannot spend the full reflected-boundary debt.
             if let Some(reference) = self.reference {
-                self.pending[1].shift += (self.boundary - reference) / 4.;
+                self.pending[1].shift += self.pending[0].reference_correction_limit.min((self.boundary - reference) / 4.);
             }
         }
         self.last_growth = self.extent - old_extent;
@@ -189,13 +188,20 @@ impl ReverseCentering {
         let future = self.pending[2].growth;
         self.extent = self.extent.max(length + 2. * future);
         let mut alignment = old_extent - self.last_growth + 2. * future;
-        // A shorter line can drain the visible shift without replacing the
-        // nominal alignment reference. Reuse it when the following line crosses
-        // its reflected boundary. Fitting and restored placement have separate
-        // reference lifetimes and retain their existing centering state.
-        if let Some(reference) = self.reference.filter(|&reference| exceeds(following, 2. * old_extent - reference)) {
-            let corrected = alignment.min(2. * reference - old_extent + 2. * future);
-            self.pending[2].reference_changed = exceeds(alignment, corrected);
+        // A retained nominal reference differs from an ordinary forward-growth
+        // extent. Its alignment moves through the exposed boundary and the next
+        // deferred line before reaching the reflected-reference limit. Fitted
+        // and restored trials do not own this nominal history.
+        if let Some(reference) = self.reference.filter(|&reference| exceeds(old_extent, reference) && exceeds(following, old_extent)) {
+            let exposed = following - old_extent;
+            let retained = old_extent - reference;
+            let reflected = old_extent - 2. * retained + 2. * future;
+            let first = old_extent - exposed + 2. * future;
+            let second = old_extent + retained - 3. * exposed + 2. * future;
+            let corrected = reflected.max(first.min(second));
+            if exceeds(alignment, corrected) || exceeds(corrected, alignment) {
+                self.pending[2].reference_correction_limit = (exposed - retained / 2.).max(0.);
+            }
             alignment = corrected;
         }
         let step = if exceeds(following, old_extent) { (self.boundary - alignment - (length - following).max(0.)) / 2. } else { 0. };
@@ -1381,6 +1387,47 @@ mod tests {
             assert!((tail.y - actual[0].y - seed_y).abs() < 1e-7);
             assert!((tail.w - 17. * scale).abs() < 1e-7);
             assert!((tail.h - 10. * scale).abs() < 1e-7);
+        }
+    }
+
+    #[test]
+    fn reverse_nominal_reference_advances_before_the_reflected_boundary() {
+        // Original native controls distinguish both sides of the intermediate
+        // boundary and the final reflected limit, with a retained short first row.
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr"), ("contDir", "revDir")];
+        for (first, following, next, tail) in [
+            (14., 64., 2., 1.),
+            (14., 84., 22., 11.),
+            (14., 88., 28., 15.),
+            (14., 108., 68., 45.),
+            (14., 110., 72., 48.),
+            (14., 122., 78., 57.),
+            (34., 64., 2., 1.),
+            (34., 74., 12., 6.),
+            (34., 78., 18., 10.),
+            (34., 88., 38., 25.),
+            (34., 90., 42., 28.),
+            (34., 102., 48., 37.),
+        ] {
+            let sizes = [first, 62., 10., 34., 34., 6., following, 26., 12., 12.].map(|w| (w, 10.));
+            let actual = packed(&sizes, (400., 180.), &params, 0.);
+            let expected = [0., 0., (62. - first) / 2., (62. - first) / 2., 0., 0., following - 62., next, tail, tail];
+            for (center, expected) in relative_line_centers(&actual, 1, false).into_iter().zip(expected) {
+                assert!((center - expected).abs() < 1e-7, "{first}/{following}: {center} != {expected}");
+            }
+        }
+    }
+
+    #[test]
+    fn reverse_reference_advance_uses_the_updated_extent_and_nominal_reference() {
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr"), ("contDir", "revDir")];
+        for (following, next, tail) in [(90., 12., 11.), (111., 33., 21.5), (115., 39., 25.5), (136., 81., 57.), (138., 85., 60.), (146., 89., 66.)] {
+            let sizes = [18., 68., 38., 8., following, 26., 12., 12.].map(|w| (w, 10.));
+            let actual = packed(&sizes, (400., 180.), &params, 0.);
+            let expected = [0., 0., 25., 35., following - 78., next, tail, tail];
+            for (center, expected) in relative_line_centers(&actual, 1, false).into_iter().zip(expected) {
+                assert!((center - expected).abs() < 1e-7, "{following}: {center} != {expected}");
+            }
         }
     }
 
