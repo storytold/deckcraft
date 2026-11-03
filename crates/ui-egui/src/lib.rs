@@ -35,6 +35,7 @@ pub mod icons;
 pub mod media;
 pub mod menus;
 pub mod opening;
+pub mod presenter;
 pub mod ribbon;
 pub mod settings;
 pub mod show;
@@ -140,7 +141,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("show.end", "End Show", None, "{}"),
     ("animation.preview", "Preview Animations", None, "{on?: bool, from?: effect index}"),
     ("app.home", "Home", None, "{on?}"),
-    ("app.backstage", "File", Some("Alt+F"), "{page?: home|new|open|info|saveAs|print|export|account, on?: bool}"),
+    ("app.backstage", "File", Some("Alt+F"), "{page?: home|new|open|info|saveAs|print|export|about, on?: bool}"),
     ("app.closePresentation", "Close", Some("Cmd+W"), "{}"),
     (
         "app.print",
@@ -305,6 +306,7 @@ pub struct SlideApp {
     /// creating or closing a presentation leaves it.
     pub backstage: Option<backstage::Backstage>,
     pending_urls: Vec<String>,
+    print_previews: app::files::PrintPreviews,
     #[cfg(not(target_arch = "wasm32"))]
     updates_rt: updates_ui::Runtime,
     /// Text for the system clipboard from a Copy or Cut command, handed over on the next frame.

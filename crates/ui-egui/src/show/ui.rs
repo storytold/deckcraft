@@ -1,8 +1,8 @@
-use super::keys::keyboard;
+use super::keys::{handle_keys, keyboard};
 use super::media::{
     Pick, Under, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, shapes_under_pointer, show_media,
 };
-use super::presenter::{PresenterTimer, presenter_window};
+use super::presenter::{PresenterTimer, format_elapsed, presenter_window};
 use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
 use super::zoom::{
     Zoom, grid_indices, norm_on_slide, paint_grid, see_all_hit, slide_aspect, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
@@ -58,6 +58,9 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let Some((doc_uid, doc)) = app.session.active().map(|d| (d.uid, d.doc.clone())) else {
         app.show = None;
+        if let Some(host) = app.services.presenter.as_mut() {
+            host.close();
+        }
         return;
     };
     let now = ctx.input(|i| i.time);
@@ -71,8 +74,35 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         return;
     }
     show.observe_visible_frame(now, web_time::Instant::now());
-    begin_show(&ctx, &mut show, &doc, now);
+    begin_show(&ctx, &mut show, &doc, now, app.services.presenter.is_some());
     let mut out = Out { keep: keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
+    if show.presenter
+        && !show.reading
+        && let Some(host) = app.services.presenter.as_mut()
+    {
+        if !show.remote_opened {
+            show.remote_opened = true;
+            if let Err(message) = host.open() {
+                app.status = Some((message, crate::now_ms()));
+            }
+        }
+        for command in host.commands() {
+            match command {
+                crate::presenter::Command::End => out.keep = false,
+                crate::presenter::Command::Zoom { x, y } if x.is_finite() && y.is_finite() && show.zoom_arm => {
+                    show.zoom = Some(Zoom::at(x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)));
+                    show.zoom_arm = false;
+                }
+                crate::presenter::Command::Key { name, command, shift, alt, ctrl } => {
+                    if let Some(key) = egui::Key::ALL.iter().copied().find(|key| key.name() == name) {
+                        let modifiers = egui::Modifiers { command, shift, alt, ctrl, mac_cmd: command && !ctrl };
+                        out.keep &= handle_keys(&mut show, &doc, now, vec![(key, modifiers)], false).0;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
     let (clicked, secondary, moved) = ctx.input(|i| (i.pointer.primary_clicked(), i.pointer.secondary_clicked(), i.pointer.delta().length() > 0.0));
     if moved {
         show.last_move = now;
@@ -94,6 +124,43 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     draw_pen_and_hints(ui, &mut show, &f, &painter, pointing);
     draw_bars(ui, &mut show, &f, &painter, &mut out);
     draw_extras(&mut show, &f, &painter, &mut out);
+    if out.keep
+        && show.presenter
+        && !show.reading
+        && let Some(host) = app.services.presenter.as_mut()
+    {
+        if now - show.remote_sent >= 0.2 {
+            let next = show.state.peek_next(&doc);
+            if let Some(n) = next
+                && show.remote_next.as_ref().is_none_or(|(old, _)| *old != n)
+            {
+                let size =
+                    crate::textures::fit_size((480, (480.0 * doc.slide_size.height / doc.slide_size.width.max(1.0)).clamp(1.0, 1e9) as u32), 640);
+                let image = deckcraft_render::render_slide(
+                    &doc,
+                    n,
+                    &RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), ..Default::default() },
+                );
+                show.remote_next = crate::presenter::Preview::from_image(&crate::textures::to_color_image(&image, false)).map(|image| (n, image));
+            }
+            host.update(crate::presenter::Snapshot {
+                slide: show.state.slide,
+                total: doc.slides.len(),
+                ended: show.ended,
+                notes: doc.slides.get(show.state.slide).map(|s| s.notes_text()).unwrap_or_default(),
+                elapsed: format_elapsed(show.timer.elapsed(now)),
+                paused: show.timer.paused(),
+                notes_px: show.notes_px,
+                blank: show.blank_name().map(str::to_owned),
+                grid: show.grid,
+                zoom_armed: show.zoom_arm,
+                current: show.remote_preview.clone(),
+                next: show.remote_next.as_ref().filter(|(n, _)| Some(*n) == next).map(|(_, image)| image.clone()),
+            });
+            show.remote_sent = now;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+    }
     finish(app, show, &f, out.keep);
 }
 
@@ -110,7 +177,7 @@ fn paint_hidden(ui: &Ui, doc: &Presentation, show: &Show) {
     }
 }
 
-fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) {
+fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, remote: bool) {
     if !show.started {
         show.started = true;
         show.slide_start = now;
@@ -121,7 +188,7 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
         show.show_start = now;
         show.timer = PresenterTimer::start(now);
         show.last_move = now;
-        if show_fills_screen(show.reading, &doc.show.show_type) {
+        if show_fills_screen(show.reading, &doc.show.show_type) && !(show.presenter && remote) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
         }
         show.after_enter(doc, now);
@@ -303,6 +370,9 @@ fn frame_texture(show: &mut Show, f: &Fr, sl: &Sl) -> Option<TextureHandle> {
                 render_frame(doc, idx, tl, step, sl.t, size, sl.hidden.clone(), &sl.times, render_threads(), &sl.plays, &sl.stamps, back.as_deref())
             }
         };
+        if show.remote_opened && show.presenter {
+            show.remote_preview = crate::presenter::Preview::from_image(&ci);
+        }
         let tex = match show.tex.take() {
             Some((_, mut h)) => {
                 crate::textures::replace(ctx, &mut h, ci);
@@ -730,7 +800,7 @@ fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) 
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
     // Presenter view in a second window.
-    if out.keep && show.presenter && !show.reading {
+    if out.keep && show.presenter && !show.reading && !show.remote_opened {
         presenter_window(ctx, show, doc, now, &mut out.keep);
     }
 }
@@ -740,6 +810,9 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
     if keep {
         app.show = Some(show);
     } else {
+        if let Some(host) = app.services.presenter.as_mut() {
+            host.close();
+        }
         app.media.stop_owned(crate::media::Owner::Show);
         if !show.reading {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));

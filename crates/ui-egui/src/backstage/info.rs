@@ -189,20 +189,39 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
     }
 }
 
-/// Account: the interface's appearance and what DeckCraft is. DeckCraft has no accounts, so
-/// there is nothing to sign in to.
-pub(super) fn account(app: &mut SlideApp, ui: &mut Ui) {
+/// Product information, project links, credits and appearance preferences.
+pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    ui.horizontal_top(|ui| {
+    // Side by side needs 480 + 40 + 340 points; stack the columns when the page is narrower.
+    let layout = if ui.available_width() >= 860.0 { egui::Layout::left_to_right(egui::Align::Min) } else { egui::Layout::top_down(egui::Align::Min) };
+    ui.with_layout(layout, |ui| {
+        ui.vertical(|ui| {
+            ui.set_width(480.0);
+            heading(ui, tl!("Product Information"));
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
+                crate::dialogs::paint_logo(ui.painter(), r);
+                ui.label(RichText::new(tl!("DeckCraft")).font(theme::bold(24.0)).color(t.text));
+            });
+            dim(ui, &crate::dialogs::version_line());
+            dim(ui, tl!("Open source under MIT OR Apache-2.0. Not affiliated with Microsoft."));
+            ui.add_space(14.0);
+            if task(ui, Icon::Help, tl!("Credits"), tl!("Credits"), tl!("The people and models who built DeckCraft."), true) {
+                let _ = app.run("app.about", json!({}));
+            }
+            ui.hyperlink_to(tl!("Join our community on Discord"), deckcraft_engine::links::DISCORD);
+            ui.hyperlink_to(tl!("Source on GitHub"), deckcraft_engine::links::GITHUB);
+        });
+        ui.add_space(40.0);
         ui.vertical(|ui| {
             ui.set_width(340.0);
-            heading(ui, "Appearance");
+            heading(ui, tl!("Appearance"));
             let dark = app.ui.brightness == theme::Brightness::Dark;
             craft_ui::ComboBox::from_id_salt("backstage_appearance")
                 .width(260.0)
-                .selected_text(if dark { "Dark" } else { "Light" })
+                .selected_text(if dark { tl!("Dark") } else { tl!("Light") })
                 .show_ui(ui, |ui| {
-                    for (on, label) in [(false, "Light"), (true, "Dark")] {
+                    for (on, label) in [(false, tl!("Light")), (true, tl!("Dark"))] {
                         if ui.selectable_label(dark == on, label).clicked() {
                             let _ = app.run("view.dark", json!({"on": on}));
                         }
@@ -210,33 +229,6 @@ pub(super) fn account(app: &mut SlideApp, ui: &mut Ui) {
                 })
                 .response
                 .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Appearance"));
-            ui.add_space(16.0);
-            heading(ui, "User Information");
-            dim(ui, "DeckCraft has no accounts: there is nothing to sign in to, and your presentations stay on your device.");
-        });
-        ui.add_space(40.0);
-        ui.vertical(|ui| {
-            heading(ui, "Product Information");
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
-                crate::dialogs::paint_logo(ui.painter(), r);
-                ui.label(RichText::new(tl!("DeckCraft")).font(theme::bold(24.0)).color(t.text));
-            });
-            dim(ui, &crate::dialogs::version_line());
-            dim(ui, "Open source under MIT OR Apache-2.0. Not affiliated with Microsoft.");
-            ui.add_space(14.0);
-            if task(
-                ui,
-                Icon::Help,
-                "About DeckCraft",
-                "About DeckCraft",
-                "The version, the people and models who built it, and where to find us.",
-                true,
-            ) {
-                let _ = app.run("app.about", json!({}));
-            }
-            ui.hyperlink_to("Join our community on Discord", deckcraft_engine::links::DISCORD);
-            ui.hyperlink_to("Source on GitHub", deckcraft_engine::links::GITHUB);
         });
     });
 }

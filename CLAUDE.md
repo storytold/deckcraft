@@ -9,8 +9,7 @@ before modules or other crate items; crate-level `//!` documentation may precede
 
 ## Start every session
 1. Read `plan/STATUS.md`, then the current milestone in `plan/execution-plan.md`.
-2. Read `../../craftrules/AGENTS.md` and the standards it lists for your task.
-3. Run `cargo xtask ci` before you change anything, so you know the tree is green.
+2. Run `cargo xtask ci` before you change anything, so you know the tree is green.
 
 ## Habits
 - Every user-visible action is a command with tests (`crates/engine/src/cmd/*`).
