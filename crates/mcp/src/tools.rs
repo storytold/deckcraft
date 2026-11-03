@@ -357,12 +357,25 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
             wrap(exec(b, c, a.get("params").cloned().unwrap_or(json!({}))))
         }
         "batch" => {
+            use crate::server::{MAX_BATCH_BYTES, MAX_BATCH_ITEMS};
             let keep = a.get("keepGoing").and_then(Value::as_bool).unwrap_or(false);
+            let commands = a.get("commands").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+            if commands.len() > MAX_BATCH_ITEMS {
+                return ToolResult::error(format!("a batch holds at most {MAX_BATCH_ITEMS} commands"));
+            }
             let mut out = vec![];
-            for c in a.get("commands").and_then(Value::as_array).cloned().unwrap_or_default() {
+            let mut used = 0usize;
+            for c in commands {
                 let id = c.get("command").and_then(Value::as_str).unwrap_or("");
                 match exec(b, id, c.get("params").cloned().unwrap_or(json!({}))) {
-                    Ok(v) => out.push(json!({"command": id, "ok": true, "result": v})),
+                    Ok(v) => {
+                        used = used.saturating_add(v.to_string().len());
+                        if used > MAX_BATCH_BYTES {
+                            out.push(json!({"command": id, "ok": false, "error": "the batch's results passed 64 MiB; stopped here"}));
+                            return ToolResult { content: vec![json!({"type": "text", "text": Value::Array(out).to_string()})], is_error: true };
+                        }
+                        out.push(json!({"command": id, "ok": true, "result": v}));
+                    }
                     Err(e) => {
                         out.push(json!({"command": id, "ok": false, "error": e}));
                         if !keep {
