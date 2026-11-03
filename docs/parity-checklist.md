@@ -5,6 +5,7 @@
 > **Last updated:** 2026-11-02 · Reflection transforms and fade geometry now survive native and PPTX resaves; the row remains P because rendering is still partial. No score change.
 >
 > **Previously (2026-11-01):** Locked-shape and no-outline regressions added for #1621; fill row re-assessed: remains D; No Fill hit-testing now follows resolved appearance. Scores unchanged.
+> **Last updated:** 2026-11-02 · Picture compression now measures displayed dimensions through nested group transforms; Compress pictures remains D. Scores unchanged.
 
 The summary between `<!-- SUMMARY -->
 **Weighted breadth parity: 84%** over 191 features.
@@ -244,4 +245,5 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 |---|---|---|
 | 2026-11-02 | trivial | Reflection transform/fade serialization retained; its P score stays because rendering remains partial |
 | 2026-11-02 | trivial | Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P and summary scores are unchanged |
+| 2026-11-02 | trivial | Picture compression uses displayed dimensions through nested group transforms; Compress pictures remains D and summary scores are unchanged |
 | 2026-10-31 | trivial | No Fill interior hit-testing follows resolved fill (#1621); fill row remains D and summary scores are unchanged |
