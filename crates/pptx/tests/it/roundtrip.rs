@@ -469,6 +469,27 @@ fn text_and_formatting_round_trip() {
 }
 
 #[test]
+fn thai_distributed_alignment_survives_two_pptx_round_trips() {
+    assert_eq!(Align::from_xml("thaiDist"), Some(Align::ThaiDistributed));
+    assert_eq!(Align::ThaiDistributed.xml(), "thaiDist");
+    assert_eq!(Align::from_xml("just"), Some(Align::Justify));
+
+    let mut p = Presentation::default();
+    let mut slide = new_slide(&mut p, "Thai distributed alignment");
+    let mut text = shape(&mut p, "Text", 10.0, 10.0, 200.0, 80.0);
+    let mut body = TextBody::from_text("one two three");
+    body.paragraphs[0].props.align = Some(Align::ThaiDistributed);
+    text.text = Some(body);
+    slide.shapes.push(text);
+    p.slides.push(Arc::new(slide));
+
+    let twice = round(&round(&p));
+    let slide = twice.slides.last().expect("added slide");
+    let text = by_name(slide, "Text").text.as_ref().expect("text body");
+    assert_eq!(text.paragraphs[0].props.align, Some(Align::ThaiDistributed));
+}
+
+#[test]
 fn shapes_fills_lines_effects_round_trip() {
     let p = rich_deck();
     let q = round(&p);

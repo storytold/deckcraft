@@ -157,6 +157,7 @@ pub enum Align {
     /// Justified with kashida (tatweel) elongation for Arabic (`justLow`).
     JustLow,
     Distributed,
+    ThaiDistributed,
 }
 
 impl Align {
@@ -168,6 +169,7 @@ impl Align {
             Align::Justify => "just",
             Align::JustLow => "justLow",
             Align::Distributed => "dist",
+            Align::ThaiDistributed => "thaiDist",
         }
     }
     pub fn from_xml(s: &str) -> Option<Self> {
@@ -175,7 +177,8 @@ impl Align {
             "l" => Align::Left,
             "ctr" => Align::Center,
             "r" => Align::Right,
-            "just" | "thaiDist" => Align::Justify,
+            "just" => Align::Justify,
+            "thaiDist" => Align::ThaiDistributed,
             "justLow" => Align::JustLow,
             "dist" => Align::Distributed,
             _ => return None,
