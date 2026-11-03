@@ -1,6 +1,6 @@
 # DeckCraft roadmap: milestones and what's next
 
-> **PPTX.61 update 2026-11-03:** Centered reverse SmartArt fitting now separates delayed logical capacity from painted bounds. The 2,488-case geometry matrix gains 26 strict matches without losing or worsening any case; 661 PDF text pages and 90 selected rasters remain exact. Twelve larger painted-layout differences in the preceding diagnostic set remain open, alongside broader text rules, maps and chart labels. Full LibreOffice replacement remains unproven; feature scores are unchanged.
+> **PPTX.62 update 2026-11-03:** Unresolved absolute SmartArt dimensions retain ordered growth without shrinking toward a smaller limit. A 2,542-case native matrix gains six strict matches with no lost or worse result; 17 painted comparisons have at most 1px bound error at 4x. A broader 6,794-page replay changes only nine already-verified pages. Full text-rule, map, chart and LibreOffice parity remains open; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
 
@@ -202,6 +202,7 @@ and rich point labels; provider/native-layout gaps remain documented, and beta s
 |---|---|---|
 | 2026-11-02 | minor | PPTX.53: retain scoped fitting checkpoints and correct diagram glyph/bullet origins; remaining failures retained |
 | 2026-11-03 | minor | PPTX.54: preserve intermediate reversed-flow alignment and bounded pending corrections |
+| 2026-11-03 | minor | PPTX.62: preserve ordered unresolved dimension growth |
 | 2026-11-03 | minor | PPTX.61: separate reverse fitting capacity from painted bounds |
 | 2026-11-03 | minor | PPTX.60: preserve staged chart bounds and complete dense authored axes |
 | 2026-11-03 | minor | PPTX.59: preserve authored break character indices in PDF text extraction |
@@ -646,3 +647,58 @@ projection precision, grouped chart text and rich label layout remain incomplete
 Only original Rust, programmatic tests and documentation are published. Full
 PowerPoint equivalence or replacement of every LibreOffice conversion is not
 claimed.
+
+### PPTX.62: preserve ordered unresolved dimension growth
+
+An absolute SmartArt width or height rule is an ordered growth step, not a
+request to minimize any positive text-overflow score. While local text remains
+unresolved, smaller limits now keep the starting dimension. Larger endpoints
+are retained even if rotated text geometry trades away height; an interior
+trial is preferred only when it actually fits. Linear and general rule paths
+share this policy. Cross-axis growth clipped to an existing allocation does not
+invent a new text budget for later font reclaim. Font rules, factor-rule endpoint
+selection, generic joint fallback and existing bounded search budgets remain
+in use.
+
+Fifty-four original native controls cover seed/locked/rule triples, changed
+angles, font sizes, row dimensions, fitting text, standalone nodes, cross-axis
+capacity and rule order. Ordered width-then-height controls match an independently
+authored locked-width reference; reversing the rules retains the starting width
+when the height step already fits. One early reverse-order prediction failed
+because its height limit still overflowed; that failure is retained, and a new
+larger-height control independently verifies the conditional behavior. Three
+former mock expectations conflicted with these native observations. Tests now
+assert ordered dimensions, while a separate generic user-rule case preserves
+joint plateau-search coverage. Preceding code fails the new native-backed
+standalone regression.
+
+The expanded native geometry matrix has 2,542 unique cases: strict matches within
+0.025pt improve from 2,417 to 2,423, 2,528 results remain exact, and no match is lost
+or measured error increased. All 26 preceding reverse-capacity controls are
+included. Seventeen painted comparisons have at most one pixel of colored-bound
+error at 4x, with no increase; two retained defects fall from 32px and 29px to
+zero, and a new standalone shrink control falls from 127px to zero. Rotated
+model-box versus painted-box differences remain separate; content is not aligned
+or resized. Actual native/baseline/candidate contacts were visually reviewed.
+All 15,598 retained text-property observations, 661 PDF text pages and 90 selected
+4x rasters remain exact.
+
+A separate archive inventory replays 6,794 pages from 577 source-bound packages
+against the accepted preceding implementation. Of these, 6,785 model snapshots
+are exact; all nine changed pages are already covered by the native geometry
+and painted comparisons, and their 15 text-property records remain unchanged.
+All 13,622 visible text-body properties across the archive also remain exact.
+This is regression coverage, not proof of native fidelity on every archived page.
+Seventy older pages lack their original source bytes, 2,852 replayable pages lack
+a unique native color-to-object mapping, and two conflicting native observations
+remain explicit. No missing or ambiguous observation becomes a pass.
+All eight workspace CI stages pass: 2,739 tests including doctests, zero failures
+and eight existing ignored tests.
+
+The broader inventory also exposes additional previously uncounted nominal
+reverse-layout failures. Remaining rule/centering transitions, cyclic layouts,
+map reduction and projection precision, rich labels and dense chart integration
+still need work. The 2,542-case matrix retains 119 strict raw-box mismatches,
+including rotated representations. Full PowerPoint equivalence or complete
+LibreOffice replacement is not established. Only original Rust, programmatic
+tests and documentation are published.

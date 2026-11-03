@@ -722,7 +722,7 @@ fn parent_size_rules_and_unmapped_inherited_font_rules_do_not_fit_child_text() {
 }
 
 #[test]
-fn coupled_rules_cross_a_plateau_without_changing_an_unrelated_label() {
+fn ordered_dimensions_keep_earlier_growth_without_changing_an_unrelated_label() {
     let data = source();
     let l = layout(
         "<layoutNode><alg type='composite'/>
@@ -737,8 +737,31 @@ fn coupled_rules_cross_a_plateau_without_changing_an_unrelated_label() {
         Ok(p.iter().map(|p| if p.name == "a" { (40. * 72. / 25.4 - p.rect.w.min(p.rect.h)).max(0.) } else { 0. }).collect())
     };
     let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
-    assert!((out[0].rect.w - 40. * 72. / 25.4).abs() < 0.02);
+    // Native paired controls retain the first unresolved width endpoint. The
+    // later successful height rule does not minimize both dimensions together.
+    assert!((out[0].rect.w - 60. * 72. / 25.4).abs() < 0.02);
     assert!((out[0].rect.h - 40. * 72. / 25.4).abs() < 0.02);
+    assert_eq!(out[1].font, Some(30.));
+}
+
+#[test]
+fn coupled_user_rules_cross_a_plateau_without_changing_an_unrelated_label() {
+    let data = source();
+    let l = layout(
+        "<layoutNode><alg type='composite'/>
+        <layoutNode name='a'><alg type='tx'/><shape type='rect'/><constrLst>
+        <constr type='userA' val='20'/><constr type='userB' val='20'/>
+        <constr type='w' refType='userA'/><constr type='h' refType='userB'/></constrLst>
+        <ruleLst><rule type='userA' val='60'/><rule type='userB' val='60'/></ruleLst></layoutNode>
+        <layoutNode name='unrelated'><alg type='tx'/><shape type='rect'/><constrLst>
+        <constr type='w' val='20'/><constr type='primFontSz' val='30'/></constrLst>
+        <ruleLst><rule type='primFontSz' val='8'/></ruleLst></layoutNode></layoutNode>",
+    );
+    let mut measure =
+        |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| if p.name == "a" { (40. - p.rect.w.min(p.rect.h)).max(0.) } else { 0. }).collect());
+    let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+    assert!((out[0].rect.w - 40.).abs() < 0.02);
+    assert!((out[0].rect.h - 40.).abs() < 0.02);
     assert_eq!(out[1].font, Some(30.));
 }
 
@@ -1049,7 +1072,7 @@ fn composite_overflow_uses_shared_bounds_with_individual_end_edges() {
 }
 
 #[test]
-fn joint_rules_do_not_reintroduce_a_redundant_edge_equation() {
+fn ordered_rules_do_not_reintroduce_a_redundant_edge_equation() {
     let data = source();
     let l = layout(
         "<layoutNode><alg type='composite'/><constrLst>
@@ -1061,8 +1084,9 @@ fn joint_rules_do_not_reintroduce_a_redundant_edge_equation() {
     );
     let mut measure = |p: &[Placed<'_>], _: MeasureKind| Ok(p.iter().map(|p| (90. - p.rect.w.min(p.rect.h)).max(0.)).collect());
     let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
-    assert!((out[0].rect.w - 90.).abs() < 0.02);
-    assert!((out[0].rect.h - 90.).abs() < 0.02);
+    assert!((out[0].rect.w - 60. * 72. / 25.4).abs() < 0.02);
+    // Five native size bisections reach 32.5mm for a 90pt height requirement.
+    assert!((out[0].rect.h - 32.5 * 72. / 25.4).abs() < 0.02);
 }
 
 #[test]

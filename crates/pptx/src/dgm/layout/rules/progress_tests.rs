@@ -39,14 +39,12 @@ fn growing_footprints_survive_a_rotated_text_rectangle_plateau() {
 }
 
 #[test]
-fn plateau_retention_does_not_accept_shrinking_or_worsening_geometry() {
+fn resolved_or_non_growing_rules_keep_their_footprint() {
     let data = crate::xml::parse(b"<dataModel><ptLst><pt modelId='root' type='doc'/></ptLst><cxnLst/></dataModel>").unwrap().root;
     let frame = Xfrm::new(0., 0., 400., 300.);
-    for (width, height, limit) in [(21., 12., 18.), (21., 12., 21.), (20., 20., 25.)] {
+    for (width, height, limit) in [(21., 12., 18.), (21., 12., 21.)] {
         let seed = layout(width, height, "");
         let changed = layout(width, height, &format!("<rule type='w' val='{limit}'/>"));
-        // The last case trades away text height as the footprint widens. Keep the
-        // old geometry when all candidates make this positive height deficit worse.
         let mut measure = |items: &[Placed<'_>], _: MeasureKind| Ok(items.iter().map(|p| (100. - p.text_rect.unwrap().h).max(0.)).collect());
         let before = evaluate_measured(&seed, &data, frame, Some(&mut measure)).unwrap();
         let after = evaluate_measured(&changed, &data, frame, Some(&mut measure)).unwrap();
@@ -58,4 +56,19 @@ fn plateau_retention_does_not_accept_shrinking_or_worsening_geometry() {
     let before = evaluate_measured(&seed, &data, frame, Some(&mut fits)).unwrap();
     let after = evaluate_measured(&changed, &data, frame, Some(&mut fits)).unwrap();
     assert_eq!(before[0].rect, after[0].rect);
+}
+
+#[test]
+fn unresolved_dimensions_grow_even_when_rotated_text_height_worsens() {
+    let data = crate::xml::parse(b"<dataModel><ptLst><pt modelId='root' type='doc'/></ptLst><cxnLst/></dataModel>").unwrap().root;
+    let frame = Xfrm::new(0., 0., 400., 300.);
+    let seed = layout(20., 20., "");
+    let changed = layout(20., 20., "<rule type='w' val='25'/>");
+    // Independent native seed/locked/rule controls contradict the former mock
+    // expectation that any larger positive height deficit rejects box growth.
+    let mut measure = |items: &[Placed<'_>], _: MeasureKind| Ok(items.iter().map(|p| (100. - p.text_rect.unwrap().h).max(0.)).collect());
+    let before = evaluate_measured(&seed, &data, frame, Some(&mut measure)).unwrap();
+    let after = evaluate_measured(&changed, &data, frame, Some(&mut measure)).unwrap();
+    assert!(after[0].text_rect.unwrap().h < before[0].text_rect.unwrap().h);
+    assert!((after[0].rect.center().x - before[0].rect.center().x - 2.5 * unit("w")).abs() < 1e-8);
 }

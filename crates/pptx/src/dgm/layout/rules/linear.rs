@@ -1,7 +1,7 @@
 //! Ordered local text rules around a linear allocation pass.
 //! Independent children retain their allocated dimensions for subsequent rules.
 use super::{
-    Choice, Control, Data, Instance, Measure, Placed, Range, Xfrm, charge, choose, constraints, control_scope, geometry, range, score, unit,
+    Choice, Control, Data, Instance, Measure, Placed, Range, Xfrm, charge, choose, constraints, control_scope, geometry, progress, range, score, unit,
 };
 use std::collections::HashSet;
 
@@ -184,6 +184,22 @@ fn text_budget_recedes(before: &[Placed<'_>], after: &[Placed<'_>], scope: &Hash
     }))
 }
 
+fn retain_growth(
+    range: &Range,
+    choice: &Choice<'_>,
+    before: &[Placed<'_>],
+    scope: &HashSet<usize>,
+    primary: &str,
+    work: &mut usize,
+) -> Result<bool, &'static str> {
+    if !progress::retain_endpoint(range, choice) {
+        return Ok(false);
+    }
+    // A cross-axis endpoint clipped to the existing capacity reserves no new
+    // text budget. Remembering it would alter a later font reclaim.
+    Ok(range.key.1 == primary || text_budget_recedes(before, &choice.out, scope, work)? || text_budget_recedes(&choice.out, before, scope, work)?)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn search<'a>(
     tree: &Instance<'a>,
@@ -287,9 +303,12 @@ fn search_pass<'a>(
         let solution = constraints::resolve_adjusted(tree, frame, data, work, &changes)?;
         let Some(range) = range(control, entries, data, &solution, &changes)? else { continue };
         let (start, limit, is_factor) = (range.start, range.limit, range.is_factor);
+        if size_rule && !is_factor && limit <= start {
+            continue;
+        }
         charge(work, range.keys.len())?;
         let old: Vec<_> = range.keys.iter().map(|k| (k.clone(), changes.get(k).copied())).collect();
-        let selected = choose(font_rule || size_rule, |t| {
+        let probe = |t| {
             let value = start + (limit - start) * t;
             range.set_value(&mut changes, value);
             let Some(candidate) = trial(tree, frame, data, &changes, flow, work)? else { return Ok(None) };
@@ -298,11 +317,9 @@ fn search_pass<'a>(
             }
             let score = score(&candidate, &scope, measure, prefer_words, work)?;
             Ok(Some(Choice { out: candidate, score, t, low: 0. }))
-        })?;
-        // Only the primary footprint was restored to its local allocation above.
-        // Cross growth clipped by the enclosing capacity reserves no new budget.
-        let retain_endpoint = control.property == flow.primary
-            && selected.as_ref().map(|c| super::progress::retain_endpoint(&range, c, before, &out, &scope, work)).transpose()?.unwrap_or(false);
+        };
+        let selected = if size_rule && !is_factor { progress::choose_growth(probe)? } else { choose(font_rule || size_rule, probe)? };
+        let retain_endpoint = selected.as_ref().map(|c| retain_growth(&range, c, &out, &scope, flow.primary, work)).transpose()?.unwrap_or(false);
         let Some(Choice { out: candidate, score: after, t: selected, low: bracket }) =
             selected.filter(|c| c.score < before - 1e-6 || retain_endpoint || font_rule && limit < start && c.score <= before + 1e-6)
         else {
@@ -719,6 +736,67 @@ mod tests {
             assert_eq!(eligible(&entries, &controls, &mut 0).unwrap().is_some(), supported, "{shape_xml}, {alg}, dependent={dependent}");
             let mut exhausted = super::super::MAX_WORK;
             assert!(eligible(&entries, &controls, &mut exhausted).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod direction_tests {
+    use super::super::super::evaluate_measured;
+    use super::*;
+
+    #[test]
+    fn unresolved_local_dimensions_grow_without_minimizing_positive_overflow() {
+        let data = crate::xml::parse(b"<dataModel><ptLst><pt modelId='root' type='doc'/></ptLst><cxnLst/></dataModel>").unwrap().root;
+        let mm = unit("w");
+        let frame = Xfrm::new(0., 0., 148. * mm, 92. * mm);
+        for (width, height, limit, rotation, unresolved) in [
+            (24., 22., 33., 17., true),
+            (28., 24., 38., 37., true),
+            (27., 14., 9., 25., true),
+            (24., 22., 12., 17., true),
+            (20., 20., 25., 0., true),
+            (20., 20., 12., 0., true),
+            (24., 22., 33., 17., false),
+        ] {
+            let layout = |rule: &str| {
+                crate::xml::parse(
+                    format!(
+                        "<layoutDef><layoutNode name='flow'><alg type='lin'/><shape type='none'/>
+                 <layoutNode name='first'><alg type='tx'/><shape type='rect' rot='{rotation}'/>
+                 <constrLst><constr type='w' val='{width}'/><constr type='h' val='{height}'/></constrLst>
+                 <ruleLst>{rule}</ruleLst></layoutNode>
+                 <layoutNode name='marker'><alg type='tx'/><shape type='rect'/>
+                 <constrLst><constr type='w' val='31'/><constr type='h' val='16'/></constrLst>
+                 </layoutNode></layoutNode></layoutDef>"
+                    )
+                    .as_bytes(),
+                )
+                .unwrap()
+                .root
+            };
+            let seed = layout("");
+            let changed = layout(&format!("<rule type='w' val='{limit}'/>"));
+            // A positive height deficit can worsen or improve as rotation trades
+            // text width for height. Native seed/locked/rule controls distinguish
+            // that score from the ordered dimension reservation.
+            let mut measure = |items: &[Placed<'_>], _: super::super::MeasureKind| {
+                Ok(items
+                    .iter()
+                    .map(|p| if unresolved && p.name == "first" { (100. * mm - p.text_rect.unwrap_or(p.rect).h).max(0.) } else { 0. })
+                    .collect())
+            };
+            let before = evaluate_measured(&seed, &data, frame, Some(&mut measure)).unwrap();
+            let after = evaluate_measured(&changed, &data, frame, Some(&mut measure)).unwrap();
+            // The marker's actual width also carries the final flow-fit scale;
+            // recover the reserved dimension without confusing it with that fit.
+            let allocation = |items: &[Placed<'_>]| {
+                let marker = items.iter().find(|p| p.name == "marker").unwrap().rect;
+                2. * (marker.center().x - frame.w / 2.) / (marker.w / 31.)
+            };
+            let expected = if unresolved && limit > width { limit } else { width };
+            assert!((allocation(&before) - width).abs() < 1e-7);
+            assert!((allocation(&after) - expected).abs() < 1e-7, "{width}..{limit}, {rotation}, {unresolved}: {} != {expected}", allocation(&after));
         }
     }
 }

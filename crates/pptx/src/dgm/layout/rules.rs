@@ -457,18 +457,19 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
         let solution = constraints::resolve_adjusted(tree, frame, data, &mut work, &changes)?;
         let Some(range) = range(control, &entries, data, &solution, &changes)? else { continue };
         let (start, limit, is_factor) = (range.start, range.limit, range.is_factor);
+        if size_rule && !is_factor && limit <= start {
+            continue;
+        }
         let old: Vec<_> = range.keys.iter().map(|k| (k.clone(), changes.get(k).copied())).collect();
-        let selected = choose(font_rule || size_rule, |t| {
+        let probe = |t| {
             let value = start + (limit - start) * t;
             range.set_value(&mut changes, value);
             let Some(candidate) = trial(tree, frame, data, &changes, measure, &mut work)? else { return Ok(None) };
             let score = score(&candidate, &scope, measure, prefer_words, &mut work)?;
             Ok(Some(Choice { out: candidate, score, t, low: 0. }))
-        })?;
-        // A growing layout footprint can leave its rotated text rectangle unchanged.
-        // Retain that endpoint so a later dimension or font rule sees the new budget.
-        let retain_endpoint =
-            selected.as_ref().map(|c| progress::retain_endpoint(&range, c, before, &out, &scope, &mut work)).transpose()?.unwrap_or(false);
+        };
+        let selected = if size_rule && !is_factor { progress::choose_growth(probe)? } else { choose(font_rule || size_rule, probe)? };
+        let retain_endpoint = selected.as_ref().is_some_and(|c| progress::retain_endpoint(&range, c));
         let Some(Choice { out: candidate, score: after, t: selected, low: bracket }) =
             selected.filter(|c| c.score < before - 1e-6 || retain_endpoint)
         else {
