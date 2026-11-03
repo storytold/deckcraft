@@ -6508,6 +6508,7 @@ fn chart_options_axis_bounds_set_clear_and_refuse() {
     // Not a number, or a minimum at or above the maximum: refused, nothing changes.
     assert!(s.execute("chart.options", &json!({"id": id, "axisMax": "80"})).is_err());
     assert!(s.execute("chart.options", &json!({"id": id, "axisMax": 5})).is_err(), "5 is below the minimum of 10");
+    assert!(s.execute("chart.options", &json!({"id": id, "axisMax": 10})).is_err(), "a maximum equal to the minimum");
     assert_eq!(bounds(&s), (Some(10.0), None));
     // A chart with no value axis to bound is refused; a radar chart has one.
     for kind in ["pie", "doughnut", "waterfall", "funnel"] {
