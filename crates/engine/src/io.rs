@@ -41,12 +41,13 @@ pub fn write_file(path: &str, bytes: &[u8]) -> Result<(), String> {
         Ok(canonical) => canonical,
         Err(_) => std::path::PathBuf::from(path),
     };
-    let target_str = target_path.to_str().unwrap_or(path);
     let existing_perms = std::fs::metadata(&target_path).ok().map(|m| m.permissions());
 
     let mut attempts = 0;
     let (tmp, mut file) = loop {
-        let tmp = format!("{target_str}.{}.{}.saving", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed));
+        // A short fixed-size name: appending to the target's name could exceed the file name limit.
+        let tmp_name = format!(".deckcraft.{}.{}.saving", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed));
+        let tmp = target_path.with_file_name(tmp_name);
         match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
             Ok(f) => break (tmp, f),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempts < 16 => attempts += 1,
@@ -119,5 +120,19 @@ mod tests {
 
         let _ = std::fs::remove_file(&test_file);
         let _ = std::fs::remove_dir(&tmp_dir);
+    }
+
+    #[test]
+    fn write_file_overwrites_file_with_name_near_the_length_limit() {
+        let dir = std::env::temp_dir().join("deckcraft_io_long_name_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join(format!("{}.pptx", "a".repeat(250)));
+        std::fs::write(&file, b"old").unwrap();
+        let path_str = file.to_str().unwrap();
+
+        write_file(path_str, b"new").unwrap();
+        assert_eq!(read_file(path_str).unwrap(), b"new");
+
+        let _ = std::fs::remove_file(&file);
     }
 }
