@@ -230,7 +230,9 @@ impl MediaHost {
             audio: clip.volume > 0.0,
         };
         let source_changed = self.owners.get(&id).is_some_and(|o| o.source != media_key);
-        if clip.video && (source_changed || !self.videos.contains_key(&id)) {
+        // A shape whose feed could not be had (the cap, a decode error) tries again on each play.
+        let feedless = self.videos.get(&id).is_some_and(|v| v.feed.is_none());
+        if clip.video && (source_changed || feedless || !self.videos.contains_key(&id)) {
             // One decoder and frame queue per video shape: past the cap a shape plays its sound only.
             let live = self.videos.iter().filter(|(vid, v)| **vid != id && v.feed.is_some()).count();
             let feed = if live >= MAX_VIDEO_FEEDS {
