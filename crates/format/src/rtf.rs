@@ -578,6 +578,14 @@ mod tests {
     }
 
     #[test]
+    fn outline_rtf_without_heading_styles_keeps_unicode_and_caps_deep_levels() {
+        let rtf = r"{\rtf1\ansi\pard\li0 Caf\'e9 \uc1\u233?\par\pard\li3600 Deep\par}";
+        let mut p = deckcraft_model::defaults::blank_presentation(deckcraft_model::defaults::WIDE, Default::default(), false);
+        assert_eq!(rtf_to_slides(&mut p, rtf), 1);
+        assert_eq!(crate::slides_to_outline(&p), "Café é\n\t\t\t\t\t\t\t\t\tDeep\n");
+    }
+
+    #[test]
     fn export_writes_heading_styles() {
         let mut p = deckcraft_model::defaults::blank_presentation(deckcraft_model::defaults::WIDE, Default::default(), false);
         crate::outline_to_slides(&mut p, "A\n\tB\n\t\tC\n");
