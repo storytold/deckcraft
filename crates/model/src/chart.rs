@@ -1178,21 +1178,26 @@ fn axis_data_range(lo: f64, hi: f64) -> (f64, f64) {
     if lo.is_finite() && hi.is_finite() { (lo.min(hi).clamp(-1e100, 1e100), lo.max(hi).clamp(-1e100, 1e100)) } else { (0.0, 1.0) }
 }
 
-/// Office's automatic (min, max) of the data range [lo, hi]. "How chart axis limits are determined",
-/// as Jon Peltier summarises it: 5 % of the data range past the data, and zero when the values don't
-/// sit within the top sixth of their largest magnitude. A single value is measured from zero.
+/// Automatic bounds before major-unit rounding. Same-sign data uses zero or
+/// half its span toward zero, then five percent of that unrounded span at the
+/// far end. Rounding the inner bound first changes the resulting outer tick.
 fn auto_limits(lo: f64, hi: f64, headroom: bool) -> (f64, f64) {
     let flat = hi - lo <= 1e-12 * lo.abs().max(hi.abs());
-    let pad = if !headroom {
-        0.0
-    } else if flat {
-        hi.abs() / 20.0
+    let zero_lo = lo >= 0.0 && (flat || lo < hi * 5.0 / 6.0);
+    let zero_hi = hi <= 0.0 && (flat || hi > lo * 5.0 / 6.0);
+    if !headroom {
+        return (if zero_lo { 0.0 } else { lo }, if zero_hi { 0.0 } else { hi });
+    }
+    if lo >= 0.0 {
+        let lower = if zero_lo { 0.0 } else { lo - (hi - lo) / 2.0 };
+        (lower, hi + (hi - lower) / 20.0)
+    } else if hi <= 0.0 {
+        let upper = if zero_hi { 0.0 } else { hi + (hi - lo) / 2.0 };
+        (lo - (upper - lo) / 20.0, upper)
     } else {
-        (hi - lo) / 20.0
-    };
-    let auto_lo = if lo >= 0.0 && (flat || lo < hi * 5.0 / 6.0) { 0.0 } else { lo - pad };
-    let auto_hi = if hi <= 0.0 && (flat || hi > lo * 5.0 / 6.0) { 0.0 } else { hi + pad };
-    (auto_lo, auto_hi)
+        let pad = (hi - lo) / 20.0;
+        (lo - pad, hi + pad)
+    }
 }
 
 /// The ends of a span too small to show: with one fixed limit on the far side of the data, the
@@ -1227,6 +1232,72 @@ fn axis_step(major: Option<f64>, lo: f64, hi: f64, n: f64, unit: f64) -> f64 {
     }
 }
 
+/// The initial five-percent range precedes the same-sign inner-limit expansion.
+/// An authored end (or an automatic zero end) supplies the opposite reference.
+fn major_limit_stages(lo: f64, hi: f64, fmin: Option<f64>, fmax: Option<f64>) -> ((f64, f64), (f64, f64)) {
+    match (fmin, fmax) {
+        (Some(min), Some(max)) => ((min, max), (min, max)),
+        (Some(min), None) => {
+            if hi <= 0.0 && min < 0.0 && hi > min * 5.0 / 6.0 {
+                return ((min, 0.0), (min, 0.0));
+            }
+            let initial = (min, hi + (hi - min) / 20.0);
+            let refined = if hi <= 0.0 && min < 0.0 { (min, hi + (hi - min) / 2.0) } else { initial };
+            (initial, refined)
+        }
+        (None, Some(max)) => {
+            if lo >= 0.0 && max > 0.0 && lo < max * 5.0 / 6.0 {
+                return ((0.0, max), (0.0, max));
+            }
+            let initial = (lo - (max - lo) / 20.0, max);
+            let refined = if lo >= 0.0 && max > 0.0 { (lo - (max - lo) / 2.0, max) } else { initial };
+            (initial, refined)
+        }
+        (None, None) => {
+            let flat = hi - lo <= 1e-12 * lo.abs().max(hi.abs());
+            if lo >= 0.0 && (flat || lo < hi * 5.0 / 6.0) {
+                return ((0.0, hi * 1.05), (0.0, hi * 1.05));
+            }
+            if hi <= 0.0 && (flat || hi > lo * 5.0 / 6.0) {
+                return ((lo * 1.05, 0.0), (lo * 1.05, 0.0));
+            }
+            let pad = (hi - lo) / 20.0;
+            ((lo - pad, hi + pad), auto_limits(lo, hi, true))
+        }
+    }
+}
+
+fn align_major_bounds(bounds: (f64, f64), fmin: Option<f64>, fmax: Option<f64>, step: f64) -> Option<(f64, f64)> {
+    let aligned = match (fmin, fmax) {
+        (Some(min), Some(max)) => (min, max),
+        (Some(min), None) => (min, min + ((bounds.1 - min) / step - 1e-9).ceil() * step),
+        (None, Some(max)) => (max - ((max - bounds.0) / step - 1e-9).ceil() * step, max),
+        (None, None) => (((bounds.0 / step + 1e-9).floor()) * step, ((bounds.1 / step - 1e-9).ceil()) * step),
+    };
+    (aligned.0.is_finite() && aligned.1.is_finite() && aligned.1 > aligned.0).then_some(aligned)
+}
+
+/// Normalize an authored unit at each range-generation stage, then align the
+/// limits again. The final alignment can have 501 intervals; repeatedly clamping
+/// it to 500 changes native mixed and translated same-sign scales.
+fn authored_major_scale(lo: f64, hi: f64, fmin: Option<f64>, fmax: Option<f64>, major: f64) -> Option<(f64, f64, f64)> {
+    if !(major > 0.0 && major.is_finite()) {
+        return None;
+    }
+    let (initial, refined) = major_limit_stages(lo, hi, fmin, fmax);
+    let span = initial.1 - initial.0;
+    if !span.is_finite() || span <= 1e-12 * initial.0.abs().max(initial.1.abs()) {
+        return None;
+    }
+    let mut step = major.max(span / 500.0);
+    let mut bounds = align_major_bounds(refined, fmin, fmax, step)?;
+    if refined != initial {
+        step = step.max((bounds.1 - bounds.0) / 500.0);
+        bounds = align_major_bounds(refined, fmin, fmax, step)?;
+    }
+    Some((bounds.0, bounds.1, step))
+}
+
 pub fn axis_scale(
     lo: f64,
     hi: f64,
@@ -1240,6 +1311,9 @@ pub fn axis_scale(
     let fin = |v: Option<f64>| v.filter(|v| v.is_finite()).map(|v| v.clamp(-1e100, 1e100));
     let (fmin, fmax) = (fin(fmin), fin(fmax));
     let (lo, hi) = axis_data_range(lo, hi);
+    if headroom && let Some(scale) = fin(major).and_then(|m| authored_major_scale(lo, hi, fmin, fmax, m)) {
+        return scale;
+    }
     let (mut auto_lo, mut auto_hi) = auto_limits(lo, hi, headroom);
     // A single authored end sets the reference for the opposite automatic
     // limit. Keep zero outside its top sixth; inside it reserve half the
@@ -1300,6 +1374,68 @@ pub fn nice_scale(lo: f64, hi: f64) -> (f64, f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authored_dense_axes_preserve_native_generation_stages() {
+        // Independent native controls distinguish the intermediate 716/717
+        // intervals, sign mirrors, an unrounded mixed extent and authored ends.
+        for (lo, hi, major, fmin, fmax, expected) in [
+            (42.0, 46.32, 0.001, None, None, (39.836795328, 46.651163328, 0.013628736)),
+            (-46.32, -42.0, 0.001, None, None, (-46.651163328, -39.836795328, 0.013628736)),
+            (42.077097, 46.397097, 0.001, None, None, (39.903722496, 46.722196224, 0.013609728)),
+            (42.081552, 46.401552, 0.001, None, None, (39.918567744, 46.732935744, 0.013628736)),
+            (45.000515625, 52.500515625, 0.001, None, None, (41.23086, 53.068488, 0.023628)),
+            (45.00825, 52.50825, 0.001, None, None, (41.241123, 53.071623, 0.023661)),
+            (-11.3, 27.7, 0.01, None, None, (-13.299, 29.6868, 0.0858)),
+            (5.0, 80.0, 0.1, None, None, (0.0, 84.0, 0.168)),
+            (42.0, 46.32, 0.001, Some(38.2), None, (38.2, 46.726, 0.017052)),
+            (42.0, 46.32, 0.001, None, Some(48.2), (38.8907, 48.2, 0.0186186)),
+            (45.0, 52.5, 0.001, Some(40.0), None, (40.0, 53.125, 0.02625)),
+            (45.0, 52.5, 0.001, None, Some(52.5), (41.23875, 52.5, 0.0225225)),
+        ] {
+            let actual = axis_scale(lo, hi, fmin, fmax, Some(major), 10, true);
+            assert!(
+                (actual.0 - expected.0).abs() < 1e-8 && (actual.1 - expected.1).abs() < 1e-8 && (actual.2 - expected.2).abs() < 1e-10,
+                "{lo}..{hi}, fixed {fmin:?}..{fmax:?}: {actual:?} != {expected:?}"
+            );
+        }
+        let (lo, hi, step) = axis_scale(-11.3, 27.7, None, None, Some(0.01), 10, true);
+        assert!(((hi - lo) / step - 501.0).abs() < 1e-9, "final rounding keeps the native 502 ticks");
+    }
+
+    #[test]
+    fn authored_dense_axes_anchor_to_fixed_ends_without_half_unit_offsets() {
+        for intervals in [499.0, 500.0, 501.0] {
+            let major = 6.48 / intervals;
+            for negative in [false, true] {
+                let actual = if negative {
+                    axis_scale(-46.32, -42.0, Some(-46.32), None, Some(major), 10, true)
+                } else {
+                    axis_scale(42.0, 46.32, None, Some(46.32), Some(major), 10, true)
+                };
+                let expected = if negative { (-46.32, -39.84) } else { (39.84, 46.32) };
+                assert!((actual.0 - expected.0).abs() < 1e-10 && (actual.1 - expected.1).abs() < 1e-10, "{intervals}: {actual:?}");
+                assert!((actual.2 - major.max(6.48 / 500.0)).abs() < 1e-12);
+            }
+        }
+        assert_eq!(axis_scale(1.0, 2.0, Some(0.0), Some(501.0), Some(1.0), 10, true), (0.0, 501.0, 1.002));
+        assert_eq!(axis_scale(3.0, 4.0, Some(2.2), Some(4.7), Some(1.0), 10, true), (2.2, 4.7, 1.0));
+    }
+
+    #[test]
+    fn authored_dense_axes_keep_fallback_and_finite_budget_guards() {
+        let automatic = axis_scale(42.0, 46.32, None, None, None, 10, true);
+        assert_eq!(automatic, (39.0, 47.0, 1.0));
+        for major in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -1.0, 0.0] {
+            assert_eq!(axis_scale(42.0, 46.32, None, None, Some(major), 10, true), automatic);
+        }
+        assert_eq!(axis_scale(42.0, 46.32, None, None, Some(0.001), 10, false), (42.0, 46.5, 0.5));
+        for (lo, hi) in [(0.0, f64::from_bits(1)), (-1e100, 1e100), (f64::NAN, 3.0), (1e-300, 2e-300)] {
+            let (min, max, step) = axis_scale(lo, hi, None, None, Some(f64::from_bits(1)), usize::MAX, true);
+            assert!(min.is_finite() && max.is_finite() && step.is_finite() && step > 0.0 && max >= min, "{min} {max} {step}");
+            assert!(((max - min) / step).is_finite() && (max - min) / step <= 1000.0, "bounded authored-unit work: {min} {max} {step}");
+        }
+    }
 
     #[test]
     fn tiny_data_keeps_its_own_scale() {
@@ -1430,6 +1566,36 @@ mod tests {
         assert_eq!(axis_scale(0.0, 1.0, None, None, None, 5, false), (0.0, 1.0, 0.2));
     }
 
+    #[test]
+    fn automatic_bounds_pad_from_the_unrounded_inner_limit() {
+        // Native controls distinguish original-data padding, padding after
+        // rounding the inner limit, and padding from its unrounded value.
+        for (lo, hi, major, expected) in [
+            (33.0, 35.0, 0.01, (32.0, 35.15)),
+            (26.0, 30.64, 1.0, (23.0, 31.0)),
+            (25.55, 30.64, 1.0, (23.0, 32.0)),
+            (25.5, 30.64, 1.0, (0.0, 33.0)),
+            (42.0, 46.32, 0.5, (39.5, 47.0)),
+            (50.0, 60.0, 1.0, (45.0, 61.0)),
+            (49.8, 60.0, 1.0, (0.0, 63.0)),
+            (0.42, 0.4632, 0.005, (0.395, 0.47)),
+            (-11.3, 27.7, 0.5, (-13.5, 30.0)),
+            (13.5, 13.5, 0.5, (0.0, 14.5)),
+        ] {
+            let positive = axis_scale(lo, hi, None, None, Some(major), 10, true);
+            let negative = axis_scale(-hi, -lo, None, None, Some(major), 10, true);
+            for (got, want) in [(positive.0, expected.0), (positive.1, expected.1), (negative.0, -expected.1), (negative.1, -expected.0)] {
+                assert!((got - want).abs() < 1e-10, "{lo}..{hi}: {positive:?}, {negative:?}");
+            }
+        }
+        assert_eq!(axis_scale(42.0, 46.32, None, None, None, 10, true), (39.0, 47.0, 1.0));
+        assert_eq!(axis_scale(50.0, 60.0, None, None, None, 10, true), (44.0, 62.0, 2.0));
+        assert_eq!(axis_scale(49.8, 60.0, None, None, None, 10, true), (0.0, 70.0, 10.0));
+        // No-headroom ranges retain their own policy.
+        assert_eq!(axis_scale(9.0, 9.5, None, None, Some(0.1), 10, false), (9.0, 9.5, 0.1));
+        assert_eq!(axis_scale(-7.0, 9.0, None, None, Some(1.0), 10, false), (-7.0, 9.0, 1.0));
+    }
+
     fn column(values: &[f64]) -> Chart {
         let series = Series { name: "Sales".into(), values: values.iter().map(|v| Some(*v)).collect(), ..Default::default() };
         Chart { categories: (0..values.len()).map(|i| format!("C{i}")).collect(), series: vec![series], ..Default::default() }
@@ -1460,14 +1626,15 @@ mod tests {
     #[test]
     fn automatic_axis_minimum() {
         // Below 5/6 of the maximum the axis starts at zero; at or above it, a unit below
-        // min − (max − min)/20.
+        // min − (max − min)/2. Native column, line and horizontal controls
+        // distinguish these bounds from the former five-percent assumption.
         assert_eq!(scale(&column(&[59.0, 49.0])).0, 0.0);
-        assert_eq!(scale(&column(&[59.0, 50.0])), (48.0, 60.0, 2.0));
-        assert_eq!(scale(&column(&[85.0, 92.0, 97.0])), (84.0, 98.0, 2.0));
+        assert_eq!(scale(&column(&[59.0, 50.0])), (44.0, 60.0, 2.0));
+        assert_eq!(scale(&column(&[85.0, 92.0, 97.0])), (78.0, 98.0, 2.0));
         // All-negative data mirrors it: the axis ends at zero, or near the data.
         assert_eq!(scale(&column(&[-42.1, -18.7, -6.3])), (-45.0, 0.0, 5.0));
         assert_eq!(scale(&column(&[-59.0, -49.0])).1, 0.0);
-        assert_eq!(scale(&column(&[-59.0, -50.0])), (-60.0, -48.0, 2.0));
+        assert_eq!(scale(&column(&[-59.0, -50.0])), (-60.0, -44.0, 2.0));
         // Mixed signs get headroom at both ends.
         assert_eq!(scale(&column(&[42.1, -18.7])), (-30.0, 50.0, 10.0));
         // Stacked bars build up from zero, so their axis keeps it.
@@ -1482,7 +1649,7 @@ mod tests {
         c.series[1].values = vec![Some(7_000.0), Some(7_400.0)];
         c.series[1].secondary_axis = true;
         assert_eq!(c.axis_scale(false, 10), Some((0.0, 350_000.0, 50_000.0)));
-        assert_eq!(c.axis_scale(true, 10), Some((6_950.0, 7_450.0, 50.0)));
+        assert_eq!(c.axis_scale(true, 10), Some((6_800.0, 7_500.0, 100.0)));
     }
 
     #[test]

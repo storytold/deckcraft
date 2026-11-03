@@ -771,10 +771,16 @@ pub(crate) fn positive_span(s: f64) -> f64 {
     if s > 0.0 && s.is_finite() { s } else { 1.0 }
 }
 
-/// The tick values of an axis (min, max, major step), one per step (at most 51).
+/// The in-range tick values of an axis. The work cap matches the model's
+/// accepted authored interval budget; it must not truncate ordinary dense axes.
 fn axis_ticks((lo, hi, st): (f64, f64, f64)) -> impl Iterator<Item = f64> {
-    let n = if st > 0.0 { (((hi - lo) / st).round() as i64).clamp(1, 50) } else { 1 };
-    (0..=n).map(move |k| lo + k as f64 * st)
+    let intervals = (hi - lo) / st;
+    let count = if lo.is_finite() && hi.is_finite() && st.is_finite() && st > 0.0 && intervals.is_finite() && intervals >= 0.0 {
+        (intervals + 1e-9).floor().clamp(0.0, 1000.0) as usize + 1
+    } else {
+        0
+    };
+    (0..count).map(move |k| lo + k as f64 * st)
 }
 
 pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64, h: f64) {
@@ -2197,6 +2203,45 @@ mod tests {
     fn tiny_data_gets_several_ticks() {
         let sc = deckcraft_model::chart::axis_scale(1e-13, 5e-13, None, None, None, 8, true);
         assert!(axis_ticks(sc).count() >= 3, "{sc:?}");
+    }
+
+    #[test]
+    fn dense_authored_ticks_reach_the_last_in_range_value() {
+        for (lo, hi, step, count, last) in [
+            (0., 49., 1., 50, 49.),
+            (0., 50., 1., 51, 50.),
+            (0., 51., 1., 52, 51.),
+            (0., 499., 1., 500, 499.),
+            (0., 500., 1., 501, 500.),
+            (0., 501., 1.002, 501, 501.),
+            (-501., 0., 1.002, 501, 0.),
+            (-50., 51., 1., 102, 51.),
+            (0., 50.1, 0.1002, 501, 50.1),
+            (0., 2.5, 1., 3, 2.),
+            (2.2, 4.7, 1., 3, 4.2),
+        ] {
+            let ticks: Vec<_> = axis_ticks((lo, hi, step)).collect();
+            assert_eq!(ticks.len(), count, "{lo}..{hi} by{step}");
+            assert!((ticks.last().copied().unwrap_or(f64::NAN) - last).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn malformed_tick_ranges_are_empty_and_dense_work_is_bounded() {
+        for scale in [
+            (0., 1., 0.),
+            (0., 1., -1.),
+            (0., 1., f64::NAN),
+            (f64::NAN, 1., 1.),
+            (0., f64::INFINITY, 1.),
+            (0., 1., f64::INFINITY),
+            (1., 0., 1.),
+            (-f64::MAX, f64::MAX, 1.),
+        ] {
+            assert_eq!(axis_ticks(scale).count(), 0, "{scale:?}");
+        }
+        assert_eq!(axis_ticks((0., 1., 1e-30)).count(), 1001);
+        assert_eq!(axis_ticks((2., 2., 1.)).collect::<Vec<_>>(), vec![2.]);
     }
 
     #[test]

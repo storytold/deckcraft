@@ -1,6 +1,6 @@
 # File-format parity with PowerPoint
 
-> **PPTX.59 update 2026-11-03:** PDF text extraction now preserves the source character index across authored hard breaks. All eight retained multiline identity failures are fixed; 661 unique rendered pages remain pixel-identical, and all 253 diagnostic text identities now match native output. Broader SmartArt, chart, map and LibreOffice parity remains open; feature scores are unchanged.
+> **PPTX.60 update 2026-11-03:** Automatic chart limits and dense authored units now follow staged range generation; rendering preserves all accepted in-range ticks. Of 1,218 chart pages, 1,129 are pixel-identical and 89 improve against native output, with no measured regression. All 44 fixed local masks and 140 map renders are retained. Broader SmartArt, text, map and LibreOffice parity remains open; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
 
@@ -213,6 +213,7 @@ the round trip even though DeckCraft doesn't model it.
 |---|---|---|
 | 2026-11-02 | minor | PPTX.53: retain scoped fitting checkpoints and correct diagram glyph/bullet origins; remaining failures retained |
 | 2026-11-03 | minor | PPTX.54: preserve intermediate reversed-flow alignment and bounded pending corrections |
+| 2026-11-03 | minor | PPTX.60: preserve staged chart bounds and complete dense authored axes |
 | 2026-11-03 | minor | PPTX.59: preserve authored break character indices in PDF text extraction |
 | 2026-11-03 | minor | PPTX.58: resolve generated SmartArt hanging defaults by effective font interval |
 | 2026-11-03 | minor | PPTX.57: derive the automatic chart bound from its single authored end |
@@ -578,3 +579,38 @@ differences. Fractional painting, vertical origins, the broader raw-box and
 rule-search mismatches, chart layout and dense-axis behavior, and map reduction
 and projection precision remain open. No general LibreOffice-replacement claim
 is made. Only original Rust, programmatic tests and documentation are published.
+
+### PPTX.60: preserve staged chart ranges and complete dense axes
+
+Automatic same-sign chart bounds now resolve the toward-zero limit first,
+using zero or half the data span, then pad the far end by five percent of that
+unrounded span. A valid authored major unit is normalized at the range-generation
+stages; a fixed end anchors the opposite rounding. Independent translated,
+mirrored and mixed-sign controls distinguish these stages. Final alignment can
+legitimately produce 502 ticks, so repeatedly clamping to 500 would be incorrect.
+
+The renderer previously truncated every axis to 51 ticks even when the model
+accepted many more. It now emits every in-range tick within the existing bounded
+1,000-interval work budget. Fractional final intervals stop below the upper
+bound instead of painting an extra out-of-range tick. Malformed and nonfinite
+scales remain bounded and guarded. No page, font-name or content-specific branch
+is introduced.
+
+The composed candidate was checked on 1,218 original pages in 102 packages:
+1,129 remain pixel-identical and all 89 changed pages strictly improve the fixed
+native RGB error measure. The preceding six dense-grid regressions are resolved;
+none is excluded. The corpus includes 47 original dense-axis controls with
+independently exported native references. The preceding visible chart baseline
+is reused only where intervening SmartArt-default and invisible PDF-text changes
+cannot affect the source; the new controls use a fresh preceding-version export.
+All 44 frozen local regression masks retain or improve their native comparison,
+and 140 map renders remain pixel-identical. Actual native/baseline/candidate
+contact sheets were visually reviewed. The composed model and renderer pass
+385 targeted tests. Full eight-stage CI passes with 2,733 tests including
+doctests; eight existing tests remain ignored.
+
+These results resolve the retained range and dense-tick defects, not every chart
+or text-layout difference. SmartArt reverse placement and capacity, exact and
+percentage line spacing, grouped chart text, and binary-map projection and
+reduction precision remain open. Full LibreOffice replacement is not claimed.
+Only original Rust, programmatic tests and documentation are published.
