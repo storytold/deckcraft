@@ -698,21 +698,20 @@ fn slide_notes(imp: &mut Imp, part: &Part, owned: &mut HashSet<String>) -> Optio
 /// writes both): the modern one wins, its flattened legacy copy is skipped.
 /// Each comments part is read once, for the first slide that names it.
 fn read_slide_comments(pkg: &Package, pres_part: &Part, part: &Part, slide: &mut Slide, owned: &mut HashSet<String>) {
-    let mut parts: Vec<(Doc, bool)> = vec![];
+    let mut parts: Vec<(Doc, bool, bool)> = vec![];
     for c in part.rels.all_of("comments") {
-        if !owned.insert(opc::norm(&c.target)) {
-            continue;
-        }
+        // An already-owned part is not re-read, but its kind still decides modern precedence.
+        let fresh = owned.insert(opc::norm(&c.target));
         if let Some(cd) = pkg.xml(&c.target) {
             // The content type names the modern part; a package that types it only through a
             // Default entry instead of an Override is still modern when its root is p188.
             let modern = pkg.content_type(&c.target).as_deref() == Some(crate::write::CT_COMMENTS_MODERN) || cd.root.prefix() == "p188";
-            parts.push((cd, modern));
+            parts.push((cd, modern, fresh));
         }
     }
-    let has_modern = parts.iter().any(|(_, m)| *m);
-    for (cd, modern) in parts {
-        if has_modern && !modern {
+    let has_modern = parts.iter().any(|(_, m, _)| *m);
+    for (cd, modern, fresh) in parts {
+        if !fresh || (has_modern && !modern) {
             continue;
         }
         slide.comments.extend(read_comments(pkg, pres_part, &cd.root, modern));
