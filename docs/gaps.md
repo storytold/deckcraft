@@ -284,7 +284,7 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
 ### Smaller missing rows
 Zoom: live thumbnails, the zoom-in animation and the native `p166:sldZm` element (3–5 h;
 `insert.zoom` makes linked pictures with Return to Zoom), reuse slides pane with thumbnails
-(1–2 h; `slide.reuseList` picks which slides of a file to insert, and reused content now fits the destination size), laser pointer from the presenter window (1–2 h),
+(1–2 h; `slide.reuseList` picks which slides of a file to insert, #1103; reused content now fits the destination size), laser pointer from the presenter window (1–2 h),
 artistic effects (3–6 h for the other 15 of 22; 7 approximated and round-tripped), remove
 background (6–10 h; needs a model or a classical matte), insert screenshot (2–3 h), record
 audio/screen and record slide show (8–12 h), compare presentations beyond accepting and rejecting each revision, or all (#850; per-object accept and reject, markers on the slide: 2–4 h), password protection (4–6 h, ECMA-376

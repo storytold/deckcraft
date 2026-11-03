@@ -318,7 +318,8 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit(|doc, sel| {
         let at = at.unwrap_or(sel.slide + 1).min(doc.slides.len());
         let scale = |source: f64, destination: f64| {
-            if source.is_finite() && source > 0.0 && destination.is_finite() && destination > 0.0 { destination / source } else { 1.0 }
+            let ratio = destination / source;
+            if source > 0.0 && destination > 0.0 && ratio.is_finite() && ratio > 0.0 { ratio } else { 1.0 }
         };
         let sx = scale(source_size.width, doc.slide_size.width);
         let sy = scale(source_size.height, doc.slide_size.height);
@@ -453,7 +454,14 @@ mod tests {
                 Shape {
                     xfrm: Some(Xfrm::new(40.0, 50.0, 400.0, 200.0)),
                     text: Some(text),
-                    kind: ShapeKind::Table(Table::new(2, 2, 400.0, 40.0)),
+                    kind: ShapeKind::Table({
+                        let mut table = Table::new(2, 2, 400.0, 40.0);
+                        table.rows[0].cells[0].text = TextBody::from_text("cell");
+                        if let Some(run) = table.rows[0].cells[0].text.paragraphs.first_mut().and_then(|p| p.runs.first_mut()) {
+                            run.props.size = Some(18.0);
+                        }
+                        table
+                    }),
                     ..Default::default()
                 },
                 Shape {
@@ -496,6 +504,8 @@ mod tests {
         assert_eq!(table.rows.first().map(|r| r.height), Some(20.0));
         let font_size = table_shape.text.as_ref().and_then(|t| t.paragraphs.first()).and_then(|p| p.runs.first()).and_then(|r| r.props.size);
         assert_eq!(font_size, Some(12.0));
+        let cell_size = table.rows[0].cells[0].text.paragraphs.first().and_then(|p| p.runs.first()).and_then(|r| r.props.size);
+        assert_eq!(cell_size, Some(9.0));
         let group = reused.shapes.get(2).expect("group");
         assert!(matches!(&group.kind, ShapeKind::Group { .. }));
         let ShapeKind::Group { children, child } = &group.kind else { return };

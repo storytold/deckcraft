@@ -4,6 +4,8 @@
 
 > **Last updated:** 2026-11-02 · Reused slides fit their geometry, tables and text to the destination size; reuse remains partial because the picker has no thumbnails. Scores unchanged.
 >
+> **Previously (2026-11-02):** Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P. Scores unchanged.
+>
 > **Previously (2026-11-01):** Locked-shape and no-outline regressions added for #1621; fill row re-assessed: remains D; No Fill hit-testing now follows resolved appearance. Scores unchanged.
 
 The summary between `<!-- SUMMARY -->
@@ -72,7 +74,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Files | Export video (MP4) / animated GIF (GIF: one frame per slide, no transitions; no video) | P2 | P |
 | Files | Print (slides, handouts, notes, outline) | P1 | M |
 | Files | Password protection | P2 | M |
-| Files | Reuse slides from another file (content fits destination size; picker thumbnails remain) | P1 | P |
+| Files | Reuse slides from another file | P1 | P |
 | Files | Drag and drop files onto the window | P1 | D |
 | Files | OpenDocument .odp open/save | P2 | M |
 | Slides | New slide by layout | P0 | D |
