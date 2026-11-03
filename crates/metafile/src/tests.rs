@@ -2074,3 +2074,18 @@ fn clip_polygon_work_bound() {
     let clipped = crate::cliprect::clip_polygon(&poly, &clip);
     assert!(clipped.is_empty(), "excessive polygon clip product rejected");
 }
+
+#[test]
+fn clip_work_is_bounded_across_subpaths() {
+    use crate::canvas::Raw;
+    use crate::geom::Op;
+    // 512-gon clip; 4,000 small triangles crossing its edge: each under the per-polygon cap, together
+    // far over it, for both the fill and the stroke.
+    let clip: Vec<(f64, f64)> =
+        (0..512).map(|i| (i as f64 / 512.0 * std::f64::consts::TAU).sin_cos()).map(|(s, c)| (100.0 + 100.0 * c, 100.0 + 100.0 * s)).collect();
+    let tri = |x: f64| [Op::M((x, 95.0)), Op::L((x + 1.0, 95.0)), Op::L((x, 300.0)), Op::Z];
+    let many: Vec<Op> = (0..4000).flat_map(|i| tri(i as f64 % 200.0)).collect();
+    let raw = |ops| Raw::Path { ops, fill: Some([0, 0, 0, 255]), stroke: Some(([0, 0, 0, 255], 1.0)), even_odd: false, region: None };
+    assert!(crate::cliprect::clip_raw(raw(many), &clip).is_empty(), "the whole item's clipping work is bounded");
+    assert_eq!(crate::cliprect::clip_raw(raw(tri(100.0).to_vec()), &clip).len(), 2, "a small crossing shape is still clipped");
+}

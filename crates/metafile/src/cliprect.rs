@@ -11,6 +11,10 @@ use crate::geom::{Op, P};
 /// Line segments per Bézier when a crossing shape is flattened.
 const CURVE_STEPS: usize = 16;
 
+/// Point-against-edge tests one clipped item may cost (all its subpaths together); an item over
+/// it is dropped, as a single polygon over it already was.
+const MAX_CLIP_WORK: usize = 1_000_000;
+
 /// The bounding box `[l, t, r, b]` of the points in `ops` (control points included).
 pub(crate) fn ops_bbox(ops: &[Op]) -> Option<[f64; 4]> {
     let mut b: Option<[f64; 4]> = None;
@@ -100,12 +104,12 @@ fn is_rect(clip: &[P]) -> bool {
 
 /// Sutherland–Hodgman: `poly` cut by convex `clip`.
 pub(crate) fn clip_polygon(poly: &[P], clip: &[P]) -> Vec<P> {
-    if poly.len().saturating_mul(clip.len()) > 1_000_000 {
+    if poly.len().saturating_mul(clip.len()) > MAX_CLIP_WORK {
         return Vec::new();
     }
     let mut poly = poly.to_vec();
     for i in 0..clip.len() {
-        if poly.len().saturating_mul(clip.len() - i) > 1_000_000 {
+        if poly.len().saturating_mul(clip.len() - i) > MAX_CLIP_WORK {
             return Vec::new();
         }
         let (a, b) = (clip[i], clip[(i + 1) % clip.len()]);
@@ -158,6 +162,9 @@ pub(crate) fn clip_raw(raw: Raw, clip: &[P]) -> Vec<Raw> {
                 return Vec::new();
             }
             let subs = flatten(&ops);
+            if too_much_work(&subs, clip) {
+                return Vec::new();
+            }
             let mut out = Vec::new();
             if fill.is_some() {
                 let f = clip_fill(&subs, clip);
@@ -181,7 +188,11 @@ pub(crate) fn clip_raw(raw: Raw, clip: &[P]) -> Vec<Raw> {
             if disjoint(b, cb) {
                 return Vec::new();
             }
-            let f = clip_fill(&flatten(&ops), clip);
+            let subs = flatten(&ops);
+            if too_much_work(&subs, clip) {
+                return Vec::new();
+            }
+            let f = clip_fill(&subs, clip);
             if f.is_empty() { Vec::new() } else { vec![Raw::Pattern { ops: f, even_odd, tile, region }] }
         }
         Raw::Bitmap { rect, img, region } => crop(rect, img, clip).map(|(rect, img)| vec![Raw::Bitmap { rect, img, region }]).unwrap_or_default(),
@@ -228,6 +239,12 @@ pub(crate) fn flatten(ops: &[Op]) -> Vec<(Vec<P>, bool)> {
     }
     subs.retain(|s| s.0.len() > 1);
     subs
+}
+
+/// Whether cutting every subpath of one item by `clip` would exceed [`MAX_CLIP_WORK`]; the
+/// per-polygon check alone lets many small subpaths each spend the whole allowance.
+fn too_much_work(subs: &[(Vec<P>, bool)], clip: &[P]) -> bool {
+    subs.iter().map(|s| s.0.len() + 1).sum::<usize>().saturating_mul(clip.len()) > MAX_CLIP_WORK
 }
 
 fn clip_fill(subs: &[(Vec<P>, bool)], clip: &[P]) -> Vec<Op> {
