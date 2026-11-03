@@ -479,8 +479,34 @@ fn uncached_affine_cycle_renders_all_shapes_without_an_external_converter() {
     let p = deckcraft_pptx::import(&bytes).unwrap();
     let shapes = group(&p).children();
     assert_eq!(shapes.len(), 6);
+    // The affine solver's exact 30mm result is asserted before layout in
+    // linear_root::tests::affine_cycle_solves_exact_widths_before_root_text_fitting.
+    // These labels request root text fitting at that width. Independently observed
+    // composite controls fit occupied geometry by 1023/1024 along the root flow.
+    let ctx = deckcraft_model::resolve::Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let requests_refit = shapes.iter().any(|shape| {
+        let mut unscaled = shape.clone();
+        let mut rect = unscaled.xfrm.unwrap();
+        rect.w = 30. * 72. / 25.4;
+        unscaled.xfrm = Some(rect);
+        let body = unscaled.text.as_ref().unwrap();
+        let bounds = if let deckcraft_model::Geom::Preset { name, adj } = &unscaled.geom {
+            deckcraft_geom::preset::build(name, rect.w, rect.h, adj).unwrap().text_rect
+        } else {
+            deckcraft_geom::Rect::new(0., 0., rect.w, rect.h)
+        };
+        let measured = deckcraft_text::layout_with_metrics(
+            &ctx,
+            &unscaled,
+            body,
+            &deckcraft_text::Opts { rect: bounds, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: true },
+            deckcraft_text::LayoutMetrics { advance: deckcraft_text::AdvanceMetrics::DrawingMl, line: deckcraft_text::LineMetrics::Typographic },
+        );
+        measured.forced_line_breaks(body) > 0
+    });
+    assert!(requests_refit, "the original affine fixture must independently request a word-wrap refit");
     for shape in shapes {
-        assert!((shape.xfrm.unwrap().w - 30. * 72. / 25.4).abs() < 1e-5);
+        assert!((shape.xfrm.unwrap().w - 30. * 72. / 25.4 * 1023. / 1024.).abs() < 1e-5);
     }
     let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
     assert_eq!(geometry(group(&p)), geometry(group(&back)));

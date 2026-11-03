@@ -2777,3 +2777,72 @@ Publication is limited to Rust source, contributor-original programmatic tests a
 technical documentation. Native documents, screenshots, fonts, user content, provider
 geometry and private evidence paths remain unpublished. Complete external-converter
 replacement is not claimed.
+
+
+## PPTX.50 — occupied root flows, font plateaus and rich-label margins
+
+### Root linear containers
+
+Measured root linear flows now execute child algorithms before packing their occupied
+geometry. Unused allocation space does not itself trigger fitting. Actual cross-axis
+overflow constrains the affected child allocation and reruns that child; the subsequent
+finite flow fit preserves the resolved cross dimensions. Nested flows keep their prior
+allocation path. Endpoint comparisons tolerate floating-point conversion roundoff;
+independent capacities 0.001mm below the exact boundary still reject that endpoint.
+
+Sixty new original native controls distinguish root-only text fitting, mixed child
+algorithms, reverse direction, cross-axis overflow and exact fit boundaries. All sixty
+match within 0.025pt. The container delta improves five of the retained 2,096 cases and
+leaves the other 2,091 geometries unchanged. Twelve selected raster checks at 8 pixels
+per point (7,680 by 4,320) match colored-fill bounds; one existing whole-ink edge remains
+0.125pt different. This is not a full-image pixel-equivalence claim.
+
+The affine-cycle regression still checks exact 30mm pre-layout constraint resolution.
+Its export check separately verifies the real forced-word-break trigger and the finite
+painted fit, instead of conflating constraint resolution with rendered dimensions.
+
+### Font-search plateaus
+
+A shrinking font endpoint may preserve the forced-word-break count while improving the
+intended font fit. The linear search accepts this non-worsening endpoint; an endpoint
+with a worse score remains rejected. Twelve independently authored root/nested controls
+validate font limits from 20 to 28pt, including limits that retain the same break count.
+All twelve font sizes now agree with native output. Together with the twenty existing
+height controls, all 32 measured font sets agree.
+
+The twenty height controls now match every height within 0.025pt, correcting the two
+previous 28.701pt height errors. Whole-box matches improve from nine to ten of twenty;
+width and placement errors remain separately visible. The combined 2,168-case geometry
+matrix improves from 2,000 to 2,052 strict matches with no lost prior match and no
+common-box maximum or mean error increase exceeding 0.025pt. The remaining 116 strict
+failures remain in the denominator, including nonpainted identity differences.
+
+### Rich column-label margins
+
+The renderer applies the resolved top inset to both vertical edges of its working rich
+label body, preserving the authored bottom inset for editing and serialization. Custom
+margin detection happens before this normalization. Even a one-EMU authored deviation
+selects the custom path. Wrapped automatic half turns with custom margins use bounded
+minimal-width measurement before painting at the resulting natural width. Centered
+custom overflowing labels position their complete body, with the existing chart clip.
+
+The original 814-page matrix keeps 738 full pages pixel-identical. Among 75 comparable
+changed text-bound measurements, 73 improve, one stays equal and one regresses; mean
+RMS falls from 29.554 to 1.111pt. One additional changed page recovers previously missing
+text, matching all seventeen native line bands. Of the retained 733 pages, 727 remain
+identical and six change without a measured text-bound regression.
+
+The disclosed coarse rotated-label regression increases RMS by 0.510pt (2.357 to
+2.867pt). All four local line bounds improve in a separate high-resolution comparison,
+but this does not erase the coarse result or the remaining marker-prefix centering
+mismatch. Previously recorded chart failures remain open. Axis paint order, broader
+chart families and complete manual/justified label layout are not resolved by this arc.
+
+### Integration and limits
+
+The combined binary reproduces all 814 frozen chart pages and all 140 map images
+exactly. Full local `cargo xtask ci` passes all eight stages with 2,684 tests including
+doctests; hosted checks remain separate.
+Private native images and synthetic observation files are not distributed. Publication
+contains source, original programmatic tests and documentation only. Complete external
+converter replacement remains unproven.

@@ -6,6 +6,7 @@ mod fallback;
 mod geometry;
 mod hierarchy;
 mod hierarchy_root;
+mod linear_root;
 mod orientation;
 mod rules;
 mod snake;

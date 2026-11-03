@@ -549,3 +549,133 @@ fn an_oversized_first_line_extends_from_the_positioned_cap_for_every_overflow_po
         assert!(bg.3 - bg.1 > 50, "the retained first line is taller than the cap");
     }
 }
+
+#[test]
+fn rich_column_vertical_margins_affect_paint_without_changing_authored_properties() {
+    for (fixed, anchor, angle, font, size, top, short) in [
+        (false, Anchor::Middle, 0., "Inter", 18., Some(7.), false),
+        (false, Anchor::Middle, 0., "Inter", 18., None, false),
+        (false, Anchor::Middle, 37., "Lato", 22., Some(7.), false),
+        (true, Anchor::Middle, 0., "Lato", 22., Some(7.), false),
+        (true, Anchor::Top, 0., "Open Sans", 21., Some(6.), true),
+        (true, Anchor::Middle, 0., "Open Sans", 21., Some(6.), true),
+        (true, Anchor::Bottom, 0., "Open Sans", 21., Some(6.), true),
+        (false, Anchor::Bottom, 37., "Open Sans", 21., Some(6.), true),
+    ] {
+        let mut images = Vec::new();
+        for (bottom, right) in [(1., 1.), (25., 1.), (25., 9.)] {
+            let mut p = baseline_control(7., size);
+            let shape = &mut Arc::make_mut(&mut p.slides[0]).shapes[0];
+            shape.xfrm = Some(Xfrm::new(0., 0., 700., 300.));
+            let ShapeKind::Chart(chart) = &mut shape.kind else { panic!("chart") };
+            let label = chart.series[0].point_labels.get_mut(&0).unwrap();
+            if fixed {
+                label.layout = Some(ChartLayout { w: Some(0.28), h: Some(0.5), ..Default::default() });
+            }
+            let body = label.text.as_mut().unwrap();
+            body.body.anchor = Some(anchor);
+            body.body.rot = Some(angle);
+            body.body.inset_t = top;
+            body.body.inset_b = Some(bottom);
+            body.body.inset_l = Some(5.);
+            body.body.inset_r = Some(right);
+            if short {
+                body.paragraphs.truncate(2);
+            }
+            for (i, para) in body.paragraphs.iter_mut().enumerate() {
+                para.runs[0].props.font = Some(font.into());
+                if short {
+                    para.runs[0].text = if i == 0 { "Orbit" } else { "Pulse" }.into();
+                }
+            }
+            let back = rebuilt(&p);
+            assert!(painted_bounds(&back, false).is_some());
+            images.push(render_slide(&back, 0, &RenderOpts::default()).pixels);
+            let ShapeKind::Chart(chart) = &back.slides[0].shapes[0].kind else { panic!("chart") };
+            let body = chart.series[0].point_labels[&0].text.as_ref().unwrap();
+            assert_eq!(body.body.inset_t, top);
+            assert_eq!(body.body.inset_b, Some(bottom));
+            assert_eq!(body.body.inset_r, Some(right));
+            assert_eq!(body.body.anchor, Some(anchor));
+        }
+        assert!(images[0] == images[1], "bottom margin is ignored: {font}, fixed={fixed}, {anchor:?}, angle={angle}");
+        assert!(images[1] != images[2], "right margin remains independent: {font}, fixed={fixed}, {anchor:?}, angle={angle}");
+    }
+}
+
+fn custom_margin_control(value: f64, font: &str, size: f64, angle: f64, bottom: Option<f64>) -> Presentation {
+    let mut p = baseline_control(value, size);
+    let shape = &mut Arc::make_mut(&mut p.slides[0]).shapes[0];
+    shape.xfrm = Some(Xfrm::new(0., 0., 840., 360.));
+    let ShapeKind::Chart(chart) = &mut shape.kind else { panic!("chart") };
+    chart.format.plot_layout = Some(ChartLayout {
+        inner: true,
+        x: Some(0.12),
+        y: Some(0.11),
+        w: Some(0.72),
+        h: Some(0.74),
+        x_edge: true,
+        y_edge: true,
+        ..Default::default()
+    });
+    let body = chart.series[0].point_labels.get_mut(&0).unwrap().text.as_mut().unwrap();
+    body.body.rot = Some(angle);
+    body.body.wrap = Some(true);
+    body.body.inset_b = bottom;
+    for para in &mut body.paragraphs {
+        para.runs[0].props.font = Some(font.into());
+    }
+    p
+}
+
+#[test]
+fn a_custom_bottom_margin_selects_full_box_overflow_placement_before_normalization() {
+    let custom = 1.5 + 1. / 12700.;
+    // Painted extents include the chart clip: the default-margin box's full
+    // rotated left corner extends below the chart and is therefore not visible.
+    for (value, bottom, expected_left, expected_top) in [(7., None, 350., 123.), (7., Some(custom), 271., 54.), (1., Some(custom), 271., 54.)] {
+        let mut p = custom_margin_control(value, "Open Sans", 21., 37., bottom);
+        let ShapeKind::Chart(chart) = &mut Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("chart") };
+        chart.series[0].point_labels.get_mut(&0).unwrap().text.as_mut().unwrap().body.vertical_overflow = Some(TextOverflow::Overflow);
+        let back = rebuilt(&p);
+        let bg = painted_bounds(&back, true).unwrap();
+        assert!((bg.0 as f64 - expected_left).abs() < 1.5 && (bg.1 as f64 - expected_top).abs() < 1.5, "value={value}, bottom={bottom:?}: {bg:?}");
+        assert!(painted_bounds(&back, false).is_some());
+        let ShapeKind::Chart(chart) = &back.slides[0].shapes[0].kind else { panic!("chart") };
+        let body = chart.series[0].point_labels[&0].text.as_ref().unwrap();
+        assert_eq!(body.body.inset_t, None);
+        assert_eq!(body.body.inset_b.is_some(), bottom.is_some());
+        assert!((body.body.inset_b.unwrap_or(0.) - bottom.unwrap_or(0.)).abs() < 1e-9);
+        assert_eq!(body.body.vertical_overflow, Some(TextOverflow::Overflow));
+        assert_eq!(body.paragraphs.len(), 12);
+    }
+}
+
+#[test]
+fn a_custom_half_turn_measures_narrowly_then_paints_at_the_grown_width() {
+    let bottom = 1.5 + 1. / 12700.;
+    let mut p = custom_margin_control(7., "Inter", 24., 180., Some(bottom));
+    let ShapeKind::Chart(chart) = &mut Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("chart") };
+    let body = chart.series[0].point_labels.get_mut(&0).unwrap().text.as_mut().unwrap();
+    body.paragraphs.truncate(1);
+    body.paragraphs[0].runs[0].text = "IIIIW".into();
+    let back = rebuilt(&p);
+    let bg = painted_bounds(&back, true).unwrap();
+    for (actual, expected) in [(bg.0, 388.375), (bg.1, 138.6725), (bg.2 + 1, 418.025), (bg.3 + 1, 286.8475)] {
+        assert!((actual as f64 - expected).abs() < 1.5, "five measured lines determine the box: {bg:?}");
+    }
+    let image = render_slide(&back, 0, &RenderOpts::default());
+    let rows: Vec<_> = image
+        .pixels
+        .chunks_exact(image.width as usize * 4)
+        .map(|row| row.chunks_exact(4).any(|px| px[0] > 200 && px[1] < 40 && px[2] < 40))
+        .collect();
+    let bands = rows.iter().enumerate().filter(|&(i, &ink)| ink && (i == 0 || !rows[i - 1])).count();
+    assert_eq!(bands, 3, "the grown width paints III, I, W on three baselines");
+    let ShapeKind::Chart(chart) = &back.slides[0].shapes[0].kind else { panic!("chart") };
+    let body = chart.series[0].point_labels[&0].text.as_ref().unwrap();
+    assert_eq!(body.text(), "IIIIW");
+    assert_eq!(body.body.wrap, Some(true));
+    assert_eq!(body.body.vertical_overflow, None);
+    assert!((body.body.inset_b.unwrap() - bottom).abs() < 1e-9);
+}

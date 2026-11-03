@@ -223,7 +223,9 @@ pub(super) fn search<'a>(
             let score = score(&candidate, &scope, measure, prefer_words, work)?;
             Ok(Some(Choice { out: candidate, score, t, low: 0. }))
         })?;
-        let Some(Choice { out: candidate, score: after, t: selected, low: bracket }) = selected.filter(|c| c.score < before - 1e-6) else {
+        let Some(Choice { out: candidate, score: after, t: selected, low: bracket }) =
+            selected.filter(|c| c.score < before - 1e-6 || font_rule && limit < start && c.score <= before + 1e-6)
+        else {
             for (key, value) in old {
                 if let Some(value) = value {
                     changes.insert(key, value);

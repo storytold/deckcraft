@@ -420,6 +420,8 @@ fn column_rich_label(
     if bounds.width <= 0. || bounds.height <= 0. {
         return;
     }
+    let custom_insets = label_layout::custom_column_insets(&body);
+    label_layout::column_vertical_insets(&mut body);
     let angle = body.body.rot.take().unwrap_or(0.);
     // Chart dimensions describe the box before rotation, including quarter turns.
     // Slide text's quarter-turn dimension swap must not be applied a second time.
@@ -427,18 +429,27 @@ fn column_rich_label(
     let center_manual = bounds.fixed && label_layout::manual_alignment(&mut body);
     let wrap = body.body.wrap == Some(true);
     let half_turn = angle.abs() == 180.;
+    let minimal_width = half_turn && custom_insets && wrap && label_layout::bounded_minimal_measurement(&body);
     if half_turn {
-        // Automatic half turns keep the complete unwrapped body. The authored
-        // wrap flag still controls whether positioning uses its capped corner.
-        body.body.wrap = Some(false);
+        // Half turns retain the complete body. Custom margins measure wrapped
+        // text at minimal width, then paint again at the resulting natural width;
+        // thin letters can therefore share a painted line inside a taller box.
+        body.body.wrap = Some(minimal_width);
         body.body.vertical_overflow = Some(deckcraft_model::text::TextOverflow::Overflow);
     }
-    let wrap_width = if wrap && !half_turn { bounds.width } else { 1e6 };
+    let wrap_width = if minimal_width {
+        0.
+    } else if wrap && !half_turn {
+        bounds.width
+    } else {
+        1e6
+    };
     let measured = label_layout::measure(rctx, &body, wrap_width, true);
     let (measured, marker_base) = label_layout::overflow(rctx, &mut body, wrap_width, bounds.height, measured);
     let overflow = body.body.vertical_overflow == Some(deckcraft_model::text::TextOverflow::Overflow);
     let text_h = (measured.content_height + body.body.inset_t.unwrap_or(0.) + body.body.inset_b.unwrap_or(0.)).max(1.);
-    let text_w = (measured.content_width + body.body.inset_l.unwrap_or(0.) + body.body.inset_r.unwrap_or(0.)).clamp(1., wrap_width.max(1.));
+    let text_w = (measured.content_width + body.body.inset_l.unwrap_or(0.) + body.body.inset_r.unwrap_or(0.))
+        .clamp(1., if minimal_width { 1e6 } else { wrap_width.max(1.) });
     let (mut w, h) = if bounds.fixed { (bounds.width, bounds.height) } else { (text_w, text_h) };
     let marked_w = w;
     let mut background_x = 0.;
@@ -452,10 +463,14 @@ fn column_rich_label(
             }
         }
     }
-    // Explicit no-wrap overflow at a horizontal orientation centers the full
-    // body even when it extends outside the chart. The chart clip still applies.
-    let uncapped =
-        !bounds.fixed && spec.layout.is_none() && overflow && !wrap && (angle == 0. || half_turn) && spec.position.as_deref() == Some("ctr");
+    // Custom margins center the full overflowing body, using the capped height
+    // only for its baseline constraint. Default margins keep the leading-corner
+    // policy except for horizontal no-wrap overflow. The chart clip still applies.
+    let uncapped = !bounds.fixed
+        && spec.layout.is_none()
+        && overflow
+        && (custom_insets || (!wrap && (angle == 0. || half_turn)))
+        && spec.position.as_deref() == Some("ctr");
     let mut r = label_layout::position((w, h), angle, mark, spec.position.as_deref(), negative, frame, spec.layout.as_ref(), bounds.fixed, !uncapped);
     if !bounds.fixed && (overflow || text_h > bounds.height) && !uncapped {
         // Explicit overflow and an oversized retained first line keep the full box.

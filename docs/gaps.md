@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **PPTX.50 update 2026-11-02:** Root linear flows pack occupied child output and refit actual cross overflow. Shrinking font rules can retain a valid endpoint when the forced-break score is unchanged. The 2,168-case geometry matrix improves from 2,000 to 2,052 strict matches without losing a prior match. Rich column labels use resolved vertical margins and bounded custom half-turn measurement. One coarse label-bound regression and broader layout/map/chart gaps remain explicit; feature scores are unchanged.
+
 > **PPTX.49 update 2026-11-02:** Uncached hierarchy rows use occupied extents, uniform bounded fitting and explicit parent/child attachment. Linear height reclaim retains its authored search interval and accepted fallback. The deduplicated 2,096-case geometry matrix improves from 1,854 to 1,980 strict matches, with no prior match lost. Zero-area identities and remaining text-rule, map and chart-label differences stay explicit; feature scores are unchanged.
 
 > **PPTX.48 update 2026-11-02:** Centered snake fitting retains nominal and fitted alignment state and distinguishes its early-exit phases. The deduplicated 1,921-case geometry matrix improves from 1,681 to 1,837 strict matches, with no lost match. Centered column labels constrain their position at the bar baseline before authored offsets. Partial snake, hierarchy, map precision and label-layout differences remain explicit; feature scores are unchanged.
@@ -307,7 +309,17 @@ Detail in [file-format-parity.md](file-format-parity.md).
   imported diagram's structure still redraws it with DeckCraft's layout; the full rule-search and
   constraint language is incomplete. Named child/descendant affine references, cycles, paired
   edges and bounds now use a bounded sparse solver rather than eight relaxation passes. Ordered
-  text-measured rules and circular extent fitting are supported. Successful width/height endpoint searches use the observed finite iterations; width growth accounts for forced word breaks. Independent rectangular text leaves now preserve allocations across sibling-rule stages and respect cross-axis capacity; the paired 1,619-case geometry matrix gains 53 matches without losing an earlier one. Coupled search away from the common rule parameter, broader multi-phase state, repeated-control combinations and additional hierarchy/pyramid text interactions still need independent coverage. Hierarchy-child rows and first-parent/second-container root attachment now use measured occupied bounds and uniform fitting; text-triggered root fitting, other container anchors and deeper connector interactions remain partial. Restored nested snake early exits retain partial placement; same-direction fitting-state positions remain unresolved. The corrected uncached nested-card definition now renders
+  text-measured rules and circular extent fitting are supported. Successful width/height
+  endpoint searches use finite iterations; width growth accounts for forced word breaks.
+  Independent rectangular text leaves preserve allocations across sibling-rule stages and
+  respect cross-axis capacity. Shrinking font endpoints can survive an unchanged break score.
+  Hierarchy rows/root attachments use occupied bounds and uniform fitting. Root linear wrappers
+  rerun actual cross overflow before packing resolved child output. The expanded 2,168-case
+  matrix improves from 2,000 to 2,052 strict matches with no lost prior match; 116 cases remain
+  outside strict comparison, including nonpainted identities. Coupled nonrectangular search,
+  repeated-control ordering, other container anchors and deeper connector interactions remain
+  incomplete. Restored snake early exits retain partial placement; reverse-centered history
+  and some clipped fitting paths still differ. The corrected uncached nested-card definition renders
   six shapes in PowerPoint; measured coordinates, text spacing and default insets are covered.
   Helper visibility, layout-order colours, connector/space allocation and recursive composite
   fitting, scaled-end clipping, disjoint-child placement and bounded algorithm-local geometry scope
@@ -500,6 +512,7 @@ no global parity claim or score increase.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.50: occupied root flow fitting, font-score plateaus and custom rich-label insets; independent native controls and disclosed remaining differences |
 | 2026-11-02 | minor | PPTX.49: measured hierarchy attachment and authored height reclaim; independent controls, environment diagnostics and explicit residuals |
 | 2026-11-02 | minor | PPTX.48: centered snake fit-state recovery and rich-column baseline constraints; integrated native comparisons and explicit residual cases |
 | 2026-11-02 | minor | PPTX.47: advisory geographic counts, retained-block label anchoring and property-specific height reclaim; native and resource-budget checks |

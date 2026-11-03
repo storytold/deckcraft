@@ -125,6 +125,39 @@ fn metrics(typographic: bool) -> LayoutMetrics {
     }
 }
 
+/// Rich Column labels use the resolved top margin on both vertical sides, for
+/// fitting and anchoring alike. Apply this only to the renderer's working body;
+/// the authored bottom margin remains available for editing and serialization.
+pub(super) fn column_vertical_insets(body: &mut TextBody) {
+    body.body.inset_b = body.body.inset_t;
+}
+
+/// Any authored margin different from the chart defaults selects the custom
+/// layout path, even a one-EMU difference or a bottom margin ignored in sizing.
+/// Inspect this before normalizing the working body's vertical margins.
+pub(super) fn custom_column_insets(body: &TextBody) -> bool {
+    body.body.inset_l.unwrap_or(3.) != 3.
+        || body.body.inset_r.unwrap_or(3.) != 3.
+        || body.body.inset_t.unwrap_or(1.5) != 1.5
+        || body.body.inset_b.unwrap_or(1.5) != 1.5
+}
+
+/// Minimal-width measurement can allocate one line per grapheme. Bound that
+/// extra work, including empty paragraphs/runs, before using the ordinary path
+/// for a larger body. Counting UTF-8 bytes conservatively bounds shaped cells.
+pub(super) fn bounded_minimal_measurement(body: &TextBody) -> bool {
+    let mut remaining = 16_384usize;
+    for para in &body.paragraphs {
+        let Some(next) = remaining.checked_sub(1) else { return false };
+        remaining = next;
+        for run in &para.runs {
+            let Some(next) = remaining.checked_sub(run.text.len().max(1)) else { return false };
+            remaining = next;
+        }
+    }
+    true
+}
+
 pub(super) fn measure(ctx: &Ctx, body: &TextBody, width: f64, typographic: bool) -> TextLayout {
     let mut body = body.clone();
     body.body.anchor = Some(Anchor::Top);
@@ -564,6 +597,108 @@ mod tests {
             }
         }
         body
+    }
+
+    #[test]
+    fn column_vertical_insets_control_the_retained_lines_and_height() {
+        let p = document();
+        let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        for (font, size, top, angle, count, height) in [
+            ("Inter", 18., 7., 0., 6, 144.65),
+            ("Inter", 18., 2., 0., 6, 134.65),
+            ("Inter", 18., 1.5, 0., 6, 133.65),
+            ("Lato", 22., 7., 37., 3, 93.2),
+        ] {
+            for bottom in [1., 2., 20.] {
+                let mut body = rows(size);
+                body.body.inset_l = Some(5.);
+                body.body.inset_r = Some(1.);
+                body.body.inset_t = Some(top);
+                body.body.inset_b = Some(bottom);
+                for para in &mut body.paragraphs {
+                    para.runs[0].props.font = Some(font.into());
+                }
+                column_vertical_insets(&mut body);
+                let budget = bounds((700., 300.), angle, None).unwrap();
+                let measured = measure(&ctx, &body, budget.width, true);
+                let (layout, marker) = overflow(&ctx, &mut body, budget.width, budget.height, measured);
+                assert_eq!(layout.lines.len(), count, "{font}, angle={angle}, top={top}, bottom={bottom}");
+                assert!(marker.is_some());
+                assert!(
+                    (layout.content_height + 2. * top - height).abs() < 0.05,
+                    "{font}, angle={angle}, top={top}, bottom={bottom}: content height {}",
+                    layout.content_height
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn custom_column_insets_preserve_the_authored_default_boundary() {
+        let original = rows(18.);
+        assert!(!custom_column_insets(&original));
+        assert!(!custom_column_insets(&TextBody::default()));
+        for side in 0..4 {
+            let mut body = original.clone();
+            let inset = match side {
+                0 => &mut body.body.inset_l,
+                1 => &mut body.body.inset_r,
+                2 => &mut body.body.inset_t,
+                _ => &mut body.body.inset_b,
+            };
+            *inset = Some(inset.unwrap() + 1. / 12700.);
+            assert!(custom_column_insets(&body), "one EMU on side {side}");
+            column_vertical_insets(&mut body);
+            if side == 3 {
+                assert!(!custom_column_insets(&body), "capture the authored flag before normalizing bottom");
+            }
+        }
+    }
+
+    #[test]
+    fn minimal_half_turn_measurement_and_final_width_painting_have_distinct_breaks() {
+        let p = document();
+        let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        for (font, size, text, measured_lines, painted_lines, width, height) in [
+            ("Inter", 24., "IIIIW", 5, 3, 23.65, 145.175),
+            ("Open Sans", 18., "IIIIW", 5, 3, 16.62, 122.575),
+            ("Inter", 24., "a\u{301}IIW", 4, 3, 23.65, 116.14),
+            ("Inter", 24., "I I W", 3, 2, 23.65, 87.105),
+            ("Open Sans", 18., "Thin Wide", 8, 6, 16.62, 196.12),
+            ("Lato", 20., "01a1I", 5, 5, 11.6, 120.),
+        ] {
+            let mut body = rows(size);
+            body.paragraphs.truncate(1);
+            body.paragraphs[0].runs[0].text = text.into();
+            body.paragraphs[0].runs[0].props.font = Some(font.into());
+            body.body.anchor = Some(Anchor::Middle);
+            let measured = measure(&ctx, &body, 0., true);
+            assert_eq!(measured.lines.len(), measured_lines, "{font} {text}: measurement");
+            assert!((measured.content_width - width).abs() < 0.01, "{font} {text}: {}", measured.content_width);
+            assert!((measured.content_height - height).abs() < 0.1, "{font} {text}: {}", measured.content_height);
+            let rect = Rect::new(0., 0., measured.content_width + 6., measured.content_height + 3.);
+            let painted = placed(&ctx, &body, rect, None, true);
+            assert_eq!(painted.lines.len(), painted_lines, "{font} {text}: painting at grown width");
+        }
+    }
+
+    #[test]
+    fn minimal_width_work_is_bounded_for_text_and_empty_structure() {
+        let mut body = rows(18.);
+        body.paragraphs.truncate(1);
+        body.paragraphs[0].runs[0].text = "I".repeat(16_383);
+        assert!(bounded_minimal_measurement(&body));
+        body.paragraphs[0].runs[0].text.push('I');
+        assert!(!bounded_minimal_measurement(&body));
+        body.paragraphs[0].runs[0].text = "é".repeat(8192);
+        assert!(!bounded_minimal_measurement(&body));
+        body.paragraphs = vec![Paragraph::default(); 16_384];
+        assert!(bounded_minimal_measurement(&body));
+        body.paragraphs.push(Paragraph::default());
+        assert!(!bounded_minimal_measurement(&body));
+        body.paragraphs.truncate(1);
+        body.paragraphs[0].runs = vec![Run::new(""); 16_384];
+        assert!(!bounded_minimal_measurement(&body));
     }
 
     #[test]

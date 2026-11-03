@@ -1,5 +1,7 @@
 # DeckCraft roadmap: milestones and what's next
 
+> **PPTX.50 update 2026-11-02:** Root linear flows pack occupied child output and refit actual cross overflow. Shrinking font rules can retain a valid endpoint when the forced-break score is unchanged. The 2,168-case geometry matrix improves from 2,000 to 2,052 strict matches without losing a prior match. Rich column labels use resolved vertical margins and bounded custom half-turn measurement. One coarse label-bound regression and broader layout/map/chart gaps remain explicit; feature scores are unchanged.
+
 > **PPTX.49 update 2026-11-02:** Uncached hierarchy rows use occupied extents, uniform bounded fitting and explicit parent/child attachment. Linear height reclaim retains its authored search interval and accepted fallback. The deduplicated 2,096-case geometry matrix improves from 1,854 to 1,980 strict matches, with no prior match lost. Zero-area identities and remaining text-rule, map and chart-label differences stay explicit; feature scores are unchanged.
 
 > **PPTX.48 update 2026-11-02:** Centered snake fitting retains nominal and fitted alignment state and distinguishes its early-exit phases. The deduplicated 1,921-case geometry matrix improves from 1,681 to 1,837 strict matches, with no lost match. Centered column labels constrain their position at the bar baseline before authored offsets. Partial snake, hierarchy, map precision and label-layout differences remain explicit; feature scores are unchanged.
@@ -192,6 +194,7 @@ and rich point labels; provider/native-layout gaps remain documented, and beta s
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.50: occupied root flow fitting, font-score plateaus and custom rich-label insets; independent native controls and disclosed remaining differences |
 | 2026-11-02 | minor | PPTX.49: measured hierarchy attachment and authored height reclaim; independent controls, environment diagnostics and explicit residuals |
 | 2026-11-02 | minor | PPTX.48: centered snake fit-state recovery and rich-column baseline constraints; integrated native comparisons and explicit residual cases |
 | 2026-11-02 | minor | PPTX.47: advisory geographic counts, retained-block label anchoring and property-specific height reclaim; native and resource-budget checks |

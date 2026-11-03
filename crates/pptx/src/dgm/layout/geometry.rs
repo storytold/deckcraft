@@ -296,6 +296,7 @@ fn place_inner<'a>(
         })
         .collect();
     let mut text_refit = false;
+    let root_linear = node.alg == "lin" && depth == 0 && text_refits.is_some();
     // Linear placement uses the constrained sizes, including invisible spacing nodes.
     if node.alg == "hierRoot" {
         for child in &mut children {
@@ -310,7 +311,7 @@ fn place_inner<'a>(
         // Forced word breaks or overflow request the finite fit through this scope.
         // The geometry-only evaluator retains its conservative root-fit fallback.
         let refit = text_refits.map_or(depth == 0, |refits| refits.contains(&super::constraints::id(node)));
-        pack_linear(node, local, capacity, &mut children, refit);
+        text_refit = super::linear_root::prepare(node, local, capacity, &mut children, root_linear, refit, work)?;
     } else if node.alg == "cycle" {
         text_refit = match text_refits {
             Some(refits) => refits.contains(&super::constraints::id(node)),
@@ -354,7 +355,11 @@ fn place_inner<'a>(
         }
     }
     rotate_cycle_leaves(node, &ranges, out, work)?;
-    pack_composite_extents(node, style, local, &children, &ranges, out, text_refit, work)?;
+    if root_linear {
+        RootLinear { node, style, data, depth, solution, text_refits, text_refit }.place(&mut children, &ranges, out, work)?;
+    } else {
+        pack_composite_extents(node, style, local, &children, &ranges, out, text_refit, work)?;
+    }
     if node.alg == "lin" && out.get(own).is_some_and(|p| p.node_key == super::constraints::id(node)) {
         fit_composite_shape(out.get_mut(own..).unwrap_or(&mut []), work)?;
     }
@@ -398,6 +403,48 @@ fn place_inner<'a>(
         }
     }
     Ok(())
+}
+
+struct RootLinear<'s, 'a> {
+    node: &'s Instance<'a>,
+    style: BoxStyle,
+    data: &'s Data<'a>,
+    depth: usize,
+    solution: &'s super::constraints::Solution,
+    text_refits: Option<&'s std::collections::HashSet<usize>>,
+    text_refit: bool,
+}
+
+impl<'a> RootLinear<'_, 'a> {
+    fn place(
+        self,
+        children: &mut [BoxStyle],
+        ranges: &[std::ops::Range<usize>],
+        out: &mut [Placed<'a>],
+        work: &mut usize,
+    ) -> Result<(), &'static str> {
+        let Self { node, style, data, depth, solution, text_refits, text_refit } = self;
+        let clipped = super::linear_root::constrain_cross(node, style, children, ranges, out, work)?;
+        let text_refit = text_refit || !clipped.is_empty();
+        for i in clipped {
+            let child = node.children.get(i).ok_or("invalid root linear child")?;
+            let mut fitted = *children.get(i).ok_or("invalid root linear allocation")?;
+            fitted.rect.x += style.rect.x;
+            fitted.rect.y += style.rect.y;
+            let mut replacement = Vec::new();
+            place_inner(child, fitted, Some(style.rect), data, &mut replacement, depth + 1, solution, text_refits, work)?;
+            let range = ranges.get(i).ok_or("invalid root linear range")?;
+            let target = out.get_mut(range.clone()).ok_or("invalid root linear child range")?;
+            if target.len() != replacement.len() {
+                return Err("root linear fitting changed its node count");
+            }
+            for (target, value) in target.iter_mut().zip(replacement) {
+                *target = value;
+            }
+        }
+        super::linear_root::place(node, style, children, ranges, out, text_refit, work)?;
+        Ok(())
+    }
 }
 
 fn center_frame(out: &mut [Placed<'_>], frame: Xfrm, work: &mut usize) -> Result<(), &'static str> {
@@ -939,7 +986,7 @@ fn cycle_fit_radius(
     Ok(low)
 }
 
-fn pack_linear(node: &Instance<'_>, style: BoxStyle, capacity: Option<Xfrm>, children: &mut [BoxStyle], force_fit: bool) {
+pub(super) fn pack_linear(node: &Instance<'_>, style: BoxStyle, capacity: Option<Xfrm>, children: &mut [BoxStyle], force_fit: bool) {
     let r = style.rect;
     let default_dir = if node.alg == "hierChild" && node.param("chDir", "horz") == "vert" { "fromT" } else { "fromL" };
     let dir = node.param("linDir", default_dir);
@@ -992,16 +1039,22 @@ pub(super) fn flow_fit_scale(occupied: f64, available: f64) -> f64 {
     if occupied <= 0. || available <= 0. {
         return if available > 0. { 1. } else { 0. };
     }
+    // A mathematically exact endpoint remains feasible after point conversion
+    // and occupied-bound subtraction introduce a few rounding bits.
+    let fits = |scale: f64| {
+        let extent = occupied * scale;
+        extent - available <= 16. * f64::EPSILON * extent.abs().max(available.abs())
+    };
     let (mut low, mut high) = (0., 1.);
     for _ in 0..64 {
-        if occupied * high * 0.5 <= available {
+        if fits(high * 0.5) {
             break;
         }
         high *= 0.5;
     }
     for _ in 0..10 {
         let mid = (low + high) / 2.;
-        if occupied * mid <= available {
+        if fits(mid) {
             low = mid;
         } else {
             high = mid;

@@ -2243,3 +2243,35 @@ fn partial_height_reclaim_uses_the_authored_interval_after_font_fitting() {
         assert_eq!(measure(&out, MeasureKind::Overflow).unwrap(), [0.]);
     }
 }
+
+#[test]
+fn shrinking_font_limits_survive_an_unchanged_forced_break_count() {
+    let data = source();
+    for limit in [26, 28] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='lin'/><layoutNode><alg type='tx'/><shape type='rect'/><constrLst>
+            <constr type='w' val='101'/><constr type='h' val='65'/><constr type='primFontSz' val='29'/></constrLst>
+            <ruleLst><rule type='primFontSz' val='{limit}'/></ruleLst></layoutNode></layoutNode>"
+        ));
+        let mut measure = |items: &[Placed<'_>], kind: MeasureKind| Ok(vec![if kind == MeasureKind::WordWrap { 2. } else { 0. }; items.len()]);
+        let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].font, Some(f64::from(limit)));
+    }
+}
+
+#[test]
+fn shrinking_font_does_not_accept_a_worse_endpoint_score() {
+    let data = source();
+    let l = layout(
+        "<layoutNode><alg type='lin'/><layoutNode><alg type='tx'/><shape type='rect'/><constrLst>
+        <constr type='w' val='101'/><constr type='h' val='65'/><constr type='primFontSz' val='29'/></constrLst>
+        <ruleLst><rule type='primFontSz' val='26'/></ruleLst></layoutNode></layoutNode>",
+    );
+    let mut measure = |items: &[Placed<'_>], kind: MeasureKind| {
+        Ok(items.iter().map(|item| if kind == MeasureKind::WordWrap { if item.font.unwrap_or(29.) < 29. { 3. } else { 2. } } else { 0. }).collect())
+    };
+    let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].font, Some(29.));
+}
