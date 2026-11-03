@@ -81,7 +81,7 @@ pub fn decode(bytes: &Bytes) -> Result<Pcm> {
             Some(r) => r,
             None => contained(|| decode_symphonia(bytes, "mkv")),
         },
-        Container::Mp4 if !crate::mp4guard::tables_fit(bytes) => Err(MediaError::Corrupt("the MP4's sample tables do not fit the file".into())),
+        _ if !crate::mp4guard::probe_fits(bytes) => Err(MediaError::Corrupt("the MP4's sample tables do not fit the file".into())),
         c => contained(|| decode_symphonia(bytes, c.name())),
     }
 }

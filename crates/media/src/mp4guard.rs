@@ -12,6 +12,20 @@ pub(crate) fn tables_fit(b: &[u8]) -> bool {
     boxes_fit(b, b.len() as u64, 0)
 }
 
+/// Bytes symphonia's probe scans for a format marker before giving up.
+const PROBE_SEARCH_LIMIT: usize = 1024 * 1024;
+
+/// Whether symphonia can be given `b`, whatever the sniffer made of it: its probe takes the first
+/// `ftyp` within its search window as the start of an MP4 (the size field 4 bytes before it), so
+/// the table check must start where that parser will, not at offset 0.
+pub(crate) fn probe_fits(b: &[u8]) -> bool {
+    let head = &b[..b.len().min(PROBE_SEARCH_LIMIT + 16)];
+    match head.windows(4).position(|w| w == b"ftyp") {
+        Some(p) => tables_fit(&b[p.saturating_sub(4)..]),
+        None => true,
+    }
+}
+
 fn be32(b: &[u8], at: usize) -> Option<u64> {
     b.get(at..at.checked_add(4)?).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]) as u64)
 }
@@ -73,4 +87,30 @@ fn table_fits(kind: &[u8], body: &[u8], file_len: u64) -> bool {
         _ => return true,
     };
     be32(body, 4).is_some_and(|count| count <= body.len().saturating_sub(8) as u64 / entry)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An MP4 whose `stsc` count asks for far more entries than the file holds.
+    fn mp4_with_huge_stsc() -> Vec<u8> {
+        let stsc = [&24u32.to_be_bytes()[..], b"stsc", &[0, 0, 0, 0], &u32::MAX.to_be_bytes(), &[0; 8]].concat();
+        let stbl = [&(stsc.len() as u32 + 8).to_be_bytes()[..], b"stbl", &stsc].concat();
+        let moov = [&(stbl.len() as u32 + 8).to_be_bytes()[..], b"moov", &stbl].concat();
+        [&16u32.to_be_bytes()[..], b"ftyp", b"isom", &[0; 4], &moov].concat()
+    }
+
+    #[test]
+    fn a_prefixed_mp4_is_checked_where_symphonia_starts_it() {
+        let mp4 = mp4_with_huge_stsc();
+        assert!(!tables_fit(&mp4));
+        assert!(!probe_fits(&mp4));
+        let prefixed = [&b"junk before the file "[..], &mp4].concat();
+        assert_eq!(crate::Container::sniff(&prefixed), crate::Container::Unknown);
+        assert!(tables_fit(&prefixed), "offset 0 sees no MP4 boxes");
+        assert!(!probe_fits(&prefixed));
+        let far = [&vec![0u8; PROBE_SEARCH_LIMIT + 16][..], &mp4].concat();
+        assert!(probe_fits(&far), "past the probe window symphonia never reads it as an MP4");
+    }
 }
