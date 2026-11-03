@@ -2,7 +2,7 @@
 
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-> **Last updated:** 2026-11-01 · Locked-shape and no-outline regressions added for #1621; fill row re-assessed: remains D; No Fill hit-testing now follows resolved appearance. Scores unchanged.
+> **Last updated:** 2026-11-02 · Slide-size scaling now covers table grids and cell content; slide-size row re-assessed: remains D. Summary scores unchanged.
 
 The summary between `<!-- SUMMARY -->
 **Weighted breadth parity: 84%** over 191 features.
@@ -102,7 +102,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Masters & themes | Effect schemes / background styles | P2 | P |
 | Masters & themes | Format background (solid, gradient, picture, pattern) | P0 | D |
 | Masters & themes | Hide background graphics | P1 | D |
-| Masters & themes | Slide size (16:9, 4:3, presets, custom) | P0 | D |
+| Masters & themes | Slide size (16:9, 4:3, presets, custom; table grid and cell scaling) | P0 | D |
 | Masters & themes | Header & footer (date, slide number, footer) | P1 | D |
 | Masters & themes | Browse themes from .pptx/.thmx | P2 | D |
 | Masters & themes | Designer layout suggestions (offline) | P2 | M |
@@ -240,4 +240,5 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | trivial | Slide-size scaling regression coverage includes table grids and cell content; slide-size row remains D and summary scores are unchanged |
 | 2026-10-31 | trivial | No Fill interior hit-testing follows resolved fill (#1621); fill row remains D and summary scores are unchanged |

@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (changing slide size scales table grids, cell margins and explicit cell text along with the table; slide-size parity remains done) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (progress log: read-only `slide.actions` lists shape and table text actions; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** trivial (progress log: Set Up Slide Show ▸ Keep mouse cursor visible, #1445; stage and scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -149,6 +149,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-02 | Changing slide size with Ensure Fit or Maximize scales table columns, row minima, cell margins and explicit cell text with the table; merged cells survive undo and native save/reopen |
 | 2026-11-02 | File › About replaces the unused Account page, with version, project links, contributor/model credits and appearance preferences |
 | 2026-10-31 | No Fill shape interiors allow selection and editing of underlying objects, even when a quick style remains; hit-testing uses the renderer’s fill resolution. Outlines, rotation, text targets and actual fills keep their hit behaviour (#1621) |
 | 2026-10-30 | Print-preview tests use the URL emitted by egui and its exact file path; previews are explicitly removed before the macOS process exits |
@@ -321,6 +322,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Slide-size changes scale table grids, cell margins and explicit cell text for Ensure Fit and Maximize; merge, undo and native reopen regressions cover the behavior. Parity row remains done |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-30 | trivial | Progress log: read-only slide action inspection; parity scores unchanged |
