@@ -228,7 +228,8 @@ impl Session {
                 self.tool.drag = Some(Drag::Freeform { mode, points, pressed: false });
                 return self.finish_freeform(true);
             }
-            if points.len() < super::MAX_GESTURE_POINTS {
+            self.tool.press_added_vertex = points.len() < super::MAX_GESTURE_POINTS;
+            if self.tool.press_added_vertex {
                 points.push(p);
             }
             self.tool.path_preview = points.clone();
@@ -551,7 +552,7 @@ impl Session {
             Some(Drag::Freeform { mode, points, .. }) => {
                 if mode == "scribble" {
                     // A scribble ending back at its start closes into a filled shape.
-                    let closed = points.len() > 3 && points.first().zip(points.last()).is_some_and(|(a, b)| (*a - *b).hypot() <= 6.0);
+                    let closed = points.len() > 3 && points.first().is_some_and(|a| (*a - p).hypot() <= 6.0);
                     self.tool.drag = Some(Drag::Freeform { mode, points, pressed: false });
                     return self.finish_freeform(closed);
                 }

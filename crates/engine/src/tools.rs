@@ -276,6 +276,8 @@ pub struct ToolState {
     pub path_preview: Vec<Point>,
     pub path_smooth: bool,
     pub path_closing: bool,
+    /// Whether the last freeform press added a vertex (it adds none at the point cap).
+    pub press_added_vertex: bool,
     /// The shape in Edit Points: its vertices are handles instead of the box's.
     pub edit_points: Option<ShapeId>,
     /// The vertex (path, index) whose control handles show in Edit Points.
