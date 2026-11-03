@@ -228,7 +228,9 @@ impl Session {
                 self.tool.drag = Some(Drag::Freeform { mode, points, pressed: false });
                 return self.finish_freeform(true);
             }
-            points.push(p);
+            if points.len() < super::MAX_GESTURE_POINTS {
+                points.push(p);
+            }
             self.tool.path_preview = points.clone();
             self.tool.drag = Some(Drag::Freeform { mode, points, pressed: true });
             return Ok(Value::Null);

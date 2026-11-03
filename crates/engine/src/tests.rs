@@ -5023,6 +5023,22 @@ fn pen_pressure_is_kept_and_a_mouse_draws_at_full_width() {
     assert_eq!(got, vec![vec![0.2, 1.0, 0.4], vec![1.0, 1.0]]);
 }
 
+#[test]
+fn a_long_ink_stroke_is_extended_in_place_and_capped() {
+    let mut s = session();
+    s.set_tool(tools::ToolKind::Ink { mode: "pen".into(), color: deckcraft_model::Rgba::rgb(20, 20, 20), width: 4.0 });
+    let ev = |kind, x: f64| tools::PointerEvent { kind, x, y: 80.0, mods: Mods::default(), tol: 3.0, pressure: Some(0.5) };
+    s.pointer(ev(PointerKind::Down, 0.0)).unwrap();
+    let n = tools::MAX_GESTURE_POINTS + 5_000;
+    for i in 1..n {
+        s.pointer(ev(PointerKind::Drag, (i % 500) as f64)).unwrap();
+    }
+    assert_eq!(s.tool.ink_preview.len(), tools::MAX_GESTURE_POINTS);
+    s.pointer(ev(PointerKind::Up, 0.0)).unwrap();
+    let kept: usize = ink_pressures(&s).iter().map(Vec::len).sum();
+    assert!((2..=tools::MAX_GESTURE_POINTS).contains(&kept), "{kept}");
+}
+
 fn ink_pressures(s: &Session) -> Vec<Vec<f32>> {
     let st = s.doc().unwrap();
     let Some(sh) = st.shapes().iter().rev().find(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Ink { .. })) else {

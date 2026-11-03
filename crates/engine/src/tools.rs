@@ -17,6 +17,7 @@ mod geometry;
 mod hit;
 mod pointer;
 
+pub(crate) use drag::MAX_GESTURE_POINTS;
 pub use hit::{line_xfrm, resize_box, table_rows, text_pos};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
