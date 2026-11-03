@@ -43,3 +43,16 @@ fn the_batch_tool_is_bounded_in_commands_and_result_bytes() {
     assert!(err && text.contains("64 MiB"), "{}", &text[text.len().saturating_sub(200)..]);
     assert!(text.len() < (64 << 20) + (4 << 20));
 }
+
+#[test]
+fn the_batch_tool_charges_the_escaped_reply() {
+    // Quotes escape twice on the way out (`\\\"`), so 30 results of ~2 MiB serialize to ~120 MiB.
+    let mut server = Server::new(Box::new(Headless::with_document()));
+    let notes = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "run_command", "arguments": {"command": "slide.notes", "params": {"text": "\"".repeat(1 << 20)}}}});
+    server.handle_line(&notes.to_string()).unwrap();
+    let commands = vec![json!({"command": "slide.inspect"}); 30];
+    let line = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "batch", "arguments": {"commands": commands, "keepGoing": true}}});
+    let reply = server.handle_line(&line.to_string()).unwrap();
+    assert!(reply.len() < (64 << 20) + (4 << 20), "{} bytes", reply.len());
+    assert!(reply.contains("64 MiB"));
+}

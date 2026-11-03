@@ -369,12 +369,14 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
                 let id = c.get("command").and_then(Value::as_str).unwrap_or("");
                 match exec(b, id, c.get("params").cloned().unwrap_or(json!({}))) {
                     Ok(v) => {
-                        used = used.saturating_add(v.to_string().len());
+                        let entry = json!({"command": id, "ok": true, "result": v});
+                        // What the reply carries: the entry as text, escaped again inside the JSON-RPC reply.
+                        used = used.saturating_add(json!(entry.to_string()).to_string().len());
                         if used > MAX_BATCH_BYTES {
                             out.push(json!({"command": id, "ok": false, "error": "the batch's results passed 64 MiB; stopped here"}));
                             return ToolResult { content: vec![json!({"type": "text", "text": Value::Array(out).to_string()})], is_error: true };
                         }
-                        out.push(json!({"command": id, "ok": true, "result": v}));
+                        out.push(entry);
                     }
                     Err(e) => {
                         out.push(json!({"command": id, "ok": false, "error": e}));
