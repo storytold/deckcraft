@@ -18,6 +18,7 @@ mod media_timing;
 mod notes;
 mod ole;
 mod ole_vml;
+mod parent_delays;
 mod placeholders;
 mod roundtrip;
 mod sample;

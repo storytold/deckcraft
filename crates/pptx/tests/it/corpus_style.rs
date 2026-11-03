@@ -34,7 +34,7 @@ fn glow() -> Glow {
 }
 
 fn reflection() -> Reflection {
-    Reflection { blur: 2.0, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.75, dist: 6.0 }
+    Reflection { blur: 2.0, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.75, dist: 6.0, ..Default::default() }
 }
 
 fn gradient(angle: f64) -> Fill {
