@@ -59,6 +59,80 @@ pub struct CeltDecoder {
     pcm_scratch: Vec<f32>,
 }
 
+/// Detects the silence flag, advancing the decoder to the end of the frame when set. Returns the flag and the new bit position.
+fn read_silence(dec: &mut RangeDecoder, total_bits_raw: i32) -> (bool, i32) {
+    let tell = dec.tell();
+    let silence = tell >= total_bits_raw || (tell == 1 && dec.bit_logp(15));
+    if silence {
+        // Pretend we've read all the remaining bits.
+        dec.skip_to_end(total_bits_raw);
+        return (true, total_bits_raw);
+    }
+    (false, tell)
+}
+
+struct PostfilterParams {
+    gain: f32,
+    pitch: i32,
+    tapset: usize,
+    tell: i32,
+}
+
+/// Reads the optional post-filter header (pitch, gain, tapset) at the start of a frame.
+fn read_postfilter_params(dec: &mut RangeDecoder, start: usize, tell: i32, total_bits_raw: i32) -> PostfilterParams {
+    let mut p = PostfilterParams { gain: 0.0, pitch: 0, tapset: 0, tell };
+    if start == 0 && tell + 16 <= total_bits_raw {
+        if dec.bit_logp(1) {
+            let octave = dec.uint(6);
+            p.pitch = ((16 << octave) + dec.bits(4 + octave)) as i32 - 1;
+            let qg = dec.bits(3);
+            if dec.tell() + 2 <= total_bits_raw {
+                p.tapset = dec.icdf(&TAPSET_ICDF, 2);
+            }
+            p.gain = 0.09375 * (qg + 1) as f32;
+        }
+        p.tell = dec.tell();
+    }
+    p
+}
+
+/// Decodes per-band dynamic allocation boosts. Returns the offsets, the fractional bit position and the remaining bit budget.
+fn decode_dynalloc(
+    dec: &mut RangeDecoder,
+    start: usize,
+    end: usize,
+    c: usize,
+    lm: usize,
+    cap: &[i32],
+    total_bits_raw: i32,
+) -> ([i32; NB_EBANDS], i32, i32) {
+    let mut offsets = [0i32; NB_EBANDS];
+    let mut dynalloc_logp = 6;
+    let mut total_bits = total_bits_raw << BITRES;
+    let mut tellf = dec.tell_frac() as i32;
+    for i in start..end {
+        let width = (c as i32 * (EBANDS[i + 1] - EBANDS[i])) << lm;
+        let quanta = (width << BITRES).min((6 << BITRES).max(width));
+        let mut loop_logp = dynalloc_logp;
+        let mut boost = 0;
+        while tellf + (loop_logp << BITRES) < total_bits && boost < cap[i] {
+            let flag = dec.bit_logp(loop_logp as u32);
+            tellf = dec.tell_frac() as i32;
+            if !flag {
+                break;
+            }
+            boost += quanta;
+            total_bits -= quanta;
+            loop_logp = 1;
+        }
+        offsets[i] = boost;
+        if boost > 0 {
+            dynalloc_logp = 2.max(dynalloc_logp - 1);
+        }
+    }
+    (offsets, tellf, total_bits)
+}
+
 impl CeltDecoder {
     /// `sample_rate` is the output rate (48000, 24000, 16000, 12000 or 8000).
     pub fn new(sample_rate: u32, channels: usize) -> CeltDecoder {
@@ -176,34 +250,10 @@ impl CeltDecoder {
             }
         }
         let total_bits_raw = len as i32 * 8;
-        let mut tell = dec.tell();
-        let silence = if tell >= total_bits_raw {
-            true
-        } else if tell == 1 {
-            dec.bit_logp(15)
-        } else {
-            false
-        };
-        if silence {
-            // Pretend we've read all the remaining bits.
-            dec.skip_to_end(total_bits_raw);
-            tell = total_bits_raw;
-        }
-        let mut postfilter_gain = 0.0f32;
-        let mut postfilter_pitch = 0i32;
-        let mut postfilter_tapset = 0usize;
-        if start == 0 && tell + 16 <= total_bits_raw {
-            if dec.bit_logp(1) {
-                let octave = dec.uint(6);
-                postfilter_pitch = ((16 << octave) + dec.bits(4 + octave)) as i32 - 1;
-                let qg = dec.bits(3);
-                if dec.tell() + 2 <= total_bits_raw {
-                    postfilter_tapset = dec.icdf(&TAPSET_ICDF, 2);
-                }
-                postfilter_gain = 0.09375 * (qg + 1) as f32;
-            }
-            tell = dec.tell();
-        }
+        let (silence, mut tell) = read_silence(dec, total_bits_raw);
+        let pf = read_postfilter_params(dec, start, tell, total_bits_raw);
+        tell = pf.tell;
+        let (postfilter_gain, postfilter_pitch, postfilter_tapset) = (pf.gain, pf.pitch, pf.tapset);
         let is_transient = if lm > 0 && tell + 3 <= total_bits_raw {
             let t = dec.bit_logp(3);
             tell = dec.tell();
@@ -222,30 +272,7 @@ impl CeltDecoder {
             spread = dec.icdf(&SPREAD_ICDF, 5);
         }
         let cap = m.init_caps(lm, c);
-        let mut offsets = [0i32; NB_EBANDS];
-        let mut dynalloc_logp = 6;
-        let mut total_bits = total_bits_raw << BITRES;
-        let mut tellf = dec.tell_frac() as i32;
-        for i in start..end {
-            let width = (c as i32 * (EBANDS[i + 1] - EBANDS[i])) << lm;
-            let quanta = (width << BITRES).min((6 << BITRES).max(width));
-            let mut loop_logp = dynalloc_logp;
-            let mut boost = 0;
-            while tellf + (loop_logp << BITRES) < total_bits && boost < cap[i] {
-                let flag = dec.bit_logp(loop_logp as u32);
-                tellf = dec.tell_frac() as i32;
-                if !flag {
-                    break;
-                }
-                boost += quanta;
-                total_bits -= quanta;
-                loop_logp = 1;
-            }
-            offsets[i] = boost;
-            if boost > 0 {
-                dynalloc_logp = 2.max(dynalloc_logp - 1);
-            }
-        }
+        let (offsets, tellf, total_bits) = decode_dynalloc(dec, start, end, c, lm, &cap, total_bits_raw);
         let alloc_trim = if tellf + (6 << BITRES) <= total_bits { dec.icdf(&TRIM_ICDF, 7) as i32 } else { 5 };
         let mut bits = ((len as i32 * 8) << BITRES) - dec.tell_frac() as i32 - 1;
         let anti_collapse_rsv = if is_transient && lm >= 2 && bits >= ((lm as i32 + 2) << BITRES) { 1 << BITRES } else { 0 };

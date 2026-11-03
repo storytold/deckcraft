@@ -1,7 +1,7 @@
 //! Chart parts: a `c:chartSpace` with cached categories and values.
 //! An unchanged chart also keeps the embedded workbook and the other parts it points at.
 
-use deckcraft_model::chart::{Chart, ChartType, Series, Trendline, TrendlineType};
+use deckcraft_model::chart::{Chart, ChartType, ErrorBars, Series, Trendline, TrendlineType};
 use deckcraft_model::style::Fill;
 
 use crate::opc::{NS_A, NS_C, NS_R};
@@ -204,6 +204,48 @@ fn group_of(k: ChartType) -> Group {
     }
 }
 
+fn error_bars(w: &mut W, e: &ErrorBars, g: Group) {
+    let word = |v: &str, ok: &[&'static str], d: &'static str| ok.iter().copied().find(|o| *o == v).unwrap_or(d);
+    w.open0("c:errBars");
+    if matches!(g, Group::Scatter | Group::Bubble) {
+        w.val("c:errDir", "y");
+    }
+    w.val("c:errBarType", word(&e.bar_type, &["both", "plus", "minus"], "both"));
+    let vt = word(&e.val_type, &["fixedVal", "percentage", "stdDev", "stdErr", "cust"], "fixedVal");
+    w.val("c:errValType", vt);
+    w.val("c:noEndCap", if e.end_cap { 0 } else { 1 });
+    if vt == "cust" {
+        w.open0("c:plus");
+        num_lit(w, &e.plus);
+        w.close("c:plus");
+        w.open0("c:minus");
+        num_lit(w, &e.minus);
+        w.close("c:minus");
+    } else if e.value.is_finite() {
+        w.val("c:val", fmt_num(e.value));
+    }
+    w.close("c:errBars");
+}
+
+/// Per-point fills of pie, doughnut and bar series.
+fn point_fills(w: &mut W, s: &Series, g: Group) {
+    if !matches!(g, Group::Pie | Group::Doughnut | Group::Bar) {
+        return;
+    }
+    for (idx, f) in s.point_fills.iter().take(1000) {
+        w.open0("c:dPt");
+        w.val("c:idx", idx);
+        if g == Group::Bar {
+            w.val("c:invertIfNegative", 0);
+        }
+        if g != Group::Bar {
+            w.val("c:bubble3D", 0);
+        }
+        sp_pr(w, Some(f), None);
+        w.close("c:dPt");
+    }
+}
+
 fn series(w: &mut W, c: &Chart, s: &Series, i: usize, kind: ChartType, g: Group) {
     w.open0("c:ser");
     w.val("c:idx", i);
@@ -253,20 +295,7 @@ fn series(w: &mut W, c: &Chart, s: &Series, i: usize, kind: ChartType, g: Group)
             w.close("c:marker");
         }
     }
-    if g == Group::Pie || g == Group::Doughnut || g == Group::Bar {
-        for (idx, f) in s.point_fills.iter().take(1000) {
-            w.open0("c:dPt");
-            w.val("c:idx", idx);
-            if g == Group::Bar {
-                w.val("c:invertIfNegative", 0);
-            }
-            if g != Group::Bar {
-                w.val("c:bubble3D", 0);
-            }
-            sp_pr(w, Some(f), None);
-            w.close("c:dPt");
-        }
-    }
+    point_fills(w, s, g);
     if let Some(d) = s.data_labels {
         data_labels(w, c, d);
     }
@@ -279,26 +308,7 @@ fn series(w: &mut W, c: &Chart, s: &Series, i: usize, kind: ChartType, g: Group)
     let n = c.categories.len().max(s.values.len());
     let last = n + 1;
     if let Some(e) = &s.error_bars {
-        let word = |v: &str, ok: &[&'static str], d: &'static str| ok.iter().copied().find(|o| *o == v).unwrap_or(d);
-        w.open0("c:errBars");
-        if matches!(g, Group::Scatter | Group::Bubble) {
-            w.val("c:errDir", "y");
-        }
-        w.val("c:errBarType", word(&e.bar_type, &["both", "plus", "minus"], "both"));
-        let vt = word(&e.val_type, &["fixedVal", "percentage", "stdDev", "stdErr", "cust"], "fixedVal");
-        w.val("c:errValType", vt);
-        w.val("c:noEndCap", if e.end_cap { 0 } else { 1 });
-        if vt == "cust" {
-            w.open0("c:plus");
-            num_lit(w, &e.plus);
-            w.close("c:plus");
-            w.open0("c:minus");
-            num_lit(w, &e.minus);
-            w.close("c:minus");
-        } else if e.value.is_finite() {
-            w.val("c:val", fmt_num(e.value));
-        }
-        w.close("c:errBars");
+        error_bars(w, e, g);
     }
     if matches!(g, Group::Scatter | Group::Bubble) {
         let xs: Vec<Option<f64>> = if s.x_values.is_empty() { (1..=s.values.len()).map(|v| Some(v as f64)).collect() } else { s.x_values.clone() };

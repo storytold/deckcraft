@@ -60,6 +60,8 @@ impl eframe::App for App {
         // nothing after it is needed: the preferences are saved and the log file is unbuffered.
         // `on_exit` only runs once the app exists, never on a failed start. Same as GridCraft #117.
         #[cfg(target_os = "macos")]
+        self.0.cleanup_print_previews();
+        #[cfg(target_os = "macos")]
         std::process::exit(0);
     }
 }
@@ -187,7 +189,7 @@ fn main() -> eframe::Result {
     // First, so every start-up record (and the engine's panic hook, installed with the first
     // Session) is captured; see `logging`.
     let logger = logging::install();
-    if let Some(done) = craft_update::self_update::finish(&craft_update::suite::DECKCRAFT, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
+    if let Some(done) = craft_update::self_update::finish(&deckcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
         if let Err(e) = done {
             eprintln!("DeckCraft update helper failed: {e}");
             std::process::exit(1);

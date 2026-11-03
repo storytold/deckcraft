@@ -1,4 +1,4 @@
-use super::*;
+use super::{Rect, SlideApp, Ui, Xf, screen_rect, vec2};
 
 /// Where an input method composes for the slide (#101), on screen: at the insertion point while
 /// editing text, or over the one selected shape (typing on it starts editing). `None` when there is

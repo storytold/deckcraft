@@ -10,6 +10,30 @@ fn sample() -> Presentation {
     s.doc().expect("doc").doc.as_ref().clone()
 }
 
+fn same_shapes(a: &deckcraft_model::Slide, b: &deckcraft_model::Slide) {
+    assert_eq!(a.shapes.len(), b.shapes.len(), "shape count on slide '{}'", a.title());
+    for (sa, sb) in a.shapes.iter().zip(b.shapes.iter()) {
+        assert_eq!(sa.kind_name(), sb.kind_name(), "{}", sa.name);
+        assert_eq!(sa.text.as_ref().map(|t| t.text()), sb.text.as_ref().map(|t| t.text()), "{}", sa.name);
+        if let (Some(x), Some(y)) = (sa.xfrm, sb.xfrm) {
+            assert!((x.x - y.x).abs() < 0.01 && (x.w - y.w).abs() < 0.01, "{}: {x:?} vs {y:?}", sa.name);
+        }
+        if let (ShapeKind::Table(ta), ShapeKind::Table(tb)) = (&sa.kind, &sb.kind) {
+            assert_eq!(ta.style, tb.style);
+            assert_eq!(ta.rows.len(), tb.rows.len());
+        }
+        if let (ShapeKind::Chart(ca), ShapeKind::Chart(cb)) = (&sa.kind, &sb.kind) {
+            assert_eq!(ca.kind, cb.kind);
+            assert_eq!(ca.categories, cb.categories);
+            assert_eq!(ca.series.len(), cb.series.len());
+            for (x, y) in ca.series.iter().zip(cb.series.iter()) {
+                assert_eq!(x.name, y.name);
+                assert_eq!(x.values, y.values);
+            }
+        }
+    }
+}
+
 #[test]
 fn sample_deck_round_trips() {
     let p = sample();
@@ -25,27 +49,7 @@ fn sample_deck_round_trips() {
     for (a, b) in p.slides.iter().zip(q.slides.iter()) {
         assert_eq!(a.title(), b.title());
         assert_eq!(a.notes_text(), b.notes_text());
-        assert_eq!(a.shapes.len(), b.shapes.len(), "shape count on slide '{}'", a.title());
-        for (sa, sb) in a.shapes.iter().zip(b.shapes.iter()) {
-            assert_eq!(sa.kind_name(), sb.kind_name(), "{}", sa.name);
-            assert_eq!(sa.text.as_ref().map(|t| t.text()), sb.text.as_ref().map(|t| t.text()), "{}", sa.name);
-            if let (Some(x), Some(y)) = (sa.xfrm, sb.xfrm) {
-                assert!((x.x - y.x).abs() < 0.01 && (x.w - y.w).abs() < 0.01, "{}: {x:?} vs {y:?}", sa.name);
-            }
-            if let (ShapeKind::Table(ta), ShapeKind::Table(tb)) = (&sa.kind, &sb.kind) {
-                assert_eq!(ta.style, tb.style);
-                assert_eq!(ta.rows.len(), tb.rows.len());
-            }
-            if let (ShapeKind::Chart(ca), ShapeKind::Chart(cb)) = (&sa.kind, &sb.kind) {
-                assert_eq!(ca.kind, cb.kind);
-                assert_eq!(ca.categories, cb.categories);
-                assert_eq!(ca.series.len(), cb.series.len());
-                for (x, y) in ca.series.iter().zip(cb.series.iter()) {
-                    assert_eq!(x.name, y.name);
-                    assert_eq!(x.values, y.values);
-                }
-            }
-        }
+        same_shapes(a, b);
         assert_eq!(a.transition.as_ref().map(|t| (&t.kind, &t.option)), b.transition.as_ref().map(|t| (&t.kind, &t.option)));
         assert_eq!(a.animations.len(), b.animations.len(), "animations on '{}'", a.title());
         for (x, y) in a.animations.iter().zip(b.animations.iter()) {

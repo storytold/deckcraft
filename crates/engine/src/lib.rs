@@ -682,7 +682,28 @@ impl Session {
                 self.journal.drain(..1000);
             }
         }
-        Ok(r)
+        Ok(if outer { self.with_editing(id, r) } else { r })
+    }
+
+    /// In Slide Master / layout (or handout / notes master) view the insert commands edit the
+    /// master or layout, not a slide; their answer says so with `editing: {kind, name}`, as
+    /// `slide.inspect` does. Nothing is added on slides, so those answers stay as they were.
+    fn with_editing(&self, id: &str, mut r: Value) -> Value {
+        let inserts = id.starts_with("insert.") || matches!(id, "shape.insert" | "shape.freeform" | "shape.connect" | "slide.new");
+        let (true, Some(st), Some(o)) = (inserts, self.active(), r.as_object_mut()) else { return r };
+        let doc = &st.doc;
+        let edited = match st.selection.target {
+            Target::Master { master } => doc.masters.get(master).map(|m| ("master", m.name.clone())),
+            Target::Layout { master, layout } => doc.masters.get(master).and_then(|m| m.layouts.get(layout)).map(|l| ("layout", l.name.clone())),
+            t @ (Target::Handout | Target::NotesMaster) => {
+                page_master(doc, t).map(|m| (if matches!(t, Target::Handout) { "handout" } else { "notesMaster" }, m.name.clone()))
+            }
+            Target::Slides => None,
+        };
+        if let Some((kind, name)) = edited {
+            o.entry("editing").or_insert_with(|| serde_json::json!({"kind": kind, "name": name}));
+        }
+        r
     }
 
     pub fn commands(&self) -> Vec<CommandInfo> {
@@ -695,6 +716,7 @@ impl Session {
         let mut doc = (*st.doc).clone();
         let mut sel = st.selection.clone();
         let r = f(&mut doc, &mut sel)?;
+        cmd::arrange::refit_groups(&st.doc, &mut doc);
         connect::reroute(&mut doc, &sel);
         st.doc = Arc::new(doc);
         st.selection = sel;
