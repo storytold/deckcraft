@@ -977,7 +977,7 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         // a repeat, and no word carries a copy of the value.
         let lang = "x".repeat(1 << 20);
         let p =
-            Paragraph { runs: vec![Run::with(&"the ".repeat(100_000), RunProps { lang: Some(lang), ..Default::default() })], ..Default::default() };
+            Paragraph { runs: vec![Run::with("the ".repeat(100_000), RunProps { lang: Some(lang), ..Default::default() })], ..Default::default() };
         let words = paragraph_words(&p, "en-US");
         assert_eq!(words.len(), 100_000);
         assert!(words.iter().all(|w| w.lang.is_empty()));
