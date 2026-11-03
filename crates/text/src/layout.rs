@@ -336,6 +336,13 @@ fn layout_scaled_with_metrics(
         .collect();
     // Merge adjacent decorations of the same colour on the same line.
     out.decos = merge_decos(std::mem::take(&mut out.decos));
+    if matches!(metrics.line, LineMetrics::Chart | LineMetrics::ChartLow) {
+        // Shape and position at the authored size first: rounding the font
+        // before shaping would change advances, wrapping and chart spacing.
+        for run in out.runs.iter_mut().chain(&mut out.empty_bullets) {
+            run.size = run.size.round();
+        }
+    }
     out
 }
 
@@ -459,11 +466,11 @@ fn line_extent(p: &ParaShaped, rl: &RawLine, metrics: LineMetrics) -> (f64, f64,
 }
 
 fn metric_line(face: &FontFace, size: f64, metrics: LineMetrics) -> (f64, f64) {
-    if metrics == LineMetrics::Typographic {
+    if matches!(metrics, LineMetrics::Typographic | LineMetrics::Chart | LineMetrics::ChartLow) {
         let ascent = size * face.ascent / face.upem.max(1.);
         let descent = size * face.descent / face.upem.max(1.);
         if ascent.is_finite() && descent.is_finite() && ascent >= 0. && descent >= 0. && ascent + descent > 0. {
-            return (ascent, descent);
+            return if matches!(metrics, LineMetrics::Chart | LineMetrics::ChartLow) { (ascent.round(), descent.round()) } else { (ascent, descent) };
         }
     }
     line_metrics(face, size)
@@ -594,7 +601,10 @@ fn place_line(env: &ParaEnv, pi: usize, rl: &RawLine, li: usize, is_last: bool, 
     let (p, g) = (env.p, env.g);
     let props = &p.props;
     let (asc, desc, size) = line_extent(p, rl, g.metrics.line);
-    let natural = (asc + desc).max(size * 1.0);
+    let chart = matches!(g.metrics.line, LineMetrics::Chart | LineMetrics::ChartLow);
+    let (raw_asc, raw_desc, _) = if chart { line_extent(p, rl, LineMetrics::Typographic) } else { (asc, desc, size) };
+    let natural = (raw_asc + raw_desc).max(size * 1.0);
+    let exact = matches!(props.line_spacing, Some(Spacing::Pts(_)));
     let lh = match props.line_spacing {
         // The reduction comes off the percentage (90 % less 20 % is 70 %), as PowerPoint
         // applies `lnSpcReduction`.
@@ -602,14 +612,40 @@ fn place_line(env: &ParaEnv, pi: usize, rl: &RawLine, li: usize, is_last: bool, 
         Some(Spacing::Pts(v)) => v * (1.0 - env.reduce),
         None => natural * (1.0 - env.reduce),
     };
+    let normalized = g.metrics.line == LineMetrics::ChartLow && exact;
+    let lh = if normalized { lh.round() } else { lh };
     let ratio = if natural > 0.0 { lh / natural } else { 1.0 };
     let top = flow.y;
     // Exact spacing (`spcPts`), as PowerPoint sets it: the baseline sits at 80 % of the
     // line pitch, and the text ends at the last line's descent rather than a full pitch.
-    let exact = matches!(props.line_spacing, Some(Spacing::Pts(_)));
-    let baseline = if exact { top + lh * 0.8 } else { top + asc * ratio };
-    flow.tail = if exact { (lh * 0.2 - desc).max(-lh) } else { 0.0 };
-    flow.y += lh;
+    let baseline = if chart {
+        let normal = if normalized {
+            // Low-side ticks compare the normalized exact pitch with the
+            // integer natural height. At that boundary the ascent scales with
+            // the pitch; other explicit pitches use the three-quarter baseline.
+            lh == natural.floor()
+        } else {
+            props.line_spacing.is_none_or(|spacing| matches!(spacing, Spacing::Pct(f) if f == 1.))
+        };
+        let offset = if normal { raw_asc * ratio } else { lh * 0.75 };
+        // Percentage/default positions accumulate before rounding. Exact point
+        // spacing instead rounds its first baseline and each fixed pitch.
+        if exact { top + offset.round() } else { (top + offset).round() }
+    } else if exact {
+        top + lh * 0.8
+    } else {
+        top + asc * ratio
+    };
+    flow.y += if chart && exact { lh.round() } else { lh };
+    flow.tail = if chart {
+        flow.y - baseline - desc
+    } else if exact {
+        (lh * 0.2 - desc).max(-lh)
+    } else {
+        0.0
+    };
+    // Chart highlights follow the font box, independently of paragraph pitch.
+    let (top, bottom) = if chart { (baseline - asc, baseline + desc) } else { (top, flow.y) };
     let x0 = env.start_x(li);
     let avail = (g.col_w - x0 - env.mr).max(0.0);
     let n = rl.end.saturating_sub(rl.start);
@@ -645,7 +681,7 @@ fn place_line(env: &ParaEnv, pi: usize, rl: &RawLine, li: usize, is_last: bool, 
             end: rl.end,
             top,
             baseline,
-            bottom: flow.y,
+            bottom,
             caret_x,
             column: 0,
             rtl: p.rtl,
@@ -1059,6 +1095,105 @@ mod metric_tests {
             native.lines.iter().map(|l| (l.start, l.end)).collect::<Vec<_>>()
         );
         assert_eq!(body.paragraphs[0].props.line_spacing, None, "measuring does not rewrite author spacing");
+    }
+
+    #[test]
+    fn chart_lines_round_vertical_metrics_and_paint_sizes_but_preserve_authored_advances() {
+        for (font, size, ascent, descent) in
+            [("Inter", 6.75, 7., 2.), ("Inter", 20.2, 20., 5.), ("Lato", 19.75, 19., 4.), ("Open Sans", 14.52, 16., 4.)]
+        {
+            let mut body = body();
+            body.paragraphs.truncate(1);
+            body.paragraphs[0].def_props = RunProps { font: Some(font.into()), size: Some(size), ..Default::default() };
+            body.paragraphs[0].runs[0].text = "AVA wide".into();
+            let authored = measure(&body, LayoutMetrics { line: LineMetrics::Typographic, ..Default::default() });
+            let chart = measure(&body, LayoutMetrics { line: LineMetrics::Chart, ..Default::default() });
+            assert_eq!(chart.lines[0].baseline, ascent, "{font} {size}");
+            assert_eq!(chart.lines[0].bottom, ascent + descent, "{font} {size}");
+            assert_eq!(chart.lines[0].caret_x, authored.lines[0].caret_x);
+            assert_eq!(chart.content_width, authored.content_width);
+            assert_eq!(chart.runs.len(), authored.runs.len());
+            for (paint, source) in chart.runs.iter().zip(&authored.runs) {
+                assert_eq!(paint.size, size.round());
+                assert_eq!(source.size, size);
+                assert_eq!(paint.glyphs.iter().map(|g| (g.0, g.1)).collect::<Vec<_>>(), source.glyphs.iter().map(|g| (g.0, g.1)).collect::<Vec<_>>());
+            }
+            assert_eq!(body.paragraphs[0].def_props.size, Some(size));
+        }
+    }
+
+    #[test]
+    fn chart_lines_accumulate_default_and_percentage_positions_but_round_exact_pitch() {
+        // Original three-line controls separate line position from font-box
+        // height and from an independently rounded exact point pitch.
+        for (font, size, spacing, baselines, height) in [
+            ("Inter", 13.6, None, [13., 30., 46.], 16.),
+            ("Inter", 13.6, Some(Spacing::Pct(1.4)), [17., 40., 63.], 16.),
+            ("Inter", 13.6, Some(Spacing::Pts(30.5)), [23., 54., 85.], 16.),
+            ("Lato", 15.4, None, [15., 34., 52.], 18.),
+            ("Lato", 15.4, Some(Spacing::Pct(1.4)), [19., 45., 71.], 18.),
+            ("Lato", 15.4, Some(Spacing::Pts(30.5)), [23., 54., 85.], 18.),
+            ("Open Sans", 12.1, None, [13., 29., 46.], 17.),
+            ("Open Sans", 12.1, Some(Spacing::Pct(1.4)), [17., 40., 63.], 17.),
+            ("Open Sans", 12.1, Some(Spacing::Pts(30.5)), [23., 54., 85.], 17.),
+            ("Lato", 19.75, Some(Spacing::Pct(1.5)), [27., 62., 98.], 23.),
+        ] {
+            let mut body = body();
+            body.paragraphs.truncate(1);
+            let para = &mut body.paragraphs[0];
+            para.def_props = RunProps { font: Some(font.into()), size: Some(size), ..Default::default() };
+            para.runs[0].text = "Ag".into();
+            para.props.line_spacing = spacing;
+            body.paragraphs = vec![para.clone(); 3];
+            for policy in [LineMetrics::Chart, LineMetrics::ChartLow] {
+                let layout = measure(&body, LayoutMetrics { line: policy, ..Default::default() });
+                assert_eq!(layout.lines.iter().map(|line| line.baseline).collect::<Vec<_>>(), baselines, "{font} {size}, {spacing:?}");
+                for line in &layout.lines {
+                    assert_eq!(line.bottom - line.top, height, "spacing does not stretch the font's highlight box");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn low_chart_exact_pitch_selects_the_natural_baseline_after_normalization() {
+        // Original fractional-pitch controls and independent fractional-font
+        // holdouts distinguish raw pitch, rounded natural height and font-box
+        // height. Author spacing and natural/percentage policies stay intact.
+        for (font, size, pitch, first) in [
+            ("Inter", 20., 20.6, 16.),
+            ("Inter", 20., 28.6, 22.),
+            ("Lato", 20., 24.4, 20.),
+            ("Lato", 20., 24.6, 19.),
+            ("Lato", 20., 32.6, 25.),
+            ("Inter", 20.6, 24., 19.),
+            ("Inter", 20.6, 25., 19.),
+            ("Lato", 19.75, 23., 19.),
+            ("Lato", 19.75, 24., 18.),
+            ("Open Sans", 20.4, 27., 21.),
+            ("Open Sans", 20.4, 28., 21.),
+            ("Inter", 18.6, 22., 18.),
+            ("Inter", 18.6, 23., 17.),
+            ("Lato", 18.15, 21., 17.),
+            ("Lato", 18.15, 22., 17.),
+            ("Open Sans", 17.35, 23., 18.),
+            ("Open Sans", 17.35, 24., 18.),
+        ] {
+            let mut body = body();
+            body.paragraphs.truncate(1);
+            let para = &mut body.paragraphs[0];
+            para.def_props = RunProps { font: Some(font.into()), size: Some(size), ..Default::default() };
+            para.runs[0].text = "Ag".into();
+            para.props.line_spacing = Some(Spacing::Pts(pitch));
+            body.paragraphs = vec![para.clone(); 3];
+            let layout = measure(&body, LayoutMetrics { line: LineMetrics::ChartLow, ..Default::default() });
+            assert_eq!(
+                layout.lines.iter().map(|line| line.baseline).collect::<Vec<_>>(),
+                [first, first + pitch.round(), first + 2. * pitch.round()],
+                "{font} {size}, exact {pitch}"
+            );
+            assert_eq!(body.paragraphs[0].props.line_spacing, Some(Spacing::Pts(pitch)));
+        }
     }
 
     #[test]

@@ -83,6 +83,12 @@ pub enum LineMetrics {
     #[default]
     Slide,
     Typographic,
+    /// Natural chart tick lines round ascent and descent independently to whole
+    /// points. Glyphs paint at whole-point sizes; advances retain authored sizes.
+    Chart,
+    /// Low-side category ticks also normalize exact point pitch before choosing
+    /// proportional natural-line placement or the explicit-spacing baseline.
+    ChartLow,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

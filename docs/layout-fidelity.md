@@ -2927,3 +2927,56 @@ The existing seventeen map-reduction sequences, two Albers precision sequences a
 rich-label/axis paint limitations remain open. Only source, original programmatic tests
 and documentation are published; private native output and observation decks are not.
 Complete external converter replacement is not established.
+
+### PPTX.70: chart text, axis placement and physical frames
+
+Chart text now uses explicit axis roles and preserves authored crossings, tick
+positions and label visibility independently of axis deletion. Crossing values follow
+Office's documented crossed-axis interpretation ([MS-OI29500 §2.1.1447](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-oi29500/c5ba9569-da34-4530-9743-b040df140552)), confirmed by independent native controls. Physical chart
+frames keep font and stroke sizes in slide points through the validated group
+transforms. Generated numeric General labels have a bounded character budget;
+authored number formats and data-label precision retain their own behavior.
+
+Category ticks retain complete lines that fit the frame and apply the authored
+overflow policy. Ellipsis layout reserves marker width and then positions the
+retained literal text independently of the marker. Low-side exact line pitches
+normalize before baseline selection; independently authored high-side metrics
+retain their previous behavior. Dense flat grid strokes share bounded paint
+work without dropping their accepted endpoints.
+
+Validation:
+
+- The final integrated executable reproduces all 1,218 source-bound worker chart
+  renders. Relative to the accepted parent/P60 chart baseline, 14 pages are
+  identical and 1,203 improve native RGB error. One raster-backed PDF page
+  increases by three RGB units over five pixels; it remains an explicit residual.
+- All 44 frozen historical masks and 222 valid-font category comparisons retain
+  or improve their previous errors. Two font-invalid category controls stay
+  excluded. Seventeen remaining PDF/crop observations are retained separately;
+  their checked direct 4x output matches the preceding candidate.
+- Independent fractional-pitch controls cover three open fonts, natural-height
+  boundaries and a six-page Line transfer. The transfer's 18 continuous native
+  baselines match its paired Column controls exactly. Across 110 new direct
+  comparisons, 24 improve and 86 stay exact against the preceding candidate.
+- Fourteen independent Column/Line reflection controls retain the native chart
+  center, physical size and upright category order through own, parent and nested
+  flips. Maximum native plot-edge error is below 0.000085pt. All fourteen direct
+  renders improve over the prior renderer. Two nested ordinary-text witnesses
+  lie above the page and are checked in unbounded PDF extraction; this is not a
+  claim of fourteen visible witnesses. Native Line smoothing and marker defaults
+  still differ and are retained as a separate rendering gap.
+- Six selected integrated direct 4x pages reproduce the reviewed candidate
+  exactly, including truncation, multiline ellipsis alignment, fractional pitch
+  and an unchanged high-side control. Native/before/after contacts were reviewed.
+- All 6,940 archived models, 166 same-direction controls, 13,622 text bodies,
+  661 PDF text pages, 90 retained 4x rasters and 140 map images remain exact.
+- Full integrated `cargo xtask ci`: all eight stages pass, 2,829 tests including
+  doctests, eight existing ignored tests.
+
+Known high-side frame offsets and broader chart/text placement differences remain
+open. The PDF observations above are not waived by the separate direct-raster
+checks. Native SmartArt search and geographic precision remain incomplete.
+Categorical geographic color dimensions are not yet modeled. The inspected cache
+corpus contains only clear XML and recognized raw-DEFLATE envelopes; other
+envelopes remain unverified, rather than demonstrated failures. This is not full
+LibreOffice replacement.

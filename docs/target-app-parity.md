@@ -1,6 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
-> **PPTX.69 update 2026-11-03:** Alternating centered SmartArt distinguishes deferred physical-boundary advances from logical-extent advances, bounds cancellation by scheduled growth and returns consumed growth in two stages. Independent native controls and a full integrated replay retain unresolved cases. Wider diagram, map and chart fidelity remains partial; feature scores are unchanged.
+> **PPTX.70 update 2026-11-03:** Chart axes preserve authored crossings and label visibility; complete-line overflow, fine advances and low-side line pitches follow native controls. Supported grouped charts retain physical size and upright orientation through rotations and reflections. Broad replay retains one small PDF regression and other documented limits; full converter replacement and feature scores remain unchanged. See [validation and remaining gaps](layout-fidelity.md#pptx70-chart-text-axis-placement-and-physical-frames).
 
 > **PPTX.67 update 2026-11-03:** Centered same-direction SmartArt retains fitted reference changes and distinguishes logical overflow from painted overflow and failed-trial placement. New native diagnostics improve from 48 to 165 strict matches out of 166; one off-page identity discrepancy remains, with its visible geometry corrected. The final independent 24-page set passes completely. Integrated replay changes only the expected original page out of 6,908, while all retained text and raster checks remain exact. Broader SmartArt, map and chart limits remain open; feature scores are unchanged.
 
@@ -294,6 +294,7 @@ scored done (16 open issues).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | PPTX.70: native chart text, axis placement and physical frames; residuals retained |
 | 2026-11-02 | trivial | Reused slide content scales to the destination; picker thumbnails remain; parity estimates unchanged |
 | 2026-10-22 | trivial | Animations shortfall: preview from the selected effect (Play From) is in. Percentages unchanged |
 | 2026-10-17 | trivial | A word no longer breaks after `?`, `!`, `}` or `+` (a URL's query wraps at the edge as in PowerPoint 2016 for Windows), as it already didn't after `/` and `\`. Headline percentages unchanged |

@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **PPTX.69 update 2026-11-03:** Alternating centered SmartArt distinguishes deferred physical-boundary advances from logical-extent advances, bounds cancellation by scheduled growth and returns consumed growth in two stages. Independent native controls and a full integrated replay retain unresolved cases. Wider diagram, map and chart fidelity remains partial; feature scores are unchanged.
+> **PPTX.70 update 2026-11-03:** Chart axes preserve authored crossings and label visibility; complete-line overflow, fine advances and low-side line pitches follow native controls. Supported grouped charts retain physical size and upright orientation through rotations and reflections. Broad replay retains one small PDF regression and other documented limits; full converter replacement and feature scores remain unchanged. See [validation and remaining gaps](layout-fidelity.md#pptx70-chart-text-axis-placement-and-physical-frames).
 
 > **PPTX.67 update 2026-11-03:** Centered same-direction SmartArt retains fitted reference changes and distinguishes logical overflow from painted overflow and failed-trial placement. New native diagnostics improve from 48 to 165 strict matches out of 166; one off-page identity discrepancy remains, with its visible geometry corrected. The final independent 24-page set passes completely. Integrated replay changes only the expected original page out of 6,908, while all retained text and raster checks remain exact. Broader SmartArt, map and chart limits remain open; feature scores are unchanged.
 
@@ -520,6 +520,7 @@ no global parity claim or score increase.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | PPTX.70: native chart text, axis placement and physical frames; residuals retained |
 | 2026-11-02 | minor | PPTX.53: retain scoped fitting checkpoints and correct diagram glyph/bullet origins; remaining failures retained |
 | 2026-11-03 | minor | PPTX.54: preserve intermediate reversed-flow alignment and bounded pending corrections |
 | 2026-11-03 | minor | PPTX.69: preserve deferred reverse growth and retreat |

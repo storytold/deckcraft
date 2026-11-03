@@ -1,7 +1,9 @@
 //! Chart parts: a `c:chartSpace` with cached categories and values.
 //! An unchanged chart also keeps the embedded workbook and the other parts it points at.
 
-use deckcraft_model::chart::{Chart, ChartLayout, ChartLineRole, ChartTextRole, ChartType, ErrorBars, Series, Trendline, TrendlineType};
+use deckcraft_model::chart::{
+    Chart, ChartAxisCrossing, ChartLayout, ChartLineRole, ChartTextRole, ChartTickPosition, ChartType, ErrorBars, Series, Trendline, TrendlineType,
+};
 use deckcraft_model::style::Fill;
 
 use crate::opc::{NS_A, NS_C, NS_R};
@@ -468,10 +470,38 @@ fn data_labels(w: &mut W, c: &Chart, show: bool) {
 const AX_CAT: u32 = 50_001;
 const AX_VAL: u32 = 50_002;
 
+fn category_tick_position(c: &Chart) -> &'static str {
+    if c.cat_hidden {
+        "none"
+    } else {
+        match c.cat_label_position {
+            Some(ChartTickPosition::Low) => "low",
+            Some(ChartTickPosition::High) => "high",
+            _ => "nextTo",
+        }
+    }
+}
+
+fn category_crossing(w: &mut W, c: &Chart, secondary: bool) {
+    match c.cat_crossing.filter(|_| !secondary) {
+        Some(ChartAxisCrossing::Value(v)) if v.is_finite() => w.val("c:crossesAt", fmt_num(v)),
+        crossing => w.val(
+            "c:crosses",
+            match crossing {
+                Some(ChartAxisCrossing::Min) => "min",
+                Some(ChartAxisCrossing::Max) => "max",
+                _ if secondary => "max",
+                _ => "autoZero",
+            },
+        ),
+    }
+}
+
 fn axes(w: &mut W, c: &Chart, g: Group, secondary: bool) {
     let (cat_id, val_id) = if secondary { (AX_CAT + 2, AX_VAL + 2) } else { (AX_CAT, AX_VAL) };
     let (min, max, major, format, hidden) =
         if secondary { (c.y2_min, c.y2_max, c.y2_major, &c.y2_format, c.y2_hidden) } else { (c.y_min, c.y_max, c.y_major, &c.y_format, c.y_hidden) };
+    let labels_hidden = if secondary { c.y2_tick_labels_hidden } else { c.y_tick_labels_hidden };
     let horizontal = c.kind.horizontal() && g == Group::Bar;
     let (cat_pos, val_pos) = match (horizontal, secondary) {
         (false, false) => ("b", "l"),
@@ -493,11 +523,11 @@ fn axes(w: &mut W, c: &Chart, g: Group, secondary: bool) {
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
         w.val("c:majorTickMark", "out");
         w.val("c:minorTickMark", "none");
-        w.val("c:tickLblPos", if c.cat_hidden { "none" } else { "nextTo" });
+        w.val("c:tickLblPos", category_tick_position(c));
         sp_pr(w, None, c.format.lines.get(&ChartLineRole::CategoryAxis));
         tx_pr(w, c, ChartTextRole::CategoryAxis);
         w.val("c:crossAx", val_id);
-        w.val("c:crosses", if secondary { "max" } else { "autoZero" });
+        category_crossing(w, c, secondary);
         w.val("c:crossBetween", "midCat");
         w.close("c:valAx");
     } else {
@@ -514,11 +544,11 @@ fn axes(w: &mut W, c: &Chart, g: Group, secondary: bool) {
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
         w.val("c:majorTickMark", "none");
         w.val("c:minorTickMark", "none");
-        w.val("c:tickLblPos", if c.cat_hidden { "none" } else { "nextTo" });
+        w.val("c:tickLblPos", category_tick_position(c));
         sp_pr(w, None, c.format.lines.get(&ChartLineRole::CategoryAxis));
         tx_pr(w, c, ChartTextRole::CategoryAxis);
         w.val("c:crossAx", val_id);
-        w.val("c:crosses", if secondary { "max" } else { "autoZero" });
+        category_crossing(w, c, secondary);
         w.val("c:auto", 1);
         w.val("c:lblAlgn", "ctr");
         if let Some(offset) = c.cat_label_offset {
@@ -562,7 +592,7 @@ fn axes(w: &mut W, c: &Chart, g: Group, secondary: bool) {
     }
     w.val("c:majorTickMark", "none");
     w.val("c:minorTickMark", "none");
-    w.val("c:tickLblPos", "nextTo");
+    w.val("c:tickLblPos", if labels_hidden { "none" } else { "nextTo" });
     sp_pr(w, None, c.format.lines.get(&if secondary { ChartLineRole::SecondaryValueAxis } else { ChartLineRole::ValueAxis }));
     tx_pr(w, c, if secondary { ChartTextRole::SecondaryValueAxis } else { ChartTextRole::ValueAxis });
     w.val("c:crossAx", cat_id);

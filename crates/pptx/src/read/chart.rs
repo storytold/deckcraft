@@ -1,6 +1,8 @@
 //! Chart parts (`c:chartSpace`) → [`Chart`]. The original XML is kept in `Chart.raw`.
 
-use deckcraft_model::chart::{Chart, ChartLayout, ChartLineRole, ChartTextRole, ChartType, ErrorBars, Series, Trendline, TrendlineType};
+use deckcraft_model::chart::{
+    Chart, ChartAxisCrossing, ChartLayout, ChartLineRole, ChartTextRole, ChartTickPosition, ChartType, ErrorBars, Series, Trendline, TrendlineType,
+};
 use deckcraft_model::style::Fill;
 
 use crate::xml::El;
@@ -461,8 +463,7 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
         Some(n) if n.attr("sourceLinked") != Some("1") => n.attr("formatCode").map(str::to_string),
         n => source_format(a).or_else(|| n.and_then(|n| n.attr("formatCode")).map(str::to_string)),
     };
-    // `c:tickLblPos val="none"` hides the labels just as `c:delete` does.
-    let deleted = |a: &El| a.child("delete").and_then(|d| d.bool("val")) == Some(true) || a.child_val("tickLblPos") == Some("none");
+    let deleted = |a: &El| a.child("delete").and_then(|d| d.bool("val")) == Some(true);
     // A gridline whose `c:spPr/a:ln` has `a:noFill` is not drawn, though the element is there.
     let grid =
         |a: &El, k: &str| a.child(k).is_some_and(|g| !g.child("spPr").and_then(|p| p.child("ln")).is_some_and(|l| l.child("noFill").is_some()));
@@ -476,6 +477,7 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
             c.y2_major = num(a, "majorUnit");
             c.y2_format = format_code(a);
             c.y2_hidden = deleted(a);
+            c.y2_tick_labels_hidden = a.child_val("tickLblPos") == Some("none");
             if let Some(props) = chart_text_props(a.child("txPr")) {
                 c.text_styles.insert(ChartTextRole::SecondaryValueAxis, props);
             }
@@ -493,11 +495,24 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
         c.y_log_base = sc.and_then(|s| s.child_val("logBase")).and_then(|v| v.parse().ok()).filter(|b: &f64| b.is_finite() && *b >= 2.0);
         c.y_format = format_code(v);
         c.y_hidden = deleted(v);
+        c.y_tick_labels_hidden = v.child_val("tickLblPos") == Some("none");
     }
     if let Some(a) = cat_ax {
         c.cat_hidden = a.child_val("tickLblPos") == Some("none");
         c.cat_deleted = a.child("delete").and_then(|d| d.bool("val")) == Some(true);
         c.cat_label_offset = a.child_val("lblOffset").and_then(|v| v.parse::<u16>().ok()).filter(|v| *v <= 1000);
+        c.cat_label_position = match a.child_val("tickLblPos") {
+            Some("nextTo") => Some(ChartTickPosition::NextTo),
+            Some("low") => Some(ChartTickPosition::Low),
+            Some("high") => Some(ChartTickPosition::High),
+            _ => None,
+        };
+        c.cat_crossing = num(a, "crossesAt").map(ChartAxisCrossing::Value).or_else(|| match a.child_val("crosses") {
+            Some("autoZero") => Some(ChartAxisCrossing::AutoZero),
+            Some("min") => Some(ChartAxisCrossing::Min),
+            Some("max") => Some(ChartAxisCrossing::Max),
+            _ => None,
+        });
         c.cat_reversed = a.child("scaling").and_then(|s| s.child_val("orientation")).is_some_and(|o| o == "maxMin");
         c.axis_titles.0 = a.child("title").map(|t| rich_text(t).unwrap_or_else(|| "Axis Title".into()));
     }
@@ -994,7 +1009,16 @@ mod tests {
             .as_bytes(),
         )
         .unwrap();
-        assert!(!c.gridlines && !c.minor_gridlines && c.y_hidden);
+        assert!(!c.gridlines && !c.minor_gridlines && !c.y_hidden, "hidden tick text does not delete its axis");
+        assert!(c.y_tick_labels_hidden);
+        for (deleted, labels) in [(false, false), (false, true), (true, false), (true, true)] {
+            let c = read_chart_xml(
+                xml(&format!(r#"<c:delete val="{}"/><c:tickLblPos val="{}"/>"#, u8::from(deleted), if labels { "none" } else { "nextTo" }))
+                    .as_bytes(),
+            )
+            .unwrap();
+            assert_eq!((c.y_hidden, c.y_tick_labels_hidden), (deleted, labels));
+        }
     }
 
     #[test]

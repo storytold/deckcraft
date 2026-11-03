@@ -495,6 +495,29 @@ pub enum ChartLineRole {
     MinorGrid,
 }
 
+/// Tick text placement relative to its axis or the plot edges. Hidden category
+/// text is represented separately by `Chart::cat_hidden`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartTickPosition {
+    NextTo,
+    Low,
+    High,
+}
+
+/// An authored category-axis crossing on the value scale. Office interprets
+/// `crossesAt` using the crossed axis, not its XML parent (MS-OI29500 §2.1.1447).
+/// A maximum crossing also chooses the high side for adjacent tick text; an
+/// explicit value does not.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartAxisCrossing {
+    AutoZero,
+    Min,
+    Max,
+    Value(f64),
+}
+
 /// Rendering properties which used to survive only in opaque chart XML.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -568,6 +591,9 @@ pub struct Chart {
     pub y_format: Option<String>,
     /// The value axis is deleted (`c:delete`): no labels, though gridlines may stay.
     pub y_hidden: bool,
+    /// `c:tickLblPos="none"`: omit value labels while retaining the axis line.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub y_tick_labels_hidden: bool,
     /// `c:tickLblPos="none"`: hide the category labels while retaining its axis line.
     pub cat_hidden: bool,
     /// `c:delete`: remove the category axis line and its labels.
@@ -575,6 +601,10 @@ pub struct Chart {
     /// `c:lblOffset`, from 0 to 1000. An absent value uses the DrawingML default, 100.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cat_label_offset: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cat_label_position: Option<ChartTickPosition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cat_crossing: Option<ChartAxisCrossing>,
     /// The category axis runs backwards (`c:orientation val="maxMin"`): right to left, or on a
     /// horizontal bar chart top to bottom (the default puts the first category at the bottom).
     pub cat_reversed: bool,
@@ -584,6 +614,8 @@ pub struct Chart {
     pub y2_major: Option<f64>,
     pub y2_format: Option<String>,
     pub y2_hidden: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub y2_tick_labels_hidden: bool,
     /// The chart's language (`c:lang`, e.g. `ru-RU`): digit grouping and decimal mark.
     pub lang: Option<String>,
     /// A waterfall's total points (`cx:subtotals`): bars that stand on the axis and restart
@@ -695,15 +727,19 @@ impl Default for Chart {
             y_log_base: None,
             y_format: None,
             y_hidden: false,
+            y_tick_labels_hidden: false,
             cat_hidden: false,
             cat_deleted: false,
             cat_label_offset: None,
+            cat_label_position: None,
+            cat_crossing: None,
             cat_reversed: false,
             y2_min: None,
             y2_max: None,
             y2_major: None,
             y2_format: None,
             y2_hidden: false,
+            y2_tick_labels_hidden: false,
             lang: None,
             subtotals: vec![],
             category_levels: vec![],
@@ -1016,6 +1052,30 @@ impl Chart {
         Some(axis_scale(lo, hi, fmin, fmax, major, max_intervals, !full_percent))
     }
 
+    /// The first aligned range for an authored major unit, before layout can
+    /// require a second normalization. `None` for automatic units or percent axes.
+    /// The renderer uses this checkpoint when an authored plot already clears
+    /// the value labels; the fully normalized scale remains available above.
+    pub fn initial_authored_axis_scale(&self, secondary: bool) -> Option<(f64, f64, f64)> {
+        if !secondary && self.kind.percent() {
+            return None;
+        }
+        let (lo, hi) = self.plotted_extent(secondary)?;
+        let (lo, hi) = axis_data_range(lo, hi);
+        let (fmin, fmax, major) = if secondary { (self.y2_min, self.y2_max, self.y2_major) } else { (self.y_min, self.y_max, self.y_major) };
+        let finite = |v: Option<f64>| v.filter(|v| v.is_finite()).map(|v| v.clamp(-1e100, 1e100));
+        let (fmin, fmax) = (finite(fmin), finite(fmax));
+        let major = finite(major).filter(|v| *v > 0.)?;
+        let (initial, refined) = major_limit_stages(lo, hi, fmin, fmax);
+        let span = initial.1 - initial.0;
+        if !span.is_finite() || span <= 1e-12 * initial.0.abs().max(initial.1.abs()) {
+            return None;
+        }
+        let step = major.max(span / 500.);
+        let bounds = align_major_bounds(refined, fmin, fmax, step)?;
+        Some((bounds.0, bounds.1, step))
+    }
+
     /// A logarithmic value axis' scale in exponents — (min, max, unit), so its labels are
     /// `base^min`, `base^(min+unit)`… — covering the positive values: whole powers, as PowerPoint
     /// and LibreOffice draw them. `None` when the axis isn't logarithmic or nothing is positive.
@@ -1040,7 +1100,11 @@ impl Chart {
             None | Some("General") if !secondary && self.kind.percent() => "0%",
             c => c.unwrap_or("General"),
         };
-        crate::numfmt::format(code, v, self.lang.as_deref())
+        if code.trim().is_empty() || code.trim().eq_ignore_ascii_case("General") {
+            axis_general(v, self.lang.as_deref())
+        } else {
+            crate::numfmt::format(code, v, self.lang.as_deref())
+        }
     }
 
     /// A data label of series `s`: its number format, else its axis', in the chart's language.
@@ -1160,6 +1224,46 @@ impl Chart {
             }
         }
         (self.y_min.unwrap_or(lo), self.y_max.unwrap_or(hi))
+    }
+}
+
+/// Generated axis General labels have a nine-character budget, including sign
+/// and decimal mark. Authored formats and data labels retain their own precision.
+fn axis_general(v: f64, lang: Option<&str>) -> String {
+    if !v.is_finite() || v == 0. {
+        return crate::numfmt::format("General", v, lang);
+    }
+    let exponent = v.abs().log10().floor() as i32;
+    let negative = usize::from(v < 0.);
+    let integer_digits = (exponent + 1).max(1);
+    let decimals = (8 - integer_digits - negative as i32).clamp(0, 7) as usize;
+    let format = |decimals: usize, scientific: bool| {
+        let mut code = "0".to_owned();
+        if decimals > 0 {
+            code.push('.');
+            code.push_str(&"#".repeat(decimals));
+        }
+        if scientific {
+            code.push_str("E+00");
+        }
+        crate::numfmt::format(&code, v, lang)
+    };
+    let fixed = format(decimals, false);
+    // Choose notation before rounding: a value just below 0.0001 may round
+    // to 1E-04, but still belongs to the scientific path.
+    if v.abs() >= 1e-4 && fixed.chars().count() <= 9 {
+        return fixed;
+    }
+    let exponent_digits = exponent.unsigned_abs().to_string().len().max(2);
+    let mut decimals = 9usize.saturating_sub(4 + negative + exponent_digits);
+    loop {
+        let scientific = format(decimals, true);
+        if scientific.chars().count() <= 9 || decimals == 0 {
+            return scientific;
+        }
+        // A rounded exponent can gain a digit. At most three fractional
+        // placeholders are possible, so this retry is bounded.
+        decimals -= 1;
     }
 }
 
@@ -1737,6 +1841,60 @@ mod tests {
         c.series[0].number_format = Some(r#"#,##0\ "₽""#.into());
         assert_eq!(c.data_label(&c.series[0], 516_600_000.0), "516\u{a0}600\u{a0}000 ₽");
         assert_eq!(c.data_label(&c.series[1], 0.0), "- ₽");
+    }
+
+    #[test]
+    fn axis_general_limits_characters_without_changing_authored_precision() {
+        let mut c = Chart::sample(ChartType::Column);
+        for (value, expected) in [
+            (1.234567891, "1.2345679"),
+            (-2.234567891, "-2.234568"),
+            (0.001234567891, "0.0012346"),
+            (123456.7891, "123456.79"),
+            (0.000123456789, "0.0001235"),
+            (0.0000123456789, "1.235E-05"),
+            (-0.0000123456789, "-1.23E-05"),
+            (1.234567891e-10, "1.235E-10"),
+            (1.234567891e9, "1.235E+09"),
+            (12345678.9, "12345679"),
+            (123456789., "123456789"),
+            (99999999.6, "100000000"),
+            (-12345678.9, "-12345679"),
+            (9.99999996, "10"),
+            (-9.99999996, "-10"),
+            (0.0000999999996, "1E-04"),
+        ] {
+            assert_eq!(c.axis_label(false, value), expected, "{value}");
+        }
+        c.lang = Some("ru-RU".into());
+        assert_eq!(c.axis_label(false, -2.234567891), "-2,234568");
+        c.y_format = Some("0.000000000".into());
+        assert_eq!(c.axis_label(false, -2.234567891), "-2,234567891");
+        c.y_format = None;
+        c.lang = None;
+        assert_eq!(c.data_label(&c.series[0], 1.234567891), "1.234567891", "data-label General keeps its existing precision");
+    }
+
+    #[test]
+    fn initial_authored_scale_retains_the_unit_before_layout_refinement() {
+        let mut c = Chart::sample(ChartType::Column);
+        c.series.truncate(1);
+        c.series[0].values = vec![Some(57.4), Some(62.93)];
+        c.y_max = Some(64.1);
+        c.y_major = Some(0.001);
+        let first = c.initial_authored_axis_scale(false).unwrap();
+        let final_scale = c.axis_scale(false, 5).unwrap();
+        for (actual, expected) in [(first.0, 54.03995), (first.1, 64.1), (first.2, 0.01407), (final_scale.2, 0.0201201)] {
+            assert!((actual - expected).abs() < 1e-12, "{actual}, expected {expected}");
+        }
+        assert_eq!((first.0, first.1), (final_scale.0, final_scale.1));
+        c.y_major = None;
+        assert!(c.initial_authored_axis_scale(false).is_none());
+        c.y_major = Some(f64::NAN);
+        assert!(c.initial_authored_axis_scale(false).is_none());
+        c.y_major = Some(0.001);
+        c.kind = ChartType::PercentColumn;
+        assert!(c.initial_authored_axis_scale(false).is_none());
     }
 
     #[test]

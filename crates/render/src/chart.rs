@@ -2,14 +2,16 @@
 
 use deckcraft_color::{ColorTransform, Rgba, SchemeSlot};
 use deckcraft_model::Shape;
-use deckcraft_model::chart::{Chart, ChartLineRole, ChartTextRole, ChartType, TrendlineType, axis_scale};
+use deckcraft_model::chart::{
+    Chart, ChartAxisCrossing, ChartLayout, ChartLineRole, ChartTextRole, ChartTickPosition, ChartType, TrendlineType, axis_scale,
+};
 use deckcraft_model::resolve::Ctx;
 use deckcraft_model::style::{ColorRef, Fill};
 use deckcraft_model::text::{Align, Anchor, Bullet, RunProps, TextBody};
 use kurbo::{Affine, BezPath, Point, Rect, Shape as _};
 use vello_cpu::RenderContext;
 
-use crate::color;
+use crate::{color, scale_of};
 
 #[path = "chart_label_layout.rs"]
 mod label_layout;
@@ -211,31 +213,179 @@ fn styled_label(ctx: &mut RenderContext, rctx: &Ctx, m: Affine, text: &str, r: R
 }
 
 /// Chart text keeps body rotation/vertical layout as well as run typography.
-fn chart_label(ctx: &mut RenderContext, rctx: &Ctx, m: Affine, text: &str, r: Rect, style: LabelStyle, chart: (&Chart, ChartTextRole)) {
-    let (c, role) = chart;
-    let mut body = label_body(text, style, &c.text_props(role));
+fn chart_label(ctx: &mut RenderContext, rctx: &Ctx, m: Affine, text: &str, r: Rect, style: LabelStyle, chart: (&Chart, ChartTextRole, bool)) {
+    let (c, role, axis_tick) = chart;
+    let line = if matches!(role, ChartTextRole::CategoryAxis | ChartTextRole::ValueAxis | ChartTextRole::SecondaryValueAxis) {
+        deckcraft_text::LineMetrics::Typographic
+    } else {
+        deckcraft_text::LineMetrics::Slide
+    };
+    chart_label_with_metrics(ctx, rctx, m, text, r, style, (c, role, axis_tick, line, None, None));
+}
+
+fn chart_label_with_metrics(
+    ctx: &mut RenderContext,
+    rctx: &Ctx,
+    m: Affine,
+    text: &str,
+    r: Rect,
+    style: LabelStyle,
+    chart: (&Chart, ChartTextRole, bool, deckcraft_text::LineMetrics, Option<Affine>, Option<(f64, f64)>),
+) {
+    let (c, role, axis_tick, line, view, capacity) = chart;
+    let mut props = c.text_props(role);
+    if axis_tick && role == ChartTextRole::ValueAxis {
+        // Generated value ticks retain nominal advances independently of the
+        // authored kerning threshold. Keep that property in the chart model.
+        props.kern = Some(0.);
+    }
+    if axis_tick && props.fill.is_none() {
+        // Legacy chart styles use mapped text color, except the light-text
+        // styles, which use the theme's light slot directly. A sibling axis's
+        // explicit fill is not an inherited chart-wide text color.
+        let slot = if c.style.clamp(1, 48) >= 41 { SchemeSlot::Lt1 } else { SchemeSlot::Tx1 };
+        props.fill = Some(Fill::solid(ColorRef::scheme(slot)));
+    }
+    let anchor = style.anchor;
+    let mut body = label_body(text, style, &props);
     if let Some(explicit) = c.format.bodies.get(&role) {
         body.body = merged_chart_body(explicit, &body.body);
+    }
+    if axis_tick {
+        // Tick text uses its axis placement and label distance, independently of
+        // text-box margins. Preserve the authored margins in the model only.
+        body.body.inset_l = Some(0.);
+        body.body.inset_r = Some(0.);
+        body.body.inset_t = Some(0.);
+        body.body.inset_b = Some(0.);
+        if matches!(line, deckcraft_text::LineMetrics::Chart | deckcraft_text::LineMetrics::ChartLow) {
+            // Category ticks use the axis-selected side of their box;
+            // an authored text-body anchor does not move the generated label.
+            body.body.anchor = Some(anchor);
+        }
     }
     for p in &mut body.paragraphs {
         p.props.line_spacing = c.line_spacing(role).cloned();
     }
     let tmp = Shape { text: Some(body.clone()), ..Default::default() };
-    let layout = deckcraft_text::layout_with_metrics(
+    let mut layout = deckcraft_text::layout_with_metrics(
         rctx,
         &tmp,
         &body,
         &deckcraft_text::Opts { rect: r, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: true },
-        deckcraft_text::LayoutMetrics {
-            line: if matches!(role, ChartTextRole::CategoryAxis | ChartTextRole::ValueAxis | ChartTextRole::SecondaryValueAxis) {
-                deckcraft_text::LineMetrics::Typographic
-            } else {
-                deckcraft_text::LineMetrics::Slide
-            },
-            ..Default::default()
-        },
+        deckcraft_text::LayoutMetrics { line, ..Default::default() },
     );
-    crate::draw_layout(ctx, &layout, r, m);
+    if let Some(capacity) = capacity {
+        layout = category_tick_overflow(rctx, &mut body, r, layout, capacity);
+    }
+    if let Some(view) = view {
+        crate::text_draw::draw_layout_with_origins(ctx, &layout, r, m, view);
+    } else {
+        crate::draw_layout(ctx, &layout, r, m);
+    }
+}
+
+/// Generated upright category ticks fit complete paragraph pitches inside the
+/// chart, including its 1.5pt label margin. A marker reserves width and kerning
+/// during line alignment; the retained literal text still defines placement.
+fn category_tick_overflow(
+    rctx: &Ctx,
+    body: &mut TextBody,
+    rect: Rect,
+    layout: deckcraft_text::TextLayout,
+    (pitch, frame_height): (f64, f64),
+) -> deckcraft_text::TextLayout {
+    use deckcraft_model::text::TextOverflow;
+    let policy = body.body.vert_overflow.unwrap_or(TextOverflow::Ellipsis);
+    if policy == TextOverflow::Overflow || !pitch.is_finite() || pitch <= 0. || !frame_height.is_finite() {
+        return layout;
+    }
+    // Retain an oversized first line; the chart's existing frame clip still
+    // bounds its ink. This pass uses the already bounded text layout, with no
+    // additional per-chart label queue or repeated fitting search.
+    let first_hidden = layout.lines.iter().enumerate().position(|(i, _)| i > 0 && rect.y0 + (i + 1) as f64 * pitch + 1.5 > frame_height);
+    let Some(last) = first_hidden.and_then(|i| layout.lines.get(i - 1)) else { return layout };
+    let paint = deckcraft_model::edit::props_at(body, (last.para, last.end));
+    deckcraft_model::edit::delete(body, (last.para, last.end), (usize::MAX, usize::MAX));
+    let measure = |body: &TextBody, rect| {
+        let shape = Shape { text: Some(body.clone()), ..Default::default() };
+        deckcraft_text::layout_with_metrics(
+            rctx,
+            &shape,
+            body,
+            &deckcraft_text::Opts { rect, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: true },
+            deckcraft_text::LayoutMetrics { advance: deckcraft_text::AdvanceMetrics::Chart, line: deckcraft_text::LineMetrics::ChartLow },
+        )
+    };
+    let mut kept = measure(body, rect);
+    if policy != TextOverflow::Ellipsis {
+        return kept;
+    }
+    let Some(last) = kept.lines.last() else { return kept };
+    let mut marked_body = body.clone();
+    deckcraft_model::edit::insert(&mut marked_body, (last.para, last.end), "…", Some(paint.clone()));
+    let mut marked = measure(&marked_body, rect);
+    let same_lines = marked.lines.len() == kept.lines.len()
+        && marked.lines.iter().zip(&kept.lines).enumerate().all(|(i, (full, base))| {
+            full.para == base.para && full.start == base.start && full.end == base.end.saturating_add(usize::from(i + 1 == kept.lines.len()))
+        });
+    if same_lines {
+        let literal = marked.lines.iter().zip(&kept.lines).map(|(full, base)| {
+            let width = base.extent.1 - base.extent.0;
+            if full.rtl { (full.extent.1 - width, full.extent.1) } else { (full.extent.0, full.extent.0 + width) }
+        });
+        if let Some((left, right)) = literal.reduce(|a, b| (a.0.min(b.0), a.1.max(b.1))) {
+            let dx = rect.center().x - (left + right) / 2.;
+            for run in &mut marked.runs {
+                for (_, x, _) in &mut run.glyphs {
+                    *x += dx;
+                }
+            }
+            for deco in &mut marked.decos {
+                deco.rect = deco.rect + kurbo::Vec2::new(dx, 0.);
+            }
+            for line in &mut marked.lines {
+                line.extent.0 += dx;
+                line.extent.1 += dx;
+                for x in &mut line.caret_x {
+                    *x += dx;
+                }
+                for (left, right) in &mut line.edges {
+                    *left += dx;
+                    *right += dx;
+                }
+            }
+        }
+        return marked;
+    }
+    // If the authored wrapping changes a line break, keep the retained layout
+    // and attach the marker without allowing another line past the height cap.
+    let marker = label_body(
+        "…",
+        LabelStyle { size: paint.size.unwrap_or(12.), align: Align::Left, anchor: Anchor::Top, col: Rgba::BLACK, bold: false },
+        &paint,
+    );
+    let mut mark = measure(&marker, Rect::new(0., 0., 1e6, 1e6));
+    let dx = if last.rtl { last.extent.0 - mark.content_width } else { last.extent.1 };
+    let dy = last.baseline - mark.lines.first().map_or(0., |line| line.baseline);
+    for run in &mut mark.runs {
+        run.para = last.para;
+        run.chars = (last.end, last.end.saturating_add(1));
+        for cell in &mut run.cells {
+            cell.0 = last.end;
+        }
+        for (_, x, y) in &mut run.glyphs {
+            *x += dx;
+            *y += dy;
+        }
+    }
+    for deco in &mut mark.decos {
+        deco.para = last.para;
+        deco.rect = deco.rect + kurbo::Vec2::new(dx, dy);
+    }
+    kept.runs.extend(mark.runs);
+    kept.decos.extend(mark.decos);
+    kept
 }
 
 /// Render a label through the same rich-text layout as native slide text.
@@ -492,12 +642,15 @@ fn column_rich_label(
     if let Some(line) = &spec.line {
         chart_stroke(ctx, rctx, transform, &r.to_path(0.1), Some(line), Rgba::BLACK);
     }
-    if bounds.fixed && !overflow {
-        // Vertical clipping does not suppress horizontal glyph overflow in a narrow
-        // manual box. The outer chart clip bounds this strip even after rotation.
+    let clip_text = !overflow && (bounds.fixed || h > bounds.height);
+    if clip_text {
+        // An oversized automatic first line retains its full background, but its
+        // ink is clipped to the height budget centered on that box. Both automatic
+        // and manual clips permit horizontal ink overflow, including the marker.
         let reach = frame.0 + frame.1 + w;
+        let half_height = bounds.height.min(h) / 2.;
         ctx.set_transform(transform);
-        ctx.push_clip_layer(&Rect::new(r.x0 - reach, r.y0, r.x1 + reach, r.y1).to_path(0.1));
+        ctx.push_clip_layer(&Rect::new(r.x0 - reach, r.center().y - half_height, r.x1 + reach, r.center().y + half_height).to_path(0.1));
     }
     let mut text_rect = r;
     if !bounds.fixed && marker_base.is_some() {
@@ -519,7 +672,7 @@ fn column_rich_label(
     let text_transform =
         if center_manual { transform * Affine::translate((label_layout::centering_offset(&layout, &body, text_rect), 0.)) } else { transform };
     crate::draw_layout(ctx, &layout, text_rect, text_transform);
-    if bounds.fixed && !overflow {
+    if clip_text {
         ctx.pop_layer();
     }
     ctx.pop_layer();
@@ -539,6 +692,80 @@ fn chart_stroke(ctx: &mut RenderContext, rctx: &Ctx, m: Affine, path: &BezPath, 
     }
     line.fill.get_or_insert_with(|| Fill::solid(ColorRef::rgb(fallback)));
     crate::stroke::stroke(ctx, rctx, &line, None, path, None, m, line.width.unwrap_or(0.75).clamp(0.0, 2000.0), 1.0);
+}
+
+/// Merge overlapping flat grid strokes before antialiasing their common ends.
+/// The primary tick budget bounds the input to1001 segments and the union to
+/// at most5005 path elements. Unsupported line styles keep the stroke path.
+fn fill_overlapping_grid(
+    ctx: &mut RenderContext,
+    rctx: &Ctx,
+    m: Affine,
+    path: &BezPath,
+    line: Option<&deckcraft_model::Line>,
+    fallback: Rgba,
+) -> bool {
+    use deckcraft_model::style::{Compound, LineCap};
+    let line = line.cloned().unwrap_or_default();
+    if path.elements().len() > 2002
+        || !path.elements().len().is_multiple_of(2)
+        || line.dash.is_some()
+        || line.cap.unwrap_or_default() != LineCap::Flat
+        || line.compound.unwrap_or_default() != Compound::Single
+    {
+        return false;
+    }
+    let paint = match &line.fill {
+        None => fallback,
+        Some(Fill::Solid { color }) => rctx.color(color, None),
+        _ => return false,
+    };
+    let width = line.width.unwrap_or(0.75).clamp(0.0, 2000.0).max(0.5 / scale_of(m).max(1e-6));
+    if !width.is_finite() {
+        return false;
+    }
+    let mut union = BezPath::new();
+    let mut pending: Option<Rect> = None;
+    let mut horizontal = None;
+    let mut merged = false;
+    for segment in path.elements().chunks_exact(2) {
+        let [kurbo::PathEl::MoveTo(a), kurbo::PathEl::LineTo(b)] = segment else { return false };
+        let horiz = a.y == b.y;
+        if !horiz && a.x != b.x || horizontal.is_some_and(|h| h != horiz) {
+            return false;
+        }
+        horizontal = Some(horiz);
+        let next = if horiz {
+            Rect::new(a.x.min(b.x), a.y - width / 2., a.x.max(b.x), a.y + width / 2.)
+        } else {
+            Rect::new(a.x - width / 2., a.y.min(b.y), a.x + width / 2., a.y.max(b.y))
+        };
+        if let Some(previous) = pending {
+            let same_ends = if horiz { previous.x0 == next.x0 && previous.x1 == next.x1 } else { previous.y0 == next.y0 && previous.y1 == next.y1 };
+            if !same_ends {
+                return false;
+            }
+            let touches = if horiz { next.y0 <= previous.y1 && previous.y0 <= next.y1 } else { next.x0 <= previous.x1 && previous.x0 <= next.x1 };
+            if touches {
+                pending = Some(previous.union(next));
+                merged = true;
+                continue;
+            }
+            union.extend(previous.to_path(0.1));
+        }
+        pending = Some(next);
+    }
+    if !merged {
+        return false;
+    }
+    if let Some(last) = pending {
+        union.extend(last.to_path(0.1));
+    }
+    ctx.set_transform(m);
+    ctx.set_fill_rule(vello_cpu::peniko::Fill::NonZero);
+    ctx.set_paint(color(paint, 1.0));
+    ctx.fill_path(&union);
+    true
 }
 
 /// Measure with the exact body/style used for drawing, including CJK, fallback and shaping.
@@ -588,9 +815,48 @@ fn axis_metrics(ctx: &Ctx, c: &Chart, role: ChartTextRole, base: f64) -> Option<
     [height, ascent, spaced_height].iter().all(|v| v.is_finite() && *v >= 0.).then_some(AxisMetrics { height, ascent, spaced_height })
 }
 
+/// The value gutter measures exact bounds and their major-unit neighbors, even
+/// when those samples are not painted ticks or lie beyond a very short range.
+/// Measuring every emitted tick instead changes the plot with interior digits.
+fn linear_axis_reserve_width(ctx: &Ctx, c: &Chart, (lo, hi, step): (f64, f64, f64), size: f64) -> Option<f64> {
+    let samples = [lo, lo + step, hi - step, hi];
+    if !step.is_finite() || step <= 0. || hi < lo || samples.iter().any(|v| !v.is_finite()) {
+        return None;
+    }
+    let mut props = c.text_props(ChartTextRole::ValueAxis);
+    // The axis reserve uses unkerned advances, independently of authored text
+    // thresholds and the slide's ordinary text style. Keep the model unchanged.
+    props.kern = Some(0.);
+    Some(samples.into_iter().map(|v| label_width(ctx, &c.axis_label(false, v), size, &props)).fold(0., f64::max))
+}
+
 /// Axis text reserves use font metrics, independently of the chart's dimensions or
 /// default font. These controls cover undecorated Columns with horizontal axis text.
-fn column_axis_plot(ctx: &Ctx, c: &Chart, area: Rect, frame: (f64, f64), base: f64, value_width: f64) -> Option<(Rect, f64)> {
+struct ColumnAxisPlot {
+    rect: Rect,
+    category_offset: f64,
+    value_reserve_active: bool,
+}
+
+struct ColumnAxisStage {
+    scale: (f64, f64, f64),
+    initial_right: Option<f64>,
+}
+
+fn column_axis_stage(ctx: &Ctx, c: &Chart, area: Rect, frame: (f64, f64), base: f64, final_scale: (f64, f64, f64)) -> Option<ColumnAxisStage> {
+    if c.kind != ChartType::Column || authored_inner_plot(c).is_none() {
+        return None;
+    }
+    let scale = c.initial_authored_axis_scale(false)?;
+    let width = linear_axis_reserve_width(ctx, c, scale, axis_font_size(c, ChartTextRole::ValueAxis, base))?;
+    let plot = column_axis_plot(ctx, c, area, frame, base, width, scale.0)?;
+    Some(ColumnAxisStage {
+        scale: if plot.value_reserve_active { final_scale } else { scale },
+        initial_right: plot.value_reserve_active.then_some(plot.rect.x1),
+    })
+}
+
+fn column_axis_plot(ctx: &Ctx, c: &Chart, area: Rect, frame: (f64, f64), base: f64, value_width: f64, axis_min: f64) -> Option<ColumnAxisPlot> {
     let (w, h) = frame;
     if c.kind != ChartType::Column
         || c.title.is_some()
@@ -610,25 +876,122 @@ fn column_axis_plot(ctx: &Ctx, c: &Chart, area: Rect, frame: (f64, f64), base: f
         return None;
     }
     let outer = c.format.plot_layout.as_ref().is_some_and(|l| !l.inner);
-    let rect = if outer { area } else { Rect::new(5_f64.min(w / 2.), 5_f64.min(h / 2.), (w - 5.).max(w / 2.), (h - 5.).max(h / 2.)) };
-    let floor = if outer { 0. } else { 6. };
+    let inner = authored_inner_plot(c);
+    let rect = if outer {
+        area
+    } else if inner.is_some() {
+        Rect::new(0., 0., w, h)
+    } else {
+        Rect::new(5_f64.min(w / 2.), 5_f64.min(h / 2.), (w - 5.).max(w / 2.), (h - 5.).max(h / 2.))
+    };
+    let floor = if outer || inner.is_some() { 0. } else { 6. };
     let value = axis_metrics(ctx, c, ChartTextRole::ValueAxis, base)?;
-    let left = if c.y_hidden { 0. } else { 1.5 + value_width + value.height / 2. + value.ascent / 3. };
-    let top = if c.y_hidden { 0. } else { value.spaced_height / 2. };
+    let left = if c.y_hidden || c.y_tick_labels_hidden { 0. } else { 1.5 + value_width + value.height / 2. + value.ascent / 3. };
+    let value_end = if c.y_hidden || c.y_tick_labels_hidden { 0. } else { value.spaced_height / 2. };
     let x0 = (rect.x0 + left.max(floor)).min(rect.x1);
     let x1 = (rect.x1 - floor).max(x0);
-    let (extra, offset) = category_layout_adjustment(ctx, c, base, x1 - x0, false);
+    let label_width = inner.map_or(x1 - x0, |l| l.resolve(rect, w, h).width().max(0.).min(x1 - x0));
+    let (extra, offset) = category_layout_adjustment(ctx, c, base, label_width, false);
     let category = axis_metrics(ctx, c, ChartTextRole::CategoryAxis, base)?;
-    let bottom = if c.cat_hidden || c.cat_deleted { 0. } else { 1.5 + category.height + 2. * category.ascent / 3. + extra };
-    let y0 = (rect.y0 + top.max(floor)).min(rect.y1);
-    let y1 = (rect.y1 - bottom.max(top).max(floor)).max(y0);
-    // Cramped native charts preserve a positive plot by compressing reserves.
-    // That constraint is not yet modeled: retain the approximate layout rather
-    // than making an existing series disappear when text reserves overlap.
+    let reserve = 1.5 + category.height + 2. * category.ascent / 3. + extra;
+    let (low, high) = category_label_edges(c, axis_min);
+    let top = if high { reserve.max(value_end) } else { value_end };
+    let bottom = if low { reserve.max(value_end) } else { value_end };
+    let mut y0 = (rect.y0 + top.max(floor)).min(rect.y1);
+    let mut y1 = (rect.y1 - bottom.max(floor)).max(y0);
+    if inner.is_none() && (low || high) {
+        // Automatic and outer layouts share the remaining allocation between
+        // plot and category text. Extra category lines cannot consume that
+        // minimum plot allocation; both value-end reserves still bound it.
+        let end = value_end.max(floor);
+        let compact = rect.height() / 2. - 1.5 - 2. * category.ascent / 3. - offset;
+        let extent = (y1 - y0).max(compact).min(rect.height() - 2. * end).max(10. / deckcraft_geom::EMU_PER_PT);
+        if low {
+            y0 = (rect.y0 + end).min(rect.y1);
+            y1 = y0 + extent;
+        } else {
+            y1 = (rect.y1 - end).max(rect.y0);
+            y0 = y1 - extent;
+        }
+    }
     if x1 <= x0 || y1 <= y0 {
         return None;
     }
-    Some((Rect::new(x0, y0, x1, y1), offset))
+    let bounds = Rect::new(x0, y0, x1, y1);
+    let plot = inner.map_or(bounds, |l| {
+        let mut layout = l.clone();
+        // Factor positions offset the centered authored extent. An absent x
+        // also suppresses the y offset, retaining its edge or centered origin.
+        // These are working allocations; keep the authored model unchanged.
+        if layout.x.is_none() {
+            layout.y = layout.y.and(if layout.y_edge { None } else { Some(0.) });
+        }
+        let origin = |position: Option<f64>, extent: Option<f64>, edge: bool, extent_edge: bool, frame: f64, default: f64| {
+            if position.is_some() && !edge && !extent_edge {
+                extent.filter(|v| v.is_finite() && (0.0..=1.0).contains(v)).map_or(default, |v| (1. - v) * frame / 2.)
+            } else {
+                default
+            }
+        };
+        let x = origin(layout.x, layout.w, layout.x_edge, layout.w_edge, w, bounds.x0);
+        let y = origin(layout.y, layout.h, layout.y_edge, layout.h_edge, h, bounds.y0);
+        let automatic = Rect::new(x, y, x + bounds.width(), y + bounds.height());
+        let mut plot = fit_inner_plot(layout.resolve(automatic, w, h), bounds, (value_end, h - value_end));
+        // A complete authored rectangle can place category text outside the
+        // frame. Incomplete layouts also constrain that automatic allocation
+        // to the category reserve, without moving an already fitted origin.
+        if [l.x, l.y, l.w, l.h].iter().any(Option::is_none) {
+            plot.y0 = plot.y0.clamp(bounds.y0, bounds.y1);
+            plot.y1 = plot.y1.min(bounds.y1).max(plot.y0);
+        }
+        plot
+    });
+    Some(ColumnAxisPlot { rect: plot, category_offset: offset, value_reserve_active: !c.y_hidden && !c.y_tick_labels_hidden && plot.x0 <= bounds.x0 })
+}
+
+/// Preserve authored size while translating into the space left by tick text.
+/// When the two reserves leave less space, reduce only the constrained extent.
+fn fit_inner_plot(requested: Rect, bounds: Rect, vertical: (f64, f64)) -> Rect {
+    let fit = |start: f64, end: f64, low: f64, high: f64| {
+        let extent = (end - start).max(0.).min((high - low).max(0.));
+        let start = start.max(low).min(high - extent);
+        (start, start + extent)
+    };
+    let (x0, x1) = fit(requested.x0, requested.x1, bounds.x0, bounds.x1);
+    // An authored interval may place category text outside the chart. Preserve
+    // that placement when the value ticks fit; use the category reserve only
+    // when an end collision requires the vertical interval to be fitted again.
+    let (y0, y1) = if requested.y0 >= vertical.0 && requested.y1 <= vertical.1 {
+        (requested.y0, requested.y1)
+    } else {
+        fit(requested.y0, requested.y1, bounds.y0, bounds.y1)
+    };
+    Rect::new(x0, y0, x1, y1)
+}
+
+fn authored_inner_plot(c: &Chart) -> Option<&ChartLayout> {
+    c.format.plot_layout.as_ref().filter(|l| {
+        let fields = [l.x, l.y, l.w, l.h];
+        // Empty manual layouts remain automatic; any authored coordinate
+        // selects the complete inner frame before tick reserves are applied.
+        l.inner && fields.iter().any(Option::is_some)
+    })
+}
+
+fn category_label_edges(c: &Chart, axis_min: f64) -> (bool, bool) {
+    if c.cat_hidden || c.cat_deleted {
+        return (false, false);
+    }
+    match c.cat_label_position {
+        Some(ChartTickPosition::Low) => (true, false),
+        Some(ChartTickPosition::High) => (false, true),
+        _ => match c.cat_crossing {
+            Some(ChartAxisCrossing::Min) => (true, false),
+            Some(ChartAxisCrossing::Max) => (false, true),
+            Some(ChartAxisCrossing::Value(v)) if v.is_finite() => (v <= axis_min, false),
+            _ => (0. <= axis_min, false),
+        },
+    }
 }
 
 /// Authored category line spacing and label distance change the required gutter.
@@ -667,7 +1030,7 @@ fn category_layout_adjustment(ctx: &Ctx, c: &Chart, base: f64, width: f64, horiz
 fn hidden_axis_plot(c: &Chart, area: Rect, w: f64, h: f64) -> Option<Rect> {
     if c.kind != ChartType::Column
         || !(c.cat_hidden || c.cat_deleted)
-        || !c.y_hidden
+        || !(c.y_hidden || c.y_tick_labels_hidden)
         || c.title.is_some()
         || c.legend.is_some()
         || c.axis_titles != (None, None)
@@ -783,25 +1146,46 @@ fn axis_ticks((lo, hi, st): (f64, f64, f64)) -> impl Iterator<Item = f64> {
     (0..count).map(move |k| lo + k as f64 * st)
 }
 
+#[cfg(test)]
 pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64, h: f64) {
+    draw_with_view(ctx, rctx, c, m, w, h, Affine::IDENTITY);
+}
+
+pub fn draw_with_view(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64, h: f64, view: Affine) {
+    let column_line = |kind| {
+        matches!(
+            kind,
+            ChartType::Column
+                | ChartType::StackedColumn
+                | ChartType::PercentColumn
+                | ChartType::Line
+                | ChartType::LineMarkers
+                | ChartType::StackedLine
+        )
+    };
+    // These Cartesian series share axis and label layers. Other chart families keep their
+    // existing painting order until their native mark/axis relationship is established.
+    let axis_layers = column_line(c.kind);
     match c.kind {
         // Histograms and Pareto charts are drawn as the column (and line) chart of their bins.
         ChartType::Histogram | ChartType::Pareto => {
-            draw_inner(ctx, rctx, &c.histogram_view(), ChartFrame { transform: m, width: w, height: h, boxes: None })
+            draw_inner(ctx, rctx, &c.histogram_view(), ChartFrame { transform: m, view, width: w, height: h, boxes: None, axis_layers })
         }
         ChartType::BoxWhisker => {
-            let (view, boxes) = crate::chartex::box_view(c);
-            draw_inner(ctx, rctx, &view, ChartFrame { transform: m, width: w, height: h, boxes: Some(&boxes) });
+            let (box_chart, boxes) = crate::chartex::box_view(c);
+            draw_inner(ctx, rctx, &box_chart, ChartFrame { transform: m, view, width: w, height: h, boxes: Some(&boxes), axis_layers });
         }
-        _ => draw_inner(ctx, rctx, c, ChartFrame { transform: m, width: w, height: h, boxes: None }),
+        _ => draw_inner(ctx, rctx, c, ChartFrame { transform: m, view, width: w, height: h, boxes: None, axis_layers }),
     }
 }
 
 struct ChartFrame<'a> {
     transform: Affine,
+    view: Affine,
     width: f64,
     height: f64,
     boxes: Option<&'a crate::chartex::Boxes>,
+    axis_layers: bool,
 }
 
 /// PowerPoint's default chart text colour: `tx1` with `lumMod` 65000 and `lumOff` 35000, which
@@ -812,13 +1196,14 @@ pub fn default_text_color() -> ColorRef {
 }
 
 fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<'_>) {
-    let ChartFrame { transform: m, width: w, height: h, boxes } = frame;
+    let ChartFrame { transform: m, view, width: w, height: h, boxes, axis_layers } = frame;
     // Text without a colour of its own takes PowerPoint's default, the theme's text colour at
     // lumMod 65 % / lumOff 35 % (595959 on a light theme, light grey on a dark one), so a chart
     // on a dark theme is readable (a fixed grey used to vanish there).
     let text_col = rctx.color(c.text_color.as_ref().unwrap_or(&default_text_color()), None);
     let grid_col = Rgba::rgb(0xD9, 0xD9, 0xD9);
-    if let Some(f) = &c.chart_fill {
+    let automatic_dark = (axis_layers && c.style.clamp(1, 48) >= 41).then(|| Fill::solid(ColorRef::scheme(SchemeSlot::Dk1)));
+    if let Some(f) = c.chart_fill.as_ref().or(automatic_dark.as_ref()) {
         crate::paint::fill_path(
             ctx,
             rctx,
@@ -857,7 +1242,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
             t,
             rect,
             LabelStyle { size: title_size, align: Align::Center, anchor: Anchor::Top, col: text_col, bold: false },
-            (c, ChartTextRole::Title),
+            (c, ChartTextRole::Title, false),
         );
         if !c.format.title_overlay {
             area.y0 += title_size * 1.7;
@@ -900,10 +1285,16 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     let max_intervals = (axis_len / if horiz { value_size * 6.0 } else { value_size * 1.9 }).floor().clamp(2.0, 12.0) as usize;
     // A logarithmic axis is scaled in exponents of its base.
     let log = c.log_axis_scale(max_intervals).map(|sc| (c.y_log_base.unwrap_or(10.0), sc));
-    let (min, max, step) = match log {
+    let final_scale = match log {
         Some((_, sc)) => sc,
         None => primary_scale(c, max_intervals),
     };
+    // A manual plot first fits the labels at the initial aligned range. Only
+    // contact with the value reserve triggers another unit normalization;
+    // the opposite edge stays where that first layout placed it.
+    let stage = log.is_none().then(|| column_axis_stage(rctx, c, area, (w, h), base, final_scale)).flatten();
+    let (min, max, step) = stage.as_ref().map_or(final_scale, |stage| stage.scale);
+    let initial_right = stage.and_then(|stage| stage.initial_right);
     let to_e = |v: f64| match log {
         Some((b, _)) => v.max(f64::MIN_POSITIVE).log(b).max(min - 1.0),
         None => v,
@@ -932,13 +1323,13 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
             c.categories.iter().map(|n| label_width(rctx, n, category_size, &c.text_props(ChartTextRole::CategoryAxis))).fold(0.0_f64, f64::max)
                 + category_size * 0.6;
         clamp_soft(measured, category_size * 1.5, area.width() * 0.4)
-    } else if c.y_hidden {
+    } else if c.y_hidden || c.y_tick_labels_hidden {
         value_size * 0.5
     } else {
         clamp_soft(label_w(false, (min, max, step)) + value_size * 0.6, value_size * 1.5, area.width() * 0.3)
     };
     let gutter_r = second
-        .filter(|_| !c.y2_hidden)
+        .filter(|_| !c.y2_hidden && !c.y2_tick_labels_hidden)
         .map(|sc| clamp_soft(label_w(true, sc) + secondary_size * 0.6, secondary_size * 1.5, area.width() * 0.3))
         .unwrap_or(0.0);
     let (category_extra, category_offset) = category_layout_adjustment(rctx, c, base, area.width() - gutter - gutter_r, horiz);
@@ -947,9 +1338,30 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     } else {
         Rect::new(area.x0 + gutter, area.y0, area.x1 - gutter_r, (area.y1 - category_size * 1.8 - category_extra).max(area.y0))
     };
-    let (plot, category_offset) = column_axis_plot(rctx, c, area, (w, h), base, label_w(false, (min, max, step)))
-        .unwrap_or_else(|| (hidden_axis_plot(c, area, w, h).unwrap_or(plot), category_offset));
-    let plot = c.format.plot_layout.as_ref().filter(|l| l.inner).map_or(plot, |l| l.resolve(plot, w, h));
+    let reserve_width =
+        if log.is_none() && c.kind == ChartType::Column { linear_axis_reserve_width(rctx, c, (min, max, step), value_size) } else { None };
+    let measured = column_axis_plot(
+        rctx,
+        c,
+        area,
+        (w, h),
+        base,
+        reserve_width.unwrap_or_else(|| label_w(false, (min, max, step))),
+        log.map_or(min, |(b, _)| b.powf(min)),
+    )
+    .map(|mut plot| {
+        plot.rect.x1 = initial_right.map_or(plot.rect.x1, |right| right.max(plot.rect.x0));
+        plot
+    });
+    let (plot, category_offset) = measured
+        .as_ref()
+        .map_or_else(|| (hidden_axis_plot(c, area, w, h).unwrap_or(plot), category_offset), |plot| (plot.rect, plot.category_offset));
+    let plot = c
+        .format
+        .plot_layout
+        .as_ref()
+        .filter(|l| l.inner)
+        .map_or(plot, |l| if measured.is_some() && authored_inner_plot(c).is_some() { plot } else { l.resolve(plot, w, h) });
     if let Some(f) = &c.plot_fill {
         crate::paint::fill_path(ctx, rctx, f, None, &plot.to_path(0.1), plot, m, deckcraft_geom::preset::FillMode::Norm, 1.0, rctx.pres);
     }
@@ -965,28 +1377,27 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
         (true, Some((min2, max2, _))) => plot.y1 - (v.max(min2).min(max2) - min2) / positive_span(max2 - min2) * plot.height(),
         _ => to_v(v),
     };
-    draw_gridlines(
-        ctx,
-        &GridlineDrawing {
-            rctx,
-            chart: c,
-            transform: m,
-            area,
-            plot,
-            horiz,
-            base,
-            text_color: text_col,
-            grid_color: grid_col,
-            min,
-            max,
-            step,
-            log,
-            primary_ticks: &primary_ticks,
-            second,
-            to_v: &to_v,
-            to_axis: &to_axis,
-        },
-    );
+    let grid_draw = GridlineDrawing {
+        rctx,
+        chart: c,
+        transform: m,
+        area,
+        plot,
+        horiz,
+        base,
+        text_color: text_col,
+        grid_color: grid_col,
+        min,
+        max,
+        step,
+        log,
+        primary_ticks: &primary_ticks,
+        second,
+        to_v: &to_v,
+        to_axis: &to_axis,
+        axis_ticks: axis_layers,
+    };
+    draw_gridlines(ctx, &grid_draw, !axis_layers);
     let ncat = c.categories.len().max(c.series.iter().map(|s| s.values.len()).max().unwrap_or(0)).max(1);
     // Forecast reserves empty category slots so the line can run past the data. Charts with no
     // forecast keep the old band.
@@ -1002,52 +1413,67 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     // own tick labels in place of category names.
     let xscale = if horiz { None } else { value_x_scale(c, (plot.width() / (category_size * 2.5)).floor().clamp(2.0, 12.0) as usize) };
     let to_x = |v: f64| xscale.map(|(lo, hi, _)| plot.x0 + (v - lo) / positive_span(hi - lo) * plot.width());
-    draw_category_labels(
-        ctx,
-        &CategoryLabelDrawing {
-            rctx,
-            chart: c,
-            transform: m,
-            area,
-            plot,
-            horiz,
-            band,
-            slot: &slot,
-            xscale,
-            base,
-            text_color: text_col,
-            offset: category_offset,
-        },
-    );
-    if let Some(b) = boxes {
-        crate::chartex::draw_boxes(ctx, rctx, c, b, m, plot, band, horiz, &to_v);
-        return;
-    }
     let zero = match log {
         Some((b, _)) => to_v(b.powf(min)),
         None => to_v(clamp_soft(0.0, min, max)),
     };
+    let (crossing, tick_axis, tick_high) = category_axis_placement(c, plot, zero, &to_v, axis_layers);
+    let category_draw = CategoryLabelDrawing {
+        rctx,
+        chart: c,
+        transform: m,
+        area,
+        plot,
+        horiz,
+        band,
+        slot: &slot,
+        xscale,
+        base,
+        text_color: text_col,
+        offset: category_offset,
+        axis: tick_axis,
+        high: tick_high,
+        measured_gap: axis_layers,
+        view,
+        frame_height: h,
+    };
+    if !axis_layers {
+        draw_category_labels(ctx, &category_draw);
+    }
+    if let Some(b) = boxes {
+        crate::chartex::draw_boxes(ctx, rctx, c, b, m, plot, band, horiz, &to_v);
+        return;
+    }
     // Error bars, drawn over every series: (position across the value axis, from, to, cap length, cap).
-    let mut err_marks = draw_bars(
-        ctx,
-        &BarDrawing {
-            frame: (w, h),
-            rctx,
-            chart: c,
-            transform: m,
-            plot,
-            band,
-            horiz,
-            ncat,
-            bar_kind,
-            waterfall,
-            slot: &slot,
-            to_v: &to_v,
-            to_axis: &to_axis,
-            base,
-            text_color: text_col,
-        },
-    );
+    let mut bars = BarDrawing {
+        frame: (w, h),
+        rctx,
+        chart: c,
+        transform: m,
+        plot,
+        band,
+        horiz,
+        ncat,
+        bar_kind,
+        waterfall,
+        slot: &slot,
+        to_v: &to_v,
+        to_axis: &to_axis,
+        base,
+        text_color: text_col,
+        labels: if axis_layers { BarLabelPass::Deferred } else { BarLabelPass::Inline },
+    };
+    let mut err_marks = draw_bars(ctx, &bars);
+    // Column marks lie below axis strokes; line marks lie above them. Point-label paint
+    // is deferred until both mark passes finish, then tick glyphs form the final layer.
+    if axis_layers {
+        draw_axes(ctx, rctx, c, m, plot, horiz, crossing);
+        // Rewalk bar geometry to paint each label immediately, without retaining
+        // one record per mark. Supported Column/Line charts have only one family;
+        // mixed charts retain their existing inline pass until independently proven.
+        bars.labels = BarLabelPass::Only;
+        draw_bars(ctx, &bars);
+    }
     // A stock chart's high-low lines and up/down bars (or close dashes) stand in for its series.
     if c.kind == ChartType::Stock {
         for i in 0..ncat {
@@ -1076,9 +1502,24 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     // A category position (0-based, fractional) as a slot, the way `slot` places the bars.
     let slot_at = |x: f64| if backwards { ncat as f64 - 1.0 - x + fwd } else { x + back };
     draw_trendlines(ctx, rctx, c, m, TrendlineLayout { plot, band, slot: &slot_at, xscale, ncat, horiz, base, text_col, to_axis: &to_axis });
-    if !err_marks.is_empty() {
+    draw_error_marks(ctx, m, horiz, &err_marks, text_col);
+    if axis_layers {
+        // Tick text is clipped to the chart frame, independently of point-label
+        // overflow and of the earlier series/grid/axis stroke passes.
+        ctx.set_transform(m);
+        ctx.push_clip_path(&Rect::new(0., 0., w, h).to_path(0.1));
+        draw_value_labels(ctx, &grid_draw);
+        draw_category_labels(ctx, &category_draw);
+        ctx.pop_clip_path();
+    } else {
+        draw_axes(ctx, rctx, c, m, plot, horiz, crossing);
+    }
+}
+
+fn draw_error_marks(ctx: &mut RenderContext, m: Affine, horiz: bool, marks: &[(f64, f64, f64, f64, bool)], text_col: Rgba) {
+    if !marks.is_empty() {
         let mut p = BezPath::new();
-        for &(mid, a, b, cap, end_cap) in &err_marks {
+        for &(mid, a, b, cap, end_cap) in marks {
             // A horizontal bar chart's error bars run across, its value axis being horizontal.
             let pt = |along: f64, across: f64| if horiz { Point::new(along, across) } else { Point::new(across, along) };
             p.move_to(pt(a, mid));
@@ -1095,7 +1536,6 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
         ctx.set_stroke(kurbo::Stroke::new(0.75));
         ctx.stroke_path(&p);
     }
-    draw_axes(ctx, rctx, c, m, plot, horiz, zero);
 }
 
 fn draw_axes(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, plot: Rect, horiz: bool, zero: f64) {
@@ -1285,27 +1725,22 @@ struct GridlineDrawing<'a, 'ctx> {
     second: Option<(f64, f64, f64)>,
     to_v: &'a dyn Fn(f64) -> f64,
     to_axis: &'a dyn Fn(bool, f64) -> f64,
+    axis_ticks: bool,
 }
 
-fn draw_gridlines(ctx: &mut RenderContext, draw: &GridlineDrawing<'_, '_>) {
+fn draw_gridlines(ctx: &mut RenderContext, draw: &GridlineDrawing<'_, '_>, tick_text: bool) {
     let rctx = draw.rctx;
     let c = draw.chart;
     let m = draw.transform;
-    let area = draw.area;
     let plot = draw.plot;
     let horiz = draw.horiz;
-    let base = axis_font_size(c, ChartTextRole::ValueAxis, draw.base);
-    let text_col = draw.text_color;
     let grid_col = draw.grid_color;
     let min = draw.min;
     let max = draw.max;
     let step = draw.step;
     let log = draw.log;
     let primary_ticks = draw.primary_ticks;
-    let second = draw.second;
     let to_v = draw.to_v;
-    let to_axis = draw.to_axis;
-    let ticks = axis_ticks;
     // Minor gridlines, under the major ones: five to a major unit.
     if c.minor_gridlines {
         let minor = step / 5.0;
@@ -1325,55 +1760,131 @@ fn draw_gridlines(ctx: &mut RenderContext, draw: &GridlineDrawing<'_, '_>) {
         }
         chart_stroke(ctx, rctx, m, &g, c.format.lines.get(&ChartLineRole::MinorGrid), Rgba::rgb(0xF2, 0xF2, 0xF2));
     }
-    // Gridlines and value labels.
+    // Legacy families retain their interleaved tick text. Layered Cartesian charts defer
+    // the same glyph drawing until after series labels, without moving the grid strokes.
+    let mut major = BezPath::new();
+    let crossing = (draw.axis_ticks && log.is_none()).then(|| major_grid_crossing(c, min, max)).flatten();
     for &v in primary_ticks {
         let pos = to_v(v);
-        let text = if c.y_hidden { String::new() } else { c.axis_label(false, v) };
+        if tick_text {
+            draw_value_tick(ctx, draw, v, pos);
+        }
         let mut g = BezPath::new();
         if horiz {
             g.move_to((pos, plot.y0));
             g.line_to((pos, plot.y1));
-            chart_label(
-                ctx,
-                rctx,
-                m,
-                &text,
-                Rect::new(pos - 30.0, plot.y1 + 2.0, pos + 30.0, plot.y1 + base * 1.5),
-                LabelStyle { size: base, align: Align::Center, anchor: Anchor::Top, col: text_col, bold: false },
-                (c, ChartTextRole::ValueAxis),
-            );
         } else {
             g.move_to((plot.x0, pos));
             g.line_to((plot.x1, pos));
-            chart_label(
-                ctx,
-                rctx,
-                m,
-                &text,
-                Rect::new(area.x0, pos - base, plot.x0 - base * 0.4, pos + base),
-                LabelStyle { size: base, align: Align::Right, anchor: Anchor::Middle, col: text_col, bold: false },
-                (c, ChartTextRole::ValueAxis),
-            );
         }
-        if c.gridlines {
-            chart_stroke(ctx, rctx, m, &g, c.format.lines.get(&ChartLineRole::MajorGrid), grid_col);
+        if c.gridlines && crossing.is_none_or(|crossing| (v - crossing).abs() > step.abs() * 1e-9) {
+            if tick_text {
+                chart_stroke(ctx, rctx, m, &g, c.format.lines.get(&ChartLineRole::MajorGrid), grid_col);
+            } else {
+                major.extend(g.elements().iter().copied());
+            }
         }
     }
+    if c.gridlines && !tick_text {
+        // One compound stroke preserves authored opacity and edge coverage
+        // where grid lines overlap. The existing tick budget bounds this path.
+        let line = c.format.lines.get(&ChartLineRole::MajorGrid);
+        if !fill_overlapping_grid(ctx, rctx, m, &major, line, grid_col) {
+            chart_stroke(ctx, rctx, m, &major, line, grid_col);
+        }
+    }
+    if tick_text {
+        draw_secondary_value_labels(ctx, draw);
+    }
+}
+
+/// A painted category axis replaces the grid at its numeric crossing. An
+/// authored value outside the scale does not suppress the clamped edge grid.
+fn major_grid_crossing(c: &Chart, min: f64, max: f64) -> Option<f64> {
+    if c.cat_deleted || c.format.lines.get(&ChartLineRole::CategoryAxis).is_some_and(|line| matches!(line.fill, Some(Fill::None))) {
+        return None;
+    }
+    Some(match c.cat_crossing {
+        Some(ChartAxisCrossing::Min) => min,
+        Some(ChartAxisCrossing::Max) => max,
+        Some(ChartAxisCrossing::Value(value)) if value.is_finite() => value,
+        _ => 0_f64.max(min).min(max),
+    })
+}
+
+fn draw_value_tick(ctx: &mut RenderContext, draw: &GridlineDrawing<'_, '_>, v: f64, pos: f64) {
+    let c = draw.chart;
+    let base = axis_font_size(c, ChartTextRole::ValueAxis, draw.base);
+    let text = if c.y_hidden || c.y_tick_labels_hidden { String::new() } else { c.axis_label(false, v) };
+    let (rect, align, anchor) = if draw.horiz {
+        (Rect::new(pos - 30.0, draw.plot.y1 + 2.0, pos + 30.0, draw.plot.y1 + base * 1.5), Align::Center, Anchor::Top)
+    } else {
+        let gap = draw
+            .axis_ticks
+            .then(|| axis_metrics(draw.rctx, c, ChartTextRole::ValueAxis, base))
+            .flatten()
+            .map_or(base * 0.4, |metrics| metrics.height / 2. + metrics.ascent / 3.);
+        let right = draw.plot.x0 - gap;
+        // Automatic font-based plots can start left of the generic area inset.
+        // Keep the tick's alignment edge even when no positive box width remains.
+        let left = if draw.axis_ticks { draw.area.x0.min(right) } else { draw.area.x0 };
+        (Rect::new(left, pos - base, right, pos + base), Align::Right, Anchor::Middle)
+    };
+    chart_label(
+        ctx,
+        draw.rctx,
+        draw.transform,
+        &text,
+        rect,
+        LabelStyle { size: base, align, anchor, col: draw.text_color, bold: false },
+        (c, ChartTextRole::ValueAxis, draw.axis_ticks),
+    );
+}
+
+fn draw_value_labels(ctx: &mut RenderContext, draw: &GridlineDrawing<'_, '_>) {
+    for &v in draw.primary_ticks {
+        draw_value_tick(ctx, draw, v, (draw.to_v)(v));
+    }
+    draw_secondary_value_labels(ctx, draw);
+}
+
+fn draw_secondary_value_labels(ctx: &mut RenderContext, draw: &GridlineDrawing<'_, '_>) {
+    let c = draw.chart;
     // The secondary axis' labels, on the right, without gridlines of their own.
-    if let Some(sc) = second.filter(|_| !c.y2_hidden) {
+    if let Some(sc) = draw.second.filter(|_| !c.y2_hidden && !c.y2_tick_labels_hidden) {
         let base = axis_font_size(c, ChartTextRole::SecondaryValueAxis, draw.base);
-        for v in ticks(sc) {
-            let pos = to_axis(true, v);
+        for v in axis_ticks(sc) {
+            let pos = (draw.to_axis)(true, v);
             chart_label(
                 ctx,
-                rctx,
-                m,
+                draw.rctx,
+                draw.transform,
                 &c.axis_label(true, v),
-                Rect::new(plot.x1 + base * 0.4, pos - base, area.x1, pos + base),
-                LabelStyle { size: base, align: Align::Left, anchor: Anchor::Middle, col: text_col, bold: false },
-                (c, ChartTextRole::SecondaryValueAxis),
+                Rect::new(draw.plot.x1 + base * 0.4, pos - base, draw.area.x1, pos + base),
+                LabelStyle { size: base, align: Align::Left, anchor: Anchor::Middle, col: draw.text_color, bold: false },
+                (c, ChartTextRole::SecondaryValueAxis, draw.axis_ticks),
             );
         }
+    }
+}
+
+/// Category-axis strokes and adjacent text share a crossing, while low/high text
+/// remains attached to the plot. An explicit maximum crossing chooses the upper
+/// side; a numeric crossing at the same coordinate still chooses the lower side.
+fn category_axis_placement(c: &Chart, plot: Rect, zero: f64, to_v: &dyn Fn(f64) -> f64, enabled: bool) -> (f64, f64, bool) {
+    if !enabled {
+        return (zero, plot.y1, false);
+    }
+    let crossing = match c.cat_crossing {
+        Some(ChartAxisCrossing::Min) => plot.y1,
+        Some(ChartAxisCrossing::Max) => plot.y0,
+        Some(ChartAxisCrossing::Value(v)) if v.is_finite() => to_v(v),
+        _ => zero,
+    };
+    match c.cat_label_position {
+        Some(ChartTickPosition::High) => (crossing, plot.y0, true),
+        Some(ChartTickPosition::Low) => (crossing, plot.y1, false),
+        _ => (crossing, crossing, c.cat_crossing == Some(ChartAxisCrossing::Max)),
     }
 }
 
@@ -1390,6 +1901,11 @@ struct CategoryLabelDrawing<'a, 'ctx> {
     base: f64,
     text_color: Rgba,
     offset: f64,
+    axis: f64,
+    high: bool,
+    measured_gap: bool,
+    view: Affine,
+    frame_height: f64,
 }
 
 fn draw_category_labels(ctx: &mut RenderContext, draw: &CategoryLabelDrawing<'_, '_>) {
@@ -1407,6 +1923,16 @@ fn draw_category_labels(ctx: &mut RenderContext, draw: &CategoryLabelDrawing<'_,
     let xscale = draw.xscale;
     let base = c.text_props(ChartTextRole::CategoryAxis).size.unwrap_or(draw.base).clamp(1.0, 4000.0);
     let text_col = draw.text_color;
+    let category_metrics = draw.measured_gap.then(|| axis_metrics(rctx, c, ChartTextRole::CategoryAxis, base)).flatten();
+    let horizontal_category = !horiz
+        && category_metrics.is_some()
+        && c.format
+            .bodies
+            .get(&ChartTextRole::CategoryAxis)
+            .is_none_or(|body| body.rot.unwrap_or(0.) == 0. && matches!(body.vert, None | Some(deckcraft_model::text::TextDir::Horizontal)));
+    let gap = category_metrics
+        .as_ref()
+        .map_or(3., |metrics| if horizontal_category && !draw.high { 2. * metrics.ascent / 3. } else { 1.5 + metrics.height / 2. });
     let ticks = axis_ticks;
     if let Some(sc) = xscale {
         for v in ticks(sc) {
@@ -1418,7 +1944,7 @@ fn draw_category_labels(ctx: &mut RenderContext, draw: &CategoryLabelDrawing<'_,
                 &fmt_num(v),
                 Rect::new(pos - 30.0, plot.y1 + 3.0, pos + 30.0, plot.y1 + base * 1.6),
                 LabelStyle { size: base, align: Align::Center, anchor: Anchor::Top, col: text_col, bold: false },
-                (c, ChartTextRole::CategoryAxis),
+                (c, ChartTextRole::CategoryAxis, draw.measured_gap),
             );
         }
     }
@@ -1434,23 +1960,61 @@ fn draw_category_labels(ctx: &mut RenderContext, draw: &CategoryLabelDrawing<'_,
                 name,
                 Rect::new(area.x0, mid - base, plot.x0 - base * 0.4, mid + base),
                 LabelStyle { size: base, align: Align::Right, anchor: Anchor::Middle, col: text_col, bold: false },
-                (c, ChartTextRole::CategoryAxis),
+                (c, ChartTextRole::CategoryAxis, draw.measured_gap),
             );
         } else {
             let text = if wraps { split_label(name) } else { name.clone() };
-            chart_label(
+            let extent = base * if wraps { 2.8 } else { 1.6 };
+            let (top, bottom, anchor) = if draw.high {
+                let height = category_metrics.as_ref().map_or(extent - 3., |metrics| {
+                    if horizontal_category {
+                        // A high-side frame includes each complete paragraph
+                        // pitch. Exact points round before accumulation; default
+                        // and percentage heights retain their continuous values.
+                        let pitch = if matches!(c.line_spacing(ChartTextRole::CategoryAxis), Some(deckcraft_model::text::Spacing::Pts(_))) {
+                            metrics.spaced_height.round()
+                        } else {
+                            metrics.spaced_height
+                        };
+                        let lines = text.split(['\r', '\n']).count().saturating_sub(text.matches("\r\n").count());
+                        pitch * lines as f64
+                    } else {
+                        metrics.height * if wraps { 2. } else { 1. }
+                    }
+                });
+                let top = (draw.axis - gap - draw.offset - height).max(0.);
+                (top, top + height, Anchor::Top)
+            } else {
+                (draw.axis + gap + draw.offset, draw.axis + extent.max(gap) + draw.offset, Anchor::Top)
+            };
+            chart_label_with_metrics(
                 ctx,
                 rctx,
                 m,
                 &text,
-                Rect::new(
-                    mid - band / 2.0,
-                    plot.y1 + 3.0 + draw.offset,
-                    mid + band / 2.0,
-                    plot.y1 + base * if wraps { 2.8 } else { 1.6 } + draw.offset,
+                Rect::new(mid - band / 2.0, top, mid + band / 2.0, bottom),
+                LabelStyle { size: base, align: Align::Center, anchor, col: text_col, bold: false },
+                (
+                    c,
+                    ChartTextRole::CategoryAxis,
+                    draw.measured_gap,
+                    if !horizontal_category {
+                        deckcraft_text::LineMetrics::Typographic
+                    } else if draw.high {
+                        deckcraft_text::LineMetrics::Chart
+                    } else {
+                        deckcraft_text::LineMetrics::ChartLow
+                    },
+                    horizontal_category.then_some(draw.view),
+                    category_metrics.as_ref().filter(|_| horizontal_category && !draw.high).map(|metrics| {
+                        let pitch = if matches!(c.line_spacing(ChartTextRole::CategoryAxis), Some(deckcraft_model::text::Spacing::Pts(_))) {
+                            metrics.spaced_height.round()
+                        } else {
+                            metrics.spaced_height
+                        };
+                        (pitch, draw.frame_height)
+                    }),
                 ),
-                LabelStyle { size: base, align: Align::Center, anchor: Anchor::Top, col: text_col, bold: false },
-                (c, ChartTextRole::CategoryAxis),
             );
         }
     }
@@ -1491,7 +2055,7 @@ fn draw_axis_titles(ctx: &mut RenderContext, rctx: &Ctx, draw: &AxisTitleDrawing
             t,
             r,
             LabelStyle { size: base, align: Align::Center, anchor: Anchor::Bottom, col: text_col, bold: true },
-            (c, bottom_role),
+            (c, bottom_role, false),
         );
         area.y1 -= band_h + base * 0.3;
     }
@@ -1518,11 +2082,18 @@ fn draw_axis_titles(ctx: &mut RenderContext, rctx: &Ctx, draw: &AxisTitleDrawing
             t,
             rect,
             LabelStyle { size: base, align: Align::Center, anchor: Anchor::Middle, col: text_col, bold: true },
-            (c, left_role),
+            (c, left_role, false),
         );
         area.x0 += band_h + base * 0.3;
     }
     area
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BarLabelPass {
+    Inline,
+    Deferred,
+    Only,
 }
 
 struct BarDrawing<'a, 'ctx> {
@@ -1541,6 +2112,7 @@ struct BarDrawing<'a, 'ctx> {
     to_axis: &'a dyn Fn(bool, f64) -> f64,
     base: f64,
     text_color: Rgba,
+    labels: BarLabelPass,
 }
 
 struct LineDrawing<'a, 'ctx> {
@@ -1744,7 +2316,6 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
     let to_v = draw.to_v;
     let to_axis = draw.to_axis;
     let base = draw.base;
-    let text_col = draw.text_color;
     let mut err_marks: Vec<(f64, f64, f64, f64, bool)> = vec![];
     if let Some(bk) = bar_kind {
         let bars: Vec<(usize, &deckcraft_model::chart::Series)> =
@@ -1794,6 +2365,10 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
                     Rect::new(plot.x0 + start, to_axis(sec, b), plot.x0 + start + bar, to_axis(sec, a))
                 }
                 .abs();
+                if draw.labels == BarLabelPass::Only {
+                    draw_bar_label(ctx, draw, s, i, r);
+                    continue;
+                }
                 // A waterfall colours increases, decreases and totals, and joins each bar's end
                 // to the next bar's start.
                 let paint = if waterfall {
@@ -1831,32 +2406,37 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
                         err_marks.push((mid, p0, p1, bar.min(base * 0.8) * 0.5, e.end_cap));
                     }
                 }
-                if let Some(t) = bar_data_label(c, s, i) {
-                    let lr = if horiz {
-                        Rect::new(r.x1 + 2.0, r.y0, r.x1 + 40.0, r.y1)
-                    } else {
-                        Rect::new(r.x0 - 10.0, r.y0 - base * 1.4, r.x1 + 10.0, r.y0)
-                    };
-                    point_data_label(
-                        ctx,
-                        rctx,
-                        m,
-                        &t,
-                        lr,
-                        LabelStyle {
-                            size: base * 0.9,
-                            align: if horiz { Align::Left } else { Align::Center },
-                            anchor: if horiz { Anchor::Middle } else { Anchor::Bottom },
-                            col: text_col,
-                            bold: false,
-                        },
-                        (c, s, i, r, draw.frame),
-                    );
+                if draw.labels == BarLabelPass::Inline {
+                    draw_bar_label(ctx, draw, s, i, r);
                 }
             }
         }
     }
     err_marks
+}
+
+fn draw_bar_label(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>, series: &deckcraft_model::chart::Series, point: usize, mark: Rect) {
+    let Some(text) = bar_data_label(draw.chart, series, point) else { return };
+    let rect = if draw.horiz {
+        Rect::new(mark.x1 + 2., mark.y0, mark.x1 + 40., mark.y1)
+    } else {
+        Rect::new(mark.x0 - 10., mark.y0 - draw.base * 1.4, mark.x1 + 10., mark.y0)
+    };
+    point_data_label(
+        ctx,
+        draw.rctx,
+        draw.transform,
+        &text,
+        rect,
+        LabelStyle {
+            size: draw.base * 0.9,
+            align: if draw.horiz { Align::Left } else { Align::Center },
+            anchor: if draw.horiz { Anchor::Middle } else { Anchor::Bottom },
+            col: draw.text_color,
+            bold: false,
+        },
+        (draw.chart, series, point, mark, draw.frame),
+    );
 }
 
 fn bar_data_label(c: &Chart, s: &deckcraft_model::chart::Series, i: usize) -> Option<String> {
@@ -2200,6 +2780,46 @@ mod tests {
     const AREA: Rect = Rect::new(0.0, 0.0, 400.0, 300.0);
 
     #[test]
+    fn category_ellipsis_aligns_lines_but_centers_only_retained_literal_text() {
+        use deckcraft_text::{LayoutMetrics, LineMetrics, NoFields, Opts};
+        let p = deckcraft_model::Presentation::default();
+        let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        for (font, text, spacing, x) in [
+            ("Inter", "A\nB\nC", 30., vec![402.2425, 393.9575]),
+            ("Inter", "WW\nB\nC", 30., vec![385.295, 389.815]),
+            ("Inter", "A\nWW\nC", 30., vec![406.745, 385.295]),
+            ("Inter", "A\nB\nWW", 30., vec![402.2425, 393.9575]),
+            ("Lato", "WW\nB\nC", 30., vec![384.29, 391.035]),
+            ("Lato", "A\nWW\nC", 30., vec![405.73, 384.29]),
+            ("Inter", "A\nB", 40., vec![398.10]),
+        ] {
+            let mut body = label_body(
+                text,
+                LabelStyle { size: 20., align: Align::Center, anchor: Anchor::Top, col: Rgba::BLACK, bold: false },
+                &RunProps { font: Some(font.into()), ..Default::default() },
+            );
+            for para in &mut body.paragraphs {
+                para.props.line_spacing = Some(deckcraft_model::text::Spacing::Pts(spacing));
+            }
+            let rect = Rect::new(90., 333., 720., 365.);
+            let shape = Shape { text: Some(body.clone()), ..Default::default() };
+            let layout = deckcraft_text::layout_with_metrics(
+                &ctx,
+                &shape,
+                &body,
+                &Opts { rect, fields: &NoFields, prompt_color: None, no_shrink: true },
+                LayoutMetrics { line: LineMetrics::Chart, ..Default::default() },
+            );
+            let layout = category_tick_overflow(&ctx, &mut body, rect, layout, (spacing, 400.));
+            assert_eq!(layout.lines.len(), x.len());
+            for (i, expected) in x.into_iter().enumerate() {
+                let actual = layout.runs.iter().find(|run| run.para == i).unwrap().glyphs[0].1;
+                assert!((actual - expected).abs() < 0.02, "{font} {text:?}, line{i}: {actual} vs {expected}");
+            }
+        }
+    }
+
+    #[test]
     fn tiny_data_gets_several_ticks() {
         let sc = deckcraft_model::chart::axis_scale(1e-13, 5e-13, None, None, None, 8, true);
         assert!(axis_ticks(sc).count() >= 3, "{sc:?}");
@@ -2340,6 +2960,45 @@ mod tests {
 #[cfg(test)]
 mod typography_tests {
     use super::*;
+
+    #[test]
+    fn an_authored_plot_selects_the_axis_stage_from_its_value_reserve() {
+        let p = deckcraft_model::Presentation::default();
+        let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        for (values, minimum, maximum, font, size, format, collision_x, clear_x, clear_count) in [
+            ([73.2, 79.46], None, Some(81.3), "Inter", 20., "General", 107.31966, 109.31966, 716),
+            ([-79.46, -73.2], Some(-81.3), None, "Lato", 20., "General", 112.43, 114.43, 716),
+            ([73.2, 79.46], None, None, "Inter", 20., "General", 122.64193, 124.64193, 718),
+            ([73.2, 79.46], None, Some(81.3), "Inter", 12., "0.0", 37.29297, 39.29297, 716),
+        ] {
+            let mut c = Chart::sample(ChartType::Column);
+            c.title = None;
+            c.legend = None;
+            c.series.truncate(1);
+            c.series[0].values = values.map(Some).to_vec();
+            c.y_min = minimum;
+            c.y_max = maximum;
+            c.y_major = Some(0.0037);
+            c.y_format = Some(format.into());
+            c.text_styles.insert(ChartTextRole::ValueAxis, RunProps { font: Some(font.into()), size: Some(size), ..Default::default() });
+            let final_scale = c.axis_scale(false, 5).unwrap();
+            for (x, expected) in [(collision_x, 501), (clear_x, clear_count)] {
+                c.format.plot_layout = Some(ChartLayout {
+                    inner: true,
+                    x: Some(x / 840.),
+                    y: Some(0.15),
+                    w: Some(0.7),
+                    h: Some(0.6),
+                    x_edge: true,
+                    y_edge: true,
+                    ..Default::default()
+                });
+                let stage = column_axis_stage(&ctx, &c, Rect::new(0., 0., 840., 420.), (840., 420.), 16., final_scale).unwrap();
+                assert_eq!(axis_ticks(stage.scale).count(), expected, "{font}, {format}, x={x}");
+                assert_eq!(stage.initial_right.is_some(), expected == 501);
+            }
+        }
+    }
 
     #[test]
     fn category_measurement_has_a_work_budget_and_clamps_label_offset() {

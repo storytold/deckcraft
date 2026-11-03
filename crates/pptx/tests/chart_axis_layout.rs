@@ -220,10 +220,96 @@ fn explicit_category_line_spacing_changes_visible_line_distance() {
     for spacing in [20., 40.] {
         let mut p = original();
         chart_mut(&mut p).format.line_spacings.insert(Role::CategoryAxis, Spacing::Pts(spacing));
+        // Both lines need room: the original taller plot truncates the second
+        // 40pt line, so its total ink extent does not measure line spacing.
+        chart_mut(&mut p).format.plot_layout.as_mut().unwrap().h = Some(0.5);
         let rows = red_rows(&rebuild(&p));
         extents.push(rows.last().unwrap() - rows.first().unwrap());
     }
     assert!((extents[1] as i32 - extents[0] as i32 - 20).abs() <= 1, "visible line distance: {extents:?}");
+}
+
+#[test]
+fn category_tick_overflow_keeps_whole_lines_and_attaches_ellipsis_without_recentering() {
+    use deckcraft_model::text::{BodyProps, TextOverflow};
+    let mut bounds = Vec::new();
+    for policy in [None, Some(TextOverflow::Clip), Some(TextOverflow::Overflow)] {
+        let mut p = original();
+        let c = chart_mut(&mut p);
+        c.format.line_spacings.insert(Role::CategoryAxis, Spacing::Pts(40.));
+        c.format.bodies.insert(Role::CategoryAxis, BodyProps { vert_overflow: policy, ..Default::default() });
+        let back = rebuild(&p);
+        assert_eq!(chart(&back).format.bodies.get(&Role::CategoryAxis).and_then(|body| body.vert_overflow), policy);
+        assert_eq!(chart(&back).categories, ["A\nB"]);
+        let img = render_slide(&back, 0, &RenderOpts::default());
+        let mut bound = (u32::MAX, 0, 0);
+        for y in 0..img.height {
+            for x in 0..img.width {
+                let px = img.pixel(x, y);
+                if px[0] > 200 && px[1] < 40 && px[2] < 40 {
+                    bound = (bound.0.min(x), bound.1.max(x), bound.2.max(y));
+                }
+            }
+        }
+        bounds.push(bound);
+    }
+    // The default A… and clipped A share the retained line's origin. Overflow
+    // retains B, whose lower ink is still clipped at the chart's 400pt frame.
+    assert_eq!(bounds[0].0, bounds[1].0);
+    assert!(bounds[0].1 > bounds[1].1 + 10, "ellipsis: {bounds:?}");
+    assert_eq!(bounds[0].2, bounds[1].2);
+    assert!(bounds[0].2 < 370 && bounds[2].2 == 399, "line retention: {bounds:?}");
+}
+
+#[test]
+fn category_tick_capacity_uses_complete_pitches_and_chart_label_margin() {
+    for (font, spacing, count, heights) in [
+        ("Inter", Some(40.), 2, [414.25, 414.75]),
+        ("Lato", Some(32.), 2, [398.4, 398.9]),
+        ("Inter", None, 2, [382.5, 383.]),
+        ("Inter", Some(30.), 3, [424.25, 424.75]),
+    ] {
+        for (i, height) in heights.into_iter().enumerate() {
+            let mut p = original();
+            Arc::make_mut(&mut p.slides[0]).shapes[0].xfrm = Some(Xfrm::new(0., 0., 900., height));
+            let c = chart_mut(&mut p);
+            c.categories = vec![if count == 3 { "A\nB\nC" } else { "A\nB" }.into()];
+            c.text_styles.get_mut(&Role::CategoryAxis).unwrap().font = Some(font.into());
+            if let Some(spacing) = spacing {
+                c.format.line_spacings.insert(Role::CategoryAxis, Spacing::Pts(spacing));
+            }
+            let plot = c.format.plot_layout.as_mut().unwrap();
+            plot.y = Some(60. / height);
+            plot.h = Some(260. / height);
+            let rows = red_rows(&rebuild(&p));
+            let lines = 1 + rows.windows(2).filter(|pair| pair[1] > pair[0] + 1).count();
+            assert_eq!(lines, count - 1 + i, "{font} {spacing:?}, height {height}: {rows:?}");
+        }
+    }
+}
+
+#[test]
+fn category_tick_capacity_rounds_exact_spacing_but_keeps_percentage_pitch() {
+    for (font, spacing, height, expected) in [
+        ("Inter", Spacing::Pts(30.4), 394.7, 2),
+        ("Inter", Spacing::Pts(30.6), 396., 1),
+        ("Inter", Spacing::Pct(1.3), 397.1, 1),
+        ("Inter", Spacing::Pct(1.3), 397.6, 2),
+        ("Lato", Spacing::Pts(32.4), 399., 2),
+        ("Lato", Spacing::Pts(32.6), 400.2, 1),
+    ] {
+        let mut p = original();
+        Arc::make_mut(&mut p.slides[0]).shapes[0].xfrm = Some(Xfrm::new(0., 0., 900., height));
+        let c = chart_mut(&mut p);
+        c.text_styles.get_mut(&Role::CategoryAxis).unwrap().font = Some(font.into());
+        c.format.line_spacings.insert(Role::CategoryAxis, spacing);
+        let plot = c.format.plot_layout.as_mut().unwrap();
+        plot.y = Some(60. / height);
+        plot.h = Some(260. / height);
+        let rows = red_rows(&rebuild(&p));
+        let lines = 1 + rows.windows(2).filter(|pair| pair[1] > pair[0] + 1).count();
+        assert_eq!(lines, expected, "{font} {spacing:?}, height {height}: {rows:?}");
+    }
 }
 
 #[test]
