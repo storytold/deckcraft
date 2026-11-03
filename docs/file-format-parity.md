@@ -1,5 +1,7 @@
 # File-format parity with PowerPoint
 
+> **PPTX.68 integration 2026-11-03:** Current upstream text metadata and save changes are reconciled with the fidelity branch. Vertical overflow uses one canonical property with backward-compatible native-document input; both sides' regression tests are retained. Broader SmartArt, map and chart gaps remain open; feature scores are unchanged.
+
 > **PPTX.67 update 2026-11-03:** Centered same-direction SmartArt retains fitted reference changes and distinguishes logical overflow from painted overflow and failed-trial placement. New native diagnostics improve from 48 to 165 strict matches out of 166; one off-page identity discrepancy remains, with its visible geometry corrected. The final independent 24-page set passes completely. Integrated replay changes only the expected original page out of 6,908, while all retained text and raster checks remain exact. Broader SmartArt, map and chart limits remain open; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
@@ -92,7 +94,7 @@
 
 > **Update 2026-10-31:** complete imported diagram graphs and identity-bound text edits; fixed-size embedded XLSX data synchronization. See [scope and validation](layout-fidelity.md).
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** minor (cell anchorCtr, vertOverflow/horzOverflow, compatLnSpc, normalizeH, thaiDist, table rtl, run altLang and reflection transforms round-trip; Reuse Slides brings referenced custom table styles; previous: minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every format PowerPoint reads or writes, DeckCraft's support, fidelity and how it is tested.
 Gaps are itemized in [gaps.md](gaps.md#file-formats). Dimension score: **~58% ready**
@@ -115,7 +117,7 @@ PowerPoint opens and saves; Viewer = opens only).
 | `.ppt` / `.pot` / `.pps` 97–2003 binary | Editor | no | no | Owner decision; import only would be enough | none |
 | `.odp` OpenDocument | Editor | no | no | | none |
 | `.thmx` Office theme | Viewer | theme only (Design › Browse for Themes…) | no | Browse for Themes takes a `.thmx`'s colours, fonts and effects; a `.pptx` or `.potx` brings its slide master and layouts as well, and slides move to the matching layouts (#807). A `.thmx`'s own master and layouts aren't read yet | `crates/pptx/src/lib.rs` (`import_theme_tests`), `crates/engine/src/cmd/design/browse_theme_tests.rs` |
-| `.deckcraft` native (zip + JSON) | n/a | yes (also `.slidecraft`) | yes | Lossless for the DeckCraft model, forward compatible | `crates/format` tests |
+| `.deckcraft` native (zip + JSON) | n/a | yes (also `.slidecraft`) | yes | Lossless for the DeckCraft model, forward compatible; optional table RTL direction survives two saves | `crates/format` tests |
 | PDF | export | no | yes | Slides, notes pages, handouts (1–9); real-text layer with embedded subsets, links, bookmarks. Slide artwork is a raster image at print resolution, not vector | `crates/pdf` tests |
 | Outline `.rtf` / `.txt` | export (RTF), import (outline) | `.txt` and `.rtf` outline; `.md` as Markdown (headings are slides, list items bullets) (open, drop, `slide.fromOutline`) | `.txt` and `.rtf` outline | — | format + engine tests |
 | PNG / JPEG slide images | export | n/a | yes (`file.export`, `deckcraft-cli render`) | Matches the editor's renderer. PNG `pHYs` and JPEG JFIF density are `scale` × 72 dpi (default scale 2 is 144 dpi), so Preview shows the slide's real size. PNG can leave the slide background out (`transparentBackground`, Export… “Transparent background”, `deckcraft-cli render --transparent`), so only the slide's content is opaque (#784) | render, engine, UI and CLI tests |
@@ -174,12 +176,12 @@ the round trip even though DeckCraft doesn't model it.
 | Shapes: preset geometry (~180 presets), custom geometry, groups, connectors | yes | yes | Presets re-derived in `crates/geom/src/preset.rs` (and `preset/extra.rs`). Outlines, dashes, arrowheads and ink inside a group, and text, keep their size in points whatever the group's child-coordinate scale (#233). |
 | Fills: solid, gradient, picture (stretch/tile/crop), pattern, group | yes | yes | |
 | Lines: dash, compound, caps, joins, arrowheads | yes | yes | |
-| Text: runs, paragraphs, bullets, numbering, levels, autofit, columns, vertical, RTL, script fonts, fields, hyperlinks | yes | yes | Round-trip tests incl. `justLow`, date fields and paragraph `defRPr` (the defaults a placeholder's runs inherit, including a link). A click or hover action keeps its sound, `endSnd`, and a custom show's "Show and return". Gradient and outline on a run, autofit, columns, vertical and RTL text, tab stops and line spacing round-trip (`corpus_style.rs`) |
+| Text: runs, paragraphs, bullets, numbering, levels, autofit, columns, vertical, RTL, script fonts, fields, hyperlinks | yes | yes | Run `lang` and `altLang` are independently retained through native and PPTX saves; other round-trip tests cover `justLow`, date fields and paragraph `defRPr` (the defaults a placeholder's runs inherit, including a link). A click or hover action keeps its sound, `endSnd`, and a custom show's "Show and return". Gradient and outline on a run, autofit, columns, vertical and RTL text, tab stops and line spacing round-trip (`corpus_style.rs`) |
 | Effects: shadow, glow, soft edges, reflection | yes | yes | On a run, inner shadow, reflection and soft edges are kept along with the outer shadow and glow |
 | 3-D: `scene3d`, `sp3d` | kept | kept | A bevel preset with no `sp3d` of its own is written back on shapes and theme effect styles. Bevels, cameras, face lighting and extrusion sides draw approximately |
 | Text warp (`prstTxWarp`) | yes | yes | All 40 presets rendered (`crates/geom/src/warp.rs`); adjust values (`avLst`) round-trip |
 | Pictures with crop, recolour, duotone, alpha, luminance | yes | yes | |
-| Tables with styles | yes | yes | Merges and both diagonal borders round-trip |
+| Tables with styles | yes | yes | Merges, both diagonal borders and optional RTL column direction round-trip; Reuse Slides transfers definitions referenced by source tables, including grouped tables, with conflicting ids remapped |
 | Charts (`c:chartSpace`) | yes | yes | Original XML kept in `Chart.raw`. Trendlines (type, order or period, forecast, intercept, equation and R²) are read, written and drawn. A combo chart's secondary value axis is read and rebuilt with its bounds, units, number format and independent typography. An unchanged chart also keeps its embedded workbook and the other parts its relationships point at, under fresh `keptN` names so they never replace a part DeckCraft writes (#335); fixed-size direct XLSX range edits synchronize chart caches and cells while preserving unrelated content. Unsupported sources/structural changes still drop stale workbook dependencies |
 | Charts (`cx:` chartex: waterfall, funnel, treemap, sunburst, histogram, Pareto, box, region map) | yes | yes | Unchanged parts kept, with their embedded workbook (#335); edited and new ones written from the model with a plain-chart fallback. Treemap and sunburst hierarchy levels kept; clear-cache region polygons, holes and dateline wrapping render offline. Observed plain XML, finalized raw-DEFLATE and SYNC_FLUSH envelopes decode; unsupported payloads are preserved and unusable geometry uses labelled tiles. Initial screen-space sampling preserves ring closure and holes. Full native map and rich-label layout parity remains partial |
 | SmartArt (`dgm`) | Cached drawing as editable groups/text plus the data-model outline and bounded original package graph; uncached supported definitions evaluated | Imported unmodified graphs retain point/connection IDs, drawing bytes and internal relationships. Identity-bound Text Pane edits update data/drawing/model together; structural edits use generated layouts | Named affine references, chains, solvable cycles and inequality bounds use a bounded solver. Ordered measured rules, staged independent linear text rules and circular placement are supported; all native fallback/search heuristics, ambiguous text bindings and structural relayout remain partial; [scope and validation](layout-fidelity.md) |
@@ -213,6 +215,7 @@ the round trip even though DeckCraft doesn't model it.
 |---|---|---|
 | 2026-11-02 | minor | PPTX.53: retain scoped fitting checkpoints and correct diagram glyph/bullet origins; remaining failures retained |
 | 2026-11-03 | minor | PPTX.54: preserve intermediate reversed-flow alignment and bounded pending corrections |
+| 2026-11-03 | minor | PPTX.68: integrate upstream text metadata with legacy overflow compatibility |
 | 2026-11-03 | minor | PPTX.67: retain fitted centering references and partial placement |
 | 2026-11-03 | minor | PPTX.66: retain physical growth against the current reverse reference |
 | 2026-11-03 | minor | PPTX.65: cancel consumed reverse centering growth |
@@ -266,7 +269,11 @@ the round trip even though DeckCraft doesn't model it.
 | 2026-11-01 | minor | MTX TrueType reconstruction and embedded-font pixel oracle; chartEx bounds/statistics/visibility; bounded uncached SmartArt layout execution and graph retention. Native visual parity remains partial |
 | 2026-11-01 | minor | Manual chart layout/body rotations and full line styles reach rendering and rebuilds; chartEx typography/axis references modeled. Cached diagram root coordinates and authored missing-cache fallback fixed. Direct font/chart/six-layout comparisons added; native chartEx remains a failed check, not claimed parity |
 | 2026-10-31 | minor | Locale-aware East Asian theme fonts, isolated embedded font precedence and actual-face diagnostics; separate chart typography and secondary axes survive structural rebuilds; nested SmartArt cached transforms and picture nodes survive export. Four generated render probes assert pixel equality across DeckCraft export/import, not cross-renderer parity. Remaining limits: [layout fidelity](layout-fidelity.md) |
+| 2026-11-02 | minor | Optional table RTL direction is read and written as `a:tblPr/@rtl`; native and two PPTX saves preserve true, false and absent values with distinguishable column text |
+| 2026-11-02 | minor | Text runs preserve alternate-language metadata in native and PPTX round trips |
+| 2026-11-03 | trivial | Reuse Slides transfers referenced custom table styles from native and PPTX sources; grouped tables, undo, native save/reopen and style-id conflicts are covered |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
+| 2026-11-02 | trivial | Reflection start position, affine scale/skew, direction and fade, alignment and rotation attributes survive native and PPTX saves; rendering remains partial |
 | 2026-10-15 | trivial | Native `.deckcraft` files serialize a nonempty chart `kept` sidecar (relationships, part names, content types and bytes). Older files without it still load; empty sidecars are omitted. Headless PPTX → edit → native save/reopen → PPTX checks keep the workbook and drawing bytes; editing chart data still drops the stale workbook |
 | 2026-10-15 | trivial | PPTX interactive timing sequences keep later On Click steps and paragraph click builds (`trigger_steps.rs`); mixed starts and independent buttons survive import/edit/save/reopen |
 | 2026-10-15 | minor | A `.pptx` slide that can't be read is reported instead of dropped in silence: `file.open` and `file.openBytes` return `lostSlides`, the app shows a message and opens a repaired copy (Save asks for a new name), and `deckcraft-cli` warns on stderr (#203) |
@@ -939,3 +946,23 @@ remain partial. Geographic reduction/precision and unsupported binary-cache
 variants still need native coverage. Seventy older archived pages lack original
 source bytes and two native variants conflict; neither is counted as a pass.
 This change does not establish complete LibreOffice replacement.
+
+### PPTX.68: reconcile upstream text properties
+
+The current upstream additions are integrated without duplicating vertical overflow
+attributes. The canonical `vertOverflow` native property accepts the previous
+`verticalOverflow` spelling on input. Explicit policies, inheritance, old-document
+loading and two PPTX saves retain their meaning. Horizontal overflow continues to
+reject the vertical-only ellipsis value. Upstream metadata, table, reuse-slide and
+animation changes and both sets of regression tests are retained. This integration
+does not resolve the remaining native SmartArt, map or rich-label discrepancies.
+
+Integration checks retain all 6,908 archived layouts and 166 same-direction
+controls. Existing properties of 13,622 text bodies are unchanged; the only JSON
+differences are explicitly audited new null metadata fields. All 661 PDF text
+pages, 90 high-resolution rasters, 1,218 chart pages and 140 map rasters remain
+exact against their accepted baselines. These are regression checks, not a claim
+of complete native fidelity.
+
+Full `cargo xtask ci` passes all eight stages and 2,778 tests including
+doctests, with eight existing ignored tests.

@@ -330,6 +330,15 @@ pub fn effects(el: &El) -> Effects {
                     end_alpha: pct(e, "endA").unwrap_or(0.0),
                     end_pos: pct(e, "endPos").unwrap_or(1.0),
                     dist: pt(e, "dist").unwrap_or(0.0),
+                    st_pos: e.i64("stPos").and_then(|v| i32::try_from(v).ok()),
+                    dir: e.i64("dir").and_then(|v| i32::try_from(v).ok()),
+                    fade_dir: e.i64("fadeDir").and_then(|v| i32::try_from(v).ok()),
+                    sx: e.i64("sx").and_then(|v| i32::try_from(v).ok()),
+                    sy: e.i64("sy").and_then(|v| i32::try_from(v).ok()),
+                    kx: e.i64("kx").and_then(|v| i32::try_from(v).ok()),
+                    ky: e.i64("ky").and_then(|v| i32::try_from(v).ok()),
+                    align: e.attr("algn").filter(|v| matches!(*v, "tl" | "t" | "tr" | "l" | "ctr" | "r" | "bl" | "b" | "br")).map(str::to_owned),
+                    rotate_with_shape: e.bool("rotWithShape"),
                 })
             }
             _ => {}
@@ -369,7 +378,6 @@ pub fn body_pr(b: &El) -> BodyProps {
         anchor: b.attr("anchor").and_then(Anchor::from_xml),
         anchor_ctr: b.bool("anchorCtr"),
         wrap: b.attr("wrap").map(|w| w != "none"),
-        vertical_overflow: b.attr("vertOverflow").and_then(TextOverflow::from_xml),
         vert: b.attr("vert").and_then(TextDir::from_xml),
         rot: ang(b, "rot"),
         columns: b.u32("numCol").map(|n| n.clamp(1, 16)),
@@ -377,6 +385,9 @@ pub fn body_pr(b: &El) -> BodyProps {
         rtl_col: b.bool("rtlCol"),
         upright: b.bool("upright"),
         space_first_last: b.bool("spcFirstLastPara"),
+        compat_ln_spc: b.bool("compatLnSpc"),
+        vert_overflow: b.attr("vertOverflow").and_then(TextOverflow::from_xml),
+        horz_overflow: b.attr("horzOverflow").and_then(TextOverflow::from_horz_xml),
         ..Default::default()
     };
     for e in b.elements() {
@@ -562,6 +573,7 @@ fn typeface(e: &El) -> Option<String> {
 pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
     let mut p = RunProps {
         lang: r.attr("lang").map(String::from),
+        alt_lang: r.attr("altLang").map(|lang| lang.chars().take(256).collect()),
         size: r.f64("sz").map(|s| (s / 100.0).clamp(1.0, 4000.0)),
         bold: r.bool("b"),
         italic: r.bool("i"),
@@ -580,6 +592,7 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
         spacing: r.f64("spc").map(|s| (s / 100.0).clamp(-4000.0, 4000.0)),
         kern: r.f64("kern").map(|k| (k / 100.0).clamp(0.0, 4000.0)),
         no_proof: r.bool("noProof"),
+        normalize_height: r.bool("normalizeH"),
         ..Default::default()
     };
     for e in r.elements() {
@@ -776,11 +789,11 @@ mod tests {
         assert_eq!(b.columns, Some(2));
         assert_eq!(b.autofit, Some(AutoFit::Shrink { font_scale: Some(0.625), line_reduction: 0.2 }));
         assert_eq!(b.space_first_last, None);
-        assert_eq!(b.vertical_overflow, None);
+        assert_eq!(b.vert_overflow, None);
         for (value, expected) in [("overflow", TextOverflow::Overflow), ("clip", TextOverflow::Clip), ("ellipsis", TextOverflow::Ellipsis)] {
             let xml = format!(r#"<a:bodyPr vertOverflow="{value}"/>"#);
             let d = parse(xml.as_bytes()).unwrap();
-            assert_eq!(body_pr(&d.root).vertical_overflow, Some(expected));
+            assert_eq!(body_pr(&d.root).vert_overflow, Some(expected));
         }
         // A bare `<a:normAutofit/>` keeps no scale: the schema default 100 % is drawn as it is,
         // not the same as a saved 100 % (`fontScale="100000"`) (#724).

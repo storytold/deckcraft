@@ -330,7 +330,7 @@ pub(crate) fn point_data_label(
     let h = (measured.content_height + body.body.inset_t.unwrap_or(0.) + body.body.inset_b.unwrap_or(0.)).max(1.);
     // Explicit overflow retains the complete body, but automatic positioning still
     // uses the bounded height. Its trailing lines are clipped by the chart frame.
-    let placement_h = if automatic_column && body.body.vertical_overflow == Some(deckcraft_model::text::TextOverflow::Overflow) {
+    let placement_h = if automatic_column && body.body.vert_overflow == Some(deckcraft_model::text::TextOverflow::Overflow) {
         h.min((frame.1 * 0.5).max(1.))
     } else {
         h
@@ -435,7 +435,7 @@ fn column_rich_label(
         // text at minimal width, then paint again at the resulting natural width;
         // thin letters can therefore share a painted line inside a taller box.
         body.body.wrap = Some(minimal_width);
-        body.body.vertical_overflow = Some(deckcraft_model::text::TextOverflow::Overflow);
+        body.body.vert_overflow = Some(deckcraft_model::text::TextOverflow::Overflow);
     }
     let wrap_width = if minimal_width {
         0.
@@ -446,7 +446,7 @@ fn column_rich_label(
     };
     let measured = label_layout::measure(rctx, &body, wrap_width, true);
     let (measured, marker_base) = label_layout::overflow(rctx, &mut body, wrap_width, bounds.height, measured);
-    let overflow = body.body.vertical_overflow == Some(deckcraft_model::text::TextOverflow::Overflow);
+    let overflow = body.body.vert_overflow == Some(deckcraft_model::text::TextOverflow::Overflow);
     let text_h = (measured.content_height + body.body.inset_t.unwrap_or(0.) + body.body.inset_b.unwrap_or(0.)).max(1.);
     let text_w = (measured.content_width + body.body.inset_l.unwrap_or(0.) + body.body.inset_r.unwrap_or(0.))
         .clamp(1., if minimal_width { 1e6 } else { wrap_width.max(1.) });

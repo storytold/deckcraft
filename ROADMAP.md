@@ -1,5 +1,7 @@
 # DeckCraft roadmap
 
+> **PPTX.68 integration 2026-11-03:** Current upstream text metadata and save changes are reconciled with the fidelity branch. Vertical overflow uses one canonical property with backward-compatible native-document input; both sides' regression tests are retained. Broader SmartArt, map and chart gaps remain open; feature scores are unchanged.
+
 > **PPTX.67 update 2026-11-03:** Centered same-direction SmartArt retains fitted reference changes and distinguishes logical overflow from painted overflow and failed-trial placement. New native diagnostics improve from 48 to 165 strict matches out of 166; one off-page identity discrepancy remains, with its visible geometry corrected. The final independent 24-page set passes completely. Integrated replay changes only the expected original page out of 6,908, while all retained text and raster checks remain exact. Broader SmartArt, map and chart limits remain open; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
@@ -68,7 +70,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-02 · **Change:** minor (PPTX fidelity and upstream No Fill hit-testing integration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (community PR wave 10: PPTX and native saves keep table cell centred anchoring, text overflow, compatible line spacing, normalised character height, Thai distributed alignment, RTL table direction, alternate run language and reflection transforms; imported effects placed by parent time-node delays; Reuse Slides fits the destination size and brings custom table styles; deleted slides leave custom shows; merged shapes drop their animations; Compress Pictures measures grouped pictures at displayed size; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (progress log: read-only `slide.actions` lists shape and table text actions; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -270,7 +272,14 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-31 | Imported SmartArt preserves its original package graph, IDs and geometry through no-op saves and identity-bound Text Pane edits; undo/redo and native save are tested. Categorical chart edits synchronize fixed-size direct XLSX ranges without changing unrelated cells/sheets. Native PowerPoint preservation probes render identically on no-op round trips; structural edits and unsupported spreadsheet sources remain partial |
 | 2026-10-31 | Font selection respects East Asian language/script mappings and document-scoped embedded faces. Read-only `font.inspect` reports actual faces, hashes and fallback reasons. Charts keep separate title/legend/axis typography and rebuilt secondary axes; label widths use text shaping, and logical series order survives plot grouping. Cached SmartArt retains nested transforms and image nodes. Four generated render probes compare exact pixels before/after PPTX round trip; these are not PowerPoint parity claims. See [layout fidelity](docs/layout-fidelity.md) |
 | 2026-10-31 | PPTX fidelity: data-only categorical chart edits keep unmodelled formatting and remove stale workbook dependencies; line data labels render; partial shape restrictions survive save; flat default process SmartArt derives export geometry and font size from its canvas. Paragraph defaults include proofing language, and CJK hanging punctuation follows explicit language. Native PowerPoint validation is bounded; full chart/SmartArt parity remains open |
+| 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
+| 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
+| 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |
+| 2026-11-02 | Deleting slides removes their IDs from every custom show; the cleanup is undoable and survives native save/reopen |
+| 2026-11-02 | Reused slides scale their geometry and content dimensions to the destination slide, including kept source masters and layouts; the reuse picker still lacks thumbnails |
 | 2026-11-02 | File › About replaces the unused Account page, with version, project links, contributor/model credits and appearance preferences |
+| 2026-11-02 | PPTX reflection effects keep their authored start position, affine scale/skew, direction and fade, alignment, and rotation flag through native and PPTX saves |
+| 2026-11-03 | Reuse Slides brings along referenced custom table styles, including grouped tables, and remaps conflicting style ids without changing destination tables |
 | 2026-11-02 | Tiled picture fills in groups: a tile (`a:blipFill` with `a:tile`) keeps its size, offset and anchor in slide points whatever the group's child-coordinate scale, uniform or stretched unevenly, nested or flipped (also a group's own tile fill passed to its members, and a picture shape's own tile, with its shadow and reflection), and tiles with `rotWithShape="0"` keep their size in points at any zoom, as PowerPoint draws them (measured on its own PNG export of a synthetic probe deck: every grouped case within ~3/255 of the ungrouped control's own difference from PowerPoint, which is ~13/255 from resampling). Before, a group whose child space was ~1800 times smaller than its box showed one flat texel of the texture (a Venn diagram with paper-textured circles and a hatched intersection) |
 | 2026-10-31 | No Fill shape interiors allow selection and editing of underlying objects, even when a quick style remains; hit-testing uses the renderer’s fill resolution. Outlines, rotation, text targets and actual fills keep their hit behaviour (#1621) |
 | 2026-10-30 | Print-preview tests use the URL emitted by egui and its exact file path; previews are explicitly removed before the macOS process exits |
@@ -445,6 +454,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 |---|---|---|
 | 2026-11-02 | minor | PPTX.53: retain scoped fitting checkpoints and correct diagram glyph/bullet origins; remaining failures retained |
 | 2026-11-03 | minor | PPTX.54: preserve intermediate reversed-flow alignment and bounded pending corrections |
+| 2026-11-03 | minor | PPTX.68: integrate upstream text metadata with legacy overflow compatibility |
 | 2026-11-03 | minor | PPTX.67: retain fitted centering references and partial placement |
 | 2026-11-03 | minor | PPTX.66: retain physical growth against the current reverse reference |
 | 2026-11-03 | minor | PPTX.65: cancel consumed reverse centering growth |
@@ -481,6 +491,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-11-01 | minor | PPTX.21 separates authored-default rounding, displayed trial measurement and fractional local-font propagation; native font controls pass, full visual parity remains partial |
 | 2026-11-01 | minor | PPTX.19 geographic lineage, regional projection and explicit native viewport limits; scores unchanged |
 | 2026-10-31 | minor | Progress log: bounded PPTX editing/export fidelity fixes; overall parity scores and alpha stage unchanged |
+| 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
+| 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-11-02 | trivial | Progress log: tiled picture fills keep their size in scaled groups. Scores and milestone names unchanged |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
@@ -1229,3 +1241,23 @@ remain partial. Geographic reduction/precision and unsupported binary-cache
 variants still need native coverage. Seventy older archived pages lack original
 source bytes and two native variants conflict; neither is counted as a pass.
 This change does not establish complete LibreOffice replacement.
+
+### PPTX.68: reconcile upstream text properties
+
+The current upstream additions are integrated without duplicating vertical overflow
+attributes. The canonical `vertOverflow` native property accepts the previous
+`verticalOverflow` spelling on input. Explicit policies, inheritance, old-document
+loading and two PPTX saves retain their meaning. Horizontal overflow continues to
+reject the vertical-only ellipsis value. Upstream metadata, table, reuse-slide and
+animation changes and both sets of regression tests are retained. This integration
+does not resolve the remaining native SmartArt, map or rich-label discrepancies.
+
+Integration checks retain all 6,908 archived layouts and 166 same-direction
+controls. Existing properties of 13,622 text bodies are unchanged; the only JSON
+differences are explicitly audited new null metadata fields. All 661 PDF text
+pages, 90 high-resolution rasters, 1,218 chart pages and 140 map rasters remain
+exact against their accepted baselines. These are regression checks, not a claim
+of complete native fidelity.
+
+Full `cargo xtask ci` passes all eight stages and 2,778 tests including
+doctests, with eight existing ignored tests.

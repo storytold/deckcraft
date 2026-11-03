@@ -239,7 +239,7 @@ pub fn body(ctx: &Ctx, shape: &Shape) -> BodyProps {
         }),
         anchor_ctr: Some(false),
         wrap: Some(true),
-        vertical_overflow: Some(crate::text::TextOverflow::Overflow),
+        vert_overflow: Some(crate::text::TextOverflow::Overflow),
         diagram_recovery_metrics: None,
         diagram_fine_advances: None,
         autofit: Some(if shape.text_box { AutoFit::Shape } else { AutoFit::None }),
@@ -253,6 +253,8 @@ pub fn body(ctx: &Ctx, shape: &Shape) -> BodyProps {
         rtl_col: Some(false),
         upright: Some(false),
         space_first_last: Some(false),
+        compat_ln_spc: None,
+        horz_overflow: None,
     });
     b
 }

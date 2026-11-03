@@ -577,7 +577,7 @@ fn a_tiled_pictures_reflection_keeps_the_tile_size_inside_a_scaled_group() {
         let mut p = Presentation::default();
         let media = p.add_media("t.png", "image/png", half_red_half_blue()).expect("media");
         let mode = PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 10.0, sy: 10.0, flip: "none".into(), align: "tl".into() };
-        let rf = Reflection { blur: 0.0, start_alpha: 1.0, end_alpha: 0.0, end_pos: 0.5, dist: 0.0 };
+        let rf = Reflection { blur: 0.0, start_alpha: 1.0, end_alpha: 0.0, end_pos: 0.5, dist: 0.0, ..Default::default() };
         let img = in_a_scaled_group(kx, ky, p, |w, h| Shape {
             id: ShapeId(22),
             xfrm: Some(Xfrm::new(0.0, 0.0, w, h)),
@@ -935,7 +935,7 @@ fn a_picture_reflects_its_pixels() {
     let mut p = picture_deck(None);
     let s = std::sync::Arc::make_mut(&mut p.slides[0]);
     if let Some(sh) = s.shapes.first_mut() {
-        let rf = deckcraft_model::style::Reflection { blur: 0.0, start_alpha: 1.0, end_alpha: 0.0, end_pos: 0.5, dist: 0.0 };
+        let rf = deckcraft_model::style::Reflection { blur: 0.0, start_alpha: 1.0, end_alpha: 0.0, end_pos: 0.5, dist: 0.0, ..Default::default() };
         sh.effects = Some(deckcraft_model::Effects { reflection: Some(rf), ..Default::default() });
     }
     let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });

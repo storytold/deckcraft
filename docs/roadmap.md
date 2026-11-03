@@ -1,5 +1,7 @@
 # DeckCraft roadmap: milestones and what's next
 
+> **PPTX.68 integration 2026-11-03:** Current upstream text metadata and save changes are reconciled with the fidelity branch. Vertical overflow uses one canonical property with backward-compatible native-document input; both sides' regression tests are retained. Broader SmartArt, map and chart gaps remain open; feature scores are unchanged.
+
 > **PPTX.67 update 2026-11-03:** Centered same-direction SmartArt retains fitted reference changes and distinguishes logical overflow from painted overflow and failed-trial placement. New native diagnostics improve from 48 to 165 strict matches out of 166; one off-page identity discrepancy remains, with its visible geometry corrected. The final independent 24-page set passes completely. Integrated replay changes only the expected original page out of 6,908, while all retained text and raster checks remain exact. Broader SmartArt, map and chart limits remain open; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
@@ -84,7 +86,7 @@
 
 > **PPTX.11 update 2026-11-01:** interior diagram-rule trials, native duplicate-map binding, two/three-stop map scales, stable cropped projection and richer paragraph/leaf-label typography are implemented. Native custom numeric map stops and full coupled-rule/native fallback parity remain open; scores are unchanged.
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (beta item 9 drops Play From, now in; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: PPTX corpus, presenter and show controls, review navigation, starter decks, Grid Options and New Window, WordArt gallery and handles, pen pressure; beta items 9 and 10 narrowed; duplicated rows and headers folded; previous: minor, core-workflow alpha gate added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-03 · **Change:** trivial (beta item 9 drops Play From, now in; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: PPTX corpus, presenter and show controls, review navigation, starter decks, Grid Options and New Window, WordArt gallery and handles, pen pressure; beta items 9 and 10 narrowed; duplicated rows and headers folded; previous: minor, core-workflow alpha gate added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Forward-looking: where DeckCraft is going and in what order. The one-page summary is
 [ROADMAP.md](../ROADMAP.md); every shortfall is in [gaps.md](gaps.md); numbers are in
@@ -202,6 +204,7 @@ and rich point labels; provider/native-layout gaps remain documented, and beta s
 |---|---|---|
 | 2026-11-02 | minor | PPTX.53: retain scoped fitting checkpoints and correct diagram glyph/bullet origins; remaining failures retained |
 | 2026-11-03 | minor | PPTX.54: preserve intermediate reversed-flow alignment and bounded pending corrections |
+| 2026-11-03 | minor | PPTX.68: integrate upstream text metadata with legacy overflow compatibility |
 | 2026-11-03 | minor | PPTX.67: retain fitted centering references and partial placement |
 | 2026-11-03 | minor | PPTX.66: retain physical growth against the current reverse reference |
 | 2026-11-03 | minor | PPTX.65: cancel consumed reverse centering growth |
@@ -930,3 +933,23 @@ remain partial. Geographic reduction/precision and unsupported binary-cache
 variants still need native coverage. Seventy older archived pages lack original
 source bytes and two native variants conflict; neither is counted as a pass.
 This change does not establish complete LibreOffice replacement.
+
+### PPTX.68: reconcile upstream text properties
+
+The current upstream additions are integrated without duplicating vertical overflow
+attributes. The canonical `vertOverflow` native property accepts the previous
+`verticalOverflow` spelling on input. Explicit policies, inheritance, old-document
+loading and two PPTX saves retain their meaning. Horizontal overflow continues to
+reject the vertical-only ellipsis value. Upstream metadata, table, reuse-slide and
+animation changes and both sets of regression tests are retained. This integration
+does not resolve the remaining native SmartArt, map or rich-label discrepancies.
+
+Integration checks retain all 6,908 archived layouts and 166 same-direction
+controls. Existing properties of 13,622 text bodies are unchanged; the only JSON
+differences are explicitly audited new null metadata fields. All 661 PDF text
+pages, 90 high-resolution rasters, 1,218 chart pages and 140 map rasters remain
+exact against their accepted baselines. These are regression checks, not a claim
+of complete native fidelity.
+
+Full `cargo xtask ci` passes all eight stages and 2,778 tests including
+doctests, with eight existing ignored tests.

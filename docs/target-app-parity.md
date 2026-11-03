@@ -1,10 +1,12 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
+> **PPTX.68 integration 2026-11-03:** Current upstream text metadata and save changes are reconciled with the fidelity branch. Vertical overflow uses one canonical property with backward-compatible native-document input; both sides' regression tests are retained. Broader SmartArt, map and chart gaps remain open; feature scores are unchanged.
+
 > **PPTX.67 update 2026-11-03:** Centered same-direction SmartArt retains fitted reference changes and distinguishes logical overflow from painted overflow and failed-trial placement. New native diagnostics improve from 48 to 165 strict matches out of 166; one off-page identity discrepancy remains, with its visible geometry corrected. The final independent 24-page set passes completely. Integrated replay changes only the expected original page out of 6,908, while all retained text and raster checks remain exact. Broader SmartArt, map and chart limits remain open; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (no break after `?`, `!`, `}`, `+` inside a word; previous: trivial, Animations shortfall: preview from the selected effect is in; before that: major, community PR wave 2026-10-14: breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) after `cargo xtask parity`; area table and What works today folded to one row or bullet each; 320 engine commands; ready ~55% and stage alpha unchanged; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-03 · **Change:** trivial (reused slide contents fit the destination size; thumbnails remain; parity estimates unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The authoritative answer to "how close is DeckCraft to PowerPoint, and how much work is left?".
 [ROADMAP.md](../ROADMAP.md) summarizes it; [gaps.md](gaps.md) itemizes every shortfall;
@@ -183,7 +185,7 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Area | Weight | Breadth (measured) | Ready (est.) | Hours | Main shortfalls | Doc |
 |---|---:|---:|---:|---|---|---|
 | Application shell | 5 | 81% | ~55% | 8–14 | No native macOS menu bar, contextual tabs and multiple-window handling thinner than PowerPoint's | [ui-parity.md](ui-parity.md) |
-| Files (commands) | 4 | 75% | ~50% | see file formats | Print, passwords, legacy and macro formats, video export; reuse slides is partial | [file-format-parity.md](file-format-parity.md) |
+| Files (commands) | 4 | 75% | ~50% | see file formats | Print, passwords, legacy and macro formats, video export; reuse content now fits destination size, but the picker still lacks thumbnails | [file-format-parity.md](file-format-parity.md) |
 | Slides and sections | 6 | 92% | ~85% | 3–5 | Zoom (summary/section/slide) is partial, copying slides between decks keeps formatting only partly | [parity-checklist.md](parity-checklist.md) |
 | Views | 4 | 98% | ~80% | 3–6 | Arrange All (Grid Options and New Window are in) | [ui-parity.md](ui-parity.md) |
 | Masters and themes | 7 | 92% | ~70% | 8–14 | Notes/Handout master view polish, effect-scheme depth, Designer suggestions | [parity-checklist.md](parity-checklist.md) |
@@ -292,6 +294,7 @@ scored done (16 open issues).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | trivial | Reused slide content scales to the destination; picker thumbnails remain; parity estimates unchanged |
 | 2026-10-22 | trivial | Animations shortfall: preview from the selected effect (Play From) is in. Percentages unchanged |
 | 2026-10-17 | trivial | A word no longer breaks after `?`, `!`, `}` or `+` (a URL's query wraps at the edge as in PowerPoint 2016 for Windows), as it already didn't after `/` and `\`. Headline percentages unchanged |
 | 2026-10-16 | trivial | Arrange shortfall: Align to Slide and Align Selected Objects are in the Align menu. Percentages unchanged |
@@ -968,3 +971,23 @@ remain partial. Geographic reduction/precision and unsupported binary-cache
 variants still need native coverage. Seventy older archived pages lack original
 source bytes and two native variants conflict; neither is counted as a pass.
 This change does not establish complete LibreOffice replacement.
+
+### PPTX.68: reconcile upstream text properties
+
+The current upstream additions are integrated without duplicating vertical overflow
+attributes. The canonical `vertOverflow` native property accepts the previous
+`verticalOverflow` spelling on input. Explicit policies, inheritance, old-document
+loading and two PPTX saves retain their meaning. Horizontal overflow continues to
+reject the vertical-only ellipsis value. Upstream metadata, table, reuse-slide and
+animation changes and both sets of regression tests are retained. This integration
+does not resolve the remaining native SmartArt, map or rich-label discrepancies.
+
+Integration checks retain all 6,908 archived layouts and 166 same-direction
+controls. Existing properties of 13,622 text bodies are unchanged; the only JSON
+differences are explicitly audited new null metadata fields. All 661 PDF text
+pages, 90 high-resolution rasters, 1,218 chart pages and 140 map rasters remain
+exact against their accepted baselines. These are regression checks, not a claim
+of complete native fidelity.
+
+Full `cargo xtask ci` passes all eight stages and 2,778 tests including
+doctests, with eight existing ignored tests.

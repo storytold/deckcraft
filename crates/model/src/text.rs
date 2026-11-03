@@ -93,34 +93,6 @@ impl TextDir {
     }
 }
 
-/// Vertical overflow policy (`ST_TextVertOverflowType`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum TextOverflow {
-    Overflow,
-    Clip,
-    Ellipsis,
-}
-
-impl TextOverflow {
-    pub fn xml(self) -> &'static str {
-        match self {
-            Self::Overflow => "overflow",
-            Self::Clip => "clip",
-            Self::Ellipsis => "ellipsis",
-        }
-    }
-
-    pub fn from_xml(s: &str) -> Option<Self> {
-        Some(match s {
-            "overflow" => Self::Overflow,
-            "clip" => Self::Clip,
-            "ellipsis" => Self::Ellipsis,
-            _ => return None,
-        })
-    }
-}
-
 /// `bodyPr`: insets in points, anchoring, wrapping, autofit, columns, direction, warp.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -132,8 +104,6 @@ pub struct BodyProps {
     pub anchor: Option<Anchor>,
     pub anchor_ctr: Option<bool>,
     pub wrap: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vertical_overflow: Option<TextOverflow>,
     /// Internal metrics for a recovered SmartArt text frame. Regenerated on diagram
     /// import; this is not a DrawingML bodyPr attribute.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -163,6 +133,47 @@ pub struct BodyProps {
     pub upright: Option<bool>,
     /// Space before the first paragraph and after the last count too (`spcFirstLastPara`).
     pub space_first_last: Option<bool>,
+    pub compat_ln_spc: Option<bool>,
+    #[serde(alias = "verticalOverflow", skip_serializing_if = "Option::is_none")]
+    pub vert_overflow: Option<TextOverflow>,
+    pub horz_overflow: Option<TextOverflow>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TextOverflow {
+    Overflow,
+    Clip,
+    Ellipsis,
+}
+
+impl TextOverflow {
+    pub fn xml(self) -> &'static str {
+        match self {
+            Self::Overflow => "overflow",
+            Self::Clip => "clip",
+            Self::Ellipsis => "ellipsis",
+        }
+    }
+
+    pub fn from_xml(value: &str) -> Option<Self> {
+        Some(match value {
+            "overflow" => Self::Overflow,
+            "clip" => Self::Clip,
+            "ellipsis" => Self::Ellipsis,
+            _ => return None,
+        })
+    }
+
+    /// A `horzOverflow` value: `ST_TextHorzOverflowType` has only `overflow` and `clip`.
+    pub fn from_horz_xml(value: &str) -> Option<Self> {
+        Self::from_xml(value).filter(|v| *v != Self::Ellipsis)
+    }
+
+    /// The `horzOverflow` attribute to write, leaving out `ellipsis`, which is vertical only.
+    pub fn horz_xml(v: Option<Self>) -> Option<&'static str> {
+        v.filter(|v| *v != Self::Ellipsis).map(Self::xml)
+    }
 }
 
 impl BodyProps {
@@ -174,7 +185,6 @@ impl BodyProps {
         self.anchor = self.anchor.or(p.anchor);
         self.anchor_ctr = self.anchor_ctr.or(p.anchor_ctr);
         self.wrap = self.wrap.or(p.wrap);
-        self.vertical_overflow = self.vertical_overflow.or(p.vertical_overflow);
         self.diagram_recovery_metrics = self.diagram_recovery_metrics.or(p.diagram_recovery_metrics);
         self.diagram_fine_advances = self.diagram_fine_advances.or(p.diagram_fine_advances);
         self.autofit = self.autofit.or(p.autofit);
@@ -190,6 +200,9 @@ impl BodyProps {
         self.rtl_col = self.rtl_col.or(p.rtl_col);
         self.upright = self.upright.or(p.upright);
         self.space_first_last = self.space_first_last.or(p.space_first_last);
+        self.compat_ln_spc = self.compat_ln_spc.or(p.compat_ln_spc);
+        self.vert_overflow = self.vert_overflow.or(p.vert_overflow);
+        self.horz_overflow = self.horz_overflow.or(p.horz_overflow);
     }
 }
 
@@ -203,6 +216,7 @@ pub enum Align {
     /// Justified with kashida (tatweel) elongation for Arabic (`justLow`).
     JustLow,
     Distributed,
+    ThaiDistributed,
 }
 
 impl Align {
@@ -214,6 +228,7 @@ impl Align {
             Align::Justify => "just",
             Align::JustLow => "justLow",
             Align::Distributed => "dist",
+            Align::ThaiDistributed => "thaiDist",
         }
     }
     pub fn from_xml(s: &str) -> Option<Self> {
@@ -221,7 +236,8 @@ impl Align {
             "l" => Align::Left,
             "ctr" => Align::Center,
             "r" => Align::Right,
-            "just" | "thaiDist" => Align::Justify,
+            "just" => Align::Justify,
+            "thaiDist" => Align::ThaiDistributed,
             "justLow" => Align::JustLow,
             "dist" => Align::Distributed,
             _ => return None,
@@ -502,6 +518,8 @@ pub struct RunProps {
     /// Action on mouse over (Insert ▸ Action ▸ Mouse Over on selected text, `a:hlinkMouseOver`).
     pub hover: Option<Hyperlink>,
     pub lang: Option<String>,
+    #[serde(deserialize_with = "bounded_language")]
+    pub alt_lang: Option<String>,
     pub shadow: Option<crate::style::Shadow>,
     /// `a:innerShdw` on the run. Outer shadow stays in `shadow`.
     pub inner_shadow: Option<crate::style::Shadow>,
@@ -511,6 +529,14 @@ pub struct RunProps {
     pub soft_edge: Option<f64>,
     /// Spelling/grammar errors are not flagged.
     pub no_proof: Option<bool>,
+    pub normalize_height: Option<bool>,
+}
+
+fn bounded_language<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(|lang| lang.map(|value| value.chars().take(256).collect()))
 }
 
 impl RunProps {
@@ -539,12 +565,14 @@ impl RunProps {
             link,
             hover,
             lang,
+            alt_lang,
             shadow,
             inner_shadow,
             glow,
             reflection,
             soft_edge,
-            no_proof
+            no_proof,
+            normalize_height
         );
     }
 }
@@ -761,16 +789,46 @@ mod tests {
 
     #[test]
     fn optional_overflow_inherits_without_replacing_explicit_policy() {
-        let parent = BodyProps { vertical_overflow: Some(TextOverflow::Ellipsis), ..Default::default() };
+        let parent = BodyProps { vert_overflow: Some(TextOverflow::Ellipsis), ..Default::default() };
         let mut inherited = BodyProps::default();
         inherited.inherit(&parent);
-        assert_eq!(inherited.vertical_overflow, Some(TextOverflow::Ellipsis));
-        let mut explicit = BodyProps { vertical_overflow: Some(TextOverflow::Overflow), ..Default::default() };
+        assert_eq!(inherited.vert_overflow, Some(TextOverflow::Ellipsis));
+        let mut explicit = BodyProps { vert_overflow: Some(TextOverflow::Overflow), ..Default::default() };
         explicit.inherit(&parent);
-        assert_eq!(explicit.vertical_overflow, Some(TextOverflow::Overflow));
+        assert_eq!(explicit.vert_overflow, Some(TextOverflow::Overflow));
         let old: BodyProps = serde_json::from_str("{}").unwrap();
-        assert_eq!(old.vertical_overflow, None);
-        assert!(!serde_json::to_string(&old).unwrap().contains("verticalOverflow"));
+        assert_eq!(old.vert_overflow, None);
+        assert!(!serde_json::to_string(&old).unwrap().contains("vertOverflow"));
+    }
+
+    #[test]
+    fn legacy_vertical_overflow_loads_into_the_canonical_field() {
+        for (name, policy) in [("clip", TextOverflow::Clip), ("overflow", TextOverflow::Overflow), ("ellipsis", TextOverflow::Ellipsis)] {
+            let legacy = serde_json::json!({"verticalOverflow": name, "horzOverflow": "clip"});
+            let body: BodyProps = serde_json::from_value(legacy).unwrap();
+            assert_eq!(body.vert_overflow, Some(policy));
+            assert_eq!(body.horz_overflow, Some(TextOverflow::Clip));
+            let current = serde_json::to_value(&body).unwrap();
+            assert_eq!(current["vertOverflow"], name);
+            assert!(current.get("verticalOverflow").is_none());
+            assert_eq!(serde_json::from_value::<BodyProps>(current).unwrap(), body);
+        }
+        let ambiguous = serde_json::json!({"verticalOverflow": "clip", "vertOverflow": "overflow"});
+        assert!(serde_json::from_value::<BodyProps>(ambiguous).is_err());
+    }
+
+    #[test]
+    fn alternate_language_inherits_and_native_input_is_bounded() {
+        let mut child = RunProps::default();
+        child.inherit(&RunProps { lang: Some("en-US".into()), alt_lang: Some("fr-FR".into()), ..Default::default() });
+        assert_eq!(child.lang.as_deref(), Some("en-US"));
+        assert_eq!(child.alt_lang.as_deref(), Some("fr-FR"));
+
+        let oversized = "x".repeat(300);
+        let json = serde_json::json!({"altLang": oversized});
+        let props: RunProps = serde_json::from_value(json).expect("run props");
+        assert_eq!(props.alt_lang.as_deref().map(str::len), Some(256));
+        assert_eq!(serde_json::from_value::<RunProps>(serde_json::json!({})).expect("old run props"), RunProps::default());
     }
 
     #[test]

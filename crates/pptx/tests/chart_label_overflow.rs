@@ -16,7 +16,7 @@ fn original(policy: Option<TextOverflow>) -> Presentation {
     chart.y_max = Some(10.);
     chart.text_styles.insert(ChartTextRole::Default, RunProps { font: Some("Inter".into()), size: Some(16.), ..Default::default() });
     let mut body = TextBody::from_text(&(1..=12).map(|i| format!("Row{i:02}")).collect::<Vec<_>>().join("\n"));
-    body.body.vertical_overflow = policy;
+    body.body.vert_overflow = policy;
     for (i, p) in body.paragraphs.iter_mut().enumerate() {
         p.runs[0].props = RunProps {
             font: Some("Inter".into()),
@@ -54,7 +54,7 @@ fn overflow_policy_and_complete_rich_body_survive_forced_rebuild() {
         let back = deckcraft_pptx::import(&bytes).unwrap();
         let ShapeKind::Chart(chart) = &back.slides[0].shapes[0].kind else { panic!("chart") };
         let text = chart.series[0].point_labels[&0].text.as_ref().unwrap();
-        assert_eq!(text.body.vertical_overflow, policy);
+        assert_eq!(text.body.vert_overflow, policy);
         assert_eq!(text.paragraphs.len(), 12);
         assert!(text.text().ends_with("Row12"));
 
@@ -162,7 +162,7 @@ fn manual_overflow_centers_the_complete_body_across_the_fixed_box() {
         let mut p = manual(Some(0.2), Some(0.25), 0., anchor);
         let ShapeKind::Chart(chart) = &mut Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("chart") };
         let body = chart.series[0].point_labels.get_mut(&0).unwrap().text.as_mut().unwrap();
-        body.body.vertical_overflow = Some(TextOverflow::Overflow);
+        body.body.vert_overflow = Some(TextOverflow::Overflow);
         let background = painted_bounds(&p, true).unwrap();
         let ink = painted_bounds(&p, false).unwrap();
         tops.push(ink.1);
@@ -333,7 +333,7 @@ fn automatic_half_turns_keep_the_full_unwrapped_body_for_every_overflow_policy()
                 }
                 let ShapeKind::Chart(chart) = &back.slides[0].shapes[0].kind else { panic!("chart") };
                 let body = chart.series[0].point_labels[&0].text.as_ref().unwrap();
-                assert_eq!(body.body.vertical_overflow, policy);
+                assert_eq!(body.body.vert_overflow, policy);
                 assert_eq!(body.paragraphs.len(), 12);
                 images.push(render_slide(&back, 0, &RenderOpts::default()).pixels);
                 if angle == 180. && !wrap && policy == Some(TextOverflow::Overflow) {
@@ -499,7 +499,7 @@ fn baseline_placement_preserves_wrapped_and_unwrapped_overflow_policies() {
             let body = chart.series[0].point_labels.get_mut(&0).unwrap().text.as_mut().unwrap();
             body.body.wrap = Some(wrap);
             body.body.rot = Some(angle);
-            body.body.vertical_overflow = Some(TextOverflow::Overflow);
+            body.body.vert_overflow = Some(TextOverflow::Overflow);
             let back = rebuilt(&p);
             let bg = painted_bounds(&back, true).unwrap();
             let expected_top = if wrap {
@@ -514,7 +514,7 @@ fn baseline_placement_preserves_wrapped_and_unwrapped_overflow_policies() {
             let ShapeKind::Chart(chart) = &back.slides[0].shapes[0].kind else { panic!("chart") };
             let body = chart.series[0].point_labels[&0].text.as_ref().unwrap();
             assert_eq!(body.body.wrap, Some(wrap));
-            assert_eq!(body.body.vertical_overflow, Some(TextOverflow::Overflow));
+            assert_eq!(body.body.vert_overflow, Some(TextOverflow::Overflow));
             assert_eq!(body.paragraphs.len(), 12);
         }
     }
@@ -536,7 +536,7 @@ fn an_oversized_first_line_extends_from_the_positioned_cap_for_every_overflow_po
         let ShapeKind::Chart(chart) = &mut shape.kind else { panic!("chart") };
         let body = chart.series[0].point_labels.get_mut(&0).unwrap().text.as_mut().unwrap();
         body.body.rot = Some(angle);
-        body.body.vertical_overflow = policy;
+        body.body.vert_overflow = policy;
         body.paragraphs.truncate(2);
         for (i, p) in body.paragraphs.iter_mut().enumerate() {
             p.runs[0].text = "I".into();
@@ -636,7 +636,7 @@ fn a_custom_bottom_margin_selects_full_box_overflow_placement_before_normalizati
     for (value, bottom, expected_left, expected_top) in [(7., None, 350., 123.), (7., Some(custom), 271., 54.), (1., Some(custom), 271., 54.)] {
         let mut p = custom_margin_control(value, "Open Sans", 21., 37., bottom);
         let ShapeKind::Chart(chart) = &mut Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("chart") };
-        chart.series[0].point_labels.get_mut(&0).unwrap().text.as_mut().unwrap().body.vertical_overflow = Some(TextOverflow::Overflow);
+        chart.series[0].point_labels.get_mut(&0).unwrap().text.as_mut().unwrap().body.vert_overflow = Some(TextOverflow::Overflow);
         let back = rebuilt(&p);
         let bg = painted_bounds(&back, true).unwrap();
         assert!((bg.0 as f64 - expected_left).abs() < 1.5 && (bg.1 as f64 - expected_top).abs() < 1.5, "value={value}, bottom={bottom:?}: {bg:?}");
@@ -646,7 +646,7 @@ fn a_custom_bottom_margin_selects_full_box_overflow_placement_before_normalizati
         assert_eq!(body.body.inset_t, None);
         assert_eq!(body.body.inset_b.is_some(), bottom.is_some());
         assert!((body.body.inset_b.unwrap_or(0.) - bottom.unwrap_or(0.)).abs() < 1e-9);
-        assert_eq!(body.body.vertical_overflow, Some(TextOverflow::Overflow));
+        assert_eq!(body.body.vert_overflow, Some(TextOverflow::Overflow));
         assert_eq!(body.paragraphs.len(), 12);
     }
 }
@@ -676,6 +676,6 @@ fn a_custom_half_turn_measures_narrowly_then_paints_at_the_grown_width() {
     let body = chart.series[0].point_labels[&0].text.as_ref().unwrap();
     assert_eq!(body.text(), "IIIIW");
     assert_eq!(body.body.wrap, Some(true));
-    assert_eq!(body.body.vertical_overflow, None);
+    assert_eq!(body.body.vert_overflow, None);
     assert!((body.body.inset_b.unwrap() - bottom).abs() < 1e-9);
 }

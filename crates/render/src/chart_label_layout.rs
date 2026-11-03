@@ -226,7 +226,7 @@ pub(super) struct Marker {
 }
 
 pub(super) fn overflow(ctx: &Ctx, body: &mut TextBody, width: f64, height: f64, measured: TextLayout) -> (TextLayout, Option<Marker>) {
-    let policy = body.body.vertical_overflow.unwrap_or(TextOverflow::Ellipsis);
+    let policy = body.body.vert_overflow.unwrap_or(TextOverflow::Ellipsis);
     if policy == TextOverflow::Overflow {
         return (measured, None);
     }
@@ -820,7 +820,7 @@ mod tests {
         body.paragraphs.truncate(1);
         body.paragraphs[0].runs[0].text = "Alpha beta gamma delta epsilon zeta".into();
         body.paragraphs[0].runs[0].props.font = Some("Open Sans".into());
-        body.body.vertical_overflow = Some(TextOverflow::Clip);
+        body.body.vert_overflow = Some(TextOverflow::Clip);
         let b = bounds((900., 280.), 12., None).unwrap();
         let measured = measure(&ctx, &body, b.width, true);
         let (measured, marker) = overflow(&ctx, &mut body, b.width, b.height, measured);
@@ -851,7 +851,7 @@ mod tests {
         let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
         for (policy, expected) in [(TextOverflow::Clip, 5), (TextOverflow::Overflow, 12)] {
             let mut body = rows(30.);
-            body.body.vertical_overflow = Some(policy);
+            body.body.vert_overflow = Some(policy);
             let measured = measure(&ctx, &body, 192., true);
             let (result, _) = overflow(&ctx, &mut body, 192., 200., measured);
             assert_eq!(result.lines.len(), expected);
