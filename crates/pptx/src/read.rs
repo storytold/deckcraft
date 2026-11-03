@@ -663,42 +663,46 @@ fn read_slides(
     let pkg = imp.pkg;
     let fallback_layout = p.masters.first().and_then(|m| m.layouts.first()).map(|l| l.id).unwrap_or_default();
     let mut file_slide_ids: HashMap<u32, SlideId> = HashMap::new();
-    let mut notes_by_target: HashMap<String, TextBody> = HashMap::new();
+    // A notes or comments part belongs to one slide; one shared by many must not be read (and
+    // copied) once per slide that names it.
+    let mut owned_parts: HashSet<String> = HashSet::new();
     for (file_id, path, id) in slide_ids {
         let Some(doc) = docs.get(&opc::norm(path)) else { continue };
         let part = Part::new(pkg, path, doc);
         let layout = part.rels.first_of("slideLayout").and_then(|r| layout_by_part.get(&opc::norm(&r.target)).copied()).unwrap_or(fallback_layout);
         let mut slide = read_slide(imp, &part, doc, *id, layout);
-        if let Some(notes) = slide_notes(imp, &part, &mut notes_by_target) {
+        if let Some(notes) = slide_notes(imp, &part, &mut owned_parts) {
             slide.notes = notes;
         }
-        read_slide_comments(pkg, pres_part, &part, &mut slide);
+        read_slide_comments(pkg, pres_part, &part, &mut slide, &mut owned_parts);
         file_slide_ids.insert(*file_id, *id);
         p.slides.push(Arc::new(slide));
     }
     file_slide_ids
 }
 
-/// The slide's notes text, read once per notes part.
-fn slide_notes(imp: &mut Imp, part: &Part, cache: &mut HashMap<String, TextBody>) -> Option<TextBody> {
+/// The slide's notes text. A notes part is the notes of the first slide that names it.
+fn slide_notes(imp: &mut Imp, part: &Part, owned: &mut HashSet<String>) -> Option<TextBody> {
     let n = part.rels.first_of("notesSlide")?;
-    let key = opc::norm(&n.target);
-    if let Some(cached) = cache.get(&key) {
-        return Some(cached.clone());
+    if !owned.insert(opc::norm(&n.target)) {
+        log::warn!("pptx: notes part {} is named by more than one slide; kept on the first", n.target);
+        return None;
     }
     let pkg = imp.pkg;
     let nd = load(pkg, &n.target)?;
     let np = Part::new(pkg, &n.target, &nd);
-    let notes = read_notes(imp, &np, &nd.root);
-    cache.insert(key, notes.clone());
-    Some(notes)
+    Some(read_notes(imp, &np, &nd.root))
 }
 
 /// Comments. A modern part and the legacy part can describe the same threads (PowerPoint
 /// writes both): the modern one wins, its flattened legacy copy is skipped.
-fn read_slide_comments(pkg: &Package, pres_part: &Part, part: &Part, slide: &mut Slide) {
+/// Each comments part is read once, for the first slide that names it.
+fn read_slide_comments(pkg: &Package, pres_part: &Part, part: &Part, slide: &mut Slide, owned: &mut HashSet<String>) {
     let mut parts: Vec<(Doc, bool)> = vec![];
     for c in part.rels.all_of("comments") {
+        if !owned.insert(opc::norm(&c.target)) {
+            continue;
+        }
         if let Some(cd) = pkg.xml(&c.target) {
             // The content type names the modern part; a package that types it only through a
             // Default entry instead of an Override is still modern when its root is p188.
