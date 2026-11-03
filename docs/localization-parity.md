@@ -1,6 +1,6 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (Simplified Chinese interface catalog from craft-i18n: 1,148 DeckCraft rows plus shared rows on 0.13.1, CJK faces borrowed for the UI's own text; previous: major, interface catalogs from craft-i18n, language setting and German) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-03 · **Last updated:** 2026-11-03 · **Change:** minor (Simplified Chinese interface carried onto 0.15.0: 1,148 DeckCraft rows plus shared rows cover the 0.13.1 labels; CJK faces borrowed for the UI's own text; new 0.14/0.15 labels remain English until translated) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft's interface is shown in English, German or Simplified Chinese. Strings stay English
 literals in the code and are looked up in the shared
@@ -70,6 +70,7 @@ of every text in the file and the default for new text (`format.languageAll`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | Simplified Chinese carried onto 0.15.0: catalog and CJK interface faces carry over; new 0.14/0.15 labels remain English until translated. Still no native review. |
 | 2026-11-01 | minor | Simplified Chinese on 0.13.1: upstream refactors keep every existing translation; the new Effects presets, Size & Properties fields, picture styles, print-preview error and command labels are translated (1,148 DeckCraft rows). Still no native review. |
 | 2026-10-29 | minor | Simplified Chinese interface catalog (`zh-hans/deckcraft.tsv` in craft-i18n: 1,093 DeckCraft rows plus shared rows), offered as `zh-hans` and drawn with CJK faces borrowed for the UI's own catalog text. Dynamic strings still assembled with `format!` before drawing stay English until the source uses `tl!`/`fmt`. No native review yet. |
 | 2026-10-28 | major | Interface catalogs from craft-i18n, system language and Preferences › Interface language (#15); German partial (~840 rows) |

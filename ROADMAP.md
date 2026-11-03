@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (Simplified Chinese interface catalog from craft-i18n: 1,148 DeckCraft rows plus shared rows on 0.13.1, including the new Effects presets, size fields and picture styles; CJK faces borrowed for the UI's own text; localization ~15% → ~20%; previous: minor, interface languages from craft-i18n: language setting and German, #15) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-03 · **Last updated:** 2026-11-03 · **Change:** minor (Simplified Chinese interface carried onto 0.15.0: the 1,148-row catalog and CJK interface faces still cover the 0.13.1 labels; new 0.14/0.15 labels remain English until translated; previous: trivial, File › About replaces Account) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (progress log: read-only `slide.actions` lists shape and table text actions; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -150,6 +150,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-03 | Interface languages (#15): the Simplified Chinese catalog is carried onto 0.15.0 with no translation regressions; 1,148 rows still cover the 0.13.1 labels, and new 0.14/0.15 labels remain English until translated |
 | 2026-11-01 | Interface languages (#15): the Simplified Chinese catalog moves onto 0.13.1. Upstream refactors keep every translation, and the new Effects presets, Size & Properties fields, picture styles and command labels get `tl!` rows (1,148 DeckCraft rows) |
 | 2026-10-29 | Interface languages (#15): Simplified Chinese is offered as `zh-hans` from the craft-i18n catalog (1,093 DeckCraft rows plus shared rows); the interface borrows CJK faces for its own labels, so the UI draws before a Chinese deck is open. Dynamic strings still assembled with `format!` stay English until the source uses `tl!`/`fmt` |
 | 2026-10-28 | Interface languages (#15): DeckCraft reads the craft-i18n catalogs (`CRAFT_I18N_DIR`, pinned in `craft-i18n.rev`), follows the system language and has Preferences › Interface language and `app.language`. German is the first language: ribbon, menus, command palette, status bar, File tab, dialogs and panes |
@@ -325,6 +326,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | Simplified Chinese interface (zh-hans) carried onto 0.15.0: the catalog and CJK interface faces carry over; new 0.14/0.15 labels remain English until translated |
 | 2026-11-01 | minor | Simplified Chinese interface (zh-hans) merged onto 0.13.1: the catalog and CJK interface faces carry over, and strings upstream refactored keep their translations |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
