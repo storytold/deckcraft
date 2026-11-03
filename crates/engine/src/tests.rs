@@ -6486,3 +6486,19 @@ fn slide_master_view_rejects_invalid_indices() {
     assert!(s.execute("view.slideMaster", &json!({})).is_ok());
     assert!(s.execute("view.slideMaster", &json!({"master": 0})).is_ok());
 }
+
+#[test]
+fn save_to_image_path_is_an_error_not_zip_bytes() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-img-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (cmd, name) in [("file.save", "a.png"), ("file.saveAs", "a.jpg"), ("file.save", "a.jpeg")] {
+        let mut s = Session::new();
+        sample::open_sample(&mut s).unwrap();
+        let path = dir.join(name).to_string_lossy().to_string();
+        let before = s.doc().unwrap().path.clone();
+        assert!(s.execute(cmd, &json!({"path": path})).is_err(), "{cmd} {name} should fail");
+        assert!(!std::path::Path::new(&path).exists(), "{name} must not be written");
+        assert_eq!(s.doc().unwrap().path, before);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
