@@ -606,8 +606,9 @@ pub fn dictionary(lang: &str) -> Option<Arc<Dictionary>> {
         }
         let (bytes_a, bytes_d) = (std::fs::read(&a).ok()?, std::fs::read(d).ok()?);
         let dict = Arc::new(Dictionary::parse(&bytes_a, &bytes_d));
+        // A concurrent loader of the same files may have inserted first: share its copy.
         if let Ok(mut m) = by_files().lock() {
-            m.insert(a, dict.clone());
+            return Some(m.entry(a).or_insert(dict).clone());
         }
         Some(dict)
     });
