@@ -100,8 +100,7 @@ impl Part {
     }
     /// Like [`Part::keep`], also declaring prefixes that only an enclosing wrapper binds.
     pub fn keep_inner(&self, el: &El) -> String {
-        let ns: Vec<(String, String)> = self.ns.iter().chain(&self.inner_ns).cloned().collect();
-        keep_xml(el, &ns)
+        keep_with(el, &[&self.ns, &self.inner_ns])
     }
 }
 
@@ -136,36 +135,58 @@ fn inner_decls(root: &El, ns: &[(String, String)]) -> Vec<(String, String)> {
     out
 }
 
-/// Serialize `el`, declaring every prefix it uses that the source root declared.
-pub fn keep_xml(el: &El, ns: &[(String, String)]) -> String {
-    let mut used = HashSet::new();
-    fn rec(e: &El, used: &mut HashSet<String>, depth: usize) {
+/// Longest namespace name copied onto a kept fragment or a resolved `mc` branch. Real ones are
+/// URIs of well under 100 bytes; a longer one is not copied, so one declaration cannot be
+/// multiplied by every fragment that uses its prefix.
+const MAX_NS_VALUE: usize = 2048;
+
+/// Prefixes `el` and its descendants use in element and attribute names, and those listed in
+/// `mc:Ignorable` (which must stay declared for the markup-compatibility rules to hold).
+fn used_prefixes(el: &El) -> HashSet<&str> {
+    fn rec<'a>(e: &'a El, used: &mut HashSet<&'a str>, depth: usize) {
         if depth > crate::xml::MAX_DEPTH {
             return;
         }
         if let Some((p, _)) = e.name.split_once(':') {
-            used.insert(p.to_string());
+            used.insert(p);
         }
-        for (k, _) in &e.attrs {
-            if let Some((p, _)) = k.split_once(':')
+        for (k, v) in &e.attrs {
+            if let Some((p, local)) = k.split_once(':')
                 && p != "xmlns"
                 && p != "xml"
             {
-                used.insert(p.to_string());
+                used.insert(p);
+                if local == "Ignorable" {
+                    used.extend(v.split_whitespace());
+                }
             }
         }
         for c in e.elements() {
             rec(c, used, depth + 1);
         }
     }
+    let mut used = HashSet::new();
     rec(el, &mut used, 0);
-    let mut el = el.clone();
-    for (k, v) in ns {
+    used
+}
+
+/// Serialize `el`, declaring every prefix it uses that the source root declared.
+pub fn keep_xml(el: &El, ns: &[(String, String)]) -> String {
+    keep_with(el, &[ns])
+}
+
+fn keep_with(el: &El, decls: &[&[(String, String)]]) -> String {
+    let used = used_prefixes(el);
+    let mut have: HashSet<&str> = el.attrs.iter().map(|(a, _)| a.as_str()).collect();
+    let mut extra = Vec::new();
+    for (k, v) in decls.iter().flat_map(|d| d.iter()) {
         let p = k.strip_prefix("xmlns:").unwrap_or("");
-        if !p.is_empty() && used.contains(p) && !el.attrs.iter().any(|(a, _)| a == k) {
-            el.attrs.push((k.clone(), v.clone()));
+        if !p.is_empty() && used.contains(p) && v.len() <= MAX_NS_VALUE && have.insert(k) {
+            extra.push((k.clone(), v.clone()));
         }
     }
+    let mut el = el.clone();
+    el.attrs.extend(extra);
     el.to_xml()
 }
 
@@ -315,9 +336,12 @@ fn kept_parts(pkg: &Package, pres_path: &str) -> Vec<deckcraft_model::KeptPart> 
             let rp = opc::rels_path(&name);
             if let Some(rels_xml) = text(&rp) {
                 for sub in pkg.rels(&name).items.iter().filter(|s| !s.external && keepable(&s.target)) {
-                    if let Some(x) = text(&sub.target)
-                        && !out.iter().any(|k| k.name.eq_ignore_ascii_case(&sub.target))
-                    {
+                    // Checked before the part is read: repeated relationships to one large part
+                    // must not copy it again each time.
+                    if out.len() >= 400 || out.iter().any(|k| k.name.eq_ignore_ascii_case(&sub.target)) {
+                        continue;
+                    }
+                    if let Some(x) = text(&sub.target) {
                         out.push(KeptPart {
                             content_type: pkg.content_type(&sub.target).unwrap_or_default(),
                             name: sub.target.clone(),
@@ -365,13 +389,19 @@ fn resolve_mc_rels(el: &mut El, depth: usize, rels: Option<&Rels>) {
                     if let Some(b) = branch {
                         for n in &b.children {
                             if let Node::El(e) = n {
-                                let mut e = e.clone();
-                                // Carry namespace declarations from the branch onto its content.
+                                // Carry the namespace declarations from the branch that its content
+                                // uses (all of them per child made children x declarations copies).
+                                let used = used_prefixes(e);
+                                let mut have: HashSet<&str> = e.attrs.iter().map(|(a, _)| a.as_str()).collect();
+                                let mut extra = Vec::new();
                                 for (k, v) in b.attrs.iter().chain(ac.attrs.iter()) {
-                                    if k.starts_with("xmlns") && !e.attrs.iter().any(|(a, _)| a == k) {
-                                        e.attrs.push((k.clone(), v.clone()));
+                                    let needed = k == "xmlns" || k.strip_prefix("xmlns:").is_some_and(|p| used.contains(p));
+                                    if needed && v.len() <= MAX_NS_VALUE && have.insert(k) {
+                                        extra.push((k.clone(), v.clone()));
                                     }
                                 }
+                                let mut e = e.clone();
+                                e.attrs.extend(extra);
                                 out.push(Node::El(e));
                             }
                         }
@@ -1413,4 +1443,37 @@ fn header_footer(p: &Presentation) -> HeaderFooter {
         }
     }
     hf
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mc_branches_carry_only_the_declarations_their_content_uses() {
+        // 2,000 declarations on the branch and 2,000 children: each child gets the one it uses
+        // (and the default), not all 2,000.
+        let decls: String = (0..2000).map(|i| format!(r#" xmlns:n{i}="urn:n{i}""#)).collect();
+        let kids: String = (0..2000).map(|i| format!("<n{i}:x/>")).collect();
+        let x = format!(
+            r#"<r xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:AlternateContent><mc:Fallback xmlns="urn:d"{decls}>{kids}</mc:Fallback></mc:AlternateContent></r>"#
+        );
+        let mut d = crate::xml::parse(x.as_bytes()).unwrap();
+        resolve_mc(&mut d.root, 0);
+        let kids: Vec<&El> = d.root.elements().collect();
+        assert_eq!(kids.len(), 2000);
+        assert_eq!(kids[7].attrs, vec![("xmlns".to_string(), "urn:d".to_string()), ("xmlns:n7".to_string(), "urn:n7".to_string())]);
+    }
+
+    #[test]
+    fn kept_fragments_skip_oversized_namespace_names() {
+        let big = "u".repeat(MAX_NS_VALUE + 1);
+        let ns = vec![("xmlns:a".to_string(), "urn:a".to_string()), ("xmlns:b".to_string(), big)];
+        let d = crate::xml::parse(br#"<a:x xmlns:a="urn:a" xmlns:b="urn:b"><b:y/></a:x>"#).unwrap();
+        let mut el = d.root.clone();
+        el.attrs.clear();
+        let out = keep_xml(&el, &ns);
+        assert!(out.contains(r#"xmlns:a="urn:a""#), "{out}");
+        assert!(!out.contains("uuuu"), "the oversized declaration is not copied");
+    }
 }
