@@ -34,6 +34,7 @@ use paragraph::{
     align, align_to, anchor, autofit, bullets, columns, direction, level, line_spacing, margins, numbering, paragraph, paragraph_dialog, rtl, wrap,
 };
 use ruler::{ruler, tabs};
+pub use text_effects::default_text_shadow;
 use text_effects::{case, text_outline, text_shadow, text_warp};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -120,7 +121,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Font…",
             ["Home", "Font"],
             Some("Cmd+T"),
-            "{family?, size?: pt, bold?: bool, italic?: bool, underline?: none|sng|dbl|heavy|dotted|dash|wavy, color?, strike?: none|sng|dbl, baseline?: none|super|sub|<fraction>, caps?: none|small|all, spacing?: pt} — with none of these, opens the Font dialog",
+            "{family?, size?: pt, bold?: bool, italic?: bool, underline?: none|sng|dbl|heavy|dotted|dash|wavy, color?, strike?: none|sng|dbl, shadow?: bool, baseline?: none|super|sub|<fraction>, caps?: none|small|all, spacing?: pt} — with none of these, opens the Font dialog",
             has_text_or_shapes,
             font_dialog
         ),
@@ -353,6 +354,7 @@ mod tests {
                 "underline": "wavy",
                 "color": "#112233",
                 "strike": "dbl",
+                "shadow": true,
                 "baseline": "super",
                 "caps": "small",
                 "spacing": 3
@@ -369,12 +371,13 @@ mod tests {
         assert_eq!(r.underline.as_deref(), Some("wavy"));
         assert!(matches!(r.fill, Some(Fill::Solid { color }) if matches!(color.base, ColorBase::Rgb { .. })));
         assert_eq!(r.strike, Some(Strike::Double));
+        assert!(r.shadow.is_some());
         assert_eq!(r.baseline, Some(0.3));
         assert_eq!(r.caps, Some(Caps::Small));
         assert_eq!(r.spacing, Some(3.0));
         s.execute("edit.undo", &json!({})).unwrap();
         let r = props(&s);
-        assert!(r.font.is_none() && r.size.is_none() && r.bold.is_none() && r.underline.is_none() && r.fill.is_none());
+        assert!(r.font.is_none() && r.size.is_none() && r.bold.is_none() && r.underline.is_none() && r.fill.is_none() && r.shadow.is_none());
         assert_eq!(r.strike, None);
         assert_eq!(r.caps, None);
     }
@@ -411,6 +414,7 @@ mod tests {
         assert_eq!(id, "font");
         assert_eq!(params["italic"], true);
         assert_eq!(params["bold"], false);
+        assert_eq!(params["shadow"], false);
         assert!(params["family"].as_str().is_some_and(|f| !f.is_empty()));
         assert!(params["size"].as_f64().is_some_and(|n| n > 0.0));
     }
