@@ -176,8 +176,8 @@ fn parse_extra(v: Option<&Value>) -> Result<Option<Vec<deckcraft_color::ExtraCol
     let Some(arr) = v.as_array() else {
         return Err(bad("design.colors", "`extra` must be a list of {name, color: #RRGGBB, tints?}"));
     };
-    if arr.len() > 200 {
-        return Err(bad("design.colors", "`extra` holds at most 200 colours"));
+    if arr.len() > deckcraft_color::MAX_EXTRA_COLORS {
+        return Err(bad("design.colors", format!("`extra` holds at most {} colours", deckcraft_color::MAX_EXTRA_COLORS)));
     }
     let mut out: Vec<deckcraft_color::ExtraColor> = Vec::with_capacity(arr.len());
     for e in arr {

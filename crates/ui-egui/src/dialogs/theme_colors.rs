@@ -81,7 +81,7 @@ fn extra_color_rows(ui: &mut Ui, d: &mut Dialog) {
         n = n.saturating_sub(1);
         d.fields.insert("extraCount".into(), n.to_string());
     }
-    if ui.button("Add colour").clicked() && n < 200 {
+    if ui.button("Add colour").clicked() && n < deckcraft_color::MAX_EXTRA_COLORS {
         d.fields.insert(format!("extra.{n}.name"), String::new());
         d.fields.insert(format!("extra.{n}.color"), "000000".into());
         d.fields.insert("extraCount".into(), (n + 1).to_string());

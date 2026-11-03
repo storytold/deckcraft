@@ -243,6 +243,9 @@ impl SchemeSlot {
 pub const VARIANT_ROWS: usize = 5;
 /// The most rows an explicit `tints` list may hold.
 pub const MAX_TINT_ROWS: usize = 10;
+/// The most extra named colours a scheme holds: what `design.colors` and the dialog accept, and
+/// what a file carries in either direction.
+pub const MAX_EXTRA_COLORS: usize = 200;
 
 /// A named colour beyond the twelve slots (a brand palette entry). It is shown in the colour
 /// galleries after the theme colours and can be named wherever a scheme colour name is accepted;

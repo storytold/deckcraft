@@ -384,6 +384,19 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
     let t = Tokens::get(ui.ctx());
     let mut out = None;
     ui.set_min_width(220.0);
+    // A scheme with many extra colours makes a tall gallery: it scrolls past this height, while
+    // the usual ten-colour gallery is well under it and looks as before (the area shrinks to it).
+    egui::ScrollArea::vertical().max_height(GALLERY_MAX_HEIGHT).show(ui, |ui| color_grid_body(ui, &t, scheme, none_label, &mut out));
+    if out.is_some() {
+        ui.close();
+    }
+    out
+}
+
+/// The tallest the colour gallery grows before it scrolls, in points.
+pub(crate) const GALLERY_MAX_HEIGHT: f32 = 420.0;
+
+fn color_grid_body(ui: &mut Ui, t: &Tokens, scheme: &ColorScheme, none_label: Option<&str>, out: &mut Option<Option<ColorRef>>) {
     ui.label(egui::RichText::new("Theme Colors").font(theme::bold(12.0)));
     let slots = [
         SchemeSlot::Lt1,
@@ -456,7 +469,7 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
         egui::Grid::new(("theme_colors", chunk)).spacing(vec2(3.0, 1.0)).show(ui, |ui| {
             for col in cols {
                 if sw(ui, col.color, &col.tip) {
-                    out = Some(Some(col.pick.clone()));
+                    *out = Some(Some(col.pick.clone()));
                 }
             }
             ui.end_row();
@@ -476,7 +489,7 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
                         _ => (format!("{} {}", col.tip, v.label), ColorRef::rgb(v.color)),
                     };
                     if sw(ui, v.color, &tip) {
-                        out = Some(Some(pick));
+                        *out = Some(Some(pick));
                     }
                 }
                 ui.end_row();
@@ -489,7 +502,7 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
         ui.spacing_mut().item_spacing.x = 3.0;
         for (c, name) in deckcraft_color::STANDARD_COLORS {
             if sw(ui, c, name) {
-                out = Some(Some(ColorRef::rgb(c)));
+                *out = Some(Some(ColorRef::rgb(c)));
             }
         }
     });
@@ -497,7 +510,7 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
     if let Some(n) = none_label
         && ui.button(n).clicked()
     {
-        out = Some(None);
+        *out = Some(None);
     }
     // "More Colors…": a hex field.
     let id = ui.scope_id().with("hex");
@@ -509,7 +522,7 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
             && ui.input(|i| i.key_pressed(egui::Key::Enter))
             && let Some(c) = Rgba::from_hex(&hex)
         {
-            out = Some(Some(ColorRef::rgb(c)));
+            *out = Some(Some(ColorRef::rgb(c)));
         }
     });
     ui.data_mut(|d| d.insert_temp(id, hex));
@@ -517,10 +530,6 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
         crate::eyedropper::request(ui.ctx());
         ui.close();
     }
-    if out.is_some() {
-        ui.close();
-    }
-    out
 }
 
 /// A row of gallery tiles drawn by `paint_tile`; returns the clicked index.

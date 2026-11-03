@@ -114,7 +114,7 @@ fn extra_colors(cs: &El, scheme: &mut ColorScheme) {
             scheme.tints.insert(slot, clrs(t));
         }
     }
-    for c in x.children_named("color").take(256) {
+    for c in x.children_named("color").take(deckcraft_color::MAX_EXTRA_COLORS) {
         let (Some(name), Some(color)) = (c.attr("name"), c.attr("val").and_then(Rgba::from_hex)) else { continue };
         if name.trim().is_empty() {
             continue;

@@ -41,7 +41,8 @@ fn extra_colors(w: &mut W, c: &ColorScheme) {
     for (slot, tints) in &c.tints {
         rows(w, A::new().a("slot", slot.xml_name()), tints);
     }
-    for e in &c.extra {
+    // What the reader takes back, no more.
+    for e in c.extra.iter().take(deckcraft_color::MAX_EXTRA_COLORS) {
         w.open("dc:color", A::new().a("name", &e.name).a("val", e.color.hex()));
         if let Some(t) = &e.tints {
             rows(w, A::new(), t);

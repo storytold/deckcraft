@@ -2069,6 +2069,22 @@ fn default_durations_match_powerpoint() {
 }
 
 #[test]
+fn extra_colours_beyond_the_limit_are_cut_the_same_way_on_save_and_load() {
+    use deckcraft_color::MAX_EXTRA_COLORS;
+    let mut p = defaults::new_presentation(None);
+    {
+        let c = &mut Arc::make_mut(&mut p.masters[0]).theme.colors;
+        for i in 0..MAX_EXTRA_COLORS + 7 {
+            c.extra.push(ExtraColor { name: format!("Extra {i}"), color: Rgba::rgb((i % 256) as u8, 0, 0), tints: None });
+        }
+    }
+    let q = round(&p);
+    let back = &q.masters[0].theme.colors.extra;
+    assert_eq!(back.len(), MAX_EXTRA_COLORS, "the writer keeps what the reader takes");
+    assert_eq!(back.last().map(|e| e.name.as_str()), Some(format!("Extra {}", MAX_EXTRA_COLORS - 1).as_str()));
+}
+
+#[test]
 fn extra_theme_colours_and_tint_rows_survive_save() {
     let mut p = defaults::new_presentation(None);
     {
