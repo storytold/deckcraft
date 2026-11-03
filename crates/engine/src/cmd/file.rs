@@ -900,15 +900,17 @@ mod tests {
             chart
         }
 
-        let mut p = Presentation::default();
-        p.slides = vec![Arc::new(Slide { shapes: vec![shape(true, "Series"), shape(false, "User title")], ..Default::default() })];
-        p.masters = vec![Arc::new(Master {
-            shapes: vec![shape(true, "Series")],
-            layouts: vec![Layout { shapes: vec![shape(true, "Series")], ..Default::default() }],
+        let mut p = Presentation {
+            slides: vec![Arc::new(Slide { shapes: vec![shape(true, "Series"), shape(false, "User title")], ..Default::default() })],
+            masters: vec![Arc::new(Master {
+                shapes: vec![shape(true, "Series")],
+                layouts: vec![Layout { shapes: vec![shape(true, "Series")], ..Default::default() }],
+                ..Default::default()
+            })],
+            notes_master: Some(Arc::new(Master { shapes: vec![shape(true, "Series")], ..Default::default() })),
+            handout_master: Some(Arc::new(Master { shapes: vec![shape(true, "Series")], ..Default::default() })),
             ..Default::default()
-        })];
-        p.notes_master = Some(Arc::new(Master { shapes: vec![shape(true, "Series")], ..Default::default() }));
-        p.handout_master = Some(Arc::new(Master { shapes: vec![shape(true, "Series")], ..Default::default() }));
+        };
 
         restore_missing_chart_title_state(&mut p);
         restore_missing_chart_title_state(&mut p);
