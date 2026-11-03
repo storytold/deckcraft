@@ -77,7 +77,7 @@ fn placed<'a>(
         style.font = style.font.map(f64::round);
         style.secondary_font = style.secondary_font.map(f64::round);
     }
-    let mut out = footprints(tree, frame, data, &solution, work)?;
+    let mut out = footprints(tree, frame, data, &solution, false, work)?;
     charge(work, out.len())?;
     for p in &mut out {
         if flow.children.contains(&p.node_key)
@@ -102,11 +102,13 @@ fn footprints<'a>(
     frame: Xfrm,
     data: &Data<'a>,
     solution: &constraints::Solution,
+    refit: bool,
     work: &mut usize,
 ) -> Result<Vec<Placed<'a>>, &'static str> {
     let mut out = Vec::new();
     let style = constraints::lookup(solution, tree).unwrap_or_else(|| geometry::BoxStyle::new(frame));
-    geometry::place_inner(tree, style, Some(frame), data, &mut out, 0, solution, Some(&HashSet::new()), work)?;
+    let refits = if refit { HashSet::from([constraints::id(tree)]) } else { HashSet::new() };
+    geometry::place_inner(tree, style, Some(frame), data, &mut out, 0, solution, Some(&refits), work)?;
     out.retain(|p| p.shape.is_some() || (p.text_enabled && p.points.iter().any(|pt| pt.attr("type") != Some("doc"))));
     Ok(out)
 }
@@ -116,6 +118,7 @@ fn allocated<'a>(
     frame: Xfrm,
     data: &Data<'a>,
     changes: &constraints::Adjustments,
+    refit: bool,
     work: &mut usize,
 ) -> Result<Vec<Placed<'a>>, &'static str> {
     let mut solution = constraints::resolve_adjusted(tree, frame, data, work, changes)?;
@@ -124,7 +127,31 @@ fn allocated<'a>(
         style.font = style.font.map(f64::round);
         style.secondary_font = style.secondary_font.map(f64::round);
     }
-    footprints(tree, frame, data, &solution, work)
+    footprints(tree, frame, data, &solution, refit, work)
+}
+
+fn retain_allocation(
+    out: &[Placed<'_>],
+    changes: &mut constraints::Adjustments,
+    flow: &Flow,
+    local_primary: &std::collections::HashMap<usize, f64>,
+    work: &mut usize,
+) -> Result<bool, &'static str> {
+    use constraints::Adjustment::Value;
+    charge(work, out.len().saturating_mul(2))?;
+    let mut reduced = false;
+    for p in out {
+        if !flow.children.contains(&p.node_key) {
+            continue;
+        }
+        let actual = if flow.primary == "w" { p.rect.w } else { p.rect.h } / unit(flow.primary);
+        if let Some(&before) = local_primary.get(&p.node_key) {
+            reduced |= before - actual > 16. * f64::EPSILON * before.abs().max(actual.abs()).max(1.);
+        }
+        changes.insert((p.node_key, "w".into()), Value(p.rect.w / unit("w")));
+        changes.insert((p.node_key, "h".into()), Value(p.rect.h / unit("h")));
+    }
+    Ok(reduced)
 }
 
 fn trial<'a>(
@@ -223,6 +250,9 @@ fn search_pass<'a>(
     steps.extend(rest);
     let mut changes = constraints::Adjustments::new();
     let mut local_primary = std::collections::HashMap::new();
+    // Remember an actual capacity reduction, not merely that allocation ran.
+    // A root rule search retains that reduction when it reaches final text fit.
+    let mut allocated_fit = false;
     let mut grown = Vec::<Growth>::new();
     let mut coupled = HashSet::new();
     let mut out = placed(tree, frame, data, &changes, flow, work)?;
@@ -239,14 +269,8 @@ fn search_pass<'a>(
                     local_primary.insert(*key, value / unit(flow.primary));
                 }
             }
-            out = allocated(tree, frame, data, &changes, work)?;
-            charge(work, out.len().saturating_mul(2))?;
-            for p in &out {
-                if flow.children.contains(&p.node_key) {
-                    changes.insert((p.node_key, "w".into()), Value(p.rect.w / unit("w")));
-                    changes.insert((p.node_key, "h".into()), Value(p.rect.h / unit("h")));
-                }
-            }
+            out = allocated(tree, frame, data, &changes, false, work)?;
+            allocated_fit |= retain_allocation(&out, &mut changes, flow, &local_primary, work)?;
             out = placed(tree, frame, data, &changes, flow, work)?;
             continue;
         };
@@ -371,10 +395,41 @@ fn search_pass<'a>(
     // Orientation can trade one text dimension for the other. Such scopes retain
     // the joint fallback; a clipped parent budget alone does not reopen allocation.
     charge(work, controls.len().saturating_mul(2))?;
+    let dimension_rules = controls.iter().any(|c| matches!(c.property.as_str(), "w" | "h"));
     let controls: Vec<_> = controls.iter().filter(|c| coupled.contains(&c.target)).cloned().collect();
     super::coupled::search(tree, frame, data, entries, &controls, measure, &mut changes, &mut out, work)?;
+    finish(tree, frame, data, &mut changes, flow, dimension_rules && !allocated_fit, measure, work)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish<'a>(
+    tree: &Instance<'a>,
+    frame: Xfrm,
+    data: &Data<'a>,
+    changes: &mut constraints::Adjustments,
+    flow: &Flow,
+    retain_fit: bool,
+    measure: &mut Measure<'_>,
+    work: &mut usize,
+) -> Result<Vec<Placed<'a>>, &'static str> {
+    use constraints::Adjustment::Value;
     // Final text-aware placement sees the reclaimed dimensions in rule order.
-    super::placed(tree, frame, data, &changes, measure, work)
+    let mut out = super::placed(tree, frame, data, changes, measure, work)?;
+    // A root dimension search with unfinished text also retains a finite fit of
+    // its allocated footprints. Do not repeat a capacity fit already performed
+    // above, or fit again after a later font/height rule resolved the overflow.
+    if flow.index == 0 && retain_fit && score(&out, &flow.children, measure, true, work)? > 1e-6 {
+        let retained = allocated(tree, frame, data, changes, true, work)?;
+        charge(work, retained.len().saturating_mul(2))?;
+        for p in retained {
+            if flow.children.contains(&p.node_key) {
+                changes.insert((p.node_key, "w".into()), Value(p.rect.w / unit("w")));
+                changes.insert((p.node_key, "h".into()), Value(p.rect.h / unit("h")));
+            }
+        }
+        out = super::placed(tree, frame, data, changes, measure, work)?;
+    }
+    Ok(out)
 }
 
 // Probe the original endpoint and retain the smallest successful point on the
@@ -574,6 +629,66 @@ mod tests {
             assert!((actual.rect.h - expected.rect.h).abs() < 1e-8);
             assert_eq!(actual.font, Some(13.));
         }
+    }
+
+    #[test]
+    fn root_dimension_rules_retain_text_fit_without_repeating_capacity_fit() {
+        let data = data();
+        let mm = unit("w");
+        // Independent native controls distinguish a text-only fit from a flow
+        // that first exceeds its frame. A no-op width rule still owns its fit.
+        for (frame_width, ordinary_scale, dimension_scale) in [
+            (118., 0.9912109375, 0.9902429580688477),
+            (119., 0.9990234375, 0.9980478286743164),
+            (120., 0.9990234375, 0.9980478286743164),
+            (167., 0.9990234375, 0.9980478286743164),
+        ] {
+            for (rules, expected) in [("", ordinary_scale), ("<rule type='w' val='91'/>", dimension_scale)] {
+                let xml = format!(
+                    "<layoutDef><layoutNode><alg type='lin'/>
+                     <layoutNode name='target'><alg type='tx'/><presOf axis='ch'/><shape type='rect'/>
+                     <constrLst><constr type='w' val='91'/><constr type='h' val='13'/>
+                     <constr type='primFontSz' val='23'/></constrLst><ruleLst>{rules}</ruleLst></layoutNode>
+                     <layoutNode name='marker'><alg type='tx'/><presOf axis='ch'/><shape type='rect'/>
+                     <constrLst><constr type='w' val='28'/><constr type='h' val='18'/>
+                     <constr type='primFontSz' val='12'/></constrLst></layoutNode></layoutNode></layoutDef>"
+                );
+                let layout = crate::xml::parse(xml.as_bytes()).unwrap();
+                let mut measure =
+                    |items: &[Placed<'_>], _: super::super::MeasureKind| Ok(items.iter().map(|p| if p.name == "target" { 1. } else { 0. }).collect());
+                let out =
+                    super::super::super::evaluate_measured(&layout.root, &data, Xfrm::new(0., 0., frame_width * mm, 94. * mm), Some(&mut measure))
+                        .unwrap();
+                let marker = out.iter().find(|p| p.name == "marker").unwrap();
+                assert!((marker.rect.w / (28. * mm) - expected).abs() < 1e-10, "frame={frame_width}, rules={rules}, marker={:?}", marker.rect);
+            }
+        }
+    }
+
+    #[test]
+    fn successful_later_font_rule_removes_the_root_text_refit() {
+        let data = data();
+        let layout = crate::xml::parse(
+            b"<layoutDef><layoutNode><alg type='lin'/>
+              <layoutNode name='target'><alg type='tx'/><presOf axis='ch'/><shape type='rect'/>
+              <constrLst><constr type='w' val='91'/><constr type='h' val='13'/>
+              <constr type='primFontSz' val='23'/></constrLst>
+              <ruleLst><rule type='w' val='91'/><rule type='primFontSz' val='7'/></ruleLst></layoutNode>
+              <layoutNode name='marker'><alg type='tx'/><presOf axis='ch'/><shape type='rect'/>
+              <constrLst><constr type='w' val='28'/><constr type='h' val='18'/></constrLst></layoutNode>
+              </layoutNode></layoutDef>",
+        )
+        .unwrap();
+        let mm = unit("w");
+        let mut measure = |items: &[Placed<'_>], _: super::super::MeasureKind| {
+            Ok(items.iter().map(|p| if p.name == "target" { (p.font.unwrap_or(23.) - 10.).max(0.) } else { 0. }).collect())
+        };
+        let out = super::super::super::evaluate_measured(&layout.root, &data, Xfrm::new(0., 0., 146. * mm, 94. * mm), Some(&mut measure)).unwrap();
+        let marker = out.iter().find(|p| p.name == "marker").unwrap();
+        let target = out.iter().find(|p| p.name == "target").unwrap();
+        assert!((marker.rect.w - 28. * mm).abs() < 1e-8);
+        assert!((target.rect.w - 91. * mm).abs() < 1e-8);
+        assert!(target.font.unwrap() <= 10.);
     }
 
     #[test]

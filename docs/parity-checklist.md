@@ -1,6 +1,6 @@
 # PowerPoint feature checklist
 
-> **PPTX.55 update 2026-11-03:** Customized uncached SmartArt text retains authored run sizes through font rules. Independent default-inheritance controls support the diagram-specific missing-size default. All 24 non-whitespace font-size sets match; all 2,430 retained geometry results are unchanged. Small-font origins, line metrics and wider layout/map/chart limits remain open; feature scores are unchanged.
+> **PPTX.56 update 2026-11-03:** Root SmartArt dimension rules retain their finite text-fit stage without duplicating an earlier capacity reduction. Independent native controls distinguish successful later text fits and already allocated flows. The final build improves 56 of 2,462 geometry cases with no lost or worse geometry result; all eight CI stages and 2,725 tests pass. Generated bullet defaults for fractional custom font sizes, wider layout/map/chart limits and full LibreOffice replacement remain open; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
 
@@ -340,6 +340,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 |---|---|---|
 | 2026-11-02 | minor | PPTX.53: retain scoped fitting checkpoints and correct diagram glyph/bullet origins; remaining failures retained |
 | 2026-11-03 | minor | PPTX.54: preserve intermediate reversed-flow alignment and bounded pending corrections |
+| 2026-11-03 | minor | PPTX.56: preserve root dimension-rule fitting without repeating capacity reduction |
 | 2026-11-03 | minor | PPTX.55: retain customized diagram run sizes and independently verified missing-size precedence |
 | 2026-11-02 | minor | PPTX.52: preserve local text footprints, fine numeric font fitting and final reverse-search phase; native controls and residual metrics retained |
 | 2026-11-02 | minor | PPTX.51: phase-aware reverse alignment, unchanged-budget dimension progress and native rich-label reload; independent controls and explicit remaining failures |
@@ -511,3 +512,55 @@ records and 42 selected rasters, all 814 chart pages and 140 map images. All 24 
 control pages match
 the isolated candidate's model, raw text and 4x raster exactly. Complete SmartArt,
 geographic and chart parity and full LibreOffice replacement remain unproven.
+
+### PPTX.56: retain the root dimension-rule fit stage
+
+A root linear dimension search retains a finite fit when text still overflows.
+The allocator now records whether it actually reduced the flow to fit capacity,
+so the final stage does not apply that reduction twice. Later font or height
+rules that resolve the text overflow remove the need for the extra text fit.
+The change uses allocation state and measured overflow, with bounded existing
+search work; it does not select behavior by document, font or page identity.
+
+Thirty-two original native controls distinguish a no-op width rule from a direct
+endpoint, reverse the width/height search order, change later font rules, and
+compare frames below, at and above the children's combined extent. Eight controls
+transpose the primary axis and reverse vertical flow; their preregistered scale
+predictions agree with native results within 0.00000122. All controls
+pass format validation and open/export successfully. The first candidate gained
+51 strict geometry matches but lost 29 by fitting already allocated flows again;
+it was rejected. The revised candidate improves 2,314 to 2,370 strict matches
+within 0.025pt across 2,462 cases, with 2,393 unchanged and no lost or worse results.
+The 92 remaining strict raw-box mismatches include known orientation-related
+representation differences as well as unresolved geometry; they are not claimed
+fixed. Separate newer reverse-layout diagnostics also remain unresolved.
+
+Two regression tests cover native-observed capacity cases and removal of the
+refit after a successful later font rule. Restoring the previous production
+logic makes the dimension-rule regression fail. Four actual 4,096-pixel-wide
+before/candidate/native comparisons remain within two pixels on shape bounds
+in both versions: the new numerical gain is subpixel, not a claimed visible
+raster improvement. Overflowing text and its remaining clipped-glyph differences
+are still visible in those controls.
+
+New independent fractional-font controls also expose a retained PPTX.55 problem:
+a customized 27.75pt run receives a generated 22.5pt margin instead of the native
+18pt. Truncating font sizes with the existing default-size bands fixes that case but
+regresses the separate 21.75pt control, so that proposal was rejected and is not
+part of this patch. Exact 21pt controls also expose an incorrect existing band;
+this is not proof that truncation alone caused the discrepancy.
+Fractional glyph advances, painted font sizes and generated defaults require
+separate treatment; the static 11pt default and broader text/layout gaps remain.
+
+The initial text comparison preserves 476 of 485 raw-text records and 41 of 42
+selected rasters exactly. All nine changed text pages retain the complete
+non-whitespace character sequences, font sizes and counts, and their absolute
+glyph-origin RMS improves. One page's maximum individual glyph error increases
+by 0.01861pt while its RMS improves; existing text-origin errors remain. Actual
+raster comparisons on that page, a rotated control and the changed-raster page
+also reduce total RGB error against native output. This is not complete text
+parity. Final refactor integration exactly reproduces all 2,462 geometry results,
+485 text records and 42 selected rasters of the isolated root-fit candidate.
+All 814 retained chart pages, 140 map images and 24 custom-font control pages
+remain unchanged. All eight local CI stages and 2,725 tests including doctests
+pass, with eight existing ignored tests retained; hosted checks are separate.
