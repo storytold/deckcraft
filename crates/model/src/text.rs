@@ -456,6 +456,8 @@ pub struct RunProps {
     /// Action on mouse over (Insert ▸ Action ▸ Mouse Over on selected text, `a:hlinkMouseOver`).
     pub hover: Option<Hyperlink>,
     pub lang: Option<String>,
+    #[serde(deserialize_with = "bounded_language")]
+    pub alt_lang: Option<String>,
     pub shadow: Option<crate::style::Shadow>,
     /// `a:innerShdw` on the run. Outer shadow stays in `shadow`.
     pub inner_shadow: Option<crate::style::Shadow>,
@@ -465,6 +467,13 @@ pub struct RunProps {
     pub soft_edge: Option<f64>,
     /// Spelling/grammar errors are not flagged.
     pub no_proof: Option<bool>,
+}
+
+fn bounded_language<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(|lang| lang.map(|value| value.chars().take(256).collect()))
 }
 
 impl RunProps {
@@ -493,6 +502,7 @@ impl RunProps {
             link,
             hover,
             lang,
+            alt_lang,
             shadow,
             inner_shadow,
             glow,
@@ -694,6 +704,20 @@ impl TextBody {
 mod tests {
     use super::*;
     use deckcraft_color::Rgba;
+
+    #[test]
+    fn alternate_language_inherits_and_native_input_is_bounded() {
+        let mut child = RunProps::default();
+        child.inherit(&RunProps { lang: Some("en-US".into()), alt_lang: Some("fr-FR".into()), ..Default::default() });
+        assert_eq!(child.lang.as_deref(), Some("en-US"));
+        assert_eq!(child.alt_lang.as_deref(), Some("fr-FR"));
+
+        let oversized = "x".repeat(300);
+        let json = serde_json::json!({"altLang": oversized});
+        let props: RunProps = serde_json::from_value(json).expect("run props");
+        assert_eq!(props.alt_lang.as_deref().map(str::len), Some(256));
+        assert_eq!(serde_json::from_value::<RunProps>(serde_json::json!({})).expect("old run props"), RunProps::default());
+    }
 
     #[test]
     fn explicit_bullet_follow_text_resets_block_inheritance() {
