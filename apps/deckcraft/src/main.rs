@@ -25,6 +25,7 @@ mod graphics;
 mod logging;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
+mod start_failure;
 
 use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Services, SlideApp};
@@ -285,7 +286,7 @@ fn main() -> eframe::Result {
     let apple_events = apple_events::AppleEvents::install();
     #[cfg(target_os = "macos")]
     let apple_events = &apple_events;
-    eframe::run_native(
+    let result = eframe::run_native(
         "DeckCraft",
         options,
         Box::new(move |cc| {
@@ -328,7 +329,12 @@ fn main() -> eframe::Result {
                 apple_events.connect(&cc.egui_ctx),
             )))
         }),
-    )
+    );
+    // Say why instead of exiting silently (`start_failure`).
+    if let Err(e) = &result {
+        start_failure::report(e);
+    }
+    result
 }
 
 #[cfg(test)]
