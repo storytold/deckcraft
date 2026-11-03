@@ -246,6 +246,9 @@ fn point_fills(w: &mut W, s: &Series, g: Group) {
     }
 }
 
+/// Data points (categories and values counted per series) one chart group writes to its caches.
+const MAX_EXPORT_POINTS: usize = 4_000_000;
+
 fn series(w: &mut W, c: &Chart, s: &Series, i: usize, kind: ChartType, g: Group) {
     w.open0("c:ser");
     w.val("c:idx", i);
@@ -529,7 +532,16 @@ fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)]) 
     if g != Group::Stock {
         w.val("c:varyColors", vary);
     }
-    for (i, s) in list {
+    // Each series repeats the categories in its own cache, so the output grows with series times
+    // categories: stop adding series once a group's caches pass the budget (the first is always written).
+    let mut left = MAX_EXPORT_POINTS;
+    for (n, (i, s)) in list.iter().enumerate() {
+        let cost = c.categories.len().max(s.values.len()).saturating_mul(2).saturating_add(s.x_values.len() + s.sizes.len());
+        if n > 0 && cost > left {
+            log::warn!("pptx: chart export stopped after {n} series; the data caches passed {MAX_EXPORT_POINTS} points");
+            break;
+        }
+        left = left.saturating_sub(cost);
         series(w, c, s, *i, kind, g);
     }
     if c.data_labels {
