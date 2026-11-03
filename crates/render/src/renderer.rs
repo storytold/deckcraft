@@ -346,6 +346,14 @@ impl Renderer {
         if k.is_finite() && k > 1e-12 { 1.0 / k } else { 1.0 }
     }
 
+    /// [`Renderer::per_point`] along the shape's own x and y axes: a group can stretch its child
+    /// space unevenly, and a tiled fill keeps its size in points on the slide on both axes.
+    fn per_point_xy(&self, m: Affine, depth: usize) -> (f64, f64) {
+        let c = self.line_space(m, depth).1.as_coeffs();
+        let inv = |s: f64| if s.is_finite() && s > 1e-12 { 1.0 / s } else { 1.0 };
+        (inv(c[0].hypot(c[1])), inv(c[2].hypot(c[3])))
+    }
+
     /// The size and transform a shape's text is set in: inside a group whose child coordinates
     /// scale the shape, the shape's size in slide points and `m` with that scale taken out, so
     /// insets and font sizes stay in points; otherwise `w`, `h` and `m` themselves.
@@ -428,7 +436,8 @@ impl Renderer {
                 // A group's own fill (a group filled with its parent's passes that on).
                 let own = match &s.fill {
                     Some(Fill::Group) | None => self.group_fill.clone(),
-                    Some(fl) => Some((fl.clone(), m, Rect::new(0.0, 0.0, x.w, x.h))),
+                    // A tile is given in points; this group's own space may be scaled by its parents.
+                    Some(fl) => Some((paint::tiled_per_point(fl, self.per_point_xy(m, depth)).into_owned(), m, Rect::new(0.0, 0.0, x.w, x.h))),
                 };
                 let outer = std::mem::replace(&mut self.group_fill, own);
                 // A group's outer shadow is cast by everything in it, as PowerPoint draws it: the
@@ -541,6 +550,7 @@ impl Renderer {
         geo: &Geometry,
         (w, h): (f64, f64),
         m: Affine,
+        per_point: (f64, f64),
         fade: &dyn Fn(usize) -> deckcraft_geom::morph::Fade,
     ) {
         for (i, sp) in geo.paths.iter().enumerate() {
@@ -566,7 +576,10 @@ impl Renderer {
                         paint::fill_path(ctx, rctx, gf, None, &path, *gbox, *gm, sp.fill, fade(i).fill, f.pres);
                     }
                 }
-                _ => paint::fill_path(ctx, rctx, fl, fill_ph, &sp.path, Rect::new(0.0, 0.0, w, h), m, sp.fill, fade(i).fill, f.pres),
+                _ => {
+                    let fl = paint::tiled_per_point(fl, per_point);
+                    paint::fill_path(ctx, rctx, &fl, fill_ph, &sp.path, Rect::new(0.0, 0.0, w, h), m, sp.fill, fade(i).fill, f.pres)
+                }
             }
             ctx.set_fill_rule(peniko::Fill::NonZero);
         }
@@ -655,9 +668,13 @@ impl Renderer {
         let line = &d.line;
         // Effects below the shape.
         if let Some(e) = &effects {
-            // A picture (or picture fill) casts its shadow from its pixels, not its frame.
+            // A picture (or picture fill) casts its shadow from its pixels, not its frame. A tile
+            // is sized in points on the slide, as the face's is, and so is its shadow and reflection.
             let content = match (&s.kind, &fill) {
-                (ShapeKind::Picture { fill: pf }, _) | (_, Some(Fill::Picture(pf))) => Some(paint::resolved(rctx, pf, None).into_owned()),
+                (ShapeKind::Picture { fill: pf }, _) | (_, Some(Fill::Picture(pf))) => {
+                    let pf = paint::tiled_picture_per_point(pf, self.per_point_xy(m, depth));
+                    Some(paint::resolved(rctx, &pf, None).into_owned())
+                }
                 _ => None,
             };
             // What casts the shadow: the fill as see-through as it is, and the outline.
@@ -736,6 +753,7 @@ impl Renderer {
         let fill = &d.fill;
         let outline = &d.outline;
         let fade = |i: usize| d.fade(i);
+        let pt_xy = self.per_point_xy(m, d.depth);
         // Fill.
         match &s.kind {
             ShapeKind::Picture { fill: pf } => {
@@ -744,13 +762,14 @@ impl Renderer {
                 if s.fill.as_ref().is_some_and(|f| !f.is_none())
                     && let Some(fl) = &fill
                 {
-                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, &fade);
+                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, pt_xy, &fade);
                 }
                 ctx.set_transform(m);
                 let bounds = Rect::new(0.0, 0.0, w, h);
                 ctx.push_clip_layer(outline);
                 let t = f.opts.gif_times.iter().find(|g| g.0 == s.id).map(|g| g.1);
-                paint::picture(ctx, f.pres, &paint::resolved(rctx, pf, None), bounds, m, t);
+                let pf = paint::tiled_picture_per_point(pf, pt_xy);
+                paint::picture(ctx, f.pres, &paint::resolved(rctx, &pf, None), bounds, m, t);
                 ctx.pop_layer();
             }
             // An object DeckCraft doesn't model (an embedded OLE object, an unknown graphic): its
@@ -761,7 +780,7 @@ impl Renderer {
                 if s.fill.as_ref().is_some_and(|f| !f.is_none())
                     && let Some(fl) = &fill
                 {
-                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, &fade);
+                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, pt_xy, &fade);
                 }
                 ctx.set_transform(m);
                 let pf = deckcraft_model::style::PictureFill { media: *media, ..Default::default() };
@@ -787,7 +806,7 @@ impl Renderer {
                 if let Some(fl) = &fill
                     && !(empty_ph && f.opts.edit && s.fill.is_none() && s.line.is_none() && s.style.is_none())
                 {
-                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, &fade);
+                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, pt_xy, &fade);
                 }
             }
         }
