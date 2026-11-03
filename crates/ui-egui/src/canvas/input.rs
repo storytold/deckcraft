@@ -53,6 +53,17 @@ pub(crate) fn page_flick(wheel: egui::Vec2) -> Option<bool> {
 pub(super) fn wheel_slide_target(events: &[egui::Event], current: usize, slides: usize, carry: &mut f32) -> Option<usize> {
     let last = slides.checked_sub(1)?;
     let mut target = current.min(last);
+    let handled = wheel_lines(events, carry, |whole, down| {
+        let steps = whole.min(slides);
+        target = if down { target.saturating_add(steps).min(last) } else { target.saturating_sub(steps) };
+    });
+    handled.then_some(target)
+}
+
+/// Reads discrete (line or page) mouse-wheel events and calls `step` once per event with the
+/// whole lines it completed and whether it went down. Fractions add up in `carry`; a change of
+/// direction drops what was left over. Returns whether a wheel event was read.
+pub(crate) fn wheel_lines(events: &[egui::Event], carry: &mut f32, mut step: impl FnMut(usize, bool)) -> bool {
     let mut handled = false;
     for event in events {
         if let egui::Event::MouseWheel { unit, delta, modifiers, .. } = event
@@ -71,15 +82,15 @@ pub(super) fn wheel_slide_target(events: &[egui::Event], current: usize, slides:
             // The small slack keeps sums such as 10 × 0.1 from falling just short of a line.
             let whole = (carry.abs() + 1e-4).floor();
             *carry -= whole.copysign(*carry);
-            let steps = whole.min(slides as f32) as usize;
-            target = if delta.y < 0.0 { target.saturating_add(steps).min(last) } else { target.saturating_sub(steps) };
+            // A page unit or a huge delta is still a bounded number of steps.
+            step(whole.min(f32::from(u16::MAX)) as usize, delta.y < 0.0);
             handled = true;
         }
     }
-    handled.then_some(target)
+    handled
 }
 
-pub(super) fn trackpad_scroll(events: &[egui::Event]) -> egui::Vec2 {
+pub(crate) fn trackpad_scroll(events: &[egui::Event]) -> egui::Vec2 {
     events.iter().fold(egui::Vec2::ZERO, |sum, event| match event {
         egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta, modifiers, .. } if !modifiers.ctrl && !modifiers.command => sum + *delta,
         _ => sum,

@@ -280,23 +280,51 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
     {
         show.wheel_zoom(srect, p, lines);
     }
-    // A trackpad swipe (and the mouse wheel) turns the page. The pen is drawing, so a flick
-    // there stays on the slide. Pinch zoom is not a show gesture.
-    if !show.pen
-        && let Some(next) = crate::canvas::page_flick(ctx.input(|i| i.smooth_scroll_delta))
+    // The mouse wheel and a trackpad swipe turn the page. The pen is drawing, so a flick there
+    // stays on the slide. Pinch zoom is not a show gesture.
+    if show.pen {
+        return;
+    }
+    // #1724: each wheel notch is one step, as →/← are. The smoothed delta spread a notch over
+    // several frames, too little in each to count, and the swipe cooldown dropped quick notches.
+    let mut steps = Vec::new();
+    let mut carry = show.wheel_carry;
+    let wheeled = ctx.input(|i| crate::canvas::wheel_lines(&i.events, &mut carry, |whole, down| steps.push((whole, down))));
+    show.wheel_carry = carry;
+    if wheeled {
+        // Quick notches past the last slide stop at the end-of-show screen; the next notch, like
+        // the next click, leaves it.
+        let was_ended = show.ended;
+        'notches: for (whole, next) in steps {
+            for _ in 0..whole {
+                if next && (show.state.ended && !was_ended || !out.keep) {
+                    break 'notches;
+                }
+                turn_page(show, doc, next, out);
+                if out.actions.last() == Some(&deckcraft_anim::ShowAction::None) {
+                    // Back at the first step: further notches change nothing.
+                    break;
+                }
+            }
+        }
+    } else if let Some(next) = crate::canvas::page_flick(ctx.input(|i| crate::canvas::trackpad_scroll(&i.events)))
         && now - show.last_swipe > 0.35
     {
         show.last_swipe = now;
-        if next {
-            if show.ended {
-                out.keep = false;
-            } else {
-                out.actions.push(show.state.next(doc));
-            }
+        turn_page(show, doc, next, out);
+    }
+}
+
+fn turn_page(show: &mut Show, doc: &Presentation, next: bool, out: &mut Out) {
+    if next {
+        if show.ended {
+            out.keep = false;
         } else {
-            show.ended = false;
-            out.actions.push(show.state.prev(doc));
+            out.actions.push(show.state.next(doc));
         }
+    } else {
+        show.ended = false;
+        out.actions.push(show.state.prev(doc));
     }
 }
 
