@@ -357,10 +357,18 @@ pub fn effects(w: &mut W, fx: &Effects) {
                 .a("endA", pct(r.end_alpha.clamp(0.0, 1.0)))
                 .a("endPos", pct(r.end_pos.clamp(0.0, 1.0)))
                 .a("dist", emu(r.dist).max(0))
-                .a("dir", 5_400_000)
-                .a("sy", -100_000)
-                .a("algn", "bl")
-                .a("rotWithShape", "0"),
+                // Kept from a file as read: held to the schema's ranges so a stray value can't
+                // make PowerPoint repair the file (ST_PositiveFixedAngle, ST_FixedAngle,
+                // ST_PositiveFixedPercentage).
+                .o("stPos", r.st_pos.map(|v| v.clamp(0, 100_000)))
+                .o("dir", r.dir.map(|v| v.rem_euclid(21_600_000)))
+                .o("fadeDir", r.fade_dir.map(|v| v.rem_euclid(21_600_000)))
+                .o("sx", r.sx)
+                .o("sy", r.sy)
+                .o("kx", r.kx.map(|v| v.clamp(-5_399_999, 5_399_999)))
+                .o("ky", r.ky.map(|v| v.clamp(-5_399_999, 5_399_999)))
+                .o("algn", r.align.as_deref())
+                .b("rotWithShape", r.rotate_with_shape),
         );
     }
     if let Some(r) = fx.soft_edge {
@@ -468,7 +476,10 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
         .o("anchor", b.anchor.map(|a| a.xml()))
         .b("anchorCtr", b.anchor_ctr)
         .b("upright", b.upright)
-        .b("spcFirstLastPara", b.space_first_last);
+        .b("spcFirstLastPara", b.space_first_last)
+        .b("compatLnSpc", b.compat_ln_spc)
+        .o("vertOverflow", b.vert_overflow.map(|v| v.xml()))
+        .o("horzOverflow", deckcraft_model::text::TextOverflow::horz_xml(b.horz_overflow));
     let warp = b.warp.as_deref().filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()));
     if warp.is_none() && b.autofit.is_none() {
         w.empty("a:bodyPr", a);
@@ -629,6 +640,7 @@ fn typeface(w: &mut W, tag: &str, f: &Option<String>) {
 pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
     let a = A::new()
         .o("lang", r.lang.as_deref().filter(|l| !l.is_empty()))
+        .o("altLang", r.alt_lang.as_deref().filter(|l| !l.is_empty()))
         .o("sz", r.size.map(|s| (s.clamp(1.0, 4000.0) * 100.0).round() as i64))
         .b("b", r.bold)
         .b("i", r.italic)
@@ -652,7 +664,8 @@ pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
         )
         .o("spc", r.spacing.map(|s| (s.clamp(-4000.0, 4000.0) * 100.0).round() as i64))
         .o("baseline", r.baseline.map(|b| pct(b.clamp(-10.0, 10.0))))
-        .b("noProof", r.no_proof);
+        .b("noProof", r.no_proof)
+        .b("normalizeH", r.normalize_height);
     let has_fx = r.shadow.is_some() || r.inner_shadow.is_some() || r.glow.is_some() || r.reflection.is_some() || r.soft_edge.is_some();
     let has_kids = r.outline.is_some()
         || r.fill.is_some()
