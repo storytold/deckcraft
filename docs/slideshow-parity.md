@@ -1,6 +1,6 @@
 # Slide show and presenter view: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** minor (Set Up Slide Show ▸ Keep mouse cursor visible, #1445; previous: minor, Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (deleting slides removes them from custom shows; previous: minor, Set Up Slide Show ▸ Keep mouse cursor visible, #1445; previous: minor, Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Presenting is the job PowerPoint is hired for. This doc covers the show window, presenter view,
 rehearsal and recording. Transition and animation playback are in
@@ -33,7 +33,7 @@ ready** (estimated), **10–16 h** to parity.
 | Pen and highlighter ink | yes | pen only (Cmd+P pen, Cmd+A arrow, E erases all ink) | No highlighter, per-stroke eraser, ink colours, or keep/discard annotations prompt |
 | Laser pointer | yes | yes in the show | Cmd/Ctrl+L and the on-screen button draw the show's laser colour and leave no ink. The presenter window does not move that dot |
 | Subtitles and live captions | yes (cloud speech) | no | AI dimension |
-| Custom shows | yes | yes: Show plays that list in order and does not change Set Up; Set Up Slide Show can keep one for Play from Start | Hidden slides in the list are skipped |
+| Custom shows | yes | yes: Show plays that list in order and does not change Set Up; Set Up Slide Show can keep one for Play from Start | Hidden slides in the list are skipped; deleting a slide removes its ID from every custom show |
 | Set Up Show: loop until Esc, kiosk (browsed at a kiosk), show without animation/narration, pen colour, slides range | yes | yes, most options | Keep mouse cursor visible (DeckCraft's own, #1445) stops the show hiding a still pointer after 2.5 s, for decks with clickable choices; it is a user preference (`ui.json`, `showKeepCursor`), since PPTX has no place for it |
 | Use rehearsed timings | yes | yes | |
 
@@ -90,6 +90,7 @@ Reading View in a window with navigation: present (checklist row done).
 | 2026-10-14 | trivial | Show Media Controls hides the show's playback bar and GIF button |
 | 2026-10-14 | minor | Typing a slide number during the show shows it, and Enter goes there. Esc clears the number before it leaves the show. Checklist breadth stays 66% |
 | 2026-10-14 | minor | A custom show plays only its slides, from the Custom Shows dialog, from Set Up Slide Show, or from a click action. Checklist breadth stays 66% |
+| 2026-11-02 | minor | Deleting a slide removes it from every custom show; custom-show cleanup is undoable and survives native save/reopen |
 | 2026-10-14 | minor | Presenter view pauses and resets its timer (T, R) and changes notes size (A-/A+, brackets). The clock shows local time. Second-display placement and swap stay with #433. Checklist breadth stays 66% |
 | 2026-10-14 | minor | See All Slides (G) and click-to-zoom (Z) during the show. Presenter view opens that grid and sets black, white and zoom. Checklist breadth stays 66% |
 | 2026-10-24 | minor | Ctrl+wheel (Cmd+wheel on a Mac) zooms the show in and out around the pointer, up to 4×; the plain wheel still turns the page (#1286) |

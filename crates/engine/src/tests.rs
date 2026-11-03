@@ -5362,7 +5362,8 @@ fn opening_a_file_caps_absurd_effect_sizes() {
                 e.soft_edge = Some(f64::NAN);
                 let sw = e.outer_shadow.as_mut().unwrap();
                 (sw.blur, sw.dist, sw.sx) = (huge, huge, huge);
-                *e.reflection.as_mut().unwrap() = Reflection { blur: huge, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.5, dist: huge };
+                *e.reflection.as_mut().unwrap() =
+                    Reflection { blur: huge, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.5, dist: huge, ..Default::default() };
             }
             let glow = Some(Glow { color: deckcraft_model::style::ColorRef::rgb(deckcraft_color::Rgba::BLACK), radius: huge });
             let runs: Vec<&mut deckcraft_model::text::Run> = match &mut sh.kind {
