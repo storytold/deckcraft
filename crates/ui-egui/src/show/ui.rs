@@ -267,11 +267,14 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
     pointing
 }
 
-/// Count whole discrete steps from mouse wheel events, accumulating fractions in `carry`.
-pub(super) fn mouse_wheel_steps(events: &[egui::Event], line_points: f32, carry: &mut f32) -> i32 {
+/// Count whole discrete steps from mouse wheel (Line/Page) events, accumulating fractions in `carry`.
+/// Returns `(steps, has_wheel_event)`.
+pub(super) fn mouse_wheel_steps(events: &[egui::Event], carry: &mut f32) -> (i32, bool) {
     let mut steps = 0i32;
+    let mut has_wheel = false;
     for event in events {
         if let egui::Event::MouseWheel { unit, delta, modifiers, .. } = event
+            && matches!(unit, egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page)
             && !modifiers.ctrl
             && !modifiers.command
             && !modifiers.shift
@@ -279,22 +282,19 @@ pub(super) fn mouse_wheel_steps(events: &[egui::Event], line_points: f32, carry:
             && delta.y.abs() > 0.0
             && delta.y.abs() >= delta.x.abs()
         {
-            let lines = match unit {
-                egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => delta.y,
-                egui::MouseWheelUnit::Point => delta.y / line_points.max(1.0),
-            };
-            if *carry * lines < 0.0 {
+            has_wheel = true;
+            if *carry * delta.y < 0.0 {
                 *carry = 0.0;
             }
-            *carry += lines;
+            *carry += delta.y;
             let whole = (carry.abs() + 1e-4).floor();
             if whole >= 1.0 {
                 *carry -= whole.copysign(*carry);
-                steps += if lines < 0.0 { whole as i32 } else { -(whole as i32) };
+                steps += if delta.y < 0.0 { whole as i32 } else { -(whole as i32) };
             }
         }
     }
-    steps
+    (steps, has_wheel)
 }
 
 fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
@@ -312,19 +312,27 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
     }
     // Discrete mouse-wheel notches turn the page one step per notch without gesture cooldown (#1724).
     if !show.pen {
-        let steps = ctx.input(|i| mouse_wheel_steps(&i.events, line_points, &mut show.wheel_carry));
+        let (steps, has_wheel) = ctx.input(|i| mouse_wheel_steps(&i.events, &mut show.wheel_carry));
         if steps > 0 {
             show.last_swipe = now;
-            if show.ended {
-                out.keep = false;
-            } else {
-                out.actions.push(show.state.next(doc));
+            for _ in 0..steps {
+                if show.ended {
+                    out.keep = false;
+                    break;
+                } else {
+                    out.actions.push(show.state.next(doc));
+                }
             }
             return;
         } else if steps < 0 {
             show.last_swipe = now;
             show.ended = false;
-            out.actions.push(show.state.prev(doc));
+            for _ in 0..(-steps) {
+                out.actions.push(show.state.prev(doc));
+            }
+            return;
+        }
+        if has_wheel {
             return;
         }
     }

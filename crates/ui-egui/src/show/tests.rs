@@ -818,7 +818,7 @@ fn ctrl_wheel_zooms_the_show_and_the_plain_wheel_turns_the_page() {
         assert_eq!(show.state.slide, 0, "{held:?}: zooming out does not go back a page either");
         assert!(show.zoom_view().is_none(), "{held:?}: back to the whole slide");
 
-        show_wheel(&mut h, centre, -3.0, egui::Modifiers::NONE);
+        show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
         assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 1, "the plain wheel turns the page");
     }
 }
@@ -856,6 +856,18 @@ fn fractional_mouse_wheel_notches_accumulate_to_turn_slide() {
     assert_eq!(h.state().show.as_ref().expect("showing").state.slide, 0);
     show_wheel(&mut h, centre, -0.5, egui::Modifiers::NONE);
     assert_eq!(h.state().show.as_ref().expect("showing").state.slide, 1);
+}
+
+/// #1724: multiple notches in a single wheel event advance multiple slides.
+#[test]
+fn multiple_wheel_notches_in_one_event_advance_multiple_slides() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    assert_eq!(h.state().show.as_ref().expect("showing").state.slide, 0);
+
+    // Two notches forward in one event (-2.0 lines): advances 2 slides.
+    show_wheel(&mut h, centre, -2.0, egui::Modifiers::NONE);
+    assert_eq!(h.state().show.as_ref().expect("showing").state.slide, 2);
 }
 
 #[test]
