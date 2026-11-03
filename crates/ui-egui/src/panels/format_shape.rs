@@ -517,7 +517,7 @@ pub(super) fn dash_params(v: &str) -> Value {
         "squareDot" => json!({"dash": "dot", "cap": "square"}),
         // Plain Dot has a flat cap, so it does not stay Round Dot or Square Dot.
         "dot" => json!({"dash": "dot", "cap": "flat"}),
-        v => json!({"dash": v}),
+        v => json!({"dash": v, "cap": "flat"}),
     }
 }
 
