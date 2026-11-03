@@ -362,7 +362,22 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
         }
         "batch" => {
             let keep = a.get("keepGoing").and_then(Value::as_bool).unwrap_or(false);
-            if a.get("atomic").and_then(Value::as_bool).unwrap_or(false) {
+            // An `atomic` that is not a boolean is refused: read as false, it would keep the
+            // changes made before a failing command.
+            let atomic = match a.get("atomic") {
+                None | Some(Value::Null) => false,
+                Some(Value::Bool(v)) => *v,
+                Some(v) => {
+                    let kind = match v {
+                        Value::String(_) => "a string",
+                        Value::Number(_) => "a number",
+                        Value::Array(_) => "a list",
+                        _ => "an object",
+                    };
+                    return ToolResult::error(format!("batch: `atomic` takes true or false, not {kind}; no command ran"));
+                }
+            };
+            if atomic {
                 if keep {
                     return ToolResult::error("`atomic` and `keepGoing` together: an atomic batch stops at the first error and changes nothing");
                 }
