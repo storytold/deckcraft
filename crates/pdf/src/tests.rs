@@ -681,9 +681,9 @@ fn raster_scale_caps_total_pixels_not_each_side() {
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn huge_paper_and_long_notes_export_in_bounded_work() {
-    // At 1e17 pt adding a rule's 22 pt leaves y unchanged: the rules are counted, not stepped.
+    // At 1e19 pt adding a rule's 22 pt leaves y unchanged: the rules are counted, not stepped. A narrow page keeps the raster small.
     let p = deck(1);
-    let _ = export(&p, &PdfOptions { paper: (1.0e17, 1.0e17), ..opts(PageLayout::Handouts { per_page: 3 }) });
+    let _ = export(&p, &PdfOptions { paper: (612.0, 1.0e19), ..opts(PageLayout::Handouts { per_page: 3 }) });
     // 20,000 short words of notes, wrapped with the line width kept as words are added.
     let mut p = deck(1);
     Arc::make_mut(&mut p.slides[0]).notes = TextBody::from_text(&"ab ".repeat(20_000));
