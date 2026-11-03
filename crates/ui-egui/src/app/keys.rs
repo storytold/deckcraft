@@ -185,6 +185,25 @@ impl SlideApp {
                         self.anim_preview = None;
                         continue;
                     }
+                    // When an animation effect is selected in the Animation Pane, Delete/Backspace removes
+                    // the animation rather than deleting the underlying shape (#1725).
+                    if (key == egui::Key::Delete || key == egui::Key::Backspace)
+                        && !modifiers.command
+                        && !modifiers.ctrl
+                        && self.ui.pane.as_deref() == Some("animation")
+                        && let Some(st) = self.session.active()
+                    {
+                        let pick_id = egui::Id::unique(("anim_pane_pick", st.uid, st.selection.slide));
+                        let pick = ctx.data(|m| m.get_temp::<usize>(pick_id));
+                        if let Some(i) = pick {
+                            ctx.data_mut(|m| m.remove::<usize>(pick_id));
+                            if let Err(e) = self.session.execute("animation.remove", &json!({"index": i})) {
+                                self.set_status(e.to_string());
+                            }
+                            self.note_application_edit(ctx);
+                            continue;
+                        }
+                    }
                     let mods = Mods { shift: modifiers.shift, alt: modifiers.alt, cmd: modifiers.command || modifiers.ctrl };
                     if !self.session.tool.drawing_freeform() && menus::ui_shortcut(self, key, mods) {
                         continue;

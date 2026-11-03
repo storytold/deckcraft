@@ -53,6 +53,7 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
         }
         let name = names.iter().find(|(id, _)| *id == a.shape.0).map(|(_, n)| n.clone()).unwrap_or_else(|| format!("Shape {}", a.shape));
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::ListItem, true, from == Some(i), &name));
         let sel = selected.contains(&a.shape.0);
         if sel || resp.hovered() {
             ui.painter().rect_filled(r, CornerRadius::same(4), if sel { t.selected } else { t.hover });
@@ -168,6 +169,12 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
                 ui.close();
             }
         });
+    }
+    if let Some(i) = from
+        && ui.input(|inp| inp.key_pressed(egui::Key::Delete) || inp.key_pressed(egui::Key::Backspace))
+    {
+        ui.data_mut(|m| m.remove::<usize>(pick_id));
+        run(app, "animation.remove", json!({"index": i}));
     }
     // Seconds ruler under the bars.
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 18.0), Sense::hover());
