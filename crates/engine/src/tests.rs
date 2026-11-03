@@ -3223,6 +3223,7 @@ fn numbering_takes_color_and_size() {
         props.bullet_font_follow_text = Some(true);
         props.bullet_color_follow_text = Some(true);
         props.bullet_size_follow_text = Some(true);
+        props.bullet_size_points = Some(12.0);
     }
     s.execute("format.numbering", &json!({"on": true, "scheme": "romanUcPeriod", "start": 3, "color": "accent2", "size": 150})).unwrap();
     let para = |s: &Session| {
@@ -3236,9 +3237,11 @@ fn numbering_takes_color_and_size() {
     assert_eq!(pp.bullet_font_follow_text, Some(true));
     assert_eq!(pp.bullet_color_follow_text, None);
     assert_eq!(pp.bullet_size_follow_text, None);
+    assert_eq!(pp.bullet_size_points, None);
     assert_eq!(pp.bullet_color, Some(deckcraft_model::ColorRef::scheme(deckcraft_color::SchemeSlot::Accent2)));
     s.execute("format.bullets", &json!({"on": true, "char": "★", "size": 9000})).unwrap();
     assert_eq!(para(&s).bullet_size, Some(4.0));
+    assert_eq!(para(&s).bullet_size_points, None);
     assert_eq!(para(&s).bullet_font_follow_text, None);
 }
 
