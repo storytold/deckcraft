@@ -199,6 +199,7 @@ pub(super) fn place<'a>(
             style: "node1".into(),
             color_index: index,
             rect,
+            ignore_bounds: false,
             path_rotation: 0.,
             text_rect: None,
             text_source: None,

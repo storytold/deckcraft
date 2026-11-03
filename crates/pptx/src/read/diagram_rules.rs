@@ -227,6 +227,7 @@ mod tests {
             name: "probe".into(),
             style: String::new(),
             rect: Xfrm::new(0., 0., 70., 40.),
+            ignore_bounds: false,
             path_rotation: 0.,
             text_rect: None,
             text_source: None,

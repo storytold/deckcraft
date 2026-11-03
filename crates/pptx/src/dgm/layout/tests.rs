@@ -2213,5 +2213,33 @@ fn linear_font_reclaims_height_before_a_later_width_rule_changes_wrapping() {
     assert!(out[0].rect.w >= 60. * mm);
     // The font stage still has three wrapped lines. Later width growth must not
     // retroactively reclaim that height as if it had already been one line.
-    assert!((18. ..19.).contains(&(out[0].rect.h / mm)), "height = {}", out[0].rect.h / mm);
+    assert!((18. ..20.).contains(&(out[0].rect.h / mm)), "height = {}", out[0].rect.h / mm);
+}
+
+#[test]
+fn partial_height_reclaim_uses_the_authored_interval_after_font_fitting() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for (limit, expected) in [(50, 18.75), (70, 19.375), (90, 20.)] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='lin'/><layoutNode><alg type='tx'/><shape type='rect'/><constrLst>
+            <constr type='w' val='20'/><constr type='h' val='10'/><constr type='primFontSz' val='28'/></constrLst>
+            <ruleLst><rule type='h' val='{limit}'/><rule type='primFontSz' val='14'/></ruleLst>
+            </layoutNode></layoutNode>"
+        ));
+        let mut measure = |items: &[Placed<'_>], kind: MeasureKind| {
+            Ok(items
+                .iter()
+                .map(|p| {
+                    let font = p.font.unwrap_or(28.);
+                    (font * 3.6 - p.rect.h).max(0.) + if kind == MeasureKind::WordWrap { (font - 14.).max(0.) } else { 0. }
+                })
+                .collect())
+        };
+        let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].font, Some(14.));
+        assert!((out[0].rect.h / mm - expected).abs() < 1e-9, "limit {limit}: {}", out[0].rect.h / mm);
+        assert_eq!(measure(&out, MeasureKind::Overflow).unwrap(), [0.]);
+    }
 }

@@ -1,5 +1,7 @@
 # PowerPoint feature checklist
 
+> **PPTX.49 update 2026-11-02:** Uncached hierarchy rows use occupied extents, uniform bounded fitting and explicit parent/child attachment. Linear height reclaim retains its authored search interval and accepted fallback. The deduplicated 2,096-case geometry matrix improves from 1,854 to 1,980 strict matches, with no prior match lost. Zero-area identities and remaining text-rule, map and chart-label differences stay explicit; feature scores are unchanged.
+
 > **PPTX.48 update 2026-11-02:** Centered snake fitting retains nominal and fitted alignment state and distinguishes its early-exit phases. The deduplicated 1,921-case geometry matrix improves from 1,681 to 1,837 strict matches, with no lost match. Centered column labels constrain their position at the bar baseline before authored offsets. Partial snake, hierarchy, map precision and label-layout differences remain explicit; feature scores are unchanged.
 
 > **PPTX.47 update 2026-11-02:** Geographic readers preserve valid rings despite advisory point-count differences, with global decoded-work limits. Fixed manual column labels center retained text independently of automatic ellipses and honor explicit edge anchoring. Linear height reclaim uses the height-overflow metric at the font-rule stage, before later dimension changes. Native controls and integrated renders retain their unresolved cases; full SmartArt, map and chart parity remains partial and feature scores are unchanged.
@@ -326,6 +328,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.49: measured hierarchy attachment and authored height reclaim; independent controls, environment diagnostics and explicit residuals |
 | 2026-11-02 | minor | PPTX.48: centered snake fit-state recovery and rich-column baseline constraints; integrated native comparisons and explicit residual cases |
 | 2026-11-02 | minor | PPTX.47: advisory geographic counts, retained-block label anchoring and property-specific height reclaim; native and resource-budget checks |
 | 2026-11-02 | minor | PPTX.46: staged linear rules, fine label advances and bounded native geographic cache rebuilding; residual native failures retained |

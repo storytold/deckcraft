@@ -2716,3 +2716,61 @@ tests including doctests; hosted CI is tracked separately. Native
 screenshots, source decks, provider geometry, fonts and local evidence paths remain
 private; publication includes only Rust source, original programmatic tests and these
 documents. Complete external-converter replacement is not claimed.
+
+
+## PPTX.49 — hierarchy attachment and authored height search
+
+### Fit hierarchy children before attaching their parent
+
+Hierarchy-child rows retain a shared edge, honor their direction and sibling gap,
+and fit width and height with one bounded scale. Zero-area children do not consume
+sibling spacing. The root uses the first direct child as parent and the second as
+its child container. A nested hierarchy-child container exposes its occupied
+rectangle; a flat text child retains its own attachment origin. Additional direct
+children remain at the hierarchy origin and contribute to occupied bounds. Authored
+positions do not shift these algorithmic attachment points.
+
+After nested children are placed, the root fits occupied width and height uniformly
+and centers the result. One-axis-zero children still contribute their visible extent;
+double-zero editable objects remain in the model even when native export paints none.
+All searches, scans and subtree transformations consume the existing shared work budget.
+
+The child-hierarchy arc preserves the preceding 1,921 cases, improving twelve strict
+matches, and adds 98 original controls. The root arc leaves all 2,019 child-arc geometries
+unchanged and adds 57 controls: 52 strict matches within 0.025pt, with five editable-versus-
+painted zero-area identity differences explicitly retained. All 57 painted-box comparisons
+pass. Ten root raster controls pass visible bounds within 0.2pt at eight pixels per point;
+the largest measured difference is 0.125pt. This is not a whole-image pixel-equivalence claim.
+
+### Reclaim height within the original authored interval
+
+After font fitting, height reclaim searches the original authored height interval,
+while retaining the previously accepted height as the fallback if later trials fail.
+Width reclaim keeps its existing fitted endpoint. Twelve original controls and eight
+independent holdouts distinguish the authored interval from repeatedly narrowed ranges;
+all twenty native heights lie on the original authored search grid. The implementation
+matches eighteen of twenty heights within 0.025pt; two existing font-stage cases retain
+about 28.701pt height error. Whole-box matches improve from three to nine of twenty.
+Remaining width, height and allocation differences stay in the strict denominator.
+
+The combined native matrix contains 2,096 unique cases and improves from
+1,854 to 1,980 strict matches, with no lost prior match and no
+common-box maximum or mean error increase above 0.025pt. A remote run initially reported
+six regressions because an unavailable requested font was substituted. Font diagnostics
+identified the actual faces; the same binary on the original validation environment
+passes all 24 affected font controls without source or tolerance changes. Those remote
+observations remain recorded as environment failures, not successful regression tests.
+
+Text-triggered hierarchy-root fitting, additional container/connector interactions,
+centered snake clipping/reverse aborts and broader coupled rule search remain incomplete.
+Zero-area identities and genuine visible residuals are tracked separately.
+
+### Integration and publication
+
+Full local `cargo xtask ci` passes all eight stages, with 2,660 tests including doctests.
+The integrated binary reproduces all 733 frozen chart pages and all 140 map reference
+images exactly. Hosted CI is tracked separately.
+Publication is limited to Rust source, contributor-original programmatic tests and
+technical documentation. Native documents, screenshots, fonts, user content, provider
+geometry and private evidence paths remain unpublished. Complete external-converter
+replacement is not claimed.

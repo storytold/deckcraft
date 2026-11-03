@@ -4,6 +4,8 @@ mod constraints;
 mod data;
 mod fallback;
 mod geometry;
+mod hierarchy;
+mod hierarchy_root;
 mod orientation;
 mod rules;
 mod snake;
@@ -30,6 +32,8 @@ pub(crate) struct Placed<'a> {
     /// Colour-list position in layout order, before connectors move behind nodes.
     pub color_index: usize,
     pub rect: Xfrm,
+    /// Degenerate hierarchy children retain editable geometry without reserving ancestor space.
+    pub ignore_bounds: bool,
     /// Cycle path rotation is applied after the shape fits its allocation.
     pub path_rotation: f64,
     /// A mapped text algorithm can own a different rectangle from its composite shape.

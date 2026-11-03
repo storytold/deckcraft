@@ -5,6 +5,13 @@ use super::{
 };
 use std::collections::HashSet;
 
+struct Growth {
+    range: Range,
+    scope: HashSet<usize>,
+    refit: bool,
+    authored_limit: f64,
+}
+
 struct Flow {
     index: usize,
     primary: &'static str,
@@ -175,7 +182,7 @@ pub(super) fn search<'a>(
     steps.push(None);
     steps.extend(rest);
     let mut changes = constraints::Adjustments::new();
-    let mut grown: Vec<(Range, HashSet<usize>, bool)> = Vec::new();
+    let mut grown = Vec::<Growth>::new();
     let mut out = placed(tree, frame, data, &changes, &flow, work)?;
     for step in steps {
         // Apply the previous font rule before later dimensions change its fit budget.
@@ -227,17 +234,17 @@ pub(super) fn search<'a>(
             continue;
         };
         if font_rule {
-            for (_, grown_scope, refit) in grown.iter_mut().rev() {
-                charge(work, grown_scope.len().min(scope.len()).saturating_add(1))?;
-                if !scope.is_disjoint(grown_scope) {
-                    *refit = true;
+            for growth in grown.iter_mut().rev() {
+                charge(work, growth.scope.len().min(scope.len()).saturating_add(1))?;
+                if !scope.is_disjoint(&growth.scope) {
+                    growth.refit = true;
                     break;
                 }
             }
         } else if limit > start && matches!(control.property.as_str(), "w" | "h") {
             let mut remembered = range.clone();
             remembered.limit = start + (limit - start) * selected;
-            grown.push((remembered, scope.clone(), false));
+            grown.push(Growth { range: remembered, scope: scope.clone(), refit: false, authored_limit: limit });
         }
         out = candidate;
         let selected_value = start + (limit - start) * selected;
@@ -274,8 +281,8 @@ pub(super) fn search<'a>(
         }
         range.set_value(&mut changes, best);
         charge(work, grown.len())?;
-        if let Some((remembered, _, _)) = grown.iter_mut().rev().find(|(r, _, _)| r.key == range.key) {
-            remembered.limit = best;
+        if let Some(growth) = grown.iter_mut().rev().find(|g| g.range.key == range.key) {
+            growth.range.limit = best;
         }
     }
     reclaim(tree, frame, data, &mut changes, &flow, &mut grown, measure, work, out)?;
@@ -290,12 +297,12 @@ fn reclaim<'a>(
     data: &Data<'a>,
     changes: &mut constraints::Adjustments,
     flow: &Flow,
-    grown: &mut [(Range, HashSet<usize>, bool)],
+    grown: &mut [Growth],
     measure: &mut Measure<'_>,
     work: &mut usize,
     mut out: Vec<Placed<'a>>,
 ) -> Result<Vec<Placed<'a>>, &'static str> {
-    for (range, scope, refit) in grown {
+    for Growth { range, scope, refit, authored_limit } in grown {
         charge(work, 1)?;
         if !*refit {
             continue;
@@ -308,7 +315,10 @@ fn reclaim<'a>(
         if score(&out, scope, measure, prefer_words, work)? > 1e-6 {
             continue;
         }
-        let limit = range.limit;
+        // Height reclaim repeats the authored search interval after a font change.
+        // Keep the accepted endpoint separately: failed trials must not replace
+        // a valid fitted height with an infeasible authored maximum.
+        let limit = if prefer_words { range.limit } else { *authored_limit };
         range.set_value(changes, start);
         if let Some(candidate) = trial(tree, frame, data, changes, flow, work)?
             && score(&candidate, scope, measure, prefer_words, work)? <= 1e-6
@@ -317,7 +327,7 @@ fn reclaim<'a>(
             continue;
         }
         let (mut low, mut high) = (0.0, 1.0);
-        let mut best = limit;
+        let mut best = range.limit;
         for _ in 0..5 {
             let t = (low + high) / 2.0;
             let value = start + (limit - start) * t;

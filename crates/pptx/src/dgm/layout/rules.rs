@@ -215,14 +215,19 @@ fn placed<'a>(
     for ((alg, kind), overflowing) in
         [("cycle", MeasureKind::WordWrap), ("snake", MeasureKind::SnakeFit), ("lin", MeasureKind::WordWrap)].into_iter().zip(&mut overflowing)
     {
-        if contains_algorithm(tree, alg, work)? {
+        let hierarchy_root = alg == "lin" && tree.alg == "hierChild";
+        if hierarchy_root || contains_algorithm(tree, alg, work)? {
             charge(work, out.len())?;
             let values = measure(&out, kind)?;
             if values.len() != out.len() || values.iter().any(|v| !v.is_finite() || *v < 0.) {
                 return Err("invalid diagram text measurement");
             }
-            overflowing
-                .extend(out.iter().zip(values).filter(|(p, v)| p.shape.is_some() && *v > 1e-6).map(|(p, _)| p.text_source.unwrap_or(p.node_key)));
+            overflowing.extend(
+                out.iter()
+                    .zip(values)
+                    .filter(|(p, v)| p.shape.is_some() && *v > 1e-6 && (!hierarchy_root || p.rect.w > 0. && p.rect.h > 0.))
+                    .map(|(p, _)| p.text_source.unwrap_or(p.node_key)),
+            );
         }
     }
     if overflowing.iter().any(|set| !set.is_empty()) {
@@ -272,7 +277,10 @@ fn collect_refits(
             *own |= child;
         }
     }
-    if node.alg == "cycle" && needs_fit[0] || node.alg == "snake" && needs_fit[1] || node.alg == "lin" && depth == 0 && needs_fit[2] {
+    if node.alg == "cycle" && needs_fit[0]
+        || node.alg == "snake" && needs_fit[1]
+        || matches!(node.alg.as_str(), "lin" | "hierChild") && depth == 0 && needs_fit[2]
+    {
         refits.insert(constraints::id(node));
     }
     Ok(needs_fit)

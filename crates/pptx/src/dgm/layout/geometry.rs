@@ -188,8 +188,8 @@ impl CompositeFit {
     }
 }
 
-fn occupied_bounds(out: &[Placed<'_>]) -> Option<Xfrm> {
-    out.iter().filter(|p| p.rect.w > 0. || p.rect.h > 0.).fold(None, |bounds, p| {
+pub(super) fn occupied_bounds(out: &[Placed<'_>]) -> Option<Xfrm> {
+    out.iter().filter(|p| !p.ignore_bounds && (p.rect.w > 0. || p.rect.h > 0.)).fold(None, |bounds, p| {
         Some(match bounds {
             None => p.rect,
             Some(b) => {
@@ -237,6 +237,7 @@ fn place_inner<'a>(
             style: node.style.clone(),
             color_index: 0,
             rect,
+            ignore_bounds: false,
             path_rotation: 0.,
             text_rect: None,
             text_source: None,
@@ -261,6 +262,7 @@ fn place_inner<'a>(
             style: node.style.clone(),
             color_index: 0,
             rect: style.rect,
+            ignore_bounds: false,
             path_rotation: 0.,
             text_rect: None,
             text_source: None,
@@ -295,7 +297,15 @@ fn place_inner<'a>(
         .collect();
     let mut text_refit = false;
     // Linear placement uses the constrained sizes, including invisible spacing nodes.
-    if matches!(node.alg.as_str(), "lin" | "hierChild") {
+    if node.alg == "hierRoot" {
+        for child in &mut children {
+            child.rect.x = 0.;
+            child.rect.y = 0.;
+        }
+    } else if node.alg == "hierChild" {
+        let refit = text_refits.map_or(depth == 0, |refits| refits.contains(&super::constraints::id(node)));
+        super::hierarchy::pack(node, local, &mut children, refit, work)?;
+    } else if node.alg == "lin" {
         // With real text measurement, a fitting root retains its exact size.
         // Forced word breaks or overflow request the finite fit through this scope.
         // The geometry-only evaluator retains its conservative root-fit fallback.
@@ -331,6 +341,13 @@ fn place_inner<'a>(
                 _ => capacity,
             };
             place_inner(child, global, capacity, data, out, depth + 1, solution, text_refits, work)?;
+            if node.alg == "hierChild" && (bounds.rect.w <= 0. || bounds.rect.h <= 0.) {
+                let descendants = out.get_mut(start..).ok_or("invalid hierarchy child range")?;
+                charge(work, descendants.len())?;
+                for p in descendants {
+                    p.ignore_bounds |= p.rect.w <= 0. || p.rect.h <= 0.;
+                }
+            }
             if let Some(range) = ranges.get_mut(i) {
                 *range = start..out.len();
             }
@@ -403,7 +420,7 @@ fn fit_composite_shape(out: &mut [Placed<'_>], work: &mut usize) -> Result<(), &
     let Some((own, descendants)) = out.split_first_mut() else { return Ok(()) };
     charge(work, descendants.len())?;
     let mut bounds: Option<Xfrm> = None;
-    for p in descendants.iter().filter(|p| p.rect.w > 0. || p.rect.h > 0.) {
+    for p in descendants.iter().filter(|p| !p.ignore_bounds && (p.rect.w > 0. || p.rect.h > 0.)) {
         bounds = Some(match bounds {
             None => p.rect,
             Some(b) => {
@@ -452,6 +469,9 @@ fn pack_composite_extents(
     text_refit: bool,
     work: &mut usize,
 ) -> Result<(), &'static str> {
+    if node.alg == "hierRoot" {
+        return super::hierarchy_root::place(node, style, children, ranges, out, work);
+    }
     if node.alg == "snake" {
         // Each nested algorithm first resolves its own occupied size. Packing
         // the enclosing allocations prematurely would wrap and shrink children
@@ -664,10 +684,10 @@ pub(super) fn initial(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
                 Xfrm::new(r.x + (r.w - width) / 2.0, r.y + i as f64 * r.h / n, width, r.h / n)
             })
             .collect(),
-        "hierRoot" => hierarchy(node, style),
+        "hierRoot" => vec![r; count],
         _ => vec![r; count],
     };
-    if matches!(node.alg.as_str(), "lin" | "cycle" | "snake") {
+    if matches!(node.alg.as_str(), "lin" | "cycle" | "snake" | "hierChild" | "hierRoot") {
         for rect in &mut rectangles {
             rect.w = 100. * 72. / 25.4;
             rect.h = 100. * 72. / 25.4;
@@ -1041,64 +1061,6 @@ pub(super) fn connect(out: &mut [Placed<'_>], data: &Data<'_>) {
         p.rect = Xfrm { flip_h: x2 < x1, flip_v: y2 < y1, ..Xfrm::new(x1.min(x2), y1.min(y2), (x2 - x1).abs(), (y2 - y1).abs()) };
     }
     out.sort_by_key(|p| !p.connector);
-}
-
-/// Allocate each subtree by its leaf demand. Orientation comes from hierAlign; a forest has
-/// no distinguished first parent. This avoids shrinking deeper branches into equal-width slots.
-fn hierarchy(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
-    fn weight(n: &Instance<'_>, depth: usize) -> f64 {
-        if depth > 64 || n.children.is_empty() {
-            return 1.0;
-        }
-        n.children.iter().filter(|c| c.alg != "conn").map(|c| weight(c, depth + 1)).sum::<f64>().max(1.0)
-    }
-    fn levels(n: &Instance<'_>, depth: usize) -> usize {
-        if depth > 64 {
-            return 1;
-        }
-        usize::from(!n.points.is_empty()) + n.children.iter().map(|c| levels(c, depth + 1)).max().unwrap_or(0)
-    }
-    let r = style.rect;
-    let count = node.children.len();
-    let has_parent = node
-        .children
-        .first()
-        .is_some_and(|c| !c.points.is_empty() || c.shape.is_some_and(|s| s.attr("type").is_some_and(|t| t != "none" && !t.is_empty())));
-    let alignment = node.param("hierAlign", "tCtrCh");
-    let horizontal = alignment.starts_with(['l', 'r']);
-    let reverse = alignment.starts_with(['r', 'b']);
-    let gap = style.get("sp").unwrap_or(0.0).max(0.0);
-    let depth = levels(node, 0).max(if has_parent && count > 1 { 2 } else { 1 }) as f64;
-    let parent_len = if has_parent { (if horizontal { r.w } else { r.h }) / depth } else { 0.0 };
-    let start = usize::from(has_parent);
-    let total = node.children.iter().skip(start).map(|c| weight(c, 0)).sum::<f64>().max(1.0);
-    let mut offset = 0.0;
-    let mut result = Vec::with_capacity(count);
-    for (i, child) in node.children.iter().enumerate() {
-        let mut b = if has_parent && i == 0 {
-            if horizontal { Xfrm::new(0.0, 0.0, parent_len, r.h) } else { Xfrm::new(0.0, 0.0, r.w, parent_len) }
-        } else {
-            let fraction = weight(child, 0) / total;
-            let b = if horizontal {
-                Xfrm::new(parent_len + gap, offset * r.h, (r.w - parent_len - gap).max(0.0), r.h * fraction)
-            } else {
-                Xfrm::new(offset * r.w, parent_len + gap, r.w * fraction, (r.h - parent_len - gap).max(0.0))
-            };
-            offset += fraction;
-            b
-        };
-        if reverse {
-            if horizontal {
-                b.x = r.w - b.x - b.w;
-            } else {
-                b.y = r.h - b.y - b.h;
-            }
-        }
-        b.x += r.x;
-        b.y += r.y;
-        result.push(b);
-    }
-    result
 }
 
 #[cfg(test)]

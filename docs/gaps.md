@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **PPTX.49 update 2026-11-02:** Uncached hierarchy rows use occupied extents, uniform bounded fitting and explicit parent/child attachment. Linear height reclaim retains its authored search interval and accepted fallback. The deduplicated 2,096-case geometry matrix improves from 1,854 to 1,980 strict matches, with no prior match lost. Zero-area identities and remaining text-rule, map and chart-label differences stay explicit; feature scores are unchanged.
+
 > **PPTX.48 update 2026-11-02:** Centered snake fitting retains nominal and fitted alignment state and distinguishes its early-exit phases. The deduplicated 1,921-case geometry matrix improves from 1,681 to 1,837 strict matches, with no lost match. Centered column labels constrain their position at the bar baseline before authored offsets. Partial snake, hierarchy, map precision and label-layout differences remain explicit; feature scores are unchanged.
 
 > **PPTX.47 update 2026-11-02:** Geographic readers preserve valid rings despite advisory point-count differences, with global decoded-work limits. Fixed manual column labels center retained text independently of automatic ellipses and honor explicit edge anchoring. Linear height reclaim uses the height-overflow metric at the font-rule stage, before later dimension changes. Native controls and integrated renders retain their unresolved cases; full SmartArt, map and chart parity remains partial and feature scores are unchanged.
@@ -305,7 +307,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
   imported diagram's structure still redraws it with DeckCraft's layout; the full rule-search and
   constraint language is incomplete. Named child/descendant affine references, cycles, paired
   edges and bounds now use a bounded sparse solver rather than eight relaxation passes. Ordered
-  text-measured rules and circular extent fitting are supported. Successful width/height endpoint searches use the observed finite iterations; width growth accounts for forced word breaks. Independent rectangular text leaves now preserve allocations across sibling-rule stages and respect cross-axis capacity; the paired 1,619-case geometry matrix gains 53 matches without losing an earlier one. Coupled search away from the common rule parameter, broader multi-phase state, repeated-control combinations and hierarchy/pyramid text interactions still need independent coverage. Restored nested snake early exits retain partial placement; same-direction fitting-state positions remain unresolved. The corrected uncached nested-card definition now renders
+  text-measured rules and circular extent fitting are supported. Successful width/height endpoint searches use the observed finite iterations; width growth accounts for forced word breaks. Independent rectangular text leaves now preserve allocations across sibling-rule stages and respect cross-axis capacity; the paired 1,619-case geometry matrix gains 53 matches without losing an earlier one. Coupled search away from the common rule parameter, broader multi-phase state, repeated-control combinations and additional hierarchy/pyramid text interactions still need independent coverage. Hierarchy-child rows and first-parent/second-container root attachment now use measured occupied bounds and uniform fitting; text-triggered root fitting, other container anchors and deeper connector interactions remain partial. Restored nested snake early exits retain partial placement; same-direction fitting-state positions remain unresolved. The corrected uncached nested-card definition now renders
   six shapes in PowerPoint; measured coordinates, text spacing and default insets are covered.
   Helper visibility, layout-order colours, connector/space allocation and recursive composite
   fitting, scaled-end clipping, disjoint-child placement and bounded algorithm-local geometry scope
@@ -498,6 +500,7 @@ no global parity claim or score increase.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.49: measured hierarchy attachment and authored height reclaim; independent controls, environment diagnostics and explicit residuals |
 | 2026-11-02 | minor | PPTX.48: centered snake fit-state recovery and rich-column baseline constraints; integrated native comparisons and explicit residual cases |
 | 2026-11-02 | minor | PPTX.47: advisory geographic counts, retained-block label anchoring and property-specific height reclaim; native and resource-budget checks |
 | 2026-11-02 | minor | PPTX.46: staged linear rules, fine label advances and bounded native geographic cache rebuilding; residual native failures retained |
