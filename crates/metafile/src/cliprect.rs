@@ -111,12 +111,10 @@ pub(crate) fn clip_polygon(poly: &[P], clip: &[P]) -> Vec<P> {
 /// can gain a vertex at every edge, so its cost isn't known from its input size alone. `None`
 /// once the budget is spent.
 fn clip_polygon_within(poly: &[P], clip: &[P], budget: &mut usize) -> Option<Vec<P>> {
-    if poly.len().saturating_mul(clip.len()) > *budget {
-        return None;
-    }
     let mut poly = poly.to_vec();
     for i in 0..clip.len() {
-        if poly.len().saturating_mul(clip.len() - i) > *budget {
+        // The work actually done: this edge visits the polygon as it now stands.
+        if poly.len() > *budget {
             return None;
         }
         *budget -= poly.len();

@@ -2076,6 +2076,17 @@ fn clip_polygon_work_bound() {
 }
 
 #[test]
+fn clip_polygon_charges_actual_work_not_projected_growth() {
+    // Two convex 1,000-gons: the product is exactly the budget, and a cut that adds a vertex must
+    // not make a later step look over budget.
+    let gon = |cx: f64| -> Vec<(f64, f64)> {
+        (0..1000).map(|i| (i as f64 / 1000.0 * std::f64::consts::TAU).sin_cos()).map(|(s, c)| (cx + 100.0 * c, 100.0 * s)).collect()
+    };
+    let clipped = crate::cliprect::clip_polygon(&gon(0.0), &gon(30.0));
+    assert!(clipped.len() > 100, "the intersection is kept: {}", clipped.len());
+}
+
+#[test]
 fn clip_work_is_bounded_across_subpaths() {
     use crate::canvas::Raw;
     use crate::geom::Op;
