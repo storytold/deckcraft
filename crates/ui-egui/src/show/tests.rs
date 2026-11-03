@@ -823,6 +823,41 @@ fn ctrl_wheel_zooms_the_show_and_the_plain_wheel_turns_the_page() {
     }
 }
 
+/// #1724: a single mouse wheel notch turns the slide in slideshow view without requiring
+/// multiple rapid scrolls or gesture cooldown.
+#[test]
+fn single_mouse_wheel_notch_turns_slide_in_slideshow() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    assert_eq!(h.state().show.as_ref().expect("showing").state.slide, 0);
+
+    // One notch forward (-1.0 line): immediately advances to slide 1.
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert_eq!(h.state().show.as_ref().expect("showing").state.slide, 1);
+
+    // Another single notch forward (-1.0 line): immediately advances to slide 2.
+    show_wheel(&mut h, centre, -1.0, egui::Modifiers::NONE);
+    assert_eq!(h.state().show.as_ref().expect("showing").state.slide, 2);
+
+    // One notch backward (1.0 line): immediately rewinds to slide 1.
+    show_wheel(&mut h, centre, 1.0, egui::Modifiers::NONE);
+    assert_eq!(h.state().show.as_ref().expect("showing").state.slide, 1);
+}
+
+/// #1724: high-resolution mouse wheel fractional notches accumulate across events.
+#[test]
+fn fractional_mouse_wheel_notches_accumulate_to_turn_slide() {
+    let mut h = show_of_three();
+    let centre = pos2(500.0, 350.0);
+    assert_eq!(h.state().show.as_ref().expect("showing").state.slide, 0);
+
+    // Two fractional notches (-0.5 each): first accumulates, second triggers slide advance.
+    show_wheel(&mut h, centre, -0.5, egui::Modifiers::NONE);
+    assert_eq!(h.state().show.as_ref().expect("showing").state.slide, 0);
+    show_wheel(&mut h, centre, -0.5, egui::Modifiers::NONE);
+    assert_eq!(h.state().show.as_ref().expect("showing").state.slide, 1);
+}
+
 #[test]
 fn escape_only_closes_the_grid_of_its_own_window() {
     let mut s = deckcraft_engine::Session::with_new();

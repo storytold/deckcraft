@@ -267,6 +267,36 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
     pointing
 }
 
+/// Count whole discrete steps from mouse wheel events, accumulating fractions in `carry`.
+pub(super) fn mouse_wheel_steps(events: &[egui::Event], line_points: f32, carry: &mut f32) -> i32 {
+    let mut steps = 0i32;
+    for event in events {
+        if let egui::Event::MouseWheel { unit, delta, modifiers, .. } = event
+            && !modifiers.ctrl
+            && !modifiers.command
+            && !modifiers.shift
+            && delta.y.is_finite()
+            && delta.y.abs() > 0.0
+            && delta.y.abs() >= delta.x.abs()
+        {
+            let lines = match unit {
+                egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => delta.y,
+                egui::MouseWheelUnit::Point => delta.y / line_points.max(1.0),
+            };
+            if *carry * lines < 0.0 {
+                *carry = 0.0;
+            }
+            *carry += lines;
+            let whole = (carry.abs() + 1e-4).floor();
+            if whole >= 1.0 {
+                *carry -= whole.copysign(*carry);
+                steps += if lines < 0.0 { whole as i32 } else { -(whole as i32) };
+            }
+        }
+    }
+    steps
+}
+
 fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
     let Fr { ctx, doc, now, srect, pointer, .. } = *f;
     // Ctrl+wheel (Cmd+wheel on a Mac) zooms around the pointer, as in PowerPoint (#1286). egui
@@ -280,8 +310,25 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
     {
         show.wheel_zoom(srect, p, lines);
     }
-    // A trackpad swipe (and the mouse wheel) turns the page. The pen is drawing, so a flick
-    // there stays on the slide. Pinch zoom is not a show gesture.
+    // Discrete mouse-wheel notches turn the page one step per notch without gesture cooldown (#1724).
+    if !show.pen {
+        let steps = ctx.input(|i| mouse_wheel_steps(&i.events, line_points, &mut show.wheel_carry));
+        if steps > 0 {
+            show.last_swipe = now;
+            if show.ended {
+                out.keep = false;
+            } else {
+                out.actions.push(show.state.next(doc));
+            }
+            return;
+        } else if steps < 0 {
+            show.last_swipe = now;
+            show.ended = false;
+            out.actions.push(show.state.prev(doc));
+            return;
+        }
+    }
+    // A trackpad swipe turns the page. The pen is drawing, so a flick there stays on the slide.
     if !show.pen
         && let Some(next) = crate::canvas::page_flick(ctx.input(|i| i.smooth_scroll_delta))
         && now - show.last_swipe > 0.35
