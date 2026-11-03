@@ -1,7 +1,7 @@
 //! `edit.batch`: several commands as one step. An agent that builds a slide in several calls
-//! leaves it half-built when a later call fails; a batch makes every change or none, and one undo
-//! takes all of them back. `document.inspect` reports how many undo and redo steps there are, so
-//! an agent can check that.
+//! leaves it half-built when a later call fails; a batch makes every change to the presentation or
+//! none, and one undo takes all of them back. `document.inspect` reports how many undo and redo
+//! steps there are, so an agent can check that.
 
 use serde_json::{Value, json};
 
@@ -100,6 +100,30 @@ fn a_failing_batch_of_selection_changes_puts_the_selection_back() {
     let steps = json!([{"command": "edit.select", "params": {"ids": [a]}}]);
     s.execute("edit.batch", &json!({"commands": steps})).unwrap();
     assert_eq!(serde_json::to_value(&s.doc().unwrap().selection.shapes).unwrap(), json!([a]));
+}
+
+/// font.replace lists the fonts the presentation uses that aren't installed (the app tells the user
+/// about them). A batch whose replace is undone by a later failing step leaves that list as it was.
+#[test]
+fn a_failing_batch_puts_the_list_of_missing_fonts_back() {
+    let mut s = blank();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 300, 80], "text": "Hello"})).unwrap();
+    let used = s.execute("font.used", &json!({})).unwrap();
+    let family = used[0].as_str().unwrap().to_string();
+    s.execute("font.replace", &json!({"from": family, "to": "Qqq Nonexistent Sans"})).unwrap();
+    let missing = vec!["Qqq Nonexistent Sans".to_string()];
+    assert_eq!(s.doc().unwrap().missing_fonts, missing);
+    // Back to a bundled family, which empties the list, then a step that fails.
+    let have = deckcraft_fonts::FontDb::global().face(deckcraft_fonts::FALLBACK_FAMILY, "Regular").family.clone();
+    let fix = json!({"command": "font.replace", "params": {"from": "Qqq Nonexistent Sans", "to": have}});
+    let e = s.execute("edit.batch", &json!({"commands": [fix, bad_rename()]})).unwrap_err().to_string();
+    assert!(e.contains("step 1 (`shape.rename`)"), "{e}");
+    assert_eq!(s.execute("font.used", &json!({})).unwrap(), json!(["Qqq Nonexistent Sans"]));
+    assert_eq!(s.doc().unwrap().missing_fonts, missing);
+    // Without the failing step the replace goes through and the list empties.
+    let fix = json!({"command": "font.replace", "params": {"from": "Qqq Nonexistent Sans", "to": have}});
+    s.execute("edit.batch", &json!({"commands": [fix]})).unwrap();
+    assert!(s.doc().unwrap().missing_fonts.is_empty());
 }
 
 #[test]

@@ -85,7 +85,7 @@ files it was given rather than guarding against other software on the computer.
 |---|---|
 | `list_commands` | Every command (id, label, menu, shortcut, params doc), optionally filtered |
 | `run_command` | Run one command: `{command, params}` — every menu item, ribbon button and gesture is a command |
-| `batch` | Run several commands in order and stop at the first error; with `atomic: true` every change is made or none, as one undo step (command `edit.batch`) |
+| `batch` | Run several commands in order and stop at the first error; with `atomic: true` every change to the presentation is made or none, as one undo step (command `edit.batch`); the clipboard (`edit.copy`, `edit.cut`) and the user dictionary (`review.addToDictionary`) are not rolled back |
 | `new_presentation`, `open_presentation`, `save_presentation`, `export` | Files: native `.deckcraft`, PowerPoint `.pptx`, PDF (slides, notes pages, handouts), PNG/JPEG, outline, animated GIF (size, seconds per slide, loop, slides) |
 | `inspect_document`, `inspect_slide` | Structure of the deck / one slide (shapes, text, placeholders, animations) |
 | `render_slide` | A slide as an image the model can look at |

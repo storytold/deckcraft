@@ -62,7 +62,8 @@ fn handshake_and_tool_list() {
     assert!(s.handle_line("{}").is_some());
 }
 
-/// `batch {atomic: true}` runs engine `edit.batch`: every change or none, in one undo step.
+/// `batch {atomic: true}` runs engine `edit.batch`: every change to the presentation or none, in
+/// one undo step.
 #[test]
 fn atomic_batch_makes_every_change_or_none() {
     let mut s = Server::new(Box::new(Headless::new()));

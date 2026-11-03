@@ -751,8 +751,9 @@ fn batch_refuses(id: &str) -> bool {
 
 /// Run several commands as one step. The steps run nested, so none of them adds an undo step or
 /// a journal record of its own; when one fails, the outer command puts the presentation back and
-/// this puts the selection back. Undo entries a step pushes itself (Delete Text) are dropped with
-/// the history saved before the first step, so the batch stays one undo step either way.
+/// this puts the selection and the list of missing fonts back. Undo entries a step pushes itself
+/// (Delete Text) are dropped with the history saved before the first step, so the batch stays one
+/// undo step either way.
 fn batch(s: &mut Session, p: &Value) -> Result<Value> {
     let list = p.get("commands").and_then(Value::as_array).ok_or_else(|| bad("edit.batch", "missing `commands`: [{command, params?}]"))?;
     if list.len() > MAX_BATCH {
@@ -779,9 +780,9 @@ fn batch(s: &mut Session, p: &Value) -> Result<Value> {
         };
         steps.push((id, params));
     }
-    let (history, selection) = {
+    let (history, selection, missing_fonts) = {
         let st = s.doc()?;
-        (st.history.clone(), st.selection.clone())
+        (st.history.clone(), st.selection.clone(), st.missing_fonts.clone())
     };
     let mut results = Vec::with_capacity(steps.len());
     for (i, (id, params)) in steps.iter().enumerate() {
@@ -789,10 +790,12 @@ fn batch(s: &mut Session, p: &Value) -> Result<Value> {
             Ok(r) => results.push(json!({"command": id, "result": r})),
             Err(e) => {
                 // The outer command puts the presentation back only when it changed; steps that
-                // only selected still moved the selection.
+                // only selected still moved the selection, and font.replace listed the missing
+                // fonts of a presentation that is now put back.
                 if let Ok(st) = s.doc_mut() {
                     st.history = history;
                     st.selection = selection;
+                    st.missing_fonts = missing_fonts;
                 }
                 return Err(bad("edit.batch", format!("step {i} (`{id}`) failed, so nothing changed: {e}")));
             }
