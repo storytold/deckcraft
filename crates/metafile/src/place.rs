@@ -58,6 +58,7 @@ impl Picture {
         let k = (c[0].abs() + c[3].abs()) / 2.0;
         let mut out = Vec::with_capacity(self.items.len());
         let mut total_elements = 0usize;
+        let region_elements = std::cell::Cell::new(0usize);
         let mut cached_region: Option<(*const [f32; 4], usize, Option<Option<Arc<BezPath>>>)> = None;
         let mut get_region = |reg: &Option<Vec<[f32; 4]>>| -> Option<Option<Arc<BezPath>>> {
             let (ptr, len) = match reg {
@@ -71,12 +72,15 @@ impl Picture {
                 return res.clone();
             }
             let res = placed_region(&tf, reg);
+            // Each distinct clip region is expanded once; its elements count against the placement budget.
+            let n = res.as_ref().and_then(Option::as_ref).map_or(0, |p| p.elements().len());
+            region_elements.set(region_elements.get().saturating_add(n));
             cached_region = Some((ptr, len, res.clone()));
             res
         };
 
         for (index, item) in self.items.iter().enumerate() {
-            if total_elements >= MAX_PLACED_ELEMENTS {
+            if total_elements.saturating_add(region_elements.get()) >= MAX_PLACED_ELEMENTS {
                 break;
             }
             match item {

@@ -2074,3 +2074,15 @@ fn clip_polygon_work_bound() {
     let clipped = crate::cliprect::clip_polygon(&poly, &clip);
     assert!(clipped.is_empty(), "excessive polygon clip product rejected");
 }
+
+#[test]
+fn full_canvas_does_not_sample_gradient_tiles() {
+    let mut cv = Canvas::new();
+    let big = || Rgba { w: 1, h: 1, bottom_up: false, px: vec![0u8; MAX_BYTES / 2] };
+    for _ in 0..3 {
+        cv.bitmap([0.0, 0.0, 1.0, 1.0], big());
+    }
+    assert!(cv.full());
+    cv.shade_shape(&crate::geom::rect(0.0, 0.0, 10.0, 10.0), &|_| panic!("sampled a full canvas"));
+    assert_eq!(cv.items.len(), 2);
+}

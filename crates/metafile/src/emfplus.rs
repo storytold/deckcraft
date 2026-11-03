@@ -289,7 +289,7 @@ impl Plus {
             return None;
         }
         match typ {
-            0x4008 => self.object(flags, r),
+            0x4008 => self.object(flags, r, cv.used()),
             0x4009 | 0x4013 | 0x401A..=0x401C | 0x4036 => self.record_image_text_region(cv, typ, flags, r),
             0x4025..=0x4035 => self.record_state(cv, typ, flags, r),
             0x4010..=0x4012 | 0x4016..=0x4019 => self.record_curve(cv, typ, flags, r),
@@ -559,7 +559,7 @@ impl Plus {
         Some(())
     }
 
-    fn object(&mut self, flags: u16, r: Bytes) -> Option<()> {
+    fn object(&mut self, flags: u16, r: Bytes, canvas_used: usize) -> Option<()> {
         let id = usize::from(flags & 0xFF);
         let kind = (flags >> 8) & 0x7F;
         if flags & 0x8000 != 0 {
@@ -575,7 +575,7 @@ impl Plus {
             p.data.extend_from_slice(&chunk[..chunk.len().min(room)]);
             if p.data.len() >= p.total {
                 let obj = parse_object(p.kind, Bytes(&p.data));
-                self.store(p.id, obj);
+                self.store(p.id, obj, canvas_used);
             } else {
                 self.partial = Some(p);
             }
@@ -589,22 +589,23 @@ impl Plus {
             let room = p.total.saturating_sub(p.data.len());
             p.data.extend_from_slice(&r.0[..r.0.len().min(room)]);
             let obj = parse_object(kind, Bytes(&p.data));
-            self.store(id, obj);
+            self.store(id, obj, canvas_used);
             return Some(());
         }
         let obj = parse_object(kind, r);
-        self.store(id, obj);
+        self.store(id, obj, canvas_used);
         Some(())
     }
 
-    fn store(&mut self, id: usize, obj: Option<Obj>) {
+    /// `canvas_used` is what the canvas already retains: objects and items share one budget.
+    fn store(&mut self, id: usize, obj: Option<Obj>, canvas_used: usize) {
         let Some(slot) = self.objects.get_mut(id) else { return };
         if let Some(old) = slot.take() {
             self.object_bytes = self.object_bytes.saturating_sub(Self::obj_cost(&old));
         }
         if let Some(new_obj) = obj {
             let cost = Self::obj_cost(&new_obj);
-            if self.object_bytes.saturating_add(cost) <= crate::MAX_BYTES {
+            if self.object_bytes.saturating_add(cost).saturating_add(canvas_used) <= crate::MAX_BYTES {
                 self.object_bytes += cost;
                 *slot = Some(new_obj);
             }
@@ -615,7 +616,7 @@ impl Plus {
         match obj {
             Obj::Image(img) => match img.as_ref() {
                 ImageData::Bitmap(rgba) => rgba.px.len(),
-                ImageData::Meta(pic) => pic.items.len().saturating_mul(128),
+                ImageData::Meta(pic) => pic.items.iter().map(item_cost).sum(),
             },
             Obj::Brush(Fill::Texture { img, .. }) => img.px.len(),
             Obj::Path(ops) => ops.len().saturating_mul(std::mem::size_of::<Op>()),
@@ -1274,6 +1275,18 @@ fn metafile(r: Bytes) -> Option<Picture> {
     let pic = crate::parse(data).ok();
     NESTING.with(|n| n.set(depth));
     pic.filter(|p| p.width > 0.0 && p.height > 0.0)
+}
+
+/// Bytes an item of a nested picture owns: its path segments, clip rectangles, pixels and text.
+fn item_cost(item: &crate::Item) -> usize {
+    use crate::Item;
+    let region = |r: &Option<Vec<[f32; 4]>>| r.as_ref().map_or(0, |v| v.len() * 16);
+    128 + match item {
+        Item::Path { segs, region: r, .. } => segs.len() * std::mem::size_of::<crate::Seg>() + region(r),
+        Item::Bitmap { rgba, region: r, .. } => rgba.len() + region(r),
+        Item::Pattern { segs, tile, region: r, .. } => segs.len() * std::mem::size_of::<crate::Seg>() + tile.rgba.len() + region(r),
+        Item::Text(t) => t.text.len() + region(&t.region),
+    }
 }
 
 fn bitmap(r: Bytes) -> Option<Rgba> {
