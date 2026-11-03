@@ -150,7 +150,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
-| 2026-11-03 | WordArt follow-path text (arches, circles, buttons) sets each glyph down whole, turned to the guide where its centre falls, as PowerPoint does, instead of bending it along the guide; the guide's direction also turns continuously instead of stepping at each vertex of the flattened guide, which left ragged edges on large text |
+| 2026-11-03 | WordArt follow-path text (Arch Up, Arch Down, Circle, Button) sets each glyph down whole, turned to the guide where its centre falls, as PowerPoint does, instead of bending it along the guide; the guide's direction also turns continuously instead of stepping at each vertex of the flattened guide, which left ragged edges on large text |
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
 | 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
 | 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |

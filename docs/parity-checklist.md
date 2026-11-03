@@ -2,7 +2,7 @@
 
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-> **Last updated:** 2026-11-03 · WordArt follow-path text (arches, circles) sets each glyph down whole and turned, as PowerPoint does, on a guide whose direction turns smoothly; Text warp transforms row stays P. Scores unchanged.
+> **Last updated:** 2026-11-03 · WordArt follow-path text (Arch Up, Arch Down, Circle, Button) sets each glyph down whole and turned, as PowerPoint does, on a guide whose direction turns smoothly; Text warp transforms row stays P. Scores unchanged.
 >
 > **Previously (2026-11-03):** Community PR wave 10: reflection transforms survive resaves (row stays P, rendering partial); Reuse Slides fits the destination size and brings referenced custom table styles (row stays P, picker has no thumbnails); Compress Pictures measures grouped pictures at displayed size (stays D). Scores unchanged.
 >
