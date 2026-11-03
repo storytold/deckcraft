@@ -1,6 +1,8 @@
 //! Fonts a presentation uses that this machine doesn't have, so opening it can say so (its text
 //! draws in a stand-in; see `FontDb::document_face`).
 
+use std::collections::HashSet;
+
 use deckcraft_fonts::FontDb;
 use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::text::{Bullet, TextBody};
@@ -12,8 +14,13 @@ use deckcraft_model::{Presentation, Shape, ShapeKind};
 /// font to load and are left for the round trip.
 pub fn install_embedded_fonts(p: &Presentation) {
     let db = FontDb::global();
+    // Faces can name one media item many times; each is copied and enumerated once.
+    let mut seen = HashSet::new();
     for font in &p.embedded_fonts {
         for id in font.faces().into_iter().flatten() {
+            if !seen.insert(id) {
+                continue;
+            }
             let Some(item) = p.media(id) else { continue };
             let Some(sfnt) = deckcraft_fonts::embedded_sfnt(&item.data) else { continue };
             db.add_font(sfnt.to_vec());
@@ -27,12 +34,8 @@ pub fn install_embedded_fonts(p: &Presentation) {
 /// and can't be installed, so they aren't reported.
 pub fn missing_fonts(p: &Presentation) -> Vec<String> {
     let db = FontDb::global();
-    let mut out: Vec<String> = Vec::new();
-    for family in used_fonts(p) {
-        if !family.starts_with('.') && !db.has_family(&family) && !out.iter().any(|f| f.eq_ignore_ascii_case(&family)) {
-            out.push(family);
-        }
-    }
+    // used_fonts is already free of case-insensitive duplicates.
+    let mut out: Vec<String> = used_fonts(p).into_iter().filter(|f| !f.starts_with('.') && !db.has_family(f)).collect();
     out.sort_by_key(|f| f.to_lowercase());
     out
 }
@@ -40,9 +43,10 @@ pub fn missing_fonts(p: &Presentation) -> Vec<String> {
 /// The families the slides' text runs and bullets are drawn in.
 pub fn used_fonts(p: &Presentation) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     let mut add = |f: String| {
         let f = f.trim().to_string();
-        if !f.is_empty() && !out.iter().any(|o| o.eq_ignore_ascii_case(&f)) {
+        if !f.is_empty() && seen.insert(f.to_ascii_lowercase()) {
             out.push(f);
         }
     };
