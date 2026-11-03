@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use super::*;
+use egui_kittest::kittest::Queryable;
 
 /// #1005: shapes stacked above a playing video must be drawn over its frame; the video, what
 /// is below it and other videos stay out of that overlay.
@@ -1331,4 +1332,61 @@ fn transition_preview_for_first_slide_transitions_from_black() {
     assert_eq!(tr.kind, "fade");
     assert_eq!(tr.from, None, "slide 0 transitions from black (None)");
     assert_eq!(tr.dur, 0.5);
+}
+
+/// #1655: selecting a transition in the gallery automatically triggers a preview on the slide.
+#[test]
+fn selecting_transition_in_gallery_auto_previews_when_enabled() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    let mut app = SlideApp::new(s, crate::Services::default());
+    app.ui.tab = "Transitions".into();
+    assert!(app.ui.auto_preview_transitions);
+
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+
+    // Click "Push" in the transitions gallery.
+    h.get_by_label("Push").click();
+    h.run_steps(2);
+
+    // Show preview should now be actively running with preview_only = true.
+    let show = h.state().show.as_ref().expect("auto-preview started show");
+    assert!(show.preview_only);
+    let tr = show.trans.as_ref().expect("transition preview is playing");
+    assert_eq!(tr.kind, "push");
+}
+
+/// #1655: when auto_preview_transitions is disabled, selecting a transition does not play preview.
+#[test]
+fn selecting_transition_does_not_auto_preview_when_disabled() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    let mut app = SlideApp::new(s, crate::Services::default());
+    app.ui.tab = "Transitions".into();
+    app.ui.auto_preview_transitions = false;
+
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+
+    // Click "Push" in the transitions gallery.
+    h.get_by_label("Push").click();
+    h.run_steps(2);
+
+    // Transition is set on the slide, but show is NOT started.
+    assert!(h.state().show.is_none());
+    let doc = h.state().session.active().unwrap().current_slide().unwrap();
+    assert_eq!(doc.transition.as_ref().unwrap().kind, "push");
 }
