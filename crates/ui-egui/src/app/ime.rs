@@ -17,13 +17,6 @@ impl SlideApp {
                 })
                 .collect()
         });
-        self.ui_fonts.note(ctx, &typed);
-        for d in self.session.documents() {
-            self.ui_fonts.note(ctx, &d.title());
-        }
-        for r in &self.ui.recent {
-            self.ui_fonts.note(ctx, r);
-        }
         let lang = crate::i18n::current();
         if self.catalog_noted != Some(lang) {
             // The language's own face is now installed: characters seen against the old fonts and
@@ -33,6 +26,13 @@ impl SlideApp {
                 self.ui_fonts.note(ctx, text);
             }
             self.catalog_noted = Some(lang);
+        }
+        self.ui_fonts.note(ctx, &typed);
+        for d in self.session.documents() {
+            self.ui_fonts.note(ctx, &d.title());
+        }
+        for r in &self.ui.recent {
+            self.ui_fonts.note(ctx, r);
         }
         if let Some(st) = self.session.active() {
             self.ui_fonts.note_doc(ctx, st);
