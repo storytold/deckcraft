@@ -927,7 +927,7 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let key = app.session.active().map(|st| {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (std::sync::Arc::as_ptr(&st.doc) as usize, st.revision, &ignored, deckcraft_engine::spell::user_generation()).hash(&mut h);
+        (st.uid, st.revision, &ignored, deckcraft_engine::spell::user_generation()).hash(&mut h);
         h.finish()
     });
     let list = match (&d.spelling, key) {
