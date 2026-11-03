@@ -59,6 +59,7 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
             return true;
         }
         (P, true, true, false) => "app.palette",
+        (O, true, true, false) => crate::ask_agent::COMMAND,
         (Comma, true, false, false) => "app.preferences",
         (Equals | Plus, true, false, false) => "view.zoomIn",
         (Minus, true, false, false) => "view.zoomOut",
@@ -307,7 +308,15 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("Set Up Show…", "show.setup"),
             ],
         ),
-        ("Help", vec![("About DeckCraft", "app.about"), ("Check for Updates…", "app.checkUpdates"), ("Command Palette", "app.palette")]),
+        (
+            "Help",
+            vec![
+                ("About DeckCraft", "app.about"),
+                ("Check for Updates…", "app.checkUpdates"),
+                ("Command Palette", "app.palette"),
+                ("Ask Agent…", crate::ask_agent::COMMAND),
+            ],
+        ),
     ]
 }
 

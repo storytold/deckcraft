@@ -13,6 +13,8 @@ workspace = true
 [dependencies]
 deckcraft-engine = { workspace = true }
 deckcraft-ui-egui = { workspace = true }
+# Control-channel tokens.
+deckcraft-mcp = { workspace = true }
 deckcraft-media = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "links", "wayland", "x11"] }
 egui = { workspace = true }

@@ -18,6 +18,10 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        if let Some(why) = crate::ask_agent::held(self, id) {
+            self.set_status(why.clone());
+            return Err(why);
+        }
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else {
@@ -277,6 +281,7 @@ impl SlideApp {
                 let d = p.get("id").and_then(Value::as_str).ok_or("missing `id`")?;
                 self.dialog = Some(dialogs::Dialog::new(d));
             }
+            crate::ask_agent::COMMAND => return crate::ask_agent::command(self, p),
             "app.links" => {
                 use deckcraft_engine::links::{APP_PAGE, APPS, DISCORD, GITHUB, WEBSITE};
                 return Ok(json!({"discord": DISCORD, "website": WEBSITE, "apps": APPS, "appPage": APP_PAGE, "github": GITHUB}));

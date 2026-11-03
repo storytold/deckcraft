@@ -34,6 +34,13 @@ pub(super) fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
         } else {
             slide_items(app, ui);
         }
+        if app.ask_agent.hub.is_some() {
+            ui.separator();
+            if ui.button("Ask Agent…").clicked() {
+                let _ = app.run(crate::ask_agent::COMMAND, json!({}));
+                ui.close();
+            }
+        }
     });
 }
 

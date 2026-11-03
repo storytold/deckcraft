@@ -24,6 +24,10 @@ impl Default for Headless {
 pub(crate) const NEEDS_APP: &str = "it needs the desktop app: start `deckcraft --control 7979` and run the MCP server \
 with `deckcraft-cli mcp --connect 7979`";
 
+/// Ask Agent without the desktop app.
+pub(crate) const ASK_NEEDS_APP: &str = "Ask Agent requests come from the DeckCraft window, and this server has no window \
+(headless): start `deckcraft --control 7979`, then run the MCP server with `deckcraft-cli mcp --connect 7979`";
+
 fn s<'a>(p: &'a Value, k: &str) -> Option<&'a str> {
     p.get(k).and_then(Value::as_str)
 }
@@ -174,6 +178,7 @@ impl Headless {
             "app.export" => self.exec("file.export", p),
             "ui.inspect" => Ok(json!({"headless": true, "tool": serde_json::to_value(&self.session.tool.kind).unwrap_or_default()})),
             m if m.starts_with("ui.") || m.starts_with("app.") => Err(format!("`{m}`: {NEEDS_APP}")),
+            m if m.starts_with("agent.") => Err(ASK_NEEDS_APP.to_string()),
             other => Err(format!("unknown method `{other}`")),
         }
     }

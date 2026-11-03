@@ -109,6 +109,7 @@ impl SlideApp {
             self.drain_requests();
             return;
         }
+        crate::ask_agent::typed_on_slide(self, &events);
         let img = if image_paste { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
         if let Some(png) = img {
             let data = deckcraft_engine::cmd::base64_encode(&png);
