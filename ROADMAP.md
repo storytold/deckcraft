@@ -1,6 +1,6 @@
 # DeckCraft roadmap
 
-> **PPTX.62 update 2026-11-03:** Unresolved absolute SmartArt dimensions retain ordered growth without shrinking toward a smaller limit. A 2,542-case native matrix gains six strict matches with no lost or worse result; 17 painted comparisons have at most 1px bound error at 4x. A broader 6,794-page replay changes only nine already-verified pages. Full text-rule, map, chart and LibreOffice parity remains open; feature scores are unchanged.
+> **PPTX.63 update 2026-11-03:** Independent linear SmartArt rules reconsider cross dimensions and fonts after capacity allocation changes wrapping. Twenty-four original native controls all pass; a 2,566-case matrix gains 13 strict matches with no lost or worse result. Broader archive replay changes one already-verified page. Full SmartArt, map, chart and LibreOffice parity remains open; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
 
@@ -445,6 +445,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 |---|---|---|
 | 2026-11-02 | minor | PPTX.53: retain scoped fitting checkpoints and correct diagram glyph/bullet origins; remaining failures retained |
 | 2026-11-03 | minor | PPTX.54: preserve intermediate reversed-flow alignment and bounded pending corrections |
+| 2026-11-03 | minor | PPTX.63: replay text rules after linear capacity allocation |
 | 2026-11-03 | minor | PPTX.62: preserve ordered unresolved dimension growth |
 | 2026-11-03 | minor | PPTX.61: separate reverse fitting capacity from painted bounds |
 | 2026-11-03 | minor | PPTX.60: preserve staged chart bounds and complete dense authored axes |
@@ -1001,3 +1002,46 @@ still need work. The 2,542-case matrix retains 119 strict raw-box mismatches,
 including rotated representations. Full PowerPoint equivalence or complete
 LibreOffice replacement is not established. Only original Rust, programmatic
 tests and documentation are published.
+
+### PPTX.63: replay text rules after linear capacity allocation
+
+A linear parent's allocation can change a child's line count after its local
+rules have already run. Independent cross-dimension and font rules now receive
+a bounded second pass in authored order when capacity actually shrinks. A nested
+flow restarts a cross dimension from its original seed; a root retains a fitting
+checkpoint and reopens an overflowing one. Repeated rules consume the preceding
+result instead of repeatedly resetting the seed. An initially fitting dimension
+is remembered too, so later wrapping can enlarge it. Single-child and unchanged
+capacity controls retain their preceding behavior. No page, text or model name
+selects this policy, and ordinary glyph/line metrics remain unchanged.
+
+Twenty-four original source-bound PowerPoint controls cover root and nested
+flows, different limits and text, initially fitting heights, repeated rules,
+intermediate font fitting and vertical flow. All 24 match native geometry within
+0.025pt. The first candidate failed several independent holdouts; those failures
+were retained and led to the ordered replay rather than a height-only reclaim.
+One preregistered arithmetic prediction was wrong and remains recorded. A new
+programmatic regression exercises eight root/nested/order/initial-fit branches;
+the preceding implementation fails its allocation-induced height growth case.
+
+The combined 2,566-case matrix improves from 2,435 to 2,448 strict matches. Exactly
+2,553 results are unchanged; no prior match is lost and neither maximum nor mean
+raw-box error increases. Seventeen actual painted comparisons at 4x have a maximum
+colored-bound error of 1px, with no increase. Native, baseline and candidate images
+were reviewed without aligning or resizing their content. All 15,598 retained
+text properties, 661 PDF text pages and 90 selected 4x rasters remain exact.
+
+A separate replay of 6,794 source-bound archive pages keeps 6,793 model snapshots
+exact. Its one changed page is covered by the geometry and painted checks; all
+13,622 nonempty text bodies retain their full properties. This does not establish
+native fidelity on unchanged pages. Seventy older pages remain unreplayable
+because their original bytes are absent, and two conflicting native observations
+remain explicit. All eight CI stages pass: 2,740 tests including doctests,
+zero failures and eight existing ignored tests.
+
+The matrix still contains 118 strict raw-box mismatches, including rotated
+representations. Existing text-baseline and clipping differences in unaffected sibling labels also remain; colored-bound agreement is not full text-raster equivalence. Broader reverse/centering transitions, cyclic layouts, geographic
+cache coverage, map reduction and projection precision, and rich chart labels
+remain incomplete. Complete PowerPoint equivalence and LibreOffice replacement
+are not claimed. Only original Rust, programmatic tests and documentation are
+published.

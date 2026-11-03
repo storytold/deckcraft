@@ -225,6 +225,89 @@ pub(super) fn search<'a>(
     Ok(Some(out))
 }
 
+struct Step<'c, 'a> {
+    control: Option<&'c Control<'a>>,
+    replay: bool,
+}
+
+fn steps<'c, 'a>(
+    entries: &[constraints::Entry<'_, 'a>],
+    controls: &'c [Control<'a>],
+    flow: &Flow,
+    work: &mut usize,
+) -> Result<Vec<Step<'c, 'a>>, &'static str> {
+    let mut by_target = std::collections::HashMap::<usize, Vec<&Control<'_>>>::new();
+    charge(work, controls.len().saturating_add(entries.len()))?;
+    for control in controls {
+        by_target.entry(control.target).or_default().push(control);
+    }
+    // Each child resolves through its first flow-axis rule before the siblings
+    // share available space. Remaining authored rules see that new allocation;
+    // fitting each child's entire rule list first loses this dependency.
+    let mut steps = Vec::with_capacity(controls.len().saturating_mul(2).saturating_add(1));
+    let mut rest = Vec::new();
+    for (index, entry) in entries.iter().enumerate() {
+        if entry.parent != Some(flow.index) {
+            continue;
+        }
+        let mut crossed = false;
+        for c in by_target.remove(&index).unwrap_or_default() {
+            if crossed {
+                rest.push(Step { control: Some(c), replay: false });
+            } else {
+                steps.push(Step { control: Some(c), replay: false });
+                if c.property != flow.primary {
+                    rest.push(Step { control: Some(c), replay: true });
+                }
+            }
+            crossed |= c.property == flow.primary;
+        }
+    }
+    steps.push(Step { control: None, replay: false });
+    steps.extend(rest);
+    Ok(steps)
+}
+
+#[derive(Default)]
+struct Replay {
+    original: std::collections::HashMap<(usize, String), Range>,
+    seen: HashSet<(usize, String)>,
+}
+
+// Capacity allocation can change wrapping after a child's local rules ran.
+// Nested flows reconsider their cross dimension from its original seed; a root
+// preserves a fitting checkpoint. Repeated rules then consume the preceding
+// result in authored order, rather than resetting the same seed repeatedly.
+#[allow(clippy::too_many_arguments)]
+fn replay<'a>(
+    state: &mut Replay,
+    control: &Control<'a>,
+    entries: &[constraints::Entry<'_, 'a>],
+    tree: &Instance<'a>,
+    frame: Xfrm,
+    data: &Data<'a>,
+    changes: &mut constraints::Adjustments,
+    flow: &Flow,
+    scope: &HashSet<usize>,
+    out: &mut Vec<Placed<'a>>,
+    measure: &mut Measure<'_>,
+    work: &mut usize,
+) -> Result<bool, &'static str> {
+    charge(work, 1)?;
+    let Some(entry) = entries.get(control.target) else { return Ok(false) };
+    let key = (constraints::id(entry.node), control.property.clone());
+    if !matches!(control.property.as_str(), "w" | "h") || !state.seen.insert(key.clone()) {
+        return Ok(true);
+    }
+    if flow.index == 0 && score(out, scope, measure, control.property == "w", work)? <= 1e-6 {
+        return Ok(false);
+    }
+    let Some(initial) = state.original.get(&key) else { return Ok(false) };
+    initial.set_value(changes, initial.start);
+    *out = placed(tree, frame, data, changes, flow, work)?;
+    Ok(true)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn search_pass<'a>(
     tree: &Instance<'a>,
@@ -238,41 +321,17 @@ fn search_pass<'a>(
     work: &mut usize,
 ) -> Result<Vec<Placed<'a>>, &'static str> {
     use constraints::Adjustment::Value;
-    let mut by_target = std::collections::HashMap::<usize, Vec<&Control<'_>>>::new();
-    charge(work, controls.len().saturating_add(entries.len()))?;
-    for control in controls {
-        by_target.entry(control.target).or_default().push(control);
-    }
-    // Each child resolves through its first flow-axis rule before the siblings
-    // share available space. Remaining authored rules see that new allocation;
-    // fitting each child's entire rule list first loses this dependency.
-    let mut steps = Vec::with_capacity(controls.len().saturating_add(1));
-    let mut rest = Vec::new();
-    for (index, entry) in entries.iter().enumerate() {
-        if entry.parent != Some(flow.index) {
-            continue;
-        }
-        let mut crossed = false;
-        for c in by_target.remove(&index).unwrap_or_default() {
-            if crossed {
-                rest.push(Some(c));
-            } else {
-                steps.push(Some(c));
-            }
-            crossed |= c.property == flow.primary;
-        }
-    }
-    steps.push(None);
-    steps.extend(rest);
+    let steps = steps(entries, controls, flow, work)?;
     let mut changes = constraints::Adjustments::new();
     let mut local_primary = std::collections::HashMap::new();
+    let mut replay_state = Replay::default();
     // Remember an actual capacity reduction, not merely that allocation ran.
     // A root rule search retains that reduction when it reaches final text fit.
     let mut allocated_fit = false;
     let mut grown = Vec::<Growth>::new();
     let mut coupled = HashSet::new();
     let mut out = placed(tree, frame, data, &changes, flow, work)?;
-    for step in steps {
+    for Step { control: step, replay: repeat_cross } in steps {
         // Apply the previous font rule before later dimensions change its fit budget.
         out = reclaim(tree, frame, data, &mut changes, flow, &mut grown, measure, work, out)?;
         let Some(control) = step else {
@@ -291,17 +350,26 @@ fn search_pass<'a>(
             continue;
         };
         let scope = control_scope(entries, data, control, work)?;
+        if repeat_cross
+            && (!allocated_fit
+                || !replay(&mut replay_state, control, entries, tree, frame, data, &mut changes, flow, &scope, &mut out, measure, work)?)
+        {
+            continue;
+        }
         let font_rule = matches!(control.property.as_str(), "primFontSz" | "secFontSz");
         let size_rule = matches!(control.property.as_str(), "w" | "h");
         // Width rules keep searching when an emergency word break hides overflow.
         // Height rules fit the resulting lines without requiring every word intact.
         let prefer_words = font_rule || control.property == "w";
+        let solution = constraints::resolve_adjusted(tree, frame, data, work, &changes)?;
+        let Some(range) = range(control, entries, data, &solution, &changes)? else { continue };
+        if !repeat_cross {
+            replay_state.original.entry(range.key.clone()).or_insert_with(|| range.clone());
+        }
         let before = score(&out, &scope, measure, prefer_words, work)?;
         if before <= 1e-6 {
             continue;
         }
-        let solution = constraints::resolve_adjusted(tree, frame, data, work, &changes)?;
-        let Some(range) = range(control, entries, data, &solution, &changes)? else { continue };
         let (start, limit, is_factor) = (range.start, range.limit, range.is_factor);
         if size_rule && !is_factor && limit <= start {
             continue;

@@ -2299,3 +2299,71 @@ fn shrinking_font_does_not_accept_a_worse_endpoint_score() {
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].font, Some(29.));
 }
+
+#[test]
+fn allocated_linear_rules_revisit_cross_dimensions_in_authored_order() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for nested in [false, true] {
+        for repeated in [false, true] {
+            for initially_fits in [false, true] {
+                let (width, initial_height, limit) = if initially_fits { (110., 70., 100.) } else { (163., 16., 59.) };
+                let extra = if repeated { "<rule type='h' val='71'/>" } else { "" };
+                let mut flow = String::from("<layoutNode name='flow'><alg type='lin'/>");
+                for (name, w, h, rules) in [
+                    ("first", 17., 12., "<rule type='w' val='100'/><rule type='h' val='79'/>".to_string()),
+                    ("second", 31., 18., "<rule type='w' val='83'/><rule type='h' val='67'/>".to_string()),
+                    ("last", 23., initial_height, format!("<rule type='h' val='{limit}'/>{extra}<rule type='w' val='71'/>")),
+                ] {
+                    flow.push_str(&format!(
+                        "<layoutNode name='{name}'><alg type='tx'/><presOf axis='ch'/><shape type='rect'/>
+                        <constrLst><constr type='w' val='{w}'/><constr type='h' val='{h}'/></constrLst>
+                        <ruleLst>{rules}</ruleLst></layoutNode>"
+                    ));
+                }
+                flow.push_str("</layoutNode>");
+                let body = if nested {
+                    format!(
+                        "<layoutNode><alg type='composite'/><constrLst>
+                        <constr type='w' for='ch' forName='flow' val='{width}'/>
+                        <constr type='h' for='ch' forName='flow' val='120'/>
+                        </constrLst>{flow}</layoutNode>"
+                    )
+                } else {
+                    flow
+                };
+                let mut measure = |items: &[Placed<'_>], kind: MeasureKind| {
+                    Ok(items
+                        .iter()
+                        .map(|p| {
+                            let width = p.rect.w / mm;
+                            let height = match p.name.as_str() {
+                                "first" => 18.,
+                                "second" => 100.,
+                                _ if width < 20. => 78.,
+                                _ if width < 25. => 67.,
+                                _ if width < 33. => 55.,
+                                _ => 30.,
+                            };
+                            let words = if p.name == "last" { 33. } else { 40. };
+                            (height * mm - p.rect.h).max(0.) + if kind == MeasureKind::WordWrap { (words - width).max(0.) } else { 0. }
+                        })
+                        .collect())
+                };
+                let definition = layout(&body);
+                let out = evaluate_measured(&definition, &data, Xfrm::new(0., 0., width * mm, 120. * mm), Some(&mut measure)).unwrap();
+                let last = out.iter().find(|p| p.name == "last").unwrap();
+                if initially_fits {
+                    // A previously fitting height must grow when allocation adds lines,
+                    // including at the root. Later smaller limits cannot erase that fit.
+                    assert!((last.rect.h / mm - 78.4375).abs() < 1e-7, "nested={nested}, repeated={repeated}: {}", last.rect.h / mm);
+                } else if nested {
+                    // The second height rule sees the first one's new fit and is skipped.
+                    assert!((last.rect.h / mm - 56.3125).abs() < 1e-7, "repeated={repeated}: {}", last.rect.h / mm);
+                } else {
+                    assert!(last.rect.h / mm >= 59. - 1e-7);
+                }
+            }
+        }
+    }
+}
