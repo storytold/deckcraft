@@ -258,7 +258,9 @@ impl ReverseCentering {
 
     fn forward_growth(&mut self, length: f64, entering_extent: f64) -> (f64, f64) {
         let expansion = length - self.extent;
-        let Some(reference) = self.reference else { return (expansion, expansion / 4.) };
+        let Some(reference) = self.reference else {
+            return (expansion, expansion / 4.);
+        };
         let projected = 2. * (self.pending[1].advance + self.pending[1].growth);
         let retained = (self.boundary - reference - projected).max(0.);
         let mut boundary_growth = (expansion - retained).max(0.);
@@ -626,6 +628,7 @@ struct CenterExit {
 }
 
 struct CenterSearch {
+    normalized: bool,
     initial: CenterTrial,
     best: CenterTrial,
     scale: f64,
@@ -652,6 +655,7 @@ impl CenterExit {
 
 #[derive(Clone, Copy)]
 struct FittedLine {
+    reference_adjustment: f64,
     nominal: Centering,
     fitted: Centering,
     reference: f64,
@@ -666,40 +670,56 @@ struct FittedLine {
 /// Keep both centering cursors: an alignment correction moves the fitted cursor,
 /// and its portion not consumed by line growth becomes pending for the next line.
 struct FittedCentering {
+    consumption_limit: Option<(f64, usize)>,
     nominal: Centering,
     fitted: Centering,
     nominal_refs: [f64; 2],
     fitted_refs: [f64; 2],
+    reference_adjustments: [f64; 2],
     held: [bool; 2],
     balance: f64,
     reference_origin: f64,
     corrected: bool,
     previous: Option<f64>,
+    previous_correction: f64,
+    previous_reference: f64,
+    previous_carried: bool,
+    previous_expansion: f64,
     largest: f64,
     largest_offset: f64,
     rebound: Option<f64>,
+    rebound_adjustment: f64,
 }
 
 impl FittedCentering {
-    fn new(first: f64, scale: f64) -> Self {
+    fn new(first: f64, scale: f64, consumption_limit: Option<(f64, usize)>) -> Self {
         Self {
+            consumption_limit,
             nominal: Centering::new(first),
             fitted: Centering::new(first * scale),
             nominal_refs: [first; 2],
             fitted_refs: [first * scale; 2],
+            reference_adjustments: [0.; 2],
             held: [false; 2],
             balance: 0.,
             reference_origin: 0.,
             corrected: false,
             previous: None,
+            previous_correction: 0.,
+            previous_reference: first,
+            previous_carried: false,
+            previous_expansion: 0.,
             largest: 0.,
             largest_offset: 0.,
             rebound: None,
+            rebound_adjustment: 0.,
         }
     }
 
     fn advance(&mut self, length: f64, scale: f64, index: usize, nominal_balance: Option<f64>) -> FittedLine {
         let pending_before = self.fitted.next;
+        let prior_extent = self.nominal.extent;
+        let old_fitted_reference = self.fitted_refs[index % 2];
         let rebound = self.rebound.take();
         let (nominal_growth, nominal_expansion) = self.nominal.advance(length);
         let (fitted_growth, expansion) = self.fitted.advance(length * scale);
@@ -711,8 +731,22 @@ impl FittedCentering {
         }
         // The slot is internal parity, never an input-derived index.
         let slot = index % 2;
+        let reference_adjustment = self.reference_adjustments[slot];
+        self.reference_adjustments[slot] = 0.;
         let reference = self.nominal_refs[slot];
         let mut alignment = self.fitted_refs[slot];
+        let mut carried_reference = false;
+        let mut carried_shrink = 0.;
+        if exceeds(fitted_growth, nominal_growth * scale)
+            && exceeds(self.previous_correction, 0.)
+            && let Some(previous) = self.previous.filter(|&previous| exceeds(prior_extent, previous))
+        {
+            alignment = old_fitted_reference - (prior_extent - previous);
+            carried_reference = true;
+            carried_shrink = (prior_extent - previous) * scale / 2.;
+            self.reference_adjustments[slot] =
+                fitted_growth - nominal_growth * scale + (prior_extent - previous + (reference - length).max(0.)) * scale / 2.;
+        }
         let origin = if self.held[slot] { self.reference_origin } else { 0. };
         self.held[slot] = false;
         let mut correction = 0.;
@@ -724,16 +758,35 @@ impl FittedCentering {
                 // an earlier fitted correction would suppress later growth.
                 if let Some((boundary, nominal)) = rebound.zip(nominal_balance) {
                     alignment = boundary;
-                    self.balance = nominal * scale;
+                    self.balance = nominal * scale + self.rebound_adjustment;
                 }
-                let candidate = (length - reference - (alignment - previous).max(0.)) / 2.;
-                let consumed = if exceeds(previous, alignment) { self.balance.max(expansion / 2.) } else { self.balance };
+                let difference = if carried_reference { alignment - previous } else { (alignment - previous).max(0.) };
+                let candidate = (length - reference - difference) / 2.;
+                let consumed = if exceeds(previous, alignment)
+                    && !carried_reference
+                    && self.consumption_limit.is_some_and(|(flow, stop)| exceeds(previous, flow * scale) || stop == index + 1)
+                {
+                    self.balance.max(expansion / 2.)
+                } else {
+                    self.balance
+                };
                 correction = (candidate - consumed - origin).max(0.);
+                if exceeds(fitted_growth, nominal_growth * scale)
+                    && exceeds(self.previous_correction, 0.)
+                    && !self.previous_carried
+                    && !carried_reference
+                    && exceeds(self.previous_expansion, 0.)
+                    && exceeds(reference, self.previous_reference)
+                    && !exceeds(prior_extent * scale, previous)
+                {
+                    correction = ((length - previous / scale - (reference - self.previous_reference) * scale) / 2.).max(0.);
+                }
                 if exceeds(correction, 0.) {
                     // Correcting the left boundary can release pending growth
                     // consumed by this line's expansion. Recompute that balance
                     // from its value before expansion, including partial release.
-                    let pending = (pending_before + (correction - expansion) / 2.).max(0.) - self.fitted.pending;
+                    let pending = (pending_before + if carried_reference { correction / 4. } else { (correction - expansion) / 2. }).max(0.)
+                        - self.fitted.pending;
                     self.fitted.offset -= correction;
                     self.fitted.pending += pending;
                     self.reference_origin += pending * (2. * scale - 1.);
@@ -744,6 +797,9 @@ impl FittedCentering {
                 }
             }
         }
+        if carried_reference && !exceeds(correction, 0.) {
+            self.reference_adjustments[slot] -= (length - reference).max(0.) * scale / 2.;
+        }
         if !self.held[slot] {
             self.nominal_refs[slot] = reference.max(length);
         }
@@ -753,10 +809,16 @@ impl FittedCentering {
             self.largest_offset = self.nominal.offset;
         }
         self.previous = Some(length);
+        self.previous_correction = correction;
+        self.previous_reference = reference;
+        self.previous_carried = carried_reference;
+        self.previous_expansion = nominal_expansion;
         if self.held[slot] && exceeds(nominal_expansion, 0.) {
             self.rebound = Some(self.fitted.extent - expansion);
+            self.rebound_adjustment = carried_shrink;
         }
         FittedLine {
+            reference_adjustment,
             nominal: self.nominal,
             fitted: self.fitted,
             reference,
@@ -808,12 +870,14 @@ impl Policy {
         }
         let (mut low, mut high) = (0., 1.);
         let mut exit = CenterExit::default();
+        let mut normalized = false;
         loop {
             let trial = self.center_trial(children, flow, cross, high * 0.5, work)?;
             exit.observe(trial.phase);
             if matches!(trial.phase, CenterFitPhase::Fits) {
                 break;
             }
+            normalized = true;
             high *= 0.5;
         }
         let mut best = self.center_trial(children, flow, cross, 0., work)?;
@@ -833,7 +897,7 @@ impl Policy {
         if exit.raw_failed {
             return self.layout(children, flow, low, PackingPhase::Fitted, work);
         }
-        self.finish_centered(children, CenterSearch { initial, best, scale: low, exit }, flow, grow, work)
+        self.finish_centered(children, CenterSearch { initial, best, scale: low, exit, normalized }, flow, grow, work)
     }
 
     fn nominal_seed(&self, children: &[BoxStyle], trial: &CenterTrial, grow: &str) -> Vec<Xfrm> {
@@ -900,13 +964,14 @@ impl Policy {
 
     fn finish_centered(&self, children: &[BoxStyle], search: CenterSearch, flow: f64, grow: &str, work: &mut usize) -> Result<Packing, &'static str> {
         charge(work, children.len().saturating_mul(10))?;
-        let CenterSearch { initial, best, scale, exit } = search;
+        let CenterSearch { initial, best, scale, exit, normalized } = search;
         let nominal_length = |line: &Line| {
             children.get(line.range.clone()).unwrap_or_default().iter().map(|c| if self.column { c.rect.h } else { c.rect.w }).sum::<f64>()
         };
         let first = best.lines.first().map_or(0., &nominal_length);
-        let mut centering = FittedCentering::new(first, scale);
-        let mut nominal = FittedCentering::new(initial.lines.first().map_or(0., &nominal_length), 1.);
+        let mut centering = FittedCentering::new(first, scale, exit.stop.filter(|_| normalized).map(|stop| (flow, stop)));
+        let mut nominal =
+            FittedCentering::new(initial.lines.first().map_or(0., &nominal_length), 1., exit.stop.filter(|_| normalized).map(|stop| (flow, stop)));
         let mut nominal_balance = 0.;
         let mut nominal_balances = Vec::with_capacity(initial.lines.len());
         for (index, line) in initial.lines.iter().enumerate() {
@@ -932,9 +997,10 @@ impl Policy {
         }
         let (mut cross, mut origin, mut low, mut high) = (0., 0., f64::INFINITY, f64::NEG_INFINITY);
         let mut previous: Option<FittedLine> = None;
+        let mut deferred_paint_abort = false;
         for (index, ((line, normal), &state)) in best.lines.iter().zip(&best.centers).zip(&states).enumerate() {
             let ordinary = (self.column || grow.ends_with('R')) && !exit.cross_failed && exit.stop.is_none();
-            let proper = if ordinary { normal.offset } else { state.fitted.offset };
+            let mut proper = if ordinary { normal.offset } else { state.fitted.offset };
             let mut anchor = proper;
             if let Some(prior) = previous.filter(|p| exceeds(p.length, p.reference)) {
                 anchor = (first - prior.largest) / 2. + prior.largest_offset + (4. * state.nominal.offset - prior.largest_offset) * scale
@@ -942,7 +1008,7 @@ impl Policy {
             }
             let mut tail = proper - anchor;
             let mut pos = origin;
-            if exit.stop.is_some() && exceeds(high - low, flow) {
+            if exit.stop.is_some() && exceeds(high - low, flow) && !deferred_paint_abort {
                 return Ok(occupied_packing(boxes));
             }
             for (child, rect) in
@@ -953,10 +1019,33 @@ impl Policy {
                 rect.y = cross + (line.thickness - thickness * scale) / 2.;
                 pos += length * scale;
             }
+            let wanted = first * scale / 2. + proper - line.length / 2.;
+            let logical_overflow = exceeds(state.fitted.extent + 2. * state.fitted.pending, flow);
+            let painted_overflow = exceeds(high.max(wanted + line.length) - low.min(wanted), flow);
+            deferred_paint_abort = exit.stop.is_some()
+                && !logical_overflow
+                && painted_overflow
+                && (!normalized || exceeds(state.reference_adjustment, 0.) || previous.is_some_and(|prior| exceeds(prior.correction, 0.)));
+            if deferred_paint_abort {
+                proper -= state.reference_adjustment;
+                tail -= state.reference_adjustment;
+            }
+            if !ordinary
+                && (exit.stop.is_none() || logical_overflow)
+                && painted_overflow
+                && let Some(prior) = previous.filter(|prior| exceeds(prior.correction, 0.) && exceeds(state.length, prior.length))
+            {
+                let partial =
+                    origin + (prior.length - state.length) / 2. + (state.reference - prior.reference) * scale / 2. - state.reference_adjustment;
+                for rect in boxes.get_mut(line.range.clone()).unwrap_or_default() {
+                    rect.x += partial - origin;
+                }
+                return Ok(occupied_packing(boxes));
+            }
             // Fitting can overflow its logical extent before this row reaches
             // final centering. Growing rows still use the carried boundary;
             // following children retain their nominal positions.
-            if exit.stop.is_none() && !ordinary && exceeds(state.fitted.extent + 2. * state.fitted.pending, flow) {
+            if !ordinary && logical_overflow && (exit.stop.is_none() || (!normalized && painted_overflow)) {
                 let adjustment = if exceeds(state.expansion, 0.) {
                     first * scale / 2. + proper - line.length / 2. + state.expansion / 2. - origin
                 } else {
@@ -1166,6 +1255,207 @@ mod tests {
             &packed(&sizes, (120., 80.), &[("bkpt", "fixed"), ("bkPtFixedVal", "3"), ("off", "ctr")], 0.),
             &[[30., 30., 20., 10.], [50., 30., 20., 10.], [70., 30., 20., 10.], [40., 40., 20., 10.], [60., 40., 20., 10.]],
         );
+    }
+
+    struct NativeCenteredControl<'a> {
+        widths: &'a [f64],
+        heights: &'a [f64],
+        fractions: &'a [f64],
+        frame: (f64, f64),
+        column: bool,
+        grow: &'a str,
+        gap: f64,
+        lines: &'a [[f64; 4]],
+    }
+
+    fn check_native_centered_lines(c: NativeCenteredControl<'_>) {
+        let sizes: Vec<_> = c
+            .widths
+            .iter()
+            .zip(c.heights)
+            .flat_map(|(&w, &h)| c.fractions.iter().map(move |&f| if c.column { (h, w * f) } else { (w * f, h) }))
+            .collect();
+        let count = c.fractions.len().to_string();
+        let params = [
+            ("off", "ctr"),
+            ("contDir", "sameDir"),
+            ("bkpt", "fixed"),
+            ("bkPtFixedVal", count.as_str()),
+            ("flowDir", if c.column { "col" } else { "row" }),
+            ("grDir", c.grow),
+        ];
+        let boxes = packed(&sizes, c.frame, &params, c.gap);
+        let bounds: Vec<_> = boxes
+            .chunks(c.fractions.len())
+            .map(|line| {
+                let x = line.iter().map(|r| r.x).fold(f64::INFINITY, f64::min);
+                let y = line.iter().map(|r| r.y).fold(f64::INFINITY, f64::min);
+                let right = line.iter().map(|r| r.x + r.w).fold(f64::NEG_INFINITY, f64::max);
+                let bottom = line.iter().map(|r| r.y + r.h).fold(f64::NEG_INFINITY, f64::max);
+                [x, y, right - x, bottom - y]
+            })
+            .collect();
+        assert_eq!(bounds.len(), c.lines.len());
+        for (row, (actual, expected)) in bounds.iter().zip(c.lines).enumerate() {
+            let actual = [actual[0] - bounds[0][0], actual[1] - bounds[0][1], actual[2], actual[3]];
+            for (actual, expected) in actual.into_iter().zip(expected) {
+                assert!((actual - expected).abs() < 0.001, "row{row}: {actual}, native {expected}");
+            }
+        }
+    }
+
+    #[test]
+    fn centered_fits_carry_references_through_held_and_growing_rows() {
+        // Original native controls compare complete line bounds, including
+        // retained working rows, instead of only the final occupied extent.
+        for c in [
+            NativeCenteredControl {
+                widths: &[19., 19., 34., 27., 43., 72., 159., 111.],
+                heights: &[9., 10.7, 12.4, 9., 10.7, 12.4, 9., 10.7],
+                fractions: &[1.],
+                frame: (81., 88.),
+                column: false,
+                grow: "tL",
+                gap: 2.1,
+                lines: &[
+                    [0., 0., 7.598158, 3.599113],
+                    [0., 4.438855, 7.598158, 4.278938],
+                    [-2.999279, 9.557621, 13.596694, 4.958784],
+                    [-5.599594, 15.35619, 10.79736, 3.599113],
+                    [-5.299181, 19.795088, 17.195763, 4.278959],
+                    [-25.148433, 24.913875, 28.792956, 4.958784],
+                    [-70.348473, 30.712445, 63.584459, 3.599113],
+                    [-42.249962, 87.899975, 44.389108, 4.278916],
+                ],
+            },
+            NativeCenteredControl {
+                widths: &[18., 18., 32., 24., 40., 70., 163., 113.],
+                heights: &[10., 11.3, 12.6, 10., 11.3, 12.6, 10., 11.3],
+                fractions: &[1.],
+                frame: (97., 105.),
+                column: false,
+                grow: "tL",
+                gap: 2.2,
+                lines: &[
+                    [0., 0., 8.33205, 4.628873],
+                    [0., 5.647265, 8.33205, 5.230624],
+                    [-3.240198, 11.896259, 14.812468, 5.832439],
+                    [-4.388664, 18.747068, 11.109356, 4.628873],
+                    [-4.97166, 24.394291, 18.515601, 5.230645],
+                    [-26.906217, 30.643328, 32.402307, 5.832439],
+                    [-94.378359, 37.494094, 75.451155, 4.628916],
+                    [-94.378359, 43.141402, 52.306637, 5.230645],
+                ],
+            },
+            NativeCenteredControl {
+                widths: &[23., 23., 40., 31., 49., 84., 181., 125.],
+                heights: &[10., 11.3, 12.6, 10., 11.3, 12.6, 10., 11.3],
+                fractions: &[1.],
+                frame: (107., 105.),
+                column: false,
+                grow: "tL",
+                gap: 2.2,
+                lines: &[
+                    [0., 0., 10.713859, 4.658178],
+                    [0., 5.683051, 10.713859, 5.263718],
+                    [-3.95947, 11.971599, 18.63282, 5.869323],
+                    [-5.863273, 18.865752, 14.440441, 4.658178],
+                    [-6.075921, 24.54876, 22.825222, 5.263761],
+                    [-30.634715, 30.837308, 39.128878, 5.869323],
+                    [-101.675383, 37.731461, 84.313458, 4.658221],
+                    [-101.675383, 43.414469, 58.227518, 5.263761],
+                ],
+            },
+        ] {
+            check_native_centered_lines(c);
+        }
+    }
+
+    #[test]
+    fn centered_fits_stop_logical_and_painted_overflow_at_their_own_stage() {
+        // Original native controls compare complete line bounds, including
+        // retained working rows, instead of only the final occupied extent.
+        for c in [
+            NativeCenteredControl {
+                widths: &[67., 86., 127., 41., 48., 113., 26.],
+                heights: &[9.7, 10.8, 11.9, 9.7, 10.8, 11.9, 9.7],
+                fractions: &[1.],
+                frame: (90., 112.),
+                column: false,
+                grow: "tL",
+                gap: 2.6,
+                lines: &[
+                    [0., 0., 40.828107, 5.910923],
+                    [-5.789074, 7.495322, 52.406254, 6.581209],
+                    [-48.281237, 15.660973, 77.390636, 7.25156],
+                    [-48.281237, 24.496847, 24.98436, 5.910944],
+                    [0., 0., 29.250002, 6.581252],
+                    [0., 0., 68.859363, 7.25156],
+                    [0., 0., 15.843736, 5.910923],
+                ],
+            },
+            NativeCenteredControl {
+                widths: &[20., 63., 130., 30., 106., 162., 111., 40.],
+                heights: &[9.7, 10.8, 11.9, 9.7, 10.8, 11.9, 9.7, 10.8],
+                fractions: &[1.],
+                frame: (93., 112.),
+                column: false,
+                grow: "tL",
+                gap: 2.6,
+                lines: &[
+                    [0., 0., 11.367136, 5.513079],
+                    [-12.219754, 6.990831, 35.806665, 6.138256],
+                    [-67.219713, 14.606839, 73.886683, 6.763498],
+                    [-54.999948, 40.200023, 17.050768, 5.513057],
+                    [0., 0., 60.246086, 6.138256],
+                    [0., 0., 92.074203, 6.763455],
+                    [0., 0., 63.087902, 5.513079],
+                    [0., 0., 22.734357, 6.138256],
+                ],
+            },
+            NativeCenteredControl {
+                widths: &[31., 46., 72., 105., 229., 163.],
+                heights: &[11.3, 12.2, 13.1, 11.3, 12.2, 13.1],
+                fractions: &[1.],
+                frame: (128., 129.),
+                column: false,
+                grow: "bR",
+                gap: 3.4,
+                lines: &[
+                    [0., 0., 13.623027, 4.965804],
+                    [-3.295901, 6.459963, 20.21483, 5.361301],
+                    [-29.508772, 13.315423, 31.640597, 5.756841],
+                    [-43.778809, 20.566402, 46.142554, 4.965804],
+                    [-118.919421, 27.026365, 100.63477, 5.361301],
+                    [-118.919421, 33.881825, 71.630856, 5.756841],
+                ],
+            },
+        ] {
+            check_native_centered_lines(c);
+        }
+    }
+
+    #[test]
+    fn centered_fits_preserve_subdivided_working_rows_after_partial_placement() {
+        // Original native controls compare complete line bounds, including
+        // retained working rows, instead of only the final occupied extent.
+        check_native_centered_lines(NativeCenteredControl {
+            widths: &[33.532, 46.665, 77.902, 115.443, 160.331, 122.798],
+            heights: &[14.04, 13.121, 11.101, 9.153, 12.541, 11.97],
+            fractions: &[0.13, 0.22, 0.27, 0.38],
+            frame: (143., 62.529),
+            column: true,
+            grow: "bL",
+            gap: 1.9,
+            lines: &[
+                [0., 0., 11.904721, 4.355074],
+                [-2.244372, 5.448332, 14.373649, 6.060698],
+                [-29.767757, 10.5823, 20.302831, 10.117987],
+                [-45.833184, 15.02587, 27.592459, 14.994132],
+                [-62.938837, 18.803762, 38.262867, 20.824483],
+                [-63.399489, 69.455967, 80.226111, 15.949414],
+            ],
+        });
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # DeckCraft roadmap
 
-> **PPTX.66 update 2026-11-03:** Nominal reverse SmartArt compares retained physical growth with the current reference before expanding an equal-length row. Integrated replay changes only 25 independently predicted pages out of 6,888; all 25 become strict native matches. The complete reverse ledger now has 1,121 matches out of 1,153, with 31 geometry failures and one raw identity mismatch retained. Broader text-rule, cycle, map and chart limits remain open; feature scores are unchanged.
+> **PPTX.67 update 2026-11-03:** Centered same-direction SmartArt retains fitted reference changes and distinguishes logical overflow from painted overflow and failed-trial placement. New native diagnostics improve from 48 to 165 strict matches out of 166; one off-page identity discrepancy remains, with its visible geometry corrected. The final independent 24-page set passes completely. Integrated replay changes only the expected original page out of 6,908, while all retained text and raster checks remain exact. Broader SmartArt, map and chart limits remain open; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
 
@@ -445,6 +445,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 |---|---|---|
 | 2026-11-02 | minor | PPTX.53: retain scoped fitting checkpoints and correct diagram glyph/bullet origins; remaining failures retained |
 | 2026-11-03 | minor | PPTX.54: preserve intermediate reversed-flow alignment and bounded pending corrections |
+| 2026-11-03 | minor | PPTX.67: retain fitted centering references and partial placement |
 | 2026-11-03 | minor | PPTX.66: retain physical growth against the current reverse reference |
 | 2026-11-03 | minor | PPTX.65: cancel consumed reverse centering growth |
 | 2026-11-03 | minor | PPTX.64: retain deferred boundaries and exposed center targets |
@@ -1187,3 +1188,44 @@ search, remaining center/cyclic layouts, geographic cache coverage and numeric
 projection/reduction, and rich chart-label fidelity remain incomplete. Complete
 PowerPoint equivalence and LibreOffice replacement are not claimed. Publication
 contains only original Rust, programmatic tests and documentation.
+
+### PPTX.67: retain fitted centering references and partial placement
+
+Same-direction centered rows can release a pending alignment correction into a
+later reference. The fitted cursor now retains that reference change through
+shrinking, held and subsequent growing rows. Failed fitting also keeps its
+normalization phase: logical overflow stops current-row centering, whereas a
+painted-bound overflow can leave the following row at its working position.
+This avoids either restoring the wrong nominal row or completing a layout that
+PowerPoint leaves partial. Reverse, ordinary and restored layout paths retain
+their prior behavior.
+
+Validation:
+
+- 166 original native diagnostic pages improve from 48 to 165 strict full-identity
+  matches within 0.025pt, with no lost match or increased visible error. The one
+  remaining raw identity mismatch consists of original off-page objects; all
+  visible bounds pass. The final preregistered 24-page holdout varies seeded
+  dimensions, two/four children per row and growth direction, improving 16 to 24.
+- All 6,908 retained source-bound model snapshots match the predicted result:
+  6,907 are unchanged, and only the original centered failure changes, in boxes
+  only. Its maximum visible error falls from 7.717pt to 0.011pt, while its original
+  off-page identity discrepancy remains explicit.
+- All 13,622 visible text bodies, 661 PDF text pages and 90 retained 4x rasters
+  remain exact, including the recovery packages. Nine new painted comparisons
+  put all 89 visible colored bounds within one pixel at 4x. Four fully occluded
+  vector identities remain in geometry checks; neither native nor either
+  candidate has visible pixels for them. Native/before/after contacts were reviewed.
+- Three native-backed regressions fail with the preceding implementation and pass
+  with the final source. Full `cargo xtask ci` passes all eight stages and 2,750
+  tests including doctests, with eight existing ignored tests.
+
+Remaining limits:
+
+The expanded reverse ledger remains at 1,126 strict matches out of 1,173 before
+the separately held reverse candidate: 46 geometry failures and one raw identity
+mismatch. Wider text-rule search, cycles, connectors and chart label overflow
+remain partial. Geographic reduction/precision and unsupported binary-cache
+variants still need native coverage. Seventy older archived pages lack original
+source bytes and two native variants conflict; neither is counted as a pass.
+This change does not establish complete LibreOffice replacement.
