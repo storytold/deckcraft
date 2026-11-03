@@ -31,7 +31,9 @@ fn confined(tag: &str, read: bool, write: bool) -> (Server, PathBuf) {
     std::fs::write(base.join("outside/pic.png"), PNG).unwrap();
     std::fs::write(base.join("in2/c.txt"), "Sibling").unwrap();
     let (in_dir, out_dir) = (base.join("in"), base.join("out"));
-    let roots = AutomationRoots::new(read.then_some(in_dir.as_path()), write.then_some(out_dir.as_path())).unwrap();
+    let read = read.then(|| in_dir.to_path_buf()).into_iter().collect::<Vec<_>>();
+    let write = write.then(|| out_dir.to_path_buf()).into_iter().collect::<Vec<_>>();
+    let roots = AutomationRoots::new(&read, &write).unwrap();
     let mut server = Server::new(Box::new(Headless::with_document().with_automation_roots(roots)));
     ok(&mut server, "new_presentation", json!({}));
     (server, base)
@@ -215,7 +217,7 @@ fn without_roots_nothing_is_confined() {
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
     std::fs::write(base.join("a.txt"), "Anywhere").unwrap();
-    let mut server = Server::new(Box::new(Headless::with_document().with_automation_roots(AutomationRoots::new(None, None).unwrap())));
+    let mut server = Server::new(Box::new(Headless::with_document().with_automation_roots(AutomationRoots::new(&[], &[]).unwrap())));
     ok(&mut server, "open_presentation", json!({"path": s(&base.join("a.txt"))}));
     ok(&mut server, "save_presentation", json!({"path": s(&base.join("b.deckcraft"))}));
     assert!(base.join("b.deckcraft").exists());
