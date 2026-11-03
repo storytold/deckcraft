@@ -151,6 +151,8 @@ fn place_by_parent_delays(out: &mut [(Animation, u32, String, bool)], at: &[(Opt
         if flat == abs {
             continue;
         }
+        // The group's click stays on whichever effect now plays first.
+        let had_click = out[idx[0]].0.start == AnimStart::OnClick;
         let mut order: Vec<usize> = (0..idx.len()).collect();
         order.sort_by_key(|&k| abs[k]);
         let mut sorted: Vec<(Animation, u32, String, bool)> = order.iter().map(|&k| out[idx[k]].clone()).collect();
@@ -158,7 +160,8 @@ fn place_by_parent_delays(out: &mut [(Animation, u32, String, bool)], at: &[(Opt
         for (n, (&k, item)) in order.iter().zip(sorted.iter_mut()).enumerate() {
             let a = &mut item.0;
             let t = abs[k];
-            if n == 0 && a.start == AnimStart::OnClick {
+            if n == 0 && had_click {
+                a.start = AnimStart::OnClick;
                 a.delay_ms = t;
             } else if a.start == AnimStart::AfterPrevious && t >= end {
                 begin = end;

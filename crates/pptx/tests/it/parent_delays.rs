@@ -126,3 +126,20 @@ fn a_timeline_already_in_order_is_read_unchanged() {
     let starts: Vec<_> = fx.iter().map(|(n, st, d)| (n.as_str(), *st, *d)).collect();
     assert_eq!(starts, [("Three", AnimStart::OnClick, 0), ("Visual", AnimStart::WithPrevious, 500), ("Two", AnimStart::AfterPrevious, 1000)]);
 }
+
+#[test]
+fn a_delayed_click_effect_sorted_after_a_with_effect_keeps_the_click_on_the_group() {
+    // The click effect waits 500 ms; a with-effect in the same click plays at once, and a later
+    // effect is placed only by its parent's delay. Sorted, the with-effect plays first and takes
+    // the click, so the group still waits for one.
+    let fx = import_with_timing(|s| {
+        [
+            group(10, 0, &[eff(11, "exit", "clickEffect", 500, s[0]), eff(12, "entr", "withEffect", 0, s[3])].concat()),
+            group(20, 1000, &eff(21, "exit", "afterEffect", 0, s[1])),
+        ]
+        .concat()
+    });
+    let starts: Vec<_> = fx.iter().map(|(n, st, _)| (n.as_str(), *st)).collect();
+    assert_eq!(starts[0], ("Visual", AnimStart::OnClick), "{fx:?}");
+    assert_eq!(starts.iter().filter(|(_, st)| *st == AnimStart::OnClick).count(), 1, "{fx:?}");
+}
