@@ -1040,8 +1040,7 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
                         err_marks.push((mid, p0, p1, bar.min(base * 0.8) * 0.5, e.end_cap));
                     }
                 }
-                if c.series_data_labels(s) {
-                    let t = c.data_label(s, s.values.get(i).copied().flatten().unwrap_or(0.0));
+                if let Some(t) = bar_data_label(c, s, i) {
                     let lr = if horiz {
                         Rect::new(r.x1 + 2.0, r.y0, r.x1 + 40.0, r.y1)
                     } else {
@@ -1066,6 +1065,31 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
         }
     }
     err_marks
+}
+
+fn bar_data_label(c: &Chart, s: &deckcraft_model::chart::Series, i: usize) -> Option<String> {
+    if !c.series_data_labels(s) {
+        return None;
+    }
+    s.values.get(i).copied().flatten().map(|value| c.data_label(s, value))
+}
+
+#[cfg(test)]
+mod bar_label_tests {
+    use super::bar_data_label;
+    use deckcraft_model::chart::{Chart, Series};
+
+    #[test]
+    fn missing_bar_values_have_no_label_but_explicit_zero_does() {
+        let chart = Chart { data_labels: true, ..Default::default() };
+        let series = Series { values: [Some(1.0), None, Some(3.0)].into(), ..Default::default() };
+
+        let labels: Vec<_> = (0..series.values.len()).filter_map(|i| bar_data_label(&chart, &series, i)).collect();
+
+        assert_eq!(labels, ["1", "3"]);
+        let zero = Series { values: [Some(0.0)].into(), ..Default::default() };
+        assert_eq!(bar_data_label(&chart, &zero, 0).as_deref(), Some("0"));
+    }
 }
 
 fn draw_pie(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, text_col: Rgba) {

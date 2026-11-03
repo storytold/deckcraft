@@ -1,12 +1,14 @@
 use super::{
     Arc, BTreeSet, Background, Fill, NO_ID_SPACE, Presentation, Result, Session, Target, Value, bad, bool_or, bool_param, color_param, color_value,
-    f64_param, ok, usize_param, with_param,
+    f64_param, ok, opt_usize_param, usize_param, with_param,
 };
 
 pub(super) fn background(s: &mut Session, p: &Value) -> Result<Value> {
     if bool_or(p, "copy", false) {
         return copy_slide_background(s);
     }
+    // Check the index before anything is edited: a picture is added to the media first.
+    let index = opt_usize_param(p, "index", "design.background")?;
     let props = p.get("pictureProps").filter(|v| v.is_object()).cloned();
     let transparency = f64_param(p, "transparency");
     let reset = bool_or(p, "reset", false);
@@ -62,7 +64,6 @@ pub(super) fn background(s: &mut Session, p: &Value) -> Result<Value> {
         ));
     };
     let all = bool_or(p, "all", false);
-    let index = usize_param(p, "index");
     if matches!(op, BgOp::Adjust) {
         let next = {
             let st = s.doc()?;
