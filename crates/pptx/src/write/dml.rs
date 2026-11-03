@@ -470,7 +470,7 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
         .b("upright", b.upright)
         .b("spcFirstLastPara", b.space_first_last)
         .o("vertOverflow", b.vert_overflow.map(|v| v.xml()))
-        .o("horzOverflow", b.horz_overflow.map(|v| v.xml()));
+        .o("horzOverflow", deckcraft_model::text::TextOverflow::horz_xml(b.horz_overflow));
     let warp = b.warp.as_deref().filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()));
     if warp.is_none() && b.autofit.is_none() {
         w.empty("a:bodyPr", a);

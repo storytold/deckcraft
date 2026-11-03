@@ -150,6 +150,16 @@ impl TextOverflow {
             _ => return None,
         })
     }
+
+    /// A `horzOverflow` value: `ST_TextHorzOverflowType` has only `overflow` and `clip`.
+    pub fn from_horz_xml(value: &str) -> Option<Self> {
+        Self::from_xml(value).filter(|v| *v != Self::Ellipsis)
+    }
+
+    /// The `horzOverflow` attribute to write, leaving out `ellipsis`, which is vertical only.
+    pub fn horz_xml(v: Option<Self>) -> Option<&'static str> {
+        v.filter(|v| *v != Self::Ellipsis).map(Self::xml)
+    }
 }
 
 impl BodyProps {

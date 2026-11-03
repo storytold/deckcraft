@@ -475,7 +475,7 @@ fn text_overflow_policies_survive_two_pptx_round_trips() {
     let mut text = shape(&mut p, "Text", 10.0, 10.0, 200.0, 80.0);
     let mut body = TextBody::from_text("policy");
     body.body.vert_overflow = Some(TextOverflow::Clip);
-    body.body.horz_overflow = Some(TextOverflow::Ellipsis);
+    body.body.horz_overflow = Some(TextOverflow::Overflow);
     text.text = Some(body);
     let mut table_shape = shape(&mut p, "Table", 10.0, 100.0, 200.0, 80.0);
     let mut table = Table::new(1, 1, 200.0, 80.0);
@@ -488,9 +488,28 @@ fn text_overflow_policies_survive_two_pptx_round_trips() {
     let slide = twice.slides.last().expect("added slide");
     let text = by_name(slide, "Text").text.as_ref().expect("text body");
     assert_eq!(text.body.vert_overflow, Some(TextOverflow::Clip));
-    assert_eq!(text.body.horz_overflow, Some(TextOverflow::Ellipsis));
+    assert_eq!(text.body.horz_overflow, Some(TextOverflow::Overflow));
     let ShapeKind::Table(table) = &by_name(slide, "Table").kind else { panic!("table") };
     assert_eq!(table.rows[0].cells[0].horz_overflow, Some(TextOverflow::Clip));
+}
+
+#[test]
+fn horizontal_ellipsis_is_not_written_because_only_vertical_overflow_has_it() {
+    let mut p = Presentation::default();
+    let mut slide = new_slide(&mut p, "Horizontal ellipsis");
+    let mut text = shape(&mut p, "Text", 10.0, 10.0, 200.0, 80.0);
+    let mut body = TextBody::from_text("policy");
+    body.body.vert_overflow = Some(TextOverflow::Ellipsis);
+    body.body.horz_overflow = Some(TextOverflow::Ellipsis);
+    text.text = Some(body);
+    slide.shapes = vec![text];
+    p.slides.push(Arc::new(slide));
+
+    let once = round(&p);
+    let slide = once.slides.last().expect("added slide");
+    let text = by_name(slide, "Text").text.as_ref().expect("text body");
+    assert_eq!(text.body.vert_overflow, Some(TextOverflow::Ellipsis));
+    assert_eq!(text.body.horz_overflow, None);
 }
 
 #[test]
