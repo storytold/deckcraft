@@ -64,12 +64,22 @@ fn spelling_dialog_checks_again_only_when_something_changed() {
         },
         app,
     );
-    let found = |h: &Harness<'_, SlideApp>| h.state().dialog.as_ref().and_then(|d| d.spelling.as_ref()).map(|(_, l)| l.clone()).unwrap();
+    let found = |h: &Harness<'_, SlideApp>| h.state().dialog.as_ref().and_then(|d| d.spelling.as_ref()).map(|f| f.list.clone()).unwrap();
     h.run_steps(3);
     let first = found(&h);
     assert!(first.iter().any(|i| i["word"] == "plna"));
     h.run_steps(5);
     assert!(std::sync::Arc::ptr_eq(&first, &found(&h)), "an unchanged deck is not checked again");
+    // Go to: the dialog changes the slide and the selection, not the text.
+    let shape = first[0]["shape"].clone();
+    h.state_mut().session.execute("slide.go", &json!({"index": 0})).unwrap();
+    h.state_mut().session.execute("edit.select", &json!({"ids": [shape]})).unwrap();
+    h.run_steps(3);
+    assert!(std::sync::Arc::ptr_eq(&first, &found(&h)), "a change of selection is not checked again");
+    h.state_mut().session.execute("review.spellingChange", &json!({"shape": shape, "para": 0, "start": 4, "word": "plna", "to": "plan"})).unwrap();
+    h.run_steps(3);
+    assert!(!std::sync::Arc::ptr_eq(&first, &found(&h)), "an edit is checked again");
+    let first = found(&h);
     h.get_all_by_label("Ignore All").next().unwrap().click();
     h.run_steps(3);
     assert!(!std::sync::Arc::ptr_eq(&first, &found(&h)), "an ignored word is checked again");
@@ -95,7 +105,7 @@ fn spelling_dialog_checks_another_document_at_the_same_revision() {
     );
     h.run_steps(3);
     let words = |h: &Harness<'_, SlideApp>| -> Vec<String> {
-        let found = h.state().dialog.as_ref().and_then(|d| d.spelling.as_ref()).map(|(_, l)| l.clone()).unwrap();
+        let found = h.state().dialog.as_ref().and_then(|d| d.spelling.as_ref()).map(|f| f.list.clone()).unwrap();
         found.iter().filter_map(|i| i["word"].as_str().map(str::to_string)).collect()
     };
     assert_eq!(words(&h), ["plna"]);
