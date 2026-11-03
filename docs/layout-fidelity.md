@@ -2548,7 +2548,8 @@ retained as failures. The seventeen rendering threshold sequences and two Albers
 failures are unchanged. These tests neither establish every provider/entity-type branch nor
 make unsupported LibreOffice map output a passing reference.
 
-Final local `cargo xtask ci` passes all eight stages with 2,619 tests including doctests.
+Final local `cargo xtask ci` passes all eight stages with 2,621 tests including doctests,
+including the upstream About-page integration. Renderer source is unchanged by that integration.
 The final executable reproduces all 102 frozen map images and 656 chart pages. Eighty selected
 linear/boundary geometries exactly match the full-matrix candidate; its production rule logic
 is unchanged. Native and renderer comparisons retain their distinct acceptance criteria.
