@@ -708,7 +708,7 @@ impl Exporter<'_> {
         // would want millions of rules.
         let first = r.y0 + 18.0;
         let count = ((r.y1 - first) / 22.0).floor() + 1.0;
-        if !(count >= 1.0) {
+        if count.is_nan() || count < 1.0 {
             return;
         }
         s.set_stroke(Some(krilla::paint::Stroke {
