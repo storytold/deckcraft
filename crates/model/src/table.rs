@@ -77,6 +77,9 @@ impl Default for Table {
     }
 }
 
+/// Cells a table may hold after [`Table::normalize`] (PowerPoint's own limit is 75 x 75).
+pub const MAX_CELLS: usize = 100_000;
+
 impl Table {
     pub fn new(rows: usize, cols: usize, width: f64, row_height: f64) -> Self {
         let rows = rows.clamp(1, 1000);
@@ -164,8 +167,12 @@ impl Table {
         true
     }
     /// The merged areas: every uncovered cell spanning more than one cell, clipped to the grid.
+    /// Merges of a well-formed table do not overlap, so together they cover at most the grid; a
+    /// file's overlapping spans past that are dropped, so rebuilding them cannot revisit cells
+    /// without bound.
     fn merges(&self) -> Vec<Merge> {
         let (nr, nc) = (self.rows.len(), self.cols.len());
+        let mut area = nr.saturating_mul(nc);
         let mut out = vec![];
         for (r, row) in self.rows.iter().enumerate() {
             for (c, cell) in row.cells.iter().enumerate().take(nc) {
@@ -174,7 +181,10 @@ impl Table {
                 }
                 let rs = (cell.row_span.max(1) as usize).min(nr - r);
                 let gs = (cell.grid_span.max(1) as usize).min(nc - c);
-                if rs > 1 || gs > 1 {
+                if (rs > 1 || gs > 1)
+                    && let Some(left) = area.checked_sub(rs.saturating_mul(gs))
+                {
+                    area = left;
                     out.push(Merge { r, c, rs, gs });
                 }
             }
@@ -283,21 +293,25 @@ impl Table {
             return false;
         }
         // Spans come from the file and may reach past the table; only walk the cells that exist.
-        for rr in r..r.saturating_add(rs).min(self.rows.len()) {
-            for cc in c..c.saturating_add(gs).min(self.cols.len()) {
-                if let Some(x) = self.cell_mut(rr, cc) {
-                    x.h_merge = false;
-                    x.v_merge = false;
-                    x.grid_span = 1;
-                    x.row_span = 1;
-                }
+        let end = r.saturating_add(rs).min(self.rows.len());
+        let gs = gs.min(self.cols.len().saturating_sub(c));
+        for row in self.rows.get_mut(r..end).unwrap_or_default() {
+            for x in row.cells.iter_mut().skip(c).take(gs) {
+                x.h_merge = false;
+                x.v_merge = false;
+                x.grid_span = 1;
+                x.row_span = 1;
             }
         }
         true
     }
-    /// Make every row have exactly `cols.len()` cells (repair after loading).
+    /// Make every row have exactly `cols.len()` cells (repair after loading). A grid over
+    /// [`MAX_CELLS`] loses its last rows (and columns) first, so a file naming many rows and many
+    /// columns but few cells cannot make this allocate their product.
     pub fn normalize(&mut self) {
+        self.cols.truncate(MAX_CELLS);
         let n = self.cols.len();
+        self.rows.truncate((MAX_CELLS / n.max(1)).max(1));
         for r in &mut self.rows {
             r.cells.resize_with(n, || Cell::new(""));
             for c in &mut r.cells {
@@ -511,6 +525,42 @@ mod tests {
                 assert_eq!(*n, 1, "cell ({r},{c}) owned {n} times");
             }
         }
+    }
+
+    #[test]
+    fn normalize_caps_a_sparse_grid_at_max_cells() {
+        // 1,000 columns and 1,000 empty rows would be a million cells.
+        let mut t = Table { cols: vec![10.0; 1000], rows: vec![Row::default(); 1000], ..Default::default() };
+        t.normalize();
+        assert_eq!(t.cols.len(), 1000);
+        assert_eq!(t.rows.len(), MAX_CELLS / 1000);
+        assert!(t.rows.iter().all(|r| r.cells.len() == 1000));
+        // Columns alone past the cap keep one row of MAX_CELLS cells.
+        let mut t = Table { cols: vec![1.0; MAX_CELLS + 5], rows: vec![Row::default(); 3], ..Default::default() };
+        t.normalize();
+        assert_eq!((t.cols.len(), t.rows.len()), (MAX_CELLS, 1));
+        // A normal table is untouched.
+        let mut t = Table::new(4, 4, 400.0, 30.0);
+        t.normalize();
+        assert_eq!((t.n_rows(), t.n_cols()), (4, 4));
+    }
+
+    #[test]
+    fn overlapping_file_spans_rebuild_in_bounded_work() {
+        // Every cell an uncovered anchor spanning to the far corner: their areas add up to about
+        // n^4 / 4, but only what fits the grid is kept, so an edit's rebuild stays near n^2.
+        let n = 200;
+        let mut t = Table::new(n, n, 400.0, 30.0);
+        for row in &mut t.rows {
+            for c in &mut row.cells {
+                c.grid_span = u32::MAX;
+                c.row_span = u32::MAX;
+            }
+        }
+        assert_eq!(t.merges().len(), 1, "the first anchor already covers the whole grid");
+        t.insert_row(n);
+        assert_eq!(t.n_rows(), n + 1);
+        assert!(t.split(0, 0));
     }
 
     fn merged() -> Table {

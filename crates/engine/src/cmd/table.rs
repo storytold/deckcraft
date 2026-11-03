@@ -285,6 +285,8 @@ fn with_table(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Table) -> R
     };
     let r = edit_shapes(s, &json!({"id": id}), cmd, |sh| match &mut sh.kind {
         ShapeKind::Table(t) => {
+            // Edits walk the grid: bound it first (a loaded table need not be normalized yet).
+            t.normalize();
             f(t)?;
             t.normalize();
             let (w, h) = (t.width(), t.height());
