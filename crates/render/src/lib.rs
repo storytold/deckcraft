@@ -96,6 +96,9 @@ mod tests;
 mod tests_wild;
 
 #[cfg(test)]
+mod tests_effect_holes;
+
+#[cfg(test)]
 mod mt_tests {
     use super::*;
 
