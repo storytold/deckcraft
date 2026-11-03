@@ -1,6 +1,6 @@
 # DeckCraft roadmap
 
-> **PPTX.60 update 2026-11-03:** Automatic chart limits and dense authored units now follow staged range generation; rendering preserves all accepted in-range ticks. Of 1,218 chart pages, 1,129 are pixel-identical and 89 improve against native output, with no measured regression. All 44 fixed local masks and 140 map renders are retained. Broader SmartArt, text, map and LibreOffice parity remains open; feature scores are unchanged.
+> **PPTX.61 update 2026-11-03:** Centered reverse SmartArt fitting now separates delayed logical capacity from painted bounds. The 2,488-case geometry matrix gains 26 strict matches without losing or worsening any case; 661 PDF text pages and 90 selected rasters remain exact. Twelve larger painted-layout differences in the preceding diagnostic set remain open, alongside broader text rules, maps and chart labels. Full LibreOffice replacement remains unproven; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
 
@@ -445,6 +445,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 |---|---|---|
 | 2026-11-02 | minor | PPTX.53: retain scoped fitting checkpoints and correct diagram glyph/bullet origins; remaining failures retained |
 | 2026-11-03 | minor | PPTX.54: preserve intermediate reversed-flow alignment and bounded pending corrections |
+| 2026-11-03 | minor | PPTX.61: separate reverse fitting capacity from painted bounds |
 | 2026-11-03 | minor | PPTX.60: preserve staged chart bounds and complete dense authored axes |
 | 2026-11-03 | minor | PPTX.59: preserve authored break character indices in PDF text extraction |
 | 2026-11-03 | minor | PPTX.58: resolve generated SmartArt hanging defaults by effective font interval |
@@ -904,3 +905,43 @@ or text-layout difference. SmartArt reverse placement and capacity, exact and
 percentage line spacing, grouped chart text, and binary-map projection and
 reduction precision remain open. Full LibreOffice replacement is not claimed.
 Only original Rust, programmatic tests and documentation are published.
+
+### PPTX.61: separate reverse fitting capacity from painted bounds
+
+Centered alternating SmartArt lines can paint beyond their frame while their
+logical fitting capacity still fits. Using the painted union as the fitting
+budget incorrectly shrank supported diagrams. The importer now retains a
+forward-growth capacity event until the second following line, accounting for
+physical extent already retained from a reverse line. Logical extents determine
+fitting; the occupied painted union still determines final centering. Nominal
+placement arithmetic and bounded fitting-search budgets are unchanged.
+
+Three original native-backed Rust regressions distinguish deferred capacity,
+independent row subdivisions and the painted-versus-logical boundary. All three
+fail against the preceding production implementation. Twenty-six independent
+native controls include prefix stopping, extra neutral lines, different largest
+lines, row/column flow and subdivided physical widths. A first candidate failed
+one of these prefix controls and was rejected rather than weakening its expected
+scale. The final candidate passes all 26, up from 6. Of 2,462 retained geometry
+cases, strict matches within 0.025pt rise from 2,370 to 2,376; all other 2,456
+results are unchanged. The combined 2,488 cases improve from 2,376 to 2,402
+strict matches, with no lost match or increased measured error.
+
+All 15,598 retained text-property observations, 661 unique PDF text pages and
+90 selected 4x rasters remain exact. Unchanged preceding PDF evidence is reused
+only where the intervening chart-axis change cannot affect the SmartArt sources.
+Fourteen actual painted comparisons have at most one pixel of colored-bound
+error at 4x, with no increase; the preceding maximum was 102 pixels. Native page
+height rounding is recorded separately, without resizing or aligning content.
+Actual native/baseline/candidate contact sheets were visually reviewed. The
+candidate passes 255 targeted PPTX tests; all eight full workspace CI stages pass, with 2,736 tests including doctests, zero failures and eight existing ignored tests.
+
+This resolves six of the 18 larger painted-layout differences in the preceding
+diagnostic set. Eight nominal reverse-origin cases and four other rule/centering
+cases remain; an off-page identity case is not counted as fixed. The combined
+strict raw-box matrix retains 86 mismatches, including rotated representation
+differences. Coupled text rules, broader cyclic layouts, map reduction and
+projection precision, grouped chart text and rich label layout remain incomplete.
+Only original Rust, programmatic tests and documentation are published. Full
+PowerPoint equivalence or replacement of every LibreOffice conversion is not
+claimed.

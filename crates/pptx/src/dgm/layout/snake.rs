@@ -89,6 +89,7 @@ struct CenterAdjustment {
     extent_floor: f64,
     early_extent: f64,
     reference_correction_limit: f64,
+    capacity: f64,
 }
 
 /// Alternating lines keep the flow extent separate from the right boundary of
@@ -217,6 +218,11 @@ impl ReverseCentering {
     fn forward(&mut self, length: f64, early_extent: bool) {
         let expansion = length - self.extent;
         if let Some(reference) = &mut self.reference {
+            // Fitting sees this growth on the second following line. Physical
+            // extent retained from a reverse line absorbs part of the increase,
+            // independently of the later placement and alignment adjustments.
+            let retained = (self.boundary - *reference).max(0.);
+            self.pending[2].capacity = length + (expansion - retained).max(0.) / 2.;
             *reference = reference.max(length);
         }
         if !early_extent {
@@ -399,18 +405,19 @@ impl Policy {
         let lines = self.lines(children, flow, scale);
         let mut centering = ReverseCentering::new(lines.first().map_or(0., |line| line.length), PackingPhase::Nominal);
         let mut origins = Vec::with_capacity(lines.len());
-        let (mut low, mut high, mut logical, mut cross) = (0_f64, 0_f64, 0_f64, 0.);
+        let (mut logical, mut cross) = (0_f64, 0.);
         let (mut raw_failed, mut stop) = (false, None);
         for (index, line) in lines.iter().enumerate() {
             let next = lines.get(index + 1);
             let first_width = next.and_then(|line| children.get(line.range.start)).map_or(0., |c| c.rect.w * scale);
             let early = centering.pending[0].early_extent;
+            let capacity = centering.pending[0].capacity;
             let origin = centering.origin(line, next.map_or(0., |line| line.length), first_width, index % 2 == 1);
             origins.push(origin);
-            low = low.min(origin);
-            high = high.max(origin + line.length);
             let midpoint = (centering.boundary + centering.reference.unwrap_or(centering.boundary)) / 2.;
-            logical = logical.max(high - low).max(line.length).max(early).max(midpoint);
+            // Painted bounds are centered after fitting and can exceed the
+            // canvas even when every required logical extent fits.
+            logical = logical.max(line.length).max(early).max(midpoint).max(capacity);
             raw_failed |= exceeds(line.length, flow);
             if stop.is_none() && exceeds(logical, flow) {
                 stop = Some(index);
@@ -1152,6 +1159,90 @@ mod tests {
             })
             .collect();
         centers.iter().map(|v| v - centers[0]).collect()
+    }
+
+    #[test]
+    fn reversed_fitting_defers_growth_capacity_until_the_second_following_line() {
+        // Native prefix controls retain the larger dimensions until the second
+        // line after growth appears. Extra neutral lines do not grow it again.
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr"), ("contDir", "revDir"), ("flowDir", "col")];
+        for (largest, count, numerator) in [(146., 7, 701.), (146., 8, 701.), (146., 9, 575.), (146., 11, 575.), (126., 7, 812.), (126., 9, 691.)] {
+            let lengths = [28., 82., 22., 46., 46., 14., largest, 26., 17., 17., 17.];
+            let sizes: Vec<_> = lengths[..count].iter().map(|&length| (10., length)).collect();
+            let actual = packed(&sizes, (120., 100.), &params, 0.);
+            for (rect, &(w, h)) in actual.iter().zip(&sizes) {
+                assert!((rect.w / w - numerator / 1024.).abs() < 1e-7, "{largest}, {count}: {rect:?}");
+                assert!((rect.h / h - numerator / 1024.).abs() < 1e-7);
+            }
+        }
+        let lengths = [28., 82., 22., 46., 46., 14., 146., 26., 17.];
+        let sizes: Vec<_> = lengths.iter().map(|&length| (6., length)).collect();
+        let actual = packed(&sizes, (120., 100.), &params, 0.);
+        assert!((actual[0].w / 6. - 575. / 1024.).abs() < 1e-7);
+        let unfitted = packed(&sizes, (120., 200.), &params, 0.);
+        for (rect, &(w, h)) in unfitted.iter().zip(&sizes) {
+            assert!((rect.w - w).abs() < 1e-7 && (rect.h - h).abs() < 1e-7);
+        }
+    }
+
+    #[test]
+    fn reversed_fitting_keeps_retained_physical_extent_separate_from_line_length() {
+        // Independently subdivided rows preserve total lengths while changing
+        // the physical extent retained from their first reverse line.
+        let cases: &[(f64, f64, &[f64], f64)] = &[
+            (28., 146., &[0.25, 0.75], 635.),
+            (42., 146., &[0.25, 0.75], 608.),
+            (28., 146., &[0.2, 0.3, 0.5], 597.),
+            (28., 126., &[0.2, 0.3, 0.5], 723.),
+            (28., 146., &[0.2, 0.8], 643.),
+            (28., 126., &[0.2, 0.8], 792.),
+            (42., 146., &[0.2, 0.3, 0.5], 575.),
+        ];
+        for &(first, largest, parts, numerator) in cases {
+            let lengths = [first, 82., 22., 46., 46., 14., largest, 26., 17.];
+            let sizes: Vec<_> = lengths.iter().flat_map(|length| parts.iter().map(move |ratio| (length * ratio, 10.))).collect();
+            let count = parts.len().to_string();
+            let params = [("bkpt", "fixed"), ("bkPtFixedVal", count.as_str()), ("off", "ctr"), ("contDir", "revDir")];
+            let actual = packed(&sizes, (100., 180.), &params, 0.);
+            for (rect, &(w, h)) in actual.iter().zip(&sizes) {
+                assert!((rect.w / w - numerator / 1024.).abs() < 1e-7, "{first}, {largest}, {parts:?}: {rect:?}");
+                assert!((rect.h / h - numerator / 1024.).abs() < 1e-7);
+            }
+        }
+    }
+
+    #[test]
+    fn reversed_fitting_tests_logical_capacity_before_centering_painted_bounds() {
+        // Native column and subdivided-row controls allow the painted union to
+        // extend past the frame. The longest line and delayed logical extents
+        // decide fitting; the final occupied union decides centering.
+        for (largest, count, flow, numerator) in [(142., 7, 100., 721.), (134., 7, 100., 764.), (142., 6, 95., 1024.), (142., 7, 142., 1024.)] {
+            let lengths = [34., 94., 20., 38., 38., 16., largest];
+            for column in [false, true] {
+                let parts: &[f64] = if column { &[1.] } else { &[0.2, 0.25, 0.25, 0.3] };
+                let sizes: Vec<_> = lengths[..count]
+                    .iter()
+                    .flat_map(|length| parts.iter().map(move |ratio| if column { (10., length * ratio) } else { (length * ratio, 10.) }))
+                    .collect();
+                let per_line = parts.len().to_string();
+                let params = [
+                    ("bkpt", "fixed"),
+                    ("bkPtFixedVal", per_line.as_str()),
+                    ("off", "ctr"),
+                    ("contDir", "revDir"),
+                    ("flowDir", if column { "col" } else { "row" }),
+                ];
+                let actual = packed(&sizes, if column { (120., flow) } else { (flow, 180.) }, &params, 0.);
+                for (rect, &(w, h)) in actual.iter().zip(&sizes) {
+                    assert!((rect.w / w - numerator / 1024.).abs() < 1e-7);
+                    assert!((rect.h / h - numerator / 1024.).abs() < 1e-7);
+                }
+                let low = actual.iter().map(|r| if column { r.y } else { r.x }).fold(f64::INFINITY, f64::min);
+                let high = actual.iter().map(|r| if column { r.y + r.h } else { r.x + r.w }).fold(f64::NEG_INFINITY, f64::max);
+                assert!(high - low > flow);
+                assert!(((high + low) / 2. - flow / 2.).abs() < 1e-7);
+            }
+        }
     }
 
     #[test]
