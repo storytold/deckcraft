@@ -17,6 +17,15 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "edit.undo", "Undo", ["Edit"], Some("Cmd+Z"), "{}", can_undo, undo),
         cmd!(noundo "edit.redo", "Redo", ["Edit"], Some("Cmd+Y"), "{}", can_redo, redo),
+        cmd!(
+            "edit.batch",
+            "Batch Edit",
+            [],
+            None,
+            "{commands: [{command, params?}]} → {results: [{command, result}]} — runs the commands in order as one step: when one fails, the presentation and selection are left as they were and the error names the step; one undo undoes them all. At most 1000 commands; file.*, window.*, edit.undo, edit.redo, edit.batch, show.fromStart, show.fromCurrent, text.compose and text.commit are refused before any command runs",
+            has_doc,
+            batch
+        ),
         cmd!("edit.cut", "Cut", ["Home", "Clipboard"], Some("Cmd+X"), "{scope?: slides} → {text, html?}", has_doc, cut),
         cmd!(noundo "edit.copy", "Copy", ["Home", "Clipboard"], Some("Cmd+C"), "{scope?: slides} → {text, html?}", has_doc, copy),
         cmd!(
@@ -728,3 +737,74 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
     })?;
     Ok(json!({"selected": s.doc()?.selection.shapes}))
 }
+
+/// Most commands one `edit.batch` runs.
+const MAX_BATCH: usize = 1000;
+
+/// Commands `edit.batch` refuses: they reach outside the presentation (files, windows, the slide
+/// show), rewrite its undo history, or hold an input method's composition open across commands.
+fn batch_refuses(id: &str) -> bool {
+    id.starts_with("file.")
+        || id.starts_with("window.")
+        || matches!(id, "edit.batch" | "edit.undo" | "edit.redo" | "show.fromStart" | "show.fromCurrent" | "text.compose" | "text.commit")
+}
+
+/// Run several commands as one step. The steps run nested, so none of them adds an undo step or
+/// a journal record of its own; when one fails, the outer command puts the presentation back and
+/// this puts the selection back. Undo entries a step pushes itself (Delete Text) are dropped with
+/// the history saved before the first step, so the batch stays one undo step either way.
+fn batch(s: &mut Session, p: &Value) -> Result<Value> {
+    let list = p.get("commands").and_then(Value::as_array).ok_or_else(|| bad("edit.batch", "missing `commands`: [{command, params?}]"))?;
+    if list.len() > MAX_BATCH {
+        return Err(bad("edit.batch", format!("{} commands; one batch runs at most {MAX_BATCH}", list.len())));
+    }
+    // Every step is checked before any runs, so a batch that cannot run changes nothing.
+    let mut steps = Vec::with_capacity(list.len());
+    for (i, c) in list.iter().enumerate() {
+        let id = c.get("command").and_then(Value::as_str).ok_or_else(|| bad("edit.batch", format!("step {i}: missing `command`")))?;
+        if super::find_command(id).is_none() {
+            return Err(bad("edit.batch", format!("step {i}: unknown command `{id}`")));
+        }
+        if batch_refuses(id) {
+            return Err(bad(
+                "edit.batch",
+                format!(
+                    "step {i}: `{id}` cannot run in a batch (files, windows, the slide show, undo and redo, and input-method composition stay outside)"
+                ),
+            ));
+        }
+        let params = match c.get("params") {
+            None | Some(Value::Null) => json!({}),
+            Some(v) => v.clone(),
+        };
+        steps.push((id, params));
+    }
+    let (history, selection) = {
+        let st = s.doc()?;
+        (st.history.clone(), st.selection.clone())
+    };
+    let mut results = Vec::with_capacity(steps.len());
+    for (i, (id, params)) in steps.iter().enumerate() {
+        match s.execute(id, params) {
+            Ok(r) => results.push(json!({"command": id, "result": r})),
+            Err(e) => {
+                // The outer command puts the presentation back only when it changed; steps that
+                // only selected still moved the selection.
+                if let Ok(st) = s.doc_mut() {
+                    st.history = history;
+                    st.selection = selection;
+                }
+                return Err(bad("edit.batch", format!("step {i} (`{id}`) failed, so nothing changed: {e}")));
+            }
+        }
+    }
+    // The outer command adds the batch's one undo step after this returns.
+    if let Ok(st) = s.doc_mut() {
+        st.history = history;
+    }
+    Ok(json!({"results": results}))
+}
+
+#[cfg(test)]
+#[path = "batch_tests.rs"]
+mod batch_tests;
