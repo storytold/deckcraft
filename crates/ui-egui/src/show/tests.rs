@@ -1331,6 +1331,8 @@ fn transition_preview_for_first_slide_transitions_from_black() {
     assert_eq!(tr.kind, "fade");
     assert_eq!(tr.from, None, "slide 0 transitions from black (None)");
     assert_eq!(tr.dur, 0.5);
+}
+
 /// #1659: an audio clip with "Hide during show" is hidden during the presentation,
 /// does not show a playback bar on hover, and stays hidden in presenter view previews.
 #[test]
