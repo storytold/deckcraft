@@ -616,7 +616,7 @@ impl Plus {
         match obj {
             Obj::Image(img) => match img.as_ref() {
                 ImageData::Bitmap(rgba) => rgba.px.len(),
-                ImageData::Meta(pic) => pic.items.iter().map(item_cost).sum(),
+                ImageData::Meta(pic) => picture_cost(&pic.items),
             },
             Obj::Brush(Fill::Texture { img, .. }) => img.px.len(),
             Obj::Path(ops) => ops.len().saturating_mul(std::mem::size_of::<Op>()),
@@ -1277,16 +1277,31 @@ fn metafile(r: Bytes) -> Option<Picture> {
     pic.filter(|p| p.width > 0.0 && p.height > 0.0)
 }
 
-/// Bytes an item of a nested picture owns: its path segments, clip rectangles, pixels and text.
-fn item_cost(item: &crate::Item) -> usize {
+/// Bytes the items of a nested picture own: path segments, clip rectangles, pixels and text, with
+/// each shared pattern tile counted once.
+fn picture_cost(items: &[crate::Item]) -> usize {
     use crate::Item;
-    let region = |r: &Option<Vec<[f32; 4]>>| r.as_ref().map_or(0, |v| v.len() * 16);
-    128 + match item {
-        Item::Path { segs, region: r, .. } => segs.len() * std::mem::size_of::<crate::Seg>() + region(r),
-        Item::Bitmap { rgba, region: r, .. } => rgba.len() + region(r),
-        Item::Pattern { segs, tile, region: r, .. } => segs.len() * std::mem::size_of::<crate::Seg>() + tile.rgba.len() + region(r),
-        Item::Text(t) => t.text.len() + region(&t.region),
+    let region = |r: &Option<Vec<[f32; 4]>>| r.as_ref().map_or(0, |v| v.len().saturating_mul(16));
+    let mut tiles = std::collections::HashSet::new();
+    let mut total = 0usize;
+    for item in items {
+        let own = match item {
+            Item::Path { segs, region: r, .. } => segs.len().saturating_mul(std::mem::size_of::<crate::Seg>()).saturating_add(region(r)),
+            Item::Bitmap { rgba, region: r, .. } => rgba.len().saturating_add(region(r)),
+            Item::Pattern { segs, tile, region: r, .. } => {
+                let tile_bytes = if tiles.insert(Arc::as_ptr(tile)) { tile.rgba.len() } else { 0 };
+                segs.len().saturating_mul(std::mem::size_of::<crate::Seg>()).saturating_add(tile_bytes).saturating_add(region(r))
+            }
+            Item::Text(t) => t
+                .text
+                .len()
+                .saturating_add(t.dx.len().saturating_mul(std::mem::size_of::<f32>()))
+                .saturating_add(t.font.family.len())
+                .saturating_add(region(&t.region)),
+        };
+        total = total.saturating_add(128).saturating_add(own);
     }
+    total
 }
 
 fn bitmap(r: Bytes) -> Option<Rgba> {
@@ -1565,4 +1580,18 @@ fn wrap_line(line: &[u16], width: f64, em: f64) -> Vec<Vec<u16>> {
     cur.truncate(n);
     out.push(cur);
     out
+}
+
+#[cfg(test)]
+mod cost_tests {
+    use super::*;
+    use crate::{Item, Seg, Tile};
+
+    #[test]
+    fn a_shared_pattern_tile_is_charged_once() {
+        let tile = Arc::new(Tile { width: 512, height: 512, rgba: vec![0; 1 << 20], cell: [1.0, 1.0], origin: [0.0, 0.0] });
+        let item = || Item::Pattern { segs: vec![Seg::Move(0.0, 0.0), Seg::Line(1.0, 1.0)], even_odd: false, tile: tile.clone(), region: None };
+        let items: Vec<Item> = (0..257).map(|_| item()).collect();
+        assert!(picture_cost(&items) < 2 << 20, "{}", picture_cost(&items));
+    }
 }

@@ -88,6 +88,10 @@ impl Picture {
                     let path = tf * bez(segs);
                     let Some(region) = get_region(region) else { continue };
                     if in_range(path.bounding_box()) {
+                        // This item's own region is expanded by now: it counts before it is kept.
+                        if total_elements.saturating_add(path.elements().len()).saturating_add(region_elements.get()) > MAX_PLACED_ELEMENTS {
+                            break;
+                        }
                         total_elements = total_elements.saturating_add(path.elements().len());
                         let stroke = stroke.map(|(c, w)| (c, f64::from(w) * k));
                         out.push(PlacedItem::Path { path, fill: *fill, stroke, even_odd: *even_odd, region });
@@ -101,6 +105,9 @@ impl Picture {
                         * Affine::scale_non_uniform(f64::from(t.cell[0]), f64::from(t.cell[1]));
                     let det = tile.determinant();
                     if in_range(path.bounding_box()) && det.is_finite() && det.abs() > 1e-12 {
+                        if total_elements.saturating_add(path.elements().len()).saturating_add(region_elements.get()) > MAX_PLACED_ELEMENTS {
+                            break;
+                        }
                         total_elements = total_elements.saturating_add(path.elements().len());
                         out.push(PlacedItem::Pattern { index, path, even_odd: *even_odd, tile, region });
                     }
