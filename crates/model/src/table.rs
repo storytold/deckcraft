@@ -79,6 +79,9 @@ impl Default for Table {
 
 /// Cells a table may hold after [`Table::normalize`] (PowerPoint's own limit is 75 x 75).
 pub const MAX_CELLS: usize = 100_000;
+/// Cell visits [`Table::merge`] may spend growing its rectangle over existing merges: a few
+/// passes over the largest grid, where a real table needs one or two.
+const MAX_MERGE_WORK: usize = 16 * MAX_CELLS;
 
 impl Table {
     pub fn new(rows: usize, cols: usize, width: f64, row_height: f64) -> Self {
@@ -237,9 +240,17 @@ impl Table {
         if r1 >= self.rows.len() || c1 >= self.cols.len() || (r0 == r1 && c0 == c1) {
             return false;
         }
-        // Grow the rectangle until no existing merge sticks out of it.
+        // Grow the rectangle until no existing merge sticks out of it. Each pass reads the whole
+        // grid and may grow it by one row, so the passes are charged against
+        // [`MAX_MERGE_WORK`]: past it the merge is refused, before anything changed.
         let (mut r0, mut c0, mut r1, mut c1) = (r0, c0, r1, c1);
+        let pass = self.rows.len().saturating_mul(self.cols.len()).max(1);
+        let mut work = 0usize;
         loop {
+            work = work.saturating_add(pass);
+            if work > MAX_MERGE_WORK {
+                return false;
+            }
             let before = (r0, c0, r1, c1);
             for (r, row) in self.rows.iter().enumerate() {
                 for (c, cell) in row.cells.iter().enumerate().take(self.cols.len()) {
@@ -304,6 +315,12 @@ impl Table {
             }
         }
         true
+    }
+    /// Whether the grid is as [`Table::normalize`] leaves it: within [`MAX_CELLS`], every row
+    /// exactly `cols.len()` cells wide.
+    pub fn is_normalized(&self) -> bool {
+        let n = self.cols.len();
+        n <= MAX_CELLS && self.rows.len() <= (MAX_CELLS / n.max(1)).max(1) && self.rows.iter().all(|r| r.cells.len() == n)
     }
     /// Make every row have exactly `cols.len()` cells (repair after loading). A grid over
     /// [`MAX_CELLS`] loses its last rows (and columns) first, so a file naming many rows and many
@@ -525,6 +542,25 @@ mod tests {
                 assert_eq!(*n, 1, "cell ({r},{c}) owned {n} times");
             }
         }
+    }
+
+    /// Each cell spans two rows, uncovered: merging the last two rows would grow the rectangle a
+    /// row per pass over the whole grid, 10,000 passes. The merge is refused at its work bound
+    /// instead, leaving the table as it was; a small merge still works.
+    #[test]
+    fn merge_expansion_stops_at_its_work_bound() {
+        let mut t = Table::new(10_000, 10, 400.0, 30.0);
+        for row in &mut t.rows {
+            for c in &mut row.cells {
+                c.row_span = 2;
+            }
+        }
+        let before = t.clone();
+        assert!(!t.merge(9_998, 0, 9_999, 9));
+        assert_eq!(t, before);
+        let mut small = Table::new(4, 4, 400.0, 30.0);
+        assert!(small.merge(0, 0, 1, 1));
+        assert!(small.is_normalized() && !Table { cols: vec![1.0; 3], rows: vec![Row::default(); 2], ..Default::default() }.is_normalized());
     }
 
     #[test]
