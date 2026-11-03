@@ -212,6 +212,30 @@ fn deleting_an_animation_in_the_pane_removes_animation_and_keeps_shape() {
     assert_eq!(slide.shapes.len(), shape_count_before);
 }
 
+/// #1725: consecutive Delete keypresses in the Animation Pane remove remaining animations
+/// sequentially and keep the shape intact.
+#[test]
+fn consecutive_delete_in_the_pane_removes_all_animations_and_keeps_shape() {
+    let mut h = harness();
+    let shape_count_before = h.state().session.active().unwrap().current_slide().unwrap().shapes.len();
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().animations.len(), 2);
+
+    // Select the first animation.
+    click_row(&mut h, 1, egui::PointerButton::Primary);
+
+    // First delete removes effect 1.
+    h.key_press(egui::Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().animations.len(), 1);
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), shape_count_before);
+
+    // Second delete removes the second effect.
+    h.key_press(egui::Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().animations.len(), 0);
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), shape_count_before);
+}
+
 /// #1725: selecting "None" in the animations gallery removes the shape's animations and keeps the shape.
 #[test]
 fn selecting_none_in_animations_gallery_removes_animation_and_keeps_shape() {
