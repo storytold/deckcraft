@@ -196,18 +196,40 @@ pub(super) fn part_textures(ctx: &egui::Context, doc: &Presentation, from: Optio
     ]
 }
 
+/// Width of a slide-show grid thumbnail, in pixels.
+const THUMB_WIDTH: f64 = 320.0;
+/// Tallest grid thumbnail, so an extreme portrait slide cannot ask for a huge raster.
+const THUMB_MAX_HEIGHT: f64 = 2048.0;
+
+/// The scale and pixel size of a grid thumbnail of a `width` x `height` slide.
+fn thumb_size(width: f64, height: f64) -> (f64, f64, f64) {
+    let (sw, sh) = (width.max(1.0), height.max(1.0));
+    let scale = (THUMB_WIDTH / sw).min(THUMB_MAX_HEIGHT / sh);
+    (scale, (sw * scale).round().max(1.0), (sh * scale).round().max(1.0))
+}
+
 pub(super) fn render_thumb(ctx: &egui::Context, show: &mut Show, doc: &Presentation, i: usize) -> Option<TextureHandle> {
     if show.thumbs.len() >= GRID_CAP {
         return None;
     }
-    let w = 320.0_f64;
-    let h = (w * doc.slide_size.height / doc.slide_size.width.max(1.0)).round().max(1.0);
-    let img = deckcraft_render::render_slide(
-        doc,
-        i,
-        &RenderOpts { scale: w / doc.slide_size.width.max(1.0), size: Some((w as u32, h as u32)), ..Default::default() },
-    );
+    // 320 wide, unless the slide is so tall that this would pass the height limit: fit that box.
+    let (scale, w, h) = thumb_size(doc.slide_size.width, doc.slide_size.height);
+    let img = deckcraft_render::render_slide(doc, i, &RenderOpts { scale, size: Some((w as u32, h as u32)), ..Default::default() });
     let tex = crate::textures::upload(ctx, format!("show-grid-{i}"), crate::textures::to_color_image(&img, false));
     show.thumbs.push((i, tex.clone()));
     Some(tex)
+}
+
+#[cfg(test)]
+mod thumb_size_tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_slides_are_320_wide_and_extreme_ones_stay_in_the_height_limit() {
+        let (scale, w, h) = thumb_size(960.0, 540.0);
+        assert_eq!((w, h), (320.0, 180.0));
+        assert!((scale - 320.0 / 960.0).abs() < 1e-12);
+        let (_, w, h) = thumb_size(1.0, 1.0e9);
+        assert!(h <= THUMB_MAX_HEIGHT && w >= 1.0);
+    }
 }
