@@ -739,15 +739,20 @@ pub(super) fn diagram_text_layout(
     let secondary_font = p.secondary_font.unwrap_or_else(|| (font * 0.78).round());
     body.body.min_autofit_scale = p.min_font.map(|min| (min / font).clamp(0.1, 1.0));
     let mut levels = p.points.iter().enumerate().flat_map(|(i, point)| {
+        let customized = point.child("prSet").and_then(|pr| pr.bool("custT")).unwrap_or(false);
         point
             .child("t")
             .into_iter()
             .flat_map(|t| t.children_named("p"))
-            .map(move |paragraph| (p.point_levels.get(i).copied().unwrap_or(0), paragraph.child("pPr")))
+            .map(move |paragraph| (p.point_levels.get(i).copied().unwrap_or(0), paragraph.child("pPr"), customized))
     });
     let bullet_level = p.params.get("stBulletLvl").and_then(|v| v.parse::<usize>().ok()).unwrap_or(2);
     for paragraph in &mut body.paragraphs {
-        let (level, authored) = levels.next().unwrap_or((0, None));
+        let (level, authored, customized) = levels.next().unwrap_or((0, None, false));
+        // Customized point text retains each run's size through layout font trials.
+        // Missing run sizes use the diagram text default, independently of the
+        // paragraph's defRPr and the layout's primary/secondary constraints.
+        let custom_font = customized.then(|| paragraph.runs.first().and_then(|run| run.props.size).unwrap_or(36.0));
         let align = match p.params.get("parTxLTRAlign").map(String::as_str) {
             Some("l") => Align::Left,
             Some("r") => Align::Right,
@@ -762,11 +767,13 @@ pub(super) fn diagram_text_layout(
             paragraph.props.bullet = Some(deckcraft_model::text::Bullet::Char { char: "•".into() });
             let indent_level = level.saturating_add(2).saturating_sub(bullet_level).clamp(1, 8);
             paragraph.level = paragraph.level.max(indent_level as u8);
-            // Authored layouts derive the hang from the final secondary font: 4.5pt
-            // steps for each nearest 6pt font band, with midpoint ties down and five
-            // steps at most. Independently authored marL and indent still win.
-            let indent =
-                if p.recovered { (font / 8.).round().clamp(1., 5.) * 4.5 } else { (secondary_font.max(0.) / 6. - 0.5).ceil().clamp(1., 5.) * 4.5 };
+            // Generated hanging defaults use the secondary font, or the first run
+            // for customized text. Independently authored marL and indent still win.
+            let indent = if p.recovered {
+                (font / 8.).round().clamp(1., 5.) * 4.5
+            } else {
+                (custom_font.unwrap_or(secondary_font).max(0.) / 6. - 0.5).ceil().clamp(1., 5.) * 4.5
+            };
             paragraph.props.margin_left = paragraph.props.margin_left.or(Some(indent_level as f64 * indent));
             paragraph.props.indent = paragraph.props.indent.or(Some(-indent));
             // A font search changes these defaults for valid and recovered layouts.
@@ -783,7 +790,7 @@ pub(super) fn diagram_text_layout(
         paragraph.props.space_after = paragraph.props.space_after.or(Some(Spacing::Pct(if secondary { 0.15 } else { 0.35 })));
         let paragraph_font = if secondary { secondary_font } else { font };
         for run in &mut paragraph.runs {
-            run.props.size = Some(paragraph_font);
+            run.props.size = Some(if customized { run.props.size.unwrap_or(36.0) } else { paragraph_font });
             if p.recovered {
                 run.props.kern = run.props.kern.or(Some(12.));
             }

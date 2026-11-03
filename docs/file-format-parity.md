@@ -1,6 +1,6 @@
 # File-format parity with PowerPoint
 
-> **PPTX.54 update 2026-11-03:** Reversed centered flows advance a retained nominal reference through intermediate widths and cap the deferred correction. The 2,430-case geometry matrix improves from 2,239 to 2,295 strict matches; all 56 changed cases pass, with no lost match or measured error increase. The 135 remaining strict raw-box mismatches and map/chart/text limits stay open; feature scores are unchanged.
+> **PPTX.55 update 2026-11-03:** Customized uncached SmartArt text retains authored run sizes through font rules. Independent default-inheritance controls support the diagram-specific missing-size default. All 24 non-whitespace font-size sets match; all 2,430 retained geometry results are unchanged. Small-font origins, line metrics and wider layout/map/chart limits remain open; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
 
@@ -213,6 +213,7 @@ the round trip even though DeckCraft doesn't model it.
 |---|---|---|
 | 2026-11-02 | minor | PPTX.53: retain scoped fitting checkpoints and correct diagram glyph/bullet origins; remaining failures retained |
 | 2026-11-03 | minor | PPTX.54: preserve intermediate reversed-flow alignment and bounded pending corrections |
+| 2026-11-03 | minor | PPTX.55: retain customized diagram run sizes and independently verified missing-size precedence |
 | 2026-11-02 | minor | PPTX.52: preserve local text footprints, fine numeric font fitting and final reverse-search phase; native controls and residual metrics retained |
 | 2026-11-02 | minor | PPTX.51: phase-aware reverse alignment, unchanged-budget dimension progress and native rich-label reload; independent controls and explicit remaining failures |
 | 2026-11-02 | minor | PPTX.50: occupied root flow fitting, font-score plateaus and custom rich-label insets; independent native controls and disclosed remaining differences |
@@ -382,3 +383,37 @@ point scale reduce colored-bound errors from 134–294px to 1–2px. Native PDF 
 quantization and page-box rounding are recorded separately; content is not realigned.
 The actual before/candidate/native contact was visually reviewed. Hosted checks are
 reported separately.
+
+### PPTX.55: customized diagram font precedence
+
+The data-point `custT` flag distinguishes customized text from automatic layout
+font selection. Customized text retains each run's authored size through layout
+font trials. Missing run sizes use the independently observed 36pt diagram default;
+paragraph defaults and layout constraints do not replace it. Generated bullet
+margins follow the first customized run, while independently authored margins and
+indents still win. Non-customized text retains automatic layout font selection.
+
+Sixteen original controls vary the customization flag, mixed-run ordering,
+paragraph defaults, authored indents and active shrinking rules. Eight additional
+controls independently change presentation, master, list and theme defaults and
+include an uncustomized negative control. The ordinary witness text responds to the
+presentation-default intervention; the customized target does not. A separate
+master-only witness prediction was refuted and is retained in the private evidence.
+Non-whitespace font-size matching improves from 6 to all 24 pages. The long overflow
+case still differs in extracted trailing whitespace and by up to 1.669pt in baseline
+placement; these are not counted as complete text or layout matches.
+
+The native-backed regression fails on the preceding implementation because an
+authored 14pt run becomes 27pt. The repaired run sizes and margins survive native
+save/reload and PPTX reimport without invented PPTX attributes. Actual same-scale
+before/candidate/native crops were visually reviewed. The 11pt generated margin
+remains 9pt versus native 4.5pt; this patch does not refit its quantization rule.
+Recovered customized text and empty/break/field-run precedence still need positive
+native controls. Additional reverse-boundary diagnostics remain unresolved.
+
+PPTX.55 validation: all eight local CI stages and 2,723 tests including
+doctests pass. The final binary retains all 2,430 geometry results (2,295 strict matches), all 485 text-page
+records and 42 selected rasters, all 814 chart pages and 140 map images. All 24 new
+control pages match
+the isolated candidate's model, raw text and 4x raster exactly. Complete SmartArt,
+geographic and chart parity and full LibreOffice replacement remain unproven.

@@ -988,6 +988,82 @@ fn diagram_hanging_defaults_follow_the_final_secondary_font_and_preserve_authore
 }
 
 #[test]
+fn customized_diagram_runs_keep_sizes_and_first_run_hanging_defaults_through_font_rules() {
+    // Independent native controls separate custT from run formatting: without it,
+    // the layout font wins; with it, each run retains its size even during a shrink
+    // rule. The first run controls the bullet. Missing run sizes use 36pt, including
+    // when pPr/defRPr supplies a different size.
+    for (customized, sizes, default_size, secondary, fitting, authored_hang, expected_sizes, expected_margin) in [
+        (false, vec![Some(14.)], None, 27., false, false, vec![27.], Some(18.)),
+        (true, vec![Some(14.)], None, 27., false, false, vec![14.], Some(9.)),
+        (true, vec![Some(27.), Some(11.)], None, 11., false, false, vec![27., 11.], Some(18.)),
+        // The known native 11pt default-margin residual is separate from preserving
+        // these authored run sizes; do not codify it as native-equivalent here.
+        (true, vec![Some(11.), Some(27.)], None, 27., false, false, vec![11., 27.], None),
+        (true, vec![None], None, 27., false, false, vec![36.], Some(22.5)),
+        (true, vec![None], Some(27.), 11., false, false, vec![36.], Some(22.5)),
+        (true, vec![Some(14.)], None, 27., false, true, vec![14.], Some(25.)),
+        (true, vec![Some(14.)], None, 27., true, false, vec![14.], Some(9.)),
+    ] {
+        let rules = if fitting { r#"<dgm:rule type="secFontSz" val="8"/>"# } else { "" };
+        let mut parts = files(&numeric_rule_fixture(rules, r#"<dgm:constr type="h" val="12"/>"#, false));
+        for (_, bytes) in &mut parts {
+            let Ok(mut doc) = parse_xml(bytes) else { continue };
+            if doc.root.is("layoutDef") {
+                *bytes = doc
+                    .root
+                    .to_xml()
+                    .replace("<dgm:alg type=\"tx\"/>", "<dgm:alg type=\"tx\"><dgm:param type=\"stBulletLvl\" val=\"1\"/></dgm:alg>")
+                    .replace(
+                        "<dgm:constr type=\"primFontSz\" val=\"36\"/>",
+                        &format!("<dgm:constr type=\"primFontSz\" val=\"49\"/><dgm:constr type=\"secFontSz\" val=\"{secondary}\"/>"),
+                    )
+                    .into_bytes();
+            } else if doc.root.is("dataModel") {
+                let props = if authored_hang { "marL=\"317500\" indent=\"-317500\"" } else { "indent=\"0\"" };
+                let default = default_size.map(|v| format!("<a:defRPr sz=\"{}\"/>", v * 100.)).unwrap_or_default();
+                let runs: String = sizes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, size)| {
+                        let size = size.map(|v| format!(" sz=\"{}\"", v * 100.)).unwrap_or_default();
+                        let text = if fitting {
+                            "W".repeat(200)
+                        } else if i == 0 {
+                            "Quiet".into()
+                        } else {
+                            " Brook".into()
+                        };
+                        format!("<a:r><a:rPr{size}><a:latin typeface=\"Inter\"/></a:rPr><a:t>{text}</a:t></a:r>")
+                    })
+                    .collect();
+                for point in doc.root.elements_mut().find(|e| e.is("ptLst")).unwrap().elements_mut() {
+                    if let Some(pr) = point.elements_mut().find(|e| e.is("prSet")) {
+                        pr.set_attr("custT", if customized { "1" } else { "0" });
+                    }
+                    if let Some(text) = point.elements_mut().find(|e| e.is("t")) {
+                        for paragraph in text.elements_mut().filter(|e| e.is("p")) {
+                            *paragraph = parse_xml(format!("<a:p><a:pPr {props}>{default}</a:pPr>{runs}</a:p>").as_bytes()).unwrap().root;
+                        }
+                    }
+                }
+                *bytes = doc.root.to_xml().into_bytes();
+            }
+        }
+        let p = deckcraft_pptx::import(&zip(parts)).unwrap();
+        let paragraph = &group(&p).children()[0].text.as_ref().unwrap().paragraphs[0];
+        let actual: Vec<_> = paragraph.runs.iter().map(|r| r.props.size.unwrap()).collect();
+        assert_eq!(actual, expected_sizes, "custT={customized}, fitting={fitting}");
+        if let Some(expected) = expected_margin {
+            assert_eq!(paragraph.props.margin_left, Some(expected));
+        }
+        assert_eq!(paragraph.props.indent, Some(if authored_hang { -25. } else { 0. }));
+        let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+        assert_eq!(group(&back).children()[0].text, group(&p).children()[0].text);
+    }
+}
+
+#[test]
 fn diagram_font_rules_refresh_unauthored_hanging_defaults_without_rewriting_authored_sides() {
     // Native rule/direct endpoint pairs agree after shrinking primary35 to14 (secondary11),
     // including independently authored marL and indent. The exact small-font native default
