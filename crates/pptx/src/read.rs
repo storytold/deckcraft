@@ -141,7 +141,7 @@ fn inner_decls(root: &El, ns: &[(String, String)]) -> Vec<(String, String)> {
 const MAX_NS_VALUE: usize = 2048;
 
 /// Prefixes `el` and its descendants use in element and attribute names, and those listed in
-/// `mc:Ignorable` (which must stay declared for the markup-compatibility rules to hold).
+/// `mc:Ignorable` or `mc:MustUnderstand` (which must stay declared for the markup-compatibility rules to hold).
 fn used_prefixes(el: &El) -> HashSet<&str> {
     fn rec<'a>(e: &'a El, used: &mut HashSet<&'a str>, depth: usize) {
         if depth > crate::xml::MAX_DEPTH {
@@ -156,7 +156,7 @@ fn used_prefixes(el: &El) -> HashSet<&str> {
                 && p != "xml"
             {
                 used.insert(p);
-                if local == "Ignorable" {
+                if local == "Ignorable" || local == "MustUnderstand" {
                     used.extend(v.split_whitespace());
                 }
             }
@@ -391,15 +391,18 @@ fn resolve_mc_rels(el: &mut El, depth: usize, rels: Option<&Rels>) {
                         // in order), indexed by prefix once: each child then looks up the prefixes
                         // it uses instead of scanning every declaration.
                         let mut decls: Vec<(&String, &String)> = Vec::new();
-                        let mut by_prefix: HashMap<&str, usize> = HashMap::new();
+                        // An oversized declaration still shadows an outer one of its name: its
+                        // content is left unbound rather than bound to the outer namespace.
+                        let mut by_prefix: HashMap<&str, Option<usize>> = HashMap::new();
                         for (k, v) in b.attrs.iter().chain(ac.attrs.iter()) {
                             let prefix = if k == "xmlns" { Some("") } else { k.strip_prefix("xmlns:") };
                             if let Some(p) = prefix
-                                && v.len() <= MAX_NS_VALUE
                                 && !by_prefix.contains_key(p)
                             {
-                                by_prefix.insert(p, decls.len());
-                                decls.push((k, v));
+                                by_prefix.insert(p, (v.len() <= MAX_NS_VALUE).then_some(decls.len()));
+                                if v.len() <= MAX_NS_VALUE {
+                                    decls.push((k, v));
+                                }
                             }
                         }
                         for n in &b.children {
@@ -410,7 +413,7 @@ fn resolve_mc_rels(el: &mut El, depth: usize, rels: Option<&Rels>) {
                                 let have: HashSet<&str> = e.attrs.iter().map(|(a, _)| a.as_str()).collect();
                                 let mut wanted: Vec<usize> = std::iter::once("")
                                     .chain(used.iter().copied())
-                                    .filter_map(|p| by_prefix.get(p).copied())
+                                    .filter_map(|p| by_prefix.get(p).copied().flatten())
                                     .filter(|&i| !have.contains(decls[i].0.as_str()))
                                     .collect();
                                 wanted.sort_unstable();
@@ -1481,7 +1484,7 @@ mod tests {
     }
 
     /// The branch's own declaration of a prefix wins over the `AlternateContent`'s; an oversized
-    /// one gives way to the next usable one; a child's own declaration is left alone.
+    /// one still shadows it (its content stays unbound); a child's own declaration is left alone.
     #[test]
     fn mc_branch_declarations_keep_their_precedence() {
         let long = "u".repeat(MAX_NS_VALUE + 1);
@@ -1493,8 +1496,17 @@ mod tests {
         let kids: Vec<&El> = d.root.elements().collect();
         let attrs = |i: usize| kids[i].attrs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>();
         assert_eq!(attrs(0), ["xmlns:p=urn:b"]);
-        assert_eq!(attrs(1), ["xmlns:q=urn:q-short"]);
+        assert!(attrs(1).is_empty(), "{:?}", attrs(1));
         assert_eq!(attrs(2), ["xmlns:p=urn:own"]);
+    }
+
+    #[test]
+    fn mc_branches_keep_prefixes_named_by_must_understand() {
+        let x = r#"<r xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:AlternateContent><mc:Fallback xmlns:q="urn:q"><a mc:MustUnderstand="q"/></mc:Fallback></mc:AlternateContent></r>"#;
+        let mut d = crate::xml::parse(x.as_bytes()).unwrap();
+        resolve_mc(&mut d.root, 0);
+        let kid = d.root.elements().next().unwrap();
+        assert!(kid.attrs.iter().any(|(k, v)| k == "xmlns:q" && v == "urn:q"), "{:?}", kid.attrs);
     }
 
     #[test]
