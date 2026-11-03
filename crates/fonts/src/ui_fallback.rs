@@ -68,19 +68,45 @@ const MAX_NEEDED: usize = 4096;
 /// as blank space.
 pub(crate) const OUTLINE_TABLES: [&[u8; 4]; 4] = [b"glyf", b"CFF ", b"CFF2", b"VARC"];
 
-/// A character only a font for the language has: a simplified-only hanzi, kana, or Hangul.
-fn probe(hans: bool, korean: bool) -> char {
-    if hans {
-        '页'
-    } else if korean {
-        '한'
-    } else {
-        'の'
+/// The CJK interface language a system font is chosen for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiCjk {
+    /// Simplified Chinese (`zh-hans`).
+    Hans,
+    /// Traditional Chinese (`zh-hant`).
+    Hant,
+    /// Korean.
+    Korean,
+    /// Japanese, or any other CJK interface.
+    Other,
+}
+
+impl UiCjk {
+    /// The mode for the flags older callers pass (Simplified Chinese wins over Korean).
+    pub fn from_flags(hans: bool, korean: bool) -> Self {
+        if hans {
+            Self::Hans
+        } else if korean {
+            Self::Korean
+        } else {
+            Self::Other
+        }
+    }
+}
+
+/// A character only a font for the language has: a simplified-only or traditional-only hanzi,
+/// kana, or Hangul.
+fn probe(mode: UiCjk) -> char {
+    match mode {
+        UiCjk::Hans => '页',
+        UiCjk::Hant => '頁',
+        UiCjk::Korean => '한',
+        UiCjk::Other => 'の',
     }
 }
 
 /// Font files to look for, relative to a font folder (or absolute), best first.
-fn candidates(hans: bool, korean: bool) -> Vec<&'static str> {
+fn candidates(mode: UiCjk) -> Vec<&'static str> {
     let (zh, ja, ko): (&[&str], &[&str], &[&str]) = if cfg!(windows) {
         (
             &["msyh.ttc", "simhei.ttf", "simsun.ttc", "Deng.ttf"],
@@ -117,12 +143,12 @@ fn candidates(hans: bool, korean: bool) -> Vec<&'static str> {
             &["truetype/nanum/NanumGothic.ttf", "truetype/nanum/NanumBarunGothic.ttf", "opentype/nanum/NanumGothic.otf"],
         )
     };
-    if hans {
-        zh.to_vec()
-    } else if korean {
-        ko.iter().chain(ja).chain(zh).copied().collect()
-    } else {
-        ja.iter().chain(zh).copied().collect()
+    let hant: &[&str] = if cfg!(windows) { &["msjh.ttc", "msjhl.ttc", "mingliu.ttc"] } else { &[] };
+    match mode {
+        UiCjk::Hans => zh.to_vec(),
+        UiCjk::Hant => hant.iter().chain(zh).copied().collect(),
+        UiCjk::Korean => ko.iter().chain(ja).chain(zh).copied().collect(),
+        UiCjk::Other => ja.iter().chain(zh).copied().collect(),
     }
 }
 
@@ -130,14 +156,14 @@ fn candidates(hans: bool, korean: bool) -> Vec<&'static str> {
 /// (the characters the embedded faces lack; empty: a character typical of the language), if one
 /// is found. Never panics on damaged files.
 pub fn system_cjk_ui_font(hans: bool, needed: &[char]) -> Option<SystemUiFont> {
-    system_cjk_ui_font_for(hans, false, needed)
+    system_cjk_ui_font_for(UiCjk::from_flags(hans, false), needed)
 }
 
-/// The installed CJK font for a Chinese, Korean or Japanese interface.
-pub fn system_cjk_ui_font_for(hans: bool, korean: bool, needed: &[char]) -> Option<SystemUiFont> {
-    let probe = [probe(hans, korean)];
+/// The installed CJK font for a Chinese (Simplified or Traditional), Korean or Japanese interface.
+pub fn system_cjk_ui_font_for(mode: UiCjk, needed: &[char]) -> Option<SystemUiFont> {
+    let probe = [probe(mode)];
     let needed = if needed.is_empty() { &probe[..] } else { needed.get(..MAX_NEEDED).unwrap_or(needed) };
-    find_ui_font(&with_asset_data(crate::system_font_dirs()), &candidates(hans, korean), needed, hans)
+    find_ui_font(&with_asset_data(crate::system_font_dirs()), &candidates(mode), needed, mode)
 }
 
 /// `dirs` and, for each macOS font asset folder among them (`com_apple_MobileAsset_Font<N>`),
@@ -161,7 +187,7 @@ pub(crate) fn with_asset_data(dirs: Vec<std::path::PathBuf>) -> Vec<std::path::P
 /// The font file among `names` (tried in order, each in every folder of `dirs`) whose best face
 /// maps all of `needed`, or failing that the one mapping the most of them (the earliest on a
 /// tie). A file that maps none of them is never chosen.
-pub(crate) fn find_ui_font(dirs: &[std::path::PathBuf], names: &[&str], needed: &[char], hans: bool) -> Option<SystemUiFont> {
+pub(crate) fn find_ui_font(dirs: &[std::path::PathBuf], names: &[&str], needed: &[char], mode: UiCjk) -> Option<SystemUiFont> {
     let mut tried = std::collections::HashSet::new();
     let mut best: Option<(usize, SystemUiFont)> = None;
     for path in names.iter().flat_map(|n| dirs.iter().map(move |d| d.join(n))) {
@@ -173,7 +199,7 @@ pub(crate) fn find_ui_font(dirs: &[std::path::PathBuf], names: &[&str], needed: 
             continue;
         }
         let Ok(bytes) = std::fs::read(&path) else { continue };
-        let Some((index, family, covered)) = pick_face(&bytes, needed, hans) else { continue };
+        let Some((index, family, covered)) = pick_face(&bytes, needed, mode) else { continue };
         if best.as_ref().is_some_and(|(b, _)| *b >= covered) {
             continue;
         }
@@ -187,11 +213,11 @@ pub(crate) fn find_ui_font(dirs: &[std::path::PathBuf], names: &[&str], needed: 
 }
 
 /// The face of a font file (or collection) to use and how many of `needed` it maps: the one
-/// mapping the most, then preferring a Regular style and, for Chinese, a Simplified Chinese
-/// family (`… SC`, `… GB`, as in a pan-CJK collection). Faces with none of the
-/// [`OUTLINE_TABLES`] are skipped. `None` if the header isn't a font's or no face with outlines
-/// maps any of `needed`.
-pub(crate) fn pick_face(data: &[u8], needed: &[char], hans: bool) -> Option<(u32, String, usize)> {
+/// mapping the most, then preferring a Regular style and, for Chinese, a family of the script
+/// (Simplified: `… SC`, `… GB`; Traditional: `… TC`, `… HK`, as in a pan-CJK collection). Faces
+/// with none of the [`OUTLINE_TABLES`] are skipped. `None` if the header isn't a font's or no
+/// face with outlines maps any of `needed`.
+pub(crate) fn pick_face(data: &[u8], needed: &[char], mode: UiCjk) -> Option<(u32, String, usize)> {
     let magic = data.get(..4)?;
     if ![&[0, 1, 0, 0][..], b"OTTO", b"ttcf"].contains(&magic) {
         return None;
@@ -212,7 +238,11 @@ pub(crate) fn pick_face(data: &[u8], needed: &[char], hans: bool) -> Option<(u32
             continue;
         }
         let Some((family, style)) = crate::fontdb::face_names(&f) else { continue };
-        let regional = !hans || family.ends_with(" SC") || family.ends_with(" GB") || family.contains("YaHei");
+        let regional = match mode {
+            UiCjk::Hans => family.ends_with(" SC") || family.ends_with(" GB") || family.contains("YaHei"),
+            UiCjk::Hant => family.ends_with(" TC") || family.ends_with(" HK") || family.contains("JhengHei") || family.contains("MingLiU"),
+            UiCjk::Korean | UiCjk::Other => true,
+        };
         let score = (covered, style.eq_ignore_ascii_case("Regular"), regional);
         if best.as_ref().is_none_or(|(s, ..)| score > *s) {
             best = Some((score, i, family));
@@ -229,7 +259,7 @@ mod tests {
 
     #[test]
     fn korean_interface_uses_korean_first_system_font_candidates() {
-        let names = candidates(false, true);
+        let names = candidates(UiCjk::Korean);
         assert_eq!(
             names.first(),
             Some(&if cfg!(windows) {
@@ -240,13 +270,14 @@ mod tests {
                 "truetype/nanum/NanumGothic.ttf"
             })
         );
-        assert_eq!(probe(false, true), '한');
+        assert_eq!(probe(UiCjk::Korean), '한');
     }
 
     #[test]
     fn hans_takes_priority_when_both_hans_and_korean_flags_are_set() {
-        assert_eq!(probe(true, true), '页');
-        let names = candidates(true, true);
+        assert_eq!(UiCjk::from_flags(true, true), UiCjk::Hans);
+        assert_eq!(probe(UiCjk::Hans), '页');
+        let names = candidates(UiCjk::Hans);
         assert_eq!(
             names.first(),
             Some(&if cfg!(windows) {
@@ -260,8 +291,21 @@ mod tests {
     }
 
     #[test]
+    fn traditional_chinese_uses_a_traditional_probe_and_chinese_candidates() {
+        assert_eq!(probe(UiCjk::Hant), '頁');
+        let names = candidates(UiCjk::Hant);
+        let zh = candidates(UiCjk::Hans);
+        // Chinese faces only: no Japanese or Korean candidate (those lead the other modes).
+        assert!(zh.iter().all(|n| names.contains(n)));
+        assert!(names.len() <= zh.len() + 3);
+        if cfg!(windows) {
+            assert_eq!(names.first(), Some(&"msjh.ttc"));
+        }
+    }
+
+    #[test]
     fn korean_system_font_is_found_on_system() {
-        let found = system_cjk_ui_font_for(false, true, &['한', '글', '홈']);
+        let found = system_cjk_ui_font_for(UiCjk::Korean, &['한', '글', '홈']);
         if let Some(font) = found {
             assert!(!font.bytes.is_empty());
         }

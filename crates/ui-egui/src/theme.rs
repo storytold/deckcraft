@@ -230,9 +230,16 @@ pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> 
     {
         let lang = crate::i18n::current();
         let need_cjk = lang.uses_cjk() || cfg!(target_os = "windows");
-        let hans = lang.prefers_hans();
-        let korean = if lang.uses_cjk() { lang.prefers_korean() } else { cfg!(target_os = "windows") };
-        if need_cjk && let Some(f) = system_cjk_font(hans, korean) {
+        let mode = if lang.prefers_hans() {
+            deckcraft_fonts::UiCjk::Hans
+        } else if lang.prefers_hant() {
+            deckcraft_fonts::UiCjk::Hant
+        } else if lang.uses_cjk() && lang.prefers_korean() || !lang.uses_cjk() && cfg!(target_os = "windows") {
+            deckcraft_fonts::UiCjk::Korean
+        } else {
+            deckcraft_fonts::UiCjk::Other
+        };
+        if need_cjk && let Some(f) = system_cjk_font(mode) {
             let name = format!("system-cjk-{}", f.family);
             if !defs.font_data.contains_key(&name) {
                 let mut data = FontData::from_static(&f.bytes);
@@ -276,20 +283,21 @@ pub fn add_fallback_faces(defs: &mut FontDefinitions, faces: &[std::sync::Arc<de
     }
 }
 
-/// The installed CJK interface font for a Chinese (`hans`), Korean, or other CJK interface.
+/// The installed CJK interface font for a Simplified or Traditional Chinese, Korean, or other CJK interface.
 #[cfg(not(target_arch = "wasm32"))]
-fn system_cjk_font(hans: bool, korean: bool) -> Option<&'static deckcraft_fonts::SystemUiFont> {
+fn system_cjk_font(mode: deckcraft_fonts::UiCjk) -> Option<&'static deckcraft_fonts::SystemUiFont> {
+    use deckcraft_fonts::UiCjk;
     static ZH: std::sync::OnceLock<Option<deckcraft_fonts::SystemUiFont>> = std::sync::OnceLock::new();
+    static HANT: std::sync::OnceLock<Option<deckcraft_fonts::SystemUiFont>> = std::sync::OnceLock::new();
     static OTHER: std::sync::OnceLock<Option<deckcraft_fonts::SystemUiFont>> = std::sync::OnceLock::new();
     static KO: std::sync::OnceLock<Option<deckcraft_fonts::SystemUiFont>> = std::sync::OnceLock::new();
-    (if hans {
-        &ZH
-    } else if korean {
-        &KO
-    } else {
-        &OTHER
+    (match mode {
+        UiCjk::Hans => &ZH,
+        UiCjk::Hant => &HANT,
+        UiCjk::Korean => &KO,
+        UiCjk::Other => &OTHER,
     })
-    .get_or_init(|| deckcraft_fonts::system_cjk_ui_font_for(hans, korean, &[]))
+    .get_or_init(|| deckcraft_fonts::system_cjk_ui_font_for(mode, &[]))
     .as_ref()
 }
 

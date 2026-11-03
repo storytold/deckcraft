@@ -143,6 +143,11 @@ impl Lang {
         self.code() == "zh-hans"
     }
 
+    /// Check whether this language prefers Traditional Chinese fonts.
+    pub fn prefers_hant(self) -> bool {
+        self.code() == "zh-hant"
+    }
+
     /// Check whether this language prefers Korean fonts.
     pub fn prefers_korean(self) -> bool {
         self.code() == "ko"
