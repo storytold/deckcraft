@@ -16,7 +16,7 @@ pub fn transition(w: &mut W, x: &mut Exp, o: &mut Out, t: &Transition) {
         601..=900 => "med",
         _ => "slow",
     };
-    let sound = t.sound.and_then(|m| x.media_rel(o, m, "audio").map(|r| (r, x.p.media(m).map(|i| i.name.clone()).unwrap_or_default())));
+    let sound = t.sound.and_then(|m| x.media_rel(o, m, "audio").map(|r| (r, x.media(m).map(|i| i.name.clone()).unwrap_or_default())));
     let snd = |w: &mut W| {
         if let Some((r, name)) = &sound {
             w.open0("p:sndAc");
