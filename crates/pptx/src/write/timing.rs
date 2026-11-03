@@ -604,9 +604,12 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
     shape_index(shapes, 0, &mut by_id);
     let mut roles_of: std::collections::HashMap<ShapeId, Vec<BuildRole>> = Default::default();
     let mut effect_count = 0usize;
+    let mut warned = false;
     for a in anims.iter().take(10_000) {
         if effect_count >= MAX_EFFECTS {
-            log::warn!("pptx: more than {MAX_EFFECTS} animation effects; the rest are left out");
+            if !warned {
+                log::warn!("pptx: more than {MAX_EFFECTS} animation effects; the rest are left out");
+            }
             break;
         }
         let Some(spid) = idmap.get(a.shape) else {
@@ -660,6 +663,10 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
                 };
                 let Ok(pi) = u32::try_from(i) else { break };
                 if effect_count + effs.len() >= MAX_EFFECTS {
+                    if !warned {
+                        log::warn!("pptx: more than {MAX_EFFECTS} animation effects; the rest are left out");
+                        warned = true;
+                    }
                     break;
                 }
                 effs.push(Eff { a, spid, start, paragraph: Some(pi), grp });
