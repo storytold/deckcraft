@@ -811,9 +811,11 @@ fn clamp_selection(st: &mut DocState) {
 /// Default for [`History::byte_limit`].
 pub const UNDO_BYTE_BUDGET: usize = 256 << 20;
 
-/// A rough size of a text body in memory: its paragraphs and runs.
+/// A rough size of a text body in memory: its paragraphs and runs, at their inline struct sizes.
 fn text_cost(t: &deckcraft_model::text::TextBody) -> usize {
-    t.paragraphs.iter().map(|p| 96 + p.runs.iter().map(|r| 128 + r.text.len()).sum::<usize>()).sum()
+    use deckcraft_model::text::{Paragraph, Run};
+    let (para, run) = (std::mem::size_of::<Paragraph>(), std::mem::size_of::<Run>());
+    t.paragraphs.iter().map(|p| para + p.runs.iter().map(|r| run + r.text.len()).sum::<usize>()).sum()
 }
 
 /// A rough size of comments in memory, replies included.
