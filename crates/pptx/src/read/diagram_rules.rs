@@ -137,7 +137,9 @@ fn measure(ctx: &Ctx<'_>, source: &[Shape], placed: &[Placed<'_>], kind: Measure
             body,
             &deckcraft_text::Opts { rect: bounds, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: true },
             deckcraft_text::LayoutMetrics {
-                advance: if p.recovered { deckcraft_text::AdvanceMetrics::Diagram } else { deckcraft_text::AdvanceMetrics::DrawingMl },
+                // Numeric diagram fitting uses fine advances even when the font
+                // constraints are valid. Coarse slide advances can hide a wrap.
+                advance: deckcraft_text::AdvanceMetrics::Diagram,
                 // Numeric diagram rules fit the font's typographic height, including
                 // valid authored layouts; the ordinary slide pitch underestimates it.
                 line: deckcraft_text::LineMetrics::Typographic,
@@ -269,6 +271,32 @@ mod tests {
         measure(&ctx, &source, &placed, MeasureKind::WordWrap, &mut cache).unwrap();
         assert_eq!(cache.bytes, bytes * 3);
     }
+
+    #[test]
+    fn valid_diagram_font_search_counts_the_fine_advance_wrap() {
+        use deckcraft_model::text::TextBody;
+        let pres = Presentation { slides: vec![Arc::new(deckcraft_model::Slide::default())], ..Default::default() };
+        let ctx = Ctx::for_slide(&pres, &pres.slides[0]).unwrap();
+        let mut body = TextBody::from_text("Longer currents cross the narrow channel and continue beyond the distant islands");
+        body.paragraphs[0].runs[0].props.font = Some("Inter".into());
+        let source = vec![Shape { name: "probe".into(), geom: Geom::preset("rect"), text: Some(body), ..Default::default() }];
+        // A fixed-font native control has nine lines at 17pt, seven at 16pt.
+        // Rounding advances to slide precision incorrectly permits an eighth-line
+        // fit at 17pt. Valid authored constraints need the same fine measurement
+        // as recovered constraints; their painting line policies remain separate.
+        for recovered in [false, true] {
+            let mut p = probe();
+            p.recovered = recovered;
+            p.rect = Xfrm::new(0., 0., 114.91478106315415, 152.95610120914424);
+            p.font = Some(17.);
+            let mut cache = Measurements::default();
+            let overflow = measure(&ctx, &source, std::slice::from_ref(&p), MeasureKind::Overflow, &mut cache).unwrap();
+            assert!(overflow[0] > 0.08, "17pt must overflow; recovered={recovered}: {overflow:?}");
+            p.font = Some(16.);
+            assert_eq!(measure(&ctx, &source, &[p], MeasureKind::Overflow, &mut cache).unwrap(), vec![0.]);
+        }
+    }
+
     #[test]
     fn snake_height_gate_distinguishes_paragraphs_from_wrapped_lines() {
         use deckcraft_model::text::TextBody;

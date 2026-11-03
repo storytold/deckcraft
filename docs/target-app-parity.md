@@ -1,5 +1,7 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
+> **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
+
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (no break after `?`, `!`, `}`, `+` inside a word; previous: trivial, Animations shortfall: preview from the selected effect is in; before that: major, community PR wave 2026-10-14: breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) after `cargo xtask parity`; area table and What works today folded to one row or bullet each; 320 engine commands; ready ~55% and stage alpha unchanged; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The authoritative answer to "how close is DeckCraft to PowerPoint, and how much work is left?".
@@ -322,3 +324,24 @@ scored done (16 open issues).
 | 2026-10-10 | minor | Added the mainstream practitioner (~53%) and essentials user (~62%) numbers with written weights, discounts and user evidence. Features dimension recomputed from written area weights (66% judgement → 62.4% weighted mean), which moves ready for real work from ~56% to ~55%; stage unchanged |
 | 2026-10-10 | minor | Stage checked against the core-workflow gate (all six pass); stays alpha |
 | 2026-10-10 | major | Created from ROADMAP.md's "How far from full parity" and "Status" sections; full re-measure against PowerPoint for Mac 16.113.4 (Info.plist, lproj, menu dump), 226 commands, 191-row checklist (79%), weighted dimension table (~56% ready), hours recalibrated from git history |
+
+### PPTX.52: local text allocation and reversed fitting state
+
+Local primary-axis allocations are restored before preset text bounds and orientation;
+clipped cross-axis growth does not reopen a previously allocated flow. Fine advances
+correct two 17pt numeric font selections to the independently observed 16pt result.
+The five checkpoint fonts match, while a forced-font control distinguishes nine native
+lines from the old eight-line measurement. Painting advances and bullet origins remain
+separate open work; this change does not replace ordinary slide text metrics.
+
+Reversed centered fitting distinguishes raw, logical and cross-capacity rejection,
+preserves the final search trial, and keeps nominal/fitted/restored alignment lifetimes.
+The complete 2,300-case matrix retains every identity and threshold: 2,096 to 2,145
+strict matches, 2,246 unchanged, and every output equals its isolated expected result.
+One rotated case retains its worse unrotated metric, with rotation-corrected painted
+error 0.00752pt; the other two rotated controls retain 0.00809pt bounds. Six independent
+height-replay controls reject uniform checkpoint reuse, so broader rule-search history
+remains incomplete. The map threshold ledger still has seventeen boundary sequences
+and two Albers sequences; no geographic assets or native documents are published.
+
+PPTX.52 integration validation: all eight local CI stages and 2,713 tests pass. The final binary preserves all 814 retained chart pages and 140 map images exactly, and five selected reverse-layout rasters match the accepted isolated result pixel for pixel. Across 14,096 inspected text-property sets, only the two expected 17pt-to-16pt font corrections change; all 326 recovery pages retain geometry and PDF text/font positions.

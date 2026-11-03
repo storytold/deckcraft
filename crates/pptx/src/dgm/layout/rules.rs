@@ -26,6 +26,7 @@ fn charge(work: &mut usize, amount: usize) -> Result<(), &'static str> {
 fn unit(property: &str) -> f64 {
     if matches!(property, "primFontSz" | "secFontSz" | "pyraAcctRatio") || property.starts_with("user") { 1.0 } else { 72.0 / 25.4 }
 }
+#[derive(Clone)]
 struct Control<'a> {
     target: usize,
     members: Vec<usize>,

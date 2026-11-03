@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
+
 > **PPTX.51 update 2026-11-02:** Nominal reverse snake placement retains its alignment reference across short rows, with fitted and restored phases kept separate. General growing dimension rules retain a non-worsening endpoint only when the measured text budget is unchanged. The 2,225-case matrix improves from 2,069 to 2,078 strict matches without a lost prior match or measured error regression. Native point-label indices survive tagged-shape reload. Rotation-corrected checks and remaining layout/map/chart failures are reported separately; feature scores are unchanged.
 
 > **PPTX.50 update 2026-11-02:** Root linear flows pack occupied child output and refit actual cross overflow. Shrinking font rules can retain a valid endpoint when the forced-break score is unchanged. The 2,168-case geometry matrix improves from 2,000 to 2,052 strict matches without losing a prior match. Rich column labels use resolved vertical margins and bounded custom half-turn measurement. One coarse label-bound regression and broader layout/map/chart gaps remain explicit; feature scores are unchanged.
@@ -514,6 +516,7 @@ no global parity claim or score increase.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.52: preserve local text footprints, fine numeric font fitting and final reverse-search phase; native controls and residual metrics retained |
 | 2026-11-02 | minor | PPTX.51: phase-aware reverse alignment, unchanged-budget dimension progress and native rich-label reload; independent controls and explicit remaining failures |
 | 2026-11-02 | minor | PPTX.50: occupied root flow fitting, font-score plateaus and custom rich-label insets; independent native controls and disclosed remaining differences |
 | 2026-11-02 | minor | PPTX.49: measured hierarchy attachment and authored height reclaim; independent controls, environment diagnostics and explicit residuals |
@@ -637,3 +640,24 @@ offline geographic joins, data/world scopes and map label typography implemented
 administrative viewport selection and native cyclic fallback remain
 explicit gaps. PowerPoint and LibreOffice comparisons are detailed in layout-fidelity.md.
 | 2026-11-02 | minor | PPTX.39: distinguish inactive zero font equalities from zero assignments; 104 native font controls and retained recovery/cycle regressions |
+
+### PPTX.52: local text allocation and reversed fitting state
+
+Local primary-axis allocations are restored before preset text bounds and orientation;
+clipped cross-axis growth does not reopen a previously allocated flow. Fine advances
+correct two 17pt numeric font selections to the independently observed 16pt result.
+The five checkpoint fonts match, while a forced-font control distinguishes nine native
+lines from the old eight-line measurement. Painting advances and bullet origins remain
+separate open work; this change does not replace ordinary slide text metrics.
+
+Reversed centered fitting distinguishes raw, logical and cross-capacity rejection,
+preserves the final search trial, and keeps nominal/fitted/restored alignment lifetimes.
+The complete 2,300-case matrix retains every identity and threshold: 2,096 to 2,145
+strict matches, 2,246 unchanged, and every output equals its isolated expected result.
+One rotated case retains its worse unrotated metric, with rotation-corrected painted
+error 0.00752pt; the other two rotated controls retain 0.00809pt bounds. Six independent
+height-replay controls reject uniform checkpoint reuse, so broader rule-search history
+remains incomplete. The map threshold ledger still has seventeen boundary sequences
+and two Albers sequences; no geographic assets or native documents are published.
+
+PPTX.52 integration validation: all eight local CI stages and 2,713 tests pass. The final binary preserves all 814 retained chart pages and 140 map images exactly, and five selected reverse-layout rasters match the accepted isolated result pixel for pixel. Across 14,096 inspected text-property sets, only the two expected 17pt-to-16pt font corrections change; all 326 recovery pages retain geometry and PDF text/font positions.

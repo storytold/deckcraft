@@ -205,8 +205,10 @@ fn charge(work: &mut usize, amount: usize) -> Result<(), &'static str> {
     if *work > MAX_WORK { Err("diagram constraint budget exceeded") } else { Ok(()) }
 }
 
+/// Place constrained footprints before shape and text orientation. Rule search can
+/// restore a local allocation here, then orient it once for measurement.
 #[allow(clippy::too_many_arguments)]
-fn place_inner<'a>(
+pub(super) fn place_inner<'a>(
     node: &Instance<'a>,
     style: BoxStyle,
     capacity: Option<Xfrm>,

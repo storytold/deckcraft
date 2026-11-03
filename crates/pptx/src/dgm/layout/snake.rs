@@ -88,6 +88,7 @@ struct CenterAdjustment {
     advance: f64,
     extent_floor: f64,
     early_extent: f64,
+    reference_changed: bool,
 }
 
 /// Alternating lines keep the flow extent separate from the right boundary of
@@ -155,6 +156,14 @@ impl ReverseCentering {
             self.widen_boundary(line.length, following, old_extent);
         }
         self.pending[1].shift += prior_negative.min(((line.length - old_extent) / 2.).max(0.));
+        if self.pending[0].reference_changed && exceeds(self.pending[0].advance, 0.) && expansion == 0. && following > 0. {
+            // A changed nominal reference still owes half of its boundary
+            // adjustment to the following forward line. An ordinary deferred
+            // advance has no such outstanding correction.
+            if let Some(reference) = self.reference {
+                self.pending[1].shift += (self.boundary - reference) / 4.;
+            }
+        }
         self.last_growth = self.extent - old_extent;
         self.first_reverse = false;
     }
@@ -185,7 +194,9 @@ impl ReverseCentering {
         // its reflected boundary. Fitting and restored placement have separate
         // reference lifetimes and retain their existing centering state.
         if let Some(reference) = self.reference.filter(|&reference| exceeds(following, 2. * old_extent - reference)) {
-            alignment = alignment.min(2. * reference - old_extent + 2. * future);
+            let corrected = alignment.min(2. * reference - old_extent + 2. * future);
+            self.pending[2].reference_changed = exceeds(alignment, corrected);
+            alignment = corrected;
         }
         let step = if exceeds(following, old_extent) { (self.boundary - alignment - (length - following).max(0.)) / 2. } else { 0. };
         self.pending[2].advance = step.max(0.);
@@ -359,6 +370,184 @@ fn occupied_packing(mut boxes: Vec<Xfrm>) -> Packing {
         rect.y -= top;
     }
     Packing { boxes, width: right - left, height: bottom - top, complete: false }
+}
+
+struct ReverseTrial {
+    lines: Vec<Line>,
+    origins: Vec<f64>,
+    logical: f64,
+    cross: f64,
+    phase: CenterFitPhase,
+}
+
+struct ReverseSearch {
+    initial: ReverseTrial,
+    best: ReverseTrial,
+    scale: f64,
+    phase: CenterFitPhase,
+}
+
+impl Policy {
+    fn reverse_trial(&self, children: &[BoxStyle], flow: f64, cross_limit: f64, scale: f64, work: &mut usize) -> Result<ReverseTrial, &'static str> {
+        charge(work, children.len().saturating_mul(4))?;
+        let lines = self.lines(children, flow, scale);
+        let mut centering = ReverseCentering::new(lines.first().map_or(0., |line| line.length), PackingPhase::Nominal);
+        let mut origins = Vec::with_capacity(lines.len());
+        let (mut low, mut high, mut logical, mut cross) = (0_f64, 0_f64, 0_f64, 0.);
+        let (mut raw_failed, mut stop) = (false, None);
+        for (index, line) in lines.iter().enumerate() {
+            let next = lines.get(index + 1);
+            let first_width = next.and_then(|line| children.get(line.range.start)).map_or(0., |c| c.rect.w * scale);
+            let early = centering.pending[0].early_extent;
+            let origin = centering.origin(line, next.map_or(0., |line| line.length), first_width, index % 2 == 1);
+            origins.push(origin);
+            low = low.min(origin);
+            high = high.max(origin + line.length);
+            let midpoint = (centering.boundary + centering.reference.unwrap_or(centering.boundary)) / 2.;
+            logical = logical.max(high - low).max(line.length).max(early).max(midpoint);
+            raw_failed |= exceeds(line.length, flow);
+            if stop.is_none() && exceeds(logical, flow) {
+                stop = Some(index);
+            }
+            cross += line.thickness + if index > 0 { self.gap * scale } else { 0. };
+        }
+        let phase = if raw_failed {
+            CenterFitPhase::RawOverflow
+        } else if exceeds(logical, flow) {
+            CenterFitPhase::CenterOverflow(stop.unwrap_or(0))
+        } else if exceeds(cross, cross_limit) {
+            CenterFitPhase::CrossOverflow
+        } else {
+            CenterFitPhase::Fits
+        };
+        Ok(ReverseTrial { lines, origins, logical, cross, phase })
+    }
+
+    fn fit_reversed(&self, children: &[BoxStyle], frame: Xfrm, grow: &str, refit: bool, work: &mut usize) -> Result<Packing, &'static str> {
+        let (flow, cross) = if self.column { (frame.h, frame.w) } else { (frame.w, frame.h) };
+        let initial = self.reverse_trial(children, flow, cross, 1., work)?;
+        if !refit && matches!(initial.phase, CenterFitPhase::Fits) {
+            return self.layout(children, flow, 1., PackingPhase::Nominal, work);
+        }
+        let (mut low, mut high) = (0., 1.);
+        while !matches!(self.reverse_trial(children, flow, cross, high * 0.5, work)?.phase, CenterFitPhase::Fits) {
+            high *= 0.5;
+        }
+        let mut best = self.reverse_trial(children, flow, cross, 0., work)?;
+        let mut phase = CenterFitPhase::Fits;
+        for _ in 0..10 {
+            let scale = (low + high) / 2.;
+            let trial = self.reverse_trial(children, flow, cross, scale, work)?;
+            phase = trial.phase;
+            if matches!(phase, CenterFitPhase::Fits) {
+                low = scale;
+                best = trial;
+            } else {
+                high = scale;
+            }
+        }
+        self.finish_reversed(children, ReverseSearch { initial, best, scale: low, phase }, flow, grow, work)
+    }
+
+    fn finish_reversed(
+        &self,
+        children: &[BoxStyle],
+        search: ReverseSearch,
+        flow: f64,
+        grow: &str,
+        work: &mut usize,
+    ) -> Result<Packing, &'static str> {
+        charge(work, children.len().saturating_mul(6))?;
+        let ReverseSearch { initial, best, scale, phase } = search;
+        let mut boxes: Vec<_> = children.iter().map(|c| Xfrm::new(0., 0., c.rect.w * scale, c.rect.h * scale)).collect();
+        let first = initial.lines.first().map_or(0., |line| line.length);
+        let stop = if let CenterFitPhase::CenterOverflow(index) = phase { Some(index) } else { None };
+        let mut cross = 0.;
+        // Dimensions fit first. The last trial decides which positions survive:
+        // an accepted trial keeps nominal placement; logical rejection leaves
+        // unvisited children at the original origin before any reflection.
+        for (index, (line, &origin)) in initial.lines.iter().zip(&initial.origins).enumerate() {
+            let reversed = index % 2 == 1;
+            let mut pos = first / 2. + origin + if reversed { line.length } else { 0. };
+            for (child, rect) in
+                children.get(line.range.clone()).unwrap_or_default().iter().zip(boxes.get_mut(line.range.clone()).unwrap_or_default())
+            {
+                let (length, thickness) = if self.column { (child.rect.h, child.rect.w) } else { (child.rect.w, child.rect.h) };
+                if reversed {
+                    pos -= length;
+                }
+                rect.x = pos;
+                rect.y = cross + (line.thickness - thickness) / 2.;
+                if !reversed {
+                    pos += length;
+                }
+            }
+            cross += line.thickness + self.gap;
+            if stop == Some(index) {
+                break;
+            }
+        }
+        if stop.is_none() {
+            for (child, rect) in children.iter().zip(&mut boxes) {
+                let (length, thickness) = if self.column { (child.rect.h, child.rect.w) } else { (child.rect.w, child.rect.h) };
+                if grow.ends_with('R') {
+                    rect.x = initial.logical - rect.x - length;
+                }
+                if grow.starts_with('b') {
+                    rect.y = initial.cross - rect.y - thickness;
+                }
+            }
+        }
+        let first = best.lines.first().map_or(0., |line| line.length);
+        let mut centering = ReverseCentering::new(first, PackingPhase::Fitted);
+        let (mut cross, mut previous_origin, mut previous_center) = (0., 0., 0.);
+        for (index, line) in best.lines.iter().enumerate() {
+            let reversed = index % 2 == 1;
+            let raw_origin = previous_origin + if reversed { centering.extent - line.length } else { 0. };
+            let next = best.lines.get(index + 1);
+            let first_width = next.and_then(|line| children.get(line.range.start)).map_or(0., |c| c.rect.w * scale);
+            let mut wanted = first / 2. + centering.origin(line, next.map_or(0., |line| line.length), first_width, reversed);
+            if matches!(phase, CenterFitPhase::CrossOverflow) && index + 1 == best.lines.len() {
+                // The final cross-capacity rejection stops the last alignment
+                // from consuming the preceding center, even when flow fits.
+                wanted += previous_center;
+            }
+            let mut pos = raw_origin + if reversed { line.length } else { 0. };
+            for (child, rect) in
+                children.get(line.range.clone()).unwrap_or_default().iter().zip(boxes.get_mut(line.range.clone()).unwrap_or_default())
+            {
+                let (length, thickness) = if self.column { (child.rect.h, child.rect.w) } else { (child.rect.w, child.rect.h) };
+                if reversed {
+                    pos -= length * scale;
+                }
+                rect.x = pos;
+                rect.y = cross + (line.thickness - thickness * scale) / 2.;
+                if !reversed {
+                    pos += length * scale;
+                }
+            }
+            // Reverse placement uses the carried right boundary before the new
+            // logical extent is checked. An overflow returns before centering,
+            // column transposition and the requested growth reflection.
+            if exceeds(centering.extent, flow) {
+                return Ok(occupied_packing(boxes));
+            }
+            for rect in boxes.get_mut(line.range.clone()).unwrap_or_default() {
+                rect.x += wanted - raw_origin;
+            }
+            previous_origin = wanted;
+            previous_center = wanted + line.length / 2. - first / 2.;
+            cross += line.thickness + self.gap * scale;
+        }
+        if self.column {
+            for rect in &mut boxes {
+                std::mem::swap(&mut rect.x, &mut rect.y);
+            }
+        }
+        let mut packed = occupied_packing(boxes);
+        packed.complete = true;
+        Ok(packed)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -775,6 +964,11 @@ pub(super) fn pack(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyl
         place(node, frame, children, packed);
         return Ok(());
     }
+    if policy.center && policy.reverse {
+        let packed = policy.fit_reversed(children, frame, &node.param("grDir", "tL"), refit, work)?;
+        place(node, frame, children, packed);
+        return Ok(());
+    }
     let available = if policy.column { frame.h } else { frame.w };
     let fits = |packing: &Packing| !exceeds(packing.width, frame.w) && !exceeds(packing.height, frame.h);
     let mut packed = policy.layout(children, available, 1., PackingPhase::Nominal, work)?;
@@ -1095,7 +1289,7 @@ mod tests {
     }
 
     #[test]
-    fn reverse_fitted_tail_survives_repacking_unchanged_dimensions() {
+    fn reverse_fitted_and_restored_tails_keep_separate_alignment_history() {
         let xml = crate::xml::parse(b"<layoutNode/>").unwrap();
         let mut node = Instance::new(&xml.root);
         node.alg = "snake".into();
@@ -1104,32 +1298,89 @@ mod tests {
             .into_iter()
             .collect();
         let style = BoxStyle::new(Xfrm::new(0., 0., 90., 65.));
-        for first in [22., 38.] {
+        for (first, scale) in [(22., 663. / 2048.), (38., 725. / 2048.)] {
             let mut children: Vec<_> =
                 [first, 74., 18., 44., 44., 10., 158., 22.].into_iter().map(|w| BoxStyle::new(Xfrm::new(0., 0., w, 10.))).collect();
             pack(&node, style, &mut children, false, &mut 0).unwrap();
             let fitted: Vec<_> = children.iter().map(|c| c.rect).collect();
-            // In this fitting counterexample, reusing the nominal reference
-            // moves only the tail and worsens mean error while maximum error
-            // stays unchanged. Preserve the fitted slot, not just its score.
+            // The final row overflows before centering and growth reflection.
+            // Preserve the original fitting fixture with its observed output.
             let tail = fitted.last().unwrap();
-            assert!((tail.x - 49.4970703125).abs() < 1e-7);
-            assert!((tail.y - 14.51171875).abs() < 1e-7);
-            assert!((tail.w - 9.8935546875).abs() < 1e-7);
-            assert!((tail.h - 4.4970703125).abs() < 1e-7);
+            assert!((tail.x - 45. - 120. * scale).abs() < 1e-7);
+            assert!((tail.y - 32.5 - 30. * scale).abs() < 1e-7);
+            assert!((tail.w - 22. * scale).abs() < 1e-7);
+            assert!((tail.h - 10. * scale).abs() < 1e-7);
 
-            // Repacking uses unit scale even when its dimensions came from a
-            // fitting pass. With no intrinsic dimensions changed, every node
-            // must retain its fitted position rather than start nominal history.
+            // An explicit restored pass uses unit scale with these dimensions.
+            // It completes placement using the restored reference lifetime.
             let allocations = children.clone();
             repack(&node, style, &mut children, &allocations, &mut 0).unwrap();
+            let restored = children.last().unwrap().rect;
+            assert!((restored.x - 45. - 10. * scale).abs() < 1e-7);
+            assert!((restored.y - 32.5 + 40. * scale).abs() < 1e-7);
             for (child, before) in children.iter().zip(fitted) {
-                for (after, before) in
-                    [child.rect.x, child.rect.y, child.rect.w, child.rect.h].into_iter().zip([before.x, before.y, before.w, before.h])
+                assert_eq!((child.rect.w, child.rect.h), (before.w, before.h));
+            }
+        }
+    }
+
+    #[test]
+    fn reverse_cross_only_fit_preserves_its_last_trial_alignment() {
+        let xml = crate::xml::parse(b"<layoutNode/>").unwrap();
+        let mut node = Instance::new(&xml.root);
+        node.alg = "snake".into();
+        node.params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr"), ("contDir", "revDir"), ("grDir", "bR")]
+            .map(|(k, v)| (k.into(), v.into()))
+            .into_iter()
+            .collect();
+        let style = BoxStyle::new(Xfrm::new(0., 0., 400., 65.));
+        for first in [22., 38.] {
+            let mut children: Vec<_> =
+                [first, 74., 18., 44., 44., 10., 158., 22.].into_iter().map(|w| BoxStyle::new(Xfrm::new(0., 0., w, 10.))).collect();
+            pack(&node, style, &mut children, false, &mut 0).unwrap();
+            let tail = children.last().unwrap().rect;
+            assert!((tail.x - 139.875).abs() < 1e-7 && tail.y.abs() < 1e-7);
+            assert!((tail.w - 17.875).abs() < 1e-7 && (tail.h - 8.125).abs() < 1e-7);
+            let allocations = children.clone();
+            repack(&node, style, &mut children, &allocations, &mut 0).unwrap();
+            let tail = children.last().unwrap().rect;
+            assert!((tail.x - 208.125).abs() < 1e-7 && tail.y.abs() < 1e-7);
+            assert!((tail.w - 17.875).abs() < 1e-7 && (tail.h - 8.125).abs() < 1e-7);
+        }
+    }
+
+    #[test]
+    fn reverse_logical_fit_keeps_the_raw_turn_before_growth_reflection() {
+        for (first, scale) in [(18., 101. / 256.), (30., 877. / 2048.)] {
+            let sizes = [first, 66., 12., 42., 42., 6., 126., 12.].map(|w| (w, 10.));
+            for grow in ["tL", "tR", "bL", "bR"] {
+                let params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr"), ("contDir", "revDir"), ("grDir", grow)];
+                let actual = packed(&sizes, (90., 100.), &params, 0.);
+                let half_growth = (66. - first) / 2.;
+                for (center, expected) in
+                    relative_line_centers(&actual, 1, false).into_iter().zip([0., 0., half_growth, half_growth, 0., 0., 60., 177.])
                 {
-                    assert!((after - before).abs() < 1e-7);
+                    assert!((center - expected * scale).abs() < 1e-7);
+                }
+                for (index, rect) in actual.iter().enumerate() {
+                    assert!((rect.y - actual[0].y - index as f64 * 10. * scale).abs() < 1e-7);
+                    assert!((rect.h - 10. * scale).abs() < 1e-7);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn reverse_final_trial_preserves_nominal_or_unvisited_positions() {
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "1"), ("off", "ctr"), ("contDir", "revDir"), ("grDir", "tR")];
+        for (first, scale, seed_x, seed_y) in [(18., 898. / 2048., 0., 0.), (30., 975. / 2048., 132.5, 80.)] {
+            let sizes = [first, 66., 12., 42., 42., 6., 126., 12., 17.].map(|w| (w, 10.));
+            let actual = packed(&sizes, (100., 180.), &params, 0.);
+            let tail = actual.last().unwrap();
+            assert!((tail.x - actual[0].x - seed_x).abs() < 1e-7);
+            assert!((tail.y - actual[0].y - seed_y).abs() < 1e-7);
+            assert!((tail.w - 17. * scale).abs() < 1e-7);
+            assert!((tail.h - 10. * scale).abs() < 1e-7);
         }
     }
 

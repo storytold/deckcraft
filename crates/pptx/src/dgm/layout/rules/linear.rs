@@ -18,9 +18,9 @@ struct Flow {
     children: HashSet<usize>,
 }
 
-// This staged path applies to independent, unrotated rectangular text leaves.
-// Referenced constraints, other shapes, and enclosing algorithms keep the general
-// solver, whose geometry cannot be restored from these local dimensions alone.
+// Independent text leaves retain local footprint dimensions between rule stages.
+// References and enclosing algorithms keep the general solver because their
+// dependent geometry cannot be restored from these local dimensions alone.
 fn eligible(entries: &[constraints::Entry<'_, '_>], controls: &[Control<'_>], work: &mut usize) -> Result<Option<Flow>, &'static str> {
     charge(work, controls.len().saturating_add(entries.len()))?;
     let Some(parent) = controls.first().and_then(|c| entries.get(c.target)).and_then(|e| e.parent) else { return Ok(None) };
@@ -53,11 +53,7 @@ fn eligible(entries: &[constraints::Entry<'_, '_>], controls: &[Control<'_>], wo
         }
         if entry.parent == Some(parent) {
             let n = entry.node;
-            if n.alg != "tx"
-                || !n.children.is_empty()
-                || n.number("txRot", 0.) != 0.
-                || n.shape.is_some_and(|s| s.attr("type") != Some("rect") || s.f64("rot").unwrap_or(0.) != 0. || s.child("adjLst").is_some())
-            {
+            if n.alg != "tx" || !n.children.is_empty() {
                 return Ok(None);
             }
             children.insert(constraints::id(n));
@@ -81,8 +77,7 @@ fn placed<'a>(
         style.font = style.font.map(f64::round);
         style.secondary_font = style.secondary_font.map(f64::round);
     }
-    let mut out = Vec::new();
-    geometry::place_solved(tree, frame, data, &mut out, 0, &solution, Some(&HashSet::new()), work)?;
+    let mut out = footprints(tree, frame, data, &solution, work)?;
     charge(work, out.len())?;
     for p in &mut out {
         if flow.children.contains(&p.node_key)
@@ -92,18 +87,27 @@ fn placed<'a>(
             // their cross-axis text budget is still the enclosing capacity.
             if flow.primary == "w" {
                 p.rect.w = style.rect.w;
-                if let Some(t) = &mut p.text_rect {
-                    t.w = style.rect.w;
-                }
             } else {
                 p.rect.h = style.rect.h;
-                if let Some(t) = &mut p.text_rect {
-                    t.h = style.rect.h;
-                }
             }
         }
     }
+    super::super::orientation::apply(&mut out, work)?;
     geometry::connect(&mut out, data);
+    Ok(out)
+}
+
+fn footprints<'a>(
+    tree: &Instance<'a>,
+    frame: Xfrm,
+    data: &Data<'a>,
+    solution: &constraints::Solution,
+    work: &mut usize,
+) -> Result<Vec<Placed<'a>>, &'static str> {
+    let mut out = Vec::new();
+    let style = constraints::lookup(solution, tree).unwrap_or_else(|| geometry::BoxStyle::new(frame));
+    geometry::place_inner(tree, style, Some(frame), data, &mut out, 0, solution, Some(&HashSet::new()), work)?;
+    out.retain(|p| p.shape.is_some() || (p.text_enabled && p.points.iter().any(|pt| pt.attr("type") != Some("doc"))));
     Ok(out)
 }
 
@@ -120,10 +124,7 @@ fn allocated<'a>(
         style.font = style.font.map(f64::round);
         style.secondary_font = style.secondary_font.map(f64::round);
     }
-    let mut out = Vec::new();
-    geometry::place_solved(tree, frame, data, &mut out, 0, &solution, Some(&HashSet::new()), work)?;
-    geometry::connect(&mut out, data);
-    Ok(out)
+    footprints(tree, frame, data, &solution, work)
 }
 
 fn trial<'a>(
@@ -141,6 +142,19 @@ fn trial<'a>(
         }
         Err(e) => Err(e),
     }
+}
+
+fn text_budget_recedes(before: &[Placed<'_>], after: &[Placed<'_>], scope: &HashSet<usize>, work: &mut usize) -> Result<bool, &'static str> {
+    charge(work, before.len())?;
+    if before.len() != after.len() {
+        return Err("diagram rule shape binding changed");
+    }
+    let smaller = |a: f64, b: f64| a - b > 16. * f64::EPSILON * a.abs().max(b.abs()).max(1.);
+    Ok(before.iter().zip(after).filter(|(p, _)| scope.contains(&p.node_key)).any(|(a, b)| {
+        let a = a.text_rect.unwrap_or(a.rect);
+        let b = b.text_rect.unwrap_or(b.rect);
+        smaller(a.w, b.w) || smaller(a.h, b.h)
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -183,6 +197,7 @@ pub(super) fn search<'a>(
     steps.extend(rest);
     let mut changes = constraints::Adjustments::new();
     let mut grown = Vec::<Growth>::new();
+    let mut coupled = HashSet::new();
     let mut out = placed(tree, frame, data, &changes, &flow, work)?;
     for step in steps {
         // Apply the previous font rule before later dimensions change its fit budget.
@@ -220,11 +235,18 @@ pub(super) fn search<'a>(
             let value = start + (limit - start) * t;
             range.set_value(&mut changes, value);
             let Some(candidate) = trial(tree, frame, data, &changes, &flow, work)? else { return Ok(None) };
+            if size_rule && limit > start && t == 1. && text_budget_recedes(&out, &candidate, &scope, work)? {
+                coupled.insert(control.target);
+            }
             let score = score(&candidate, &scope, measure, prefer_words, work)?;
             Ok(Some(Choice { out: candidate, score, t, low: 0. }))
         })?;
+        // Only the primary footprint was restored to its local allocation above.
+        // Cross growth clipped by the enclosing capacity reserves no new budget.
+        let retain_endpoint = control.property == flow.primary
+            && selected.as_ref().map(|c| super::progress::retain_endpoint(&range, c, before, &out, &scope, work)).transpose()?.unwrap_or(false);
         let Some(Choice { out: candidate, score: after, t: selected, low: bracket }) =
-            selected.filter(|c| c.score < before - 1e-6 || font_rule && limit < start && c.score <= before + 1e-6)
+            selected.filter(|c| c.score < before - 1e-6 || retain_endpoint || font_rule && limit < start && c.score <= before + 1e-6)
         else {
             for (key, value) in old {
                 if let Some(value) = value {
@@ -287,7 +309,12 @@ pub(super) fn search<'a>(
             growth.range.limit = best;
         }
     }
-    reclaim(tree, frame, data, &mut changes, &flow, &mut grown, measure, work, out)?;
+    let mut out = reclaim(tree, frame, data, &mut changes, &flow, &mut grown, measure, work, out)?;
+    // Orientation can trade one text dimension for the other. Such scopes retain
+    // the joint fallback; a clipped parent budget alone does not reopen allocation.
+    charge(work, controls.len().saturating_mul(2))?;
+    let controls: Vec<_> = controls.iter().filter(|c| coupled.contains(&c.target)).cloned().collect();
+    super::coupled::search(tree, frame, data, entries, &controls, measure, &mut changes, &mut out, work)?;
     // Final text-aware placement sees the reclaimed dimensions in rule order.
     Ok(Some(super::placed(tree, frame, data, &changes, measure, work)?))
 }
@@ -357,15 +384,98 @@ fn reclaim<'a>(
 mod tests {
     use super::*;
 
+    fn data() -> crate::xml::El {
+        crate::xml::parse(
+            b"<dataModel><ptLst><pt modelId='root' type='doc'/><pt modelId='a'><t><p><r><t>Alpha</t></r></p></t></pt></ptLst>
+              <cxnLst><cxn srcId='root' destId='a'/></cxnLst></dataModel>",
+        )
+        .unwrap()
+        .root
+    }
+
     #[test]
-    fn scope_requires_independent_unrotated_text_leaves_and_obeys_budget() {
+    fn local_rules_measure_the_preset_text_area_before_parent_allocation() {
+        let data = data();
+        let layout = crate::xml::parse(
+            b"<layoutDef><layoutNode><alg type='lin'/>
+              <layoutNode name='ellipse'><alg type='tx'/><presOf axis='ch'/><shape type='ellipse'/>
+              <constrLst><constr type='w' val='80'/><constr type='h' val='40'/></constrLst>
+              <ruleLst><rule type='w' val='100'/></ruleLst></layoutNode>
+              <layoutNode><alg type='tx'/><presOf axis='ch'/><shape type='rect'/>
+              <constrLst><constr type='w' val='80'/><constr type='h' val='40'/></constrLst></layoutNode>
+              </layoutNode></layoutDef>",
+        )
+        .unwrap();
+        let mm = unit("w");
+        // The preset's five-decimal inset coordinates are 0.14645 and 0.85355.
+        let text_fraction = 0.85355 - 0.14645;
+        let mut largest_text_width: f64 = 0.;
+        let mut measure = |items: &[Placed<'_>], _: super::super::MeasureKind| {
+            Ok(items
+                .iter()
+                .map(|p| {
+                    if p.name != "ellipse" {
+                        return 0.;
+                    }
+                    let text = p.text_rect.unwrap();
+                    assert!((text.w / p.rect.w - text_fraction).abs() < 1e-10);
+                    largest_text_width = largest_text_width.max(text.w);
+                    (65. * mm - text.w).max(0.)
+                })
+                .collect())
+        };
+        let out = super::super::super::evaluate_measured(&layout.root, &data, Xfrm::new(0., 0., 100. * mm, 60. * mm), Some(&mut measure)).unwrap();
+        assert_eq!(out.len(), 2);
+        assert!((largest_text_width - 100. * mm * text_fraction).abs() < 1e-8);
+    }
+
+    #[test]
+    fn clipped_cross_growth_does_not_reopen_the_allocated_flow() {
+        let data = data();
+        let layout = |allocated: bool| {
+            let mut body = "<layoutDef><layoutNode><alg type='lin'/>".to_string();
+            for (seed, limit) in [(20., 100.), (30., 80.)] {
+                let (width, height, font) = if allocated { (limit * 0.75, 17., 13.) } else { (seed, 20., 25.) };
+                body.push_str(&format!(
+                    "<layoutNode><alg type='tx'/><presOf axis='ch'/><shape type='rect'/><constrLst>
+                     <constr type='w' val='{width}'/><constr type='h' val='{height}'/><constr type='primFontSz' val='{font}'/></constrLst>"
+                ));
+                if !allocated {
+                    body.push_str(&format!(
+                        "<ruleLst><rule type='w' val='{limit}'/><rule type='h' val='80'/><rule type='primFontSz' val='13'/></ruleLst>"
+                    ));
+                }
+                body.push_str("</layoutNode>");
+            }
+            body.push_str("</layoutNode></layoutDef>");
+            crate::xml::parse(body.as_bytes()).unwrap().root
+        };
+        let mm = unit("w");
+        let frame = Xfrm::new(0., 0., 135. * mm, 17. * mm);
+        // Positive remaining overflow cannot justify changing a sibling's already
+        // allocated share when cross-axis growth only encounters the same clip.
+        let mut measure = |items: &[Placed<'_>], _: super::super::MeasureKind| Ok(items.iter().map(|p| 1. + 100. * mm / p.rect.w).collect());
+        let authored = layout(false);
+        let fixed = layout(true);
+        let actual = super::super::super::evaluate_measured(&authored, &data, frame, Some(&mut measure)).unwrap();
+        let expected = super::super::super::evaluate_measured(&fixed, &data, frame, Some(&mut measure)).unwrap();
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!((actual.rect.w - expected.rect.w).abs() < 1e-8);
+            assert!((actual.rect.h - expected.rect.h).abs() < 1e-8);
+            assert_eq!(actual.font, Some(13.));
+        }
+    }
+
+    #[test]
+    fn scope_requires_independent_text_leaves_and_obeys_budget() {
         let xml = crate::xml::parse(b"<node/>").unwrap().root;
         let rule = crate::xml::parse(b"<rule type='w' val='80'/>").unwrap().root;
         let reference = crate::xml::parse(b"<constr type='w' refType='w' fact='0.5'/>").unwrap().root;
         for (shape_xml, alg, dependent, supported) in [
             ("<shape type='rect'/>", "lin", false, true),
-            ("<shape type='rect' rot='30'/>", "lin", false, false),
-            ("<shape type='ellipse'/>", "lin", false, false),
+            ("<shape type='rect' rot='30'/>", "lin", false, true),
+            ("<shape type='ellipse'/>", "lin", false, true),
             ("<shape type='rect'/>", "snake", false, false),
             ("<shape type='rect'/>", "lin", true, false),
         ] {
