@@ -746,6 +746,7 @@ fn table(w: &mut W, x: &mut Exp, o: &mut Out, t: &Table) {
                     other => other.xml(),
                 }),
             );
+            a = a.b("anchorCtr", c.anchor_ctr);
             w.open("a:tcPr", a);
             for (tag, l) in [
                 ("a:lnL", &c.borders[0]),
