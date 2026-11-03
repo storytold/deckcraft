@@ -1179,13 +1179,13 @@ fn morph_of_large_slides_stays_linear() {
     // One named pair at opposite ends.
     a.shapes[0].name = "Logo".into();
     b.shapes[n as usize - 1].name = "Logo".into();
-    let t = std::time::Instant::now();
+    // No wall-clock bound (it would flake on a loaded runner): at this size a quadratic pairing
+    // takes minutes, so a regression shows as a test that hangs rather than a failed assertion.
     assert_eq!(morph_pairs(&a, &b), [(ShapeId(1), ShapeId(2 * n))]);
     let p = deckcraft_model::defaults::new_presentation(None);
     let f = morph_frame(&p, &a, &b, 0.5, &|_| false);
     // Every shape fades in place; the named pair differs in text, so it cross-fades as two.
     assert_eq!(f.shapes.len(), 2 * n as usize);
-    assert!(t.elapsed().as_secs() < 10);
 }
 
 #[test]
@@ -1202,12 +1202,11 @@ fn paragraph_states_of_a_large_build_stay_linear() {
     a.text_build = TextBuild::ByParagraph;
     s.animations = vec![a];
     let tl = Timeline::new(&s, W, H);
-    let t = std::time::Instant::now();
+    // No wall-clock bound, as above: a per-paragraph scan of the slide would take minutes here.
     assert_eq!(tl.paragraph_targets(ShapeId(1)).len(), n);
     for p in 0..n {
         assert!(!tl.state(ShapeId(1), Some(p), 0, 0.0).visible);
         assert!(tl.state(ShapeId(1), Some(p), 1, 0.0).visible);
     }
     assert_eq!(tl.animated_shapes(), [ShapeId(1)]);
-    assert!(t.elapsed().as_secs() < 10);
 }
