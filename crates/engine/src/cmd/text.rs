@@ -139,7 +139,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Text Fit",
             [],
             None,
-            "{index?: slide index (else the current slide), ids?: [shape id] (else every text body on the slide)} → {index, bodies: [{id, name, autofit: none|shrink|shape, autofitFrom: shape|layout|master|default, fontScale, lineReduction, minSize, maxSize, lines, contentHeight, frameHeight, overflows, overflowPt}]} — how each text body fits its shape as the slide draws it: the autofit in effect after placeholder inheritance, the font scale and line spacing reduction it applied, the drawn font sizes of the text in pt (bullets left out), and how far the text runs past its frame (`overflows` is the drawing's own test, true past half a point; tables are left out: their rows grow to fit)",
+            "{index?: slide index (else the current slide), ids?: [shape id] (else every text body on the slide)} → {index, bodies: [{id, name, autofit: none|shrink|shape, autofitFrom: shape|layout|master|default, fontScale, lineReduction, minSize, maxSize, lines, contentHeight, frameHeight, overflows, overflowPt}]} — how each text body fits its shape as the slide draws it: the autofit in effect after placeholder inheritance, the font scale and line spacing reduction it applied, the drawn font sizes of the text in pt (bullets left out), and how far the text runs past its frame (`overflows` is the drawing's own test, true past half a point; tables are left out: their rows grow to fit). Heights and sizes are points on the slide: a group member is measured at the size its groups draw it. A body whose paragraphs are all empty draws no text and reports 0 lines and no overflow",
             has_slide,
             fit::fit
         ),

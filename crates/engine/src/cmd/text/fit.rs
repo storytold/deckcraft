@@ -4,7 +4,11 @@
 //! effect, the scale and line spacing reduction the layout applied, the drawn font sizes and how
 //! far the text runs past its frame.
 
-use deckcraft_model::text::AutoFit;
+use std::borrow::Cow;
+
+use deckcraft_geom::{Affine, Rect};
+use deckcraft_model::resolve::Ctx;
+use deckcraft_model::text::{AutoFit, TextBody};
 use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
@@ -33,7 +37,8 @@ pub(crate) struct Fit {
     /// left out); `None` for a body with no drawn text.
     pub sizes: Option<(f64, f64)>,
     pub lines: usize,
-    /// Height of the laid-out text and of the frame it sits in (insets applied), in points.
+    /// Height of the laid-out text and of the frame it sits in (insets applied), in points on the
+    /// slide: a group member's at the size its groups draw it.
     pub content_height: f64,
     pub frame_height: f64,
     /// The layout's overflow test: the text is taller than its frame by more than half a point.
@@ -65,9 +70,17 @@ impl Fit {
 }
 
 /// The fit of `sh`'s text on the page `sel` names, as the slide draws it: `fields` are the field
-/// values the page draws (slide number, date, footer). `None` for a shape with no text body and for
-/// tables, whose rows grow to fit their text.
-pub(crate) fn fit_of(doc: &Presentation, sel: &Selection, fields: &dyn deckcraft_text::Fields, sh: &Shape) -> Option<Fit> {
+/// values the page draws (slide number, date, footer), and `parent` maps the coordinates `sh` is
+/// placed in onto the slide, `depth` groups down (the identity and 0 for a shape on the slide
+/// itself). `None` for a shape with no text body and for tables, whose rows grow to fit their text.
+pub(crate) fn fit_of(
+    doc: &Presentation,
+    sel: &Selection,
+    fields: &dyn deckcraft_text::Fields,
+    sh: &Shape,
+    parent: Affine,
+    depth: usize,
+) -> Option<Fit> {
     if matches!(sh.kind, ShapeKind::Table(_)) {
         return None;
     }
@@ -75,9 +88,11 @@ pub(crate) fn fit_of(doc: &Presentation, sel: &Selection, fields: &dyn deckcraft
     let ctx = ctx_for(doc, sel)?;
     let bp = resolve::body(&ctx, sh);
     let x = xfrm_of(doc, sel, sh);
-    let rect = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
+    let (w, h) = text_size(&ctx, sh, x.w, x.h, parent * x.affine(), depth);
+    let rect = deckcraft_render::shape_geometry(sh, w, h).text_rect;
+    let body = drawn_body(body);
     let opts = deckcraft_text::Opts { rect, fields, prompt_color: None, no_shrink: false };
-    let l = deckcraft_text::layout(&ctx, sh, body, &opts);
+    let l = deckcraft_text::layout(&ctx, sh, &body, &opts);
     let autofit = match bp.autofit {
         None | Some(AutoFit::None) => "none",
         Some(AutoFit::Shrink { .. }) => "shrink",
@@ -120,6 +135,42 @@ pub(crate) fn fit_of(doc: &Presentation, sel: &Selection, fields: &dyn deckcraft
     })
 }
 
+/// The body the slide lays out for `body`. The renderer draws no text for a body whose paragraphs
+/// are all empty (the editor shows only a caret or a placeholder prompt there), so such a body is
+/// measured as one with no paragraphs: its frame, and no lines or overflow.
+fn drawn_body(body: &TextBody) -> Cow<'_, TextBody> {
+    if body.is_empty() && !body.paragraphs.is_empty() {
+        let mut none = body.clone();
+        none.paragraphs.clear();
+        Cow::Owned(none)
+    } else {
+        Cow::Borrowed(body)
+    }
+}
+
+/// The width and height the renderer sets `sh`'s text in (`Renderer::text_space`): `w` x `h`, the
+/// shape's own size, stretched along each of its axes as much as `m`, its transform to the slide,
+/// stretches them. A group's child coordinates size and place a member's box but never its type,
+/// so a member of a resized group wraps its text at its size on the slide. A shape on the slide
+/// itself, a scale within 1e-9 of 1 on both axes and a degenerate transform keep `w` x `h`.
+fn text_size(ctx: &Ctx, sh: &Shape, w: f64, h: f64, mut m: Affine, depth: usize) -> (f64, f64) {
+    if depth == 0 {
+        return (w, h);
+    }
+    // The renderer measures the transform it draws the shape with, 3-D camera turn included.
+    if let Some(turn) = deckcraft_render::camera_turn(ctx, sh, w, h) {
+        m *= turn;
+    }
+    let c = m.as_coeffs();
+    let (sx, sy) = (c[0].hypot(c[1]), c[2].hypot(c[3]));
+    let ok = |k: f64| k.is_finite() && k > 1e-9;
+    if !ok(sx) || !ok(sy) || ((sx - 1.0).abs() < 1e-9 && (sy - 1.0).abs() < 1e-9) {
+        return (w, h);
+    }
+    let (tw, th) = (w * sx, h * sy);
+    if tw.is_finite() && th.is_finite() { (tw, th) } else { (w, h) }
+}
+
 /// Every text body on slide `index`, in drawing order, group members included.
 pub(crate) fn slide_fits(doc: &Presentation, index: usize) -> Vec<Fit> {
     let Some(slide) = doc.slides.get(index) else { return vec![] };
@@ -127,12 +178,36 @@ pub(crate) fn slide_fits(doc: &Presentation, index: usize) -> Vec<Fit> {
     // The slide number, date and footer text the renderer puts in this slide's fields.
     let fields = deckcraft_render::slide_fields(doc, index);
     let mut out = vec![];
-    deckcraft_model::walk(&slide.shapes, &mut |sh, _| {
-        if let Some(f) = fit_of(doc, &sel, &fields, sh) {
+    fits_in(doc, &sel, &fields, &slide.shapes, Affine::IDENTITY, 0, &mut out);
+    out
+}
+
+/// Appends the fits of `shapes` and of their group members to `out`, depth first in the order
+/// `deckcraft_model::walk` visits them. `parent` maps the shapes' coordinates onto the slide; a
+/// group's members get the group's child coordinates mapped onto its box, as the renderer draws
+/// them.
+fn fits_in(
+    doc: &Presentation,
+    sel: &Selection,
+    fields: &dyn deckcraft_text::Fields,
+    shapes: &[Shape],
+    parent: Affine,
+    depth: usize,
+    out: &mut Vec<Fit>,
+) {
+    if depth > 64 {
+        return;
+    }
+    for sh in shapes {
+        if let Some(f) = fit_of(doc, sel, fields, sh, parent, depth) {
             out.push(f);
         }
-    });
-    out
+        if let ShapeKind::Group { children, child } = &sh.kind {
+            let ch = Rect::new(child.x, child.y, child.x + child.w, child.y + child.h);
+            let gm = parent * deckcraft_geom::group_child_affine(&xfrm_of(doc, sel, sh), ch);
+            fits_in(doc, sel, fields, children, gm, depth + 1, out);
+        }
+    }
 }
 
 /// `text.fit {index?, ids?}`: the fit of every text body on a slide (the current one by default),

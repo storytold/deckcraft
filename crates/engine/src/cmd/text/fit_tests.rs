@@ -1,8 +1,8 @@
 //! `text.fit`: how text bodies fit their shapes as the slide draws them. An agent filling a
 //! placeholder sees `autofit: null` in `shape.inspect` while the layout's shrink-on-overflow draws
 //! the text at a fraction of its size; these tests pin what the query reports for that case, for
-//! text that fits, for text that overflows a shape that does not shrink, for a slide number field
-//! and for bad params.
+//! text that fits, for text that overflows a shape that does not shrink, for a slide number field,
+//! for members of resized groups, for a body of empty paragraphs and for bad params.
 
 use serde_json::{Value, json};
 
@@ -176,4 +176,63 @@ fn a_slide_number_field_is_measured_with_the_number_the_slide_draws() {
     assert!(wrapped_height > height, "{wrapped_height} after {height}");
     assert_eq!(b["lines"], wrapped, "text.fit {b} against the drawn layout");
     assert_eq!(num(&b, "contentHeight"), wrapped_height, "{b}");
+}
+
+/// The renderer sets a group member's text at the member's size on the slide: a group's child
+/// coordinates size and place the box, never the type. After `shape.resize` halves a group (its
+/// members keep their child coordinates), a member must report what a plain shape of its drawn
+/// size reports, and so must a member of a group inside another resized group.
+#[test]
+fn members_of_resized_groups_are_measured_at_their_size_on_the_slide() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let text = "Group members wrap as drawn on the slide";
+    let insert = |s: &mut Session, rect: [i64; 4], text: &str| {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": rect, "text": text})).unwrap()["id"].clone()
+    };
+    let same = |s: &mut Session, member: &Value, plain: &Value| {
+        let r = fit(s, json!({"ids": [member, plain]}));
+        let (m, p) = (&r["bodies"][0], &r["bodies"][1]);
+        for k in ["fontScale", "lineReduction", "minSize", "maxSize", "lines", "contentHeight", "frameHeight", "overflows", "overflowPt"] {
+            assert_eq!(m[k], p[k], "{k}: member {m}, plain shape {p}");
+        }
+        p["overflows"].clone()
+    };
+    let a = insert(&mut s, [100, 100, 200, 80], text);
+    let b = insert(&mut s, [400, 100, 200, 80], "B");
+    s.execute("edit.select", &json!({"ids": [a, b]})).unwrap();
+    let g = s.execute("arrange.group", &json!({})).unwrap()["id"].clone();
+    // A group at the size of its child coordinates draws its members at their own size.
+    let own = insert(&mut s, [100, 300, 200, 80], text);
+    same(&mut s, &a, &own);
+    s.execute("shape.resize", &json!({"ids": [g], "w": 250})).unwrap();
+    let half_wide = insert(&mut s, [400, 300, 100, 80], text);
+    // At half the width the text needs more lines than the frame holds.
+    assert_eq!(same(&mut s, &a, &half_wide), true);
+    let c = insert(&mut s, [700, 100, 100, 80], "C");
+    s.execute("edit.select", &json!({"ids": [g, c]})).unwrap();
+    let outer = s.execute("arrange.group", &json!({})).unwrap()["id"].clone();
+    s.execute("shape.resize", &json!({"ids": [outer], "h": 40})).unwrap();
+    let half_high = insert(&mut s, [600, 300, 100, 40], text);
+    assert_eq!(same(&mut s, &a, &half_high), true);
+}
+
+/// The renderer draws no text for a body whose paragraphs are all empty (`TextBody::is_empty`),
+/// so `text.fit` reports one as it reports a body with no paragraphs: no lines and no overflow,
+/// even in a frame shorter than one line.
+#[test]
+fn a_body_of_empty_paragraphs_reports_no_lines_and_no_overflow() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let e = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 450, 200, 10]})).unwrap()["id"].clone();
+    let no_paragraphs = fit(&mut s, json!({"ids": [e]}));
+    assert_eq!(no_paragraphs["bodies"][0]["lines"], 0, "{no_paragraphs}");
+    s.execute("text.set", &json!({"id": e, "text": ""})).unwrap();
+    let id = deckcraft_model::ShapeId(e.as_u64().unwrap() as u32);
+    let st = s.doc().unwrap();
+    let body = deckcraft_model::find_shape(&st.doc.slides[1].shapes, id).unwrap().text.clone().unwrap();
+    assert!(body.paragraphs.len() == 1 && body.is_empty(), "{body:?}");
+    let r = fit(&mut s, json!({"ids": [e]}));
+    assert_eq!(r, no_paragraphs);
+    assert_eq!(r["bodies"][0]["overflows"], false, "{r}");
 }

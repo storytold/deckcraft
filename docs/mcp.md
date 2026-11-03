@@ -110,4 +110,6 @@ draws it: the autofit in effect and where it is set (the shape, its layout or ma
 the default), the font scale and line spacing reduction shrink-on-overflow applied, the smallest and
 largest drawn font size of the text in points (bullets are left out), the line count, and how far
 the text runs past its frame (`overflowPt`). A placeholder that inherits its shrink from the layout
-shows `autofit: null` in `shape.inspect`; `text.fit` shows the scale it is drawn at.
+shows `autofit: null` in `shape.inspect`; `text.fit` shows the scale it is drawn at. Heights and
+sizes are points on the slide: a member of a resized group is measured at the size the group draws
+it. A body whose paragraphs are all empty draws no text and reports 0 lines and no overflow.
