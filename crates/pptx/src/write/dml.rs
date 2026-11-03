@@ -762,17 +762,27 @@ pub fn text_body(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, tb: &TextBody, 
 }
 
 fn run_text(w: &mut W, x: &mut Exp, o: &mut Out, text: &str, props: &RunProps) {
+    // The run's properties are the same for every piece and line break: serialize them once.
+    let mut rpr_xml: Option<String> = None;
+    let mut put_rpr = |w: &mut W| match &rpr_xml {
+        Some(xml) => w.s.push_str(xml),
+        None => {
+            let start = w.s.len();
+            rpr(w, x, o, "a:rPr", props);
+            rpr_xml = Some(w.s[start..].to_string());
+        }
+    };
     for (i, piece) in text.split(['\n', '\u{b}']).enumerate() {
         if i > 0 {
             w.open0("a:br");
-            rpr(w, x, o, "a:rPr", props);
+            put_rpr(w);
             w.close("a:br");
         }
         if piece.is_empty() && i > 0 {
             continue;
         }
         w.open0("a:r");
-        rpr(w, x, o, "a:rPr", props);
+        put_rpr(w);
         w.elt("a:t", piece);
         w.close("a:r");
     }
