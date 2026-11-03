@@ -469,6 +469,24 @@ fn text_and_formatting_round_trip() {
 }
 
 #[test]
+fn centered_cell_anchor_survives_two_pptx_round_trips() {
+    let mut p = Presentation::default();
+    let mut slide = new_slide(&mut p, "Cell anchor");
+    let mut table_shape = shape(&mut p, "Table", 10.0, 10.0, 200.0, 80.0);
+    let mut table = Table::new(1, 1, 200.0, 80.0);
+    table.rows[0].cells[0].anchor_ctr = Some(true);
+    table_shape.kind = ShapeKind::Table(table);
+    slide.shapes.push(table_shape);
+    p.slides.push(Arc::new(slide));
+
+    let once = round(&p);
+    let twice = round(&once);
+    let slide = twice.slides.last().expect("added slide");
+    let ShapeKind::Table(table) = &by_name(slide, "Table").kind else { panic!("table") };
+    assert_eq!(table.rows[0].cells[0].anchor_ctr, Some(true));
+}
+
+#[test]
 fn shapes_fills_lines_effects_round_trip() {
     let p = rich_deck();
     let q = round(&p);
