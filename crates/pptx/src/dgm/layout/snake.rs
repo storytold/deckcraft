@@ -211,6 +211,15 @@ impl ReverseCentering {
             alignment = corrected;
         }
         let step = if exceeds(following, old_extent) { (self.boundary - alignment - (length - following).max(0.)) / 2. } else { 0. };
+        let step = if self.reference.is_some() {
+            // A nominal retreat consumes pending forward growth. Its center
+            // stops when that growth is exhausted, and the consumed portion
+            // must not later enlarge the logical extent.
+            self.pending[2].growth -= (-step).max(0.).min(future);
+            step.max(-future)
+        } else {
+            step
+        };
         self.pending[2].advance = step.max(0.);
         let shift = step - (self.boundary - self.extent).max(0.);
         self.pending[2].shift += shift;
@@ -1188,6 +1197,65 @@ mod tests {
             })
             .collect();
         centers.iter().map(|v| v - centers[0]).collect()
+    }
+
+    #[test]
+    fn reverse_negative_advance_cancels_pending_center_and_logical_growth() {
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "2"), ("off", "ctr"), ("contDir", "revDir")];
+        // Short terminal rows expose the physical boundary; long rows expose
+        // the logical reference. Native controls distinguish excess retreat,
+        // partial cancellation, and a positive advance with the same prefix.
+        for (first, prefix, short_end) in [
+            (76., [0., 0., -1., 1., 16., 16., 16., 26.], 90.),
+            (82., [0., 0., -1., 1., 22., 24., 24., 32.], 90.),
+            (104., [0., 0., -1., 1., 44., 41., 41., 46.], 82.),
+        ] {
+            for terminal in [32., 250.] {
+                let parts =
+                    [[13., 19.], [17., 25.], [36., 48.], [13., 21.], [first, 128. - first], [16., 16.], [16., 16.], [terminal / 2.; 2], [180., 20.]];
+                let sizes: Vec<_> = parts.into_iter().flatten().map(|w| (w, 10.)).collect();
+                let actual = packed(&sizes, (620., 250.), &params, 0.);
+                let centers = relative_line_centers(&actual, 2, false);
+                for (center, expected) in centers.iter().zip(prefix) {
+                    assert!((center - expected).abs() < 1e-7, "{first}/{terminal}: {centers:?}");
+                }
+                let expected = if terminal == 32. { short_end } else { 39. };
+                assert!((centers[8] - expected).abs() < 1e-7, "{first}/{terminal}: {centers:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn reverse_negative_advance_cancellation_survives_mirrored_subdivision() {
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "3"), ("off", "ctr"), ("contDir", "revDir"), ("grDir", "bR")];
+        for (first, prefix, short_end) in [
+            (80., [0., 0., 1., -0.5, -15.5, -15.5, -15.5, -27.25], -100.25),
+            (91., [0., 0., 1., -0.5, -26.5, -29.5, -29.5, -38.25], -100.25),
+            (117., [0., 0., 1., -0.5, -52.5, -44.5, -44.5, -52.25], -88.25),
+        ] {
+            for terminal in [36., 270.] {
+                let rest = (140. - first) / 2.;
+                let parts = [
+                    [10., 12., 14.],
+                    [11., 15., 18.],
+                    [39., 23., 28.],
+                    [9., 12., 15.],
+                    [first, rest, rest],
+                    [12.; 3],
+                    [12.; 3],
+                    [terminal / 3.; 3],
+                    [200., 10., 15.],
+                ];
+                let sizes: Vec<_> = parts.into_iter().flatten().map(|w| (w, 11.)).collect();
+                let actual = packed(&sizes, (650., 280.), &params, 0.);
+                let centers = relative_line_centers(&actual, 3, false);
+                for (center, expected) in centers.iter().zip(prefix) {
+                    assert!((center - expected).abs() < 1e-7, "{first}/{terminal}: {centers:?}");
+                }
+                let expected = if terminal == 36. { short_end } else { -47. };
+                assert!((centers[8] - expected).abs() < 1e-7, "{first}/{terminal}: {centers:?}");
+            }
+        }
     }
 
     #[test]
