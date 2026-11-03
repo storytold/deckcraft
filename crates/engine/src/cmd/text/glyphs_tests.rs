@@ -1,0 +1,183 @@
+//! `font.used {detail: true}`, the answer of `format.font` and `text.glyphs`: which face draws a
+//! deck's text. The decks are built with commands. The families are the default theme's body
+//! font (Inter, bundled with every build that carries craft-fonts) and a family no machine has,
+//! which is drawn in a stand-in.
+
+use deckcraft_fonts::FontDb;
+use serde_json::{Value, json};
+
+use crate::Session;
+
+/// A family no machine has installed.
+const NOWHERE: &str = "Qqq Nonexistent Sans";
+
+/// A new presentation with a blank slide added and selected, and that slide's index.
+fn deck() -> (Session, usize) {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let slide = s.doc().unwrap().selection.slide;
+    (s, slide)
+}
+
+/// Adds a text box holding `text` at `y` on the current slide and leaves it selected; its id.
+fn text_box(s: &mut Session, y: f64, text: &str) -> Value {
+    let id = s.execute("insert.textBox", &json!({"rect": [40.0, y, 600.0, 60.0], "text": text})).unwrap()["id"].clone();
+    s.execute("text.exit", &json!({})).unwrap();
+    id
+}
+
+/// The default theme's body font.
+fn body_font(s: &Session) -> String {
+    s.doc().unwrap().doc.masters[0].theme.fonts.minor.latin.clone()
+}
+
+/// The strings of an answer's list `key`.
+fn strings(v: &Value, key: &str) -> Vec<String> {
+    v[key].as_array().unwrap().iter().filter_map(Value::as_str).map(String::from).collect()
+}
+
+/// `font.used {detail: true}` answers, per family and in the order of the plain list, whether this
+/// machine has it, the faces that draw it, and its runs, sizes and slides. A family no machine has
+/// is drawn in a stand-in and never named as its own face.
+#[test]
+fn font_used_detail_tells_installed_from_missing_families() {
+    let (mut s, slide) = deck();
+    text_box(&mut s, 40.0, "Installed");
+    s.execute("format.size", &json!({"size": 20})).unwrap();
+    text_box(&mut s, 140.0, "Missing");
+    s.execute("format.font", &json!({"family": NOWHERE})).unwrap();
+    s.execute("format.size", &json!({"size": 30})).unwrap();
+    let theme = body_font(&s);
+    let mut want = vec![theme.clone(), NOWHERE.to_string()];
+    want.sort_by_key(|f| f.to_lowercase());
+    assert_eq!(s.execute("font.used", &json!({})).unwrap(), json!(want), "the plain answer stays the sorted names");
+    let detail = s.execute("font.used", &json!({"detail": true})).unwrap();
+    let entries = detail.as_array().unwrap();
+    let families: Vec<&str> = entries.iter().map(|e| e["family"].as_str().unwrap()).collect();
+    assert_eq!(families, want);
+    let entry = |family: &str| entries.iter().find(|e| e["family"] == family).unwrap().clone();
+    let db = FontDb::global();
+
+    let missing = entry(NOWHERE);
+    assert_eq!(missing["installed"], false, "{missing}");
+    let stand_in = db.document_face(NOWHERE, "Regular").family.clone();
+    assert_eq!(missing["drawnWith"][0], stand_in.as_str(), "{missing}");
+    assert!(!strings(&missing, "drawnWith").contains(&NOWHERE.to_string()), "{missing}");
+    assert_eq!(missing["runs"], 1, "{missing}");
+    assert_eq!(missing["bullets"], 0, "{missing}");
+    assert_eq!(missing["sizes"], json!([30.0]), "{missing}");
+    assert_eq!(missing["slides"], json!([slide]), "{missing}");
+
+    let installed = entry(theme.as_str());
+    assert!(db.has_family(&theme) || option_env!("CRAFT_FONTS_REQUIRED").is_none(), "a required build bundles {theme}");
+    assert_eq!(installed["installed"], db.has_family(&theme), "{installed}");
+    assert_eq!(installed["drawnWith"][0], db.document_face(&theme, "Regular").family.as_str(), "{installed}");
+    assert_eq!(installed["runs"], 1, "{installed}");
+    assert_eq!(installed["sizes"], json!([20.0]), "{installed}");
+    assert_eq!(installed["slides"], json!([slide]), "{installed}");
+}
+
+/// `format.font` answers the family the runs now ask for, whether this machine has it and the
+/// face it is drawn in, on every call: for a family no machine has, for the theme's own font, and
+/// for a theme reference, which answers with the family it names.
+#[test]
+fn format_font_answers_what_the_family_is_drawn_in() {
+    let (mut s, _) = deck();
+    text_box(&mut s, 40.0, "Words");
+    let db = FontDb::global();
+
+    let missing = s.execute("format.font", &json!({"family": NOWHERE})).unwrap();
+    assert_eq!(missing["family"], NOWHERE, "{missing}");
+    assert_eq!(missing["installed"], false, "{missing}");
+    assert_eq!(missing["drawnWith"], db.document_face(NOWHERE, "Regular").family.as_str(), "{missing}");
+    assert_ne!(missing["drawnWith"], NOWHERE, "{missing}");
+
+    let theme = body_font(&s);
+    let installed = s.execute("format.font", &json!({"family": theme})).unwrap();
+    assert!(db.has_family(&theme) || option_env!("CRAFT_FONTS_REQUIRED").is_none(), "a required build bundles {theme}");
+    assert_eq!(installed, json!({"family": theme, "installed": db.has_family(&theme), "drawnWith": db.document_face(&theme, "Regular").family}));
+
+    let by_ref = s.execute("format.font", &json!({"family": "+mn-lt"})).unwrap();
+    assert_eq!(by_ref, installed);
+    assert_eq!(s.execute("font.used", &json!({})).unwrap(), json!([theme]), "the run is set to the theme's font");
+}
+
+/// `text.glyphs` lists each run with the families it asks for and the faces drawing it, the
+/// characters drawn in a fallback face (kana, which the body font lacks) and the characters no
+/// face has (U+10FFFD, a private-use code point, drawn as an empty box). Spaces are left out.
+#[test]
+fn text_glyphs_reports_fallback_and_missing_characters() {
+    let (mut s, slide) = deck();
+    let text = "Kana \u{3042} and \u{10FFFD}";
+    let id = text_box(&mut s, 40.0, text);
+    let other = text_box(&mut s, 140.0, "Elsewhere");
+    let theme = body_font(&s);
+    let out = s.execute("text.glyphs", &json!({"slide": slide, "ids": [id]})).unwrap();
+    let runs = out.as_array().unwrap();
+    assert_eq!(runs.len(), 1, "{out}");
+    let r = &runs[0];
+    assert_eq!(r["slide"], json!(slide), "{r}");
+    assert_eq!(r["shape"], id, "{r}");
+    assert_eq!((r["para"].as_u64(), r["run"].as_u64()), (Some(0), Some(0)), "{r}");
+    assert_eq!(r["text"], text, "{r}");
+    assert_eq!(r["requested"], json!([theme]), "{r}");
+
+    let db = FontDb::global();
+    let body = db.document_face(&theme, "Regular").family.clone();
+    let drawn = strings(r, "drawnWith");
+    assert_eq!(drawn.first(), Some(&body), "the body font draws most of the run: {r}");
+    match db.fallback_for('\u{3042}', u32::MAX) {
+        Some(f) if !f.family.eq_ignore_ascii_case(&body) => {
+            assert_eq!(strings(r, "fallbackChars"), ["\u{3042}"], "{r}");
+            assert!(drawn.contains(&f.family), "{r}");
+        }
+        _ => assert!(option_env!("CRAFT_FONTS_REQUIRED").is_none(), "a required build bundles a kana face"),
+    }
+    if db.fallback_for('\u{10FFFD}', u32::MAX).is_none() {
+        assert_eq!(strings(r, "missingChars"), ["\u{10FFFD}"], "{r}");
+    }
+
+    let all = s.execute("text.glyphs", &json!({"slide": slide})).unwrap();
+    let shapes: Vec<Value> = all.as_array().unwrap().iter().map(|e| e["shape"].clone()).collect();
+    assert_eq!(shapes, [id, other], "every run on the slide, in drawing order");
+}
+
+/// Table text is listed per cell, with the cell's row and column, and `font.used {detail: true}`
+/// counts the cells' runs.
+#[test]
+fn text_glyphs_lists_table_cells() {
+    let (mut s, slide) = deck();
+    let table = json!({"rows": 1, "cols": 2, "rect": [40.0, 40.0, 400.0, 40.0], "data": [["Left", "Right"]]});
+    let id = s.execute("insert.table", &table).unwrap()["id"].clone();
+    let out = s.execute("text.glyphs", &json!({"slide": slide, "ids": [id]})).unwrap();
+    let cells: Vec<(Value, Value)> = out.as_array().unwrap().iter().map(|e| (e["cell"].clone(), e["text"].clone())).collect();
+    assert_eq!(cells, [(json!([0, 0]), json!("Left")), (json!([0, 1]), json!("Right"))], "{out}");
+    let detail = s.execute("font.used", &json!({"detail": true})).unwrap();
+    let runs: u64 = detail.as_array().unwrap().iter().filter_map(|e| e["runs"].as_u64()).sum();
+    assert_eq!(runs, 2, "{detail}");
+}
+
+/// Bad parameters are refused with an error that names the parameter; null means absent.
+#[test]
+fn font_and_glyph_queries_refuse_bad_params() {
+    let (mut s, slide) = deck();
+    text_box(&mut s, 40.0, "Text");
+    let err = |s: &mut Session, id: &str, p: Value| s.execute(id, &p).unwrap_err().to_string();
+    assert_eq!(err(&mut s, "font.used", json!({"detail": "yes"})), "invalid parameters for `font.used`: `detail` is not true or false: \"yes\"");
+    let glyphs = "invalid parameters for `text.glyphs`";
+    assert_eq!(err(&mut s, "text.glyphs", json!({"slide": -1})), format!("{glyphs}: `slide` is not a valid index: -1"));
+    assert_eq!(
+        err(&mut s, "text.glyphs", json!({"slide": 99})),
+        format!("{glyphs}: `slide` is past the last slide ({} in the presentation): 99", slide + 1)
+    );
+    assert_eq!(err(&mut s, "text.glyphs", json!({"ids": "x"})), format!("{glyphs}: `ids` is not a list of shape ids: \"x\""));
+    assert_eq!(err(&mut s, "text.glyphs", json!({"ids": [-3]})), format!("{glyphs}: `ids` has an invalid shape id: -3"));
+    assert_eq!(
+        err(&mut s, "text.glyphs", json!({"slide": slide, "ids": [999999]})),
+        format!("{glyphs}: `ids` names a shape that is not on slide {slide}: 999999")
+    );
+    assert_eq!(err(&mut s, "text.glyphs", json!({"ids": [999999]})), format!("{glyphs}: `ids` names a shape that is on no slide: 999999"));
+    assert_eq!(s.execute("text.glyphs", &json!({"slide": null, "ids": null})).unwrap().as_array().map(Vec::len), Some(1));
+    assert_eq!(s.execute("font.used", &json!({"detail": false})).unwrap(), s.execute("font.used", &json!({})).unwrap());
+    assert_eq!(s.execute("font.used", &json!({"detail": null})).unwrap(), s.execute("font.used", &json!({})).unwrap());
+}

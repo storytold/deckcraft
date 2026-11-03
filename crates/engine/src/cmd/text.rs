@@ -19,6 +19,9 @@ mod autocorrect;
 mod caret;
 mod editing;
 mod formatting;
+mod glyphs;
+#[cfg(test)]
+mod glyphs_tests;
 mod ime;
 mod layout;
 
@@ -31,6 +34,8 @@ pub(crate) use editing::{insert_field, insert_text, paste_body};
 pub use formatting::format_range;
 use formatting::{fonts_used, replace_font};
 pub(crate) use formatting::{format_body, format_para, format_run, format_run_levels, link_text};
+pub(crate) use glyphs::font_answer;
+use glyphs::text_glyphs;
 pub use ime::{IME_SURROUNDING_MAX_BYTES, ImeSurrounding, cell_range_underlines, composition_underlines, ime_surrounding, range_underlines};
 use ime::{commit, compose};
 pub(crate) use layout::ctx_for;
@@ -40,7 +45,15 @@ pub use layout::{caret_color, caret_line, fit_text_box, layout_for, text_frame, 
 /// with their parameter docs and enabled predicates.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(query "font.used", "Fonts in Presentation", [], None, "{} → [family] (theme fonts resolved)", has_doc, fonts_used),
+        cmd!(
+            query "font.used",
+            "Fonts in Presentation",
+            [],
+            None,
+            "{detail?: true} → [family] (theme fonts resolved, sorted by name); with `detail`, [{family, installed, drawnWith: [face family], runs, bullets, sizes: [pt], slides: [index]}] in the same order: whether this machine has the family, the faces that draw its text (most characters first; a family this machine lacks is drawn in a stand-in), how many runs and character bullets are set in it, the font sizes set on those runs and the slides they are on",
+            has_doc,
+            fonts_used
+        ),
         cmd!(
             "font.replace",
             "Replace Fonts",
@@ -131,6 +144,15 @@ pub fn specs() -> Vec<CommandSpec> {
             set
         ),
         cmd!(query "text.get", "Get Text", [], None, "{id?} → {text, paragraphs}", has_slide, get),
+        cmd!(
+            query "text.glyphs",
+            "Text Glyphs",
+            [],
+            None,
+            "{slide?: slide index (else every slide), ids?: [shape id] (else every shape; a group brings its members)} → [{slide, shape, cell?: [row, col], para, run, text, requested: [family], drawnWith: [face family], fallbackChars: [char], missingChars: [char]}], one entry per run holding a visible character, as the slide's layout draws it: the families the run's characters ask for (its Latin typeface first, then its East Asian, complex-script, theme script and symbol typefaces when its characters use them), the faces that draw them (most characters first), the characters drawn in a face none of the requested families is drawn in, and the characters no face has a glyph for (drawn as empty boxes); spaces and control characters are left out, hidden shapes are listed",
+            has_doc,
+            text_glyphs
+        ),
     ]
 }
 

@@ -45,9 +45,13 @@ pub(super) fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
     format_run(s, &move |r| r.baseline = Some(if v { -0.25 } else { 0.0 }))
 }
 
+/// `format.font {family}`: sets the family, then answers what a run in it asks for and is drawn in.
 pub(super) fn font(s: &mut Session, p: &Value) -> Result<Value> {
     let f = str_param(p, "family").ok_or_else(|| bad("format.font", "missing `family`"))?.to_string();
-    format_run(s, &move |r| r.font = Some(f.clone()))
+    let family = f.clone();
+    format_run(s, &move |r| r.font = Some(f.clone()))?;
+    let st = s.doc()?;
+    Ok(crate::cmd::text::font_answer(&st.doc, &st.selection, &family))
 }
 
 pub(super) fn size(s: &mut Session, p: &Value) -> Result<Value> {
