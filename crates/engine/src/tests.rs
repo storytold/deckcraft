@@ -6458,3 +6458,14 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
 }
+
+/// A shape named many times in one edit is edited once and not copied per mention.
+#[test]
+fn repeated_target_ids_edit_the_shape_once() {
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 100], "text": "x".repeat(100_000)})).unwrap();
+    let id = r["id"].as_u64().unwrap();
+    s.execute("shape.fill", &json!({"ids": vec![id; 50_000], "color": "#ff0000"})).unwrap();
+    let v = s.execute("shape.inspect", &json!({"id": id})).unwrap();
+    assert!(v.to_string().to_lowercase().contains("ff0000"), "{v}");
+}
