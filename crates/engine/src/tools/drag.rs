@@ -18,16 +18,8 @@ pub(crate) const MAX_GESTURE_POINTS: usize = 20_000;
 impl Session {
     /// Update the active drag interaction using the pointer position and modifiers.
     pub(super) fn drag(&mut self, p: Point, mods: Mods, tol: f64) -> Result<Value> {
-        // Ink grows by one sample per move: extend it (and its preview) in place rather than
-        // copying the whole stroke twice per event.
         if matches!(self.tool.drag, Some(Drag::Ink { .. })) {
-            let sample = self.ink_sample(p);
-            if let Some(Drag::Ink { points }) = self.tool.drag.as_mut()
-                && points.len() < MAX_GESTURE_POINTS
-            {
-                points.push(sample);
-                self.tool.ink_preview.push(sample);
-            }
+            self.extend_ink(p);
             return Ok(Value::Null);
         }
         let Some(drag) = self.tool.drag.clone() else { return Ok(Value::Null) };
@@ -210,6 +202,18 @@ impl Session {
             Drag::Ink { .. } => {}
         }
         Ok(Value::Null)
+    }
+
+    /// Ink grows by one sample per move: extend it (and its preview) in place rather than
+    /// copying the whole stroke twice per event, up to [`MAX_GESTURE_POINTS`].
+    fn extend_ink(&mut self, p: Point) {
+        let sample = self.ink_sample(p);
+        if let Some(Drag::Ink { points }) = self.tool.drag.as_mut()
+            && points.len() < MAX_GESTURE_POINTS
+        {
+            points.push(sample);
+            self.tool.ink_preview.push(sample);
+        }
     }
 
     fn drag_move(&mut self, drag: MoveDrag, p: Point, mods: Mods, tol: f64) -> Result<Value> {
