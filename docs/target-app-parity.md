@@ -1,6 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
-> **PPTX.56 update 2026-11-03:** Root SmartArt dimension rules retain their finite text-fit stage without duplicating an earlier capacity reduction. Independent native controls distinguish successful later text fits and already allocated flows. The final build improves 56 of 2,462 geometry cases with no lost or worse geometry result; all eight CI stages and 2,725 tests pass. Generated bullet defaults for fractional custom font sizes, wider layout/map/chart limits and full LibreOffice replacement remain open; feature scores are unchanged.
+> **PPTX.57 update 2026-11-03:** A single fixed chart-axis end now determines the opposite automatic bound before tick rounding. The candidate improves 19 of 1,119 rendered chart pages; 1,100 remain pixel-identical, and all 140 retained map renders remain unchanged. Complete chart, SmartArt, map and LibreOffice parity remains open; feature scores are unchanged.
 
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
 
@@ -510,3 +510,35 @@ parity. Final refactor integration exactly reproduces all 2,462 geometry results
 All 814 retained chart pages, 140 map images and 24 custom-font control pages
 remain unchanged. All eight local CI stages and 2,725 tests including doctests
 pass, with eight existing ignored tests retained; hosted checks are separate.
+
+### PPTX.57: use the authored axis end when choosing the automatic end
+
+A chart with only its maximum fixed must choose its automatic minimum relative
+to that maximum. The previous calculation used the largest data value instead.
+For example, values 8 and 9.5 with maximum 10 now use 0–10; values 9 and 9.5 use
+8.4–10 after major-unit rounding. The negative-axis case is symmetric. Explicit
+both-end bounds, both-automatic bounds, and no-headroom percentage scales retain
+their separate policies. Non-finite inputs retain existing finite filtering,
+clamping and bounded step selection.
+
+Eleven independently authored fixed-bound controls reproduce the native axis
+ranges, including positive/negative data, threshold equality, fractional scale,
+and shortened plots. The regression test fails against the prior production
+calculation and passes with the correction. The final candidate was compared
+against the actual previous build on 1,119 pages in 91 packages: 1,100 are
+pixel-identical and every changed page has lower native RGB error. The 28 native
+bar controls have 18 improved bounds and no worsened bounds; all 140 retained
+map renders are identical. All 44 previously frozen local regression masks also have no worsening;
+whole-page gains do not waive local defects. All eight local CI stages pass,
+with 2,726 tests including doctests (eight existing tests remain ignored).
+
+This is an axis-range correction, not complete chart fidelity. Two retained
+out-of-range bar controls still have a 1.5-point clipping difference. A separate
+both-automatic control still has a 51-point bar endpoint difference; its native
+8.7–9.6 range differs from the existing 8.9–9.6 result. Category text placement,
+axis visibility, PDF compositing, and broader rich-label layout remain open.
+SmartArt rule search, generated bullet defaults, reverse/cyclic placement, and
+remaining map coordinate/projection differences also remain open. The separate
+combined chart-layout candidate is not included in this change. Only original
+Rust, tests and documentation are published; private native observations and
+source decks remain excluded.

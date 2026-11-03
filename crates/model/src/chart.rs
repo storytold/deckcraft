@@ -1240,7 +1240,21 @@ pub fn axis_scale(
     let fin = |v: Option<f64>| v.filter(|v| v.is_finite()).map(|v| v.clamp(-1e100, 1e100));
     let (fmin, fmax) = (fin(fmin), fin(fmax));
     let (lo, hi) = axis_data_range(lo, hi);
-    let (auto_lo, auto_hi) = auto_limits(lo, hi, headroom);
+    let (mut auto_lo, mut auto_hi) = auto_limits(lo, hi, headroom);
+    // A single authored end sets the reference for the opposite automatic
+    // limit. Keep zero outside its top sixth; inside it reserve half the
+    // remaining distance. Data beyond the fixed end is still clipped there.
+    if headroom {
+        match (fmin, fmax) {
+            (None, Some(max)) if lo >= 0.0 && max > 0.0 => {
+                auto_lo = if lo < max * 5.0 / 6.0 { 0.0 } else { lo - (max - lo) / 2.0 };
+            }
+            (Some(min), None) if hi <= 0.0 && min < 0.0 => {
+                auto_hi = if hi > min * 5.0 / 6.0 { 0.0 } else { hi + (hi - min) / 2.0 };
+            }
+            _ => {}
+        }
+    }
     let (mut lo, mut hi) = (fmin.unwrap_or(auto_lo), fmax.unwrap_or(auto_hi));
     let mag = lo.abs().max(hi.abs());
     // Relative to the data's magnitude, so tiny values don't count as flat; all-zero falls back to 1.
@@ -1377,6 +1391,43 @@ mod tests {
             let (a, b, s) = axis_scale(lo, hi, None, None, Some(0.0), 0, true);
             assert!(a.is_finite() && b.is_finite() && s > 0.0 && b > a, "{lo} {hi}: {a} {b} {s}");
         }
+    }
+
+    #[test]
+    fn fixed_axis_end_controls_the_opposite_automatic_limit() {
+        // With a fixed upper end, values in its top sixth retain half the
+        // remaining distance below the least value before unit rounding.
+        for (lo, hi, fixed, intervals, expected) in [
+            (8.0, 9.5, 10.0, 10, (0.0, 10.0, 1.0)),
+            (8.5, 9.5, 10.0, 10, (7.5, 10.0, 0.5)),
+            (9.0, 9.5, 10.0, 10, (8.4, 10.0, 0.2)),
+            (9.0, 12.0, 10.0, 10, (8.4, 10.0, 0.2)),
+            (9.5, 9.5, 10.0, 10, (9.2, 10.0, 0.1)),
+            (10.0, 11.0, 12.0, 10, (9.0, 12.0, 0.5)),
+            (9.99, 11.0, 12.0, 10, (0.0, 12.0, 2.0)),
+            (0.9, 0.95, 1.0, 10, (0.84, 1.0, 0.02)),
+            (9.0, 9.5, 10.0, 4, (8.5, 10.0, 0.5)),
+            (12.0, 12.0, 10.0, 10, (0.0, 10.0, 1.0)),
+        ] {
+            let positive = axis_scale(lo, hi, None, Some(fixed), None, intervals, true);
+            let negative = axis_scale(-hi, -lo, Some(-fixed), None, None, intervals, true);
+            for (got, want) in [
+                (positive.0, expected.0),
+                (positive.1, expected.1),
+                (positive.2, expected.2),
+                (negative.0, -expected.1),
+                (negative.1, -expected.0),
+                (negative.2, expected.2),
+            ] {
+                assert!((got - want).abs() < 1e-10, "{lo}..{hi}, fixed {fixed}: {positive:?}, {negative:?}");
+            }
+        }
+        assert_eq!(axis_scale(9.0, 9.0, None, Some(10.0), Some(1.0), 10, true), (8.0, 10.0, 1.0));
+        assert_eq!(axis_scale(9.0, 9.5, Some(0.0), Some(10.0), None, 10, true), (0.0, 10.0, 1.0));
+        // The fixed-end correction leaves the existing both-automatic and
+        // no-headroom policies independent.
+        assert_eq!(axis_scale(9.0, 9.0, None, None, None, 10, true), (0.0, 10.0, 1.0));
+        assert_eq!(axis_scale(0.0, 1.0, None, None, None, 5, false), (0.0, 1.0, 0.2));
     }
 
     fn column(values: &[f64]) -> Chart {
