@@ -267,6 +267,9 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
         for sec in &mut doc.sections {
             sec.slides.retain(|x| !ids.contains(x));
         }
+        for show in &mut doc.custom_shows {
+            show.slides.retain(|x| !ids.contains(x));
+        }
         sel.slide = first.min(doc.slides.len().saturating_sub(1));
         sel.slides = doc.slides.get(sel.slide).map(|x| vec![x.id]).unwrap_or_default();
         sel.shapes.clear();
@@ -775,6 +778,45 @@ mod tests {
     fn selected(s: &Session) -> (usize, Vec<u32>) {
         let sel = &s.doc().expect("doc").selection;
         (sel.slide, sel.slides.iter().map(|x| x.0).collect())
+    }
+
+    #[test]
+    fn deleting_slide_prunes_every_custom_show_in_one_undo_step() {
+        let (mut s, ids) = deck(3);
+        let shows = vec![
+            deckcraft_model::CustomShow {
+                name: "First".into(),
+                slides: vec![deckcraft_model::SlideId(ids[0]), deckcraft_model::SlideId(ids[1]), deckcraft_model::SlideId(ids[1])],
+            },
+            deckcraft_model::CustomShow { name: "Second".into(), slides: vec![deckcraft_model::SlideId(ids[1]), deckcraft_model::SlideId(ids[2])] },
+            deckcraft_model::CustomShow { name: "Empty after delete".into(), slides: vec![deckcraft_model::SlideId(ids[1])] },
+        ];
+        s.edit(|doc, _| {
+            doc.custom_shows = shows;
+            Ok(())
+        })
+        .expect("set custom shows");
+
+        s.execute("slide.delete", &json!({"index": 1})).expect("delete slide");
+        let shows = &s.doc().expect("doc").doc.custom_shows;
+        assert_eq!(shows[0].slides, [deckcraft_model::SlideId(ids[0])]);
+        assert_eq!(shows[1].slides, [deckcraft_model::SlideId(ids[2])]);
+        assert!(shows[2].slides.is_empty());
+
+        s.execute("edit.undo", &json!({})).expect("undo deletion");
+        assert_eq!(order(&s), ids);
+        assert_eq!(
+            s.doc().expect("doc").doc.custom_shows[0].slides,
+            [deckcraft_model::SlideId(ids[0]), deckcraft_model::SlideId(ids[1]), deckcraft_model::SlideId(ids[1])]
+        );
+        assert_eq!(s.doc().expect("doc").doc.custom_shows[1].slides, [deckcraft_model::SlideId(ids[1]), deckcraft_model::SlideId(ids[2])]);
+
+        s.execute("edit.redo", &json!({})).expect("redo deletion");
+        let bytes = deckcraft_format::save(&s.doc().expect("doc").doc).expect("save deck");
+        let reopened = deckcraft_format::load(&bytes).expect("reopen deck");
+        assert_eq!(reopened.custom_shows[0].slides, [deckcraft_model::SlideId(ids[0])]);
+        assert_eq!(reopened.custom_shows[1].slides, [deckcraft_model::SlideId(ids[2])]);
+        assert!(reopened.custom_shows[2].slides.is_empty());
     }
 
     #[test]

@@ -103,6 +103,41 @@ pub struct Timeline {
     /// By-paragraph builds animate first-level paragraphs; deeper paragraphs follow their parent:
     /// (shape, member paragraph, owner paragraph).
     groups: Vec<(ShapeId, usize, usize)>,
+    /// Lookups built with the timeline, so evaluating a shape or paragraph costs its own effects
+    /// rather than a scan of every effect, group and colour on the slide.
+    index: TimelineIndex,
+}
+
+#[derive(Clone, Debug, Default)]
+struct TimelineIndex {
+    /// Effects (indices into `effects`, in order) by target shape and paragraph.
+    by_target: HashMap<(ShapeId, Option<usize>), Vec<usize>>,
+    /// Effects (indices into `effects`, in order) by target shape.
+    by_shape: HashMap<ShapeId, Vec<usize>>,
+    /// Owner paragraph of each member paragraph (the first group recorded wins).
+    owner: HashMap<(ShapeId, usize), usize>,
+    /// Groups (member, owner) by shape, in order.
+    groups_by_shape: HashMap<ShapeId, Vec<(usize, usize)>>,
+    /// Base colour by shape (the first recorded wins).
+    color: HashMap<ShapeId, Rgba>,
+}
+
+impl TimelineIndex {
+    fn build(effects: &[Effect], groups: &[(ShapeId, usize, usize)], colors: &[(ShapeId, Rgba)]) -> TimelineIndex {
+        let mut ix = TimelineIndex::default();
+        for (i, e) in effects.iter().enumerate() {
+            ix.by_target.entry((e.timing.shape, e.timing.paragraph)).or_default().push(i);
+            ix.by_shape.entry(e.timing.shape).or_default().push(i);
+        }
+        for &(shape, member, owner) in groups {
+            ix.owner.entry((shape, member)).or_insert(owner);
+            ix.groups_by_shape.entry(shape).or_default().push((member, owner));
+        }
+        for &(shape, c) in colors {
+            ix.color.entry(shape).or_insert(c);
+        }
+        ix
+    }
 }
 
 enum Status {
@@ -324,6 +359,7 @@ impl Timeline {
             };
             tl.colors.push((id, c));
         }
+        tl.index = TimelineIndex::build(&tl.effects, &tl.groups, &tl.colors);
         tl
     }
 
@@ -413,8 +449,12 @@ impl Timeline {
 
     /// Paragraph indices of `shape` animated separately (by-paragraph builds).
     pub fn paragraph_targets(&self, shape: ShapeId) -> Vec<usize> {
-        let mut v: Vec<usize> = self.effects.iter().filter(|e| e.timing.shape == shape).filter_map(|e| e.timing.paragraph).collect();
-        v.extend(self.groups.iter().filter(|g| g.0 == shape && v.contains(&g.2)).map(|g| g.1).collect::<Vec<_>>());
+        let mine = self.index.by_shape.get(&shape).map_or(&[][..], Vec::as_slice);
+        let mut v: Vec<usize> = mine.iter().filter_map(|&i| self.effects.get(i)).filter_map(|e| e.timing.paragraph).collect();
+        let owners: HashSet<usize> = v.iter().copied().collect();
+        if let Some(groups) = self.index.groups_by_shape.get(&shape) {
+            v.extend(groups.iter().filter(|(_, owner)| owners.contains(owner)).map(|(member, _)| *member));
+        }
         v.sort_unstable();
         v.dedup();
         v
@@ -422,13 +462,8 @@ impl Timeline {
 
     /// Shapes with any effect.
     pub fn animated_shapes(&self) -> Vec<ShapeId> {
-        let mut v: Vec<ShapeId> = Vec::new();
-        for e in &self.effects {
-            if !v.contains(&e.timing.shape) {
-                v.push(e.timing.shape);
-            }
-        }
-        v
+        let mut seen: HashSet<ShapeId> = HashSet::new();
+        self.effects.iter().map(|e| e.timing.shape).filter(|s| seen.insert(*s)).collect()
     }
 
     /// State of `shape` (or of one of its paragraphs, `para`) when `step` main steps have been
@@ -456,9 +491,9 @@ impl Timeline {
         triggers: &[TriggerPlay],
         stamps: &[StepStamp],
     ) -> AnimState {
-        let para = para.map(|p| self.groups.iter().find(|g| g.0 == shape && g.1 == p).map(|g| g.2).unwrap_or(p));
-        let mine = self.effects.iter().filter(|e| e.timing.shape == shape && e.timing.paragraph == para);
-        let base_color = self.colors.iter().find(|(s, _)| *s == shape).map(|(_, c)| *c).unwrap_or(Rgba::rgb(0x15, 0x60, 0x82));
+        let para = para.map(|p| self.index.owner.get(&(shape, p)).copied().unwrap_or(p));
+        let mine = self.index.by_target.get(&(shape, para)).map_or(&[][..], Vec::as_slice).iter().filter_map(|&i| self.effects.get(i));
+        let base_color = self.index.color.get(&shape).copied().unwrap_or(Rgba::rgb(0x15, 0x60, 0x82));
         let mut st = AnimState::default();
         // Initial visibility comes from the first effect in the Animation Pane order.
         let mut ordered: Vec<&Effect> = mine.collect();

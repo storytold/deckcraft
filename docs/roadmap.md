@@ -8,8 +8,7 @@ Forward-looking: where DeckCraft is going and in what order. The one-page summar
 
 ## Alpha gate: PowerPoint's core workflows
 
-What a typical PowerPoint user does every day, checked end to end on macOS, the main platform
-(craftrules `standards/progress-docs.md`, "The core-workflow gate"). Every workflow passes, so
+What a typical PowerPoint user does every day, checked end to end on macOS, the main platform. Every workflow passes, so
 DeckCraft stays **alpha**. The "partial" rows don't block the workflow, but they are its weakest
 points and lead the beta plan.
 
@@ -38,8 +37,7 @@ points and lead the beta plan.
 
 ## Plan to beta (~120–210 h; ~40–70 h wall clock with 3–4 agents)
 
-Beta means ~75% ready for real work and opening and saving PowerPoint's `.pptx` reliably
-(craftrules `standards/progress-docs.md`). Ranked:
+Beta means ~75% ready for real work and opening and saving PowerPoint's `.pptx` reliably. Ranked:
 
 | # | Work | Hours | Moves |
 |---|---|---|---|
@@ -94,7 +92,7 @@ From the local execution plan (`plan/execution-plan.md`, gitignored). Status as 
 
 ## History: the 2026-10-07 alpha checklist
 
-Before the craftrules stages existed, DeckCraft defined "alpha" as: install a signed build on
+Before the stages existed, DeckCraft defined "alpha" as: install a signed build on
 macOS, Windows or Linux, make a real deck from scratch or from a PowerPoint file, present it with
 transitions, animations and media, save back to `.pptx`/PDF without losing work, and hit no crashes
 on common paths. On 2026-10-07 it was ~80% there with these blockers:
@@ -108,7 +106,7 @@ on common paths. On 2026-10-07 it was ~80% there with these blockers:
 | UI fidelity pass on the most-used ribbon groups and dialogs; first run | Partly (start-screen fixes #20, #49); beta item 11 |
 | Mascot app icon, README screenshots, user docs | App icon (with a scalable SVG, #29) and README screenshots in place; user docs open |
 
-By the standard's definitions DeckCraft is **alpha** (~55% ready); these blockers now feed the beta
+DeckCraft is **alpha** (~55% ready); these blockers now feed the beta
 plan above.
 
 ## Revision history
