@@ -2,7 +2,7 @@
 
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-> **Last updated:** 2026-11-01 · Locked-shape and no-outline regressions added for #1621; fill row re-assessed: remains D; No Fill hit-testing now follows resolved appearance. Scores unchanged.
+> **Last updated:** 2026-11-02 · Find/replace re-assessed: whole-word matching now includes Unicode combining marks; Find/Replace dialog remains missing, so the feature stays P. Weighted scores unchanged.
 
 The summary between `<!-- SUMMARY -->
 **Weighted breadth parity: 84%** over 191 features.
@@ -155,7 +155,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Text | Vertical anchor, margins, wrap | P0 | D |
 | Text | Autofit (shrink on overflow, resize shape) | P0 | D |
 | Text | Text direction (rotated, stacked) | P1 | D |
-| Text | Find and replace, replace fonts | P1 | P |
+| Text | Find and replace (whole-word Unicode boundaries; dialog missing), replace fonts | P1 | P |
 | Text | Spelling check | P1 | P |
 | Text | AutoCorrect and smart quotes | P2 | P |
 | Text | Thesaurus | P2 | P |
@@ -240,4 +240,5 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | trivial | Find/replace re-assessed: combining marks stay inside whole words; P remains P, summary scores unchanged |
 | 2026-10-31 | trivial | No Fill interior hit-testing follows resolved fill (#1621); fill row remains D and summary scores are unchanged |
