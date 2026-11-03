@@ -3351,11 +3351,7 @@ fn undo_history_counts_slide_notes() {
     .unwrap();
     s.doc_mut().unwrap().history = History { limit: 500, byte_limit: 8 << 20, ..Default::default() };
     for i in 0..40 {
-        s.edit(|doc, _| {
-            std::sync::Arc::make_mut(&mut doc.slides[0]).name = format!("v{i}");
-            Ok(())
-        })
-        .unwrap();
+        s.execute("slide.rename", &json!({"name": format!("v{i}"), "index": 0})).unwrap();
     }
     let n = s.doc().unwrap().history.undo.len();
     assert!((1..=8).contains(&n), "{n} steps of 1 MB notes kept under an 8 MB budget");
