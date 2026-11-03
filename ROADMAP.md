@@ -150,6 +150,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-03 | WordArt follow-path text (arches, circles, buttons) sets each glyph down whole, turned to the guide where its centre falls, as PowerPoint does, instead of bending it along the guide; the guide's direction also turns continuously instead of stepping at each vertex of the flattened guide, which left ragged edges on large text |
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
 | 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
 | 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |
@@ -330,6 +331,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | trivial | Progress log: WordArt follow-path text sets glyphs down whole. Scores and milestone names unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
 | 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
