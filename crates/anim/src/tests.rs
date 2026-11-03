@@ -289,6 +289,29 @@ fn a_reveal_edge_is_a_linear_ramp_of_the_ramp_width_with_an_opaque_inside() {
 }
 
 #[test]
+fn a_rows_alpha_bytes_are_the_alpha_of_each_point_within_a_level() {
+    use RevealShape::*;
+    // The fast path for masks agrees with the plain rule: every shape, both directions, a front
+    // before, in and after the box, rows and columns past the box too.
+    let us: Vec<f64> = (-10..=50).map(|i| f64::from(i) / 40.0).collect();
+    for shape in [Box, Circle, Diamond, Plus, WipeLeft, WipeRight, WipeTop, WipeBottom, SplitVertical, SplitHorizontal] {
+        for inward in [false, true] {
+            for p in [0.0, 0.1, 0.43, 0.8, 1.0] {
+                let r = Reveal::new(shape, inward, p);
+                for v in (-5..=45).map(|i| f64::from(i) / 40.0) {
+                    let mut row = vec![0u8; us.len()];
+                    r.row_alpha(v, &us, &mut row);
+                    for (u, got) in us.iter().zip(&row) {
+                        let want = (r.alpha(*u, v) * 255.0).round();
+                        assert!((f64::from(*got) - want).abs() <= 1.0, "{shape:?} inward {inward} p {p} at ({u}, {v}): {got} against {want}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn the_fronts_have_the_shapes_of_their_names() {
     use RevealShape::*;
     let same = |shape, a: (f64, f64), b: (f64, f64)| {

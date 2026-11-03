@@ -82,4 +82,51 @@ impl Reveal {
         let a = if self.inward { (d - self.edge) / RAMP } else { (self.edge - d) / RAMP };
         if a.is_finite() { a.clamp(0.0, 1.0) } else { 0.0 }
     }
+
+    /// [`Reveal::alpha`] as bytes (0 to 255) along one row of the bounds: `out[i]` for the point
+    /// (`us[i]`, `v`). Meant for masks, where it runs once per pixel: a straight loop per shape,
+    /// and for Box and Plus the two axes' ramps combined by a minimum or a maximum (the distance
+    /// is a maximum or a minimum of the axes' and the ramp is monotonic in it). Within one level of
+    /// `alpha` times 255.
+    pub fn row_alpha(&self, v: f64, us: &[f64], out: &mut [u8]) {
+        let (edge, inward) = (self.edge, self.inward);
+        let ramp = |d: f64| if inward { (d - edge) * (1.0 / RAMP) } else { (edge - d) * (1.0 / RAMP) };
+        // A ramp value as a byte; the saturating cast sends NaN to 0.
+        let byte = |t: f64| (t.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+        let axis = |c: f64| (2.0 * c - 1.0).abs();
+        let y = axis(v);
+        let n = us.len().min(out.len());
+        let (us, out) = (&us[..n], &mut out[..n]);
+        match self.shape {
+            // The ramp is decreasing in the distance going out and increasing coming in, so the
+            // ramp of a maximum is the minimum of the ramps going out and the maximum coming in.
+            RevealShape::Box | RevealShape::Plus => {
+                let by_max = self.shape == RevealShape::Box;
+                let ry = ramp(y).clamp(0.0, 1.0);
+                let take_min = by_max != inward;
+                for (o, &u) in out.iter_mut().zip(us) {
+                    let rx = ramp(axis(u)).clamp(0.0, 1.0);
+                    *o = byte(if take_min { rx.min(ry) } else { rx.max(ry) });
+                }
+            }
+            RevealShape::Circle => {
+                for (o, &u) in out.iter_mut().zip(us) {
+                    let x = axis(u);
+                    *o = byte(ramp((x * x + y * y).sqrt() * std::f64::consts::FRAC_1_SQRT_2));
+                }
+            }
+            RevealShape::Diamond => {
+                for (o, &u) in out.iter_mut().zip(us) {
+                    *o = byte(ramp((axis(u) + y) / 2.0));
+                }
+            }
+            RevealShape::WipeLeft => out.iter_mut().zip(us).for_each(|(o, &u)| *o = byte(ramp(u))),
+            RevealShape::WipeRight => out.iter_mut().zip(us).for_each(|(o, &u)| *o = byte(ramp(1.0 - u))),
+            RevealShape::SplitVertical => out.iter_mut().zip(us).for_each(|(o, &u)| *o = byte(ramp(axis(u)))),
+            // These depend on the row only.
+            RevealShape::WipeTop => out.fill(byte(ramp(v))),
+            RevealShape::WipeBottom => out.fill(byte(ramp(1.0 - v))),
+            RevealShape::SplitHorizontal => out.fill(byte(ramp(y))),
+        }
+    }
 }

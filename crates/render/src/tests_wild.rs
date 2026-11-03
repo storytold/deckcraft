@@ -1103,3 +1103,31 @@ fn a_reveal_in_a_scaled_group_looks_the_same_whatever_the_child_space() {
         }
     }
 }
+
+#[test]
+fn a_reveal_mask_is_the_rule_inside_the_box_and_the_boxs_edge_outside_it() {
+    use deckcraft_anim::{Reveal, RevealShape};
+    // Only the pixels inside the box are evaluated; what lies outside shows as the nearest point of
+    // the box does, so a small shape on a big canvas costs its own area.
+    let byte = |r: &Reveal, u: f64, v: f64| (r.alpha(u, v) * 255.0).round();
+    for shape in [RevealShape::Box, RevealShape::Circle, RevealShape::WipeLeft, RevealShape::SplitHorizontal] {
+        for inward in [false, true] {
+            let r = Reveal::new(shape, inward, 0.43);
+            let (w, h) = (200u16, 120u16);
+            // Inside the canvas, straddling its left edge, and entirely off it (above and to the left).
+            for b in [Rect::new(60.0, 30.0, 140.0, 90.0), Rect::new(-40.0, 30.0, 60.0, 130.0), Rect::new(-500.0, -500.0, -300.0, -300.0)] {
+                let m = super::reveal::mask(w, h, b, &r).expect("a mask");
+                for (x, y) in [(0u16, 0u16), (100, 5), (199, 119), (10, 60), (90, 60), (59, 29), (61, 31), (139, 89), (150, 100), (30, 110)] {
+                    let (u, v) =
+                        (((f64::from(x) + 0.5 - b.x0) / b.width()).clamp(0.0, 1.0), ((f64::from(y) + 0.5 - b.y0) / b.height()).clamp(0.0, 1.0));
+                    let got = f64::from(m.sample(x, y));
+                    assert!(
+                        (got - byte(&r, u, v)).abs() <= 1.0,
+                        "{shape:?} inward {inward}, box {b:?}, pixel ({x}, {y}): {got}, wanted {}",
+                        byte(&r, u, v)
+                    );
+                }
+            }
+        }
+    }
+}
