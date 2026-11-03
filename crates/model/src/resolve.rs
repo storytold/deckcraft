@@ -249,6 +249,7 @@ pub fn body(ctx: &Ctx, shape: &Shape) -> BodyProps {
         rtl_col: Some(false),
         upright: Some(false),
         space_first_last: Some(false),
+        compat_ln_spc: None,
     });
     b
 }
