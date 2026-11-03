@@ -2089,3 +2089,20 @@ fn clip_work_is_bounded_across_subpaths() {
     assert!(crate::cliprect::clip_raw(raw(many), &clip).is_empty(), "the whole item's clipping work is bounded");
     assert_eq!(crate::cliprect::clip_raw(raw(tri(100.0).to_vec()), &clip).len(), 2, "a small crossing shape is still clipped");
 }
+
+/// Clipping a fill can add a vertex at every clip edge, so a polygon's work isn't its input size:
+/// shapes that pass the up-front estimate but grow while clipped are charged as they grow, against
+/// one budget for the whole item.
+#[test]
+fn growing_fill_clips_share_one_budget() {
+    use crate::canvas::Raw;
+    use crate::geom::Op;
+    let clip: Vec<(f64, f64)> =
+        (0..512).map(|i| (i as f64 / 512.0 * std::f64::consts::TAU).sin_cos()).map(|(s, c)| (100.0 + 100.0 * c, 100.0 + 100.0 * s)).collect();
+    // A triangle around the whole circle: clipped, it becomes the 512-gon, about 130,000 steps.
+    let tri = [Op::M((-1000.0, -1000.0)), Op::L((1000.0, -1000.0)), Op::L((100.0, 1000.0)), Op::Z];
+    let raw = |n: usize| Raw::Path { ops: tri.repeat(n), fill: Some([0, 0, 0, 255]), stroke: None, even_odd: false, region: None };
+    // 400 of them pass the estimate (400 x 4 x 512 is under a million) but cost about 52 million.
+    assert!(crate::cliprect::clip_raw(raw(400), &clip).is_empty(), "the growing work is charged");
+    assert_eq!(crate::cliprect::clip_raw(raw(2), &clip).len(), 1, "a couple of them are still clipped");
+}
