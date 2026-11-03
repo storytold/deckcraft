@@ -2410,6 +2410,23 @@ fn pdf_options_take_paper_and_orientation() {
     assert!(cmd::file::pdf_options(&json!({"orientation": "sideways"}), 1).is_err());
 }
 
+/// Handout `perPage` accepts only 1, 2, 3, 4, 6 and 9; anything else is an error, not a 9-up page.
+#[test]
+fn pdf_options_reject_unsupported_per_page() {
+    for n in [1, 2, 3, 4, 6, 9] {
+        let o = cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": n}), 1).unwrap();
+        assert!(matches!(o.layout, deckcraft_pdf::PageLayout::Handouts { per_page } if per_page as usize == n));
+    }
+    for n in [0, 5, 7, 8, 10] {
+        let e = cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": n}), 1).unwrap_err();
+        assert!(e.to_string().contains("1, 2, 3, 4, 6, 9"), "perPage {n}: {e}");
+    }
+    // Not a count at all: refused too, instead of falling back to 6.
+    for v in [json!(-1), json!(5.5), json!("6")] {
+        assert!(cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": v}), 1).is_err(), "perPage {v}");
+    }
+}
+
 #[test]
 fn shape_line_sets_compound_and_arrow_sizes() {
     // The Format Shape pane's Line page: compound type, arrowheads and their sizes.
@@ -3206,6 +3223,7 @@ fn numbering_takes_color_and_size() {
         props.bullet_font_follow_text = Some(true);
         props.bullet_color_follow_text = Some(true);
         props.bullet_size_follow_text = Some(true);
+        props.bullet_size_points = Some(12.0);
     }
     s.execute("format.numbering", &json!({"on": true, "scheme": "romanUcPeriod", "start": 3, "color": "accent2", "size": 150})).unwrap();
     let para = |s: &Session| {
@@ -3219,9 +3237,11 @@ fn numbering_takes_color_and_size() {
     assert_eq!(pp.bullet_font_follow_text, Some(true));
     assert_eq!(pp.bullet_color_follow_text, None);
     assert_eq!(pp.bullet_size_follow_text, None);
+    assert_eq!(pp.bullet_size_points, None);
     assert_eq!(pp.bullet_color, Some(deckcraft_model::ColorRef::scheme(deckcraft_color::SchemeSlot::Accent2)));
     s.execute("format.bullets", &json!({"on": true, "char": "★", "size": 9000})).unwrap();
     assert_eq!(para(&s).bullet_size, Some(4.0));
+    assert_eq!(para(&s).bullet_size_points, None);
     assert_eq!(para(&s).bullet_font_follow_text, None);
 }
 
@@ -5342,7 +5362,8 @@ fn opening_a_file_caps_absurd_effect_sizes() {
                 e.soft_edge = Some(f64::NAN);
                 let sw = e.outer_shadow.as_mut().unwrap();
                 (sw.blur, sw.dist, sw.sx) = (huge, huge, huge);
-                *e.reflection.as_mut().unwrap() = Reflection { blur: huge, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.5, dist: huge };
+                *e.reflection.as_mut().unwrap() =
+                    Reflection { blur: huge, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.5, dist: huge, ..Default::default() };
             }
             let glow = Some(Glow { color: deckcraft_model::style::ColorRef::rgb(deckcraft_color::Rgba::BLACK), radius: huge });
             let runs: Vec<&mut deckcraft_model::text::Run> = match &mut sh.kind {
@@ -6457,4 +6478,31 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     s.execute("format.shrink", &json!({})).unwrap();
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
+}
+
+#[test]
+fn slide_master_view_rejects_invalid_indices() {
+    let mut s = Session::with_new();
+    for p in [json!({"master": -1}), json!({"master": 0.5}), json!({"master": 0, "layout": -1}), json!({"master": 0, "layout": 1.5})] {
+        let r = s.execute("view.slideMaster", &p);
+        assert!(r.is_err(), "invalid index accepted for {p}: {r:?}");
+    }
+    assert!(s.execute("view.slideMaster", &json!({})).is_ok());
+    assert!(s.execute("view.slideMaster", &json!({"master": 0})).is_ok());
+}
+
+#[test]
+fn save_to_image_path_is_an_error_not_zip_bytes() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-img-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (cmd, name) in [("file.save", "a.png"), ("file.saveAs", "a.jpg"), ("file.save", "a.jpeg")] {
+        let mut s = Session::new();
+        sample::open_sample(&mut s).unwrap();
+        let path = dir.join(name).to_string_lossy().to_string();
+        let before = s.doc().unwrap().path.clone();
+        assert!(s.execute(cmd, &json!({"path": path})).is_err(), "{cmd} {name} should fail");
+        assert!(!std::path::Path::new(&path).exists(), "{name} must not be written");
+        assert_eq!(s.doc().unwrap().path, before);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
