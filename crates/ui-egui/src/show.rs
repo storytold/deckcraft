@@ -595,6 +595,7 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPl
         scale: (a.scale_x, a.scale_y),
         rotate: a.rotate,
         clip: a.clip,
+        reveal: a.reveal,
         tint: a.tint,
         paras: tl
             .paragraph_targets(id)

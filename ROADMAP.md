@@ -150,6 +150,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-03 | Box, Circle, Diamond, Plus, Wipe and Split entrance effects reveal through a soft edge, as PowerPoint draws them: the revealed part is fully opaque (no opacity fade) and the edge is a linear ramp 7 % of the shape's visual bounds on each axis (an outline counts, a turned shape is measured on its box on the slide's axes, a group on its own box whatever its child scale), the front moving linearly in time; the "In" directions are a soft hole closing from the edges, not a fade; Circle is an ellipse in a box that is not square, Diamond a rhombus and Plus a cross. Measured on PowerPoint's own video export of a synthetic probe deck (alpha error against the model 0.002 to 0.005); DeckCraft's frames of the same deck are within 0.011 of PowerPoint's (0.025 for a flipped arrow and text). Before, the edges were hard, the "In" directions grew from the middle with a fade and Circle, Diamond and Plus were rectangles |
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
 | 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
 | 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |
@@ -330,6 +331,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | trivial | Progress log: clip-style entrance effects reveal through a soft edge. Scores and milestone names unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
 | 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |

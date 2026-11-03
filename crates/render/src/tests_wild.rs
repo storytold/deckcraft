@@ -991,3 +991,115 @@ fn a_tiny_dash_on_a_huge_shape_draws_without_running_out_of_memory() {
     let pat = limit_dash_count(&p, vec![1.0, 1.0]);
     assert!((4.0e6 / (pat[0] + pat[1]) - MAX_DASHES).abs() < 1.0, "{pat:?}");
 }
+
+/// A black rectangle `x, y, w, h` pt with no outline, drawn with `reveal` at 1 px per point.
+fn revealed_rect(x: f64, y: f64, w: f64, h: f64, rot: f64, line: Option<Line>, reveal: deckcraft_anim::Reveal) -> Image {
+    let sh = Shape {
+        id: ShapeId(31),
+        xfrm: Some(Xfrm { rot, ..Xfrm::new(x, y, w, h) }),
+        geom: Geom::preset("rect"),
+        fill: solid(Rgba::rgb(0, 0, 0)),
+        line: line.or_else(no_line),
+        ..Default::default()
+    };
+    let state = move |_: ShapeId| super::ShapeState { reveal: Some(reveal), ..Default::default() };
+    render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, state: Some(&state), ..Default::default() })
+}
+
+/// How much of a black shape shows at a pixel: 0 on white, 1 on black.
+fn shown(img: &Image, x: u32, y: u32) -> f64 {
+    1.0 - f64::from(img.pixel(x, y)[0]) / 255.0
+}
+
+#[test]
+fn a_box_reveal_has_an_opaque_inside_and_a_soft_edge_in_proportion_to_the_shape() {
+    use deckcraft_anim::{Reveal, RevealShape};
+    // PowerPoint's Box (Out), seen in its video export: the revealed part is fully opaque (no
+    // fade) and the edge is a linear ramp 7 % of the box wide on each axis, so a box half as tall
+    // has a ramp half as tall. At 43 % of the effect the 50 % point of a 320 x 200 box is 0.42 of
+    // the way from the middle to the edge on both axes.
+    let r = Reveal::new(RevealShape::Box, false, 0.43);
+    let img = revealed_rect(100.0, 100.0, 320.0, 200.0, 0.0, None, r);
+    assert!(shown(&img, 260, 200) > 0.99 && shown(&img, 260 + 50, 200) > 0.99, "opaque inside the front, no fade");
+    let half = shown(&img, 260 + 67, 200);
+    assert!((half - 0.5).abs() < 0.08, "the 50 % point is 67 pt from the middle: {half}");
+    assert!(shown(&img, 260 + 84, 200) < 0.01, "hidden beyond the ramp");
+    let half = shown(&img, 260, 200 - 42);
+    assert!((half - 0.5).abs() < 0.08, "and 42 pt above it: {half}");
+    // A box half as tall: the same front is half as far from the middle vertically.
+    let flat = revealed_rect(100.0, 150.0, 320.0, 100.0, 0.0, None, r);
+    let half = shown(&flat, 260, 200 - 21);
+    assert!((half - 0.5).abs() < 0.08, "a 100 pt tall box has its 50 % point 21 pt above the middle: {half}");
+    assert!(shown(&flat, 260, 200 - 35) < 0.05, "35 pt above the middle the 100 pt box is hidden already");
+}
+
+#[test]
+fn a_box_in_reveal_is_a_soft_hole_closing_from_the_edges_and_never_fades() {
+    use deckcraft_anim::{Reveal, RevealShape};
+    let r = Reveal::new(RevealShape::Box, true, 0.43);
+    let img = revealed_rect(100.0, 100.0, 320.0, 200.0, 0.0, None, r);
+    assert!(shown(&img, 260, 200) < 0.01, "the middle is still hidden");
+    let half = shown(&img, 260 + 93, 200);
+    assert!((half - 0.5).abs() < 0.08, "the 50 % point is 93 pt from the middle: {half}");
+    assert!(shown(&img, 260 + 130, 200) > 0.99, "fully opaque towards the edge, not translucent");
+}
+
+#[test]
+fn a_reveal_of_a_turned_shape_is_measured_on_its_box_on_the_slides_axes() {
+    use deckcraft_anim::{Reveal, RevealShape};
+    // 220 x 110 pt turned 30 degrees about (460, 205): its box on the slide is 245.5 x 205.3 pt.
+    // At 50 % the front is at 0.57, so what lies within 0.5 of the middle on that box shows. A point
+    // 50 pt along the short axis is at 0.42 on that box (shown) but at 0.91 on the shape's own.
+    let r = Reveal::new(RevealShape::Box, false, 0.5);
+    let img = revealed_rect(350.0, 150.0, 220.0, 110.0, 30.0, None, r);
+    assert!(shown(&img, 435, 248) > 0.99, "the point on the short axis shows: {}", shown(&img, 435, 248));
+    // 105 pt along the long axis is at 0.74 on the slide's box: hidden.
+    assert!(shown(&img, 551, 257) < 0.01, "the far end of the long axis is hidden: {}", shown(&img, 551, 257));
+}
+
+#[test]
+fn a_reveal_includes_the_outline_in_the_boxs_bounds() {
+    use deckcraft_anim::{Reveal, RevealShape};
+    // At the end of the effect the front has left the bounds just as far as the ramp is wide. An
+    // 8 pt outline reaches 4 pt past the geometry; measured on the geometry alone its outer edge
+    // would be at 1.04 and still be partly hidden; PowerPoint shows it whole.
+    let line = Line { fill: solid(Rgba::rgb(0, 0, 0)), width: Some(8.0), ..Default::default() };
+    let img = revealed_rect(100.0, 100.0, 220.0, 120.0, 0.0, Some(line), Reveal::new(RevealShape::Box, false, 1.0));
+    assert!(shown(&img, 100 - 3, 160) > 0.99, "the outline just outside the geometry is fully shown: {}", shown(&img, 97, 160));
+    assert!(shown(&img, 320 + 3, 160) > 0.99);
+}
+
+#[test]
+fn a_reveal_in_a_scaled_group_looks_the_same_whatever_the_child_space() {
+    use deckcraft_anim::{Reveal, RevealShape};
+    // PowerPoint reveals a group through its box; the scale of its child coordinates changes nothing.
+    let r = Reveal::new(RevealShape::Box, false, 0.43);
+    let drawn = |kx: f64, ky: f64| {
+        let (w, h) = (240.0 / kx, 60.0 / ky);
+        let member =
+            Shape { id: ShapeId(22), xfrm: Some(Xfrm::new(0.0, 0.0, w, h)), fill: solid(Rgba::rgb(0, 0, 0)), line: no_line(), ..Default::default() };
+        let group = Shape {
+            id: ShapeId(21),
+            xfrm: Some(Xfrm::new(100.0, 100.0, 240.0, 60.0)),
+            kind: ShapeKind::Group { children: vec![member], child: Xfrm::new(0.0, 0.0, w, h) },
+            ..Default::default()
+        };
+        let state = move |id: ShapeId| super::ShapeState { reveal: (id == ShapeId(21)).then_some(r), ..Default::default() };
+        render_slide(&deck_with(vec![group]), 0, &RenderOpts { scale: 1.0, state: Some(&state), ..Default::default() })
+    };
+    let base = drawn(1.0, 1.0);
+    let half = shown(&base, 270, 130);
+    assert!(
+        shown(&base, 220, 130) > 0.99 && (half - 0.5).abs() < 0.1 && shown(&base, 335, 130) < 0.01,
+        "the control has its front inside the group: {half}"
+    );
+    for (kx, ky) in [(0.25, 0.25), (1600.0, 1600.0), (2.0, 0.5)] {
+        let img = drawn(kx, ky);
+        for x in (101..340).step_by(6) {
+            for y in [105, 130, 155] {
+                let (a, b) = (shown(&base, x, y), shown(&img, x, y));
+                assert!((a - b).abs() < 0.03, "child scale {kx} x {ky}: pixel ({x}, {y}) shows {b}, the control {a}");
+            }
+        }
+    }
+}
