@@ -6538,6 +6538,38 @@ fn text_shadow_off_keeps_each_runs_own_inherited_effects() {
     assert!(two.own_effects == Some(true) && two.glow.is_none(), "{two:?}");
 }
 
+/// Turning a shadow on next to an inherited glow gives the run its own effect list with the glow
+/// in it, so the glow is still there when the saved file is reopened (a run's `a:effectLst`
+/// replaces the inherited one).
+#[test]
+fn text_shadow_on_keeps_an_inherited_glow_through_save_and_reopen() {
+    let mut s = session();
+    let id =
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [40.0, 40.0, 240.0, 80.0], "text": "Hello"})).unwrap()["id"].as_u64().unwrap();
+    s.edit(|doc, sel| {
+        let sh = model::find_shape_mut(crate::shapes_mut(doc, sel).unwrap(), ShapeId(id as u32)).unwrap();
+        sh.text.as_mut().unwrap().paragraphs[0].def_props = model::text::RunProps { shadow: None, ..shadowed(true) };
+        Ok(())
+    })
+    .unwrap();
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    s.execute("format.textShadow", &json!({"on": true})).unwrap();
+    let run = s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().text.clone().unwrap().paragraphs[0].runs[0].props.clone();
+    assert!(run.own_effects == Some(true) && run.shadow.is_some() && run.glow.is_some(), "{run:?}");
+
+    let back = deckcraft_pptx::import(&deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap()).unwrap();
+    let text = back
+        .slides
+        .iter()
+        .flat_map(|sl| sl.shapes.iter())
+        .find_map(|sh| sh.text.as_ref().filter(|t| t.paragraphs[0].runs.first().is_some_and(|r| r.text == "Hello")));
+    let para = &text.expect("the shape comes back").paragraphs[0];
+    let mut shown = para.runs[0].props.clone();
+    shown.inherit(&para.def_props);
+    assert!(shown.shadow.is_some(), "{shown:?}");
+    assert_eq!(shown.glow.map(|g| g.radius), Some(5.0), "the inherited glow survives the round trip");
+}
+
 #[test]
 fn master_body_placeholder_format_keeps_per_level_formatting() {
     let mut s = Session::new();
