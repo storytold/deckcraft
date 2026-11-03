@@ -1528,6 +1528,32 @@ fn literal_line_ends_in_run_text_read_as_breaks_and_survive_save() {
 }
 
 #[test]
+fn alternate_run_language_survives_pptx_saves_and_absence() {
+    let mut p = defaults::new_presentation(None);
+    let first = p.slides[0].id;
+    let slide = p.slide_mut(first).expect("slide");
+    slide.shapes[0].text = Some(TextBody {
+        paragraphs: vec![Paragraph {
+            runs: vec![
+                Run::with("bonjour", RunProps { lang: Some("en-US".into()), alt_lang: Some("fr-FR".into()), ..Default::default() }),
+                Run::with(" plain", RunProps { lang: Some("en-US".into()), ..Default::default() }),
+            ],
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    let mut q = round(&p);
+    for _ in 0..2 {
+        let runs = &q.slides[0].shapes[0].text.as_ref().expect("text").paragraphs[0].runs;
+        assert_eq!(runs[0].props.lang.as_deref(), Some("en-US"));
+        assert_eq!(runs[0].props.alt_lang.as_deref(), Some("fr-FR"));
+        assert_eq!(runs[1].props.lang.as_deref(), Some("en-US"));
+        assert_eq!(runs[1].props.alt_lang, None);
+        q = round(&q);
+    }
+}
+
+#[test]
 fn color_pulse_keeps_its_effect_colour_and_duration() {
     let mut p = defaults::new_presentation(None);
     let s = shape(&mut p, "Pulsed", 10.0, 10.0, 200.0, 100.0);

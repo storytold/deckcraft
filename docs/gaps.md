@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (text run alternate-language metadata now survives native and PPTX saves; per-run language editing and proofing gaps remain; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -368,6 +368,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-30 | minor | Slide-show click targets use each shape’s own animation state; scale and rotation test added |
 | 2026-10-28 | trivial | Automatic lists now run independently of Replace text as you type; proofing gap description updated |
@@ -427,7 +428,7 @@ Detail in [localization-parity.md](localization-parity.md).
 | 2026-10-13 | minor | AutoCorrect options: case rules, fractions, ellipsis, a larger built-in list and your own entries (`text.autocorrect`, Tools ▸ AutoCorrect) |
 | 2026-10-14 | trivial | Notes spelling menu, Review › Language with Do Not Check Spelling, repeated words |
 | 2026-10-14 | trivial | Spelling squiggles in table cells and notes, and on the web |
-| 2026-10-14 | minor | Spelling squiggles while typing, Add to Dictionary, per-run languages and compounds |
+| 2026-10-14 | minor | Spelling squiggles while typing, Add to Dictionary, per-run language editing and compounds; run language metadata now round-trips |
 | 2026-10-14 | minor | Spelling checks with installed Hunspell dictionaries and suggests corrections |
 | 2026-10-13 | minor | Animation preview plays the current slide on the editor canvas; the pane gap keeps the timeline, preview from the selected effect, and the remaining effects |
 | 2026-10-14 | minor | A two-finger twist rotates the selected shapes. Pinch-zoom is still open |

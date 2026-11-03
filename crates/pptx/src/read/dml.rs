@@ -553,6 +553,7 @@ fn typeface(e: &El) -> Option<String> {
 pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
     let mut p = RunProps {
         lang: r.attr("lang").map(String::from),
+        alt_lang: r.attr("altLang").map(|lang| lang.chars().take(256).collect()),
         size: r.f64("sz").map(|s| (s / 100.0).clamp(1.0, 4000.0)),
         bold: r.bool("b"),
         italic: r.bool("i"),

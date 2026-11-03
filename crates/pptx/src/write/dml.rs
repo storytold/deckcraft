@@ -629,6 +629,7 @@ fn typeface(w: &mut W, tag: &str, f: &Option<String>) {
 pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
     let a = A::new()
         .o("lang", r.lang.as_deref().filter(|l| !l.is_empty()))
+        .o("altLang", r.alt_lang.as_deref().filter(|l| !l.is_empty()))
         .o("sz", r.size.map(|s| (s.clamp(1.0, 4000.0) * 100.0).round() as i64))
         .b("b", r.bold)
         .b("i", r.italic)
