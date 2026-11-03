@@ -2,7 +2,8 @@
 //! placeholder sees `autofit: null` in `shape.inspect` while the layout's shrink-on-overflow draws
 //! the text at a fraction of its size; these tests pin what the query reports for that case, for
 //! text that fits, for text that overflows a shape that does not shrink, for a slide number field,
-//! for members of resized groups, for a body of empty paragraphs and for bad params.
+//! for members of resized groups, for a body of empty paragraphs, for text nested deeper than the
+//! slide draws and for bad params.
 
 use serde_json::{Value, json};
 
@@ -235,4 +236,50 @@ fn a_body_of_empty_paragraphs_reports_no_lines_and_no_overflow() {
     let r = fit(&mut s, json!({"ids": [e]}));
     assert_eq!(r, no_paragraphs);
     assert_eq!(r["bodies"][0]["overflows"], false, "{r}");
+}
+
+/// Puts the slide's shape `id` inside `levels` groups, each holding only the next and sized to the
+/// shape, as a saved file can nest them past the 32 levels `arrange.group` builds.
+fn nest(s: &mut Session, id: &Value, levels: usize) {
+    s.edit(|doc, sel| {
+        let ids: Vec<u32> = (0..levels).map(|_| doc.alloc_id().unwrap()).collect();
+        let list = crate::shapes_mut(doc, sel).unwrap();
+        let at = list.iter().position(|sh| json!(sh.id) == *id).unwrap();
+        let mut sh = list.remove(at);
+        let x = sh.xfrm.unwrap();
+        for g in ids {
+            sh = deckcraft_model::Shape {
+                id: deckcraft_model::ShapeId(g),
+                name: format!("Group {g}"),
+                xfrm: Some(x),
+                kind: deckcraft_model::ShapeKind::Group { children: vec![sh], child: x },
+                ..Default::default()
+            };
+        }
+        list.insert(at, sh);
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// The renderer draws shapes nested at most 32 groups deep, and `text.fit` measures the same
+/// shapes: a text body 32 groups down is reported, and one 33 groups down is left out of the slide
+/// answer and refused by id.
+#[test]
+fn text_nested_deeper_than_the_slide_draws_is_left_out() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let drawn = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 80], "text": "Drawn"})).unwrap()["id"].clone();
+    let deep = s.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 100, 200, 80], "text": "Too deep"})).unwrap()["id"].clone();
+    nest(&mut s, &drawn, 32);
+    nest(&mut s, &deep, 33);
+    // The slide's placement pass for exports stops where the renderer stops.
+    let placed: Vec<Value> = deckcraft_render::place_slide(&s.doc().unwrap().doc, 1).shapes.iter().map(|p| json!(p.id)).collect();
+    assert!(placed.contains(&drawn) && !placed.contains(&deep), "{placed:?}");
+    let r = fit(&mut s, json!({}));
+    let ids: Vec<Value> = r["bodies"].as_array().unwrap().iter().map(|x| x["id"].clone()).collect();
+    assert_eq!(ids, vec![drawn.clone()], "{r}");
+    assert_eq!(fit(&mut s, json!({"ids": [drawn.clone()]}))["bodies"][0]["id"], drawn);
+    let e = s.execute("text.fit", &json!({"ids": [deep]})).unwrap_err().to_string();
+    assert!(e.contains("33 groups deep"), "{e}");
 }

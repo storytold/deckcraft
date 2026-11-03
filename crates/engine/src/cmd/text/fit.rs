@@ -2,7 +2,7 @@
 //! its text on overflow usually inherits the setting from its layout, so `shape.inspect` shows
 //! `autofit: null` while the slide draws the text at half size; this query reports the setting in
 //! effect, the scale and line spacing reduction the layout applied, the drawn font sizes and how
-//! far the text runs past its frame.
+//! far the drawn lines reach past the frame's top and bottom edges.
 
 use std::borrow::Cow;
 
@@ -171,7 +171,9 @@ fn text_size(ctx: &Ctx, sh: &Shape, w: f64, h: f64, mut m: Affine, depth: usize)
     if tw.is_finite() && th.is_finite() { (tw, th) } else { (w, h) }
 }
 
-/// Every text body on slide `index`, in drawing order, group members included.
+/// Every text body on slide `index`, in drawing order, group members included: hidden shapes too
+/// (measured as the slide would draw them), but none nested deeper than the renderer draws
+/// ([`deckcraft_render::MAX_DRAW_DEPTH`] groups down).
 pub(crate) fn slide_fits(doc: &Presentation, index: usize) -> Vec<Fit> {
     let Some(slide) = doc.slides.get(index) else { return vec![] };
     let sel = Selection { slide: index, target: Target::Slides, ..Default::default() };
@@ -183,9 +185,9 @@ pub(crate) fn slide_fits(doc: &Presentation, index: usize) -> Vec<Fit> {
 }
 
 /// Appends the fits of `shapes` and of their group members to `out`, depth first in the order
-/// `deckcraft_model::walk` visits them. `parent` maps the shapes' coordinates onto the slide; a
-/// group's members get the group's child coordinates mapped onto its box, as the renderer draws
-/// them.
+/// `deckcraft_model::walk` visits them, down to the depth the renderer draws. `parent` maps the
+/// shapes' coordinates onto the slide; a group's members get the group's child coordinates mapped
+/// onto its box, as the renderer draws them.
 fn fits_in(
     doc: &Presentation,
     sel: &Selection,
@@ -195,7 +197,7 @@ fn fits_in(
     depth: usize,
     out: &mut Vec<Fit>,
 ) {
-    if depth > 64 {
+    if depth > deckcraft_render::MAX_DRAW_DEPTH {
         return;
     }
     for sh in shapes {
@@ -211,7 +213,8 @@ fn fits_in(
 }
 
 /// `text.fit {index?, ids?}`: the fit of every text body on a slide (the current one by default),
-/// or of the shapes `ids` names.
+/// or of the shapes `ids` names. The slide answer leaves out shapes nested deeper than the
+/// renderer draws, so `ids` refuses them, naming their depth.
 pub(super) fn fit(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let index = opt_usize_param(p, "index", CMD)?.unwrap_or(st.selection.slide);
@@ -237,13 +240,24 @@ pub(super) fn fit(s: &mut Session, p: &Value) -> Result<Value> {
             let mut v = Vec::with_capacity(ids.len());
             for id in ids {
                 let f = fits.iter().find(|f| f.id == id).ok_or_else(|| {
-                    let on_slide = st.doc.slides.get(index).and_then(|sl| deckcraft_model::find_shape(&sl.shapes, id)).is_some();
+                    // How many groups deep the shape sits, when it is on the slide at all.
+                    let mut found = None;
+                    if let Some(sl) = st.doc.slides.get(index) {
+                        deckcraft_model::walk(&sl.shapes, &mut |sh, depth| {
+                            if sh.id == id && found.is_none() {
+                                found = Some(depth);
+                            }
+                        });
+                    }
+                    let max = deckcraft_render::MAX_DRAW_DEPTH;
                     bad(
                         CMD,
-                        if on_slide {
-                            format!("shape {id} has no text body to fit (tables grow their rows instead)")
-                        } else {
-                            format!("no shape {id} on slide {index}")
+                        match found {
+                            Some(depth) if depth > max => {
+                                format!("shape {id} is nested {depth} groups deep and the slide draws nothing deeper than {max}")
+                            }
+                            Some(_) => format!("shape {id} has no text body to fit (tables grow their rows instead)"),
+                            None => format!("no shape {id} on slide {index}"),
                         },
                     )
                 })?;

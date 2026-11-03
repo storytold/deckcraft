@@ -60,6 +60,12 @@ pub use table::cell_rects as table_cell_rects;
 pub use table::row_heights as table_row_heights;
 pub use transition::{SlideParts, composite_transition, render_transition};
 
+/// How many groups deep shapes are drawn: a slide's, layout's or master's own shapes are at depth
+/// 0 and a group's members one deeper. The renderer draws nothing deeper, the text and links placed
+/// for exports and text extraction stop at the same depth, and the engine's `text.fit` measures the
+/// same shapes.
+pub const MAX_DRAW_DEPTH: usize = 32;
+
 mod geometry;
 mod opts;
 mod raster;
