@@ -74,6 +74,18 @@ pub fn encode(clip: &Clipboard) -> Option<String> {
     if clip.is_empty() {
         return None;
     }
+    // The media bytes are base64 twice (once in the JSON, once around it): 16/9 of their size,
+    // so a copy that cannot fit is refused before anything is allocated (a large video would
+    // otherwise be copied several times over on the UI thread, only to be thrown away).
+    let media_bytes: usize = clip.media.iter().map(|m| m.data.len()).sum();
+    if media_bytes.checked_mul(16).is_none_or(|v| v / 9 > MAX_PAYLOAD) {
+        log::warn!(
+            "the copy holds {} MiB of media, over the {} MiB clipboard payload limit: it stays in this window",
+            media_bytes >> 20,
+            MAX_PAYLOAD >> 20
+        );
+        return None;
+    }
     let media = clip
         .media
         .iter()
@@ -235,6 +247,14 @@ mod tests {
         let big = deckcraft_model::MediaItem { id: MediaId(1), name: "big.bin".into(), data: Arc::new(vec![7u8; MAX_PAYLOAD]), ..Default::default() };
         let clip = Clipboard { shapes: vec![Shape::default()], media: vec![big], ..Clipboard::fresh() };
         assert_eq!(encode(&clip), None, "over the cap");
+        // Refused on the estimate (16/9 of the media bytes), before encoding anything: a media
+        // item a little over 9/16 of the cap is out, one well under it is carried.
+        let bytes =
+            |n: usize| deckcraft_model::MediaItem { id: MediaId(1), name: "m.bin".into(), data: Arc::new(vec![1u8; n]), ..Default::default() };
+        let over = Clipboard { shapes: vec![Shape::default()], media: vec![bytes(MAX_PAYLOAD / 16 * 9 + 1024)], ..Clipboard::fresh() };
+        assert_eq!(encode(&over), None);
+        let under = Clipboard { shapes: vec![Shape::default()], media: vec![bytes(MAX_PAYLOAD / 4)], ..Clipboard::fresh() };
+        assert!(encode(&under).is_some());
         assert!(decode(&"v".repeat(MAX_PAYLOAD + 1)).is_err());
         assert!(decode("v1:12:not base64!").is_err());
         assert!(decode("hello").is_err());
@@ -282,6 +302,8 @@ mod tests {
         let mut b = Session::with_new();
         let r = b.execute("edit.paste", &json!({"text": "box", "payload": payload})).unwrap();
         assert_eq!(r["ids"].as_array().map(Vec::len), Some(2));
+        let (cmd, journaled) = b.journal.last().expect("journaled");
+        assert_eq!((cmd.as_str(), journaled), ("edit.paste", &json!({"text": "box"})), "the journal keeps no clipboard payload");
         let d = b.doc().unwrap();
         let shapes = &d.doc.slides[0].shapes;
         let pic = shapes.iter().find(|x| matches!(x.kind, ShapeKind::Picture { .. })).expect("picture");
@@ -304,6 +326,7 @@ mod tests {
         let mut b = Session::with_new();
         let r = b.execute("edit.paste", &json!({"text": a.clipboard.plain, "html": html})).unwrap();
         assert_eq!(r["slides"], 1);
+        assert_eq!(b.journal.last().map(|(_, p)| p.get("html").is_none()), Some(true), "nor the HTML it rode in");
         let d = b.doc().unwrap();
         assert_eq!(d.doc.slides.len(), 2);
         let pic = d.doc.slides[1].shapes.iter().find(|x| matches!(x.kind, ShapeKind::Picture { .. })).expect("picture");

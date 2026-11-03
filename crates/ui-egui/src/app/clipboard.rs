@@ -36,15 +36,15 @@ impl SlideApp {
         let text = copied.get("text").and_then(Value::as_str).unwrap_or("");
         let html = copied.get("html").and_then(Value::as_str).unwrap_or("");
         let plain = system_clipboard_text(text);
-        let carried = deckcraft_engine::clipboard::embed(html, text, &self.session.clipboard);
-        let rich = carried.as_deref().or((!html.is_empty()).then_some(html));
-        if let Some(rich) = rich
-            && let Some(f) = self.services.clipboard_set_html.as_mut()
-        {
-            if f(rich, &plain) {
-                return None;
+        // Without a host that takes HTML (the web, the test harness) the payload is never built.
+        if let Some(f) = self.services.clipboard_set_html.as_mut() {
+            let carried = deckcraft_engine::clipboard::embed(html, text, &self.session.clipboard);
+            if let Some(rich) = carried.as_deref().or((!html.is_empty()).then_some(html)) {
+                if f(rich, &plain) {
+                    return None;
+                }
+                log::warn!("the system clipboard refused the HTML copy ({} bytes); offering the plain text only", rich.len());
             }
-            log::warn!("the system clipboard refused the HTML copy ({} bytes); offering the plain text only", rich.len());
         }
         Some(plain)
     }

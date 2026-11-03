@@ -681,7 +681,7 @@ impl Session {
             push_undo(st, HistoryEntry { label: spec.label.to_string(), doc: old, selection: sel, vertex_kind });
         }
         if spec.journal && outer {
-            self.journal.push((id.to_string(), params.clone()));
+            self.journal.push((id.to_string(), journaled_params(id, params)));
             if self.journal.len() > 10_000 {
                 self.journal.drain(..1000);
             }
@@ -874,6 +874,25 @@ pub(crate) fn push_undo(st: &mut DocState, e: HistoryEntry) {
         let live: std::collections::HashSet<usize> = h.undo.iter().chain(h.redo.iter()).map(|e| Arc::as_ptr(&e.doc) as usize).collect();
         h.costs.retain(|k, _| live.contains(k));
     }
+}
+
+/// What the journal keeps of a command's parameters: everything, except that a paste drops the
+/// system clipboard's `html` and the `payload` (a copy of another window's shapes and media,
+/// megabytes at a time) — the journal would otherwise hold every paste's clipboard until it is
+/// drained.
+fn journaled_params(id: &str, params: &Value) -> Value {
+    const CLIPBOARD: [&str; 2] = ["html", "payload"];
+    if matches!(id, "edit.paste" | "edit.pasteSpecial" | "edit.pasteText")
+        && let Some(o) = params.as_object()
+        && CLIPBOARD.iter().any(|k| o.contains_key(*k))
+    {
+        let mut o = o.clone();
+        for k in CLIPBOARD {
+            o.remove(k);
+        }
+        return Value::Object(o);
+    }
+    params.clone()
 }
 
 #[cfg(test)]
