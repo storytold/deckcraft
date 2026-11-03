@@ -757,6 +757,7 @@ fn table(imp: &mut Imp, part: &Part, tbl: &El) -> Table {
         t.last_col = pr.bool("lastCol").unwrap_or(false);
         t.band_row = pr.bool("bandRow").unwrap_or(false);
         t.band_col = pr.bool("bandCol").unwrap_or(false);
+        t.rtl = pr.bool("rtl");
         if let Some(id) = pr.child("tableStyleId").map(|e| e.text()) {
             // A style the file defines is drawn from its definition (by its GUID).
             // DeckCraft's own styles (written with GUIDs derived from their ids) map back to them.
