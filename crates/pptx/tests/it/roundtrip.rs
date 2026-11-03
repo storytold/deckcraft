@@ -487,6 +487,39 @@ fn centered_cell_anchor_survives_two_pptx_round_trips() {
 }
 
 #[test]
+fn normalized_character_height_survives_two_pptx_round_trips() {
+    let mut p = Presentation::default();
+    let mut slide = new_slide(&mut p, "Normalized height");
+    let mut enabled = shape(&mut p, "Enabled", 10.0, 10.0, 200.0, 80.0);
+    let mut enabled_body = TextBody::from_text("enabled");
+    enabled_body.paragraphs[0].runs[0].props.normalize_height = Some(true);
+    enabled_body.paragraphs[0].runs[0].props.size = Some(18.0);
+    enabled_body.paragraphs[0].runs[0].props.caps = Some(Caps::Small);
+    enabled_body.paragraphs[0].runs[0].props.spacing = Some(1.5);
+    enabled.text = Some(enabled_body);
+    let mut disabled = shape(&mut p, "Disabled", 10.0, 100.0, 200.0, 80.0);
+    let mut disabled_body = TextBody::from_text("disabled");
+    disabled_body.paragraphs[0].runs[0].props.normalize_height = Some(false);
+    disabled.text = Some(disabled_body);
+    let mut absent = shape(&mut p, "Absent", 10.0, 190.0, 200.0, 80.0);
+    absent.text = Some(TextBody::from_text("absent"));
+    slide.shapes = vec![enabled, disabled, absent];
+    p.slides.push(Arc::new(slide));
+
+    let twice = round(&round(&p));
+    let slide = twice.slides.last().expect("added slide");
+    let run = &by_name(slide, "Enabled").text.as_ref().expect("text").paragraphs[0].runs[0];
+    assert_eq!(run.props.normalize_height, Some(true));
+    assert_eq!(run.props.size, Some(18.0));
+    assert_eq!(run.props.caps, Some(Caps::Small));
+    assert_eq!(run.props.spacing, Some(1.5));
+    let run = &by_name(slide, "Disabled").text.as_ref().expect("text").paragraphs[0].runs[0];
+    assert_eq!(run.props.normalize_height, Some(false));
+    let run = &by_name(slide, "Absent").text.as_ref().expect("text").paragraphs[0].runs[0];
+    assert_eq!(run.props.normalize_height, None);
+}
+
+#[test]
 fn shapes_fills_lines_effects_round_trip() {
     let p = rich_deck();
     let q = round(&p);
