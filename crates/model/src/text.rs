@@ -434,6 +434,7 @@ pub struct RunProps {
     pub soft_edge: Option<f64>,
     /// Spelling/grammar errors are not flagged.
     pub no_proof: Option<bool>,
+    pub normalize_height: Option<bool>,
 }
 
 impl RunProps {
@@ -467,7 +468,8 @@ impl RunProps {
             glow,
             reflection,
             soft_edge,
-            no_proof
+            no_proof,
+            normalize_height
         );
     }
 }
