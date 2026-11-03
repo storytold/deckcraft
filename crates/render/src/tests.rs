@@ -516,6 +516,56 @@ fn glow_of_a_shape_with_no_fill_and_no_line_is_not_drawn() {
 }
 
 #[test]
+fn shadow_and_glow_keep_an_even_odd_shapes_hole() {
+    // #1596: a donut is one even-odd subpath — its hole exists only under the
+    // even-odd rule. The effects were cast from a merged silhouette filled
+    // NonZero, so the shadow and the glow filled the hole solid. The hole's
+    // centre must stay the slide's white in both, while the effects still draw.
+    let donut = |effects: deckcraft_model::Effects| {
+        let mut sh = Shape {
+            id: ShapeId(612),
+            xfrm: Some(Xfrm::new(50.0, 50.0, 200.0, 200.0)),
+            geom: Geom::preset("donut"),
+            fill: Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 160, 0)))),
+            ..Default::default()
+        };
+        sh.effects = Some(effects);
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let img = donut(deckcraft_model::Effects {
+        outer_shadow: Some(deckcraft_model::style::Shadow {
+            color: ColorRef::rgb(deckcraft_color::Rgba::BLACK),
+            blur: 8.0,
+            dist: 0.0,
+            dir: 45.0,
+            inner: false,
+            sx: 1.0,
+            sy: 1.0,
+            kx: 0.0,
+            ky: 0.0,
+            align: String::new(),
+            rotate_with_shape: false,
+        }),
+        ..Default::default()
+    });
+    let hole = img.pixel(150, 150);
+    assert!(hole[0] > 245 && hole[1] > 245 && hole[2] > 245, "shadow in the hole: {hole:?}");
+    // The shadow still falls around the shape (just below its bottom edge).
+    let below = img.pixel(150, 251);
+    assert!(below[0] < 200 && below[0] == below[2], "no shadow below: {below:?}");
+
+    let img = donut(deckcraft_model::Effects {
+        glow: Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0)), radius: 8.0 }),
+        ..Default::default()
+    });
+    let hole = img.pixel(150, 150);
+    assert!(hole[0] > 245 && hole[1] > 245 && hole[2] > 245, "glow in the hole: {hole:?}");
+    // The ring itself is the shape's orange.
+    let ring = img.pixel(150, 75);
+    assert!(ring[0] > 200 && ring[1] > 100 && ring[2] < 100, "ring: {ring:?}");
+}
+
+#[test]
 fn placeholder_prompts_only_in_edit_view() {
     let p = Presentation::default();
     let edit = render_slide(&p, 0, &RenderOpts { scale: 0.5, edit: true, ..Default::default() });

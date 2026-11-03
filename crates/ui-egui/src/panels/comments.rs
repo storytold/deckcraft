@@ -130,29 +130,34 @@ fn comment_card(app: &mut SlideApp, ui: &mut Ui, slide: usize, index: usize, c: 
             for r in &c.replies {
                 ui.label(egui::RichText::new(format!("↳ {}: {}", r.author, r.text)).color(t.text_dim));
             }
+            // The buttons are laid out first, from the right, so the reply field takes exactly the
+            // width they leave. A fixed allowance overflowed the card and widened the pane every
+            // frame until it stuck at its widest (#1431).
             ui.horizontal(|ui| {
-                let id = ui.scope_id().with(("reply", slide, index));
-                let mut txt: String = ui.data_mut(|d| d.get_temp(id).unwrap_or_default());
-                let r = ui.add(egui::TextEdit::singleline(&mut txt).hint_text("Reply…").desired_width(ui.available_width() - 70.0));
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !txt.trim().is_empty() {
-                    focus_comment(app, slide, index);
-                    run(app, "comment.reply", json!({"index": index, "text": txt}));
-                    txt.clear();
-                }
-                ui.data_mut(|d| d.insert_temp(id, txt));
-                if ui.small_button(if c.resolved { "Reopen" } else { "Resolve" }).clicked() {
-                    focus_comment(app, slide, index);
-                    run(app, "comment.resolve", json!({"index": index, "resolved": !c.resolved}));
-                }
-                if ui.small_button("🗑").clicked() {
-                    let _ = app.run("slide.go", json!({"index": slide}));
-                    let _ = app.run("comment.delete", json!({"index": index}));
-                    match app.ui.comment_focus {
-                        Some((fs, fi)) if fs == slide && fi == index => app.ui.comment_focus = None,
-                        Some((fs, fi)) if fs == slide && fi > index => app.ui.comment_focus = Some((fs, fi - 1)),
-                        _ => {}
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("🗑").clicked() {
+                        let _ = app.run("slide.go", json!({"index": slide}));
+                        let _ = app.run("comment.delete", json!({"index": index}));
+                        match app.ui.comment_focus {
+                            Some((fs, fi)) if fs == slide && fi == index => app.ui.comment_focus = None,
+                            Some((fs, fi)) if fs == slide && fi > index => app.ui.comment_focus = Some((fs, fi - 1)),
+                            _ => {}
+                        }
                     }
-                }
+                    if ui.small_button(if c.resolved { "Reopen" } else { "Resolve" }).clicked() {
+                        focus_comment(app, slide, index);
+                        run(app, "comment.resolve", json!({"index": index, "resolved": !c.resolved}));
+                    }
+                    let id = ui.scope_id().with(("reply", slide, index));
+                    let mut txt: String = ui.data_mut(|d| d.get_temp(id).unwrap_or_default());
+                    let r = ui.add(egui::TextEdit::singleline(&mut txt).hint_text("Reply…").desired_width(ui.available_width()));
+                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !txt.trim().is_empty() {
+                        focus_comment(app, slide, index);
+                        run(app, "comment.reply", json!({"index": index, "text": txt}));
+                        txt.clear();
+                    }
+                    ui.data_mut(|d| d.insert_temp(id, txt));
+                });
             });
         });
     if focused {
