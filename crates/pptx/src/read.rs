@@ -387,21 +387,36 @@ fn resolve_mc_rels(el: &mut El, depth: usize, rels: Option<&Rels>) {
                     });
                     let branch = choice.or_else(|| ac.child("Fallback"));
                     if let Some(b) = branch {
+                        // The branch's namespace declarations (the first usable one of each name,
+                        // in order), indexed by prefix once: each child then looks up the prefixes
+                        // it uses instead of scanning every declaration.
+                        let mut decls: Vec<(&String, &String)> = Vec::new();
+                        let mut by_prefix: HashMap<&str, usize> = HashMap::new();
+                        for (k, v) in b.attrs.iter().chain(ac.attrs.iter()) {
+                            let prefix = if k == "xmlns" { Some("") } else { k.strip_prefix("xmlns:") };
+                            if let Some(p) = prefix
+                                && v.len() <= MAX_NS_VALUE
+                                && !by_prefix.contains_key(p)
+                            {
+                                by_prefix.insert(p, decls.len());
+                                decls.push((k, v));
+                            }
+                        }
                         for n in &b.children {
                             if let Node::El(e) = n {
                                 // Carry the namespace declarations from the branch that its content
                                 // uses (all of them per child made children x declarations copies).
                                 let used = used_prefixes(e);
-                                let mut have: HashSet<&str> = e.attrs.iter().map(|(a, _)| a.as_str()).collect();
-                                let mut extra = Vec::new();
-                                for (k, v) in b.attrs.iter().chain(ac.attrs.iter()) {
-                                    let needed = k == "xmlns" || k.strip_prefix("xmlns:").is_some_and(|p| used.contains(p));
-                                    if needed && v.len() <= MAX_NS_VALUE && have.insert(k) {
-                                        extra.push((k.clone(), v.clone()));
-                                    }
-                                }
+                                let have: HashSet<&str> = e.attrs.iter().map(|(a, _)| a.as_str()).collect();
+                                let mut wanted: Vec<usize> = std::iter::once("")
+                                    .chain(used.iter().copied())
+                                    .filter_map(|p| by_prefix.get(p).copied())
+                                    .filter(|&i| !have.contains(decls[i].0.as_str()))
+                                    .collect();
+                                wanted.sort_unstable();
+                                wanted.dedup();
                                 let mut e = e.clone();
-                                e.attrs.extend(extra);
+                                e.attrs.extend(wanted.into_iter().map(|i| (decls[i].0.clone(), decls[i].1.clone())));
                                 out.push(Node::El(e));
                             }
                         }
@@ -1463,6 +1478,23 @@ mod tests {
         let kids: Vec<&El> = d.root.elements().collect();
         assert_eq!(kids.len(), 2000);
         assert_eq!(kids[7].attrs, vec![("xmlns".to_string(), "urn:d".to_string()), ("xmlns:n7".to_string(), "urn:n7".to_string())]);
+    }
+
+    /// The branch's own declaration of a prefix wins over the `AlternateContent`'s; an oversized
+    /// one gives way to the next usable one; a child's own declaration is left alone.
+    #[test]
+    fn mc_branch_declarations_keep_their_precedence() {
+        let long = "u".repeat(MAX_NS_VALUE + 1);
+        let x = format!(
+            r#"<r xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:AlternateContent xmlns:p="urn:ac" xmlns:q="urn:q-short"><mc:Fallback xmlns:p="urn:b" xmlns:q="{long}"><p:x/><q:y/><p:z xmlns:p="urn:own"/></mc:Fallback></mc:AlternateContent></r>"#
+        );
+        let mut d = crate::xml::parse(x.as_bytes()).unwrap();
+        resolve_mc(&mut d.root, 0);
+        let kids: Vec<&El> = d.root.elements().collect();
+        let attrs = |i: usize| kids[i].attrs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>();
+        assert_eq!(attrs(0), ["xmlns:p=urn:b"]);
+        assert_eq!(attrs(1), ["xmlns:q=urn:q-short"]);
+        assert_eq!(attrs(2), ["xmlns:p=urn:own"]);
     }
 
     #[test]
