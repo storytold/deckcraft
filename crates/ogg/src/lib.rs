@@ -196,6 +196,21 @@ pub struct OggFile {
     pub warnings: Vec<String>,
 }
 
+/// Source bytes damage recovery may read per file: the windows the scan for the next capture
+/// pattern fills and the pages read only to find their CRC wrong.
+const RECOVERY_BUDGET: u64 = 32 << 20;
+/// Warnings kept per file (not counting the one about the budget); the rest are counted in one last entry.
+const MAX_WARNINGS: usize = 256;
+
+/// Record a warning, keeping at most `MAX_WARNINGS` and one entry saying the rest were dropped.
+fn warn(warnings: &mut Vec<String>, msg: String) {
+    match warnings.len().cmp(&MAX_WARNINGS) {
+        std::cmp::Ordering::Less => warnings.push(msg),
+        std::cmp::Ordering::Equal => warnings.push("further warnings omitted".into()),
+        std::cmp::Ordering::Greater => {}
+    }
+}
+
 struct Partial {
     parts: Vec<(u64, u32)>,
     size: u32,
@@ -219,7 +234,7 @@ pub fn open(src: &(impl ByteSource + ?Sized)) -> Result<OggFile> {
             match scanner.find(src, pos + 1, len)? {
                 Some(p) => {
                     if found_any {
-                        warnings.push(format!("lost sync at byte {pos}; resumed at {p}"));
+                        warn(&mut warnings, format!("lost sync at byte {pos}; resumed at {p}"));
                     }
                     pos = p;
                     continue;
@@ -229,14 +244,14 @@ pub fn open(src: &(impl ByteSource + ?Sized)) -> Result<OggFile> {
         }
         let nseg = hdr[26] as usize;
         if pos + 27 + nseg as u64 > len {
-            warnings.push(format!("truncated page header at byte {pos}"));
+            warn(&mut warnings, format!("truncated page header at byte {pos}"));
             break;
         }
         src.read_at(pos + 27, &mut hdr[27..27 + nseg])?;
         let body_len: u64 = hdr[27..27 + nseg].iter().map(|&b| b as u64).sum();
         let page_len = 27 + nseg as u64 + body_len;
         if pos + page_len > len {
-            warnings.push(format!("truncated page at byte {pos}"));
+            warn(&mut warnings, format!("truncated page at byte {pos}"));
             break;
         }
         let mut page = vec![0u8; page_len as usize];
@@ -244,7 +259,11 @@ pub fn open(src: &(impl ByteSource + ?Sized)) -> Result<OggFile> {
         let stored_crc = u32::from_le_bytes([page[22], page[23], page[24], page[25]]);
         page[22..26].fill(0);
         if crc32(&page) != stored_crc {
-            warnings.push(format!("bad CRC on page at byte {pos}"));
+            warn(&mut warnings, format!("bad CRC on page at byte {pos}"));
+            // a page read only to find it damaged is recovery work, charged like the scan's windows
+            if scanner.charge(page_len) {
+                break;
+            }
             pos += 1;
             continue;
         }
@@ -275,7 +294,7 @@ pub fn open(src: &(impl ByteSource + ?Sized)) -> Result<OggFile> {
         // a continued page without a pending packet (lost a page): drop the fragment
         let continued = flags & 0x01 != 0;
         if !continued && partial.remove(&serial).is_some() {
-            warnings.push(format!("incomplete packet before page at byte {pos}"));
+            warn(&mut warnings, format!("incomplete packet before page at byte {pos}"));
         }
         let mut completed: Vec<Packet> = Vec::new();
         let mut off = 0u64;
@@ -332,7 +351,11 @@ pub fn open(src: &(impl ByteSource + ?Sized)) -> Result<OggFile> {
         return Err(Error::NotOgg);
     }
     if !partial.is_empty() {
-        warnings.push("file ends inside a packet".into());
+        warn(&mut warnings, "file ends inside a packet".into());
+    }
+    if scanner.spent() {
+        // once per file and last, so it is not subject to the cap on the others
+        warnings.push("recovery budget spent; the rest of the damaged data was not searched".into());
     }
     Ok(OggFile { streams, warnings })
 }
@@ -340,12 +363,23 @@ pub fn open(src: &(impl ByteSource + ?Sized)) -> Result<OggFile> {
 struct CaptureScanner {
     buf: Vec<u8>,
     buf_start: u64,
-    budget: usize,
+    budget: u64,
 }
 
 impl CaptureScanner {
     fn new() -> Self {
-        Self { buf: Vec::new(), buf_start: 0, budget: 32 * 1024 * 1024 }
+        Self { buf: Vec::new(), buf_start: 0, budget: RECOVERY_BUDGET }
+    }
+
+    /// Charge `bytes` of recovery work; true once the budget is spent.
+    fn charge(&mut self, bytes: u64) -> bool {
+        self.budget = self.budget.saturating_sub(bytes);
+        self.spent()
+    }
+
+    /// Nothing left to search with: fewer bytes than a capture pattern can still be charged for.
+    fn spent(&self) -> bool {
+        self.budget < 4
     }
 
     fn find(&mut self, src: &(impl ByteSource + ?Sized), from: u64, len: u64) -> Result<Option<u64>> {
@@ -360,17 +394,17 @@ impl CaptureScanner {
                 at = buf_end.saturating_sub(3);
                 continue;
             }
-            if self.budget == 0 {
+            if self.spent() {
                 return Ok(None);
             }
-            let n = ((len - at) as usize).min(64 * 1024).min(self.budget);
+            let n = ((len - at) as usize).min(64 * 1024).min(usize::try_from(self.budget).unwrap_or(usize::MAX));
             if n < 4 {
                 break;
             }
             self.buf.resize(n, 0);
             src.read_at(at, &mut self.buf)?;
             self.buf_start = at;
-            self.budget = self.budget.saturating_sub(n);
+            self.budget = self.budget.saturating_sub(n as u64);
             if let Some(i) = self.buf.windows(4).position(|w| w == b"OggS") {
                 return Ok(Some(at + i as u64));
             }

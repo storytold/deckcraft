@@ -1,6 +1,9 @@
 use super::files::{place_row, square_button};
 use super::info::SAVE_TYPES;
-use super::*;
+use super::{
+    Align2, Backstage, Color32, CornerRadius, ExportTask, Icon, PrintScope, Rect, RichText, Sense, SlideApp, Stroke, StrokeKind, Tokens, Ui, Value,
+    bullets, dim, heading, icon_button, json, pos2, theme, vec2,
+};
 
 /// The slides the Print page prints, in order (0-based).
 pub fn print_slides(doc: &deckcraft_model::Presentation, bs: &Backstage, current: usize) -> Result<Vec<usize>, String> {

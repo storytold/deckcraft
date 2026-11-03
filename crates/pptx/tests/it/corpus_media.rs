@@ -198,74 +198,90 @@ fn object_corpus_round_trips() {
     let twice = round(&once);
 
     for q in [&once, &twice] {
-        let diagram = by_name(q, "Diagram");
-        let ShapeKind::Opaque { xml, label, .. } = &diagram.kind else { panic!("{:?}", diagram.kind) };
-        assert_eq!(label, "SmartArt");
-        assert!(xml.contains("Quarter"), "{xml}");
-        assert!(!xml.contains("r:dm"), "diagram parts are not part of this corpus");
-
-        let embedded = by_name(q, "Embedded");
-        let ShapeKind::Opaque { xml, label, .. } = &embedded.kind else { panic!("{:?}", embedded.kind) };
-        assert_eq!(label, "DeckCraft.Note.1");
-        assert!(xml.contains("DeckCraft.Note.1"), "{xml}");
-        assert!(!xml.contains("r:id"), "an embedding part is issue #203");
-
-        let block_shape = by_name(q, "Block");
-        assert!(matches!(block_shape.kind, ShapeKind::Model3d { poster: None, .. }), "{:?}", block_shape.kind);
-        assert_eq!(block_shape.xfrm, Some(Xfrm::new(40.0, 240.0, 120.0, 90.0)));
-        assert_eq!(media_bytes(q, "Block"), block);
-        let ShapeKind::Model3d { media, .. } = &block_shape.kind else { panic!("{:?}", block_shape.kind) };
-        let block_media = q.media(*media).expect("block media");
-        assert_eq!(block_media.content_type, "model/gltf-binary");
-        assert!(block_media.name.to_ascii_lowercase().ends_with(".glb"), "{}", block_media.name);
-
-        let globe_shape = by_name(q, "Globe");
-        let ShapeKind::Model3d { media, poster: Some(poster_media) } = &globe_shape.kind else { panic!("{:?}", globe_shape.kind) };
-        assert_eq!(globe_shape.xfrm, Some(Xfrm::new(180.0, 240.0, 160.0, 120.0)));
-        assert_eq!(q.media(*media).expect("globe").data.as_ref(), globe.as_slice());
-        assert_eq!(q.media(*poster_media).expect("poster").data.as_ref(), poster.as_slice());
-
-        let narration = by_name(q, "Narration");
-        let ShapeKind::Media(m) = &narration.kind else { panic!("{:?}", narration.kind) };
-        assert!(!m.video);
-        assert_eq!(m.trim_start_ms, 400);
-        assert_eq!(m.trim_end_ms, 2600);
-        assert_eq!(m.fade_in_ms, 80);
-        assert_eq!(m.fade_out_ms, 120);
-        assert_eq!(m.bookmarks, vec![("Intro".into(), 400), ("Outro".into(), 2200)]);
-        assert_eq!(q.media(m.media).expect("audio").data.as_ref(), b"audio-bytes-deckcraft".as_slice());
-
-        let film = by_name(q, "Film");
-        let ShapeKind::Media(m) = &film.kind else { panic!("{:?}", film.kind) };
-        assert!(m.video);
-        assert_eq!(m.trim_start_ms, 250);
-        assert_eq!(m.trim_end_ms, 9000);
-        assert_eq!(m.bookmarks, vec![("Mark".into(), 1500)]);
-        assert_eq!(q.media(m.media).expect("video").data.as_ref(), b"video-bytes-deckcraft".as_slice());
-
-        assert_field(q, "Slide number", "slidenum", "4");
-        assert_field(q, "Date", "datetime4", "14 October 2026");
-        assert_eq!(q.first_slide_number, 4);
-
-        assert_eq!(q.sections.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Open", "Aside"]);
-        let hidden = q.slides.iter().position(|s| s.hidden).expect("a hidden slide");
-        assert_eq!(q.slides.iter().filter(|s| s.hidden).count(), 1);
-        assert!(q.sections[1].slides.contains(&q.slides[hidden].id));
-        assert!(!q.sections[0].slides.contains(&q.slides[hidden].id));
-
-        assert_ink(by_name(q, "Sketch"));
-
-        let timing = q.slides.iter().find(|s| s.animations.iter().any(|a| a.effect == "fade")).expect("timing slide");
-        let fade = timing.animations.iter().find(|a| a.effect == "fade").expect("fade");
-        let pulse = timing.animations.iter().find(|a| a.effect == "pulse").expect("pulse");
-        assert_eq!(fade.repeat, 4);
-        assert!((fade.bounce_end - 0.25).abs() < 1e-9, "{}", fade.bounce_end);
-        assert_eq!(fade.trigger, Some(by_name(q, "Trigger").id));
-        assert_eq!(fade.shape, by_name(q, "Fader").id);
-        assert_eq!(pulse.repeat, u32::MAX);
-        assert_eq!(pulse.class, AnimClass::Emphasis);
-        assert!(pulse.trigger.is_none());
+        opaque_parts_survive(q);
+        models_survive(q, &block, &globe, &poster);
+        media_clips_survive(q);
+        fields_and_sections_survive(q);
+        ink_and_timing_survive(q);
     }
+}
+
+fn opaque_parts_survive(q: &Presentation) {
+    let diagram = by_name(q, "Diagram");
+    let ShapeKind::Opaque { xml, label, .. } = &diagram.kind else { panic!("{:?}", diagram.kind) };
+    assert_eq!(label, "SmartArt");
+    assert!(xml.contains("Quarter"), "{xml}");
+    assert!(!xml.contains("r:dm"), "diagram parts are not part of this corpus");
+
+    let embedded = by_name(q, "Embedded");
+    let ShapeKind::Opaque { xml, label, .. } = &embedded.kind else { panic!("{:?}", embedded.kind) };
+    assert_eq!(label, "DeckCraft.Note.1");
+    assert!(xml.contains("DeckCraft.Note.1"), "{xml}");
+    assert!(!xml.contains("r:id"), "an embedding part is issue #203");
+}
+
+fn models_survive(q: &Presentation, block: &[u8], globe: &[u8], poster: &[u8]) {
+    let block_shape = by_name(q, "Block");
+    assert!(matches!(block_shape.kind, ShapeKind::Model3d { poster: None, .. }), "{:?}", block_shape.kind);
+    assert_eq!(block_shape.xfrm, Some(Xfrm::new(40.0, 240.0, 120.0, 90.0)));
+    assert_eq!(media_bytes(q, "Block"), block);
+    let ShapeKind::Model3d { media, .. } = &block_shape.kind else { panic!("{:?}", block_shape.kind) };
+    let block_media = q.media(*media).expect("block media");
+    assert_eq!(block_media.content_type, "model/gltf-binary");
+    assert!(block_media.name.to_ascii_lowercase().ends_with(".glb"), "{}", block_media.name);
+
+    let globe_shape = by_name(q, "Globe");
+    let ShapeKind::Model3d { media, poster: Some(poster_media) } = &globe_shape.kind else { panic!("{:?}", globe_shape.kind) };
+    assert_eq!(globe_shape.xfrm, Some(Xfrm::new(180.0, 240.0, 160.0, 120.0)));
+    assert_eq!(q.media(*media).expect("globe").data.as_ref(), globe);
+    assert_eq!(q.media(*poster_media).expect("poster").data.as_ref(), poster);
+}
+
+fn media_clips_survive(q: &Presentation) {
+    let narration = by_name(q, "Narration");
+    let ShapeKind::Media(m) = &narration.kind else { panic!("{:?}", narration.kind) };
+    assert!(!m.video);
+    assert_eq!(m.trim_start_ms, 400);
+    assert_eq!(m.trim_end_ms, 2600);
+    assert_eq!(m.fade_in_ms, 80);
+    assert_eq!(m.fade_out_ms, 120);
+    assert_eq!(m.bookmarks, vec![("Intro".into(), 400), ("Outro".into(), 2200)]);
+    assert_eq!(q.media(m.media).expect("audio").data.as_ref(), b"audio-bytes-deckcraft".as_slice());
+
+    let film = by_name(q, "Film");
+    let ShapeKind::Media(m) = &film.kind else { panic!("{:?}", film.kind) };
+    assert!(m.video);
+    assert_eq!(m.trim_start_ms, 250);
+    assert_eq!(m.trim_end_ms, 9000);
+    assert_eq!(m.bookmarks, vec![("Mark".into(), 1500)]);
+    assert_eq!(q.media(m.media).expect("video").data.as_ref(), b"video-bytes-deckcraft".as_slice());
+}
+
+fn fields_and_sections_survive(q: &Presentation) {
+    assert_field(q, "Slide number", "slidenum", "4");
+    assert_field(q, "Date", "datetime4", "14 October 2026");
+    assert_eq!(q.first_slide_number, 4);
+
+    assert_eq!(q.sections.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Open", "Aside"]);
+    let hidden = q.slides.iter().position(|s| s.hidden).expect("a hidden slide");
+    assert_eq!(q.slides.iter().filter(|s| s.hidden).count(), 1);
+    assert!(q.sections[1].slides.contains(&q.slides[hidden].id));
+    assert!(!q.sections[0].slides.contains(&q.slides[hidden].id));
+}
+
+fn ink_and_timing_survive(q: &Presentation) {
+    assert_ink(by_name(q, "Sketch"));
+
+    let timing = q.slides.iter().find(|s| s.animations.iter().any(|a| a.effect == "fade")).expect("timing slide");
+    let fade = timing.animations.iter().find(|a| a.effect == "fade").expect("fade");
+    let pulse = timing.animations.iter().find(|a| a.effect == "pulse").expect("pulse");
+    assert_eq!(fade.repeat, 4);
+    assert!((fade.bounce_end - 0.25).abs() < 1e-9, "{}", fade.bounce_end);
+    assert_eq!(fade.trigger, Some(by_name(q, "Trigger").id));
+    assert_eq!(fade.shape, by_name(q, "Fader").id);
+    assert_eq!(pulse.repeat, u32::MAX);
+    assert_eq!(pulse.class, AnimClass::Emphasis);
+    assert!(pulse.trigger.is_none());
 }
 
 /// An exported deck with `parts` added (or replaced) and `edit` applied to every XML part.

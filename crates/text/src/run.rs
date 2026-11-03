@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, FontFace, Point, Rect, Rgba};
 
 /// A run of glyphs in one face, size and colour.
 #[derive(Clone)]

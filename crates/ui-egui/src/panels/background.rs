@@ -1,4 +1,4 @@
-use super::*;
+use super::{Fill, SlideApp, Ui, Value, cref_param, json, run, scheme, theme, vec2, widgets};
 
 pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
     let sc = scheme(app);

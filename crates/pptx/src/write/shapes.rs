@@ -711,7 +711,8 @@ fn table(w: &mut W, x: &mut Exp, o: &mut Out, t: &Table) {
             .t("lastRow", t.last_row)
             .t("lastCol", t.last_col)
             .t("bandRow", t.band_row)
-            .t("bandCol", t.band_col),
+            .t("bandCol", t.band_col)
+            .b("rtl", t.rtl),
     );
     if let Some(f) = &t.background {
         dml::fill(w, x, o, f);
@@ -746,6 +747,8 @@ fn table(w: &mut W, x: &mut Exp, o: &mut Out, t: &Table) {
                     other => other.xml(),
                 }),
             );
+            a = a.b("anchorCtr", c.anchor_ctr);
+            a = a.o("horzOverflow", deckcraft_model::text::TextOverflow::horz_xml(c.horz_overflow));
             w.open("a:tcPr", a);
             for (tag, l) in [
                 ("a:lnL", &c.borders[0]),
