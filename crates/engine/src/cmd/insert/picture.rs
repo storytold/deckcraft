@@ -2,6 +2,7 @@ use super::{
     EngineError, MediaClip, NO_ID_SPACE, PictureFill, Result, Session, Shape, ShapeKind, Value, Xfrm, add_shape, bad, base64_decode, default_rect,
     json, rect_param, str_param, xfrm_of,
 };
+use crate::cmd::picture_facts::Fit;
 
 /// Read media bytes from `data` (base64) or `path`.
 pub(crate) fn media_bytes(p: &Value, cmd: &str) -> Result<(String, Vec<u8>)> {
@@ -95,6 +96,7 @@ pub(super) fn picture(s: &mut Session, p: &Value) -> Result<Value> {
     if ct != "image/svg+xml" && deckcraft_render::decode_image(&bytes).is_none() {
         return Err(EngineError::Other(format!("{name}: the picture can't be read")));
     }
+    let fit = Fit::param(p, "insert.picture", &bytes)?;
     let (w, h) = fitted(s, &bytes);
     // Into a selected empty picture/content placeholder, if there is one.
     let target_ph = s.active().and_then(|d| {
@@ -107,26 +109,15 @@ pub(super) fn picture(s: &mut Session, p: &Value) -> Result<Value> {
             })
             .map(|x| (x.id, xfrm_of(&d.doc, &d.selection, x)))
     });
-    let rect = rect_param(p, "rect").unwrap_or_else(|| match target_ph {
-        Some((_, b)) => {
-            // Fill the placeholder, cropping the picture to its aspect.
-            b
-        }
+    let given = rect_param(p, "rect");
+    let frame = given.unwrap_or_else(|| match target_ph {
+        Some((_, b)) => b,
         None => default_rect(s, w, h),
     });
-    let crop = match (target_ph, rect_param(p, "rect")) {
-        (Some(_), None) => {
-            let (ia, ba) = (w / h.max(1e-9), rect.w / rect.h.max(1e-9));
-            if ia > ba {
-                let c = (1.0 - ba / ia) / 2.0;
-                [c, 0.0, c, 0.0]
-            } else {
-                let c = (1.0 - ia / ba) / 2.0;
-                [0.0, c, 0.0, c]
-            }
-        }
-        _ => [0.0; 4],
-    };
+    // A placeholder filled without a box crops the picture to the placeholder's aspect; any
+    // other box is filled as given, unless `fit` says otherwise.
+    let default_fit = if target_ph.is_some() && given.is_none() { Fit::Cover } else { Fit::Stretch };
+    let (rect, crop) = fit.unwrap_or(default_fit).apply(frame, w / h.max(1e-9));
     let media = s.edit(|doc, _| doc.add_media(&name, ct, bytes).ok_or_else(|| bad("insert.picture", NO_ID_SPACE)))?;
     let shape = Shape {
         xfrm: Some(rect),

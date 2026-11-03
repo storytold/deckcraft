@@ -104,3 +104,13 @@ rect, text}`, `shape.connect {from, to, preset}`, `shape.freeform {points, close
 `chart.*` (`chart.options {textColor}` colours a chart's title, axes, legend and labels), `table.*`, `file.export {path, layout}` (PDF) or `{path, width, secondsPerSlide, loop}`
 (GIF). `deckcraft-cli describe COMMAND` prints any
 command's parameters.
+
+To check pictures after placing them, `inspect_slide` gives each picture, group members included,
+`pixels` (from the image's header), `ppi` (image pixels per inch as drawn, across and down, after
+the crop) and `aspect` (`source` for the part of the image the crop shows, `shown` as drawn); pixels
+and ppi are null for SVG. `review.pictures {minPpi?, maxDistortion?}` lists the pictures drawn
+below 96 ppi or stretched more than 2% (`distortion` is `max(r, 1/r) - 1` for `r` = shown aspect
+over source aspect), each with `fitRect`, the largest box inside the picture's box that draws it
+undistorted, to pass to `shape.setBounds`. `insert_picture`'s `fit` places a picture without
+stretching it: `contain` shrinks the box to the picture's aspect and `cover` crops the picture to
+the box's; `stretch`, the default, fills the box as given.
