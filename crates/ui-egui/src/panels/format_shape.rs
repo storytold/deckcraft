@@ -46,59 +46,68 @@ fn format_tabs(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
     });
 }
 
-/// The effects for a shape, resolved from the shape itself, its layout/master placeholder,
-/// and its text runs' inherited shadow (#1661). Returns `(effects, is_text_shadow)`.
-pub(crate) fn resolved_effects(app: &SlideApp, sh: &deckcraft_model::Shape) -> (deckcraft_model::style::Effects, bool) {
+/// The effects for a shape, resolved from the shape itself or its layout/master placeholder (#1661).
+/// Returns `(effects, is_inherited)`.
+pub(crate) fn resolved_shape_effects(app: &SlideApp, sh: &deckcraft_model::Shape) -> (deckcraft_model::style::Effects, bool) {
     if let Some(fx) = &sh.effects {
         return (fx.clone(), false);
     }
-    let mut fx = deckcraft_model::style::Effects::default();
-    let mut is_text_shadow = false;
-
     if let Some(d) = app.session.active()
         && let Some(slide) = d.current_slide()
         && let Some(ctx) = deckcraft_model::resolve::Ctx::for_slide(&d.doc, slide)
+        && let (Some(inherited_fx), _) = deckcraft_model::resolve::effects(&ctx, sh)
     {
-        if let (Some(inherited_fx), _) = deckcraft_model::resolve::effects(&ctx, sh) {
-            fx = inherited_fx;
+        return (inherited_fx, true);
+    }
+    (deckcraft_model::style::Effects::default(), false)
+}
+
+/// Text effects for a shape's runs, resolved from the first run or its layout/master list style (#1661).
+/// Returns `(effects, is_inherited)`.
+pub(crate) fn resolved_text_effects(app: &SlideApp, sh: &deckcraft_model::Shape) -> (deckcraft_model::style::Effects, bool) {
+    let mut fx = deckcraft_model::style::Effects::default();
+    let mut inherited = false;
+    if let Some(t) = &sh.text
+        && let Some(p) = t.paragraphs.first()
+    {
+        if let Some(r) = p.runs.first() {
+            if let Some(s) = &r.props.shadow {
+                fx.outer_shadow = Some(s.clone());
+                return (fx, false);
+            }
+            if let Some(s) = &r.props.inner_shadow {
+                fx.inner_shadow = Some(s.clone());
+                return (fx, false);
+            }
         }
-        if fx.outer_shadow.is_none()
-            && fx.inner_shadow.is_none()
-            && let Some(t) = &sh.text
+        if let Some(d) = app.session.active()
+            && let Some(slide) = d.current_slide()
+            && let Some(ctx) = deckcraft_model::resolve::Ctx::for_slide(&d.doc, slide)
         {
-            'outer: for p in &t.paragraphs {
-                let def_r = deckcraft_model::text::RunProps::default();
-                let runs: Vec<&deckcraft_model::text::RunProps> =
-                    if p.runs.is_empty() { vec![&def_r] } else { p.runs.iter().map(|r| &r.props).collect() };
-                for r in runs {
-                    let resolved_r = deckcraft_model::resolve::run(&ctx, sh, p, r);
-                    if let Some(s) = resolved_r.shadow {
-                        fx.outer_shadow = Some(s);
-                        is_text_shadow = true;
-                        break 'outer;
-                    }
-                    if let Some(s) = resolved_r.inner_shadow {
-                        fx.inner_shadow = Some(s);
-                        is_text_shadow = true;
-                        break 'outer;
-                    }
-                }
+            let def_r = deckcraft_model::text::RunProps::default();
+            let r = p.runs.first().map(|r| &r.props).unwrap_or(&def_r);
+            let resolved = deckcraft_model::resolve::run(&ctx, sh, p, r);
+            if let Some(s) = resolved.shadow {
+                fx.outer_shadow = Some(s);
+                inherited = true;
+            } else if let Some(s) = resolved.inner_shadow {
+                fx.inner_shadow = Some(s);
+                inherited = true;
             }
         }
     }
-
-    (fx, is_text_shadow)
+    (fx, inherited)
 }
 
 fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
-    let (fx, from_text) = resolved_effects(app, sh);
+    let (fx, inherited) = resolved_shape_effects(app, sh);
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Shadow").font(theme::bold(13.0)));
-        if from_text {
-            ui.label(egui::RichText::new("(inherited from text style)").weak().small());
+        if inherited {
+            ui.label(egui::RichText::new("(inherited from layout or master)").weak().small());
         }
     });
-    ui.add_enabled_ui(!from_text, |ui| {
+    ui.add_enabled_ui(!inherited, |ui| {
         if let Some(v) = effect_presets::shadow_row(ui, effect_presets::shadow_preset_id(&fx)) {
             run(app, "shape.effects", json!({"shadow": v}));
         }
@@ -184,6 +193,50 @@ fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
     if ui.button("Reset Effects").clicked() {
         run(app, "shape.effects", json!({"reset": true}));
     }
+}
+
+fn text_effects_section(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
+    let (fx, from_style) = resolved_text_effects(app, sh);
+    ui.label(egui::RichText::new("Text Effects").font(theme::bold(13.0)));
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Shadow").font(theme::bold(12.0)));
+        if from_style {
+            ui.label(egui::RichText::new("(inherited from text style)").weak().small());
+        }
+    });
+    ui.add_enabled_ui(!from_style, |ui| {
+        if let Some(v) = effect_presets::shadow_row(ui, effect_presets::shadow_preset_id(&fx)) {
+            if v == "none" {
+                run(app, "format.textShadow", json!({"on": false}));
+            } else {
+                run(app, "format.textShadow", json!({"on": true}));
+            }
+        }
+        let shadow = fx.inner_shadow.as_ref().or(fx.outer_shadow.as_ref());
+        if let Some(sw) = shadow {
+            color_button(app, ui, "Color", None, |_| ("".into(), json!({})));
+            ui.horizontal(|ui| {
+                ui.label("Transparency");
+                ui.label(format!("{:.0}%", (1.0 - sw.color.alpha()) * 100.0));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Size");
+                ui.label(format!("{:.0}%", sw.sx * 100.0));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Blur");
+                ui.label(format!("{:.1} pt", sw.blur));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Angle");
+                ui.label(format!("{:.0}°", sw.dir));
+            });
+            ui.horizontal(|ui| {
+                ui.label("Distance");
+                ui.label(format!("{:.1} pt", sw.dist));
+            });
+        }
+    });
 }
 
 /// A group keeps no slide background fill of its own. It shows Slide background fill when every
@@ -329,6 +382,8 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 None => ("format.color".into(), json!({"color": "tx1"})),
             });
             text_transparency_slider(app, ui, &sh);
+            ui.add_space(6.0);
+            text_effects_section(app, ui, &sh);
             ui.add_space(6.0);
             ui.label(egui::RichText::new("Text Box").font(theme::bold(13.0)));
             ui.horizontal(|ui| {

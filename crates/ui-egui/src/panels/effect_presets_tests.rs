@@ -78,10 +78,10 @@ fn the_current_preset_tile_is_marked_selected() {
     assert_eq!(h.get_by_label("11 pt glow").accesskit_node().toggled(), Some(Toggled::False));
 }
 
-/// #1661: text with an inherited shadow displays the shadow in the Format Shape effects tab
-/// rather than showing "Shadow: None".
+/// #1661: text with an inherited shadow displays the shadow in the Format Shape Text Options
+/// rather than showing "Shadow: None", while Shape Effects shows only the shape's own effects.
 #[test]
-fn inherited_text_shadow_is_shown_in_effects_tab() {
+fn inherited_text_shadow_is_shown_in_text_options() {
     let mut s = Session::with_new();
     let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 200.0, 120.0], "text": "Quote"})).unwrap();
     let id = r.get("id").and_then(|v| v.as_u64()).unwrap();
@@ -115,7 +115,7 @@ fn inherited_text_shadow_is_shown_in_effects_tab() {
 
     let mut app = SlideApp::new(s, Services::default());
     app.ui.pane = Some("format".into());
-    app.ui.format_tab = "effects".into();
+    app.ui.format_tab = "text".into();
     let mut h = Harness::builder().with_size(egui::vec2(1800.0, 1100.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
@@ -125,12 +125,16 @@ fn inherited_text_shadow_is_shown_in_effects_tab() {
     );
     h.run_steps(3);
 
-    // The shadow preset row must show the inherited shadow rather than "No shadow" toggled.
+    // Under Text Options, the shadow preset row must show the inherited shadow rather than "No shadow" toggled.
     assert_eq!(h.get_by_label("No shadow").accesskit_node().toggled(), Some(Toggled::False));
-    // The shadow property sliders (Size, Blur, Angle, Distance) are displayed.
-    assert!(h.query_all_by_label("Size").count() >= 2);
+    assert!(h.query_all_by_label("Size").count() >= 1);
     assert!(h.query_all_by_label("Distance").count() >= 1);
 
     // The inherited text shadow controls are presented read-only so shape-level edits cannot contradict the text style.
     assert!(h.get_by_label("No shadow").accesskit_node().is_disabled());
+
+    // Switch to Shape Effects tab: the shape has no shape-level shadow, so it shows "No shadow" toggled.
+    h.state_mut().ui.format_tab = "effects".into();
+    h.run_steps(2);
+    assert_eq!(h.get_by_label("No shadow").accesskit_node().toggled(), Some(Toggled::True));
 }
