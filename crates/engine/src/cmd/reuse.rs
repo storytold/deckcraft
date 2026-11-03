@@ -6,9 +6,10 @@
 //! renumbered with animations, triggers and connector ends following them. Links to another
 //! reused slide follow its copy.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use deckcraft_model::table::TableStyleDef;
 use deckcraft_model::text::{Action, Hyperlink, RunProps, TextBody};
 use deckcraft_model::{LayoutId, Master, MasterId, MediaId, Presentation, ShapeId, ShapeKind, Slide, SlideId};
 use serde_json::{Value, json};
@@ -152,6 +153,88 @@ fn matching_layout(doc: &Presentation, name: &str, kind: deckcraft_model::Layout
         .unwrap_or_default()
 }
 
+fn collect_table_styles(shapes: &[deckcraft_model::Shape], styles: &mut Vec<String>, seen: &mut HashSet<String>, depth: usize) {
+    if depth > 64 {
+        return;
+    }
+    for shape in shapes {
+        if let ShapeKind::Table(table) = &shape.kind
+            && seen.insert(table.style.to_ascii_lowercase())
+        {
+            styles.push(table.style.clone());
+        }
+        collect_table_styles(shape.children(), styles, seen, depth + 1);
+    }
+}
+
+fn remap_table_styles(shapes: &mut [deckcraft_model::Shape], styles: &HashMap<String, String>, depth: usize) {
+    if depth > 64 {
+        return;
+    }
+    for shape in shapes {
+        if let ShapeKind::Table(table) = &mut shape.kind
+            && let Some(style) = styles.get(&table.style.to_ascii_lowercase())
+        {
+            table.style = style.clone();
+        }
+        if let Some(children) = shape.children_mut() {
+            remap_table_styles(children, styles, depth + 1);
+        }
+    }
+}
+
+fn same_table_style(a: &TableStyleDef, b: &TableStyleDef) -> bool {
+    a.name == b.name && a.parts == b.parts && a.background == b.background && a.raw == b.raw
+}
+
+/// Copy only definitions used on selected slides. Conflicting GUIDs receive a fresh GUID so
+/// existing destination tables continue to resolve to their original definitions.
+fn import_table_styles(cmd: &str, doc: &mut Presentation, src: &Presentation, used: &[String]) -> Result<HashMap<String, String>> {
+    let mut map = HashMap::new();
+    let mut source_defs = HashMap::new();
+    let mut source_ids = HashSet::new();
+    for (index, style) in src.table_styles.iter().enumerate() {
+        let key = style.id.to_ascii_lowercase();
+        source_defs.entry(key.clone()).or_insert(index);
+        source_ids.insert(key);
+    }
+    let mut destination_defs = HashMap::new();
+    for (index, style) in doc.table_styles.iter().enumerate() {
+        destination_defs.entry(style.id.to_ascii_lowercase()).or_insert(index);
+    }
+    for id in used {
+        let key = id.to_ascii_lowercase();
+        if map.contains_key(&key) {
+            continue;
+        }
+        let Some(source_index) = source_defs.get(&key).copied() else { continue };
+        let Some(source) = src.table_styles.get(source_index) else { continue };
+        let destination = destination_defs.get(&key).and_then(|index| doc.table_styles.get(*index));
+        let mut imported = source.clone();
+        if let Some(existing) = destination {
+            if same_table_style(existing, source) {
+                map.insert(key, existing.id.clone());
+                continue;
+            }
+            let candidate = loop {
+                let n = doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?;
+                let candidate = format!("{{00000000-0000-4000-8000-{n:012X}}}");
+                let key = candidate.to_ascii_lowercase();
+                if !destination_defs.contains_key(&key) && !source_ids.contains(&key) {
+                    break candidate;
+                }
+            };
+            imported.id.clone_from(&candidate);
+            map.insert(key, candidate);
+        } else {
+            map.insert(key, imported.id.clone());
+        }
+        destination_defs.insert(imported.id.to_ascii_lowercase(), doc.table_styles.len());
+        doc.table_styles.push(imported);
+    }
+    Ok(map)
+}
+
 fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
     let (name, bytes) = super::insert::media_bytes(p, "slide.reuse")?;
     let src = super::file::open_presentation(&name, &bytes)?;
@@ -178,6 +261,14 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
     let at = usize_param(p, "at");
     s.edit(|doc, sel| {
         let at = at.unwrap_or(sel.slide + 1).min(doc.slides.len());
+        let mut used_table_styles = Vec::new();
+        let mut seen_table_styles = HashSet::new();
+        for &i in &picked {
+            if let Some(slide) = src.slides.get(i) {
+                collect_table_styles(&slide.shapes, &mut used_table_styles, &mut seen_table_styles, 0);
+            }
+        }
+        let table_style_map = import_table_styles("slide.reuse", doc, &src, &used_table_styles)?;
         // Media: what the slides use is copied under fresh ids.
         let mut media_map: HashMap<MediaId, MediaId> = HashMap::new();
         // Keep Source Formatting: bring each source master used, once, with fresh ids.
@@ -201,6 +292,7 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
             let Some(from) = src.slides.get(i) else { continue };
             copy_media("slide.reuse", doc, &src, &media_refs::slide_media(from), &mut media_map)?;
             let mut sl: Slide = from.as_ref().clone();
+            remap_table_styles(&mut sl.shapes, &table_style_map, 0);
             media_refs::visit_mut::slide(&mut sl, &mut remap(&media_map));
             sl.id = SlideId(doc.alloc_id().ok_or_else(|| bad("slide.reuse", NO_ID_SPACE))?);
             let map = renumber("slide.reuse", doc, &mut sl.shapes)?;
@@ -285,11 +377,113 @@ fn copy_media(cmd: &str, doc: &mut Presentation, src: &Presentation, used: &[Med
 #[cfg(test)]
 mod tests {
     use deckcraft_model::style::{Artistic, Fill, PictureFill};
+    use deckcraft_model::table::TableStyleDef;
     use deckcraft_model::text::{Action, Bullet, Hyperlink, TextBody};
     use deckcraft_model::{Background, MediaClip, Shape, ShapeKind, defaults};
     use serde_json::json;
 
     use super::*;
+
+    const CUSTOM_STYLE: &str = "{11111111-2222-4333-8444-555555555555}";
+
+    fn styled_table_presentation(id: &str, color: &str) -> Presentation {
+        let mut p = deckcraft_model::defaults::new_presentation(None);
+        let raw = format!(
+            r#"<a:tblStyle xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" styleId="{id}" styleName="Owned"><a:wholeTbl><a:tcStyle><a:fill><a:solidFill><a:srgbClr val="{color}"/></a:solidFill></a:fill></a:tcStyle></a:wholeTbl></a:tblStyle>"#
+        );
+        p.table_styles.push(TableStyleDef { id: id.into(), name: "Owned".into(), raw, ..Default::default() });
+        let table = deckcraft_model::Table { style: id.into(), ..deckcraft_model::Table::new(1, 1, 100.0, 24.0) };
+        let child = deckcraft_model::Shape { id: ShapeId(p.alloc_id().expect("shape id")), kind: ShapeKind::Table(table), ..Default::default() };
+        let group = deckcraft_model::Shape {
+            id: ShapeId(p.alloc_id().expect("group id")),
+            kind: ShapeKind::Group { children: vec![child], child: Default::default() },
+            ..Default::default()
+        };
+        let slide = p.slides.first_mut().expect("default slide");
+        Arc::make_mut(slide).shapes.push(group);
+        p
+    }
+
+    fn first_table_style(shapes: &[deckcraft_model::Shape]) -> Option<String> {
+        for shape in shapes {
+            if let ShapeKind::Table(table) = &shape.kind {
+                return Some(table.style.clone());
+            }
+            if let Some(style) = first_table_style(shape.children()) {
+                return Some(style);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn reused_grouped_table_styles_survive_native_and_pptx_round_trips_and_undo() {
+        for (name, bytes) in [
+            ("source.deckcraft", deckcraft_format::save(&styled_table_presentation(CUSTOM_STYLE, "FF0000")).expect("native source")),
+            ("source.pptx", deckcraft_pptx::export(&styled_table_presentation(CUSTOM_STYLE, "FF0000")).expect("pptx source")),
+        ] {
+            let data = super::super::base64_encode(&bytes);
+            let mut session = Session::with_new();
+            session.execute("slide.reuse", &json!({"data": data, "name": name, "slides": [0], "keepFormatting": true})).expect("reuse");
+            let doc = &session.doc().expect("doc").doc;
+            assert_eq!(doc.table_styles.iter().filter(|style| style.id == CUSTOM_STYLE).count(), 1);
+            assert!(doc.table_styles.iter().any(|style| style.id == CUSTOM_STYLE && style.raw.contains("FF0000")));
+            assert_eq!(first_table_style(&doc.slides.get(1).expect("reused slide").shapes).as_deref(), Some(CUSTOM_STYLE));
+
+            session.execute("edit.undo", &json!({})).expect("undo reuse");
+            let doc = &session.doc().expect("doc").doc;
+            assert!(doc.table_styles.iter().all(|style| style.id != CUSTOM_STYLE));
+            session.execute("edit.redo", &json!({})).expect("redo reuse");
+            let bytes = crate::cmd::file::save_bytes(&session.doc().expect("doc").doc, "deckcraft").expect("save destination");
+            let reopened = crate::cmd::file::open_presentation("destination.deckcraft", &bytes).expect("reopen destination");
+            assert!(reopened.table_styles.iter().any(|style| style.id == CUSTOM_STYLE));
+            assert_eq!(first_table_style(&reopened.slides.get(1).expect("reused slide").shapes).as_deref(), Some(CUSTOM_STYLE));
+        }
+    }
+
+    #[test]
+    fn reused_table_style_definitions_are_deduplicated_or_remapped_on_collision() {
+        let source = styled_table_presentation(CUSTOM_STYLE, "FF0000");
+        let source_bytes = deckcraft_format::save(&source).expect("save source");
+
+        let mut identical = Session::with_new();
+        identical
+            .edit(|doc, _| {
+                doc.table_styles.push(source.table_styles.first().cloned().unwrap_or_default());
+                Ok(())
+            })
+            .expect("seed identical definition");
+        identical
+            .execute("slide.reuse", &json!({"data": super::super::base64_encode(&source_bytes), "name": "source.deckcraft", "slides": [0]}))
+            .expect("reuse identical definition");
+        let doc = &identical.doc().expect("doc").doc;
+        assert_eq!(doc.table_styles.iter().filter(|style| style.id == CUSTOM_STYLE).count(), 1);
+        assert_eq!(first_table_style(&doc.slides.get(1).expect("reused slide").shapes).as_deref(), Some(CUSTOM_STYLE));
+
+        let mut conflicting = Session::with_new();
+        conflicting
+            .edit(|doc, _| {
+                let mut own = source.table_styles.first().cloned().unwrap_or_default();
+                own.raw = own.raw.replace("FF0000", "0000FF");
+                doc.table_styles.push(own);
+                let table = deckcraft_model::Table { style: CUSTOM_STYLE.into(), ..deckcraft_model::Table::new(1, 1, 100.0, 24.0) };
+                let id = ShapeId(doc.alloc_id().expect("destination table id"));
+                if let Some(slide) = doc.slides.first_mut() {
+                    Arc::make_mut(slide).shapes.push(Shape { id, kind: ShapeKind::Table(table), ..Default::default() });
+                }
+                Ok(())
+            })
+            .expect("seed conflicting definition");
+        conflicting
+            .execute("slide.reuse", &json!({"data": super::super::base64_encode(&source_bytes), "name": "source.deckcraft", "slides": [0]}))
+            .expect("reuse conflicting definition");
+        let doc = &conflicting.doc().expect("doc").doc;
+        assert_eq!(first_table_style(&doc.slides.first().expect("destination slide").shapes).as_deref(), Some(CUSTOM_STYLE));
+        let imported_style = first_table_style(&doc.slides.get(1).expect("reused slide").shapes).expect("grouped table style");
+        assert_ne!(imported_style, CUSTOM_STYLE);
+        assert!(doc.table_styles.iter().any(|style| style.id == imported_style && style.raw.contains("FF0000")));
+        assert!(doc.table_styles.iter().any(|style| style.id == CUSTOM_STYLE && style.raw.contains("0000FF")));
+    }
 
     /// Every kind of media a slide can hold comes along, each pointing at its own bytes: the
     /// artistic-effect original, a background picture, poster, sounds and picture bullets too.
