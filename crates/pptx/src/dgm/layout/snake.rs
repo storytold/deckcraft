@@ -152,7 +152,10 @@ impl ReverseCentering {
         let future = self.pending[2].growth;
         let reference = old_extent - 2. * future;
         let equal = !exceeds(line.length, old_extent) && !exceeds(old_extent, line.length);
-        let expansion = if equal { 0. } else { (line.physical_width.max(first_width) - self.boundary).max(0.) };
+        // Nominal physical growth can remain beyond the current reference even
+        // when logical lengths match. Forward growth replaces that reference.
+        let retained_boundary = self.reference.is_some_and(|reference| exceeds(self.boundary, reference));
+        let expansion = if equal && !retained_boundary { 0. } else { (line.physical_width.max(first_width) - self.boundary).max(0.) };
         self.boundary += expansion;
         let shift = expansion - ((line.length - reference) / 2.).max(0.);
         self.pending[1].shift += shift;
@@ -1197,6 +1200,72 @@ mod tests {
             })
             .collect();
         centers.iter().map(|v| v - centers[0]).collect()
+    }
+
+    #[test]
+    fn reverse_current_reference_controls_equal_length_boundary_expansion() {
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "3"), ("off", "ctr"), ("contDir", "revDir")];
+        // Native controls vary early physical growth, then distinguish own-child
+        // expansion from following-child lookahead. Reset and delay rows expose
+        // the lifetime of the current nominal reference.
+        for (early, forward, terminal, delay, expected) in [
+            ([43., 44., 44.], [20., 22., 26.], 131., false, [0., 0.]),
+            ([40., 41., 50.], [20., 22., 26.], 131., false, [0., 0.]),
+            ([32., 32., 67.], [20., 22., 26.], 131., false, [17., 18.]),
+            ([32., 32., 67.], [48., 51., 52.], 152.5, false, [0., 0.]),
+            ([32., 32., 67.], [20., 22., 26.], 131., true, [17., 18.]),
+        ] {
+            for (probe, &step) in expected.iter().enumerate() {
+                let mut parts = vec![[18., 17., 15.], [4.; 3], [4.; 3], early, [11.; 3], [4.; 3], forward, [11.; 3], [11.; 3]];
+                if delay {
+                    parts.extend([[11.; 3], [11.; 3]]);
+                }
+                let terminal_parts = if probe == 0 {
+                    let left: f64 = terminal - 84.;
+                    [(left / 2.).floor(), left - (left / 2.).floor(), 84.]
+                } else {
+                    let first: f64 = (terminal / 3.).floor();
+                    [first, first, terminal - 2. * first]
+                };
+                parts.extend([terminal_parts, if probe == 0 { [24., 39., 40.] } else { [85., 9., 9.] }]);
+                let sizes: Vec<_> = parts.into_iter().flatten().map(|w| (w, 12.)).collect();
+                let actual = packed(&sizes, (700., 320.), &params, 0.);
+                let centers = relative_line_centers(&actual, 3, false);
+                let n = centers.len();
+                assert!((centers[n - 1] - centers[n - 2] - step).abs() < 1e-7, "{early:?}/{probe}/{delay}: {centers:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn reverse_current_reference_resets_and_persists_with_mirrored_pairs() {
+        let params = [("bkpt", "fixed"), ("bkPtFixedVal", "2"), ("off", "ctr"), ("contDir", "revDir"), ("grDir", "bR")];
+        for (early, forward, terminal, delay, expected) in [
+            ([105., 106.], [39., 41.], 211_f64, false, [0., 0.]),
+            ([91., 120.], [39., 41.], 211., false, [0., 0.]),
+            ([61., 150.], [39., 41.], 211., false, [-23., -24.]),
+            ([61., 150.], [119., 122.], 241., false, [0., 0.]),
+            ([61., 150.], [39., 41.], 211., true, [-23., -24.]),
+        ] {
+            for (probe, &step) in expected.iter().enumerate() {
+                let mut parts = vec![[57., 63.], [8.; 2], [8.; 2], early, [20.; 2], [8.; 2], forward, [20.; 2], [20.; 2]];
+                if delay {
+                    parts.extend([[20.; 2], [20.; 2]]);
+                }
+                let terminal_parts = if probe == 0 {
+                    [terminal - 173., 173.]
+                } else {
+                    let first: f64 = (terminal / 2.).floor();
+                    [first, terminal - first]
+                };
+                parts.extend([terminal_parts, if probe == 0 { [40., 140.] } else { [174., 6.] }]);
+                let sizes: Vec<_> = parts.into_iter().flatten().map(|w| (w, 11.)).collect();
+                let actual = packed(&sizes, (740., 350.), &params, 0.);
+                let centers = relative_line_centers(&actual, 2, false);
+                let n = centers.len();
+                assert!((centers[n - 1] - centers[n - 2] - step).abs() < 1e-7, "{early:?}/{probe}/{delay}: {centers:?}");
+            }
+        }
     }
 
     #[test]
