@@ -757,6 +757,7 @@ fn table(imp: &mut Imp, part: &Part, tbl: &El) -> Table {
         t.last_col = pr.bool("lastCol").unwrap_or(false);
         t.band_row = pr.bool("bandRow").unwrap_or(false);
         t.band_col = pr.bool("bandCol").unwrap_or(false);
+        t.rtl = pr.bool("rtl");
         if let Some(id) = pr.child("tableStyleId").map(|e| e.text()) {
             // A style the file defines is drawn from its definition (by its GUID).
             // DeckCraft's own styles (written with GUIDs derived from their ids) map back to them.
@@ -805,6 +806,8 @@ fn cell(imp: &mut Imp, part: &Part, tc: &El) -> Cell {
             ]);
         }
         c.anchor = pr.attr("anchor").and_then(Anchor::from_xml);
+        c.anchor_ctr = pr.bool("anchorCtr");
+        c.horz_overflow = pr.attr("horzOverflow").and_then(deckcraft_model::text::TextOverflow::from_horz_xml);
         c.vertical = pr.attr("vert").and_then(TextDir::from_xml);
         for (i, n) in ["lnL", "lnR", "lnT", "lnB"].iter().enumerate() {
             if let Some(ln) = pr.child(n)
