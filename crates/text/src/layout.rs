@@ -379,6 +379,7 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
             default_tab: props.default_tab.unwrap_or(72.0),
             x0_first: first_x,
             x0_rest: rest_x,
+            advances: g.metrics.advance,
         },
     );
     // The first paragraph's space before counts only when the body says so.
@@ -1005,6 +1006,39 @@ mod metric_tests {
             &Opts { rect: Rect::new(0., 0., 300., 500.), fields: &crate::NoFields, prompt_color: None, no_shrink: true },
             metrics,
         )
+    }
+
+    #[test]
+    fn chart_fit_comparisons_round_both_widths_without_changing_other_policies() {
+        let p = document();
+        let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        let mut body = body();
+        body.paragraphs.truncate(1);
+        body.body.wrap = Some(true);
+        body.paragraphs[0].def_props = RunProps { font: Some("Open Sans".into()), size: Some(28.), ..Default::default() };
+        body.paragraphs[0].runs[0].text = "Alpha beta gamma".into();
+        let shape = Shape { text: Some(body.clone()), ..Default::default() };
+        // The first word pair is 140.30078125pt. Original native chart controls
+        // retain it at 140.299pt, but break it at 140.297pt. Existing slide and
+        // diagram policies keep their distinct equality boundaries.
+        for (width, ends) in [(140.297, [5, 5, 5]), (140.299, [10, 5, 5]), (140.30078125, [10, 5, 10])] {
+            for (advance, end) in [AdvanceMetrics::Chart, AdvanceMetrics::Diagram, AdvanceMetrics::DrawingMl].into_iter().zip(ends) {
+                let layout = layout_with_metrics(
+                    &ctx,
+                    &shape,
+                    &body,
+                    &Opts { rect: Rect::new(0., 0., width, 500.), fields: &crate::NoFields, prompt_color: None, no_shrink: true },
+                    LayoutMetrics { advance, line: LineMetrics::Typographic },
+                );
+                assert_eq!(layout.lines[0].end, end, "{advance:?}, width={width}");
+            }
+        }
+        body.body.wrap = Some(false);
+        body.paragraphs[0].runs[0].text = "I".repeat(48);
+        for advance in [AdvanceMetrics::Chart, AdvanceMetrics::Diagram, AdvanceMetrics::DrawingMl] {
+            let layout = measure(&body, LayoutMetrics { advance, line: LineMetrics::Typographic });
+            assert!((layout.content_width - 375.375).abs() < 1e-6, "GPOS painting remains continuous: {advance:?}");
+        }
     }
 
     #[test]

@@ -72,6 +72,9 @@ pub enum AdvanceMetrics {
     #[default]
     DrawingMl,
     Diagram,
+    /// Fine nominal advances, with both sides of a line-fit comparison rounded
+    /// to 1/200pt. Shaped glyph positions retain continuous pair adjustments.
+    Chart,
 }
 
 /// Line sizing policy, separate from glyph advances and authored line spacing.

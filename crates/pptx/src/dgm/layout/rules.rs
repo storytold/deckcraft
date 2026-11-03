@@ -1,6 +1,7 @@
 //! Ordered, bounded numeric-rule search driven by measured text overflow.
 //! Rules replace constraint values/factors, then the entire dependent layout is solved again.
 mod coupled;
+mod linear;
 
 use super::{Data, Instance, MAX_WORK, Placed, constraints, geometry};
 use crate::xml::El;
@@ -424,6 +425,9 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
     let mut entries = Vec::new();
     constraints::collect(tree, geometry::BoxStyle::new(frame), None, &mut entries, &mut work)?;
     let controls = controls(&entries, data, &mut work)?;
+    if let Some(out) = linear::search(tree, frame, data, &entries, &controls, measure, &mut work)? {
+        return Ok(out);
+    }
     let mut changes = constraints::Adjustments::new();
     let mut grown: Vec<(Range, HashSet<usize>, bool)> = Vec::new();
     let mut out = placed(tree, frame, data, &changes, measure, &mut work)?;

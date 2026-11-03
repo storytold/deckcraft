@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-02 (PPTX.45): accumulated map coordinates and centered half-turn
-column labels, with native round-trip failures retained explicitly.
+Updated 2026-11-02 (PPTX.46): staged independent linear text rules, fine chart-label
+advances and bounded geographic cache rebuilding; remaining native differences stay explicit.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -2455,3 +2455,100 @@ controls support local rule evaluation followed by persistent parent allocation,
 height endpoint and state-mutation differences remain. Only source, original code tests
 and documentation are published; native observations and document assets remain private.
 This is not blanket PowerPoint parity or complete LibreOffice replacement.
+
+
+## PPTX.46 — staged linear rules and chart advance precision
+
+### Independent linear text rules
+
+A child's first flow-axis rule resolves before sibling allocations are packed. Later
+height/width/font rules measure the resulting allocation rather than the original box.
+That allocation pass does not run text fitting: fitting there and again at final placement
+shrinks the flow twice. Local trials retain the enclosing cross-axis capacity so that an
+oversized authored height cannot suppress a necessary font reduction. Only the most recent
+intersecting box growth is eligible for release after a later font rule.
+
+The staged path is bounded and applies to independent unrotated rectangular text leaves
+under a linear flow and optional composite ancestors. Referenced constraints, other shape
+text frames and other enclosing algorithms retain the general solver. Selector grouping is
+linear in the collected controls; work accounting covers allocation, scans and searches.
+Original tests cover scope rejection, exhausted work budgets, wrapping after sibling
+allocation, and font reduction within a constrained cross axis.
+
+The paired native geometry matrix contains 1,619 original cases: strict matches within
+0.025pt increase from 1,499 to 1,552, with no previously matching case lost and no error
+increase above 0.025pt. An independent 16-case boundary group improves from zero to eleven;
+its remaining cases include rotated/elliptical text and one 0.042pt size discrepancy.
+The initially tested local-height restoration worsened two boundary cases; preserving cross
+capacity fixes both, and those rejected results remain in private validation notes. A visual
+comparison separately checks text wrapping and container dimensions on representative cases.
+This does not close stateful multi-phase height searches, coupled references or snake abort
+behavior; the 67 nonmatching cases remain failures rather than being removed from the matrix. Sixteen additional
+long-word/font controls are unchanged from the prior implementation: ten match and six still
+fail. They are a separate next-stage investigation, not extra passes in the 1,619-case matrix.
+
+### Rich column-label advances
+
+Rich column labels opt into a distinct chart metric policy: nominal legacy glyph advances
+use 1/200pt precision, while continuous GPOS positions remain unchanged. Line fitting rounds
+both accumulated and available width to 1/200pt for comparisons, without rounding stored
+positions or tab accumulation. Ordinary slide and diagram policies retain their existing
+behavior. Rounding only the available width was independently falsified and is not used.
+
+The integration matches the frozen candidate on all 656 pages in 43 original packages.
+On the 628 retained pages, mean red-text bounding-box RMS changes from 1.812 to 1.792pt and
+background RMS from 1.116 to 1.064pt. On 28 new controls, text RMS changes from 4.388 to
+0.625pt; matching line-band counts increase from seventeen to twenty-one among twenty-one
+changed comparable cases. No previously matching line-band count or text-presence check is
+lost. Forty-eight-glyph painting controls independently reduce center RMS from 0.764 to
+0.054pt for Inter and from 0.484 to 0.042pt for Lato.
+
+Small regressions are still counted: fourteen retained red-text and two retained background
+bounding-box increases at 1.5x, plus one new Lato background increase. All seventeen flagged
+pages were rerendered at 4x; remaining old red increases are at most 0.052pt, and the new Lato
+case increases by 0.087pt against an existing plot-center error. These observations do not
+remove the original counts. Manual placement, non-centered half turns, plot alignment,
+synthetic-font line differences and fractional baseline/hinting differences remain open.
+The rejected first precision candidate broke five Open Sans pages; the final candidate
+restores all five exactly to their previous pixels.
+
+### Geographic cache rebuilding
+
+The model retains the document's provider identity instead of substituting a new provider.
+Binary cache queries use their own explicit entity-type vocabulary, distinct from visible
+schema clear XML. Rebuilt caches use finished raw-DEFLATE streams. Child-enumeration keys
+retain authored type order and multiplicity, and distinguish an absent result from an
+explicitly empty result. Child IDs include boundary-less entities. These query tables are
+preserved rather than inferred from parent edges.
+
+Large ring collections split into at most 4,096 rings per polygon without changing ring
+order. Independent native controls put a hole or island across that split and remain exact.
+The writer bounds provider bytes, total points/rings, entities, lineage and child references,
+metadata, expanded XML and compressed output. Invalid provider values become empty; a
+geometry-only empty-provider cache uses clear XML, while encodable child-query tables retain
+a binary representation. An oversized or unencodable cache falls back to bounded clear
+geometry/lineage; binary-only query tables are omitted in that out-of-budget fallback.
+
+All 24 forced rebuilds pass schema validation. Geometry, bounds, data bindings and child-query
+keys/states survive reopening; existing empty-kind normalization and entity ordering prevent
+a claim of complete raw-model identity. All 102 renderer checks match their frozen references:
+78 original sources, including 73 retained controls, and 24 rebuilt documents compared with
+their original sources. Native PowerPoint rebuilds are separately tested: thirteen of fourteen
+have exactly matching whole-image pixels and map paths. This includes restoring all 638 gray
+background regions in a 641-region control, two multilevel empty/absent-result controls, and
+two hole/island split-boundary controls.
+
+One complex Robinson native rebuild still fails: 7,053 image pixels change, with four old gray
+paths becoming three, while 240 other gray paths and selected blue geometry remain exact.
+Separate causal controls trace this residual to the existing reader rejecting decoded
+polygons whose declared point count differs from the actual count. Seven independent native
+controls accept smaller, larger and zero declarations; the bounded reader repair is a
+separate, not-yet-integrated change. Earlier blank outputs, negative provider/type controls and a failed native hybrid are
+retained as failures. The seventeen rendering threshold sequences and two Albers precision
+failures are unchanged. These tests neither establish every provider/entity-type branch nor
+make unsupported LibreOffice map output a passing reference.
+
+Final local `cargo xtask ci` passes all eight stages with 2,619 tests including doctests.
+The final executable reproduces all 102 frozen map images and 656 chart pages. Eighty selected
+linear/boundary geometries exactly match the full-matrix candidate; its production rule logic
+is unchanged. Native and renderer comparisons retain their distinct acceptance criteria.

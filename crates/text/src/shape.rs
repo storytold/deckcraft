@@ -435,7 +435,7 @@ fn shape_item(
         let nominal = if quantized && g.x_advance != 0 { face.advance(g.gid) * s } else { 0.0 };
         let precision = match advances {
             AdvanceMetrics::DrawingMl => 8.0,
-            AdvanceMetrics::Diagram => 200.0,
+            AdvanceMetrics::Diagram | AdvanceMetrics::Chart => 200.0,
         };
         *w += advance + (nominal * precision).round() / precision - nominal;
         let e = lig.entry(h).or_insert((g.gid, 0));

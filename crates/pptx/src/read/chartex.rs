@@ -266,11 +266,18 @@ fn value_colors(series: &El) -> Option<deckcraft_model::geography::ValueColorSca
 fn geography(g: &El, d: &Data, budget: &mut usize) -> deckcraft_model::geography::Geography {
     use deckcraft_model::geography::{GeoRegion, Geography, decode_ring};
     let mut map = Geography {
+        provider: g
+            .child("geoCache")
+            .and_then(|cache| cache.attr("provider"))
+            .filter(|s| s.len() <= deckcraft_model::geography::MAX_GEO_PROVIDER_BYTES && !s.chars().any(char::is_control))
+            .unwrap_or("")
+            .into(),
         projection: g.attr("projectionType").unwrap_or("").into(),
         viewed_region: g.attr("viewedRegionType").unwrap_or("").into(),
         attribution: g.attr("attribution").unwrap_or("").into(),
         regions: vec![],
         entities: vec![],
+        child_queries: vec![],
     };
     if *budget < 3 {
         return map;
@@ -289,6 +296,7 @@ fn geography(g: &El, d: &Data, budget: &mut usize) -> deckcraft_model::geography
         log::warn!("pptx: geographic hierarchy exceeds the work budget");
         vec![]
     });
+    map.child_queries = child_queries(clear, &map.entities);
     let Some(results) = clear.child("geoDataEntityQueryResults") else { return map };
     for result in results.children_named("geoDataEntityQueryResult").take(4096) {
         let Some(data) = result.child("geoData") else { continue };
@@ -307,7 +315,7 @@ fn geography(g: &El, d: &Data, budget: &mut usize) -> deckcraft_model::geography
                 }
                 let mut rings = Vec::new();
                 let mut valid = true;
-                for ring in encoded.take(4096) {
+                for ring in encoded.take(deckcraft_model::geography::MAX_GEO_POLYGON_RINGS) {
                     if let Some(points) = decode_ring(ring, budget) {
                         rings.push(points);
                     } else {
@@ -337,10 +345,120 @@ fn geography(g: &El, d: &Data, budget: &mut usize) -> deckcraft_model::geography
     map
 }
 
+fn child_queries(clear: &El, entities: &[deckcraft_model::geography::GeoEntity]) -> Vec<deckcraft_model::geography::GeoChildQuery> {
+    use deckcraft_model::geography::{GeoChildQuery, MAX_GEO_CHILD_QUERIES, MAX_GEO_CHILD_REFERENCES, MAX_GEO_QUERY_BYTES};
+    let Some(group) = clear.child("geoChildEntitiesQueryResults") else { return vec![] };
+    let known: std::collections::HashSet<_> = entities.iter().take(4096).map(|e| e.id.as_str()).collect();
+    let (mut references, mut bytes) = (MAX_GEO_CHILD_REFERENCES, MAX_GEO_QUERY_BYTES);
+    let mut result = Vec::new();
+    for row in group.children_named("geoChildEntitiesQueryResult").take(MAX_GEO_CHILD_QUERIES) {
+        let Some(query) = row.child("geoChildEntitiesQuery") else { continue };
+        let Some(id) = query.attr("entityId").filter(|s| !s.is_empty()) else { continue };
+        let Some(entity_id) = child_query_string(id, 2048, &mut bytes) else { continue };
+        let mut valid = true;
+        let child_types = query.child("geoChildTypes").map(|types| {
+            let mut values = Vec::new();
+            for node in types.children_named("entityType").take(65) {
+                if values.len() == 64 {
+                    valid = false;
+                    break;
+                }
+                let Some(value) = child_query_string(&node.text(), 64, &mut bytes) else {
+                    valid = false;
+                    break;
+                };
+                values.push(value);
+            }
+            values
+        });
+        if !valid {
+            continue;
+        }
+        let children = row.child("geoChildEntities").map(|children| {
+            let mut ids = Vec::new();
+            for child in children.children_named("geoHierarchyEntity").take(MAX_GEO_CHILD_REFERENCES + 1) {
+                if references == 0 {
+                    valid = false;
+                    break;
+                }
+                references -= 1;
+                let Some(id) = child.attr("entityId").filter(|id| known.contains(id)) else { continue };
+                let Some(id) = child_query_string(id, 2048, &mut bytes) else {
+                    valid = false;
+                    break;
+                };
+                ids.push(id);
+            }
+            ids
+        });
+        if valid {
+            result.push(GeoChildQuery { entity_id, child_types, children });
+        }
+    }
+    result
+}
+
+fn child_query_string(value: &str, limit: usize, budget: &mut usize) -> Option<String> {
+    if value.len() > limit || value.len() > *budget || value.chars().any(char::is_control) {
+        return None;
+    }
+    *budget -= value.len();
+    Some(value.into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use deckcraft_model::geography::ValueColorPosition as Position;
+
+    #[test]
+    fn geographic_provider_identity_is_document_owned_and_bounded() {
+        let limit = deckcraft_model::geography::MAX_GEO_PROVIDER_BYTES;
+        for (provider, kept) in [("original-cache".to_string(), true), ("p".repeat(limit), true), ("p".repeat(limit + 1), false)] {
+            let xml = format!(r#"<geography><geoCache provider="{provider}"><clear/></geoCache></geography>"#);
+            let doc = crate::xml::parse(xml.as_bytes()).unwrap();
+            let map = geography(&doc.root, &Data::default(), &mut 100);
+            assert_eq!(map.provider, if kept { provider.as_str() } else { "" });
+        }
+        let doc = crate::xml::parse(br#"<geography><geoCache provider="bad&#10;identity"><clear/></geoCache></geography>"#).unwrap();
+        assert!(geography(&doc.root, &Data::default(), &mut 100).provider.is_empty());
+    }
+
+    #[test]
+    fn child_query_keys_empty_results_and_global_reference_budget_are_preserved() {
+        use deckcraft_model::geography::{GeoEntity, MAX_GEO_CHILD_QUERIES, MAX_GEO_CHILD_REFERENCES};
+        let entity = GeoEntity { id: "sparse".into(), ..Default::default() };
+        let doc = crate::xml::parse(br#"<clear><geoChildEntitiesQueryResults>
+          <geoChildEntitiesQueryResult><geoChildEntitiesQuery entityId="parent"><geoChildTypes><entityType>countryRegion</entityType><entityType>CountryRegion</entityType><entityType>countryRegion</entityType></geoChildTypes></geoChildEntitiesQuery><geoChildEntities><geoHierarchyEntity entityId="sparse"/></geoChildEntities></geoChildEntitiesQueryResult>
+          <geoChildEntitiesQueryResult><geoChildEntitiesQuery entityId="parent"/><geoChildEntities/></geoChildEntitiesQueryResult>
+          <geoChildEntitiesQueryResult><geoChildEntitiesQuery entityId="parent"><geoChildTypes/></geoChildEntitiesQuery></geoChildEntitiesQueryResult>
+        </geoChildEntitiesQueryResults></clear>"#).unwrap();
+        let rows = child_queries(&doc.root, std::slice::from_ref(&entity));
+        assert_eq!(rows[0].child_types.as_ref().unwrap(), &["countryRegion", "CountryRegion", "countryRegion"]);
+        assert_eq!(rows[0].children.as_ref().unwrap(), &["sparse"]);
+        assert_eq!((rows[1].child_types.as_ref(), rows[1].children.as_deref()), (None, Some([].as_slice())));
+        assert_eq!((rows[2].child_types.as_deref(), rows[2].children.as_ref()), (Some([].as_slice()), None));
+        let row = |n: usize| {
+            format!(
+                "<geoChildEntitiesQueryResult><geoChildEntitiesQuery entityId='parent'/><geoChildEntities>{}</geoChildEntities></geoChildEntitiesQueryResult>",
+                "<geoHierarchyEntity entityId='sparse'/>".repeat(n)
+            )
+        };
+        let xml = format!(
+            "<clear><geoChildEntitiesQueryResults>{}{}{}</geoChildEntitiesQueryResults></clear>",
+            row(MAX_GEO_CHILD_REFERENCES),
+            row(1),
+            row(0)
+        );
+        let doc = crate::xml::parse(xml.as_bytes()).unwrap();
+        let rows = child_queries(&doc.root, std::slice::from_ref(&entity));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].children.as_ref().unwrap().len(), MAX_GEO_CHILD_REFERENCES);
+        assert_eq!(rows[1].children, Some(vec![]));
+        let xml = format!("<clear><geoChildEntitiesQueryResults>{}</geoChildEntitiesQueryResults></clear>", row(0).repeat(MAX_GEO_CHILD_QUERIES + 1));
+        let doc = crate::xml::parse(xml.as_bytes()).unwrap();
+        assert_eq!(child_queries(&doc.root, &[]).len(), MAX_GEO_CHILD_QUERIES);
+    }
 
     #[test]
     fn map_stops_accept_native_names_and_public_schema_aliases() {

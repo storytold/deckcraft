@@ -2111,3 +2111,52 @@ fn later_font_shrink_can_restore_the_exact_original_size() {
     assert_eq!(out[0].font, Some(8.));
     assert!((out[0].rect.h - 10. * 72. / 25.4).abs() < 1e-6);
 }
+
+#[test]
+fn linear_allocation_remeasures_wrapped_height_before_later_rules() {
+    let data = source();
+    let leaf = "<layoutNode><alg type='tx'/><shape type='rect'/><constrLst>
+        <constr type='w' val='20'/><constr type='h' val='10'/><constr type='primFontSz' val='20'/></constrLst>
+        <ruleLst><rule type='w' val='90'/><rule type='h' val='60'/></ruleLst></layoutNode>";
+    let l = layout(&format!("<layoutNode><alg type='lin'/>{leaf}{leaf}</layoutNode>"));
+    let mm = 72. / 25.4;
+    let mut measure = |items: &[Placed<'_>], kind: MeasureKind| {
+        Ok(items
+            .iter()
+            .map(|p| {
+                let narrow = p.rect.w < 60. * mm;
+                let height = (if narrow { 40. * mm } else { 8. * mm } - p.rect.h).max(0.);
+                height + if kind == MeasureKind::WordWrap { f64::from(narrow) } else { 0. }
+            })
+            .collect())
+    };
+    let out = evaluate_measured(&l, &data, Xfrm::new(0., 0., 100. * mm, 100. * mm), Some(&mut measure)).unwrap();
+    assert_eq!(out.len(), 2);
+    assert!(out.iter().all(|p| p.font == Some(20.)));
+    assert!(out.iter().all(|p| (40. ..=42.).contains(&(p.rect.h / mm))), "heights: {:?}", out.iter().map(|p| p.rect.h / mm).collect::<Vec<_>>());
+    assert!(out.iter().map(|p| p.rect.w).sum::<f64>() <= 100. * mm);
+}
+
+#[test]
+fn linear_font_search_respects_the_enclosing_cross_axis_capacity() {
+    let data = source();
+    let l = layout(
+        "<layoutNode><alg type='lin'/><layoutNode><alg type='tx'/><shape type='rect'/><constrLst>
+        <constr type='w' val='20'/><constr type='h' val='10'/><constr type='primFontSz' val='28'/></constrLst>
+        <ruleLst><rule type='w' val='90'/><rule type='h' val='70'/><rule type='primFontSz' val='10'/></ruleLst>
+        </layoutNode></layoutNode>",
+    );
+    let mm = 72. / 25.4;
+    let mut measure = |items: &[Placed<'_>], kind: MeasureKind| {
+        Ok(items
+            .iter()
+            .map(|p| {
+                (p.font.unwrap_or(28.) * 3. - p.rect.h).max(0.) + if kind == MeasureKind::WordWrap { f64::from(p.rect.w < 60. * mm) } else { 0. }
+            })
+            .collect())
+    };
+    let out = evaluate_measured(&l, &data, Xfrm::new(0., 0., 100. * mm, 25. * mm), Some(&mut measure)).unwrap();
+    assert_eq!(out.len(), 1);
+    assert!(out[0].font.is_some_and(|size| (10. ..28.).contains(&size)));
+    assert!(out[0].rect.h <= 25. * mm);
+}

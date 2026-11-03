@@ -1,5 +1,7 @@
 # DeckCraft roadmap
 
+> **PPTX.46 update 2026-11-02:** Independent linear text rules now resolve around sibling allocation and retain cross-axis capacity for later font searches. The original 1,619-case geometry matrix improves from 1,499 to 1,552 matches without losing a prior match. Rich column labels use fine advances and rounded fit comparisons. Geographic rebuilds preserve provider identity, binary query vocabulary, child-query states and large polygon groups. Coupled rule state, snake abort paths, geographic reduction and other label placement remain partial; feature scores are unchanged.
+
 > **PPTX.45 update 2026-11-02:** Geographic decoding and rebuilding retain accumulated longitudes and explicit long edges; world continuity follows per-region extents. Centered automatic half-turn column labels retain their full unwrapped body and use the authored wrap mode for placement. Stateful diagram search, geographic reduction thresholds and other label modes remain partial; feature scores are unchanged.
 
 > **PPTX.44 update 2026-11-02:** Restored nested snake layouts retain partial placement on overflow, raising the original matrix to 490/491. Geographic paint order follows materialized regions, improving overlap in independent large caches. Explicit axis fonts govern chart geometry; supported column reserves use measured font metrics. Remaining text-rule state, small-frame and rotated-label limits stay explicit; feature scores are unchanged.
@@ -198,6 +200,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-02 | PPTX.46: stage independent text rules around allocation and preserve chart advance precision |
 | 2026-11-02 | PPTX.45: preserve accumulated map coordinates and centered half-turn label bodies |
 | 2026-11-02 | PPTX.44: nested overflow placement, geographic painter ordering and measured column-axis reserves |
 | 2026-11-02 | PPTX.43: measured root fitting, alternating snake centers, sparse geographic extents and rich-label ellipsis alignment |
@@ -414,6 +417,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | PPTX.46: staged linear rules, fine label advances and bounded native geographic cache rebuilding; residual native failures retained |
 | 2026-11-02 | minor | PPTX.45: accumulated geographic longitude/edge preservation and centered automatic half-turn label layout; existing native full-chart rebuild failure retained |
 | 2026-11-02 | minor | PPTX.44: restored-layout early exits, materialized geographic paint order and font-metric axis reserves; independent controls and unresolved failures retained |
 | 2026-11-02 | minor | PPTX.43: measured linear fitting, alternating snake centering, sparse map extents and rich-label ellipsis geometry; explicit incomplete cases retained |

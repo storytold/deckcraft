@@ -5,7 +5,7 @@ use deckcraft_model::Shape;
 use deckcraft_model::chart::ChartLayout;
 use deckcraft_model::resolve::Ctx;
 use deckcraft_model::text::{Align, Anchor, Bullet, Paragraph, Run, RunKind, RunProps, TextBody, TextOverflow};
-use deckcraft_text::{LayoutMetrics, LineMetrics, NoFields, Opts, TextLayout};
+use deckcraft_text::{AdvanceMetrics, LayoutMetrics, LineMetrics, NoFields, Opts, TextLayout};
 
 /// The text box before rotation. Manual dimensions are fixed; automatic dimensions
 /// are a wrapping/overflow budget and shrink to the retained text.
@@ -110,7 +110,13 @@ pub(super) fn position(
 }
 
 fn metrics(typographic: bool) -> LayoutMetrics {
-    LayoutMetrics { line: if typographic { LineMetrics::Typographic } else { LineMetrics::Slide }, ..Default::default() }
+    // Rich Column labels use fine nominal advances for both wrapping and glyph
+    // placement, with rounded line-fit comparisons. This numeric policy is
+    // independent of line height and does not mark the body as a diagram.
+    LayoutMetrics {
+        line: if typographic { LineMetrics::Typographic } else { LineMetrics::Slide },
+        advance: if typographic { AdvanceMetrics::Chart } else { AdvanceMetrics::DrawingMl },
+    }
 }
 
 pub(super) fn measure(ctx: &Ctx, body: &TextBody, width: f64, typographic: bool) -> TextLayout {
@@ -500,6 +506,76 @@ mod tests {
             }
         }
         body
+    }
+
+    #[test]
+    fn rich_label_break_thresholds_use_fine_nominal_advances() {
+        let p = document();
+        let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        // Original native controls distinguish 1/200pt advances from both
+        // continuous metrics and ordinary slide text's 1/8pt advances.
+        for (font, size, text, width, end) in [
+            ("Inter", 30., "Row10", 80., 3),
+            ("Inter", 30., "Row10", 80.042, 3),
+            ("Inter", 30., "Row10", 80.043, 4),
+            ("Inter", 30., "Row10", 80.045, 4),
+            ("Inter", 30., "Row1a", 80., 3),
+            ("Inter", 30., "Row1a", 80.2, 4),
+            ("Inter", 30., "Rowaa", 80., 3),
+            ("Inter", 30., "1111111", 80., 6),
+            ("Lato", 22., "IIIIIIIIX", 55.14, 7),
+            ("Lato", 22., "IIIIIIIIX", 55.3, 8),
+            ("Open Sans", 28., "Alpha beta gamma", 146.297, 5),
+            ("Open Sans", 28., "Alpha beta gamma", 146.299, 10),
+            ("Open Sans", 28., "IIIX", 29.459, 3),
+            ("Open Sans", 28., "IIIX", 29.457, 2),
+        ] {
+            let mut body = rows(size);
+            body.paragraphs.truncate(1);
+            body.paragraphs[0].runs[0].text = text.into();
+            body.paragraphs[0].runs[0].props.font = Some(font.into());
+            let layout = measure(&ctx, &body, width, true);
+            assert_eq!(layout.lines[0].end, end, "{font} {text} at {width}");
+        }
+    }
+
+    #[test]
+    fn rich_label_placed_glyphs_share_measurement_precision() {
+        let p = document();
+        let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        for (font, size, fine, coarse) in [("Inter", 30., 8.055, 8.), ("Lato", 22., 6.16, 6.125)] {
+            let mut body = rows(size);
+            body.paragraphs.truncate(1);
+            body.paragraphs[0].runs[0].text = "I".repeat(48);
+            body.paragraphs[0].runs[0].props.font = Some(font.into());
+            body.body.wrap = Some(false);
+            for (rich_column, advance) in [(true, fine), (false, coarse)] {
+                let layout = placed(&ctx, &body, Rect::new(0., 0., 500., 100.), None, rich_column);
+                let glyphs: Vec<_> = layout.runs.iter().flat_map(|r| r.glyphs.iter()).collect();
+                assert_eq!(glyphs.len(), 48);
+                assert!((glyphs[47].1 - glyphs[0].1 - 47. * advance).abs() < 1e-6, "{font}, rich={rich_column}");
+                assert!((layout.content_width - 48. * advance).abs() < 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn fitted_rich_labels_retain_the_measured_lines() {
+        let p = document();
+        let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        let mut body = rows(28.);
+        body.paragraphs.truncate(1);
+        body.paragraphs[0].runs[0].text = "Alpha beta gamma delta epsilon zeta".into();
+        body.paragraphs[0].runs[0].props.font = Some("Open Sans".into());
+        body.body.vertical_overflow = Some(TextOverflow::Clip);
+        let b = bounds((900., 280.), 12., None).unwrap();
+        let measured = measure(&ctx, &body, b.width, true);
+        let (measured, marker) = overflow(&ctx, &mut body, b.width, b.height, measured);
+        let width = measured.content_width + 6.;
+        let height = measured.content_height + 3.;
+        let result = placed(&ctx, &body, Rect::new(0., 0., width, height), marker.as_ref(), true);
+        assert_eq!(measured.lines.len(), 2);
+        assert_eq!(result.lines.len(), measured.lines.len(), "width={width}, body={}", body.text());
     }
 
     #[test]

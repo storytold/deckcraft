@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_GEO_POINTS: usize = 2_000_000;
 pub const MAX_GEO_RINGS: usize = 100_000;
+pub const MAX_GEO_POLYGON_RINGS: usize = 4096;
+pub const MAX_GEO_PROVIDER_BYTES: usize = 256;
+pub const MAX_GEO_CHILD_QUERIES: usize = 4096;
+pub const MAX_GEO_CHILD_REFERENCES: usize = 20_000;
+pub const MAX_GEO_QUERY_BYTES: usize = 2 << 20;
 /// Compressed rings can accumulate longitude beyond one turn before projection.
 pub const MAX_GEO_LONGITUDE: f64 = 540.;
 const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
@@ -34,6 +39,9 @@ pub enum ValueColorPosition {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Geography {
+    /// Document-owned cache provider identity; an empty value has no native provider.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub provider: String,
     pub projection: String,
     /// Authored viewport scope, e.g. `dataOnly` or `world`; empty means automatic.
     pub viewed_region: String,
@@ -41,6 +49,21 @@ pub struct Geography {
     pub regions: Vec<GeoRegion>,
     /// Document-owned administrative lineage, including ancestors without boundary polygons.
     pub entities: Vec<GeoEntity>,
+    /// Cached child-enumeration keys and results. Parent edges alone do not identify
+    /// which query was cached or distinguish an absent result from an empty one.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub child_queries: Vec<GeoChildQuery>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct GeoChildQuery {
+    pub entity_id: String,
+    /// Preserve the wire vocabulary, order and multiplicity rather than deriving types.
+    pub child_types: Option<Vec<String>>,
+    /// IDs refer to `Geography.entities`, including entities with no boundary geometry.
+    /// `None` is an absent result element; `Some([])` is an explicitly empty result.
+    pub children: Option<Vec<String>>,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]

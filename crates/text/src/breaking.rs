@@ -1,5 +1,5 @@
 use super::style::{Cell, ParaShaped};
-use super::{FontFace, ParaProps};
+use super::{AdvanceMetrics, FontFace, ParaProps};
 
 pub(crate) fn measure_str(face: &FontFace, size: f64, s: &str) -> (f64, Vec<(u32, f64)>) {
     let g = deckcraft_fonts::shape(face, s, &[], |c| c);
@@ -161,10 +161,11 @@ pub(crate) struct BreakParams<'a> {
     pub(crate) default_tab: f64,
     pub(crate) x0_first: f64,
     pub(crate) x0_rest: f64,
+    pub(crate) advances: AdvanceMetrics,
 }
 
 pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> {
-    let BreakParams { first_w, rest_w, wrap, tab_stops, default_tab, x0_first, x0_rest } = *params;
+    let BreakParams { first_w, rest_w, wrap, tab_stops, default_tab, x0_first, x0_rest, advances } = *params;
     let text: String = p.cells.iter().map(|c| c.ch).collect();
     let (allowed, _) = break_opportunities(&text, p.props.latin_line_break.unwrap_or(false));
     let hang = p.props.hanging_punct.unwrap_or(false);
@@ -176,6 +177,11 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
     }
     while start < n {
         let avail = if lines.is_empty() { first_w } else { rest_w };
+        // Chart wrapping compares widths at 1/200pt, including continuous GPOS
+        // advances. Rounding only the available width can rebreak a fitted line.
+        // Keep the actual accumulated width for painting and tab placement.
+        let comparison = |v: f64| if advances == AdvanceMetrics::Chart { (v * 200.).round() / 200. } else { v };
+        let exceeds = |v: f64| comparison(v) > comparison(avail) + 1e-6;
         let x0 = if lines.is_empty() { x0_first } else { x0_rest };
         let mut x = 0.0;
         let mut last_break: Option<usize> = None;
@@ -201,13 +207,13 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
             }
             // Closing East Asian punctuation hangs past the end instead of wrapping
             // (`hangingPunct`); the line breaks after it.
-            if wrap && hang && ea_punct && x + adv > avail + 1e-6 && x <= avail + 1e-6 && is_hanging_punct(c) && i > start {
+            if wrap && hang && ea_punct && exceeds(x + adv) && !exceeds(x) && is_hanging_punct(c) && i > start {
                 end = i + 1;
                 next = i + 1;
                 break;
             }
             // A tab that would run past the end moves to the next line (and to its first stop there).
-            if wrap && c == '\t' && x + adv > avail + 1e-6 && i > start {
+            if wrap && c == '\t' && exceeds(x + adv) && i > start {
                 end = i;
                 next = i;
                 while end > start && p.cells.get(end - 1).is_some_and(|c| c.ch == ' ') {
@@ -215,7 +221,7 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
                 }
                 break;
             }
-            if wrap && x + adv > avail + 1e-6 && !c.is_whitespace() && i > start {
+            if wrap && exceeds(x + adv) && !c.is_whitespace() && i > start {
                 // Break at the last opportunity, or force mid-word (between clusters).
                 let b = last_break
                     .filter(|b| *b > start)

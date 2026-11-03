@@ -88,6 +88,7 @@ fn geographic_polygons_survive_rebuild_match_ids_and_render_holes() {
                 ..Default::default()
             },
         ],
+        ..Default::default()
     };
     c.series = vec![Series {
         values: vec![Some(1.), Some(9.)],
@@ -434,6 +435,95 @@ fn compressed_geographic_cache_matches_clear_geometry_and_render_after_rebuild()
         assert!(expected.pixels == actual.pixels, "binary and clear cache images differ");
         assert_eq!(chart(&rebuilt(&back)).series[0].geography, chart(&clear).series[0].geography);
     }
+}
+
+#[test]
+fn document_provider_and_binary_query_keys_survive_forced_rebuild() {
+    use base64::Engine as _;
+    use deckcraft_model::geography::{GeoChildQuery, GeoEntity};
+    use std::io::Read as _;
+    let geography = Geography {
+        provider: "contributor.original.cache".into(),
+        projection: "miller".into(),
+        viewed_region: "world".into(),
+        entities: vec![
+            GeoEntity {
+                id: "original-leaf".into(),
+                name: "Original leaf".into(),
+                kind: "countryRegion".into(),
+                parents: vec!["original-parent".into()],
+            },
+            GeoEntity { id: "original-parent".into(), kind: "countryRegions".into(), ..Default::default() },
+            GeoEntity { id: "original-sparse".into(), kind: "ocean".into(), parents: vec!["original-parent".into()], ..Default::default() },
+        ],
+        child_queries: vec![
+            GeoChildQuery {
+                entity_id: "original-parent".into(),
+                child_types: Some(vec!["countryRegion".into(), "ocean".into(), "countryRegion".into()]),
+                children: Some(vec!["original-leaf".into(), "original-sparse".into(), "original-leaf".into()]),
+            },
+            GeoChildQuery { entity_id: "original-parent".into(), child_types: None, children: Some(vec![]) },
+            GeoChildQuery { entity_id: "original-parent".into(), child_types: Some(vec![]), children: None },
+        ],
+        regions: vec![GeoRegion {
+            entity_id: "original-leaf".into(),
+            name: "Original leaf".into(),
+            point: Some(0),
+            bounds: Some([-180., -80., 180., 80.]),
+            rings: vec![vec![[-232., 21.], [-226., 21.], [-231., 26.], [-232., 21.]]],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let mut c = base(ChartType::RegionMap);
+    c.categories = vec!["Original leaf".into()];
+    c.series = vec![Series { values: vec![Some(8.)], geography: Some(geography.clone()), ..Default::default() }];
+    let mut p = original();
+    append(&mut p, c);
+    let back = rebuilt(&p);
+    assert_eq!(chart(&back).series[0].geography.as_ref(), Some(&geography));
+    let xml = chart(&back).raw.as_ref().unwrap();
+    assert!(xml.contains(r#"provider="contributor.original.cache""#));
+    let encoded = xml.split_once("<cx:binary>").unwrap().1.split_once("</cx:binary>").unwrap().0;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).unwrap();
+    let mut clear = String::new();
+    flate2::read::DeflateDecoder::new(bytes.as_slice()).read_to_string(&mut clear).unwrap();
+    assert!(clear.contains(r#"entityType="countryRegion""#));
+    assert!(clear.contains(r#"entityType="countryRegions""#));
+    assert!(!clear.contains(r#"entityType="CountryRegion""#));
+    let before = render_slide(&p, 0, &RenderOpts::default());
+    let after = render_slide(&back, 0, &RenderOpts::default());
+    assert!(before.pixels == after.pixels);
+}
+
+#[test]
+fn many_island_rings_survive_polygon_chunking_and_forced_rebuild() {
+    use deckcraft_model::geography::{GeoEntity, MAX_GEO_POLYGON_RINGS};
+    let rings = vec![vec![[0., 0.], [1., 0.], [0., 1.], [0., 0.]]; MAX_GEO_POLYGON_RINGS + 1];
+    let map = Geography {
+        provider: "original.island.cache".into(),
+        entities: vec![GeoEntity {
+            id: "original-islands".into(),
+            name: "Original islands".into(),
+            kind: "countryRegion".into(),
+            ..Default::default()
+        }],
+        regions: vec![GeoRegion {
+            entity_id: "original-islands".into(),
+            name: "Original islands".into(),
+            point: Some(0),
+            rings,
+            bounds: Some([0., 0., 1., 1.]),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let mut c = base(ChartType::RegionMap);
+    c.categories = vec!["Original islands".into()];
+    c.series = vec![Series { values: vec![Some(1.)], geography: Some(map.clone()), ..Default::default() }];
+    let mut p = original();
+    append(&mut p, c);
+    assert_eq!(chart(&rebuilt(&p)).series[0].geography.as_ref(), Some(&map));
 }
 
 #[test]

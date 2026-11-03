@@ -346,3 +346,55 @@ fn automatic_half_turns_keep_the_full_unwrapped_body_for_every_overflow_policy()
         assert!(images.windows(2).all(|pair| pair[0] == pair[1]), "half-turn policy/sign invariance, wrap={wrap}");
     }
 }
+
+#[test]
+fn rich_column_advances_control_wrapping_and_painted_width_after_rebuild() {
+    for (font, size, text, width, wrap, expected_width) in [
+        ("Inter", 30., "Row10".into(), 400., true, 67.845),
+        ("Inter", 30., "Row10".into(), 400.225, true, 80.045),
+        ("Inter", 30., "Row1a".into(), 400., true, 67.845),
+        ("Lato", 22., "IIIIIIIIX".into(), 275.7, true, 49.12),
+        ("Lato", 22., "IIIIIIIIX".into(), 276.5, true, 55.28),
+        ("Inter", 30., "I".repeat(48), 960., false, 392.64),
+        ("Lato", 22., "I".repeat(48), 960., false, 301.68),
+    ] {
+        let mut p = original(Some(TextOverflow::Overflow));
+        let shape = &mut Arc::make_mut(&mut p.slides[0]).shapes[0];
+        shape.xfrm = Some(Xfrm::new(0., 0., width, 360.));
+        let ShapeKind::Chart(chart) = &mut shape.kind else { panic!("chart") };
+        chart.y_min = Some(0.);
+        chart.series[0].values = vec![Some(9.)];
+        chart.format.plot_layout = Some(ChartLayout {
+            inner: true,
+            x: Some(0.1),
+            y: Some(0.15),
+            w: Some(0.7),
+            h: Some(0.65),
+            x_edge: true,
+            y_edge: true,
+            ..Default::default()
+        });
+        let label = chart.series[0].point_labels.get_mut(&0).unwrap();
+        label.fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 255, 0))));
+        let body = label.text.as_mut().unwrap();
+        body.body.wrap = Some(wrap);
+        body.paragraphs.truncate(1);
+        body.paragraphs[0].runs[0].text = text.clone();
+        body.paragraphs[0].runs[0].props.font = Some(font.into());
+        body.paragraphs[0].runs[0].props.size = Some(size);
+        let back = rebuilt(&p);
+        let image = render_slide(&back, 0, &RenderOpts { scale: 4., ..Default::default() });
+        let columns: Vec<_> = image
+            .pixels
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(_, px)| px[0] > 200 && px[1] > 200 && px[2] < 40)
+            .map(|(i, _)| i as u32 % image.width)
+            .collect();
+        let painted_width = (columns.iter().max().unwrap() - columns.iter().min().unwrap() + 1) as f64 / 4.;
+        assert!((painted_width - expected_width).abs() <= 0.5, "{font} {text}, width={width}: painted width {painted_width}");
+        assert!(painted_bounds(&back, false).is_some());
+        let ShapeKind::Chart(chart) = &back.slides[0].shapes[0].kind else { panic!("chart") };
+        assert_eq!(chart.series[0].point_labels[&0].text.as_ref().unwrap().text(), text);
+    }
+}

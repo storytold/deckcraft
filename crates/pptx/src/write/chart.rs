@@ -1365,14 +1365,67 @@ fn write_geography(w: &mut W, g: &deckcraft_model::geography::Geography) {
             .a("cultureRegion", "US")
             .a("attribution", &g.attribution),
     );
-    w.open("cx:geoCache", A::new().a("provider", "DeckCraft"));
-    w.open0("cx:clear");
+    let provider = g.provider.as_str();
+    let provider =
+        if provider.len() <= deckcraft_model::geography::MAX_GEO_PROVIDER_BYTES && !provider.chars().any(char::is_control) { provider } else { "" };
+    w.open("cx:geoCache", A::new().a("provider", provider));
+    let binary = if provider.is_empty() && g.child_queries.is_empty() {
+        None
+    } else {
+        let mut cache = W::frag();
+        write_geo_cache(&mut cache, g, true);
+        encode_geo_cache(&cache.s)
+    };
+    if let Some(binary) = binary {
+        w.elt("cx:binary", &binary);
+    } else {
+        let mut clear = W::frag();
+        write_geo_cache(&mut clear, g, false);
+        w.raw(&clear.s);
+    }
+    w.close("cx:geoCache");
+    w.close("cx:geography");
+    w.close("cx:layoutPr");
+}
+
+const MAX_GEO_CACHE_XML: usize = 32 << 20;
+const MAX_GEO_CACHE_COMPRESSED: usize = 8 << 20;
+
+fn encode_geo_cache(xml: &str) -> Option<String> {
+    encode_geo_cache_with_limits(xml, MAX_GEO_CACHE_XML, MAX_GEO_CACHE_COMPRESSED)
+}
+
+fn encode_geo_cache_with_limits(xml: &str, expanded_limit: usize, compressed_limit: usize) -> Option<String> {
+    use base64::Engine as _;
+    use std::io::Write as _;
+    // Match the bounded decoder's expanded and compressed cache limits.
+    if xml.len() > expanded_limit {
+        return None;
+    }
+    let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(xml.as_bytes()).ok()?;
+    let bytes = encoder.finish().ok()?;
+    (bytes.len() <= compressed_limit).then(|| base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+fn geo_cache_room<'a>(w: &W, text: impl IntoIterator<Item = &'a str>, encoded: usize) -> bool {
+    // Attribute escaping expands each byte at most sixfold. Reserve markup, numeric
+    // attributes and closing tags before copying any document-owned text into XML.
+    let text = text.into_iter().fold(0usize, |n, s| n.saturating_add(s.len().saturating_mul(6)));
+    w.s.len().saturating_add(encoded).saturating_add(text).saturating_add(4096) <= MAX_GEO_CACHE_XML
+}
+
+fn write_geo_cache(w: &mut W, g: &deckcraft_model::geography::Geography, binary: bool) {
+    w.open("cx:clear", A::new().o("xmlns:cx", binary.then_some(NS_CX)));
     w.open0("cx:geoDataEntityQueryResults");
     let mut budget = deckcraft_model::geography::MAX_GEO_POINTS;
+    let mut ring_budget = deckcraft_model::geography::MAX_GEO_RINGS;
+    let mut polygon_id = 0usize;
     let kinds: std::collections::HashMap<_, _> = g.entities.iter().take(4096).map(|e| (e.id.as_str(), e.kind.as_str())).collect();
     for region in g.regions.iter().take(4096) {
         let mut rings = Vec::new();
-        for ring in region.rings.iter().take(deckcraft_model::geography::MAX_GEO_RINGS) {
+        for ring in region.rings.iter().take(ring_budget) {
+            ring_budget -= 1;
             if ring.len() > budget {
                 break;
             }
@@ -1387,6 +1440,13 @@ fn write_geography(w: &mut W, g: &deckcraft_model::geography::Geography) {
         if rings.is_empty() && authored.is_none() {
             continue;
         }
+        let text = [region.entity_id.as_str(), region.entity_id.as_str(), region.name.as_str()]
+            .into_iter()
+            .chain(region.copyrights.iter().take(64).map(String::as_str));
+        let encoded = rings.iter().map(|(s, _)| s.len() + 1).sum();
+        if !geo_cache_room(w, text, encoded) {
+            continue;
+        }
         let (mut west, mut east, mut north, mut south) = (180f64, -180f64, -90f64, 90f64);
         for (_, ring) in &rings {
             for &[x, y] in *ring {
@@ -1397,7 +1457,7 @@ fn write_geography(w: &mut W, g: &deckcraft_model::geography::Geography) {
             }
         }
         w.open0("cx:geoDataEntityQueryResult");
-        let kind = geo_entity_kind(kinds.get(region.entity_id.as_str()).copied().unwrap_or(""));
+        let kind = geo_cache_entity_kind(kinds.get(region.entity_id.as_str()).copied().unwrap_or(""), binary);
         w.empty("cx:geoDataEntityQuery", A::new().a("entityType", kind).a("entityId", &region.entity_id));
         if let Some([w, s, e, n]) = authored {
             (west, south, east, north) = (w, s, e, n);
@@ -1414,14 +1474,17 @@ fn write_geography(w: &mut W, g: &deckcraft_model::geography::Geography) {
         );
         if !rings.is_empty() {
             w.open0("cx:geoPolygons");
-            let count: usize = rings.iter().map(|(_, r)| r.len()).sum();
-            let encoded = format!("0,{}", rings.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join(","));
-            w.empty("cx:geoPolygon", A::new().a("polygonId", &region.entity_id).a("numPoints", count).a("pcaRings", encoded));
+            for chunk in rings.chunks(deckcraft_model::geography::MAX_GEO_POLYGON_RINGS) {
+                let count: usize = chunk.iter().map(|(_, r)| r.len()).sum();
+                let encoded = format!("0,{}", chunk.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join(","));
+                w.empty("cx:geoPolygon", A::new().a("polygonId", polygon_id).a("numPoints", count).a("pcaRings", encoded));
+                polygon_id += 1;
+            }
             w.close("cx:geoPolygons");
         }
         if !region.copyrights.is_empty() {
             w.open0("cx:copyrights");
-            for text in &region.copyrights {
+            for text in region.copyrights.iter().take(64) {
                 w.elt("cx:copyright", text);
             }
             w.close("cx:copyrights");
@@ -1430,29 +1493,102 @@ fn write_geography(w: &mut W, g: &deckcraft_model::geography::Geography) {
         w.close("cx:geoDataEntityQueryResult");
     }
     w.close("cx:geoDataEntityQueryResults");
-    write_geo_lineage(w, &g.entities);
+    if binary {
+        write_geo_child_queries(w, g);
+    }
+    write_geo_lineage(w, &g.entities, binary);
     w.close("cx:clear");
-    w.close("cx:geoCache");
-    w.close("cx:geography");
-    w.close("cx:layoutPr");
 }
 
-fn write_geo_lineage(w: &mut W, entities: &[deckcraft_model::geography::GeoEntity]) {
+fn write_geo_child_queries(w: &mut W, g: &deckcraft_model::geography::Geography) {
+    use deckcraft_model::geography::{MAX_GEO_CHILD_QUERIES, MAX_GEO_CHILD_REFERENCES, MAX_GEO_QUERY_BYTES};
+    if g.child_queries.is_empty() {
+        return;
+    }
+    let entities: std::collections::HashMap<_, _> = g.entities.iter().take(4096).map(|e| (e.id.as_str(), e)).collect();
+    let (mut references, mut bytes) = (MAX_GEO_CHILD_REFERENCES, MAX_GEO_QUERY_BYTES);
+    w.open0("cx:geoChildEntitiesQueryResults");
+    for query in g.child_queries.iter().take(MAX_GEO_CHILD_QUERIES) {
+        let types = query.child_types.as_deref().unwrap_or_default();
+        let valid = |s: &str, limit| s.len() <= limit && !s.chars().any(char::is_control);
+        if query.entity_id.is_empty() || !valid(&query.entity_id, 2048) || types.len() > 64 || types.iter().any(|s| !valid(s, 64)) {
+            continue;
+        }
+        let mut size = query.entity_id.len() + types.iter().map(String::len).sum::<usize>();
+        let mut children = Vec::new();
+        let mut complete = true;
+        if let Some(ids) = &query.children {
+            for id in ids.iter().take(MAX_GEO_CHILD_REFERENCES + 1) {
+                if references == 0 {
+                    complete = false;
+                    break;
+                }
+                references -= 1;
+                if !valid(id, 2048) {
+                    continue;
+                }
+                if let Some(entity) = entities.get(id.as_str()) {
+                    size = size.saturating_add(id.len()).saturating_add(entity.name.len()).saturating_add(entity.kind.len());
+                    children.push(*entity);
+                }
+            }
+        }
+        if !complete || size > bytes {
+            continue;
+        }
+        bytes -= size;
+        let mut body = W::frag();
+        body.open0("cx:geoChildEntitiesQueryResult");
+        body.open("cx:geoChildEntitiesQuery", A::new().a("entityId", &query.entity_id));
+        if let Some(types) = &query.child_types {
+            body.open0("cx:geoChildTypes");
+            for kind in types {
+                body.elt("cx:entityType", kind);
+            }
+            body.close("cx:geoChildTypes");
+        }
+        body.close("cx:geoChildEntitiesQuery");
+        if query.children.is_some() {
+            body.open0("cx:geoChildEntities");
+            for entity in children {
+                if !geo_cache_room(&body, [entity.id.as_str(), entity.name.as_str()], 0) {
+                    complete = false;
+                    break;
+                }
+                body.empty(
+                    "cx:geoHierarchyEntity",
+                    A::new().a("entityId", &entity.id).a("entityName", &entity.name).a("entityType", geo_cache_entity_kind(&entity.kind, true)),
+                );
+            }
+            body.close("cx:geoChildEntities");
+        }
+        body.close("cx:geoChildEntitiesQueryResult");
+        if complete && geo_cache_room(w, [], body.s.len()) {
+            w.raw(&body.s);
+        }
+    }
+    w.close("cx:geoChildEntitiesQueryResults");
+}
+
+fn write_geo_lineage(w: &mut W, entities: &[deckcraft_model::geography::GeoEntity], binary: bool) {
     if entities.is_empty() {
         return;
     }
     w.open0("cx:geoParentEntitiesQueryResults");
     let mut budget = 20000usize;
     for entity in entities.iter().take(4096) {
-        let parents: Vec<_> = if entity.parents.is_empty() { vec![None] } else { entity.parents.iter().take(budget).map(Some).collect() };
-        for parent in parents {
-            if budget == 0 {
-                break;
-            }
+        if budget == 0 {
+            break;
+        }
+        let parents = entity.parents.iter().map(Some).chain(entity.parents.is_empty().then_some(None));
+        for parent in parents.take(budget) {
             budget -= 1;
+            if !geo_cache_room(w, [entity.id.as_str(), entity.name.as_str(), parent.map_or("", String::as_str)], 0) {
+                continue;
+            }
             w.open0("cx:geoParentEntitiesQueryResult");
             w.empty("cx:geoParentEntitiesQuery", A::new().a("entityId", &entity.id));
-            w.empty("cx:geoEntity", A::new().a("entityName", &entity.name).a("entityType", geo_entity_kind(&entity.kind)));
+            w.empty("cx:geoEntity", A::new().a("entityName", &entity.name).a("entityType", geo_cache_entity_kind(&entity.kind, binary)));
             if let Some(parent) = parent {
                 w.empty("cx:geoParentEntity", A::new().a("entityId", parent));
             }
@@ -1460,6 +1596,31 @@ fn write_geo_lineage(w: &mut W, entities: &[deckcraft_model::geography::GeoEntit
         }
     }
     w.close("cx:geoParentEntitiesQueryResults");
+}
+
+fn geo_cache_entity_kind(kind: &str, binary: bool) -> &'static str {
+    if !binary {
+        return geo_entity_kind(kind);
+    }
+    // Binary cache query keys use a different vocabulary from visible clear XML's
+    // ST_EntityType. Changing their case makes native consumers miss cached geometry.
+    if kind.eq_ignore_ascii_case("countryRegions") {
+        return "countryRegions";
+    }
+    match geo_entity_kind(kind) {
+        "Address" => "address",
+        "AdminDistrict" => "adminDistrict",
+        "AdminDistrict2" => "adminDistrict2",
+        "AdminDistrict3" => "adminDistrict3",
+        "Continent" => "continent",
+        "CountryRegion" => "countryRegion",
+        "Locality" => "locality",
+        "Ocean" => "ocean",
+        "Planet" => "planet",
+        "PostalCode" => "postalCode",
+        "Unsupported" => "unsupported",
+        _ => "region",
+    }
 }
 
 fn geo_entity_kind(kind: &str) -> &'static str {
@@ -1481,4 +1642,38 @@ fn geo_entity_kind(kind: &str) -> &'static str {
     .into_iter()
     .find(|name| name.eq_ignore_ascii_case(kind))
     .unwrap_or("Region")
+}
+
+#[cfg(test)]
+mod geographic_cache_tests {
+    use super::*;
+    use deckcraft_model::geography::{GeoRegion, Geography, MAX_GEO_PROVIDER_BYTES};
+
+    #[test]
+    fn invalid_model_providers_fall_back_to_well_formed_clear_xml() {
+        for provider in [String::new(), "bad\nidentity".into(), "bad\0identity".into(), "p".repeat(MAX_GEO_PROVIDER_BYTES + 1)] {
+            let map = Geography { provider, ..Default::default() };
+            let mut w = W::frag();
+            write_geography(&mut w, &map);
+            let doc = crate::xml::parse(w.s.as_bytes()).unwrap();
+            let cache = doc.root.path(&["geography", "geoCache"]).unwrap();
+            assert_eq!(cache.attr("provider"), Some(""));
+            assert!(cache.child("clear").is_some() && cache.child("binary").is_none());
+        }
+    }
+
+    #[test]
+    fn cache_encoding_and_intermediate_metadata_respect_budgets() {
+        assert!(encode_geo_cache_with_limits("<clear/>", 7, 100).is_none());
+        assert!(encode_geo_cache_with_limits("<clear/>", 100, 1).is_none());
+        assert!(encode_geo_cache_with_limits("<clear/>", 100, 100).is_some());
+        let map = Geography {
+            regions: vec![GeoRegion { name: "&".repeat(MAX_GEO_CACHE_XML / 6), bounds: Some([-1., -1., 1., 1.]), ..Default::default() }],
+            ..Default::default()
+        };
+        let mut w = W::frag();
+        write_geography(&mut w, &map);
+        assert!(w.s.len() < 1024, "oversized escaped metadata must be rejected before copying");
+        assert!(crate::xml::parse(w.s.as_bytes()).is_ok());
+    }
 }
