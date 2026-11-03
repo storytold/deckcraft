@@ -196,3 +196,45 @@ fn extra_colours_are_listed_added_and_removed() {
     let status = h.state().status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
     assert!(status.contains("needs a name"), "{status}");
 }
+
+/// An extra colour's explicit tint rows follow its row through a rename, and through the removal
+/// of a row above it; a row added in the dialog has none.
+#[test]
+fn renaming_or_removing_extra_colours_keeps_the_others_tint_rows() {
+    use serde_json::json;
+    let sand = vec!["#C7EBBA", "#0D4A21"];
+    let navy = vec!["#000061"];
+    let extras = json!([{"name": "Sand", "color": "#EBE5E0", "tints": sand}, {"name": "Navy", "color": "#000061", "tints": navy}]);
+    let mut h = harness();
+    h.state_mut().session.execute("design.colors", &json!({"extra": extras})).unwrap();
+    h.run_steps(2);
+    open_dialog(&mut h);
+    h.state_mut().dialog.as_mut().unwrap().fields.insert("extra.0.name".into(), "Beach".into());
+    h.get_by_label("Add colour").click();
+    h.run_steps(2);
+    {
+        let d = h.state_mut().dialog.as_mut().unwrap();
+        d.fields.insert("extra.2.name".into(), "Mint".into());
+        d.fields.insert("extra.2.color".into(), "#A0FFC0".into());
+    }
+    h.get_by_label("Save").click();
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none(), "status: {:?}", h.state().status);
+    let extra = scheme(&h).extra;
+    let rows = |e: &deckcraft_color::ExtraColor| e.tints.as_ref().map(|t| t.iter().map(|c| format!("#{}", c.hex())).collect::<Vec<_>>());
+    assert_eq!(extra.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["Beach", "Navy", "Mint"]);
+    assert_eq!(rows(&extra[0]).as_deref(), Some(&["#C7EBBA".to_string(), "#0D4A21".to_string()][..]), "renamed: rows kept");
+    assert_eq!(rows(&extra[1]).as_deref(), Some(&["#000061".to_string()][..]));
+    assert_eq!(rows(&extra[2]), None, "an added colour has no rows");
+    // Remove the first row: the second keeps its own rows, not the first's.
+    open_dialog(&mut h);
+    h.get_by_label("Remove extra colour 1").click();
+    h.run_steps(2);
+    h.get_by_label("Save").click();
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none(), "status: {:?}", h.state().status);
+    let extra = scheme(&h).extra;
+    assert_eq!(extra.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["Navy", "Mint"]);
+    assert_eq!(rows(&extra[0]).as_deref(), Some(&["#000061".to_string()][..]), "removal above: rows kept");
+    assert_eq!(rows(&extra[1]), None);
+}

@@ -17,6 +17,9 @@ fn seed_theme_colors(d: &mut Dialog) {
     for (i, e) in extra.iter().enumerate() {
         d.fields.insert(format!("extra.{i}.name"), e.get("name").and_then(Value::as_str).unwrap_or("").to_string());
         d.fields.insert(format!("extra.{i}.color"), e.get("color").and_then(Value::as_str).unwrap_or("000000").to_string());
+        // Which of the scheme's extra colours the row edits: its tint rows follow it through a
+        // rename or the removal of a row above (an added row has none).
+        d.fields.insert(format!("extra.{i}.from"), i.to_string());
     }
     d.fields.insert("seeded".into(), "1".into());
 }
@@ -73,17 +76,23 @@ fn extra_color_rows(ui: &mut Ui, d: &mut Dialog) {
     });
     if let Some(r) = remove {
         for i in r..n.saturating_sub(1) {
-            for k in ["name", "color"] {
-                let next = d.fields.get(&format!("extra.{}.{k}", i + 1)).cloned().unwrap_or_default();
-                d.fields.insert(format!("extra.{i}.{k}"), next);
+            for k in ["name", "color", "from"] {
+                match d.fields.get(&format!("extra.{}.{k}", i + 1)).cloned() {
+                    Some(next) => d.fields.insert(format!("extra.{i}.{k}"), next),
+                    None => d.fields.remove(&format!("extra.{i}.{k}")),
+                };
             }
         }
         n = n.saturating_sub(1);
         d.fields.insert("extraCount".into(), n.to_string());
+        for k in ["name", "color", "from"] {
+            d.fields.remove(&format!("extra.{n}.{k}"));
+        }
     }
     if ui.button("Add colour").clicked() && n < deckcraft_color::MAX_EXTRA_COLORS {
         d.fields.insert(format!("extra.{n}.name"), String::new());
         d.fields.insert(format!("extra.{n}.color"), "000000".into());
+        d.fields.remove(&format!("extra.{n}.from"));
         d.fields.insert("extraCount".into(), (n + 1).to_string());
     }
     let mut computed = d.get("computedTints", "1") == "1";
@@ -125,8 +134,9 @@ fn theme_color_payload(d: &mut Dialog) -> Result<Value, String> {
         };
         colors.insert(slot.xml_name().into(), Value::String(format!("#{}", rgb.hex())));
     }
-    // Extra colours as edited; a colour that kept its name keeps its explicit tint rows, and the
-    // slots' tint rows pass through untouched (the dialog does not edit them).
+    // Extra colours as edited; a row seeded from one of the scheme's keeps that colour's explicit
+    // tint rows (`extra.N.from`, whatever its name is now), and the slots' tint rows pass through
+    // untouched (the dialog does not edit them).
     let before = d.params.get("extra").and_then(Value::as_array).cloned().unwrap_or_default();
     let mut extra = Vec::new();
     for i in 0..extra_count(d) {
@@ -139,10 +149,7 @@ fn theme_color_payload(d: &mut Dialog) -> Result<Value, String> {
             return Err(format!("{name} needs a colour like #RRGGBB."));
         };
         let mut e = json!({"name": name, "color": format!("#{}", rgb.hex())});
-        if let Some(t) = before
-            .iter()
-            .find(|b| b.get("name").and_then(Value::as_str).is_some_and(|n| n.trim().eq_ignore_ascii_case(&name)))
-            .and_then(|b| b.get("tints"))
+        if let Some(t) = d.fields.get(&format!("extra.{i}.from")).and_then(|f| f.parse::<usize>().ok()).and_then(|f| before.get(f)?.get("tints"))
             && let Some(o) = e.as_object_mut()
         {
             o.insert("tints".into(), t.clone());

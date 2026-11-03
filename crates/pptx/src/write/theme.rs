@@ -54,9 +54,10 @@ fn extra_colors(w: &mut W, c: &ColorScheme) {
     w.close("a:extLst");
 }
 
+/// A tint list, cut to `MAX_TINT_ROWS` like the reader takes it (and the galleries show it).
 fn rows(w: &mut W, a: A, tints: &[deckcraft_color::Rgba]) {
     w.open("dc:tints", a);
-    for t in tints {
+    for t in tints.iter().take(deckcraft_color::MAX_TINT_ROWS) {
         w.val("dc:clr", t.hex());
     }
     w.close("dc:tints");

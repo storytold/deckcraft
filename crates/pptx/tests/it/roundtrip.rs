@@ -2068,6 +2068,24 @@ fn default_durations_match_powerpoint() {
     }
 }
 
+/// Tint lists over `MAX_TINT_ROWS` (a model built by hand; `design.colors` refuses them) are cut
+/// to the limit on save, as the reader and the galleries cut them.
+#[test]
+fn tint_rows_beyond_the_limit_are_cut_the_same_way_on_save_and_load() {
+    use deckcraft_color::{ExtraColor, MAX_TINT_ROWS, Rgba};
+    let mut p = defaults::new_presentation(None);
+    let long: Vec<Rgba> = (0..MAX_TINT_ROWS + 3).map(|i| Rgba::rgb(i as u8, 0, 0)).collect();
+    {
+        let c = &mut Arc::make_mut(&mut p.masters[0]).theme.colors;
+        c.tints.insert(SchemeSlot::Accent1, long.clone());
+        c.extra.push(ExtraColor { name: "Long".into(), color: Rgba::rgb(1, 2, 3), tints: Some(long.clone()) });
+    }
+    let q = round(&p);
+    let c = &q.masters[0].theme.colors;
+    assert_eq!(c.tints.get(&SchemeSlot::Accent1).map(Vec::as_slice), Some(&long[..MAX_TINT_ROWS]));
+    assert_eq!(c.extra[0].tints.as_deref(), Some(&long[..MAX_TINT_ROWS]));
+}
+
 #[test]
 fn extra_colours_beyond_the_limit_are_cut_the_same_way_on_save_and_load() {
     use deckcraft_color::MAX_EXTRA_COLORS;
