@@ -93,7 +93,8 @@ impl Package {
                 }
             }
             total = total.saturating_add(data.len() as u64);
-            parts.insert(name.to_ascii_lowercase(), (name, data));
+            // A name kept with `\` would reach code that splits paths on `/`.
+            parts.insert(norm(&name), (name.replace('\\', "/"), data));
         }
         Ok(Package { parts, ct_cache: std::sync::OnceLock::new() })
     }
@@ -497,6 +498,14 @@ mod tests {
         // With room to spare the same small part is kept.
         let p = Package::open_within(&z, 1000, 100, 10_000).unwrap();
         assert!(p.get("e").is_some());
+    }
+
+    #[test]
+    fn backslash_zip_entry_names_are_found() {
+        let z = zip_of(&[("PPT\\Slides\\Slide1.xml", 3)]);
+        let p = Package::open(&z).unwrap();
+        assert!(p.get("ppt/slides/slide1.xml").is_some());
+        assert_eq!(p.original_name("ppt/slides/slide1.xml"), Some("PPT/Slides/Slide1.xml"));
     }
 
     #[test]

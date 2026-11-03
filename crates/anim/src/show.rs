@@ -58,6 +58,9 @@ pub struct ShowState {
     pub playing: bool,
     /// On the end screen.
     pub ended: bool,
+    /// The current slide was reached by going back (← / Backspace), so the show plays the
+    /// transition of the slide it left, in reverse, as PowerPoint does (#1531).
+    pub backward: bool,
     /// The show has entered a slide (so `slide` and `step` are meaningful and can be saved).
     active: bool,
     /// The time of the last [`ShowState::tick`] (seconds), for the triggered animations' clocks.
@@ -208,6 +211,7 @@ impl ShowState {
         self.active = true;
         self.slide = i;
         self.ended = false;
+        self.backward = false;
         // Time spent elsewhere never counts for this slide's triggered animations.
         self.last_now = None;
         let steps = ShowState::steps(pres, i);
@@ -309,6 +313,7 @@ impl ShowState {
             }
             self.step = ShowState::steps(pres, self.slide);
             self.playing = false;
+            self.backward = false;
             return ShowAction::Slide(self.slide);
         }
         // #844: undoing the automatic first step left the slide as before it appeared, and the show
@@ -337,6 +342,7 @@ impl ShowState {
                     self.step = ShowState::steps(pres, i);
                     self.playing = false;
                 }
+                self.backward = true;
                 ShowAction::Slide(i)
             }
             None => ShowAction::None,

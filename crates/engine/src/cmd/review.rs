@@ -58,9 +58,17 @@ pub fn specs() -> Vec<CommandSpec> {
             has_text,
             insert_synonym
         ),
-        cmd!(noundo "review.compare", "Compare", ["Review", "Compare"], None, "{path} | {name, data: base64} — compare with a revised copy → {name, changes}", has_doc, compare),
-        cmd!(query "review.revisions", "Revisions", [], None, "{} → {name, changes: [{kind: inserted|deleted|changed, slide, revised, details}]}", has_doc, revisions),
-        cmd!("review.accept", "Accept Revision", ["Review", "Compare"], None, "{index} | {all: true}", comparing, accept),
+        cmd!(noundo "review.compare", "Compare", ["Review", "Compare"], None, "{path} | {name, data: base64} — compare the open deck with another file → {name, changes: [{kind, slide, number, onlyIn?, revised, details}]}; each change is described from the open deck: `onlyIn: \"deck\"` is in the deck and not in the file, `onlyIn: \"file\"` is in the file and not in the deck, `changed` is in both and differs; `slide` is 0-based, `number` the editor's slide number; review.accept takes the FILE's side, so it deletes what is only in the deck (Accept All keeps the deck's last remaining slide rather than deleting it)", has_doc, compare),
+        cmd!(query "review.revisions", "Revisions", [], None, "{} → {name, changes: [{kind: inserted|deleted|changed, slide (0-based), number (editor's), onlyIn?: deck|file, revised, details}]}; `onlyIn: deck` = only in the open deck, `file` = only in the compared file; accepting takes the file's side", has_doc, revisions),
+        cmd!(
+            "review.accept",
+            "Accept Revision",
+            ["Review", "Compare"],
+            None,
+            "{index} | {all: true} — accept the compared file's side of a change (or all): what is only in the file is added, what is only in the open deck is deleted (all: true leaves the deck's last remaining slide in place), a changed slide becomes the file's",
+            comparing,
+            accept
+        ),
         cmd!(
             noundo "review.reject",
             "Reject Revision",
@@ -264,19 +272,31 @@ fn accessibility(s: &mut Session, _p: &Value) -> Result<Value> {
                 _ => None,
             };
             if let Some(bg) = bg {
-                for sh in &sl.shapes {
-                    let Some(t) = &sh.text else { continue };
-                    let Some(para) = t.paragraphs.iter().find(|p| !p.is_empty()) else { continue };
-                    let rp = deckcraft_model::resolve::run(&ctx, sh, para, &para.runs.first().map(|r| r.props.clone()).unwrap_or_default());
+                deckcraft_model::walk(&sl.shapes, &mut |sh, _| {
+                    let Some(t) = &sh.text else { return };
                     let (fill, _) = deckcraft_model::resolve::fill(&ctx, sh);
                     if fill.as_ref().is_some_and(|f| !f.is_none()) {
-                        continue;
+                        return;
                     }
-                    let fg = deckcraft_model::resolve::text_color(&ctx, &rp);
-                    if fg.contrast(bg) < 3.0 {
-                        out.push(json!({"slide": i, "shape": sh.id, "name": sh.name, "issue": format!("Hard-to-read text contrast ({:.1}:1)", fg.contrast(bg))}));
+                    let low = t
+                        .paragraphs
+                        .iter()
+                        .flat_map(|para| {
+                            // A line break or blank run shows no glyphs, so its colour can't be hard to read.
+                            para.runs.iter().filter(|run| run.kind != deckcraft_model::text::RunKind::Break && !run.text.trim().is_empty()).map(
+                                |run| {
+                                    let rp = deckcraft_model::resolve::run(&ctx, sh, para, &run.props);
+                                    deckcraft_model::resolve::text_color(&ctx, &rp).contrast(bg)
+                                },
+                            )
+                        })
+                        .find(|contrast| *contrast < 3.0);
+                    if let Some(contrast) = low {
+                        out.push(
+                            json!({"slide": i, "shape": sh.id, "name": sh.name, "issue": format!("Hard-to-read text contrast ({contrast:.1}:1)")}),
+                        );
                     }
-                }
+                });
             }
         }
     }
@@ -858,5 +878,83 @@ mod spelling_change_range_tests {
         let id = r["id"].clone();
         let err = s.execute("review.spellingChange", &json!({"shape": id, "para": 0, "start": u64::MAX, "word": "Hello", "to": "x"})).unwrap_err();
         assert!(matches!(err, EngineError::BadParams { .. }), "{err:?}");
+    }
+}
+
+#[cfg(test)]
+mod accessibility_contrast_tests {
+    use super::*;
+    use deckcraft_model::text::{Paragraph, Run, RunKind, RunProps};
+    use deckcraft_model::{ColorRef, Fill, Rgba, Shape, ShapeId, ShapeKind, TextBody};
+    use serde_json::json;
+
+    fn run(text: &str, color: Rgba) -> Run {
+        Run::with(text, RunProps { fill: Some(Fill::solid(ColorRef::rgb(color))), ..Default::default() })
+    }
+
+    fn text_shape(id: u32, name: &str, paragraphs: Vec<Paragraph>) -> Shape {
+        Shape { id: ShapeId(id), name: name.into(), text: Some(TextBody { paragraphs, ..Default::default() }), ..Default::default() }
+    }
+
+    #[test]
+    fn contrast_checks_mixed_runs_later_paragraphs_and_group_descendants_once() {
+        let mut s = Session::with_new();
+        s.edit(|doc, _| {
+            let black = Rgba::BLACK;
+            let white = Rgba::WHITE;
+            let mixed = Paragraph { runs: vec![run("visible", black), run("hidden", white)], ..Default::default() };
+            let later = vec![
+                Paragraph { runs: vec![run("visible", black)], ..Default::default() },
+                Paragraph { runs: vec![run("hidden", white)], ..Default::default() },
+            ];
+            let child = text_shape(5, "nested text", vec![Paragraph { runs: vec![run("hidden", white)], ..Default::default() }]);
+            let group = Shape {
+                id: ShapeId(4),
+                name: "group".into(),
+                descr: "group of text".into(),
+                kind: ShapeKind::Group {
+                    children: vec![Shape {
+                        id: ShapeId(7),
+                        name: "nested group".into(),
+                        descr: "nested group of text".into(),
+                        kind: ShapeKind::Group { children: vec![child], child: Default::default() },
+                        ..Default::default()
+                    }],
+                    child: Default::default(),
+                },
+                ..Default::default()
+            };
+            let sl = Arc::make_mut(doc.slides.get_mut(0).ok_or_else(|| bad("test", "no slide"))?);
+            sl.shapes = vec![
+                text_shape(2, "mixed", vec![mixed]),
+                text_shape(3, "later paragraph", later),
+                group,
+                text_shape(6, "black control", vec![Paragraph { runs: vec![run("visible", black)], ..Default::default() }]),
+                text_shape(
+                    8,
+                    "invisible white runs",
+                    vec![Paragraph {
+                        runs: vec![run("visible", black), Run { kind: RunKind::Break, ..run("\n", white) }, run("  ", white), run("visible", black)],
+                        ..Default::default()
+                    }],
+                ),
+            ];
+            Ok(())
+        })
+        .unwrap();
+
+        let issues = s.execute("review.accessibility", &json!({})).unwrap();
+        let contrasts: Vec<_> = issues
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|issue| issue["issue"].as_str().unwrap_or("").starts_with("Hard-to-read text contrast"))
+            .collect();
+        assert_eq!(contrasts.len(), 3, "{issues}");
+        for id in [2, 3, 5] {
+            assert!(contrasts.iter().any(|issue| issue["shape"] == id), "missing shape {id}: {issues}");
+        }
+        assert!(!contrasts.iter().any(|issue| issue["shape"] == 6), "black control warned: {issues}");
+        assert!(!contrasts.iter().any(|issue| issue["shape"] == 8), "white break or spaces warned: {issues}");
     }
 }

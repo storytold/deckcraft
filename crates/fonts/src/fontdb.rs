@@ -30,12 +30,15 @@ pub fn bundled() -> Vec<&'static [u8]> {
 /// Open substitutes for families documents often ask for but we can't ship (metric-compatible
 /// where one exists), tried in order after the family itself.
 pub fn substitutes(family: &str) -> &'static [&'static str] {
-    match family.to_ascii_lowercase().as_str() {
+    let f = family.to_ascii_lowercase();
+    if is_monospace_family(&f) {
+        return &["Liberation Mono", "Courier New", "Menlo", "Courier", "DejaVu Sans Mono"];
+    }
+    match f.as_str() {
         "calibri" | "calibri light" => &["Carlito", "Liberation Sans", "Arial", "Inter"],
         "cambria" | "cambria math" => &["Caladea", "Liberation Serif", "Times New Roman", "Merriweather"],
         "arial" | "helvetica" | "helvetica neue" | "arial nova" => &["Liberation Sans", "Arial", "Helvetica Neue", "Helvetica", "Inter"],
         "times new roman" | "times" => &["Liberation Serif", "Times New Roman", "Times", "Merriweather"],
-        "courier new" | "courier" | "consolas" | "menlo" => &["Liberation Mono", "Courier New", "Menlo", "Courier"],
         "aptos" | "aptos display" | "aptos narrow" | "segoe ui" | "segoe ui light" | "segoe ui semibold" | "tahoma" | "verdana" => {
             &["Inter", "Helvetica Neue", "Arial", "Liberation Sans"]
         }
@@ -52,12 +55,77 @@ pub fn substitutes(family: &str) -> &'static [&'static str] {
     }
 }
 
+/// Families that are monospaced: when not installed, documents keep a monospaced substitute
+/// ([`substitutes`]) so code blocks and columns stay aligned instead of falling back to
+/// proportional Calibri.
+pub fn is_monospace_family(family: &str) -> bool {
+    let f = family.to_ascii_lowercase();
+    let s = f.trim();
+    if matches!(
+        s,
+        "courier new"
+            | "courier"
+            | "cousine"
+            | "consolas"
+            | "menlo"
+            | "monaco"
+            | "source code pro"
+            | "jetbrains mono"
+            | "cascadia code"
+            | "cascadia code pl"
+            | "cascadia mono"
+            | "cascadia mono pl"
+            | "fira code"
+            | "fira mono"
+            | "inconsolata"
+            | "dejavu sans mono"
+            | "sf mono"
+            | "roboto mono"
+            | "hack"
+            | "ubuntu mono"
+            | "pt mono"
+            | "liberation mono"
+            | "andale mono"
+            | "lucida console"
+            | "lucida sans typewriter"
+            | "fixedsys"
+            | "terminal"
+            | "monospace"
+            | "iosevka"
+            | "monolisa"
+            | "envy code r"
+            | "hasklig"
+    ) {
+        return true;
+    }
+    s.starts_with("courier")
+        || s.starts_with("consolas")
+        || s.starts_with("inconsolata")
+        || s.starts_with("iosevka")
+        || s.ends_with(" mono")
+        || s.ends_with(" code")
+        || s.ends_with(" console")
+        || s.ends_with(" typewriter")
+        || s.ends_with(" monospace")
+        || s.split_whitespace().any(|w| w == "mono" || w == "terminal" || w == "monospace")
+}
+
 /// Families whose open substitutes ([`substitutes`]) keep their metrics, so text drawn with
 /// them breaks into the same lines.
 fn has_metric_twin(family: &str) -> bool {
     matches!(
         family.to_ascii_lowercase().as_str(),
-        "calibri" | "calibri light" | "cambria" | "cambria math" | "arial" | "helvetica" | "times new roman" | "times" | "courier new" | "courier"
+        "calibri"
+            | "calibri light"
+            | "cambria"
+            | "cambria math"
+            | "arial"
+            | "helvetica"
+            | "times new roman"
+            | "times"
+            | "courier new"
+            | "courier"
+            | "cousine"
     )
 }
 
@@ -393,6 +461,22 @@ fn legacy_names(f: &skrifa::FontRef<'_>, family: &str) -> Option<(String, String
     Some((legacy, name(f, &[StringId::SUBFAMILY_NAME]).unwrap_or_else(|| "Regular".into())))
 }
 
+/// The Windows family and style a variable font's named instance answers to. Windows lists each
+/// instance other than Regular, Italic, Bold and Bold Italic as a family of its own, as the
+/// family's static files name themselves: "Montserrat ExtraBold" / "Regular" for the ExtraBold
+/// instance, "Montserrat ExtraBold" / "Italic" for ExtraBold Italic.
+fn instance_legacy_names(family: &str, style: &str) -> Option<(String, String)> {
+    if style.contains('{') {
+        return None;
+    }
+    let weight: Vec<&str> = style.split_whitespace().filter(|w| !matches!(norm(w).as_str(), "italic" | "oblique")).collect();
+    let weight = weight.join(" ");
+    if matches!(norm(&weight).as_str(), "" | "regular" | "bold") {
+        return None;
+    }
+    Some((format!("{family} {weight}"), if style_italic(style) { "Italic" } else { "Regular" }.into()))
+}
+
 /// The tables skrifa reads glyph outlines from: `glyf` (TrueType), `CFF `, `CFF2` and `VARC`. For a
 /// face with none of them (bitmaps only, or outlines in Apple's `hvgl` table), [`FontDb::outline`]
 /// returns an empty path for every glyph.
@@ -604,21 +688,55 @@ fn fontconfig_dirs(text: &str, data_home: Option<&str>, home: Option<&std::path:
 /// axis settings.
 type Found = (u32, String, String, Vec<([u8; 4], f32)>);
 
+/// Maximum number of faces we enumerate from a single font collection.
+const MAX_COLLECTION_FACES: u32 = 256;
+/// Maximum collection entries inspected while looking for distinct table directories.
+const MAX_COLLECTION_ENTRIES_SCANNED: u32 = 16_384;
+/// Maximum named instances read from a single face.
+const MAX_NAMED_INSTANCES_PER_FACE: usize = 1024;
+
+fn distinct_face_indices(entries: impl IntoIterator<Item = (u32, u32)>) -> Vec<u32> {
+    let mut offsets = std::collections::HashSet::new();
+    let mut indices = Vec::with_capacity(MAX_COLLECTION_FACES as usize);
+    for (index, offset) in entries.into_iter().take(MAX_COLLECTION_ENTRIES_SCANNED as usize) {
+        if offsets.insert(offset) {
+            indices.push(index);
+            if indices.len() == MAX_COLLECTION_FACES as usize {
+                break;
+            }
+        }
+    }
+    indices
+}
+
+fn capped_named_instance_count(count: usize) -> usize {
+    count.min(MAX_NAMED_INSTANCES_PER_FACE)
+}
+
 /// Parse every face in `data` (a font file or collection); a variable font yields one face per
 /// named instance (InDesign lists them as styles).
 fn enumerate_faces(data: &[u8]) -> Vec<Found> {
-    let count = match FileRef::new(data) {
-        Ok(FileRef::Font(_)) => 1,
-        Ok(FileRef::Collection(c)) => c.len(),
-        Err(_) => 0,
+    let indices = match FileRef::new(data) {
+        Ok(FileRef::Font(_)) => vec![0],
+        Ok(FileRef::Collection(c)) => {
+            let entries = (0..c.len().min(MAX_COLLECTION_ENTRIES_SCANNED)).filter_map(|i| {
+                let start = 12usize.checked_add((i as usize).checked_mul(4)?)?;
+                let end = start.checked_add(4)?;
+                let offset = u32::from_be_bytes(data.get(start..end)?.try_into().ok()?);
+                Some((i, offset))
+            });
+            distinct_face_indices(entries)
+        }
+        Err(_) => Vec::new(),
     };
     let mut out = Vec::new();
-    for i in 0..count {
+    for i in indices {
         let Ok(f) = skrifa::FontRef::from_index(data, i) else { continue };
         let Some((family, style)) = face_names(&f) else { continue };
         let axes = f.axes();
         let mut named = Vec::new();
-        for ni in f.named_instances().iter() {
+        let instances = f.named_instances();
+        for ni in instances.iter().take(capped_named_instance_count(instances.len())) {
             let Some(style) = name(&f, &[ni.subfamily_name_id()]) else { continue };
             if named.iter().any(|(_, s, _): &(u32, String, _)| s.eq_ignore_ascii_case(&style)) {
                 continue;
@@ -686,7 +804,7 @@ fn make_face(bytes: FontBytes, index: u32, family: String, style: String, coords
         .map(|v| v >= 0.5)
         .or(axis(b"slnt").map(|v| v.abs() > 0.1))
         .unwrap_or(!matches!(a.style, skrifa::attribute::Style::Normal) || style_italic(&style));
-    let legacy = if coords.is_empty() { legacy_names(&f, &family) } else { None };
+    let legacy = if coords.is_empty() { legacy_names(&f, &family) } else { instance_legacy_names(&family, &style) };
     Some(FontFace {
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         family,
@@ -1030,6 +1148,7 @@ impl FontDb {
     /// when it is installed or bundled, or a metric-compatible stand-in (Carlito for Calibri,
     /// Liberation Sans for Arial…), or the family PowerPoint maps it to (Liberation Sans as Arial,
     /// see `office_twin`); any other missing family is drawn in Calibri (or Carlito).
+    /// Monospaced families keep a monospaced substitute instead of falling back to Calibri.
     /// DeckCraft's own default family keeps [`FontDb::face`]'s fallbacks.
     pub fn document_face(&self, family: &str, style: &str) -> Arc<FontFace> {
         if family.eq_ignore_ascii_case(FALLBACK_FAMILY) || has_metric_twin(family) || is_office_cloud_font(family) || self.has_family(family) {
@@ -1037,6 +1156,9 @@ impl FontDb {
         }
         if let Some(twin) = office_twin(family) {
             return self.face(twin, style);
+        }
+        if is_monospace_family(family) {
+            return self.face(family, style);
         }
         self.face(MISSING_FONT_FAMILY, style)
     }
@@ -1434,6 +1556,24 @@ mod font_dir_tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
+
+    #[test]
+    fn duplicate_collection_offsets_do_not_consume_face_cap() {
+        let mut entries = vec![(0, 7); MAX_COLLECTION_FACES as usize];
+        entries.extend((0..MAX_COLLECTION_FACES).map(|i| (i + MAX_COLLECTION_FACES, i + 8)));
+        let faces = distinct_face_indices(entries);
+        assert_eq!(faces.len(), MAX_COLLECTION_FACES as usize);
+        assert_eq!(faces.first(), Some(&0));
+        assert_eq!(faces.get(1), Some(&MAX_COLLECTION_FACES));
+        assert_eq!(faces.last(), Some(&(MAX_COLLECTION_FACES * 2 - 2)));
+    }
+
+    #[test]
+    fn named_instance_limit_is_bounded_per_face() {
+        assert_eq!(capped_named_instance_count(0), 0);
+        assert_eq!(capped_named_instance_count(MAX_NAMED_INSTANCES_PER_FACE), MAX_NAMED_INSTANCES_PER_FACE);
+        assert_eq!(capped_named_instance_count(MAX_NAMED_INSTANCES_PER_FACE + 1), MAX_NAMED_INSTANCES_PER_FACE);
+    }
 
     #[test]
     fn xdg_data_dirs_contribute_their_fonts_folders() {
