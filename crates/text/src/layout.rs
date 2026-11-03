@@ -418,7 +418,7 @@ fn justify_line(p: &ParaShaped, rl: &RawLine, adv: &mut [f64], align: Align, sla
             filled = true;
         }
     }
-    if stretch && !filled && matches!(align, Align::Justify | Align::JustLow) {
+    if stretch && !filled && matches!(align, Align::Justify | Align::JustLow | Align::ThaiDistributed) {
         let spaces = line_cells.iter().filter(|c| c.ch == ' ').count();
         if spaces > 0 {
             for (a, c) in adv.iter_mut().zip(line_cells) {
