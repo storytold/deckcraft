@@ -334,6 +334,24 @@ mod tests {
         assert_eq!(d.doc.media(fill.media).unwrap().data.as_ref(), b"slide picture");
     }
 
+    /// Copy or Cut with a caret and nothing selected replaces no clipboard, and says so, so the
+    /// UI publishes nothing (not the previous copy over again).
+    #[test]
+    fn a_caret_copy_replaces_nothing_and_says_so() {
+        let mut a = deck_with_a_picture(b"p");
+        let r = a.execute("edit.copy", &json!({"payload": true})).unwrap();
+        assert_eq!(r["copied"], true);
+        assert!(r.get("payload").is_some());
+        let token = a.clipboard.token;
+        let id = a.doc().unwrap().doc.slides[0].shapes.iter().find(|x| x.text.is_some()).unwrap().id.0;
+        a.execute("text.edit", &json!({"id": id})).unwrap();
+        let r = a.execute("edit.copy", &json!({"payload": true})).unwrap();
+        assert_eq!((r["copied"].as_bool(), r.get("payload")), (Some(false), None), "{r}");
+        assert_eq!(a.clipboard.token, token, "the clipboard is as it was");
+        let r = a.execute("edit.cut", &json!({})).unwrap();
+        assert_eq!(r["copied"], false);
+    }
+
     #[test]
     fn copy_returns_the_payload_on_request_and_paste_special_takes_it() {
         let mut a = deck_with_a_picture(b"p");

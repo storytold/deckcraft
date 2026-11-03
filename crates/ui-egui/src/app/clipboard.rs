@@ -33,6 +33,11 @@ impl SlideApp {
     /// the HTML, with the session clipboard inside, and the plain text alternative. Returns the
     /// plain text still to be put there with `ctx.copy_text` when the host took nothing.
     pub(super) fn offer_clipboard(&mut self, copied: &Value) -> Option<String> {
+        // A caret with nothing selected copies nothing: the session clipboard is as it was, and
+        // the system clipboard stays whatever it is (not the old copy, published afresh).
+        if copied.get("copied").and_then(Value::as_bool) == Some(false) {
+            return None;
+        }
         let text = copied.get("text").and_then(Value::as_str).unwrap_or("");
         let html = copied.get("html").and_then(Value::as_str).unwrap_or("");
         let plain = system_clipboard_text(text);

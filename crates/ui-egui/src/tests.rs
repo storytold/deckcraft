@@ -1301,6 +1301,36 @@ fn a_copy_in_another_window_pastes_its_objects() {
     assert_eq!(bold.text.as_ref().unwrap().paragraphs[0].runs[0].props.bold, Some(true));
 }
 
+/// Ctrl+C with a caret and nothing selected copies nothing: the system clipboard is left alone,
+/// not handed the previous copy again (which another app may have replaced since).
+#[test]
+fn a_caret_copy_publishes_nothing() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let offers = Rc::new(RefCell::new(0));
+    let count = offers.clone();
+    let services = Services {
+        clipboard_set_html: Some(Box::new(move |_html, _plain| {
+            *count.borrow_mut() += 1;
+            true
+        })),
+        ..Default::default()
+    };
+    let mut h = step_app(services);
+    h.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 120.0, 80.0]})).unwrap();
+    h.event(egui::Event::Copy);
+    h.run_steps(1);
+    assert_eq!(*offers.borrow(), 1, "the rectangle went out");
+    let title = h.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
+    h.state_mut().session.execute("text.edit", &json!({"id": title})).unwrap();
+    h.run_steps(1);
+    h.event(egui::Event::Copy);
+    h.run_steps(1);
+    assert_eq!(*offers.borrow(), 1, "a caret copy offers nothing");
+    assert!(!h.output().platform_output.commands.iter().any(|c| matches!(c, egui::output::OutputCommand::CopyText(_))), "and no text either");
+    assert_eq!(h.state().session.clipboard.shapes.len(), 1, "the session clipboard is as it was");
+}
+
 /// Our own copy comes back from the system clipboard with our token: the internal clipboard is
 /// used as before (the paste offset counts up), not a decoded copy of it.
 #[test]
