@@ -125,14 +125,11 @@ fn inherited_text_shadow_is_shown_in_text_options() {
     );
     h.run_steps(3);
 
-    // Under Text Options, the shadow preset row must show the inherited shadow rather than "No shadow" toggled.
-    assert_eq!(h.get_by_label("No shadow").accesskit_node().toggled(), Some(Toggled::False));
+    // Under Text Options, the text shadow checkbox reflects the inherited shadow and is read-only.
+    assert_eq!(h.get_by_label("Text shadow").accesskit_node().toggled(), Some(Toggled::True));
+    assert!(h.get_by_label("Text shadow").accesskit_node().is_disabled());
     assert!(h.query_all_by_label("Size").count() >= 1);
     assert!(h.query_all_by_label("Distance").count() >= 1);
-
-    // The inherited text shadow controls are presented read-only so shape-level edits cannot contradict the text style.
-    assert!(h.get_by_label("No shadow").accesskit_node().is_disabled());
-
     // Switch to Shape Effects tab: the shape has no shape-level shadow, so it shows "No shadow" toggled.
     h.state_mut().ui.format_tab = "effects".into();
     h.run_steps(2);
