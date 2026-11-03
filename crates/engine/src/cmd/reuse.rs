@@ -10,7 +10,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use deckcraft_model::table::TableStyleDef;
-use deckcraft_model::text::{Action, Hyperlink, RunProps, TextBody};
 use deckcraft_model::text::{Action, Hyperlink, ListStyle, RunProps, Spacing, TextBody};
 use deckcraft_model::{LayoutId, Master, MasterId, MediaId, Presentation, ShapeId, ShapeKind, Slide, SlideId};
 use serde_json::{Value, json};

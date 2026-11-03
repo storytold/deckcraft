@@ -1,8 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (text run alternate-language metadata now survives native and PPTX saves; per-run language editing and proofing gaps remain; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-02 · **Change:** trivial (PPTX reflection transforms and fade geometry survive resaves; rendering remains partial) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-02 · **Change:** trivial (reused slide contents now scale to the destination; picker thumbnails remain a gap) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-03 · **Change:** trivial (run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in

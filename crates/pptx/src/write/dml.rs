@@ -477,8 +477,7 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
         .b("anchorCtr", b.anchor_ctr)
         .b("upright", b.upright)
         .b("spcFirstLastPara", b.space_first_last)
-        .b("compatLnSpc", b.compat_ln_spc);
-        .b("spcFirstLastPara", b.space_first_last)
+        .b("compatLnSpc", b.compat_ln_spc)
         .o("vertOverflow", b.vert_overflow.map(|v| v.xml()))
         .o("horzOverflow", deckcraft_model::text::TextOverflow::horz_xml(b.horz_overflow));
     let warp = b.warp.as_deref().filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()));
