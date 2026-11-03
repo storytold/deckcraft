@@ -67,7 +67,7 @@ fn a_tags_part_listed_many_times_is_copied_once_and_capped() {
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).expect("entry");
-        let name = f.name().to_string();
+        let name = f.name().expect("entry name").to_string();
         let mut data = vec![];
         f.read_to_end(&mut data).expect("read");
         out.start_file(&name, zip::write::SimpleFileOptions::default()).expect("start");
@@ -131,7 +131,7 @@ fn new_tag_parts_are_not_parsed_or_cached_after_the_budget_is_exhausted() {
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).expect("entry");
-        let name = f.name().to_string();
+        let name = f.name().expect("entry name").to_string();
         let mut data = vec![];
         f.read_to_end(&mut data).expect("read");
         out.start_file(&name, zip::write::SimpleFileOptions::default()).expect("start");
