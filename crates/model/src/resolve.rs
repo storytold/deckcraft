@@ -250,6 +250,8 @@ pub fn body(ctx: &Ctx, shape: &Shape) -> BodyProps {
         upright: Some(false),
         space_first_last: Some(false),
         compat_ln_spc: None,
+        vert_overflow: None,
+        horz_overflow: None,
     });
     b
 }

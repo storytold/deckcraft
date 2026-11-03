@@ -748,6 +748,7 @@ fn table(w: &mut W, x: &mut Exp, o: &mut Out, t: &Table) {
                 }),
             );
             a = a.b("anchorCtr", c.anchor_ctr);
+            a = a.o("horzOverflow", deckcraft_model::text::TextOverflow::horz_xml(c.horz_overflow));
             w.open("a:tcPr", a);
             for (tag, l) in [
                 ("a:lnL", &c.borders[0]),

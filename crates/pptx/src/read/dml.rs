@@ -378,6 +378,8 @@ pub fn body_pr(b: &El) -> BodyProps {
         upright: b.bool("upright"),
         space_first_last: b.bool("spcFirstLastPara"),
         compat_ln_spc: b.bool("compatLnSpc"),
+        vert_overflow: b.attr("vertOverflow").and_then(deckcraft_model::text::TextOverflow::from_xml),
+        horz_overflow: b.attr("horzOverflow").and_then(deckcraft_model::text::TextOverflow::from_horz_xml),
         ..Default::default()
     };
     for e in b.elements() {

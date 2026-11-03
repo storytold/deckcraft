@@ -24,6 +24,7 @@ pub struct Cell {
     pub v_merge: bool,
     pub vertical: Option<crate::text::TextDir>,
     pub anchor_ctr: Option<bool>,
+    pub horz_overflow: Option<crate::text::TextOverflow>,
 }
 
 impl Cell {

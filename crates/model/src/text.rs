@@ -122,6 +122,45 @@ pub struct BodyProps {
     /// Space before the first paragraph and after the last count too (`spcFirstLastPara`).
     pub space_first_last: Option<bool>,
     pub compat_ln_spc: Option<bool>,
+    pub vert_overflow: Option<TextOverflow>,
+    pub horz_overflow: Option<TextOverflow>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TextOverflow {
+    Overflow,
+    Clip,
+    Ellipsis,
+}
+
+impl TextOverflow {
+    pub fn xml(self) -> &'static str {
+        match self {
+            Self::Overflow => "overflow",
+            Self::Clip => "clip",
+            Self::Ellipsis => "ellipsis",
+        }
+    }
+
+    pub fn from_xml(value: &str) -> Option<Self> {
+        Some(match value {
+            "overflow" => Self::Overflow,
+            "clip" => Self::Clip,
+            "ellipsis" => Self::Ellipsis,
+            _ => return None,
+        })
+    }
+
+    /// A `horzOverflow` value: `ST_TextHorzOverflowType` has only `overflow` and `clip`.
+    pub fn from_horz_xml(value: &str) -> Option<Self> {
+        Self::from_xml(value).filter(|v| *v != Self::Ellipsis)
+    }
+
+    /// The `horzOverflow` attribute to write, leaving out `ellipsis`, which is vertical only.
+    pub fn horz_xml(v: Option<Self>) -> Option<&'static str> {
+        v.filter(|v| *v != Self::Ellipsis).map(Self::xml)
+    }
 }
 
 impl BodyProps {
@@ -146,6 +185,8 @@ impl BodyProps {
         self.upright = self.upright.or(p.upright);
         self.space_first_last = self.space_first_last.or(p.space_first_last);
         self.compat_ln_spc = self.compat_ln_spc.or(p.compat_ln_spc);
+        self.vert_overflow = self.vert_overflow.or(p.vert_overflow);
+        self.horz_overflow = self.horz_overflow.or(p.horz_overflow);
     }
 }
 
