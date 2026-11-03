@@ -25,6 +25,16 @@ const MAX_EDGE_WORK: u64 = 64_000_000;
 /// Fewest edges a simplified polygon keeps, so a coarse outline still has a shape.
 const MIN_POLY_EDGES: usize = 8;
 
+/// Most points `polygons` keeps from one path; a path flattening past this (a huge finite curve) is
+/// not drawn rather than held in memory first.
+const MAX_POINTS: usize = 2_000_000;
+
+/// The edge budget for a `pw` x `ph` raster where each pixel tests every edge.
+pub(crate) fn edge_budget(pw: u32, ph: u32) -> usize {
+    let pixels = u64::from(pw).saturating_mul(u64::from(ph)).max(1);
+    usize::try_from(MAX_EDGE_WORK / pixels).unwrap_or(usize::MAX).max(MIN_POLY_EDGES)
+}
+
 /// Colour position (0 at the focus, 1 at the edge) of `p` for path `kind` in `bounds` with the
 /// focus rect `focus` (fractions inset from left, top, right, bottom), `outline` being the
 /// shape's flattened polygon(s) for `shape`.
@@ -114,21 +124,31 @@ fn shape_position(outline: &[Vec<Point>], c: Point, p: Point) -> f64 {
 pub fn polygons(path: &BezPath) -> Vec<Vec<Point>> {
     let mut out: Vec<Vec<Point>> = Vec::new();
     let mut cur: Vec<Point> = Vec::new();
-    kurbo::flatten(path.iter(), 0.25, |el| match el {
-        PathEl::MoveTo(p) => {
-            if cur.len() > 1 {
-                out.push(std::mem::take(&mut cur));
-            }
-            cur = vec![p];
+    let mut total = 0usize;
+    kurbo::flatten(path.iter(), 0.25, |el| {
+        total += 1;
+        if total > MAX_POINTS {
+            return;
         }
-        PathEl::LineTo(p) => cur.push(p),
-        PathEl::ClosePath => {
-            if let Some(f) = cur.first().copied() {
-                cur.push(f);
+        match el {
+            PathEl::MoveTo(p) => {
+                if cur.len() > 1 {
+                    out.push(std::mem::take(&mut cur));
+                }
+                cur = vec![p];
             }
+            PathEl::LineTo(p) => cur.push(p),
+            PathEl::ClosePath => {
+                if let Some(f) = cur.first().copied() {
+                    cur.push(f);
+                }
+            }
+            _ => {}
         }
-        _ => {}
     });
+    if total > MAX_POINTS {
+        return Vec::new();
+    }
     if cur.len() > 1 {
         out.push(cur);
     }
@@ -146,7 +166,7 @@ pub fn polygons(path: &BezPath) -> Vec<Vec<Point>> {
 /// `outline` cut down to at most about `max_edges` edges in total: first by dropping points
 /// closer than `tol` to the last kept one (detail finer than a raster pixel), then, if still too
 /// many, by keeping every k-th point. Each polygon stays closed. Returns it unchanged when it fits.
-fn simplify(outline: Vec<Vec<Point>>, tol: f64, max_edges: usize) -> Vec<Vec<Point>> {
+pub(crate) fn simplify(outline: Vec<Vec<Point>>, tol: f64, max_edges: usize) -> Vec<Vec<Point>> {
     let edges = |o: &[Vec<Point>]| o.iter().map(|p| p.len().saturating_sub(1)).sum::<usize>();
     if edges(&outline) <= max_edges {
         return outline;
@@ -233,8 +253,7 @@ pub fn fill(ctx: &mut RenderContext, kind: &str, focus: [f64; 4], stops: &[(f64,
     let s = (MAX_SIDE / longest).min(1.0) * k;
     let (pw, ph) = (((bounds.width() * s).ceil() as u32).clamp(1, 4096), ((bounds.height() * s).ceil() as u32).clamp(1, 4096));
     let outline = if kind == "shape" {
-        let pixels = u64::from(pw).saturating_mul(u64::from(ph)).max(1);
-        let max_edges = usize::try_from(MAX_EDGE_WORK / pixels).unwrap_or(usize::MAX).max(MIN_POLY_EDGES);
+        let max_edges = edge_budget(pw, ph);
         let pixel = (bounds.width() / f64::from(pw)).min(bounds.height() / f64::from(ph));
         simplify(polygons(path), pixel, max_edges)
     } else {
