@@ -282,4 +282,40 @@ mod font_script_tests {
         s.execute("format.font", &json!({"family": "  Lato  ", "eastAsia": " Noto Sans CJK SC "})).unwrap();
         assert_eq!(typefaces(&mut s), vec![(Some("Lato".into()), Some("Noto Sans CJK SC".into()), None)]);
     }
+
+    /// Each script's typeface is set on its own, and a run whose text is entirely CJK takes its
+    /// East Asian one: that is the run #786 is about, where `a:latin` alone changes nothing that
+    /// is drawn (noted in review).
+    #[test]
+    fn a_cjk_run_takes_the_east_asian_typeface_and_each_script_is_set_on_its_own() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 300, 50], "text": "你好世界"})).unwrap();
+        s.execute("text.exit", &json!({})).unwrap();
+
+        // `eastAsia` alone (with the required `family`): the complex-script typeface is untouched.
+        s.execute("format.font", &json!({"family": "Lato", "eastAsia": "Noto Sans CJK SC"})).unwrap();
+        assert_eq!(typefaces(&mut s), vec![(Some("Lato".into()), Some("Noto Sans CJK SC".into()), None)]);
+
+        // `complexScript` alone: the East Asian typeface just set is kept, not cleared.
+        s.execute("format.font", &json!({"family": "Lato", "complexScript": "Noto Sans Arabic"})).unwrap();
+        assert_eq!(typefaces(&mut s), vec![(Some("Lato".into()), Some("Noto Sans CJK SC".into()), Some("Noto Sans Arabic".into()))]);
+
+        // A Latin-only call on the CJK run changes `a:latin` and nothing a CJK glyph is drawn in.
+        s.execute("format.font", &json!({"family": "Comic Neue"})).unwrap();
+        assert_eq!(typefaces(&mut s), vec![(Some("Comic Neue".into()), Some("Noto Sans CJK SC".into()), Some("Noto Sans Arabic".into()))]);
+
+        // The saved run carries its text and the East Asian typeface together.
+        let bytes = crate::cmd::file::save_bytes(&s.doc().unwrap().doc, "pptx").unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let mut xml = String::new();
+        for i in 0..zip.len() {
+            let mut f = zip.by_index(i).unwrap();
+            if f.name().starts_with("ppt/slides/slide") && f.name().ends_with(".xml") {
+                std::io::Read::read_to_string(&mut f, &mut xml).unwrap();
+            }
+        }
+        let run = xml.find("你好世界").and_then(|at| xml[..at].rfind("<a:r>").map(|start| &xml[start..at])).unwrap_or_default();
+        assert!(run.contains(r#"<a:ea typeface="Noto Sans CJK SC"/>"#), "the CJK run has no a:ea: {run}");
+    }
 }
