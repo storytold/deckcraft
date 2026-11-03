@@ -595,16 +595,17 @@ mod tests {
         let pic = |id: u32| Shape {
             id: ShapeId(id),
             name: "Box".into(),
+            xfrm: Some(deckcraft_model::Xfrm::new(10.0, 10.0, 50.0, 50.0)),
             kind: ShapeKind::Picture { fill: PictureFill { media: img, ..Default::default() } },
             ..Default::default()
         };
         Arc::make_mut(&mut cur.slides[0]).shapes = (0..3000).map(|k| pic(100_000 + k)).collect();
         Arc::make_mut(&mut rev.slides[0]).shapes = (0..3000).map(|k| pic(200_000 + k)).collect();
-        let base = (*rev.slides[0]).clone();
+        let mut base = (*rev.slides[0]).clone();
+        base.shapes.clear();
         for k in 0..3000 {
             let mut s = base.clone();
             s.id = SlideId(300_000 + k);
-            s.shapes.clear();
             rev.slides.push(Arc::new(s));
         }
         let changes = super::diff(&cur, &rev, false);
