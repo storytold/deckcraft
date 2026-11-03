@@ -167,8 +167,34 @@ pub(super) fn search<'a>(
     measure: &mut Measure<'_>,
     work: &mut usize,
 ) -> Result<Option<Vec<Placed<'a>>>, &'static str> {
-    use constraints::Adjustment::Value;
     let Some(flow) = eligible(entries, controls, work)? else { return Ok(None) };
+    let nested = entries.get(flow.index).is_some_and(|entry| entry.parent.is_some());
+    let out = search_pass(tree, frame, data, entries, controls, &flow, !nested, measure, work)?;
+    // A nested allocation must first settle its whole text scope. Incomplete
+    // sibling fits keep the allocation pass's search history. A root flow owns
+    // its final refit and can retain local checkpoints even with residual text.
+    if nested && score(&out, &flow.children, measure, true, work)? <= 1e-6 {
+        let candidate = search_pass(tree, frame, data, entries, controls, &flow, true, measure, work)?;
+        if score(&candidate, &flow.children, measure, true, work)? <= 1e-6 {
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(Some(out))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn search_pass<'a>(
+    tree: &Instance<'a>,
+    frame: Xfrm,
+    data: &Data<'a>,
+    entries: &[constraints::Entry<'_, 'a>],
+    controls: &[Control<'a>],
+    flow: &Flow,
+    retain_checkpoint: bool,
+    measure: &mut Measure<'_>,
+    work: &mut usize,
+) -> Result<Vec<Placed<'a>>, &'static str> {
+    use constraints::Adjustment::Value;
     let mut by_target = std::collections::HashMap::<usize, Vec<&Control<'_>>>::new();
     charge(work, controls.len().saturating_add(entries.len()))?;
     for control in controls {
@@ -196,15 +222,23 @@ pub(super) fn search<'a>(
     steps.push(None);
     steps.extend(rest);
     let mut changes = constraints::Adjustments::new();
+    let mut local_primary = std::collections::HashMap::new();
     let mut grown = Vec::<Growth>::new();
     let mut coupled = HashSet::new();
-    let mut out = placed(tree, frame, data, &changes, &flow, work)?;
+    let mut out = placed(tree, frame, data, &changes, flow, work)?;
     for step in steps {
         // Apply the previous font rule before later dimensions change its fit budget.
-        out = reclaim(tree, frame, data, &mut changes, &flow, &mut grown, measure, work, out)?;
+        out = reclaim(tree, frame, data, &mut changes, flow, &mut grown, measure, work, out)?;
         let Some(control) = step else {
             // Persist capacity allocation only. Measuring/refitting text here
             // and again at the final placement would shrink the flow twice.
+            let local = constraints::resolve_adjusted(tree, frame, data, work, &changes)?;
+            charge(work, flow.children.len())?;
+            for key in &flow.children {
+                if let Some(value) = local.get(key).and_then(|style| style.get(flow.primary)) {
+                    local_primary.insert(*key, value / unit(flow.primary));
+                }
+            }
             out = allocated(tree, frame, data, &changes, work)?;
             charge(work, out.len().saturating_mul(2))?;
             for p in &out {
@@ -213,7 +247,7 @@ pub(super) fn search<'a>(
                     changes.insert((p.node_key, "h".into()), Value(p.rect.h / unit("h")));
                 }
             }
-            out = placed(tree, frame, data, &changes, &flow, work)?;
+            out = placed(tree, frame, data, &changes, flow, work)?;
             continue;
         };
         let scope = control_scope(entries, data, control, work)?;
@@ -234,7 +268,7 @@ pub(super) fn search<'a>(
         let selected = choose(font_rule || size_rule, |t| {
             let value = start + (limit - start) * t;
             range.set_value(&mut changes, value);
-            let Some(candidate) = trial(tree, frame, data, &changes, &flow, work)? else { return Ok(None) };
+            let Some(candidate) = trial(tree, frame, data, &changes, flow, work)? else { return Ok(None) };
             if size_rule && limit > start && t == 1. && text_budget_recedes(&out, &candidate, &scope, work)? {
                 coupled.insert(control.target);
             }
@@ -287,7 +321,7 @@ pub(super) fn search<'a>(
             let t = (low + high) / 2.0;
             let value = start + (limit - start) * t;
             range.set_value(&mut changes, value);
-            let candidate = trial(tree, frame, data, &changes, &flow, work)?;
+            let candidate = trial(tree, frame, data, &changes, flow, work)?;
             if let Some(candidate) = candidate
                 && score(&candidate, &scope, measure, prefer_words, work)? <= 1e-6
             {
@@ -303,20 +337,95 @@ pub(super) fn search<'a>(
                 break;
             }
         }
+        // A local cross-size fit is another valid search checkpoint. Allocation
+        // can require more room, but it does not discard a smaller fitting result
+        // reached from that checkpoint. Keep both bounded search paths.
+        if retain_checkpoint
+            && size_rule
+            && control.property != flow.primary
+            && limit > start
+            && selected == 1.
+            && bracket == 0.
+            && let Some(&primary) = local_primary.get(&range.key.0)
+        {
+            charge(work, changes.len().saturating_mul(2))?;
+            let mut local = changes.clone();
+            local.insert((range.key.0, flow.primary.into()), Value(primary));
+            if let Some((checkpoint, _)) = fit_growth(tree, frame, data, &range, start, limit, &mut local, flow, &scope, measure, work)? {
+                let mut resumed = changes.clone();
+                if let Some((value, candidate)) = fit_growth(tree, frame, data, &range, checkpoint, limit, &mut resumed, flow, &scope, measure, work)?
+                    && value < best
+                {
+                    best = value;
+                    out = candidate;
+                }
+            }
+        }
         range.set_value(&mut changes, best);
         charge(work, grown.len())?;
         if let Some(growth) = grown.iter_mut().rev().find(|g| g.range.key == range.key) {
             growth.range.limit = best;
         }
     }
-    let mut out = reclaim(tree, frame, data, &mut changes, &flow, &mut grown, measure, work, out)?;
+    let mut out = reclaim(tree, frame, data, &mut changes, flow, &mut grown, measure, work, out)?;
     // Orientation can trade one text dimension for the other. Such scopes retain
     // the joint fallback; a clipped parent budget alone does not reopen allocation.
     charge(work, controls.len().saturating_mul(2))?;
     let controls: Vec<_> = controls.iter().filter(|c| coupled.contains(&c.target)).cloned().collect();
     super::coupled::search(tree, frame, data, entries, &controls, measure, &mut changes, &mut out, work)?;
     // Final text-aware placement sees the reclaimed dimensions in rule order.
-    Ok(Some(super::placed(tree, frame, data, &changes, measure, work)?))
+    super::placed(tree, frame, data, &changes, measure, work)
+}
+
+// Probe the original endpoint and retain the smallest successful point on the
+// same five-bisection interval as a size rule. Each trial recomputes text areas;
+// rounded painted dimensions must not become the next search's input.
+#[allow(clippy::too_many_arguments)]
+fn fit_growth<'a>(
+    tree: &Instance<'a>,
+    frame: Xfrm,
+    data: &Data<'a>,
+    range: &Range,
+    start: f64,
+    limit: f64,
+    changes: &mut constraints::Adjustments,
+    flow: &Flow,
+    scope: &HashSet<usize>,
+    measure: &mut Measure<'_>,
+    work: &mut usize,
+) -> Result<Option<(f64, Vec<Placed<'a>>)>, &'static str> {
+    let prefer_words = range.key.1 == "w";
+    range.set_value(changes, start);
+    if let Some(candidate) = trial(tree, frame, data, changes, flow, work)?
+        && score(&candidate, scope, measure, prefer_words, work)? <= 1e-6
+    {
+        return Ok(Some((start, candidate)));
+    }
+    if start >= limit {
+        return Ok(None);
+    }
+    range.set_value(changes, limit);
+    let Some(mut out) = trial(tree, frame, data, changes, flow, work)? else { return Ok(None) };
+    if score(&out, scope, measure, prefer_words, work)? > 1e-6 {
+        return Ok(None);
+    }
+    let (mut low, mut high, mut best) = (0., 1., limit);
+    for _ in 0..5 {
+        let t = (low + high) / 2.;
+        let value = start + (limit - start) * t;
+        range.set_value(changes, value);
+        if let Some(candidate) = trial(tree, frame, data, changes, flow, work)?
+            && score(&candidate, scope, measure, prefer_words, work)? <= 1e-6
+        {
+            high = t;
+            best = value;
+            out = candidate;
+        } else {
+            low = t;
+        }
+    }
+    range.set_value(changes, best);
+    Ok(Some((best, out)))
 }
 
 #[allow(clippy::too_many_arguments)]

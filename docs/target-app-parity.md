@@ -1,5 +1,7 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
+> **PPTX.53 update 2026-11-02:** Text-size searches retain fitting local and allocated checkpoints; nested flows retain allocation history while any sibling remains unresolved. The 2,364-case geometry matrix improves from 2,174 to 2,227 strict matches with no lost match or increased measured error. Materialized SmartArt uses fine glyph advances independently of line pitch, and bullet origins honor authored hanging margins. The 137 remaining strict raw-box mismatches and map/chart/text limits stay open; feature scores are unchanged.
+
 > **PPTX.52 update 2026-11-02:** Independent text-rule stages restore local footprints before preset/rotation measurement, and numeric font fitting uses fine diagram advances. Reversed centered fitting retains the final trial and partial-placement state. The combined 2,300-case matrix improves from 2,096 to 2,145 strict matches with no lost prior match. A rotated raw-box metric worsens while its actual painted bounds improve to 0.008pt; both are retained. The 155 remaining strict failures and wider map/chart/text limits remain open; feature scores are unchanged.
 
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (no break after `?`, `!`, `}`, `+` inside a word; previous: trivial, Animations shortfall: preview from the selected effect is in; before that: major, community PR wave 2026-10-14: breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) after `cargo xtask parity`; area table and What works today folded to one row or bullet each; 320 engine commands; ready ~55% and stage alpha unchanged; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -345,3 +347,50 @@ remains incomplete. The map threshold ledger still has seventeen boundary sequen
 and two Albers sequences; no geographic assets or native documents are published.
 
 PPTX.52 integration validation: all eight local CI stages and 2,713 tests pass. The final binary preserves all 814 retained chart pages and 140 map images exactly, and five selected reverse-layout rasters match the accepted isolated result pixel for pixel. Across 14,096 inspected text-property sets, only the two expected 17pt-to-16pt font corrections change; all 326 recovery pages retain geometry and PDF text/font positions.
+
+### PPTX.53: fitting checkpoints and diagram text origins
+
+Independent original controls distinguish resetting a cross-size search from resuming
+its local fit. Both fitting checkpoints must be retained. A nested flow with unresolved
+sibling text keeps its allocation history; nesting by itself does not invalidate a
+checkpoint. The implementation shares the existing work and text-measurement budgets.
+The 2,364-case comparison improves from 2,174 to 2,227 strict geometry matches;
+all 53 changed cases pass, with no lost prior match or increased measured error.
+
+Materialized uncached SmartArt text now records fine glyph advances separately from
+line metrics. Ordinary and cached DrawingML do not acquire that flag, and the flag
+is not written as an invented PPTX attribute. At text materialization, valid bullet
+paragraphs derive missing hanging defaults from their resolved secondary font while
+preserving authored margin and indent independently. Font-rule trials refresh only
+the unauthored sides instead of retaining an earlier trial's computed indent. An overrunning marker starts
+text at the marker end without an extra artificial gap. Existing recovered defaults
+remain separate.
+
+The direct text comparison against the preceding implementation improves absolute
+glyph positions on 52 of 326 pages, with no measured regression and 274 raw text-record
+matches. The 82-page drawing comparison keeps 66 exact line-text/font-size sets;
+66 pages improve glyph advances, 15 are unchanged and one has no common comparable
+line. Fifty-seven valid new bullet controls show 47 improved text origins and 10
+unchanged; two fractional-font controls did not satisfy their discriminator premise
+and are excluded. Ordinary marker quantization still differs by up to 0.063pt. The drawing set
+retains 16 line-text/font-size mismatches, and the recovery set retains 27 complete-text
+mismatches; no existing mismatch is counted as a pass. Twelve bullet prefixes are
+absent from PDF text extraction even though raster checks show the painted bullets.
+
+These results do not close the remaining 137 strict raw-box mismatches (including
+retained rotated-shape representations whose painted bounds were checked separately),
+the 17 geographic
+threshold and two projection residuals, or retained chart/line-layout differences.
+Ten rule/direct endpoint controls verify default refresh after a font change, including
+independently authored margins and indents. Eight byte-preserving small-font controls
+expose a retained 11pt default-margin gap: the native margin is 4.5pt rather than the
+current 9pt. Its prefix error reaches 4.498pt; the larger default bands are not a
+universal font-to-margin rule. No universal PowerPoint or LibreOffice replacement is claimed.
+
+The 77-page bullet control set improves 51 prefix origins against the preceding
+implementation, leaves 26 unchanged and worsens none. Four improvements specifically
+remove stale defaults introduced by the initial candidate; the static 11pt gap remains.
+Final integration preserves all 2,364 accepted geometry results, 485 isolated text-page
+records and 42 selected rasters, plus all 814 chart pages and 140 map images. All eight
+local CI stages and 2,720 tests including doctests pass. Hosted checks are
+reported separately.

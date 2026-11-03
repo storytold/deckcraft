@@ -1052,6 +1052,33 @@ fn an_ordinary_hang_still_puts_the_text_at_the_margin() {
 }
 
 #[test]
+fn an_overrunning_bullet_starts_text_at_its_end_without_an_extra_tab_gap() {
+    // Independent ordinary DrawingML exports: Inter at 27pt, with authored paragraph
+    // margins. Native marker advances round to 1/8pt; our separate marker measurement
+    // remains continuous, so the comparison allows that rounding residual.
+    for (margin, indent, first) in [(9., -9., 15.25), (25., -9., 31.25), (25., -25., 25.), (12., -20., 20.), (9., 0., 24.25)] {
+        let (p, mut sh) = setup("Quiet", 300., 150.);
+        let body = sh.text.as_mut().unwrap();
+        body.body.autofit = Some(AutoFit::None);
+        let para = &mut body.paragraphs[0];
+        para.props.align = Some(Align::Left);
+        para.props.bullet = Some(Bullet::Char { char: "•".into() });
+        para.props.bullet_font = Some("Inter".into());
+        para.props.bullet_size = Some(1.);
+        para.props.margin_left = Some(margin);
+        para.props.indent = Some(indent);
+        para.props.default_tab = Some(11.);
+        para.props.tabs = Some(vec![deckcraft_model::text::TabStop { pos: 16., align: "l".into() }]);
+        para.runs[0].props.font = Some("Inter".into());
+        para.runs[0].props.size = Some(27.);
+        let l = lay(&p, &sh, 300., 150.);
+        assert_eq!(l.lines.len(), 1);
+        let x = l.lines[0].caret_x[0] - l.inner.x0;
+        assert!((x - first).abs() < 0.065, "marL {margin}, indent {indent}: {x} vs native {first}");
+    }
+}
+
+#[test]
 fn single_spaced_lines_are_1_2_times_the_size_apart_whatever_the_font() {
     // PowerPoint spaces single-spaced lines 1.2 × the font size apart in every font, with the
     // baseline where the font's Windows ascent/descent split puts it (observed on twenty fonts).
@@ -2363,6 +2390,55 @@ fn recovered_diagram_paints_with_the_same_wrap_metrics_used_to_select_its_font()
     assert!((recovered.content_width - 128.25).abs() < 1e-6);
     shape.text.as_mut().unwrap().body.diagram_recovery_metrics = None;
     assert_eq!(lay(&p, &shape, 128.30, 400.).lines.len(), 2);
+}
+
+#[test]
+fn valid_diagram_uses_fine_advances_without_changing_its_slide_line_pitch() {
+    // Fixed allocated text frame: native draws nine lines at 17pt, including
+    // separate final words. Coarse advances incorrectly keep those words together.
+    let text = "Longer currents cross the narrow channel and continue beyond the distant islands";
+    let (width, height) = (114.91478106315415, 152.95610120914424);
+    let (p, mut shape) = setup(text, width, height);
+    shape.ph = None;
+    let body = shape.text.as_mut().unwrap();
+    body.body = BodyProps {
+        inset_l: Some(0.),
+        inset_t: Some(0.),
+        inset_r: Some(0.),
+        inset_b: Some(0.),
+        anchor: Some(Anchor::Middle),
+        wrap: Some(true),
+        autofit: Some(AutoFit::None),
+        ..Default::default()
+    };
+    body.paragraphs[0].props.bullet = Some(Bullet::None);
+    body.paragraphs[0].props.line_spacing = Some(Spacing::Pct(0.9));
+    let run = &mut body.paragraphs[0].runs[0];
+    run.props.font = Some("Inter".into());
+    run.props.size = Some(17.);
+    run.props.kern = Some(12.);
+    body.paragraphs[0].end_props = run.props.clone();
+    let ordinary = lay(&p, &shape, width, height);
+    assert_eq!(ordinary.lines.len(), 8);
+    shape.text.as_mut().unwrap().body.diagram_fine_advances = Some(true);
+    let valid = lay(&p, &shape, width, height);
+    assert_eq!(valid.lines.len(), 9);
+    let words: Vec<String> = valid.lines.iter().map(|l| text.chars().skip(l.start).take(l.end - l.start).collect()).collect();
+    assert_eq!(&words[7..], &["distant", "islands"]);
+    let pitch = valid.lines[1].baseline - valid.lines[0].baseline;
+    assert!((pitch - 18.36).abs() < 1e-8);
+    assert!((pitch - (ordinary.lines[1].baseline - ordinary.lines[0].baseline)).abs() < 1e-8);
+    shape.text.as_mut().unwrap().body.diagram_recovery_metrics = Some(true);
+    let recovered = lay(&p, &shape, width, height);
+    assert_eq!(recovered.lines.len(), 9);
+    assert!((recovered.lines[1].baseline - recovered.lines[0].baseline - 18.51240234375).abs() < 1e-8);
+    shape.text.as_mut().unwrap().body.diagram_fine_advances = Some(false);
+    assert_eq!(lay(&p, &shape, width, height).content_height, recovered.content_height, "legacy recovery still selects both policies");
+    shape.text.as_mut().unwrap().body.diagram_recovery_metrics = None;
+    let ordinary_again = lay(&p, &shape, width, height);
+    assert_eq!(ordinary_again.lines.len(), ordinary.lines.len());
+    assert_eq!(ordinary_again.content_width, ordinary.content_width);
+    assert_eq!(ordinary_again.content_height, ordinary.content_height);
 }
 
 /// Native PowerPoint keeps an asymmetric crossed interval's midpoint, even when

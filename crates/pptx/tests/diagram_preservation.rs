@@ -209,6 +209,33 @@ fn uncached_custom_layout_executes_tree_constraints_and_retains_original_graph()
         std::fs::write(dir.join("uncached-composite.png"), image.to_png()).unwrap();
     }
 }
+
+#[test]
+fn uncached_diagram_advance_policy_survives_native_save_without_drawingml_attributes() {
+    let p = deckcraft_pptx::import(&uncached_fixture()).unwrap();
+    let texts: Vec<_> = group(&p).children().iter().filter_map(|s| s.text.as_ref()).collect();
+    assert!(!texts.is_empty());
+    for text in texts {
+        assert_eq!(text.body.diagram_fine_advances, Some(true));
+        assert_eq!(text.body.diagram_recovery_metrics, None);
+    }
+    let cached = deckcraft_pptx::import(&fixture()).unwrap();
+    for text in group(&cached).children().iter().filter_map(|s| s.text.as_ref()) {
+        assert_eq!(text.body.diagram_fine_advances, None, "cached DrawingML retains its own text policy");
+    }
+    let bytes = deckcraft_engine::cmd::file::save_bytes(&p, "deckcraft").unwrap();
+    let back = deckcraft_engine::cmd::file::open_presentation("native.deckcraft", &bytes).unwrap();
+    assert_eq!(group(&p), group(&back));
+    let before = deckcraft_engine::render::render_slide(&p, 0, &Default::default());
+    let after = deckcraft_engine::render::render_slide(&back, 0, &Default::default());
+    assert_eq!(before.pixels, after.pixels);
+    for (_, bytes) in files(&deckcraft_pptx::export(&back).unwrap()) {
+        if let Ok(xml) = std::str::from_utf8(&bytes) {
+            assert!(!xml.contains("diagramFineAdvances"));
+            assert!(!xml.contains("diagramRecoveryMetrics"));
+        }
+    }
+}
 #[test]
 fn uncached_shape_adjustment_keeps_unspecified_preset_defaults() {
     let mut parts = files(&uncached_fixture());
@@ -899,6 +926,120 @@ fn diagram_bullet_start_uses_data_hierarchy_and_secondary_font_not_paragraph_ind
         }
         let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
         assert_eq!(group(&back).children()[0].text, group(&p).children()[0].text);
+    }
+}
+
+#[test]
+fn diagram_hanging_defaults_follow_the_final_secondary_font_and_preserve_authored_sides() {
+    // Same-font native controls: primary 11/12 both produce secondary 9 and a 4.5pt
+    // hang. Explicit secondary 27/28 produce 18/22.5pt, independently of primary.
+    for (primary, secondary, margin, indent, expected_font, expected_margin, expected_indent) in [
+        (11., None, None, None, 9., 4.5, -4.5),
+        (12., None, None, None, 9., 4.5, -4.5),
+        (49., Some(9.), None, None, 9., 4.5, -4.5),
+        (24., Some(27.), None, None, 27., 18., -18.),
+        (49., Some(28.), None, None, 28., 22.5, -22.5),
+        (24., Some(38.), None, None, 38., 22.5, -22.5),
+        (24., Some(27.), Some(9.), None, 27., 9., -18.),
+        (24., Some(27.), None, Some(-9.), 27., 18., -9.),
+        (24., Some(27.), None, Some(0.), 27., 18., 0.),
+    ] {
+        let mut parts = files(&numeric_rule_fixture("", r#"<dgm:constr type="h" val="80"/>"#, false));
+        for (_, bytes) in &mut parts {
+            let Ok(mut doc) = parse_xml(bytes) else { continue };
+            if doc.root.is("layoutDef") {
+                *bytes = doc
+                    .root
+                    .to_xml()
+                    .replace("<dgm:alg type=\"tx\"/>", "<dgm:alg type=\"tx\"><dgm:param type=\"stBulletLvl\" val=\"1\"/></dgm:alg>")
+                    .replace(
+                        "<dgm:constr type=\"primFontSz\" val=\"36\"/>",
+                        &format!(
+                            "<dgm:constr type=\"primFontSz\" val=\"{primary}\"/>{}",
+                            secondary.map(|s| format!("<dgm:constr type=\"secFontSz\" val=\"{s}\"/>")).unwrap_or_default()
+                        ),
+                    )
+                    .into_bytes();
+            } else if doc.root.is("dataModel") {
+                for point in doc.root.elements_mut().find(|e| e.is("ptLst")).unwrap().elements_mut() {
+                    if let Some(t) = point.elements_mut().find(|e| e.is("t")) {
+                        for p in t.elements_mut().filter(|e| e.is("p")) {
+                            let mut prefix = parse_xml(br#"<a:p><a:pPr/></a:p>"#).unwrap().root;
+                            let props = prefix.elements_mut().next().unwrap();
+                            if let Some(v) = margin {
+                                props.set_attr("marL", &format!("{}", v * 12700.));
+                            }
+                            if let Some(v) = indent {
+                                props.set_attr("indent", &format!("{}", v * 12700.));
+                            }
+                            p.children.splice(0..0, prefix.children);
+                        }
+                    }
+                }
+                *bytes = doc.root.to_xml().into_bytes();
+            }
+        }
+        let p = deckcraft_pptx::import(&zip(parts)).unwrap();
+        let paragraph = &group(&p).children()[0].text.as_ref().unwrap().paragraphs[0];
+        assert_eq!(paragraph.props.margin_left, Some(expected_margin));
+        assert_eq!(paragraph.props.indent, Some(expected_indent));
+        assert!(paragraph.runs.iter().all(|r| r.props.size == Some(expected_font)));
+    }
+}
+
+#[test]
+fn diagram_font_rules_refresh_unauthored_hanging_defaults_without_rewriting_authored_sides() {
+    // Native rule/direct endpoint pairs agree after shrinking primary35 to14 (secondary11),
+    // including independently authored marL and indent. The exact small-font native default
+    // remains a separate gap; this regression checks that a previous trial cannot persist.
+    let fixture = |rule: bool, margin: Option<f64>, indent: Option<f64>| {
+        let rules = if rule { r#"<dgm:rule type="primFontSz" val="14"/>"# } else { "" };
+        let primary = if rule { 35 } else { 14 };
+        let mut parts = files(&numeric_rule_fixture(rules, r#"<dgm:constr type="h" val="12"/>"#, false));
+        for (_, bytes) in &mut parts {
+            let Ok(mut doc) = parse_xml(bytes) else { continue };
+            if doc.root.is("layoutDef") {
+                *bytes = doc
+                    .root
+                    .to_xml()
+                    .replace("<dgm:alg type=\"tx\"/>", "<dgm:alg type=\"tx\"><dgm:param type=\"stBulletLvl\" val=\"1\"/></dgm:alg>")
+                    .replace("type=\"primFontSz\" val=\"36\"", &format!("type=\"primFontSz\" val=\"{primary}\""))
+                    .into_bytes();
+            } else if doc.root.is("dataModel") {
+                for point in doc.root.elements_mut().find(|e| e.is("ptLst")).unwrap().elements_mut() {
+                    if let Some(t) = point.elements_mut().find(|e| e.is("t")) {
+                        for p in t.elements_mut().filter(|e| e.is("p")) {
+                            let mut prefix = parse_xml(br#"<a:p><a:pPr/></a:p>"#).unwrap().root;
+                            let props = prefix.elements_mut().next().unwrap();
+                            if let Some(v) = margin {
+                                props.set_attr("marL", &format!("{}", v * 12700.));
+                            }
+                            if let Some(v) = indent {
+                                props.set_attr("indent", &format!("{}", v * 12700.));
+                            }
+                            p.children.splice(0..0, prefix.children);
+                        }
+                    }
+                }
+                *bytes = doc.root.to_xml().replace(">OK<", &format!(">Quiet {}<", "W".repeat(100))).into_bytes();
+            }
+        }
+        deckcraft_pptx::import(&zip(parts)).unwrap()
+    };
+    for (margin, indent) in [(None, None), (Some(9.), None), (None, Some(0.)), (None, Some(-9.)), (Some(25.), Some(-25.))] {
+        let fitted = fixture(true, margin, indent);
+        let direct = fixture(false, margin, indent);
+        let a = &group(&fitted).children()[0].text.as_ref().unwrap().paragraphs[0];
+        let b = &group(&direct).children()[0].text.as_ref().unwrap().paragraphs[0];
+        assert!(a.runs.iter().chain(&b.runs).all(|r| r.props.size == Some(11.)));
+        assert_eq!(a.props.margin_left, b.props.margin_left, "font trial retained a previous margin");
+        assert_eq!(a.props.indent, b.props.indent, "font trial retained a previous indent");
+        if let Some(margin) = margin {
+            assert_eq!(a.props.margin_left, Some(margin));
+        }
+        if let Some(indent) = indent {
+            assert_eq!(a.props.indent, Some(indent));
+        }
     }
 }
 

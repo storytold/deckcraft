@@ -298,6 +298,80 @@ mod tests {
     }
 
     #[test]
+    fn cross_size_search_retains_fitting_local_and_allocated_checkpoints() {
+        use deckcraft_model::text::TextBody;
+        let pres = Presentation { slides: vec![Arc::new(deckcraft_model::Slide::default())], ..Default::default() };
+        let ctx = Ctx::for_slide(&pres, &pres.slides[0]).unwrap();
+        let texts = ["Silent waters wind below green slopes", "Quiet paths cross small fields"];
+        let data = crate::xml::parse(
+            b"<dataModel><ptLst><pt modelId='root' type='doc'/><pt modelId='a'><t><p><r><t>First</t></r></p></t></pt>
+              <pt modelId='b'><t><p><r><t>Second</t></r></p></t></pt></ptLst>
+              <cxnLst><cxn srcId='root' destId='a' srcOrd='0'/><cxn srcId='root' destId='b' srcOrd='1'/></cxnLst></dataModel>",
+        )
+        .unwrap();
+        let mm = 72. / 25.4;
+        // Original fixed-font controls distinguish the two search starts: the
+        // reset path wins for the first rectangle, but the local checkpoint wins
+        // for its sibling. Neither always-reset nor always-resume reproduces both.
+        for (preset, seeds, expected, nested, second_limit) in [
+            ("rect", [7., 9.], [27.3125, 26.796875], false, 77),
+            ("rect", [15., 17.], [26.912109375, 27.95703125], false, 77),
+            ("ellipse", [7., 9.], [62.859375, 62.65625], false, 77),
+            ("ellipse", [15., 17.], [62.4814453125, 63.46484375], false, 77),
+            ("rect", [15., 17.], [26.912109375, 27.95703125], true, 77),
+            ("ellipse", [15., 17.], [62.4814453125, 63.46484375], true, 77),
+            ("rect", [15., 17.], [27.46875, 20.], true, 20),
+            ("ellipse", [15., 17.], [63.09375, 50.], true, 50),
+            ("rect", [15., 17.], [26.912109375, 20.], false, 20),
+            ("ellipse", [15., 17.], [62.4814453125, 50.], false, 50),
+        ] {
+            let mut xml = "<layoutDef>".to_owned();
+            if nested {
+                xml.push_str(
+                    "<layoutNode><alg type='composite'/><constrLst>
+                    <constr type='w' for='ch' forName='flow' val='123'/><constr type='h' for='ch' forName='flow' val='110'/>
+                    <constr type='l' for='ch' forName='flow' val='0'/><constr type='t' for='ch' forName='flow' val='0'/></constrLst>",
+                );
+            }
+            xml.push_str("<layoutNode name='flow'><alg type='lin'/>");
+            let mut source = Vec::new();
+            for (i, ((width, limit), text)) in [(21., 90.), (29., 78.)].into_iter().zip(texts).enumerate() {
+                let mut body = TextBody::from_text(text);
+                body.paragraphs[0].runs[0].props.font = Some("Inter".into());
+                source.push(Shape { name: format!("node{i}"), geom: Geom::preset(preset), text: Some(body), ..Default::default() });
+                xml.push_str(&format!(
+                    "<layoutNode name='node{i}'><alg type='tx'/><presOf axis='ch' st='{start}' cnt='1'/><shape type='{preset}'/>
+                     <constrLst><constr type='w' val='{width}'/><constr type='h' val='{height}'/>
+                     <constr type='primFontSz' val='23'/><constr type='lMarg' val='0'/><constr type='rMarg' val='0'/>
+                     <constr type='tMarg' val='0'/><constr type='bMarg' val='0'/></constrLst>
+                     <ruleLst><rule type='w' val='{limit}'/><rule type='h' val='{cap}'/></ruleLst></layoutNode>",
+                    start = i + 1,
+                    height = seeds[i],
+                    cap = if i == 0 { 72 } else { second_limit },
+                ));
+            }
+            xml.push_str("</layoutNode>");
+            if nested {
+                xml.push_str("</layoutNode>");
+            }
+            xml.push_str("</layoutDef>");
+            let layout = crate::xml::parse(xml.as_bytes()).unwrap();
+            let mut cache = Measurements::default();
+            let mut callback = |p: &[Placed<'_>], kind| measure(&ctx, &source, p, kind, &mut cache);
+            let out = evaluate_measured(&layout.root, &data.root, Xfrm::new(0., 0., 123. * mm, 110. * mm), Some(&mut callback)).unwrap();
+            assert_eq!(out.len(), 2);
+            for (p, height) in out.iter().zip(expected) {
+                assert!(
+                    (p.rect.h / mm - height).abs() < 1e-7,
+                    "{preset}, {seeds:?}, nested={nested}, cap={second_limit}, {}: {} != {height}",
+                    p.name,
+                    p.rect.h / mm
+                );
+            }
+        }
+    }
+
+    #[test]
     fn snake_height_gate_distinguishes_paragraphs_from_wrapped_lines() {
         use deckcraft_model::text::TextBody;
         let pres = Presentation { slides: vec![Arc::new(deckcraft_model::Slide::default())], ..Default::default() };

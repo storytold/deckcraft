@@ -15,10 +15,11 @@ thread_local! {
 
 /// Lay out a shape's text body.
 pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLayout {
-    let metrics = if resolve::body(ctx, shape).diagram_recovery_metrics == Some(true) {
-        LayoutMetrics { advance: AdvanceMetrics::Diagram, line: LineMetrics::Typographic }
-    } else {
-        LayoutMetrics::default()
+    let bp = resolve::body(ctx, shape);
+    let recovered = bp.diagram_recovery_metrics == Some(true);
+    let metrics = LayoutMetrics {
+        advance: if recovered || bp.diagram_fine_advances == Some(true) { AdvanceMetrics::Diagram } else { AdvanceMetrics::DrawingMl },
+        line: if recovered { LineMetrics::Typographic } else { LineMetrics::Slide },
     };
     layout_with_metrics(ctx, shape, body, opts, metrics)
 }
@@ -348,7 +349,9 @@ fn first_line_start(has_bullet: bool, margin: f64, indent: f64, bullet_w: f64) -
     // (marL + indent < 0), PowerPoint pins the bullet to the box's edge and keeps the
     // hang: the first line's text starts at -indent (later lines stay at the margin).
     let stop = margin.max(-indent);
-    if indent < 0.0 && bx + bullet_w <= stop { stop } else { bx + bullet_w + if indent >= 0.0 { 0.0 } else { 3.0 } }
+    // An overrunning marker advances the first text directly to its end; inline tab stops
+    // do not add another gap to the bullet prefix.
+    if indent < 0.0 && bx + bullet_w <= stop { stop } else { bx + bullet_w }
 }
 
 /// Breaks one paragraph into lines and stacks them onto `flow`. `spacing` is

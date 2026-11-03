@@ -65,8 +65,8 @@ pub use style::{Fields, NoFields, Opts};
 use symbol::{covers_symbol, is_symbol_font, symbol_font_char, symbol_font_draw, symbol_unicode, symbol_unicode_alts};
 pub use symbol::{map_symbol_bullet, symbol_char};
 
-/// Nominal advances used for layout. Recovered diagrams use finer metrics for
-/// both font selection and painting; ordinary DrawingML keeps its own policy.
+/// Nominal advances used for layout. Materialized uncached diagrams use finer
+/// advances; their line sizing remains independent. Ordinary DrawingML keeps its policy.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AdvanceMetrics {
     #[default]

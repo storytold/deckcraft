@@ -138,6 +138,10 @@ pub struct BodyProps {
     /// import; this is not a DrawingML bodyPr attribute.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagram_recovery_metrics: Option<bool>,
+    /// Internal advances for materialized uncached SmartArt text. This is independent
+    /// of recovered-diagram line sizing and is not a DrawingML bodyPr attribute.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagram_fine_advances: Option<bool>,
     pub autofit: Option<AutoFit>,
     /// Internal lower bound from a diagram font-size rule. Ordinary text leaves it unset.
     /// Regenerated from the retained SmartArt layout on PPTX import; not an a:bodyPr attribute.
@@ -172,6 +176,7 @@ impl BodyProps {
         self.wrap = self.wrap.or(p.wrap);
         self.vertical_overflow = self.vertical_overflow.or(p.vertical_overflow);
         self.diagram_recovery_metrics = self.diagram_recovery_metrics.or(p.diagram_recovery_metrics);
+        self.diagram_fine_advances = self.diagram_fine_advances.or(p.diagram_fine_advances);
         self.autofit = self.autofit.or(p.autofit);
         self.min_autofit_scale = self.min_autofit_scale.or(p.min_autofit_scale);
         self.vert = self.vert.or(p.vert);
@@ -735,6 +740,24 @@ impl TextBody {
 mod tests {
     use super::*;
     use deckcraft_color::Rgba;
+
+    #[test]
+    fn diagram_advances_inherit_and_serialize_independently_of_recovery_lines() {
+        let parent = BodyProps { diagram_fine_advances: Some(true), ..Default::default() };
+        let mut inherited = BodyProps::default();
+        inherited.inherit(&parent);
+        assert_eq!(inherited.diagram_fine_advances, Some(true));
+        assert_eq!(inherited.diagram_recovery_metrics, None);
+        let mut explicit = BodyProps { diagram_fine_advances: Some(false), ..Default::default() };
+        explicit.inherit(&parent);
+        assert_eq!(explicit.diagram_fine_advances, Some(false));
+        let old: BodyProps = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.diagram_fine_advances, None);
+        assert!(!serde_json::to_string(&old).unwrap().contains("diagramFineAdvances"));
+        let json = serde_json::to_string(&inherited).unwrap();
+        assert!(json.contains("\"diagramFineAdvances\":true"));
+        assert_eq!(serde_json::from_str::<BodyProps>(&json).unwrap(), inherited);
+    }
 
     #[test]
     fn optional_overflow_inherits_without_replacing_explicit_policy() {
