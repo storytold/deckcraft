@@ -229,7 +229,6 @@ pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
                 })
                 .response
                 .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Appearance"));
-
         });
     });
 }
