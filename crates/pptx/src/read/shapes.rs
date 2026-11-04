@@ -27,6 +27,8 @@ pub struct IdCtx {
     /// Always allocate new ids (shapes pulled in from other parts).
     pub fresh: bool,
     pub count: usize,
+    /// Normalized target paths of `diagramDrawing` parts consumed by modeled SmartArt shapes.
+    pub diagram_drawings: HashSet<String>,
 }
 
 impl IdCtx {
@@ -395,7 +397,7 @@ fn grp(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> Sha
         if let Some(fx) = pr.child("effectLst") {
             s.effects = Some(dml::effects(fx));
         }
-        let raw: String = pr.elements().filter(|c| c.is("scene3d")).map(|c| c.to_xml()).collect();
+        let raw: String = pr.elements().filter(|c| c.is("scene3d")).map(|c| part.keep(c)).collect();
         if !raw.is_empty() {
             s.effects.get_or_insert_with(Effects::default).raw3d = Some(raw);
         }
@@ -441,7 +443,7 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
             return s;
         }
         if uri.ends_with("/diagram")
-            && let Some(g) = smartart(imp, part, gd, &s, depth)
+            && let Some(g) = smartart(imp, part, ctx, gd, &s, depth)
         {
             return g;
         }
@@ -594,7 +596,7 @@ fn diagram_data(imp: &mut Imp, target: &str) -> Option<deckcraft_model::MediaId>
 }
 
 /// SmartArt: read the pre-drawn shapes of its drawing part as a group.
-fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) -> Option<Shape> {
+fn smartart(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, gd: &El, frame: &Shape, depth: usize) -> Option<Shape> {
     if depth > 8 {
         return None;
     }
@@ -618,6 +620,7 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     g.diagram = diagram_outline(imp, part, rel_ids, &data.root);
     // Node pictures, from the blips of the data model's presentation points.
     if let Some(d) = &mut g.diagram {
+        ctx.diagram_drawings.insert(crate::opc::norm(&drawing_rel));
         let rels = imp.pkg.rels(&dm.target);
         for (k, rid) in crate::dgm::node_pictures(&data.root) {
             let Some(target) = rels.get(&rid).filter(|r| !r.external).map(|r| r.target.clone()) else { continue };

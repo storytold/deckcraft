@@ -266,9 +266,14 @@ fn theme_and_bevel_survive(once: &Presentation, twice: &Presentation) {
     s3.diagram_drawings.push(dgm_draw);
     p3.slides.push(Arc::new(s3));
     let r3 = round(&p3);
+    let r3_twice = round(&r3);
     let g3 = by_name(&r3, "Group3D");
-    assert_eq!(g3.effects.as_ref().and_then(|e| e.raw3d.as_deref()), Some(grp_3d));
-    assert_eq!(g3.children()[0].text.as_ref().and_then(|t| t.body.raw3d.as_deref()), Some(text_3d));
+    let g3_raw = g3.effects.as_ref().and_then(|e| e.raw3d.as_deref()).unwrap_or("");
+    let t3_raw = g3.children()[0].text.as_ref().and_then(|t| t.body.raw3d.as_deref()).unwrap_or("");
+    assert!(g3_raw.contains("isometricTopUp"), "{g3_raw}");
+    assert!(t3_raw.contains("orthographicFront") && t3_raw.contains("extrusionH=\"12700\""), "{t3_raw}");
+    assert_eq!(by_name(&r3_twice, "Group3D").effects.as_ref().and_then(|e| e.raw3d.as_deref()), Some(g3_raw));
+    assert_eq!(by_name(&r3_twice, "Group3D").children()[0].text.as_ref().and_then(|t| t.body.raw3d.as_deref()), Some(t3_raw));
     assert_eq!(r3.slides.last().expect("slide").diagram_drawings.len(), 1);
 }
 

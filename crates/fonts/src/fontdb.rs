@@ -404,6 +404,7 @@ struct CoverageIndex {
 struct CoverageFile {
     path: std::path::PathBuf,
     ranges: Option<Box<[(u32, u32)]>>,
+    complete: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -420,26 +421,31 @@ fn ranges_hold(ranges: &[(u32, u32)], cp: u32) -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn coverage_ranges(path: &std::path::Path, reads: &mut usize) -> Box<[(u32, u32)]> {
+fn coverage_ranges(path: &std::path::Path, reads: &mut usize) -> (Box<[(u32, u32)]>, bool) {
     *reads = reads.saturating_add(1);
-    let Ok(data) = std::fs::read(path) else { return Box::new([]) };
+    let Ok(data) = std::fs::read(path) else { return (Box::new([]), true) };
     const MAX_MAPPINGS: usize = 4 * 0x11_0000;
     const MAX_RANGES: usize = 1 << 17;
     let indices = collection_face_indices(&data);
     let mut ranges = Vec::new();
     let mut budget = MAX_MAPPINGS;
+    let mut complete = true;
     'faces: for i in indices {
         let Ok(f) = skrifa::FontRef::from_index(&data, i) else { continue };
         for (cp, _) in f.charmap().mappings() {
             budget = match budget.checked_sub(1) {
                 Some(v) => v,
-                None => break 'faces,
+                None => {
+                    complete = false;
+                    break 'faces;
+                }
             };
             match ranges.last_mut() {
                 Some((_, end)) if *end == cp.saturating_sub(1) => *end = cp,
                 Some((start, end)) if *start <= cp && cp <= *end => {}
                 _ => {
                     if ranges.len() >= MAX_RANGES {
+                        complete = false;
                         break 'faces;
                     }
                     ranges.push((cp, cp));
@@ -455,7 +461,7 @@ fn coverage_ranges(path: &std::path::Path, reads: &mut usize) -> Box<[(u32, u32)
             _ => compact.push((start, end)),
         }
     }
-    compact.into_boxed_slice()
+    (compact.into_boxed_slice(), complete)
 }
 
 /// Does face `index` of `data` carry colour glyph tables?
@@ -1244,16 +1250,17 @@ impl FontDb {
             let index = if let Some(index) = coverage.files.iter().position(|file| file.path == path) {
                 index
             } else {
-                coverage.files.push(CoverageFile { path: path.clone(), ranges: None });
+                coverage.files.push(CoverageFile { path: path.clone(), ranges: None, complete: true });
                 coverage.files.len().saturating_sub(1)
             };
             if coverage.files.get(index).and_then(|file| file.ranges.as_ref()).is_none() {
-                let ranges = coverage_ranges(&path, &mut coverage.reads);
+                let (ranges, complete) = coverage_ranges(&path, &mut coverage.reads);
                 if let Some(file) = coverage.files.get_mut(index) {
                     file.ranges = Some(ranges);
+                    file.complete = complete;
                 }
             }
-            if coverage.files.get(index).and_then(|file| file.ranges.as_deref()).is_some_and(|ranges| ranges_hold(ranges, cp)) {
+            if coverage.files.get(index).is_some_and(|file| !file.complete || file.ranges.as_deref().is_some_and(|ranges| ranges_hold(ranges, cp))) {
                 return true;
             }
         }

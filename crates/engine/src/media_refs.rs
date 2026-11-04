@@ -225,6 +225,9 @@ macro_rules! walkers {
                     f(id);
                 }
             }
+            for id in &$($m)? s.diagram_drawings {
+                f(id);
+            }
             text(&$($m)? s.notes, f);
         }
 
