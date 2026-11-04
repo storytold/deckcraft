@@ -285,7 +285,7 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
 fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     // External plain text (from the system clipboard) wins when given and differs from ours.
     // HTML from Pages or Keynote keeps bold, italic and underline when it says the same words.
-    if let Some(t) = str_param(p, "text")
+    if let Some(t) = str_param(p, "text").filter(|t| !t.is_empty())
         && t != s.clipboard.plain
     {
         if let Some(html) = str_param(p, "html")
