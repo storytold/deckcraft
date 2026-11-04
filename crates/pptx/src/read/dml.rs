@@ -664,12 +664,22 @@ fn push_text_runs(para: &mut Paragraph, props: RunProps, text: &str) {
 /// Appends an Office Math (a14:m) run: its plain text and its OMML.
 fn push_math_run(para: &mut Paragraph, part: &Part, e: &El) {
     if para.runs.len() < MAX_PARAGRAPH_RUNS {
-        let mut text = String::new();
-        let mut ts = vec![];
-        e.find_all("t", &mut ts);
-        for t in ts {
-            text.push_str(&t.text());
+        // The text of the outermost `t` elements: a `t` nested in another is already part of
+        // the outer one's text, and taking it again would copy it once per nesting level.
+        fn outer_t(e: &El, depth: usize, text: &mut String) {
+            if depth > crate::xml::MAX_DEPTH {
+                return;
+            }
+            for c in e.elements() {
+                if c.is("t") {
+                    text.push_str(&c.text());
+                } else {
+                    outer_t(c, depth + 1, text);
+                }
+            }
         }
+        let mut text = String::new();
+        outer_t(e, 0, &mut text);
         let omml = e.elements().map(|c| part.keep_inner(c)).collect::<String>();
         para.runs.push(Run { text, props: RunProps::default(), kind: RunKind::Math { omml } });
     }
@@ -713,6 +723,17 @@ pub fn paragraph(imp: &mut Imp, part: &Part, p: &El) -> Paragraph {
 mod tests {
     use super::*;
     use crate::xml::parse;
+
+    #[test]
+    fn nested_math_text_is_taken_once() {
+        // 200 `m:t` nested in each other around one word: the word, not 200 copies of it.
+        let x = format!(r#"<a14:m xmlns:a14="a" xmlns:m="m"><m:oMath>{}word{}</m:oMath></a14:m>"#, "<m:t>".repeat(200), "</m:t>".repeat(200));
+        let d = parse(x.as_bytes()).unwrap();
+        let part = Part { name: "ppt/slides/slide1.xml".into(), rels: Default::default(), ns: vec![], inner_ns: vec![] };
+        let mut para = Paragraph::default();
+        push_math_run(&mut para, &part, &d.root);
+        assert_eq!(para.runs[0].text, "word");
+    }
 
     #[test]
     fn colors_and_transforms() {
