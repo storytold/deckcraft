@@ -191,7 +191,8 @@ pub(crate) fn limit_dash_count(path: &BezPath, pat: Vec<f64>) -> Vec<f64> {
         return pat;
     }
     let len: f64 = path.segments().map(|s| s.arclen(1e-2)).sum();
-    let dashes = len / period;
+    // Every dash of the pattern counts, not each repeat of it: a custom pattern can hold many.
+    let dashes = len / period * pat.len().div_ceil(2) as f64;
     if !len.is_finite() {
         return vec![];
     }
