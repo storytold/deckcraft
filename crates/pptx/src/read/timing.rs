@@ -216,9 +216,11 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         let Some(id) = cm.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|f| ctx.lookup(f)) else { continue };
         let Some(shape) = find_shape_mut(shapes, id) else { continue };
         let ShapeKind::Media(clip) = &mut shape.kind else {
-            // A recorded Cameo's video is in the picture's timing node, not a media shape.
+            // A recorded Cameo's video is in the picture's timing node, not a media shape. It
+            // autoplays only when the node starts on slide entry (delay 0); a click waits.
             if let Some(cameo) = shape.cameo.as_mut().filter(|c| c.recorded.is_some()) {
-                cameo.autoplay = true;
+                let entry = cm.path(&["cTn", "stCondLst", "cond"]).and_then(|c| c.attr("delay")) == Some("0");
+                cameo.autoplay = entry;
             }
             continue;
         };

@@ -254,6 +254,35 @@ fn a_recorded_cameo_keeps_the_camera_background_it_was_imported_with() {
 }
 
 #[test]
+fn a_recorded_cameo_that_does_not_autoplay_gets_no_entry_timing() {
+    let mut p = recorded_deck();
+    if let Some(s) = p.slides.first_mut() {
+        for sh in &mut std::sync::Arc::make_mut(s).shapes {
+            if let Some(c) = &mut sh.cameo {
+                c.autoplay = false;
+            }
+        }
+    }
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let xml = part(&bytes, "ppt/slides/slide1.xml");
+    assert!(!xml.contains("<p:video>"), "no playback on slide entry: {xml}");
+    assert!(!xml.contains("<p:timing"), "nothing to time: {xml}");
+    // The recording is still part of the picture, so the round trip keeps it.
+    assert!(xml.contains("<a:videoFile r:link=\"rId"), "{xml}");
+
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let mut found = None;
+    deckcraft_model::walk(&q.slides[0].shapes, &mut |sh, _| {
+        if sh.name == "Camera 1" {
+            found = Some(sh.clone());
+        }
+    });
+    let cameo = found.expect("cameo shape").cameo.expect("cameo");
+    assert!(cameo.recorded.is_some());
+    assert!(!cameo.autoplay, "an imported recording does not start by itself");
+}
+
+#[test]
 fn a_linked_cameo_svg_is_written_as_a_link_not_an_embed() {
     let mut p = defaults::new_presentation(None);
     let media = deckcraft_model::MediaId(p.alloc_id().expect("id"));

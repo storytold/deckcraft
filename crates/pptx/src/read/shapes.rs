@@ -393,11 +393,11 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
     }
     if let Some(media) = recorded {
         // Attach the recording to the Cameo already read, so the `liveFeedProps` kept above
-        // (camera background, device) survives the round trip instead of an empty feed.
+        // (camera background, device) survives the round trip instead of an empty feed. Whether it
+        // plays on slide entry is decided by the timing tree (`media_settings`), not by the part.
         let cameo = s.cameo.get_or_insert_with(Default::default);
         cameo.live = false;
         cameo.recorded = Some(media);
-        cameo.autoplay = true;
     }
     s
 }

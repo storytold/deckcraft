@@ -586,18 +586,18 @@ pub fn has_recorded_cameo(shapes: &[Shape]) -> bool {
         if depth > 64 {
             return false;
         }
-        shapes.iter().any(|s| s.cameo.as_ref().is_some_and(|c| c.recorded.is_some()) || at(s.children(), depth + 1))
+        shapes.iter().any(|s| s.cameo.as_ref().is_some_and(|c| c.recorded.is_some() && c.autoplay) || at(s.children(), depth + 1))
     }
     at(shapes, 0)
 }
 
-/// The shapes a recorded Cameo plays on: `p:video` for each, in document order.
+/// The shapes a recorded Cameo plays on: `p:video` for each autoplaying Cameo, in document order.
 fn cameo_spids(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<u32>, depth: usize) {
     if depth > 64 {
         return;
     }
     for s in shapes {
-        if s.cameo.as_ref().is_some_and(|c| c.recorded.is_some())
+        if s.cameo.as_ref().is_some_and(|c| c.recorded.is_some() && c.autoplay)
             && let Some(spid) = idmap.get(s.id)
         {
             out.push(spid);
