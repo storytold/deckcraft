@@ -22,7 +22,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Batch Edit",
             [],
             None,
-            "{commands: [{command, params?}]} → {results: [{command, result}]} — runs the commands in order as one step; one undo undoes them all. The batch fails when a command fails, or when a shape.rotate gesture a command started is still open after the last one (end it in the batch with gesture: end). A failed batch names the step in its error and leaves the presentation, the selection, the default shape look, the Format and Animation Painters, whether a gesture is open, the AutoCorrect options, which GIFs are paused and Edit Points as they were, and no dialog, pane or playback a step asked for reaches the app. Some state is not rolled back, such as the clipboard and the user dictionary. At most 1000 commands; file.*, window.*, edit.undo, edit.redo, edit.batch, show.fromStart, show.fromCurrent, text.compose and text.commit are refused before any command runs",
+            "{commands: [{command, params?}]} → {results: [{command, result}]} — runs the commands in order as one step; one undo undoes them all. A shape.rotate gesture open before the batch that a command ends keeps its own undo step, before the batch's. The batch fails when a command fails, or when a shape.rotate gesture a command started is still open after the last one (end it in the batch with gesture: end). A failed batch names the step in its error and leaves the presentation, the selection, the default shape look, the Format and Animation Painters, whether a gesture is open, the AutoCorrect options, which GIFs are paused and Edit Points as they were, and no dialog, pane or playback a step asked for reaches the app. Some state is not rolled back, such as the clipboard and the user dictionary. At most 1000 commands; file.*, window.*, edit.undo, edit.redo, edit.batch, show.fromStart, show.fromCurrent, text.compose and text.commit are refused before any command runs",
             has_doc,
             batch
         ),
@@ -758,7 +758,8 @@ fn batch_refuses(id: &str) -> bool {
 /// animated GIFs are paused, Edit Points and the requests to the app. Some state is not rolled
 /// back, such as the clipboard and the user dictionary. Undo entries a step pushes itself (Delete
 /// Text) are dropped with the history saved before the first step, so the batch stays one undo
-/// step either way.
+/// step either way. A gesture open before the batch that a step ends keeps its own undo step,
+/// before the batch's, as if the gesture had ended just before the batch.
 fn batch(s: &mut Session, p: &Value) -> Result<Value> {
     let list = p.get("commands").and_then(Value::as_array).ok_or_else(|| bad("edit.batch", "missing `commands`: [{command, params?}]"))?;
     if list.len() > MAX_BATCH {
@@ -792,11 +793,27 @@ fn batch(s: &mut Session, p: &Value) -> Result<Value> {
     let (default_look, painter, anim_painter) = (s.default_look.clone(), s.painter.clone(), s.anim_painter.clone());
     let (prefs, gif_paused, ui_requests) = (s.prefs.clone(), s.gif_paused.clone(), s.ui_requests.clone());
     let (edit_points, edit_vertex, edit_segment) = (s.tool.edit_points, s.tool.edit_vertex, s.tool.edit_segment);
+    // Whether the gesture open now, if one is, has changed the presentation: ending it now would
+    // add its undo step.
+    let gesture_changed = {
+        let st = s.doc()?;
+        st.interaction.as_ref().is_some_and(|g| !Arc::ptr_eq(&g.doc, &st.doc))
+    };
     match run_steps(s, &steps) {
         Ok(results) => {
-            // The outer command adds the batch's one undo step after this returns.
+            // The outer command adds the batch's one undo step after this returns. Putting the
+            // history back also drops the undo step a step pushed when it ended the gesture open
+            // before the batch. That gesture gets its own undo step back, ahead of the batch's,
+            // when it had changed the presentation before the batch: the batch then undoes as if
+            // the gesture had ended just before it.
             if let Ok(st) = s.doc_mut() {
                 st.history = history;
+                if let Some(g) = interaction
+                    && gesture_changed
+                    && !st.interaction.as_ref().is_some_and(|now| Arc::ptr_eq(&now.doc, &g.doc))
+                {
+                    crate::push_undo(st, HistoryEntry { label: g.label, doc: g.doc, selection: g.selection, vertex_kind: g.vertex_kind });
+                }
             }
             Ok(json!({"results": results}))
         }

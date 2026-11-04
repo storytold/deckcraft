@@ -392,6 +392,150 @@ fn a_batch_that_starts_and_ends_a_gesture_is_one_undo_step() {
     assert_eq!(depth(&mut s), (undo, 1));
 }
 
+/// The label of the step the next undo takes back.
+fn next_undo(s: &mut Session) -> Value {
+    s.execute("document.inspect", &json!({})).unwrap()["undo"].clone()
+}
+
+/// A batch that ends a twist opened before it keeps the twist's own undo step, ahead of the
+/// batch's: one undo takes back the batch and the next the twist, as if the twist had ended just
+/// before the batch.
+#[test]
+fn a_batch_that_ends_an_earlier_gesture_leaves_the_gesture_its_own_undo_step() {
+    let mut s = blank();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80]})).unwrap()["id"].clone();
+    let rotation = |s: &mut Session| s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"]["rot"].as_f64().unwrap_or(0.0);
+    let shapes = names(&s).len();
+    let (undo, _) = depth(&mut s);
+    s.execute("shape.rotate", &json!({"by": 10.0, "gesture": "move"})).unwrap();
+    let steps = json!([
+        {"command": "shape.rotate", "params": {"gesture": "end"}},
+        {"command": "shape.insert", "params": {"preset": "ellipse", "rect": [300, 200, 80, 80]}},
+    ]);
+    s.execute("edit.batch", &json!({"commands": steps})).unwrap();
+    assert!(s.doc().unwrap().interaction.is_none(), "a gesture is still open");
+    assert_eq!(names(&s).len(), shapes + 1);
+    assert_eq!(depth(&mut s), (undo + 2, 0), "the twist and the batch are not two undo steps");
+    assert_eq!(next_undo(&mut s), "Batch Edit");
+    // One undo takes back the ellipse and leaves the twist.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(names(&s).len(), shapes);
+    assert!((rotation(&mut s) - 10.0).abs() < 1e-9, "rotation {} after one undo", rotation(&mut s));
+    assert_eq!(next_undo(&mut s), "Rotation");
+    // The next takes back the twist, and the shape is still there.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(names(&s).len(), shapes);
+    assert!(rotation(&mut s).abs() < 1e-9, "rotation {} after two undos", rotation(&mut s));
+    assert_eq!(depth(&mut s), (undo, 2));
+    // The third takes back the shape's insertion, the step before the twist.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(names(&s).len(), shapes - 1);
+}
+
+/// A batch whose only step ends a twist opened before it adds the twist's undo step and no step of
+/// its own: nothing else changed.
+#[test]
+fn a_batch_that_only_ends_an_earlier_gesture_adds_just_the_gestures_undo_step() {
+    let mut s = blank();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80]})).unwrap()["id"].clone();
+    let rotation = |s: &mut Session| s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"]["rot"].as_f64().unwrap_or(0.0);
+    let (undo, _) = depth(&mut s);
+    s.execute("shape.rotate", &json!({"by": 10.0, "gesture": "move"})).unwrap();
+    s.execute("edit.batch", &json!({"commands": [{"command": "shape.rotate", "params": {"gesture": "end"}}]})).unwrap();
+    assert!(s.doc().unwrap().interaction.is_none(), "a gesture is still open");
+    assert_eq!(depth(&mut s), (undo + 1, 0), "the twist has no undo step, or the batch added one");
+    assert_eq!(next_undo(&mut s), "Rotation");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(rotation(&mut s).abs() < 1e-9, "rotation {} after one undo", rotation(&mut s));
+    assert_eq!(depth(&mut s), (undo, 1));
+}
+
+/// The steps before and after the one that ends a twist opened before the batch undo together, as
+/// the batch's one step, after the twist's own: one undo takes back the ellipse, the rectangle and
+/// the 5 degrees the batch added to the twist, and the next takes back the twist's first 10.
+#[test]
+fn a_batch_that_ends_an_earlier_gesture_between_its_edits_undoes_them_together() {
+    let mut s = blank();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80]})).unwrap()["id"].clone();
+    let rotation = |s: &mut Session| s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"]["rot"].as_f64().unwrap_or(0.0);
+    let shapes = names(&s).len();
+    let (undo, _) = depth(&mut s);
+    s.execute("shape.rotate", &json!({"by": 10.0, "gesture": "move"})).unwrap();
+    let steps = json!([
+        {"command": "shape.insert", "params": {"preset": "ellipse", "rect": [300, 200, 80, 80]}},
+        {"command": "shape.rotate", "params": {"ids": [id], "by": 5.0, "gesture": "move"}},
+        {"command": "shape.rotate", "params": {"gesture": "end"}},
+        rect(140.0),
+    ]);
+    s.execute("edit.batch", &json!({"commands": steps})).unwrap();
+    assert!((rotation(&mut s) - 15.0).abs() < 1e-9, "rotation {}", rotation(&mut s));
+    assert_eq!(names(&s).len(), shapes + 2);
+    assert_eq!(depth(&mut s), (undo + 2, 0));
+    // One undo takes back all the batch did, before the twist ended and after.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(names(&s).len(), shapes);
+    assert!((rotation(&mut s) - 10.0).abs() < 1e-9, "rotation {} after one undo", rotation(&mut s));
+    // The next takes back the twist from before the batch.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(names(&s).len(), shapes);
+    assert!(rotation(&mut s).abs() < 1e-9, "rotation {} after two undos", rotation(&mut s));
+}
+
+/// A batch that ends a twist opened before it, edits and then fails leaves the presentation as it
+/// was and the twist open, so ending the twist afterwards makes it one undo step.
+#[test]
+fn a_batch_that_fails_after_ending_an_earlier_gesture_and_editing_leaves_the_gesture_open() {
+    let mut s = blank();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80]})).unwrap()["id"].clone();
+    let rotation = |s: &mut Session| s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"]["rot"].as_f64().unwrap_or(0.0);
+    let (undo, _) = depth(&mut s);
+    s.execute("shape.rotate", &json!({"by": 10.0, "gesture": "move"})).unwrap();
+    let before = snapshot(&s);
+    let steps = json!([
+        {"command": "shape.rotate", "params": {"gesture": "end"}},
+        {"command": "shape.insert", "params": {"preset": "ellipse", "rect": [300, 200, 80, 80]}},
+        bad_rename(),
+    ]);
+    let e = s.execute("edit.batch", &json!({"commands": steps})).unwrap_err().to_string();
+    assert!(e.contains("step 2 (`shape.rename`)"), "{e}");
+    assert_eq!(snapshot(&s), before, "the ellipse stayed or the twist moved");
+    assert_eq!(depth(&mut s), (undo, 0));
+    assert!(s.doc().unwrap().interaction.is_some(), "the twist is no longer open");
+    s.execute("shape.rotate", &json!({"gesture": "end"})).unwrap();
+    assert_eq!(depth(&mut s), (undo + 1, 0));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(rotation(&mut s).abs() < 1e-9, "rotation {} after one undo", rotation(&mut s));
+}
+
+/// A batch that ends a twist opened before it and then starts and ends one of its own keeps the
+/// earlier twist's undo step; its own twist is part of the batch's step.
+#[test]
+fn a_batch_that_ends_an_earlier_gesture_and_runs_its_own_keeps_only_the_earlier_ones_step() {
+    let mut s = blank();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80]})).unwrap()["id"].clone();
+    let rotation = |s: &mut Session| s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"]["rot"].as_f64().unwrap_or(0.0);
+    let shapes = names(&s).len();
+    let (undo, _) = depth(&mut s);
+    s.execute("shape.rotate", &json!({"by": 10.0, "gesture": "move"})).unwrap();
+    let steps = json!([
+        {"command": "shape.rotate", "params": {"gesture": "end"}},
+        {"command": "shape.rotate", "params": {"by": 10.0, "gesture": "move"}},
+        {"command": "shape.rotate", "params": {"gesture": "end"}},
+        {"command": "shape.insert", "params": {"preset": "ellipse", "rect": [300, 200, 80, 80]}},
+    ]);
+    s.execute("edit.batch", &json!({"commands": steps})).unwrap();
+    assert!((rotation(&mut s) - 20.0).abs() < 1e-9, "rotation {}", rotation(&mut s));
+    assert_eq!(depth(&mut s), (undo + 2, 0));
+    // One undo takes back the batch's twist and the ellipse.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(names(&s).len(), shapes);
+    assert!((rotation(&mut s) - 10.0).abs() < 1e-9, "rotation {} after one undo", rotation(&mut s));
+    // The next takes back the twist from before the batch.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(names(&s).len(), shapes);
+    assert!(rotation(&mut s).abs() < 1e-9, "rotation {} after two undos", rotation(&mut s));
+}
+
 /// AutoCorrect's options and replacement list are preferences, which the app saves when it quits;
 /// changing them is not an undo step. A failing batch leaves them as they were.
 #[test]
