@@ -182,16 +182,8 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
         return;
     }
     let (idx, uid) = (st.selection.slide, st.uid);
-    // Save an edited draft once the field has lost focus or another slide is shown (before
-    // anything reloads it), to the slide it was written on.
     let id = egui::Id::unique("notes_edit");
     let focused = ui.ctx().memory(|m| m.has_focus(id));
-    if app.notes_buf.2.edited && (!focused || app.notes_buf.0 != uid || app.notes_buf.1 != idx) {
-        app.notes_buf.2.edited = false;
-        if app.notes_buf.0 == uid {
-            let _ = app.run("slide.notes", json!({"body": app.notes_buf.2.body, "index": app.notes_buf.1}));
-        }
-    }
     let notes = app.session.active().and_then(|st| st.current_slide()).map(|s| s.notes.clone()).unwrap_or_default();
     egui::Panel::bottom("notes")
         .resizable(true)
@@ -203,11 +195,9 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
             let rect = ui.max_rect();
             ui.painter()
                 .line_segment([pos2(rect.min.x - 8.0, rect.min.y - 6.0), pos2(rect.max.x + 8.0, rect.min.y - 6.0)], Stroke::new(1.0, t.separator));
-            // Keep a local draft per slide, following the notes while the field isn't focused.
-            if app.notes_buf.0 != uid || app.notes_buf.1 != idx || (!focused && app.notes_buf.2.body != notes) {
-                app.notes_buf = (uid, idx, crate::notes::Draft::new(&notes));
-            }
-            let mut draft = app.notes_buf.2.clone();
+            // Keep a local draft per slide. A text command that ran earlier this frame (Home ▸
+            // Font, bold, …) is already on the slide; pick that up while the field stays focused.
+            let mut draft = crate::notes::prepare_draft(app, uid, idx, &notes, focused);
             let look = crate::notes::Look { size: 13.0, color: None };
             // Long notes scroll inside the pane instead of spilling over the slide (#221).
             let out = egui::ScrollArea::vertical()
@@ -298,13 +288,19 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                 draft.text = buf.clone();
                 deckcraft_model::edit::replace_text(&mut draft.body, &buf);
                 draft.edited = false;
+                app.notes_buf = (uid, idx, draft.clone());
                 let _ = app.run("slide.notes", json!({"body": draft.body, "index": idx}));
             }
             if r.lost_focus() && draft.edited {
-                draft.edited = false;
-                let _ = app.run("slide.notes", json!({"body": draft.body, "index": idx}));
+                app.notes_buf = (uid, idx, draft.clone());
+                crate::notes::commit_draft(app);
+                draft.edited = app.notes_buf.2.edited;
+                draft.body = app.notes_buf.2.body.clone();
             }
-            app.notes_buf.2 = draft;
+            let range = out.cursor_range.map(|c| (c.secondary.index.0, c.primary.index.0));
+            let focused_now = r.has_focus();
+            crate::notes::sync_focus(app, ui, idx, &draft.body, focused_now, range.map(|c| c.0), range.map(|c| c.1));
+            app.notes_buf = (uid, idx, draft);
         });
 }
 
@@ -420,5 +416,50 @@ mod tests {
         h.state_mut().set_status("Saved a copy");
         h.run_steps(3);
         assert_eq!(h.get_by_value("Saved a copy").accesskit_node().role(), Role::Label);
+    }
+
+    /// Speaker notes take the same font commands as a shape: the unsaved typing is saved first,
+    /// then the selection is formatted, and the notes field picks the result back up.
+    #[test]
+    fn notes_take_the_same_font_commands_as_slide_text() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        app.run("slide.notes", json!({"text": "Hello notes"})).unwrap();
+        let (uid, notes) = {
+            let st = app.session.active().unwrap();
+            (st.uid, st.current_slide().unwrap().notes.clone())
+        };
+        let mut draft = crate::notes::Draft::new(&notes);
+        draft.text.push('!');
+        deckcraft_model::edit::replace_text(&mut draft.body, &draft.text);
+        draft.edited = true;
+        app.notes_buf = (uid, 0, draft);
+        let (body, n) = (app.notes_buf.2.body.clone(), app.notes_buf.2.text.chars().count());
+        crate::notes::publish_selection(&mut app, 0, &body, 0, n);
+        app.run("format.font", json!({"family": "Liberation Serif"})).unwrap();
+        app.run("format.size", json!({"size": 28.0})).unwrap();
+        app.run("format.bold", json!({"on": true})).unwrap();
+        let fresh = app.session.active().unwrap().current_slide().unwrap().notes.clone();
+        let text = fresh.paragraphs.iter().flat_map(|p| p.runs.iter().map(|r| r.text.clone())).collect::<String>();
+        assert!(text.contains('!'), "the unsaved keystroke was saved before the font command: {text}");
+        let props = &fresh.paragraphs[0].runs[0].props;
+        assert_eq!(props.font.as_deref(), Some("Liberation Serif"));
+        assert_eq!(props.size, Some(28.0));
+        assert_eq!(props.bold, Some(true));
+        let shown = crate::notes::prepare_draft(&mut app, uid, 0, &fresh, true);
+        assert_eq!(shown.body.paragraphs[0].runs[0].props.font.as_deref(), Some("Liberation Serif"));
+    }
+
+    /// A saved window with no presenter split keeps the next-slide preview; an explicit 0 hides it.
+    #[test]
+    fn a_missing_presenter_split_keeps_the_next_slide() {
+        let old: crate::state::UiState = serde_json::from_str("{}").unwrap();
+        assert!((old.presenter_next - crate::state::PRESENTER_NEXT_DEFAULT).abs() < 0.001);
+        assert!((old.presenter_current - crate::state::PRESENTER_CURRENT_DEFAULT).abs() < 0.001);
+        let mut hidden: crate::state::UiState = serde_json::from_str(r#"{"presenterNext":0}"#).unwrap();
+        assert_eq!(hidden.presenter_next, 0.0);
+        assert!((hidden.presenter_current - crate::state::PRESENTER_CURRENT_DEFAULT).abs() < 0.001);
+        hidden.presenter_next = f32::NAN;
+        hidden = hidden.sanitized();
+        assert!((hidden.presenter_next - crate::state::PRESENTER_NEXT_DEFAULT).abs() < 0.001);
     }
 }

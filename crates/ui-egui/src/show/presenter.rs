@@ -1,5 +1,5 @@
 use super::keys::keyboard;
-use super::render::{fit, next_rect};
+use super::render::{fit, next_rect, next_split_from_pointer};
 use super::zoom::{Zoom, grid_indices, paint_grid, see_all_hit, slide_aspect, toggle_blank, zoom_frame};
 use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, Stroke, Ui, pos2, theme, vec2};
 
@@ -146,152 +146,270 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
     let button = |ui: &mut Ui, s: &str| {
         ui.add(egui::Button::new(egui::RichText::new(s).size(15.0).color(Color32::WHITE)).fill(Color32::from_gray(60)).min_size(vec2(0.0, 30.0)))
     };
-    let mut viewport = egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]);
-    if let Some(screen) = crate::screens::presenter_monitor(show.audience_screen, show.notes_screen) {
-        viewport = viewport.with_monitor(screen);
+    // A fixed point size is scaled into physical pixels. At 125% that leaves a
+    // 1100×700 window on a 1920×1200 monitor, so a notes screen gets no inner
+    // size and is fitted to the monitor from inside the window.
+    let mut viewport = egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft");
+    if show.notes_frame.is_some()
+        && let Some(screen) = crate::screens::presenter_monitor(show.audience_screen, show.notes_screen)
+    {
+        viewport = viewport.with_monitor(screen).with_decorations(false);
+    } else {
+        viewport = viewport.with_inner_size([1100.0, 700.0]);
     }
-    ctx.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("deckcraft_presenter"),
-        viewport,
-        |ui, _| {
-            if !keyboard(ui.ctx(), show, doc, now, true) {
-                *keep = false;
-            }
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
-            let elapsed = show.timer.elapsed(now);
-            let paused = show.timer.paused();
-            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::from_gray(24)).inner_margin(egui::Margin::same(16))).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format_elapsed(elapsed)).size(22.0).color(if paused {
-                        Color32::from_gray(160)
-                    } else {
-                        Color32::WHITE
-                    }));
-                    ui.add_space(12.0);
-                    ui.label(egui::RichText::new(clock.clone()).size(16.0).color(Color32::from_gray(200)));
-                    ui.add_space(20.0);
-                    ui.label(egui::RichText::new(format!("Slide {} of {}", cur + 1, doc.slides.len())).size(16.0).color(Color32::from_gray(200)));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if button(ui, "End Show").clicked() {
-                            *keep = false;
-                        }
-                        if button(ui, "Next ▶").clicked() {
-                            actions.push(show.state.next(doc));
-                        }
-                        if button(ui, "◀ Previous").clicked() {
-                            actions.push(show.state.prev(doc));
-                        }
-                    });
-                });
-                ui.horizontal(|ui| {
-                    if button(ui, if paused { "Resume" } else { "Pause" }).clicked() {
-                        show.timer.toggle(now);
-                    }
-                    if button(ui, "Reset").clicked() {
-                        show.timer.reset(now);
-                    }
-                    if button(ui, if show.blank == Some(Color32::BLACK) { "Black on" } else { "Black" }).clicked() {
-                        toggle_blank(show, Color32::BLACK);
-                    }
-                    if button(ui, if show.blank == Some(Color32::WHITE) { "White on" } else { "White" }).clicked() {
-                        toggle_blank(show, Color32::WHITE);
-                    }
-                    if button(ui, if show.presenter_grid { "All slides on" } else { "All slides" }).clicked() {
-                        show.presenter_grid = !show.presenter_grid;
-                    }
-                    if button(ui, show.zoom_label()).clicked() {
-                        show.zoom_key();
-                    }
-                });
-                ui.add_space(8.0);
-                let avail = ui.available_rect_before_wrap();
-                if show.presenter_grid {
-                    // The grid fills this window; the audience keeps seeing the current slide.
-                    paint_grid(ui.painter(), ui.ctx(), show, doc, avail);
-                    let hit = ui.interact(avail, ui.scope_id().with("presenter_grid"), Sense::click());
-                    if hit.clicked()
-                        && let Some(p) = hit.interact_pointer_pos()
-                        && let Some(n) = see_all_hit(avail, grid_indices(doc.slides.len()).len(), slide_aspect(doc), p)
-                        && let Some(&i) = grid_indices(doc.slides.len()).get(n)
+    ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("deckcraft_presenter"), viewport, |ui, _| {
+        if let Some(frame) = show.notes_frame {
+            crate::screens::cover_monitor(ui.ctx(), frame);
+        }
+        if !keyboard(ui.ctx(), show, doc, now, true) {
+            *keep = false;
+        }
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+        let elapsed = show.timer.elapsed(now);
+        let paused = show.timer.paused();
+        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::from_gray(24)).inner_margin(egui::Margin::same(16))).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format_elapsed(elapsed)).size(22.0).color(if paused {
+                    Color32::from_gray(160)
+                } else {
+                    Color32::WHITE
+                }));
+                ui.add_space(12.0);
+                ui.label(egui::RichText::new(clock.clone()).size(16.0).color(Color32::from_gray(200)));
+                ui.add_space(20.0);
+                ui.label(egui::RichText::new(format!("Slide {} of {}", cur + 1, doc.slides.len())).size(16.0).color(Color32::from_gray(200)));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let halt = if show.halt_last { "Halt on last slide on" } else { "Halt on last slide" };
+                    if button(ui, halt)
+                        .on_hover_text("On the last slide, arrows and a clicker stay put so a live show does not end. End Show still leaves.")
+                        .clicked()
                     {
-                        show.presenter_grid = false;
-                        show.blank = None;
-                        show.zoom = None;
-                        show.zoom_arm = false;
-                        actions.push(show.state.goto(doc, i));
+                        show.halt_last = !show.halt_last;
                     }
-                    return;
-                }
-                let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, avail.max.y));
-                let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), avail.max);
-                let cr = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.8)), doc);
-                let cr = Rect::from_min_size(left.min, cr.size());
-                if let Some(t) = &cur_tex {
-                    ui.painter().image(t.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-                }
-                if let Some(z) = show.zoom {
-                    let mark = zoom_frame(cr, z.uv());
-                    ui.painter().rect_stroke(mark, CornerRadius::ZERO, Stroke::new(2.0, Color32::WHITE), egui::StrokeKind::Inside);
-                }
-                if show.zoom_arm {
-                    let hit = ui.interact(cr, ui.scope_id().with("presenter_zoom"), Sense::click());
-                    hit.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Zoom"));
-                    if hit.clicked()
-                        && let Some(p) = hit.interact_pointer_pos()
-                        && cr.width() > 1.0
-                        && cr.height() > 1.0
-                    {
-                        show.zoom = Some(Zoom::at((p.x - cr.min.x) / cr.width(), (p.y - cr.min.y) / cr.height()));
-                        show.zoom_arm = false;
+                    if button(ui, "End Show").clicked() {
+                        *keep = false;
                     }
-                }
-                if let Some(c) = show.blank {
-                    ui.painter().rect_filled(cr, CornerRadius::ZERO, c);
-                }
-                let nr = next_rect(right, doc);
-                ui.painter().text(right.min, Align2::LEFT_TOP, "Next", theme::font(13.0), Color32::from_gray(170));
-                match &next_tex {
-                    Some(t) => {
-                        ui.painter().image(t.id(), nr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                    if button(ui, "Next ▶").clicked() {
+                        actions.push(show.state.next(doc));
                     }
-                    None => {
-                        ui.painter().rect_filled(nr, CornerRadius::ZERO, Color32::from_gray(40));
-                        // A next slide whose preview is still on its way is not the end.
-                        if next.is_none() {
-                            ui.painter().text(nr.center(), Align2::CENTER_CENTER, "End of slide show", theme::font(13.0), Color32::from_gray(170));
-                        }
+                    if button(ui, "◀ Previous").clicked() {
+                        actions.push(show.state.prev(doc));
                     }
-                }
-                let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
-                let mut head = ui.new_child(egui::UiBuilder::new().max_rect(notes_head));
-                head.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Notes").size(13.0).color(Color32::from_gray(170)));
-                    if ui.button("A-").clicked() {
-                        show.nudge_notes(-NOTES_STEP);
-                    }
-                    ui.label(egui::RichText::new(format!("{}", show.notes_px as i32)).size(13.0).color(Color32::from_gray(200)));
-                    if ui.button("A+").clicked() {
-                        show.nudge_notes(NOTES_STEP);
-                    }
-                });
-                let notes_rect = Rect::from_min_max(pos2(right.min.x, notes_head.max.y + 4.0), right.max);
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
-                egui::ScrollArea::vertical().show(&mut child, |ui| {
-                    presenter_notes(ui, notes, show.notes_px);
                 });
             });
-            if ui.input(|i| i.viewport().close_requested()) {
-                show.presenter = false;
-                // A grid left open in the closed window would hold auto-advance for the rest of the show.
-                show.presenter_grid = false;
+            ui.horizontal(|ui| {
+                if button(ui, if paused { "Resume" } else { "Pause" }).clicked() {
+                    show.timer.toggle(now);
+                }
+                if button(ui, "Reset").clicked() {
+                    show.timer.reset(now);
+                }
+                if button(ui, if show.blank == Some(Color32::BLACK) { "Black on" } else { "Black" }).clicked() {
+                    toggle_blank(show, Color32::BLACK);
+                }
+                if button(ui, if show.blank == Some(Color32::WHITE) { "White on" } else { "White" }).clicked() {
+                    toggle_blank(show, Color32::WHITE);
+                }
+                if button(ui, if show.presenter_grid { "All slides on" } else { "All slides" }).clicked() {
+                    show.presenter_grid = !show.presenter_grid;
+                }
+                if button(ui, show.zoom_label()).clicked() {
+                    show.zoom_key();
+                }
+            });
+            ui.add_space(8.0);
+            let avail = ui.available_rect_before_wrap();
+            if show.presenter_grid {
+                // The grid fills this window; the audience keeps seeing the current slide.
+                paint_grid(ui.painter(), ui.ctx(), show, doc, avail);
+                let hit = ui.interact(avail, ui.scope_id().with("presenter_grid"), Sense::click());
+                if hit.clicked()
+                    && let Some(p) = hit.interact_pointer_pos()
+                    && let Some(n) = see_all_hit(avail, grid_indices(doc.slides.len()).len(), slide_aspect(doc), p)
+                    && let Some(&i) = grid_indices(doc.slides.len()).get(n)
+                {
+                    show.presenter_grid = false;
+                    show.blank = None;
+                    show.zoom = None;
+                    show.zoom_arm = false;
+                    actions.push(show.state.goto(doc, i));
+                }
+                return;
             }
-        },
-    );
+            let right = slide_column(ui, show, doc, avail, &cur_tex);
+            let notes_top = next_column(ui, show, doc, right, &next_tex, next.is_none());
+            let notes_rect = Rect::from_min_max(pos2(right.min.x, notes_top), right.max);
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
+            super::notes_edit::pane(&mut child, show, cur, notes, doc);
+        });
+        if ui.input(|i| i.viewport().close_requested()) {
+            show.notes_editing = false;
+            super::notes_edit::flush_draft(show);
+            show.presenter = false;
+            // A grid left open in the closed window would hold auto-advance for the rest of the show.
+            show.presenter_grid = false;
+        }
+    });
     for a in actions {
         if !show.apply(a, doc, now) {
             *keep = false;
         }
     }
+}
+
+/// The current slide and the drag handle on its right. Returns the column left for the next
+/// slide and the notes. Hidden (`current_split` near 0) leaves a button that brings the slide back.
+fn slide_column(ui: &mut Ui, show: &mut Show, doc: &Presentation, avail: Rect, cur_tex: &Option<egui::TextureHandle>) -> Rect {
+    let hidden = !show.current_split.is_finite() || show.current_split < 0.04;
+    let show_btn = |ui: &mut Ui, label: &str| {
+        ui.add(egui::Button::new(egui::RichText::new(label).size(13.0).color(Color32::WHITE)).fill(Color32::from_gray(58)).min_size(vec2(0.0, 26.0)))
+    };
+    if hidden {
+        let bar = Rect::from_min_size(avail.min, vec2(avail.width().max(1.0), 28.0));
+        let mut header = ui.new_child(egui::UiBuilder::new().max_rect(bar));
+        if show_btn(&mut header, "Show current slide").on_hover_text("Show the current slide beside the notes").clicked() {
+            show.current_split = crate::state::PRESENTER_CURRENT_DEFAULT;
+        }
+        return Rect::from_min_max(pos2(avail.min.x, (bar.max.y + 8.0).min(avail.max.y)), avail.max);
+    }
+    let cols = presenter_columns(avail, show.current_split);
+    let header = Rect::from_min_size(cols.slide.min, vec2(cols.slide.width().max(1.0), 22.0));
+    let mut bar = ui.new_child(egui::UiBuilder::new().max_rect(header));
+    bar.horizontal(|ui| {
+        ui.label(egui::RichText::new("Slide").size(13.0).color(Color32::from_gray(170)));
+        if show_btn(ui, "Hide").on_hover_text("Hide the current slide and give the room to the notes").clicked() {
+            show.current_split = 0.0;
+        }
+    });
+    let image_area = Rect::from_min_max(pos2(cols.slide.min.x, header.max.y), cols.slide.max);
+    let cr = if image_area.width() > 8.0 && image_area.height() > 8.0 {
+        let fitted = fit(image_area, doc);
+        Rect::from_min_size(image_area.min, fitted.size())
+    } else {
+        Rect::from_min_size(image_area.min, vec2(0.0, 0.0))
+    };
+    if cr.width() > 1.0 && cr.height() > 1.0 {
+        if let Some(t) = cur_tex {
+            ui.painter().image(t.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        }
+        if let Some(z) = show.zoom {
+            let mark = zoom_frame(cr, z.uv());
+            ui.painter().rect_stroke(mark, CornerRadius::ZERO, Stroke::new(2.0, Color32::WHITE), egui::StrokeKind::Inside);
+        }
+        if show.zoom_arm {
+            let hit = ui.interact(cr, ui.scope_id().with("presenter_zoom"), Sense::click());
+            hit.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Zoom"));
+            if hit.clicked()
+                && let Some(p) = hit.interact_pointer_pos()
+                && cr.width() > 1.0
+                && cr.height() > 1.0
+            {
+                show.zoom = Some(Zoom::at((p.x - cr.min.x) / cr.width(), (p.y - cr.min.y) / cr.height()));
+                show.zoom_arm = false;
+            }
+        }
+        if let Some(c) = show.blank {
+            ui.painter().rect_filled(cr, CornerRadius::ZERO, c);
+        }
+    }
+    let x = (avail.min.x + avail.width() * show.current_split.clamp(0.04, 0.85)).clamp(avail.min.x + 36.0, avail.max.x - 48.0);
+    let handle = Rect::from_min_max(pos2(x - 4.0, avail.min.y), pos2(x + 4.0, avail.max.y));
+    ui.painter().vline(x, handle.y_range(), Stroke::new(2.0, Color32::from_gray(70)));
+    let hit = ui.interact(handle, ui.scope_id().with("presenter_current_split"), Sense::click_and_drag());
+    let hit = hit.on_hover_cursor(egui::CursorIcon::ResizeHorizontal).on_hover_text("Drag to resize the current slide. Double-click to hide it.");
+    if hit.double_clicked() {
+        show.current_split = 0.0;
+    } else if hit.dragged()
+        && let Some(p) = ui.input(|i| i.pointer.interact_pos())
+    {
+        show.current_split = current_split_from_pointer(avail, p.x);
+    }
+    cols.notes
+}
+
+/// The current slide's column and the column for the next slide and notes.
+/// A split below `0.04` hides the slide and gives the whole area to the notes.
+pub(super) fn presenter_columns(avail: Rect, split: f32) -> PresenterColumns {
+    if !split.is_finite() || split < 0.04 || avail.width() < 8.0 || avail.height() < 8.0 {
+        return PresenterColumns { slide: Rect::from_min_size(avail.min, vec2(0.0, 0.0)), notes: avail };
+    }
+    let split = split.clamp(0.04, 0.85);
+    let boundary = avail.min.x + avail.width() * split;
+    let slide = Rect::from_min_max(avail.min, pos2((boundary - 8.0).max(avail.min.x), avail.max.y));
+    let notes = Rect::from_min_max(pos2((boundary + 8.0).min(avail.max.x), avail.min.y), avail.max);
+    PresenterColumns { slide, notes }
+}
+
+/// Current-slide and notes columns of the presenter window.
+pub(super) struct PresenterColumns {
+    pub slide: Rect,
+    pub notes: Rect,
+}
+
+/// The current-slide splitter as a fraction of `area`, from a drag at `x`. Hiding is the Hide
+/// button, not a drag.
+pub(super) fn current_split_from_pointer(area: Rect, x: f32) -> f32 {
+    let w = area.width();
+    if !x.is_finite() || w < 1.0 {
+        return crate::state::PRESENTER_CURRENT_DEFAULT;
+    }
+    let min = (180.0 / w).clamp(0.15, 0.45);
+    let max = ((w - 220.0) / w).clamp(min, 0.85);
+    ((x - area.min.x) / w).clamp(min, max)
+}
+
+/// The next-slide preview and the drag handle under it. Returns where the notes start.
+/// Hidden (`next_split` near 0) leaves only a button that brings the preview back.
+fn next_column(ui: &mut Ui, show: &mut Show, doc: &Presentation, right: Rect, next_tex: &Option<egui::TextureHandle>, at_end: bool) -> f32 {
+    let hidden = !show.next_split.is_finite() || show.next_split < 0.04;
+    let show_btn = |ui: &mut Ui, label: &str| {
+        ui.add(egui::Button::new(egui::RichText::new(label).size(13.0).color(Color32::WHITE)).fill(Color32::from_gray(58)).min_size(vec2(0.0, 26.0)))
+    };
+    if hidden {
+        let bar = Rect::from_min_size(right.min, vec2(right.width().max(1.0), 28.0));
+        let mut header = ui.new_child(egui::UiBuilder::new().max_rect(bar));
+        if show_btn(&mut header, "Show next slide").on_hover_text("Show the next slide beside the notes").clicked() {
+            show.next_split = crate::state::PRESENTER_NEXT_DEFAULT;
+        }
+        return (bar.max.y + 8.0).min(right.max.y);
+    }
+    let split = show.next_split.clamp(0.04, 0.85);
+    let header = Rect::from_min_size(right.min, vec2(right.width().max(1.0), 22.0));
+    let mut bar = ui.new_child(egui::UiBuilder::new().max_rect(header));
+    bar.horizontal(|ui| {
+        ui.label(egui::RichText::new("Next").size(13.0).color(Color32::from_gray(170)));
+        if show_btn(ui, "Hide").on_hover_text("Hide the next slide and give the room to the notes").clicked() {
+            show.next_split = 0.0;
+        }
+    });
+    let nr = next_rect(right, doc, split);
+    if nr.width() > 1.0 && nr.height() > 1.0 {
+        match next_tex {
+            Some(t) => {
+                ui.painter().image(t.id(), nr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+            }
+            None => {
+                ui.painter().rect_filled(nr, CornerRadius::ZERO, Color32::from_gray(40));
+                // A next slide whose preview is still on its way is not the end.
+                if at_end {
+                    ui.painter().text(nr.center(), Align2::CENTER_CENTER, "End of slide show", theme::font(13.0), Color32::from_gray(170));
+                }
+            }
+        }
+    }
+    let y = (right.min.y + right.height() * split).clamp(right.min.y + 36.0, right.max.y - 48.0);
+    let handle = Rect::from_min_max(pos2(right.min.x, y - 4.0), pos2(right.max.x, y + 4.0));
+    ui.painter().hline(handle.x_range(), y, Stroke::new(2.0, Color32::from_gray(70)));
+    let hit = ui.interact(handle, ui.scope_id().with("presenter_next_split"), Sense::click_and_drag());
+    let hit = hit.on_hover_cursor(egui::CursorIcon::ResizeVertical).on_hover_text("Drag to resize the next slide. Double-click to hide it.");
+    if hit.double_clicked() {
+        show.next_split = 0.0;
+    } else if hit.dragged()
+        && let Some(p) = ui.input(|i| i.pointer.interact_pos())
+    {
+        show.next_split = next_split_from_pointer(right, p.y);
+    }
+    (y + 8.0).min(right.max.y)
 }
 
 /// The current slide's notes in the presenter's notes pane, `px` for 12 pt text.

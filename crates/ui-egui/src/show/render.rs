@@ -153,12 +153,32 @@ pub(super) fn fit(avail: Rect, doc: &Presentation) -> Rect {
 
 /// A transition layer as an egui mesh: [`deckcraft_anim::layer_mesh`]'s triangles (perspective
 /// cards subdivided so their pictures stay straight) with per-vertex opacity.
-/// Where presenter view's "Next" preview goes: the column's width below its label, kept inside
-/// the top 60% of the column. A portrait slide used to get the full width and a height many
-/// times the window (a white slab over the notes and past the window edge).
-pub(super) fn next_rect(right: Rect, doc: &Presentation) -> Rect {
-    let area = Rect::from_min_max(right.min + vec2(0.0, 22.0), pos2(right.max.x, right.min.y + 22.0 + (right.height() - 22.0).max(0.0) * 0.6));
+/// Where presenter view's "Next" preview goes: the column's width below its label, inside the
+/// top `split` of the column (`0` hides it). A portrait slide used to get the full width and a
+/// height many times the window (a white slab over the notes and past the window edge).
+pub(super) fn next_rect(right: Rect, doc: &Presentation, split: f32) -> Rect {
+    if !split.is_finite() || split < 0.04 || right.width() < 8.0 || right.height() < 8.0 {
+        return Rect::from_min_size(right.min, vec2(0.0, 0.0));
+    }
+    let split = split.clamp(0.04, 0.85);
+    let bottom = (right.min.y + right.height() * split - 6.0).max(right.min.y + 22.0);
+    let area = Rect::from_min_max(right.min + vec2(0.0, 22.0), pos2(right.max.x, bottom.min(right.max.y)));
+    if area.height() < 8.0 || area.width() < 8.0 {
+        return Rect::from_min_size(right.min, vec2(0.0, 0.0));
+    }
     Rect::from_min_size(area.min, fit(area, doc).size())
+}
+
+/// The next-slide splitter as a fraction of `column`, from a drag at `y`. Stays large enough
+/// to grab and leaves the notes a strip of their own. Hiding is the Hide button, not a drag.
+pub(super) fn next_split_from_pointer(column: Rect, y: f32) -> f32 {
+    let h = column.height();
+    if !y.is_finite() || h < 1.0 {
+        return crate::state::PRESENTER_NEXT_DEFAULT;
+    }
+    let min = (88.0 / h).clamp(0.12, 0.45);
+    let max = ((h - 80.0) / h).clamp(min, 0.85);
+    ((y - column.min.y) / h).clamp(min, max)
 }
 
 pub(super) fn quad_mesh(tex: Option<egui::TextureId>, rect: Rect, l: &Layer, color: Color32) -> Mesh {

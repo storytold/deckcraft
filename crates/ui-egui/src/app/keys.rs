@@ -1,5 +1,4 @@
-use super::clipboard::OBJECTS_MARKER;
-use super::{Mods, SlideApp, Value, backstage, json, menus};
+use super::{Mods, SlideApp, backstage, json, menus};
 
 impl SlideApp {
     /// The app shortcuts that still make sense on the empty File/start screen: create, open,
@@ -95,13 +94,6 @@ impl SlideApp {
         {
             ctx.memory_mut(|m| m.surrender_focus(id));
         }
-        if ctx.memory(|m| m.focused().is_some()) || modal {
-            // A stock field/modal/palette owns input now. Retire the custom fence, then visit
-            // controls in raw order; stock text/key events are left for the stock widgets.
-            self.suspend_ime_reset(viewport);
-            self.route_ime_controls_only(ctx, &events);
-            return;
-        }
         if self.backstage.is_some() {
             self.suspend_ime_reset(viewport);
             self.route_ime_controls_only(ctx, &events);
@@ -109,28 +101,32 @@ impl SlideApp {
             self.drain_requests();
             return;
         }
-        let img = if image_paste { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
-        if let Some(png) = img {
-            let data = deckcraft_engine::cmd::base64_encode(&png);
-            if let Err(e) = self.session.execute("insert.picture", &json!({"name": "Pasted image.png", "data": data})) {
-                self.set_status(e.to_string());
+        // A text field pastes into itself. Anything else that holds focus (a ribbon button, a
+        // slider) must not swallow a copy from another program.
+        let text_field = ctx.text_edit_focused();
+        if !modal && !text_field {
+            self.apply_clipboard(ctx, &events, image_paste, pasted_image_event);
+        }
+        if ctx.memory(|m| m.focused().is_some()) || modal {
+            // A stock field/modal/palette owns input now. Retire the custom fence, then visit
+            // controls in raw order; stock text/key events are left for the stock widgets.
+            // Formatting shortcuts still reach the notes, the same ones the slide text uses.
+            self.suspend_ime_reset(viewport);
+            self.route_ime_controls_only(ctx, &events);
+            if !modal && self.notes_format_target() {
+                self.notes_format_keys(ctx, &events);
             }
+            return;
         }
         for e in events {
             // An earlier command in this raw batch may have settled the composition. Request the
             // replacement at this ordered boundary, before the current event is considered.
+            if matches!(e, egui::Event::Paste(_) | egui::Event::PasteImage(_) | egui::Event::Copy | egui::Event::Cut) {
+                continue;
+            }
             self.note_settled_composition(ctx);
             match e {
                 egui::Event::ImeResetCompleted { request_id } => self.ime_reset_completed(request_id, ctx),
-                egui::Event::PasteImage(image) => match color_image_png(&image) {
-                    Ok(png) => {
-                        let params = json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)});
-                        if let Err(e) = self.session.execute("insert.picture", &params) {
-                            self.set_status(e.to_string());
-                        }
-                    }
-                    Err(e) => self.set_status(e),
-                },
                 egui::Event::Text(t) => {
                     let revision = self.session.active().map(|d| d.revision);
                     if self.session.active().is_some_and(|d| d.selection.text.is_some() || d.selection.shapes.len() == 1)
@@ -143,37 +139,6 @@ impl SlideApp {
                     }
                 }
                 egui::Event::Ime(ime) => self.ime_event(ctx, &ime),
-                egui::Event::Copy => self.publish_clipboard(ctx, false),
-                egui::Event::Cut => self.publish_clipboard(ctx, true),
-                egui::Event::Paste(text) => {
-                    // Our own marker for objects without text: paste what the session copied.
-                    let text = if text == OBJECTS_MARKER { String::new() } else { text };
-                    // A picture (TIFF from Keynote, a screenshot) lands when the paste has no text.
-                    // Text keeps its HTML (bold, italic, underline) when the host can read it.
-                    let html = self.services.clipboard_html.as_mut().and_then(|f| f()).filter(|h| !h.is_empty());
-                    // egui 0.37 sends `PasteImage` directly; the services fallback stays for
-                    // integrations that still send an empty `Paste`. Never insert twice.
-                    let img = if text.is_empty() && !pasted_image_event { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
-                    let revision = self.session.active().map(|d| d.revision);
-                    let r = match img {
-                        Some(png) => self
-                            .session
-                            .execute("insert.picture", &json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)})),
-                        None => {
-                            let mut params = json!({"text": text});
-                            if let Some(h) = html {
-                                params["html"] = Value::String(h);
-                            }
-                            self.session.execute("edit.paste", &params)
-                        }
-                    };
-                    if let Err(e) = r {
-                        self.set_status(e.to_string());
-                    }
-                    if self.session.active().map(|d| d.revision) != revision {
-                        self.note_application_edit(ctx);
-                    }
-                }
                 egui::Event::Key { key, pressed: true, modifiers, .. } => {
                     if key == egui::Key::Tab {
                         // The slide has the keyboard, so Tab is ours (indent, tab character, next
@@ -203,6 +168,73 @@ impl SlideApp {
             }
         }
         self.drain_requests();
+    }
+
+    /// Copy, cut and paste. Also a Ctrl+V that egui swallowed because the system clipboard had no
+    /// text it could read (a screenshot on Windows).
+    fn apply_clipboard(&mut self, ctx: &egui::Context, events: &[egui::Event], image_paste: bool, pasted_image_event: bool) {
+        let saw_paste = events.iter().any(|e| matches!(e, egui::Event::Paste(_) | egui::Event::PasteImage(_)));
+        if image_paste && !saw_paste {
+            self.note_settled_composition(ctx);
+            self.paste_shortcut_without_event(ctx);
+        }
+        for e in events {
+            self.note_settled_composition(ctx);
+            match e {
+                egui::Event::PasteImage(image) => match color_image_png(image) {
+                    Ok(png) => {
+                        let data = deckcraft_engine::cmd::base64_encode(&png);
+                        let revision = self.session.active().map(|d| d.revision);
+                        if let Err(e) = self.session.execute("insert.picture", &json!({"name": "Pasted image.png", "data": data})) {
+                            self.set_status(e.to_string());
+                        }
+                        if self.session.active().map(|d| d.revision) != revision {
+                            self.note_application_edit(ctx);
+                        }
+                    }
+                    Err(e) => self.set_status(e),
+                },
+                egui::Event::Copy => self.publish_clipboard(ctx, false),
+                egui::Event::Cut => self.publish_clipboard(ctx, true),
+                egui::Event::Paste(text) => self.paste_event(ctx, text, !pasted_image_event),
+                _ => {}
+            }
+        }
+    }
+
+    fn notes_format_target(&self) -> bool {
+        self.notes_focused && self.session.active().is_some_and(|d| d.selection.text.as_ref().is_some_and(|t| t.notes))
+    }
+
+    /// Ctrl/Cmd+B and the other font shortcuts, while the notes field has the keyboard.
+    fn notes_format_keys(&mut self, ctx: &egui::Context, events: &[egui::Event]) {
+        for event in events {
+            let egui::Event::Key { key, pressed: true, modifiers, .. } = event else { continue };
+            if !notes_format_shortcut(*key, *modifiers) {
+                continue;
+            }
+            ctx.input_mut(|i| i.consume_key(*modifiers, *key));
+            crate::notes::commit_draft(self);
+            let mods = Mods { shift: modifiers.shift, alt: modifiers.alt, cmd: modifiers.command || modifiers.ctrl };
+            if let Err(e) = self.session.key(key_name(*key), mods) {
+                self.set_status(e.to_string());
+            }
+        }
+    }
+}
+
+/// Font shortcuts the notes field should not swallow: the same bindings as slide text.
+fn notes_format_shortcut(key: egui::Key, modifiers: egui::Modifiers) -> bool {
+    if !(modifiers.command || modifiers.ctrl) || modifiers.alt {
+        return false;
+    }
+    match key {
+        egui::Key::B | egui::Key::I | egui::Key::U if !modifiers.shift => true,
+        egui::Key::X if modifiers.shift => true,
+        egui::Key::Period | egui::Key::Comma if modifiers.shift => true,
+        egui::Key::Equals => true,
+        egui::Key::Space if !modifiers.shift => true,
+        _ => false,
     }
 }
 

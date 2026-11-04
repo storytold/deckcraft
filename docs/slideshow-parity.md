@@ -1,6 +1,6 @@
 # Slide show and presenter view: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (deleting slides removes them from custom shows; previous: minor, Set Up Slide Show ▸ Keep mouse cursor visible, #1445; previous: minor, Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (presenter Halt on last slide; previous: minor, presenter current slide resizes and hides) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Presenting is the job PowerPoint is hired for. This doc covers the show window, presenter view,
 rehearsal and recording. Transition and animation playback are in
@@ -41,13 +41,13 @@ ready** (estimated), **10–16 h** to parity.
 
 | Feature | PowerPoint | DeckCraft | Notes |
 |---|---|---|---|
-| Separate presenter window with current slide, next slide, notes | yes | yes (an egui viewport, 1100×700); the notes keep their bullets, numbers, indents and bold/italic, as in the notes pane | |
+| Separate presenter window with current slide, next slide, notes | yes | yes (an egui viewport, 1100×700); the notes keep their bullets, numbers, indents and bold/italic, as in the notes pane. Hide, or drag the bar beside the current slide and the bar under the next slide; both splits are kept in `ui.json` (`presenter_current`, `presenter_next`; `0` hides that pane) | |
 | Elapsed timer | yes | yes | |
 | Pause / reset timer, clock | yes | yes: Pause/Resume and Reset in presenter view (T pauses, R resets); the clock is local time, `--:--` where there is no clock | Pausing the timer does not pause the show, animations or rehearsal |
-| Slide counter, previous/next/end buttons | yes | yes | |
+| Slide counter, previous/next/end buttons | yes | yes. Halt on last slide, at the top right, keeps arrows and a clicker on the last slide; End Show and Escape still leave. The choice is kept in `ui.json` (`halt_last`) | |
 | Keyboard navigation while Presenter View has focus | yes | yes | Shares the audience window's key handling; handled keys are consumed before buttons, and the presenter stays available at the end screen |
-| Notes font size, scrolling | yes | yes: A- / A+ (and `[` / `]`), 12–48 pt in steps of 4, default 18; the notes scroll | |
-| Placed on the presenter's display automatically, show on the projector | yes | **no**: opens wherever the OS puts it | Beta blocker, 3–5 h. Open PR #433 places the show on a second display when one is attached. This change does not |
+| Notes font size, scrolling | yes | yes: A- / A+ (and `[` / `]`), 12–48 pt in steps of 4, default 18; the notes scroll. While editing (F2) the bar sets font, point size, bold, italic, underline and strikethrough on the selection, the same properties as slide text | |
+| Placed on the presenter's display automatically, show on the projector | yes | Slides use the saved presentation screen, or the non-primary screen. Ending the show puts the editing window back at the screen, size and maximized state it had before the slides moved | Swap displays is still open on #433 |
 | Swap displays | yes | no | Still open on #433 |
 | Pen, laser, black screen, zoom from presenter view | yes | Black, White and Zoom buttons; the audience zoom is framed on the presenter slide | Pen and laser are driven from the audience window only; the presenter window does not move the laser dot |
 | See all slides from presenter view | yes | yes: All slides (or G) opens the grid in presenter view only, the audience keeps the slide; click a thumbnail to go there, Esc closes it | |
@@ -79,6 +79,9 @@ Reading View in a window with navigation: present (checklist row done).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | minor | Presenter view's Halt on last slide keeps arrows and a clicker from leaving the last slide (`ui.inspect` `haltLast`, saved as `halt_last`). End Show and Escape still end the show |
+| 2026-11-04 | minor | Presenter view's current slide resizes and hides (`ui.inspect` `currentSplit`, saved as `presenter_current`). Ending a show that moved the editing window puts that window back on its previous screen |
+| 2026-11-04 | minor | Presenter view's next-slide preview resizes and hides (`ui.inspect` `nextSplit`, saved as `presenter_next`). Notes in the pane, Notes Page and presenter edit bar take the same font, size, bold, italic, underline and strikethrough as slide text |
 | 2026-10-27 | minor | Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows keep a still pointer, so clickable choices stay targetable; Reading View unchanged (#1445) |
 | 2026-10-22 | minor | See All Slides from presenter view opens in presenter view, not on the audience screen (#1130) |
 | 2026-10-14 | trivial | Community PR wave folded: one media playback row, the presenter pen/laser row matches the laser that exists, estimates keep only the open work (~9–16 h); checklist breadth 68% |

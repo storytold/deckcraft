@@ -418,6 +418,87 @@ fn ctrl_v_pastes_an_image_when_no_paste_event_arrives() {
     assert_eq!(pictures(harness.state()), 1);
 }
 
+fn slide_texts(app: &SlideApp) -> Vec<String> {
+    app.session
+        .active()
+        .and_then(|d| d.doc.slides.first())
+        .map(|sl| sl.shapes.iter().map(|s| s.text.as_ref().map(|t| t.text()).unwrap_or_default()).collect())
+        .unwrap_or_default()
+}
+
+/// Copy in another program, then Paste on the ribbon: the command carries no text, so the system
+/// clipboard has to be read. A copy inside DeckCraft still pastes that copy when the system
+/// clipboard holds our objects marker.
+#[test]
+fn paste_reads_text_copied_in_another_program() {
+    let services = Services { clipboard_text: Some(Box::new(|| Some("From Notepad".into()))), ..Default::default() };
+    let mut h = step_app(services);
+    h.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 40.0, 40.0]})).unwrap();
+    h.state_mut().session.execute("edit.copy", &json!({})).unwrap();
+    h.state_mut().run("edit.paste", json!({})).unwrap();
+    let texts = slide_texts(h.state());
+    assert!(texts.iter().any(|t| t == "From Notepad"), "{texts:?}");
+
+    let session = Session::with_new();
+    let png = {
+        let d = session.active().unwrap();
+        deckcraft_engine::cmd::file::render_png(&d.doc, 0, 0.1, false).0
+    };
+    let services = Services {
+        clipboard_text: Some(Box::new(|| Some(OBJECTS_MARKER.to_string()))),
+        clipboard_image: Some(Box::new(move || Some(png.clone()))),
+        ..Default::default()
+    };
+    let mut h = step_app(services);
+    let before = h.state().session.active().unwrap().doc.slides[0].shapes.len();
+    h.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 40.0, 40.0]})).unwrap();
+    h.state_mut().session.execute("edit.copy", &json!({})).unwrap();
+    h.state_mut().run("edit.paste", json!({})).unwrap();
+    let shapes = &h.state().session.active().unwrap().doc.slides[0].shapes;
+    assert_eq!(shapes.len(), before + 2, "the rectangle and a copy of it");
+    assert!(shapes.last().unwrap().text.as_ref().is_none_or(|t| t.text().is_empty()), "not a text box of the marker");
+    assert!(!shapes.iter().any(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })), "the marker is not a picture");
+}
+
+/// A picture on the clipboard and no text pastes as a picture from the Paste command too.
+#[test]
+fn paste_command_inserts_a_clipboard_picture() {
+    let session = Session::with_new();
+    let png = {
+        let d = session.active().unwrap();
+        deckcraft_engine::cmd::file::render_png(&d.doc, 0, 0.1, false).0
+    };
+    let services = Services { clipboard_image: Some(Box::new(move || Some(png.clone()))), ..Default::default() };
+    let mut h = step_app(services);
+    h.state_mut().run("edit.paste", json!({})).unwrap();
+    let pictures = h.state().session.active().unwrap().doc.slides[0]
+        .shapes
+        .iter()
+        .filter(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. }))
+        .count();
+    assert_eq!(pictures, 1);
+}
+
+/// Ctrl+V with text egui did not turn into a Paste event still pastes that text.
+#[test]
+fn ctrl_v_pastes_text_when_no_paste_event_arrives() {
+    let services = Services { clipboard_text: Some(Box::new(|| Some("Outside".into()))), ..Default::default() };
+    let mut h = step_app(services);
+    h.event(egui::Event::Key { key: egui::Key::V, physical_key: None, pressed: false, repeat: false, modifiers: egui::Modifiers::COMMAND });
+    h.run_steps(2);
+    assert!(slide_texts(h.state()).iter().any(|t| t == "Outside"));
+}
+
+/// Focus on a ribbon button must not eat a paste from another program.
+#[test]
+fn paste_lands_while_a_button_has_focus() {
+    let mut h = step_app(Services::default());
+    h.ctx.memory_mut(|m| m.request_focus(egui::Id::unique("paste-focus")));
+    h.event(egui::Event::Paste("From Word".into()));
+    h.run_steps(2);
+    assert!(slide_texts(h.state()).iter().any(|t| t == "From Word"));
+}
+
 /// #78: after Tab in a text box, typing and deleting no longer reached the text.
 #[test]
 fn typing_goes_on_after_tab_in_a_text_box() {

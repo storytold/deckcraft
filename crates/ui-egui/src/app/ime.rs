@@ -17,6 +17,7 @@ impl SlideApp {
                 })
                 .collect()
         });
+        self.ui_fonts.take_note_requests(ctx);
         self.ui_fonts.note(ctx, &typed);
         for d in self.session.documents() {
             self.ui_fonts.note(ctx, &d.title());

@@ -27,6 +27,29 @@ impl SlideApp {
         Ok(Some(from))
     }
 
+    /// Put the editing window back on the screen it used before the slides moved it.
+    /// A show that is still running keeps the window where the slides are.
+    pub(crate) fn restore_editor_window(&mut self, ctx: &egui::Context) {
+        if self.show.is_some() {
+            return;
+        }
+        let Some((place, tries)) = self.restore_editor else { return };
+        crate::screens::restore_editor_place(ctx, place);
+        let back = ctx.input(|i| {
+            let v = i.viewport();
+            match (v.outer_rect, v.inner_rect) {
+                (Some(outer), Some(inner)) => crate::screens::editor_place_matches(place, outer.min, inner.size(), v.maximized, v.fullscreen),
+                _ => false,
+            }
+        });
+        if back || tries >= 12 {
+            self.restore_editor = None;
+        } else {
+            self.restore_editor = Some((place, tries.saturating_add(1)));
+            ctx.request_repaint();
+        }
+    }
+
     /// Leave animation preview, stop editor-owned media, and create a show at the requested slide
     /// with the current reading/presenter configuration; an out-of-range slide starts an ended show.
     pub fn start_show(&mut self, from: usize, reading: bool) {
@@ -37,6 +60,12 @@ impl SlideApp {
             let mut show = show::Show::new(&d.doc, from, reading, self.ui.presenter_view && !reading);
             show.instance = self.show_instance;
             show.keep_cursor = self.ui.show_keep_cursor;
+            show.next_split = self.ui.presenter_next;
+            show.current_split = self.ui.presenter_current;
+            show.halt_last = self.ui.halt_last;
+            if let Some((place, _)) = self.restore_editor.take() {
+                show.editor_place = Some(place);
+            }
             self.place_show(&mut show);
             self.show = Some(show);
         }

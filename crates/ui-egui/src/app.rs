@@ -95,6 +95,9 @@ impl SlideApp {
             last_recovery: 0.0,
             quit_confirmed: false,
             notes_buf: (0, usize::MAX, notes::Draft::default()),
+            notes_focused: false,
+            notes_touched: false,
+            restore_editor: None,
             ui_fonts: uifonts::UiFonts::default(),
             thumb_drag: None,
             selpane: selpane::State::default(),
@@ -301,10 +304,13 @@ impl SlideApp {
             self.anim_preview = None;
             show::ui(self, ui);
             doc_window::show(self, &ctx);
+            self.notes_focused = false;
+            self.notes_touched = false;
             self.perf.frame_ms = now_ms() - t0;
             self.ui_end(&ctx);
             return;
         }
+        self.restore_editor_window(&ctx);
         self.sync_backstage();
         self.keyboard(&ctx);
         self.sync_backstage();
@@ -361,6 +367,10 @@ impl SlideApp {
         }
         self.drain_requests();
         doc_window::show(self, &ctx);
+        if !self.notes_touched {
+            self.notes_focused = false;
+        }
+        self.notes_touched = false;
         self.perf.frame_ms = now_ms() - t0;
         self.ui_end(&ctx);
     }

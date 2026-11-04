@@ -14,6 +14,7 @@ use crate::theme;
 
 mod keys;
 mod media;
+mod notes_edit;
 mod presenter;
 mod render;
 mod ui;
@@ -23,9 +24,11 @@ mod zoom;
 use media::{on_screen, pointer_on_media_bar, shown_slide_rect, slide_media_bars};
 use presenter::{NOTES_DEFAULT, PresenterTimer};
 #[cfg(test)]
-use presenter::{NOTES_MAX, NOTES_MIN, NOTES_STEP, format_elapsed, presenter_notes, presenter_window, wall_clock};
+use presenter::{
+    NOTES_MAX, NOTES_MIN, NOTES_STEP, current_split_from_pointer, format_elapsed, presenter_columns, presenter_notes, presenter_window, wall_clock,
+};
 #[cfg(test)]
-use render::{below_playing_video, next_rect, render_frame, start_prefetch};
+use render::{below_playing_video, next_rect, next_split_from_pointer, render_frame, start_prefetch};
 use render::{render_backdrop, render_threads};
 #[cfg(test)]
 use ui::transition_layers;
@@ -96,8 +99,26 @@ pub struct Show {
     show_start: f64,
     /// Elapsed time in presenter view. Pausing it does not pause the show.
     timer: PresenterTimer,
-    /// Speaker-notes size in presenter view, in points.
+    /// Reading size for speaker notes in presenter view, in points. Every slide uses it.
     notes_px: f32,
+    /// Fraction of the notes column given to the next-slide preview. `0` hides it.
+    pub(crate) next_split: f32,
+    /// Fraction of the presenter window given to the current slide. `0` hides it.
+    pub(crate) current_split: f32,
+    /// Arrows and a clicker stay on the last slide instead of ending the show.
+    pub(crate) halt_last: bool,
+    /// Editing window position from before the slides moved to another screen.
+    pub(crate) editor_place: Option<crate::screens::EditorPlace>,
+    /// Speaker notes are unlocked for typing and formatting. Show keys stay out of the editor.
+    notes_editing: bool,
+    /// The notes editor takes the keyboard on the frame edit mode opens.
+    notes_focus: bool,
+    /// The slide being edited, and the formatted draft for that slide only.
+    notes_draft: Option<(usize, crate::notes::Draft)>,
+    /// Notes to store with `slide.notes` once this frame has finished drawing.
+    notes_save: Option<(usize, deckcraft_model::text::TextBody)>,
+    /// Physical pixels of the monitor Presenter View should cover. None keeps a normal window.
+    pub(crate) notes_frame: Option<crate::screens::ScreenFrame>,
     timings: Vec<(usize, f64)>,
     last_move: f64,
     /// The last trackpad flick or mouse-wheel notch, so one gesture turns one page.
@@ -262,6 +283,15 @@ impl Show {
             show_start: 0.0,
             timer: PresenterTimer::start(0.0),
             notes_px: NOTES_DEFAULT,
+            next_split: crate::state::PRESENTER_NEXT_DEFAULT,
+            current_split: crate::state::PRESENTER_CURRENT_DEFAULT,
+            halt_last: false,
+            editor_place: None,
+            notes_editing: false,
+            notes_focus: false,
+            notes_draft: None,
+            notes_save: None,
+            notes_frame: None,
             timings: vec![],
             last_move: 0.0,
             last_swipe: f64::NEG_INFINITY,
@@ -543,9 +573,15 @@ impl Show {
                 self.after_enter(doc, now);
             }
             ShowAction::End => {
-                self.ended = true;
-                if self.preview_only {
-                    return false;
+                // The last slide stays up. End Show and Escape still leave; this only refuses
+                // the step an arrow, a clicker, a click or Next would take off the end.
+                if self.halt_last && !self.preview_only {
+                    self.state.ended = false;
+                } else {
+                    self.ended = true;
+                    if self.preview_only {
+                        return false;
+                    }
                 }
             }
             ShowAction::Exit => return false,

@@ -17,7 +17,20 @@ fn grid_flag(p: &Value, key: &str) -> Result<Option<bool>, String> {
 impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
-    pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+    pub fn run(&mut self, id: &str, mut params: Value) -> Result<Value, String> {
+        // Home ▸ Font and the other text commands format whatever the caret is in. Notes typed
+        // since the last save have to be on the slide first, or bold would change the old text
+        // and the draft would write it back.
+        if id != "slide.notes" {
+            crate::notes::commit_draft(self);
+        }
+        // Paste with no text of its own reads the system clipboard, so a copy in another program
+        // lands here. Ctrl+V already arrives as a paste event; the ribbon and menus do not.
+        let redirected = self.paste_command(id, &mut params);
+        let id = match redirected {
+            Some(next) => next,
+            None => id,
+        };
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else {

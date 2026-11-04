@@ -195,6 +195,11 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
         show.last_move = now;
         if show_fills_screen(show.reading, &doc.show.show_type) && !(show.presenter && remote) {
             if let Some(screen) = show.audience_screen {
+                // Remember the editing window before the slides take another screen. Ending the
+                // show puts it back; a second show keeps that place instead of the projector.
+                if show.editor_place.is_none() {
+                    show.editor_place = crate::screens::take_editor_place(ctx);
+                }
                 ctx.send_viewport_cmd(egui::ViewportCommand::SetMonitor(screen));
             } else {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
@@ -827,6 +832,20 @@ fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) 
 
 fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
     let Fr { ctx, now, .. } = *f;
+    if !keep {
+        show.notes_editing = false;
+        super::notes_edit::flush_draft(&mut show);
+    }
+    if show.next_split.is_finite() {
+        app.ui.presenter_next = show.next_split.clamp(0.0, 0.85);
+    }
+    if show.current_split.is_finite() {
+        app.ui.presenter_current = show.current_split.clamp(0.0, 0.85);
+    }
+    app.ui.halt_last = show.halt_last;
+    if let Some((index, body)) = show.notes_save.take() {
+        let _ = app.run("slide.notes", json!({"index": index, "body": body}));
+    }
     if keep {
         app.show = Some(show);
     } else {
@@ -836,6 +855,9 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
         app.media.stop_owned(crate::media::Owner::Show);
         if !show.reading {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+        }
+        if let Some(place) = show.editor_place.take() {
+            app.restore_editor = Some((place, 0));
         }
         if show.rehearse {
             if let Some((_, tl)) = &show.timeline {

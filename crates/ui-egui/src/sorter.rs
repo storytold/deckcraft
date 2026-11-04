@@ -365,6 +365,7 @@ pub fn notes_page(app: &mut SlideApp, ui: &mut Ui) {
     let Some(st) = app.session.active() else { return };
     let doc = st.doc.clone();
     let idx = st.selection.slide;
+    let uid = st.uid;
     let page_h = avail.height() - 40.0;
     let page_w = page_h * 8.5 / 11.0;
     let page = Rect::from_center_size(avail.center(), vec2(page_w, page_h));
@@ -399,33 +400,25 @@ pub fn notes_page(app: &mut SlideApp, ui: &mut Ui) {
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
     // A draft belongs to this document and to the notes it started from (#413): another document,
     // a reorder or an undo that changes them drops it.
-    let id = egui::Id::unique(("notespage", st.uid, idx));
     let edit_id = egui::Id::unique(("notespage-edit", idx));
     let focused = child.ctx().memory(|m| m.has_focus(edit_id));
-    let notes_of = |app: &SlideApp| app.session.active().and_then(|st| st.doc.slides.get(idx)).map(|s| s.notes.clone()).unwrap_or_default();
-    let notes = notes_of(app);
-    let stored: Option<(deckcraft_model::text::TextBody, crate::notes::Draft)> = child.data_mut(|d| d.get_temp(id));
-    let mut draft = stored.filter(|(base, _)| *base == notes).map(|(_, d)| d);
-    // Save an edited draft once the field has lost focus, before anything reloads it.
-    if !focused && let Some(d) = draft.as_mut().filter(|d| d.edited) {
-        d.edited = false;
-        let _ = app.run("slide.notes", json!({"body": d.body, "index": idx}));
-    }
-    let notes = notes_of(app);
-    let mut draft = draft.filter(|d| focused || d.body == notes).unwrap_or_else(|| crate::notes::Draft::new(&notes));
+    let notes = app.session.active().and_then(|st| st.doc.slides.get(idx)).map(|s| s.notes.clone()).unwrap_or_default();
+    let mut draft = crate::notes::prepare_draft(app, uid, idx, &notes, focused);
     let look = crate::notes::Look { size: 14.0, color: Some(Color32::from_gray(30)) };
     let width = notes_rect.width();
-    let r = crate::notes::editor(&mut child, &mut draft, &look, |e| {
+    let out = crate::notes::editor(&mut child, &mut draft, &look, |e| {
         e.id(edit_id).hint_text("Click to add text").desired_width(width).desired_rows(12).frame(egui::Frame::NONE)
-    })
-    .response
-    .response;
+    });
+    let r = out.response.response.clone();
     if r.lost_focus() && draft.edited {
-        draft.edited = false;
-        let _ = app.run("slide.notes", json!({"body": draft.body, "index": idx}));
+        app.notes_buf = (uid, idx, draft.clone());
+        crate::notes::commit_draft(app);
+        draft.edited = app.notes_buf.2.edited;
+        draft.body = app.notes_buf.2.body.clone();
     }
-    let base = notes_of(app);
-    child.data_mut(|d| d.insert_temp(id, (base, draft)));
+    let range = out.cursor_range.map(|c| (c.secondary.index.0, c.primary.index.0));
+    crate::notes::sync_focus(app, &child, idx, &draft.body, r.has_focus(), range.map(|c| c.0), range.map(|c| c.1));
+    app.notes_buf = (uid, idx, draft);
     let nav = ui.input(|i| (i.key_pressed(egui::Key::PageDown), i.key_pressed(egui::Key::PageUp)));
     if nav.0 {
         let _ = app.run("slide.next", json!({}));

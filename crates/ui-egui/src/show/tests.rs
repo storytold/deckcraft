@@ -1033,14 +1033,41 @@ fn the_next_preview_fits_its_column_whatever_the_slide_shape() {
     for (w, h) in [(72, 4032), (4032, 72), (960, 540)] {
         s.execute("design.slideSize", &json!({"w": w, "h": h})).unwrap();
         let doc = s.active().unwrap().doc.clone();
-        let r = next_rect(right, &doc);
+        let r = next_rect(right, &doc, crate::state::PRESENTER_NEXT_DEFAULT);
         assert!(right.contains_rect(r), "{w}x{h}: {r:?}");
-        let aspect = r.height() / r.width();
+        let aspect = r.height() / r.width().max(1.0);
         assert!((aspect - h as f32 / w as f32).abs() / (h as f32 / w as f32) < 0.01, "{w}x{h}: {r:?}");
     }
-    // 16:9 still takes the column's full width.
+    // 16:9 still takes the column's full width. Hiding the preview collapses it.
     let doc = s.active().unwrap().doc.clone();
-    assert_eq!(next_rect(right, &doc).width(), 400.0);
+    assert_eq!(next_rect(right, &doc, crate::state::PRESENTER_NEXT_DEFAULT).width(), 400.0);
+    assert_eq!(next_rect(right, &doc, 0.0).size(), egui::vec2(0.0, 0.0));
+    let tall = {
+        s.execute("design.slideSize", &json!({"w": 72, "h": 4032})).unwrap();
+        s.active().unwrap().doc.clone()
+    };
+    let full = next_rect(right, &tall, 0.6);
+    let smaller = next_rect(right, &tall, 0.3);
+    assert!(smaller.height() < full.height(), "a shorter split gives a shorter preview: {smaller:?} vs {full:?}");
+    let dragged = next_split_from_pointer(right, right.min.y + right.height() * 0.4);
+    assert!((dragged - 0.4).abs() < 0.02, "{dragged}");
+    assert!(next_split_from_pointer(right, f32::NAN).is_finite());
+}
+
+#[test]
+fn the_current_slide_column_can_shrink_and_hide() {
+    let area = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 600.0));
+    let cols = presenter_columns(area, crate::state::PRESENTER_CURRENT_DEFAULT);
+    assert!(area.contains_rect(cols.slide));
+    assert!(area.contains_rect(cols.notes));
+    assert!(cols.slide.max.x < cols.notes.min.x, "the columns do not overlap: {:?} {:?}", cols.slide, cols.notes);
+    assert!(cols.slide.width() > cols.notes.width());
+    let hidden = presenter_columns(area, 0.0);
+    assert_eq!(hidden.slide.size(), egui::vec2(0.0, 0.0));
+    assert_eq!(hidden.notes, area);
+    let dragged = current_split_from_pointer(area, 400.0);
+    assert!((dragged - 0.4).abs() < 0.02, "{dragged}");
+    assert!(current_split_from_pointer(area, f32::NAN).is_finite());
 }
 
 #[test]

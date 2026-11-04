@@ -182,8 +182,21 @@ pub fn install_fonts_with(ctx: &egui::Context, extra: &[std::sync::Arc<deckcraft
     ctx.set_fonts(font_definitions(extra));
 }
 
+/// A face the notes editors draw under its own family name (Home ▸ Font on speaker notes).
+pub struct NoteFace {
+    /// `FontFamily::Name` key, such as `notes:Liberation Serif`.
+    pub key: String,
+    pub face: std::sync::Arc<deckcraft_fonts::FontFace>,
+}
+
 /// The interface font definitions; see [`install_fonts_with`].
 pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> FontDefinitions {
+    font_definitions_named(extra, &[])
+}
+
+/// [`font_definitions`], plus one named family per notes face so a notes run can draw in the
+/// family it stores. Each named family falls through to the interface fonts for missing glyphs.
+pub fn font_definitions_named(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>], notes: &[NoteFace]) -> FontDefinitions {
     let mut defs = FontDefinitions::default();
     let mut names = vec![];
     for (i, f) in deckcraft_fonts::CRAFT_FONTS.iter().enumerate() {
@@ -224,6 +237,7 @@ pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> 
         }
     }
     add_fallback_faces(&mut defs, extra);
+    add_note_faces(&mut defs, notes);
     // The Japanese interface face (the first one when Inter isn't embedded) hints its en and em
     // dashes, bars thinner than a pixel, down to nothing, so they drew as gaps in interface text;
     // unhinted, they draw.
@@ -235,6 +249,26 @@ pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> 
         }
     }
     defs
+}
+
+/// Register each notes face as its own family, with the interface fonts behind it.
+fn add_note_faces(defs: &mut FontDefinitions, notes: &[NoteFace]) {
+    for note in notes {
+        if note.key.is_empty() || defs.families.contains_key(&FontFamily::Name(note.key.clone().into())) {
+            continue;
+        }
+        let data_key = format!("note-{}", note.key);
+        if !defs.font_data.contains_key(&data_key) {
+            let mut data = FontData::from_owned(note.face.data().to_vec());
+            data.index = note.face.index();
+            defs.font_data.insert(data_key.clone(), std::sync::Arc::new(data));
+        }
+        let mut chain = vec![data_key];
+        if let Some(prop) = defs.families.get(&FontFamily::Proportional) {
+            chain.extend(prop.iter().cloned());
+        }
+        defs.families.insert(FontFamily::Name(note.key.clone().into()), chain);
+    }
 }
 
 /// Add `faces` after every other font of each interface family (the last fallbacks).
