@@ -1756,6 +1756,41 @@ fn a_pointer_request_always_states_the_current_modifiers() {
     );
 }
 
+/// `show.end` closes a show at once, unless a take is running: then it asks the next frame to run
+/// the same finish path the show's own end uses, which saves the take.
+#[test]
+fn ending_a_show_with_a_take_goes_through_the_finish_path() {
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    app.session.execute("slide.new", &json!({})).unwrap();
+    app.start_show(0, false);
+    app.run("show.end", json!({})).expect("end");
+    assert!(app.show.is_none(), "no take: the show closes at once");
+    app.start_show(0, false);
+    app.show.as_mut().unwrap().record_view.captured = true;
+    app.run("show.end", json!({})).expect("end");
+    let show = app.show.as_ref().expect("a running take keeps the show for its finish pass");
+    assert!(show.end_requested, "the next frame closes it through finish");
+}
+
+/// A control pointer request leads with its `ModifiersChanged`; that event is injected with the
+/// first pointer event only, so a drag still reaches the canvas one pass per step.
+#[test]
+fn a_pointer_request_injects_its_modifiers_with_its_first_pointer_event() {
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    let ctx = egui::Context::default();
+    let pos = egui::pos2(10.0, 10.0);
+    app.queue_input(egui::Event::ModifiersChanged(egui::Modifiers::COMMAND));
+    app.queue_input(egui::Event::PointerMoved(pos));
+    app.queue_input(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::COMMAND });
+    app.queue_input(egui::Event::PointerMoved(egui::pos2(20.0, 10.0)));
+    let mut raw = egui::RawInput::default();
+    app.raw_input_hook(&ctx, &mut raw);
+    assert_eq!(raw.events.len(), 2, "the modifiers and the first pointer event: {:?}", raw.events);
+    assert!(matches!(raw.events[0], egui::Event::ModifiersChanged(_)));
+    assert!(matches!(raw.events[1], egui::Event::PointerMoved(_)));
+    assert_eq!(app.synthetic_queued_len(), 2, "the rest of the drag waits for the next pass");
+}
+
 /// A hidden/logic-only iteration drains control requests and autosave/screenshot queues; it does
 /// not need a painted frame for those side effects.
 #[test]

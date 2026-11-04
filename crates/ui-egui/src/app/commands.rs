@@ -176,9 +176,29 @@ impl SlideApp {
                 }
             }
             "show.end" => {
-                self.stop_mic();
-                self.show = None;
-                self.media.stop_owned(media::Owner::Show);
+                // A running take ends through the show's own finish path (the next frame), which
+                // saves its timings, narration, ink and laser; stopping the microphone here would
+                // drop them with the show.
+                match self.show.as_mut() {
+                    Some(show) if show.record_view.captured => show.end_requested = true,
+                    _ => {
+                        self.stop_mic();
+                        self.show = None;
+                        self.media.stop_owned(media::Owner::Show);
+                    }
+                }
+            }
+            "record.start" | "record.toggle" | "record.pause" | "record.resume" | "record.stop" | "record.reset" | "record.undo" => {
+                let Some(show) = self.show.as_mut() else { return Err("the Record view is not open".into()) };
+                let now = show.command_now();
+                let status = show.record_command(id, now)?;
+                let rec = &show.record_view;
+                return Ok(json!({
+                    "status": status,
+                    "captured": rec.captured,
+                    "elapsed": rec.elapsed(now),
+                    "slide": show.state.slide,
+                }));
             }
             "animation.preview" => {
                 if p.get("on").and_then(Value::as_bool) == Some(false) {

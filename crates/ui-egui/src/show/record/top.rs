@@ -35,7 +35,7 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
     child.visuals_mut().override_text_color = Some(FG);
 
     if child.add(egui::Button::new(RichText::new("‹ Edit").size(13.0).color(FG)).frame(false)).on_hover_text("Leave the Record view").clicked() {
-        rec.stop(now);
+        let _ = super::command(rec, show, "record.stop", now);
         // Only a take that actually captured something is saved when the view closes.
         show.record = rec.captured;
         out.close = true;
@@ -84,24 +84,21 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
     let pause_label = if rec.status == RecordStatus::Paused { "Resume" } else { "Pause" };
     let pause = right_ui.add_enabled(rec.status != RecordStatus::Idle, egui::Button::new(RichText::new(pause_label).size(13.0)).frame(false));
     if pause.clicked() {
-        match rec.status {
-            RecordStatus::Recording => rec.pause(show, now),
-            RecordStatus::Paused => rec.resume(show, now),
-            RecordStatus::Idle => {}
-        }
+        let id = if rec.status == RecordStatus::Paused { "record.resume" } else { "record.pause" };
+        let _ = super::command(rec, show, id, now);
     }
     let record_label = if rec.status == RecordStatus::Recording { "■ Stop" } else { "● Record" };
     let record = right_ui.add(egui::Button::new(RichText::new(record_label).size(13.0).color(RED)).frame(false));
     record.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Record"));
     if record.on_hover_text("Start recording").clicked() {
-        rec.toggle_record(show, now);
+        let _ = super::command(rec, show, "record.toggle", now);
     }
     let undo = right_ui.add_enabled(rec.undo_elapsed.is_some(), egui::Button::new(RichText::new("Undo").size(13.0)).frame(false));
     if undo.clicked() {
-        rec.undo(now);
+        let _ = super::command(rec, show, "record.undo", now);
     }
     if right_ui.add(egui::Button::new(RichText::new("Reset").size(13.0)).frame(false)).on_hover_text("Reset the capture clock").clicked() {
-        rec.reset(now);
+        let _ = super::command(rec, show, "record.reset", now);
     }
 
     painter.text(

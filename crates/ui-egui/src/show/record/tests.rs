@@ -34,9 +34,45 @@ fn the_capture_clock_starts_pauses_resumes_and_stops() {
     rec.resume(&mut show, 30.0);
     assert_eq!(rec.status, RecordStatus::Recording);
     assert!((rec.elapsed(32.0) - 5.0).abs() < 1e-9, "the pause is not counted");
-    rec.stop(32.0);
+    rec.stop(&mut show, 32.0);
     assert_eq!(rec.status, RecordStatus::Idle);
     assert!((rec.elapsed(99.0) - 5.0).abs() < 1e-9, "a stopped clock keeps its value");
+}
+
+/// Stop freezes the slide's captured length: the interval between Stop and leaving the view (or
+/// the rest of a pause) must not reach the saved timing.
+#[test]
+fn stop_freezes_the_slide_timing() {
+    let doc = doc_with(1);
+    let mut show = Show::new(&doc, 0, false, false);
+    let mut rec = RecordView::default();
+    rec.start(&mut show, 100.0);
+    assert_eq!(rec.frozen_slide_seconds(), None, "a running take has no frozen timing");
+    rec.stop(&mut show, 105.0);
+    assert!((rec.frozen_slide_seconds().expect("frozen at Stop") - 5.0).abs() < 1e-9);
+    // Ten seconds of browsing after Stop are not part of the take.
+    assert!((show.captured_slide_seconds(115.0) - 15.0).abs() < 1e-9, "the running clock keeps growing");
+    // Stopping while paused freezes at the pause, not at the Stop that came later.
+    rec.start(&mut show, 200.0);
+    rec.pause(&mut show, 203.0);
+    rec.stop(&mut show, 260.0);
+    assert!((rec.frozen_slide_seconds().expect("frozen while paused") - 3.0).abs() < 1e-9);
+}
+
+#[test]
+fn record_commands_share_the_shell_state_machine() {
+    let doc = doc_with(1);
+    let mut show = Show::new(&doc, 0, false, false);
+    let mut rec = RecordView::default();
+    assert_eq!(command(&mut rec, &mut show, "record.start", 10.0).expect("start"), "recording");
+    assert!(rec.captured);
+    assert_eq!(command(&mut rec, &mut show, "record.pause", 12.0).expect("pause"), "paused");
+    assert_eq!(command(&mut rec, &mut show, "record.resume", 14.0).expect("resume"), "recording");
+    assert_eq!(command(&mut rec, &mut show, "record.toggle", 16.0).expect("stop"), "idle");
+    assert!(rec.frozen_slide_seconds().is_some(), "the command path freezes the timing too");
+    assert_eq!(command(&mut rec, &mut show, "record.reset", 17.0).expect("reset"), "idle");
+    assert_eq!(command(&mut rec, &mut show, "record.undo", 18.0).expect("undo"), "idle");
+    assert!(command(&mut rec, &mut show, "record.jump", 19.0).is_err(), "an unknown command is refused");
 }
 
 #[test]

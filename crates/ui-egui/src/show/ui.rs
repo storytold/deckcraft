@@ -76,6 +76,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         app.show = Some(show);
         return;
     }
+    show.last_now = now;
     show.observe_visible_frame(now, web_time::Instant::now());
     begin_show(&ctx, &mut show, &doc, now, app.services.presenter.is_some());
     sync_mic(app, &mut show);
@@ -175,7 +176,10 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
     }
-    finish(app, show, &f, out.keep);
+    // A command asked to end the show: close it through this same finish path so a running take
+    // still saves its timings, narration, ink and laser.
+    let keep = out.keep && !show.end_requested;
+    finish(app, show, &f, keep);
 }
 
 fn paint_hidden(ui: &Ui, doc: &Presentation, show: &Show) {
@@ -888,6 +892,17 @@ fn draw_extras(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter
 /// while the take was held. A pause keeps what was already captured on the current slide.
 fn sync_mic(app: &mut SlideApp, show: &mut Show) {
     let capturing = show.capturing();
+    if capturing && show.mic_tried && show.mic_ok {
+        // A device that failed mid-take (unplugged, or the ten minute limit): keep what it
+        // captured for this slide, stop it, and say so instead of saving a take that lost audio.
+        if let Some(why) = app.services.mic.as_mut().and_then(|m| m.problem()) {
+            take_narration(app, show);
+            app.stop_mic();
+            show.mic_ok = false;
+            app.set_status(format!("{why}. Narration for this slide ends here."));
+        }
+        return;
+    }
     if capturing && !show.mic_tried {
         show.mic_tried = true;
         match app.services.mic.as_mut() {
@@ -942,7 +957,10 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
                 show.stash_ink(doc, show.state.slide);
                 show.stash_laser(show.state.slide);
             }
-            show.timings.push((show.state.slide, now - show.slide_start));
+            // Stop froze the slide's captured length: time after Stop, or the rest of a pause, is
+            // not part of the take.
+            let last_secs = show.record_view.frozen_slide_seconds().unwrap_or_else(|| show.captured_slide_seconds(now));
+            show.timings.push((show.state.slide, last_secs));
             for (i, secs) in show.timings.clone() {
                 let ms = if secs.is_finite() { (secs.max(0.0) * 1000.0).round() as u64 } else { 0 };
                 let _ = app.run("transition.timing", json!({"index": i, "after": ms}));

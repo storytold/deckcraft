@@ -84,7 +84,10 @@ pub(crate) struct RecordView {
     /// The separate camera preview window is shown.
     pub(super) camera_preview: bool,
     /// A take has started in this view, so leaving it should save the recording.
-    pub(super) captured: bool,
+    pub(crate) captured: bool,
+    /// The slide's captured length in seconds when Stop froze it: time after Stop (and the rest of
+    /// a pause) is not part of the take.
+    frozen_slide_secs: Option<f64>,
     /// The clock value replaced by the last Reset, so Undo can put it back.
     undo_elapsed: Option<f64>,
 }
@@ -104,6 +107,7 @@ impl Default for RecordView {
             camera_bubble: true,
             camera_preview: false,
             captured: false,
+            frozen_slide_secs: None,
             undo_elapsed: None,
         }
     }
@@ -111,8 +115,17 @@ impl Default for RecordView {
 
 impl RecordView {
     /// Seconds recorded so far. A paused view keeps the value it had when it was paused.
-    pub(super) fn elapsed(&self, now: f64) -> f64 {
+    pub(crate) fn elapsed(&self, now: f64) -> f64 {
         self.timer.elapsed(now)
+    }
+
+    /// The take's status as the commands and the status bar print it.
+    pub(super) fn status_name(&self) -> &'static str {
+        match self.status {
+            RecordStatus::Idle => "idle",
+            RecordStatus::Recording => "recording",
+            RecordStatus::Paused => "paused",
+        }
     }
 
     /// The deck's timed length, or zero when no slide carries a recorded advance.
@@ -139,6 +152,7 @@ impl RecordView {
         self.timer = PresenterTimer::start(now);
         self.undo_elapsed = None;
         self.captured = true;
+        self.frozen_slide_secs = None;
         self.ink.active = false;
         show.begin_recording(now);
     }
@@ -161,8 +175,13 @@ impl RecordView {
         }
     }
 
-    /// Stop capturing and leave the view open on the frozen clock. Record starts a new take.
-    pub(super) fn stop(&mut self, now: f64) {
+    /// Stop capturing and leave the view open on the frozen clock. Record starts a new take. The
+    /// slide's captured length is frozen here, so time after Stop (or the rest of a pause) never
+    /// reaches the saved timing.
+    pub(super) fn stop(&mut self, show: &mut Show, now: f64) {
+        if self.status != RecordStatus::Idle {
+            self.frozen_slide_secs = Some(show.captured_slide_seconds(now));
+        }
         match self.status {
             RecordStatus::Recording => {
                 self.timer.toggle(now);
@@ -174,11 +193,16 @@ impl RecordView {
         self.ink.active = false;
     }
 
+    /// The slide's captured length when Stop froze it, in seconds.
+    pub(super) fn frozen_slide_seconds(&self) -> Option<f64> {
+        self.frozen_slide_secs
+    }
+
     /// Record or stop, the red button's one action.
     pub(super) fn toggle_record(&mut self, show: &mut Show, now: f64) {
         match self.status {
             RecordStatus::Idle => self.start(show, now),
-            RecordStatus::Recording | RecordStatus::Paused => self.stop(now),
+            RecordStatus::Recording | RecordStatus::Paused => self.stop(show, now),
         }
     }
 
@@ -210,6 +234,25 @@ impl RecordView {
         let top = top_rect(full);
         top.contains(pos) || notes_rect(full, top, self).contains(pos) || bottom_rect(full, top).contains(pos)
     }
+}
+
+/// Run a Record-view command on the shell's state: `record.start`, `record.toggle`, `record.pause`,
+/// `record.resume`, `record.stop`, `record.reset`, `record.undo`. The shell's buttons and the
+/// command channel share this one implementation; returns the take's status after it.
+pub(super) fn command(rec: &mut RecordView, show: &mut Show, id: &str, now: f64) -> Result<&'static str, String> {
+    match id {
+        "record.start" => rec.start(show, now),
+        "record.toggle" => rec.toggle_record(show, now),
+        "record.pause" => rec.pause(show, now),
+        "record.resume" => rec.resume(show, now),
+        "record.stop" => rec.stop(show, now),
+        "record.reset" => rec.reset(now),
+        "record.undo" => {
+            let _ = rec.undo(now);
+        }
+        other => return Err(format!("`{other}` isn't a Record-view command")),
+    }
+    Ok(rec.status_name())
 }
 
 /// Where every section lives on screen this frame.
@@ -288,13 +331,19 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Pre
     notes::ui(app, ui, show, &mut rec, doc, layout);
     let top = top::ui(app, ui, show, &mut rec, now, layout);
     keep &= !top.close;
-    bottom::ui(ui, show, &mut rec, doc, now, layout);
+    let nav = bottom::ui(ui, show, &mut rec, doc, layout);
     canvas::bubble(ui, &rec, layout);
     views::ui(ui, &mut rec, layout);
     if keep {
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
     }
     show.record_view = rec;
+    // The shell's own prev/next run once the take is back on the show: `Show::apply` and
+    // `before_slide_change` both read `show.capturing()`, which is false while `rec` is out.
+    if let Some(action) = nav {
+        super::before_slide_change(app, show, &action);
+        keep &= show.apply(action, doc, now);
+    }
     keep
 }
 

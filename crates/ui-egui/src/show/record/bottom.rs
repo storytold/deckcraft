@@ -28,9 +28,10 @@ pub(super) const INK_COLORS: [Color32; 10] = [
     Color32::from_rgb(235, 235, 235),
 ];
 
-/// Draw the bottom strip. A navigation that leaves the show's end does nothing: the Record view
-/// stays on the last slide.
-pub(super) fn ui(ui: &mut Ui, show: &mut Show, rec: &mut RecordView, doc: &Arc<Presentation>, now: f64, layout: &Layout) {
+/// Draw the bottom strip. Returns the slide change the buttons asked for, for the shell to apply
+/// once its own state is back on the show (the timings and the microphone take both need it);
+/// a navigation that leaves the show's end does nothing and returns `None`.
+pub(super) fn ui(ui: &mut Ui, show: &mut Show, rec: &mut RecordView, doc: &Arc<Presentation>, layout: &Layout) -> Option<super::super::ShowAction> {
     let rect = layout.bottom;
     let painter = ui.painter().clone();
     painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_rgb(23, 23, 27));
@@ -73,23 +74,22 @@ pub(super) fn ui(ui: &mut Ui, show: &mut Show, rec: &mut RecordView, doc: &Arc<P
 
     // Navigation row and progress.
     let nav_row = egui::Rect::from_min_max(egui::pos2(rect.min.x + 180.0, rect.min.y + 48.0), egui::pos2(rect.max.x - 180.0, rect.min.y + 82.0));
-    let mut nav = ui.new_child(UiBuilder::new().max_rect(nav_row));
-    nav.visuals_mut().override_text_color = Some(Color32::from_gray(225));
-    nav.with_layout(EguiLayout::left_to_right(Align::Center), |ui| {
+    let mut nav_ui = ui.new_child(UiBuilder::new().max_rect(nav_row));
+    nav_ui.visuals_mut().override_text_color = Some(Color32::from_gray(225));
+    let mut nav = None;
+    nav_ui.with_layout(EguiLayout::left_to_right(Align::Center), |ui| {
         let total = doc.slides.len().max(1);
         ui.add_space(((nav_row.width() - 300.0) / 2.0).max(0.0));
         let prev = ui.add_enabled(show.state.slide > 0, egui::Button::new(RichText::new("‹").size(18.0)).frame(false));
         prev.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, show.state.slide > 0, "Previous slide"));
         if prev.clicked() {
-            let action = show.state.prev(doc);
-            let _ = show.apply(action, doc, now);
+            nav = Some(show.state.prev(doc));
         }
         ui.label(RichText::new(format!("Slide {} of {}", show.state.slide + 1, total)).size(12.0));
         let next = ui.add_enabled(show.state.slide + 1 < total, egui::Button::new(RichText::new("›").size(18.0)).frame(false));
         next.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, show.state.slide + 1 < total, "Next slide"));
         if next.clicked() {
-            let action = show.state.next(doc);
-            let _ = show.apply(action, doc, now);
+            nav = Some(show.state.next(doc));
         }
     });
 
@@ -99,6 +99,7 @@ pub(super) fn ui(ui: &mut Ui, show: &mut Show, rec: &mut RecordView, doc: &Arc<P
     let fraction = ((show.state.slide + 1) as f32 / doc.slides.len().max(1) as f32).clamp(0.0, 1.0);
     let filled = egui::Rect::from_min_size(track.min, vec2((track.width() * fraction).max(0.0), track.height()));
     painter.rect_filled(filled, CornerRadius::same(2), theme::Tokens::get(ui.ctx()).accent);
+    nav
 }
 
 /// Map the shell's ink selection onto the show's pen. The ink section agent adds the highlighter

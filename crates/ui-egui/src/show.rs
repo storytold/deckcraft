@@ -49,6 +49,12 @@ pub struct Show {
     pub rehearse: bool,
     /// Record Slide Show: keep timings, narration, pen ink and laser when the show ends.
     pub record: bool,
+    /// A command asked to end the show: the next frame closes it through the normal finish path,
+    /// so a running take still saves its timings, narration, ink and laser.
+    pub(crate) end_requested: bool,
+    /// The UI clock of the last frame. A command runs between frames and needs the same time base
+    /// the shell and the show's timers use.
+    pub(crate) last_now: f64,
     /// The Record view shell's own state (clock, layout, sections, device hooks).
     pub(crate) record_view: record::RecordView,
     /// When a recording pause started; the show clock is shifted by the pause length.
@@ -244,6 +250,8 @@ impl Show {
             rehearse: false,
             record: false,
             record_view: record::RecordView::default(),
+            end_requested: false,
+            last_now: 0.0,
             record_paused_at: None,
             keep_cursor: false,
             timeline: None,
@@ -721,6 +729,28 @@ impl Show {
         self.mic_tried
     }
 
+    /// The UI clock of the last frame, for a command that runs between frames.
+    pub(crate) fn command_now(&self) -> f64 {
+        self.last_now
+    }
+
+    /// Seconds this slide has been captured: up to the pause while a take is held, `now` while it
+    /// runs. A take that stopped keeps the value `RecordView::stop` froze.
+    pub(crate) fn captured_slide_seconds(&self, now: f64) -> f64 {
+        let at = self.record_paused_at.unwrap_or(now);
+        (at - self.slide_start).max(0.0)
+    }
+
+    /// Run a Record-view command (`record.start`, `record.toggle`, `record.pause`, `record.resume`,
+    /// `record.stop`, `record.reset`, `record.undo`) with this show's clock. The shell's buttons
+    /// and the command channel share one implementation. Returns the take's status after it.
+    pub(crate) fn record_command(&mut self, id: &str, now: f64) -> Result<&'static str, String> {
+        let mut rec = std::mem::take(&mut self.record_view);
+        let r = record::command(&mut rec, self, id, now);
+        self.record_view = rec;
+        r
+    }
+
     /// Whether a take is capturing right now: the Record view is open *and* running. Timings,
     /// ink, laser and narration belong to the take, so browsing the Record view before Record,
     /// while paused, or after Stop must not collect them. `record` alone is the mode flag and is
@@ -800,8 +830,20 @@ fn narration_wav(rate: u32, samples: &[f32]) -> Option<Vec<u8>> {
     if !rms.is_finite() || rms < 0.008 {
         return None;
     }
+    // Narration is written at NARRATION_RATE whatever the device gave us: the WAV cap is ten
+    // minutes at the written rate, so a 96 kHz microphone keeps its full take instead of half.
+    let resampled;
+    let (rate, samples) = if rate == NARRATION_RATE {
+        (rate, samples)
+    } else {
+        resampled = deckcraft_media::audio::resample(&deckcraft_media::Pcm { rate, channels: 1, samples: samples.to_vec() }, NARRATION_RATE);
+        (resampled.rate, resampled.samples.as_slice())
+    };
     deckcraft_media::wav_mono(rate, samples).ok()
 }
+
+/// The rate narration is written at: ten minutes fit [`deckcraft_media::MAX_WAV_SAMPLES`].
+const NARRATION_RATE: u32 = 48_000;
 
 fn saved_status(narr: bool, ink: bool, laser: bool) -> &'static str {
     match (narr, ink, laser) {

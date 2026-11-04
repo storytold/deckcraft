@@ -42,6 +42,12 @@ pub trait MicIn {
     fn captured(&self) -> usize {
         0
     }
+    /// A failure the device reported since the last call (a disconnected stream, a take that
+    /// reached its length limit), cleared once read. The recording UI stops filing audio when it
+    /// sees one instead of saving a take that silently lost samples.
+    fn problem(&mut self) -> Option<String> {
+        None
+    }
     fn stop(&mut self);
 }
 

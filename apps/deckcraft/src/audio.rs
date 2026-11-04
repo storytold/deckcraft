@@ -50,11 +50,12 @@ impl Drop for CpalOut {
     }
 }
 
-/// Mono samples from an interleaved frame. Stops at `cap` samples.
-fn push_mono(out: &mut Vec<f32>, interleaved: &[f32], channels: usize, cap: usize) {
+/// Mono samples from an interleaved frame. Stops at `cap` samples; true when it had to drop some.
+fn push_mono(out: &mut Vec<f32>, interleaved: &[f32], channels: usize, cap: usize) -> bool {
     let ch = channels.max(1);
     let frames = interleaved.len() / ch;
     let room = cap.saturating_sub(out.len());
+    let full = frames > room;
     for i in 0..frames.min(room) {
         let mut sum = 0.0f32;
         let mut n = 0u32;
@@ -70,15 +71,21 @@ fn push_mono(out: &mut Vec<f32>, interleaved: &[f32], channels: usize, cap: usiz
             out.push((sum / n as f32).clamp(-1.0, 1.0));
         }
     }
+    full
 }
 
-/// Ten minutes of mono audio, so one slide cannot grow without bound.
-const MAX_SAMPLES: usize = 48_000 * 60 * 10;
+/// Ten minutes of mono audio at `rate`, so one slide cannot grow without bound. The limit follows
+/// the device: a 96 kHz stream must not stop after five minutes.
+fn max_samples(rate: u32) -> usize {
+    (rate as usize).saturating_mul(60 * 10)
+}
 
 #[derive(Default)]
 struct Capture {
     rate: u32,
     samples: Vec<f32>,
+    /// The take reached its length limit and later samples were dropped.
+    truncated: bool,
 }
 
 /// Default input device. The callback appends mono f32; the UI thread drains it.
@@ -134,7 +141,10 @@ impl deckcraft_media::MicIn for CpalIn {
                     &config,
                     move |data: &[f32], _| {
                         if let Ok(mut g) = buf.try_lock() {
-                            push_mono(&mut g.samples, data, channels.max(1), MAX_SAMPLES);
+                            let cap = max_samples(g.rate);
+                            if push_mono(&mut g.samples, data, channels.max(1), cap) {
+                                g.truncated = true;
+                            }
                         }
                     },
                     err,
@@ -151,7 +161,10 @@ impl deckcraft_media::MicIn for CpalIn {
                             for s in data {
                                 tmp.push(*s as f32 / i16::MAX as f32);
                             }
-                            push_mono(&mut g.samples, &tmp, channels.max(1), MAX_SAMPLES);
+                            let cap = max_samples(g.rate);
+                            if push_mono(&mut g.samples, &tmp, channels.max(1), cap) {
+                                g.truncated = true;
+                            }
                         }
                     },
                     err,
@@ -175,6 +188,14 @@ impl deckcraft_media::MicIn for CpalIn {
 
     fn captured(&self) -> usize {
         self.buf.lock().unwrap_or_else(PoisonError::into_inner).samples.len()
+    }
+
+    fn problem(&mut self) -> Option<String> {
+        if let Some(e) = take_stream_error(&self.error) {
+            return Some(format!("the microphone stopped ({e})"));
+        }
+        let mut g = self.buf.lock().unwrap_or_else(PoisonError::into_inner);
+        std::mem::take(&mut g.truncated).then(|| "the take reached its ten minute limit, so later audio was dropped".to_string())
     }
 
     fn stop(&mut self) {
@@ -278,7 +299,18 @@ mod tests {
         assert_eq!(out.len(), 3);
         assert!((out[2] - 0.5).abs() < 1e-6);
         let before = out.len();
-        push_mono(&mut out, &[0.25], 1, 3);
+        assert!(push_mono(&mut out, &[0.25], 1, 3), "the cap dropped a sample, and says so");
         assert_eq!(out.len(), before);
+        assert!(!push_mono(&mut out, &[0.25], 1, 10), "room left: nothing dropped");
+    }
+
+    #[test]
+    fn the_take_limit_follows_the_device_rate() {
+        // Ten minutes at the device's own rate: a 96 kHz stream got half a take under the old
+        // fixed 48 kHz cap.
+        assert_eq!(max_samples(8_000), 4_800_000);
+        assert_eq!(max_samples(48_000), 28_800_000);
+        assert_eq!(max_samples(96_000), 57_600_000);
+        assert_eq!(max_samples(192_000), 115_200_000);
     }
 }
