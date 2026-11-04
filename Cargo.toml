@@ -74,6 +74,7 @@ egui_extras = { version = "0.37", default-features = false }
 eframe = { version = "0.37", default-features = false }
 egui_kittest = "0.37"
 web-time = "1.1"
+sys-locale = "0.3"
 rfd = "0.17"
 arboard = { version = "3.6", default-features = false }
 

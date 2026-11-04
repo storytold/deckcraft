@@ -8,6 +8,11 @@ impl SlideApp {
         if (ctx.zoom_factor() - scale).abs() > 1e-3 {
             ctx.set_zoom_factor(scale);
         }
+        // Traditional Chinese text gets Taiwan glyph forms from an installed face when one is
+        // available. Adding it changes the font set, so the next pass installs it before layout.
+        if self.language() == crate::i18n::Resolved::TraditionalChinese && self.ui_fonts.prefer_traditional() {
+            self.styled = false;
+        }
         if !self.styled {
             theme::install_fonts_with(ctx, &self.ui_fonts.faces);
             self.styled = true;
