@@ -11,7 +11,7 @@
 mod bottom;
 mod canvas;
 pub(super) mod devices;
-mod notes;
+pub(crate) mod notes;
 mod top;
 mod views;
 

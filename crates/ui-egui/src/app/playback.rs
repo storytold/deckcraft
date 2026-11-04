@@ -40,6 +40,12 @@ impl SlideApp {
     pub(crate) fn end_show_now(&mut self) {
         if let Some(mut show) = self.show.take() {
             if let Some(doc) = self.session.active().map(|d| d.doc.clone()) {
+                // An unsaved script edit lives in the Record view's draft: write it back before
+                // the show goes, or quitting from the field loses the text.
+                let slide = show.state.slide;
+                show::record::notes::flush(self, &mut show.record_view, &doc, slide);
+            }
+            if let Some(doc) = self.session.active().map(|d| d.doc.clone()) {
                 let now = show.last_now;
                 show::save_take(self, &mut show, &doc, now);
             }

@@ -15,7 +15,7 @@ use crate::theme;
 mod keys;
 mod media;
 mod presenter;
-mod record;
+pub(crate) mod record;
 mod render;
 mod ui;
 mod zoom;

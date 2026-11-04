@@ -97,7 +97,7 @@ pub(super) fn has_focus(ctx: &egui::Context) -> bool {
 }
 
 /// Save an in-progress script edit before the Record view goes away.
-pub(super) fn flush(app: &mut SlideApp, rec: &mut RecordView, doc: &Arc<Presentation>, slide: usize) {
+pub(crate) fn flush(app: &mut SlideApp, rec: &mut RecordView, doc: &Arc<Presentation>, slide: usize) {
     edit::flush(app, rec, doc, slide);
 }
 

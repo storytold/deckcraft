@@ -130,7 +130,12 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
         // screen recording was written.
         rec.pending = Some(RecordCommand::Export);
     }
-    let _ = devices::mic_button(&mut right_ui, rec, now);
+    // A refused microphone that the user asks for again gets a new start attempt. Read the
+    // failure first: the click clears it.
+    let mic_failed = rec.devices.mic.failed;
+    if devices::mic_button(&mut right_ui, rec, now) && mic_failed {
+        show.mic_tried = false;
+    }
     if devices::camera_button(&mut right_ui, rec, now) {
         rec.camera_bubble = rec.devices.camera.is_on();
     }
