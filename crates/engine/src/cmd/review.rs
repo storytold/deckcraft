@@ -1365,7 +1365,7 @@ fn shapes_have_cameo(shapes: &[Shape]) -> bool {
     found
 }
 
-fn slide_has_recording(sl: &deckcraft_model::Slide) -> bool {
+fn slide_has_recording(sl: &Arc<deckcraft_model::Slide>) -> bool {
     !recorded_shape_ids(&sl.shapes).is_empty()
         || sl.laser.is_some()
         || sl.transition.as_ref().is_some_and(|t| t.advance_after_ms.is_some())
@@ -1373,14 +1373,14 @@ fn slide_has_recording(sl: &deckcraft_model::Slide) -> bool {
 }
 
 /// Enabled state of Clear Recording: some slide has recorded material.
-fn has_recording(s: &Session) -> std::result::Result<(), String> {
+fn has_recording(s: &Session) -> Result<()> {
     has_slide(s)?;
     let st = s.doc()?;
     if st.doc.slides.iter().any(slide_has_recording) { Ok(()) } else { Err("nothing recorded".into()) }
 }
 
 /// Enabled state of Reset to Cameo: the deck has a Cameo on some slide.
-fn has_any_cameo(s: &Session) -> std::result::Result<(), String> {
+fn has_any_cameo(s: &Session) -> Result<()> {
     has_slide(s)?;
     let st = s.doc()?;
     if st.doc.slides.iter().any(|sl| shapes_have_cameo(&sl.shapes)) { Ok(()) } else { Err("no Cameo".into()) }
