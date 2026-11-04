@@ -255,6 +255,9 @@ impl SlideApp {
             if let Err(e) = self.session.execute("show.screenRecord", &serde_json::json!({"action": "stop"})) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.set_status(e.to_string());
+                // The status bar is hidden during a slide show: keep the recorder's window up,
+                // which shows the message (and the kept take's path).
+                self.screen.open = true;
             }
         }
         // Closing during a take must not lose it, even when the deck itself is clean: nothing is

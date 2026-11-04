@@ -275,6 +275,14 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
                 ui.add_space(6.0);
                 ui.label(RichText::new(e).size(11.0).color(Color32::from_rgb(255, 140, 140)));
             }
+            // The status bar is not drawn during a slide show: a message it would carry (the path
+            // of a take that could not be inserted, for instance) belongs here too.
+            if let Some((text, _)) = &app.status
+                && !text.is_empty()
+            {
+                ui.add_space(6.0);
+                ui.label(RichText::new(text).size(11.0).color(Color32::from_rgb(240, 200, 120)));
+            }
         });
     if close {
         open = false;
