@@ -45,12 +45,10 @@ pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, layout: &Layout) {
         CornerRadius::ZERO,
         if rec.camera_preview { Color32::from_rgb(90, 170, 230) } else { Color32::from_gray(190) },
     );
-    if cp_resp.clicked() {
-        rec.camera_preview = !rec.camera_preview;
-        changed = true;
-    }
-    cp_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::CheckBox, rec.camera_preview, "Camera preview"));
-    cp_resp.on_hover_text(if rec.camera_preview { "Hide camera preview" } else { "Show camera preview" });
+    // The Record view has no camera surface yet: the icon says so instead of toggling state
+    // nothing draws.
+    cp_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::CheckBox, false, "Camera preview"));
+    cp_resp.on_hover_text("The Record view's camera preview arrives with the camera section");
 
     let r = layout.views;
     let resp = ui.interact(r, ui.scope_id().with("record_views"), Sense::click());

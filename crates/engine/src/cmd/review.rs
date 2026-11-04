@@ -1499,8 +1499,10 @@ fn reset_cameo(s: &mut Session, p: &Value) -> Result<Value> {
             let Some(sl) = doc.slides.get_mut(*i) else { continue };
             let sl = Arc::make_mut(sl);
             let mut n = 0u32;
-            walk_mut(&mut sl.shapes, &mut |sh| {
-                let Some(c) = &mut sh.cameo else { return };
+            // Only top-level Cameos: a grouped one holds its box in the group's child space, so a
+            // slide-space default would move it to the wrong place.
+            for sh in &mut sl.shapes {
+                let Some(c) = &mut sh.cameo else { continue };
                 if let Some(m) = c.recorded.take() {
                     media.push(m);
                 }
@@ -1508,7 +1510,7 @@ fn reset_cameo(s: &mut Session, p: &Value) -> Result<Value> {
                 let xfrm = sh.xfrm.unwrap_or_default();
                 sh.xfrm = Some(Xfrm { rot: xfrm.rot, flip_h: xfrm.flip_h, flip_v: xfrm.flip_v, ..default });
                 n = n.saturating_add(1);
-            });
+            }
             if n > 0 {
                 reset = reset.saturating_add(n);
                 slides = slides.saturating_add(1);

@@ -120,8 +120,8 @@ fn paint_style(p: &egui::Painter, r: Rect, i: usize) {
     p.add(egui::Shape::circle_filled(lens, lr, Color32::from_rgb(0x1B, 0x2A, 0x36)));
 }
 
-/// Apply a gallery pick to the Cameo, ignoring the freeform tools the shared gallery also lists.
-fn submit_camera_shape(app: &mut SlideApp, preset: &str) {
+/// Apply a gallery pick to a shape, ignoring the freeform tools the shared gallery also lists.
+pub(super) fn submit_camera_shape(app: &mut SlideApp, preset: &str) {
     let draw_tool = matches!(preset, "curve" | "freeform" | "scribble");
     if draw_tool {
         app.set_status("Pick a shape preset for a Cameo");

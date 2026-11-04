@@ -19,7 +19,9 @@ pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, now: f64) -> bool {
         let mut changed = false;
         changed |= ui.checkbox(&mut rec.notes_open, RichText::new("Notes pane").size(13.0)).changed();
         changed |= ui.checkbox(&mut rec.camera_bubble, RichText::new("Camera bubble").size(13.0)).changed();
-        changed |= ui.checkbox(&mut rec.camera_preview, RichText::new("Camera preview").size(13.0)).changed();
+        // No camera surface in the Record view yet: the switch reads as unavailable.
+        let camera = ui.add_enabled(false, egui::Checkbox::new(&mut rec.camera_preview, RichText::new("Camera preview").size(13.0)));
+        let _ = camera.on_hover_text("The Record view's camera preview arrives with the camera section");
         ui.separator();
         let undo = egui::Button::new(RichText::new("Undo reset").size(13.0)).frame(false);
         if ui.add_enabled(can_undo(rec), undo).clicked() {

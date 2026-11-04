@@ -203,6 +203,9 @@ impl MicIn for CpalIn {
                     this.report();
                 }
                 Err(e) => {
+                    // Keep it where `failure()` reads: a second call must not come back empty.
+                    keep_stream_error(&this.error, &e);
+                    this.dead.store(true, Ordering::Relaxed);
                     let _ = tx.send(Err(e));
                 }
             })
@@ -227,13 +230,9 @@ impl MicIn for CpalIn {
     }
 
     fn failure(&self) -> Option<String> {
-        // A startup that failed is a failed take, and so is a lost device. A single dropped
-        // buffer is not: it is logged and capture continues.
-        if let Some(rx) = &self.startup
-            && let Ok(Err(e)) = rx.try_recv()
-        {
-            return Some(e);
-        }
+        // A startup that failed and a lost device are both failed takes (the worker keeps the
+        // reason in the slot, so this is stable across calls). A single dropped buffer is not:
+        // it is logged and capture continues.
         if !self.dead.load(Ordering::Relaxed) {
             return None;
         }
