@@ -118,13 +118,13 @@ impl ScreenState {
         }
         let path = temp_path();
         // `create_new` refuses a path that already exists (a pre-planted link in the shared temp
-        // folder would otherwise be truncated and written through).
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(|e| ScreenError::Failed(format!("couldn't start a screen recording: {e}")))?;
+        // folder would otherwise be truncated and written through), and the take is created
+        // owner-only on Unix so other local users cannot read captured screen content.
+        let mut file_options = std::fs::OpenOptions::new();
+        file_options.read(true).write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut file_options, 0o600);
+        let file = file_options.open(&path).map_err(|e| ScreenError::Failed(format!("couldn't start a screen recording: {e}")))?;
         let recorder = match ScreenRecorder::new(Box::new(file), recorder) {
             Ok(r) => r,
             Err(e) => {

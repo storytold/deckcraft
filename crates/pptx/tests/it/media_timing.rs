@@ -198,6 +198,7 @@ fn autoplay_and_click_to_play_round_trip_through_the_media_timing() {
     assert!(xml.contains("<p:video"), "media timing is written even without animations");
     assert!(xml.contains(r#"<p:cond delay="0"/>"#), "autoplay starts at zero");
     assert!(xml.contains(r#"<p:cond delay="indefinite"/>"#), "click-to-play waits");
+    assert!(xml.contains(r#"cmd="playFrom(0.0)""#), "the autoplay clip gets a PowerPoint automatic-start behaviour");
     let q = deckcraft_pptx::import(&bytes).expect("import");
     let autoplay: Vec<bool> = q.slides[0]
         .shapes
@@ -208,4 +209,76 @@ fn autoplay_and_click_to_play_round_trip_through_the_media_timing() {
         })
         .collect();
     assert_eq!(autoplay, vec![true, false]);
+    // The behaviour starts playback, it is not an animation of its own: importing the file does not
+    // add a "play" effect to the Animation Pane.
+    assert!(q.slides[0].animations.is_empty(), "{:?}", q.slides[0].animations);
+}
+
+#[test]
+fn a_media_play_after_a_click_round_trips_as_click_triggered() {
+    let mut p = defaults::new_presentation(None);
+    let video = p.add_media("clip.mp4", "video/mp4", b"video".to_vec()).expect("media");
+    let id = ShapeId(p.alloc_id().expect("id"));
+    let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+    slide.shapes.push(deckcraft_model::Shape {
+        id,
+        name: "Clip".into(),
+        xfrm: Some(Xfrm::new(40.0, 40.0, 200.0, 100.0)),
+        kind: ShapeKind::Media(MediaClip { media: video, video: true, autoplay: false, ..Default::default() }),
+        ..Default::default()
+    });
+    // On Click first, then the media play after it: both land in the same click group, so the
+    // play must not come back as an automatic start.
+    slide.animations.push(deckcraft_model::Animation {
+        shape: id,
+        class: deckcraft_model::anim::AnimClass::Media,
+        effect: "play".into(),
+        start: deckcraft_model::anim::AnimStart::OnClick,
+        ..Default::default()
+    });
+    slide.animations.push(deckcraft_model::Animation {
+        shape: id,
+        class: deckcraft_model::anim::AnimClass::Entrance,
+        effect: "fade".into(),
+        start: deckcraft_model::anim::AnimStart::AfterPrevious,
+        ..Default::default()
+    });
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let clip = q.slides[0]
+        .shapes
+        .iter()
+        .find_map(|s| match &s.kind {
+            ShapeKind::Media(m) => Some(m.clone()),
+            _ => None,
+        })
+        .expect("the clip");
+    assert!(!clip.autoplay, "a media play after a click waits for that click");
+    assert_eq!(q.slides[0].animations.len(), 2, "the two effects round-trip");
+}
+
+#[test]
+fn an_automatic_start_behaviour_does_not_add_an_animation() {
+    let mut p = defaults::new_presentation(None);
+    let video = p.add_media("clip.mp4", "video/mp4", b"video".to_vec()).expect("media");
+    let id = ShapeId(p.alloc_id().expect("id"));
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes.push(deckcraft_model::Shape {
+        id,
+        name: "Clip".into(),
+        xfrm: Some(Xfrm::new(40.0, 40.0, 200.0, 100.0)),
+        kind: ShapeKind::Media(MediaClip { media: video, video: true, autoplay: true, ..Default::default() }),
+        ..Default::default()
+    });
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    assert!(q.slides[0].animations.is_empty(), "an automatic start is not an animation: {:?}", q.slides[0].animations);
+    let clip = q.slides[0]
+        .shapes
+        .iter()
+        .find_map(|s| match &s.kind {
+            ShapeKind::Media(m) => Some(m.clone()),
+            _ => None,
+        })
+        .expect("the clip");
+    assert!(clip.autoplay, "the automatic start survives the round trip");
 }

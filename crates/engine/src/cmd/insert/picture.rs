@@ -164,7 +164,12 @@ pub(super) fn picture(s: &mut Session, p: &Value) -> Result<Value> {
 fn media(s: &mut Session, p: &Value, video: bool) -> Result<Value> {
     let cmd = if video { "insert.video" } else { "insert.audio" };
     let (name, bytes) = media_bytes(p, cmd)?;
-    let ct = content_type(&name, &bytes);
+    // Detect from the source file's own name: a display `name` without an extension (or with a
+    // misleading one) must not decide whether a Matroska file is audio or video.
+    let detect = str_param(p, "path")
+        .and_then(|path| std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| name.clone());
+    let ct = content_type(&detect, &bytes);
     let bytes = std::sync::Arc::new(bytes);
     let info = deckcraft_media::probe(&bytes);
     let has_video = info.as_ref().is_ok_and(|i| i.video.is_some());

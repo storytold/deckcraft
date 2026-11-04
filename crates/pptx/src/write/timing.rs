@@ -538,6 +538,70 @@ fn group<'a>(effects: Vec<Eff<'a>>) -> Groups<'a> {
     clicks
 }
 
+/// The autoplay and narration clips that need an automatic-start behaviour: they have no media
+/// "play" animation of their own, so nothing else starts them in PowerPoint.
+fn automatic_media(shapes: &[Shape], idmap: &IdMap, main: &[Eff], depth: usize) -> Vec<u32> {
+    if depth > 64 {
+        return vec![];
+    }
+    let mut out = vec![];
+    for s in shapes {
+        if let ShapeKind::Media(m) = &s.kind
+            && (m.autoplay || m.narration)
+            && let Some(spid) = idmap.get(s.id)
+            && !main.iter().any(|e| e.spid == spid && matches!(e.a.class, AnimClass::Media))
+        {
+            out.push(spid);
+        }
+        out.extend(automatic_media(s.children(), idmap, main, depth + 1));
+    }
+    out
+}
+
+/// One main-sequence paragraph per automatic clip: a `playFrom(0.0)` behaviour starting at delay 0.
+/// The behaviour carries no `grpId`, which marks it as a playback trigger rather than an effect the
+/// Animation Pane lists (and keeps a round trip from turning it into an animation of its own).
+fn automatic_media_pars(w: &mut W, ids: &mut Ids, spids: &[u32]) {
+    for spid in spids {
+        w.open0("p:par");
+        w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold"));
+        w.open0("p:stCondLst");
+        w.empty("p:cond", A::new().a("delay", 0));
+        w.close("p:stCondLst");
+        w.open0("p:childTnLst");
+        w.open0("p:par");
+        w.open(
+            "p:cTn",
+            A::new()
+                .a("id", ids.next())
+                .a("presetID", 1)
+                .a("presetClass", "mediacall")
+                .a("presetSubtype", 0)
+                .a("fill", "hold")
+                .a("nodeType", "afterEffect"),
+        );
+        w.open0("p:stCondLst");
+        w.empty("p:cond", A::new().a("delay", 0));
+        w.close("p:stCondLst");
+        w.open0("p:childTnLst");
+        w.open("p:cmd", A::new().a("type", "call").a("cmd", "playFrom(0.0)"));
+        w.open0("p:cBhvr");
+        w.open("p:cTn", A::new().a("id", ids.next()).a("dur", 1).a("fill", "hold"));
+        w.close("p:cTn");
+        w.open0("p:tgtEl");
+        w.empty("p:spTgt", A::new().a("spid", *spid));
+        w.close("p:tgtEl");
+        w.close("p:cBhvr");
+        w.close("p:cmd");
+        w.close("p:childTnLst");
+        w.close("p:cTn");
+        w.close("p:par");
+        w.close("p:childTnLst");
+        w.close("p:cTn");
+        w.close("p:par");
+    }
+}
+
 fn click_pars(w: &mut W, x: &mut Exp, ids: &mut Ids, clicks: &Groups, interactive: bool) {
     for (ci, (auto, afters)) in clicks.iter().enumerate() {
         w.open0("p:par");
@@ -765,11 +829,16 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
     w.open0("p:childTnLst");
     // Media behaviour comes before the animation sequence, as PowerPoint writes it.
     media_nodes(w, &mut ids, shapes, idmap, 0);
-    if !main.is_empty() {
+    // PowerPoint reads a clip's automatic start from a main-sequence `playFrom(0.0)`, not from the
+    // media node's delay: emit one for every autoplay or narration clip that has no media "play"
+    // animation of its own, before any click group so it starts with the slide.
+    let auto_media = automatic_media(shapes, idmap, &main, 0);
+    if !main.is_empty() || !auto_media.is_empty() {
         let clicks = group(main);
         w.open("p:seq", A::new().a("concurrent", 1).a("nextAc", "seek"));
         w.open("p:cTn", A::new().a("id", ids.next()).a("dur", "indefinite").a("nodeType", "mainSeq"));
         w.open0("p:childTnLst");
+        automatic_media_pars(w, &mut ids, &auto_media);
         click_pars(w, x, &mut ids, &clicks, false);
         w.close("p:childTnLst");
         w.close("p:cTn");

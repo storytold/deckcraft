@@ -73,7 +73,11 @@ fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, 
     }
     for c in e.elements() {
         if c.is("cTn") && c.has_attr("presetClass") {
-            out.push(Found { ctn: c, trigger: at.trigger, group: at.group, offset: at.offset });
+            // A media behaviour with no `grpId` is a playback trigger (the writer's automatic
+            // start for an autoplay clip), not an effect the Animation Pane lists.
+            if !(c.attr("presetClass") == Some("mediacall") && !c.has_attr("grpId")) {
+                out.push(Found { ctn: c, trigger: at.trigger, group: at.group, offset: at.offset });
+            }
             continue;
         }
         let mut at = at;
@@ -278,32 +282,39 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
 /// is no guide: PowerPoint leaves it `indefinite` for automatic starts too. A file without any
 /// such behaviour (DeckCraft writes the delay alone) falls back to that numeric delay.
 fn starts_alone(timing: &El, spid: u32, delay: Option<&str>) -> bool {
-    match play_from(timing, spid, false, 0) {
+    match play_from(timing, spid, false, false, 0) {
         Some(main) => main,
         None => delay.is_some_and(|d| d.trim() != "indefinite"),
     }
 }
 
 /// `Some(true)` when a `playFrom` behaviour for `spid` starts without a click, `Some(false)` when
-/// the only ones sit in a click-triggered effect or an interactive sequence, `None` when there is
-/// none at all.
-fn play_from(e: &El, spid: u32, interactive: bool, depth: usize) -> Option<bool> {
+/// the only ones wait for one, `None` when there is none at all.
+///
+/// `interactive` is set inside an interactive sequence, `clicked` once a click effect precedes the
+/// behaviour in the same click group: PowerPoint's first group holds both the automatic start
+/// (before any click effect) and everything the click sets off, so the order in the group decides.
+fn play_from(e: &El, spid: u32, interactive: bool, clicked: bool, depth: usize) -> Option<bool> {
     if depth > 64 {
         return None;
     }
-    // A click effect (DeckCraft's own writer puts an On Click media "play" here) and an interactive
-    // sequence both wait for a click, so a `playFrom` inside either is not an automatic start.
+    // An interactive sequence and a click effect both wait for a click.
     let interactive = interactive || (e.is("cTn") && matches!(e.attr("nodeType"), Some("interactiveSeq" | "clickEffect")));
+    let clicked = clicked || (e.is("cTn") && e.attr("nodeType") == Some("clickEffect"));
     if e.is("cmd")
         && e.attr("cmd").is_some_and(|c| c.trim().to_ascii_lowercase().starts_with("playfrom"))
         && e.path(&["cBhvr", "tgtEl", "spTgt"]).and_then(|t| t.u32("spid")) == Some(spid)
     {
-        return Some(!interactive);
+        return Some(!(interactive || clicked));
     }
     let mut found = None;
     for c in e.elements() {
-        match play_from(c, spid, interactive, depth + 1) {
-            // A main-sequence start wins over a click one, whichever the file lists first.
+        // A new click group starts its own sequence: the click that opened the previous group does
+        // not trigger this one.
+        let new_group = c.is("cTn") && c.path(&["stCondLst", "cond"]).and_then(|x| x.attr("delay")).map(str::trim) == Some("indefinite");
+        let child_clicked = if new_group { false } else { clicked };
+        match play_from(c, spid, interactive, child_clicked, depth + 1) {
+            // A start without a click wins over a click one, whichever the file lists first.
             Some(true) => return Some(true),
             Some(false) => found = Some(false),
             None => {}

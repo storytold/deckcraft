@@ -43,17 +43,20 @@ impl SlideApp {
         // A show replaced mid-take loses the take (the new instance has its own state), so its
         // narration microphone must stop with it: otherwise the stream keeps capturing for a view
         // that is gone, and its samples land on the next show's first slide.
-        // A show being replaced loses its take: save it first (the new instance has its own
-        // state), then stop the microphone it started.
-        if let Some(show) = self.show.take()
-            && show.take_captured()
-        {
-            let now = show.command_now();
-            if let (Some(ctx), Some(doc)) = (self.last_ctx.clone(), self.session.active().map(|d| d.doc.clone())) {
-                self.end_show(&ctx, show, &doc, now);
+        // A show being replaced loses its take: save it if it captured one, then stop the
+        // microphone it started — the new instance knows nothing about that stream, so its
+        // samples would otherwise land on the next show's first slide.
+        if let Some(show) = self.show.take() {
+            let started = show.mic_started();
+            if show.take_captured() {
+                let now = show.command_now();
+                if let (Some(ctx), Some(doc)) = (self.last_ctx.clone(), self.session.active().map(|d| d.doc.clone())) {
+                    self.end_show(&ctx, show, &doc, now);
+                }
             }
-        } else if self.show.as_ref().is_some_and(|s| s.mic_started()) {
-            self.stop_mic();
+            if started {
+                self.stop_mic();
+            }
         }
         if let Some(d) = self.session.active() {
             self.show_instance = self.show_instance.wrapping_add(1).max(1);
