@@ -364,8 +364,11 @@ fn a_stretched_picture_on_a_group_spans_the_group_not_each_member() {
     std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![g];
     let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
     let blue = Rgba::rgb(0, 0, 255);
-    assert!(close(img.pixel(130, 130), RED, 30), "the left member shows the picture's left half: {:?}", img.pixel(130, 130));
-    assert!(close(img.pixel(310, 130), blue, 30), "the right member shows the picture's right half: {:?}", img.pixel(310, 130));
+    // The samples sit where the two readings disagree: had each member stretched its own
+    // copy, the left member would turn blue at x=160 and the right member would start red
+    // until x=280; under one mapping across the group, the turn is at the group's middle.
+    assert!(close(img.pixel(190, 130), RED, 30), "the left member is still in the picture's left half: {:?}", img.pixel(190, 130));
+    assert!(close(img.pixel(250, 130), blue, 30), "the right member is already in the picture's right half: {:?}", img.pixel(250, 130));
 }
 
 #[test]

@@ -229,7 +229,8 @@ mod group_fill_roundtrip_tests {
         // each member), and both must survive a save/reload unchanged. The media bytes are
         // opaque to the round trip; the PNG signature is enough for the content type.
         let mut p = defaults::new_presentation(None);
-        let media = p.add_media("t.png", "image/png", vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).expect("media");
+        let png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        let media = p.add_media("t.png", "image/png", png.clone()).expect("media");
         let member =
             |id: u32, x: f64| Shape { id: ShapeId(id), xfrm: Some(Xfrm::new(x, 0.0, 120.0, 60.0)), fill: Some(Fill::Group), ..Default::default() };
         let group = Shape {
@@ -242,7 +243,10 @@ mod group_fill_roundtrip_tests {
         Arc::make_mut(&mut p.slides[0]).shapes.push(group);
         let rt = crate::import(&crate::export(&p).expect("export")).expect("import");
         let g = rt.slides[0].shapes.iter().find(|s| matches!(s.kind, ShapeKind::Group { .. })).expect("the group survives");
-        assert!(matches!(g.fill, Some(Fill::Picture(_))), "the group keeps its picture fill, got {:?}", g.fill);
+        let Some(Fill::Picture(pic)) = &g.fill else { panic!("the group keeps its picture fill, got {:?}", g.fill) };
+        assert!(matches!(pic.mode, PictureMode::Stretch { .. }), "the fill stays a stretch, not a tile");
+        let item = rt.media.iter().find(|m| m.id == pic.media).expect("the media the fill names");
+        assert_eq!(*item.data, png, "the media bytes survive the round trip");
         if let ShapeKind::Group { children, .. } = &g.kind {
             assert_eq!(children.len(), 2, "both members survive");
             assert!(
