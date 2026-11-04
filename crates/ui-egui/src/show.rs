@@ -715,6 +715,12 @@ impl Show {
         self.laser_live.push((x, y, t_ms));
     }
 
+    /// Whether the narration microphone was started for this show (so a show being replaced can
+    /// stop the stream it owns).
+    pub(crate) fn mic_started(&self) -> bool {
+        self.mic_tried
+    }
+
     /// Whether a take is capturing right now: the Record view is open *and* running. Timings,
     /// ink, laser and narration belong to the take, so browsing the Record view before Record,
     /// while paused, or after Stop must not collect them. `record` alone is the mode flag and is
@@ -848,7 +854,9 @@ fn take_narration(app: &mut SlideApp, show: &mut Show) {
     if samples.is_empty() {
         return;
     }
-    let slide = show.state.slide;
+    // `ShowState::next`/`prev`/`goto` already moved the state to the new slide; the take belongs
+    // to the one being left, which is the slide `Show::apply` reads its cached timeline for.
+    let slide = show.timeline.as_ref().map(|t| t.0).unwrap_or(show.state.slide);
     if let Some(i) = show.narration.iter().position(|(s, _, _)| *s == slide) {
         // A take paused on this slide and resumed: the microphone restarted, so only the samples
         // are appended. A changed rate keeps the first take's rate (the two would not line up).

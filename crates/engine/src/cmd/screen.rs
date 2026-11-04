@@ -113,7 +113,17 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
             }))
         }
         "targets" => {
-            let targets = s.screen.targets().map_err(err)?;
+            // A missing permission or an unsupported host is the picker's state, not a failed
+            // request: report it with an empty list so the "Grant permission…" button can appear.
+            let targets = match s.screen.targets() {
+                Ok(t) => t,
+                Err(
+                    deckcraft_screen::ScreenError::PermissionDenied
+                    | deckcraft_screen::ScreenError::Unavailable
+                    | deckcraft_screen::ScreenError::NoDevice,
+                ) => Vec::new(),
+                Err(e) => return Err(err(e)),
+            };
             let list: Vec<Value> = targets
                 .iter()
                 .map(|t| json!({"id": t.id, "kind": t.kind.as_str(), "title": t.title, "width": t.width, "height": t.height}))
@@ -187,6 +197,11 @@ mod tests {
         let mut s = Session::with_new();
         let e = s.execute(CMD, &json!({"action": "start"})).unwrap_err().to_string();
         assert!(e.contains("isn't available"), "{e}");
+        // The picker asks for targets first: an unavailable host is its status, with no screens,
+        // rather than an error that would leave "Grant permission…" unreachable.
+        let v = s.execute(CMD, &json!({"action": "targets"})).expect("targets reports the state");
+        assert_eq!(v["status"], "unavailable", "{v}");
+        assert_eq!(v["targets"].as_array().map(Vec::len), Some(0), "{v}");
     }
 
     /// A fake screen device with a frame queue the test fills.

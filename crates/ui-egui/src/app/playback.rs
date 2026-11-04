@@ -40,6 +40,12 @@ impl SlideApp {
     pub fn start_show(&mut self, from: usize, reading: bool) {
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);
+        // A show replaced mid-take loses the take (the new instance has its own state), so its
+        // narration microphone must stop with it: otherwise the stream keeps capturing for a view
+        // that is gone, and its samples land on the next show's first slide.
+        if self.show.as_ref().is_some_and(|s| s.mic_started()) {
+            self.stop_mic();
+        }
         if let Some(d) = self.session.active() {
             self.show_instance = self.show_instance.wrapping_add(1).max(1);
             let mut show = show::Show::new(&d.doc, from, reading, self.ui.presenter_view && !reading);
