@@ -298,8 +298,8 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             cnvpr(w, x, o, id, s);
             w.open0("p:cNvPicPr");
             locks(w, "a:picLocks", s, A::new().a("noChangeAspect", "1"));
-            if s.cameo.is_some() {
-                crate::cameo::write_live_feed(w);
+            if let Some(c) = &s.cameo {
+                crate::cameo::write_live_feed(w, c.raw.as_deref());
             }
             w.close("p:cNvPicPr");
             nv_pr(w, x, o, s);
