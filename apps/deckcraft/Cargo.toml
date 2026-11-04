@@ -40,3 +40,7 @@ fmv-macos-events = "=0.1.0"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+# GNOME/Wayland client-side controls, including FreeBSD, without a bundled title font.
+winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita-notitle"] }
