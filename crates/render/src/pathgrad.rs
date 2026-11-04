@@ -259,6 +259,11 @@ pub fn fill(ctx: &mut RenderContext, kind: &str, focus: [f64; 4], stops: &[(f64,
     } else {
         Vec::new()
     };
+    // An outline `polygons` refused (too many points) has no contours: skip the shape rather than
+    // paint it with the rectangle fallback's different gradient.
+    if kind == "shape" && outline.is_empty() {
+        return;
+    }
     let lut = ramp(stops);
     let a = alpha.clamp(0.0, 1.0);
     let mut data = Vec::with_capacity((pw * ph) as usize);
@@ -389,6 +394,20 @@ mod tests {
         fill(&mut ctx, "shape", CENTRE, &stops, Rect::new(0.0, 0.0, 200.0, 200.0), &path, Affine::scale(2.0), 1.0);
         // Unbudgeted this is 147k pixels × 80k edges ≈ 1.2e10 tests (minutes); budgeted, well under a second in release.
         assert!(t.elapsed() < std::time::Duration::from_secs(20), "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn a_shape_gradient_with_no_usable_outline_paints_nothing() {
+        // One polygon over the per-polygon cap is dropped by `polygons`.
+        let path = many_segment_square(26_000);
+        assert!(polygons(&path).is_empty());
+        let mut ctx = RenderContext::new(64, 64);
+        let stops = [(0.0, Rgba::rgb(0, 0, 0)), (1.0, Rgba::rgb(255, 255, 255))];
+        fill(&mut ctx, "shape", CENTRE, &stops, Rect::new(0.0, 0.0, 64.0, 64.0), &path, Affine::IDENTITY, 1.0);
+        ctx.flush();
+        let mut px = vec![0u8; 64 * 64 * 4];
+        ctx.render(vello_cpu::PixmapMut::new(64, 64, &mut px).unwrap(), &mut vello_cpu::Resources::new());
+        assert!(px.chunks(4).all(|p| p[3] == 0), "nothing was painted");
     }
 
     #[test]
