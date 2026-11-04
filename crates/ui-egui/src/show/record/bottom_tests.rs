@@ -143,6 +143,7 @@ use super::super::super::{InkMode, InkStroke, Show};
 use super::super::layout as record_layout;
 use super::super::{InkTool, Layout, RecordView};
 use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable;
 
 type State = (Show, RecordView, std::sync::Arc<deckcraft_model::Presentation>, Layout);
 

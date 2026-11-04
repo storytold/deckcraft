@@ -11,7 +11,8 @@ use deckcraft_model::Presentation;
 use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 
 use super::super::{InkMode, Show};
-use super::{InkTool, Layout, RecordView, theme};
+use super::{InkTool, Layout, RecordView};
+use crate::theme;
 
 /// The ten ink colours of PowerPoint's recording toolbar, in swatch order.
 pub(super) const INK_COLORS: [Color32; 10] = [
@@ -214,8 +215,9 @@ pub(super) fn ui(ui: &mut Ui, show: &mut Show, rec: &mut RecordView, doc: &Arc<P
         show.set_ink_mode(mode);
     }
     let color = INK_COLORS[rec.ink.color.min(INK_COLORS.len() - 1)];
-    if show.ink_color() != color {
-        show.set_ink_color(deckcraft_model::Rgba::rgb(color.r(), color.g(), color.b()));
+    let rgba = deckcraft_model::Rgba::rgb(color.r(), color.g(), color.b());
+    if show.ink_color() != rgba {
+        show.set_ink_color(rgba);
     }
     rec.ink.active = show.ink_active();
 
@@ -324,4 +326,5 @@ fn paint_swatch(ui: &Ui, rect: Rect, color: Color32, selected: bool, hovered: bo
 }
 
 #[cfg(test)]
+#[path = "bottom_tests.rs"]
 mod bottom_tests;
