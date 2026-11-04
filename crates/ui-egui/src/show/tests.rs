@@ -1365,3 +1365,89 @@ fn laser_follows_the_slide_clock_then_goes_out() {
     assert_eq!(saved_status(true, false, true), "Recording saved: slide timings, narration and laser.");
     assert_eq!(saved_status(false, false, false), "Recording saved: slide timings.");
 }
+
+/// Ink tools: selecting the pen, highlighter or eraser sets the derived pointer flag and the
+/// active state the recording toolbar reads; the arrow turns both off.
+#[test]
+fn the_ink_tools_drive_the_pen_flag_and_the_active_state() {
+    let doc = deckcraft_model::Presentation::default();
+    let mut show = Show::new(&doc, 0, false, false);
+    assert_eq!(show.ink_mode(), InkMode::Arrow);
+    assert!(!show.pen && !show.ink_active(), "the arrow leaves no ink");
+    show.set_ink_mode(InkMode::Pen);
+    assert!(show.pen && show.ink_active());
+    show.set_ink_mode(InkMode::Highlighter);
+    assert!(show.pen && show.ink_active(), "the highlighter captures drags like the pen");
+    show.set_ink_mode(InkMode::Eraser);
+    assert!(!show.pen && !show.ink_active(), "the eraser removes ink instead of drawing");
+    show.set_ink_mode(InkMode::Arrow);
+    assert!(!show.pen && !show.ink_active());
+}
+
+/// Picking an ink colour keeps the selected tool; the toolbar's swatch is active for that colour.
+#[test]
+fn an_ink_colour_sticks_to_the_selected_tool() {
+    let doc = deckcraft_model::Presentation::default();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.set_ink_mode(InkMode::Highlighter);
+    let blue = deckcraft_model::Rgba::rgb(0x2E, 0x6F, 0xD8);
+    show.set_ink_color(blue);
+    assert_eq!(show.ink_color(), blue);
+    assert_eq!(show.ink_mode(), InkMode::Highlighter, "the colour does not switch the tool");
+}
+
+/// The eraser removes whole strokes it touches and leaves the rest alone.
+#[test]
+fn the_eraser_removes_touched_strokes() {
+    let doc = deckcraft_model::Presentation::default();
+    let mut show = Show::new(&doc, 0, false, false);
+    let stroke = |pts: &[(f32, f32)]| InkStroke {
+        points: pts.iter().map(|(x, y)| pos2(*x, *y)).collect(),
+        mode: InkMode::Pen,
+        color: deckcraft_model::Rgba::BLACK,
+        width: 2.25,
+    };
+    show.strokes.push(stroke(&[(0.1, 0.1), (0.2, 0.1)]));
+    show.strokes.push(stroke(&[(0.8, 0.8), (0.9, 0.8)]));
+    assert_eq!(show.stroke_count(), 2);
+    assert!(show.has_ink());
+    assert_eq!(show.erase_ink_at(pos2(0.15, 0.5), pos2(0.15, 0.12), 0.02), 1, "only the touched stroke goes");
+    assert_eq!(show.stroke_count(), 1);
+    assert_eq!(show.erase_ink_at(pos2(0.0, 0.0), pos2(1.0, 1.0), 0.02), 1, "the diagonal crosses the remaining stroke");
+    assert!(!show.has_ink() && show.stroke_count() == 0);
+}
+
+/// A stroke is erased by its segment between two pointer samples, not only by a sample that
+/// lands exactly on a vertex.
+#[test]
+fn the_eraser_catches_a_segment_that_crosses_the_stroke() {
+    let doc = deckcraft_model::Presentation::default();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.strokes.push(InkStroke {
+        points: vec![pos2(0.1, 0.5), pos2(0.9, 0.5)],
+        mode: InkMode::Pen,
+        color: deckcraft_model::Rgba::BLACK,
+        width: 2.25,
+    });
+    assert_eq!(show.erase_ink_at(pos2(0.5, 0.4), pos2(0.5, 0.6), 0.02), 1);
+    assert!(!show.has_ink());
+}
+
+/// A recorded highlighter stroke keeps its tool, colour and width, so the save path writes a
+/// translucent highlighter rather than the deck's plain pen colour.
+#[test]
+fn a_recorded_stroke_keeps_its_tool_colour_and_width() {
+    let doc = deckcraft_model::Presentation::default();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    let color = deckcraft_model::Rgba::rgb(0xFF, 0xD4, 0x00);
+    show.strokes.push(InkStroke { points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)], mode: InkMode::Highlighter, color, width: 6.75 });
+    show.stash_ink(&doc, 2);
+    assert_eq!(show.recorded.len(), 1);
+    let (slide, pts, mode, saved, width) = &show.recorded[0];
+    assert_eq!(*slide, 2);
+    assert_eq!(pts.len(), 2);
+    assert_eq!(*mode, InkMode::Highlighter);
+    assert_eq!(*saved, color);
+    assert!((*width - 6.75).abs() < 1e-9);
+}

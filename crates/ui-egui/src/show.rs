@@ -4,7 +4,7 @@
 
 use deckcraft_anim::{Click, HitShape, Layer, LinkJump, ShowAction, ShowState, Source, StepStamp, Timeline, TriggerPlay};
 use deckcraft_model::text::Hyperlink;
-use deckcraft_model::{Presentation, ShapeId};
+use deckcraft_model::{Presentation, Rgba, ShapeId};
 use deckcraft_render::{ParaState, PlacedLink, PlacedShape, RenderOpts, ShapeState};
 use egui::{Align2, Color32, CornerRadius, Mesh, Pos2, Rect, Sense, Stroke, TextureHandle, Ui, pos2, vec2};
 use serde_json::json;
@@ -34,6 +34,48 @@ pub use ui::ui;
 use zoom::Zoom;
 #[cfg(test)]
 use zoom::{GOTO_DIGITS, norm_on_slide, see_all_cells, see_all_hit, toggle_blank, unit_uv, wheel_zoom_lines, zoom_uv};
+
+/// What the pointer draws: the arrow selects, the pen and highlighter leave ink, the eraser
+/// removes whole strokes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum InkMode {
+    #[default]
+    Arrow,
+    Pen,
+    Highlighter,
+    Eraser,
+}
+
+impl InkMode {
+    /// True for the tools that draw (the eraser removes instead).
+    pub(crate) fn draws(self) -> bool {
+        matches!(self, Self::Pen | Self::Highlighter)
+    }
+
+    /// Highlighter ink is wider and translucent; the pen is a thin solid line.
+    pub(crate) fn width_scale(self) -> f64 {
+        if self == Self::Highlighter { 3.0 } else { 1.0 }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Arrow => "Pointer",
+            Self::Pen => "Pen",
+            Self::Highlighter => "Highlighter",
+            Self::Eraser => "Eraser",
+        }
+    }
+}
+
+/// One live stroke on the show canvas, in normalized slide coordinates.
+#[derive(Clone, Debug)]
+pub(crate) struct InkStroke {
+    pub points: Vec<Pos2>,
+    pub mode: InkMode,
+    pub color: Rgba,
+    /// Width in slide points; the highlighter's is already scaled.
+    pub width: f64,
+}
 
 pub struct Show {
     /// Monotonic identity of this show instance. Starting a show again (even at the same slide
@@ -91,7 +133,13 @@ pub struct Show {
     pen: bool,
     /// A dot that follows the pointer and leaves no ink (`Cmd/Ctrl+L`).
     laser: bool,
-    strokes: Vec<Vec<Pos2>>,
+    /// The ink tool selected for the show or the recording toolbar.
+    ink_mode: InkMode,
+    /// The colour the pen and highlighter draw with.
+    ink_color: Rgba,
+    /// The pen's width in slide points; the highlighter scales this by three.
+    ink_width: f64,
+    strokes: Vec<InkStroke>,
     /// Digits typed for Go to Slide, shown until Enter, Esc, or a short pause.
     goto: String,
     goto_at: f64,
@@ -102,8 +150,9 @@ pub struct Show {
     /// Speaker-notes size in presenter view, in points.
     notes_px: f32,
     timings: Vec<(usize, f64)>,
-    /// Pen strokes kept while recording, in slide points, with the slide they were drawn on.
-    recorded: Vec<(usize, Vec<(f64, f64)>)>,
+    /// Pen strokes kept while recording, in slide points, with the slide, tool, colour and width
+    /// they were drawn with.
+    recorded: Vec<(usize, Vec<(f64, f64)>, InkMode, Rgba, f64)>,
     /// Laser samples kept while recording: slide points and milliseconds from the slide start.
     laser_live: Vec<(f64, f64, u32)>,
     laser_saved: Vec<(usize, Vec<(f64, f64, u32)>)>,
@@ -111,8 +160,6 @@ pub struct Show {
     narration: Vec<(usize, Vec<u8>)>,
     mic_tried: bool,
     mic_ok: bool,
-    /// Pen width in slide points, matching the 3px stroke on screen.
-    ink_width: f64,
     last_move: f64,
     /// The last trackpad flick or mouse-wheel notch, so one gesture turns one page.
     last_swipe: f64,
@@ -270,6 +317,9 @@ impl Show {
             thumbs: vec![],
             pen: false,
             laser: false,
+            ink_mode: InkMode::Arrow,
+            ink_color: Rgba::rgb(0xFF, 0x00, 0x00),
+            ink_width: 2.25,
             strokes: vec![],
             goto: String::new(),
             goto_at: 0.0,
@@ -284,7 +334,6 @@ impl Show {
             narration: vec![],
             mic_tried: false,
             mic_ok: false,
-            ink_width: 2.25,
             last_move: 0.0,
             last_swipe: f64::NEG_INFINITY,
             ended: false,
@@ -476,9 +525,11 @@ impl Show {
 
     /// Pen and laser are different pointers: turning one on puts the other away.
     fn set_pen(&mut self, on: bool) {
-        self.pen = on;
         if on {
-            self.laser = false;
+            self.set_ink_mode(InkMode::Pen);
+        } else {
+            self.ink_mode = InkMode::Arrow;
+            self.pen = false;
         }
     }
 
@@ -486,6 +537,7 @@ impl Show {
         self.laser = on;
         if on {
             self.pen = false;
+            self.ink_mode = InkMode::Arrow;
         }
     }
 
@@ -493,6 +545,53 @@ impl Show {
     fn arrow(&mut self) {
         self.pen = false;
         self.laser = false;
+        self.ink_mode = InkMode::Arrow;
+    }
+
+    /// Choose the ink tool. The pen and highlighter capture pointer drags; the eraser removes
+    /// whole strokes and leaves no ink of its own. Selecting any ink tool puts the laser away.
+    pub(crate) fn set_ink_mode(&mut self, mode: InkMode) {
+        self.ink_mode = mode;
+        self.pen = mode.draws();
+        if mode != InkMode::Arrow {
+            self.laser = false;
+        }
+    }
+
+    pub(crate) fn ink_mode(&self) -> InkMode {
+        self.ink_mode
+    }
+
+    /// The colour the pen and highlighter use.
+    pub(crate) fn set_ink_color(&mut self, color: Rgba) {
+        self.ink_color = color;
+    }
+
+    pub(crate) fn ink_color(&self) -> Rgba {
+        self.ink_color
+    }
+
+    /// True while the selected tool leaves ink (the pen or the highlighter).
+    pub(crate) fn ink_active(&self) -> bool {
+        self.ink_mode.draws()
+    }
+
+    /// Whether the canvas has live strokes the eraser could remove.
+    pub(crate) fn has_ink(&self) -> bool {
+        !self.strokes.is_empty()
+    }
+
+    pub(crate) fn stroke_count(&self) -> usize {
+        self.strokes.len()
+    }
+
+    /// Remove every stroke touched by the eraser segment `a`–`b` (normalized slide points).
+    /// Whole-stroke removal is PowerPoint's default eraser. Returns how many strokes went.
+    pub(crate) fn erase_ink_at(&mut self, a: Pos2, b: Pos2, radius: f32) -> usize {
+        let radius = radius.max(0.0);
+        let before = self.strokes.len();
+        self.strokes.retain(|s| !stroke_touched(s, a, b, radius));
+        before - self.strokes.len()
     }
 
     /// The backdrop for `key`: kept from earlier, waited for if it is being rendered ahead of
@@ -658,7 +757,7 @@ impl Show {
         }
         for stroke in strokes {
             let mut pts = Vec::new();
-            for q in stroke.iter().take(4096) {
+            for q in stroke.points.iter().take(4096) {
                 let x = q.x as f64 * w;
                 let y = q.y as f64 * h;
                 if x.is_finite() && y.is_finite() {
@@ -666,7 +765,7 @@ impl Show {
                 }
             }
             if pts.len() >= 2 {
-                self.recorded.push((slide, pts));
+                self.recorded.push((slide, pts, stroke.mode, stroke.color, stroke.width));
             }
         }
     }
@@ -818,6 +917,23 @@ fn take_narration(app: &mut SlideApp, show: &mut Show) {
         show.narration.retain(|(i, _)| *i != slide);
         show.narration.push((slide, wav));
     }
+}
+
+/// Whether any point of `stroke` lies within `radius` of the segment `a`–`b`, in normalized
+/// slide coordinates. The eraser removes the whole stroke, as PowerPoint's default eraser does.
+fn stroke_touched(stroke: &InkStroke, a: Pos2, b: Pos2, radius: f32) -> bool {
+    stroke.points.iter().any(|p| point_segment_distance(*p, a, b) <= radius)
+}
+
+/// Distance from `p` to the segment `a`–`b`; the segment of a click has zero length.
+fn point_segment_distance(p: Pos2, a: Pos2, b: Pos2) -> f32 {
+    let ab = b - a;
+    let len2 = ab.length_sq();
+    if !len2.is_finite() || len2 <= f32::EPSILON {
+        return p.distance(a);
+    }
+    let t = ((p - a).dot(ab) / len2).clamp(0.0, 1.0);
+    p.distance(a + ab * t)
 }
 
 #[cfg(test)]
