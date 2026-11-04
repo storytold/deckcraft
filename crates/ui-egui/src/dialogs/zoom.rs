@@ -28,7 +28,7 @@ pub(super) fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     if ui.radio(mode == "fit", "Fit").clicked() {
         mode = "fit".into();
     }
-    for pct in ZOOM_PRESETS {
+    for pct in ZOOM_PRESETS.iter().filter(|p| !sorter || (50..=300).contains(*p)) {
         let on = mode == "percent" && percent == pct.to_string();
         if ui.radio(on, format!("{pct}%")).clicked() {
             mode = "percent".into();

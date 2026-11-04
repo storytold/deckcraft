@@ -76,7 +76,8 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         // those so the status row stays consistent with every other control without hard-coding
         // a size the slider would override anyway.
         let slider_size = vec2(right.spacing().slider_width, right.spacing().interact_size.y);
-        let s = right.add_sized(slider_size, egui::Slider::new(&mut zp, 10.0..=400.0).logarithmic(true).show_value(false));
+        let s = right
+            .add_sized(slider_size, egui::Slider::new(&mut zp, if sorter { 50.0..=300.0 } else { 10.0..=400.0 }).logarithmic(true).show_value(false));
         // The status bar has no room for a visible "Zoom" label; name the slider for assistive
         // technology only, leaving its geometry unchanged. Its value is the percentage shown.
         let shown = format!("{}%", zp.round());
