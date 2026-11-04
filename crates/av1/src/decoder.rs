@@ -777,6 +777,14 @@ fn decode_frame(job: &FrameJob, pool: &Pool, stats: &mut DecodeStats) -> Result<
     Ok((rf, pic))
 }
 
+/// Bytes all parallel tile states may hold of whole-frame CDEF and restoration metadata; past it
+/// the tiles decode one after another on the frame's own metadata.
+const TILE_METADATA_BUDGET: usize = 256 << 20;
+
+fn tile_metadata_fits(tiles: usize, per_tile: usize) -> bool {
+    tiles.checked_mul(per_tile).is_some_and(|n| n <= TILE_METADATA_BUDGET)
+}
+
 /// Decode the tiles of a frame (tile number, data), in parallel when several; returns the final
 /// CDFs of tile context_update_tile_id.
 fn decode_tiles(pool: &Pool, fs: &mut FrameState, cdfs: &Cdfs, tiles: &[(usize, Vec<u8>)]) -> Result<Option<Box<Cdfs>>> {
@@ -790,7 +798,7 @@ fn decode_tiles(pool: &Pool, fs: &mut FrameState, cdfs: &Cdfs, tiles: &[(usize, 
     };
     // Intra block copy reads the current frame through the tile's own buffer: keep whole-frame
     // buffers (tiles one after another) for it.
-    if tiles.len() > 1 && pool.is_parallel() && !fs.fh.allow_intrabc {
+    if tiles.len() > 1 && pool.is_parallel() && !fs.fh.allow_intrabc && tile_metadata_fits(tiles.len(), fs.tile_metadata_bytes()) {
         let mut states: Vec<TileState> = tiles
             .iter()
             .map(|(num, _)| {
@@ -1075,6 +1083,14 @@ mod guard_tests {
 #[cfg(test)]
 mod budget_tests {
     use super::*;
+
+    #[test]
+    fn tile_metadata_copies_are_budgeted() {
+        assert!(tile_metadata_fits(64, 1 << 20));
+        assert!(!tile_metadata_fits(4096, 1 << 20));
+        assert!(!tile_metadata_fits(usize::MAX, 2));
+    }
+
     use deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET;
 
     fn color(mono: bool) -> crate::header::ColorConfig {
