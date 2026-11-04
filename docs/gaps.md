@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-03 · **Change:** trivial (run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (screen recording captures a display, window or region as an H.264/MP4 video with the pointer; Record Slide Show keeps timings, narration, pen ink and a laser trace, with the Ctrl laser pointer and Clear Timing / Clear Narration in an ordinary show; standalone audio recording, system audio while recording, camera capture while recording and a picker with thumbnails remain gaps; previous: trivial (run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -443,10 +443,7 @@ Detail in [localization-parity.md](localization-parity.md).
 | 2026-10-13 | minor | WordArt adjust handles: a selected text warp shows one yellow handle per adjust, and dragging it sets that guide value (gallery and command still open) |
 | 2026-10-14 | minor | Pen pressure scales ink width when the pointer reports it; tilt, pinch-zoom and other trackpad gestures remain |
 | 2026-10-13 | trivial | Chart workbook round-trip (#335) noted under the charts gap; editing chart data is still open |
-| 2026-10-14 | minor | Laser pointer during a show (hold Ctrl, red/green/blue). Clear Timing and Clear Narration on the current slide or all slides |
-| 2026-10-14 | minor | Record Slide Show keeps narration audio and a laser trace. Screen capture and camera stay open |
-| 2026-10-14 | minor | Record Slide Show keeps timings and pen ink. Audio and screen capture stay open |
-| 2026-11-03 | minor | Screen recording (#1815): display, window or region through scap; H.264/MP4 take inserted as a video clip with poster and click-to-play timing |
+| 2026-11-04 | minor | Screen recording (#1815): display, window or region through scap into an H.264/MP4 take, inserted as a video clip with a poster and click-to-play timing (pointer only, no system audio). Record Slide Show keeps timings, narration, pen ink and a laser trace; an ordinary show holds Ctrl for the laser pointer and Clear Timing / Clear Narration work on the current slide or all slides. Camera capture while recording stays open |
 | 2026-10-13 | minor | Shape, picture and table rendering checked against PowerPoint on ~150 synthetic edge-case slides; 3-D bevels, cameras and face lighting now render approximately (gap narrowed to extrusion, rigs and the 3-D pane) |
 | 2026-10-13 | minor | Interactive decks: triggers, return-to-slide state and click rules landed in the slide show; the remaining pieces are one new entry under Features |
 | 2026-10-12 | minor | IME composition in slide text and notes, and CJK interface text with real glyphs (#101): the IME gap is now Korean on the web and table-cell underlines |

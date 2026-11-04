@@ -40,6 +40,9 @@ struct Active {
     frames: u64,
     /// The newest captured picture waiting for its slot; a later capture replaces it.
     pending: Option<ScreenFrame>,
+    /// Stop was asked for while a full queue held work back: later ticks send what was kept
+    /// before the file is requested, without capturing anything.
+    draining: bool,
     /// Stop asked for the file to be written: the encoder finishes it while the UI keeps running.
     stopping: bool,
     /// Why the take is ending, for the message the session shows when it inserts the file.
@@ -475,16 +478,17 @@ impl ScreenState {
     }
 
     pub fn is_recording(&self) -> bool {
-        self.active.as_ref().is_some_and(|a| !a.stopping)
+        self.active.as_ref().is_some_and(|a| !a.stopping && !a.draining)
     }
 
-    /// Whether a take is being written (Stop or a failure asked for the file).
+    /// Whether a take is being written (Stop or a failure asked for the file, or the pictures a
+    /// full queue held back are still on their way).
     pub fn is_finishing(&self) -> bool {
-        self.active.as_ref().is_some_and(|a| a.stopping)
+        self.active.as_ref().is_some_and(|a| a.stopping || a.draining)
     }
 
     pub fn is_paused(&self) -> bool {
-        self.active.as_ref().is_some_and(|a| a.paused && !a.stopping)
+        self.active.as_ref().is_some_and(|a| a.paused && !a.stopping && !a.draining)
     }
 
     /// Frames encoded so far.
@@ -558,6 +562,7 @@ impl ScreenState {
             next_at: 0.0,
             frames: 0,
             pending: None,
+            draining: false,
             stopping: false,
             reason: String::new(),
         });
@@ -584,15 +589,21 @@ impl ScreenState {
     /// [`take_ended`](Self::take_ended) on a later tick, so Stop never blocks on encoding.
     pub fn stop(&mut self) -> Result<(), ScreenError> {
         let Some(active) = self.active.as_mut() else { return Err(ScreenError::NotRecording) };
-        if active.stopping {
+        if active.stopping || active.draining {
             return Err(ScreenError::Busy);
         }
         if let Some(host) = self.host.as_mut() {
             host.stop();
         }
-        active.stopping = true;
         active.reason.clear();
-        active.encoder.request_finish();
+        // A full queue can hold the newest picture (or an owed interval) back; sending it before
+        // the file is asked for keeps the take's last frame and its length (see `tick`).
+        if active.pending.is_some() || !active.due {
+            active.draining = true;
+        } else {
+            active.stopping = true;
+            active.encoder.request_finish();
+        }
         Ok(())
     }
 
@@ -613,6 +624,21 @@ impl ScreenState {
     pub fn tick(&mut self, now: f64) -> Option<String> {
         let active = self.active.as_mut()?;
         active.encoder.poll();
+        if active.draining {
+            // Stop was asked for while the queue held work back: send it without capturing
+            // anything (the host is already stopped), then ask for the file.
+            if let Some(e) = drain_retained(active, now) {
+                let reason = format!("the screen recording stopped: {e}");
+                active.reason = reason;
+            }
+            if active.pending.is_some() || owed_pictures(active, now) > 0 {
+                return None;
+            }
+            active.draining = false;
+            active.stopping = true;
+            active.encoder.request_finish();
+            // Fall through: a worker that is already gone reports its failure in this tick.
+        }
         if active.stopping {
             // Stop already asked for the file: take it when the encoder reports it, and never
             // re-enter the capture path.
@@ -678,41 +704,7 @@ impl ScreenState {
                 };
             }
         }
-        let mut why = None;
-        if active.due {
-            // The start waits for the first picture: keeping `due` set means a late first frame
-            // (the capturer may still be building) starts the schedule rather than becoming
-            // hundreds of owed repeats of itself.
-            let scheduled = if active.pending.is_some() || active.frames > 0 {
-                let (n, e) = schedule_pictures(active, 1);
-                why = e;
-                n
-            } else {
-                0
-            };
-            if scheduled > 0 {
-                active.due = false;
-                active.next_at = now + interval;
-            }
-        } else if now + 1.0e-9 >= active.next_at {
-            // Every interval that passed is owed one picture; one job carries them all.
-            let owed = ((now - active.next_at) / interval).floor() as u32 + 1;
-            let pictures = owed.clamp(1, MAX_CATCH_UP);
-            let mut scheduled = 0;
-            if active.pending.is_some() || active.frames > 0 {
-                let (n, e) = schedule_pictures(active, pictures);
-                scheduled = n;
-                why = e;
-            }
-            // Only the pictures the queue took move the schedule: the rest stay owed and are tried
-            // again on the next tick.
-            active.next_at += f64::from(scheduled) * interval;
-            if owed > MAX_CATCH_UP {
-                // The backlog past the cap is dropped, not split into bursts: a one minute stall
-                // must not keep the encoder busy for minutes afterwards.
-                active.next_at = now + interval;
-            }
-        }
+        let mut why = schedule_owed(active, now, interval);
         active.encoder.poll();
         if why.is_none()
             && let Some(e) = active.encoder.failure().map(str::to_string)
@@ -751,16 +743,94 @@ impl ScreenState {
             host.stop();
         }
         // The same non-blocking finish a Stop uses: the tick that follows hands the file over
-        // once the encoder has written it, with this reason attached.
-        active.stopping = true;
+        // once the encoder has written it, with this reason attached. Pictures a full queue held
+        // back go out first, so the take keeps its last frame.
         active.reason = why.to_string();
-        active.encoder.request_finish();
+        if active.pending.is_some() || !active.due {
+            active.draining = true;
+        } else {
+            active.stopping = true;
+            active.encoder.request_finish();
+        }
         why.to_string()
     }
 }
 
 /// Schedule one picture: the newest capture if one is waiting, else a repeat of the last. `Some`
 /// is the encoder error when the picture could not be queued.
+/// Send the pictures the schedule is owed at `now`: the frame waiting for its slot, then one
+/// repeat per interval that passed. Only what the queue took moves the schedule, so a busy
+/// encoder catches up instead of shortening the take. Returns an encoder failure, if any.
+fn schedule_owed(active: &mut Active, now: f64, interval: f64) -> Option<String> {
+    if active.due {
+        // The start waits for the first picture: keeping `due` set means a late first frame
+        // (the capturer may still be building) starts the schedule rather than becoming
+        // hundreds of owed repeats of itself.
+        let mut why = None;
+        let scheduled = if active.pending.is_some() || active.frames > 0 {
+            let (n, e) = schedule_pictures(active, 1);
+            why = e;
+            n
+        } else {
+            0
+        };
+        if scheduled > 0 {
+            active.due = false;
+            active.next_at = now + interval;
+        }
+        return why;
+    }
+    if now + 1.0e-9 < active.next_at {
+        return None;
+    }
+    // Every interval that passed is owed one picture; one job carries them all.
+    let owed = owed_pictures(active, now);
+    let pictures = owed.clamp(1, MAX_CATCH_UP);
+    let mut why = None;
+    let mut scheduled = 0;
+    if active.pending.is_some() || active.frames > 0 {
+        let (n, e) = schedule_pictures(active, pictures);
+        scheduled = n;
+        why = e;
+    }
+    // Only the pictures the queue took move the schedule: the rest stay owed and are tried
+    // again on the next tick.
+    active.next_at += f64::from(scheduled) * interval;
+    if owed > MAX_CATCH_UP {
+        // The backlog past the cap is dropped, not split into bursts: a one minute stall
+        // must not keep the encoder busy for minutes afterwards.
+        active.next_at = now + interval;
+    }
+    why
+}
+
+/// Intervals the schedule owes at `now` (0 when the next picture is not due yet).
+fn owed_pictures(active: &Active, now: f64) -> u32 {
+    if active.due || now + 1.0e-9 < active.next_at {
+        return 0;
+    }
+    let interval = 1.0 / f64::from(active.fps.max(1));
+    (((now - active.next_at) / interval).floor() as u32).saturating_add(1)
+}
+
+/// Send what a stop interrupted. A frame the queue refused goes out now rather than at its
+/// slot: the take is ending, so the newest picture and the owed intervals are what preserve its
+/// content and its length. Returns an encoder failure, if any.
+fn drain_retained(active: &mut Active, now: f64) -> Option<String> {
+    let interval = 1.0 / f64::from(active.fps.max(1));
+    let owed = owed_pictures(active, now);
+    let pictures = if active.pending.is_some() { owed.max(1) } else { owed };
+    if pictures == 0 {
+        return None;
+    }
+    let (n, why) = schedule_pictures(active, pictures.clamp(1, MAX_CATCH_UP));
+    if n > 0 {
+        active.due = false;
+        active.next_at = now + interval;
+    }
+    why
+}
+
 fn schedule_pictures(active: &mut Active, pictures: u32) -> (u32, Option<String>) {
     if pictures == 0 {
         return (0, None);
@@ -877,6 +947,29 @@ mod tests {
         assert_eq!(stopped.frames, 1);
         assert_eq!((stopped.width, stopped.height), (160, 120));
         assert!(stopped.path.is_file());
+        let _ = std::fs::remove_file(&stopped.path);
+    }
+
+    /// A picture captured after its slot passed sits in `pending`; Stop must still write it (and
+    /// the duration it carries) instead of closing the encoder queue on a take that is one frame
+    /// short.
+    #[test]
+    fn a_stop_keeps_the_picture_the_schedule_had_not_sent_yet() {
+        let (host, queue) = FakeScreen::ready((160, 120));
+        let mut s = state_with(host);
+        s.start(CaptureOptions::default(), RecorderConfig::new(30)).expect("start");
+        queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [0, 0, 255, 255]));
+        assert_eq!(s.tick(0.0), None);
+        assert_eq!(s.frames(), 1, "the first picture starts the schedule");
+        // The host already has the next picture, but its slot is 1/30 s away: it waits in
+        // `pending`, exactly what a Stop between slots interrupts.
+        queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [0, 255, 0, 255]));
+        assert_eq!(s.tick(0.0), None);
+        s.stop().expect("stop");
+        assert!(s.is_finishing(), "the retained picture is still on its way");
+        let stopped = pump(&mut s);
+        assert_eq!(stopped.frames, 2, "the picture Stop interrupted is written too");
+        assert!(stopped.duration_ms >= 66, "two 30 fps pictures are at least two intervals: {}", stopped.duration_ms);
         let _ = std::fs::remove_file(&stopped.path);
     }
 

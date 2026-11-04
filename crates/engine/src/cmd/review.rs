@@ -1249,28 +1249,28 @@ fn link_uses_media(link: Option<&deckcraft_model::text::Hyperlink>, id: deckcraf
     link.is_some_and(|l| l.sound == Some(id))
 }
 
+/// Whether a text body's picture bullets or linked runs point at `id`.
+fn text_uses_media(t: Option<&deckcraft_model::text::TextBody>, id: deckcraft_model::MediaId) -> bool {
+    let Some(t) = t else { return false };
+    t.paragraphs.iter().any(|p| {
+        matches!(p.props.bullet, Some(deckcraft_model::text::Bullet::Picture { media }) if media == id)
+            || p.runs.iter().any(|r| link_uses_media(r.props.link.as_ref(), id) || link_uses_media(r.props.hover.as_ref(), id))
+    })
+}
+
 fn shape_uses_media(sh: &Shape, id: deckcraft_model::MediaId) -> bool {
     if matches!(&sh.fill, Some(deckcraft_model::style::Fill::Picture(p)) if p.media == id) {
         return true;
     }
-    // The shape's own action buttons, and every run's link or mouse-over.
-    if link_uses_media(sh.click.as_ref(), id) || link_uses_media(sh.hover.as_ref(), id) {
+    // The shape's own action buttons, its text, and a table's cell text (which a table keeps in
+    // the cells rather than in the shape's own body).
+    if link_uses_media(sh.click.as_ref(), id) || link_uses_media(sh.hover.as_ref(), id) || text_uses_media(sh.text.as_ref(), id) {
         return true;
     }
-    if let Some(t) = &sh.text
-        && t.paragraphs
-            .iter()
-            .flat_map(|p| p.runs.iter())
-            .any(|r| link_uses_media(r.props.link.as_ref(), id) || link_uses_media(r.props.hover.as_ref(), id))
+    if let ShapeKind::Table(t) = &sh.kind
+        && t.rows.iter().flat_map(|r| r.cells.iter()).any(|c| text_uses_media(Some(&c.text), id))
     {
         return true;
-    }
-    if let Some(t) = &sh.text {
-        for p in &t.paragraphs {
-            if matches!(p.props.bullet, Some(deckcraft_model::text::Bullet::Picture { media }) if media == id) {
-                return true;
-            }
-        }
     }
     match &sh.kind {
         ShapeKind::Media(c) => c.media == id || c.poster == Some(id),
@@ -1666,6 +1666,42 @@ mod tests {
         assert!(s.execute("show.clearTiming", &json!({"index": 99})).is_err());
         assert_eq!(s.execute("show.clearTiming", &json!({"index": 1})).unwrap()["cleared"], 1);
         assert_eq!(s.execute("show.clearTiming", &json!({"index": 1})).unwrap()["cleared"], 0);
+    }
+
+    /// A narration clip can share its media with another reference (bytes are deduplicated): a
+    /// table cell's picture bullet or a link's sound must keep it when the narration is cleared.
+    #[test]
+    fn clear_narration_keeps_media_a_table_cell_or_a_link_still_points_to() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let wav = tone(4000);
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        let media = narrations(&s, 0)[0].media;
+        {
+            let state = s.doc_mut().unwrap();
+            let doc = std::sync::Arc::make_mut(&mut state.doc);
+            let mut cell_text = deckcraft_model::text::TextBody::default();
+            let mut para = deckcraft_model::text::Paragraph::default();
+            para.props.bullet = Some(deckcraft_model::text::Bullet::Picture { media });
+            cell_text.paragraphs.push(para);
+            let cell = deckcraft_model::table::Cell { text: cell_text, ..Default::default() };
+            let table =
+                deckcraft_model::table::Table { rows: vec![deckcraft_model::table::Row { height: 20.0, cells: vec![cell] }], ..Default::default() };
+            let linked = deckcraft_model::text::Hyperlink {
+                action: deckcraft_model::text::Action::NextSlide,
+                tooltip: String::new(),
+                highlight_click: false,
+                sound: Some(media),
+                stop_sound: false,
+                zoom_return: None,
+            };
+            let mut deck_shape = Shape { kind: ShapeKind::Table(table), ..Default::default() };
+            deck_shape.text = Some(deckcraft_model::text::TextBody::default());
+            deck_shape.hover = Some(linked);
+            std::sync::Arc::make_mut(&mut doc.slides[1]).shapes.push(deck_shape);
+        }
+        assert_eq!(s.execute("show.clearNarrationAll", &json!({})).unwrap()["cleared"], 1);
+        assert!(s.doc().unwrap().doc.media(media).is_some(), "the table cell and the link still use this media");
     }
 
     #[test]
