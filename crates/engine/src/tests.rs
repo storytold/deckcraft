@@ -2410,6 +2410,23 @@ fn pdf_options_take_paper_and_orientation() {
     assert!(cmd::file::pdf_options(&json!({"orientation": "sideways"}), 1).is_err());
 }
 
+/// Handout `perPage` accepts only 1, 2, 3, 4, 6 and 9; anything else is an error, not a 9-up page.
+#[test]
+fn pdf_options_reject_unsupported_per_page() {
+    for n in [1, 2, 3, 4, 6, 9] {
+        let o = cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": n}), 1).unwrap();
+        assert!(matches!(o.layout, deckcraft_pdf::PageLayout::Handouts { per_page } if per_page as usize == n));
+    }
+    for n in [0, 5, 7, 8, 10] {
+        let e = cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": n}), 1).unwrap_err();
+        assert!(e.to_string().contains("1, 2, 3, 4, 6, 9"), "perPage {n}: {e}");
+    }
+    // Not a count at all: refused too, instead of falling back to 6.
+    for v in [json!(-1), json!(5.5), json!("6")] {
+        assert!(cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": v}), 1).is_err(), "perPage {v}");
+    }
+}
+
 #[test]
 fn shape_line_sets_compound_and_arrow_sizes() {
     // The Format Shape pane's Line page: compound type, arrowheads and their sizes.
@@ -3198,6 +3215,16 @@ fn motion_path_presets_have_paths_ids_and_round_trip() {
 fn numbering_takes_color_and_size() {
     let mut s = Session::with_new();
     s.execute("insert.textBox", &json!({"rect": [10, 10, 300, 100], "text": "One\nTwo"})).unwrap();
+    {
+        let id = s.doc().unwrap().selection.shapes[0];
+        let d = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+        let shape = deckcraft_model::find_shape_mut(&mut std::sync::Arc::make_mut(&mut d.slides[0]).shapes, id).unwrap();
+        let props = &mut shape.text.as_mut().unwrap().paragraphs[0].props;
+        props.bullet_font_follow_text = Some(true);
+        props.bullet_color_follow_text = Some(true);
+        props.bullet_size_follow_text = Some(true);
+        props.bullet_size_points = Some(12.0);
+    }
     s.execute("format.numbering", &json!({"on": true, "scheme": "romanUcPeriod", "start": 3, "color": "accent2", "size": 150})).unwrap();
     let para = |s: &Session| {
         let st = s.doc().unwrap();
@@ -3207,9 +3234,15 @@ fn numbering_takes_color_and_size() {
     let pp = para(&s);
     assert!(matches!(&pp.bullet, Some(deckcraft_model::text::Bullet::AutoNum { scheme, start_at: 3 }) if scheme == "romanUcPeriod"));
     assert_eq!(pp.bullet_size, Some(1.5));
+    assert_eq!(pp.bullet_font_follow_text, Some(true));
+    assert_eq!(pp.bullet_color_follow_text, None);
+    assert_eq!(pp.bullet_size_follow_text, None);
+    assert_eq!(pp.bullet_size_points, None);
     assert_eq!(pp.bullet_color, Some(deckcraft_model::ColorRef::scheme(deckcraft_color::SchemeSlot::Accent2)));
     s.execute("format.bullets", &json!({"on": true, "char": "★", "size": 9000})).unwrap();
     assert_eq!(para(&s).bullet_size, Some(4.0));
+    assert_eq!(para(&s).bullet_size_points, None);
+    assert_eq!(para(&s).bullet_font_follow_text, None);
 }
 
 #[test]
@@ -4281,6 +4314,41 @@ fn a_params_doc_spells_out_each_parameter() {
     );
 }
 
+/// `shape.fill`'s params doc names each key and kind its `gradient` takes.
+#[test]
+fn shape_fill_documents_each_gradient_key_and_kind() {
+    use deckcraft_model::style::GradientShape;
+    let params = cmd::parse_params(find_command("shape.fill").unwrap().params).unwrap();
+    let about = params.iter().find(|p| p.name == "gradient").unwrap().about;
+    assert_eq!(cmd::param_keys(about).unwrap(), ["stops", "kind", "angle", "focus", "rotateWithShape"]);
+    // The renderer keeps only linear and radial gradients upright (`paint::fill_path`).
+    let rotate = cmd::parse_params(about).unwrap().into_iter().find(|p| p.name == "rotateWithShape").unwrap().about;
+    assert!(rotate.contains("rectangular and path gradients turn with the shape"), "{rotate}");
+    for kind in ["linear", "radial", "rectangular", "path"] {
+        assert!(about.contains(kind), "{kind}: {about}");
+        let g = cmd::shape::gradient_param(&json!({
+            "stops": [[0, "#ffffff"], [1, "#000000"]],
+            "kind": kind,
+            "angle": 30,
+            "focus": [0, 0, 1, 1],
+            "rotateWithShape": false
+        }))
+        .unwrap();
+        assert!(!g.rotate_with_shape, "{kind}");
+        match g.shape {
+            GradientShape::Linear { angle, .. } => assert_eq!((kind, angle), ("linear", 30.0)),
+            GradientShape::Path { path, focus } => {
+                let expected = match kind {
+                    "radial" => "circle",
+                    "rectangular" => "rect",
+                    _ => "shape",
+                };
+                assert_eq!((path.as_str(), focus), (expected, [0.0, 0.0, 1.0, 1.0]), "{kind}");
+            }
+        }
+    }
+}
+
 #[test]
 fn what_a_command_acts_on_names_only_keys_it_takes() {
     for c in command_specs() {
@@ -5297,7 +5365,8 @@ fn opening_a_file_caps_absurd_effect_sizes() {
                 e.soft_edge = Some(f64::NAN);
                 let sw = e.outer_shadow.as_mut().unwrap();
                 (sw.blur, sw.dist, sw.sx) = (huge, huge, huge);
-                *e.reflection.as_mut().unwrap() = Reflection { blur: huge, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.5, dist: huge };
+                *e.reflection.as_mut().unwrap() =
+                    Reflection { blur: huge, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.5, dist: huge, ..Default::default() };
             }
             let glow = Some(Glow { color: deckcraft_model::style::ColorRef::rgb(deckcraft_color::Rgba::BLACK), radius: huge });
             let runs: Vec<&mut deckcraft_model::text::Run> = match &mut sh.kind {
@@ -5559,6 +5628,170 @@ fn edit_points_conversion_is_one_undo_step() {
     assert!(preset(&s), "the only step was the conversion");
 }
 
+/// #1621: build overlapping objects with an ordinary quick style on the foreground shape.
+fn no_fill_overlap(s: &mut Session, text: bool) -> (ShapeId, ShapeId) {
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let under = s
+        .execute(
+            if text { "insert.textBox" } else { "shape.insert" },
+            &json!({"preset": "rect", "rect": [100, 300, 300, 60], "text": if text { "UNDERLYING TEXT" } else { "" }}),
+        )
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let over = s.execute("shape.insert", &json!({"preset": "rect", "rect": [80, 270, 350, 140]})).unwrap()["id"].as_u64().unwrap();
+    (ShapeId(under as u32), ShapeId(over as u32))
+}
+
+/// No Fill passes interior clicks through while preserving outline and actual-fill targets.
+#[test]
+fn no_fill_shape_allows_selecting_and_editing_underlying_text() {
+    let mut s = session();
+    let (under, over) = no_fill_overlap(&mut s, true);
+    s.execute("shape.fill", &json!({"none": true})).unwrap();
+    assert!(s.doc().unwrap().shape(over).unwrap().style.is_some(), "the ordinary quick style remains");
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let p = deckcraft_geom::Point::new(200.0, 310.0);
+    assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == under));
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        s.pointer(tev(kind, p.x, p.y)).unwrap();
+    }
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![under]);
+    assert_eq!(text_sel(&s).unwrap().shape, under);
+    // The transparent foreground also leaves an already-active text editor's caret alone.
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        s.pointer(tev(kind, p.x + 20.0, p.y)).unwrap();
+    }
+    assert_eq!(text_sel(&s).unwrap().shape, under);
+    s.execute("edit.deselect", &json!({})).unwrap();
+    // The rectangle's outline is still a target, and selecting it does not remove its style.
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        s.pointer(tev(kind, 80.0, 330.0)).unwrap();
+    }
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![over]);
+    assert!(s.doc().unwrap().shape(over).unwrap().style.is_some());
+    // A real fill still catches clicks, even with 100% transparency (distinct from No Fill).
+    for transparency in [0.0, 1.0] {
+        s.execute("edit.select", &json!({"ids": [over.0]})).unwrap();
+        s.execute("shape.fill", &json!({"color": "#336699", "transparency": transparency})).unwrap();
+        s.execute("edit.deselect", &json!({})).unwrap();
+        assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == over));
+    }
+}
+
+/// Rotation and pointer tolerance must preserve both pass-through interiors and outline hits.
+#[test]
+fn no_fill_shape_hit_testing_respects_rotation_and_pointer_tolerance() {
+    let mut s = session();
+    let (under, over) = no_fill_overlap(&mut s, false);
+    s.execute("shape.fill", &json!({"none": true})).unwrap();
+    s.execute("shape.rotate", &json!({"deg": 30})).unwrap();
+    let x = s.doc().unwrap().shape(over).unwrap().xfrm.unwrap();
+    let p = x.affine() * deckcraft_geom::Point::new(x.w / 2.0, x.h / 2.0);
+    let edge = x.affine() * deckcraft_geom::Point::new(0.0, x.h / 4.0);
+    for tol in [0.5, 3.0, 8.0] {
+        s.execute("edit.deselect", &json!({})).unwrap();
+        assert!(matches!(s.hit_test(p, tol), Some(tools::Hit::Shape { id, .. }) if id == under));
+        assert!(matches!(s.hit_test(edge, tol), Some(tools::Hit::Shape { id, .. }) if id == over));
+        for kind in [PointerKind::Down, PointerKind::Up] {
+            s.pointer(PointerEvent { tol, ..tev(kind, p.x, p.y) }).unwrap();
+        }
+        assert_eq!(s.doc().unwrap().selection.shapes, vec![under]);
+    }
+}
+
+/// Style, theme and absent fills follow rendering, with explicit fill taking precedence.
+#[test]
+fn no_fill_hit_testing_resolves_style_and_theme_fills() {
+    use std::sync::Arc;
+    for source in ["style", "theme", "absent"] {
+        let mut s = session();
+        let (under, over) = no_fill_overlap(&mut s, true);
+        {
+            let st = s.doc_mut().unwrap();
+            let doc = Arc::make_mut(&mut st.doc);
+            if source == "theme" {
+                Arc::make_mut(&mut doc.masters[0]).theme.format.fills[0] = model::Fill::None;
+            }
+            let sh = Arc::make_mut(&mut doc.slides[st.selection.slide]).shapes.iter_mut().find(|sh| sh.id == over).unwrap();
+            assert!(sh.fill.is_none(), "the shape has no explicit fill override");
+            if source == "absent" {
+                sh.style = None;
+            } else {
+                sh.style.as_mut().unwrap().fill_ref.0 = if source == "style" { 0 } else { 1 };
+            }
+        }
+        s.execute("edit.deselect", &json!({})).unwrap();
+        let p = deckcraft_geom::Point::new(200.0, 310.0);
+        assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == under), "{source}");
+        // An explicit fill takes precedence over the no-fill style/theme.
+        s.execute("edit.select", &json!({"ids": [over.0]})).unwrap();
+        s.execute("shape.fill", &json!({"color": "#336699"})).unwrap();
+        s.execute("edit.deselect", &json!({})).unwrap();
+        assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == over), "{source}");
+    }
+}
+
+/// Text on a foreground No Fill shape retains its selection and editing target.
+#[test]
+fn no_fill_text_shapes_keep_their_interior_text_target() {
+    let mut s = session();
+    let (_, over) = no_fill_overlap(&mut s, true);
+    s.execute("text.set", &json!({"id": over.0, "text": "FOREGROUND TEXT"})).unwrap();
+    s.execute("shape.fill", &json!({"none": true})).unwrap();
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let p = deckcraft_geom::Point::new(200.0, 310.0);
+    assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, text: true }) if id == over));
+    s.pointer(tev(PointerKind::DoubleClick, p.x, p.y)).unwrap();
+    assert_eq!(text_sel(&s).unwrap().shape, over);
+}
+
+/// A locked No Fill shape remains selectable on its outline, but dragging cannot move it.
+#[test]
+fn no_fill_locked_shape_keeps_outline_selection_without_moving() {
+    let mut s = session();
+    let (under, over) = no_fill_overlap(&mut s, true);
+    s.execute("shape.fill", &json!({"none": true})).unwrap();
+    s.execute("shape.lock", &json!({"locked": true})).unwrap();
+    let before = s.doc().unwrap().shape(over).unwrap().xfrm;
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let inside = deckcraft_geom::Point::new(200.0, 310.0);
+    assert!(matches!(s.hit_test(inside, 3.0), Some(tools::Hit::Shape { id, .. }) if id == under));
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        s.pointer(tev(kind, inside.x, inside.y)).unwrap();
+    }
+    assert_eq!(text_sel(&s).unwrap().shape, under);
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let edge = deckcraft_geom::Point::new(80.0, 330.0);
+    assert!(matches!(s.hit_test(edge, 3.0), Some(tools::Hit::Shape { id, .. }) if id == over));
+    s.pointer(tev(PointerKind::Down, edge.x, edge.y)).unwrap();
+    s.pointer(tev(PointerKind::Drag, edge.x + 40.0, edge.y + 20.0)).unwrap();
+    s.pointer(tev(PointerKind::Up, edge.x + 40.0, edge.y + 20.0)).unwrap();
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection.shapes, vec![over]);
+    assert_eq!(st.shape(over).unwrap().xfrm, before);
+    assert!(st.shape(over).unwrap().locked);
+}
+
+/// Removing both fill and outline leaves the empty interior transparent to clicks, locked or not.
+#[test]
+fn no_fill_shape_without_text_or_outline_passes_interior_clicks() {
+    for locked in [false, true] {
+        let mut s = session();
+        let (under, _) = no_fill_overlap(&mut s, false);
+        s.execute("shape.fill", &json!({"none": true})).unwrap();
+        s.execute("shape.line", &json!({"none": true})).unwrap();
+        s.execute("shape.lock", &json!({"locked": locked})).unwrap();
+        s.execute("edit.deselect", &json!({})).unwrap();
+        let p = deckcraft_geom::Point::new(200.0, 310.0);
+        assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == under));
+        for kind in [PointerKind::Down, PointerKind::Up] {
+            s.pointer(tev(kind, p.x, p.y)).unwrap();
+        }
+        assert_eq!(s.doc().unwrap().selection.shapes, vec![under]);
+    }
+}
+
 /// #931: while the text of a placeholder is being edited, a shape in front of it still takes a
 /// click (as in PowerPoint); a click on the text where nothing is in front still moves the caret.
 #[test]
@@ -5630,6 +5863,204 @@ fn snap_scene(rect: [f64; 4], other: [f64; 4]) -> (Session, u64) {
 /// The slide box (`x`, `y`, `w`, `h`) of shape `id`, as `shape.inspect` reports it.
 fn box_of(s: &mut Session, id: u64) -> serde_json::Value {
     s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"].clone()
+}
+
+/// Two selected boxes with different sizes and aligned right edges, on a blank slide.
+fn resize_selection_scene() -> (Session, [u64; 2]) {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.prefs.smart_guides = false;
+    s.prefs.snap_to_grid = false;
+    let ids = [[100, 100, 100, 80], [120, 300, 80, 100]]
+        .map(|rect| s.execute("shape.insert", &json!({"preset": "rect", "rect": rect, "text": "Resize test"})).unwrap()["id"].as_u64().unwrap());
+    s.execute("edit.select", &json!({"ids": ids})).unwrap();
+    (s, ids)
+}
+
+/// Simulate file-loaded shapes whose stored boxes have not yet been fitted to their text.
+fn pending_resize_autofit(s: &mut Session, ids: &[u64]) {
+    s.edit(|doc, sel| {
+        let shapes = crate::shapes_mut(doc, sel).unwrap();
+        for id in ids {
+            let sh = deckcraft_model::find_shape_mut(shapes, ShapeId(*id as u32)).unwrap();
+            sh.text.as_mut().unwrap().body.autofit = Some(deckcraft_model::text::AutoFit::Shape);
+        }
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// Resizing multiple selected shapes scales them proportionally around their anchors in one undo step.
+#[test]
+fn resizing_selected_shapes_is_one_undo_step() {
+    let (mut s, [a, b]) = resize_selection_scene();
+    let before = s.doc().unwrap().doc.clone();
+    let steps = s.doc().unwrap().history.undo.len();
+    let down = drag_gesture(&mut s, (200.0, 180.0), (250.0, 210.0));
+    assert_eq!(down["hit"]["kind"], "resize");
+    assert_eq!(down["hit"]["id"], a);
+    for (id, expected) in [(a, [100.0, 100.0, 150.0, 110.0]), (b, [120.0, 300.0, 120.0, 137.5])] {
+        let actual = box_of(&mut s, id);
+        for (key, value) in ["x", "y", "w", "h"].into_iter().zip(expected) {
+            assert_eq!(actual[key], value, "{id}: {key}");
+        }
+    }
+    assert_eq!(s.doc().unwrap().history.undo.len(), steps + 1);
+    let after = s.doc().unwrap().doc.clone();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, before, "one undo restores both shapes");
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, after, "one redo resizes both shapes again");
+}
+
+/// Resizing selected shapes refits their text boxes inside the same undo transaction.
+#[test]
+fn resizing_selected_shapes_refits_text_in_the_same_undo_step() {
+    let (mut s, ids) = resize_selection_scene();
+    pending_resize_autofit(&mut s, &ids);
+    let before = s.doc().unwrap().doc.clone();
+    let steps = s.doc().unwrap().history.undo.len();
+    // An east-handle drag changes width only; a height change must come from text fitting.
+    drag_gesture(&mut s, (200.0, 140.0), (250.0, 140.0));
+    for (id, old_height) in ids.into_iter().zip([80.0, 100.0]) {
+        assert_ne!(box_of(&mut s, id)["h"], old_height, "both shapes' text is refitted");
+    }
+    assert_eq!(s.doc().unwrap().history.undo.len(), steps + 1);
+    let after = s.doc().unwrap().doc.clone();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, before);
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, after, "redo includes the final text fit");
+}
+
+/// Clicking a resize handle without dragging neither modifies shapes nor triggers text autofit.
+#[test]
+fn clicking_a_resize_handle_does_not_change_or_refit_selected_shapes() {
+    let (mut s, ids) = resize_selection_scene();
+    pending_resize_autofit(&mut s, &ids);
+    let before = s.doc().unwrap().doc.clone();
+    let steps = s.doc().unwrap().history.undo.len();
+    let revision = s.doc().unwrap().revision;
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        s.pointer(PointerEvent { kind, x: 200.0, y: 180.0, tol: 3.0, ..Default::default() }).unwrap();
+    }
+    assert_eq!(s.doc().unwrap().doc, before);
+    assert_eq!(s.doc().unwrap().history.undo.len(), steps, "a click creates no undo entry");
+    assert_eq!(s.doc().unwrap().revision, revision);
+    assert!(std::sync::Arc::ptr_eq(&s.doc().unwrap().doc, &before), "a click does not dirty the document");
+    // Ensure this fixture would catch an accidental refit on release.
+    for id in ids {
+        cmd::text::fit_text_box(&mut s, ShapeId(id as u32)).unwrap();
+    }
+    assert_ne!(s.doc().unwrap().doc, before);
+}
+
+/// Locked shapes in a multi-selection are excluded from both resizing and post-resize text fitting.
+#[test]
+fn resizing_selected_shapes_skips_locked_shapes_and_their_text_fit() {
+    let (mut s, [a, b]) = resize_selection_scene();
+    pending_resize_autofit(&mut s, &[b]);
+    s.execute("shape.lock", &json!({"ids": [b], "locked": true})).unwrap();
+    s.execute("edit.select", &json!({"ids": [a, b]})).unwrap();
+    let locked = s.doc().unwrap().shape(ShapeId(b as u32)).unwrap().clone();
+    let before = s.doc().unwrap().doc.clone();
+    let steps = s.doc().unwrap().history.undo.len();
+    drag_gesture(&mut s, (200.0, 180.0), (250.0, 210.0));
+    assert_eq!(box_of(&mut s, a)["w"], 150.0);
+    assert_eq!(box_of(&mut s, a)["h"], 110.0);
+    assert_eq!(s.doc().unwrap().shape(ShapeId(b as u32)).unwrap(), &locked, "the locked shape is neither resized nor refitted");
+    assert_eq!(s.doc().unwrap().history.undo.len(), steps + 1);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, before);
+}
+
+/// Resizing selected shapes excludes other selected resize targets from smart-guide snapping.
+#[test]
+fn resizing_selected_shapes_does_not_snap_to_other_resize_targets() {
+    for reverse in [false, true] {
+        let (mut s, [a, b]) = resize_selection_scene();
+        s.prefs.smart_guides = true;
+        let ids = if reverse { [b, a] } else { [a, b] };
+        s.execute("edit.select", &json!({"ids": ids})).unwrap();
+        // Within snap tolerance of the other selected shape's original right edge.
+        drag_gesture(&mut s, (200.0, 140.0), (203.0, 140.0));
+        assert_eq!(box_of(&mut s, a)["w"], 103.0, "first shape must not snap back");
+        assert_eq!(box_of(&mut s, b)["w"], 82.4, "selection order must not affect snapping");
+    }
+}
+
+/// Resizing selected shapes snaps the active shape against unselected stationary shapes and scales others proportionally.
+#[test]
+fn resizing_selected_shapes_still_snaps_to_stationary_shapes() {
+    let (mut s, [a, b]) = resize_selection_scene();
+    let fixed = s.execute("shape.insert", &json!({"preset": "rect", "rect": [207, 430, 100, 80]})).unwrap()["id"].as_u64().unwrap();
+    let fixed_before = box_of(&mut s, fixed);
+    s.execute("edit.select", &json!({"ids": [a, b]})).unwrap();
+    s.prefs.smart_guides = true;
+    drag_gesture(&mut s, (200.0, 140.0), (203.0, 140.0));
+    assert_eq!(box_of(&mut s, a)["w"], 107.0);
+    assert!((box_of(&mut s, b)["w"].as_f64().unwrap() - 85.6).abs() < 1e-9);
+    assert_eq!(box_of(&mut s, fixed), fixed_before);
+}
+
+/// Secondary pictures resize uniformly around their anchor, preserving independent flips
+/// and keeping the complete multi-selection resize in one undo step.
+#[test]
+fn resizing_selected_shapes_resizes_secondary_pictures() {
+    // Pointer destination, Alt, expected rectangle, expected picture, expected flips.
+    let cases = [
+        ((180.0, 200.0), false, [100.0, 100.0, 80.0, 100.0], [300.0, 300.0, 80.0, 80.0], [false, false]),
+        ((200.0, 180.0), false, [100.0, 100.0, 100.0, 80.0], [300.0, 300.0, 80.0, 80.0], [false, false]),
+        ((220.0, 200.0), false, [100.0, 100.0, 120.0, 100.0], [300.0, 300.0, 120.0, 120.0], [false, false]),
+        ((200.0, 220.0), false, [100.0, 100.0, 100.0, 120.0], [300.0, 300.0, 120.0, 120.0], [false, false]),
+        ((180.0, 200.0), true, [120.0, 100.0, 60.0, 100.0], [320.0, 320.0, 60.0, 60.0], [false, false]),
+        ((200.0, 180.0), true, [100.0, 120.0, 100.0, 60.0], [320.0, 320.0, 60.0, 60.0], [false, false]),
+        ((80.0, 200.0), false, [80.0, 100.0, 20.0, 100.0], [280.0, 300.0, 20.0, 20.0], [true, false]),
+        ((200.0, 80.0), false, [100.0, 80.0, 100.0, 20.0], [300.0, 280.0, 20.0, 20.0], [false, true]),
+    ];
+
+    for (to, alt, expected_rect, expected_picture, flips) in cases {
+        let mut s = session();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        s.prefs.smart_guides = false;
+        s.prefs.snap_to_grid = false;
+
+        let rect = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 100, 100]})).unwrap()["id"].as_u64().unwrap();
+        let picture = ramp_picture(&mut s, 1, [300, 300, 100, 100]).as_u64().unwrap();
+        s.execute("edit.select", &json!({"ids": [rect, picture]})).unwrap();
+
+        let before = s.doc().unwrap().doc.clone();
+        let steps = s.doc().unwrap().history.undo.len();
+        let mods = Mods { alt, ..Default::default() };
+        let ev = |kind, (x, y): (f64, f64)| PointerEvent { kind, x, y, mods, tol: 3.0, pressure: None };
+
+        let down = s.pointer(ev(PointerKind::Down, (200.0, 200.0))).unwrap();
+        assert_eq!(down["hit"]["kind"], "resize");
+        assert_eq!(down["hit"]["id"], rect);
+        assert_eq!(down["hit"]["handle"], 4);
+
+        s.pointer(ev(PointerKind::Drag, ((200.0 + to.0) / 2.0, (200.0 + to.1) / 2.0))).unwrap();
+        s.pointer(ev(PointerKind::Drag, to)).unwrap();
+        s.pointer(ev(PointerKind::Up, to)).unwrap();
+
+        for (id, expected) in [(rect, expected_rect), (picture, expected_picture)] {
+            let actual = box_of(&mut s, id);
+            for (key, value) in ["x", "y", "w", "h"].into_iter().zip(expected) {
+                let got = actual[key].as_f64().unwrap();
+                assert!((got - value).abs() < 1e-9, "{to:?}, alt={alt}, shape={id}, {key}: expected {value}, got {got}");
+            }
+
+            let xfrm = s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().xfrm.unwrap();
+            assert_eq!([xfrm.flip_h, xfrm.flip_v], flips, "{to:?}, alt={alt}, shape={id}");
+        }
+
+        assert_eq!(s.doc().unwrap().history.undo.len(), steps + 1);
+        let after = s.doc().unwrap().doc.clone();
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc, before);
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc, after);
+    }
 }
 
 /// #961: dragging the east handle snaps the dragged (right) edge, even when the fixed left edge
@@ -5953,6 +6384,128 @@ fn invalid_slide_index_never_falls_back_to_the_selection_in_export_commands() {
         assert!(matches!(r, Err(crate::EngineError::BadParams { .. })), "render slide {slide} gave {r:?}");
         let r = s.execute("slide.colorAt", &json!({"slide": slide, "x": 1, "y": 1, "scale": 0.1}));
         assert!(matches!(r, Err(crate::EngineError::BadParams { .. })), "colorAt slide {slide} gave {r:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("text.insert", &json!({"text": "ARCH"})).unwrap();
+    s.execute("text.selectAll", &json!({})).unwrap();
+    s.execute("format.highlight", &json!({"color": "yellow"})).unwrap();
+    let has_highlight = |s: &mut Session| {
+        let t = s.doc().unwrap().shape(ShapeId(title)).unwrap().text.clone().unwrap();
+        t.paragraphs.iter().flat_map(|p| p.runs.iter()).any(|r| r.props.highlight.is_some())
+    };
+    assert!(has_highlight(&mut s));
+    let r = s.execute("format.highlight", &json!({"color": "notacolour"}));
+    assert!(matches!(r, Err(crate::EngineError::BadParams { .. })), "{r:?}");
+    assert!(has_highlight(&mut s), "an invalid colour must not clear the highlight");
+    s.execute("format.highlight", &json!({})).unwrap();
+    assert!(!has_highlight(&mut s), "an absent colour clears the highlight");
+}
+
+#[test]
+fn master_layout_placeholder_format_inherits() {
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let title_of = |shapes: &[model::Shape]| shapes.iter().find(|sh| sh.ph.as_ref().is_some_and(|p| p.kind.is_title())).map(|sh| sh.id.0).unwrap();
+    let existing = title_of(&s.doc().unwrap().doc.slides[0].shapes);
+    s.execute("view.slideMaster", &json!({"master": 0, "layout": 0})).unwrap();
+    let layout_title = title_of(&s.doc().unwrap().doc.masters[0].layouts[0].shapes);
+    s.execute("edit.select", &json!({"ids": [layout_title]})).unwrap();
+    s.execute("format.font", &json!({"family": "Montserrat"})).unwrap();
+    s.execute("format.align", &json!({"align": "right"})).unwrap();
+    let st = s.execute("format.state", &json!({})).unwrap();
+    assert_eq!(st["fontRef"], "Montserrat", "layout placeholder: {st}");
+    s.execute("view.closeMaster", &json!({})).unwrap();
+    s.execute("slide.new", &json!({"layout": "title"})).unwrap();
+    let slide = s.doc().unwrap().selection.slide;
+    let fresh = title_of(&s.doc().unwrap().doc.slides[slide].shapes);
+    for (index, id) in [(slide, fresh), (0, existing)] {
+        s.execute("slide.go", &json!({"index": index})).unwrap();
+        s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+        let st = s.execute("format.state", &json!({})).unwrap();
+        assert_eq!(st["fontRef"], "Montserrat", "slide placeholder {id}: {st}");
+        assert_eq!(st["align"], "r", "slide placeholder {id}: {st}");
+    }
+}
+
+#[test]
+fn master_body_placeholder_format_keeps_per_level_formatting() {
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    s.execute("view.slideMaster", &json!({"master": 0})).unwrap();
+    let body_idx =
+        s.doc().unwrap().doc.masters[0].shapes.iter().position(|sh| sh.ph.as_ref().is_some_and(|p| p.kind == model::PhType::Body)).unwrap();
+    let id = {
+        let st = s.doc_mut().unwrap();
+        let sh = &mut std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut st.doc).masters[0]).shapes[body_idx];
+        let mut body = model::TextBody::from_text("Alpha\nBeta");
+        body.paragraphs[1].level = 1;
+        for (l, size) in [(0u8, 32.0), (1, 28.0)] {
+            let mut lvl = model::text::LevelStyle::default();
+            lvl.run.size = Some(size);
+            body.list_style.set(l, lvl);
+        }
+        sh.text = Some(body);
+        sh.id
+    };
+    let level =
+        |s: &Session, l: u8| s.doc().unwrap().doc.masters[0].shapes[body_idx].text.as_ref().unwrap().list_style.level(l).cloned().unwrap_or_default();
+    // Bolding the level-2 paragraph reaches level 2 only.
+    s.doc_mut().unwrap().selection.shapes = vec![id];
+    s.doc_mut().unwrap().selection.text = Some(TextSel { shape: id, anchor: (1, 0), caret: (1, 4), cell: None, notes: false, line_end: None });
+    s.execute("format.bold", &json!({"on": true})).unwrap();
+    assert_eq!(level(&s, 1).run.bold, Some(true));
+    for l in [0, 2, 3, 8] {
+        assert_eq!(level(&s, l).run.bold, None, "level {}", l + 1);
+    }
+    // Grow and shrink step each level from its own size.
+    s.doc_mut().unwrap().selection.text = None;
+    // The text itself: a run's explicit size, else its level's effective size.
+    let shown = |s: &Session| -> Vec<Option<f64>> {
+        let st = s.doc().unwrap();
+        let ctx = crate::cmd::text::ctx_for(&st.doc, &st.selection).unwrap();
+        let sh = &st.doc.masters[0].shapes[body_idx];
+        let body = sh.text.as_ref().unwrap();
+        body.paragraphs.iter().map(|p| p.runs[0].props.size.or(deckcraft_model::resolve::level_style(&ctx, sh, p.level).run.size)).collect()
+    };
+    s.execute("format.grow", &json!({})).unwrap();
+    assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(36.0), Some(32.0)));
+    assert_eq!(shown(&s), vec![Some(36.0), Some(32.0)]);
+    s.execute("format.shrink", &json!({})).unwrap();
+    s.execute("format.shrink", &json!({})).unwrap();
+    assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
+    assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
+}
+
+#[test]
+fn slide_master_view_rejects_invalid_indices() {
+    let mut s = Session::with_new();
+    for p in [json!({"master": -1}), json!({"master": 0.5}), json!({"master": 0, "layout": -1}), json!({"master": 0, "layout": 1.5})] {
+        let r = s.execute("view.slideMaster", &p);
+        assert!(r.is_err(), "invalid index accepted for {p}: {r:?}");
+    }
+    assert!(s.execute("view.slideMaster", &json!({})).is_ok());
+    assert!(s.execute("view.slideMaster", &json!({"master": 0})).is_ok());
+}
+
+#[test]
+fn save_to_image_path_is_an_error_not_zip_bytes() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-img-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (cmd, name) in [("file.save", "a.png"), ("file.saveAs", "a.jpg"), ("file.save", "a.jpeg")] {
+        let mut s = Session::new();
+        sample::open_sample(&mut s).unwrap();
+        let path = dir.join(name).to_string_lossy().to_string();
+        let before = s.doc().unwrap().path.clone();
+        assert!(s.execute(cmd, &json!({"path": path})).is_err(), "{cmd} {name} should fail");
+        assert!(!std::path::Path::new(&path).exists(), "{name} must not be written");
+        assert_eq!(s.doc().unwrap().path, before);
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

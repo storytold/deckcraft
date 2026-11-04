@@ -234,9 +234,9 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "insert_chart",
             "Insert chart",
-            "Insert a chart (column, bar, line, pie, doughnut, area, scatter, stackedColumn…) with categories and series.",
+            "Insert a chart (column, bar, line, pie, doughnut, area, scatter, stackedColumn…) with categories and series, optionally at a box.",
             obj(
-                json!({"type": string("Chart type"), "title": string("Chart title"), "categories": {"type": "array", "items": {"type": "string"}}, "series": {"type": "array", "items": obj(json!({"name": string("Series name"), "values": {"type": "array", "items": {"type": "number"}}}), &["values"])}}),
+                json!({"type": string("Chart type"), "title": string("Chart title"), "categories": {"type": "array", "items": {"type": "string"}}, "series": {"type": "array", "items": obj(json!({"name": string("Series name"), "values": {"type": "array", "items": {"type": "number"}}}), &["values"])}, "x": num("Left"), "y": num("Top"), "w": num("Width"), "h": num("Height")}),
                 &[],
             ),
             false,
@@ -444,7 +444,13 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
             }
             wrap(exec(b, "insert.table", p))
         }
-        "insert_chart" => wrap(exec(b, "insert.chart", a)),
+        "insert_chart" => {
+            let mut p = a.clone();
+            if let (Some(x), Some(y), Some(w), Some(h)) = (f(&a, "x"), f(&a, "y"), f(&a, "w"), f(&a, "h")) {
+                p["rect"] = json!([x, y, w, h]);
+            }
+            wrap(exec(b, "insert.chart", p))
+        }
         "select" => wrap(exec(b, "edit.select", a)),
         "pointer" => wrap(b.call("ui.pointer", a)),
         "select_tool" => wrap(b.call("ui.tool.select", a)),
