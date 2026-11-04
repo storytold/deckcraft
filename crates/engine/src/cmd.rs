@@ -34,7 +34,7 @@ pub mod transition;
 pub mod zoom;
 
 use deckcraft_geom::Xfrm;
-use deckcraft_model::ShapeId;
+use deckcraft_model::{Shape, ShapeId};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -138,6 +138,31 @@ pub fn has_text(s: &Session) -> std::result::Result<(), String> {
 pub fn has_text_or_shapes(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
     if s.active().is_some_and(|d| d.selection.text.is_some() || !d.selection.shapes.is_empty()) { Ok(()) } else { Err(SELECT_TEXT_OR_SHAPE.into()) }
+}
+
+/// Shape tag marking material Record Slide Show added, so Clear Recording can tell it from the
+/// user's own content. Stored as an ordinary add-in tag (`p:custDataLst`) and round-trips.
+pub const RECORDING_TAG: &str = "deckcraft.recording";
+/// The tag's value for the show's pen layer.
+pub const RECORDED_INK: &str = "ink";
+/// The tag's value for a camera or screen recording shape.
+pub const RECORDED_MEDIA: &str = "media";
+
+/// The recording tag's value on `sh`, when it has one.
+pub fn recording_tag(sh: &Shape) -> Option<&str> {
+    sh.tags.iter().find(|(k, _)| k == RECORDING_TAG).map(|(_, v)| v.as_str())
+}
+
+/// True for the ink layer the show recorded, which Clear Recording removes and the user's pen
+/// never joins.
+pub fn is_recorded_ink(sh: &Shape) -> bool {
+    matches!(sh.kind, deckcraft_model::ShapeKind::Ink { .. }) && recording_tag(sh) == Some(RECORDED_INK)
+}
+
+/// Mark `sh` as material Record Slide Show added. An existing recording tag is replaced.
+pub fn mark_recorded(sh: &mut Shape, kind: &str) {
+    sh.tags.retain(|(k, _)| k != RECORDING_TAG);
+    sh.tags.push((RECORDING_TAG.into(), kind.into()));
 }
 
 pub fn can_undo(s: &Session) -> std::result::Result<(), String> {
