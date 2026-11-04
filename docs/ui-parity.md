@@ -1,6 +1,7 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-29 · **Change:** trivial (Picture Format: the Picture Styles row leaves room for Crop and Size, #1232; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (dragging several selected slides moves them all; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (group fill and outline edits reach members, #1079; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** trivial (Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -28,7 +29,7 @@ ends and are omitted from thumbnails, slide shows and exports.
 | Colour menus: theme and standard colours, hex field, Eyedropper | yes (plus a More Colors dialog) | yes: theme and standard colours, hex field and an Eyedropper that takes the colour drawn under the pointer on the slide (#367) | More Colors dialog; Eyedropper only takes colours from the slide, not the rest of the screen |
 | Contextual tabs: Shape Format, Picture Format, Table Design, Table Layout, Chart Design, Chart Format, Video/Audio Format and Playback | yes | most; checklist P0 row partial | Chart Format, media tabs thinner |
 | File tab (Backstage): Home, New, Open, Info, Save, Save As, Print, Share, Export, Close, Account, Options | yes | yes (#76), see [File tab](#file-tab-backstage); no Share (cloud) | Video/GIF/CD exports, templates beyond the built-in themes |
-| Start screen: new, themes, templates, recent, open | yes, the same page as File › Home | yes: File › Home with Home, New, Open, Account and Options (#76) | |
+| Start screen: new, themes, templates, recent, open | yes, the same page as File › Home | yes: File › Home with Home, New, Open, About and Options (#76) | |
 | Status bar: slide counter, language, notes, comments, views, zoom slider | yes | yes | |
 | Command search (Tell Me) | yes | command palette | |
 | Light / dark appearance | follows the system | light or dark; doesn't follow the system (#41) | 1–2 h |
@@ -45,7 +46,8 @@ Close and, at the bottom under a rule, Account and Options. Entries are 40 point
 outline icon; the current page is drawn in the accent colour and outlined. Esc goes back. Alt+F opens
 on Home with the keyboard in the side menu; Up and Down move through it and a page shows as soon as
 its entry has the focus. PowerPoint's start screen is the same Home page, with only Home, New and
-Open at the top. DeckCraft follows all of this (`crates/ui-egui/src/backstage.rs`), with the page and
+Open at the top. DeckCraft follows all of this (`crates/ui-egui/src/backstage.rs`), except that
+Account is About, with the page and
 menu colours taken from the theme tokens (menu `chrome`, page `card`).
 
 | Page | PowerPoint | DeckCraft |
@@ -60,7 +62,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Share | Cloud sharing | Not offered |
 | Export | Create PDF/XPS Document, Create a Video, Create an Animated GIF, Package Presentation for CD, Create Handouts, Change File Type | Create PDF Document, Create Handouts (a PDF), Change File Type (PNG with an optional transparent background, #784). No video, GIF or CD package |
 | Close | Closes; asks Save / Don't Save / Cancel about unsaved changes | Same (`file.close` after the prompt); Ctrl+W asks too |
-| Account | User information, sign-in, Office Background and Office Theme, product information, About | Appearance (light/dark, `view.dark`), product information, About DeckCraft. No accounts to sign in to |
+| Account | User information, sign-in, Office Background and Office Theme, product information, About | About: product information, project links, contributor/model credits and appearance (light/dark, `view.dark`). No Account entry |
 | Options | Opens the PowerPoint Options dialog | Opens Preferences |
 
 ## Panes and dialogs
@@ -81,7 +83,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 
 | Behaviour | PowerPoint | DeckCraft |
 |---|---|---|
-| Selection handles, rotation handle, yellow adjustment handles | yes | yes |
+| Selection handles, rotation handle, yellow adjustment handles | yes | yes; an empty No Fill shape passes interior clicks to underlying objects while its outline and handles remain selectable. Explicit, style and theme fills resolve as rendered; tests also cover locked outline targets and empty interiors without an outline (#1621) |
 | Marquee, Shift/Cmd multi-select, Tab to cycle | yes | yes |
 | Objects off the slide: drawn on the area around it in Normal view (full strength, master graphics too), selectable and movable there; clipped in the show, exports and thumbnails | yes | yes (#270) |
 | Scroll bars on the slide pane when the zoomed slide is larger than the window | yes | yes, on each axis that overflows: drag the thumb or click the track; the wheel and trackpad still pan. The vertical bar does not turn the page (#1157) |
@@ -171,6 +173,8 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
+| 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-29 | trivial | Picture Format: the Picture Styles row shows as many styles as fit beside the groups after it (at least two) and a More arrow with all 24, as the Transitions and Animations galleries do; Crop and Size are in view in the default window (#1232) |
 | 2026-10-26 | trivial | Thumbnail pane and Slide Sorter: dragging one of several selected slides moves the whole selection |
 | 2026-10-24 | trivial | Table cells: dragging across cells selects a range of cells |

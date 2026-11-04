@@ -13,6 +13,7 @@ struct MoveDrag {
 }
 
 impl Session {
+    /// Update the active drag interaction using the pointer position and modifiers.
     pub(super) fn drag(&mut self, p: Point, mods: Mods, tol: f64) -> Result<Value> {
         let Some(drag) = self.tool.drag.clone() else { return Ok(Value::Null) };
         match drag {
@@ -26,10 +27,48 @@ impl Session {
             Drag::Move { ids, start, origs, moved, duplicate, enter_text } => {
                 return self.drag_move(MoveDrag { ids, start, origs, moved, duplicate, enter_text }, p, mods, tol);
             }
-            Drag::Resize { id, handle, orig, start } => {
-                let nx = resize_box(&orig, handle, p - start, mods.shift || self.is_picture(id), mods.alt);
-                let nx = self.snap_resize(nx, &orig, handle, id, tol);
-                self.set_xfrm(id, nx)?;
+            Drag::Resize { id, orig, ids, handle, origs, start } => {
+                let keep_aspect = mods.shift || self.is_picture(id);
+                let nx = resize_box(&orig, handle, p - start, keep_aspect, mods.alt);
+                let nx = self.snap_resize(nx, handle, &ids, tol);
+                let sx = if orig.w > 1e-9 { (nx.w / orig.w) * if nx.flip_h != orig.flip_h { -1.0 } else { 1.0 } - 1.0 } else { 0.0 };
+                let sy = if orig.h > 1e-9 { (nx.h / orig.h) * if nx.flip_v != orig.flip_v { -1.0 } else { 1.0 } - 1.0 } else { 0.0 };
+                let div = if mods.alt { 2.0 } else { 1.0 };
+                let hx = match handle {
+                    0 | 6 | 7 => -1.0,
+                    2..=4 => 1.0,
+                    _ => 0.0,
+                };
+                let hy = match handle {
+                    0..=2 => -1.0,
+                    4..=6 => 1.0,
+                    _ => 0.0,
+                };
+                for (tid, o) in &origs {
+                    let target_nx = if *tid == id {
+                        nx
+                    } else {
+                        let picture = self.is_picture(*tid);
+                        let (sx, sy) = if picture && matches!(handle, 0 | 2 | 4 | 6) {
+                            // Use the axis with the larger relative change so an unchanged
+                            // dimension cannot cancel shrinking. Preserve each axis's flip.
+                            let scale_x = 1.0 + sx;
+                            let scale_y = 1.0 + sy;
+                            let scale = if sx.abs() >= sy.abs() { scale_x.abs() } else { scale_y.abs() };
+                            (scale.copysign(scale_x) - 1.0, scale.copysign(scale_y) - 1.0)
+                        } else {
+                            (sx, sy)
+                        };
+
+                        let lp = Affine::rotate(o.rot.to_radians())
+                            * Point::new(
+                                hx * sx * o.w / div * if o.flip_h { -1.0 } else { 1.0 },
+                                hy * sy * o.h / div * if o.flip_v { -1.0 } else { 1.0 },
+                            );
+                        resize_box(o, handle, Vec2::new(lp.x, lp.y), picture, mods.alt)
+                    };
+                    self.set_xfrm(*tid, target_nx)?;
+                }
             }
             Drag::LineEnd { id, end, orig } => {
                 let a = orig.affine();
