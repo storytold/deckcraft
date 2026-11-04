@@ -192,6 +192,7 @@ fn a_recorded_cameo_writes_video_links_and_a_media_timing_node() {
     assert!(xml.contains("<a:videoFile r:link=\"rId"), "the video relationship: {xml}");
     assert!(xml.contains("<p14:media xmlns:p14="), "the embedded media part: {xml}");
     assert!(xml.contains("<p:video><p:cMediaNode vol=\"100000\" showWhenStopped=\"0\">"), "plays on entry: {xml}");
+    assert!(xml.contains("<p:cmd type=\"call\" cmd=\"playFrom(0.0)\">"), "the media-call step PowerPoint uses: {xml}");
     assert!(xml.contains("<p:spTgt spid=\""), "targets the cameo picture: {xml}");
     // The poster stays the picture's image, not a second part the timing points at.
     assert!(xml.contains("<a:blip r:embed=\"rId"), "{xml}");

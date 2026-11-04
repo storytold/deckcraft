@@ -618,6 +618,20 @@ fn media_node(w: &mut W, ids: &mut Ids, spid: u32, video: bool, entry: bool) {
     w.open0("p:stCondLst");
     w.empty("p:cond", A::new().a("delay", if entry { "0" } else { "indefinite" }));
     w.close("p:stCondLst");
+    if entry {
+        // PowerPoint starts an automatic video with a media-call step, not the condition alone.
+        w.open0("p:childTnLst");
+        w.open("p:cmd", A::new().a("type", "call").a("cmd", "playFrom(0.0)"));
+        w.open0("p:cBhvr");
+        w.open("p:cTn", A::new().a("id", ids.next()).a("dur", "1").a("fill", "hold"));
+        w.close("p:cTn");
+        w.open0("p:tgtEl");
+        w.empty("p:spTgt", A::new().a("spid", spid));
+        w.close("p:tgtEl");
+        w.close("p:cBhvr");
+        w.close("p:cmd");
+        w.close("p:childTnLst");
+    }
     w.close("p:cTn");
     w.open0("p:tgtEl");
     w.empty("p:spTgt", A::new().a("spid", spid));
