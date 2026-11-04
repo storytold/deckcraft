@@ -23,6 +23,16 @@ pub fn pct(e: &El, name: &str) -> Option<f64> {
     e.f64(name).map(|v| v / 100_000.0)
 }
 
+fn bullet_size_points(value: Option<&str>) -> Option<f64> {
+    value.and_then(|v| v.trim().parse::<u32>().ok()).filter(|v| (100..=400_000).contains(v)).map(|v| v as f64 / 100.0)
+}
+
+fn bullet_size_percent(value: Option<&str>) -> Option<f64> {
+    let value = value?.trim();
+    let (value, scale) = if let Some(value) = value.strip_suffix('%') { (value.trim(), 100.0) } else { (value, 100_000.0) };
+    value.parse::<f64>().ok().filter(|v| v.is_finite()).map(|v| v / scale)
+}
+
 /// 1/60 000 degree → degrees.
 pub fn ang(e: &El, name: &str) -> Option<f64> {
     e.f64(name).map(|v| v / 60_000.0)
@@ -312,6 +322,15 @@ pub fn effects(el: &El) -> Effects {
                     end_alpha: pct(e, "endA").unwrap_or(0.0),
                     end_pos: pct(e, "endPos").unwrap_or(1.0),
                     dist: pt(e, "dist").unwrap_or(0.0),
+                    st_pos: e.i64("stPos").and_then(|v| i32::try_from(v).ok()),
+                    dir: e.i64("dir").and_then(|v| i32::try_from(v).ok()),
+                    fade_dir: e.i64("fadeDir").and_then(|v| i32::try_from(v).ok()),
+                    sx: e.i64("sx").and_then(|v| i32::try_from(v).ok()),
+                    sy: e.i64("sy").and_then(|v| i32::try_from(v).ok()),
+                    kx: e.i64("kx").and_then(|v| i32::try_from(v).ok()),
+                    ky: e.i64("ky").and_then(|v| i32::try_from(v).ok()),
+                    align: e.attr("algn").filter(|v| matches!(*v, "tl" | "t" | "tr" | "l" | "ctr" | "r" | "bl" | "b" | "br")).map(str::to_owned),
+                    rotate_with_shape: e.bool("rotWithShape"),
                 })
             }
             _ => {}
@@ -358,6 +377,9 @@ pub fn body_pr(b: &El) -> BodyProps {
         rtl_col: b.bool("rtlCol"),
         upright: b.bool("upright"),
         space_first_last: b.bool("spcFirstLastPara"),
+        compat_ln_spc: b.bool("compatLnSpc"),
+        vert_overflow: b.attr("vertOverflow").and_then(deckcraft_model::text::TextOverflow::from_xml),
+        horz_overflow: b.attr("horzOverflow").and_then(deckcraft_model::text::TextOverflow::from_horz_xml),
         ..Default::default()
     };
     for e in b.elements() {
@@ -454,9 +476,22 @@ pub fn ppr(imp: &mut Imp, part: &Part, p: &El) -> (Option<u8>, ParaProps, Option
             "buFont" => pp.bullet_font = e.attr("typeface").map(String::from),
             "buFontTx" => pp.bullet_font_follow_text = Some(true),
             "buClr" => pp.bullet_color = color(e),
+            "buSzPct" => {
+                pp.bullet_size_points = None;
+                pp.bullet_size_follow_text = None;
+                pp.bullet_size = bullet_size_percent(e.attr("val")).map(|v| v.clamp(0.25, 4.0));
+            }
+            "buSzPts" => {
+                pp.bullet_size = None;
+                pp.bullet_size_follow_text = None;
+                pp.bullet_size_points = bullet_size_points(e.attr("val"));
+            }
             "buClrTx" => pp.bullet_color_follow_text = Some(true),
-            "buSzPct" => pp.bullet_size = pct(e, "val").map(|v| v.clamp(0.25, 4.0)),
-            "buSzTx" => pp.bullet_size_follow_text = Some(true),
+            "buSzTx" => {
+                pp.bullet_size = None;
+                pp.bullet_size_points = None;
+                pp.bullet_size_follow_text = Some(true);
+            }
             "tabLst" => {
                 pp.tabs = Some(
                     e.children_named("tab")
@@ -530,6 +565,7 @@ fn typeface(e: &El) -> Option<String> {
 pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
     let mut p = RunProps {
         lang: r.attr("lang").map(String::from),
+        alt_lang: r.attr("altLang").map(|lang| lang.chars().take(256).collect()),
         size: r.f64("sz").map(|s| (s / 100.0).clamp(1.0, 4000.0)),
         bold: r.bool("b"),
         italic: r.bool("i"),
@@ -548,6 +584,7 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
         spacing: r.f64("spc").map(|s| (s / 100.0).clamp(-4000.0, 4000.0)),
         kern: r.f64("kern").map(|k| (k / 100.0).clamp(0.0, 4000.0)),
         no_proof: r.bool("noProof"),
+        normalize_height: r.bool("normalizeH"),
         ..Default::default()
     };
     for e in r.elements() {
@@ -627,12 +664,22 @@ fn push_text_runs(para: &mut Paragraph, props: RunProps, text: &str) {
 /// Appends an Office Math (a14:m) run: its plain text and its OMML.
 fn push_math_run(para: &mut Paragraph, part: &Part, e: &El) {
     if para.runs.len() < MAX_PARAGRAPH_RUNS {
-        let mut text = String::new();
-        let mut ts = vec![];
-        e.find_all("t", &mut ts);
-        for t in ts {
-            text.push_str(&t.text());
+        // The text of the outermost `t` elements: a `t` nested in another is already part of
+        // the outer one's text, and taking it again would copy it once per nesting level.
+        fn outer_t(e: &El, depth: usize, text: &mut String) {
+            if depth > crate::xml::MAX_DEPTH {
+                return;
+            }
+            for c in e.elements() {
+                if c.is("t") {
+                    text.push_str(&c.text());
+                } else {
+                    outer_t(c, depth + 1, text);
+                }
+            }
         }
+        let mut text = String::new();
+        outer_t(e, 0, &mut text);
         let omml = e.elements().map(|c| part.keep_inner(c)).collect::<String>();
         para.runs.push(Run { text, props: RunProps::default(), kind: RunKind::Math { omml } });
     }
@@ -678,6 +725,17 @@ mod tests {
     use crate::xml::parse;
 
     #[test]
+    fn nested_math_text_is_taken_once() {
+        // 200 `m:t` nested in each other around one word: the word, not 200 copies of it.
+        let x = format!(r#"<a14:m xmlns:a14="a" xmlns:m="m"><m:oMath>{}word{}</m:oMath></a14:m>"#, "<m:t>".repeat(200), "</m:t>".repeat(200));
+        let d = parse(x.as_bytes()).unwrap();
+        let part = Part { name: "ppt/slides/slide1.xml".into(), rels: Default::default(), ns: vec![], inner_ns: vec![] };
+        let mut para = Paragraph::default();
+        push_math_run(&mut para, &part, &d.root);
+        assert_eq!(para.runs[0].text, "word");
+    }
+
+    #[test]
     fn colors_and_transforms() {
         let d = parse(
             br#"<a:solidFill xmlns:a="x"><a:schemeClr val="accent2"><a:lumMod val="75000"/><a:alpha val="50000"/></a:schemeClr></a:solidFill>"#,
@@ -690,6 +748,21 @@ mod tests {
         assert!(matches!(color(&d.root).unwrap().base, ColorBase::System { last: Rgba::WHITE, .. }));
         let d = parse(br#"<x><a:scrgbClr r="100000" g="0" b="0"/></x>"#).unwrap();
         assert_eq!(color(&d.root).unwrap().base, ColorBase::Rgb { rgb: Rgba::rgb(255, 0, 0) });
+    }
+
+    #[test]
+    fn bullet_point_size_trims_schema_whitespace() {
+        let d = parse(br#"<a:buSzPts xmlns:a="x" val=" 1400 "/>"#).unwrap();
+        assert_eq!(bullet_size_points(d.root.attr("val")), Some(14.0));
+        assert_eq!(bullet_size_points(Some("1400")), Some(14.0));
+    }
+
+    #[test]
+    fn bullet_percentage_size_accepts_numeric_and_percent_forms() {
+        assert_eq!(bullet_size_percent(Some("100000")), Some(1.0));
+        assert_eq!(bullet_size_percent(Some("100%")), Some(1.0));
+        assert_eq!(bullet_size_percent(Some(" 125% ")), Some(1.25));
+        assert_eq!(bullet_size_percent(Some("invalid")), None);
     }
 
     #[test]
