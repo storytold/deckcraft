@@ -3,7 +3,7 @@ use super::geometry::{
 };
 use super::opts::{RenderOpts, ShapeState, SlideFields};
 use super::raster::Image;
-use super::slide::{SlidePart, needs_filters, output_size};
+use super::slide::{SlidePart, needs_st_canvas, output_size, shape_needs_filters};
 use super::stroke::{arrowheads, head_trims, stroke, trim_ends};
 use super::text_draw::{draw_layout_with, draw_text, line_bounds, preview_empty_bullets, prompt_body, text_transform, text_warp};
 use super::*;
@@ -33,6 +33,10 @@ pub struct Renderer {
     /// Visits spent on outer-shadow silhouette passes, kept apart so they cannot use up the budget
     /// of the normal drawing that follows.
     shadow_work: usize,
+    /// Whether the canvas being drawn runs on worker threads. vello_cpu's multi-threaded
+    /// dispatcher cannot run filter effects, so a shape that uses one takes a detour through its
+    /// own single-threaded canvas instead of costing the whole slide its threads.
+    mt: bool,
 }
 
 impl Default for Renderer {
@@ -48,6 +52,7 @@ impl Default for Renderer {
             in_shadow_pass: false,
             render_work: 0,
             shadow_work: 0,
+            mt: false,
         }
     }
 }
@@ -106,14 +111,16 @@ struct FxSource<'a> {
     h: f64,
 }
 
+/// Whether a canvas made with `opts` runs on worker threads.
+fn canvas_is_mt(opts: &RenderOpts) -> bool {
+    !cfg!(target_arch = "wasm32") && opts.threads > 0
+}
+
 impl Renderer {
-    fn canvas(pres: &Presentation, opts: &RenderOpts, filters: bool) -> (RenderContext, u16, u16, Affine) {
+    fn canvas(pres: &Presentation, opts: &RenderOpts, st: bool) -> (RenderContext, u16, u16, Affine) {
         let (w, h) = output_size(pres, opts);
-        let mut ctx = RenderContext::new_with(
-            w,
-            h,
-            vello_cpu::RenderSettings { num_threads: if cfg!(target_arch = "wasm32") || filters { 0 } else { opts.threads }, ..Default::default() },
-        );
+        let threads = if cfg!(target_arch = "wasm32") || st { 0 } else { opts.threads };
+        let mut ctx = RenderContext::new_with(w, h, vello_cpu::RenderSettings { num_threads: threads, ..Default::default() });
         if let Some(c) = opts.clear {
             ctx.set_paint(color(c, 1.0));
             ctx.fill_rect(&Rect::new(0.0, 0.0, w as f64, h as f64));
@@ -164,7 +171,9 @@ impl Renderer {
         self.render_work = 0;
         self.shadow_work = 0;
         self.in_shadow_pass = false;
-        let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, slide));
+        let st = needs_st_canvas(pres, slide);
+        let (mut ctx, w, h, view) = Self::canvas(pres, opts, st);
+        self.mt = canvas_is_mt(opts) && !st;
         let f = Frame { pres, opts, fields: Self::fields(pres, index, opts) };
         if let Some(rctx) = Ctx::for_slide(pres, slide) {
             self.backdrop(&mut ctx, &f, &rctx, slide, view);
@@ -179,7 +188,9 @@ impl Renderer {
         self.render_work = 0;
         self.shadow_work = 0;
         self.in_shadow_pass = false;
-        let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, slide));
+        let st = needs_st_canvas(pres, slide);
+        let (mut ctx, w, h, view) = Self::canvas(pres, opts, st);
+        self.mt = canvas_is_mt(opts) && !st;
         let f = Frame { pres, opts, fields: Self::fields(pres, index, opts) };
         if let Some(rctx) = Ctx::for_slide(pres, slide) {
             match part {
@@ -213,7 +224,9 @@ impl Renderer {
         self.render_work = 0;
         self.shadow_work = 0;
         self.in_shadow_pass = false;
-        let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, old.0) || needs_filters(pres, new.0));
+        let st = needs_st_canvas(pres, old.0) || needs_st_canvas(pres, new.0);
+        let (mut ctx, w, h, view) = Self::canvas(pres, opts, st);
+        self.mt = canvas_is_mt(opts) && !st;
         let (Some(co), Some(cn)) = (Ctx::for_slide(pres, old.0), Ctx::for_slide(pres, new.0)) else { return self.finish(ctx, w, h) };
         if mix < 1.0 {
             let f = Frame { pres, opts, fields: Self::fields(pres, old.1, opts) };
@@ -263,6 +276,7 @@ impl Renderer {
         self.in_shadow_pass = false;
         let (w, h) = output_size(pres, opts);
         let mut ctx = RenderContext::new_with(w, h, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
+        self.mt = false;
         let view = Affine::translate((opts.offset.0, opts.offset.1)) * Affine::scale(opts.scale);
         let f = Frame { pres, opts, fields: SlideFields::new(1, String::new(), opts) };
         if let Some(m) = pres.masters.get(mi) {
@@ -321,11 +335,69 @@ impl Renderer {
     pub(crate) fn shape(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, s: &Shape, parent: Affine, depth: usize) {
         if depth == 0 {
             let outer = std::mem::replace(&mut self.view, parent);
-            self.shape_at(ctx, f, rctx, s, parent, depth);
+            if self.mt && shape_needs_filters(rctx, s) {
+                self.shape_filtered(ctx, f, rctx, s, parent);
+            } else {
+                self.shape_at(ctx, f, rctx, s, parent, depth);
+            }
             self.view = outer;
         } else {
             self.shape_at(ctx, f, rctx, s, parent, depth);
         }
+    }
+
+    /// Draw a shape that uses filter effects on its own single-threaded canvas, then paste that
+    /// canvas into `ctx` where the shape stands.
+    ///
+    /// vello_cpu's multi-threaded dispatcher panics on filter effects, so the slide used to give
+    /// up its worker threads entirely as soon as one shape anywhere carried a shadow. Only the
+    /// shape that needs it draws single-threaded now: the detour is one buffer the size of the
+    /// shape's box (its spill included), pasted 1:1, which leaves the drawing identical and the
+    /// rest of the slide parallel.
+    fn shape_filtered(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, s: &Shape, parent: Affine) {
+        let Some(bx) = crate::extent::shape_box(rctx, s) else { return };
+        let dev = parent.transform_rect_bbox(bx);
+        if !dev.is_finite() {
+            return self.shape_at(ctx, f, rctx, s, parent, 0);
+        }
+        // Whole pixels, clipped to the canvas: the paste is 1:1, so nothing resamples.
+        let (cw, ch) = (ctx.width() as f64, ctx.height() as f64);
+        let x0 = dev.x0.floor().clamp(0.0, cw);
+        let y0 = dev.y0.floor().clamp(0.0, ch);
+        let x1 = dev.x1.ceil().clamp(0.0, cw);
+        let y1 = dev.y1.ceil().clamp(0.0, ch);
+        let (pw, ph) = ((x1 - x0) as u16, (y1 - y0) as u16);
+        if pw == 0 || ph == 0 {
+            return;
+        }
+        let mut sub = RenderContext::new_with(pw, ph, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
+        let m = Affine::translate((-x0, -y0)) * parent;
+        let (was_mt, outer_view, drawn) = (self.mt, self.view, self.drawn);
+        self.mt = false;
+        self.view = m;
+        self.shape_at(&mut sub, f, rctx, s, m, 0);
+        self.mt = was_mt;
+        self.view = outer_view;
+        // `shape_at` tracked what it drew in the detour's coordinates; the shape's box in the
+        // canvas's own is what the caller needs.
+        self.drawn = drawn;
+        self.track(Affine::IDENTITY, Rect::new(x0, y0, x1, y1));
+
+        sub.flush();
+        let mut pixels = vec![0u8; pw as usize * ph as usize * 4];
+        if let Some(pm) = vello_cpu::PixmapMut::new(pw, ph, &mut pixels) {
+            sub.render(pm, &mut self.resources);
+        }
+        let data = pixels.as_chunks::<4>().0.iter().map(|c| vello_cpu::color::PremulRgba8 { r: c[0], g: c[1], b: c[2], a: c[3] }).collect();
+        let pm = std::sync::Arc::new(vello_cpu::Pixmap::from_parts(data, pw, ph));
+        ctx.set_transform(Affine::IDENTITY);
+        ctx.set_paint(vello_cpu::Image {
+            image: vello_cpu::ImageSource::Pixmap(pm),
+            sampler: peniko::ImageSampler { quality: peniko::ImageQuality::Low, ..Default::default() },
+        });
+        ctx.set_paint_transform(Affine::translate((x0, y0)));
+        ctx.fill_rect(&Rect::new(x0, y0, x1, y1));
+        ctx.reset_paint_transform();
     }
 
     /// How lines are drawn for a shape under `m` at `depth`: the transform to stroke under and the
