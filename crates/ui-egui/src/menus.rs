@@ -98,15 +98,23 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
 
 /// The palette's entries for the lowercase query `q`. An engine command is hidden when a UI command has the same label: Open…, Save As…,
 /// Export… and Audio/Video from File… need a `path` the palette can't give, so the one entry left opens the dialog instead of failing.
-fn palette_items(session: &deckcraft_engine::Session, q: &str) -> Vec<(String, String, Option<&'static str>)> {
+fn palette_items(session: &deckcraft_engine::Session, q: &str, language: crate::i18n::Language) -> Vec<(String, String, Option<&'static str>)> {
     let mut items: Vec<(String, String, Option<&'static str>)> = session
         .commands()
         .into_iter()
         // Commands that need a path or other value fail when the palette runs them with `{}`.
         .filter(|c| c.enabled && !crate::UI_COMMANDS.iter().any(|u| u.1 == c.label) && !deckcraft_engine::cmd::needs_arguments(c.params))
-        .map(|c| (c.id.to_string(), c.label.to_string(), c.shortcut))
-        .chain(crate::UI_COMMANDS.iter().filter(|c| !deckcraft_engine::cmd::needs_arguments(c.3)).map(|c| (c.0.to_string(), c.1.to_string(), c.2)))
-        .filter(|(id, label, _)| q.is_empty() || label.to_lowercase().contains(q) || id.to_lowercase().contains(q))
+        .map(|c| (c.id.to_string(), language.text(c.label).to_string(), c.label.to_string(), c.shortcut))
+        .chain(
+            crate::UI_COMMANDS
+                .iter()
+                .filter(|c| !deckcraft_engine::cmd::needs_arguments(c.3))
+                .map(|c| (c.0.to_string(), language.text(c.1).to_string(), c.1.to_string(), c.2)),
+        )
+        .filter(|(id, label, english, _)| {
+            q.is_empty() || label.to_lowercase().contains(q) || english.to_lowercase().contains(q) || id.to_lowercase().contains(q)
+        })
+        .map(|(id, label, _, shortcut)| (id, label, shortcut))
         .collect();
     items.sort_by_key(|(_, l, _)| !l.to_lowercase().starts_with(q));
     items.truncate(60);
@@ -117,6 +125,7 @@ fn palette_items(session: &deckcraft_engine::Session, q: &str) -> Vec<(String, S
 pub fn palette(app: &mut SlideApp, ctx: &egui::Context) {
     let Some((mut query, mut sel)) = app.palette.take() else { return };
     let t = Tokens::get(ctx);
+    let language = app.ui.interface_language;
     let mut close = false;
     let mut run: Option<String> = None;
     egui::Window::new("command_palette")
@@ -124,10 +133,15 @@ pub fn palette(app: &mut SlideApp, ctx: &egui::Context) {
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 90.0))
         .fixed_size(egui::vec2(520.0, 380.0))
         .show(ctx, |ui| {
-            let r = ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search commands…").desired_width(f32::INFINITY).font(theme::font(15.0)));
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut query)
+                    .hint_text(language.text("Search commands…"))
+                    .desired_width(f32::INFINITY)
+                    .font(theme::font(15.0)),
+            );
             r.request_focus();
             let q = query.to_lowercase();
-            let items = palette_items(&app.session, &q);
+            let items = palette_items(&app.session, &q, language);
             let (down, up, enter, esc) = ui.input(|i| {
                 (
                     i.key_pressed(egui::Key::ArrowDown),
@@ -311,16 +325,25 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
     ]
 }
 
+/// Localized labels for the native-menu boundary; command IDs remain stable for execution.
+pub fn localized_menu_tree(language: crate::i18n::Language) -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
+    menu_tree()
+        .into_iter()
+        .map(|(menu, entries)| (language.text(menu), entries.into_iter().map(|(label, id)| (language.text(label), id)).collect()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::palette_items;
+    use super::{localized_menu_tree, menu_tree, palette_items};
+    use crate::i18n::Language;
 
     /// #79: the palette listed two "Export…" entries and the first (`file.export`) failed with "missing `path`".
     #[test]
     fn palette_has_one_export_entry_that_opens_the_dialog() {
         let session = deckcraft_engine::Session::with_new();
         for query in ["exp", "export"] {
-            let exports: Vec<_> = palette_items(&session, query).into_iter().filter(|(_, label, _)| label == "Export…").collect();
+            let exports: Vec<_> = palette_items(&session, query, Language::English).into_iter().filter(|(_, label, _)| label == "Export…").collect();
             assert_eq!(exports.len(), 1, "query {query}");
             assert_eq!(exports[0].0, "app.exportDialog");
         }
@@ -330,9 +353,47 @@ mod tests {
             if deckcraft_engine::cmd::needs_arguments(params) {
                 continue;
             }
-            let same: Vec<_> = palette_items(&session, &label.to_lowercase()).into_iter().filter(|(_, l, _)| l == label).collect();
+            let same: Vec<_> = palette_items(&session, &label.to_lowercase(), Language::English).into_iter().filter(|(_, l, _)| l == label).collect();
             assert_eq!(same.len(), 1, "{label}");
             assert_eq!(same[0].0, *id, "{label}");
+        }
+    }
+
+    #[test]
+    fn palette_searches_russian_labels_without_changing_command_ids() {
+        let session = deckcraft_engine::Session::with_new();
+        for query in ["экспорт", "export"] {
+            let exports: Vec<_> =
+                palette_items(&session, query, Language::Russian).into_iter().filter(|(id, _, _)| id == "app.exportDialog").collect();
+            assert_eq!(exports.len(), 1, "query {query}");
+            assert_eq!(exports[0].0, "app.exportDialog");
+            assert_eq!(exports[0].1, "Экспорт…");
+        }
+    }
+
+    #[test]
+    fn localized_menu_tree_keeps_command_ids_and_english_fallback() {
+        let english = menu_tree();
+        let russian = localized_menu_tree(Language::Russian);
+        assert_eq!(english.first().map(|(label, _)| *label), Some("File"));
+        assert_eq!(russian.first().map(|(label, _)| *label), Some("Файл"));
+        assert_eq!(english[0].1[1].1, "app.openDialog");
+        assert_eq!(russian[0].1[1].1, "app.openDialog");
+        assert_eq!(localized_menu_tree(Language::English), english);
+    }
+
+    #[test]
+    fn every_existing_menu_label_has_a_russian_translation() {
+        let english = menu_tree();
+        let russian = localized_menu_tree(Language::Russian);
+        for ((menu, entries), (translated_menu, translated_entries)) in english.iter().zip(&russian) {
+            assert_ne!(menu, translated_menu, "menu {menu}");
+            for ((label, id), (translated_label, translated_id)) in entries.iter().zip(translated_entries) {
+                assert_eq!(id, translated_id);
+                if *label != "-" {
+                    assert_ne!(label, translated_label, "menu item {label}");
+                }
+            }
         }
     }
 }

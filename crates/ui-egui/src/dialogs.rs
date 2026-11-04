@@ -83,7 +83,8 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let Some(mut d) = app.dialog.take() else { return };
     let mut open = true;
     let mut close = false;
-    let mut window = egui::Window::new(title(&d.id))
+    let title = app.ui.interface_language.text(title(&d.id));
+    let mut window = egui::Window::new(title)
         .id(egui::Id::unique(("dialog", d.id.clone())))
         .collapsible(false)
         .resizable(false)
@@ -107,6 +108,9 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
         } else if d.id == "themeFonts" {
             ui.set_min_height(280.0);
         }
+        if d.id == "preferences" {
+            preferences::interface_language_row(app, ui, &mut d);
+        }
         close = body(app, ui, &mut d);
     });
     let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
@@ -127,6 +131,8 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
 }
 
 fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
+    let ok_label = crate::i18n::context_text(ui.ctx(), ok_label);
+    let cancel_label = crate::i18n::context_text(ui.ctx(), "Cancel");
     let mut ok = false;
     let mut cancel = false;
     ui.add_space(8.0);
@@ -137,7 +143,7 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
         {
             ok = true;
         }
-        if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+        if ui.add(egui::Button::new(cancel_label).min_size(vec2(72.0, 24.0))).clicked() {
             cancel = true;
         }
     });
@@ -148,6 +154,7 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
 /// edited value in the dialog.
 fn field(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str, default: &str) {
     let mut v = d.get(key, default);
+    let label = crate::i18n::context_text(ui.ctx(), label);
     ui.horizontal(|ui| {
         let l = ui.add_sized(vec2(120.0, 20.0), egui::Label::new(label));
         ui.add(egui::TextEdit::singleline(&mut v).desired_width(180.0)).labelled_by(l.id);
@@ -157,7 +164,7 @@ fn field(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str, default: &str) {
 
 fn check(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str, default: bool) -> bool {
     let mut v = d.get(key, if default { "1" } else { "0" }) == "1";
-    ui.checkbox(&mut v, label);
+    ui.checkbox(&mut v, crate::i18n::context_text(ui.ctx(), label));
     d.fields.insert(key.into(), if v { "1".into() } else { "0".into() });
     v
 }
@@ -261,20 +268,21 @@ fn color_label(v: &Value) -> String {
 /// the caller supplies the visible label.
 fn choice(ui: &mut Ui, d: &mut Dialog, salt: &str, name: &str, key: &str, choices: &[(&str, &str)]) {
     let cur = d.get(key, "");
-    let label = choices.iter().find(|(v, _)| *v == cur).map(|(_, l)| *l).unwrap_or(cur.as_str());
+    let label = choices.iter().find(|(v, _)| *v == cur).map(|(_, l)| crate::i18n::context_text(ui.ctx(), l)).unwrap_or_else(|| cur.clone());
     let combo = craft_ui::ComboBox::from_id_salt(salt).selected_text(label).width(140.0).show_ui(ui, |ui| {
         for (v, l) in choices {
-            if ui.selectable_label(cur == *v, *l).clicked() {
+            if ui.selectable_label(cur == *v, crate::i18n::context_text(ui.ctx(), l)).clicked() {
                 d.fields.insert((*key).into(), (*v).into());
             }
         }
     });
-    combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, name));
+    let choice_accessible_name = crate::i18n::context_text(ui.ctx(), name);
+    combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &choice_accessible_name));
 }
 
 fn labeled_text(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str, width: f32) -> String {
     let mut v = d.get(key, "");
-    let l = ui.label(label);
+    let l = ui.label(crate::i18n::context_text(ui.ctx(), label));
     ui.add(egui::TextEdit::singleline(&mut v).desired_width(width)).labelled_by(l.id);
     d.fields.insert(key.into(), v.clone());
     v

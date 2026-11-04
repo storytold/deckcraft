@@ -281,6 +281,7 @@ impl SlideApp {
     /// show mode.
     fn ui_inner(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        crate::i18n::set_context(&ctx, self.ui.interface_language);
         self.ime_frame_viewport = Some(ctx.viewport_id());
         self.ime_pending = None;
         if !self.ui_setup(&ctx) {
