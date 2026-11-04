@@ -777,8 +777,10 @@ mod tests {
             assert!(s.execute("slide.inspect", &json!({"index": bad})).is_err(), "slide.inspect {bad}");
             assert!(s.execute("animation.get", &json!({"slide": bad})).is_err(), "animation.get {bad}");
             assert!(s.execute("comment.list", &json!({"slide": bad})).is_err(), "comment.list {bad}");
-            assert!(s.execute("comment.next", &json!({"slide": bad})).is_err(), "comment.next {bad}");
-            assert!(s.execute("comment.prev", &json!({"slide": bad})).is_err(), "comment.prev {bad}");
+            let e = s.execute("comment.next", &json!({"slide": bad})).unwrap_err().to_string();
+            assert!(e.contains("not a valid index"), "comment.next {bad}: {e}");
+            let e = s.execute("comment.prev", &json!({"slide": bad})).unwrap_err().to_string();
+            assert!(e.contains("not a valid index"), "comment.prev {bad}: {e}");
         }
     }
 
