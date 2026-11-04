@@ -137,30 +137,25 @@ pub fn apply(sh: &mut Shape, id: &str) -> bool {
 /// a custom frame or effect was applied on top (Camera Border, Camera Effects).
 pub fn style_of(sh: &Shape) -> Option<&'static str> {
     let preset = sh.geom.preset_name()?;
-    let fx = sh.effects.as_ref();
-    let shadow = fx.and_then(|e| e.outer_shadow.as_ref()).is_some();
-    let soft = fx.and_then(|e| e.soft_edge);
-    let width = sh.line.as_ref().and_then(|l| l.width);
-    let framed = sh.line.as_ref().is_some_and(|l| matches!(l.fill, Some(Fill::Solid { .. })));
-    if !framed && !shadow && soft.is_none() {
+    let no_line = sh.line.as_ref().is_none_or(|l| matches!(l.fill, None | Some(Fill::None)));
+    let no_effects = sh.effects.as_ref().is_none_or(|e| *e == Effects::default());
+    if no_line && no_effects {
         return Some("none");
     }
     STYLES
         .iter()
         .find(|st| {
-            st.id != "none"
-                && st.preset == preset
-                && st.shadow == shadow
-                && match (st.frame, width, framed) {
-                    (Some(w), Some(v), true) => (w - v).abs() < 0.01,
-                    (None, _, false) => true,
-                    _ => false,
-                }
-                && match (st.soft_edge, soft) {
-                    (Some(a), Some(b)) => (a - b).abs() < 0.01,
-                    (None, None) => true,
-                    _ => false,
-                }
+            if st.id == "none" || st.preset != preset {
+                return false;
+            }
+            let line_ok = match st.frame {
+                Some(w) => sh.line.as_ref().is_some_and(|l| {
+                    matches!(l.fill, Some(Fill::Solid { .. })) && l.width.is_some_and(|v| (v - w).abs() < 0.01)
+                }),
+                None => no_line,
+            };
+            let want = Effects { outer_shadow: st.shadow.then(center_shadow), soft_edge: st.soft_edge, ..Default::default() };
+            line_ok && sh.effects.as_ref().is_none_or(|e| *e == want) && (sh.effects.is_some() || want == Effects::default())
         })
         .map(|s| s.id)
 }
@@ -495,5 +490,64 @@ mod tests {
         let before = cameo_shapes(&s)[0].kind.clone();
         s.execute("camera.style", &json!({"style": "softEdgeCircle"})).expect("style");
         assert_eq!(cameo_shapes(&s)[0].kind, before);
+    }
+
+    #[test]
+    fn apply_to_all_is_one_undo_step_that_restores_every_cameo() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("slide");
+        s.execute("insert.cameo", &json!({"all": true})).expect("insert");
+        let before: Vec<Option<&'static str>> = cameo_shapes(&s).iter().map(super::style_of).collect();
+        s.execute("camera.style", &json!({"style": "centerShadowHexagon"})).expect("style");
+        s.execute("camera.applyToAll", &json!({})).expect("apply");
+        assert!(cameo_shapes(&s).iter().all(|sh| super::style_of(sh) == Some("centerShadowHexagon")));
+        s.execute("edit.undo", &json!({})).expect("undo");
+        let after: Vec<Option<&'static str>> = cameo_shapes(&s).iter().map(super::style_of).collect();
+        assert_eq!(after, before, "one undo restores the formatting of every cameo");
+        s.execute("edit.redo", &json!({})).expect("redo");
+        assert!(cameo_shapes(&s).iter().all(|sh| super::style_of(sh) == Some("centerShadowHexagon")));
+    }
+
+    #[test]
+    fn no_style_clears_frame_and_effects_but_keeps_the_camera_shape() {
+        let mut s = Session::with_new();
+        s.execute("insert.cameo", &json!({})).expect("insert");
+        s.execute("camera.style", &json!({"style": "centerShadowDiamond"})).expect("style");
+        s.execute("camera.style", &json!({"style": "none"})).expect("none");
+        let sh = &cameo_shapes(&s)[0];
+        assert_eq!(sh.geom.preset_name(), Some("diamond"), "No Style keeps the user's Camera Shape");
+        assert!(sh.line.is_none() && sh.effects.is_none());
+        assert_eq!(super::style_of(sh), Some("none"));
+    }
+
+    #[test]
+    fn camera_style_values_survive_a_pptx_round_trip() {
+        let mut s = Session::with_new();
+        s.execute("insert.cameo", &json!({})).expect("insert");
+        s.execute("camera.style", &json!({"style": "centerShadowHexagon"})).expect("style");
+        let bytes = deckcraft_pptx::export(&s.doc().expect("doc").doc).expect("export");
+        let back = deckcraft_pptx::import(&bytes).expect("import");
+        let mut found = None;
+        deckcraft_model::walk(&back.slides[0].shapes, &mut |sh, _| {
+            if sh.is_cameo() {
+                found = Some(sh.clone());
+            }
+        });
+        let sh = found.expect("cameo after import");
+        assert!(sh.is_cameo());
+        assert_eq!(sh.geom.preset_name(), Some("hexagon"));
+        assert!(sh.effects.as_ref().and_then(|e| e.outer_shadow.as_ref()).is_some(), "the centre shadow is written as a:outerShdw");
+        assert_eq!(super::style_of(&sh), Some("centerShadowHexagon"), "the gallery still reads the same preset");
+        // A second save must not drift: the style is formatting, not an id.
+        let again = deckcraft_pptx::import(&deckcraft_pptx::export(&back).expect("export again")).expect("import again");
+        let mut second = None;
+        deckcraft_model::walk(&again.slides[0].shapes, &mut |sh, _| {
+            if sh.is_cameo() {
+                second = Some(sh.clone());
+            }
+        });
+        let sh = second.expect("cameo after second import");
+        assert_eq!(sh.geom, deckcraft_model::Geom::preset("hexagon"));
+        assert_eq!(super::style_of(&sh), Some("centerShadowHexagon"));
     }
 }
