@@ -249,7 +249,12 @@ impl SlideApp {
         // A screen recording is not part of the document until it is inserted: stop it here, so
         // closing the window keeps the take and the insert makes the deck dirty (which then asks
         // the user), instead of dropping the worker with an unfinished MP4 in the temp folder.
-        if closing && self.session.screen.is_recording() {
+        if closing && (self.session.screen.is_recording() || self.session.screen.is_finishing()) {
+            // A take that is still being written must land first: the insert dirties the deck, so
+            // the next close asks about it.
+            if self.session.screen.is_finishing() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            }
             // If the take cannot be inserted (no slide to put it on, say), keep the window open:
             // the message and the kept MP4 stay visible instead of the app closing over them.
             if let Err(e) = self.session.execute("show.screenRecord", &serde_json::json!({"action": "stop"})) {

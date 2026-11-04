@@ -555,18 +555,25 @@ impl Session {
     }
 
     /// Let a running screen recording take the frames the host has captured. The UI calls this
-    /// once a frame with its clock (`now`, in seconds). A capture failure ends the take: the frames
-    /// recorded so far are inserted on the current slide (an empty take is dropped) and one message
-    /// for the status bar says why the recording stopped.
+    /// once a frame with its clock (`now`, in seconds). A capture failure — or a `stop`, which only
+    /// asks the encoder to write the file — ends the take: the finished file is inserted on the
+    /// current slide on the tick that receives it (an empty take is dropped) and one message for
+    /// the status bar says why the recording stopped.
     pub fn screen_tick(&mut self, now: f64) {
         let reason = self.screen.tick(now);
-        if let Some(stopped) = self.screen.take_ended() {
-            let why = reason.unwrap_or_else(|| "the screen capture stopped".into());
+        if let Some((stopped, why)) = self.screen.take_ended_with_reason() {
+            let why = if why.is_empty() { reason.unwrap_or_default() } else { why };
             // The error texts carry no closing period; the status bar reads complete sentences.
-            let why = if why.ends_with(['.', '!', '?']) { why } else { format!("{why}.") };
+            let why = if why.is_empty() {
+                String::new()
+            } else if why.ends_with(['.', '!', '?']) {
+                format!("{why} ")
+            } else {
+                format!("{why}. ")
+            };
             let text = match cmd::screen::insert_take(self, &stopped) {
-                Ok(_) => format!("{why} The recording so far was inserted on this slide."),
-                Err(e) => format!("{why} The recording so far couldn't be inserted: {e}"),
+                Ok(_) => format!("{why}The screen recording was inserted on this slide."),
+                Err(e) => format!("{why}The screen recording couldn't be inserted: {e}"),
             };
             self.ui_requests.push(UiRequest::Message { text });
         } else if let Some(text) = reason {

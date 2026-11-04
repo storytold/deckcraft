@@ -312,8 +312,10 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
     if stop_now {
         let ok = command(app, "stop");
         if ok {
+            // The encoder writes the file on its thread; the take is inserted on the tick that
+            // receives it (its message says so).
             open = false;
-            app.notify("Screen recording inserted on the current slide");
+            app.notify("Finishing the screen recording…");
         }
     }
     if cancel_now {

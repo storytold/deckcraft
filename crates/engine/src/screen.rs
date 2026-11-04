@@ -40,6 +40,10 @@ struct Active {
     frames: u64,
     /// The newest captured picture waiting for its slot; a later capture replaces it.
     pending: Option<ScreenFrame>,
+    /// Stop asked for the file to be written: the encoder finishes it while the UI keeps running.
+    stopping: bool,
+    /// Why the take is ending, for the message the session shows when it inserts the file.
+    reason: String,
 }
 
 /// One scheduled picture for the encoder thread.
@@ -86,6 +90,8 @@ struct Worker {
     busy: bool,
     /// The picture the queue refused, for the next interval.
     kept: Option<ScreenFrame>,
+    /// A finish was requested: the worker writes the file when the queue drains.
+    finish: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// The recorder on the caller's thread (the web build).
@@ -93,6 +99,7 @@ struct Inline {
     recorder: Option<ScreenRecorder>,
     frames: u64,
     failure: Option<String>,
+    finished: Option<Result<RecorderOutput, RecorderError>>,
 }
 
 impl Encoder {
@@ -102,7 +109,10 @@ impl Encoder {
         {
             let (job_tx, job_rx) = std::sync::mpsc::sync_channel::<Job>(JOB_QUEUE);
             let (event_tx, event_rx) = std::sync::mpsc::channel::<Event>();
-            let spawned = std::thread::Builder::new().name("deckcraft-encode".into()).spawn(move || encode_loop(recorder, &job_rx, &event_tx));
+            let finish = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let worker_finish = finish.clone();
+            let spawned =
+                std::thread::Builder::new().name("deckcraft-encode".into()).spawn(move || encode_loop(recorder, &job_rx, &event_tx, &worker_finish));
             match spawned {
                 Ok(handle) => {
                     return Encoder::Worker(Worker {
@@ -114,6 +124,7 @@ impl Encoder {
                         finished: None,
                         busy: false,
                         kept: None,
+                        finish,
                     });
                 }
                 // No thread to be had: fall back to encoding here rather than losing the take.
@@ -125,11 +136,11 @@ impl Encoder {
             // The recorder moved into the closure only when the thread started; on failure the
             // closure was never called, so it is gone. That path cannot happen with the handle
             // above unless the spawn failed, which drops it — recoverable only by a new recorder.
-            Encoder::Inline(Inline { recorder: None, frames: 0, failure: Some("couldn't start the encoder".into()) })
+            Encoder::Inline(Inline { recorder: None, frames: 0, failure: Some("couldn't start the encoder".into()), finished: None })
         }
         #[cfg(target_arch = "wasm32")]
         {
-            Encoder::Inline(Inline { recorder: Some(recorder), frames: 0, failure: None })
+            Encoder::Inline(Inline { recorder: Some(recorder), frames: 0, failure: None, finished: None })
         }
     }
 
@@ -242,8 +253,47 @@ impl Encoder {
         }
     }
 
-    /// Write the file and hand back what it holds. The worker is joined here, so the file is
-    /// complete when this returns.
+    /// Ask the encoder to write the file and stop, without waiting: the worker drains its queue,
+    /// writes the file and reports the result through [`poll`](Self::poll), which the UI calls once
+    /// a frame. Stop must not block the UI on encoding and muxing.
+    fn request_finish(&mut self) {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Encoder::Worker(w) => {
+                w.finish.store(true, Ordering::Relaxed);
+                // Dropping the sender lets the worker drain what is queued and then finish.
+                w.jobs = None;
+            }
+            Encoder::Inline(i) => {
+                let out = match i.recorder.take() {
+                    Some(recorder) => recorder.finish(),
+                    None => Err(RecorderError::Empty),
+                };
+                i.finished = Some(out);
+            }
+        }
+    }
+
+    /// The result of a requested finish, once (the worker reports it through `poll`).
+    fn take_finished(&mut self) -> Option<Result<RecorderOutput, RecorderError>> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Encoder::Worker(w) => {
+                if w.finished.is_some()
+                    && let Some(handle) = w.handle.take()
+                {
+                    let _ = handle.join();
+                }
+                w.finished.take()
+            }
+            Encoder::Inline(i) => i.finished.take(),
+        }
+    }
+
+    /// Write the file and hand back what it holds, waiting for the worker. Only the terminal paths
+    /// that cannot defer (the web build's inline encoder) use this; the UI calls
+    /// [`request_finish`](Self::request_finish) and polls instead.
+    #[allow(dead_code)]
     fn finish(&mut self) -> Result<RecorderOutput, RecorderError> {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
@@ -295,7 +345,7 @@ impl Encoder {
 
 /// The encoder thread: encode or repeat each scheduled picture, then write the file on `Finish`.
 #[cfg(not(target_arch = "wasm32"))]
-fn encode_loop(recorder: ScreenRecorder, jobs: &Receiver<Job>, events: &std::sync::mpsc::Sender<Event>) {
+fn encode_loop(recorder: ScreenRecorder, jobs: &Receiver<Job>, events: &std::sync::mpsc::Sender<Event>, finish: &std::sync::atomic::AtomicBool) {
     let mut recorder = Some(recorder);
     let mut last: Option<ScreenFrame> = None;
     while let Ok(job) = jobs.recv() {
@@ -330,6 +380,12 @@ fn encode_loop(recorder: ScreenRecorder, jobs: &Receiver<Job>, events: &std::syn
         }
         let _ = events.send(Event::Encoded);
     }
+    // The queue drained: a requested finish writes the file, a discard leaves it unwritten.
+    if finish.load(Ordering::Relaxed)
+        && let Some(rec) = recorder.take()
+    {
+        let _ = events.send(Event::Finished(rec.finish()));
+    }
 }
 
 /// The encoder failed mid-take: write the file with what it holds (the caller keeps and inserts
@@ -349,6 +405,8 @@ pub struct ScreenState {
     /// A take a capture or encoder failure finished with frames in it, waiting for the session
     /// to insert it.
     ended: Option<StoppedRecording>,
+    /// Why the ended take stopped (empty for an ordinary Stop).
+    ended_reason: Option<String>,
 }
 
 impl ScreenState {
@@ -369,11 +427,16 @@ impl ScreenState {
     }
 
     pub fn is_recording(&self) -> bool {
-        self.active.is_some()
+        self.active.as_ref().is_some_and(|a| !a.stopping)
+    }
+
+    /// Whether a take is being written (Stop or a failure asked for the file).
+    pub fn is_finishing(&self) -> bool {
+        self.active.as_ref().is_some_and(|a| a.stopping)
     }
 
     pub fn is_paused(&self) -> bool {
-        self.active.as_ref().is_some_and(|a| a.paused)
+        self.active.as_ref().is_some_and(|a| a.paused && !a.stopping)
     }
 
     /// Frames encoded so far.
@@ -447,6 +510,8 @@ impl ScreenState {
             next_at: 0.0,
             frames: 0,
             pending: None,
+            stopping: false,
+            reason: String::new(),
         });
         Ok(())
     }
@@ -466,20 +531,21 @@ impl ScreenState {
 
     /// Finish the recording and hand back its file. The caller inserts it and deletes the file;
     /// on an error nothing is left behind.
-    pub fn stop(&mut self) -> Result<StoppedRecording, ScreenError> {
-        let Some(mut active) = self.active.take() else { return Err(ScreenError::NotRecording) };
+    /// Stop the take. This only asks the encoder to write the file: the worker drains its queue and
+    /// writes the MP4 while the UI keeps running, and the finished take is handed over by
+    /// [`take_ended`](Self::take_ended) on a later tick, so Stop never blocks on encoding.
+    pub fn stop(&mut self) -> Result<(), ScreenError> {
+        let Some(active) = self.active.as_mut() else { return Err(ScreenError::NotRecording) };
+        if active.stopping {
+            return Err(ScreenError::Busy);
+        }
         if let Some(host) = self.host.as_mut() {
             host.stop();
         }
-        let path = active.path;
-        let out: RecorderOutput = match active.encoder.finish() {
-            Ok(o) => o,
-            Err(e) => {
-                let _ = std::fs::remove_file(&path);
-                return Err(ScreenError::Failed(format!("the screen recording couldn't be written: {e}")));
-            }
-        };
-        Ok(StoppedRecording { path, frames: out.frames, width: out.width, height: out.height, duration_ms: out.duration_ms })
+        active.stopping = true;
+        active.reason.clear();
+        active.encoder.request_finish();
+        Ok(())
     }
 
     /// Throw the recording away. `true` when one was running.
@@ -499,6 +565,30 @@ impl ScreenState {
     pub fn tick(&mut self, now: f64) -> Option<String> {
         let active = self.active.as_mut()?;
         active.encoder.poll();
+        if active.stopping {
+            // Stop already asked for the file: take it when the encoder reports it, and never
+            // re-enter the capture path.
+            let done = active.encoder.take_finished()?;
+            let path = active.path.clone();
+            let reason = active.reason.clone();
+            self.active = None;
+            return match done {
+                Ok(out) if out.frames > 0 => {
+                    self.ended =
+                        Some(StoppedRecording { path, frames: out.frames, width: out.width, height: out.height, duration_ms: out.duration_ms });
+                    self.ended_reason = Some(reason);
+                    None
+                }
+                Ok(_) => {
+                    let _ = std::fs::remove_file(&path);
+                    Some("the screen recording had nothing in it".into())
+                }
+                Err(e) => {
+                    let _ = std::fs::remove_file(&path);
+                    Some(format!("the screen recording couldn't be written: {e}"))
+                }
+            };
+        }
         if let Some(f) = active.encoder.failure().map(str::to_string) {
             let why = format!("the screen recording stopped: {f}");
             return if active.frames > 0 {
@@ -591,29 +681,25 @@ impl ScreenState {
         self.ended.take()
     }
 
+    /// The take a stop or a capture failure finished, with why it ended.
+    pub fn take_ended_with_reason(&mut self) -> Option<(StoppedRecording, String)> {
+        let rec = self.ended.take()?;
+        Some((rec, self.ended_reason.take().unwrap_or_default()))
+    }
+
     /// End the take the way a source failure should: stop the host, write the MP4 and keep it.
     /// Nothing recorded means nothing to keep, so the file is removed.
     fn end_keeping(&mut self, why: &str) -> String {
-        let Some(mut active) = self.active.take() else { return why.to_string() };
+        let Some(active) = self.active.as_mut() else { return why.to_string() };
         if let Some(host) = self.host.as_mut() {
             host.stop();
         }
-        match active.encoder.finish() {
-            Ok(out) if out.frames > 0 => {
-                self.ended = Some(StoppedRecording {
-                    path: active.path,
-                    frames: out.frames,
-                    width: out.width,
-                    height: out.height,
-                    duration_ms: out.duration_ms,
-                });
-                why.to_string()
-            }
-            Ok(_) | Err(_) => {
-                let _ = std::fs::remove_file(&active.path);
-                why.to_string()
-            }
-        }
+        // The same non-blocking finish a Stop uses: the tick that follows hands the file over
+        // once the encoder has written it, with this reason attached.
+        active.stopping = true;
+        active.reason = why.to_string();
+        active.encoder.request_finish();
+        why.to_string()
     }
 }
 
@@ -702,6 +788,18 @@ mod tests {
         fn stop(&mut self) {}
     }
 
+    /// Run ticks until the encoder hands the finished take over (bounded), as the UI does.
+    fn pump(s: &mut ScreenState) -> StoppedRecording {
+        for _ in 0..500 {
+            let _ = s.tick(0.0);
+            if let Some(rec) = s.take_ended() {
+                return rec;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("the take never arrived");
+    }
+
     fn state_with(host: FakeScreen) -> ScreenState {
         let mut s = ScreenState::default();
         s.set_host(Some(Box::new(host)));
@@ -717,9 +815,32 @@ mod tests {
         queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [0, 0, 255, 255]));
         assert_eq!(s.tick(0.0), None);
         assert_eq!(s.frames(), 1);
-        let stopped = s.stop().expect("stop");
+        s.stop().expect("stop");
+        assert!(!s.is_recording(), "a stopping take is no longer recording");
+        let stopped = pump(&mut s);
         assert_eq!(stopped.frames, 1);
         assert_eq!((stopped.width, stopped.height), (160, 120));
+        assert!(stopped.path.is_file());
+        let _ = std::fs::remove_file(&stopped.path);
+    }
+
+    /// Stop must not wait for the encoder: it answers at once, the file arrives on a later tick,
+    /// and the session inserts it then.
+    #[test]
+    fn stop_returns_before_the_encoder_drains_and_the_take_arrives_on_a_tick() {
+        let (host, queue) = FakeScreen::ready((160, 120));
+        let mut s = state_with(host);
+        s.start(CaptureOptions::default(), RecorderConfig::new(30)).expect("start");
+        for _ in 0..8 {
+            queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [4, 8, 12, 255]));
+        }
+        assert_eq!(s.tick(0.0), None);
+        let started = std::time::Instant::now();
+        s.stop().expect("stop");
+        assert!(started.elapsed() < std::time::Duration::from_millis(50), "Stop waited on the encoder: {:?}", started.elapsed());
+        assert!(s.take_ended().is_none(), "the file is not ready at once");
+        let stopped = pump(&mut s);
+        assert!(stopped.frames >= 1, "the queued pictures are written by the worker");
         assert!(stopped.path.is_file());
         let _ = std::fs::remove_file(&stopped.path);
     }
@@ -775,7 +896,8 @@ mod tests {
         assert!(after_stall - 31 <= u64::from(MAX_CATCH_UP), "one tick is capped");
         assert_eq!(s.tick(30.0 + 1.0 / 30.0), None);
         assert!(s.frames() - after_stall <= 2, "the next interval is one frame again, got {}", s.frames() - after_stall);
-        let stopped = s.stop().expect("stop");
+        s.stop().expect("stop");
+        let stopped = pump(&mut s);
         assert!(stopped.frames >= 30);
         let _ = std::fs::remove_file(&stopped.path);
     }
@@ -793,7 +915,7 @@ mod tests {
         let why = s.tick(1.0).expect("the failure is reported");
         assert!(why.contains("the capture source is gone"), "{why}");
         assert!(!s.is_recording());
-        let kept = s.take_ended().expect("the recorded frames are kept");
+        let kept = pump(&mut s);
         assert_eq!((kept.frames, kept.width, kept.height), (1, 160, 120));
         assert!(kept.path.is_file());
         assert_eq!(s.take_ended(), None, "the take is handed over once");

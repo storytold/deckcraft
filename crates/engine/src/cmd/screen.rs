@@ -19,7 +19,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Screen Recording",
         ["Record", "Record"],
         None,
-        "{action?: start|pause|resume|stop|cancel|targets|permission, target?: id, targetKind?: display|window, region?: [x,y,w,h] px, fps?: 1-60, cursor?: bool, quality?: 10-51} → {state, …}",
+        "{action?: start|pause|resume|stop|cancel|targets|permission, target?: id, targetKind?: display|window, region?: [x,y,w,h] px, fps?: 1-60, cursor?: bool, quality?: 10-51} → {state, …} (`stop` answers {state: stopping}; the take is inserted on a later tick, once the encoder has written it)",
         always,
         run
     )]
@@ -115,16 +115,10 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
             Ok(json!({"state": if was { "cancelled" } else { "idle" }}))
         }
         "stop" => {
-            let stopped = s.screen.stop().map_err(err)?;
-            let inserted = insert_take(s, &stopped)?;
-            Ok(json!({
-                "state": "stopped",
-                "id": inserted.get("id").cloned().unwrap_or(Value::Null),
-                "frames": stopped.frames,
-                "durationMs": stopped.duration_ms,
-                "width": stopped.width,
-                "height": stopped.height,
-            }))
+            // The encoder writes the file on its thread; the take is inserted on the tick that
+            // receives it, so Stop answers at once instead of freezing the UI on encoding.
+            s.screen.stop().map_err(err)?;
+            Ok(json!({"state": "stopping"}))
         }
         "targets" => {
             // A missing permission or an unsupported host is the picker's state, not a failed
@@ -241,7 +235,9 @@ mod tests {
         assert!(empty.execute(CMD, &json!({"action": "start"})).is_err(), "start still needs a slide");
         empty.execute(CMD, &json!({"action": "cancel"})).expect("cancel needs no slide");
         let v = s.execute(CMD, &json!({"action": "stop"})).expect("stop with a slide");
-        assert!(v.get("id").and_then(Value::as_u64).is_some(), "{v}");
+        assert_eq!(v["state"], "stopping", "{v}");
+        let slide = s.active().expect("doc").selection.slide;
+        assert!(pump_until_inserted(&mut s, slide), "the finished take is inserted on a tick");
     }
 
     #[test]
@@ -283,6 +279,22 @@ mod tests {
         fn stop(&mut self) {}
     }
 
+    /// Run ticks until the encoder hands the take over and the session inserts it (bounded), as
+    /// the UI does: Stop itself only asks for the file.
+    fn pump_until_inserted(s: &mut Session, slide: usize) -> bool {
+        for _ in 0..500 {
+            s.screen_tick(0.0);
+            let done = s.active().is_some_and(|d| {
+                d.doc.slides.get(slide).is_some_and(|sl| sl.shapes.iter().any(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Media(_))))
+            });
+            if done {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        false
+    }
+
     #[test]
     fn stop_inserts_a_click_to_play_video_with_a_poster_and_undo_removes_it() {
         let frames = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
@@ -292,7 +304,9 @@ mod tests {
         frames.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [40, 90, 200, 255]));
         s.screen_tick(0.0);
         let r = s.execute(CMD, &json!({"action": "stop"})).expect("stop");
-        assert!(r.get("id").and_then(Value::as_u64).is_some(), "{r}");
+        assert_eq!(r["state"], "stopping", "Stop answers before the encoder writes the file: {r}");
+        let slide = s.active().expect("doc").selection.slide;
+        assert!(pump_until_inserted(&mut s, slide), "the finished take is inserted on a tick");
         let doc = s.active().expect("doc");
         let shape = doc
             .doc
