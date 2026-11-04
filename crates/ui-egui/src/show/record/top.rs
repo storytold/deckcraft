@@ -87,10 +87,11 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
         let id = if rec.status == RecordStatus::Paused { "record.resume" } else { "record.pause" };
         let _ = super::command(rec, show, id, now);
     }
-    let record_label = if rec.status == RecordStatus::Recording { "■ Stop" } else { "● Record" };
+    let taking = rec.status != RecordStatus::Idle;
+    let (record_label, record_hint) = if taking { ("■ Stop", "Stop recording") } else { ("● Record", "Start recording") };
     let record = right_ui.add(egui::Button::new(RichText::new(record_label).size(13.0).color(RED)).frame(false));
-    record.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Record"));
-    if record.on_hover_text("Start recording").clicked() {
+    record.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, if taking { "Stop recording" } else { "Record" }));
+    if record.on_hover_text(record_hint).clicked() {
         let _ = super::command(rec, show, "record.toggle", now);
     }
     let undo = right_ui.add_enabled(rec.undo_elapsed.is_some(), egui::Button::new(RichText::new("Undo").size(13.0)).frame(false));
