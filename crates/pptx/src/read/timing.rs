@@ -204,23 +204,43 @@ fn behaviour_auto_reverses(c: &El) -> bool {
     !behaviours.is_empty() && behaviours.iter().all(|b| b.child("cTn").and_then(|t| t.bool("autoRev")).unwrap_or(false))
 }
 
+/// Does this time node wait for a click? Its start condition is `indefinite` or names the click.
+fn starts_on_click(e: &El) -> bool {
+    e.child("stCondLst")
+        .and_then(|s| s.child("cond"))
+        .is_some_and(|c| c.attr("delay").is_some_and(|d| d.trim() == "indefinite") || c.attr("evt") == Some("onClick"))
+}
+
+/// The `p:video`/`p:audio` nodes, each with whether an enclosing time node waits for a click.
+fn media_nodes<'a>(e: &'a El, click: bool, out: &mut Vec<(&'a El, bool)>, depth: usize) {
+    if depth > crate::xml::MAX_DEPTH || out.len() >= 10_000 {
+        return;
+    }
+    let click = click || starts_on_click(e);
+    if e.is("video") || e.is("audio") {
+        out.push((e, click));
+    }
+    for c in e.elements() {
+        media_nodes(c, click, out, depth + 1);
+    }
+}
+
 /// Volume, mute, Loop until Stopped, Hide While Not Playing and Play Full Screen live in the timing tree
 /// (`p:video`/`p:audio` > `p:cMediaNode`), not on the picture: copy them onto the target's `MediaClip`.
 pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
-    let mut nodes = vec![];
-    for tag in ["video", "audio"] {
-        timing.find_all(tag, &mut nodes);
-    }
-    for node in nodes.into_iter().take(10_000) {
+    let mut found = vec![];
+    media_nodes(timing, false, &mut found, 0);
+    for (node, click) in found {
         let Some(cm) = node.child("cMediaNode") else { continue };
         let Some(id) = cm.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|f| ctx.lookup(f)) else { continue };
         let Some(shape) = find_shape_mut(shapes, id) else { continue };
         let ShapeKind::Media(clip) = &mut shape.kind else {
             // A recorded Cameo's video is in the picture's timing node, not a media shape. It
-            // autoplays only when the node starts on slide entry (delay 0); a click waits.
+            // autoplays only when its own condition starts at slide entry and no enclosing step
+            // waits for a click (a click-step keeps `delay="0"` on the inner node).
             if let Some(cameo) = shape.cameo.as_mut().filter(|c| c.recorded.is_some()) {
-                let entry = cm.path(&["cTn", "stCondLst", "cond"]).and_then(|c| c.attr("delay")) == Some("0");
-                cameo.autoplay = entry;
+                let own = cm.path(&["cTn", "stCondLst", "cond"]).is_some_and(|c| c.attr("delay") == Some("0") && c.attr("evt") != Some("onClick"));
+                cameo.autoplay = own && !click;
             }
             continue;
         };
@@ -377,4 +397,40 @@ fn plays_as_build(effects: &[&Animation], text: &TextBody) -> bool {
         matched = k + 1;
     }
     matched == effects.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use deckcraft_model::{Cameo, MediaId, ShapeId};
+
+    use super::*;
+
+    fn ctx() -> IdCtx {
+        let mut map = std::collections::HashMap::new();
+        map.insert(2, ShapeId(2));
+        IdCtx { used: Default::default(), map, fresh: false, count: 0 }
+    }
+
+    fn autoplay_of(xml: &str) -> bool {
+        let doc = crate::xml::parse(xml.as_bytes()).expect("xml");
+        let mut shapes =
+            vec![Shape { id: ShapeId(2), cameo: Some(Cameo { recorded: Some(MediaId(1)), ..Default::default() }), ..Default::default() }];
+        media_settings(&doc.root, &ctx(), &mut shapes);
+        shapes[0].cameo.as_ref().expect("cameo").autoplay
+    }
+
+    const ENTRY: &str = r#"<p:timing xmlns:p="urn:x"><p:tnLst><p:par><p:cTn id="1" dur="indefinite"><p:childTnLst><p:video><p:cMediaNode vol="100000"><p:cTn id="2"><p:stCondLst><p:cond delay="0"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="2"/></p:tgtEl></p:cMediaNode></p:video></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>"#;
+
+    #[test]
+    fn a_cameo_autoplays_only_from_a_slide_entry_condition() {
+        assert!(autoplay_of(ENTRY), "delay 0 with no click above it is slide entry");
+        let click_event = ENTRY.replace(r#"<p:cond delay="0"/>"#, r#"<p:cond evt="onClick" delay="0"/>"#);
+        assert!(!autoplay_of(&click_event), "an on-click condition is not slide entry");
+        let click_step = ENTRY
+            .replace("<p:video>", r#"<p:par><p:cTn id="9"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst><p:video>"#)
+            .replace("</p:video>", "</p:video></p:childTnLst></p:cTn></p:par>");
+        assert!(!autoplay_of(&click_step), "an enclosing click step keeps delay 0 on the inner node");
+        let waiting = ENTRY.replace(r#"<p:cond delay="0"/>"#, r#"<p:cond delay="indefinite"/>"#);
+        assert!(!autoplay_of(&waiting), "an indefinite delay waits for a click");
+    }
 }

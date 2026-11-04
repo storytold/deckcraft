@@ -580,40 +580,42 @@ fn click_pars(w: &mut W, x: &mut Exp, ids: &mut Ids, clicks: &Groups, interactiv
 /// Most effects one slide's timing writes; animations past it are left out.
 const MAX_EFFECTS: usize = 100_000;
 
-/// Does the slide have a recorded Cameo that plays when the slide appears?
+/// Does the slide have a recorded Cameo? Its `p:video` node plays on entry or on a click.
 pub fn has_recorded_cameo(shapes: &[Shape]) -> bool {
     fn at(shapes: &[Shape], depth: usize) -> bool {
         if depth > 64 {
             return false;
         }
-        shapes.iter().any(|s| s.cameo.as_ref().is_some_and(|c| c.recorded.is_some() && c.autoplay) || at(s.children(), depth + 1))
+        shapes.iter().any(|s| s.cameo.as_ref().is_some_and(|c| c.recorded.is_some()) || at(s.children(), depth + 1))
     }
     at(shapes, 0)
 }
 
-/// The shapes a recorded Cameo plays on: `p:video` for each autoplaying Cameo, in document order.
-fn cameo_spids(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<u32>, depth: usize) {
+/// The shapes a recorded Cameo plays on, in document order, each with whether it starts with the
+/// slide (`autoplay`) or waits for a click.
+fn cameo_spids(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<(u32, bool)>, depth: usize) {
     if depth > 64 {
         return;
     }
     for s in shapes {
-        if s.cameo.as_ref().is_some_and(|c| c.recorded.is_some() && c.autoplay)
+        if let Some(c) = s.cameo.as_ref().filter(|c| c.recorded.is_some())
             && let Some(spid) = idmap.get(s.id)
         {
-            out.push(spid);
+            out.push((spid, c.autoplay));
         }
         cameo_spids(s.children(), idmap, out, depth + 1);
     }
 }
 
-/// One `p:video`/`p:audio` time node for a media shape.
-fn media_node(w: &mut W, ids: &mut Ids, spid: u32, video: bool) {
+/// One `p:video`/`p:audio` time node for a media shape. `entry` starts it with the slide;
+/// otherwise it waits for a click in the show, as a non-autoplaying recording does.
+fn media_node(w: &mut W, ids: &mut Ids, spid: u32, video: bool, entry: bool) {
     let tag = if video { "p:video" } else { "p:audio" };
     w.open0(tag);
     w.open("p:cMediaNode", A::new().a("vol", "100000").a("showWhenStopped", "0"));
     w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold").a("display", "0"));
     w.open0("p:stCondLst");
-    w.empty("p:cond", A::new().a("delay", "0"));
+    w.empty("p:cond", A::new().a("delay", if entry { "0" } else { "indefinite" }));
     w.close("p:stCondLst");
     w.close("p:cTn");
     w.open0("p:tgtEl");
@@ -764,8 +766,8 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.close("p:nextCondLst");
         w.close("p:seq");
     }
-    for spid in media_spids {
-        media_node(w, &mut ids, spid, true);
+    for (spid, entry) in media_spids {
+        media_node(w, &mut ids, spid, true, entry);
     }
     for (trig, effs) in triggered {
         // The first step starts with the button's click. Later On Click effects must remain

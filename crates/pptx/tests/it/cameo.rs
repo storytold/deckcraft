@@ -254,7 +254,7 @@ fn a_recorded_cameo_keeps_the_camera_background_it_was_imported_with() {
 }
 
 #[test]
-fn a_recorded_cameo_that_does_not_autoplay_gets_no_entry_timing() {
+fn a_recorded_cameo_that_does_not_autoplay_waits_for_a_click() {
     let mut p = recorded_deck();
     if let Some(s) = p.slides.first_mut() {
         for sh in &mut std::sync::Arc::make_mut(s).shapes {
@@ -265,8 +265,8 @@ fn a_recorded_cameo_that_does_not_autoplay_gets_no_entry_timing() {
     }
     let bytes = deckcraft_pptx::export(&p).expect("export");
     let xml = part(&bytes, "ppt/slides/slide1.xml");
-    assert!(!xml.contains("<p:video>"), "no playback on slide entry: {xml}");
-    assert!(!xml.contains("<p:timing"), "nothing to time: {xml}");
+    assert!(xml.contains("<p:video>"), "the clip plays when the show reaches it: {xml}");
+    assert!(xml.contains("<p:cond delay=\"indefinite\"/>"), "it waits for a click, not slide entry: {xml}");
     // The recording is still part of the picture, so the round trip keeps it.
     assert!(xml.contains("<a:videoFile r:link=\"rId"), "{xml}");
 
