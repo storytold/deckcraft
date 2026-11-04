@@ -301,18 +301,14 @@ pub fn master_text_pieces(pres: &Presentation, m: &deckcraft_model::Master, pape
     let (kx, ky) = (paper.0 / pres.notes_size.width.max(1.0), paper.1 / pres.notes_size.height.max(1.0));
     let mut out = vec![];
     for pt in deckcraft_render::place_master_texts(pres, m, n) {
+        let mut para_chars: HashMap<usize, Vec<char>> = HashMap::new();
         for run in &pt.layout.runs {
             let Some(g) = run.glyphs.first() else { continue };
-            let text: String = pt
-                .body
-                .paragraphs
-                .get(run.para)
-                .map(|p| p.runs.iter().map(|r| r.content()).collect::<String>())
-                .unwrap_or_default()
-                .chars()
-                .skip(run.chars.0)
-                .take(run.chars.1.saturating_sub(run.chars.0))
-                .collect();
+            let chars = para_chars.entry(run.para).or_insert_with(|| {
+                pt.body.paragraphs.get(run.para).map(|p| p.runs.iter().flat_map(|r| r.content().chars()).collect()).unwrap_or_default()
+            });
+            let (a, b) = (run.chars.0.min(chars.len()), run.chars.1.min(chars.len()));
+            let text: String = chars.get(a..b.max(a)).unwrap_or_default().iter().collect();
             if text.trim().is_empty() {
                 continue;
             }
@@ -578,7 +574,7 @@ impl Exporter<'_> {
     /// Invisible glyphs exactly over the rasterised text.
     fn text_layer(&mut self, s: &mut Surface, pt: &PlacedText, view: Affine, visible: bool) -> Result<()> {
         // Each paragraph's characters, gathered once: a long paragraph wraps into many runs.
-        let mut para_chars: std::collections::HashMap<usize, Vec<char>> = std::collections::HashMap::new();
+        let mut para_chars: HashMap<usize, Vec<char>> = HashMap::new();
         for run in &pt.layout.runs {
             if run.glyphs.is_empty() || run.size <= 0.0 {
                 continue;
