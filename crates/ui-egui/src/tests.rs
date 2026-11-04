@@ -419,6 +419,10 @@ fn ctrl_v_pastes_the_picture_a_browser_copied_not_its_link() {
         let pictures = shapes.iter().filter(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })).count();
         assert_eq!(pictures, pictures_after, "{text:?}");
         assert_eq!(shapes.len(), shapes_before + 1, "one shape, picture or text, for {text:?}");
+        if pictures_after == 0 {
+            let pasted = shapes.last().and_then(|s| s.text.as_ref()).map(deckcraft_model::TextBody::text);
+            assert_eq!(pasted.as_deref(), Some(text.as_str()), "the text survives");
+        }
     }
 }
 

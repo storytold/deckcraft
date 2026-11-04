@@ -307,7 +307,6 @@ fn keep_source_formatting_uses_the_slides_colour_map() {
         let p = &sh.text.as_ref().unwrap().paragraphs[0];
         resolve::text_color(&ctx, &resolve::run(&ctx, sh, p, &p.runs[0].props))
     };
-    let swapped = || Some([("bg1", "dk1"), ("tx1", "lt1"), ("bg2", "dk2"), ("tx2", "lt2")].map(|(a, b)| (a.to_string(), b.to_string())).to_vec());
     for on_layout in [false, true] {
         let mut s = session();
         s.execute("slide.new", &json!({})).unwrap();
@@ -320,9 +319,9 @@ fn keep_source_formatting_uses_the_slides_colour_map() {
         if on_layout {
             let layout = doc.slides[at].layout;
             let m = std::sync::Arc::make_mut(&mut doc.masters[0]);
-            m.layouts.iter_mut().find(|l| l.id == layout).unwrap().color_map = swapped();
+            m.layouts.iter_mut().find(|l| l.id == layout).unwrap().color_map = swapped_colour_map();
         } else {
-            std::sync::Arc::make_mut(&mut doc.slides[at]).color_map = swapped();
+            std::sync::Arc::make_mut(&mut doc.slides[at]).color_map = swapped_colour_map();
         }
         let want = first_run_colour(&s, title);
         assert_ne!(want, plain, "the override changes how the title draws");
@@ -333,6 +332,85 @@ fn keep_source_formatting_uses_the_slides_colour_map() {
         let copy = s.doc().unwrap().selection.shapes[0];
         assert_ne!(copy, title);
         assert_eq!(first_run_colour(&s, copy), want, "override on the layout: {on_layout}");
+    }
+}
+
+/// A colour map that swaps text and background, as a dark slide or layout has.
+fn swapped_colour_map() -> Option<Vec<(String, String)>> {
+    Some([("bg1", "dk1"), ("tx1", "lt1"), ("bg2", "dk2"), ("tx2", "lt2")].map(|(a, b)| (a.to_string(), b.to_string())).to_vec())
+}
+
+/// A new rectangle in the edited tree, filled with theme colour `slot`.
+fn rect_filled_with(s: &mut Session, slot: deckcraft_color::SchemeSlot) -> ShapeId {
+    use deckcraft_model::{ColorRef, Fill};
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+    let id = ShapeId(u32::try_from(id).unwrap());
+    s.edit(|doc, sel| {
+        let list = crate::shapes_mut(doc, sel).unwrap();
+        list.iter_mut().find(|x| x.id == id).unwrap().fill = Some(Fill::solid(ColorRef::scheme(slot)));
+        Ok(())
+    })
+    .unwrap();
+    id
+}
+
+/// How shape `id`'s fill draws in the edited tree.
+fn drawn_fill(s: &Session, id: ShapeId) -> deckcraft_color::Rgba {
+    use deckcraft_model::{Fill, resolve};
+    let st = s.doc().unwrap();
+    let ctx = crate::cmd::text::ctx_for(&st.doc, &st.selection).unwrap();
+    match resolve::fill(&ctx, st.shape(id).unwrap()).0 {
+        Some(Fill::Solid { color }) => ctx.color(&color, None),
+        other => panic!("not a solid fill: {other:?}"),
+    }
+}
+
+/// Copy the selected shape and paste it with Keep Source Formatting; the copy's id.
+fn keep_source_copy(s: &mut Session, id: ShapeId) -> ShapeId {
+    s.execute("selection.select", &json!({"id": id.0})).unwrap();
+    s.execute("edit.copy", &json!({})).unwrap();
+    s.execute("edit.pasteSpecial", &json!({"as": "keepSource"})).unwrap();
+    let copy = s.doc().unwrap().selection.shapes[0];
+    assert_ne!(copy, id);
+    copy
+}
+
+/// A colour map renames only `tx1`, `bg1`, `tx2` and `bg2`. Keep Source Formatting fixes every slot
+/// as it draws: `tx1` follows the map, while a direct `dk1` stays the theme's dark colour.
+#[test]
+fn keep_source_formatting_maps_only_the_alias_colours() {
+    use deckcraft_color::SchemeSlot::{self, *};
+    let mut s = session();
+    let st = s.doc_mut().unwrap();
+    let at = st.selection.slide;
+    std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut st.doc).slides[at]).color_map = swapped_colour_map();
+    let slots: [SchemeSlot; 9] = [Dk1, Lt1, Dk2, Lt2, Tx1, Bg1, Tx2, Bg2, Accent1];
+    let mut drawn = vec![];
+    for slot in slots {
+        let id = rect_filled_with(&mut s, slot);
+        let want = drawn_fill(&s, id);
+        let copy = keep_source_copy(&mut s, id);
+        assert_eq!(drawn_fill(&s, copy), want, "{slot:?}");
+        drawn.push(want);
+    }
+    assert_ne!(drawn[0], drawn[4], "the map sets `tx1` apart from `dk1`");
+}
+
+/// In Slide Master view a copy draws through the edited master's map, not an override on the slide
+/// that happens to be current.
+#[test]
+fn keep_source_formatting_in_slide_master_view_ignores_the_slides_colour_map() {
+    use deckcraft_color::SchemeSlot::Tx1;
+    for master in [false, true] {
+        let mut s = session();
+        let st = s.doc_mut().unwrap();
+        let at = st.selection.slide;
+        std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut st.doc).slides[at]).color_map = swapped_colour_map();
+        s.execute("view.slideMaster", &if master { json!({"master": 0}) } else { json!({}) }).unwrap();
+        let id = rect_filled_with(&mut s, Tx1);
+        let want = drawn_fill(&s, id);
+        let copy = keep_source_copy(&mut s, id);
+        assert_eq!(drawn_fill(&s, copy), want, "editing the master: {master}");
     }
 }
 

@@ -127,11 +127,12 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
     let mids = crate::media_refs::shapes_media(&shapes);
     let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
     let plain = shapes.iter().filter_map(|x| x.text.as_ref().map(|t| t.text())).collect::<Vec<_>>().join("\n");
-    // The scheme the slide draws with: its or its layout's colour map, else the master's.
-    let source_theme = st
-        .current_slide()
-        .and_then(|sl| deckcraft_model::resolve::Ctx::for_slide(&st.doc, sl))
-        .map(|ctx| (ctx.scheme.clone(), ctx.master.theme.fonts.clone()));
+    // The theme of what is being edited: a slide's or layout's colour map, else the master's.
+    let source_theme = super::text::ctx_for(&st.doc, &st.selection).map(|ctx| crate::SourceTheme {
+        colors: ctx.master.theme.colors.clone(),
+        color_map: ctx.color_map.clone(),
+        fonts: ctx.master.theme.fonts.clone(),
+    });
     s.clipboard = crate::Clipboard { shapes, placeholders, media, plain: plain.clone(), source_theme, ..Default::default() };
     Ok(plain)
 }
@@ -430,9 +431,9 @@ fn paste_special(s: &mut Session, p: &Value) -> Result<Value> {
         "text" | "keepTextOnly" => paste_text(s, &json!({})),
         "keepSource" | "keepSourceFormatting" => {
             let saved = s.clipboard.clone();
-            if let Some((scheme, fonts)) = &saved.source_theme {
-                bake_theme(&mut s.clipboard.shapes, scheme, fonts);
-                bake_theme(&mut s.clipboard.placeholders, scheme, fonts);
+            if let Some(theme) = &saved.source_theme {
+                bake_theme(&mut s.clipboard.shapes, theme);
+                bake_theme(&mut s.clipboard.placeholders, theme);
             }
             let r = paste(s, &json!({}));
             let pastes = s.clipboard.pastes;
@@ -447,8 +448,8 @@ fn paste_special(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Replace theme colours and theme fonts with the values they have in `scheme` / `fonts`, so the
 /// shapes keep their look under another theme.
-pub(crate) fn bake_theme(shapes: &mut [Shape], scheme: &deckcraft_color::ColorScheme, fonts: &deckcraft_model::theme::FontScheme) {
-    fn rec(v: &mut Value, scheme: &deckcraft_color::ColorScheme, fonts: &deckcraft_model::theme::FontScheme, depth: usize) {
+pub(crate) fn bake_theme(shapes: &mut [Shape], theme: &crate::SourceTheme) {
+    fn rec(v: &mut Value, theme: &crate::SourceTheme, depth: usize) {
         if depth > 256 {
             return;
         }
@@ -457,7 +458,7 @@ pub(crate) fn bake_theme(shapes: &mut [Shape], scheme: &deckcraft_color::ColorSc
                 if o.get("kind").and_then(Value::as_str) == Some("scheme")
                     && let Some(slot) = o.get("slot").and_then(|x| serde_json::from_value::<deckcraft_color::SchemeSlot>(x.clone()).ok())
                     && slot != deckcraft_color::SchemeSlot::PhClr
-                    && let Ok(rgb) = serde_json::to_value(scheme.get(slot))
+                    && let Ok(rgb) = serde_json::to_value(theme.colors.get(deckcraft_model::map_slot(&theme.color_map, slot)))
                 {
                     o.clear();
                     o.insert("kind".into(), json!("rgb"));
@@ -465,14 +466,14 @@ pub(crate) fn bake_theme(shapes: &mut [Shape], scheme: &deckcraft_color::ColorSc
                     return;
                 }
                 for x in o.values_mut() {
-                    rec(x, scheme, fonts, depth + 1);
+                    rec(x, theme, depth + 1);
                 }
             }
-            Value::Array(a) => a.iter_mut().for_each(|x| rec(x, scheme, fonts, depth + 1)),
+            Value::Array(a) => a.iter_mut().for_each(|x| rec(x, theme, depth + 1)),
             Value::String(t) if t.starts_with('+') => {
                 let set = match t.get(1..3) {
-                    Some("mj") => &fonts.major,
-                    Some("mn") => &fonts.minor,
+                    Some("mj") => &theme.fonts.major,
+                    Some("mn") => &theme.fonts.minor,
                     _ => return,
                 };
                 let face = match t.get(3..) {
@@ -490,7 +491,7 @@ pub(crate) fn bake_theme(shapes: &mut [Shape], scheme: &deckcraft_color::ColorSc
     }
     for sh in shapes.iter_mut() {
         let Ok(mut v) = serde_json::to_value(&*sh) else { continue };
-        rec(&mut v, scheme, fonts, 0);
+        rec(&mut v, theme, 0);
         if let Ok(baked) = serde_json::from_value::<Shape>(v) {
             *sh = baked;
         }
@@ -503,8 +504,8 @@ fn paste_picture(s: &mut Session) -> Result<Value> {
     if clip.shapes.is_empty() {
         return Err(bad("edit.pasteSpecial", "copy shapes first to paste them as a picture"));
     }
-    if let Some((scheme, fonts)) = &clip.source_theme {
-        bake_theme(&mut clip.shapes, scheme, fonts);
+    if let Some(theme) = &clip.source_theme {
+        bake_theme(&mut clip.shapes, theme);
     }
     let st = s.doc()?;
     let mut doc = (*st.doc).clone();
