@@ -565,7 +565,7 @@ impl SlideApp {
         self.apply_external_file(id, name, bytes);
     }
 
-    fn capture_file_target(&self) -> FileTarget {
+    pub(crate) fn capture_file_target(&self) -> FileTarget {
         let Some(d) = self.session.active() else { return FileTarget::Absent };
         let place = match d.selection.target {
             Target::Slides => match d.current_slide() {
@@ -639,7 +639,7 @@ impl SlideApp {
 
     /// Run `cmd` on the document and slide captured for the request, then put the view back
     /// if the user has since moved. A missing document or slide cancels the file.
-    fn execute_on_target(&mut self, target: &FileTarget, name: &str, cmd: &str, params: &Value) -> Result<(), String> {
+    pub(crate) fn execute_on_target(&mut self, target: &FileTarget, name: &str, cmd: &str, params: &Value) -> Result<(), String> {
         let FileTarget::Document { doc, place } = target else {
             self.session.execute("file.new", &json!({})).map_err(|e| e.to_string())?;
             return self.session.execute(cmd, params).map(|_| ()).map_err(|e| e.to_string());
@@ -649,6 +649,8 @@ impl SlideApp {
         };
         let view = self.session.active_index();
         let saved = self.session.documents().get(idx).map(|d| d.selection.clone());
+        // Whether the user has moved away from the place the file was chosen for.
+        let moved = self.capture_file_target() != *target;
         self.session.set_active(idx);
         let located = match self.locate_place(place) {
             Ok(located) => located,
@@ -668,12 +670,15 @@ impl SlideApp {
             st.selection.cells = None;
         }
         let result = self.session.execute(cmd, params).map(|_| ()).map_err(|e| e.to_string());
-        if view == Some(idx) {
+        if view != Some(idx) {
+            self.restore_file_view(view);
+        } else if moved {
+            // The user is looking at another slide of the same document: put them back there.
+            // When they have not moved, the command's own selection stands, so the new shape is
+            // selected for the next step.
             if let (Some(sel), Some(st)) = (saved, self.session.active_mut()) {
                 st.selection = sel;
             }
-        } else {
-            self.restore_file_view(view);
         }
         result
     }

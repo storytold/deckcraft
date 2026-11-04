@@ -234,6 +234,11 @@ impl MicIn for CpalIn {
         self.buf.lock().unwrap_or_else(PoisonError::into_inner).samples.len()
     }
 
+    fn failure(&self) -> Option<String> {
+        // Peek: `report` still logs the error, so this must not consume it.
+        self.error.lock().ok().and_then(|kept| kept.clone())
+    }
+
     fn stop(&mut self) {
         if let Some(stop) = self.stop.take() {
             let (lock, cv) = &*stop;

@@ -80,7 +80,7 @@ pub use state::{RECENT_MAX, UiState, ViewMode, ZOOM_RANGE};
 
 /// The presentation (and place in it) captured when the request started.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FileTarget {
+pub(crate) enum FileTarget {
     /// Nothing was open. An insert makes its own document rather than using one opened
     /// while the file was being read.
     Absent,
@@ -239,6 +239,8 @@ pub struct SlideApp {
     /// The word looked up in the Thesaurus pane.
     pub thesaurus_query: String,
     pub show: Option<show::Show>,
+    /// A commanded end dropped a full-screen show: the next frame leaves full screen.
+    pub(crate) leave_fullscreen: bool,
     /// Current slide's animations playing on the editor canvas (not the full-screen show).
     anim_preview: Option<AnimPreview>,
     /// Where the Reuse Slides picker inserts: the presentation and slide current when it opened.

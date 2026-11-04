@@ -109,13 +109,13 @@ fn a_take_is_capped_by_duration_and_size() {
 fn a_device_or_permission_error_leaves_the_recorder_idle() {
     let mut rec = Recorder::default();
     let mut mic = FakeMic::failing("permission denied");
-    let e = rec.start(Some(&mut mic), 0.0).expect_err("start must fail");
+    let e = rec.start(Some(&mut mic), 0.0, crate::FileTarget::Absent).expect_err("start must fail");
     assert!(e.contains("permission denied"), "{e}");
     assert!(!rec.is_recording());
-    assert!(rec.start(None, 0.0).is_err(), "no microphone is reported, not a panic");
+    assert!(rec.start(None, 0.0, crate::FileTarget::Absent).is_err(), "no microphone is reported, not a panic");
     let mut mic = FakeMic::ok(8_000, tone(8_000, 0.5));
-    rec.start(Some(&mut mic), 0.0).expect("start");
-    assert!(rec.start(Some(&mut mic), 0.0).is_err(), "a second take is refused");
+    rec.start(Some(&mut mic), 0.0, crate::FileTarget::Absent).expect("start");
+    assert!(rec.start(Some(&mut mic), 0.0, crate::FileTarget::Absent).is_err(), "a second take is refused");
     rec.cancel(Some(&mut mic));
     assert!(!rec.is_recording());
 }

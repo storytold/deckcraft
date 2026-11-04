@@ -70,6 +70,9 @@ struct Take {
     started: f64,
     /// The duration or byte cap stopped further capture.
     full: bool,
+    /// The presentation and slide that were in front when the take started: the recording lands
+    /// there even if the user browsed elsewhere meanwhile.
+    target: crate::FileTarget,
 }
 
 /// Record ▸ Audio state.
@@ -102,14 +105,14 @@ impl Recorder {
     }
 
     /// Open the microphone and begin a take. A failed start leaves the recorder idle.
-    pub(crate) fn start(&mut self, mic: Option<&mut (dyn MicIn + '_)>, now: f64) -> Result<(), String> {
+    pub(crate) fn start(&mut self, mic: Option<&mut (dyn MicIn + '_)>, now: f64, target: crate::FileTarget) -> Result<(), String> {
         if self.is_recording() {
             return Err("A recording is already in progress".into());
         }
         let mic = mic.ok_or_else(|| "Audio recording isn't available here".to_string())?;
         mic.stop();
         mic.start().map_err(|e| format!("Couldn't start recording: {e}"))?;
-        self.take = Some(Take { rate: 0, samples: Vec::new(), started: now, full: false });
+        self.take = Some(Take { rate: 0, samples: Vec::new(), started: now, full: false, target });
         Ok(())
     }
 
@@ -135,15 +138,23 @@ impl Recorder {
 
     /// Stop the microphone, drain what is left and return the WAV. Any error leaves the recorder
     /// idle, so a refused take never keeps a dead stream open.
-    pub(crate) fn finish(&mut self, mut mic: Option<&mut (dyn MicIn + '_)>) -> Result<Vec<u8>, String> {
+    pub(crate) fn finish(&mut self, mut mic: Option<&mut (dyn MicIn + '_)>) -> Result<(Vec<u8>, crate::FileTarget), String> {
         if let Some(mic) = mic.as_mut() {
             self.tick(Some(&mut **mic));
+        }
+        // The device may have gone away mid-take: say so instead of saving a truncated clip.
+        if let Some(e) = mic.as_ref().and_then(|mic| mic.failure()) {
+            self.take = None;
+            if let Some(mic) = mic.as_mut() {
+                mic.stop();
+            }
+            return Err(format!("The microphone stopped: {e}"));
         }
         let Some(take) = self.take.take() else { return Err("No recording is in progress".into()) };
         if let Some(mic) = mic {
             mic.stop();
         }
-        encode(take.rate, &take.samples)
+        encode(take.rate, &take.samples).map(|wav| (wav, take.target))
     }
 
     /// Stop the microphone and throw the take away.
@@ -171,7 +182,9 @@ impl SlideApp {
             return Err("Open a presentation first".into());
         }
         let now = monotonic_secs();
-        let r = self.record.start(self.services.mic.as_deref_mut(), now);
+        // The take belongs to the slide it starts on, wherever the user browses meanwhile.
+        let target = self.capture_file_target();
+        let r = self.record.start(self.services.mic.as_deref_mut(), now, target);
         if let Err(e) = &r {
             self.set_status(e.clone());
         }
@@ -189,17 +202,18 @@ impl SlideApp {
 
     /// Stop the take, validate it and insert it as audio on the current slide (one undo step).
     pub(crate) fn stop_audio_recording(&mut self) -> Result<(), String> {
-        let wav = match self.record.finish(self.services.mic.as_deref_mut()) {
-            Ok(wav) => wav,
+        let (wav, target) = match self.record.finish(self.services.mic.as_deref_mut()) {
+            Ok(done) => done,
             Err(e) => {
                 self.set_status(e.clone());
                 return Err(e);
             }
         };
         let name = self.next_recording_name();
-        let r = self.run("insert.audio", serde_json::json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(&wav)}));
-        match r {
-            Ok(_) => self.set_status("Recording inserted on the current slide"),
+        let params = serde_json::json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(&wav)});
+        // Inserted where the take started, not where the user happens to be now.
+        match self.execute_on_target(&target, "The recording", "insert.audio", &params) {
+            Ok(()) => self.set_status("Recording inserted on the slide it was made for"),
             Err(e) => {
                 self.set_status(format!("Couldn't insert the recording: {e}"));
                 return Err(e);

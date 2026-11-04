@@ -335,7 +335,10 @@ pub fn has_cameo(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
     let doc = s.active().ok_or_else(|| "no presentation open".to_string())?;
     let shapes = doc.selected_shapes();
-    if !shapes.is_empty() && shapes.iter().all(|sh| sh.is_cameo()) { Ok(()) } else { Err("no Cameo selected".into()) }
+    let selected = !shapes.is_empty() && shapes.iter().all(|sh| sh.is_cameo());
+    // A running preview can always be stopped, even after its Cameo was deselected or deleted.
+    let running = s.camera_status != deckcraft_media::camera::CameraStatus::Off;
+    if selected || running { Ok(()) } else { Err("no Cameo selected".into()) }
 }
 
 #[cfg(test)]

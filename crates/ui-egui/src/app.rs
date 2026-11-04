@@ -54,6 +54,7 @@ impl SlideApp {
             dialog: None,
             thesaurus_query: String::new(),
             show: None,
+            leave_fullscreen: false,
             anim_preview: None,
             reuse_target: None,
             media: media::MediaHost::new(audio_out),
@@ -237,6 +238,9 @@ impl SlideApp {
         self.retract_synthetic_after_logic(ctx);
         // Queued/settling screenshots force the bounded hidden paints they need; issued ones
         // rely on the screenshot command and the completion callback, with only a deadline wake.
+        if std::mem::take(&mut self.leave_fullscreen) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+        }
         self.capture.request_paint_if_needed(ctx, web_time::Instant::now());
         if !self.synthetic.is_empty() || !self.synthetic_next.is_empty() || self.synthetic_pending {
             ctx.request_repaint();
@@ -319,6 +323,9 @@ impl SlideApp {
             self.anim_preview = None;
             show::ui(self, ui);
             doc_window::show(self, &ctx);
+            // A close request during a take raises the quit prompt; it must be visible over the
+            // show, or the user cannot answer it.
+            dialogs::show(self, &ctx);
             self.perf.frame_ms = now_ms() - t0;
             self.ui_end(&ctx);
             return;

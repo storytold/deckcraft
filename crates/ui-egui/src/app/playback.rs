@@ -39,6 +39,10 @@ impl SlideApp {
     /// commanded end never drops a recording.
     pub(crate) fn end_show_now(&mut self) {
         if let Some(mut show) = self.show.take() {
+            // The shell's finish leaves full screen; a commanded end asks the next pass to.
+            if !show.reading {
+                self.leave_fullscreen = true;
+            }
             if let Some(doc) = self.session.active().map(|d| d.doc.clone()) {
                 // An unsaved script edit lives in the Record view's draft: write it back before
                 // the show goes, or quitting from the field loses the text.
@@ -59,6 +63,10 @@ impl SlideApp {
     /// Leave animation preview, stop editor-owned media, and create a show at the requested slide
     /// with the current reading/presenter configuration; an out-of-range slide starts an ended show.
     pub fn start_show(&mut self, from: usize, reading: bool) {
+        // A show replaces the current one, so a take it holds is saved before the swap.
+        if self.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured)) {
+            self.end_show_now();
+        }
         // The show and Record ▸ Audio share one microphone. A finished take is inserted on the
         // slide before the show opens, so starting Play never throws the samples away.
         if self.record.is_recording() {

@@ -64,7 +64,11 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
     }
     let mut body = ui.new_child(UiBuilder::new().max_rect(body_rect));
     body.visuals_mut().override_text_color = Some(Color32::from_gray(224));
-    rec.notes_scroll = scroll::pane(&mut body, rec.notes_scroll, body_rect, |ui| {
+    // With the teleprompter overlay off, the pane's script is the visible one: it follows the
+    // take's offset instead of its own scroll position.
+    let following = rec.view == ViewKind::Teleprompter && !rec.teleprompter.overlay;
+    let start = if following { rec.teleprompter.offset } else { rec.notes_scroll };
+    rec.notes_scroll = scroll::pane(&mut body, start, body_rect, |ui| {
         edit::ui(app, ui, rec, doc, slide);
     });
 }

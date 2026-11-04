@@ -317,20 +317,31 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
 
 fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     let names: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).map(|d| d.title()).collect();
-    if names.is_empty() {
+    // A take is unsaved work too: the prompt must offer save, discard and cancel for it even when
+    // no document is dirty.
+    let recording = app.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured));
+    if names.is_empty() && !recording {
         app.quit_confirmed = true;
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         return true;
     }
-    let what = if names.len() == 1 { format!("“{}”", names[0]) } else { format!("{} presentations", names.len()) };
-    ui.label(egui::RichText::new(format!("Do you want to save the changes you made to {what}?")).strong());
-    ui.label("Your changes will be lost if you don't save them.");
+    if !names.is_empty() {
+        let what = if names.len() == 1 { format!("“{}”", names[0]) } else { format!("{} presentations", names.len()) };
+        ui.label(egui::RichText::new(format!("Do you want to save the changes you made to {what}?")).strong());
+        ui.label("Your changes will be lost if you don't save them.");
+    } else {
+        ui.label(egui::RichText::new("A recording is still in progress.").strong());
+        ui.label("Save it with the presentation, or discard it?");
+    }
     ui.add_space(8.0);
     let mut done = false;
     ui.horizontal(|ui| {
         let t = Tokens::get(ui.ctx());
         if ui.add(egui::Button::new("Don't Save").min_size(vec2(84.0, 24.0))).clicked() {
             let _ = app.session.execute("file.recovery.discard", &json!({}));
+            // Discarding means the take goes too, not just the document's changes.
+            app.show = None;
+            app.stop_mic();
             app.quit_confirmed = true;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             done = true;

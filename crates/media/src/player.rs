@@ -46,6 +46,11 @@ pub trait MicIn {
     fn captured(&self) -> usize {
         0
     }
+    /// Why capture stopped on its own (the device was unplugged, the stream errored), if it did.
+    /// `start` clears it; a recorder that sees one must not present the take as complete.
+    fn failure(&self) -> Option<String> {
+        None
+    }
     fn stop(&mut self);
 }
 
