@@ -21,6 +21,7 @@ pub mod recolor;
 pub mod reuse;
 pub mod review;
 mod richclip;
+pub use richclip::html_is_single_image;
 pub mod selection;
 pub mod shape;
 pub mod slide;

@@ -1,7 +1,10 @@
 # UI parity with PowerPoint
 
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (browser image parser completeness and URL fallback hardened; current main integrated; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** trivial (single-image browser HTML can use clipboard pixels beside a text alternative (#1641); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (dragging several selected slides moves them all; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (group fill and outline edits reach members, #1079; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** trivial (Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -106,7 +109,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Rulers with indent markers and tab stops | yes | yes: indent markers and tab stops drag on the ruler (a click adds a tab, the corner selector picks its kind); Tabs dialog from Home › Paragraph and the Paragraph dialog |
 | Drag and drop of files and between thumbnails | yes | yes; several selected slides move together as one run, in one undo step, in the thumbnail pane and the Slide Sorter |
 | Slide Sorter sections: a bar per section, add, rename in place, collapse, drag the whole section (its slides move with it) | yes | yes |
-| Image paste from the clipboard | yes | macOS pastes a picture when the paste carries no text (TIFF), and rich text copies and pastes as HTML (bold, italic, underline). Windows image paste stays open (#1414) |
+| Image paste from the clipboard | yes | An available clipboard bitmap is pasted for image-only content or single-image HTML with a text/URL alternative (#1641); rich text with inline images stays text. Duplicate image/text events insert once. Desktop OS clipboard integration still needs #1419; Windows image paste stays open (#1414) |
 | Font menu: every installed family with its faces | yes | families yes; only Regular/Bold/Italic faces (#69) |
 
 ## Keyboard shortcuts
@@ -173,8 +176,10 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | trivial | Browser-image run-cap completeness and same-URL/failed-image fallback covered; main conflicts reconciled and scores unchanged (#1641) |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
+| 2026-11-01 | trivial | Browser-image paste uses available pixels for single-image HTML with text alternatives; internal objects and rich text retained (#1641). Scores unchanged |
 | 2026-10-29 | trivial | Picture Format: the Picture Styles row shows as many styles as fit beside the groups after it (at least two) and a More arrow with all 24, as the Transitions and Animations galleries do; Crop and Size are in view in the default window (#1232) |
 | 2026-10-26 | trivial | Thumbnail pane and Slide Sorter: dragging one of several selected slides moves the whole selection |
 | 2026-10-24 | trivial | Table cells: dragging across cells selects a range of cells |

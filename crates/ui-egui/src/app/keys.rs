@@ -116,6 +116,8 @@ impl SlideApp {
                 self.set_status(e.to_string());
             }
         }
+        let mut image_pasted = false;
+        let mut image_text_fallback = None;
         for e in events {
             // An earlier command in this raw batch may have settled the composition. Request the
             // replacement at this ordered boundary, before the current event is considered.
@@ -127,6 +129,8 @@ impl SlideApp {
                         let params = json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)});
                         if let Err(e) = self.session.execute("insert.picture", &params) {
                             self.set_status(e.to_string());
+                        } else {
+                            image_pasted = true;
                         }
                     }
                     Err(e) => self.set_status(e),
@@ -147,18 +151,32 @@ impl SlideApp {
                 egui::Event::Cut => self.publish_clipboard(ctx, true),
                 egui::Event::Paste(text) => {
                     // Our own marker for objects without text: paste what the session copied.
-                    let text = if text == OBJECTS_MARKER { String::new() } else { text };
-                    // A picture (TIFF from Keynote, a screenshot) lands when the paste has no text.
-                    // Text keeps its HTML (bold, italic, underline) when the host can read it.
+                    let object_marker = text == OBJECTS_MARKER;
+                    let text = if object_marker { String::new() } else { text };
+                    // Browsers can publish URL/text alternatives alongside a copied image.
+                    // Prefer its bitmap only for a single-image HTML fragment, retaining rich
+                    // text with inline images and our own object copies as normal pastes.
                     let html = self.services.clipboard_html.as_mut().and_then(|f| f()).filter(|h| !h.is_empty());
+                    let browser_image = !object_marker && html.as_deref().is_some_and(deckcraft_engine::cmd::html_is_single_image);
+                    if pasted_image_event && browser_image {
+                        // Decide after all image events, so failures retain their text alternative
+                        // regardless of which representation arrived first.
+                        image_text_fallback = Some(text);
+                        continue;
+                    }
                     // egui 0.37 sends `PasteImage` directly; the services fallback stays for
                     // integrations that still send an empty `Paste`. Never insert twice.
-                    let img = if text.is_empty() && !pasted_image_event { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
+                    let img = if !object_marker && !pasted_image_event && (text.is_empty() || browser_image) {
+                        self.services.clipboard_image.as_mut().and_then(|f| f())
+                    } else {
+                        None
+                    };
                     let revision = self.session.active().map(|d| d.revision);
                     let r = match img {
                         Some(png) => self
                             .session
                             .execute("insert.picture", &json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)})),
+                        None if browser_image => self.session.execute("edit.pasteText", &json!({"text": text})),
                         None => {
                             let mut params = json!({"text": text});
                             if let Some(h) = html {
@@ -202,7 +220,21 @@ impl SlideApp {
                 _ => {}
             }
         }
+        if !image_pasted && let Some(text) = image_text_fallback {
+            self.paste_image_text_fallback(ctx, &text);
+        }
         self.drain_requests();
+    }
+
+    /// Retain the companion text when an explicit image event could not be inserted.
+    fn paste_image_text_fallback(&mut self, ctx: &egui::Context, text: &str) {
+        let revision = self.session.active().map(|d| d.revision);
+        if let Err(e) = self.session.execute("edit.pasteText", &json!({"text": text})) {
+            self.set_status(e.to_string());
+        }
+        if self.session.active().map(|d| d.revision) != revision {
+            self.note_application_edit(ctx);
+        }
     }
 }
 
