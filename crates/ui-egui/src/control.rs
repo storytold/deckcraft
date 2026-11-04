@@ -385,6 +385,13 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
             // written into the document before the save, so the file keeps it.
             if p.get("save").and_then(Value::as_bool) == Some(true) {
                 app.end_show_now();
+                // A Record ▸ Audio take is part of what "save" must keep: finish and insert it,
+                // and report the failure instead of confirming a quit that lost it.
+                if app.record.is_recording()
+                    && let Err(e) = app.stop_audio_recording()
+                {
+                    return err(e);
+                }
                 if !app.save_all() {
                     return err("not every presentation could be saved");
                 }

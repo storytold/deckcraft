@@ -563,6 +563,7 @@ impl Show {
         self.last_move = now;
         self.record_paused_at = None;
         self.mic_tried = false;
+        self.mic_error = None;
         self.capturing = true;
         self.timings.clear();
         self.recorded.clear();

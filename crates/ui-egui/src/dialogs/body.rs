@@ -350,14 +350,22 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
             if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                // Live takes are written into the document first, so the file keeps them.
+                // Live takes are written into the document first, so the file keeps them. If the
+                // audio cannot be saved, the prompt stays open rather than closing without it.
                 app.end_show_now();
-                let _ = app.stop_audio_recording();
-                if app.save_all() {
-                    app.quit_confirmed = true;
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                let audio = if app.record.is_recording() { app.stop_audio_recording() } else { Ok(()) };
+                match audio {
+                    Err(e) => {
+                        app.set_status(format!("Couldn't save the recording: {e}"));
+                    }
+                    Ok(()) => {
+                        if app.save_all() {
+                            app.quit_confirmed = true;
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        done = true;
+                    }
                 }
-                done = true;
             }
             if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
                 done = true;
