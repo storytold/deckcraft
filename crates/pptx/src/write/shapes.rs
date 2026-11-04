@@ -446,7 +446,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
 }
 
 fn model_rel(x: &mut Exp, o: &mut Out, media: deckcraft_model::MediaId) -> Option<String> {
-    if x.p.media(media).is_none_or(|m| m.data.is_empty()) {
+    if x.media(media).is_none_or(|m| m.data.is_empty()) {
         return None;
     }
     x.media_rel(o, media, crate::opc::RT_MODEL3D)
@@ -479,7 +479,7 @@ fn write_model(
         return;
     };
     let id = cx.id_for(s);
-    let poster = poster.filter(|p| x.p.media(*p).is_some_and(|m| !m.data.is_empty()));
+    let poster = poster.filter(|p| x.media(*p).is_some_and(|m| !m.data.is_empty()));
     let Some(poster) = poster else {
         write_model_part(w, x, o, id, s, &rid);
         return;
@@ -700,7 +700,7 @@ fn table(w: &mut W, x: &mut Exp, o: &mut Out, t: &Table) {
     t.normalize();
     w.open0("a:tbl");
     let (guid, _) = crate::tables::guid_for_style(&t.style);
-    if !x.table_styles.contains(&t.style) {
+    if x.table_style_set.insert(t.style.clone()) {
         x.table_styles.push(t.style.clone());
     }
     w.open(
@@ -884,7 +884,7 @@ fn opaque(
         p.name = label.to_string();
     }
     match preview {
-        Some(m) if x.p.media(m).is_some() => {
+        Some(m) if x.media(m).is_some() => {
             p.kind = ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media: m, ..Default::default() } };
             p.ph = None;
             shape_with_id(w, x, o, cx, &p, id);
