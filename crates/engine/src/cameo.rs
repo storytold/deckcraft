@@ -422,6 +422,21 @@ mod tests {
     }
 
     #[test]
+    fn a_camera_worker_that_goes_away_ends_the_recording() {
+        let (camera, events, stopped) = fake();
+        let mut run = CameoRun::start(Some(camera), &CameraConfig::default());
+        run.enter_slide(0, (32, 32), 0);
+        send(&events, CameraEvent::Frame(frame(0, 32, 32)));
+        run.poll(500);
+        // The worker drops its sender without sending Closed: the drain synthesises it.
+        events.lock().unwrap_or_else(|e| e.into_inner()).take();
+        run.poll(1_000);
+        assert_eq!(run.status(), CameoStatus::Lost);
+        assert!(stopped.load(Ordering::SeqCst));
+        assert_eq!(run.finish(1_000).len(), 1, "the clip so far is kept");
+    }
+
+    #[test]
     fn a_camera_that_never_opens_reports_no_camera() {
         let events = Arc::new(Mutex::new(None));
         let camera = Box::new(Fake { events, fail_start: Some(CameraError::PermissionDenied), stopped: Arc::new(AtomicBool::new(false)) });

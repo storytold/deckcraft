@@ -9,8 +9,9 @@ use deckcraft_engine::cmd::camera::{STYLES, style_of};
 const TILE: egui::Vec2 = vec2(34.0, 34.0);
 
 pub(super) fn styles_section(app: &mut SlideApp, ui: &mut Ui) {
-    let current = app.session.active().and_then(|d| d.selected_shapes().first().and_then(|sh| style_of(sh))).unwrap_or("none");
-    let selected = STYLES.iter().position(|s| s.id == current);
+    // A custom frame (`style_of` returns `None`) selects no tile; only a real "none" does.
+    let current = app.session.active().and_then(|d| d.selected_shapes().first().and_then(|sh| style_of(sh)));
+    let selected = current.and_then(|id| STYLES.iter().position(|s| s.id == id));
     group(ui, |ui| {
         let labels: Vec<&str> = STYLES.iter().map(|s| s.label).collect();
         // The gallery follows the command: a mixed selection or no Cameo greys it out instead of
@@ -28,21 +29,29 @@ pub(super) fn styles_section(app: &mut SlideApp, ui: &mut Ui) {
         }
         rows(ui, |ui| {
             small(app, ui, Icon::ApplyToAll, "Apply to All Slides", "camera.applyToAll", json!({}));
-            let r = widgets::small_button(ui, Icon::Shapes, "Camera Shape", true, false);
-            egui::Popup::menu(&r).show(|ui| {
-                if let Some(p) = mask_gallery(ui) {
-                    run(app, "shape.change", json!({"preset": p}));
-                }
-            });
-            let r = widgets::small_button(ui, Icon::ShapeOutline, "Camera Border", true, false);
-            egui::Popup::menu(&r).show(|ui| {
-                let sc = scheme(app);
-                outline_menu(app, ui, &sc);
+            // These commands act on the selection, so a mixed selection must not send them to a
+            // plain shape beside the Cameo.
+            let cameo = enabled(app, "camera.style");
+            ui.add_enabled_ui(cameo, |ui| {
+                let r = widgets::small_button(ui, Icon::Shapes, "Camera Shape", true, false);
+                egui::Popup::menu(&r).show(|ui| {
+                    if let Some(p) = mask_gallery(ui) {
+                        run(app, "shape.change", json!({"preset": p}));
+                    }
+                });
+                let r = widgets::small_button(ui, Icon::ShapeOutline, "Camera Border", true, false);
+                egui::Popup::menu(&r).show(|ui| {
+                    let sc = scheme(app);
+                    outline_menu(app, ui, &sc);
+                });
             });
         });
         rows(ui, |ui| {
-            let r = widgets::small_button(ui, Icon::ShapeEffects, "Camera Effects", true, false);
-            egui::Popup::menu(&r).show(|ui| effects_menu(app, ui));
+            let cameo = enabled(app, "camera.style");
+            ui.add_enabled_ui(cameo, |ui| {
+                let r = widgets::small_button(ui, Icon::ShapeEffects, "Camera Effects", true, false);
+                egui::Popup::menu(&r).show(|ui| effects_menu(app, ui));
+            });
             small(app, ui, Icon::FormatBackground, "Format Object…", "view.pane", json!({"pane": "format"}));
         });
     });

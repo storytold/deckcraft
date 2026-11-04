@@ -9,7 +9,9 @@ pub(super) fn size_section(app: &mut SlideApp, ui: &mut Ui) {
         let r = big_button(ui, Icon::Crop, "Crop", enabled(app, "picture.crop"));
         egui::Popup::menu(&r).show(|ui| {
             ui.label("Crop to Shape");
-            if let Some(p) = mask_gallery(ui) {
+            // A mask applies to the selection: only offer it while the Cameo is the selection.
+            let picked = ui.add_enabled_ui(enabled(app, "camera.style"), mask_gallery).inner;
+            if let Some(p) = picked {
                 run(app, "shape.change", json!({"preset": p}));
             }
             ui.separator();

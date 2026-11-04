@@ -14,6 +14,7 @@ mod dgm;
 mod maps;
 mod opc;
 mod png;
+pub use png::cameo_poster;
 pub(crate) mod read;
 pub use read::MAX_TAG_BYTES;
 mod tables;

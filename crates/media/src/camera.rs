@@ -107,7 +107,12 @@ impl CameraSession {
         while out.len() < MAX_DRAIN {
             match self.events.try_recv() {
                 Ok(e) => out.push(e),
-                Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => break,
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    // The worker went away without saying so: treat it as an unplugged camera.
+                    out.push(CameraEvent::Closed);
+                    break;
+                }
             }
         }
         out
@@ -356,6 +361,16 @@ mod tests {
         let clip = rec.finish(now).expect("the clip so far is kept, not rejected");
         assert!(clip.frames > 0);
         assert!(clip.mp4.len() <= MAX_CLIP_BYTES);
+    }
+
+    #[test]
+    fn a_dropped_camera_channel_reads_as_closed() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let session = CameraSession::new(Instant::now(), rx);
+        drop(tx);
+        let events = session.drain();
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert!(matches!(events.first(), Some(CameraEvent::Closed)));
     }
 
     #[test]

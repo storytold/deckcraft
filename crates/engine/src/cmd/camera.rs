@@ -287,8 +287,9 @@ fn record_cameo(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let (poster, poster_ct) = match crate::cmd::media::poster_png(&data, 0) {
         Some(png) => (png, "image/png"),
-        // A clip we cannot decode still plays in PowerPoint; its Cameo shows our placeholder.
-        None => (PLACEHOLDER_SVG.as_bytes().to_vec(), "image/svg+xml"),
+        // A clip we cannot decode still plays in PowerPoint; its Cameo shows the raster camera
+        // placeholder (the renderer decodes rasters, not SVG).
+        None => (deckcraft_pptx::cameo_poster(), "image/png"),
     };
     let rect = rect_param(p, "rect").filter(|r| r.w >= 1.0 && r.h >= 1.0);
     let wanted = opt_usize_param(p, "index", "show.cameo")?;
