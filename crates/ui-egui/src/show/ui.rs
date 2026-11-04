@@ -88,6 +88,11 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 Err(e) => {
                     log::info!("record narration: {e}");
                     show.mic_ok = false;
+                    // Say so, and keep the toolbar from claiming a capture that is not happening.
+                    let device = &mut show.record_view.devices.mic;
+                    device.failed = true;
+                    device.status = super::record::devices::DeviceStatus::Unavailable;
+                    app.set_status(format!("Microphone: {e}"));
                 }
             },
             None => show.mic_ok = false,

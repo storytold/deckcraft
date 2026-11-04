@@ -10,7 +10,7 @@
 
 mod bottom;
 mod canvas;
-mod devices;
+pub(super) mod devices;
 mod notes;
 mod top;
 mod views;

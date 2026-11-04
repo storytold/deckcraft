@@ -381,9 +381,13 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         "app.save" => wrap(app.run("file.save", p.clone())),
         "app.export" => wrap(app.run("file.export", p.clone())),
         "app.quit" => {
-            // Automation quits without asking (`{"save": true}` saves first).
-            if p.get("save").and_then(Value::as_bool) == Some(true) && !app.save_all() {
-                return err("not every presentation could be saved");
+            // Automation quits without asking (`{"save": true}` saves first). A live take is
+            // written into the document before the save, so the file keeps it.
+            if p.get("save").and_then(Value::as_bool) == Some(true) {
+                app.end_show_now();
+                if !app.save_all() {
+                    return err("not every presentation could be saved");
+                }
             }
             app.quit_confirmed = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);

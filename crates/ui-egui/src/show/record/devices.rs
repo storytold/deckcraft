@@ -24,6 +24,9 @@ pub(in crate::show) enum DeviceStatus {
 #[derive(Clone, Debug, Default)]
 pub(in crate::show) struct DeviceState {
     pub status: DeviceStatus,
+    /// The device was asked to open and refused (no device, denied permission): the control says
+    /// so until the user asks again, instead of claiming a capture that is not happening.
+    pub failed: bool,
 }
 
 impl DeviceState {
@@ -48,11 +51,11 @@ pub(in crate::show) struct Devices {
 /// follows the capture service — absent, the control reads unavailable; present, it starts on,
 /// as PowerPoint's narration capture does — and the take honours the user's toggle.
 pub(super) fn connect(rec: &mut RecordView, services: &crate::Services) {
-    let mic = &mut rec.devices.mic.status;
+    let mic = &mut rec.devices.mic;
     if services.mic.is_none() {
-        *mic = DeviceStatus::Unavailable;
-    } else if *mic == DeviceStatus::Unavailable {
-        *mic = DeviceStatus::On;
+        mic.status = DeviceStatus::Unavailable;
+    } else if mic.status == DeviceStatus::Unavailable && !mic.failed {
+        mic.status = DeviceStatus::On;
     }
 }
 
@@ -77,14 +80,18 @@ fn toggle(ui: &mut Ui, state: &mut DeviceState, name: &str) -> bool {
         DeviceStatus::Unavailable => format!("{name} — unavailable"),
     };
     let color = if state.status == DeviceStatus::On { Color32::from_rgb(120, 200, 140) } else { Color32::from_gray(200) };
-    let resp = ui.add_enabled(state.can_toggle(), egui::Button::new(RichText::new(label).size(12.0).color(color)).frame(false));
+    // A refused device is still clickable: the click asks it to open again.
+    let usable = state.can_toggle() || state.failed;
+    let resp = ui.add_enabled(usable, egui::Button::new(RichText::new(label).size(12.0).color(color)).frame(false));
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::CheckBox, state.is_on(), name));
     let detail = match state.status {
+        DeviceStatus::Unavailable if state.failed => "The device could not be opened",
         DeviceStatus::Unavailable => "No device found",
         DeviceStatus::On | DeviceStatus::Off => "Device is available",
     };
     let resp = resp.on_hover_text(detail);
     if resp.clicked() {
+        state.failed = false;
         state.status = if state.status == DeviceStatus::On { DeviceStatus::Off } else { DeviceStatus::On };
         return true;
     }
