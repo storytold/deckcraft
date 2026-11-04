@@ -215,9 +215,10 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         "ui.move" | "ui.click" | "ui.drag" => {
             let (Some(x), Some(y)) = (f(p, "x"), f(p, "y")) else { return err("missing x/y") };
             let pos = egui::pos2(x, y);
-            if p.get("ctrl").is_some() || p.get("shift").is_some() || p.get("alt").is_some() || p.get("cmd").is_some() {
-                app.queue_input(egui::Event::ModifiersChanged(egui_mods(p)));
-            }
+            // egui keeps the last modifiers it was told about, so every pointer request states
+            // them: a request without modifier fields clears them rather than leaving the previous
+            // request's Ctrl (which would keep the laser on) in force.
+            app.queue_input(egui::Event::ModifiersChanged(egui_mods(p)));
             app.queue_input(egui::Event::PointerMoved(pos));
             if req.method == "ui.click" {
                 let button = match s("button") {

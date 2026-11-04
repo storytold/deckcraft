@@ -102,23 +102,7 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
         }
         "stop" => {
             let stopped = s.screen.stop().map_err(err)?;
-            // Hide the temporary file name from the deck: the shape is named "Screen Recording".
-            let insert = s.execute("insert.video", &json!({"path": stopped.path.to_string_lossy(), "name": "Screen Recording.mp4"}));
-            let _ = std::fs::remove_file(&stopped.path);
-            let inserted = insert?;
-            // Tag the shape so Clear Recording can remove takes without touching ordinary videos.
-            if let Some(id) = inserted.get("id").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok()) {
-                let id = deckcraft_model::ShapeId(id);
-                let _ = s.edit(|doc, sel| {
-                    if let Some(slide) = doc.slides.get_mut(sel.slide) {
-                        let slide = std::sync::Arc::make_mut(slide);
-                        if let Some(shape) = slide.shape_mut(id) {
-                            shape.tags.push(("deckcraft.recording".into(), "media".into()));
-                        }
-                    }
-                    Ok(())
-                });
-            }
+            let inserted = insert_take(s, &stopped)?;
             Ok(json!({
                 "state": "stopped",
                 "id": inserted.get("id").cloned().unwrap_or(Value::Null),
@@ -142,6 +126,29 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
         }
         other => Err(bad(CMD, format!("action “{other}” isn't start, pause, resume, stop, cancel, targets or permission"))),
     }
+}
+
+/// Insert a finished take on the current slide and delete its temporary file. Both the `stop`
+/// action and a recording that a capture failure ended use this, so the shape is the same.
+pub(crate) fn insert_take(s: &mut Session, stopped: &crate::screen::StoppedRecording) -> crate::Result<Value> {
+    // Hide the temporary file name from the deck: the shape is named "Screen Recording".
+    let insert = s.execute("insert.video", &json!({"path": stopped.path.to_string_lossy(), "name": "Screen Recording.mp4"}));
+    let _ = std::fs::remove_file(&stopped.path);
+    let inserted = insert?;
+    // Tag the shape so Clear Recording can remove takes without touching ordinary videos.
+    if let Some(id) = inserted.get("id").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok()) {
+        let id = deckcraft_model::ShapeId(id);
+        let _ = s.edit(|doc, sel| {
+            if let Some(slide) = doc.slides.get_mut(sel.slide) {
+                let slide = std::sync::Arc::make_mut(slide);
+                if let Some(shape) = slide.shape_mut(id) {
+                    shape.tags.push(("deckcraft.recording".into(), "media".into()));
+                }
+            }
+            Ok(())
+        });
+    }
+    Ok(inserted)
 }
 
 fn status_str(status: deckcraft_screen::CaptureStatus) -> &'static str {

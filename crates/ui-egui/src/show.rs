@@ -107,8 +107,9 @@ pub struct Show {
     /// Laser samples kept while recording: slide points and milliseconds from the slide start.
     laser_live: Vec<(f64, f64, u32)>,
     laser_saved: Vec<(usize, Vec<(f64, f64, u32)>)>,
-    /// WAV bytes per slide, taken from the microphone when the slide is left.
-    narration: Vec<(usize, Vec<u8>)>,
+    /// Narration per slide: the microphone's rate and the mono samples taken from it. A take that
+    /// is paused and resumed on the same slide continues the same entry, so no audio is lost.
+    narration: Vec<(usize, u32, Vec<f32>)>,
     mic_tried: bool,
     mic_ok: bool,
     /// Pen width in slide points, matching the 3px stroke on screen.
@@ -560,7 +561,7 @@ impl Show {
                 self.zoom = None;
                 self.zoom_arm = false;
                 let left = self.timeline.as_ref().map(|t| t.0).unwrap_or(i);
-                if self.rehearse || self.record {
+                if self.rehearse || self.capturing() {
                     self.timings.push((left, now - self.slide_start));
                 }
                 self.stash_ink(doc, left);
@@ -648,12 +649,23 @@ impl Show {
         self.media_clock = if t.is_finite() { Some((k, t)) } else { None };
     }
 
-    /// Move the pen's strokes into the recording, in slide points. Always clears the live strokes.
+    /// Move the pen's strokes into the recording, in slide points, when a take is capturing.
+    /// Always clears the live strokes.
     fn stash_ink(&mut self, doc: &Presentation, slide: usize) {
+        if self.capturing() {
+            self.keep_ink(doc, slide);
+        } else {
+            self.strokes.clear();
+        }
+    }
+
+    /// File the live strokes under `slide` whatever the take's state: the end of a take uses this
+    /// so ink drawn while recording is kept even when Stop came before the show closed.
+    fn keep_ink(&mut self, doc: &Presentation, slide: usize) {
         let strokes = std::mem::take(&mut self.strokes);
         let w = doc.slide_size.width;
         let h = doc.slide_size.height;
-        if !self.record || !(w > 0.0 && h > 0.0) {
+        if !(w > 0.0 && h > 0.0) {
             return;
         }
         for stroke in strokes {
@@ -671,9 +683,21 @@ impl Show {
         }
     }
 
+    /// File the live laser trace under `slide` when a take is capturing; always clears it.
     fn stash_laser(&mut self, slide: usize) {
+        if self.capturing() {
+            self.keep_laser(slide);
+        } else {
+            self.laser_live.clear();
+        }
+    }
+
+    /// File the live laser trace under `slide` whatever the take's state (see [`keep_ink`]).
+    ///
+    /// [`keep_ink`]: Self::keep_ink
+    fn keep_laser(&mut self, slide: usize) {
         let pts = std::mem::take(&mut self.laser_live);
-        if self.record && !pts.is_empty() {
+        if !pts.is_empty() {
             self.laser_saved.push((slide, pts));
         }
     }
@@ -689,6 +713,14 @@ impl Show {
             }
         }
         self.laser_live.push((x, y, t_ms));
+    }
+
+    /// Whether a take is capturing right now: the Record view is open *and* running. Timings,
+    /// ink, laser and narration belong to the take, so browsing the Record view before Record,
+    /// while paused, or after Stop must not collect them. `record` alone is the mode flag and is
+    /// only for layout and chrome.
+    pub(crate) fn capturing(&self) -> bool {
+        self.record && self.record_view.status == record::RecordStatus::Recording
     }
 
     /// Whether the pointer is over the Record view's chrome: clicks there must not advance the
@@ -802,7 +834,7 @@ fn laser_pos(points: &[deckcraft_model::LaserSample], elapsed_ms: u32) -> Option
 
 /// A slide change ends the microphone take and hands it to the slide being left.
 fn before_slide_change(app: &mut SlideApp, show: &mut Show, action: &ShowAction) {
-    if show.record && matches!(action, ShowAction::Slide(_)) {
+    if show.capturing() && matches!(action, ShowAction::Slide(_)) {
         take_narration(app, show);
     }
 }
@@ -813,10 +845,16 @@ fn take_narration(app: &mut SlideApp, show: &mut Show) {
     }
     let Some(mic) = app.services.mic.as_mut() else { return };
     let (rate, samples) = mic.take();
-    if let Some(wav) = narration_wav(rate, &samples) {
-        let slide = show.state.slide;
-        show.narration.retain(|(i, _)| *i != slide);
-        show.narration.push((slide, wav));
+    if samples.is_empty() {
+        return;
+    }
+    let slide = show.state.slide;
+    if let Some(i) = show.narration.iter().position(|(s, _, _)| *s == slide) {
+        // A take paused on this slide and resumed: the microphone restarted, so only the samples
+        // are appended. A changed rate keeps the first take's rate (the two would not line up).
+        show.narration[i].2.extend_from_slice(&samples);
+    } else {
+        show.narration.push((slide, rate, samples));
     }
 }
 

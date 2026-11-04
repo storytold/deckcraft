@@ -28,7 +28,7 @@ mod yuv;
 
 use std::sync::Arc;
 
-pub use audio::{Pcm, wav_mono};
+pub use audio::{MAX_WAV_SAMPLES, Pcm, wav_mono};
 pub use clip::ClipParams;
 pub use feed::VideoFeed;
 pub use player::{AudioOut, MicIn, PlayState, Player, VoiceSpec, VoiceStatus};

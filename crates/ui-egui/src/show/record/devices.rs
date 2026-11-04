@@ -10,7 +10,7 @@ use super::RecordView;
 
 /// What a device control knows about its backend.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum DeviceStatus {
+pub(in crate::show) enum DeviceStatus {
     /// No backend or no device was found.
     #[default]
     Unavailable,
@@ -18,19 +18,12 @@ pub(super) enum DeviceStatus {
     Off,
     /// A device is present and capturing.
     On,
-    /// The system refused access.
-    Denied,
-    /// Another application holds the device.
-    Busy,
 }
 
 /// One selectable device and its current state.
 #[derive(Clone, Debug, Default)]
-pub(super) struct DeviceState {
+pub(in crate::show) struct DeviceState {
     pub status: DeviceStatus,
-    pub selected: Option<String>,
-    /// Microphone level, 0..=1, when the backend reports one.
-    pub level: f32,
 }
 
 impl DeviceState {
@@ -45,7 +38,7 @@ impl DeviceState {
 
 /// Camera, microphone and screen capture as the shell sees them.
 #[derive(Clone, Debug, Default)]
-pub(super) struct Devices {
+pub(in crate::show) struct Devices {
     pub camera: DeviceState,
     pub mic: DeviceState,
     pub screen: DeviceState,
@@ -76,16 +69,12 @@ fn toggle(ui: &mut Ui, state: &mut DeviceState, name: &str) -> bool {
         DeviceStatus::On => format!("{name} on"),
         DeviceStatus::Off => format!("{name} off"),
         DeviceStatus::Unavailable => format!("{name} — unavailable"),
-        DeviceStatus::Denied => format!("{name} — denied"),
-        DeviceStatus::Busy => format!("{name} — busy"),
     };
     let color = if state.status == DeviceStatus::On { Color32::from_rgb(120, 200, 140) } else { Color32::from_gray(200) };
     let resp = ui.add_enabled(state.can_toggle(), egui::Button::new(RichText::new(label).size(12.0).color(color)).frame(false));
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::CheckBox, state.is_on(), name));
     let detail = match state.status {
         DeviceStatus::Unavailable => "No device found",
-        DeviceStatus::Denied => "Access denied",
-        DeviceStatus::Busy => "In use by another application",
         DeviceStatus::On | DeviceStatus::Off => "Device is available",
     };
     let resp = resp.on_hover_text(detail);

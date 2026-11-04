@@ -6,11 +6,7 @@
 //! builds the capturer, reports whether it started, then pushes frames until the recorder drops
 //! the receiver or sets the stop flag; the UI never blocks on the device.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, TryRecvError, channel};
-
-use deckcraft_screen::{CaptureOptions, CaptureStatus, CaptureTarget, NoScreen, ScreenError, ScreenFrame, ScreenIn, TargetKind};
+use deckcraft_screen::ScreenIn;
 
 /// The host's screen-capture device: `scap` where it exists, [`NoScreen`] elsewhere.
 pub fn host() -> Option<Box<dyn ScreenIn>> {
@@ -23,13 +19,17 @@ pub fn host() -> Option<Box<dyn ScreenIn>> {
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
-        Some(Box::new(NoScreen))
+        Some(Box::new(deckcraft_screen::NoScreen))
     }
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod imp {
-    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc::{Receiver, TryRecvError, TrySendError, channel, sync_channel};
+
+    use deckcraft_screen::{CaptureOptions, CaptureStatus, CaptureTarget, ScreenError, ScreenFrame, ScreenIn, TargetKind};
 
     /// A frame or a capture error from the worker thread.
     type Item = Result<ScreenFrame, ScreenError>;
@@ -127,7 +127,9 @@ mod imp {
             let cursor = options.show_cursor;
             let stop = Arc::new(AtomicBool::new(false));
             let flag = stop.clone();
-            let (tx, rx) = channel::<Item>();
+            // Two frames at most: the recorder takes one per interval, so a slow consumer drops
+            // capture instead of queueing full pictures (8 MB each at 1080p) without a limit.
+            let (tx, rx) = sync_channel::<Item>(2);
             let (ready_tx, ready_rx) = channel::<Result<(), ScreenError>>();
             let spawned = std::thread::Builder::new().name("deckcraft-screen".into()).spawn(move || {
                 let target = wanted.and_then(|id| {
@@ -162,8 +164,10 @@ mod imp {
                     match cap.get_next_frame() {
                         Ok(f) => {
                             let Some(f) = convert(f) else { continue };
-                            if tx.send(Ok(f)).is_err() {
-                                break;
+                            match tx.try_send(Ok(f)) {
+                                // The consumer is behind: dropping this frame beats queueing it.
+                                Ok(()) | Err(TrySendError::Full(_)) => {}
+                                Err(TrySendError::Disconnected(_)) => break,
                             }
                         }
                         Err(_) => break,
@@ -193,11 +197,21 @@ mod imp {
 
         fn frame(&mut self) -> Result<Option<ScreenFrame>, ScreenError> {
             let Some(rx) = self.frames.as_ref() else { return Ok(None) };
-            match rx.try_recv() {
-                Ok(Ok(f)) => Ok(Some(f)),
-                Ok(Err(e)) => Err(e),
-                Err(TryRecvError::Empty) => Ok(None),
-                Err(TryRecvError::Disconnected) => Err(ScreenError::Failed("the screen capture stopped".into())),
+            // The host returns the latest frame (see `ScreenIn::frame`): take everything queued and
+            // keep the newest, so a slow consumer never replays a stale picture after a pause.
+            let mut latest = None;
+            loop {
+                match rx.try_recv() {
+                    Ok(Ok(f)) => latest = Some(f),
+                    Ok(Err(e)) => return Err(e),
+                    Err(TryRecvError::Empty) => return Ok(latest),
+                    Err(TryRecvError::Disconnected) => {
+                        return match latest {
+                            Some(f) => Ok(Some(f)),
+                            None => Err(ScreenError::Failed("the screen capture stopped".into())),
+                        };
+                    }
+                }
             }
         }
 

@@ -19,6 +19,13 @@ pub const MAX_FRAMES: u64 = 2 * 60 * 60 * 60;
 pub const MAX_SIDE: u32 = 8192;
 /// The H.264 encoder's smallest side.
 const MIN_SIDE: u32 = 16;
+/// H.264 level 5.1's picture budget in macroblocks (an 8192×1152 picture). PowerPoint's decoder
+/// can refuse a bigger level, and a screen recording is played there before anywhere else, so a
+/// bigger capture is recorded smaller rather than at a level it may not play. Level 5.1 allows
+/// 36,864 macroblocks in a picture.
+const LEVEL_51_MAX_MBS: u64 = 36_864;
+/// The largest whole downscale the recorder applies (8K records at 4K).
+const MAX_DOWNSCALE: u32 = 8;
 /// A key frame at least this often (seconds), so players can seek.
 const KEY_EVERY_S: u32 = 2;
 
@@ -82,6 +89,8 @@ pub struct ScreenRecorder {
     mux: Option<Mp4Writer<Box<dyn RecorderSink>>>,
     track: usize,
     size: (u32, u32),
+    /// Whole-number downscale of the captured picture (1 = recorded as captured).
+    scale: u32,
     frames: u64,
     /// Reused BGRA→RGBA buffer (one frame).
     rgba: Vec<u8>,
@@ -94,7 +103,7 @@ impl ScreenRecorder {
         if cfg.fps == 0 || cfg.fps > 240 {
             return Err(RecorderError::Encoder("the capture rate must be from 1 to 240 frames per second".into()));
         }
-        Ok(ScreenRecorder { sink: Some(sink), cfg, encoder: None, mux: None, track: 0, size: (0, 0), frames: 0, rgba: Vec::new() })
+        Ok(ScreenRecorder { sink: Some(sink), cfg, encoder: None, mux: None, track: 0, size: (0, 0), scale: 1, frames: 0, rgba: Vec::new() })
     }
 
     /// The encoded picture size, once the first frame has been seen.
@@ -116,15 +125,20 @@ impl ScreenRecorder {
         if w < MIN_SIDE || h < MIN_SIDE {
             return Err(RecorderError::BadRegion);
         }
+        let (n, ow, oh) = self.scaled(w, h);
+        if ow < MIN_SIDE || oh < MIN_SIDE {
+            return Err(RecorderError::BadRegion);
+        }
         if self.encoder.is_none() {
-            self.open(w, h)?;
-        } else if self.size != (w, h) {
+            self.scale = n;
+            self.open(ow, oh)?;
+        } else if self.size != (ow, oh) {
             // The capture output changed size mid-recording (a display was rotated): refuse
             // rather than mux samples that don't match the track's sample entry.
             return Err(RecorderError::BadFrame);
         }
-        self.to_rgba(frame, x, y, w, h);
-        let key = self.frames == 0 || self.frames % u64::from(self.cfg.key_frame_interval.max(1)) == 0;
+        self.fill_rgba(frame, x, y, w, h);
+        let key = self.frames == 0 || self.frames.is_multiple_of(u64::from(self.cfg.key_frame_interval.max(1)));
         let Some(encoder) = self.encoder.as_mut() else { return Err(RecorderError::Encoder("the encoder is not ready".into())) };
         let pic = encoder.encode_rgba(&self.rgba, key);
         let data = pic.length_prefixed();
@@ -158,6 +172,18 @@ impl ScreenRecorder {
         Ok((x, y, w, h))
     }
 
+    /// The picture size to encode for a cropped capture `w`×`h` and its whole downscale: the
+    /// capture itself, or the smallest downscale that fits H.264 level 5.1 so PowerPoint plays
+    /// the take.
+    fn scaled(&self, w: u32, h: u32) -> (u32, u32, u32) {
+        let fits = |n: u32| {
+            let mbs = u64::from((w / n).div_ceil(16)) * u64::from((h / n).div_ceil(16));
+            mbs <= LEVEL_51_MAX_MBS
+        };
+        let n = (1..=MAX_DOWNSCALE).find(|n| fits(*n)).unwrap_or(MAX_DOWNSCALE);
+        (n, (w / n) & !1, (h / n) & !1)
+    }
+
     /// Start the encoder and the MP4 track at the final picture size.
     fn open(&mut self, w: u32, h: u32) -> Result<(), RecorderError> {
         if w > MAX_SIDE || h > MAX_SIDE {
@@ -177,20 +203,44 @@ impl ScreenRecorder {
         Ok(())
     }
 
-    /// BGRA rows → one RGBA picture, dropping the stride's padding.
-    fn to_rgba(&mut self, frame: &ScreenFrame, x: usize, y: usize, w: u32, h: u32) {
-        let need = w as usize * h as usize * 4;
+    /// BGRA rows → one RGBA picture, dropping the stride's padding and applying the recording's
+    /// whole downscale (a box average per block, so text keeps its edges).
+    fn fill_rgba(&mut self, frame: &ScreenFrame, x: usize, y: usize, w: u32, h: u32) {
+        let n = self.scale.max(1) as usize;
+        let (ow, oh) = (self.size.0 as usize, self.size.1 as usize);
+        let need = ow * oh * 4;
         self.rgba.clear();
         self.rgba.resize(need, 0);
-        for row in 0..h as usize {
-            let src_at = (y + row) * frame.stride + x * 4;
-            let Some(src) = frame.data.get(src_at..src_at + w as usize * 4) else { continue };
-            let dst = &mut self.rgba[row * w as usize * 4..(row + 1) * w as usize * 4];
-            for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
-                d[0] = s[2];
-                d[1] = s[1];
-                d[2] = s[0];
-                d[3] = 255;
+        if n == 1 {
+            for row in 0..h as usize {
+                let src_at = (y + row) * frame.stride + x * 4;
+                let Some(src) = frame.data.get(src_at..src_at + w as usize * 4) else { continue };
+                let dst = &mut self.rgba[row * ow * 4..(row + 1) * ow * 4];
+                for (d, s) in dst.as_chunks_mut::<4>().0.iter_mut().zip(src.as_chunks::<4>().0) {
+                    *d = [s[2], s[1], s[0], 255];
+                }
+            }
+            return;
+        }
+        for row in 0..oh {
+            for col in 0..ow {
+                let (mut sum, mut count) = ([0u32; 3], 0u32);
+                for dy in 0..n {
+                    let src_at = (y + row * n + dy) * frame.stride + (x + col * n) * 4;
+                    let Some(src) = frame.data.get(src_at..src_at + n * 4) else { continue };
+                    for s in src.as_chunks::<4>().0 {
+                        sum[0] += u32::from(s[2]);
+                        sum[1] += u32::from(s[1]);
+                        sum[2] += u32::from(s[0]);
+                        count += 1;
+                    }
+                }
+                let count = count.max(1);
+                let at = (row * ow + col) * 4;
+                self.rgba[at] = (sum[0] / count) as u8;
+                self.rgba[at + 1] = (sum[1] / count) as u8;
+                self.rgba[at + 2] = (sum[2] / count) as u8;
+                self.rgba[at + 3] = 255;
             }
         }
     }
@@ -283,5 +333,25 @@ mod tests {
         let file = create(&scratch("empty"));
         let rec = ScreenRecorder::new(Box::new(file), RecorderConfig::new(30)).expect("recorder");
         assert_eq!(rec.finish(), Err(RecorderError::Empty));
+    }
+
+    #[test]
+    fn the_picture_is_downscaled_only_until_it_fits_level_51() {
+        let file = create(&scratch("scaled"));
+        let rec = ScreenRecorder::new(Box::new(file), RecorderConfig::new(30)).expect("recorder");
+        assert_eq!(rec.scaled(3840, 2160), (1, 3840, 2160), "4K fits level 5.1 as captured");
+        assert_eq!(rec.scaled(5120, 2880), (2, 2560, 1440), "a 5K display records at half size");
+        assert_eq!(rec.scaled(7680, 4320), (2, 3840, 2160), "8K records at 4K");
+    }
+
+    #[test]
+    fn a_bigger_than_level_51_frame_records_at_the_downscaled_size() {
+        // Level 5.1 is what PowerPoint's decoder is sure to play; the take keeps it.
+        let frame = ScreenFrame::solid(5120, 2880, [10, 20, 30, 255]);
+        let (path, out) = record("downscale", &[frame], RecorderConfig::new(30));
+        assert_eq!((out.width, out.height), (2560, 1440));
+        let file = deckcraft_isobmff::open(std::fs::read(&path).expect("read").as_slice()).expect("demux");
+        assert_eq!((file.tracks[0].width, file.tracks[0].height), (2560, 1440));
+        let _ = std::fs::remove_file(&path);
     }
 }

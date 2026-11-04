@@ -29,13 +29,9 @@ impl ViewKind {
     }
 }
 
-pub(super) struct Out {
-    pub changed: bool,
-}
-
-/// Draw the Views dropdown in the bottom-right slot and the camera-preview icon beside it.
-pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, layout: &Layout) -> Out {
-    let mut changed = false;
+/// Draw the Views dropdown in the bottom-right slot and the camera-preview icon beside it. Each
+/// pick writes [`RecordView`], which the next frame lays out around.
+pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, layout: &Layout) {
     let painter = ui.painter().clone();
     // Camera preview icon: a filled camera body when the preview is up.
     let cp = layout.camera_preview;
@@ -51,7 +47,6 @@ pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, layout: &Layout) -> Out {
     );
     if cp_resp.clicked() {
         rec.camera_preview = !rec.camera_preview;
-        changed = true;
     }
     cp_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::CheckBox, rec.camera_preview, "Camera preview"));
     cp_resp.on_hover_text(if rec.camera_preview { "Hide camera preview" } else { "Show camera preview" });
@@ -75,21 +70,11 @@ pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, layout: &Layout) -> Out {
             if picked {
                 rec.view = view;
                 rec.notes_open = view != ViewKind::Slide;
-                changed = true;
                 ui.close();
             }
         }
         ui.separator();
-        if ui.checkbox(&mut rec.camera_preview, "Camera preview").changed() {
-            changed = true;
-        }
-        if ui.checkbox(&mut rec.notes_open, "Notes pane").changed() {
-            changed = true;
-        }
+        ui.checkbox(&mut rec.camera_preview, "Camera preview");
+        ui.checkbox(&mut rec.notes_open, "Notes pane");
     });
-    let _ = MENU_BG;
-    Out { changed }
 }
-
-/// The bottom-right Views dropdown background colour, shared with section agents.
-pub(super) const MENU_BG: Color32 = Color32::from_rgb(38, 38, 42);

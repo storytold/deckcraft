@@ -1194,8 +1194,9 @@ fn the_presenter_next_preview_arrives_without_blocking_the_frame() {
     // preview and returns without it.
     let mut show = Show::new(&doc, 0, false, true);
     let mut keep = true;
+    let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
     let ctx = egui::Context::default();
-    ctx.run_ui(egui::RawInput::default(), |ui| presenter_window(ui.ctx(), &mut show, &doc, 0.0, &mut keep)).textures_delta.clear();
+    ctx.run_ui(egui::RawInput::default(), |ui| presenter_window(&mut app, ui.ctx(), &mut show, &doc, 0.0, &mut keep)).textures_delta.clear();
     assert!(show.next_job.is_some() && show.next_tex.is_none(), "the first frame leaves the preview pending");
     assert_eq!(show.preview_spawns, 1);
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(

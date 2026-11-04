@@ -86,13 +86,16 @@ pub fn decode(bytes: &Bytes) -> Result<Pcm> {
     }
 }
 
+/// The most samples [`wav_mono`] writes: ten minutes at 48 kHz.
+pub const MAX_WAV_SAMPLES: usize = 48_000 * 60 * 10;
+
 /// 16-bit mono PCM WAV. Samples outside −1..1 are clamped; non-finite samples are silence.
-/// At most ten minutes are written.
+/// At most ten minutes ([`MAX_WAV_SAMPLES`]) are written.
 pub fn wav_mono(rate: u32, samples: &[f32]) -> std::result::Result<Vec<u8>, String> {
     if !(8_000..=192_000).contains(&rate) {
         return Err(format!("sample rate {rate} is out of range"));
     }
-    let n = samples.len().min(48_000 * 60 * 10);
+    let n = samples.len().min(MAX_WAV_SAMPLES);
     let data_len = n.checked_mul(2).ok_or_else(|| "audio is too long".to_string())?;
     let riff = 36usize.checked_add(data_len).ok_or_else(|| "audio is too long".to_string())?;
     if riff > u32::MAX as usize {

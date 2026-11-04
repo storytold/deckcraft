@@ -1735,6 +1735,27 @@ fn ui_screenshot_round_trips_through_the_callable_slot() {
     assert_eq!(harness.state().capture.reserved_bytes(), 0, "the reservation is released after the reply");
 }
 
+/// egui keeps the modifiers of the last `ModifiersChanged`, so every synthetic pointer request
+/// states them: a later click without `ctrl` must not inherit the previous request's Ctrl, which
+/// would leave the show's laser on.
+#[test]
+fn a_pointer_request_always_states_the_current_modifiers() {
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    let ctx = egui::Context::default();
+    let move_with = |app: &mut SlideApp, p: serde_json::Value| {
+        let (req, _reply) = ControlRequest::new("ui.move", p);
+        let _ = control::handle(app, &ctx, &req);
+        std::mem::take(&mut app.synthetic)
+    };
+    let first = move_with(&mut app, json!({"x": 10.0, "y": 20.0, "ctrl": true}));
+    assert!(matches!(first.first(), Some(egui::Event::ModifiersChanged(m)) if m.ctrl), "the request's Ctrl is stated before the move: {first:?}");
+    let second = move_with(&mut app, json!({"x": 10.0, "y": 20.0}));
+    assert!(
+        matches!(second.first(), Some(egui::Event::ModifiersChanged(m)) if !m.ctrl && !m.shift && !m.alt),
+        "a request without modifier fields clears them: {second:?}"
+    );
+}
+
 /// A hidden/logic-only iteration drains control requests and autosave/screenshot queues; it does
 /// not need a painted frame for those side effects.
 #[test]

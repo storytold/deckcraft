@@ -84,6 +84,46 @@ fn muted_audio_has_no_volume_and_other_clips_keep_theirs() {
     assert_eq!((c[1].volume, c[1].loop_play, c[1].full_screen), (0.0, false, false));
 }
 
+/// A media node that starts on `delay` (`0` or `indefinite`), as PowerPoint writes it.
+fn delayed_node(tag: &str, spid: u32, delay: &str) -> String {
+    format!(
+        r#"<p:par><p:cTn id="2" fill="hold"><p:childTnLst><p:{tag}><p:cMediaNode><p:cTn id="3" fill="hold"><p:stCondLst><p:cond delay="{delay}"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="{spid}"/></p:tgtEl></p:cMediaNode></p:{tag}></p:childTnLst></p:cTn></p:par>"#
+    )
+}
+
+/// A `playFrom(0.0)` start behaviour, in the main sequence or inside an interactive (click) one.
+fn play_from(spid: u32, interactive: bool) -> String {
+    let par = format!(
+        r#"<p:par><p:cTn id="9" presetID="1" presetClass="mediacall" presetSubtype="0" fill="hold" nodeType="afterEffect"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:cmd type="call" cmd="playFrom(0.0)"><p:cBhvr><p:cTn id="10" dur="1" fill="hold"/><p:tgtEl><p:spTgt spid="{spid}"/></p:tgtEl></p:cBhvr></p:cmd></p:childTnLst></p:cTn></p:par>"#
+    );
+    if interactive {
+        format!(
+            r#"<p:seq concurrent="1" nextAc="seek"><p:cTn id="11" dur="indefinite" nodeType="interactiveSeq"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst>{par}</p:childTnLst></p:cTn></p:seq>"#
+        )
+    } else {
+        par
+    }
+}
+
+#[test]
+fn autoplay_comes_from_the_main_sequence_not_the_media_nodes_start_delay() {
+    // PowerPoint writes an automatic start as a `playFrom` in the main sequence, and leaves the
+    // media node's own start delay `indefinite` for it too: the delay alone must not decide.
+    let c = clips(|v, a| {
+        format!("{}{}{}{}", delayed_node("video", v, "indefinite"), delayed_node("audio", a, "indefinite"), play_from(v, false), play_from(a, true))
+    });
+    assert!(c[0].autoplay, "a main-sequence playFrom starts the video automatically");
+    assert!(!c[1].autoplay, "a playFrom in an interactive sequence waits for a click");
+}
+
+#[test]
+fn a_numeric_start_delay_alone_is_still_an_automatic_start() {
+    // DeckCraft's own writer marks autoplay with the media node's delay and no behaviour node.
+    let c = clips(|v, _| delayed_node("video", v, "0"));
+    assert!(c[0].autoplay);
+    assert!(!c[1].autoplay, "a clip with no timing node keeps the default");
+}
+
 #[test]
 fn autoplay_and_click_to_play_round_trip_through_the_media_timing() {
     let mut p = defaults::new_presentation(None);

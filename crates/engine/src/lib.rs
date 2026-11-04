@@ -555,10 +555,19 @@ impl Session {
     }
 
     /// Let a running screen recording take the frames the host has captured. The UI calls this
-    /// once a frame with its clock (`now`, in seconds). A capture failure cancels the recording
-    /// and leaves one message for the status bar.
+    /// once a frame with its clock (`now`, in seconds). A capture failure ends the take: the frames
+    /// recorded so far are inserted on the current slide (an empty take is dropped) and one message
+    /// for the status bar says why the recording stopped.
     pub fn screen_tick(&mut self, now: f64) {
-        if let Some(text) = self.screen.tick(now) {
+        let reason = self.screen.tick(now);
+        if let Some(stopped) = self.screen.take_ended() {
+            let why = reason.unwrap_or_else(|| "the screen capture stopped".into());
+            let text = match cmd::screen::insert_take(self, &stopped) {
+                Ok(_) => format!("{why} The recording so far was inserted on this slide."),
+                Err(e) => format!("{why} The recording so far couldn't be inserted: {e}"),
+            };
+            self.ui_requests.push(UiRequest::Message { text });
+        } else if let Some(text) = reason {
             self.ui_requests.push(UiRequest::Message { text });
         }
     }

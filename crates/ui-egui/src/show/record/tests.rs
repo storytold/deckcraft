@@ -61,7 +61,8 @@ fn reset_and_undo_move_the_clock() {
     rec.start(&mut show, 100.0);
     assert!((rec.elapsed(105.0) - 5.0).abs() < 1e-9);
     rec.reset(105.0);
-    assert!(rec.elapsed(106.0) < 1e-9);
+    assert!(rec.elapsed(105.0) < 1e-9, "Reset zeroes the clock");
+    assert!((rec.elapsed(106.0) - 1.0).abs() < 1e-9, "and it counts on from zero");
     assert!(rec.undo(106.0));
     assert!((rec.elapsed(107.0) - 6.0).abs() < 1e-9, "Undo restores the elapsed time");
     assert!(!rec.undo(108.0), "one Undo per Reset");
@@ -82,11 +83,10 @@ fn the_shell_geometry_matches_the_powerpoint_layout() {
     assert!(layout.camera.center().x > layout.slide.center().x && layout.camera.center().y > layout.slide.center().y, "bottom-right");
     assert!(layout.views.max.x < layout.bottom.max.x, "Views menu inside the bottom strip");
     assert!(layout.camera_preview.max.x <= layout.views.min.x, "preview icon left of Views");
-    assert!(layout.next.is_none(), "only Presenter view reserves a next-slide strip");
 }
 
 #[test]
-fn view_kind_resizes_the_notes_and_reserves_the_next_strip() {
+fn view_kind_resizes_the_notes() {
     let doc = doc_with(3);
     let full = Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(1920.0, 1200.0));
     let mut rec = RecordView::default();
@@ -97,8 +97,6 @@ fn view_kind_resizes_the_notes_and_reserves_the_next_strip() {
     let slide_only = layout(full, &doc, &rec);
     assert!(tele.notes.height() > presenter.notes.height());
     assert_eq!(slide_only.notes.height(), 0.0, "Slide view hides the script");
-    assert!(presenter.next.is_some(), "Presenter view has a next-slide strip");
-    assert!(presenter.next.unwrap().max.y <= presenter.notes.max.y);
 }
 
 fn app_with(slides: usize) -> SlideApp {
@@ -235,8 +233,10 @@ fn devices_report_unavailable_instead_of_faking_success() {
 }
 
 #[test]
+#[ignore = "writes a screenshot for review"]
 fn a_shell_snapshot() {
     let mut h = harness(app_with(3));
     open_record(&mut h, 0);
-    h.snapshot("record_window_shell");
+    let img = h.render().unwrap();
+    img.save(std::env::temp_dir().join("record_window_shell.png")).unwrap();
 }

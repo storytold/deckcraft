@@ -248,7 +248,8 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
     }
     for node in nodes.into_iter().take(10_000) {
         let Some(cm) = node.child("cMediaNode") else { continue };
-        let Some(id) = cm.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|f| ctx.lookup(f)) else { continue };
+        let Some(spid) = cm.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")) else { continue };
+        let Some(id) = ctx.lookup(spid) else { continue };
         let Some(ShapeKind::Media(clip)) = find_shape_mut(shapes, id).map(|s| &mut s.kind) else { continue };
         if let Some(v) = cm.attr("vol").and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite()) {
             clip.volume = (v / 100_000.0).clamp(0.0, 1.0);
@@ -265,13 +266,47 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         if node.bool("fullScrn") == Some(true) {
             clip.full_screen = true;
         }
-        // Click to play waits (`delay="indefinite"`); an automatic start has a numeric delay
-        // (normally 0). The shape's own click action doesn't say which one PowerPoint wrote.
-        if let Some(delay) = cm.path(&["cTn", "stCondLst", "cond"]).and_then(|c| c.attr("delay")) {
-            clip.autoplay = delay != "indefinite";
-        }
+        clip.autoplay = starts_alone(timing, spid, cm.path(&["cTn", "stCondLst", "cond"]).and_then(|c| c.attr("delay")));
     }
 }
+/// Whether the timing starts `spid` on its own, without a click.
+///
+/// PowerPoint writes an automatic start as a `playFrom` behaviour in the main sequence, and a
+/// click-to-play clip's behaviour inside an interactive sequence. The media node's own start delay
+/// is no guide: PowerPoint leaves it `indefinite` for automatic starts too. A file without any
+/// such behaviour (DeckCraft writes the delay alone) falls back to that numeric delay.
+fn starts_alone(timing: &El, spid: u32, delay: Option<&str>) -> bool {
+    match play_from(timing, spid, false, 0) {
+        Some(main) => main,
+        None => delay.is_some_and(|d| d.trim() != "indefinite"),
+    }
+}
+
+/// `Some(true)` when a `playFrom` behaviour for `spid` sits in the main sequence, `Some(false)`
+/// when the only ones sit in interactive (click) sequences, `None` when there is none at all.
+fn play_from(e: &El, spid: u32, interactive: bool, depth: usize) -> Option<bool> {
+    if depth > 64 {
+        return None;
+    }
+    let interactive = interactive || (e.is("cTn") && e.attr("nodeType") == Some("interactiveSeq"));
+    if e.is("cmd")
+        && e.attr("cmd").is_some_and(|c| c.trim().to_ascii_lowercase().starts_with("playfrom"))
+        && e.path(&["cBhvr", "tgtEl", "spTgt"]).and_then(|t| t.u32("spid")) == Some(spid)
+    {
+        return Some(!interactive);
+    }
+    let mut found = None;
+    for c in e.elements() {
+        match play_from(c, spid, interactive, depth + 1) {
+            // A main-sequence start wins over a click one, whichever the file lists first.
+            Some(true) => return Some(true),
+            Some(false) => found = Some(false),
+            None => {}
+        }
+    }
+    found
+}
+
 /// Flatten the timing tree into the Animation Pane list.
 pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: &[Shape]) -> Vec<Animation> {
     let _ = (imp, part);

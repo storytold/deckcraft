@@ -10,8 +10,8 @@ use super::zoom::{
 };
 use super::{
     Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
-    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, before_slide_change, json, laser_pos, pen_width_slide, pointer_is_laser, record,
-    saved_status, show_fills_screen, state_for, take_narration, theme, vec2, viewport_visible, pos2,
+    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, before_slide_change, json, laser_pos, narration_wav, pen_width_slide, pointer_is_laser,
+    pos2, record, saved_status, show_fills_screen, state_for, take_narration, theme, vec2, viewport_visible,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -78,21 +78,11 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     }
     show.observe_visible_frame(now, web_time::Instant::now());
     begin_show(&ctx, &mut show, &doc, now, app.services.presenter.is_some());
-    if show.record && show.record_view.status == record::RecordStatus::Recording && !show.mic_tried {
-        show.mic_tried = true;
-        match app.services.mic.as_mut() {
-            Some(mic) => match mic.start() {
-                Ok(()) => show.mic_ok = true,
-                Err(e) => {
-                    log::info!("record narration: {e}");
-                    show.mic_ok = false;
-                }
-            },
-            None => show.mic_ok = false,
-        }
-    }
+    sync_mic(app, &mut show);
+    // A focused notes field in the Record view owns the keyboard; everywhere else the show's keys
+    // still run (a pen or a navigation key typed in the shell must reach the show).
     let editing = show.record && record::notes_has_focus(&ctx);
-    let mut out = Out { keep: !editing || keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
+    let mut out = Out { keep: editing || keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
     if show.presenter
         && !show.reading
         && let Some(host) = app.services.presenter.as_mut()
@@ -706,7 +696,9 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
     let pen_rect = f.layout.map_or(full, |l| l.slide);
     let resp = ui.interact(pen_rect, ui.scope_id().with("show_pen"), if show.pen && !laser_on { Sense::drag() } else { Sense::hover() });
     if show.pen && !laser_on {
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Pen"));
+        // The drawing surface, not the bottom bar's "Pen" tool: a distinct label keeps the two
+        // apart for assistive tech (and for tests that click the tool by name).
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Drawing area"));
     }
     if show.pen && !laser_on {
         if resp.drag_started() {
@@ -747,7 +739,7 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         painter.circle_filled(p, 16.0, Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 70));
         painter.circle_filled(p, 5.5, c);
     }
-    if show.record && laser_on {
+    if show.capturing() && laser_on {
         if let Some(p) = ctx.input(|i| i.pointer.hover_pos()) {
             let nx = (p.x - srect.min.x) / srect.width().max(1.0);
             let ny = (p.y - srect.min.y) / srect.height().max(1.0);
@@ -891,6 +883,34 @@ fn draw_extras(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter
     }
 }
 
+/// Keep the narration microphone in step with the take: it runs only while frames are captured,
+/// so a pause or a Stop neither captures silence into the next slide nor files audio recorded
+/// while the take was held. A pause keeps what was already captured on the current slide.
+fn sync_mic(app: &mut SlideApp, show: &mut Show) {
+    let capturing = show.capturing();
+    if capturing && !show.mic_tried {
+        show.mic_tried = true;
+        match app.services.mic.as_mut() {
+            Some(mic) => match mic.start() {
+                Ok(()) => show.mic_ok = true,
+                Err(e) => {
+                    log::info!("record narration: {e}");
+                    show.mic_ok = false;
+                }
+            },
+            None => show.mic_ok = false,
+        }
+    } else if !capturing && show.mic_tried {
+        // The take paused or stopped: hand what it captured to this slide, then stop the device.
+        if show.record && show.record_view.captured {
+            take_narration(app, show);
+        }
+        app.stop_mic();
+        show.mic_ok = false;
+        show.mic_tried = false;
+    }
+}
+
 fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
     let Fr { ctx, doc, now, .. } = *f;
     if keep {
@@ -903,29 +923,43 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
         if !show.reading {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         }
-        if show.rehearse || show.record {
-            if show.record {
+        // Only a take that captured is saved. Opening the Record view and leaving it without
+        // pressing Record must not write browsing time over the deck's own timings.
+        let recording = show.record && show.record_view.captured;
+        if show.rehearse || recording {
+            if recording {
                 take_narration(app, &mut show);
             }
             if show.mic_tried {
                 app.stop_mic();
             }
-            show.stash_ink(&doc, show.state.slide);
-            show.stash_laser(show.state.slide);
+            if recording {
+                // Whatever was drawn or pointed at during the take is filed under its slide even
+                // if Stop came before the show closed.
+                show.keep_ink(doc, show.state.slide);
+                show.keep_laser(show.state.slide);
+            } else {
+                show.stash_ink(doc, show.state.slide);
+                show.stash_laser(show.state.slide);
+            }
             show.timings.push((show.state.slide, now - show.slide_start));
             for (i, secs) in show.timings.clone() {
                 let ms = if secs.is_finite() { (secs.max(0.0) * 1000.0).round() as u64 } else { 0 };
                 let _ = app.run("transition.timing", json!({"index": i, "after": ms}));
             }
-            if show.record {
+            if recording {
                 let c = doc.show.pen_color;
                 for (i, pts) in &show.recorded {
                     let points: Vec<_> = pts.iter().map(|(x, y)| json!([x, y, 0.5])).collect();
                     let _ = app.run("ink.stroke", json!({"index": i, "points": points, "width": show.ink_width, "color": [c.r, c.g, c.b]}));
                 }
-                for (i, wav) in &show.narration {
-                    let _ =
-                        app.run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(wav)}));
+                let mut narrations = 0usize;
+                for (i, rate, samples) in &show.narration {
+                    if let Some(wav) = narration_wav(*rate, samples) {
+                        let _ = app
+                            .run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(&wav)}));
+                        narrations += 1;
+                    }
                 }
                 let lc = doc.show.laser_color;
                 for (i, pts) in &show.laser_saved {
@@ -933,7 +967,7 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
                     let _ = app.run("show.laser", json!({"index": i, "points": points, "color": [lc.r, lc.g, lc.b]}));
                 }
                 let _ = app.run("show.setup", json!({"useTimings": true}));
-                app.set_status(saved_status(!show.narration.is_empty(), !show.recorded.is_empty(), !show.laser_saved.is_empty()));
+                app.set_status(saved_status(narrations > 0, !show.recorded.is_empty(), !show.laser_saved.is_empty()));
             } else {
                 app.set_status("Slide timings recorded.");
             }

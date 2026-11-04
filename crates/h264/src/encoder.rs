@@ -375,7 +375,11 @@ impl Encoder {
             (m, r) if m <= 8192 && r <= 245_760 => 40,
             (m, r) if m <= 8704 && r <= 522_240 => 42,
             (m, r) if m <= 22_080 && r <= 589_824 => 50,
-            _ => 51,
+            (m, r) if m <= 36_864 && r <= 983_040 => 51,
+            (m, r) if m <= 36_864 && r <= 2_073_600 => 52,
+            (m, r) if m <= 139_264 && r <= 4_177_920 => 60,
+            (m, r) if m <= 139_264 && r <= 8_355_840 => 61,
+            _ => 62,
         }
     }
 
@@ -559,6 +563,69 @@ impl Encoder {
         combine(a, t)
     }
 
+    /// The cheapest Intra 16×16 prediction for macroblock `(mx, my)`: DC (2) unless the row above
+    /// or the column to the left predicts the picture closer.
+    fn intra_mode(&self, src: &Planes, mx: usize, my: usize, top: &[i32], left: &[i32], dc: i32) -> u32 {
+        let stride = self.recon.w;
+        let (x0, y0) = (mx * 16, my * 16);
+        let s = |x: usize, y: usize| i32::from(src.y[(y0 + y) * stride + x0 + x]);
+        let cost = |mode: u32| -> i32 {
+            (0..256)
+                .map(|i| {
+                    let (x, y) = (i % 16, i / 16);
+                    let pred = match mode {
+                        0 => top[x],
+                        1 => left[y],
+                        _ => dc,
+                    };
+                    (s(x, y) - pred).abs()
+                })
+                .sum()
+        };
+        let mut modes = vec![2u32];
+        if my > 0 {
+            modes.push(0);
+        }
+        if mx > 0 {
+            modes.push(1);
+        }
+        modes.into_iter().min_by_key(|&m| cost(m)).unwrap_or(2)
+    }
+
+    /// The luma residual of one macroblock with `mode`: every 4×4 block forward transformed and
+    /// quantised. Returns the AC levels per block (raster order) and the DC levels, which the
+    /// caller runs through the Hadamard.
+    fn luma_levels(&self, src: &Planes, mx: usize, my: usize, mode: u32, top: &[i32], left: &[i32], dc: i32) -> ([[i32; 16]; 16], [i32; 16]) {
+        let qp = self.cfg.qp;
+        let stride = self.recon.w;
+        let (x0, y0) = (mx * 16, my * 16);
+        let s = |x: usize, y: usize| i32::from(src.y[(y0 + y) * stride + x0 + x]);
+        let pred_of = |x: usize, y: usize| match mode {
+            0 => top[x],
+            1 => left[y],
+            _ => dc,
+        };
+        let qbits = 15 + u32::from(qp / 6);
+        let f = (1 << qbits) / 3;
+        let m6 = usize::from(qp % 6);
+        let mut ac = [[0i32; 16]; 16]; // [block raster (by*4+bx)][raster coeff], quantised
+        let mut wdc = [0i32; 16];
+        for blk in 0..16 {
+            let (bx, by) = (blk % 4, blk / 4);
+            let mut r = [0i32; 16];
+            for i in 0..16 {
+                let (x, y) = (bx * 4 + i % 4, by * 4 + i / 4);
+                r[i] = s(x, y) - pred_of(x, y);
+            }
+            let w = fdct(&r);
+            wdc[blk] = w[0];
+            for k in 1..16 {
+                ac[blk][k] = quant(w[k], MF[m6][pos_class(k)], qbits, f);
+            }
+        }
+        (ac, wdc)
+    }
+
     fn intra_mb(&mut self, b: &mut Bits, src: &Planes, mx: usize, my: usize, in_p: bool) {
         let qp = self.cfg.qp;
         let stride = self.recon.w;
@@ -572,40 +639,17 @@ impl Encoder {
             (false, true) => (left.iter().sum::<i32>() + 8) >> 4,
             _ => 128,
         };
-        let s = |x: usize, y: usize| i32::from(src.y[(y0 + y) * stride + x0 + x]);
         let pred_of = |mode: u32, x: usize, y: usize| match mode {
             0 => top[x],
             1 => left[y],
             _ => dc,
         };
-        let mut modes = vec![2u32];
-        if has_top {
-            modes.push(0);
-        }
-        if has_left {
-            modes.push(1);
-        }
-        let mode =
-            modes.iter().copied().min_by_key(|&m| (0..256).map(|i| (s(i % 16, i / 16) - pred_of(m, i % 16, i / 16)).abs()).sum::<i32>()).unwrap_or(2);
+        let mode = self.intra_mode(src, mx, my, &top, &left, dc);
         // Luma: transform each 4x4, DC through the Hadamard.
         let qbits = 15 + u32::from(qp / 6);
         let f = (1 << qbits) / 3;
         let m6 = usize::from(qp % 6);
-        let mut ac = [[0i32; 16]; 16]; // [block raster (by*4+bx)][raster coeff], quantised
-        let mut wdc = [0i32; 16];
-        for blk in 0..16 {
-            let (bx, by) = (blk % 4, blk / 4);
-            let mut r = [0i32; 16];
-            for i in 0..16 {
-                let (x, y) = (bx * 4 + i % 4, by * 4 + i / 4);
-                r[i] = s(x, y) - pred_of(mode, x, y);
-            }
-            let w = fdct(&r);
-            wdc[blk] = w[0];
-            for k in 1..16 {
-                ac[blk][k] = quant(w[k], MF[m6][pos_class(k)], qbits, f);
-            }
-        }
+        let (ac, wdc) = self.luma_levels(src, mx, my, mode, &top, &left, dc);
         let ydc = hadamard4(&wdc);
         let mut zdc = [0i32; 16];
         for k in 0..16 {
@@ -889,6 +933,16 @@ mod tests {
         assert_eq!(e.level_idc(), 40);
         let e = Encoder::new(EncoderConfig { width: 3840, height: 2160, fps: 30, qp: 26 }).unwrap();
         assert_eq!(e.level_idc(), 51);
+        // A frame past level 5.1's 36,864 macroblocks per picture, then past 5.2's rate: the SPS
+        // names the level the stream really is, never a level it exceeds.
+        let e = Encoder::new(EncoderConfig { width: 4096, height: 2160, fps: 30, qp: 26 }).unwrap();
+        assert_eq!(e.level_idc(), 52);
+        let e = Encoder::new(EncoderConfig { width: 5120, height: 2880, fps: 30, qp: 26 }).unwrap();
+        assert_eq!(e.level_idc(), 60);
+        let e = Encoder::new(EncoderConfig { width: 7680, height: 4320, fps: 60, qp: 26 }).unwrap();
+        assert_eq!(e.level_idc(), 61);
+        let e = Encoder::new(EncoderConfig { width: 8192, height: 4320, fps: 120, qp: 26 }).unwrap();
+        assert_eq!(e.level_idc(), 62);
     }
 
     #[test]

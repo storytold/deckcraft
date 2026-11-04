@@ -473,10 +473,13 @@ mod tests {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             // `io` and this module are the checked gateway; `tests*.rs` are test-only modules.
             // `recovery` and `spell` touch only the app's own folders (AutoRecover files, the
-            // system and user spelling dictionaries), never a path a command names.
-            if path.parent() == Some(src.as_path()) && matches!(name, "io.rs" | "file_access.rs" | "recovery.rs" | "spell.rs")
-                || name.starts_with("tests")
-            {
+            // system and user spelling dictionaries), never a path a command names. The screen
+            // recorder is the same: it creates, writes and deletes the take's own temporary MP4
+            // (`crate::screen`, its start/stop/tick in `cmd/screen.rs`), never a path a command
+            // names.
+            let gateway = path.parent() == Some(src.as_path()) && matches!(name, "io.rs" | "file_access.rs");
+            let own_files = matches!(name, "recovery.rs" | "spell.rs" | "screen.rs");
+            if gateway || own_files || name.starts_with("tests") {
                 continue;
             }
             let text = std::fs::read_to_string(&path).unwrap();

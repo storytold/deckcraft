@@ -220,7 +220,7 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
                         ui.label(RichText::new("no screen found").color(Color32::from_gray(170)));
                     } else {
                         let current = app.screen.targets.get(app.screen.selected).map(TargetRow::label).unwrap_or_default();
-                        egui::ComboBox::from_id_salt("screen-target").selected_text(current).show_ui(ui, |ui| {
+                        craft_ui::ComboBox::from_id_salt("screen-target").selected_text(current).show_ui(ui, |ui| {
                             for (i, t) in app.screen.targets.iter().enumerate() {
                                 if ui.selectable_label(app.screen.selected == i, t.label()).clicked() {
                                     app.screen.selected = i;

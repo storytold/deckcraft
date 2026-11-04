@@ -1,9 +1,9 @@
 //! Screen recording: the session state that drives a host's capture and the MP4 recorder.
 //!
 //! The host (the desktop app) installs a [`ScreenIn`]; the UI calls [`ScreenState::tick`] once a
-//! frame while a recording runs, which pulls captured frames and feeds them to the recorder. All
-//! capture and encoder failures become one message and cancel the recording cleanly: a missing
-//! device, a denied permission or a broken stream never panics.
+//! frame while a recording runs, which pulls captured frames and feeds them to the recorder. A
+//! capture or encoder failure ends the take without a panic: frames already recorded are kept and
+//! finished ([`ScreenState::take_ended`]), and only a take with nothing in it is thrown away.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -37,6 +37,9 @@ struct Active {
 pub struct ScreenState {
     host: Option<Box<dyn ScreenIn>>,
     active: Option<Active>,
+    /// A take a capture or encoder failure finished with frames in it, waiting for the session
+    /// to insert it.
+    ended: Option<StoppedRecording>,
 }
 
 impl ScreenState {
@@ -169,37 +172,86 @@ impl ScreenState {
         true
     }
 
-    /// Pull the next frame when one is due. Returns a message when the capture failed; the
-    /// recording was then cancelled and its file removed.
+    /// Pull the next frame when one is due. Returns a message when the capture failed; the take
+    /// then keeps what it recorded ([`take_ended`](Self::take_ended)) unless it had no frames.
     pub fn tick(&mut self, now: f64) -> Option<String> {
-        let Some(active) = self.active.as_mut() else { return None };
+        let active = self.active.as_mut()?;
         if active.paused {
+            // Nothing is captured while the take is held: drop what the device produced so the
+            // recording resumes on live frames rather than on the pause.
+            if let Some(host) = self.host.as_mut() {
+                let _ = host.frame();
+            }
             return None;
         }
         let interval = 1.0 / f64::from(active.fps.max(1));
         if !active.due && now + 1.0e-9 < active.next_at {
             return None;
         }
-        let Some(host) = self.host.as_mut() else {
-            self.cancel();
-            return Some(ScreenError::Unavailable.to_string());
+        let shot = match self.host.as_mut() {
+            Some(host) => host.frame(),
+            None => Err(ScreenError::Unavailable),
         };
-        match host.frame() {
+        match shot {
             Ok(Some(frame)) => {
-                if let Err(e) = active.recorder.push(&frame) {
-                    let msg = format!("the screen recording stopped: {e}");
-                    self.cancel();
-                    return Some(msg);
-                }
+                let why = match active.recorder.push(&frame) {
+                    Ok(()) => {
+                        active.frames = active.recorder.frames();
+                        active.due = false;
+                        active.next_at = now + interval;
+                        return None;
+                    }
+                    Err(e) => format!("the screen recording stopped: {e}"),
+                };
                 active.frames = active.recorder.frames();
-                active.due = false;
-                active.next_at = now + interval;
-                None
+                let recorded = active.frames > 0;
+                if recorded {
+                    Some(self.end_keeping(&why))
+                } else {
+                    self.cancel();
+                    Some(why)
+                }
             }
             Ok(None) => None,
             Err(e) => {
-                self.cancel();
-                Some(e.to_string())
+                let why = e.to_string();
+                if active.frames > 0 {
+                    Some(self.end_keeping(&why))
+                } else {
+                    self.cancel();
+                    Some(why)
+                }
+            }
+        }
+    }
+
+    /// The take a failed capture finished, for the caller to insert like `show.screenRecord
+    /// stop` does. Its file is the caller's to delete once the bytes are in the presentation.
+    pub fn take_ended(&mut self) -> Option<StoppedRecording> {
+        self.ended.take()
+    }
+
+    /// End the take the way a source failure should: stop the host, write the MP4 and keep it.
+    /// Nothing recorded means nothing to keep, so the file is removed.
+    fn end_keeping(&mut self, why: &str) -> String {
+        let Some(active) = self.active.take() else { return why.to_string() };
+        if let Some(host) = self.host.as_mut() {
+            host.stop();
+        }
+        match active.recorder.finish() {
+            Ok(out) if out.frames > 0 => {
+                self.ended = Some(StoppedRecording {
+                    path: active.path,
+                    frames: out.frames,
+                    width: out.width,
+                    height: out.height,
+                    duration_ms: out.duration_ms,
+                });
+                why.to_string()
+            }
+            Ok(_) | Err(_) => {
+                let _ = std::fs::remove_file(&active.path);
+                why.to_string()
             }
         }
     }
@@ -221,6 +273,8 @@ mod tests {
     /// A fake screen device: frames are queued by the test and delivered one per `frame` call.
     struct FakeScreen {
         frames: Arc<Mutex<std::collections::VecDeque<deckcraft_screen::ScreenFrame>>>,
+        /// Set when the capture source disappears (a closed window, an unplugged display).
+        fail: Arc<std::sync::atomic::AtomicBool>,
         status: CaptureStatus,
         size: (u32, u32),
     }
@@ -228,7 +282,8 @@ mod tests {
     impl FakeScreen {
         fn ready(size: (u32, u32)) -> (Self, Arc<Mutex<std::collections::VecDeque<deckcraft_screen::ScreenFrame>>>) {
             let frames = Arc::new(Mutex::new(std::collections::VecDeque::new()));
-            (FakeScreen { frames: frames.clone(), status: CaptureStatus::Ready, size }, frames)
+            let fail = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            (FakeScreen { frames: frames.clone(), fail, status: CaptureStatus::Ready, size }, frames)
         }
     }
 
@@ -249,6 +304,9 @@ mod tests {
             Ok(())
         }
         fn frame(&mut self) -> Result<Option<deckcraft_screen::ScreenFrame>, ScreenError> {
+            if self.fail.load(Ordering::Relaxed) {
+                return Err(ScreenError::Failed("the capture source is gone".into()));
+            }
             Ok(self.frames.lock().map_err(|_| ScreenError::Failed("the fake host was poisoned".into()))?.pop_front())
         }
         fn stop(&mut self) {}
@@ -304,5 +362,57 @@ mod tests {
         assert_eq!(s.start(CaptureOptions::default(), RecorderConfig::new(30)), Err(ScreenError::Unavailable));
         assert_eq!(s.stop(), Err(ScreenError::NotRecording));
         assert_eq!(s.tick(1.0), None);
+    }
+
+    #[test]
+    fn a_capture_that_disappears_keeps_the_frames_it_recorded() {
+        let (host, queue) = FakeScreen::ready((160, 120));
+        let fail = host.fail.clone();
+        let mut s = state_with(host);
+        s.start(CaptureOptions::default(), RecorderConfig::new(30)).expect("start");
+        queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [0, 0, 255, 255]));
+        assert_eq!(s.tick(0.0), None);
+        assert_eq!(s.frames(), 1);
+        fail.store(true, Ordering::Relaxed);
+        let why = s.tick(1.0).expect("the failure is reported");
+        assert!(why.contains("the capture source is gone"), "{why}");
+        assert!(!s.is_recording());
+        let kept = s.take_ended().expect("the recorded frames are kept");
+        assert_eq!((kept.frames, kept.width, kept.height), (1, 160, 120));
+        assert!(kept.path.is_file());
+        assert_eq!(s.take_ended(), None, "the take is handed over once");
+        let _ = std::fs::remove_file(&kept.path);
+    }
+
+    #[test]
+    fn a_capture_that_disappears_before_a_frame_keeps_nothing() {
+        let (host, _queue) = FakeScreen::ready((160, 120));
+        let fail = host.fail.clone();
+        let mut s = state_with(host);
+        s.start(CaptureOptions::default(), RecorderConfig::new(30)).expect("start");
+        fail.store(true, Ordering::Relaxed);
+        assert!(s.tick(0.0).is_some(), "the failure is reported");
+        assert!(!s.is_recording());
+        assert!(s.take_ended().is_none(), "nothing was recorded, so no file is kept");
+    }
+
+    #[test]
+    fn a_paused_take_drops_the_frames_captured_while_it_was_held() {
+        let (host, queue) = FakeScreen::ready((160, 120));
+        let mut s = state_with(host);
+        s.start(CaptureOptions::default(), RecorderConfig::new(30)).expect("start");
+        queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [0, 0, 255, 255]));
+        queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [0, 255, 0, 255]));
+        assert_eq!(s.tick(0.0), None);
+        assert_eq!(s.frames(), 1);
+        s.pause().expect("pause");
+        assert_eq!(s.tick(1.0), None);
+        assert_eq!(s.frames(), 1, "a held take records nothing");
+        assert!(queue.lock().expect("queue").is_empty(), "the paused frame is dropped, not queued");
+        s.resume().expect("resume");
+        queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [255, 0, 0, 255]));
+        assert_eq!(s.tick(2.0), None);
+        assert_eq!(s.frames(), 2);
+        let _ = s.cancel();
     }
 }

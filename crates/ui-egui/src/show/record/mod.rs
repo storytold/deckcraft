@@ -36,14 +36,6 @@ pub(super) enum RecordStatus {
     Paused,
 }
 
-/// An explicit request for a section that is not wired yet. A section consumes it and must not
-/// report success unless it actually did the work.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RecordCommand {
-    /// Export the recorded show as a video (no renderer is wired in this shell).
-    Export,
-}
-
 /// Ink tool selected in the bottom bar. `Arrow` leaves the pointer alone; the three ink tools are
 /// mapped onto the show's pen by [`bottom`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -85,16 +77,12 @@ pub(crate) struct RecordView {
     pub(super) notes_open: bool,
     /// Selected record view. Defined in [`views`] so the dropdown and the shell share it.
     pub(super) view: views::ViewKind,
-    pub(super) views_open: bool,
-    pub(super) more_open: bool,
     pub(super) ink: InkState,
     pub(super) devices: devices::Devices,
     /// The cameo bubble on the slide canvas is shown.
     pub(super) camera_bubble: bool,
     /// The separate camera preview window is shown.
     pub(super) camera_preview: bool,
-    /// A shell button asked for work that only a section can do.
-    pub(super) pending: Option<RecordCommand>,
     /// A take has started in this view, so leaving it should save the recording.
     pub(super) captured: bool,
     /// The clock value replaced by the last Reset, so Undo can put it back.
@@ -111,13 +99,10 @@ impl Default for RecordView {
             notes_scroll: 0.0,
             notes_open: true,
             view: views::ViewKind::default(),
-            views_open: false,
-            more_open: false,
             ink: InkState::default(),
             devices: devices::Devices::default(),
             camera_bubble: true,
             camera_preview: false,
-            pending: None,
             captured: false,
             undo_elapsed: None,
         }
@@ -241,8 +226,6 @@ pub(crate) struct Layout {
     pub views: Rect,
     /// Camera-preview icon, left of the Views dropdown.
     pub camera_preview: Rect,
-    /// Presenter view's next-slide strip, below the notes pane. None in the other views.
-    pub next: Option<Rect>,
 }
 
 /// Horizontal margin shared by the chrome.
@@ -254,22 +237,14 @@ pub(super) fn layout(full: Rect, doc: &Presentation, rec: &RecordView) -> Layout
     let top = top_rect(full);
     let bottom = bottom_rect(full, top);
     let notes = notes_rect(full, top, rec);
-    let notes_below = if rec.view == views::ViewKind::Presenter && notes.height() > 1.0 {
-        // The presenter view keeps a next-slide strip under the notes.
-        let h = (notes.height() * 0.34).clamp(56.0, 120.0);
-        let strip = Rect::from_min_max(pos2(notes.min.x, notes.max.y - h), notes.max);
-        strip
-    } else {
-        Rect::NOTHING
-    };
-    let canvas = Rect::from_min_max(pos2(full.min.x + EDGE, notes.max.y + 12.0), pos2(full.max.x - EDGE, (bottom.min.y - 14.0).max(notes.max.y + 12.0)));
+    let canvas =
+        Rect::from_min_max(pos2(full.min.x + EDGE, notes.max.y + 12.0), pos2(full.max.x - EDGE, (bottom.min.y - 14.0).max(notes.max.y + 12.0)));
     let slide = if canvas.width() > 1.0 && canvas.height() > 1.0 { fit(canvas, doc) } else { Rect::from_min_size(canvas.min, vec2(0.0, 0.0)) };
     let radius = (slide.height() * 0.14).clamp(48.0, 120.0);
     let camera = Rect::from_center_size(pos2(slide.max.x - radius - 16.0, slide.max.y - radius - 16.0), vec2(radius * 2.0, radius * 2.0));
     let views = views_rect(bottom);
     let camera_preview = Rect::from_min_size(pos2(views.min.x - 44.0, views.min.y), vec2(30.0, 30.0));
-    let next = (rec.view == views::ViewKind::Presenter).then_some(notes_below);
-    Layout { full, top, notes, slide, bottom, views, camera, camera_preview, next }
+    Layout { full, top, notes, slide, bottom, views, camera, camera_preview }
 }
 
 fn top_rect(full: Rect) -> Rect {
@@ -313,9 +288,9 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Pre
     notes::ui(app, ui, show, &mut rec, doc, layout);
     let top = top::ui(app, ui, show, &mut rec, now, layout);
     keep &= !top.close;
-    let _ = bottom::ui(ui, show, &mut rec, doc, now, layout);
+    bottom::ui(ui, show, &mut rec, doc, now, layout);
     canvas::bubble(ui, &rec, layout);
-    let _ = views::ui(ui, &mut rec, layout);
+    views::ui(ui, &mut rec, layout);
     if keep {
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
     }

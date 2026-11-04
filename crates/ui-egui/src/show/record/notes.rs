@@ -7,9 +7,9 @@ use deckcraft_model::Presentation;
 use egui::{Align, Color32, CornerRadius, Layout as EguiLayout, RichText, Ui, UiBuilder, vec2};
 
 use super::{Layout as RecordLayout, RecordView};
+use crate::SlideApp;
 use crate::panels::notes::{self as notes_panel, Look};
 use crate::show::Show;
-use crate::SlideApp;
 
 pub(super) const NOTES_DEFAULT: f32 = 18.0;
 pub(super) const NOTES_MIN: f32 = 12.0;
@@ -51,17 +51,16 @@ pub(super) fn ui(_app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Re
     let empty = deckcraft_model::text::TextBody::default();
     let notes = slide.map_or(&empty, |s| &s.notes);
     let look = Look { size: rec.notes_px, color: Some(Color32::from_gray(224)) };
-    let out = egui::ScrollArea::vertical()
-        .id_salt("record_notes")
-        .max_height(body_rect.height())
-        .vertical_scroll_offset(rec.notes_scroll)
-        .show(&mut body, |ui| {
+    let out = egui::ScrollArea::vertical().id_salt("record_notes").max_height(body_rect.height()).vertical_scroll_offset(rec.notes_scroll).show(
+        &mut body,
+        |ui| {
             if notes.text().is_empty() {
                 ui.label(RichText::new("No notes for this slide").size(rec.notes_px).color(Color32::from_gray(120)));
             } else {
                 notes_panel::view(ui, notes, &look);
             }
-        });
+        },
+    );
     rec.notes_scroll = out.state.clamped_offset().y;
 }
 

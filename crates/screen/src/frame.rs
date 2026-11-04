@@ -124,8 +124,8 @@ impl ScreenFrame {
     pub fn solid(width: u32, height: u32, bgra: [u8; 4]) -> Self {
         let stride = width as usize * 4;
         let mut data = vec![0; stride * height as usize];
-        for px in data.chunks_exact_mut(4) {
-            px.copy_from_slice(&bgra);
+        for px in data.as_chunks_mut::<4>().0 {
+            *px = bgra;
         }
         ScreenFrame { width, height, stride, data }
     }

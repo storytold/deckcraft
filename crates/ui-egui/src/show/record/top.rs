@@ -2,16 +2,16 @@
 //! Record/Stop, Pause/Resume, camera, microphone, screen recording, More and Export.
 //!
 //! Every button acts on [`RecordView`] or [`Show`] itself. Device controls call the
-//! [`super::devices`] hooks, and Export leaves an explicit [`RecordCommand`] for the section that
-//! eventually owns video export: nothing here reports success it did not have.
+//! [`super::devices`] hooks; Export says that the video renderer is not wired yet, so nothing here
+//! reports success it did not have.
 
 use egui::{Align, Color32, CornerRadius, Layout as EguiLayout, Rect, RichText, Ui, UiBuilder, vec2};
 
-use super::{RecordCommand, RecordStatus, RecordView, clock_total};
 use super::devices;
+use super::{RecordStatus, RecordView, clock_total};
+use crate::SlideApp;
 use crate::show::Show;
 use crate::theme;
-use crate::SlideApp;
 
 pub(super) struct Out {
     pub close: bool,
@@ -30,9 +30,7 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
 
     let mut out = Out { close: false };
     let inner = rect.shrink2(vec2(10.0, 6.0));
-    let mut child = ui.new_child(
-        UiBuilder::new().max_rect(inner).layout(EguiLayout::left_to_right(Align::Center)),
-    );
+    let mut child = ui.new_child(UiBuilder::new().max_rect(inner).layout(EguiLayout::left_to_right(Align::Center)));
     child.spacing_mut().item_spacing.x = 6.0;
     child.visuals_mut().override_text_color = Some(FG);
 
@@ -52,13 +50,7 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
         RecordStatus::Paused => Color32::from_rgb(230, 168, 58),
     };
     painter.circle_filled(egui::pos2(rect.center().x - 66.0, rect.center().y), 4.0, status);
-    painter.text(
-        egui::pos2(rect.center().x - 54.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        clock,
-        theme::font(14.0),
-        FG,
-    );
+    painter.text(egui::pos2(rect.center().x - 54.0, rect.center().y), egui::Align2::LEFT_CENTER, clock, theme::font(14.0), FG);
 
     // Right-hand group, laid out from the right edge inward.
     let right = Rect::from_min_max(egui::pos2(rect.center().x + 40.0, inner.min.y), inner.max);
@@ -68,9 +60,8 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
 
     let export = button(&mut right_ui, "Export ›", true);
     if export.on_hover_text("Export the finished recording (not wired yet)").clicked() {
-        // A section agent consumes this request; the shell never claims an export happened.
-        rec.pending = Some(RecordCommand::Export);
-        app.set_status("Export is waiting for the recording pipeline.");
+        // No video renderer is wired in this shell: say so rather than claim an export happened.
+        app.set_status("Exporting the recording as a video is not wired yet.");
     }
     let more = button(&mut right_ui, "…", true);
     more.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "More"));

@@ -1,10 +1,10 @@
 # DeckCraft architecture
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: minor, community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (screen recording: the L2 `screen` crate captures a display, window or region and records it with `h264` + `isobmff` into an MP4 that the engine inserts as a video clip; previous: minor, native chart payloads stored in bounded ZIP members) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
-exists. 202k lines of Rust in 24 crates, 3 apps and `xtask`; 1,641 `#[test]` functions
+exists. 202k lines of Rust in 25 crates, 3 apps and `xtask`; 1,641 `#[test]` functions
 (`cargo xtask stats` counts them per crate).
 
 ## Layers
@@ -17,7 +17,7 @@ nothing below L6 uses egui, eframe, winit or rfd.
 |---|---|---|
 | L0 | `geom`, `color`, `metafile`; standalone `bitstream`, `matroska`, `ogg`, `opus` | EMU/pt units, transforms, ~180 preset shape generators re-derived from ECMA-376, adjust handles, hit testing; RGB/HSL and DrawingML colour transforms; MKV/WebM and Ogg demuxers, the Opus decoder; EMF/WMF read into a neutral vector model (`metafile`) |
 | L1 | `model`, `fonts`; `h264`, `hevc`, `vp9`, `av1`, `isobmff` | Presentation, masters, layouts, slides, shapes, text, themes, tables, charts, transitions, animations, placeholder inheritance (`resolve`); font database (craft-fonts + system) with metric-compatible substitutes for Office fonts (Carlito for Calibri, Caladea for Cambria, Liberation for Arial/Times); video decoders and the MP4/MOV demuxer |
-| L2 | `text`, `anim`, `format`, `media` | Shaping (HarfRust), UAX #9 bidi, UAX #14 line breaking, autofit, caret hit testing; per-shape animation state over time, the show state machine, transition frame layouts, Morph matching; `.deckcraft` (zip + JSON + media) and outline text; media probing, decoding, mixer and clock |
+| L2 | `text`, `anim`, `format`, `media`, `screen` | Shaping (HarfRust), UAX #9 bidi, UAX #14 line breaking, autofit, caret hit testing; per-shape animation state over time, the show state machine, transition frame layouts, Morph matching; `.deckcraft` (zip + JSON + media) and outline text; media probing, decoding, mixer and clock; the screen-capture host contract and the screen recorder (BGRA frames to an H.264 MP4) |
 | L3 | `render`, `pptx` | `vello_cpu` raster of slides, masters and layouts (fills, outlines, effects, pictures, tables, charts, Morph frames); PPTX import/export from ECMA-376 |
 | L4 | `pdf` | App-owned export layout and rendering through the shared `craft-pdf` writer |
 | L5 | `engine` | Sessions, documents, selection, undo history on shared slide snapshots, the command registry (328 commands in `cmd/*`), pointer tools, keys, AutoRecover, the panic guard (`guard.rs`) |
@@ -95,9 +95,7 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 | 2026-10-13 | trivial | Animation preview draws the current slide's timeline on the editor canvas |
 | 2026-10-14 | minor | Paragraph and Tabs dialogs; command registry 229; 29 dialogs |
 | 2026-10-14 | minor | Font dialog; command registry 227; 28 dialogs |
-| 2026-10-14 | trivial | Command registry is 234: `show.clearTiming`, `show.clearTimingAll`, `show.clearNarration`, `show.clearNarrationAll` |
-| 2026-10-14 | trivial | Command registry is 230: `show.narration` and `show.laser` |
-| 2026-10-14 | trivial | Command registry is 228: `show.record` and `ink.stroke` |
+| 2026-11-04 | minor | Command registry is 328: screen recording (`show.screenRecord`) and Record Slide Show (`show.record`, `ink.stroke`, `show.narration`, `show.laser`, `show.clearTiming`, `show.clearTimingAll`, `show.clearNarration`, `show.clearNarrationAll`); the `screen` crate at L2 |
 | 2026-10-13 | minor | Transitions: perspective meshes, background/content parts, CPU compositor |
 | 2026-10-10 | major | Created from the code on main (d556ff9) and AGENTS.md §4 |
 

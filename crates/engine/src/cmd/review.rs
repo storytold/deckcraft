@@ -951,6 +951,12 @@ fn apply_laser_color(sh: &mut deckcraft_model::ShowSettings, p: &Value) -> Resul
     Ok(())
 }
 
+/// The largest WAV a narration take can be: `wav_mono`'s 44-byte header plus its ten minutes of
+/// 16-bit mono samples, which is what the Record view's microphone writes.
+const MAX_NARRATION_BYTES: usize = 44 + deckcraft_media::MAX_WAV_SAMPLES * 2;
+// A ten-minute 48 kHz take is 57,600,044 bytes; the old 48,000,000 cap silently dropped it.
+const _: () = assert!(MAX_NARRATION_BYTES > 48_000_000);
+
 /// Embed a WAV as the slide's narration. A later recording replaces the shape named Narration.
 fn narration(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
@@ -959,7 +965,7 @@ fn narration(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("show.narration", format!("no slide {index}")));
     }
     let (name, bytes) = super::insert::media_bytes(p, "show.narration")?;
-    if bytes.len() > 48_000_000 {
+    if bytes.len() > MAX_NARRATION_BYTES {
         return Err(bad("show.narration", "audio is too long"));
     }
     if bytes.len() < 44 {
@@ -995,7 +1001,11 @@ fn narration(s: &mut Session, p: &Value) -> Result<Value> {
             duration_ms,
             ..Default::default()
         };
-        let existing = doc.slides.get(index).and_then(|sl| sl.shapes.iter().find(|sh| sh.name == "Narration").map(|sh| sh.id));
+        // Only a narration clip is replaced: a text box or picture that happens to be called
+        // "Narration" keeps its content.
+        let existing = doc.slides.get(index).and_then(|sl| {
+            sl.shapes.iter().find(|sh| sh.name == "Narration" && matches!(&sh.kind, ShapeKind::Media(m) if m.narration)).map(|sh| sh.id)
+        });
         let id = if let Some(id) = existing {
             id
         } else {
@@ -1634,6 +1644,36 @@ mod tests {
         assert!(s.execute("show.clearNarration", &json!({"index": 99})).is_err());
     }
 
+    #[test]
+    fn recording_a_narration_leaves_a_shape_named_narration_alone() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let v = s.execute("insert.textBox", &json!({"text": "Not a clip"})).unwrap();
+        let tb = ShapeId(u32::try_from(v["id"].as_u64().expect("id")).expect("a shape id"));
+        s.edit(|doc, sel| {
+            if let Some(sl) = doc.slides.get_mut(sel.slide)
+                && let Some(sh) = std::sync::Arc::make_mut(sl).shape_mut(tb)
+            {
+                sh.name = "Narration".into();
+            }
+            Ok(())
+        })
+        .expect("rename");
+        let wav = tone(4000);
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        let doc = s.doc().unwrap().doc.clone();
+        let text = doc.slides[0].shapes.iter().find(|sh| sh.id == tb).expect("the text box is still there");
+        assert!(matches!(text.kind, ShapeKind::Shape), "a text box named Narration keeps its content");
+        assert!(text.text.as_ref().is_some_and(|t| t.text().contains("Not a clip")));
+        assert!(!text.hidden);
+        assert_eq!(narrations(&s, 0).len(), 1, "the narration is its own clip");
+        // A second take replaces the narration clip, not a new shape.
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        assert_eq!(narrations(&s, 0).len(), 1);
+        assert!(s.doc().unwrap().doc.slides[0].shapes.iter().any(|sh| sh.id == tb && sh.name == "Narration"));
+    }
+
+    #[test]
     fn delete_rejects_an_invalid_index_and_keeps_the_comments() {
         let mut s = Session::with_new();
         s.execute("comment.add", &json!({"text": "a"})).unwrap();

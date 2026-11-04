@@ -28,13 +28,9 @@ pub(super) const INK_COLORS: [Color32; 10] = [
     Color32::from_rgb(235, 235, 235),
 ];
 
-pub(super) struct Out {
-    pub keep: bool,
-}
-
-/// Draw the bottom strip. Returns `keep` false when a navigation left the show's end (the shell
-/// ignores it; the Record view stays on the last slide).
-pub(super) fn ui(ui: &mut Ui, show: &mut Show, rec: &mut RecordView, doc: &Arc<Presentation>, now: f64, layout: &Layout) -> Out {
+/// Draw the bottom strip. A navigation that leaves the show's end does nothing: the Record view
+/// stays on the last slide.
+pub(super) fn ui(ui: &mut Ui, show: &mut Show, rec: &mut RecordView, doc: &Arc<Presentation>, now: f64, layout: &Layout) {
     let rect = layout.bottom;
     let painter = ui.painter().clone();
     painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_rgb(23, 23, 27));
@@ -76,10 +72,7 @@ pub(super) fn ui(ui: &mut Ui, show: &mut Show, rec: &mut RecordView, doc: &Arc<P
     });
 
     // Navigation row and progress.
-    let nav_row = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x + 180.0, rect.min.y + 48.0),
-        egui::pos2(rect.max.x - 180.0, rect.min.y + 82.0),
-    );
+    let nav_row = egui::Rect::from_min_max(egui::pos2(rect.min.x + 180.0, rect.min.y + 48.0), egui::pos2(rect.max.x - 180.0, rect.min.y + 82.0));
     let mut nav = ui.new_child(UiBuilder::new().max_rect(nav_row));
     nav.visuals_mut().override_text_color = Some(Color32::from_gray(225));
     nav.with_layout(EguiLayout::left_to_right(Align::Center), |ui| {
@@ -106,8 +99,6 @@ pub(super) fn ui(ui: &mut Ui, show: &mut Show, rec: &mut RecordView, doc: &Arc<P
     let fraction = ((show.state.slide + 1) as f32 / doc.slides.len().max(1) as f32).clamp(0.0, 1.0);
     let filled = egui::Rect::from_min_size(track.min, vec2((track.width() * fraction).max(0.0), track.height()));
     painter.rect_filled(filled, CornerRadius::same(2), theme::Tokens::get(ui.ctx()).accent);
-    let _ = ink_row;
-    Out { keep: true }
 }
 
 /// Map the shell's ink selection onto the show's pen. The ink section agent adds the highlighter
