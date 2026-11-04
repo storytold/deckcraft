@@ -22,7 +22,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Batch Edit",
             [],
             None,
-            "{commands: [{command, params?}]} → {results: [{command, result}]} — runs the commands in order as one step: when one fails, the presentation and selection are left as they were and the error names the step; one undo undoes them all. At most 1000 commands; file.*, window.*, edit.undo, edit.redo, edit.batch, show.fromStart, show.fromCurrent, text.compose and text.commit are refused before any command runs",
+            "{commands: [{command, params?}]} → {results: [{command, result}]} — runs the commands in order as one step: when one fails, the presentation, the selection, the default shape look, the Format and Animation Painters and whether a shape.rotate gesture is open are as they were before the batch and the error names the step; one undo undoes them all. At most 1000 commands; file.*, window.*, edit.undo, edit.redo, edit.batch, show.fromStart, show.fromCurrent, text.compose and text.commit are refused before any command runs",
             has_doc,
             batch
         ),
@@ -751,10 +751,11 @@ fn batch_refuses(id: &str) -> bool {
 
 /// Run several commands as one step. The steps run nested, so none of them adds an undo step or
 /// a journal record of its own; when one fails, the outer command puts the presentation back and
-/// this puts back the selection, the list of missing fonts, the record of the last Duplicate and
-/// the comparison in progress (Review ▸ Compare). Undo entries a step pushes itself (Delete Text)
-/// are dropped with the history saved before the first step, so the batch stays one undo step
-/// either way.
+/// this puts back the selection, the list of missing fonts, the record of the last Duplicate, the
+/// comparison in progress (Review ▸ Compare), the default shape look, the Format and Animation
+/// Painters and whether a gesture is open. Undo entries a step pushes itself (Delete Text) are
+/// dropped with the history saved before the first step, so the batch stays one undo step either
+/// way.
 fn batch(s: &mut Session, p: &Value) -> Result<Value> {
     let list = p.get("commands").and_then(Value::as_array).ok_or_else(|| bad("edit.batch", "missing `commands`: [{command, params?}]"))?;
     if list.len() > MAX_BATCH {
@@ -781,10 +782,11 @@ fn batch(s: &mut Session, p: &Value) -> Result<Value> {
         };
         steps.push((id, params));
     }
-    let (history, selection, missing_fonts, last_duplicate, compare) = {
+    let (history, selection, missing_fonts, last_duplicate, compare, interaction) = {
         let st = s.doc()?;
-        (st.history.clone(), st.selection.clone(), st.missing_fonts.clone(), st.last_duplicate.clone(), st.compare.clone())
+        (st.history.clone(), st.selection.clone(), st.missing_fonts.clone(), st.last_duplicate.clone(), st.compare.clone(), st.interaction.clone())
     };
+    let (default_look, painter, anim_painter) = (s.default_look.clone(), s.painter.clone(), s.anim_painter.clone());
     let mut results = Vec::with_capacity(steps.len());
     for (i, (id, params)) in steps.iter().enumerate() {
         match s.execute(id, params) {
@@ -795,13 +797,21 @@ fn batch(s: &mut Session, p: &Value) -> Result<Value> {
                 // of a presentation that is now put back, edit.duplicate recorded copies that are
                 // gone (the next Duplicate would lose the offset it repeats), and review.compare
                 // and review.endCompare opened or closed a comparison, which is not an undo step.
+                // shape.setDefault, the two painters (format.painter, animation.painter; edit.deselect
+                // clears both) and a shape.rotate gesture are not undo steps either. A gesture left
+                // open would hold back the undo steps of the edits after the batch, and the step that
+                // ends it would go back to the presentation as it was partway through the batch.
                 if let Ok(st) = s.doc_mut() {
                     st.history = history;
                     st.selection = selection;
                     st.missing_fonts = missing_fonts;
                     st.last_duplicate = last_duplicate;
                     st.compare = compare;
+                    st.interaction = interaction;
                 }
+                s.default_look = default_look;
+                s.painter = painter;
+                s.anim_painter = anim_painter;
                 return Err(bad("edit.batch", format!("step {i} (`{id}`) failed, so the presentation was left as it was: {e}")));
             }
         }

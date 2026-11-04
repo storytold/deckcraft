@@ -187,6 +187,112 @@ fn a_failing_batch_that_ends_a_comparison_leaves_it_open() {
     assert_eq!(s.execute("review.revisions", &json!({})).ok(), Some(opened));
 }
 
+/// Set as Default Shape gives the shapes inserted after it the selected shape's look; it is not an
+/// undo step. A batch that sets the default and then fails leaves the default as it was.
+#[test]
+fn a_failing_batch_leaves_the_default_shape_look_as_it_was() {
+    let mut s = blank();
+    let insert = |s: &mut Session| s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80]})).unwrap()["id"].clone();
+    let fill = |s: &mut Session, id: &Value| s.execute("shape.inspect", &json!({"id": id})).unwrap()["shape"]["fill"].clone();
+    let plain = insert(&mut s);
+    let red = insert(&mut s);
+    s.execute("shape.fill", &json!({"ids": [red], "color": "#C00000"})).unwrap();
+    let set_default = |id: &Value| json!([{"command": "edit.select", "params": {"ids": [id]}}, {"command": "shape.setDefault"}, bad_rename()]);
+    let e = s.execute("edit.batch", &json!({"commands": set_default(&red)})).unwrap_err().to_string();
+    assert!(e.contains("step 2 (`shape.rename`)"), "{e}");
+    let after = insert(&mut s);
+    assert_eq!(fill(&mut s, &after), fill(&mut s, &plain), "the failed batch set the default look");
+    // A default set before the batch stays when the failing batch sets another.
+    s.execute("edit.select", &json!({"ids": [red]})).unwrap();
+    s.execute("shape.setDefault", &json!({})).unwrap();
+    assert!(s.execute("edit.batch", &json!({"commands": set_default(&plain)})).is_err());
+    let after = insert(&mut s);
+    assert_eq!(fill(&mut s, &after), fill(&mut s, &red));
+}
+
+/// The Format Painter holds the formatting it picked up until it is applied; picking it up is not
+/// an undo step. A failing batch leaves the painter armed or not, as it was before the batch.
+#[test]
+fn a_failing_batch_leaves_the_format_painter_as_it_was() {
+    let mut s = blank();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80]})).unwrap();
+    let armed = |s: &mut Session| s.execute("format.state", &json!({})).unwrap()["painter"].clone();
+    assert_eq!(armed(&mut s), false);
+    let e = s.execute("edit.batch", &json!({"commands": [{"command": "format.painter"}, bad_rename()]})).unwrap_err().to_string();
+    assert!(e.contains("step 1 (`shape.rename`)"), "{e}");
+    assert_eq!(armed(&mut s), false, "the failed batch armed the Format Painter");
+    // Armed before the batch, it stays armed when a step of the failing batch clears it.
+    s.execute("format.painter", &json!({})).unwrap();
+    assert!(s.execute("edit.batch", &json!({"commands": [{"command": "edit.deselect"}, bad_rename()]})).is_err());
+    assert_eq!(armed(&mut s), true);
+}
+
+/// The Animation Painter does the same with a shape's animations.
+#[test]
+fn a_failing_batch_leaves_the_animation_painter_as_it_was() {
+    let mut s = blank();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80]})).unwrap()["id"].clone();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [140, 50, 100, 80]})).unwrap()["id"].clone();
+    s.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [a]})).unwrap();
+    let pick = json!({"command": "animation.painter", "params": {"id": a}});
+    let e = s.execute("edit.batch", &json!({"commands": [pick, bad_rename()]})).unwrap_err().to_string();
+    assert!(e.contains("step 1 (`shape.rename`)"), "{e}");
+    let e = s.execute("animation.painterApply", &json!({"ids": [b]})).unwrap_err().to_string();
+    assert!(e.contains("pick animations with the Animation Painter first"), "{e}");
+    // Armed before the batch, it stays armed when a step of the failing batch clears it.
+    s.execute("animation.painter", &json!({"id": a})).unwrap();
+    assert!(s.execute("edit.batch", &json!({"commands": [{"command": "edit.deselect"}, bad_rename()]})).is_err());
+    assert_eq!(s.execute("animation.painterApply", &json!({"ids": [b]})).unwrap()["applied"], 1);
+}
+
+/// A twist on a trackpad is one undo step, from `shape.rotate` with `gesture: move` to
+/// `gesture: end`. A batch that starts one and then fails leaves no gesture open: the next edit is
+/// an undo step of its own, and undoing it does not bring back what the batch added.
+#[test]
+fn a_failing_batch_that_starts_a_gesture_leaves_none_open() {
+    let mut s = blank();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80]})).unwrap()["id"].clone();
+    let shapes = names(&s).len();
+    let (undo, _) = depth(&mut s);
+    let steps = json!([
+        {"command": "shape.insert", "params": {"preset": "ellipse", "rect": [300, 200, 80, 80]}},
+        {"command": "shape.rotate", "params": {"by": 10.0, "gesture": "move"}},
+        bad_rename(),
+    ]);
+    let e = s.execute("edit.batch", &json!({"commands": steps})).unwrap_err().to_string();
+    assert!(e.contains("step 2 (`shape.rename`)"), "{e}");
+    assert_eq!(names(&s).len(), shapes);
+    s.execute("shape.move", &json!({"ids": [id], "dx": 10.0, "dy": 0.0})).unwrap();
+    assert_eq!(depth(&mut s), (undo + 1, 0), "the move made no undo step of its own");
+    // Ending a gesture finds none to end, and one undo takes back the move alone.
+    s.execute("shape.rotate", &json!({"gesture": "end"})).unwrap();
+    assert_eq!(depth(&mut s), (undo + 1, 0));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(names(&s).len(), shapes, "undo brought back a shape from the failed batch");
+    assert_eq!(depth(&mut s), (undo, 1));
+}
+
+/// A twist that was open before the batch stays open when a step of the failing batch ends it, so
+/// ending it afterwards still makes the whole twist one undo step.
+#[test]
+fn a_failing_batch_that_ends_a_gesture_leaves_it_open() {
+    let mut s = blank();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80]})).unwrap()["id"].clone();
+    let rotation = |s: &mut Session| s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"]["rot"].as_f64().unwrap_or(0.0);
+    let (undo, _) = depth(&mut s);
+    s.execute("shape.rotate", &json!({"by": 10.0, "gesture": "move"})).unwrap();
+    let steps = json!([{"command": "shape.rotate", "params": {"gesture": "end"}}, bad_rename()]);
+    let e = s.execute("edit.batch", &json!({"commands": steps})).unwrap_err().to_string();
+    assert!(e.contains("step 1 (`shape.rename`)"), "{e}");
+    s.execute("shape.rotate", &json!({"by": 10.0, "gesture": "move"})).unwrap();
+    s.execute("shape.rotate", &json!({"gesture": "end"})).unwrap();
+    assert!((rotation(&mut s) - 20.0).abs() < 1e-9, "rotation {}", rotation(&mut s));
+    assert_eq!(depth(&mut s), (undo + 1, 0));
+    // One undo takes back the whole twist.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(rotation(&mut s).abs() < 1e-9, "rotation {} after one undo", rotation(&mut s));
+}
+
 #[test]
 fn undo_steps_a_command_pushes_itself_stay_inside_the_batch() {
     let mut s = blank();
