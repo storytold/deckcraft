@@ -184,6 +184,10 @@ pub struct FontFace {
     /// the typographic one: "Segoe UI Semibold" / "Regular" for Segoe UI Semibold. Documents name
     /// fonts this way.
     pub legacy: Option<(String, String)>,
+    /// The family's names in other languages (`name` IDs 16 and 1): "BIZ UDPゴシック" for BIZ
+    /// UDPGothic. Office documents written on a Japanese, Chinese or Korean system name fonts so
+    /// ("ＭＳ Ｐゴシック", "微软雅黑", "맑은 고딕"), and those names find the face.
+    pub aliases: Vec<String>,
     /// usWeightClass-style weight (400 = regular).
     pub weight: f32,
     pub italic: bool,
@@ -276,6 +280,14 @@ impl std::fmt::Debug for FontFace {
 }
 
 impl FontFace {
+    /// Whether a document naming the family `name` means this face's family: its typographic or
+    /// Windows family, or one of its names in another language.
+    pub fn answers_to(&self, name: &str) -> bool {
+        self.family.eq_ignore_ascii_case(name)
+            || self.legacy.as_ref().is_some_and(|(l, _)| l.eq_ignore_ascii_case(name))
+            || self.aliases.iter().any(|a| a.eq_ignore_ascii_case(name))
+    }
+
     pub fn data(&self) -> &[u8] {
         match &self.bytes {
             FontBytes::Static(b) => b,
@@ -363,6 +375,8 @@ struct CatalogEntry {
     family: String,
     style: String,
     path: std::path::PathBuf,
+    /// As [`FontFace::aliases`].
+    aliases: Vec<String>,
 }
 
 /// Process-wide font database.
@@ -483,6 +497,25 @@ fn face_names(f: &skrifa::FontRef<'_>) -> Option<(String, String)> {
     Some((family, style))
 }
 
+/// Most localized family names kept per face: a font lists one per language it was named in.
+const MAX_FAMILY_ALIASES: usize = 32;
+
+/// The family names `f` gives in languages other than the one `family` came from (`name` IDs 16
+/// and 1, every platform and language), each once.
+fn family_aliases(f: &skrifa::FontRef<'_>, family: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for id in [StringId::TYPOGRAPHIC_FAMILY_NAME, StringId::FAMILY_NAME] {
+        for s in f.localized_strings(id) {
+            let s = s.to_string();
+            let s = s.trim();
+            if !s.is_empty() && !s.eq_ignore_ascii_case(family) && !out.iter().any(|a| a.eq_ignore_ascii_case(s)) && out.len() < MAX_FAMILY_ALIASES {
+                out.push(s.to_string());
+            }
+        }
+    }
+    out
+}
+
 /// A face's Windows (GDI) family and style (`name` IDs 1 and 2) when that family differs from the
 /// typographic `family`.
 fn legacy_names(f: &skrifa::FontRef<'_>, family: &str) -> Option<(String, String)> {
@@ -520,7 +553,7 @@ const OUTLINE_TABLES: [&[u8; 4]; 4] = [b"glyf", b"CFF ", b"CFF2", b"VARC"];
 /// variable font is cataloged under its default style; its named instances appear once it loads.
 /// Faces with none of the [`OUTLINE_TABLES`] are left out.
 #[cfg(not(target_arch = "wasm32"))]
-fn file_face_names(path: &std::path::Path) -> Vec<(String, String)> {
+fn file_face_names(path: &std::path::Path) -> Vec<(String, String, Vec<String>)> {
     use std::io::{Read, Seek, SeekFrom};
     /// Caps on what a (possibly damaged) file can make the scan read.
     const MAX_FACES: u32 = 256;
@@ -567,9 +600,10 @@ fn file_face_names(path: &std::path::Path) -> Vec<(String, String)> {
             font.extend_from_slice(&table);
             let f = skrifa::FontRef::new(&font).ok()?;
             let (family, style) = face_names(&f)?;
+            let aliases = family_aliases(&f, &family);
             // Cataloged under its Windows family too, so "Segoe UI Semibold" finds the file.
-            let legacy = legacy_names(&f, &family);
-            Some(std::iter::once((family, style)).chain(legacy))
+            let legacy = legacy_names(&f, &family).map(|(fam, sty)| (fam, sty, Vec::new()));
+            Some(std::iter::once((family, style, aliases)).chain(legacy))
         })
         .flatten()
         .collect()
@@ -850,11 +884,13 @@ fn make_face(bytes: FontBytes, index: u32, family: String, style: String, coords
         .or(axis(b"slnt").map(|v| v.abs() > 0.1))
         .unwrap_or(!matches!(a.style, skrifa::attribute::Style::Normal) || style_italic(&style));
     let legacy = if coords.is_empty() { legacy_names(&f, &family) } else { instance_legacy_names(&family, &style) };
+    let aliases = family_aliases(&f, &family);
     Some(FontFace {
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         family,
         style,
         legacy,
+        aliases,
         weight,
         italic,
         upem: m.units_per_em.max(1) as f64,
@@ -1007,6 +1043,8 @@ impl FontDb {
 
     /// Style names available for `family` (Regular first, then by weight).
     pub fn styles(&self, family: &str) -> Vec<String> {
+        let canonical = self.canonical(family);
+        let family = canonical.as_deref().unwrap_or(family);
         let mut v: Vec<(bool, f32, String)> = self
             .read_faces()
             .iter()
@@ -1131,8 +1169,8 @@ impl FontDb {
                 if !font_file_ok(&meta) {
                     continue;
                 }
-                for (family, style) in file_face_names(&p) {
-                    found.push(CatalogEntry { family, style, path: p.clone() });
+                for (family, style, aliases) in file_face_names(&p) {
+                    found.push(CatalogEntry { family, style, path: p.clone(), aliases });
                 }
             }
         }
@@ -1170,6 +1208,8 @@ impl FontDb {
     /// an open substitute ([`substitutes`]), then to Inter. Installed system fonts are found by name
     /// whatever ran before.
     pub fn face(&self, family: &str, style: &str) -> Arc<FontFace> {
+        let canonical = self.canonical(family);
+        let family = canonical.as_deref().unwrap_or(family);
         if let Some(f) = self.try_family(family, style) {
             return f;
         }
@@ -1224,7 +1264,8 @@ impl FontDb {
         self.find(family, style)
     }
 
-    /// Is `family` available (loaded, or installed on the system)?
+    /// Is `family` available (loaded, or installed on the system), by its name or by one of its
+    /// names in another language?
     pub fn has_family(&self, family: &str) -> bool {
         if self.is_loaded(family) {
             return true;
@@ -1233,7 +1274,32 @@ impl FontDb {
         if self.read_catalog().iter().any(|c| c.family.eq_ignore_ascii_case(family)) {
             return true;
         }
-        false
+        self.canonical(family).is_some()
+    }
+
+    /// The family `family` is another language's name of, when no family is called `family`
+    /// itself: "BIZ UDPゴシック" gives "BIZ UDPGothic". Families were found only by the name the
+    /// font gives in English, so a document naming a font as a Japanese, Chinese or Korean system
+    /// lists it drew the text in Calibri even with the font installed.
+    fn canonical(&self, family: &str) -> Option<String> {
+        if self.is_loaded(family) {
+            return None;
+        }
+        let alias = |aliases: &[String]| aliases.iter().any(|a| a.eq_ignore_ascii_case(family));
+        if let Some(f) = self.read_faces().iter().find(|f| alias(&f.aliases)) {
+            return Some(f.family.clone());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let cat = self.read_catalog();
+            if cat.iter().any(|c| c.family.eq_ignore_ascii_case(family)) {
+                return None;
+            }
+            if let Some(c) = cat.iter().find(|c| alias(&c.aliases)) {
+                return Some(c.family.clone());
+            }
+        }
+        None
     }
 
     pub(crate) fn is_loaded(&self, family: &str) -> bool {

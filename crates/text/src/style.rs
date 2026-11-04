@@ -150,7 +150,13 @@ pub(crate) fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgb
         let name = theme.font(explicit.as_deref().unwrap_or(theme_ref));
         (!name.trim().is_empty()).then_some(name)
     };
-    let ea = slot_family(&r.font_ea, if major { "+mj-ea" } else { "+mn-ea" });
+    // With no East Asian typeface (`+mn-ea` naming an empty theme slot), the run's East Asian
+    // font is the theme's for its language (`a:font script="Jpan"` for Japanese): its own font,
+    // which sets the line as `a:ea` would.
+    let ea = slot_family(&r.font_ea, if major { "+mj-ea" } else { "+mn-ea" }).or_else(|| {
+        let set = if major { &theme.fonts.major } else { &theme.fonts.minor };
+        theme_script("Hani", r.lang.as_deref()).and_then(|k| set.script(k)).map(str::to_string)
+    });
     let cs = slot_family(&r.font_cs, if major { "+mj-cs" } else { "+mn-cs" });
     let underline =
         r.underline.as_deref().and_then(Underline::from_xml).map(|u| (r.underline_color.as_ref().map(|c| ctx.color(c, None)).unwrap_or(color), u));
@@ -206,7 +212,7 @@ pub(crate) fn face_chain(ctx: &Ctx, st: &Style, slot: FontSlot, script: Option<S
     }
     if let Some(sc) = script.and_then(|t| std::str::from_utf8(&t).ok().map(String::from)) {
         let set = if st.major { &ctx.master.theme.fonts.major } else { &ctx.master.theme.fonts.minor };
-        if let Some(f) = set.script(&sc) {
+        if let Some(f) = theme_script(&sc, st.lang.as_deref()).and_then(|k| set.script(k)).or_else(|| set.script(&sc)) {
             push(f);
         }
     }
@@ -214,6 +220,30 @@ pub(crate) fn face_chain(ctx: &Ctx, st: &Style, slot: FontSlot, script: Option<S
         chain.push(st.face.clone());
     }
     chain
+}
+
+/// The key a theme lists the font for text of Unicode script `script` under (`a:font@script`),
+/// when it differs from the script itself. Office themes name East Asian fonts by writing system,
+/// not by Unicode script: Japanese kana and kanji take the `Jpan` font, Han characters the
+/// Japanese, Korean or Chinese one by the run's language (`lang`), Bopomofo the Traditional
+/// Chinese one. Looked up by the Unicode script (`Hira`, `Hani`), a theme's `Jpan` font was never
+/// found, and Japanese text fell back to the next face. `None` where the names agree (`Arab`,
+/// `Thai`, `Hang`) or a Han character's language is unknown.
+fn theme_script(script: &str, lang: Option<&str>) -> Option<&'static str> {
+    let lang = lang.unwrap_or("").to_ascii_lowercase();
+    let primary = lang.split(['-', '_']).next().unwrap_or("");
+    match script {
+        "Hira" | "Kana" => Some("Jpan"),
+        "Bopo" => Some("Hant"),
+        "Hani" => match primary {
+            "ja" => Some("Jpan"),
+            "ko" => Some("Hang"),
+            "zh" if ["-tw", "-hk", "-mo", "-hant"].iter().any(|t| lang.contains(t)) => Some("Hant"),
+            "zh" => Some("Hans"),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Space before or after a paragraph, points. Shrink-on-overflow's line spacing reduction

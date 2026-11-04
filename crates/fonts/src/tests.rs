@@ -425,3 +425,66 @@ fn the_font_scan_skips_fifos_folders_and_link_loops() {
     assert!(fifo || n >= 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A font is found by its family name in another language as well as its English one: Office
+/// files written on a Japanese, Chinese or Korean system name fonts so ("ＭＳ Ｐゴシック"), and
+/// the text fell back to Calibri with the font installed (#1727). Here a bundled face.
+#[test]
+fn a_bundled_face_is_found_by_its_localized_family_name() {
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    if !db.has_family("BIZ UDPGothic") {
+        eprintln!("skipped: built without craft-fonts' BIZ UDPGothic (set CRAFT_FONTS_DIR)");
+        return;
+    }
+    let face = db.face("BIZ UDPゴシック", "Regular");
+    assert_eq!(face.family, "BIZ UDPGothic");
+    assert!(face.aliases.iter().any(|a| a == "BIZ UDPゴシック"), "{:?}", face.aliases);
+    assert!(db.has_family("BIZ UDPゴシック"));
+    assert_eq!(db.document_face("BIZ UDPゴシック", "Regular").family, "BIZ UDPGothic", "not drawn in Calibri");
+    assert!(!db.styles("BIZ UDPゴシック").is_empty());
+    // A name no font gives stays missing, and the English name is unaffected.
+    assert!(!db.has_family("存在しないフォント"));
+    assert_eq!(db.face("BIZ UDPGothic", "Regular").family, "BIZ UDPGothic");
+}
+
+/// The same for an installed font that isn't loaded yet: the system font scan records each
+/// face's localized family names, so the first lookup by one of them loads the font. Every
+/// craft-fonts face with a localized name is bundled, so the font here is NanumGothic renamed in
+/// place, to names nothing else has ("QanumGothic", Korean "다눔고딕"), the way a system font
+/// only the scan can find would be.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn an_installed_font_is_found_by_its_localized_family_name() {
+    let Some(src) = option_env!("CRAFT_FONTS_DIR").map(|d| std::path::Path::new(d).join("fonts/nanum-gothic/NanumGothic-Regular.ttf")) else {
+        eprintln!("skipped: set CRAFT_FONTS_DIR");
+        return;
+    };
+    let Ok(mut data) = std::fs::read(&src) else {
+        eprintln!("skipped: {} missing", src.display());
+        return;
+    };
+    // Same-length replacements, so no offset in the file moves: UTF-16BE (Windows names) and
+    // single-byte (Mac names) spellings of the English family, and the Korean family.
+    let utf16 = |s: &str| s.encode_utf16().flat_map(|u| u.to_be_bytes()).collect::<Vec<u8>>();
+    for (from, to) in
+        [(utf16("NanumGothic"), utf16("QanumGothic")), (b"NanumGothic".to_vec(), b"QanumGothic".to_vec()), (utf16("나눔고딕"), utf16("다눔고딕"))]
+    {
+        let mut at = 0;
+        while let Some(i) = data[at..].windows(from.len()).position(|w| w == from.as_slice()) {
+            data[at + i..at + i + to.len()].copy_from_slice(&to);
+            at += i + to.len();
+        }
+    }
+    let dir = std::env::temp_dir().join(format!("dk-localized-names-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("QanumGothic-Regular.ttf"), &data).unwrap();
+    let db = FontDb::with_font_dirs(vec![dir.clone()]);
+    db.set_system_fallback(false);
+    assert!(!db.is_loaded("QanumGothic"), "only the scan of `dir` can find it");
+    assert!(db.has_family("다눔고딕"));
+    assert_eq!(db.face("다눔고딕", "Regular").family, "QanumGothic");
+    assert!(db.is_loaded("QanumGothic"), "the lookup by its Korean name loaded it");
+    let _ = std::fs::remove_dir_all(&dir);
+}
