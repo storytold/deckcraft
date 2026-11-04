@@ -584,12 +584,13 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     let dpart = Part::new(imp.pkg, &drawing_rel, &d);
     let tree = d.root.child("spTree")?;
     let mut sub = IdCtx { fresh: true, ..Default::default() };
+    let before = imp.smartart_shapes;
     let children = sp_tree(imp, &dpart, &mut sub, tree, depth + 1);
     if children.is_empty() {
         return None;
     }
-    // A drawing that frames reuse (or that nests another SmartArt) counts every time it is read.
-    imp.smartart_shapes = imp.smartart_shapes.saturating_add(count_shapes(&children));
+    // Counted once here, nested SmartArt included: a drawing that frames reuse counts every time it is read.
+    imp.smartart_shapes = before.saturating_add(count_shapes(&children));
     let children = smartart_text_rects(imp, &mut sub, tree, children, depth + 1);
     let mut g = frame.clone();
     let x = frame.xfrm.unwrap_or_default();
