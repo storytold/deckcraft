@@ -1280,9 +1280,10 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
             }
             let Some(sh) = deckcraft_model::find_shape_mut(&mut s.shapes, cue.shape) else { continue };
             let narration = !cue.video && sh.name.eq_ignore_ascii_case("Narration");
+            // A clip that waits for a click keeps `autoplay` off: the slide does not start it.
             if let deckcraft_model::ShapeKind::Media(clip) = &mut sh.kind {
-                clip.autoplay = true;
-                if narration {
+                clip.autoplay = !cue.click;
+                if narration && !cue.click {
                     clip.narration = true;
                 }
             }

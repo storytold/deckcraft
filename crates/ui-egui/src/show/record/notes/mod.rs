@@ -31,7 +31,7 @@ use super::{Layout as RecordLayout, RecordView, Show};
 use crate::SlideApp;
 
 pub(crate) use edit::State as EditState;
-pub(crate) use sizing::{NOTES_DEFAULT, NOTES_MAX, NOTES_MIN, NOTES_STEP, clamp_size};
+pub(crate) use sizing::{NOTES_DEFAULT, NOTES_MAX, NOTES_MIN, clamp_size};
 pub(crate) use teleprompter::State as TeleprompterState;
 
 /// Keep a requested notes size inside the pane's usable range.

@@ -197,30 +197,36 @@ fn max_dur(e: &El, depth: usize) -> Option<u32> {
     best
 }
 
-/// A slide-start media node (`p:audio` / `p:video` outside a click sequence). Its volume, mute
-/// and playback options come from [`media_settings`].
+/// A media node in the timing tree. Its volume, mute and playback options come from
+/// [`media_settings`]; `click` says whether it starts on a click rather than with the slide.
 pub struct MediaCue {
     pub shape: ShapeId,
     pub video: bool,
+    /// The node lives in a trigger's `interactiveSeq`, which a click on another shape starts.
     pub interactive: bool,
+    /// The node waits for a click, so it is not slide-start media.
+    pub click: bool,
 }
 
-fn walk_media(e: &El, interactive: bool, ctx: &IdCtx, out: &mut Vec<MediaCue>, depth: usize) {
+fn walk_media(e: &El, interactive: bool, click: bool, ctx: &IdCtx, out: &mut Vec<MediaCue>, depth: usize) {
     if depth > 64 || out.len() >= 64 {
         return;
     }
     let interactive = interactive || (e.is("cTn") && e.attr("nodeType") == Some("interactiveSeq"));
+    // A time node that starts `indefinite` waits for a click: everything below it, the media
+    // included, plays on that click. This is the click-group rule `collect` applies.
+    let click = click || (e.is("cTn") && e.path(&["stCondLst", "cond"]).and_then(|c| c.attr("delay")).map(str::trim) == Some("indefinite"));
     if e.is("audio") || e.is("video") {
         if let Some(node) = e.child("cMediaNode")
             && let Some(spid) = node.path(&["tgtEl", "spTgt"]).and_then(|s| s.u32("spid"))
             && let Some(shape) = ctx.lookup(spid)
         {
-            out.push(MediaCue { shape, video: e.is("video"), interactive });
+            out.push(MediaCue { shape, video: e.is("video"), interactive, click });
         }
         return;
     }
     for c in e.elements() {
-        walk_media(c, interactive, ctx, out, depth + 1);
+        walk_media(c, interactive, click, ctx, out, depth + 1);
     }
 }
 
@@ -228,7 +234,7 @@ fn walk_media(e: &El, interactive: bool, ctx: &IdCtx, out: &mut Vec<MediaCue>, d
 pub fn media_cues(ctx: &IdCtx, timing: &El) -> Vec<MediaCue> {
     let Some(tn) = timing.child("tnLst") else { return vec![] };
     let mut out = Vec::new();
-    walk_media(tn, false, ctx, &mut out, 0);
+    walk_media(tn, false, false, ctx, &mut out, 0);
     out
 }
 

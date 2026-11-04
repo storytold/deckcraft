@@ -40,11 +40,11 @@ fn open_record(h: &mut Harness<'static, SlideApp>, slide: usize) {
     h.run_steps(3);
 }
 
-fn notes_editor(h: &Harness<'static, SlideApp>) -> egui_kittest::Node<'_> {
+fn notes_editor<'a>(h: &'a Harness<'static, SlideApp>) -> egui_kittest::Node<'a> {
     h.get_by_role_and_label(Role::MultilineTextInput, "Click to add notes")
 }
 
-fn view(h: &Harness<'static, SlideApp>) -> &RecordView {
+fn view<'a>(h: &'a Harness<'static, SlideApp>) -> &'a RecordView {
     &h.state().show.as_ref().unwrap().record_view
 }
 

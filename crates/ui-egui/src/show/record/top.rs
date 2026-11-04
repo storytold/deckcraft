@@ -175,7 +175,7 @@ fn close_now(show: &mut Show, rec: &mut RecordView, now: f64) -> bool {
 /// Stop the take (freezing the clock) and hand the save decision back to the show: only a take
 /// that actually captured something is kept.
 fn end_and_close(show: &mut Show, rec: &mut RecordView, now: f64) {
-    rec.stop(now);
+    rec.stop(show, now);
     rec.close_confirm = false;
     show.record = rec.captured;
 }
@@ -234,9 +234,9 @@ mod tests {
     /// Edit/Escape closes at once when idle, and raises the confirmation while a take runs.
     #[test]
     fn close_asks_first_only_for_a_running_take() {
-        let mut show = show();
+        let mut idle = show();
         let mut rec = RecordView::default();
-        assert!(close_now(&mut show, &mut rec, 1.0));
+        assert!(close_now(&mut idle, &mut rec, 1.0));
         assert!(!rec.captured, "an idle view never claims a recording");
 
         let mut show = show();

@@ -148,7 +148,14 @@ impl SlideApp {
 
     /// Poll the source once per frame and report a status change or failure.
     pub(crate) fn poll_camera(&mut self, ctx: &egui::Context) {
-        let Some(status) = self.camera_preview.poll() else { return };
+        let Some(status) = self.camera_preview.poll() else {
+            // A live preview can wait frames for the device: keep the frame clock running so a
+            // later Lost or Ready is seen even when nothing else asks for a repaint.
+            if self.camera_preview.is_on() {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
+            return;
+        };
         self.publish_camera();
         if status.is_error() {
             self.set_status(camera_message(&self.camera_preview, status));

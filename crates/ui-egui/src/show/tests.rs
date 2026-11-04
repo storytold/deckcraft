@@ -1403,16 +1403,88 @@ fn a_record_preview_keeps_no_recorded_material() {
     show.record = true;
     show.rehearse = true;
     show.recording_preview = true;
+    show.begin_recording(0.0);
     assert!(!show.keeps_recording());
-    show.strokes.push(vec![pos2(0.1, 0.1), pos2(0.2, 0.2)]);
+    show.strokes.push(InkStroke {
+        points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)],
+        mode: InkMode::Pen,
+        color: deckcraft_model::Rgba::BLACK,
+        width: 2.25,
+    });
     show.laser_live.push((0.5, 0.5, 10));
-    show.stash_ink(&doc, 0);
-    show.stash_laser(0);
+    let keep = show.keeps_recording();
+    assert!(!keep);
+    show.stash_ink(&doc, 0, keep);
+    show.stash_laser(0, keep);
     show.apply(ShowAction::Slide(1), &doc, 1.0);
     assert!(show.recorded.is_empty(), "no ink");
     assert!(show.laser_saved.is_empty(), "no laser trace");
     assert!(show.timings.is_empty(), "no slide timing");
     assert!(show.narration.is_empty(), "no narration");
+}
+
+/// #1812: an open Record view that is not capturing keeps nothing. Browsing the deck before
+/// Record, or after Stop, must not write timings, ink or laser for the browsed slides.
+#[test]
+fn an_idle_record_view_keeps_no_recorded_material() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    assert!(!show.keeps_recording(), "the Record view opens idle");
+    let stroke = || InkStroke { points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)], mode: InkMode::Pen, color: deckcraft_model::Rgba::BLACK, width: 2.25 };
+    show.strokes.push(stroke());
+    show.laser_live.push((0.5, 0.5, 10));
+    show.apply(ShowAction::Slide(1), &doc, 1.0);
+    assert!(show.recorded.is_empty(), "no ink before the take");
+    assert!(show.laser_saved.is_empty(), "no laser before the take");
+    assert!(show.timings.is_empty(), "no slide timing before the take");
+    // A take starts: the show records again.
+    show.begin_recording(1.0);
+    assert!(show.keeps_recording());
+    show.strokes.push(stroke());
+    show.laser_live.push((0.5, 0.5, 10));
+    show.apply(ShowAction::Slide(0), &doc, 2.0);
+    assert_eq!(show.recorded.len(), 1, "the take keeps its ink");
+    assert_eq!(show.laser_saved.len(), 1, "and its laser");
+    assert_eq!(show.timings.len(), 1, "and its timing");
+    // Stop keeps what the take captured and records nothing new.
+    show.end_recording();
+    assert!(!show.keeps_recording());
+    show.strokes.push(stroke());
+    show.apply(ShowAction::Slide(1), &doc, 3.0);
+    assert_eq!(show.recorded.len(), 1, "a stopped take records nothing more");
+    assert_eq!(show.timings.len(), 1);
+}
+
+/// The red Record button starts a new take: earlier browsing and a previous take's buffers go,
+/// so one save never mixes two takes.
+#[test]
+fn a_new_take_replaces_the_previous_buffers() {
+    let doc = deckcraft_model::Presentation::default();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    show.begin_recording(0.0);
+    show.strokes.push(InkStroke {
+        points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)],
+        mode: InkMode::Pen,
+        color: deckcraft_model::Rgba::BLACK,
+        width: 2.25,
+    });
+    show.stash_ink(&doc, 0, true);
+    show.laser_live.push((0.1, 0.1, 5));
+    show.stash_laser(0, true);
+    show.timings.push((0, 1.5));
+    show.narration.push((0, vec![1, 2, 3]));
+    assert!(!show.recorded.is_empty() && !show.laser_saved.is_empty());
+    show.end_recording();
+    show.begin_recording(10.0);
+    assert!(show.recorded.is_empty(), "ink from the last take goes");
+    assert!(show.laser_saved.is_empty(), "laser from the last take goes");
+    assert!(show.timings.is_empty(), "timings from the last take go");
+    assert!(show.narration.is_empty(), "narration from the last take goes");
 }
 
 /// #1812: `show.preview` reaches the app as a preview that does not record, while `show.record`
@@ -1533,9 +1605,10 @@ fn a_recorded_stroke_keeps_its_tool_colour_and_width() {
     let doc = deckcraft_model::Presentation::default();
     let mut show = Show::new(&doc, 0, false, false);
     show.record = true;
+    show.begin_recording(0.0);
     let color = deckcraft_model::Rgba::rgb(0xFF, 0xD4, 0x00);
     show.strokes.push(InkStroke { points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)], mode: InkMode::Highlighter, color, width: 6.75 });
-    show.stash_ink(&doc, 2);
+    show.stash_ink(&doc, 2, true);
     assert_eq!(show.recorded.len(), 1);
     let (slide, pts, mode, saved, width) = &show.recorded[0];
     assert_eq!(*slide, 2);

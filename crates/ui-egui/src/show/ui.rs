@@ -92,7 +92,8 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         }
     }
     let editing = show.record && record::notes_has_focus(&ctx);
-    let mut out = Out { keep: !editing || keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
+    // The show reads its keys only when the notes editor does not own them.
+    let mut out = Out { keep: editing || keyboard(&mut app.services.mic, &ctx, &mut show, &doc, now, false), actions: vec![] };
     if show.presenter
         && !show.reading
         && let Some(host) = app.services.presenter.as_mut()
@@ -113,7 +114,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 crate::presenter::Command::Key { name, command, shift, alt, ctrl } => {
                     if let Some(key) = egui::Key::ALL.iter().copied().find(|key| key.name() == name) {
                         let modifiers = egui::Modifiers { command, shift, alt, ctrl, mac_cmd: command && !ctrl };
-                        out.keep &= handle_keys(&mut show, &doc, now, vec![(key, modifiers)], false).0;
+                        out.keep &= handle_keys(&mut app.services.mic, &mut show, &doc, now, vec![(key, modifiers)], false).0;
                     }
                 }
                 _ => {}
@@ -932,16 +933,21 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         }
         // A Record preview plays the recording; it never writes timings, ink, narration or laser.
-        if show.keeps_recording() {
+        let saving = show.rehearse || (show.record && show.record_view.captured);
+        if saving {
+            let live = show.rehearse || show.record_view.status == record::RecordStatus::Recording;
             if show.record {
-                take_narration(app, &mut show);
+                // The microphone's buffer belongs to the slide the show ends on.
+                take_narration(app.services.mic.as_deref_mut(), &mut show);
             }
             if show.mic_tried {
                 app.stop_mic();
             }
-            show.stash_ink(&doc, show.state.slide);
-            show.stash_laser(show.state.slide);
-            show.timings.push((show.state.slide, now - show.slide_start));
+            show.stash_ink(&doc, show.state.slide, live);
+            show.stash_laser(show.state.slide, live);
+            if live {
+                show.timings.push((show.state.slide, now - show.slide_start));
+            }
             for (i, secs) in show.timings.clone() {
                 let ms = if secs.is_finite() { (secs.max(0.0) * 1000.0).round() as u64 } else { 0 };
                 let _ = app.run("transition.timing", json!({"index": i, "after": ms}));

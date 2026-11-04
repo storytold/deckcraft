@@ -6,6 +6,11 @@
 
 use super::*;
 
+/// The RGBA the strip sets on the show from a swatch.
+fn rgba(c: egui::Color32) -> deckcraft_model::Rgba {
+    deckcraft_model::Rgba::rgb(c.r(), c.g(), c.b())
+}
+
 fn record_view() -> RecordView {
     RecordView::default()
 }
@@ -142,10 +147,11 @@ fn the_strip_stays_centred_when_the_strip_is_taller() {
 use super::super::super::{InkMode, InkStroke, Show};
 use super::super::layout as record_layout;
 use super::super::{InkTool, Layout, RecordView};
+use egui::accesskit::Toggled;
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 
-type State = (Show, RecordView, std::sync::Arc<deckcraft_model::Presentation>, Layout);
+type State = (Show, RecordView, std::sync::Arc<deckcraft_model::Presentation>, Layout, crate::show::MicSlot);
 
 fn harness() -> Harness<'static, State> {
     let mut session = deckcraft_engine::Session::with_new();
@@ -156,10 +162,10 @@ fn harness() -> Harness<'static, State> {
     let layout = record_layout(Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 700.0)), &doc, &rec);
     let mut h = Harness::builder().with_size(vec2(1280.0, 700.0)).build_ui_state(
         |ui, st: &mut State| {
-            let (show, rec, doc, layout) = st;
-            bottom_ui(ui, show, rec, doc, 0.0, layout);
+            let (show, rec, doc, layout, mic) = st;
+            bottom_ui(mic, ui, show, rec, doc, 0.0, layout);
         },
-        (show, rec, doc, layout),
+        (show, rec, doc, layout, None),
     );
     h.run_steps(2);
     h
@@ -194,12 +200,12 @@ fn the_pen_and_highlighter_are_toggles_and_drive_the_show() {
     h.run();
     assert_eq!(h.state().1.ink.tool, InkTool::Pen);
     assert_eq!(h.state().0.ink_mode(), InkMode::Pen, "the canvas and recording see the pen");
-    assert_eq!(h.get_by_label("Pen").accesskit_node().toggled(), Some(true), "the pen reads as selected");
+    assert_eq!(h.get_by_label("Pen").accesskit_node().toggled(), Some(Toggled::True), "the pen reads as selected");
     h.get_by_label("Highlighter").click();
     h.run();
     assert_eq!(h.state().1.ink.tool, InkTool::Highlighter);
     assert_eq!(h.state().0.ink_mode(), InkMode::Highlighter);
-    assert_eq!(h.get_by_label("Pen").accesskit_node().toggled(), Some(false), "only one tool is active");
+    assert_eq!(h.get_by_label("Pen").accesskit_node().toggled(), Some(Toggled::False), "only one tool is active");
     h.get_by_label("Highlighter").click();
     h.run();
     assert_eq!(h.state().1.ink.tool, InkTool::Arrow, "pressing the active highlighter puts it away");
@@ -232,14 +238,14 @@ fn a_colour_click_selects_the_swatch_and_starts_the_pen() {
     h.run();
     assert_eq!(h.state().1.ink.color, 3);
     assert_eq!(h.state().1.ink.tool, InkTool::Pen, "the arrow gives way to the chosen pen");
-    assert_eq!(h.state().0.ink_color(), INK_COLORS[3]);
-    assert_eq!(h.get_by_label("Ink colour 4").accesskit_node().toggled(), Some(true));
-    assert_eq!(h.get_by_label("Ink colour 9").accesskit_node().toggled(), Some(false));
+    assert_eq!(h.state().0.ink_color(), rgba(INK_COLORS[3]));
+    assert_eq!(h.get_by_label("Ink colour 4").accesskit_node().toggled(), Some(Toggled::True));
+    assert_eq!(h.get_by_label("Ink colour 9").accesskit_node().toggled(), Some(Toggled::False));
     h.get_by_label("Ink colour 9").click();
     h.run();
     assert_eq!(h.state().1.ink.color, 8);
-    assert_eq!(h.get_by_label("Ink colour 4").accesskit_node().toggled(), Some(false));
-    assert_eq!(h.get_by_label("Ink colour 9").accesskit_node().toggled(), Some(true));
+    assert_eq!(h.get_by_label("Ink colour 4").accesskit_node().toggled(), Some(Toggled::False));
+    assert_eq!(h.get_by_label("Ink colour 9").accesskit_node().toggled(), Some(Toggled::True));
 }
 
 #[test]
@@ -251,5 +257,5 @@ fn a_colour_keeps_the_highlighter_selected() {
     h.run();
     assert_eq!(h.state().1.ink.tool, InkTool::Highlighter);
     assert_eq!(h.state().1.ink.color, 5);
-    assert_eq!(h.state().0.ink_color(), INK_COLORS[5]);
+    assert_eq!(h.state().0.ink_color(), rgba(INK_COLORS[5]));
 }

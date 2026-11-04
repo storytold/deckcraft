@@ -1,18 +1,19 @@
 use super::presenter::NOTES_STEP;
 use super::zoom::{plain, toggle_blank};
-use super::{Color32, Presentation, Show, ShowAction};
+use super::{Color32, MicSlot, Presentation, Show, ShowAction, before_slide_change_with};
 
 /// Read the current viewport's show keys before its widgets can consume them. Both the
 /// audience window and Presenter View use this path, including animation steps and end-of-show.
-/// `presenter` is true for Presenter View, where G opens that window's own grid (#1130).
-pub(super) fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, presenter: bool) -> bool {
+/// `presenter` is true for Presenter View, where G opens that window's own grid (#1130). The
+/// microphone goes with every slide change, so a key-driven one ends the take like a click does.
+pub(super) fn keyboard(mic: &mut MicSlot, ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, presenter: bool) -> bool {
     let keys: Vec<(egui::Key, egui::Modifiers)> = ctx.input(|i| {
         i.events
             .iter()
             .filter_map(|e| if let egui::Event::Key { key, pressed: true, modifiers, .. } = e { Some((*key, *modifiers)) } else { None })
             .collect()
     });
-    let (keep, consumed) = handle_keys(show, doc, now, keys, presenter);
+    let (keep, consumed) = handle_keys(mic, show, doc, now, keys, presenter);
     for (key, modifiers) in consumed {
         ctx.input_mut(|i| i.consume_key(modifiers, key));
         ctx.request_repaint_of(egui::ViewportId::ROOT);
@@ -21,6 +22,7 @@ pub(super) fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation,
 }
 
 pub(super) fn handle_keys(
+    mic: &mut MicSlot,
     show: &mut Show,
     doc: &Presentation,
     now: f64,
@@ -56,6 +58,7 @@ pub(super) fn handle_keys(
         consumed.push((k, m));
     }
     for action in actions {
+        before_slide_change_with(mic, show, &action);
         if !show.apply(action, doc, now) {
             keep = false;
         }

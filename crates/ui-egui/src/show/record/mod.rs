@@ -22,7 +22,7 @@ use egui::{Color32, CornerRadius, Pos2, Rect, Ui, pos2, vec2};
 
 use super::presenter::PresenterTimer;
 use super::render::fit;
-use super::{Show, SlideApp};
+use super::{Show, SlideApp, take_narration};
 
 /// Where the recorder is in its capture cycle.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -92,7 +92,7 @@ pub(crate) struct RecordView {
     pub(super) views_open: bool,
     pub(super) more_open: bool,
     pub(super) ink: InkState,
-    pub(super) devices: devices::Devices,
+    pub(in crate::show) devices: devices::Devices,
     /// The cameo bubble on the slide canvas is shown.
     pub(super) camera_bubble: bool,
     /// The separate camera preview window is shown.
@@ -176,17 +176,19 @@ impl RecordView {
         }
     }
 
-    /// Continue a paused capture from `now`.
+    /// Continue a paused capture from `now`. The microphone starts a fresh buffer, so nothing
+    /// spoken while the take was held reaches this slide's narration.
     pub(super) fn resume(&mut self, show: &mut Show, now: f64) {
         if self.status == RecordStatus::Paused {
             self.timer.toggle(now);
             self.status = RecordStatus::Recording;
+            show.mic_tried = false;
             show.resume_recording(now);
         }
     }
 
     /// Stop capturing and leave the view open on the frozen clock. Record starts a new take.
-    pub(super) fn stop(&mut self, now: f64) {
+    pub(super) fn stop(&mut self, show: &mut Show, now: f64) {
         match self.status {
             RecordStatus::Recording => {
                 self.timer.toggle(now);
@@ -195,6 +197,7 @@ impl RecordView {
             RecordStatus::Paused => self.status = RecordStatus::Idle,
             RecordStatus::Idle => {}
         }
+        show.end_recording();
         self.ink.active = false;
     }
 
@@ -202,7 +205,7 @@ impl RecordView {
     pub(super) fn toggle_record(&mut self, show: &mut Show, now: f64) {
         match self.status {
             RecordStatus::Idle => self.start(show, now),
-            RecordStatus::Recording | RecordStatus::Paused => self.stop(now),
+            RecordStatus::Recording | RecordStatus::Paused => self.stop(show, now),
         }
     }
 
@@ -317,6 +320,7 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Pre
     let mut rec = std::mem::take(&mut show.record_view);
     devices::connect(&mut rec, &app.services);
     rec.read_total(doc);
+    let was_recording = rec.status == RecordStatus::Recording;
     let mut keep = true;
     ui.painter().rect_filled(layout.full, CornerRadius::ZERO, Color32::from_rgb(16, 16, 18));
     // The slide is drawn by the show before this call; the pane backgrounds sit around it.
@@ -324,9 +328,15 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Pre
     notes::overlay(ui, &rec, doc, show, layout);
     let top = top::ui(app, ui, show, &mut rec, now, layout);
     keep &= !top.close;
-    let _ = bottom::ui(ui, show, &mut rec, doc, now, layout);
+    let _ = bottom::ui(&mut app.services.mic, ui, show, &mut rec, doc, now, layout);
     canvas::bubble(ui, &rec, layout);
     let _ = views::ui(ui, &mut rec, layout);
+    // Pause or Stop ends capture: what was spoken belongs to the slide being left, and nothing
+    // spoken afterwards may reach a later slide's narration. Resume starts a fresh buffer.
+    if was_recording && rec.status != RecordStatus::Recording {
+        take_narration(app.services.mic.as_deref_mut(), show);
+        app.stop_mic();
+    }
     if !keep {
         notes::flush(app, &mut rec, doc, show.state.slide);
     }

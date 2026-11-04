@@ -296,9 +296,9 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.label("Hold Ctrl during the show.");
     let (ok, cancel) = buttons(ui, "OK");
     if ok {
-        let ty = d.get("type", "speaker");
+        let ty = d.get("type", &sh.show_type);
         let custom = d.fields.get("custom").cloned().unwrap_or_default();
-        let key = d.get("laser", "red");
+        let key = d.get("laser", &laser);
         let rgb = match key.as_str() {
             "green" => [0, 255, 0],
             "blue" => [0, 0, 255],

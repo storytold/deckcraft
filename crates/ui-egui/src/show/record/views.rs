@@ -39,7 +39,7 @@ pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, layout: &Layout) -> Out {
     let painter = ui.painter().clone();
     // Camera preview icon: a filled camera body when the preview is up.
     let cp = layout.camera_preview;
-    let cp_resp = ui.interact(cp, ui.id().with("record_camera_preview"), Sense::click());
+    let cp_resp = ui.interact(cp, ui.scope_id().with("record_camera_preview"), Sense::click());
     let cp_bg = if cp_resp.hovered() { Color32::from_gray(58) } else { Color32::from_gray(38) };
     painter.rect_filled(cp, CornerRadius::same(5), cp_bg);
     let body = cp.shrink(6.0);
@@ -57,7 +57,7 @@ pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, layout: &Layout) -> Out {
     cp_resp.on_hover_text(if rec.camera_preview { "Hide camera preview" } else { "Show camera preview" });
 
     let r = layout.views;
-    let resp = ui.interact(r, ui.id().with("record_views"), Sense::click());
+    let resp = ui.interact(r, ui.scope_id().with("record_views"), Sense::click());
     painter.rect_filled(r, CornerRadius::same(5), if resp.hovered() { Color32::from_gray(58) } else { Color32::from_gray(38) });
     painter.text(
         pos2(r.min.x + 10.0, r.center().y),

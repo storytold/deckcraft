@@ -74,3 +74,24 @@ fn muted_audio_has_no_volume_and_other_clips_keep_theirs() {
     assert_eq!(c[0].volume, 1.0);
     assert_eq!((c[1].volume, c[1].loop_play, c[1].full_screen), (0.0, false, false));
 }
+
+/// A time node that starts `indefinite` waits for a click, so the clip under it is not
+/// slide-start media and must not come back as autoplay.
+fn click_node(tag: &str, spid: u32) -> String {
+    format!(
+        r#"<p:par><p:cTn id="2" fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst><p:{tag}><p:cMediaNode><p:cTn id="3"><p:stCondLst><p:cond delay="0"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="{spid}"/></p:tgtEl></p:cMediaNode></p:{tag}></p:childTnLst></p:cTn></p:par>"#
+    )
+}
+
+#[test]
+fn a_click_triggered_clip_is_not_autoplay() {
+    let c = clips(|v, a| format!("{}{}", node("video", "", v, "", ""), click_node("audio", a)));
+    assert!(!c[1].autoplay, "the clip waits for a click");
+    assert!(c[0].autoplay, "a slide-start clip still autoplays");
+}
+
+#[test]
+fn a_slide_start_clip_is_autoplay() {
+    let c = clips(|_, a| node("audio", "", a, "", ""));
+    assert!(c[1].autoplay, "no click node: the slide starts it");
+}

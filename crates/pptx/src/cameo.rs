@@ -24,18 +24,14 @@ fn is_feed_uri(uri: &str) -> bool {
 pub(crate) fn live_feed_props(nv_pic_pr: Option<&crate::xml::El>) -> Option<&crate::xml::El> {
     let exts = nv_pic_pr?.child("extLst")?;
     for e in exts.elements() {
-        if e.is("ext") && e.attr("uri").is_some_and(is_feed_uri) {
-            if let Some(props) = e.find("liveFeedProps") {
-                return Some(props);
-            }
+        if e.is("ext")
+            && e.attr("uri").is_some_and(is_feed_uri)
+            && let Some(props) = e.find("liveFeedProps")
+        {
+            return Some(props);
         }
     }
     None
-}
-
-/// Does `p:cNvPicPr` carry the Cameo extension?
-pub(crate) fn is_live(nv_pic_pr: Option<&crate::xml::El>) -> bool {
-    live_feed_props(nv_pic_pr).is_some()
 }
 
 /// Write the extension that makes PowerPoint read the picture as a Cameo. `raw` is the feed

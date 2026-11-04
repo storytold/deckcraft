@@ -153,7 +153,15 @@ pub(super) struct Out {
 
 /// Draw the strip and handle its clicks. `doc` is the live deck; the strip never captures the
 /// pointer, so a press outside a control falls through to the canvas.
-pub(super) fn ui(ui: &mut Ui, show: &mut Show, rec: &mut RecordView, doc: &Arc<Presentation>, now: f64, layout: &Layout) -> Out {
+pub(super) fn ui(
+    mic: &mut super::super::MicSlot,
+    ui: &mut Ui,
+    show: &mut Show,
+    rec: &mut RecordView,
+    doc: &Arc<Presentation>,
+    now: f64,
+    layout: &Layout,
+) -> Out {
     let bottom = layout.bottom;
     paint_strip(ui, bottom);
     // Keep the Views/camera-preview cluster's lower-right corner clear.
@@ -162,15 +170,15 @@ pub(super) fn ui(ui: &mut Ui, show: &mut Show, rec: &mut RecordView, doc: &Arc<P
     let count = doc.slides.len();
     let (prev_on, next_on) = nav_enabled(show.state.slide, count);
 
-    let prev = ui.interact(r.prev, ui.id().with("record_bottom_prev"), click_sense(prev_on));
+    let prev = ui.interact(r.prev, ui.scope_id().with("record_bottom_prev"), click_sense(prev_on));
     prev.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, prev_on, "Previous slide"));
-    let next = ui.interact(r.next, ui.id().with("record_bottom_next"), click_sense(next_on));
+    let next = ui.interact(r.next, ui.scope_id().with("record_bottom_next"), click_sense(next_on));
     next.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, next_on, "Next slide"));
 
     // All three tools stay live: the eraser does nothing until there is ink, as in PowerPoint.
     let mut tools = Vec::with_capacity(3);
     for (i, tool) in [InkTool::Pen, InkTool::Highlighter, InkTool::Eraser].into_iter().enumerate() {
-        let resp = ui.interact(r.tool(i), ui.id().with(("record_bottom_tool", i)), Sense::click());
+        let resp = ui.interact(r.tool(i), ui.scope_id().with(("record_bottom_tool", i)), Sense::click());
         resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, rec.ink.tool == tool, tool_name(tool)));
         if tool == InkTool::Eraser {
             let hint = if show.has_ink() { eraser_hint(show.stroke_count()) } else { "Eraser: nothing to erase yet".to_owned() };
@@ -182,7 +190,7 @@ pub(super) fn ui(ui: &mut Ui, show: &mut Show, rec: &mut RecordView, doc: &Arc<P
     let mut swatches = Vec::with_capacity(INK_COLORS.len());
     for i in 0..INK_COLORS.len() {
         let name = format!("Ink colour {}", i + 1);
-        let resp = ui.interact(r.swatch(i), ui.id().with(("record_bottom_swatch", i)), Sense::click());
+        let resp = ui.interact(r.swatch(i), ui.scope_id().with(("record_bottom_swatch", i)), Sense::click());
         let selected = rec.ink.color == i;
         resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &name));
         let _ = resp.clone().on_hover_text(format!("{} {}", name, INK_NAMES[i]));
@@ -192,10 +200,14 @@ pub(super) fn ui(ui: &mut Ui, show: &mut Show, rec: &mut RecordView, doc: &Arc<P
     // Clicks first, so the count, progress and swatch rings show the new state this frame.
     if prev.clicked() && prev_on {
         let action = show.state.prev(doc);
+        // The chevrons are the Record view's main navigation: the take ends here, on the slide
+        // being left, exactly as the keyboard and the reading bar do it.
+        super::super::before_slide_change_with(mic, show, &action);
         show.apply(action, doc, now);
     }
     if next.clicked() && next_on {
         let action = show.state.next(doc);
+        super::super::before_slide_change_with(mic, show, &action);
         show.apply(action, doc, now);
     }
     for (tool, resp) in &tools {

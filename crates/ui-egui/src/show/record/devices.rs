@@ -45,7 +45,7 @@ impl DeviceState {
 
 /// Camera, microphone and screen capture as the shell sees them.
 #[derive(Clone, Debug, Default)]
-pub(super) struct Devices {
+pub(in crate::show) struct Devices {
     pub camera: DeviceState,
     pub mic: DeviceState,
     pub screen: DeviceState,

@@ -61,7 +61,7 @@ pub(super) fn confirm(ui: &mut Ui, rec: &mut RecordView, _now: f64) -> Option<Ve
     // Anchored to the screen rather than laid out in the top bar: the question must be drawn
     // at full size even when the bar has no room left for it.
     let _window = egui::Window::new("End recording?")
-        .id(ui.id().with("record_close_confirm"))
+        .id(ui.scope_id().with("record_close_confirm"))
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .collapsible(false)
         .resizable(false)

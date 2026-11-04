@@ -34,7 +34,7 @@ impl State {
 
 /// The editor's fixed id, shared by every slide so focus survives a slide change cleanly.
 pub(super) fn editor_id() -> egui::Id {
-    egui::Id::new("record_notes_edit")
+    egui::Id::unique("record_notes_edit")
 }
 
 /// Whether the notes editor owns the keyboard this frame.

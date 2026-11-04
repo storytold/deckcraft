@@ -93,6 +93,10 @@ pub struct Show {
     pub rehearse: bool,
     /// Record Slide Show: keep timings, narration, pen ink and laser when the show ends.
     pub record: bool,
+    /// A take is capturing right now. The Record view moves [`Self::record_view`] out while its
+    /// shell draws, so the show cannot read the view's status during that frame; this flag is set
+    /// by the view's own start/pause/resume/stop and is what the capture paths consult.
+    capturing: bool,
     /// The Record view shell's own state (clock, layout, sections, device hooks).
     pub(crate) record_view: record::RecordView,
     /// When a recording pause started; the show clock is shifted by the pause length.
@@ -292,6 +296,7 @@ impl Show {
             autoplay: false,
             rehearse: false,
             record: false,
+            capturing: false,
             record_view: record::RecordView::default(),
             record_paused_at: None,
             keep_cursor: false,
@@ -409,10 +414,20 @@ impl Show {
         self.started
     }
 
-    /// Whether this show keeps timings, narration, ink and laser: Rehearse or Record, but never
-    /// a preview.
+    /// Whether this show keeps timings, narration, ink and laser: Rehearse, or a Record take that
+    /// is actually capturing. Never a preview, and never the Record view while it is idle or
+    /// paused — there is nothing to record then.
     fn keeps_recording(&self) -> bool {
-        (self.rehearse || self.record) && !self.recording_preview
+        if self.recording_preview {
+            return false;
+        }
+        self.rehearse || (self.record && self.capturing)
+    }
+
+    /// Whether the Record view's chrome is on screen. Unlike [`Self::keeps_recording`] this holds
+    /// while the take is idle, so its buttons never reach the show as a click on the slide.
+    fn record_chrome(&self) -> bool {
+        self.record && !self.recording_preview
     }
 
     /// Seconds after which the current slide advances by itself. A Record preview follows the
@@ -524,7 +539,8 @@ impl Show {
     }
 
     /// The red Record button starts capture: restart the slide clocks so the recorded timing
-    /// begins at this frame, and let the microphone start for this take.
+    /// begins at this frame, let the microphone start for this take, and empty the buffers so a
+    /// new take replaces the previous one instead of adding to it.
     fn begin_recording(&mut self, now: f64) {
         self.step_start = now;
         self.slide_start = now;
@@ -533,11 +549,17 @@ impl Show {
         self.last_move = now;
         self.record_paused_at = None;
         self.mic_tried = false;
+        self.capturing = true;
+        self.timings.clear();
+        self.recorded.clear();
+        self.laser_saved.clear();
+        self.narration.clear();
     }
 
     /// Hold the slide clocks for as long as the recording is paused. The animation clock is
     /// shifted on resume, so recorded timings do not count the pause.
     fn pause_recording(&mut self, now: f64) {
+        self.capturing = false;
         if self.record_paused_at.is_none() {
             self.record_paused_at = Some(now);
         }
@@ -545,6 +567,7 @@ impl Show {
 
     fn resume_recording(&mut self, now: f64) {
         let Some(at) = self.record_paused_at.take() else { return };
+        self.capturing = true;
         let dt = (now - at).max(0.0);
         if dt.is_finite() {
             self.step_start += dt;
@@ -553,6 +576,13 @@ impl Show {
             self.show_start += dt;
             self.last_move += dt;
         }
+    }
+
+    /// The take stopped: the capture paths stop keeping timings, ink, laser and narration, while
+    /// what they already kept stays for the save path.
+    fn end_recording(&mut self) {
+        self.capturing = false;
+        self.record_paused_at = None;
     }
 
     /// Pen and laser are different pointers: turning one on puts the other away.
@@ -691,11 +721,12 @@ impl Show {
                 self.zoom = None;
                 self.zoom_arm = false;
                 let left = self.timeline.as_ref().map(|t| t.0).unwrap_or(i);
-                if self.keeps_recording() {
+                let recording = self.keeps_recording();
+                if recording {
                     self.timings.push((left, now - self.slide_start));
                 }
-                self.stash_ink(doc, left);
-                self.stash_laser(left);
+                self.stash_ink(doc, left, recording);
+                self.stash_laser(left, recording);
                 // Take the old slide's texture rather than cloning its handle: the new slide is
                 // otherwise rendered into the same texture, and the transition blends the new
                 // slide with itself (#33).
@@ -780,11 +811,13 @@ impl Show {
     }
 
     /// Move the pen's strokes into the recording, in slide points. Always clears the live strokes.
-    fn stash_ink(&mut self, doc: &Presentation, slide: usize) {
+    /// `keep` is the caller's recording decision, so the final save can stash a take that has
+    /// already stopped.
+    fn stash_ink(&mut self, doc: &Presentation, slide: usize, keep: bool) {
         let strokes = std::mem::take(&mut self.strokes);
         let w = doc.slide_size.width;
         let h = doc.slide_size.height;
-        if !self.keeps_recording() || !(w > 0.0 && h > 0.0) {
+        if !keep || !(w > 0.0 && h > 0.0) {
             return;
         }
         for stroke in strokes {
@@ -802,9 +835,9 @@ impl Show {
         }
     }
 
-    fn stash_laser(&mut self, slide: usize) {
+    fn stash_laser(&mut self, slide: usize, keep: bool) {
         let pts = std::mem::take(&mut self.laser_live);
-        if self.keeps_recording() && !pts.is_empty() {
+        if keep && !pts.is_empty() {
             self.laser_saved.push((slide, pts));
         }
     }
@@ -825,7 +858,7 @@ impl Show {
     /// Whether the pointer is over the Record view's chrome: clicks there must not advance the
     /// show, take a stroke, or follow a link.
     fn record_bar_hit(&self, ctx: &egui::Context) -> bool {
-        if !self.keeps_recording() {
+        if !self.record_chrome() {
             return false;
         }
         ctx.input(|i| i.pointer.interact_pos()).is_some_and(|p| self.record_view.chrome_contains(ctx.content_rect(), p))
@@ -871,15 +904,27 @@ fn play_on_enter(clip: &deckcraft_model::MediaClip, without_narration: bool) -> 
     clip.autoplay && !(clip.narration && without_narration)
 }
 
+/// The microphone a take writes into: the app's service slot, borrowed so a section can hand the
+/// take over without holding the whole app.
+pub(crate) type MicSlot = Option<Box<dyn deckcraft_media::MicIn>>;
+
+/// The largest narration WAV `show.narration` accepts, in bytes. The engine rejects anything
+/// larger, so a take is capped to this before it is encoded.
+const MAX_NARRATION_BYTES: usize = 48_000_000;
+
 /// Skip near-silence and clips shorter than 0.2 s so an idle microphone adds no shape.
 fn narration_wav(rate: u32, samples: &[f32]) -> Option<Vec<u8>> {
     if !(8_000..=192_000).contains(&rate) {
         return None;
     }
     let min_n = (rate as u64).saturating_mul(200) / 1000;
+    // `show.narration` rejects a WAV over 48,000,000 bytes; a mono 16-bit header is 44 bytes.
+    // Cap the samples here so the take that passes never fails on the way in.
+    let max = (MAX_NARRATION_BYTES - 44) / 2;
+    let samples = &samples[..samples.len().min(max)];
     let mut sum = 0.0f64;
     let mut n = 0u64;
-    for s in samples.iter().take(48_000 * 60 * 10) {
+    for s in samples.iter() {
         if s.is_finite() {
             let v = *s as f64;
             sum += v * v;
@@ -933,16 +978,23 @@ fn laser_pos(points: &[deckcraft_model::LaserSample], elapsed_ms: u32) -> Option
 
 /// A slide change ends the microphone take and hands it to the slide being left.
 fn before_slide_change(app: &mut SlideApp, show: &mut Show, action: &ShowAction) {
+    before_slide_change_with(&mut app.services.mic, show, action);
+}
+
+/// The same, for a section that holds the microphone rather than the whole app.
+fn before_slide_change_with(mic: &mut MicSlot, show: &mut Show, action: &ShowAction) {
     if show.keeps_recording() && matches!(action, ShowAction::Slide(_)) {
-        take_narration(app, show);
+        take_narration(mic.as_deref_mut(), show);
     }
 }
 
-fn take_narration(app: &mut SlideApp, show: &mut Show) {
-    if !show.keeps_recording() || !show.mic_ok {
+/// Hand the microphone's buffer to the show's current slide. The callers decide whether a take is
+/// running: the end of a take also saves what was spoken on the slide it stopped on.
+fn take_narration(mic: Option<&mut (dyn deckcraft_media::MicIn + 'static)>, show: &mut Show) {
+    if !show.mic_ok {
         return;
     }
-    let Some(mic) = app.services.mic.as_mut() else { return };
+    let Some(mic) = mic else { return };
     let (rate, samples) = mic.take();
     if let Some(wav) = narration_wav(rate, &samples) {
         let slide = show.state.slide;

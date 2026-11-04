@@ -11,7 +11,9 @@ use serde_json::json;
 use crate::{Services, SlideApp};
 
 /// A blank slide holding the shapes `build` adds; `select` picks which are selected.
-fn harness(build: impl FnOnce(&mut Session) -> Vec<u32>, select: &[u32]) -> Harness<'static, SlideApp> {
+/// The harness plus the ids the build made, in document order: a test selects by index and then
+/// needs the id it picked.
+fn harness(build: impl FnOnce(&mut Session) -> Vec<u32>, select: &[u32]) -> (Harness<'static, SlideApp>, Vec<u32>) {
     let mut s = Session::with_new();
     s.execute("slide.layout", &json!({"layout": "blank"})).unwrap();
     let ids = build(&mut s);
@@ -27,7 +29,7 @@ fn harness(build: impl FnOnce(&mut Session) -> Vec<u32>, select: &[u32]) -> Harn
         app,
     );
     h.run_steps(4);
-    h
+    (h, ids)
 }
 
 fn cameo(s: &mut Session, x: f64) -> u32 {

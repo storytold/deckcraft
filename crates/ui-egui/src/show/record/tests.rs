@@ -34,7 +34,7 @@ fn the_capture_clock_starts_pauses_resumes_and_stops() {
     rec.resume(&mut show, 30.0);
     assert_eq!(rec.status, RecordStatus::Recording);
     assert!((rec.elapsed(32.0) - 5.0).abs() < 1e-9, "the pause is not counted");
-    rec.stop(32.0);
+    rec.stop(&mut show, 32.0);
     assert_eq!(rec.status, RecordStatus::Idle);
     assert!((rec.elapsed(99.0) - 5.0).abs() < 1e-9, "a stopped clock keeps its value");
 }

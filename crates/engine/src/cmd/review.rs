@@ -1035,7 +1035,10 @@ fn narration(s: &mut Session, p: &Value) -> Result<Value> {
             duration_ms,
             ..Default::default()
         };
-        let existing = doc.slides.get(index).and_then(|sl| sl.shapes.iter().find(|sh| sh.name == "Narration").map(|sh| sh.id));
+        // Only a clip this command wrote before is replaced: a shape merely named "Narration"
+        // may be the user's text box, picture or group, and its content must survive.
+        let existing =
+            doc.slides.get(index).and_then(|sl| sl.shapes.iter().find(|sh| matches!(&sh.kind, ShapeKind::Media(c) if c.narration)).map(|sh| sh.id));
         let id = if let Some(id) = existing {
             id
         } else {
@@ -1314,10 +1317,10 @@ fn recording_scope(s: &Session, p: &Value, id: &str) -> Result<Vec<usize>> {
 /// Every media item `sh` draws, so a cleared recording drops only what nothing else uses.
 fn shape_media_ids(sh: &Shape) -> Vec<deckcraft_model::MediaId> {
     let mut out = Vec::new();
-    if let Some(c) = &sh.cameo {
-        if let Some(m) = c.recorded {
-            out.push(m);
-        }
+    if let Some(c) = &sh.cameo
+        && let Some(m) = c.recorded
+    {
+        out.push(m);
     }
     match &sh.kind {
         ShapeKind::Media(c) => {
@@ -1746,6 +1749,36 @@ mod tests {
         assert!(narrations(&s, 0).is_empty());
     }
 
+    /// A shape the user happens to have named "Narration" is not the recording's clip: the take
+    /// lands in a new media shape and the user's own shape keeps its kind and content.
+    #[test]
+    fn narration_does_not_overwrite_a_user_shape_named_narration() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let user = ShapeId(4242);
+        s.edit(|doc, _| {
+            let sl = Arc::make_mut(doc.slides.get_mut(0).ok_or_else(|| bad("test", "no slide"))?);
+            sl.shapes.push(Shape {
+                id: user,
+                name: "Narration".into(),
+                xfrm: Some(Xfrm::new(10.0, 20.0, 300.0, 80.0)),
+                text: Some(deckcraft_model::TextBody::default()),
+                hidden: false,
+                ..Default::default()
+            });
+            Ok(())
+        })
+        .unwrap();
+        let wav = tone(4000);
+        let v = s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        assert_ne!(v["id"].as_u64(), Some(4242), "the take gets its own shape");
+        let sh = doc_shape(&s, user).expect("the user's shape stays");
+        assert!(matches!(sh.kind, ShapeKind::Shape), "its kind is untouched");
+        assert!(!sh.hidden);
+        assert_eq!(sh.xfrm, Some(Xfrm::new(10.0, 20.0, 300.0, 80.0)));
+        assert_eq!(narrations(&s, 0).len(), 1);
+    }
+
     #[test]
     fn narration_rejects_short_junk_and_a_missing_slide() {
         let mut s = Session::new();
@@ -1896,6 +1929,12 @@ mod tests {
         assert!(s.execute("show.clearNarration", &json!({"index": 99})).is_err());
     }
 
+    /// A shape by id, whichever slide of the deck holds it.
+    fn doc_shape(s: &Session, id: ShapeId) -> Option<Shape> {
+        let doc = s.doc().unwrap();
+        doc.doc.slides.iter().find_map(|sl| sl.shape(id)).cloned()
+    }
+
     fn shape_mut(doc: &mut deckcraft_model::Presentation, id: ShapeId) -> Option<&mut Shape> {
         for sl in &mut doc.slides {
             let sl = Arc::make_mut(sl);
@@ -1959,7 +1998,7 @@ mod tests {
     }
 
     fn cameo(s: &Session, id: ShapeId) -> deckcraft_model::Cameo {
-        s.doc().unwrap().doc.shape(id).and_then(|sh| sh.cameo.clone()).unwrap()
+        doc_shape(s, id).and_then(|sh| sh.cameo.clone()).unwrap()
     }
 
     #[test]
@@ -1980,7 +2019,7 @@ mod tests {
         let screen = s.execute("insert.audio", &json!({"name": "screen.wav", "data": base64_encode(&other)})).unwrap();
         let screen_id = ShapeId(screen["id"].as_u64().unwrap() as u32);
         mark_recorded_shape(&mut s, screen_id);
-        let screen_media = s.doc().unwrap().doc.shape(screen_id).and_then(|sh| match &sh.kind {
+        let screen_media = doc_shape(&s, screen_id).and_then(|sh| match &sh.kind {
             ShapeKind::Media(m) => Some(m.media),
             _ => None,
         });
@@ -2015,7 +2054,7 @@ mod tests {
         assert!(s.doc().unwrap().doc.slides[0].laser.is_some());
         assert_eq!(s.doc().unwrap().doc.slides[0].transition.as_ref().unwrap().advance_after_ms, Some(1200));
         assert_eq!(ink_layers(&s, 0).len(), 2);
-        assert!(s.doc().unwrap().doc.shape(screen_id).is_some());
+        assert!(doc_shape(&s, screen_id).is_some());
         assert!(s.doc().unwrap().doc.media(cam_media).is_some());
         assert!(cameo(&s, cam_id).recorded.is_some());
         assert!(screen_media.is_some_and(|m| s.doc().unwrap().doc.media(m).is_some()));
@@ -2043,31 +2082,31 @@ mod tests {
         let first = ShapeId(first["id"].as_u64().unwrap() as u32);
         let second = s.execute("insert.cameo", &json!({"slide": 1})).unwrap();
         let second = ShapeId(second["id"].as_u64().unwrap() as u32);
-        let default = s.doc().unwrap().doc.shape(first).and_then(|sh| sh.xfrm).unwrap();
+        let default = doc_shape(&s, first).and_then(|sh| sh.xfrm).unwrap();
         let media = record_cameo(&mut s, first);
 
         s.execute("shape.setBounds", &json!({"x": 20.0, "y": 30.0, "w": 220.0, "h": 160.0, "ids": [first.0]})).unwrap();
         s.execute("shape.setBounds", &json!({"x": 40.0, "y": 50.0, "w": 120.0, "h": 80.0, "ids": [second.0]})).unwrap();
-        let moved = s.doc().unwrap().doc.shape(first).and_then(|sh| sh.xfrm).unwrap();
-        let second_moved = s.doc().unwrap().doc.shape(second).and_then(|sh| sh.xfrm).unwrap();
+        let moved = doc_shape(&s, first).and_then(|sh| sh.xfrm).unwrap();
+        let second_moved = doc_shape(&s, second).and_then(|sh| sh.xfrm).unwrap();
         assert_ne!(moved, default);
 
         s.execute("slide.go", &json!({"index": 0})).unwrap();
         let v = s.execute("show.resetCameo", &json!({"scope": "current"})).unwrap();
         assert_eq!((v["reset"].as_u64(), v["slides"].as_u64()), (Some(1), Some(1)));
-        assert_eq!(s.doc().unwrap().doc.shape(first).and_then(|sh| sh.xfrm), Some(default));
+        assert_eq!(doc_shape(&s, first).and_then(|sh| sh.xfrm), Some(default));
         assert!(cameo(&s, first).live && cameo(&s, first).recorded.is_none());
         assert!(s.doc().unwrap().doc.media(media).is_none(), "the recorded clip's media goes");
-        assert_eq!(s.doc().unwrap().doc.shape(second).and_then(|sh| sh.xfrm), Some(second_moved), "the other slide keeps its placement");
+        assert_eq!(doc_shape(&s, second).and_then(|sh| sh.xfrm), Some(second_moved), "the other slide keeps its placement");
 
         s.execute("edit.undo", &json!({})).unwrap();
-        assert_eq!(s.doc().unwrap().doc.shape(first).and_then(|sh| sh.xfrm), Some(moved));
+        assert_eq!(doc_shape(&s, first).and_then(|sh| sh.xfrm), Some(moved));
         assert!(cameo(&s, first).recorded.is_some());
         assert!(s.doc().unwrap().doc.media(media).is_some());
 
         let v = s.execute("show.resetCameo", &json!({"scope": "all"})).unwrap();
         assert_eq!((v["reset"].as_u64(), v["slides"].as_u64()), (Some(2), Some(2)));
-        assert_eq!(s.doc().unwrap().doc.shape(second).and_then(|sh| sh.xfrm), Some(default));
+        assert_eq!(doc_shape(&s, second).and_then(|sh| sh.xfrm), Some(default));
 
         // A slide with no Cameo is a no-op reported as zero.
         s.execute("slide.new", &json!({})).unwrap();
@@ -2102,6 +2141,7 @@ mod tests {
         assert!(after.slides[0].shapes.iter().any(|sh| matches!(&sh.kind, ShapeKind::Media(m) if !m.narration)), "ordinary audio stays");
     }
 
+    #[test]
     fn delete_rejects_an_invalid_index_and_keeps_the_comments() {
         let mut s = Session::with_new();
         s.execute("comment.add", &json!({"text": "a"})).unwrap();
