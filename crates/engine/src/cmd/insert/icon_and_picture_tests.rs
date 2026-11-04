@@ -10,8 +10,10 @@ use crate::cmd::insert::detect_name;
 fn the_content_type_is_detected_from_the_source_paths_name() {
     assert_eq!(detect_name(&json!({"path": "C:/tmp/take.mka"}), "Narration"), "take.mka");
     assert_eq!(detect_name(&json!({"path": "/tmp/take.wav", "name": "Narration"}), "Narration"), "take.wav");
-    // Inline bytes have only the display name to go on.
+    // Inline bytes have only the display name to go on, even when a path is also present.
     assert_eq!(detect_name(&json!({"data": "AAAA", "name": "narration.wav"}), "narration.wav"), "narration.wav");
+    assert_eq!(detect_name(&json!({"data": "AAAA", "path": "old.mp4", "name": "clip.m4a"}), "clip.m4a"), "clip.m4a");
+    assert_eq!(detect_name(&json!({"data": "AAAA", "path": "old.mp4"}), "media"), "media");
     assert_eq!(detect_name(&json!({"data": "AAAA"}), "media"), "media");
 }
 

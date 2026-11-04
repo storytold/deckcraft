@@ -582,7 +582,9 @@ impl Session {
                 }
                 Err(e) => {
                     self.screen_insert_failed = true;
-                    format!("{why}The screen recording couldn't be inserted: {e}")
+                    // The take is kept, so say where: the recorder's window shows this message
+                    // when the status bar is not drawn (a slide show).
+                    format!("{why}The screen recording couldn't be inserted: {e}. The take is kept at {}.", stopped.path.display())
                 }
             };
             self.ui_requests.push(UiRequest::Message { text });

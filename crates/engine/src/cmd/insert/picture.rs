@@ -24,6 +24,11 @@ pub(crate) fn media_bytes(p: &Value, cmd: &str) -> Result<(String, Vec<u8>)> {
 /// included), or the display name when the bytes came inline. A display name may have been replaced
 /// (`name: "Narration"`), so it must not decide whether a Matroska file is audio or video.
 pub(crate) fn detect_name(p: &Value, name: &str) -> String {
+    // `media_bytes` prefers `data` when both are given, so the display name describes those bytes;
+    // only a path that supplied the bytes has an extension to go on.
+    if p.get("data").and_then(Value::as_str).is_some() {
+        return name.to_string();
+    }
     str_param(p, "path")
         .and_then(|path| std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()))
         .unwrap_or_else(|| name.to_string())
