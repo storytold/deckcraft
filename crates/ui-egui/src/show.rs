@@ -376,7 +376,7 @@ impl Show {
             let n_steps = self.timeline(doc).steps();
             let step_due = self.autoplay && cur_step < n_steps && idle > 0.3;
             let holding = self.grid || self.presenter_grid || self.zoom.is_some() || self.zoom_arm;
-            if !holding && (step_due || (!self.rehearse && self.state.auto_advance_due(doc, idle) && !self.ended)) {
+            if !holding && (step_due || (!self.rehearse && !self.preview_only && self.state.auto_advance_due(doc, idle) && !self.ended)) {
                 actions.push(self.state.next(doc));
             } else if self.preview_only && cur_step >= n_steps && idle > 0.8 {
                 return false;
