@@ -149,8 +149,7 @@ mod tests {
 
     #[test]
     fn reset_moves_the_draft_to_the_new_slide_and_clears_it() {
-        let mut rec = RecordView::default();
-        rec.notes_edit = State { slide: Some(0), draft: Draft::new(&TextBody::from_text("first")) };
+        let mut rec = RecordView { notes_edit: State { slide: Some(0), draft: Draft::new(&TextBody::from_text("first")) }, ..Default::default() };
 
         rec.notes_edit.reset(2);
         assert_eq!(rec.notes_edit.slide, Some(2));

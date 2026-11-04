@@ -34,15 +34,6 @@ pub(crate) use edit::State as EditState;
 pub(crate) use sizing::{NOTES_DEFAULT, NOTES_MAX, NOTES_MIN, clamp_size};
 pub(crate) use teleprompter::State as TeleprompterState;
 
-/// Keep a requested notes size inside the pane's usable range.
-///
-/// This is the shell's entry point (`RecordView::set_notes_size`); [`clamp_size`] is the same
-/// bound used by the pane's header and shortcuts.
-#[cfg(test)]
-pub(super) fn size_after(px: f32, delta: f32) -> f32 {
-    sizing::size_after(px, delta)
-}
-
 /// Draw the notes pane. `show` supplies the current slide index; `doc` its notes.
 pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut RecordView, doc: &Arc<Presentation>, layout: &RecordLayout) {
     let rect = layout.notes;

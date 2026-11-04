@@ -48,9 +48,7 @@ mod tests {
 
     #[test]
     fn request_during_a_take_keeps_the_take_state() {
-        let mut rec = RecordView::default();
-        rec.status = RecordStatus::Recording;
-        rec.captured = true;
+        let mut rec = RecordView { status: RecordStatus::Recording, captured: true, ..Default::default() };
 
         assert!(request(&mut rec));
 

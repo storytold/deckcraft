@@ -942,7 +942,7 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
             if show.mic_tried {
                 app.stop_mic();
             }
-            show.stash_ink(&doc, show.state.slide, live);
+            show.stash_ink(doc, show.state.slide, live);
             show.stash_laser(show.state.slide, live);
             if live {
                 show.timings.push((show.state.slide, now - show.slide_start));

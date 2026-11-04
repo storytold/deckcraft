@@ -161,10 +161,7 @@ mod tests {
     }
 
     fn view(view: ViewKind, status: RecordStatus) -> RecordView {
-        let mut rec = RecordView::default();
-        rec.view = view;
-        rec.status = status;
-        rec
+        RecordView { view, status, ..Default::default() }
     }
 
     #[test]

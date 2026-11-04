@@ -1382,13 +1382,6 @@ fn slide_has_recording(sl: &Arc<deckcraft_model::Slide>) -> bool {
         || cameo_recorded(&sl.shapes)
 }
 
-/// Enabled state of Clear Recording: some slide has recorded material.
-fn has_recording(s: &Session) -> std::result::Result<(), String> {
-    has_slide(s)?;
-    let st = s.doc().map_err(|e| e.to_string())?;
-    if st.doc.slides.iter().any(slide_has_recording) { Ok(()) } else { Err("nothing recorded".into()) }
-}
-
 /// Enabled state of Reset to Cameo: the deck has a Cameo on some slide.
 fn has_any_cameo(s: &Session) -> std::result::Result<(), String> {
     has_slide(s)?;

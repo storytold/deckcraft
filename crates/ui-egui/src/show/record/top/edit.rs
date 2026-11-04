@@ -111,16 +111,14 @@ mod tests {
 
     #[test]
     fn a_finished_take_does_not_ask_again() {
-        let mut rec = RecordView::default();
-        rec.captured = true;
+        let rec = RecordView { captured: true, ..Default::default() };
         assert_eq!(intent(&rec), Closing::Now, "a take that already stopped needs no confirmation");
     }
 
     #[test]
     fn confirm_returns_none_without_the_flag_and_draws_no_window() {
         let ctx = egui::Context::default();
-        let mut rec = RecordView::default();
-        rec.status = RecordStatus::Recording;
+        let mut rec = RecordView { status: RecordStatus::Recording, ..Default::default() };
         assert!(!rec.close_confirm);
 
         let mut verdict = Some(Verdict::End);
@@ -141,8 +139,7 @@ mod tests {
     #[test]
     fn confirm_draws_the_window_until_it_is_answered() {
         let ctx = egui::Context::default();
-        let mut rec = RecordView::default();
-        rec.status = RecordStatus::Recording;
+        let mut rec = RecordView { status: RecordStatus::Recording, ..Default::default() };
         rec.close_confirm = true;
 
         let mut verdict = Some(Verdict::End);
@@ -161,8 +158,7 @@ mod tests {
 
     #[test]
     fn keep_clears_the_flag_while_end_leaves_it_to_the_caller() {
-        let mut rec = RecordView::default();
-        rec.status = RecordStatus::Recording;
+        let mut rec = RecordView { status: RecordStatus::Recording, ..Default::default() };
         rec.close_confirm = true;
 
         apply_verdict(&mut rec, Verdict::Keep);

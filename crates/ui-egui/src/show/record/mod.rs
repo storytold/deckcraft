@@ -253,7 +253,9 @@ pub(crate) struct Layout {
     pub views: Rect,
     /// Camera-preview icon, left of the Views dropdown.
     pub camera_preview: Rect,
-    /// Presenter view's next-slide strip, below the notes pane. None in the other views.
+    /// Presenter view's next-slide strip, below the notes pane. None in the other views. The
+    /// shell does not paint in it yet; the tests pin the geometry its section will use.
+    #[allow(dead_code)]
     pub next: Option<Rect>,
 }
 
@@ -269,8 +271,7 @@ pub(super) fn layout(full: Rect, doc: &Presentation, rec: &RecordView) -> Layout
     let notes_below = if rec.view == views::ViewKind::Presenter && notes.height() > 1.0 {
         // The presenter view keeps a next-slide strip under the notes.
         let h = (notes.height() * 0.34).clamp(56.0, 120.0);
-        let strip = Rect::from_min_max(pos2(notes.min.x, notes.max.y - h), notes.max);
-        strip
+        Rect::from_min_max(pos2(notes.min.x, notes.max.y - h), notes.max)
     } else {
         Rect::NOTHING
     };
@@ -328,9 +329,9 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Pre
     notes::overlay(ui, &rec, doc, show, layout);
     let top = top::ui(app, ui, show, &mut rec, now, layout);
     keep &= !top.close;
-    let _ = bottom::ui(&mut app.services.mic, ui, show, &mut rec, doc, now, layout);
+    bottom::ui(&mut app.services.mic, ui, show, &mut rec, doc, now, layout);
     canvas::bubble(ui, &rec, layout);
-    let _ = views::ui(ui, &mut rec, layout);
+    views::ui(ui, &mut rec, layout);
     // Pause or Stop ends capture. Everything the take gathered on the slide it stopped on — its
     // narration, its ink, its laser trace and its time — moves into the take now, and nothing
     // gathered afterwards may join it. Resume starts a fresh microphone buffer.

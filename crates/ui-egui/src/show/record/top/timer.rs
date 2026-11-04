@@ -49,8 +49,7 @@ mod tests {
     #[test]
     fn the_clock_reads_elapsed_against_the_deck_length() {
         let mut show = show();
-        let mut rec = RecordView::default();
-        rec.total = 125.0;
+        let mut rec = RecordView { total: 125.0, ..Default::default() };
         rec.start(&mut show, 0.0);
 
         assert_eq!(text(&rec, 65.0), "01:05 / 02:05");
@@ -59,16 +58,14 @@ mod tests {
 
     #[test]
     fn long_lengths_fold_hours_into_minutes() {
-        let mut rec = RecordView::default();
-        rec.total = 3661.0;
+        let rec = RecordView { total: 3661.0, ..Default::default() };
 
         assert_eq!(text(&rec, 0.0), "00:00 / 61:01");
     }
 
     #[test]
     fn a_negative_or_future_clock_never_prints_a_negative() {
-        let mut rec = RecordView::default();
-        rec.timer = PresenterTimer::start(0.0);
+        let rec = RecordView { timer: PresenterTimer::start(0.0), ..Default::default() };
 
         assert_eq!(text(&rec, -5.0), "00:00 / 00:00");
         assert_eq!(text(&rec, f64::NAN), "00:00 / 00:00");
@@ -76,8 +73,7 @@ mod tests {
 
     #[test]
     fn an_invalid_length_reads_as_zero() {
-        let mut rec = RecordView::default();
-        rec.total = -5.0;
+        let mut rec = RecordView { total: -5.0, ..Default::default() };
 
         assert_eq!(text(&rec, 0.0), "00:00 / 00:00");
 

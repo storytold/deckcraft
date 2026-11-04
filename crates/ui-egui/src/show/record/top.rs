@@ -108,10 +108,8 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
     child.visuals_mut().override_text_color = Some(FG);
 
     let edit_clicked = edit::ui(&mut child, rec);
-    if edit_clicked || close_requested {
-        if close_now(show, rec, now) {
-            out.close = true;
-        }
+    if (edit_clicked || close_requested) && close_now(show, rec, now) {
+        out.close = true;
     }
 
     // The clock sits in the middle of the bar, whatever the groups on either side.
@@ -148,11 +146,11 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
         timer::dot_color(rec.status),
     );
 
-    if let Some(verdict) = edit::confirm(ui, rec, now) {
-        if verdict == edit::Verdict::End {
-            end_and_close(show, rec, now);
-            out.close = true;
-        }
+    if let Some(verdict) = edit::confirm(ui, rec, now)
+        && verdict == edit::Verdict::End
+    {
+        end_and_close(show, rec, now);
+        out.close = true;
     }
     out
 }
