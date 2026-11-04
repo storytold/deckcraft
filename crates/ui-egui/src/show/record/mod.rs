@@ -328,7 +328,8 @@ fn views_rect(bottom: Rect) -> Rect {
 pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Presentation>, now: f64, layout: &Layout) -> bool {
     // Take the state out of the show so its sections can borrow both `show` and the shell state.
     let mut rec = std::mem::take(&mut show.record_view);
-    devices::connect(&mut rec, &app.services, show);
+    let screen = (app.session.screen.host_installed(), app.session.screen.is_recording());
+    devices::connect(&mut rec, &app.services, show, screen);
     rec.read_total(doc);
     let mut keep = true;
     ui.painter().rect_filled(layout.full, CornerRadius::ZERO, Color32::from_rgb(16, 16, 18));

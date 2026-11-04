@@ -47,17 +47,21 @@ pub(in crate::show) struct Devices {
 /// Show what the presentation services and the take actually have, once per frame. A missing host
 /// leaves the device [`DeviceStatus::Unavailable`]; a microphone the take is recording from is
 /// [`DeviceStatus::On`], and the buttons only report that state (no backend is wired to them).
-pub(super) fn connect(rec: &mut RecordView, services: &crate::Services, show: &crate::show::Show) {
+pub(super) fn connect(rec: &mut RecordView, services: &crate::Services, show: &crate::show::Show, screen: (bool, bool)) {
+    // The shell's own `rec` is out of `show` while this runs, so the take state comes from `rec`
+    // and the microphone from what the show actually started.
     let mic = services.mic.is_some();
-    rec.devices.mic.status = match (mic, show.capturing() && show.mic_started()) {
+    rec.devices.mic.status = match (mic, rec.status == RecordStatus::Recording && show.mic_live()) {
         (false, _) => DeviceStatus::Unavailable,
         (true, true) => DeviceStatus::On,
         (true, false) => DeviceStatus::Off,
     };
-    rec.devices.screen.status = match (services.screen_in.is_some(), rec.status) {
+    // The capture host lives in the session (it was moved there at start-up), not in the service.
+    let (host, recording) = screen;
+    rec.devices.screen.status = match (host, recording) {
         (false, _) => DeviceStatus::Unavailable,
-        (true, RecordStatus::Recording) => DeviceStatus::On,
-        (true, _) => DeviceStatus::Off,
+        (true, true) => DeviceStatus::On,
+        (true, false) => DeviceStatus::Off,
     };
 }
 

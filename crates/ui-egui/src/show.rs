@@ -747,6 +747,11 @@ impl Show {
         self.mic_tried
     }
 
+    /// Whether the narration microphone actually started: the shell reports this, not the attempt.
+    pub(crate) fn mic_live(&self) -> bool {
+        self.mic_ok
+    }
+
     /// File the open take segment's length under `slide`, once. Stop froze it; a running segment
     /// is measured to `now`. A segment under a millisecond is not a visit and is dropped, so
     /// navigating never writes a zero advance.
