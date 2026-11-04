@@ -25,8 +25,8 @@ pub use chart::chart_type;
 use chart::{chart, chart_data, chart_options, chart_type_cmd};
 use links::{action_button, hyperlink, shape_action};
 pub use picture::content_type;
-pub(crate) use picture::media_bytes;
 use picture::{audio, picture, video};
+pub(crate) use picture::{detect_name, media_bytes};
 use text_fields::{date_time, slide_number, symbol, word_art};
 
 pub fn specs() -> Vec<CommandSpec> {

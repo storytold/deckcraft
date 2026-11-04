@@ -497,6 +497,9 @@ pub struct Session {
     pub media_status: std::collections::HashMap<ShapeId, MediaStatus>,
     /// Screen capture host and the recording in progress (see [`screen`]).
     pub screen: screen::ScreenState,
+    /// The last screen take that ended could not be inserted (its file was kept, and the message
+    /// says where). The UI reads this before closing over a failed insert.
+    pub screen_insert_failed: bool,
     /// Animated GIF pictures paused with `media.gifPlay` (the others play).
     pub gif_paused: std::collections::HashSet<ShapeId>,
     /// Text keys follow the Mac (Option+arrows move by word, Cmd+arrows to the line or text
@@ -539,6 +542,7 @@ impl Session {
             recovery_dir: None,
             media_status: Default::default(),
             screen: Default::default(),
+            screen_insert_failed: false,
             gif_paused: Default::default(),
             mac_keys: cfg!(target_os = "macos"),
             panics_caught: 0,
@@ -572,8 +576,14 @@ impl Session {
                 format!("{why}. ")
             };
             let text = match cmd::screen::insert_take(self, &stopped) {
-                Ok(_) => format!("{why}The screen recording was inserted on this slide."),
-                Err(e) => format!("{why}The screen recording couldn't be inserted: {e}"),
+                Ok(_) => {
+                    self.screen_insert_failed = false;
+                    format!("{why}The screen recording was inserted on this slide.")
+                }
+                Err(e) => {
+                    self.screen_insert_failed = true;
+                    format!("{why}The screen recording couldn't be inserted: {e}")
+                }
             };
             self.ui_requests.push(UiRequest::Message { text });
         } else if let Some(text) = reason {

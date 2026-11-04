@@ -454,6 +454,15 @@ pub struct ScreenState {
     ended_reason: Option<String>,
 }
 
+impl Drop for ScreenState {
+    fn drop(&mut self) {
+        // A session dropped while a take records (an automation quit, a closed window) would leave
+        // the temporary MP4 — captured screen content, without a `moov` box — behind: throw the
+        // take away, which stops the host, drops the encoder and removes the file.
+        let _ = self.cancel();
+    }
+}
+
 impl ScreenState {
     /// Install the host device; `None` makes capture unavailable (headless tests, wasm).
     pub fn set_host(&mut self, host: Option<Box<dyn ScreenIn>>) {

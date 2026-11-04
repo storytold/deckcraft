@@ -972,7 +972,7 @@ fn narration(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("show.narration", "audio is too short"));
     }
     let name = if name.is_empty() || name == "media" { "narration.wav".to_string() } else { name };
-    let ct = super::insert::content_type(&name, &bytes);
+    let ct = super::insert::content_type(&super::insert::detect_name(p, &name), &bytes);
     if !ct.starts_with("audio/") {
         return Err(bad("show.narration", format!("{name} is not an audio file")));
     }

@@ -113,6 +113,7 @@ plan above.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | minor | Screen recording (#1815) from the Record tab: display, window or region capture into a video clip. The recording show keeps timings, narration, pen ink and a laser trace; Clear Timing and Clear Narration work on the current slide or all slides |
 | 2026-10-22 | trivial | Beta item 9: Animation Pane ▸ Play From landed, the item keeps effect options (3–6 h) |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native save/reopen retains imported chart workbooks and related parts; headless command tests cover a PPTX → native → PPTX cycle and stale-workbook rejection. Milestone scope and scores unchanged |
@@ -137,13 +138,9 @@ plan above.
 | 2026-10-14 | trivial | Present workflow notes See All Slides and zoom |
 | 2026-10-13 | trivial | Canvas animation preview landed; beta item 9 keeps the timeline and preview from the selected effect |
 | 2026-10-13 | minor | M10: Grid Options dialog; New Window stays open |
-| 2026-11-03 | minor | Progress log: screen recording (#1815) and the recording show's timings, narration, ink and laser |
 | 2026-10-13 | minor | M9: WordArt adjust handles drag; the Transform gallery and command stay open |
 | 2026-10-14 | trivial | After beta: pen pressure scales ink width; tilt and pinch zoom remain |
 | 2026-10-14 | trivial | Laser pointer during a show, and Clear Timing / Clear Narration on the current slide or all slides |
-| 2026-10-14 | trivial | Record Slide Show keeps narration and a laser trace; screen capture and camera stay after beta |
-| 2026-10-14 | trivial | Record Slide Show keeps timings and pen ink; narration audio and screen capture stay after beta |
-| 2026-11-03 | minor | Screen recording (#1815): display, window or region; take inserted as a video clip |
 | 2026-10-10 | minor | Added the alpha gate (six core workflows): all pass, two with partial depth; stage stays alpha |
 | 2026-10-10 | major | Created: current focus, ranked beta plan with hours, milestones M0–M14 with status, the old alpha checklist as history |
 

@@ -186,6 +186,53 @@ fn an_on_click_media_play_animation_round_trips_without_autoplay() {
 }
 
 #[test]
+fn an_on_click_media_play_does_not_stop_an_autoplay_clip_from_starting() {
+    // The clip plays by itself; a second, On Click play animation is an effect the click sets off.
+    // It must not suppress the main-sequence automatic start, or the clip stops autoplaying.
+    let mut p = defaults::new_presentation(None);
+    let video = p.add_media("clip.mp4", "video/mp4", b"video".to_vec()).expect("media");
+    let id = ShapeId(p.alloc_id().expect("id"));
+    let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+    slide.shapes.push(deckcraft_model::Shape {
+        id,
+        name: "Clip".into(),
+        xfrm: Some(Xfrm::new(40.0, 40.0, 200.0, 100.0)),
+        kind: ShapeKind::Media(MediaClip { media: video, video: true, autoplay: true, ..Default::default() }),
+        ..Default::default()
+    });
+    slide.animations.push(deckcraft_model::Animation {
+        shape: id,
+        class: deckcraft_model::anim::AnimClass::Media,
+        effect: "play".into(),
+        start: deckcraft_model::anim::AnimStart::OnClick,
+        ..Default::default()
+    });
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let xml = {
+        let mut z = zip::ZipArchive::new(Cursor::new(&bytes)).expect("zip");
+        let mut f = z.by_name("ppt/slides/slide1.xml").expect("slide");
+        let mut s = String::new();
+        f.read_to_string(&mut s).expect("read");
+        s
+    };
+    assert!(xml.contains(r#"cmd="playFrom(0.0)""#), "the autoplay clip gets its automatic start");
+    assert!(xml.contains(r#"nodeType="afterEffect""#), "the automatic start is the main-sequence behaviour, not only the click effect");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let clip = q.slides[0]
+        .shapes
+        .iter()
+        .find_map(|s| match &s.kind {
+            ShapeKind::Media(m) if m.video => Some(m.clone()),
+            _ => None,
+        })
+        .expect("the video");
+    assert!(clip.autoplay, "the click effect does not take the automatic start away");
+    let plays: Vec<_> = q.slides[0].animations.iter().filter(|a| a.effect == "play" && a.class == deckcraft_model::anim::AnimClass::Media).collect();
+    assert_eq!(plays.len(), 1, "the On Click play animation round-trips: {:?}", q.slides[0].animations);
+    assert_eq!(plays[0].start, deckcraft_model::anim::AnimStart::OnClick);
+}
+
+#[test]
 fn a_numeric_start_delay_alone_is_still_an_automatic_start() {
     // DeckCraft's own writer marks autoplay with the media node's delay and no behaviour node.
     let c = clips(|v, _| delayed_node("video", v, "0"));

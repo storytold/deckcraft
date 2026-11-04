@@ -335,20 +335,20 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         }
         "show.start" => {
             let reading = p.get("reading").and_then(Value::as_bool).unwrap_or(false);
-            if let Some(name) = p.get("custom").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-                app.start_custom_show(name, reading);
+            let record = p.get("record").and_then(Value::as_bool).unwrap_or(false);
+            let custom = p.get("custom").and_then(Value::as_str).filter(|s| !s.is_empty());
+            // A custom show plays from its own first slide, so `from` is neither used nor checked
+            // for it; a plain show takes `from`, absent meaning "where Play from Start begins".
+            let from = if custom.is_some() {
+                None
             } else {
-                let from = match app.show_from(p) {
-                    Ok(from) => from.unwrap_or_else(|| app.show_start_index()),
+                match app.show_from(p) {
+                    Ok(from) => from,
                     Err(e) => return err(e),
-                };
-                app.start_show(from, reading);
-            }
-            if p.get("record").and_then(Value::as_bool) == Some(true)
-                && let Some(show) = app.show.as_mut()
-            {
-                show.record = true;
-            }
+                }
+            };
+            // Record and UI starts share one path (see `SlideApp::start_show_request`).
+            app.start_show_request(custom, from, reading, record);
             ok(Value::Null)
         }
         "show.end" => {

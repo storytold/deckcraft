@@ -497,6 +497,26 @@ impl SlideApp {
         }
     }
 
+    /// Start the show a request asks for — a custom show from its first slide, otherwise from
+    /// `from` (or where Play from Start begins) — and make it a Record show when `record` is set.
+    ///
+    /// Both entry points — the UI's `StartShow` request and the control channel's
+    /// `show.start {record: true}` — come through here, so the two cannot disagree. A Record show
+    /// draws its own full-screen shell, so the Presenter View window is cleared: it would open
+    /// over that shell and take the keyboard for the wrong window.
+    pub(crate) fn start_show_request(&mut self, custom: Option<&str>, from: Option<usize>, reading: bool, record: bool) {
+        match custom {
+            Some(name) => self.start_custom_show(name, reading),
+            None => self.start_show(from.unwrap_or_else(|| self.show_start_index()), reading),
+        }
+        if let Some(show) = self.show.as_mut() {
+            show.record = record;
+            if record {
+                show.presenter = false;
+            }
+        }
+    }
+
     /// Act on requests commands left for the UI.
     pub(super) fn drain_requests(&mut self) {
         for r in std::mem::take(&mut self.session.ui_requests) {
@@ -507,17 +527,7 @@ impl SlideApp {
                     self.dialog = Some(d);
                 }
                 UiRequest::Pane { id } => self.ui.pane = Some(id),
-                UiRequest::StartShow { from, record } => {
-                    self.start_show(from, false);
-                    if let Some(show) = self.show.as_mut() {
-                        show.record = record;
-                        if record {
-                            // A Record show draws its own full-screen shell; a separate Presenter
-                            // View window would fight it for the show.
-                            show.presenter = false;
-                        }
-                    }
-                }
+                UiRequest::StartShow { from, record } => self.start_show_request(None, Some(from), false, record),
                 UiRequest::Message { text } => self.set_status(text),
                 UiRequest::PickFile { purpose } => {
                     if purpose == "saveAs" {

@@ -20,6 +20,15 @@ pub(crate) fn media_bytes(p: &Value, cmd: &str) -> Result<(String, Vec<u8>)> {
     Err(bad(cmd, "missing `path` or `data`"))
 }
 
+/// The name a content type is detected from: the source path's own file name (extension
+/// included), or the display name when the bytes came inline. A display name may have been replaced
+/// (`name: "Narration"`), so it must not decide whether a Matroska file is audio or video.
+pub(crate) fn detect_name(p: &Value, name: &str) -> String {
+    str_param(p, "path")
+        .and_then(|path| std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| name.to_string())
+}
+
 pub fn content_type(name: &str, bytes: &[u8]) -> &'static str {
     let l = name.to_ascii_lowercase();
     if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
@@ -164,12 +173,7 @@ pub(super) fn picture(s: &mut Session, p: &Value) -> Result<Value> {
 fn media(s: &mut Session, p: &Value, video: bool) -> Result<Value> {
     let cmd = if video { "insert.video" } else { "insert.audio" };
     let (name, bytes) = media_bytes(p, cmd)?;
-    // Detect from the source file's own name: a display `name` without an extension (or with a
-    // misleading one) must not decide whether a Matroska file is audio or video.
-    let detect = str_param(p, "path")
-        .and_then(|path| std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()))
-        .unwrap_or_else(|| name.clone());
-    let ct = content_type(&detect, &bytes);
+    let ct = content_type(&detect_name(p, &name), &bytes);
     let bytes = std::sync::Arc::new(bytes);
     let info = deckcraft_media::probe(&bytes);
     let has_video = info.as_ref().is_ok_and(|i| i.video.is_some());

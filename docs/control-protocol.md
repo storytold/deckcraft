@@ -43,7 +43,7 @@ Coordinates are slide points (1/72 inch; a 16:9 slide is 960 × 540) unless note
 | `ui.pointer` | `{events: [{kind: down\|drag\|up\|move\|doubleclick\|tripleclick, x, y, mods?, pressure?}], mods?}` | Drive the active tool in slide points through the same code path as the mouse. `pressure` is `0..=1` for a pen; omit it for a mouse |
 | `ui.key` / `ui.text` | `{key, shift?, alt?, cmd?}` / `{text}` | Keyboard input (also drives a running slide show) |
 | `ui.ime` | `{preedit, active?: [start, end]}` / `{commit}` | An input method's composition through egui, as a real one arrives: shown in place on the slide or in a focused field; `{"preedit": ""}` cancels |
-| `ui.move` / `ui.click` / `ui.drag` | screen points; optional `ctrl`, `shift`, `alt`, `cmd` | Real egui pointer input — reaches every widget, menu and pane. `ctrl: true` holds Control for that event (the laser pointer in a show) |
+| `ui.move` / `ui.click` / `ui.drag` | screen points; optional `ctrl`, `shift`, `alt`, `cmd` | Real egui pointer input — reaches every widget, menu and pane. `ctrl: true` holds Control for that event (the laser pointer in a show). The modifiers stay in force until another pointer request states them, so a client that held Ctrl for the laser must send a following pointer request without `ctrl` to release it; omitting the modifier fields means "no modifiers", not "unchanged". |
 | `ui.set` | `{tab?, view?, pane?, notes?, zoom?, brightness?, ruler?, gridlines?, guides?, …}` | UI state (returns the full state) |
 | `ui.dialog.open` / `ui.dialog.close` | `{id, fields?}` | Open or close a dialog by id; `fields` pre-fills its fields (About: `{"tab": "contributors"}` or `"models"`) |
 | `ui.screenshot` | `{path?}` | PNG of the whole window (base64 when no path) |

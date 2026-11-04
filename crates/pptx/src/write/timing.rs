@@ -538,12 +538,15 @@ fn group<'a>(effects: Vec<Eff<'a>>) -> Groups<'a> {
     clicks
 }
 
-/// The autoplay and narration clips that need an automatic-start behaviour: they have no media
-/// "play" animation of their own, so nothing else starts them in PowerPoint.
+/// The autoplay and narration clips that need an automatic-start behaviour: no media "play"
+/// animation starts them before the first click, so nothing else starts them in PowerPoint.
 fn automatic_media(shapes: &[Shape], idmap: &IdMap, main: &[Eff], depth: usize) -> Vec<u32> {
     if depth > 64 {
         return vec![];
     }
+    // Effects before the first click start with the slide; an On Click play waits for the click
+    // and so leaves the automatic start in place.
+    let click_at = main.iter().position(|e| e.start == AnimStart::OnClick).unwrap_or(main.len());
     let mut out = vec![];
     for s in shapes {
         if let ShapeKind::Media(m) = &s.kind
@@ -551,7 +554,7 @@ fn automatic_media(shapes: &[Shape], idmap: &IdMap, main: &[Eff], depth: usize) 
             && let Some(spid) = idmap.get(s.id)
             // Only a media "play" starts the clip; a "pause" or "stop" effect writes another
             // command, so the automatic start is still needed.
-            && !main.iter().any(|e| e.spid == spid && matches!(e.a.class, AnimClass::Media) && e.a.effect == "play")
+            && !main[..click_at].iter().any(|e| e.spid == spid && matches!(e.a.class, AnimClass::Media) && e.a.effect == "play")
         {
             out.push(spid);
         }
