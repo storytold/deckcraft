@@ -458,6 +458,9 @@ impl Show {
     /// The red Record button starts capture: restart the slide clocks so the recorded timing
     /// begins at this frame, and let the microphone start for this take.
     fn begin_recording(&mut self, now: f64) {
+        // A new take owns its own narration: it replaces what an earlier take left on this slide,
+        // while pause and resume inside a take still append (see `take_narration`).
+        self.narration_slide = None;
         self.step_start = now;
         self.slide_start = now;
         self.step_end = now;
