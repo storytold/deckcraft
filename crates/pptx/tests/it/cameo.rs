@@ -267,6 +267,7 @@ fn a_recorded_cameo_that_does_not_autoplay_waits_for_a_click() {
     let xml = part(&bytes, "ppt/slides/slide1.xml");
     assert!(xml.contains("<p:video>"), "the clip plays when the show reaches it: {xml}");
     assert!(xml.contains("<p:cond delay=\"indefinite\"/>"), "it waits for a click, not slide entry: {xml}");
+    assert!(xml.contains("<p:cMediaNode vol=\"100000\" showWhenStopped=\"1\">"), "the poster stays visible until it starts: {xml}");
     // The recording is still part of the picture, so the round trip keeps it.
     assert!(xml.contains("<a:videoFile r:link=\"rId"), "{xml}");
 

@@ -612,7 +612,8 @@ fn cameo_spids(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<(u32, bool)>, dept
 fn media_node(w: &mut W, ids: &mut Ids, spid: u32, video: bool, entry: bool) {
     let tag = if video { "p:video" } else { "p:audio" };
     w.open0(tag);
-    w.open("p:cMediaNode", A::new().a("vol", "100000").a("showWhenStopped", "0"));
+    // A click-waiting clip shows its poster until it starts; an entry clip starts at once.
+    w.open("p:cMediaNode", A::new().a("vol", "100000").a("showWhenStopped", if entry { "0" } else { "1" }));
     w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold").a("display", "0"));
     w.open0("p:stCondLst");
     w.empty("p:cond", A::new().a("delay", if entry { "0" } else { "indefinite" }));
