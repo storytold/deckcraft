@@ -10,8 +10,8 @@
 #   TAG            Target image tag (default: $VERSION-$ARCH, also tags stable-$ARCH)
 #   GITHUB_TOKEN   Token for GHCR authentication when --push is used
 set -euo pipefail
-# shellcheck source=../env.sh
-. "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
+# shellcheck source=../common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../common.sh"
 HERE="$ROOT/packaging/linux"
 
 PUSH=0

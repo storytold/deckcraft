@@ -153,6 +153,7 @@ fn parse_html(html: &str) -> (Option<TextBody>, usize) {
     let mut runs = 0usize;
     let mut skip = 0i32;
     let mut images = 0usize;
+    let mut complete = true;
     while i < bytes.len() && paragraphs.len() <= MAX_PARAS && runs <= MAX_RUNS {
         if bytes[i] == b'<' {
             let end = bytes[i + 1..].iter().position(|c| *c == b'>').map(|n| i + 1 + n).unwrap_or(bytes.len());
@@ -240,10 +241,10 @@ fn parse_html(html: &str) -> (Option<TextBody>, usize) {
         if text.is_empty() {
             continue;
         }
-        push_run(&mut paragraphs, &mut runs, text, bold > 0, italic > 0, underline > 0);
+        complete &= push_run(&mut paragraphs, &mut runs, text, bold > 0, italic > 0, underline > 0);
     }
     // A truncated fragment cannot establish that no text or other image follows it.
-    if i < bytes.len() {
+    if i < bytes.len() || !complete {
         images = 0;
     }
     while paragraphs.last().is_some_and(Paragraph::is_empty) && paragraphs.len() > 1 {
@@ -352,11 +353,11 @@ fn trim_end_space(paragraphs: &mut [Paragraph]) {
     }
 }
 
-fn push_run(paragraphs: &mut [Paragraph], runs: &mut usize, text: String, bold: bool, italic: bool, underline: bool) {
+fn push_run(paragraphs: &mut [Paragraph], runs: &mut usize, text: String, bold: bool, italic: bool, underline: bool) -> bool {
     if *runs >= MAX_RUNS {
-        return;
+        return false;
     }
-    let Some(p) = paragraphs.last_mut() else { return };
+    let Some(p) = paragraphs.last_mut() else { return false };
     let mut props = RunProps::default();
     if bold {
         props.bold = Some(true);
@@ -369,6 +370,7 @@ fn push_run(paragraphs: &mut [Paragraph], runs: &mut usize, text: String, bold: 
     }
     p.runs.push(Run::with(text, props));
     *runs += 1;
+    true
 }
 
 /// Text with each run of HTML whitespace (spaces, tabs, line breaks) collapsed to one space.
@@ -484,7 +486,20 @@ mod tests {
             assert!(!html_is_single_image(html), "{html}");
         }
         assert!(!html_is_single_image(&format!("<img>{}", " ".repeat(MAX_HTML))));
-        assert!(!html_is_single_image(&format!("<img>{}hidden by the paragraph cap", "<p></p>".repeat(MAX_PARAS + 1))));
+        let capped = format!("<img>{}caption", "<p>&nbsp;</p>".repeat(MAX_PARAS + 1));
+        let body = html_to_body(&capped).unwrap();
+        assert_eq!(body.paragraphs.len(), MAX_PARAS, "the fixture actually reaches the paragraph cap");
+        assert!(body.text().ends_with("caption"), "the paragraph cap does not discard text");
+        assert!(!html_is_single_image(&capped));
+    }
+
+    /// Reaching the run limit is safe; discarding any later text prevents image classification.
+    #[test]
+    fn discarded_text_at_run_limit_is_not_image_only() {
+        let at_limit = format!("<img>{}", "<span>&nbsp;</span>".repeat(MAX_RUNS));
+        assert!(html_is_single_image(&at_limit), "nothing was discarded at the exact limit");
+        assert!(!html_is_single_image(&format!("{at_limit}caption")));
+        assert!(!html_is_single_image(&format!("{at_limit}<span>&nbsp;</span>caption")));
     }
 
     #[test]

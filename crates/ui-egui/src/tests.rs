@@ -999,7 +999,8 @@ fn the_language_dialog_marks_the_selected_text() {
     harness.state_mut().run("app.dialog", json!({"id": "language"})).unwrap();
     // The anchored window settles over its first frames; click once it stays put.
     harness.run_steps(4);
-    harness.get_by_label("Français (France)").click();
+    // Installed dictionaries append a marker to the language's accessible label.
+    harness.get_by_label_contains("Français (France)").click();
     harness.run_steps(2);
     harness.get_by_label("OK").click();
     harness.run_steps(2);
@@ -2309,6 +2310,7 @@ fn browser_image_detection_preserves_text_and_internal_objects() {
             })),
             clipboard_html: Some(Box::new(move || match case {
                 "address only" => None,
+                "internal text" => Some("<p>https://example.org/owned.png</p>".into()),
                 "rich text" => Some(r#"<p><b>Selected words</b><img src="https://example.org/owned.png"></p>"#.into()),
                 _ => Some(r#"<img src="https://example.org/owned.png">"#.into()),
             })),
@@ -2346,6 +2348,55 @@ fn browser_image_detection_preserves_text_and_internal_objects() {
         }
         if case == "rich text" {
             assert_eq!(pasted.text.as_ref().unwrap().paragraphs[0].runs[0].props.bold, Some(true));
+        }
+    }
+}
+
+/// External single-image HTML takes precedence over old objects with the same plain URL.
+#[test]
+fn browser_image_matching_an_internal_url_uses_external_content() {
+    const URL: &str = "https://example.org/owned.png";
+    for case in ["bitmap", "no bitmap", "image first", "image last", "invalid first", "invalid last", "oversized first", "oversized last"] {
+        let mut session = Session::with_new();
+        session.execute("shape.insert", &json!({"preset": "ellipse", "text": URL})).unwrap();
+        session.execute("edit.copy", &json!({})).unwrap();
+        let png = deckcraft_engine::cmd::file::render_png(&session.doc().unwrap().doc, 0, 0.1, false).0;
+        let services = Services {
+            clipboard_image: Some(Box::new(move || (case == "bitmap").then(|| png.clone()))),
+            clipboard_html: Some(Box::new(|| Some(format!(r#"<img src="{URL}">"#)))),
+            ..Default::default()
+        };
+        let mut h = step_app(services);
+        h.state_mut().session = session;
+        let before = h.state().session.doc().unwrap().shapes().len();
+        let text = egui::Event::Paste(URL.into());
+        if matches!(case, "bitmap" | "no bitmap") {
+            h.input_mut().events.push(text);
+        } else {
+            let image = if case.starts_with("invalid") {
+                egui::ColorImage::filled([0, 1], egui::Color32::BLUE)
+            } else if case.starts_with("oversized") {
+                egui::ColorImage { size: [16_000_001, 1], source_size: egui::vec2(16_000_001.0, 1.0), pixels: Vec::new() }
+            } else {
+                egui::ColorImage::filled([2, 2], egui::Color32::BLUE)
+            };
+            let image = egui::Event::PasteImage(std::sync::Arc::new(image));
+            h.input_mut().events.extend(if case.ends_with("first") { [image, text] } else { [text, image] });
+        }
+        h.run_steps(1);
+        let st = h.state().session.doc().unwrap();
+        assert_eq!(st.shapes().len(), before + 1, "{case}: insert one external payload");
+        let pasted = st.shapes().last().unwrap();
+        if matches!(case, "bitmap" | "image first" | "image last") {
+            assert!(matches!(pasted.kind, deckcraft_model::ShapeKind::Picture { .. }), "{case}");
+        } else {
+            assert!(pasted.text_box, "{case}: paste URL text rather than the old ellipse");
+            assert_eq!(pasted.text.as_ref().unwrap().text(), URL);
+        }
+        if case == "invalid last"
+            && let Ok(path) = std::env::var("DECKCRAFT_PNG_OUT_BROWSER_FALLBACK")
+        {
+            h.render().unwrap().save(path).unwrap();
         }
     }
 }
@@ -2500,4 +2551,48 @@ fn overdue_visible_logic_does_not_reanchor_a_later_hidden_show() {
     // the slide would not advance.
     let _ = ctx.run_logic(&raw_at(12.0, true, false), |ctx| app.tick_hidden_show(ctx, visible_anchor + std::time::Duration::from_secs(3)));
     assert_eq!(app.show.as_ref().unwrap().state.slide, 1, "time from the full visible frame is preserved through the logic-only pass");
+}
+
+/// #1431: a comment card's reply row was wider than the pane, so the Comments pane grew every
+/// frame until it stuck at its widest and dragging its edge did nothing.
+#[test]
+fn comments_pane_keeps_its_width_and_resizes() {
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        SlideApp::new(Session::with_new(), Services::default()),
+    );
+    h.run_steps(3);
+    h.state_mut().run("comment.add", json!({"text": "Check the figures on this slide"})).unwrap();
+    h.state_mut().run("comment.add", json!({"text": "Resolved one"})).unwrap();
+    h.state_mut().run("comment.resolve", json!({"index": 1, "resolved": true})).unwrap();
+    h.state_mut().run("view.pane", json!({"pane": "comments"})).unwrap();
+    h.run_steps(30);
+    let width = h.state().ui.pane_width;
+    assert!(width < 320.0, "the pane keeps its default width, not {width}");
+    // The cards stay compact: the second one starts near the top, not below a stretched first.
+    let second = h.get_by_label("Resolved one").rect();
+    assert!(second.top() < 450.0, "the second comment sits near the top, at {second:?}");
+
+    // Drag the pane's left edge: right narrows it, left widens it.
+    let drag = |h: &mut egui_kittest::Harness<'_, SlideApp>, dx: f32| {
+        let start = egui::pos2(1200.0 - h.state().ui.pane_width - 1.0, 500.0);
+        let end = start + egui::vec2(dx, 0.0);
+        h.event(egui::Event::PointerMoved(start));
+        h.run_steps(1);
+        h.event(egui::Event::PointerButton { pos: start, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+        for i in 1..=6 {
+            h.event(egui::Event::PointerMoved(start + (end - start) * (i as f32 / 6.0)));
+            h.run_steps(1);
+        }
+        h.event(egui::Event::PointerButton { pos: end, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+        h.run_steps(10);
+        h.state().ui.pane_width
+    };
+    let narrow = drag(&mut h, 50.0);
+    assert!(narrow < width - 40.0, "dragging right narrows the pane: {width} -> {narrow}");
+    let wide = drag(&mut h, -150.0);
+    assert!(wide > narrow + 140.0, "dragging left widens the pane: {narrow} -> {wide}");
 }
