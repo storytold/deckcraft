@@ -174,6 +174,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-30 | minor | Format Shape and Format Background gradient editor: per-stop Brightness; colour transforms keep their order across commands |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-29 | trivial | Picture Format: the Picture Styles row shows as many styles as fit beside the groups after it (at least two) and a More arrow with all 24, as the Transitions and Animations galleries do; Crop and Size are in view in the default window (#1232) |
