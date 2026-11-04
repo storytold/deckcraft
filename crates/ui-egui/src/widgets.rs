@@ -361,7 +361,9 @@ pub fn dropdown(ui: &mut Ui, id: &str, current: &str, width: f32, enabled: bool,
 /// A font size typed in a size field: "18", "18pt" or "10,5". `None` when it is not a positive,
 /// finite number; the engine clamps the range.
 pub fn parse_size(text: &str) -> Option<f64> {
-    let t = text.trim().trim_end_matches(['p', 't', 'P', 'T']).trim().replace(',', ".");
+    let t = text.trim();
+    let t = t.len().checked_sub(2).filter(|&i| t.get(i..).is_some_and(|s| s.eq_ignore_ascii_case("pt"))).and_then(|i| t.get(..i)).unwrap_or(t);
+    let t = t.trim().replace(',', ".");
     t.parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0)
 }
 
@@ -935,7 +937,7 @@ mod size_field_tests {
 
     #[test]
     fn things_that_are_not_a_size_are_refused() {
-        for bad in ["", "abc", "-4", "0", "NaN", "inf", "1e999"] {
+        for bad in ["", "abc", "-4", "0", "NaN", "inf", "1e999", "18p", "18t", "18ptpt"] {
             assert_eq!(parse_size(bad), None, "{bad:?}");
         }
     }
