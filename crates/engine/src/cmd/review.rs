@@ -1374,16 +1374,16 @@ fn slide_has_recording(sl: &Arc<deckcraft_model::Slide>) -> bool {
 
 /// Enabled state of Clear Recording: some slide has recorded material.
 fn has_recording(s: &Session) -> Result<()> {
-    has_slide(s)?;
+    has_slide(s).map_err(|e| bad("show.clearRecording", e))?;
     let st = s.doc()?;
-    if st.doc.slides.iter().any(slide_has_recording) { Ok(()) } else { Err("nothing recorded".into()) }
+    if st.doc.slides.iter().any(slide_has_recording) { Ok(()) } else { Err(bad("show.clearRecording", "nothing recorded")) }
 }
 
 /// Enabled state of Reset to Cameo: the deck has a Cameo on some slide.
 fn has_any_cameo(s: &Session) -> Result<()> {
-    has_slide(s)?;
+    has_slide(s).map_err(|e| bad("show.resetCameo", e))?;
     let st = s.doc()?;
-    if st.doc.slides.iter().any(|sl| shapes_have_cameo(&sl.shapes)) { Ok(()) } else { Err("no Cameo".into()) }
+    if st.doc.slides.iter().any(|sl| shapes_have_cameo(&sl.shapes)) { Ok(()) } else { Err(bad("show.resetCameo", "no Cameo")) }
 }
 
 fn drop_unused_media(doc: &mut deckcraft_model::Presentation, mut media: Vec<deckcraft_model::MediaId>) {
