@@ -452,6 +452,15 @@ fn the_three_and_four_bend_elbows_follow_their_adjust_values() {
     let g = build("bentConnector5", 200.0, 100.0, &[25000.0, 75000.0, 60000.0]).unwrap();
     let pos: Vec<(f64, f64)> = g.handles.iter().map(|h| (h.pos.x, h.pos.y)).collect();
     assert_eq!(pos, [(50.0, 37.5), (85.0, 75.0), (120.0, 87.5)]);
+    // A handle dragged far out keeps the value: the spec's range is ±2147483647, and an imported
+    // route can use values beyond ±1000000 (noted in review).
+    for name in ["bentConnector3", "bentConnector4", "bentConnector5"] {
+        let g = build(name, 200.0, 100.0, &[]).unwrap();
+        for h in &g.handles {
+            let far = h.origin + h.dir * 5_000_000.0;
+            assert_eq!(h.value_at(far), 5_000_000.0, "{name} handle {}", h.index);
+        }
+    }
 }
 
 // curvedConnector2 is one cubic (l,t)…(r,b) through (wd2,t) and (r,hd2); 4 and 5 bend at the same

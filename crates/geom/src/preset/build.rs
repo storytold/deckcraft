@@ -1106,6 +1106,9 @@ fn flowchart_and_star_shapes(c: &Ctx) -> Option<Geometry> {
     Some(g)
 }
 
+/// The range presetShapeDefinitions gives the elbows' handles (`minX` / `maxX`, `minY` / `maxY`).
+const ADJ_LIMIT: f64 = 2_147_483_647.0;
+
 fn callout_wave_and_connector_shapes(c: &Ctx) -> Option<Geometry> {
     let name = c.name;
     let w = c.w;
@@ -1188,28 +1191,30 @@ fn callout_wave_and_connector_shapes(c: &Ctx) -> Option<Geometry> {
         }
         // The elbows of ECMA-376's presetShapeDefinitions: 3 has one middle leg, 4 adds a
         // horizontal one at `adj2`, 5 a third vertical one at `adj3`. 4 and 5 were drawn as 3.
+        // Their handles take the spec's whole range (its `ahXY` min and max), so dragging one
+        // never clamps a value an imported route uses.
         "bentConnector3" => {
             let x1 = w * a(0) / 1e5;
             let l = Pb::new().m(0.0, 0.0).l(x1, 0.0).l(x1, h).l(w, h).take();
             let mut g = Geometry { paths: vec![stroke_only(l)], text_rect: full, handles: vec![], sites: vec![Point::ZERO, Point::new(w, h)] };
-            g.handles.push(Handle::new(0, Point::new(0.0, h / 2.0), Vec2::new(w / 1e5, 0.0), a(0), -1e6, 1e6));
+            g.handles.push(Handle::new(0, Point::new(0.0, h / 2.0), Vec2::new(w / 1e5, 0.0), a(0), -ADJ_LIMIT, ADJ_LIMIT));
             g
         }
         "bentConnector4" => {
             let (x1, y2) = (w * a(0) / 1e5, h * a(1) / 1e5);
             let l = Pb::new().m(0.0, 0.0).l(x1, 0.0).l(x1, y2).l(w, y2).l(w, h).take();
             let mut g = Geometry { paths: vec![stroke_only(l)], text_rect: full, handles: vec![], sites: vec![Point::ZERO, Point::new(w, h)] };
-            g.handles.push(Handle::new(0, Point::new(0.0, y2 / 2.0), Vec2::new(w / 1e5, 0.0), a(0), -1e6, 1e6));
-            g.handles.push(Handle::new(1, Point::new((x1 + w) / 2.0, 0.0), Vec2::new(0.0, h / 1e5), a(1), -1e6, 1e6));
+            g.handles.push(Handle::new(0, Point::new(0.0, y2 / 2.0), Vec2::new(w / 1e5, 0.0), a(0), -ADJ_LIMIT, ADJ_LIMIT));
+            g.handles.push(Handle::new(1, Point::new((x1 + w) / 2.0, 0.0), Vec2::new(0.0, h / 1e5), a(1), -ADJ_LIMIT, ADJ_LIMIT));
             g
         }
         "bentConnector5" => {
             let (x1, y2, x3) = (w * a(0) / 1e5, h * a(1) / 1e5, w * a(2) / 1e5);
             let l = Pb::new().m(0.0, 0.0).l(x1, 0.0).l(x1, y2).l(x3, y2).l(x3, h).l(w, h).take();
             let mut g = Geometry { paths: vec![stroke_only(l)], text_rect: full, handles: vec![], sites: vec![Point::ZERO, Point::new(w, h)] };
-            g.handles.push(Handle::new(0, Point::new(0.0, y2 / 2.0), Vec2::new(w / 1e5, 0.0), a(0), -1e6, 1e6));
-            g.handles.push(Handle::new(1, Point::new((x1 + x3) / 2.0, 0.0), Vec2::new(0.0, h / 1e5), a(1), -1e6, 1e6));
-            g.handles.push(Handle::new(2, Point::new(0.0, (y2 + h) / 2.0), Vec2::new(w / 1e5, 0.0), a(2), -1e6, 1e6));
+            g.handles.push(Handle::new(0, Point::new(0.0, y2 / 2.0), Vec2::new(w / 1e5, 0.0), a(0), -ADJ_LIMIT, ADJ_LIMIT));
+            g.handles.push(Handle::new(1, Point::new((x1 + x3) / 2.0, 0.0), Vec2::new(0.0, h / 1e5), a(1), -ADJ_LIMIT, ADJ_LIMIT));
+            g.handles.push(Handle::new(2, Point::new(0.0, (y2 + h) / 2.0), Vec2::new(w / 1e5, 0.0), a(2), -ADJ_LIMIT, ADJ_LIMIT));
             g
         }
         // The curved connectors follow the same legs with cubic Béziers.
