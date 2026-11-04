@@ -321,6 +321,10 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
 
 fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
     let Fr { ctx, doc, now, srect, pointer, .. } = *f;
+    // The teleprompter overlay scrolls itself: a flick over it does not turn the page.
+    if pointer.is_some_and(|p| show.record_bar_hit_at(ctx, p)) {
+        return;
+    }
     // Ctrl+wheel (Cmd+wheel on a Mac) zooms around the pointer, as in PowerPoint (#1286). egui
     // keeps it out of `smooth_scroll_delta`, so it does not also turn the page below.
     let line_points = ctx.options(|o| o.input_options.line_scroll_speed);

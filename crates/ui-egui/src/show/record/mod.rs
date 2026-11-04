@@ -92,6 +92,8 @@ pub(crate) struct RecordView {
     pub(super) more_open: bool,
     pub(super) ink: InkState,
     pub(in crate::show) devices: devices::Devices,
+    /// The teleprompter overlay drawn last frame, so a click or wheel over it is not the slide's.
+    pub(super) overlay: Option<Rect>,
     /// The cameo bubble on the slide canvas is shown.
     pub(super) camera_bubble: bool,
     /// The separate camera preview window is shown.
@@ -122,6 +124,7 @@ impl Default for RecordView {
             more_open: false,
             ink: InkState::default(),
             devices: devices::Devices::default(),
+            overlay: None,
             camera_bubble: true,
             camera_preview: false,
             pending: None,
@@ -235,7 +238,10 @@ impl RecordView {
     /// show or take an ink stroke.
     pub(super) fn chrome_contains(&self, full: Rect, pos: Pos2) -> bool {
         let top = top_rect(full);
-        top.contains(pos) || notes_rect(full, top, self).contains(pos) || bottom_rect(full, top).contains(pos)
+        top.contains(pos)
+            || notes_rect(full, top, self).contains(pos)
+            || bottom_rect(full, top).contains(pos)
+            || self.overlay.is_some_and(|r| r.contains(pos))
     }
 }
 
@@ -326,7 +332,7 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Pre
     ui.painter().rect_filled(layout.full, CornerRadius::ZERO, Color32::from_rgb(16, 16, 18));
     // The slide is drawn by the show before this call; the pane backgrounds sit around it.
     notes::ui(app, ui, show, &mut rec, doc, layout);
-    notes::overlay(ui, &rec, doc, show, layout);
+    notes::overlay(ui, &mut rec, doc, show, layout);
     let top = top::ui(app, ui, show, &mut rec, now, layout);
     keep &= !top.close;
     // The script scrolls with the take, so it follows this frame's Record/Pause click.

@@ -906,10 +906,13 @@ impl Show {
     /// Whether the pointer is over the Record view's chrome: clicks there must not advance the
     /// show, take a stroke, or follow a link.
     fn record_bar_hit(&self, ctx: &egui::Context) -> bool {
-        if !self.record_chrome() {
-            return false;
-        }
-        ctx.input(|i| i.pointer.interact_pos()).is_some_and(|p| self.record_view.chrome_contains(ctx.content_rect(), p))
+        ctx.input(|i| i.pointer.interact_pos()).is_some_and(|p| self.record_bar_hit_at(ctx, p))
+    }
+
+    /// Whether `pos` lies on the Record view's chrome (or its teleprompter overlay), where a click
+    /// or wheel belongs to the shell and not to the slide.
+    fn record_bar_hit_at(&self, ctx: &egui::Context, pos: Pos2) -> bool {
+        self.record_chrome() && self.record_view.chrome_contains(ctx.content_rect(), pos)
     }
 }
 

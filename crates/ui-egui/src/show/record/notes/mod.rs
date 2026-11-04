@@ -72,21 +72,28 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
     rec.notes_scroll = scroll::pane(&mut body, start, body_rect, |ui| {
         edit::ui(app, ui, rec, doc, slide);
     });
+    if following {
+        // The pane hands back the offset it could actually show; the take's offset follows it, so
+        // neither runs past the rendered script.
+        rec.teleprompter.offset = rec.notes_scroll;
+    }
 }
 
 /// A read-only script over the slide while a Teleprompter take is running. Drawn after the pane
 /// so it cannot be hidden by the pane's background.
-pub(super) fn overlay(ui: &mut Ui, rec: &RecordView, doc: &Presentation, show: &Show, layout: &RecordLayout) {
+pub(super) fn overlay(ui: &mut Ui, rec: &mut RecordView, doc: &Presentation, show: &Show, layout: &RecordLayout) {
     if rec.view != ViewKind::Teleprompter || !rec.teleprompter.overlay || rec.status != super::RecordStatus::Recording {
         return;
     }
     let rect = teleprompter::overlay_rect(layout);
     if rect.height() < 1.0 {
+        rec.overlay = None;
         return;
     }
+    rec.overlay = Some(rect);
     let slide = doc.slides.get(show.state.slide);
     let body = slide.map_or_else(deckcraft_model::text::TextBody::default, |s| s.notes.clone());
-    display::overlay(ui, rect, &body, &rec.teleprompter, rec.notes_px);
+    display::overlay(ui, rect, &body, &mut rec.teleprompter, rec.notes_px);
 }
 
 /// Advance the script's scroll for this frame. The shell calls it after the top bar, so a

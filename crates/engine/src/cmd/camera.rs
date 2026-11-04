@@ -335,7 +335,12 @@ pub fn has_cameo(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
     let doc = s.active().ok_or_else(|| "no presentation open".to_string())?;
     let shapes = doc.selected_shapes();
-    if !shapes.is_empty() && shapes.iter().all(|sh| sh.is_cameo()) { Ok(()) } else { Err("no Cameo selected".into()) }
+    if shapes.is_empty() {
+        // The shared sentinel: the engine lets a call with explicit `ids` through even when
+        // nothing is selected.
+        return Err(super::NOTHING_SELECTED.to_string());
+    }
+    if shapes.iter().all(|sh| sh.is_cameo()) { Ok(()) } else { Err("no Cameo selected".into()) }
 }
 
 /// Enabled state of `cameo.preview`: a Cameo is selected, or a preview is running — a preview can

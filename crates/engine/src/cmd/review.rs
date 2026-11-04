@@ -1377,11 +1377,10 @@ fn cameo_recorded(shapes: &[Shape]) -> bool {
 }
 
 fn shapes_have_cameo(shapes: &[Shape]) -> bool {
-    let mut found = false;
-    deckcraft_model::walk(shapes, &mut |sh, _| {
-        found |= sh.cameo.is_some();
-    });
-    found
+    // `resetCameo` only touches top-level Cameos (a grouped one keeps its group's coordinates), so
+    // the pre-check must see exactly those, or a slide whose only Cameo is grouped reports work
+    // that does not happen.
+    shapes.iter().any(|sh| sh.cameo.is_some())
 }
 
 fn slide_has_recording(sl: &Arc<deckcraft_model::Slide>) -> bool {

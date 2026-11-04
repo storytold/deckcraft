@@ -38,7 +38,7 @@ pub(super) fn script(ui: &mut Ui, body: &TextBody, px: f32) -> Response {
 ///
 /// The offset comes from the overlay's auto-scroll state; a non-finite or negative offset reads
 /// as the top of the script so a broken state can't scroll it out of view.
-pub(super) fn overlay(ui: &mut Ui, rect: Rect, body: &TextBody, tele: &TeleprompterState, px: f32) {
+pub(super) fn overlay(ui: &mut Ui, rect: Rect, body: &TextBody, tele: &mut TeleprompterState, px: f32) {
     if !overlay_rect_is_usable(rect) {
         return;
     }
@@ -60,7 +60,7 @@ pub(super) fn overlay(ui: &mut Ui, rect: Rect, body: &TextBody, tele: &Telepromp
     }
     let mut scroller = panel.new_child(UiBuilder::new().max_rect(area));
     scroller.set_clip_rect(scroller.clip_rect().intersect(rect));
-    egui::ScrollArea::vertical()
+    let out = egui::ScrollArea::vertical()
         .id_salt("record_teleprompter")
         .max_height(area.height())
         .auto_shrink([false, false])
@@ -68,6 +68,9 @@ pub(super) fn overlay(ui: &mut Ui, rect: Rect, body: &TextBody, tele: &Telepromp
         .show(&mut scroller, |ui| {
             script(ui, body, px);
         });
+    // Keep the offset inside the rendered script: an unbounded one would be handed back to the
+    // scroll area every frame and the text would sit outside the clipped panel.
+    tele.offset = out.state.clamped_offset().y.max(0.0);
 }
 
 /// A rectangle big enough to hold a legible overlay, with finite bounds.
@@ -163,9 +166,9 @@ mod tests {
     fn overlay_draws_and_ignores_zero_rects() {
         let ctx = Context::default();
         let body = long_notes();
-        let tele = TeleprompterState::default();
+        let mut tele = TeleprompterState::default();
         let mut out = ctx.run_ui(Default::default(), |ui| {
-            overlay(ui, Rect::from_min_size(pos2(0.0, 0.0), vec2(320.0, 180.0)), &body, &tele, 18.0);
+            overlay(ui, Rect::from_min_size(pos2(0.0, 0.0), vec2(320.0, 180.0)), &body, &mut tele, 18.0);
         });
         out.textures_delta.clear();
         assert!(!out.shapes.is_empty(), "the overlay paints its panel and script");
@@ -174,7 +177,7 @@ mod tests {
         let mut idle = Context::default().run_ui(Default::default(), |_| {});
         idle.textures_delta.clear();
         let mut out = Context::default().run_ui(Default::default(), |ui| {
-            overlay(ui, Rect::from_min_size(pos2(0.0, 0.0), vec2(0.0, 0.0)), &body, &tele, 18.0);
+            overlay(ui, Rect::from_min_size(pos2(0.0, 0.0), vec2(0.0, 0.0)), &body, &mut tele, 18.0);
         });
         out.textures_delta.clear();
         assert_eq!(out.shapes.len(), idle.shapes.len(), "a zero rect paints nothing");

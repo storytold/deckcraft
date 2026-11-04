@@ -192,6 +192,7 @@ impl SlideApp {
     /// Record ▸ Audio ▸ Audio: open the microphone and show the record bar.
     pub(crate) fn start_audio_recording(&mut self) -> Result<(), String> {
         if self.session.active().is_none() {
+            self.set_status("Open a presentation first");
             return Err("Open a presentation first".into());
         }
         let now = monotonic_secs();
