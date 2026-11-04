@@ -247,6 +247,11 @@ pub fn repair(p: &mut Presentation) {
     if !(p.notes_size.width.is_finite() && p.notes_size.width > 0.0 && p.notes_size.height.is_finite() && p.notes_size.height > 0.0) {
         p.notes_size = Presentation::default().notes_size;
     }
+    // A notes page is bounded like a slide: canvas and handout drawing scale with it.
+    p.notes_size = deckcraft_model::Size::new(
+        p.notes_size.width.clamp(*SLIDE_SIDE.start(), *SLIDE_SIDE.end()),
+        p.notes_size.height.clamp(*SLIDE_SIDE.start(), *SLIDE_SIDE.end()),
+    );
     sane_numbers(p);
 }
 
