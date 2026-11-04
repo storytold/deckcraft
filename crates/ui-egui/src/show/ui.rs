@@ -735,8 +735,15 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
             && let Some(p) = resp.interact_pointer_pos()
             && let Some((nx, ny)) = norm_on_slide(srect, uv, p)
         {
+            // Erase along the path the pointer swept since the last frame, not only at today's
+            // point: a fast drag can cross a whole stroke between two samples.
+            let here = pos2(nx, ny);
+            let from = if resp.drag_started() { here } else { show.eraser_from.unwrap_or(here) };
             // The eraser is wide enough to feel like PowerPoint's; whole strokes go.
-            show.erase_ink_at(pos2(nx, ny), pos2(nx, ny), 0.015);
+            show.erase_ink_at(from, here, 0.015);
+            show.eraser_from = Some(here);
+        } else {
+            show.eraser_from = None;
         }
         ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
     } else if laser_on {

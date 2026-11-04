@@ -104,6 +104,9 @@ pub struct Show {
     /// The slide the take was held on, so a slide opened while held can start its clock at
     /// resume instead of inheriting the slide-entry time.
     pause_slide: Option<usize>,
+    /// Where the eraser was last seen, so a fast drag erases along the path it swept and not
+    /// only at the frame's own point.
+    eraser_from: Option<Pos2>,
     /// Set Up Slide Show ▸ Keep mouse cursor visible: a still pointer is not hidden (#1445).
     pub keep_cursor: bool,
     timeline: Option<(usize, Timeline)>,
@@ -303,6 +306,7 @@ impl Show {
             record_view: record::RecordView::default(),
             record_paused_at: None,
             pause_slide: None,
+            eraser_from: None,
             keep_cursor: false,
             timeline: None,
             step_start: 0.0,
