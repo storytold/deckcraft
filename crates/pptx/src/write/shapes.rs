@@ -320,7 +320,25 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             let id = cx.id_for(s);
             w.open0("p:pic");
             w.open0("p:nvPicPr");
-            cnvpr(w, x, o, id, s);
+            // A click-waiting clip plays on a click of the shape, as `media()` does for videos.
+            let clicked;
+            let target = if s.click.is_none() && s.cameo.as_ref().is_some_and(|c| c.recorded.is_some() && !c.autoplay) {
+                clicked = Shape {
+                    click: Some(deckcraft_model::text::Hyperlink {
+                        action: deckcraft_model::text::Action::PlayMedia,
+                        tooltip: String::new(),
+                        highlight_click: false,
+                        sound: None,
+                        stop_sound: false,
+                        zoom_return: None,
+                    }),
+                    ..s.clone()
+                };
+                &clicked
+            } else {
+                s
+            };
+            cnvpr(w, x, o, id, target);
             w.open0("p:cNvPicPr");
             locks(w, "a:picLocks", s, A::new().a("noChangeAspect", "1"));
             if let Some(c) = &s.cameo {

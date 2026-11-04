@@ -369,7 +369,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-03 | minor | Recorded camera clips are captured and committed per slide (`show.cameo`, PPTX video part and timing); the Record Slide Show workflow does not capture them yet (`CameoRun` is not wired into the recording UI or state machine), and narration, ink, laser and screen recording remain |
+| 2026-11-03 | minor | Recorded camera clips are captured and committed per slide (`show.cameo`, PPTX video part and timing); the Record Slide Show workflow does not capture them yet (`CameoRun` is not wired into the recording UI or state machine), and narration, ink, laser and screen recording remain incomplete |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |

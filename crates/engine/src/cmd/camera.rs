@@ -658,6 +658,18 @@ mod tests {
     }
 
     #[test]
+    fn the_all_bypass_needs_a_command_that_declares_all() {
+        let mut s = Session::with_new();
+        // `arrange.bringToFront` takes no `all`, so the named-target bypass must not let it run.
+        assert!(s.execute("arrange.bringToFront", &json!({"all": true})).is_err());
+        // `camera.style` declares it and works without a selection.
+        s.execute("slide.new", &json!({})).expect("slide");
+        s.execute("insert.cameo", &json!({"all": true})).expect("cameo");
+        s.doc_mut().expect("doc").selection.shapes.clear();
+        s.execute("camera.style", &json!({"style": "softEdgeCircle", "all": true})).expect("style all");
+    }
+
+    #[test]
     fn style_rejects_an_unknown_name_and_a_non_cameo() {
         let mut s = Session::with_new();
         s.execute("insert.cameo", &json!({})).expect("insert");
