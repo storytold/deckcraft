@@ -28,7 +28,7 @@ because it mostly follows from hardware use.
 | Audio output | Core Audio / WASAPI | `cpal` (Core Audio, WASAPI, ALSA); browser Web Audio |
 | Microphone (record audio, narration) | yes | yes during Record Slide Show (cpal default input, one clip per slide); no free-standing recorder |
 | Camera (Cameo, record with camera) | yes | no |
-| Screen recording | yes | no |
+| Screen recording | yes | yes: a display, window or region (minimum 64×64), with the pointer, through `scap` on Windows, macOS and Linux; unavailable on FreeBSD and the web |
 
 ## Displays
 

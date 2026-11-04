@@ -8,9 +8,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use deckcraft_screen::{
-    CaptureOptions, CaptureRegion, CaptureStatus, CaptureTarget, RecorderConfig, RecorderOutput, ScreenError, ScreenIn, ScreenRecorder,
-};
+use deckcraft_screen::{CaptureOptions, CaptureStatus, CaptureTarget, RecorderConfig, RecorderOutput, ScreenError, ScreenIn, ScreenRecorder};
 
 /// What a stopped recording left on disk.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -28,6 +28,7 @@ pub mod menus;
 pub mod opening;
 pub mod presenter;
 pub mod ribbon;
+pub mod screen;
 pub mod settings;
 pub mod show;
 pub mod sorter;
@@ -223,6 +224,8 @@ pub struct SlideApp {
     pub table_pen: serde_json::Value,
     pub session: Session,
     pub services: Services,
+    /// Screen recording picker and control window.
+    pub screen: screen::ScreenUi,
     pub ui: UiState,
     pub textures: textures::Textures,
     pub control_rx: Option<Receiver<ControlRequest>>,

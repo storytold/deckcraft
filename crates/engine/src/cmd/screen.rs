@@ -108,6 +108,19 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
             let insert = s.execute("insert.video", &json!({"path": stopped.path.to_string_lossy(), "name": "Screen Recording.mp4"}));
             let _ = std::fs::remove_file(&stopped.path);
             let inserted = insert?;
+            // Tag the shape so Clear Recording can remove takes without touching ordinary videos.
+            if let Some(id) = inserted.get("id").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok()) {
+                let id = deckcraft_model::ShapeId(id);
+                let _ = s.edit(|doc, sel| {
+                    if let Some(slide) = doc.slides.get_mut(sel.slide) {
+                        let slide = std::sync::Arc::make_mut(slide);
+                        if let Some(shape) = slide.shape_mut(id) {
+                            shape.tags.push(("deckcraft.recording".into(), "media".into()));
+                        }
+                    }
+                    Ok(())
+                });
+            }
             Ok(json!({
                 "state": "stopped",
                 "id": inserted.get("id").cloned().unwrap_or(Value::Null),
@@ -171,6 +184,60 @@ mod tests {
         let mut s = Session::with_new();
         let e = s.execute(CMD, &json!({"action": "start"})).unwrap_err().to_string();
         assert!(e.contains("isn't available"), "{e}");
+    }
+
+    /// A fake screen device with a frame queue the test fills.
+    struct FakeScreen {
+        frames: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<deckcraft_screen::ScreenFrame>>>,
+    }
+
+    impl deckcraft_screen::ScreenIn for FakeScreen {
+        fn status(&mut self) -> deckcraft_screen::CaptureStatus {
+            deckcraft_screen::CaptureStatus::Ready
+        }
+        fn targets(&mut self) -> Result<Vec<deckcraft_screen::CaptureTarget>, deckcraft_screen::ScreenError> {
+            Ok(vec![deckcraft_screen::CaptureTarget {
+                id: 1,
+                kind: deckcraft_screen::TargetKind::Display,
+                title: "Fake display".into(),
+                width: 160,
+                height: 120,
+            }])
+        }
+        fn start(&mut self, _o: &CaptureOptions) -> Result<(), deckcraft_screen::ScreenError> {
+            Ok(())
+        }
+        fn frame(&mut self) -> Result<Option<deckcraft_screen::ScreenFrame>, deckcraft_screen::ScreenError> {
+            Ok(self.frames.lock().map_err(|_| deckcraft_screen::ScreenError::Failed("poisoned".into()))?.pop_front())
+        }
+        fn stop(&mut self) {}
+    }
+
+    #[test]
+    fn stop_inserts_a_click_to_play_video_with_a_poster_and_undo_removes_it() {
+        let frames = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        let mut s = Session::with_new();
+        s.set_screen_host(Some(Box::new(FakeScreen { frames: frames.clone() })));
+        s.execute(CMD, &json!({"fps": 30})).expect("start");
+        frames.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [40, 90, 200, 255]));
+        s.screen_tick(0.0);
+        let r = s.execute(CMD, &json!({"action": "stop"})).expect("stop");
+        assert!(r.get("id").and_then(Value::as_u64).is_some(), "{r}");
+        let doc = s.active().expect("doc");
+        let shape = doc
+            .doc
+            .slides
+            .get(doc.selection.slide)
+            .and_then(|sl| sl.shapes.iter().find(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Media(_))))
+            .expect("the recording is on the slide");
+        let deckcraft_model::ShapeKind::Media(clip) = &shape.kind else { panic!("media") };
+        assert!(clip.video && !clip.autoplay, "a recording starts on click, not by itself");
+        assert!(clip.poster.is_some(), "the first frame is the poster");
+        assert!(clip.duration_ms > 0);
+        assert!(shape.tags.iter().any(|(k, v)| k == "deckcraft.recording" && v == "media"));
+        s.execute("edit.undo", &json!({})).expect("undo");
+        let doc = s.active().expect("doc");
+        assert!(!doc.doc.slides[doc.selection.slide].shapes.iter().any(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Media(_))));
     }
 
     #[test]

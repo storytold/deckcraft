@@ -60,4 +60,6 @@ pub struct Services {
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
     /// Microphone for Record Slide Show (cpal on desktop). Without one, timings and ink are still kept.
     pub mic: Option<Box<dyn deckcraft_media::MicIn>>,
+    /// Screen capture device (scap on desktop); without one screen recording is unavailable.
+    pub screen_in: Option<Box<dyn deckcraft_screen::ScreenIn>>,
 }

@@ -77,6 +77,14 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
 
 pub(super) fn record(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
+        let recording = app.session.screen.is_recording();
+        let r = big_button_ex(ui, Icon::ScreenRecording, "Screen\nRecording", true, false, recording).0;
+        let r = r.on_hover_text("Record a display, a window or a region and insert it on the current slide");
+        if r.clicked() {
+            crate::screen::pick(app);
+        }
+    });
+    group(ui, |ui| {
         let r = big_button(ui, Icon::Cameo, "Cameo", false);
         let _ = r.on_hover_text("Camera capture is not available yet");
         if big_button(ui, Icon::PlayFromStart, "From\nBeginning", true).clicked() {

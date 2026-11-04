@@ -7,9 +7,9 @@ use super::updates_ui;
 use super::{
     AnimPreview, ControlRequest, FileTarget, HashMap, ImeCancelled, ImeComposition, ImeResetPhase, ImeTerminalPending, InputTarget, Mods,
     PendingFile, Perf, Receiver, Session, SlideApp, Target, UI_COMMANDS, UiRequest, Value, backstage, canvas, capture, dialogs, doc_window,
-    eyedropper, json, media, menus, notes, panes, preview, qat, ribbon, selpane, show, sorter, status, textures, theme, thumbs, toast, uifonts,
+    eyedropper, json, media, menus, notes, panes, preview, qat, ribbon, screen, selpane, show, sorter, status, textures, theme, thumbs, toast,
+    uifonts,
 };
-
 mod clipboard;
 mod commands;
 mod control;
@@ -37,14 +37,16 @@ impl SlideApp {
 
     /// Build application UI state, taking ownership of audio output and initialising media, dialogs,
     /// synthetic input, and timing fields.
-    pub fn new(session: Session, mut services: Services) -> Self {
+    pub fn new(mut session: Session, mut services: Services) -> Self {
         let audio_out = services.audio_out.take();
+        session.set_screen_host(services.screen_in.take());
         SlideApp {
             last_fill: serde_json::json!("accent1"),
             last_outline: serde_json::json!("tx1"),
             table_pen: serde_json::json!({"width": 1.0}),
             session,
             services,
+            screen: screen::ScreenUi::default(),
             ui: UiState::default(),
             textures: textures::Textures::default(),
             control_rx: None,
@@ -234,6 +236,10 @@ impl SlideApp {
         // Queued/settling screenshots force the bounded hidden paints they need; issued ones
         // rely on the screenshot command and the completion callback, with only a deadline wake.
         self.capture.request_paint_if_needed(ctx, web_time::Instant::now());
+        if self.session.screen.is_recording() {
+            self.session.screen_tick(monotonic_secs());
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
         if !self.synthetic.is_empty() || !self.synthetic_next.is_empty() || self.synthetic_pending {
             ctx.request_repaint();
         }
@@ -350,6 +356,7 @@ impl SlideApp {
         toast::note_missing_fonts(self);
         toast::show(self, &ctx);
         dialogs::show(self, &ctx);
+        screen::window(self, &ctx);
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, &ctx);
         menus::palette(self, &ctx);
