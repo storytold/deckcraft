@@ -10,8 +10,8 @@ use super::zoom::{
 };
 use super::{
     Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
-    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, before_slide_change, json, laser_pos, pen_width_slide, pointer_is_laser,
-    record_bar_rect, saved_status, show_fills_screen, state_for, take_narration, theme, vec2, viewport_visible, pos2,
+    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, before_slide_change, json, laser_pos, pen_width_slide, pointer_is_laser, record,
+    saved_status, show_fills_screen, state_for, take_narration, theme, vec2, viewport_visible, pos2,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -28,6 +28,8 @@ struct Fr<'a> {
     clicked: bool,
     secondary: bool,
     pointer: Option<Pos2>,
+    /// The Record view's section rects; None in an ordinary show.
+    layout: Option<record::Layout>,
 }
 
 /// Whether the show goes on, and the steps input asked for.
@@ -76,7 +78,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     }
     show.observe_visible_frame(now, web_time::Instant::now());
     begin_show(&ctx, &mut show, &doc, now, app.services.presenter.is_some());
-    if show.record && !show.mic_tried {
+    if show.record && show.record_view.status == record::RecordStatus::Recording && !show.mic_tried {
         show.mic_tried = true;
         match app.services.mic.as_mut() {
             Some(mic) => match mic.start() {
@@ -89,7 +91,8 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             None => show.mic_ok = false,
         }
     }
-    let mut out = Out { keep: keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
+    let editing = show.record && record::notes_has_focus(&ctx);
+    let mut out = Out { keep: !editing || keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
     if show.presenter
         && !show.reading
         && let Some(host) = app.services.presenter.as_mut()
@@ -122,13 +125,20 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         show.last_move = now;
     }
     let full = ui.max_rect();
-    let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
-    let srect = fit(avail, &doc);
+    let record_layout = if show.record { Some(record::layout(full, &doc, &show.record_view)) } else { None };
+    let avail = if let Some(layout) = &record_layout {
+        layout.slide
+    } else if show.reading {
+        Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0))
+    } else {
+        full
+    };
+    let srect = if let Some(layout) = &record_layout { layout.slide } else { fit(avail, &doc) };
     let pointer = ctx.input(|i| i.pointer.interact_pos());
     show.expire_goto(now);
     // The clock of the triggered animations runs before anything reacts to the pointer.
     show.tick_triggers(&doc, now);
-    let f = Fr { ctx: &ctx, doc: &doc, doc_uid, now, full, srect, clicked, secondary, pointer };
+    let f = Fr { ctx: &ctx, doc: &doc, doc_uid, now, full, srect, clicked, secondary, pointer, layout: record_layout };
     let pointing = handle_clicks(app, ui, &mut show, &f, &mut out);
     handle_wheel_and_swipe(&mut show, &f, &mut out);
     advance(app, &mut show, &f, &mut out);
@@ -210,7 +220,7 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
 }
 
 fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: &mut Out) -> bool {
-    let Fr { ctx, doc, doc_uid, now, full, srect, clicked, secondary, pointer } = *f;
+    let Fr { ctx, doc, doc_uid, now, full, srect, clicked, secondary, pointer, .. } = *f;
     let ctrl = ctx.input(|i| i.modifiers.ctrl);
     let laser_on = pointer_is_laser(show.laser, ctrl, show.blank.is_some());
     let on_slide = !show.grid
@@ -693,7 +703,8 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
     // Pen.
     let ctrl = ctx.input(|i| i.modifiers.ctrl);
     let laser_on = pointer_is_laser(show.laser, ctrl, show.blank.is_some());
-    let resp = ui.interact(full, ui.scope_id().with("show_pen"), if show.pen && !laser_on { Sense::drag() } else { Sense::hover() });
+    let pen_rect = f.layout.map_or(full, |l| l.slide);
+    let resp = ui.interact(pen_rect, ui.scope_id().with("show_pen"), if show.pen && !laser_on { Sense::drag() } else { Sense::hover() });
     if show.pen && !laser_on {
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Pen"));
     }
@@ -775,6 +786,10 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
 
 fn draw_bars(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
     let Fr { ctx, doc, now, full, .. } = *f;
+    // The Record view has its own top and bottom bars.
+    if show.record {
+        return;
+    }
     // Reading view bar / on-screen controls.
     if show.reading {
         let bar = Rect::from_min_max(pos2(full.min.x, full.max.y - 34.0), full.max);
@@ -854,9 +869,8 @@ fn draw_extras(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter
     if show.grid && !show.ended {
         paint_grid(painter, ctx, show, doc, full);
     }
-    if show.record {
-        let mic_samples = app.services.mic.as_ref().map(|m| m.captured()).unwrap_or(0);
-        out.keep = recording_bar(ui, painter, ctx, full, now, show, mic_samples) && out.keep;
+    if let Some(layout) = f.layout {
+        out.keep = record::ui(app, ui, show, doc, now, &layout) && out.keep;
     } else if show.rehearse {
         let t = now - show.slide_start;
         let total = now - show.show_start;
@@ -875,44 +889,6 @@ fn draw_extras(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter
     if out.keep && show.presenter && !show.reading && !show.remote_opened {
         presenter_window(app, ctx, show, doc, now, &mut out.keep);
     }
-}
-
-/// The recording badge. Returns false when Stop was clicked.
-fn recording_bar(ui: &mut Ui, painter: &egui::Painter, ctx: &egui::Context, full: Rect, now: f64, show: &mut Show, mic_samples: usize) -> bool {
-    let t = now - show.slide_start;
-    let secs = if t.is_finite() { t.max(0.0) } else { 0.0 };
-    let r = record_bar_rect(full);
-    painter.rect_filled(r, CornerRadius::same(6), Color32::from_black_alpha(180));
-    painter.circle_filled(pos2(r.min.x + 16.0, r.center().y), 5.0, Color32::from_rgb(220, 40, 40));
-    let clock = format!("{:02}:{:04.1}", (secs / 60.0) as u32, secs % 60.0);
-    let label = if show.mic_tried && !show.mic_ok {
-        format!("Recording  {clock}  · no mic")
-    } else if mic_samples >= 800 {
-        format!("Recording  {clock}  · mic")
-    } else {
-        format!("Recording  {clock}")
-    };
-    painter.text(pos2(r.min.x + 30.0, r.center().y), Align2::LEFT_CENTER, label, theme::font(13.0), Color32::WHITE);
-    let laser = Rect::from_min_size(pos2(r.max.x - 124.0, r.min.y + 4.0), vec2(56.0, 24.0));
-    let lresp = ui.interact(laser, ui.scope_id().with("record_laser"), Sense::click());
-    if lresp.clicked() {
-        show.set_laser(!show.laser);
-    }
-    let laser_fill = if show.laser {
-        Color32::from_rgb(180, 40, 40)
-    } else if lresp.hovered() {
-        Color32::from_rgb(80, 80, 80)
-    } else {
-        Color32::from_rgb(50, 50, 50)
-    };
-    painter.rect_filled(laser, CornerRadius::same(4), laser_fill);
-    painter.text(laser.center(), Align2::CENTER_CENTER, "Laser", theme::font(12.0), Color32::WHITE);
-    let stop = Rect::from_min_size(pos2(r.max.x - 62.0, r.min.y + 4.0), vec2(54.0, 24.0));
-    let resp = ui.interact(stop, ui.scope_id().with("record_stop"), Sense::click());
-    painter.rect_filled(stop, CornerRadius::same(4), if resp.hovered() { Color32::from_rgb(180, 40, 40) } else { Color32::from_rgb(140, 32, 32) });
-    painter.text(stop.center(), Align2::CENTER_CENTER, "Stop", theme::font(12.0), Color32::WHITE);
-    ctx.request_repaint_after(std::time::Duration::from_millis(100));
-    !resp.clicked()
 }
 
 fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
