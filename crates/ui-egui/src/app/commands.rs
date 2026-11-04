@@ -176,17 +176,9 @@ impl SlideApp {
                 }
             }
             "show.end" => {
-                // End through the shell's own path: `finish` saves an active take's timings,
-                // narration, ink and laser before the show is dropped.
-                if self.show.is_some() {
-                    self.queue_input(egui::Event::Key {
-                        key: egui::Key::Escape,
-                        physical_key: None,
-                        pressed: true,
-                        repeat: false,
-                        modifiers: egui::Modifiers::NONE,
-                    });
-                }
+                // A command ends the show without the Record view's confirmation, but never
+                // without saving: `end_show_now` runs the same finish path first.
+                self.end_show_now();
             }
             "animation.preview" => {
                 if p.get("on").and_then(Value::as_bool) == Some(false) {

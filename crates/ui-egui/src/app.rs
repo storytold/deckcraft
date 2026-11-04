@@ -249,8 +249,9 @@ impl SlideApp {
             let recording = self.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured));
             let dirty = self.session.documents().iter().any(|d| d.is_dirty());
             if self.quit_confirmed {
+                // The user said yes: the take is still saved, then the show goes.
+                self.end_show_now();
                 self.stop_mic();
-                self.show = None;
             } else if dirty || recording {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 if self.dialog.as_ref().is_none_or(|d| d.id != "quit") {

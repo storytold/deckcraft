@@ -35,14 +35,28 @@ impl SlideApp {
         self.record.cancel(mic);
     }
 
+    /// End the show without asking: a take is saved through the shell's own path first, so a
+    /// commanded end never drops a recording.
+    pub(crate) fn end_show_now(&mut self) {
+        if let Some(mut show) = self.show.take() {
+            if let Some(doc) = self.session.active().map(|d| d.doc.clone()) {
+                let now = show.last_now;
+                show::save_take(self, &mut show, &doc, now);
+            }
+            if let Some(host) = self.services.presenter.as_mut() {
+                host.close();
+            }
+            self.media.stop_owned(media::Owner::Show);
+        }
+    }
+
     /// Leave animation preview, stop editor-owned media, and create a show at the requested slide
     /// with the current reading/presenter configuration; an out-of-range slide starts an ended show.
     pub fn start_show(&mut self, from: usize, reading: bool) {
-        // The show and Record ▸ Audio share one microphone, and a show take needs all of it:
-        // finish the standalone take first rather than draining its samples.
+        // The show and Record ▸ Audio share one microphone. A finished take is inserted on the
+        // slide before the show opens, so starting Play never throws the samples away.
         if self.record.is_recording() {
-            let mic = self.services.mic.as_deref_mut();
-            self.record.cancel(mic);
+            let _ = self.stop_audio_recording();
         }
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);

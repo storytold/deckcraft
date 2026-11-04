@@ -95,9 +95,9 @@ fn a_take_is_capped_by_duration_and_size() {
     // At 8 kHz the ten-minute limit is smaller than the byte budget.
     assert_eq!(max_samples(8_000), (8_000.0 * MAX_SECONDS) as usize);
     assert!(check(8_000, max_samples(8_000) + 1).is_err());
-    // At 192 kHz the byte budget (and `wav_mono`'s 48 kHz / ten-minute cap) bites first.
-    assert_eq!(max_samples(192_000), 48_000 * MAX_SECONDS as usize);
-    assert!(max_samples(192_000) < max_samples(8_000) * 24);
+    // 16-bit mono at 192 kHz is 384 kB/s, so the 64 MiB byte budget bites before ten minutes.
+    assert_eq!(max_samples(192_000), (MAX_WAV_BYTES - 44) / 2);
+    assert!(max_samples(192_000) < 192_000 * MAX_SECONDS as usize, "the byte budget is smaller than ten minutes at this rate");
     assert!(check(192_000, (MAX_WAV_BYTES - 44) / 2 + 1).is_err());
     assert!(check(192_000, max_samples(192_000)).is_ok());
     assert_eq!(elapsed_text(0.0), "0:00.0");

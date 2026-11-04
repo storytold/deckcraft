@@ -10,6 +10,8 @@
   <string>DeckCraft</string>
   <key>CFBundleName</key>
   <string>DeckCraft</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>DeckCraft uses the microphone to record slide narration and audio.</string>
   <key>CFBundleExecutable</key>
   <string>DeckCraft</string>
   <key>CFBundleIdentifier</key>

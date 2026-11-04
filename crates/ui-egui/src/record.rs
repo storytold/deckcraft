@@ -24,8 +24,8 @@ pub(crate) const MAX_WAV_BYTES: usize = 64 * 1024 * 1024;
 /// first. The microphone callback and the UI drain both stop here.
 pub(crate) fn max_samples(rate: u32) -> usize {
     let by_time = (rate as usize).saturating_mul(MAX_SECONDS as usize);
-    // `wav_mono` writes at most ten minutes of 48 kHz samples; keep the take inside that too.
-    by_time.min(48_000 * MAX_SECONDS as usize).min((MAX_WAV_BYTES - 44) / 2)
+    // `wav_mono` writes at most ten minutes at the take's own rate; the byte cap can bite first.
+    by_time.min((MAX_WAV_BYTES - 44) / 2)
 }
 
 /// Why a take cannot become a slide's audio, or `Ok` when it can.

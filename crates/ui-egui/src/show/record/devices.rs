@@ -27,7 +27,7 @@ pub(in crate::show) struct DeviceState {
 }
 
 impl DeviceState {
-    pub(super) fn is_on(&self) -> bool {
+    pub(in crate::show) fn is_on(&self) -> bool {
         self.status == DeviceStatus::On
     }
 
@@ -44,10 +44,16 @@ pub(in crate::show) struct Devices {
     pub screen: DeviceState,
 }
 
-/// Attach the presentation services' device hosts to the shell once per frame. Until the device
-/// section lands, every service is absent and the states stay explicitly [`DeviceStatus::Unavailable`].
+/// Attach the presentation services' device hosts to the shell once per frame. The microphone
+/// follows the capture service — absent, the control reads unavailable; present, it starts on,
+/// as PowerPoint's narration capture does — and the take honours the user's toggle.
 pub(super) fn connect(rec: &mut RecordView, services: &crate::Services) {
-    let _ = (rec, services);
+    let mic = &mut rec.devices.mic.status;
+    if services.mic.is_none() {
+        *mic = DeviceStatus::Unavailable;
+    } else if *mic == DeviceStatus::Unavailable {
+        *mic = DeviceStatus::On;
+    }
 }
 
 pub(super) fn camera_button(ui: &mut Ui, rec: &mut RecordView, _now: f64) -> bool {

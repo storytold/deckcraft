@@ -11,7 +11,7 @@ use super::zoom::{
 use super::{
     Align2, BackKey, Click, Color32, CornerRadius, InkMode, InkStroke, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState,
     Show, ShowAction, ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, before_slide_change, json, laser_pos, pen_width_slide,
-    pointer_is_laser, pos2, record, saved_status, show_fills_screen, state_for, take_narration, theme, vec2, viewport_visible,
+    pointer_is_laser, pos2, record, save_take, show_fills_screen, state_for, theme, vec2, viewport_visible,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -68,6 +68,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     };
     let now = ctx.input(|i| i.time);
     let Some(mut show) = app.show.take() else { return };
+    show.last_now = now;
     if !viewport_visible(&ctx) {
         // A forced hidden paint (for example a pending screenshot) draws the current frame;
         // the show clocks are advanced by logic, not by this draw, so it must not advance them a
@@ -78,7 +79,8 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     }
     show.observe_visible_frame(now, web_time::Instant::now());
     begin_show(&ctx, &mut show, &doc, now, app.services.presenter.is_some());
-    if show.record && !show.recording_preview && show.record_view.status == record::RecordStatus::Recording && !show.mic_tried {
+    let mic_on = show.record_view.devices.mic.is_on();
+    if show.record && !show.recording_preview && mic_on && show.record_view.status == record::RecordStatus::Recording && !show.mic_tried {
         show.mic_tried = true;
         match app.services.mic.as_mut() {
             Some(mic) => match mic.start() {
@@ -90,6 +92,12 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             },
             None => show.mic_ok = false,
         }
+    }
+    // The toolbar's Microphone switch owns capture: turning it off stops the take's microphone.
+    if !mic_on && show.mic_ok {
+        app.stop_mic();
+        show.mic_ok = false;
+        show.mic_tried = false;
     }
     let editing = show.record && record::notes_has_focus(&ctx);
     // The show reads its keys only when the notes editor does not own them.
@@ -940,55 +948,7 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         }
         // A Record preview plays the recording; it never writes timings, ink, narration or laser.
-        let saving = show.rehearse || (show.record && show.record_view.captured);
-        if saving {
-            let live = show.rehearse || show.record_view.status == record::RecordStatus::Recording;
-            if show.record {
-                // The microphone's buffer belongs to the slide the show ends on.
-                let ending = show.state.slide;
-                take_narration(app.services.mic.as_deref_mut(), &mut show, ending);
-            }
-            if show.mic_tried {
-                app.stop_mic();
-            }
-            show.stash_ink(doc, show.state.slide, live);
-            show.stash_laser(show.state.slide, live);
-            if live {
-                show.timings.push((show.state.slide, now - show.slide_start));
-            }
-            for (i, secs) in show.timings.clone() {
-                let ms = if secs.is_finite() { (secs.max(0.0) * 1000.0).round() as u64 } else { 0 };
-                let _ = app.run("transition.timing", json!({"index": i, "after": ms}));
-            }
-            if show.record {
-                for (i, pts, mode, color, width) in &show.recorded {
-                    let points: Vec<_> = pts.iter().map(|(x, y)| json!([x, y, 0.5])).collect();
-                    let _ = app.run(
-                        "ink.stroke",
-                        json!({
-                            "index": i,
-                            "points": points,
-                            "width": width,
-                            "color": [color.r, color.g, color.b],
-                            "highlighter": *mode == InkMode::Highlighter,
-                        }),
-                    );
-                }
-                for (i, wav) in &show.narration {
-                    let _ =
-                        app.run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(wav)}));
-                }
-                let lc = doc.show.laser_color;
-                for (i, pts) in &show.laser_saved {
-                    let points: Vec<_> = pts.iter().map(|(x, y, t)| json!([x, y, t])).collect();
-                    let _ = app.run("show.laser", json!({"index": i, "points": points, "color": [lc.r, lc.g, lc.b]}));
-                }
-                let _ = app.run("show.setup", json!({"useTimings": true}));
-                app.set_status(saved_status(!show.narration.is_empty(), !show.recorded.is_empty(), !show.laser_saved.is_empty()));
-            } else {
-                app.set_status("Slide timings recorded.");
-            }
-        }
+        save_take(app, &mut show, doc, now);
         // A preview is a look at the recording: the editor keeps the slide it had.
         if !show.recording_preview {
             let last = show.state.slide;

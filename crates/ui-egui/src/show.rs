@@ -107,6 +107,8 @@ pub struct Show {
     /// Where the eraser was last seen, so a fast drag erases along the path it swept and not
     /// only at the frame's own point.
     eraser_from: Option<Pos2>,
+    /// The frame clock of the last drawn pass, so a commanded end can date the take's last slide.
+    pub(crate) last_now: f64,
     /// Set Up Slide Show ▸ Keep mouse cursor visible: a still pointer is not hidden (#1445).
     pub keep_cursor: bool,
     timeline: Option<(usize, Timeline)>,
@@ -307,6 +309,7 @@ impl Show {
             record_paused_at: None,
             pause_slide: None,
             eraser_from: None,
+            last_now: 0.0,
             keep_cursor: false,
             timeline: None,
             step_start: 0.0,
@@ -932,6 +935,59 @@ fn play_on_enter(clip: &deckcraft_model::MediaClip, without_narration: bool) -> 
 /// The microphone a take writes into: the app's service slot, borrowed so a section can hand the
 /// take over without holding the whole app.
 pub(crate) type MicSlot = Option<Box<dyn deckcraft_media::MicIn>>;
+
+/// Write the take's buffered timings, narration, ink and laser into the deck. The shell's finish
+/// path, a commanded `show.end` and a confirmed quit all end here, so no path can drop a take.
+pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation, now: f64) {
+    if !(show.rehearse || (show.record && show.record_view.captured)) {
+        return;
+    }
+    let live = show.rehearse || show.record_view.status == record::RecordStatus::Recording;
+    if show.record {
+        // The microphone's buffer belongs to the slide the show ends on.
+        let ending = show.state.slide;
+        take_narration(app.services.mic.as_deref_mut(), show, ending);
+    }
+    if show.mic_tried {
+        app.stop_mic();
+    }
+    show.stash_ink(doc, show.state.slide, live);
+    show.stash_laser(show.state.slide, live);
+    if live {
+        show.timings.push((show.state.slide, now - show.slide_start));
+    }
+    for (i, secs) in show.timings.clone() {
+        let ms = if secs.is_finite() { (secs.max(0.0) * 1000.0).round() as u64 } else { 0 };
+        let _ = app.run("transition.timing", json!({"index": i, "after": ms}));
+    }
+    if show.record {
+        for (i, pts, mode, color, width) in &show.recorded {
+            let points: Vec<_> = pts.iter().map(|(x, y)| json!([x, y, 0.5])).collect();
+            let _ = app.run(
+                "ink.stroke",
+                json!({
+                    "index": i,
+                    "points": points,
+                    "width": width,
+                    "color": [color.r, color.g, color.b],
+                    "highlighter": *mode == InkMode::Highlighter,
+                }),
+            );
+        }
+        for (i, wav) in &show.narration {
+            let _ = app.run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(wav)}));
+        }
+        let lc = doc.show.laser_color;
+        for (i, pts) in &show.laser_saved {
+            let points: Vec<_> = pts.iter().map(|(x, y, t)| json!([x, y, t])).collect();
+            let _ = app.run("show.laser", json!({"index": i, "points": points, "color": [lc.r, lc.g, lc.b]}));
+        }
+        let _ = app.run("show.setup", json!({"useTimings": true}));
+        app.set_status(saved_status(!show.narration.is_empty(), !show.recorded.is_empty(), !show.laser_saved.is_empty()));
+    } else {
+        app.set_status("Slide timings recorded.");
+    }
+}
 
 /// The largest narration WAV `show.narration` accepts, in bytes. The engine rejects anything
 /// larger, so a take is capped to this before it is encoded.
