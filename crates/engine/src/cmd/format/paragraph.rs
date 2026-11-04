@@ -134,7 +134,9 @@ pub(super) fn paragraph(s: &mut Session, p: &Value) -> Result<Value> {
             };
             return Err(bad(
                 "format.paragraph",
-                format!("`{k}` is a field of format.paragraphDialog (the whole Paragraph dialog), given{with}; format.paragraph does not read it"),
+                format!(
+                    "`{k}` is a field of format.paragraphDialog (the whole Paragraph dialog); pass it there{with}. format.paragraph does not read it"
+                ),
             ));
         }
         return Err(e);
