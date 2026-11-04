@@ -269,6 +269,10 @@ pub struct Cameo {
     /// A recording played by the cameo instead of the live feed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recorded: Option<MediaId>,
+    /// The feed's `alf:liveFeedProps` element kept verbatim (`backgroundProps`, `extLst`…), so a
+    /// camera background set in PowerPoint survives a save. `None` writes a plain live feed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
 }
 
 impl Cameo {

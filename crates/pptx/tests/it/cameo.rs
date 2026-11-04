@@ -10,7 +10,7 @@ use deckcraft_model::style::PictureFill;
 use deckcraft_model::{Cameo, Geom, Presentation, Shape, ShapeId, ShapeKind, defaults};
 
 fn svg() -> Vec<u8> {
-    br#"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#33404f"/><circle cx="16" cy="16" r="7" fill="#8fd3ff"/></svg>"#.to_vec()
+    br##"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#33404f"/><circle cx="16" cy="16" r="7" fill="#8fd3ff"/></svg>"##.to_vec()
 }
 
 fn png() -> Vec<u8> {
@@ -102,6 +102,40 @@ fn cameo_with_a_raster_placeholder_keeps_the_marker() {
         }
     });
     assert!(found.expect("cameo").is_cameo());
+}
+
+#[test]
+fn a_camera_background_survives_a_round_trip() {
+    let raw = concat!(
+        "<alf:liveFeedProps xmlns:alf=\"http://schemas.microsoft.com/office/drawing/2021/livefeed\">",
+        "<alf:backgroundProps><alf:Blur/></alf:backgroundProps>",
+        "</alf:liveFeedProps>"
+    );
+    let mut p = deck("cameo-placeholder.svg", svg());
+    if let Some(s) = p.slides.first_mut() {
+        for sh in &mut std::sync::Arc::make_mut(s).shapes {
+            if let Some(c) = &mut sh.cameo {
+                c.raw = Some(raw.to_string());
+            }
+        }
+    }
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let xml = part(&bytes, "ppt/slides/slide1.xml");
+    assert!(xml.contains("<alf:backgroundProps><alf:Blur/></alf:backgroundProps>"), "{xml}");
+
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let mut found = None;
+    deckcraft_model::walk(&q.slides[0].shapes, &mut |sh, _| {
+        if sh.name == "Camera 1" {
+            found = Some(sh.clone());
+        }
+    });
+    let kept = found.expect("cameo").cameo.and_then(|c| c.raw).expect("kept feed");
+    assert!(kept.contains("backgroundProps") && kept.contains("Blur"), "{kept}");
+
+    // A second save writes the same settings back.
+    let bytes = deckcraft_pptx::export(&q).expect("export");
+    assert!(part(&bytes, "ppt/slides/slide1.xml").contains("backgroundProps"));
 }
 
 #[test]
