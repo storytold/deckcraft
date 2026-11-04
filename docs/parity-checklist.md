@@ -2,6 +2,12 @@
 
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
+> **Last updated:** 2026-11-03 · Community PR wave 10: reflection transforms survive resaves (row stays P, rendering partial); Reuse Slides fits the destination size and brings referenced custom table styles (row stays P, picker has no thumbnails); Compress Pictures measures grouped pictures at displayed size (stays D). Scores unchanged.
+>
+> **Previously (2026-11-02):** Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P. Scores unchanged.
+>
+> **Previously (2026-11-01):** Locked-shape and no-outline regressions added for #1621; fill row re-assessed: remains D; No Fill hit-testing now follows resolved appearance. Scores unchanged.
+
 The summary between `<!-- SUMMARY -->
 **Weighted breadth parity: 84%** over 191 features.
 
@@ -118,7 +124,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Shapes | Text warp transforms | P2 | P |
 | Shapes | Shape quick styles | P1 | D |
 | Shapes | Set as default shape | P2 | D |
-| Format | Solid fill and transparency | P0 | D |
+| Format | Solid fill and transparency (No Fill interiors pass clicks through, #1621) | P0 | D |
 | Format | Gradient fill (linear, radial, rectangular, path) | P0 | D |
 | Format | Picture and texture fill | P1 | P |
 | Format | Pattern fill | P2 | P |
@@ -233,3 +239,13 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Platforms (✱) | macOS, Windows, Linux builds | P0 | P |
 | Platforms (✱) | Web (WASM) build | P1 | D |
 | Platforms (✱) | BSD build | P2 | P |
+
+## Revision history
+
+| Date | Change | Summary |
+|---|---|---|
+| 2026-11-02 | trivial | Reflection transform/fade serialization retained; its P score stays because rendering remains partial |
+| 2026-11-03 | trivial | Reuse Slides transfers referenced custom table styles; row remains P because other reuse behavior is still partial, summary scores unchanged |
+| 2026-11-02 | trivial | Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P and summary scores are unchanged |
+| 2026-11-02 | trivial | Picture compression uses displayed dimensions through nested group transforms; Compress pictures remains D and summary scores are unchanged |
+| 2026-10-31 | trivial | No Fill interior hit-testing follows resolved fill (#1621); fill row remains D and summary scores are unchanged |
