@@ -1195,7 +1195,9 @@ fn the_presenter_next_preview_arrives_without_blocking_the_frame() {
     let mut show = Show::new(&doc, 0, false, true);
     let mut keep = true;
     let ctx = egui::Context::default();
-    ctx.run_ui(egui::RawInput::default(), |ui| presenter_window(ui.ctx(), &mut show, &doc, &crate::displays::Displays::default(), 0.0, &mut keep)).textures_delta.clear();
+    ctx.run_ui(egui::RawInput::default(), |ui| presenter_window(ui.ctx(), &mut show, &doc, &crate::displays::Displays::default(), 0.0, &mut keep))
+        .textures_delta
+        .clear();
     assert!(show.next_job.is_some() && show.next_tex.is_none(), "the first frame leaves the preview pending");
     assert_eq!(show.preview_spawns, 1);
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
@@ -1341,7 +1343,11 @@ fn the_show_uses_the_saved_display_without_asking() {
 
     let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
     app.ui.presenter_view = true;
-    app.displays = Displays { list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }], editor: Some(0) };
+    app.displays = Displays {
+        list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }],
+        editor: Some(0),
+        primary: Some(0),
+    };
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
@@ -1350,8 +1356,10 @@ fn the_show_uses_the_saved_display_without_asking() {
         app,
     );
     harness.run_steps(3);
-    // The setting is used on each start, with automatic and disconnected-display fallbacks.
-    for (saved, expected) in [(Some(1), 1), (Some(1), 1), (None, 0), (Some(5), 0)] {
+    // The setting is used on each start, with automatic and disconnected-display fallbacks: a
+    // saved display that has gone falls back to the primary one, not the editor's.
+    for (saved, expected, editor) in [(Some(1), 1, 0), (Some(1), 1, 0), (None, 0, 0), (Some(5), 0, 0), (Some(5), 0, 1), (None, 1, 1)] {
+        harness.state_mut().displays.editor = Some(editor);
         harness.state_mut().ui.show_display = saved;
         harness.state_mut().start_show(0, false);
         harness.run_steps(2);
@@ -1389,7 +1397,11 @@ fn browsed_show_neither_selects_nor_swaps_displays() {
     let mut app = SlideApp::new(session, crate::Services::default());
     app.ui.presenter_view = true;
     app.ui.show_display = Some(1);
-    app.displays = Displays { list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }], editor: Some(0) };
+    app.displays = Displays {
+        list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }],
+        editor: Some(0),
+        primary: Some(0),
+    };
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
@@ -1430,7 +1442,11 @@ fn setup_show_display_selection_can_be_cancelled_or_saved() {
     use egui_kittest::kittest::Queryable;
 
     let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
-    app.displays = Displays { list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }], editor: Some(0) };
+    app.displays = Displays {
+        list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }],
+        editor: Some(0),
+        primary: Some(0),
+    };
     let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 800.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
@@ -1486,7 +1502,11 @@ fn saved_display_is_used_without_presenter_view() {
     let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
     app.ui.presenter_view = false;
     app.ui.show_display = Some(1);
-    app.displays = Displays { list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }], editor: Some(0) };
+    app.displays = Displays {
+        list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }],
+        editor: Some(0),
+        primary: Some(0),
+    };
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());

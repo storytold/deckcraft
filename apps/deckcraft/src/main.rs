@@ -51,9 +51,10 @@ impl eframe::App for App {
         // The slide show and Presenter View choose their displays from these.
         if let Some(w) = frame.winit_window() {
             let list: Vec<_> = w.available_monitors().collect();
-            let current = w.current_monitor();
+            let (current, primary) = (w.current_monitor(), w.primary_monitor());
             self.0.displays = Displays {
                 editor: list.iter().position(|m| Some(m) == current.as_ref()),
+                primary: list.iter().position(|m| Some(m) == primary.as_ref()),
                 list: list
                     .iter()
                     .map(|m| {

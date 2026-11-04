@@ -151,7 +151,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
-| 2026-11-04 | Set Up Slide Show selects the machine-local show monitor; OK commits, Cancel discards, browsed mode disables it (#1225) |
+| 2026-11-04 | Set Up Slide Show selects the machine-local show monitor; OK commits, Cancel discards, browsed mode disables it, and a saved monitor that is no longer connected falls back to the primary display (#1225) |
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
 | 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
 | 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |

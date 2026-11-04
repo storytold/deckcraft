@@ -13,8 +13,10 @@ ready** (estimated), **10–16 h** to parity.
 Set Up Slide Show includes **Multiple monitors → Slide show monitor**: Automatic or a
 connected display with its dimensions. OK commits the choice to the machine's `ui.json`
 (`showDisplay`); Cancel, Escape and the close button discard it. It is disabled for a
-browsed show. Starting a show uses the saved choice without prompting, with the existing
-automatic, disconnected-display and windowed fallbacks. Swap Displays updates the same setting.
+browsed show. Starting a show uses the saved choice without prompting. Automatic uses the
+editor's display; a saved display that is no longer connected falls back to the primary display
+(the editor's where the system reports none, as on Wayland); a windowed show stays where it is.
+Swap Displays updates the same setting.
 
 | Feature | PowerPoint | DeckCraft | Notes |
 |---|---|---|---|

@@ -37,11 +37,13 @@ const MARGIN: i32 = 40;
 const TITLE_BAR: i32 = 32;
 const GRAB: i32 = 160;
 
-/// The displays, and the one the editor window is on.
+/// The displays, the one the editor window is on and the system's primary display.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Displays {
     pub list: Vec<Display>,
     pub editor: Option<usize>,
+    /// `None` where the system does not say (Wayland).
+    pub primary: Option<usize>,
 }
 
 impl Displays {
@@ -56,10 +58,17 @@ impl Displays {
         self.editor.filter(|&e| Some(e) != not && e < self.list.len()).or_else(|| (0..self.list.len()).find(|&i| Some(i) != not))
     }
 
-    /// The saved display while it is still there, else the editor's.
+    /// The show's display: the saved one while it is still there; a saved display that is no
+    /// longer connected falls back to the primary display, and Automatic (`None`) uses the
+    /// editor's. Either way the other, then the first display, when one is not known.
     pub fn first_choice(&self, last: Option<usize>) -> usize {
         let valid = |i: &usize| *i < self.list.len();
-        last.filter(valid).or(self.editor.filter(valid)).unwrap_or(0)
+        let (primary, editor) = (self.primary.filter(valid), self.editor.filter(valid));
+        match last {
+            Some(i) if i < self.list.len() => i,
+            Some(_) => primary.or(editor).unwrap_or(0),
+            None => editor.or(primary).unwrap_or(0),
+        }
     }
 
     /// Can the window at `r` still be grabbed: is enough of its title bar on one display?
@@ -100,7 +109,11 @@ mod tests {
 
     /// A 1920×1080 laptop at the origin and a 1280×720 projector to its right.
     fn two() -> Displays {
-        Displays { list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }], editor: Some(0) }
+        Displays {
+            list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }],
+            editor: Some(0),
+            primary: Some(0),
+        }
     }
 
     #[test]
@@ -110,8 +123,17 @@ mod tests {
         assert_eq!(d.first_choice(Some(1)), 1);
         d.editor = Some(1);
         assert_eq!(d.first_choice(None), 1);
-        // A display that has gone: the editor's.
+        // A display that has gone: the primary display, even with the editor on another one.
+        assert_eq!(d.first_choice(Some(5)), 0);
+        d.primary = Some(1);
+        d.editor = Some(0);
         assert_eq!(d.first_choice(Some(5)), 1);
+        // No primary reported (Wayland), or an out-of-date one: the editor's, else the first.
+        d.primary = None;
+        assert_eq!(d.first_choice(Some(5)), 0);
+        d.editor = Some(1);
+        assert_eq!(d.first_choice(Some(5)), 1);
+        d.primary = Some(9);
         d.editor = Some(7);
         assert_eq!(d.first_choice(Some(5)), 0);
         assert_eq!(Displays::default().first_choice(Some(3)), 0);
@@ -139,7 +161,7 @@ mod tests {
 
     #[test]
     fn with_one_display_presenter_view_keeps_its_place_over_the_show() {
-        let one = Displays { list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }], editor: Some(0) };
+        let one = Displays { list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }], editor: Some(0), primary: Some(0) };
         assert_eq!(one.presenter(Some([100, 100, 800, 500]), None, [1100, 700]), Some([100, 100, 800, 500]));
         assert_eq!(one.presenter(Some([5000, 100, 800, 500]), None, [1100, 700]), Some([560, 290, 800, 500]));
         // No display list (tests, web): whatever was saved, else the system's choice.
@@ -154,7 +176,7 @@ mod tests {
         assert_eq!(d.swap(1, [100, 100, 900, 600]), Some((0, [2110, 60, 900, 600])));
         // Both on the laptop: the show goes to the next display, Presenter View stays on the laptop.
         assert_eq!(d.swap(0, [100, 100, 900, 600]), Some((1, [510, 240, 900, 600])));
-        let three = Displays { list: [0, 1920, 3840].map(|x| Display { x, y: 0, w: 1920, h: 1080 }).to_vec(), editor: Some(0) };
+        let three = Displays { list: [0, 1920, 3840].map(|x| Display { x, y: 0, w: 1920, h: 1080 }).to_vec(), editor: Some(0), primary: Some(0) };
         assert_eq!(three.swap(2, [2000, 100, 900, 600]).map(|s| s.0), Some(1));
         assert_eq!(three.swap(2, [4000, 100, 900, 600]).map(|s| s.0), Some(0));
         assert_eq!(Displays::default().swap(0, [0, 0, 10, 10]), None);
