@@ -101,6 +101,9 @@ pub struct Show {
     pub(crate) record_view: record::RecordView,
     /// When a recording pause started; the show clock is shifted by the pause length.
     record_paused_at: Option<f64>,
+    /// The slide the take was held on, so a slide opened while held can start its clock at
+    /// resume instead of inheriting the slide-entry time.
+    pause_slide: Option<usize>,
     /// Set Up Slide Show ▸ Keep mouse cursor visible: a still pointer is not hidden (#1445).
     pub keep_cursor: bool,
     timeline: Option<(usize, Timeline)>,
@@ -299,6 +302,7 @@ impl Show {
             capturing: false,
             record_view: record::RecordView::default(),
             record_paused_at: None,
+            pause_slide: None,
             keep_cursor: false,
             timeline: None,
             step_start: 0.0,
@@ -562,6 +566,7 @@ impl Show {
         self.capturing = false;
         if self.record_paused_at.is_none() {
             self.record_paused_at = Some(now);
+            self.pause_slide = Some(self.state.slide);
         }
     }
 
@@ -569,10 +574,18 @@ impl Show {
         let Some(at) = self.record_paused_at.take() else { return };
         self.capturing = true;
         let dt = (now - at).max(0.0);
-        if dt.is_finite() {
+        // A slide opened while the take was held starts its clock at resume: shifting its
+        // slide-entry time by the pause would undercount it (or go negative).
+        let moved = self.pause_slide.take().is_some_and(|held| held != self.state.slide);
+        if moved {
+            self.step_start = now;
+            self.slide_start = now;
+        } else if dt.is_finite() {
             self.step_start += dt;
             self.slide_start += dt;
             self.step_end += dt;
+        }
+        if dt.is_finite() {
             self.show_start += dt;
             self.last_move += dt;
         }
@@ -583,6 +596,7 @@ impl Show {
     fn end_recording(&mut self) {
         self.capturing = false;
         self.record_paused_at = None;
+        self.pause_slide = None;
     }
 
     /// The take stopped on the current slide: its time there is the last timing of the take.

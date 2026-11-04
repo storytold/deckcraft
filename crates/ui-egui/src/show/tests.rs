@@ -1460,6 +1460,29 @@ fn an_idle_record_view_keeps_no_recorded_material() {
     assert_eq!(show.timings.len(), 1);
 }
 
+/// A slide opened while the take is held starts its clock at resume: shifting its slide-entry
+/// time by the pause would undercount it, or make the timing negative after a long hold.
+#[test]
+fn a_slide_opened_during_a_pause_is_timed_from_resume() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    show.begin_recording(0.0);
+    show.pause_recording(5.0);
+    // Held on slide 0, the presenter moves to slide 1 (the shell applies the change itself).
+    show.state.slide = 1;
+    show.slide_start = 6.0;
+    show.resume_recording(20.0);
+    assert!((show.slide_start - 20.0).abs() < 1e-9, "slide 1's clock starts at resume, got {}", show.slide_start);
+    assert!((show.step_start - 20.0).abs() < 1e-9);
+    // Staying on the slide through a pause shifts its clock, so the pause is not counted.
+    show.pause_recording(25.0);
+    show.resume_recording(30.0);
+    assert!((30.0 - show.slide_start - 5.0).abs() < 1e-9, "the pause is not added to the slide's time");
+}
+
 /// The red Record button starts a new take: earlier browsing and a previous take's buffers go,
 /// so one save never mixes two takes.
 #[test]

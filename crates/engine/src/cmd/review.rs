@@ -1311,7 +1311,7 @@ fn recording_scope(s: &Session, p: &Value, id: &str) -> Result<Vec<usize>> {
     if p.get("index").is_some() {
         let index = usize_param(p, "index").ok_or_else(|| bad(id, "index must be a slide number"))?;
         if index >= s.doc()?.doc.slides.len() {
-            return Err(bad(id, format!("no slide {}", index + 1)));
+            return Err(bad(id, format!("no slide {}", index.saturating_add(1))));
         }
     }
     match str_param(p, "scope") {
