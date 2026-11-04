@@ -92,6 +92,9 @@ pub struct ScreenRecorder {
     /// Whole-number downscale of the captured picture (1 = recorded as captured).
     scale: u32,
     frames: u64,
+    /// The last encoded sample: a frame that did not change is muxed again without any
+    /// conversion or encoding work.
+    last_sample: Option<(Vec<u8>, bool)>,
     /// Reused BGRA→RGBA buffer (one frame).
     rgba: Vec<u8>,
 }
@@ -103,7 +106,18 @@ impl ScreenRecorder {
         if cfg.fps == 0 || cfg.fps > 240 {
             return Err(RecorderError::Encoder("the capture rate must be from 1 to 240 frames per second".into()));
         }
-        Ok(ScreenRecorder { sink: Some(sink), cfg, encoder: None, mux: None, track: 0, size: (0, 0), scale: 1, frames: 0, rgba: Vec::new() })
+        Ok(ScreenRecorder {
+            sink: Some(sink),
+            cfg,
+            encoder: None,
+            mux: None,
+            track: 0,
+            size: (0, 0),
+            scale: 1,
+            frames: 0,
+            last_sample: None,
+            rgba: Vec::new(),
+        })
     }
 
     /// The encoded picture size, once the first frame has been seen.
@@ -144,6 +158,25 @@ impl ScreenRecorder {
         let data = pic.length_prefixed();
         let Some(mux) = self.mux.as_mut() else { return Err(RecorderError::Muxer("the muxer is not ready".into())) };
         mux.write_sample(self.track, WriteSample { data: &data, duration: 1, composition_offset: 0, is_sync: pic.key })
+            .map_err(|e| RecorderError::Muxer(e.to_string()))?;
+        self.last_sample = Some((data, pic.key));
+        self.frames += 1;
+        Ok(())
+    }
+
+    /// Write the last sample again for a frame that did not change: the tick is recorded without
+    /// the BGRA→RGBA and RGB→YUV passes or the macroblock analysis. `BadFrame` when a key frame is
+    /// due (the caller then encodes it) or nothing has been encoded yet.
+    pub fn push_repeat(&mut self) -> Result<(), RecorderError> {
+        if self.frames >= MAX_FRAMES {
+            return Err(RecorderError::TooLong);
+        }
+        if self.frames == 0 || self.frames.is_multiple_of(u64::from(self.cfg.key_frame_interval.max(1))) {
+            return Err(RecorderError::BadFrame);
+        }
+        let Some((data, key)) = self.last_sample.as_ref() else { return Err(RecorderError::BadFrame) };
+        let Some(mux) = self.mux.as_mut() else { return Err(RecorderError::Muxer("the muxer is not ready".into())) };
+        mux.write_sample(self.track, WriteSample { data, duration: 1, composition_offset: 0, is_sync: *key })
             .map_err(|e| RecorderError::Muxer(e.to_string()))?;
         self.frames += 1;
         Ok(())
@@ -333,6 +366,26 @@ mod tests {
         let file = create(&scratch("empty"));
         let rec = ScreenRecorder::new(Box::new(file), RecorderConfig::new(30)).expect("recorder");
         assert_eq!(rec.finish(), Err(RecorderError::Empty));
+    }
+
+    #[test]
+    fn a_repeated_frame_is_muxed_without_encoding_again() {
+        let path = scratch("repeat");
+        let file = create(&path);
+        let mut rec = ScreenRecorder::new(Box::new(file), RecorderConfig::new(30)).expect("recorder");
+        rec.push(&ScreenFrame::solid(96, 64, [9, 9, 9, 255])).expect("push");
+        rec.push_repeat().expect("a repeat of the first picture");
+        assert_eq!(rec.frames(), 2);
+        let out = rec.finish().expect("finish");
+        assert_eq!((out.frames, out.width, out.height), (2, 96, 64));
+        let _ = std::fs::remove_file(&path);
+        // A key frame that is due is never a repeat: the caller must encode one.
+        let file = create(&scratch("repeat-key"));
+        let mut rec = ScreenRecorder::new(Box::new(file), RecorderConfig::new(1)).expect("recorder");
+        rec.push(&ScreenFrame::solid(96, 64, [9, 9, 9, 255])).expect("push");
+        rec.push_repeat().expect("a repeat");
+        // The interval is two frames at 1 fps: the third is a key frame, which must be encoded.
+        assert_eq!(rec.push_repeat(), Err(RecorderError::BadFrame), "a due key frame is never a repeat");
     }
 
     #[test]

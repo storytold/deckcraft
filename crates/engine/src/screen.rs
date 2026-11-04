@@ -202,9 +202,11 @@ impl ScreenState {
             Some(host) => host.frame(),
             None => Err(ScreenError::Unavailable),
         };
+        let mut fresh = false;
         match shot {
             Ok(frame) => {
                 if frame.is_some() {
+                    fresh = frame.is_some();
                     active.last = frame;
                 }
             }
@@ -223,17 +225,19 @@ impl ScreenState {
         let mut why = None;
         if active.due {
             active.due = false;
-            if let Some(frame) = active.last.as_ref()
-                && let Err(e) = active.recorder.push(frame)
-            {
+            if let Some(e) = push_picture(active, fresh) {
                 why = Some(format!("the screen recording stopped: {e}"));
             }
             active.next_at = now + interval;
         } else if now + 1.0e-9 >= active.next_at {
             let mut pushed = 0;
             while now + 1.0e-9 >= active.next_at && pushed < MAX_CATCH_UP {
-                let Some(frame) = active.last.as_ref() else { break };
-                if let Err(e) = active.recorder.push(frame) {
+                if active.last.is_none() {
+                    break;
+                }
+                // Only the first picture of a catch-up encodes the new frame; the rest repeat it.
+                let encode = fresh && pushed == 0;
+                if let Some(e) = push_picture(active, encode) {
                     why = Some(format!("the screen recording stopped: {e}"));
                     break;
                 }
@@ -287,6 +291,20 @@ impl ScreenState {
                 why.to_string()
             }
         }
+    }
+}
+
+/// Encode the last picture when `encode` is set, otherwise repeat the last sample. `Some` is the
+/// recorder error when the picture could not be written.
+fn push_picture(active: &mut Active, encode: bool) -> Option<deckcraft_screen::RecorderError> {
+    if encode {
+        let frame = active.last.as_ref()?;
+        return active.recorder.push(frame).err();
+    }
+    match active.recorder.push_repeat() {
+        Ok(()) => None,
+        // No sample to repeat yet (or a key frame is due): encode it.
+        Err(_) => active.last.as_ref().and_then(|frame| active.recorder.push(frame).err()),
     }
 }
 
