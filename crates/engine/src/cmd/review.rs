@@ -6,9 +6,10 @@ use deckcraft_geom::Xfrm;
 use deckcraft_model::{Comment, InkStroke, LaserSample, LaserTrace, MediaClip, Rgba, Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
+use super::edit::{remove_shapes, walk_mut};
 use super::{
-    CommandSpec, NO_ID_SPACE, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text, id_param, ok, str_param,
-    usize_param,
+    CommandSpec, NO_ID_SPACE, RECORDED_INK, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text,
+    id_param, is_recorded_ink, mark_recorded, ok, recording_tag, str_param, usize_param,
 };
 use crate::{Result, Session, Target, UiRequest};
 
@@ -175,6 +176,24 @@ pub fn specs() -> Vec<CommandSpec> {
             "{} → removes narration audio from every slide",
             has_slide,
             clear_narration_all
+        ),
+        cmd!(
+            "show.clearRecording",
+            "Clear Recording",
+            ["Record", "Edit"],
+            None,
+            "{scope?: current|all, index?: slide} → {cleared, slides} (narration, recorded camera/screen media, recorded ink, laser and advance timings; ordinary media and user ink stay)",
+            has_recording,
+            clear_recording
+        ),
+        cmd!(
+            "show.resetCameo",
+            "Reset to Cameo",
+            ["Record", "Edit"],
+            None,
+            "{scope?: current|all, index?: slide} → {reset, slides} (drops a recorded camera clip, restores the live feed and the default bottom-right placement and size)",
+            has_any_cameo,
+            reset_cameo
         ),
     ]
 }
@@ -873,7 +892,7 @@ fn ink_stroke(s: &mut Session, p: &Value) -> Result<Value> {
         let Some(sl) = doc.slides.get_mut(index) else {
             return Err(bad("ink.stroke", format!("no slide {index}")));
         };
-        let existing = Arc::make_mut(sl).shapes.iter().rev().find(|sh| matches!(sh.kind, ShapeKind::Ink { .. })).map(|sh| sh.id);
+        let existing = Arc::make_mut(sl).shapes.iter().rev().find(|sh| is_recorded_ink(sh)).map(|sh| sh.id);
         let id = if let Some(id) = existing {
             id
         } else {
@@ -882,13 +901,15 @@ fn ink_stroke(s: &mut Session, p: &Value) -> Result<Value> {
             let Some(sl) = doc.slides.get_mut(index) else {
                 return Err(bad("ink.stroke", format!("no slide {index}")));
             };
-            Arc::make_mut(sl).shapes.push(Shape {
+            let mut sh = Shape {
                 id,
                 name: "Ink".into(),
                 xfrm: Some(Xfrm::new(0.0, 0.0, size.width, size.height)),
                 kind: ShapeKind::Ink { strokes: vec![] },
                 ..Default::default()
-            });
+            };
+            mark_recorded(&mut sh, RECORDED_INK);
+            Arc::make_mut(sl).shapes.push(sh);
             id
         };
         let Some(sl) = doc.slides.get_mut(index) else {
@@ -1245,6 +1266,9 @@ fn shape_uses_media(sh: &Shape, id: deckcraft_model::MediaId) -> bool {
             }
         }
     }
+    if sh.cameo.as_ref().and_then(|c| c.recorded) == Some(id) {
+        return true;
+    }
     match &sh.kind {
         ShapeKind::Media(c) => c.media == id || c.poster == Some(id),
         ShapeKind::Picture { fill } => fill.media == id,
@@ -1256,6 +1280,211 @@ fn shape_uses_media(sh: &Shape, id: deckcraft_model::MediaId) -> bool {
 
 fn bg_uses(bg: Option<&deckcraft_model::Background>, id: deckcraft_model::MediaId) -> bool {
     matches!(bg, Some(deckcraft_model::Background::Fill { fill: deckcraft_model::style::Fill::Picture(p) }) if p.media == id)
+}
+
+/// The slides a recording command applies to: `scope: "current"|"all"`, or the old `all: true`
+/// and `index` forms.
+fn recording_scope(s: &Session, p: &Value, id: &str) -> Result<Vec<usize>> {
+    match str_param(p, "scope") {
+        Some("all") => slide_scope(s, &with_all(p), id),
+        Some("current") | None => slide_scope(s, p, id),
+        Some(_) => Err(bad(id, "scope must be \"current\" or \"all\"")),
+    }
+}
+
+/// Every media item `sh` draws, so a cleared recording drops only what nothing else uses.
+fn shape_media_ids(sh: &Shape) -> Vec<deckcraft_model::MediaId> {
+    let mut out = Vec::new();
+    if let Some(c) = &sh.cameo {
+        if let Some(m) = c.recorded {
+            out.push(m);
+        }
+    }
+    match &sh.kind {
+        ShapeKind::Media(c) => {
+            out.push(c.media);
+            out.extend(c.poster);
+        }
+        ShapeKind::Picture { fill } => out.push(fill.media),
+        ShapeKind::Opaque { preview, .. } => out.extend(preview),
+        ShapeKind::Model3d { media, poster } => {
+            out.push(*media);
+            out.extend(poster);
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Shapes Record Slide Show added: narration clips, the tagged camera/screen media and the tagged
+/// ink layer. The user's ordinary media and ink carry no recording tag.
+fn recorded_shape_ids(shapes: &[Shape]) -> Vec<ShapeId> {
+    let mut out = Vec::new();
+    deckcraft_model::walk(shapes, &mut |sh, _| {
+        let narration = matches!(&sh.kind, ShapeKind::Media(c) if c.narration);
+        let tagged = recording_tag(sh).is_some() && !is_recorded_ink(sh);
+        if narration || tagged || is_recorded_ink(sh) {
+            out.push(sh.id);
+        }
+    });
+    out
+}
+
+fn cameo_recorded(shapes: &[Shape]) -> bool {
+    let mut found = false;
+    deckcraft_model::walk(shapes, &mut |sh, _| {
+        found |= sh.cameo.as_ref().is_some_and(|c| c.recorded.is_some());
+    });
+    found
+}
+
+fn shapes_have_cameo(shapes: &[Shape]) -> bool {
+    let mut found = false;
+    deckcraft_model::walk(shapes, &mut |sh, _| {
+        found |= sh.cameo.is_some();
+    });
+    found
+}
+
+fn slide_has_recording(sl: &deckcraft_model::Slide) -> bool {
+    !recorded_shape_ids(&sl.shapes).is_empty()
+        || sl.laser.is_some()
+        || sl.transition.as_ref().is_some_and(|t| t.advance_after_ms.is_some())
+        || cameo_recorded(&sl.shapes)
+}
+
+/// Enabled state of Clear Recording: some slide has recorded material.
+fn has_recording(s: &Session) -> std::result::Result<(), String> {
+    has_slide(s)?;
+    let st = s.doc()?;
+    if st.doc.slides.iter().any(slide_has_recording) { Ok(()) } else { Err("nothing recorded".into()) }
+}
+
+/// Enabled state of Reset to Cameo: the deck has a Cameo on some slide.
+fn has_any_cameo(s: &Session) -> std::result::Result<(), String> {
+    has_slide(s)?;
+    let st = s.doc()?;
+    if st.doc.slides.iter().any(|sl| shapes_have_cameo(&sl.shapes)) { Ok(()) } else { Err("no Cameo".into()) }
+}
+
+fn drop_unused_media(doc: &mut deckcraft_model::Presentation, mut media: Vec<deckcraft_model::MediaId>) {
+    media.sort_by_key(|m| m.0);
+    media.dedup();
+    let drop: Vec<_> = media.into_iter().filter(|id| !media_used(doc, *id)).collect();
+    doc.media.retain(|m| !drop.contains(&m.id));
+}
+
+/// Clear Recording: remove recorded narration, camera/screen media, recorded ink, the laser trace
+/// and recorded advance timings from the chosen slides, in one undo step. Ordinary media and the
+/// user's own ink stay.
+fn clear_recording(s: &mut Session, p: &Value) -> Result<Value> {
+    let list = recording_scope(s, p, "show.clearRecording")?;
+    let any = {
+        let st = s.doc()?;
+        list.iter().any(|i| st.doc.slides.get(*i).is_some_and(slide_has_recording))
+    };
+    if !any {
+        return Ok(json!({"cleared": 0, "slides": 0}));
+    }
+    let (cleared, slides) = s.edit(|doc, sel| {
+        let mut cleared = 0u32;
+        let mut slides = 0u32;
+        let mut media = Vec::new();
+        for i in &list {
+            let Some(sl) = doc.slides.get_mut(*i) else { continue };
+            let sl = Arc::make_mut(sl);
+            let ids = recorded_shape_ids(&sl.shapes);
+            let mut touched = false;
+            if !ids.is_empty() {
+                for sh in &sl.shapes {
+                    if ids.contains(&sh.id) {
+                        media.extend(shape_media_ids(sh));
+                    }
+                }
+                let n = remove_shapes(&mut sl.shapes, &ids);
+                sl.animations.retain(|a| !ids.contains(&a.shape));
+                if sel.slide == *i {
+                    sel.shapes.retain(|id| !ids.contains(id));
+                }
+                cleared = cleared.saturating_add(n as u32);
+                touched |= n > 0;
+            }
+            if sl.laser.take().is_some() {
+                cleared = cleared.saturating_add(1);
+                touched = true;
+            }
+            if sl.transition.as_ref().is_some_and(|t| t.advance_after_ms.is_some()) {
+                if let Some(t) = sl.transition.as_mut() {
+                    t.advance_after_ms = None;
+                }
+                cleared = cleared.saturating_add(1);
+                touched = true;
+            }
+            let bare = sl
+                .transition
+                .as_ref()
+                .is_some_and(|t| t.kind == "none" && t.option.is_empty() && t.advance_on_click && t.sound.is_none() && t.raw.is_none());
+            if bare {
+                sl.transition = None;
+            }
+            walk_mut(&mut sl.shapes, &mut |sh| {
+                let Some(c) = &mut sh.cameo else { return };
+                if let Some(m) = c.recorded.take() {
+                    media.push(m);
+                    c.live = true;
+                    cleared = cleared.saturating_add(1);
+                    touched = true;
+                }
+            });
+            if touched {
+                slides = slides.saturating_add(1);
+            }
+        }
+        drop_unused_media(doc, media);
+        Ok((cleared, slides))
+    })?;
+    Ok(json!({"cleared": cleared, "slides": slides}))
+}
+
+/// Reset to Cameo: drop a recorded camera clip so the live feed returns for a retake, and put the
+/// Cameo back at its default bottom-right placement and size. One undo step per scope.
+fn reset_cameo(s: &mut Session, p: &Value) -> Result<Value> {
+    let list = recording_scope(s, p, "show.resetCameo")?;
+    let any = {
+        let st = s.doc()?;
+        list.iter().any(|i| st.doc.slides.get(*i).is_some_and(|sl| shapes_have_cameo(&sl.shapes)))
+    };
+    if !any {
+        return Ok(json!({"reset": 0, "slides": 0}));
+    }
+    let (reset, slides) = s.edit(|doc, _| {
+        let mut reset = 0u32;
+        let mut slides = 0u32;
+        let mut media = Vec::new();
+        let default = super::camera::default_rect(doc.slide_size);
+        for i in &list {
+            let Some(sl) = doc.slides.get_mut(*i) else { continue };
+            let sl = Arc::make_mut(sl);
+            let mut n = 0u32;
+            walk_mut(&mut sl.shapes, &mut |sh| {
+                let Some(c) = &mut sh.cameo else { return };
+                if let Some(m) = c.recorded.take() {
+                    media.push(m);
+                }
+                c.live = true;
+                let xfrm = sh.xfrm.unwrap_or_default();
+                sh.xfrm = Some(Xfrm { rot: xfrm.rot, flip_h: xfrm.flip_h, flip_v: xfrm.flip_v, ..default });
+                n = n.saturating_add(1);
+            });
+            if n > 0 {
+                reset = reset.saturating_add(n);
+                slides = slides.saturating_add(1);
+            }
+        }
+        drop_unused_media(doc, media);
+        Ok((reset, slides))
+    })?;
+    Ok(json!({"reset": reset, "slides": slides}))
 }
 
 #[cfg(test)]

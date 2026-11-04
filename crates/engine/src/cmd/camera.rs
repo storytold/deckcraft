@@ -188,7 +188,7 @@ pub const PLACEHOLDER_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" wid
 </svg>"#;
 
 /// Bottom-right default box for a slide.
-fn default_rect(size: deckcraft_geom::Size) -> Xfrm {
+pub(super) fn default_rect(size: deckcraft_geom::Size) -> Xfrm {
     let w = DEFAULT_SIZE.min(size.width.max(0.0));
     let h = DEFAULT_SIZE.min(size.height.max(0.0));
     Xfrm::new((size.width - w - DEFAULT_MARGIN).max(0.0), (size.height - h - DEFAULT_MARGIN).max(0.0), w, h)

@@ -88,6 +88,34 @@ pub(super) fn record(app: &mut SlideApp, ui: &mut Ui) {
         }
     });
     group(ui, |ui| {
+        rows(ui, |ui| {
+            let clear_on = super::enabled(app, "show.clearRecording");
+            let clear = ui
+                .add_enabled(clear_on, egui::Button::new("Clear Recording"))
+                .on_hover_text("Remove recorded narration, camera and screen media, ink, laser and advance timings");
+            egui::Popup::menu(&clear).show(|ui| {
+                for (label, scope) in [("Clear Recording on Current Slide", "current"), ("Clear Recording on All Slides", "all")] {
+                    if ui.add_enabled(clear_on, egui::Button::new(label)).clicked() {
+                        run(app, "show.clearRecording", json!({"scope": scope}));
+                        ui.close();
+                    }
+                }
+            });
+            let reset_on = super::enabled(app, "show.resetCameo");
+            let reset = ui
+                .add_enabled(reset_on, egui::Button::new("Reset to Cameo"))
+                .on_hover_text("Drop the recorded camera clip, return the live feed and restore the default Cameo placement and size");
+            egui::Popup::menu(&reset).show(|ui| {
+                for (label, scope) in [("Reset to Cameo on Current Slide", "current"), ("Reset to Cameo on All Slides", "all")] {
+                    if ui.add_enabled(reset_on, egui::Button::new(label)).clicked() {
+                        run(app, "show.resetCameo", json!({"scope": scope}));
+                        ui.close();
+                    }
+                }
+            });
+        });
+    });
+    group(ui, |ui| {
         if big_button(ui, Icon::Help, "Learn\nMore", true).clicked() {
             app.open_url(deckcraft_engine::links::APP_PAGE);
         }
