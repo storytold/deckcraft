@@ -10,6 +10,11 @@ use crate::cmd::{base64_decode, base64_encode};
 
 /// Bound clipboard allocations independently of the much larger document-file budget.
 pub const MAX_BYTES: usize = 64 << 20;
+/// Another process wrote the offer, so its counts are untrusted too (#1510's caps, sized for
+/// selections: far above a real copy, far below what pastes or renders slowly).
+const MAX_SLIDES: usize = 10_000;
+const MAX_SHAPES: usize = 100_000;
+const MAX_MEDIA: usize = 10_000;
 
 #[derive(Serialize, Deserialize)]
 struct Payload {
@@ -47,13 +52,22 @@ impl Clipboard {
         (bytes.len() <= MAX_BYTES).then_some(bytes)
     }
 
-    /// Unknown versions, malformed JSON/base64 and incomplete media fall back to normal paste.
+    /// Unknown versions, malformed JSON/base64, incomplete media and oversized offers fall back to
+    /// normal paste. What is accepted gets the numeric bounds a loaded file gets.
     pub fn from_system_bytes(bytes: &[u8]) -> Option<Self> {
         if bytes.len() > MAX_BYTES {
             return None;
         }
+        // Read the version alone first: a newer layout is ignored whatever its shape.
+        #[derive(Deserialize)]
+        struct Version {
+            version: u32,
+        }
+        if serde_json::from_slice::<Version>(bytes).ok()?.version != 1 {
+            return None;
+        }
         let mut payload: Payload = serde_json::from_slice(bytes).ok()?;
-        if payload.version != 1 || payload.media.len() != payload.clipboard.media.len() {
+        if payload.version != 1 || payload.media.len() != payload.clipboard.media.len() || !within_counts(&payload.clipboard) {
             return None;
         }
         for (item, data) in payload.clipboard.media.iter_mut().zip(payload.media) {
@@ -62,10 +76,36 @@ impl Clipboard {
         if payload.clipboard.shapes.is_empty() && payload.clipboard.slides.is_empty() && payload.clipboard.text.is_none() {
             return None;
         }
+        sane_numbers(&mut payload.clipboard);
         payload.clipboard.foreign = true;
         payload.clipboard.pastes = 0;
         Some(payload.clipboard)
     }
+}
+
+/// Slides, shapes (group members included) and media within the caps above.
+fn within_counts(clip: &Clipboard) -> bool {
+    let mut shapes = 0usize;
+    deckcraft_model::walk(&clip.shapes, &mut |_, _| shapes += 1);
+    for slide in &clip.slides {
+        deckcraft_model::walk(&slide.shapes, &mut |_, _| shapes += 1);
+    }
+    clip.slides.len() <= MAX_SLIDES && shapes <= MAX_SHAPES && clip.media.len() <= MAX_MEDIA
+}
+
+/// Clamp positions, sizes, line widths, font sizes and effect radii exactly as file loading does,
+/// by lending the shapes, slides and text to a scratch deck for `deckcraft_format::sane_numbers`.
+fn sane_numbers(clip: &mut Clipboard) {
+    let shapes = deckcraft_model::Slide { shapes: std::mem::take(&mut clip.shapes), ..Default::default() };
+    let text = deckcraft_model::Shape { text: clip.text.take(), ..Default::default() };
+    let text = deckcraft_model::Slide { shapes: vec![text], ..Default::default() };
+    let slides = [shapes, text].into_iter().chain(clip.slides.drain(..)).map(Arc::new).collect();
+    let mut deck = deckcraft_model::Presentation { slides, ..Default::default() };
+    deckcraft_format::sane_numbers(&mut deck);
+    let mut slides = deck.slides.into_iter().map(Arc::unwrap_or_clone);
+    clip.shapes = slides.next().map(|s| s.shapes).unwrap_or_default();
+    clip.text = slides.next().and_then(|s| s.shapes.into_iter().next()).and_then(|s| s.text);
+    clip.slides = slides.collect();
 }
 
 #[cfg(test)]
@@ -190,6 +230,117 @@ mod tests {
         v["media"] = json!(["!!!"]);
         assert!(Clipboard::from_system_bytes(&serde_json::to_vec(&v).unwrap()).is_none());
         assert!(Clipboard::from_system_bytes(&vec![0; MAX_BYTES + 1]).is_none());
+    }
+
+    fn copied_rect() -> Vec<u8> {
+        let mut s = Session::with_new();
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 120, 200, 80]})).unwrap();
+        s.execute("edit.copy", &json!({})).unwrap();
+        s.clipboard.to_system_bytes().unwrap()
+    }
+
+    #[test]
+    fn system_clipboard_rejects_an_oversized_offer_before_parsing_it() {
+        let bytes = copied_rect();
+        assert!(Clipboard::from_system_bytes(&bytes).is_some());
+        // The same valid offer, padded with JSON whitespace past the cap.
+        let mut padded = bytes.clone();
+        padded.resize(MAX_BYTES + 1, b' ');
+        assert!(Clipboard::from_system_bytes(&padded).is_none());
+        // Through the command: the oversized offer falls back to the plain text.
+        assert_pastes_fallback(&base64_encode(&padded));
+    }
+
+    #[test]
+    fn system_clipboard_garbage_is_rejected_without_panicking() {
+        let bytes = copied_rect();
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for len in [0, 1, 4, 16, 255, 4096] {
+            let noise: Vec<u8> = (0..len).map(|_| next() as u8).collect();
+            assert!(Clipboard::from_system_bytes(&noise).is_none());
+        }
+        for cut in (0..bytes.len()).step_by(7) {
+            assert!(Clipboard::from_system_bytes(&bytes[..cut]).is_none(), "prefix {cut}");
+        }
+        for v in [json!(null), json!([]), json!({}), json!({"version": "1"}), json!({"version": -1}), json!({"version": 1})] {
+            assert!(Clipboard::from_system_bytes(&serde_json::to_vec(&v).unwrap()).is_none(), "{v}");
+        }
+        assert!(Clipboard::from_system_bytes(&[b'['; 100_000]).is_none());
+        // Corrupt single bytes: whatever still parses must paste without panicking.
+        for i in (0..bytes.len()).step_by(11) {
+            let mut bad = bytes.clone();
+            bad[i] = next() as u8;
+            if let Some(clip) = Clipboard::from_system_bytes(&bad) {
+                let mut dst = Session::with_new();
+                dst.clipboard = clip;
+                let _ = dst.execute("edit.paste", &json!({}));
+            }
+        }
+    }
+
+    #[test]
+    fn system_clipboard_ignores_a_newer_version_whatever_its_layout() {
+        let bytes = copied_rect();
+        let mut v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        v["version"] = json!(2);
+        v["extra"] = json!({"from": "a newer build"});
+        let newer_same_layout = serde_json::to_vec(&v).unwrap();
+        let newer_other_layout = serde_json::to_vec(&json!({"version": 2, "clipboard": "elsewhere", "media": {}})).unwrap();
+        for newer in [newer_same_layout, newer_other_layout] {
+            assert!(Clipboard::from_system_bytes(&newer).is_none());
+            assert_pastes_fallback(&base64_encode(&newer));
+        }
+    }
+
+    /// `edit.paste` with this `clipboard` param ignores it and pastes the plain-text alternative.
+    fn assert_pastes_fallback(clipboard: &str) {
+        let mut dst = Session::with_new();
+        dst.execute("edit.paste", &json!({"clipboard": clipboard, "text": "fallback"})).unwrap();
+        assert!(!dst.clipboard.foreign);
+        let shapes = &dst.active().unwrap().doc.slides[0].shapes;
+        assert!(shapes.iter().any(|s| s.text.as_ref().is_some_and(|t| t.text() == "fallback")));
+        assert!(!shapes.iter().any(|s| s.xfrm.is_some_and(|x| (x.x, x.y) == (100.0, 120.0))));
+    }
+
+    #[test]
+    fn system_clipboard_caps_counts() {
+        let bytes = copied_rect();
+        let mut v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let mut many = v.clone();
+        many["clipboard"]["shapes"] = json!(vec![json!({}); MAX_SHAPES + 1]);
+        assert!(Clipboard::from_system_bytes(&serde_json::to_vec(&many).unwrap()).is_none());
+        let mut many = v.clone();
+        many["clipboard"]["slides"] = json!(vec![json!({}); MAX_SLIDES + 1]);
+        assert!(Clipboard::from_system_bytes(&serde_json::to_vec(&many).unwrap()).is_none());
+        v["clipboard"]["media"] = json!(vec![json!({}); MAX_MEDIA + 1]);
+        v["media"] = json!(vec![json!(""); MAX_MEDIA + 1]);
+        assert!(Clipboard::from_system_bytes(&serde_json::to_vec(&v).unwrap()).is_none());
+    }
+
+    #[test]
+    fn system_clipboard_numbers_get_the_file_bounds() {
+        let mut src = Session::with_new();
+        src.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 120, 200, 80]})).unwrap();
+        src.execute("edit.copy", &json!({})).unwrap();
+        let sh = &mut src.clipboard.shapes[0];
+        let x = sh.xfrm.as_mut().unwrap();
+        (x.x, x.w) = (1e300, 1e300);
+        sh.line = Some(deckcraft_model::Line { width: Some(1e18), ..Default::default() });
+        src.clipboard.text = Some(serde_json::from_value(json!({"paragraphs": [{"runs": [{"text": "x", "props": {"size": 1e12}}]}]})).unwrap());
+        let clip = Clipboard::from_system_bytes(&src.clipboard.to_system_bytes().unwrap()).unwrap();
+        let x = clip.shapes[0].xfrm.unwrap();
+        assert!(x.x <= 1e6 && x.w <= 1e6, "{x:?}");
+        assert!(clip.shapes[0].line.as_ref().unwrap().width.unwrap() <= 1584.0);
+        assert_eq!(clip.text.unwrap().paragraphs[0].runs[0].props.size, Some(4000.0));
+        // An ordinary selection comes back unchanged.
+        let plain = Clipboard::from_system_bytes(&copied_rect()).unwrap();
+        assert_eq!(plain.shapes[0].xfrm.unwrap().x, 100.0);
     }
 }
 
