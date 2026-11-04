@@ -331,7 +331,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     if let Some(t) = &c.title {
         let title_rect = Rect::new(0.0, area.y0, w, h);
         let layout = title_layout(rctx, t, title_size, text_col, title_rect);
-        let advance = title_advance(area, layout.content_height, title_size);
+        let advance = title_advance(area, layout.content_height, title_size, base);
         let title_clip = Rect::new(0.0, area.y0, w, area.y0 + advance);
         ctx.set_transform(m);
         ctx.push_clip_layer(&title_clip.to_path(0.1));
@@ -393,9 +393,9 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     };
     let gutter_r = second.filter(|_| !c.y2_hidden).map(|sc| clamp_soft(label_w(true, sc), base * 1.5, area.width() * 0.3)).unwrap_or(0.0);
     let plot = if horiz {
-        Rect::new(area.x0 + gutter, area.y0, area.x1, area.y1 - base * 1.6)
+        Rect::new(area.x0 + gutter, area.y0, area.x1, auto_plot_bottom(area, base, 1.6))
     } else {
-        Rect::new(area.x0 + gutter, area.y0, area.x1 - gutter_r, area.y1 - base * 1.8)
+        Rect::new(area.x0 + gutter, area.y0, area.x1 - gutter_r, auto_plot_bottom(area, base, 1.8))
     };
     if let Some(f) = &c.plot_fill {
         crate::paint::fill_path(ctx, rctx, f, None, &plot.to_path(0.1), plot, m, deckcraft_geom::preset::FillMode::Norm, 1.0, rctx.pres);
@@ -541,8 +541,13 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     ctx.stroke_path(&ax);
 }
 
-fn title_advance(area: Rect, content_height: f64, size: f64) -> f64 {
-    (content_height + size * 0.4).min((area.height() - 1.0).max(0.0))
+fn auto_plot_bottom(area: Rect, base: f64, inset: f64) -> f64 {
+    (area.y1 - base * inset).max(area.y0 + 1.0)
+}
+
+fn title_advance(area: Rect, content_height: f64, size: f64, base: f64) -> f64 {
+    // Reserve the axis-title band and plot inset too, not just one point below the chart title.
+    (content_height + size * 0.4).min((area.height() - base * 3.7 - 1.0).max(0.0))
 }
 
 struct LegendDraw<'a, 'ctx> {
@@ -1480,7 +1485,7 @@ mod tests {
     fn long_chart_title_keeps_a_positive_plot_height() {
         let p = deckcraft_model::Presentation::default();
         let rctx = Ctx::for_slide(&p, &p.slides[0]).expect("slide context");
-        let area = Rect::new(0.0, 10.0, 200.0, 30.0);
+        let area = Rect::new(0.0, 10.0, 200.0, 90.0);
         let title = title_layout(
             &rctx,
             "A very long chart title that needs more height than the tiny chart provides",
@@ -1488,8 +1493,19 @@ mod tests {
             Rgba::BLACK,
             Rect::new(0.0, area.y0, area.x1, 100.0),
         );
-        let advance = title_advance(area, title.content_height, 18.0);
-        assert!(area.y1 - (area.y0 + advance) >= 1.0);
+        let base = 13.0;
+        let advance = title_advance(area, title.content_height, 18.0, base);
+        let after_title = Rect::new(area.x0, area.y0 + advance, area.x1, area.y1);
+        let axis_area = Rect::new(after_title.x0, after_title.y0, after_title.x1, after_title.y1 - base * 1.9);
+        let plot_bottom = auto_plot_bottom(axis_area, base, 1.8);
+        assert!(plot_bottom - (area.y0 + advance) >= 1.0);
+    }
+
+    #[test]
+    fn tiny_auto_plot_keeps_a_positive_height() {
+        let area = Rect::new(0.0, 0.0, 20.0, 4.0);
+        assert!(auto_plot_bottom(area, 18.0, 1.6) - area.y0 >= 1.0);
+        assert!(auto_plot_bottom(area, 18.0, 1.8) - area.y0 >= 1.0);
     }
 
     #[test]
