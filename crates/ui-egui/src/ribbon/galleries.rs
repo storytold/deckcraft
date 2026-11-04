@@ -124,8 +124,20 @@ pub(super) fn smartart_gallery(
     });
 }
 
-/// Shapes gallery popup body: every preset by category. Returns the chosen preset.
+/// Shapes gallery popup body: every preset by category, the line and freeform tools included.
+/// Returns the chosen preset. Insert and draw tools accept the freeform entries; commands that
+/// only know presets (`shape.change`, Crop to Shape) use [`preset_gallery`].
 pub fn shapes_gallery(ui: &mut Ui) -> Option<&'static str> {
+    gallery(ui, true)
+}
+
+/// Preset-only shapes gallery: the freeform entries are not presets, so the menus behind
+/// `shape.change` and Crop to Shape must not offer them.
+pub fn preset_gallery(ui: &mut Ui) -> Option<&'static str> {
+    gallery(ui, false)
+}
+
+fn gallery(ui: &mut Ui, freeform: bool) -> Option<&'static str> {
     let t = Tokens::get(ui.ctx());
     let mut out = None;
     ui.set_max_width(330.0);
@@ -144,7 +156,7 @@ pub fn shapes_gallery(ui: &mut Ui) -> Option<&'static str> {
                         out = Some(p.name);
                     }
                 }
-                if cat == deckcraft_geom::preset::Category::Lines {
+                if freeform && cat == deckcraft_geom::preset::Category::Lines {
                     for (name, label) in deckcraft_engine::tools::FREEFORM_TOOLS {
                         let (r, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
                         if resp.hovered() {

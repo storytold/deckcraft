@@ -58,7 +58,7 @@ ready** (estimated), **10–16 h** to parity.
 | Feature | PowerPoint | DeckCraft |
 |---|---|---|
 | Rehearse Timings, keep timings | yes | yes |
-| Record Slide Show (narration, ink, laser, camera; Cameo) | yes | partial: recorded Cameo clips (per-slide video-only MP4, `show.cameo`, PPTX `a:videoFile`+`p14:media`+`p:video`); narration, ink and laser are separate work |
+| Record Slide Show (narration, ink, laser, camera; Cameo) | yes | partial: recorded Cameo clips (per-slide video-only MP4, `show.cameo`, PPTX `a:videoFile`+`p14:media`+`p:video`); `CameoRun` is a hook surface only, not yet wired into the recording UI and state machine, so the Record Slide Show workflow does not capture Cameo clips; narration, ink and laser are separate work |
 | Clear timing / narration | yes | timings only |
 | Export the recorded show to video | yes | no (see [file-format-parity.md](file-format-parity.md)) |
 

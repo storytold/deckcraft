@@ -35,15 +35,19 @@ pub fn specs() -> Vec<CommandSpec> {
             has_cameo,
             style
         ),
-        cmd!(
-            "show.cameo",
-            "Record Cameo",
-            ["Slide Show", "Record"],
-            None,
-            "{index?: index, data: base64 mp4 | path, name?, durationMs?, rect?: [x,y,w,h] pt} → the slide's recorded Cameo video",
-            has_slide,
-            record_cameo
-        ),
+        // Not journaled: the clip arrives as base64 and would sit in the session journal for the
+        // whole run. Nothing replays journal entries to rebuild a document; undo keeps the edit.
+        CommandSpec {
+            id: "show.cameo",
+            label: "Record Cameo",
+            menu: &["Slide Show", "Record"],
+            shortcut: None,
+            params: "{index?: index, data: base64 mp4 | path, name?, durationMs?, rect?: [x,y,w,h] pt} → the slide's recorded Cameo video",
+            enabled: has_slide,
+            run: record_cameo,
+            journal: false,
+            undoable: true,
+        },
         cmd!(
             "camera.applyToAll",
             "Apply to All Slides",
@@ -444,7 +448,11 @@ pub fn has_cameo(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
     let doc = s.active().ok_or_else(|| "no presentation open".to_string())?;
     let shapes = doc.selected_shapes();
-    if !shapes.is_empty() && shapes.iter().all(|sh| sh.is_cameo()) { Ok(()) } else { Err("no Cameo selected".into()) }
+    if shapes.is_empty() {
+        // `ids`/`id` callers name their targets; `style` and `applyToAll` check the targets.
+        return Err(super::NOTHING_SELECTED.into());
+    }
+    if shapes.iter().all(|sh| sh.is_cameo()) { Ok(()) } else { Err("no Cameo selected".into()) }
 }
 
 #[cfg(test)]
@@ -612,18 +620,53 @@ mod tests {
             cameo.raw = Some("<alf:liveFeedProps xmlns:alf=\"http://schemas.microsoft.com/office/drawing/2021/livefeed\"><alf:backgroundProps><alf:Blur/></alf:backgroundProps></alf:liveFeedProps>".into());
             cameo.device = Some("FaceTime HD Camera".into());
         }
-        let mut track = deckcraft_media::H264Mp4Track::new(32, 32, 15, 30).expect("track");
-        for i in 0..5 {
-            track.push_rgba(&vec![i as u8; 32 * 32 * 4]).expect("push");
-        }
-        let data = crate::cmd::base64_encode(&track.finish().expect("finish"));
-        s.execute("show.cameo", &json!({"data": data, "durationMs": 300})).expect("record");
+        s.execute("show.cameo", &json!({"data": clip_data(), "durationMs": 300})).expect("record");
         let doc = s.doc().expect("doc");
         let cameo = doc.doc.slides[0].shape(id).expect("shape").cameo.clone().expect("cameo");
         assert!(!cameo.live);
         assert!(cameo.recorded.is_some());
         assert_eq!(cameo.device.as_deref(), Some("FaceTime HD Camera"), "the device is kept");
         assert!(cameo.raw.as_deref().is_some_and(|r| r.contains("backgroundProps")), "the camera background is kept");
+    }
+
+    /// A short real MP4, base64 as `show.cameo` takes it.
+    fn clip_data() -> String {
+        let mut track = deckcraft_media::H264Mp4Track::new(32, 32, 15, 30).expect("track");
+        for i in 0..5 {
+            track.push_rgba(&vec![i as u8; 32 * 32 * 4]).expect("push");
+        }
+        crate::cmd::base64_encode(&track.finish().expect("finish"))
+    }
+
+    #[test]
+    fn a_recorded_clip_is_not_kept_in_the_journal() {
+        let mut s = Session::with_new();
+        s.execute("show.cameo", &json!({"data": clip_data(), "durationMs": 300})).expect("record");
+        assert!(s.journal.iter().all(|(id, _)| id != "show.cameo"), "the base64 clip is not journaled");
+        // The edit is still one undo step.
+        s.execute("edit.undo", &json!({})).expect("undo");
+        assert_eq!(cameo_count(&s), 0);
+        s.execute("edit.redo", &json!({})).expect("redo");
+        assert_eq!(cameo_count(&s), 1);
+    }
+
+    #[test]
+    fn camera_commands_take_named_targets_without_a_selection() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("slide");
+        s.execute("insert.cameo", &json!({"all": true})).expect("cameo");
+        let id = cameo_shapes(&s).first().expect("cameo").id;
+        {
+            let doc = s.doc_mut().expect("doc");
+            doc.selection.shapes.clear();
+            doc.selection.slide = 0;
+        }
+        // `ids` names the target, so the selection-based enablement does not block it.
+        s.execute("camera.style", &json!({"style": "centerShadowCircle", "ids": [id.0]})).expect("style by id");
+        s.execute("camera.applyToAll", &json!({"ids": [id.0]})).expect("apply by id");
+        // `all` names its target too.
+        s.execute("camera.style", &json!({"style": "softEdgeCircle", "all": true})).expect("style all");
+        assert!(cameo_shapes(&s).iter().all(|sh| sh.geom.preset_name() == Some("ellipse")));
     }
 
     #[test]

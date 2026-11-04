@@ -2,8 +2,8 @@
 //! Camera Border, Camera Effects and Format Object. A style is plain DrawingML on the picture, so
 //! every other picture command keeps working on a styled cameo.
 
-use super::super::galleries::{effects_menu, outline_menu, shapes_gallery};
-use super::super::{Color32, CornerRadius, Icon, Rect, SlideApp, Stroke, Ui, group, json, pos2, rows, run, scheme, small, vec2, widgets};
+use super::super::galleries::{effects_menu, outline_menu, preset_gallery};
+use super::super::{Color32, CornerRadius, Icon, Rect, SlideApp, Stroke, Ui, enabled, group, json, pos2, rows, run, scheme, small, vec2, widgets};
 use deckcraft_engine::cmd::camera::{STYLES, style_of};
 
 const TILE: egui::Vec2 = vec2(34.0, 34.0);
@@ -13,7 +13,15 @@ pub(super) fn styles_section(app: &mut SlideApp, ui: &mut Ui) {
     let selected = STYLES.iter().position(|s| s.id == current);
     group(ui, |ui| {
         let labels: Vec<&str> = STYLES.iter().map(|s| s.label).collect();
-        if let Some(i) = widgets::gallery(ui, STYLES.len(), TILE, selected, paint_style, |i| labels.get(i).copied().unwrap_or_default().to_string())
+        // The gallery follows the command: a mixed selection or no Cameo greys it out instead of
+        // letting a tile report an error.
+        let on = enabled(app, "camera.style");
+        let picked = ui
+            .add_enabled_ui(on, |ui| {
+                widgets::gallery(ui, STYLES.len(), TILE, selected, paint_style, |i| labels.get(i).copied().unwrap_or_default().to_string())
+            })
+            .inner;
+        if let Some(i) = picked
             && let Some(st) = STYLES.get(i)
         {
             run(app, "camera.style", json!({"style": st.id}));
@@ -22,7 +30,7 @@ pub(super) fn styles_section(app: &mut SlideApp, ui: &mut Ui) {
             small(app, ui, Icon::ApplyToAll, "Apply to All Slides", "camera.applyToAll", json!({}));
             let r = widgets::small_button(ui, Icon::Shapes, "Camera Shape", true, false);
             egui::Popup::menu(&r).show(|ui| {
-                if let Some(p) = shapes_gallery(ui) {
+                if let Some(p) = preset_gallery(ui) {
                     run(app, "shape.change", json!({"preset": p}));
                 }
             });

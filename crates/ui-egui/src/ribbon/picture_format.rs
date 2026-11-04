@@ -1,5 +1,5 @@
 use super::arrange::{arrange_group, size_group};
-use super::galleries::{cref_param, shapes_gallery};
+use super::galleries::{cref_param, preset_gallery};
 use super::{
     Color32, CornerRadius, Icon, Rect, SlideApp, Stroke, Ui, Value, big, big_button, color_split, enabled, group, json, pos2, rows, run, scheme,
     small, small_button_ex, theme, vec2, widgets,
@@ -174,7 +174,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
         let r = big_button(ui, Icon::Crop, "Crop", true);
         egui::Popup::menu(&r).show(|ui| {
             ui.label("Crop to Shape");
-            if let Some(p) = shapes_gallery(ui) {
+            if let Some(p) = preset_gallery(ui) {
                 run(app, "shape.change", json!({"preset": p}));
             }
             ui.separator();

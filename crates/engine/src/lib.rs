@@ -634,7 +634,10 @@ impl Session {
             self.settle_composition();
         }
         if let Err(e) = (spec.enabled)(self) {
-            let named = (e == cmd::NOTHING_SELECTED || e == cmd::SELECT_TWO) && (params.get("ids").is_some() || params.get("id").is_some());
+            // `ids`/`id`/`all` name the command's targets, so a selection-based enablement is not
+            // the last word: let the command validate them (AGENTS.md §4, the same for every host).
+            let names_targets = params.get("ids").is_some() || params.get("id").is_some() || params.get("all").and_then(Value::as_bool) == Some(true);
+            let named = (e == cmd::NOTHING_SELECTED || e == cmd::SELECT_TWO) && names_targets;
             if !named {
                 return Err(EngineError::Disabled(id.into(), e));
             }
