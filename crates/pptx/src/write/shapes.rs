@@ -157,7 +157,12 @@ fn cnvpr(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape) {
 }
 
 fn nv_pr(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape) {
-    if s.ph.is_none() && s.tags.is_empty() {
+    nv_pr_with(w, x, o, s, None);
+}
+
+/// `p:nvPr`, plus the video part of a recorded Cameo (`a:videoFile`, `p14:media`).
+fn nv_pr_with(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape, recorded: Option<deckcraft_model::MediaId>) {
+    if s.ph.is_none() && s.tags.is_empty() && recorded.is_none() {
         w.empty0("p:nvPr");
         return;
     }
@@ -178,7 +183,23 @@ fn nv_pr(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape) {
                 .t("hasCustomPrompt", ph.has_custom_prompt),
         );
     }
+    // `p:nvPr` order: `p:ph`, the media element, `p:custDataLst`, `p:extLst`.
+    let mut embed = None;
+    if let Some(media) = recorded {
+        let link = x.media_rel(o, media, "video");
+        embed = x.media_rel_new(o, media, crate::opc::RT_MEDIA);
+        if let Some(l) = &link {
+            w.empty("a:videoFile", A::new().a("r:link", l));
+        }
+    }
     super::cust_data(w, x, o, &s.tags);
+    if let Some(e) = &embed {
+        w.open0("p:extLst");
+        w.open("p:ext", A::new().a("uri", "{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}"));
+        w.empty("p14:media", A::new().a("xmlns:p14", crate::opc::NS_P14).a("r:embed", e));
+        w.close("p:ext");
+        w.close("p:extLst");
+    }
     w.close("p:nvPr");
 }
 
@@ -263,8 +284,12 @@ fn sp_pr_tag(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape, geom: bool, tag: &s
 }
 
 /// Write the children of a shape tree.
+/// How deep a shape tree is written; the timing writer collects media and cameo targets to the
+/// same depth, so every target it names has a serialized picture.
+pub(crate) const MAX_SHAPE_DEPTH: usize = 32;
+
 pub fn shapes(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, list: &[Shape], depth: usize) {
-    if depth > 32 {
+    if depth > MAX_SHAPE_DEPTH {
         return;
     }
     for s in list {
@@ -295,13 +320,38 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             let id = cx.id_for(s);
             w.open0("p:pic");
             w.open0("p:nvPicPr");
-            cnvpr(w, x, o, id, s);
+            // A click-waiting clip plays on a click of the shape, as `media()` does for videos.
+            let clicked;
+            let target = if s.click.is_none() && s.cameo.as_ref().is_some_and(|c| c.recorded.is_some() && !c.autoplay) {
+                clicked = Shape {
+                    click: Some(deckcraft_model::text::Hyperlink {
+                        action: deckcraft_model::text::Action::PlayMedia,
+                        tooltip: String::new(),
+                        highlight_click: false,
+                        sound: None,
+                        stop_sound: false,
+                        zoom_return: None,
+                    }),
+                    ..s.clone()
+                };
+                &clicked
+            } else {
+                s
+            };
+            cnvpr(w, x, o, id, target);
             w.open0("p:cNvPicPr");
             locks(w, "a:picLocks", s, A::new().a("noChangeAspect", "1"));
+            if let Some(c) = &s.cameo {
+                crate::cameo::write_live_feed(w, c.raw.as_deref());
+            }
             w.close("p:cNvPicPr");
-            nv_pr(w, x, o, s);
+            nv_pr_with(w, x, o, s, s.cameo.as_ref().and_then(|c| c.recorded));
             w.close("p:nvPicPr");
-            dml::blip_fill(w, x, o, "p:blipFill", fill);
+            if s.cameo.is_some() {
+                dml::cameo_blip_fill(w, x, o, "p:blipFill", fill);
+            } else {
+                dml::blip_fill(w, x, o, "p:blipFill", fill);
+            }
             let mut s2 = s.clone();
             if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background | Fill::Group)) {
                 s2.fill = None;
@@ -312,7 +362,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             }
             w.close("p:pic");
         }
-        ShapeKind::Group { children, child } if s.diagram.is_some() && depth < 32 => {
+        ShapeKind::Group { children, child } if s.diagram.is_some() && depth < MAX_SHAPE_DEPTH => {
             if let Some(d) = &s.diagram {
                 diagram(w, x, o, cx, s, d, children, child);
             }

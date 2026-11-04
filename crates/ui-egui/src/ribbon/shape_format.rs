@@ -1,5 +1,5 @@
 use super::arrange::{arrange_group, size_group};
-use super::galleries::{cref_param, effects_menu, outline_menu, quick_styles, shapes_gallery};
+use super::galleries::{cref_param, effects_menu, outline_menu, preset_gallery, quick_styles, shapes_gallery};
 use super::{
     Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, big, big_button, enabled, group, json, pos2, rows, run, scheme,
     small_button, small_button_ex, theme, vec2, widgets,
@@ -121,7 +121,7 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
         let r = big_button(ui, Icon::EditShape, "Edit\nShape", sel);
         egui::Popup::menu(&r).show(|ui| {
             ui.label("Change Shape");
-            if let Some(p) = shapes_gallery(ui) {
+            if let Some(p) = preset_gallery(ui) {
                 run(app, "shape.change", json!({"preset": p}));
             }
             ui.separator();

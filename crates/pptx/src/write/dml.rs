@@ -170,6 +170,12 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
     } else {
         w.empty("a:blip", a);
     }
+    blip_tail(w, pf);
+    w.close(tag);
+}
+
+/// The `a:srcRect` and stretch/tile children shared by every blip form.
+fn blip_tail(w: &mut W, pf: &PictureFill) {
     let c = pf.crop;
     if c.iter().any(|v| *v != 0.0) {
         w.empty("a:srcRect", A::new().a("l", pct(c[0])).a("t", pct(c[1])).a("r", pct(c[2])).a("b", pct(c[3])));
@@ -196,6 +202,29 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
             w.empty("a:tile", A::new().a("tx", emu(*tx)).a("ty", emu(*ty)).a("sx", pct(*sx)).a("sy", pct(*sy)).a("flip", flip).a("algn", algn));
         }
     }
+}
+
+/// `p:blipFill` for a Cameo. PowerPoint keeps the camera's placeholder as `asvg:svgBlip` inside
+/// the blip's extension list (with no `r:embed` on the blip itself), so write that shape. A raster
+/// placeholder — a recorded still, or an image the user swapped in — keeps the ordinary blip.
+pub fn cameo_blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFill) {
+    let svg = x.media(pf.media).is_some_and(|m| m.content_type == "image/svg+xml" || m.name.to_ascii_lowercase().ends_with(".svg"));
+    // A linked picture has no part to embed: the ordinary writer's `r:link` form is its valid
+    // fallback. `asvg:svgBlip` may only carry `r:embed`.
+    let linked = x.media(pf.media).is_some_and(|m| m.data.is_empty() && m.link.is_some());
+    if !svg || linked {
+        return blip_fill(w, x, o, tag, pf);
+    }
+    let rid = x.media_rel(o, pf.media, "image").unwrap_or_else(|| x.placeholder_rel(o));
+    w.open(tag, A::new().a("rotWithShape", if pf.upright { "0" } else { "1" }));
+    w.open0("a:blip");
+    w.open0("a:extLst");
+    w.open("a:ext", A::new().a("uri", crate::cameo::SVG_BLIP_URI));
+    w.empty("asvg:svgBlip", A::new().a("xmlns:asvg", crate::cameo::NS_ASVG).a("r:embed", &rid));
+    w.close("a:ext");
+    w.close("a:extLst");
+    w.close("a:blip");
+    blip_tail(w, pf);
     w.close(tag);
 }
 

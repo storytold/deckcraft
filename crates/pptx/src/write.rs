@@ -813,7 +813,7 @@ fn slide_xml(x: &mut Exp, o: &mut Out, s: &Slide, comment_rel: Option<&str>) -> 
     if let Some(t) = &s.transition {
         timing::transition(&mut w, x, o, t);
     }
-    if !s.animations.is_empty() {
+    if !s.animations.is_empty() || timing::has_recorded_cameo(&s.shapes) {
         timing::timing(&mut w, x, &s.animations, &s.shapes, &ids);
     }
     slide_ext_list(&mut w, s.raw_ext.as_deref(), comment_rel);

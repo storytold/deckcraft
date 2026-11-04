@@ -2,6 +2,16 @@ use super::*;
 use kurbo::Shape;
 
 #[test]
+fn only_presets_that_enclose_an_area_can_mask_a_picture() {
+    assert!(fills_area("ellipse"));
+    assert!(fills_area("roundRect"));
+    assert!(!fills_area("line"));
+    assert!(!fills_area("straightConnector1"));
+    let open: Vec<&str> = CATALOG.iter().map(|p| p.name).filter(|n| !fills_area(n)).collect();
+    assert!(open.contains(&"line") && open.len() < CATALOG.len());
+}
+
+#[test]
 fn every_catalog_preset_builds_within_bounds() {
     for p in CATALOG {
         for (w, h) in [(200.0, 100.0), (100.0, 200.0), (50.0, 50.0), (0.0, 0.0), (1.0, 300.0)] {

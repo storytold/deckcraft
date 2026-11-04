@@ -189,6 +189,12 @@ macro_rules! walkers {
                     }
                 }
             }
+            // A recorded Cameo plays a media item that paste and slide reuse must copy and remap.
+            if let Some(c) = &$($m)? s.cameo
+                && let Some(id) = &$($m)? c.recorded
+            {
+                f(id);
+            }
         }
 
         /// A shape and, for a group, everything in it.
@@ -392,6 +398,19 @@ mod tests {
         let mut got = slide_media(&s);
         got.sort();
         assert_eq!(got, (9101..=9108).map(MediaId).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_recorded_cameo_is_a_media_reference() {
+        let cameo = Shape {
+            kind: ShapeKind::Picture { fill: pf(9012) },
+            cameo: Some(deckcraft_model::Cameo { recorded: Some(MediaId(9011)), ..Default::default() }),
+            ..Default::default()
+        };
+        assert_eq!(shapes_media(std::slice::from_ref(&cameo)), vec![MediaId(9012), MediaId(9011)]);
+        let mut copied = cameo.clone();
+        visit_mut::shape(&mut copied, &mut |id: &mut MediaId| id.0 += 100);
+        assert_eq!(shapes_media(std::slice::from_ref(&copied)), vec![MediaId(9112), MediaId(9111)]);
     }
 
     /// SmartArt and OLE objects keep their parts as media items (#209); those count as used.
