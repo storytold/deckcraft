@@ -56,6 +56,19 @@ pub(super) fn record(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let r = big_button(ui, Icon::Cameo, "Cameo", false);
         let _ = r.on_hover_text("Camera capture is not available yet");
+        let recording = app.audio_recording();
+        let has_mic = app.has_mic();
+        let r = big_button(ui, Icon::Audio, "Audio", has_mic && !recording);
+        let tip = if !has_mic {
+            "Audio recording isn't available here"
+        } else if recording {
+            "A recording is in progress: use Stop or Cancel in the record bar"
+        } else {
+            "Record audio and insert it on this slide"
+        };
+        if r.on_hover_text(tip).clicked() {
+            let _ = app.start_audio_recording();
+        }
         if big_button(ui, Icon::PlayFromStart, "From\nBeginning", true).clicked() {
             app.start_show(app.show_start_index(), false);
             if let Some(s) = app.show.as_mut() {

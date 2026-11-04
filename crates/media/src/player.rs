@@ -31,6 +31,22 @@ pub trait AudioOut {
     }
 }
 
+/// A microphone. The host (cpal on desktop) fills a mono buffer the recorder drains.
+/// Without one, Record ▸ Audio is unavailable.
+pub trait MicIn {
+    /// Open the default input device. Capture runs on the device's own callback thread; this call
+    /// only sets the stream up and may report why a device or permission is unavailable.
+    fn start(&mut self) -> Result<(), String>;
+    /// Mono samples captured since the last take, and their sample rate. `(0, empty)` when the
+    /// microphone is not running.
+    fn take(&mut self) -> (u32, Vec<f32>);
+    /// Samples waiting to be taken. The record bar uses this to show the microphone is live.
+    fn captured(&self) -> usize {
+        0
+    }
+    fn stop(&mut self);
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayState {
     /// Waiting for the audio to decode.
