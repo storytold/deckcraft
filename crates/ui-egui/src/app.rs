@@ -46,6 +46,7 @@ impl SlideApp {
             session,
             services,
             ui: UiState::default(),
+            screens: Vec::new(),
             textures: textures::Textures::default(),
             control_rx: None,
             squiggles: Default::default(),

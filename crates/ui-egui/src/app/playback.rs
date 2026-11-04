@@ -38,6 +38,7 @@ impl SlideApp {
             let mut show = show::Show::new(&d.doc, from, reading, presenter);
             show.instance = self.show_instance;
             show.keep_cursor = self.ui.show_keep_cursor;
+            self.place_show(&mut show);
             self.show = Some(show);
         }
     }

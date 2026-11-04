@@ -19,6 +19,7 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         big(app, ui, Icon::SetUpShow, "Set Up\nSlide Show", "app.dialog", json!({"id": "setupShow"}));
+        big(app, ui, Icon::ScreenSettings, "Screen\nSettings", "app.dialog", json!({"id": "screenSettings"}));
         let hidden = app.session.active().and_then(|d| d.current_slide().map(|s| s.hidden)).unwrap_or(false);
         if big_button_ex(ui, Icon::HideSlide, "Hide\nSlide", true, false, hidden).0.clicked() {
             run(app, "slide.hide", json!({}));

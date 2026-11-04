@@ -146,9 +146,13 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
     let button = |ui: &mut Ui, s: &str| {
         ui.add(egui::Button::new(egui::RichText::new(s).size(15.0).color(Color32::WHITE)).fill(Color32::from_gray(60)).min_size(vec2(0.0, 30.0)))
     };
+    let mut viewport = egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]);
+    if let Some(screen) = crate::screens::presenter_monitor(show.audience_screen, show.notes_screen) {
+        viewport = viewport.with_monitor(screen);
+    }
     ctx.show_viewport_immediate(
         egui::ViewportId::from_hash_of("deckcraft_presenter"),
-        egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
+        viewport,
         |ui, _| {
             if !keyboard(ui.ctx(), show, doc, now, true) {
                 *keep = false;
