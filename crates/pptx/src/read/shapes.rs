@@ -475,7 +475,8 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
         .into_iter()
         .map(|id| {
             let rel = part.rels.get(&id).filter(|r| !r.external)?;
-            if !imp.pkg.rels(&rel.target).items.is_empty() {
+            let pkg = imp.pkg;
+            if *imp.has_rels.entry(crate::opc::norm(&rel.target)).or_insert_with(|| !pkg.rels(&rel.target).items.is_empty()) {
                 return None;
             }
             let (kind, target) = (rel.ty.clone(), rel.target.clone());
