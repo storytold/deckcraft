@@ -30,6 +30,7 @@ pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         "headerFooter" => dlg_header_footer(app, ui, d),
         "hyperlink" => dlg_hyperlink(app, ui, d),
         "setupShow" => dlg_setup_show(app, ui, d),
+        "screenSettings" => dlg_screen_settings(app, ui, d),
         "quit" => dlg_quit(app, ui, d),
         "close" => dlg_close(app, ui, d),
         "zoom" => zoom_dialog(app, ui, d),
@@ -240,6 +241,46 @@ fn dlg_hyperlink(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     }
     ok || cancel
+}
+
+fn dlg_screen_settings(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    if app.screens.is_empty() {
+        ui.label("DeckCraft could not see any screens.");
+        let (ok, cancel) = buttons(ui, "OK");
+        return ok || cancel;
+    }
+    let (presentation, notes) = crate::screens::assign(&app.screens, app.ui.show_screen, app.ui.notes_screen, true);
+    if !d.fields.contains_key("show") {
+        d.fields.insert("show".into(), presentation.map(|i| i.to_string()).unwrap_or_default());
+    }
+    if !d.fields.contains_key("notes") {
+        d.fields.insert("notes".into(), notes.map(|i| i.to_string()).unwrap_or_default());
+    }
+    ui.label("Choose the screen for the slides and the screen for Presenter View.");
+    ui.add_space(8.0);
+    screen_picker(ui, d, "show", "Presentation window", &app.screens);
+    ui.add_space(8.0);
+    screen_picker(ui, d, "notes", "Notes (Presenter View)", &app.screens);
+    let (ok, cancel) = buttons(ui, "OK");
+    if ok {
+        app.ui.show_screen = crate::screens::chosen(d.fields.get("show").map(String::as_str).unwrap_or(""), &app.screens);
+        app.ui.notes_screen = crate::screens::chosen(d.fields.get("notes").map(String::as_str).unwrap_or(""), &app.screens);
+    }
+    ok || cancel
+}
+
+fn screen_picker(ui: &mut Ui, d: &mut Dialog, key: &str, caption: &str, screens: &[crate::ScreenInfo]) {
+    let chosen = d.fields.get(key).cloned().unwrap_or_default();
+    let label = screens.iter().find(|s| s.index.to_string() == chosen).map(|s| s.label()).unwrap_or_else(|| "Choose a screen".to_string());
+    let field = ui.label(caption);
+    let combo = craft_ui::ComboBox::from_id_salt(("screen", key)).selected_text(label).width(360.0).show_ui(ui, |ui| {
+        for screen in screens {
+            if ui.selectable_label(screen.index.to_string() == chosen, screen.label()).clicked() {
+                d.fields.insert(key.to_string(), screen.index.to_string());
+            }
+        }
+    });
+    let _ = combo.response.labelled_by(field.id);
 }
 
 fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {

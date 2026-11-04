@@ -183,6 +183,7 @@ icons! {
     PresenterView => "presenter-view",
     CustomShow => "custom-show",
     SetUpShow => "set-up-show",
+    ScreenSettings => "screen-settings",
     RehearseTimings => "rehearse-timings",
     Record => "record",
     Subtitles => "subtitles",

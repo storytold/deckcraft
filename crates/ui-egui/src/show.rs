@@ -48,6 +48,10 @@ pub struct Show {
     pub rehearse: bool,
     /// Set Up Slide Show ▸ Keep mouse cursor visible: a still pointer is not hidden (#1445).
     pub keep_cursor: bool,
+    /// Full-screen presentation monitor. None keeps the window on its current screen.
+    pub(crate) audience_screen: Option<usize>,
+    /// Presenter View monitor. None keeps the notes window with the presentation.
+    pub(crate) notes_screen: Option<usize>,
     timeline: Option<(usize, Timeline)>,
     step_start: f64,
     slide_start: f64,
@@ -224,6 +228,8 @@ impl Show {
             autoplay: false,
             rehearse: false,
             keep_cursor: false,
+            audience_screen: None,
+            notes_screen: None,
             timeline: None,
             step_start: 0.0,
             slide_start: 0.0,

@@ -74,6 +74,11 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         return;
     }
     show.observe_visible_frame(now, web_time::Instant::now());
+    // A show opened before the screen list arrived (for example `--show`) is placed on the
+    // first frame that can see the monitors.
+    if !show.started {
+        app.place_show(&mut show);
+    }
     begin_show(&ctx, &mut show, &doc, now, app.services.presenter.is_some());
     let mut out = Out { keep: keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
     if show.presenter
@@ -189,7 +194,11 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
         show.timer = PresenterTimer::start(now);
         show.last_move = now;
         if show_fills_screen(show.reading, &doc.show.show_type) && !(show.presenter && remote) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+            if let Some(screen) = show.audience_screen {
+                ctx.send_viewport_cmd(egui::ViewportCommand::SetMonitor(screen));
+            } else {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+            }
         }
         show.after_enter(doc, now);
     }

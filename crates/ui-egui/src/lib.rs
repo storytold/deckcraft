@@ -28,6 +28,7 @@ pub mod menus;
 pub mod opening;
 pub mod presenter;
 pub mod ribbon;
+pub mod screens;
 pub mod settings;
 pub mod show;
 pub mod sorter;
@@ -72,6 +73,7 @@ pub use panels::notes;
 pub use panels::selpane;
 pub use panels::thumbs;
 pub use ribbon::qat;
+pub use screens::ScreenInfo;
 pub use services::{DownloadFn, Inbox, InboxEvent, InboxFile, OpenAsyncFn, PickFn, ReadFn, Services, WriteFn};
 use state::{FilePlace, FilePurpose, ImeDescriptorKey, ImeDestination, ImeTerminalStamp};
 pub use state::{RECENT_MAX, UiState, ViewMode, ZOOM_RANGE};
@@ -224,6 +226,8 @@ pub struct SlideApp {
     pub session: Session,
     pub services: Services,
     pub ui: UiState,
+    /// Screens the host reported, in the same order `ViewportCommand::SetMonitor` uses.
+    pub screens: Vec<ScreenInfo>,
     pub textures: textures::Textures,
     pub control_rx: Option<Receiver<ControlRequest>>,
     /// Spelling squiggles, checked on a worker thread.

@@ -633,6 +633,10 @@ fn draw_motion_to_view(p: &Pen<'_>, icon: Icon) -> bool {
             p.seg((5.0, 8.0), (13.0, 8.0), K.a(0.5));
             p.gear_badge((17.5, 17.5), 5.5, B);
         }
+        I::ScreenSettings => {
+            p.monitor(1.0, 4.0, 11.5, 12.0);
+            p.monitor(12.5, 4.0, 23.0, 12.0);
+        }
         I::RehearseTimings => {
             p.frame(2.0, 4.0, 19.5, 16.5);
             p.seg((5.0, 8.0), (13.0, 8.0), K.a(0.5));

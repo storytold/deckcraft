@@ -27,7 +27,24 @@ mod logging;
 mod pasteboard;
 
 use deckcraft_engine::Session;
-use deckcraft_ui_egui::{Services, SlideApp};
+use deckcraft_ui_egui::{ScreenInfo, Services, SlideApp};
+
+/// Read the monitors in winit's order and keep them on the app for Screen Settings.
+fn refresh_screens(frame: &eframe::Frame, app: &mut SlideApp) {
+    let Some(window) = frame.winit_window() else { return };
+    let primary = window.primary_monitor();
+    let screens = window
+        .available_monitors()
+        .enumerate()
+        .map(|(index, monitor)| {
+            let size = monitor.size();
+            let name = monitor.name().unwrap_or_default();
+            let primary = primary.as_ref().is_some_and(|p| p == &monitor);
+            ScreenInfo { index, name, width: size.width, height: size.height, primary }
+        })
+        .collect();
+    app.set_screens(screens);
+}
 
 struct App(
     SlideApp,
@@ -46,7 +63,8 @@ impl eframe::App for App {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         self.0.raw_input_hook(ctx, raw);
     }
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        refresh_screens(frame, &mut self.0);
         self.0.ui(ui);
     }
     fn on_exit(&mut self) {
