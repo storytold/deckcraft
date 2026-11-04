@@ -51,7 +51,7 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
     ctx.push_clip_layer(&r.to_path(0.1));
     for it in pic.place(r, [0.0; 4]) {
         match it {
-            PlacedItem::Path { path, fill, stroke, even_odd, region } => clipped(&mut ctx, region.as_ref(), |ctx| {
+            PlacedItem::Path { path, fill, stroke, even_odd, region } => clipped(&mut ctx, region.as_deref(), |ctx| {
                 if let Some(f) = fill {
                     ctx.set_paint(rgba(f));
                     ctx.set_fill_rule(if even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
@@ -64,7 +64,7 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
                     ctx.stroke_path(&path);
                 }
             }),
-            PlacedItem::Bitmap { index, rect, region } => clipped(&mut ctx, region.as_ref(), |ctx| {
+            PlacedItem::Bitmap { index, rect, region } => clipped(&mut ctx, region.as_deref(), |ctx| {
                 let Some(Some(pm)) = pixmaps.get(index) else { return };
                 let (bw, bh) = (pm.width().max(1) as f64, pm.height().max(1) as f64);
                 ctx.set_paint(vello_cpu::Image {
@@ -75,7 +75,7 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
                 ctx.fill_rect(&rect);
                 ctx.reset_paint_transform();
             }),
-            PlacedItem::Pattern { index, path, even_odd, tile, region } => clipped(&mut ctx, region.as_ref(), |ctx| {
+            PlacedItem::Pattern { index, path, even_odd, tile, region } => clipped(&mut ctx, region.as_deref(), |ctx| {
                 let Some(Item::Pattern { tile: t, .. }) = pic.items.get(index) else { return };
                 let key = Arc::as_ptr(t);
                 let (pm, avg) = tiles.entry(key).or_insert_with(|| (premul(t.width, t.height, &t.rgba), average(&t.rgba))).clone();
@@ -102,7 +102,7 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
                     }
                 }
             }),
-            PlacedItem::Text { index, transform, clip, region } => clipped(&mut ctx, region.as_ref(), |ctx| {
+            PlacedItem::Text { index, transform, clip, region } => clipped(&mut ctx, region.as_deref(), |ctx| {
                 let Some(Item::Text(t)) = pic.items.get(index) else { return };
                 if let Some(c) = clip {
                     ctx.push_clip_layer(&c.to_path(0.1));
@@ -281,7 +281,14 @@ fn draw_text(ctx: &mut RenderContext, t: &Text, m: Affine) {
         let s = em / g.face.upem.max(1.0);
         let skew = if italic && !g.face.italic { Affine::new([1.0, 0.0, -0.2, 1.0, 0.0, 0.0]) } else { Affine::IDENTITY };
         let gm = at * Affine::translate((g.x, g.y)) * Affine::scale_non_uniform(x_scale, 1.0) * skew * Affine::scale(s);
+        let sc = scale_of(gm);
+        if !sc.is_finite() || sc > 1e5 {
+            continue;
+        }
         let p: BezPath = gm * path.as_ref().clone();
+        if p.elements().len() > 10_000 || p.bounding_box().width() > 1e6 || p.bounding_box().height() > 1e6 {
+            continue;
+        }
         ctx.fill_path(&p);
         if bold && g.face.weight < 600.0 {
             ctx.set_stroke(kurbo::Stroke::new(em * 0.025 * scale_of(at)).with_join(kurbo::Join::Round));

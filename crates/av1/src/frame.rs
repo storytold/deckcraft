@@ -16,7 +16,7 @@ const POOL_MAX_SAMPLES: usize = 96 << 20;
 fn zeroed(len: usize) -> Vec<u16> {
     if len >= POOL_MIN_LEN {
         let found = {
-            let mut pool = PLANE_POOL.lock().unwrap_or_else(|e| e.into_inner());
+            let mut pool = PLANE_POOL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             pool.iter().position(|v| v.capacity() >= len && v.capacity() <= 2 * len).map(|i| pool.swap_remove(i))
         };
         if let Some(mut v) = found {
@@ -52,8 +52,8 @@ impl Drop for Plane {
     fn drop(&mut self) {
         if self.data.capacity() >= POOL_MIN_LEN {
             let v = std::mem::take(&mut self.data);
-            let mut pool = PLANE_POOL.lock().unwrap_or_else(|e| e.into_inner());
-            let kept: usize = pool.iter().map(|b| b.capacity()).sum();
+            let mut pool = PLANE_POOL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let kept: usize = pool.iter().map(Vec::capacity).sum();
             if kept + v.capacity() <= POOL_MAX_SAMPLES {
                 pool.push(v);
             }
