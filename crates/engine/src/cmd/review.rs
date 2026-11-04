@@ -367,7 +367,7 @@ fn spelling(s: &mut Session, p: &Value) -> Result<Value> {
             }
             out.push(v);
         }
-        let rep: Vec<usize> = crate::spell::repeated(para, &default).iter().map(|w| w.start).collect();
+        let rep: std::collections::HashSet<usize> = crate::spell::repeated(para, &default).iter().map(|w| w.start).collect();
         for w in crate::spell::paragraph_words(para, &default) {
             if ignore.contains(&w.text.to_lowercase()) || rep.contains(&w.start) {
                 continue;
