@@ -81,7 +81,11 @@ mod imp {
         match frame {
             scap::frame::Frame::BGRA(f) => {
                 let (w, h) = (u32::try_from(f.width).ok()?, u32::try_from(f.height).ok()?);
-                ScreenFrame::new(w, h, w as usize * 4, f.data)
+                // Windows hands back a raw buffer whose rows may be padded; the pitch is whatever
+                // the buffer's length says, never an assumption of `width * 4`.
+                let tight = w as usize * 4;
+                let stride = if h > 0 && f.data.len() % h as usize == 0 { f.data.len() / h as usize } else { tight };
+                ScreenFrame::new(w, h, stride.max(tight), f.data)
             }
             // The other layouts are not requested; converting them would guess at stride and
             // channel order. Treat them as a frame we cannot use rather than a wrong picture.

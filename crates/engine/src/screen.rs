@@ -117,11 +117,12 @@ impl ScreenState {
             return Err(ScreenError::NoDevice);
         }
         let path = temp_path();
+        // `create_new` refuses a path that already exists (a pre-planted link in the shared temp
+        // folder would otherwise be truncated and written through).
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .open(&path)
             .map_err(|e| ScreenError::Failed(format!("couldn't start a screen recording: {e}")))?;
         let recorder = match ScreenRecorder::new(Box::new(file), recorder) {

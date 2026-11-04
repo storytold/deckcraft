@@ -130,6 +130,7 @@ impl deckcraft_media::MicIn for CpalIn {
             let mut g = self.buf.lock().unwrap_or_else(PoisonError::into_inner);
             g.rate = rate;
             g.samples.clear();
+            g.truncated = false;
         }
         let config: cpal::StreamConfig = cfg.clone().into();
         let buf = self.buf.clone();

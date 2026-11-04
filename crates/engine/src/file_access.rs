@@ -477,8 +477,10 @@ mod tests {
             // recorder is the same: it creates, writes and deletes the take's own temporary MP4
             // (`crate::screen`, its start/stop/tick in `cmd/screen.rs`), never a path a command
             // names.
-            let gateway = path.parent() == Some(src.as_path()) && matches!(name, "io.rs" | "file_access.rs");
-            let own_files = matches!(name, "recovery.rs" | "spell.rs" | "screen.rs");
+            let at_src = path.parent() == Some(src.as_path());
+            let in_cmd = path.parent() == Some(src.join("cmd").as_path());
+            let gateway = at_src && matches!(name, "io.rs" | "file_access.rs");
+            let own_files = (at_src && matches!(name, "recovery.rs" | "spell.rs" | "screen.rs")) || (in_cmd && name == "screen.rs");
             if gateway || own_files || name.starts_with("tests") {
                 continue;
             }

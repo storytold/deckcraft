@@ -659,7 +659,7 @@ fn record_show(s: &mut Session, p: &Value) -> Result<Value> {
     if n == 0 {
         return Err(bad("show.record", "no slides"));
     }
-    let from = usize_param(p, "from").unwrap_or(0).min(n - 1);
+    let from = opt_usize_param(p, "from", "show.record")?.unwrap_or(0).min(n - 1);
     s.ui_requests.push(UiRequest::StartShow { from, record: true });
     Ok(json!({"from": from, "record": true}))
 }

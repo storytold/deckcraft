@@ -176,10 +176,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
     }
-    // A command asked to end the show: close it through this same finish path so a running take
-    // still saves its timings, narration, ink and laser.
-    let keep = out.keep && !show.end_requested;
-    finish(app, show, &f, keep);
+    finish(app, show, &f, out.keep);
 }
 
 fn paint_hidden(ui: &Ui, doc: &Presentation, show: &Show) {
@@ -745,8 +742,8 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
     }
     if show.capturing() && laser_on {
         if let Some(p) = ctx.input(|i| i.pointer.hover_pos()) {
-            let nx = (p.x - srect.min.x) / srect.width().max(1.0);
-            let ny = (p.y - srect.min.y) / srect.height().max(1.0);
+            // The pen's mapping: with a zoomed slide the pointer lands where the view shows it.
+            let (nx, ny) = norm_on_slide(srect, show.zoom_uv(), p).unwrap_or((-1.0, -1.0));
             if (0.0..=1.0).contains(&nx) && (0.0..=1.0).contains(&ny) {
                 let ms = (now - show.slide_start).max(0.0) * 1000.0;
                 if ms.is_finite() {

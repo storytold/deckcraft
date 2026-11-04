@@ -62,6 +62,7 @@ impl SlideApp {
             toast: None,
             fonts_noted: Default::default(),
             perf: Perf { frame_ms: 0.0, render_ms: 0.0, fps: 0.0 },
+            last_ctx: None,
             synthetic: vec![],
             synthetic_pending: false,
             synthetic_next: vec![],
@@ -210,6 +211,7 @@ impl SlideApp {
             log::debug!("ignoring SlideApp::logic for render-only viewport {:?}", ctx.viewport_id());
             return;
         }
+        self.last_ctx = Some(ctx.clone());
         self.tick_hidden_show(ctx, web_time::Instant::now());
         // `raw_input_hook` runs before `App::logic`. In a full pass egui has already built
         // `PointerState` and `keys_down` from every injected event, so retracting the events after
@@ -243,18 +245,21 @@ impl SlideApp {
         if !self.synthetic.is_empty() || !self.synthetic_next.is_empty() || self.synthetic_pending {
             ctx.request_repaint();
         }
+        let closing = ctx.input(|i| i.viewport().close_requested()) && !self.quit_confirmed;
+        // Closing during a take must not lose it, even when the deck itself is clean: nothing is
+        // written until the take is saved, so end the show before the unsaved-changes check.
+        if closing
+            && let Some(now) = self.show.as_ref().filter(|s| s.take_captured()).map(|s| s.command_now())
+            && let Some(show) = self.show.take()
+            && let Some(doc) = self.session.active().map(|d| d.doc.clone())
+        {
+            self.end_show(ctx, show, &doc, now);
+        }
         // Closing the window with unsaved changes asks first.
-        if ctx.input(|i| i.viewport().close_requested()) && !self.quit_confirmed && self.session.documents().iter().any(|d| d.is_dirty()) {
+        if closing && self.session.documents().iter().any(|d| d.is_dirty()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            // Leaving the show for the quit dialog must not lose a running take: end it the way
-            // the show's own end does (timings, narration, ink and laser), then ask.
-            if let Some(show) = self.show.take() {
-                let now = show.command_now();
-                if let Some(doc) = self.session.active().map(|d| d.doc.clone()) {
-                    self.end_show(ctx, show, &doc, now);
-                }
-            }
             self.stop_mic();
+            self.show = None;
             if self.dialog.as_ref().is_none_or(|d| d.id != "quit") {
                 self.dialog = Some(dialogs::Dialog::new("quit"));
             }

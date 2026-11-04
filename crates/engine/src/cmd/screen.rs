@@ -58,7 +58,8 @@ fn quality(p: &Value) -> Result<u8, crate::EngineError> {
 }
 
 fn target(p: &Value) -> Option<u64> {
-    p.get("target").and_then(Value::as_u64).filter(|v| *v > 0)
+    // Id 0 is a real `scap` target: only an absent target means the primary display.
+    p.get("target").and_then(Value::as_u64)
 }
 
 fn state_json(s: &ScreenState) -> Value {

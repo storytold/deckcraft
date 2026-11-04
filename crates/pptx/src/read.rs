@@ -1279,7 +1279,10 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
                 continue;
             }
             let Some(sh) = deckcraft_model::find_shape_mut(&mut s.shapes, cue.shape) else { continue };
-            let narration = !cue.video && sh.name.eq_ignore_ascii_case("Narration");
+            // A clip only counts as narration when it starts with the slide; a click-to-play audio
+            // shape the user happened to name "Narration" stays click-triggered.
+            let narration =
+                !cue.video && sh.name.eq_ignore_ascii_case("Narration") && matches!(&sh.kind, deckcraft_model::ShapeKind::Media(m) if m.autoplay);
             if let deckcraft_model::ShapeKind::Media(clip) = &mut sh.kind
                 && narration
             {

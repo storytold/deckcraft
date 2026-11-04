@@ -256,6 +256,9 @@ pub struct SlideApp {
     /// Documents (by uid) whose missing fonts have been mentioned.
     fonts_noted: std::collections::HashSet<u64>,
     pub perf: Perf,
+    /// The egui context of the last pass: a command that has to act on the window (ending a show)
+    /// runs between passes and needs it.
+    pub(crate) last_ctx: Option<egui::Context>,
     /// Synthetic input events (control channel `ui.click` etc.), injected one per frame.
     pub(crate) synthetic: Vec<egui::Event>,
     /// A synthetic batch has been injected but the UI pass has not acknowledged it. While this

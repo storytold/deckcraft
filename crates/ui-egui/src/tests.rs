@@ -1772,8 +1772,7 @@ fn ending_a_show_with_a_take_goes_through_the_finish_path() {
         show.record_view.captured = true;
     }
     app.run("show.end", json!({})).expect("end");
-    let show = app.show.as_ref().expect("a running take keeps the show for its finish pass");
-    assert!(show.end_requested, "the next frame closes it through finish");
+    assert!(app.show.is_none(), "a captured take ends the show at once, through finish");
 }
 
 /// A control pointer request leads with its `ModifiersChanged`; that event is injected with the

@@ -176,17 +176,27 @@ impl SlideApp {
                 }
             }
             "show.end" => {
-                // A running take ends through the show's own finish path (the next frame), which
-                // saves its timings, narration, ink and laser; stopping the microphone here would
-                // drop them with the show.
-                match self.show.as_mut() {
-                    Some(show) if show.take_captured() => show.end_requested = true,
+                // A take ends through the show's own finish path, and it ends *now*: a control
+                // client can save or export in the very next request, and the file must already
+                // contain the recording.
+                let Some(show) = self.show.take() else {
+                    self.stop_mic();
+                    self.media.stop_owned(media::Owner::Show);
+                    return Ok(json!({"state": "idle"}));
+                };
+                let last = show.state.slide;
+                let now = show.command_now();
+                let doc = self.session.active().map(|d| d.doc.clone());
+                match (self.last_ctx.clone(), doc) {
+                    (Some(ctx), Some(doc)) => self.end_show(&ctx, show, &doc, now),
                     _ => {
+                        // No pass has run yet (a headless client): nothing was captured either.
                         self.stop_mic();
-                        self.show = None;
                         self.media.stop_owned(media::Owner::Show);
                     }
                 }
+                let _ = self.run("slide.go", json!({"index": last}));
+                return Ok(json!({"state": "ended", "slide": last}));
             }
             "record.start" | "record.toggle" | "record.pause" | "record.resume" | "record.stop" | "record.reset" | "record.undo" => {
                 // The commands act on the Record view, not on an ordinary slide show: without the

@@ -62,7 +62,7 @@ reference renders, a Windows tester with the affected GPUs, native speakers to r
 ## After beta: toward full parity (~245–440 h more)
 
 SmartArt depth, the remaining animation effects and motion paths, edit-point segment types and
-3-D depth, bundled proofing dictionaries, Zoom depth, screen capture (Record Slide Show already keeps timings, narration, pen ink and a laser trace), video export, legacy `.ppt` import
+3-D depth, bundled proofing dictionaries, Zoom depth, screen capture *within* Record Slide Show (the Record tab's own recorder ships; the shell's screen button is still a placeholder), video export, legacy `.ppt` import
 and `.odp` (owner decision), GPU rasterization, hardware video decode, pen tilt (pressure already
 scales ink width) and pinch zoom, the other 21 languages with RTL mirroring, a larger template
 gallery (six original starters ship), and local AI features (owner decision on models). Itemized
@@ -81,7 +81,7 @@ From the local execution plan (`plan/execution-plan.md`, gitignored). Status as 
 | M4 | Design | mostly | Notes/Handout masters, variants, Designer |
 | M5 | Pictures and media | mostly | SVG/EMF, remove background, compress, icons, WMA/WMV |
 | M6 | Transitions and animations | mostly | Animation Pane timeline, remaining effects, transition sounds |
-| M7 | Slide show | mostly | second-display placement, highlighter, screen capture |
+| M7 | Slide show | mostly | second-display placement, highlighter, screen capture within Record Slide Show |
 | M8 | Tables and charts | partly | chart data grid, elements, chartex types, draw table |
 | M9 | SmartArt, equations, WordArt | partly | SmartArt layouts and PowerPoint-diagram fidelity, equations (PR #55); the text pane, warp gallery and warp handles are in |
 | M10 | Views | done | Arrange All (grid options and New Window are in) |

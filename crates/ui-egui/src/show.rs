@@ -49,9 +49,6 @@ pub struct Show {
     pub rehearse: bool,
     /// Record Slide Show: keep timings, narration, pen ink and laser when the show ends.
     pub record: bool,
-    /// A command asked to end the show: the next frame closes it through the normal finish path,
-    /// so a running take still saves its timings, narration, ink and laser.
-    pub(crate) end_requested: bool,
     /// The UI clock of the last frame. A command runs between frames and needs the same time base
     /// the shell and the show's timers use.
     pub(crate) last_now: f64,
@@ -253,7 +250,6 @@ impl Show {
             rehearse: false,
             record: false,
             record_view: record::RecordView::default(),
-            end_requested: false,
             last_now: 0.0,
             take_slide: None,
             record_paused_at: None,

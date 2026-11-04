@@ -43,7 +43,16 @@ impl SlideApp {
         // A show replaced mid-take loses the take (the new instance has its own state), so its
         // narration microphone must stop with it: otherwise the stream keeps capturing for a view
         // that is gone, and its samples land on the next show's first slide.
-        if self.show.as_ref().is_some_and(|s| s.mic_started()) {
+        // A show being replaced loses its take: save it first (the new instance has its own
+        // state), then stop the microphone it started.
+        if let Some(show) = self.show.take()
+            && show.take_captured()
+        {
+            let now = show.command_now();
+            if let (Some(ctx), Some(doc)) = (self.last_ctx.clone(), self.session.active().map(|d| d.doc.clone())) {
+                self.end_show(&ctx, show, &doc, now);
+            }
+        } else if self.show.as_ref().is_some_and(|s| s.mic_started()) {
             self.stop_mic();
         }
         if let Some(d) = self.session.active() {
@@ -186,10 +195,7 @@ impl SlideApp {
         let show_time = show.hidden_logic_time(input_time, now);
         let keep = show.advance_hidden(&doc, show_time);
         let time_driven = show.hidden_time_driven(&doc);
-        // A command's `show.end` waits for a frame; a hidden show has no visible one, so finish it
-        // here through the same end path (a running take still saves its data).
-        let ended = show.end_requested;
-        if !keep || ended {
+        if !keep {
             let Some(show) = self.show.take() else { return };
             let last = show.state.slide;
             self.end_show(ctx, show, &doc, show_time);

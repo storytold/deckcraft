@@ -234,12 +234,16 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
                 ui.add_enabled_ui(!app.screen.full, |ui| {
                     ui.horizontal(|ui| {
                         ui.label("Region");
+                        // The region must stay inside the picked target: an origin past its edge
+                        // makes the recorder reject every frame.
+                        let size = app.screen.targets.get(app.screen.selected).map(|t| (t.width, t.height)).unwrap_or((0, 0));
                         for (label, i) in [("x", 0), ("y", 1), ("w", 2), ("h", 3)] {
                             ui.label(label);
                             let mut v = app.screen.region[i];
-                            let (lo, hi) = if i < 2 { (0, 100_000) } else { (64, 100_000) };
-                            if ui.add(egui::DragValue::new(&mut v).range(lo..=hi).speed(1.0)).changed() {
-                                app.screen.region[i] = v.clamp(lo, hi);
+                            let span = i64::from(if i < 2 { size.0 } else { size.1 }).max(64);
+                            let hi = if i < 2 { (span - 64).max(0) } else { span };
+                            if ui.add(egui::DragValue::new(&mut v).range(0..=hi).speed(1.0)).changed() {
+                                app.screen.region[i] = v.clamp(0, hi);
                             }
                         }
                     });
