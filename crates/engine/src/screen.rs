@@ -241,6 +241,16 @@ impl Encoder {
         }
     }
 
+    /// Whether the encoder can no longer take work: its worker failed or ended, or the queue is
+    /// gone. A drain must then finish the take instead of waiting for a slot that never comes.
+    fn stalled(&self) -> bool {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Encoder::Worker(w) => w.jobs.is_none() || w.gone || w.failure.is_some(),
+            Encoder::Inline(i) => i.failure.is_some() || i.recorder.is_none(),
+        }
+    }
+
     /// The picture the queue refused, if any.
     fn take_kept(&mut self) -> Option<ScreenFrame> {
         match self {
@@ -627,16 +637,25 @@ impl ScreenState {
         if active.draining {
             // Stop was asked for while the queue held work back: send it without capturing
             // anything (the host is already stopped), then ask for the file.
-            if let Some(e) = drain_retained(active, now) {
-                let reason = format!("the screen recording stopped: {e}");
-                active.reason = reason;
+            if active.encoder.stalled() {
+                // The encoder cannot take the retained work (it failed or ended): write nothing
+                // more and let `take_finished` report what happened, rather than draining on
+                // every tick.
+                active.draining = false;
+                active.stopping = true;
+                active.encoder.request_finish();
+            } else {
+                if let Some(e) = drain_retained(active, now) {
+                    let reason = format!("the screen recording stopped: {e}");
+                    active.reason = reason;
+                }
+                if active.pending.is_some() || owed_pictures(active, now) > 0 {
+                    return None;
+                }
+                active.draining = false;
+                active.stopping = true;
+                active.encoder.request_finish();
             }
-            if active.pending.is_some() || owed_pictures(active, now) > 0 {
-                return None;
-            }
-            active.draining = false;
-            active.stopping = true;
-            active.encoder.request_finish();
             // Fall through: a worker that is already gone reports its failure in this tick.
         }
         if active.stopping {
@@ -971,6 +990,35 @@ mod tests {
         assert_eq!(stopped.frames, 2, "the picture Stop interrupted is written too");
         assert!(stopped.duration_ms >= 66, "two 30 fps pictures are at least two intervals: {}", stopped.duration_ms);
         let _ = std::fs::remove_file(&stopped.path);
+    }
+
+    /// A drain must not wait for a worker that is gone: the take finishes (and reports the
+    /// missing file) instead of holding `draining` while the clock moves.
+    #[test]
+    fn a_draining_take_whose_worker_is_gone_still_finishes() {
+        let (host, queue) = FakeScreen::ready((160, 120));
+        let mut s = state_with(host);
+        s.start(CaptureOptions::default(), RecorderConfig::new(30)).expect("start");
+        queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [5, 6, 7, 255]));
+        assert_eq!(s.tick(0.0), None);
+        // The next picture waits for its slot, so Stop drains rather than finishing at once.
+        queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [8, 9, 10, 255]));
+        assert_eq!(s.tick(0.0), None);
+        {
+            // Take the worker apart the way a panic does.
+            let active = s.active.as_mut().expect("an active take");
+            let Encoder::Worker(w) = &mut active.encoder else { panic!("the test runs with an encoder thread") };
+            w.jobs = None;
+            if let Some(handle) = w.handle.take() {
+                handle.join().expect("the worker exits");
+            }
+        }
+        s.stop().expect("stop");
+        assert!(s.is_finishing(), "the retained picture is still on its way");
+        // The clock moves: a drain that waits for a queue slot would never end.
+        let why = (0..5).find_map(|i| s.tick(f64::from(i))).expect("the take ends instead of draining forever");
+        assert!(why.contains("couldn't be written"), "{why}");
+        assert!(!s.is_recording() && !s.is_finishing(), "the take is over");
     }
 
     /// Stop must not wait for the encoder: it answers at once, the file arrives on a later tick,
