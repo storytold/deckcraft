@@ -157,7 +157,7 @@ pub(super) fn presenter_window(
         egui::ViewportId::from_hash_of("deckcraft_presenter"),
         egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
         |ui, _| {
-            if !keyboard(ui.ctx(), show, doc, now, true) {
+            if !keyboard(ui.ctx(), show, doc, now, true, &mut actions) {
                 *keep = false;
             }
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));

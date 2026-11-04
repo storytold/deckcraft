@@ -83,7 +83,8 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     // A focused notes field in the Record view owns the keyboard; everywhere else the show's keys
     // still run (a pen or a navigation key typed in the shell must reach the show).
     let editing = show.record && record::notes_has_focus(&ctx);
-    let mut out = Out { keep: editing || keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
+    let mut out = Out { keep: true, actions: vec![] };
+    out.keep = editing || keyboard(&ctx, &mut show, &doc, now, false, &mut out.actions);
     if show.presenter
         && !show.reading
         && let Some(host) = app.services.presenter.as_mut()
@@ -104,7 +105,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 crate::presenter::Command::Key { name, command, shift, alt, ctrl } => {
                     if let Some(key) = egui::Key::ALL.iter().copied().find(|key| key.name() == name) {
                         let modifiers = egui::Modifiers { command, shift, alt, ctrl, mac_cmd: command && !ctrl };
-                        out.keep &= handle_keys(&mut show, &doc, now, vec![(key, modifiers)], false).0;
+                        out.keep &= handle_keys(&mut show, &doc, now, vec![(key, modifiers)], false, &mut out.actions).0;
                     }
                 }
                 _ => {}
