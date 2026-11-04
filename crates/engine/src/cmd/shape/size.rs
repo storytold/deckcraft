@@ -137,7 +137,9 @@ pub(super) fn size_position(s: &mut Session, p: &Value) -> Result<Value> {
         };
         s.ui_requests.push(crate::UiRequest::Dialog {
             id: "sizePosition".into(),
-            params: json!({"x": x, "y": y, "w": w, "h": h, "rot": rot, "scaleW": 100.0, "scaleH": 100.0, "lockAspect": false}),
+            // A caller such as the Camera Format launcher may open the dialog with the aspect
+            // already locked (a Cameo is written with `noChangeAspect`), so pass its choice on.
+            params: json!({"x": x, "y": y, "w": w, "h": h, "rot": rot, "scaleW": 100.0, "scaleH": 100.0, "lockAspect": spec.lock}),
         });
         return Ok(Value::Null);
     }
@@ -324,5 +326,67 @@ mod size_position_tests {
         s.execute("edit.select", &json!({"ids": []})).unwrap();
         let err = s.execute("shape.sizePosition", &json!({})).unwrap_err();
         assert!(err.to_string().contains("nothing selected"), "{err}");
+    }
+
+    /// A Cameo on a blank slide, selected: a square frame at (40, 50), 162 pt.
+    fn cameo(s: &mut Session) -> u32 {
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let id = s.execute("insert.cameo", &json!({"rect": [40.0, 50.0, 162.0, 162.0]})).unwrap()["id"].as_u64().unwrap() as u32;
+        s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+        id
+    }
+
+    #[test]
+    fn a_cameo_sizes_with_its_aspect_locked_and_crops_without_moving() {
+        let mut s = Session::with_new();
+        let id = cameo(&mut s);
+        s.execute("shape.resize", &json!({"h": 324.0, "lockAspect": true})).unwrap();
+        let sized = geom(&mut s, id);
+        assert_eq!(sized, (40.0, 50.0, 324.0, 324.0, 0.0));
+        // Cropping writes the picture's `srcRect` and leaves the frame (the live bubble's
+        // transform) exactly where it was.
+        s.execute("picture.crop", &json!({"left": 0.1, "top": 0.05, "right": 0.2, "bottom": 0.0})).unwrap();
+        assert_eq!(geom(&mut s, id), sized);
+        let (crop, wanted) = {
+            let st = s.doc().unwrap();
+            let sh = st.shape(deckcraft_model::ShapeId(id)).unwrap();
+            let deckcraft_model::ShapeKind::Picture { fill } = &sh.kind else { panic!("not a picture") };
+            (fill.crop, [0.1, 0.05, 0.2, 0.0])
+        };
+        for (got, want) in crop.iter().zip(wanted) {
+            assert!((got - want).abs() < 1e-6, "crop {crop:?}");
+        }
+        // Both round-trip through PPTX: the Crop Format tab's Size controls edit a Cameo.
+        let back = deckcraft_pptx::import(&deckcraft_pptx::export(s.doc().unwrap().doc.as_ref()).unwrap()).unwrap();
+        let mut found = None;
+        for slide in &back.slides {
+            deckcraft_model::walk(&slide.shapes, &mut |sh, _| {
+                if sh.is_cameo() {
+                    found = Some(sh.clone());
+                }
+            });
+        }
+        let sh = found.expect("the Cameo survives the round trip");
+        let deckcraft_model::ShapeKind::Picture { fill } = &sh.kind else { panic!("not a picture") };
+        for (got, want) in fill.crop.iter().zip(wanted) {
+            assert!((got - want).abs() < 1e-4, "round-tripped crop {:?}", fill.crop);
+        }
+        let x = sh.xfrm.expect("xfrm");
+        assert!((x.x - 40.0).abs() < 1e-4 && (x.y - 50.0).abs() < 1e-4, "{x:?}");
+        assert!((x.w - 324.0).abs() < 1e-4 && (x.h - 324.0).abs() < 1e-4, "{x:?}");
+    }
+
+    #[test]
+    fn the_size_dialog_opens_locked_when_the_caller_asks() {
+        let mut s = Session::with_new();
+        cameo(&mut s);
+        s.execute("shape.sizePosition", &json!({"lockAspect": true})).unwrap();
+        match s.ui_requests.last().unwrap() {
+            crate::UiRequest::Dialog { id, params } => {
+                assert_eq!(id, "sizePosition");
+                assert_eq!(params["lockAspect"], true);
+            }
+            other => panic!("expected a dialog, got {other:?}"),
+        }
     }
 }
