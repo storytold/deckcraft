@@ -6,10 +6,9 @@
 //! runs the device loop.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
-use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use deckcraft_media::{AudioOut, MicIn};
@@ -83,8 +82,6 @@ fn push_mono(out: &mut Vec<f32>, interleaved: &[f32], channels: usize, cap: usiz
 const MAX_SAMPLES: usize = 48_000 * 60 * 10;
 
 /// How long the UI thread waits for the worker to open the input device. Device enumeration is
-/// fast; a permission dialog is not, and the record bar reports the failure asynchronously.
-const START_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
 struct Capture {
@@ -98,6 +95,11 @@ struct Capture {
 pub struct CpalIn {
     buf: Arc<Mutex<Capture>>,
     error: ErrorSlot,
+    /// The device went away while capturing: the take ends, unlike a single dropped buffer.
+    dead: Arc<AtomicBool>,
+    /// The worker's start handshake, polled from the UI loop so opening a device (and any
+    /// permission prompt) never blocks a frame.
+    startup: Option<mpsc::Receiver<Result<(), String>>>,
     stop: Option<Arc<(Mutex<bool>, Condvar)>>,
     worker: Option<JoinHandle<()>>,
 }
@@ -119,7 +121,11 @@ impl CpalIn {
         let config: cpal::StreamConfig = cfg.clone().into();
         let buf = self.buf.clone();
         let slot = self.error.clone();
-        let err = move |e: cpal::StreamError| keep_stream_error(&slot, &e);
+        let dead = self.dead.clone();
+        let err = move |e: cpal::StreamError| {
+            dead.store(true, Ordering::Relaxed);
+            keep_stream_error(&slot, &e);
+        };
         let stream = match cfg.sample_format() {
             cpal::SampleFormat::F32 => dev.build_input_stream(
                 &config,
@@ -174,10 +180,13 @@ impl MicIn for CpalIn {
             g.rate = 0;
             g.samples.clear();
         }
+        self.dead.store(false, Ordering::Relaxed);
+        // A previous failure has been reported; the new take starts clean.
+        let _ = take_stream_error(&self.error);
         let (tx, rx) = mpsc::sync_channel(1);
         let stop = Arc::new((Mutex::new(false), Condvar::new()));
         let worker_stop = stop.clone();
-        let this = CpalIn { buf: self.buf.clone(), error: self.error.clone(), stop: None, worker: None };
+        let this = CpalIn { buf: self.buf.clone(), error: self.error.clone(), dead: self.dead.clone(), startup: None, stop: None, worker: None };
         let handle = std::thread::Builder::new()
             .name("deckcraft-mic".into())
             .spawn(move || match this.open() {
@@ -200,27 +209,12 @@ impl MicIn for CpalIn {
                 }
             })
             .map_err(|e| format!("couldn't start the microphone thread: {e}"))?;
-        match rx.recv_timeout(START_TIMEOUT) {
-            Ok(Ok(())) => {
-                self.stop = Some(stop);
-                self.worker = Some(handle);
-                Ok(())
-            }
-            Ok(Err(e)) => {
-                let _ = handle.join();
-                Err(e)
-            }
-            Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {
-                let (lock, cv) = &*stop;
-                *lock.lock().unwrap_or_else(PoisonError::into_inner) = true;
-                cv.notify_all();
-                // The worker may be waiting on a permission prompt: do not block the UI thread
-                // joining it. The stop flag already set makes it exit (dropping the stream) as
-                // soon as the device call returns.
-                drop(handle);
-                Err("the microphone didn't start".to_string())
-            }
-        }
+        // The worker reports through `failure()`; the UI thread never waits on a device open or a
+        // permission prompt.
+        self.startup = Some(rx);
+        self.stop = Some(stop);
+        self.worker = Some(handle);
+        Ok(())
     }
 
     fn take(&mut self) -> (u32, Vec<f32>) {
@@ -235,8 +229,18 @@ impl MicIn for CpalIn {
     }
 
     fn failure(&self) -> Option<String> {
+        // A startup that failed is a failed take, and so is a lost device. A single dropped
+        // buffer is not: it is logged and capture continues.
+        if let Some(rx) = &self.startup
+            && let Ok(Err(e)) = rx.try_recv()
+        {
+            return Some(e);
+        }
+        if !self.dead.load(Ordering::Relaxed) {
+            return None;
+        }
         // Peek: `report` still logs the error, so this must not consume it.
-        self.error.lock().ok().and_then(|kept| kept.clone())
+        Some(self.error.lock().ok().and_then(|kept| kept.clone()).unwrap_or_else(|| "the microphone is no longer available".to_string()))
     }
 
     fn stop(&mut self) {

@@ -100,6 +100,10 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     }
     // The toolbar's Microphone switch owns capture: turning it off stops the take's microphone.
     if !mic_on && show.mic_ok {
+        if show.keeps_recording() {
+            let slide = show.state.slide;
+            super::take_narration(app.services.mic.as_deref_mut(), &mut show, slide);
+        }
         app.stop_mic();
         show.mic_ok = false;
         show.mic_tried = false;

@@ -142,9 +142,9 @@ impl Recorder {
         if let Some(mic) = mic.as_mut() {
             self.tick(Some(&mut **mic));
         }
-        // The device may have gone away mid-take: say so instead of saving a truncated clip.
+        // The device may have gone away mid-take: say so instead of saving a truncated clip. The
+        // take stays so the caller can discard it explicitly.
         if let Some(e) = mic.as_ref().and_then(|mic| mic.failure()) {
-            self.take = None;
             if let Some(mic) = mic.as_mut() {
                 mic.stop();
             }
@@ -154,7 +154,13 @@ impl Recorder {
         if let Some(mic) = mic {
             mic.stop();
         }
-        encode(take.rate, &take.samples).map(|wav| (wav, take.target))
+        match encode(take.rate, &take.samples) {
+            Ok(wav) => Ok((wav, take.target)),
+            Err(e) => {
+                self.take = Some(take);
+                Err(e)
+            }
+        }
     }
 
     /// Stop the microphone and throw the take away.

@@ -1563,7 +1563,7 @@ fn a_new_take_replaces_the_previous_buffers() {
     show.laser_live.push((0.1, 0.1, 5));
     show.stash_laser(0, true);
     show.timings.push((0, 1.5));
-    show.narration.push((0, vec![1, 2, 3]));
+    show.narration.push((0, 8_000, vec![1.0, 2.0, 3.0]));
     assert!(!show.recorded.is_empty() && !show.laser_saved.is_empty());
     show.end_recording();
     show.begin_recording(10.0);

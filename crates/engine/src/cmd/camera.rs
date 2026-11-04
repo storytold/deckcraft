@@ -217,7 +217,7 @@ fn insert_cameo(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let target = match wanted {
             Some(i) if i < n => i,
-            Some(i) => return Err(bad("insert.cameo", format!("no slide {}", i + 1))),
+            Some(i) => return Err(bad("insert.cameo", format!("no slide {}", i.saturating_add(1)))),
             None => sel.slide.min(n - 1),
         };
         let size = doc.slide_size;

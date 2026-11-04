@@ -173,7 +173,9 @@ pub struct Show {
     laser_live: Vec<(f64, f64, u32)>,
     laser_saved: Vec<(usize, Vec<(f64, f64, u32)>)>,
     /// WAV bytes per slide, taken from the microphone when the slide is left.
-    narration: Vec<(usize, Vec<u8>)>,
+    /// Per slide: the take's rate and the raw samples gathered so far. Encoding happens once, on
+    /// save, so a pause and resume appends instead of replacing what was already spoken.
+    narration: Vec<(usize, u32, Vec<f32>)>,
     mic_tried: bool,
     mic_ok: bool,
     last_move: f64,
@@ -983,8 +985,10 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
                 }),
             );
         }
-        for (i, wav) in &show.narration {
-            let _ = app.run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(wav)}));
+        for (i, rate, samples) in &show.narration {
+            // Encoded once, here: the clip is final.
+            let Some(wav) = narration_wav(*rate, samples) else { continue };
+            let _ = app.run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(&wav)}));
         }
         let lc = doc.show.laser_color;
         for (i, pts) in &show.laser_saved {
@@ -1093,9 +1097,19 @@ fn take_narration(mic: Option<&mut (dyn deckcraft_media::MicIn + 'static)>, show
     }
     let Some(mic) = mic else { return };
     let (rate, samples) = mic.take();
-    if let Some(wav) = narration_wav(rate, &samples) {
-        show.narration.retain(|(i, _)| *i != slide);
-        show.narration.push((slide, wav));
+    if samples.is_empty() || !(8_000..=192_000).contains(&rate) {
+        return;
+    }
+    match show.narration.iter_mut().find(|(i, _, _)| *i == slide) {
+        // A resumed take adds to the same slide's clip, keeping its rate.
+        Some((_, take_rate, kept)) if *take_rate == rate => {
+            let room = (rate as usize).saturating_mul(600).saturating_sub(kept.len());
+            kept.extend(samples.into_iter().take(room));
+        }
+        Some(entry) => {
+            *entry = (slide, rate, samples);
+        }
+        None => show.narration.push((slide, rate, samples)),
     }
 }
 
