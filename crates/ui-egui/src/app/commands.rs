@@ -23,6 +23,8 @@ impl SlideApp {
         // paste (`scope`).
         if id == "edit.paste"
             && params.get("scope").is_none()
+            && params.get("text").is_none()
+            && params.get("html").is_none()
             && let Some(png) = self.services.clipboard_image.as_mut().and_then(|f| f())
         {
             let data = deckcraft_engine::cmd::base64_encode(&png);
