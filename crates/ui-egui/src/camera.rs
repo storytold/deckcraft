@@ -7,11 +7,13 @@
 //! here touches the camera before that: the injected [`CameraIn`] is inert until `start`.
 
 use std::sync::Arc;
-use std::sync::mpsc::TryRecvError;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
 use deckcraft_geom::Point;
-use deckcraft_media::camera::{CameraError, CameraEvent, CameraFrame, CameraIn, CameraRequest, CameraSession, CameraStatus};
+use deckcraft_media::camera::{
+    CameraDesc, CameraError, CameraEvent, CameraFormat, CameraFrame, CameraId, CameraIn, CameraRequest, CameraSession, CameraState, CameraStatus,
+};
 use deckcraft_model::{Presentation, ShapeId};
 use egui::{Color32, ColorImage, CornerRadius, Pos2, Rect, TextureHandle, TextureOptions, pos2};
 
@@ -120,6 +122,54 @@ impl CameraHost {
         self.set_preview(!self.preview);
     }
 
+    /// The preview's state as one of the eight names the control channel reports.
+    pub fn state(&self) -> CameraState {
+        self.status.state()
+    }
+
+    /// The camera the next session asks for. `None` is the platform default.
+    pub fn device(&self) -> Option<&CameraId> {
+        self.request.device.as_ref()
+    }
+
+    /// Choose a camera (the Camera Format tab's device menu). A running session restarts with the
+    /// new device; an off preview remembers the choice for the next start.
+    pub fn set_device(&mut self, device: Option<CameraId>) {
+        if self.request.device == device {
+            return;
+        }
+        self.request.device = device;
+        self.restart();
+    }
+
+    /// The format a new session asks for. `None` lets the backend choose its closest default.
+    pub fn format(&self) -> Option<CameraFormat> {
+        self.request.format
+    }
+
+    /// Request a format. A running session restarts, because a capture stream cannot reconfigure
+    /// itself in place.
+    pub fn set_format(&mut self, format: Option<CameraFormat>) {
+        if self.request.format == format {
+            return;
+        }
+        self.request.format = format;
+        self.restart();
+    }
+
+    /// Enumerate cameras on the backend's worker. The Camera Format tab drains the receiver with
+    /// `try_recv` on later passes; the enumeration itself never runs on the UI thread.
+    pub fn devices(&mut self) -> Receiver<Result<Vec<CameraDesc>, CameraError>> {
+        match self.source.as_mut() {
+            Some(source) => source.devices(),
+            None => {
+                let (tx, rx) = mpsc::channel();
+                let _ = tx.send(Err(CameraError::Unsupported));
+                rx
+            }
+        }
+    }
+
     /// Tell the preview which show is running. A show that contains a cameo wants the camera even
     /// when the editor's preview toggle is off, as in PowerPoint's slide show.
     pub fn set_show(&mut self, instance: Option<u64>, doc: Option<&Presentation>) {
@@ -185,6 +235,15 @@ impl CameraHost {
 
     fn visible(&self) -> bool {
         self.preview || self.show_wants
+    }
+
+    /// Reopen the camera after a device or format change, if a session is wanted.
+    fn restart(&mut self) {
+        if !self.wanted {
+            return;
+        }
+        self.stop();
+        self.start();
     }
 
     fn refresh_want(&mut self) {
@@ -379,6 +438,26 @@ impl SlideApp {
     pub fn toggle_camera_preview(&mut self) {
         self.camera.toggle_preview();
     }
+
+    pub fn camera_state(&self) -> CameraState {
+        self.camera.state()
+    }
+
+    pub fn camera_device(&self) -> Option<&CameraId> {
+        self.camera.device()
+    }
+
+    pub fn set_camera_device(&mut self, device: Option<CameraId>) {
+        self.camera.set_device(device);
+    }
+
+    pub fn set_camera_format(&mut self, format: Option<CameraFormat>) {
+        self.camera.set_format(format);
+    }
+
+    pub fn camera_devices(&mut self) -> Receiver<Result<Vec<CameraDesc>, CameraError>> {
+        self.camera.devices()
+    }
 }
 
 /// Start (or keep) the camera session the current show needs, if `instance` names a new show.
@@ -411,6 +490,7 @@ mod tests {
         assert_eq!(host.status(), &CameraStatus::Starting);
         assert!(host.tick(&ctx).is_none());
         assert!(host.status().is_live(), "{:?}", host.status());
+        assert_eq!(host.state(), CameraState::Live);
         let frame = host.frame().expect("first frame");
         assert_eq!((frame.width, frame.height), (64, 48));
         assert_eq!(frame.rgba.len(), 64 * 48 * 4);
@@ -457,6 +537,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut host = started(&fake);
         assert_eq!(host.status(), &CameraStatus::Failed(CameraError::PermissionDenied));
+        assert_eq!(host.state(), CameraState::Denied);
         let notice = host.tick(&ctx).expect("a notice");
         assert!(notice.contains("denied"), "{notice}");
         // Off and on asks again, which is what the user does after fixing the setting.
@@ -503,6 +584,21 @@ mod tests {
         assert_eq!(host.status(), &CameraStatus::Failed(CameraError::Unsupported));
         assert!(host.tick(&ctx).expect("notice").contains("not available"));
         assert!(host.texture().is_none());
+    }
+
+    #[test]
+    fn choosing_another_device_restarts_a_running_session() {
+        let fake = FakeCamera::default().frames_on_start(0);
+        let ctx = egui::Context::default();
+        let mut host = started(&fake);
+        host.tick(&ctx);
+        host.set_device(Some("other-camera".into()));
+        assert_eq!(host.device().map(String::as_str), Some("other-camera"));
+        assert_eq!(fake.starts(), 2);
+        assert_eq!(fake.stops(), 1);
+        // The same device again changes nothing.
+        host.set_device(Some("other-camera".into()));
+        assert_eq!(fake.starts(), 2);
     }
 
     #[test]

@@ -99,7 +99,7 @@ fn list_devices() -> Result<Vec<CameraDesc>, CameraError> {
     cameras::devices().map(|devices| devices.iter().map(desc).collect()).map_err(map_error)
 }
 
-fn list_formats(device: Option<&CameraId>) -> Result<Vec<CameraFormat>, CameraError> {
+fn list_formats(device: Option<&str>) -> Result<Vec<CameraFormat>, CameraError> {
     let devices = cameras::devices().map_err(map_error)?;
     let device = pick_device(&devices, device).ok_or(CameraError::NoDevice)?;
     let capabilities = cameras::probe(device).map_err(map_error)?;
@@ -150,7 +150,7 @@ fn run(commands: Receiver<Command>) {
         match command {
             Command::Start(request, events) => {
                 // Drop the old camera before opening the new one: a device cannot be opened twice.
-                running = None;
+                drop(running.take());
                 running = open(&request, events);
             }
             Command::Stop => running = None,

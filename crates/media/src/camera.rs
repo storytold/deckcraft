@@ -200,6 +200,51 @@ impl CameraStatus {
             _ => None,
         }
     }
+
+    /// The state as one of the eight names the Camera Format tab and the control channel use.
+    pub fn state(&self) -> CameraState {
+        match self {
+            CameraStatus::Off => CameraState::Off,
+            CameraStatus::Starting => CameraState::Requesting,
+            CameraStatus::Live(_) => CameraState::Live,
+            CameraStatus::Failed(error) => match error {
+                CameraError::PermissionDenied => CameraState::Denied,
+                CameraError::NoDevice => CameraState::NoDevice,
+                CameraError::InUse => CameraState::Busy,
+                CameraError::Lost => CameraState::Lost,
+                CameraError::UnsupportedFormat | CameraError::Unsupported | CameraError::Backend(_) => CameraState::Unsupported,
+            },
+        }
+    }
+}
+
+/// The preview's state, named as PowerPoint's Camera status reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CameraState {
+    Off,
+    Requesting,
+    Live,
+    Denied,
+    NoDevice,
+    Busy,
+    Lost,
+    Unsupported,
+}
+
+impl CameraState {
+    /// The stable lower-camel name used in the control channel and the engine status.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CameraState::Off => "off",
+            CameraState::Requesting => "requesting",
+            CameraState::Live => "live",
+            CameraState::Denied => "denied",
+            CameraState::NoDevice => "noDevice",
+            CameraState::Busy => "busy",
+            CameraState::Lost => "lost",
+            CameraState::Unsupported => "unsupported",
+        }
+    }
 }
 
 /// A running capture, handed back by [`CameraIn::start`].
@@ -243,9 +288,12 @@ fn unsupported_receiver<T: Send + 'static>() -> Receiver<Result<T, CameraError>>
 /// A scripted camera for tests and headless builds: no device, no OS calls.
 #[cfg(feature = "test-util")]
 pub mod testing {
-    use super::*;
-    use std::sync::mpsc::SyncSender;
-    use std::sync::{Mutex, MutexGuard, PoisonError};
+    use std::sync::mpsc::{self, SyncSender};
+    use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+    use web_time::Instant;
+
+    use super::{CameraDesc, CameraError, CameraEvent, CameraFrame, CameraIn, CameraInfo, CameraPosition, CameraRequest, CameraSession, PixelFormat};
 
     struct State {
         starts: usize,
