@@ -39,6 +39,7 @@ impl SlideApp {
     /// synthetic input, and timing fields.
     pub fn new(session: Session, mut services: Services) -> Self {
         let audio_out = services.audio_out.take();
+        let camera_in = services.camera_in.take();
         SlideApp {
             last_fill: serde_json::json!("accent1"),
             last_outline: serde_json::json!("tx1"),
@@ -55,6 +56,7 @@ impl SlideApp {
             anim_preview: None,
             reuse_target: None,
             media: media::MediaHost::new(audio_out),
+            camera: camera::CameraHost::new(camera_in),
             status: None,
             opening: None,
             toast: None,
@@ -247,6 +249,7 @@ impl SlideApp {
         }
         self.autosave_if_due(ctx);
         self.tick_media_clock(ctx);
+        self.tick_camera(ctx);
         self.note_settled_composition(ctx);
         // In a full run_ui pass the UI callback after this logic half still owns the pass's final
         // IME descriptor. Only a standalone run_logic callback proves that no custom editor was

@@ -1,11 +1,20 @@
-//! Camera Format ▸ Camera: the preview controls. Live capture lands with the capture section, so
-//! both buttons stay disabled here and say why.
+//! Camera Format ▸ Camera: the live Cameo preview.
+//!
+//! The Preview toggle is the only thing that enumerates devices, so it is what asks the OS for
+//! permission. It stays enabled whenever the host injected a capture backend; the tooltip says
+//! what the session is doing (off, opening, live, or why it failed).
 
-use super::super::{Icon, SlideApp, Ui, big_button, group};
+use super::super::{Icon, SlideApp, Ui, big_button, big_button_ex, group};
 
-pub(super) fn camera_section(_app: &mut SlideApp, ui: &mut Ui) {
+pub(super) fn camera_section(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
-        big_button(ui, Icon::Cameo, "Enable\nCamera\nPreview", false).on_hover_text("Live camera preview arrives with camera capture");
-        big_button(ui, Icon::Preview, "More\nOptions", false).on_hover_text("Camera preview options arrive with camera capture");
+        let available = app.camera_available();
+        let on = app.camera_preview_on();
+        let (preview, _) = big_button_ex(ui, Icon::Cameo, "Enable\nCamera\nPreview", available, false, on);
+        let preview = preview.on_hover_text(app.camera_status_text());
+        if preview.clicked() {
+            app.toggle_camera_preview();
+        }
+        big_button(ui, Icon::Preview, "More\nOptions", false).on_hover_text("Camera preview options arrive with the Camera Format tab");
     });
 }

@@ -1,0 +1,313 @@
+//! Windows/macOS/Linux camera capture over `cameras` (pinned `=0.3.2`).
+
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError, TrySendError};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+
+use deckcraft_media::camera::{
+    CameraDesc, CameraError, CameraEvent, CameraFormat, CameraFrame, CameraId, CameraInfo, CameraIn, CameraPosition, CameraRequest,
+    CameraSession, PixelFormat,
+};
+
+/// Two buffered frames: enough that a slow paint does not stall the worker, small enough that the
+/// preview cannot accumulate latency. A full channel drops the newest frame and the next one gets
+/// through after the UI drains.
+const EVENT_CAPACITY: usize = 2;
+/// How long a frame read waits before the worker checks its command channel.
+const FRAME_WAIT: Duration = Duration::from_millis(100);
+
+/// Told to the worker thread. `Start` always replaces any running camera first.
+enum Command {
+    Start(CameraRequest, SyncSender<CameraEvent>),
+    Stop,
+    Quit,
+}
+
+/// Camera capture through the platform API. Create it without a device; it does nothing until
+/// [`CameraIn::start`].
+#[derive(Default)]
+pub struct SystemCamera {
+    commands: Option<Sender<Command>>,
+}
+
+impl SystemCamera {
+    /// The worker's command sender, spawning the worker on first use.
+    fn ensure_worker(&mut self) -> Result<Sender<Command>, CameraError> {
+        if let Some(commands) = &self.commands {
+            return Ok(commands.clone());
+        }
+        let (commands, receiver) = mpsc::channel();
+        thread::Builder::new()
+            .name("deckcraft-camera".into())
+            .spawn(move || run(receiver))
+            .map_err(|error| CameraError::Backend(error.to_string()))?;
+        self.commands = Some(commands.clone());
+        Ok(commands)
+    }
+}
+
+impl CameraIn for SystemCamera {
+    fn start(&mut self, request: &CameraRequest) -> Result<CameraSession, CameraError> {
+        let commands = self.ensure_worker()?;
+        let (events, receiver) = mpsc::sync_channel(EVENT_CAPACITY);
+        commands
+            .send(Command::Start(request.clone(), events))
+            .map_err(|_| CameraError::Backend("the camera worker stopped".into()))?;
+        Ok(CameraSession { started_at: web_time::Instant::now(), events: receiver })
+    }
+
+    fn stop(&mut self) {
+        if let Some(commands) = &self.commands {
+            // Cooperatively; the worker drops the device when its current read returns.
+            let _ = commands.send(Command::Stop);
+        }
+    }
+
+    fn devices(&mut self) -> Receiver<Result<Vec<CameraDesc>, CameraError>> {
+        probe_async(list_devices)
+    }
+
+    fn formats(&mut self, device: Option<&CameraId>) -> Receiver<Result<Vec<CameraFormat>, CameraError>> {
+        let device = device.cloned();
+        probe_async(move || list_formats(device.as_deref()))
+    }
+}
+
+impl Drop for SystemCamera {
+    fn drop(&mut self) {
+        if let Some(commands) = &self.commands {
+            let _ = commands.send(Command::Quit);
+        }
+        // Deliberately not joined: the worker may be inside enumeration waiting on the macOS
+        // permission sheet. The process is ending; the OS closes the handle.
+    }
+}
+
+/// Run `work` on a short-lived thread so a probe never blocks the UI.
+fn probe_async<T, F>(work: F) -> Receiver<Result<T, CameraError>>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, CameraError> + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+    let _ = thread::Builder::new().name("deckcraft-camera-probe".into()).spawn(move || {
+        let _ = tx.send(work());
+    });
+    rx
+}
+
+fn list_devices() -> Result<Vec<CameraDesc>, CameraError> {
+    cameras::devices().map(|devices| devices.iter().map(desc).collect()).map_err(map_error)
+}
+
+fn list_formats(device: Option<&CameraId>) -> Result<Vec<CameraFormat>, CameraError> {
+    let devices = cameras::devices().map_err(map_error)?;
+    let device = pick_device(&devices, device).ok_or(CameraError::NoDevice)?;
+    let capabilities = cameras::probe(device).map_err(map_error)?;
+    Ok(capabilities.formats.iter().map(camera_format).collect())
+}
+
+/// One open stream and its event channel.
+struct Running {
+    camera: cameras::Camera,
+    events: SyncSender<CameraEvent>,
+    device: CameraDesc,
+    fps: f32,
+    seq: u64,
+    /// Whether `Opened` has been sent (it waits for the first frame, whose size is authoritative on
+    /// macOS even when `Camera::config` echoes the request).
+    opened: bool,
+}
+
+fn run(commands: Receiver<Command>) {
+    let mut running: Option<Running> = None;
+    loop {
+        if let Some(current) = running.as_mut() {
+            match cameras::next_frame(&current.camera, FRAME_WAIT) {
+                Ok(frame) => {
+                    if !deliver(current, frame) {
+                        running = None;
+                    }
+                    continue;
+                }
+                Err(cameras::Error::Timeout) => {}
+                Err(error) => {
+                    let _ = current.events.try_send(CameraEvent::Failed(map_error(error)));
+                    running = None;
+                }
+            }
+        }
+        let command = match running.is_some() {
+            true => match commands.try_recv() {
+                Ok(command) => command,
+                Err(TryRecvError::Empty) => continue,
+                Err(TryRecvError::Disconnected) => return,
+            },
+            false => match commands.recv() {
+                Ok(command) => command,
+                Err(_) => return,
+            },
+        };
+        match command {
+            Command::Start(request, events) => {
+                // Drop the old camera before opening the new one: a device cannot be opened twice.
+                running = None;
+                running = open(&request, events);
+            }
+            Command::Stop => running = None,
+            Command::Quit => return,
+        }
+    }
+}
+
+fn open(request: &CameraRequest, events: SyncSender<CameraEvent>) -> Option<Running> {
+    let devices = match cameras::devices() {
+        Ok(devices) => devices,
+        Err(error) => {
+            let _ = events.try_send(CameraEvent::Failed(map_error(error)));
+            return None;
+        }
+    };
+    let Some(device) = pick_device(&devices, request.device.as_deref()) else {
+        let _ = events.try_send(CameraEvent::Failed(CameraError::NoDevice));
+        return None;
+    };
+    let capabilities = match cameras::probe(device) {
+        Ok(capabilities) => capabilities,
+        Err(error) => {
+            let _ = events.try_send(CameraEvent::Failed(map_error(error)));
+            return None;
+        }
+    };
+    let wanted = stream_config(request);
+    // The closest format the device really has; no format list at all leaves the request as is and
+    // lets the backend report `FormatNotSupported`.
+    let (config, fps) = match cameras::best_format(&capabilities, &wanted) {
+        Some(found) => (
+            cameras::StreamConfig { resolution: found.resolution, framerate: wanted.framerate, pixel_format: found.pixel_format },
+            found.framerate_range.max as f32,
+        ),
+        None => (wanted, wanted.framerate as f32),
+    };
+    let camera = match cameras::open(device, config) {
+        Ok(camera) => camera,
+        Err(error) => {
+            let _ = events.try_send(CameraEvent::Failed(map_error(error)));
+            return None;
+        }
+    };
+    Some(Running { camera, events, device: desc(device), fps, seq: 0, opened: false })
+}
+
+/// Convert and forward one frame. Returns false when the UI dropped the session.
+fn deliver(running: &mut Running, frame: cameras::Frame) -> bool {
+    let (width, height) = (frame.width, frame.height);
+    let source_format = pixel_format(frame.pixel_format);
+    let source_t = (!frame.timestamp.is_zero()).then_some(frame.timestamp);
+    // A corrupt compressed frame (MJPEG recovery) is skipped; the stream keeps going.
+    let Ok(rgba) = cameras::to_rgba8(&frame) else { return true };
+    let Some(expected) = (width as usize).checked_mul(height as usize).and_then(|pixels| pixels.checked_mul(4)) else { return true };
+    if rgba.len() != expected {
+        return true;
+    }
+    if !running.opened {
+        running.opened = true;
+        let info = CameraInfo { device: running.device.clone(), width, height, fps: running.fps, source_format };
+        if !send(&running.events, CameraEvent::Opened(info)) {
+            return false;
+        }
+    }
+    let event = CameraEvent::Frame(CameraFrame {
+        seq: running.seq,
+        at: web_time::Instant::now(),
+        source_t,
+        width,
+        height,
+        rgba: Arc::from(rgba.into_boxed_slice()),
+    });
+    running.seq = running.seq.wrapping_add(1);
+    send(&running.events, event)
+}
+
+/// Send unless the UI is gone. A disconnected receiver means the session was abandoned.
+fn send(events: &SyncSender<CameraEvent>, event: CameraEvent) -> bool {
+    !matches!(events.try_send(event), Err(TrySendError::Disconnected(_)))
+}
+
+fn stream_config(request: &CameraRequest) -> cameras::StreamConfig {
+    let format = request.format_or_default();
+    cameras::StreamConfig {
+        resolution: cameras::Resolution { width: format.width.max(1), height: format.height.max(1) },
+        framerate: format.fps.clamp(1.0, 240.0).round() as u32,
+        pixel_format: cameras_pixel(format.pixel_format),
+    }
+}
+
+fn cameras_pixel(format: PixelFormat) -> cameras::PixelFormat {
+    match format {
+        PixelFormat::Bgra8 => cameras::PixelFormat::Bgra8,
+        PixelFormat::Rgba8 => cameras::PixelFormat::Rgba8,
+        PixelFormat::Rgb8 => cameras::PixelFormat::Rgb8,
+        PixelFormat::Yuyv => cameras::PixelFormat::Yuyv,
+        PixelFormat::Nv12 => cameras::PixelFormat::Nv12,
+        PixelFormat::Mjpeg => cameras::PixelFormat::Mjpeg,
+    }
+}
+
+fn pick_device<'a>(devices: &'a [cameras::Device], wanted: Option<&str>) -> Option<&'a cameras::Device> {
+    match wanted {
+        Some(id) => devices.iter().find(|device| device.id.0.as_str() == id),
+        None => devices.first(),
+    }
+}
+
+fn desc(device: &cameras::Device) -> CameraDesc {
+    CameraDesc { id: device.id.0.clone(), name: device.name.clone(), position: match device.position {
+        cameras::Position::Front => CameraPosition::Front,
+        cameras::Position::Back => CameraPosition::Back,
+        cameras::Position::External => CameraPosition::External,
+        _ => CameraPosition::Unknown,
+    } }
+}
+
+fn camera_format(found: &cameras::FormatDescriptor) -> CameraFormat {
+    CameraFormat {
+        width: found.resolution.width,
+        height: found.resolution.height,
+        fps: found.framerate_range.max as f32,
+        pixel_format: pixel_format(found.pixel_format),
+    }
+}
+
+fn pixel_format(format: cameras::PixelFormat) -> PixelFormat {
+    match format {
+        cameras::PixelFormat::Bgra8 => PixelFormat::Bgra8,
+        cameras::PixelFormat::Rgba8 => PixelFormat::Rgba8,
+        cameras::PixelFormat::Rgb8 => PixelFormat::Rgb8,
+        cameras::PixelFormat::Yuyv => PixelFormat::Yuyv,
+        cameras::PixelFormat::Nv12 => PixelFormat::Nv12,
+        cameras::PixelFormat::Mjpeg => PixelFormat::Mjpeg,
+        _ => PixelFormat::Rgba8,
+    }
+}
+
+fn map_error(error: cameras::Error) -> CameraError {
+    match error {
+        cameras::Error::PermissionDenied => CameraError::PermissionDenied,
+        cameras::Error::DeviceNotFound(_) => CameraError::NoDevice,
+        cameras::Error::DeviceInUse => CameraError::InUse,
+        cameras::Error::FormatNotSupported => CameraError::UnsupportedFormat,
+        cameras::Error::StreamEnded => CameraError::Lost,
+        cameras::Error::BackendNotImplemented { .. } | cameras::Error::Unsupported { .. } => CameraError::Unsupported,
+        // Windows Media Foundation reports the privacy-toggle denial as E_ACCESSDENIED; `cameras`
+        // wraps it as `Backend`, so map it here, in one place.
+        cameras::Error::Backend { ref message, .. }
+            if message.contains("0x80070005") || message.to_ascii_lowercase().contains("access is denied") =>
+        {
+            CameraError::PermissionDenied
+        }
+        cameras::Error::Timeout => CameraError::Backend("timed out waiting for a frame".into()),
+        other => CameraError::Backend(other.to_string()),
+    }
+}

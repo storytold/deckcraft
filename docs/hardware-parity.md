@@ -1,6 +1,6 @@
 # Hardware parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (community PR wave 2026-10-14: picture export DPI, Retina pixel grid (#184), twist to rotate, swipe to turn the page, pen pressure; duplicated rows and headers folded; previous: minor, IME input, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365); PowerPoint for Windows where noted
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-03 · **Change:** minor (Cameo live camera capture through `cameras` over Media Foundation, AVFoundation and V4L2; previous: minor, community PR wave 2026-10-14: picture export DPI, Retina pixel grid (#184), twist to rotate, swipe to turn the page, pen pressure; duplicated rows and headers folded) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365); PowerPoint for Windows where noted
 
 What hardware PowerPoint uses and what DeckCraft uses, per platform. Dimension score: **~40%
 ready** (estimated), **25–45 h** to parity. Performance (unmeasured, ~55%) is tracked here too
@@ -27,7 +27,7 @@ because it mostly follows from hardware use.
 | 4K video in the show | smooth on hardware decode | unmeasured; likely CPU-bound |
 | Audio output | Core Audio / WASAPI | `cpal` (Core Audio, WASAPI, ALSA); browser Web Audio |
 | Microphone (record audio, narration) | yes | no |
-| Camera (Cameo, record with camera) | yes | no |
+| Camera (Cameo, record with camera) | yes | **preview yes**: Cameo live preview and the slide-show bubble capture through `cameras` (Media Foundation, AVFoundation, V4L2) behind a wasm-safe `CameraIn`, with device-loss, permission and busy states; recording a camera track is still no |
 | Screen recording | yes | no |
 
 ## Displays

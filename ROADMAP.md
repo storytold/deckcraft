@@ -150,6 +150,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-03 | Cameo live preview: camera capture over Media Foundation, AVFoundation and V4L2 behind a wasm-safe `CameraIn`, opened lazily on the Cameo Preview toggle, with a bounded latest-frame channel, permission/device-loss/busy states and the live frame in the canvas cameo and the slide-show bubble; macOS camera permission, the Flatpak device grant and `DECKCRAFT_NO_CAMERA` included (#1813) |
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
 | 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
 | 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |
