@@ -1417,6 +1417,35 @@ fn tab_stops_align_the_text_after_them() {
 }
 
 #[test]
+fn a_hanging_indents_margin_is_an_implicit_first_tab_stop() {
+    // PowerPoint: a paragraph with marL 27 pt and indent -27 (a 0.375" hanging indent, no
+    // bullet) puts the first line's first tab at marL and the next ones at the default
+    // stops; a paragraph without the hang tabs from its margin straight to the default
+    // stops (#1683).
+    let tabbed_para = |text: &str, indent: f64| {
+        let (p, mut sh) = setup(text, 2000.0, 300.0);
+        let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+        {
+            let pp = &mut para.props;
+            pp.bullet = Some(Bullet::None);
+            pp.margin_left = Some(27.0);
+            pp.indent = Some(indent);
+            pp.default_tab = Some(72.0);
+        }
+        para.runs[0].props.size = Some(18.0);
+        lay(&p, &sh, 2000.0, 300.0)
+    };
+    let x0 = |l: &TextLayout| l.inner.x0;
+    // With the hang: the first tab lands at marL (27 pt), the second at the next default stop.
+    let l = tabbed_para("\t\tw", -27.0);
+    assert!((l.lines[0].edges[1].0 - x0(&l) - 27.0).abs() < 0.01, "{:?}", l.lines[0].edges);
+    assert!((l.lines[0].edges[2].0 - x0(&l) - 72.0).abs() < 0.01, "{:?}", l.lines[0].edges);
+    // Without the hang (indent 0): the first line starts at marL, so a tab goes to 72 pt.
+    let l = tabbed_para("\tw", 0.0);
+    assert!((l.lines[0].edges[1].0 - x0(&l) - 72.0).abs() < 0.01, "{:?}", l.lines[0].edges);
+}
+
+#[test]
 fn a_tab_past_the_end_moves_to_the_next_line() {
     // PowerPoint: "abcdefghij\tk\tl\tm…" in a narrow box puts the tab that doesn't fit on the next
     // line, so the text after it lands on that line's first stop.

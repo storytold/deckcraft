@@ -261,7 +261,7 @@ pub(crate) struct Tab {
 }
 
 pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
-    props
+    let mut out: Vec<Tab> = props
         .tabs
         .as_ref()
         .map(|t| {
@@ -277,7 +277,16 @@ pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // A hanging indent's `marL` is an implicit left tab stop: on a line that starts left of
+    // `marL` (the first line of a hanging-indent paragraph, without a bullet), the first tab
+    // lands there and later tabs at the next stops, as PowerPoint lays them out (#1683).
+    let (margin, indent) = (props.margin_left.unwrap_or(0.0), props.indent.unwrap_or(0.0));
+    if indent < 0.0 && margin > 0.0 && !out.iter().any(|s| (s.pos - margin).abs() < 0.5) {
+        let at = out.iter().position(|s| s.pos > margin).unwrap_or(out.len());
+        out.insert(at, Tab { pos: margin, align: TabAlign::Left });
+    }
+    out
 }
 
 /// Width of the text after the tab at cell `i` up to the next tab or line break, and the width of
