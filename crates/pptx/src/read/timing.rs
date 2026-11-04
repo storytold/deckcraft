@@ -230,6 +230,11 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         if node.bool("fullScrn") == Some(true) {
             clip.full_screen = true;
         }
+        // Click to play waits (`delay="indefinite"`); an automatic start has a numeric delay
+        // (normally 0). The shape's own click action doesn't say which one PowerPoint wrote.
+        if let Some(delay) = cm.path(&["cTn", "stCondLst", "cond"]).and_then(|c| c.attr("delay")) {
+            clip.autoplay = delay != "indefinite";
+        }
     }
 }
 

@@ -11,7 +11,10 @@ pub(crate) fn media_bytes(p: &Value, cmd: &str) -> Result<(String, Vec<u8>)> {
     }
     if let Some(path) = str_param(p, "path") {
         let bytes = crate::io::read_file(path).map_err(EngineError::Other)?;
-        let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "media".into());
+        let name = str_param(p, "name")
+            .filter(|n| !n.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "media".into()));
         return Ok((name, bytes));
     }
     Err(bad(cmd, "missing `path` or `data`"))

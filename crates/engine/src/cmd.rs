@@ -21,6 +21,7 @@ pub mod recolor;
 pub mod reuse;
 pub mod review;
 mod richclip;
+pub mod screen;
 pub mod selection;
 pub mod shape;
 pub mod slide;
@@ -185,6 +186,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(table::specs());
         v.extend(find::specs());
         v.extend(review::specs());
+        v.extend(screen::specs());
         v.extend(inspect::specs());
         v.extend(media::specs());
         v.extend(artistic::specs());

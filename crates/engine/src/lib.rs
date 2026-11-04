@@ -23,6 +23,7 @@ pub mod links;
 pub mod media_refs;
 pub mod recovery;
 pub mod sample;
+pub mod screen;
 pub mod sounds;
 pub mod spell;
 pub mod templates;
@@ -491,6 +492,8 @@ pub struct Session {
     pub recovery_dir: Option<std::path::PathBuf>,
     /// Media playback state, written by the UI host every frame (empty without a host).
     pub media_status: std::collections::HashMap<ShapeId, MediaStatus>,
+    /// Screen capture host and the recording in progress (see [`screen`]).
+    pub screen: screen::ScreenState,
     /// Animated GIF pictures paused with `media.gifPlay` (the others play).
     pub gif_paused: std::collections::HashSet<ShapeId>,
     /// Text keys follow the Mac (Option+arrows move by word, Cmd+arrows to the line or text
@@ -532,12 +535,28 @@ impl Session {
             depth: 0,
             recovery_dir: None,
             media_status: Default::default(),
+            screen: Default::default(),
             gif_paused: Default::default(),
             mac_keys: cfg!(target_os = "macos"),
             panics_caught: 0,
             loaded: vec![],
             next_loaded: 0,
             composition_settles: 0,
+        }
+    }
+
+    /// Install the host's screen-capture device (the app does this once at start-up). Without one,
+    /// screen recording reports itself unavailable.
+    pub fn set_screen_host(&mut self, host: Option<Box<dyn deckcraft_screen::ScreenIn>>) {
+        self.screen.set_host(host);
+    }
+
+    /// Let a running screen recording take the frames the host has captured. The UI calls this
+    /// once a frame with its clock (`now`, in seconds). A capture failure cancels the recording
+    /// and leaves one message for the status bar.
+    pub fn screen_tick(&mut self, now: f64) {
+        if let Some(text) = self.screen.tick(now) {
+            self.ui_requests.push(UiRequest::Message { text });
         }
     }
     /// Hand over a presentation read on another thread ([`cmd::file::read_presentation_file`]);

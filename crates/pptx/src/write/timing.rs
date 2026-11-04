@@ -1,7 +1,7 @@
 //! Transitions and the animation timing tree.
 
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, TextBuild, Transition, build_filled, paragraph_build_roles};
-use deckcraft_model::{Shape, ShapeId, ShapeKind};
+use deckcraft_model::{MediaClip, Shape, ShapeId, ShapeKind};
 
 use super::shapes::IdMap;
 use super::{Exp, Out};
@@ -592,6 +592,72 @@ fn shape_index<'a>(shapes: &'a [Shape], depth: usize, out: &mut std::collections
     }
 }
 
+/// `p:video` / `p:audio` children of `p:timing`: they carry the playback behaviour (start on
+/// click or automatically, volume, loop, hide while stopped, full screen) that the picture's
+/// `a:videoFile` only names. PowerPoint reads the start condition from `p:cTn/p:stCondLst`.
+fn media_node(w: &mut W, ids: &mut Ids, spid: u32, m: &MediaClip) {
+    let tag = if m.video { "p:video" } else { "p:audio" };
+    let mut outer = A::new();
+    if m.full_screen && m.video {
+        outer = outer.a("fullScrn", "1");
+    }
+    w.open(tag, outer);
+    let volume = if m.volume.is_finite() { m.volume.clamp(0.0, 1.0) } else { 1.0 };
+    let mut node = A::new().a("vol", (volume * 100_000.0).round() as u32);
+    if volume <= 0.0 {
+        node = node.a("mute", "1");
+    }
+    if m.hide_while_not_playing {
+        node = node.a("showWhenStopped", "0");
+    }
+    w.open("p:cMediaNode", node);
+    let mut tn = A::new().a("id", ids.next()).a("fill", "hold").a("display", "0");
+    if m.loop_play {
+        tn = tn.a("repeatCount", "indefinite");
+    }
+    w.open("p:cTn", tn);
+    w.open0("p:stCondLst");
+    // `indefinite` waits for a click on the shape; a number starts on the slide's own clock.
+    w.empty("p:cond", A::new().a("delay", if m.autoplay { "0" } else { "indefinite" }));
+    w.close("p:stCondLst");
+    w.open0("p:endCondLst");
+    w.open("p:cond", A::new().a("evt", "onStopAudio").a("delay", "0"));
+    w.open0("p:tgtEl");
+    w.empty0("p:sldTgt");
+    w.close("p:tgtEl");
+    w.close("p:cond");
+    w.close("p:endCondLst");
+    w.close("p:cTn");
+    w.open0("p:tgtEl");
+    w.empty("p:spTgt", A::new().a("spid", spid));
+    w.close("p:tgtEl");
+    w.close("p:cMediaNode");
+    w.close(tag);
+}
+
+/// Write the media behaviour nodes (nested media shapes included); returns how many were written.
+fn media_nodes(w: &mut W, ids: &mut Ids, shapes: &[Shape], idmap: &IdMap, depth: usize) -> usize {
+    if depth > 64 {
+        return 0;
+    }
+    let mut n = 0;
+    for s in shapes {
+        if let ShapeKind::Media(m) = &s.kind
+            && let Some(spid) = idmap.get(s.id)
+        {
+            media_node(w, ids, spid, m);
+            n += 1;
+        }
+        n += media_nodes(w, ids, s.children(), idmap, depth + 1);
+    }
+    n
+}
+
+/// Does any shape (nested ones included) carry audio or video?
+pub fn has_media(shapes: &[Shape], depth: usize) -> bool {
+    depth <= 64 && shapes.iter().any(|s| matches!(s.kind, ShapeKind::Media(_)) || has_media(s.children(), depth + 1))
+}
+
 /// Write `p:timing` for a slide's animations.
 pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idmap: &IdMap) {
     let mut grp_count: std::collections::HashMap<u32, u32> = Default::default();
@@ -686,7 +752,7 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             None => main.extend(effs),
         }
     }
-    if main.is_empty() && triggered.is_empty() {
+    if main.is_empty() && triggered.is_empty() && !has_media(shapes, 0) {
         return;
     }
     let mut ids = Ids(0);
@@ -695,6 +761,8 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
     w.open0("p:par");
     w.open("p:cTn", A::new().a("id", ids.next()).a("dur", "indefinite").a("restart", "never").a("nodeType", "tmRoot"));
     w.open0("p:childTnLst");
+    // Media behaviour comes before the animation sequence, as PowerPoint writes it.
+    media_nodes(w, &mut ids, shapes, idmap, 0);
     if !main.is_empty() {
         let clicks = group(main);
         w.open("p:seq", A::new().a("concurrent", 1).a("nextAc", "seek"));

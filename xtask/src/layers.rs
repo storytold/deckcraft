@@ -46,6 +46,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("av1", Class::Layer(1)),
     ("isobmff", Class::Layer(1)),
     ("media", Class::Layer(2)),
+    ("screen", Class::Layer(2)),
     ("color", Class::Layer(0)),
     // WMF/EMF reader (ported from WordCraft).
     ("metafile", Class::Layer(0)),

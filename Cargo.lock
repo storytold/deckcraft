@@ -1061,6 +1061,7 @@ dependencies = [
  "deckcraft-pdf",
  "deckcraft-pptx",
  "deckcraft-render",
+ "deckcraft-screen",
  "deckcraft-text",
  "i_overlay",
  "image",
@@ -1243,6 +1244,16 @@ dependencies = [
  "skrifa 0.47.0",
  "vello_common",
  "vello_cpu",
+]
+
+[[package]]
+name = "deckcraft-screen"
+version = "0.15.0"
+dependencies = [
+ "deckcraft-h264",
+ "deckcraft-isobmff",
+ "log",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
