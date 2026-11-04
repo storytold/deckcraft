@@ -1,6 +1,9 @@
 //! Synthetic Ogg streams: a small page writer (RFC 3533) and Opus-like packets.
 
-use super::*;
+use std::cell::Cell;
+use std::io;
+
+use super::{ByteSource, CaptureScanner, Codec, Error, OpusTiming, Packet, Stream, crc32, open, opus_packet_samples, sniff};
 
 /// Write one page holding `segments` (lacing already computed by `lace`).
 fn page(out: &mut Vec<u8>, flags: u8, granule: i64, serial: u32, seq: u32, lacing: &[u8], body: &[u8]) {
@@ -99,7 +102,7 @@ fn opus_pages_packets_and_timing() {
     assert_eq!(st.packets.len(), 10);
     assert!(st.saw_eos);
     assert_eq!(o.read_packet(&f, s, 4).unwrap(), pkt(4, 44));
-    let t = OpusTiming::of(st, 312);
+    let t = OpusTiming::of(st, 312).unwrap();
     assert_eq!(t.durations, vec![960; 10]);
     assert_eq!(t.starts[0], -312);
     assert_eq!(t.starts[9], 9 * 960 - 312);
@@ -129,7 +132,7 @@ fn packets_spanning_pages() {
     assert_eq!(st.packets[0].parts.len(), 2);
     assert_eq!(o.read_packet(&f, 0, 0).unwrap(), big);
     assert_eq!(o.read_packet(&f, 0, 1).unwrap(), small);
-    let t = OpusTiming::of(st, 0);
+    let t = OpusTiming::of(st, 0).unwrap();
     assert_eq!(t.starts, vec![0, 960]);
     assert_eq!(t.total, 1920);
 }
@@ -144,13 +147,13 @@ fn corrupt_pages_are_skipped_and_truncation_is_safe() {
     let o = open(&g).unwrap();
     assert!(o.warnings.iter().any(|w| w.contains("CRC")), "{:?}", o.warnings);
     assert_eq!(o.streams[0].packets.len(), 9);
-    let t = OpusTiming::of(&o.streams[0], 312);
+    let t = OpusTiming::of(&o.streams[0], 312).unwrap();
     // the granules after the gap put the later packets at their true positions
     assert_eq!(*t.starts.last().unwrap(), 11 * 960 - 312);
     for cut in 0..f.len() {
         if let Ok(o) = open(&f[..cut].to_vec()) {
             for st in &o.streams {
-                let t = OpusTiming::of(st, 312);
+                let t = OpusTiming::of(st, 312).unwrap();
                 assert_eq!(t.starts.len(), st.packets.len());
             }
         }
@@ -178,4 +181,96 @@ fn opus_toc_durations() {
     assert_eq!(opus_packet_samples([0x80 | 3, 6], 10), Some(720)); // CELT 2.5 ms × 6
     assert_eq!(opus_packet_samples([0xF8 | 3, 7], 10), None); // 140 ms: invalid
     assert_eq!(opus_packet_samples([0xF8, 0], 0), None);
+}
+
+#[test]
+fn opus_timing_rejects_a_granule_that_overflows() {
+    let packet = |granule: i64| Stream {
+        serial: 1,
+        codec: Codec::Opus,
+        headers: vec![],
+        packets: vec![Packet { parts: vec![], size: 10, granule: Some(granule), page: 0, eos: true, prefix: [0x00, 0] }],
+        pages: 1,
+        last_granule: Some(granule),
+        saw_eos: true,
+    };
+    let ok = OpusTiming::of(&packet(480), 0).unwrap();
+    assert_eq!(ok.starts, vec![0]);
+    assert_eq!(ok.total, 480);
+    assert!(OpusTiming::of(&packet(i64::MIN), 0).is_err());
+}
+
+/// A source that counts the bytes read from it.
+struct Counting<'a> {
+    data: &'a [u8],
+    read: Cell<u64>,
+}
+
+impl ByteSource for Counting<'_> {
+    fn len(&self) -> u64 {
+        self.data.len() as u64
+    }
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<()> {
+        self.read.set(self.read.get() + buf.len() as u64);
+        self.data.read_at(offset, buf)
+    }
+}
+
+/// A valid file followed by `len` bytes of 0xFF with a capture pattern every 64 bytes. Each one
+/// claims 255 full lacing values, so it reads as a page of about 64 KiB that fails its CRC.
+fn dense_fake_pages(len: usize) -> Vec<u8> {
+    let mut f = opus_file(6, 312, 0);
+    let start = f.len();
+    f.resize(start + len, 0xFF);
+    for at in (start..start + len - 64).step_by(64) {
+        f[at..at + 5].copy_from_slice(b"OggS\0");
+        f[at + 26] = 255;
+    }
+    f
+}
+
+#[test]
+fn recovery_reads_a_bounded_amount_of_a_damaged_file() {
+    let f = dense_fake_pages(1 << 20);
+    let src = Counting { data: &f, read: Cell::new(0) };
+    let o = open(&src).unwrap();
+    assert_eq!(o.streams[0].packets.len(), 6, "the good pages are kept");
+    let read = src.read.get();
+    assert!(read <= 40 << 20, "read {read} bytes of a {} byte file", f.len());
+    assert!(o.warnings.iter().any(|w| w.contains("recovery budget")), "{:?}", o.warnings);
+}
+
+#[test]
+fn warnings_are_capped() {
+    // 100,000 pages with no segments and a wrong CRC, 27 bytes each
+    let mut f = opus_file(6, 312, 0);
+    for _ in 0..100_000 {
+        let at = f.len();
+        f.extend_from_slice(b"OggS\0\0");
+        f.resize(at + 27, 0);
+        f[at + 22] = 1;
+    }
+    let o = open(&f).unwrap();
+    assert!(o.warnings.len() <= 257, "{} warnings", o.warnings.len());
+    assert!(o.warnings.iter().any(|w| w.contains("omitted")), "{:?}", o.warnings.last());
+}
+
+#[test]
+fn a_file_of_good_pages_is_not_charged_for_recovery() {
+    let f = opus_file(2000, 312, 0);
+    let src = Counting { data: &f, read: Cell::new(0) };
+    let o = open(&src).unwrap();
+    assert_eq!(o.streams[0].packets.len(), 2000);
+    assert!(o.warnings.is_empty(), "{:?}", o.warnings);
+}
+
+#[test]
+fn a_budget_too_small_to_search_is_spent() {
+    // 1 to 3 bytes left cannot hold a capture pattern: the scan would stop without saying why
+    let mut scanner = CaptureScanner::new();
+    assert!(!scanner.spent());
+    assert!(scanner.charge(super::RECOVERY_BUDGET - 3));
+    assert!(scanner.spent());
+    let f = opus_file(6, 312, 0);
+    assert_eq!(scanner.find(&f, 0, f.len() as u64).unwrap(), None);
 }

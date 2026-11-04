@@ -24,6 +24,8 @@ pub struct Pcm {
     pub samples: Vec<f32>,
 }
 
+const MAX_PCM_SAMPLES: usize = 64 * 1024 * 1024;
+
 impl Pcm {
     /// Sample frames (samples per channel).
     pub fn frames(&self) -> usize {
@@ -47,8 +49,10 @@ impl Pcm {
 
     fn push_planar(planes: &[Vec<f32>], out: &mut Vec<f32>) {
         let n = planes.iter().map(Vec::len).min().unwrap_or(0);
-        out.reserve(n * planes.len());
-        for i in 0..n {
+        let remaining = MAX_PCM_SAMPLES.saturating_sub(out.len());
+        let to_push = n.min(remaining / planes.len().max(1));
+        out.reserve(to_push * planes.len());
+        for i in 0..to_push {
             for p in planes {
                 out.push(p[i]);
             }
@@ -71,13 +75,14 @@ pub fn decode(bytes: &Bytes) -> Result<Pcm> {
         Container::Asf => Err(MediaError::Unsupported("Windows Media Audio (WMA)".into())),
         Container::Ogg => match decode_ogg_opus(bytes) {
             Some(r) => r,
-            None => decode_symphonia(bytes, "ogg"),
+            None => contained(|| decode_symphonia(bytes, "ogg")),
         },
         Container::Matroska => match decode_mkv_opus(bytes) {
             Some(r) => r,
-            None => decode_symphonia(bytes, "mkv"),
+            None => contained(|| decode_symphonia(bytes, "mkv")),
         },
-        c => decode_symphonia(bytes, c.name()),
+        Container::Mp4 if !crate::mp4guard::tables_fit(bytes) => Err(MediaError::Corrupt("the MP4's sample tables do not fit the file".into())),
+        c => contained(|| decode_symphonia(bytes, c.name())),
     }
 }
 
@@ -92,10 +97,16 @@ fn decode_ogg_opus(bytes: &Bytes) -> Option<Result<Pcm>> {
         let mut dec = deckcraft_opus::Decoder::new(head).map_err(|e| MediaError::Corrupt(e.to_string()))?;
         dec.set_trim_pre_skip(true);
         let channels = dec.channels() as u16;
-        let timing = deckcraft_ogg::OpusTiming::of(stream, dec.pre_skip() as u32);
+        let timing = deckcraft_ogg::OpusTiming::of(stream, dec.pre_skip() as u32).map_err(|e| MediaError::Corrupt(e.to_string()))?;
         let mut out = Vec::new();
         for i in 0..stream.packets.len() {
+            if MAX_PCM_SAMPLES.saturating_sub(out.len()) < channels.max(1) as usize {
+                break;
+            }
             let Ok(p) = file.read_packet(src, s, i) else { continue };
+            if p.is_empty() {
+                continue;
+            }
             match dec.decode(Some(&p)) {
                 Ok(planes) => Pcm::push_planar(&planes, &mut out),
                 Err(e) => log::debug!("opus packet {i}: {e}"),
@@ -125,7 +136,13 @@ fn decode_mkv_opus(bytes: &Bytes) -> Option<Result<Pcm>> {
         let mut out = Vec::new();
         let n = file.tracks.get(ti).map(|t| t.samples.len()).unwrap_or(0);
         for i in 0..n {
+            if MAX_PCM_SAMPLES.saturating_sub(out.len()) < channels.max(1) as usize {
+                break;
+            }
             let Ok(p) = file.read_sample(src, ti, i) else { continue };
+            if p.is_empty() {
+                continue;
+            }
             match dec.decode(Some(&p)) {
                 Ok(planes) => Pcm::push_planar(&planes, &mut out),
                 Err(e) => log::debug!("opus packet {i}: {e}"),
@@ -141,6 +158,15 @@ fn sym_err(e: SymError) -> MediaError {
         other => MediaError::Corrupt(other.to_string()),
     }
 }
+
+/// Runs symphonia, whose demuxers can panic on damaged files (Matroska's EBML reader asserts
+/// its position, for one): the panic becomes a corrupt-file error instead of ending the app.
+fn contained<T>(f: impl FnOnce() -> Result<T>) -> Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|_| Err(MediaError::Corrupt("the audio could not be read".into())))
+}
+
+/// Demux errors in a row after which a file is taken to have no more audio.
+const MAX_DEMUX_ERRORS: u32 = 64;
 
 fn decode_symphonia(bytes: &Bytes, ext: &str) -> Result<Pcm> {
     let mss = MediaSourceStream::new(Box::new(Cursor::new(Shared(bytes.clone()))), MediaSourceStreamOptions::default());
@@ -172,12 +198,21 @@ fn decode_symphonia(bytes: &Bytes, ext: &str) -> Result<Pcm> {
     let mut rate = 0;
     let mut channels = 0u16;
     let mut buf: Option<SampleBuffer<f32>> = None;
+    // A damaged file can make the demuxer report the same error forever without moving on.
+    let mut demux_errors = 0u32;
     loop {
         let packet = match format.next_packet() {
-            Ok(p) => p,
+            Ok(p) => {
+                demux_errors = 0;
+                p
+            }
             Err(SymError::IoError(_)) | Err(SymError::ResetRequired) => break,
             Err(SymError::DecodeError(e)) => {
                 log::debug!("audio demux: {e}");
+                demux_errors += 1;
+                if demux_errors > MAX_DEMUX_ERRORS {
+                    break;
+                }
                 continue;
             }
             Err(e) => {

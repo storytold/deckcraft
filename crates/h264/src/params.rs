@@ -1,7 +1,7 @@
 //! Sequence and picture parameter sets (7.3.2.1, 7.3.2.2) including VUI and scaling lists.
 
 use crate::error::{Result, ensure, unsupported};
-use crate::tables::*;
+use crate::tables::{DEFAULT_4X4_INTER, DEFAULT_4X4_INTRA, DEFAULT_8X8_INTER, DEFAULT_8X8_INTRA, ZIGZAG4, ZIGZAG8};
 use deckcraft_bitstream::BitReader;
 
 /// Scaling matrices after applying fall-back rules, stored in raster order (weightScale).
@@ -559,6 +559,12 @@ pub struct Pps {
     pub scaling: ScalingMatrices,
 }
 
+/// `26 + minus26`, after `minus26` is inside −(26 + QpBdOffset) ..= 25.
+fn qp_plus_26(minus26: i32, qp_bd: i32, name: &str) -> Result<i32> {
+    ensure!((-(26 + qp_bd)..=25).contains(&minus26), "{name} out of range");
+    Ok(26 + minus26)
+}
+
 impl Pps {
     /// Parse a PPS. Needs the SPS table because the tail depends on chroma_format_idc.
     pub fn parse(rbsp: &[u8], spss: &[Option<Sps>]) -> Result<Pps> {
@@ -569,7 +575,7 @@ impl Pps {
         ensure!(sps_id < 32, "seq_parameter_set_id out of range");
         let sps = spss
             .get(sps_id as usize)
-            .and_then(|s| s.as_ref())
+            .and_then(Option::as_ref)
             .ok_or_else(|| crate::Error::MissingParameterSet(format!("SPS {sps_id} for PPS {id}")))?;
         let entropy_coding_mode = r.read_flag()?;
         let bottom_field_pic_order_in_frame_present = r.read_flag()?;
@@ -610,8 +616,11 @@ impl Pps {
         ensure!(num_ref_idx_l0_default_active <= 32 && num_ref_idx_l1_default_active <= 32, "num_ref_idx_default_active out of range");
         let weighted_pred = r.read_flag()?;
         let weighted_bipred_idc = r.read_bits(2)?;
-        let pic_init_qp = 26 + r.read_se()?;
-        let pic_init_qs = 26 + r.read_se()?;
+        // pic_init_qp_minus26 is −(26 + QpBdOffsetY) ..= 25. Check that before adding 26: a hostile
+        // Exp-Golomb value overflows the addition in debug builds.
+        let qp_bd = 6 * sps.bit_depth_luma.saturating_sub(8) as i32;
+        let pic_init_qp = qp_plus_26(r.read_se()?, qp_bd, "pic_init_qp_minus26")?;
+        let pic_init_qs = qp_plus_26(r.read_se()?, qp_bd, "pic_init_qs_minus26")?;
         let chroma_qp_index_offset = r.read_se()?;
         ensure!((-12..=12).contains(&chroma_qp_index_offset), "chroma_qp_index_offset out of range");
         let deblocking_filter_control_present = r.read_flag()?;
@@ -750,5 +759,65 @@ mod tests {
         assert!(Sps::parse(&sps_with(10, Some([u32::MAX - 1, u32::MAX - 1, 0, 0]))).is_err());
         assert!(Sps::parse(&sps_with(10, Some([0x8000_0000, 0, 0, 0]))).is_err());
         assert!(Sps::parse(&sps_with(10, Some([1, 1, 1, 1]))).is_ok());
+    }
+
+    fn pps_bits(qp_minus26: i32, qs_minus26: i32) -> Vec<u8> {
+        let mut w = BitWriter::new();
+        w.write_ue(0);
+        w.write_ue(0);
+        w.write_bit(false);
+        w.write_bit(false);
+        w.write_ue(0);
+        w.write_ue(0);
+        w.write_ue(0);
+        w.write_bit(false);
+        w.write_bits(0, 2);
+        w.write_se(qp_minus26);
+        w.write_se(qs_minus26);
+        w.write_se(0);
+        w.write_bit(false);
+        w.write_bit(false);
+        w.write_bit(false);
+        w.rbsp_trailing();
+        w.finish()
+    }
+
+    fn sps_table() -> Vec<Option<Sps>> {
+        vec![Sps::parse(&sps_with(10, None)).ok()]
+    }
+
+    #[test]
+    fn pic_init_qp_is_checked_before_adding_26() {
+        let table = sps_table();
+        assert_eq!(Pps::parse(&pps_bits(0, 0), &table).unwrap().pic_init_qp, 26);
+        assert_eq!(Pps::parse(&pps_bits(25, 0), &table).unwrap().pic_init_qp, 51);
+        assert_eq!(Pps::parse(&pps_bits(-26, 0), &table).unwrap().pic_init_qp, 0);
+        assert!(Pps::parse(&pps_bits(26, 0), &table).is_err());
+        assert!(Pps::parse(&pps_bits(-27, 0), &table).is_err());
+        assert!(Pps::parse(&pps_bits(i32::MAX, 0), &table).is_err());
+        assert!(Pps::parse(&pps_bits(0, i32::MAX), &table).is_err());
+    }
+
+    #[test]
+    fn slice_qp_addition_does_not_overflow() {
+        let table = sps_table();
+        let pps = Pps::parse(&pps_bits(0, 0), &table).unwrap();
+        let sps = table[0].clone().unwrap();
+        let nal = crate::slice::NalHeader { nal_ref_idc: 0, nal_unit_type: crate::slice::nal_type::SLICE };
+        let rbsp = |delta: i32| {
+            let mut w = BitWriter::new();
+            w.write_ue(0);
+            w.write_ue(2); // I
+            w.write_ue(0);
+            w.write_bits(0, sps.log2_max_frame_num);
+            w.write_se(delta);
+            w.rbsp_trailing();
+            w.finish()
+        };
+        let parse = |delta: i32| crate::slice::SliceHeader::parse(&rbsp(delta), nal, |_| Ok((&pps, table[0].as_ref().unwrap())));
+        let (sh, _, _) = parse(0).unwrap();
+        assert_eq!(sh.qp(&pps), 26);
+        assert!(parse(26).is_err());
+        assert!(parse(i32::MAX).is_err());
     }
 }

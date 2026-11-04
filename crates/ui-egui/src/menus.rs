@@ -10,9 +10,14 @@ use crate::theme::{self, Tokens};
 /// Shortcuts the UI handles itself (views, show, zoom, palette, file dialogs). True when consumed.
 pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
     use egui::Key::*;
+    if key == A && m.cmd && !m.shift && !m.alt && app.slides_list_focused() {
+        // The engine can't see which pane has focus, so the UI says so through the scope param.
+        let _ = app.run("edit.selectAll", json!({"scope": "slides"}));
+        return true;
+    }
     let id = match (key, m.cmd, m.shift, m.alt) {
         (F5, _, false, _) => {
-            app.start_show(0, false);
+            app.start_show(app.show_start_index(), false);
             return true;
         }
         (F5, _, true, _) | (Enter, true, false, false) => {
@@ -21,7 +26,7 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
             return true;
         }
         (Enter, true, true, _) => {
-            app.start_show(0, false);
+            app.start_show(app.show_start_index(), false);
             return true;
         }
         (S, true, false, false) => {
@@ -29,7 +34,30 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
             return true;
         }
         (S, true, true, false) => "app.saveAsDialog",
+        // File tab: Alt+F opens it on Home with the keyboard in its side menu; Ctrl+P on Print.
+        (F, false, false, true) => {
+            app.open_backstage(crate::backstage::Page::Home);
+            if let Some(b) = app.backstage.as_mut() {
+                b.focus = Some(0);
+            }
+            return true;
+        }
+        (P, true, false, false) => {
+            if app.session.active().is_none() {
+                return false;
+            }
+            app.open_backstage(crate::backstage::Page::Print);
+            return true;
+        }
+        (W, true, false, false) => {
+            app.close_presentation();
+            return true;
+        }
         (O, true, false, false) => "app.openDialog",
+        (V, true, false, true) if app.session.active().is_some() => {
+            app.dialog = Some(crate::dialogs::Dialog::new("pasteSpecial"));
+            return true;
+        }
         (P, true, true, false) => "app.palette",
         (Comma, true, false, false) => "app.preferences",
         (Equals | Plus, true, false, false) => "view.zoomIn",
@@ -42,14 +70,47 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
             app.dialog = Some(crate::dialogs::Dialog::new("hyperlink"));
             return true;
         }
-        (F, true, false, false) => {
-            app.palette = Some((String::new(), 0));
-            return true;
+        (F, true, false, false) => "app.find",
+        (H, true, false, false) => "app.replace",
+        (Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9, false, false, true) => {
+            if app.session.mac_keys || app.backstage.is_some() || app.session.active().is_some_and(|d| d.selection.text.is_some()) {
+                return false;
+            }
+            let idx = match key {
+                Num1 => 0,
+                Num2 => 1,
+                Num3 => 2,
+                Num4 => 3,
+                Num5 => 4,
+                Num6 => 5,
+                Num7 => 6,
+                Num8 => 7,
+                Num9 => 8,
+                _ => return false,
+            };
+            return crate::qat::run_index(app, idx);
         }
         _ => return false,
     };
     let _ = app.run(id, json!({}));
     true
+}
+
+/// The palette's entries for the lowercase query `q`. An engine command is hidden when a UI command has the same label: Open…, Save As…,
+/// Export… and Audio/Video from File… need a `path` the palette can't give, so the one entry left opens the dialog instead of failing.
+fn palette_items(session: &deckcraft_engine::Session, q: &str) -> Vec<(String, String, Option<&'static str>)> {
+    let mut items: Vec<(String, String, Option<&'static str>)> = session
+        .commands()
+        .into_iter()
+        // Commands that need a path or other value fail when the palette runs them with `{}`.
+        .filter(|c| c.enabled && !crate::UI_COMMANDS.iter().any(|u| u.1 == c.label) && !deckcraft_engine::cmd::needs_arguments(c.params))
+        .map(|c| (c.id.to_string(), c.label.to_string(), c.shortcut))
+        .chain(crate::UI_COMMANDS.iter().filter(|c| !deckcraft_engine::cmd::needs_arguments(c.3)).map(|c| (c.0.to_string(), c.1.to_string(), c.2)))
+        .filter(|(id, label, _)| q.is_empty() || label.to_lowercase().contains(q) || id.to_lowercase().contains(q))
+        .collect();
+    items.sort_by_key(|(_, l, _)| !l.to_lowercase().starts_with(q));
+    items.truncate(60);
+    items
 }
 
 /// ⇧⌘P: search every command by name and run it.
@@ -66,17 +127,7 @@ pub fn palette(app: &mut SlideApp, ctx: &egui::Context) {
             let r = ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search commands…").desired_width(f32::INFINITY).font(theme::font(15.0)));
             r.request_focus();
             let q = query.to_lowercase();
-            let mut items: Vec<(String, String, Option<&'static str>)> = app
-                .session
-                .commands()
-                .into_iter()
-                .filter(|c| c.enabled)
-                .map(|c| (c.id.to_string(), c.label.to_string(), c.shortcut))
-                .chain(crate::UI_COMMANDS.iter().map(|c| (c.0.to_string(), c.1.to_string(), c.2)))
-                .filter(|(id, label, _)| q.is_empty() || label.to_lowercase().contains(&q) || id.to_lowercase().contains(&q))
-                .collect();
-            items.sort_by_key(|(_, l, _)| !l.to_lowercase().starts_with(&q));
-            items.truncate(60);
+            let items = palette_items(&app.session, &q);
             let (down, up, enter, esc) = ui.input(|i| {
                 (
                     i.key_pressed(egui::Key::ArrowDown),
@@ -133,10 +184,11 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("New Presentation", "file.new"),
                 ("Open…", "app.openDialog"),
                 ("-", ""),
-                ("Close", "file.close"),
+                ("Close", "app.closePresentation"),
                 ("Save", "file.save"),
                 ("Save As…", "app.saveAsDialog"),
                 ("Export…", "app.exportDialog"),
+                ("Print…", "app.print"),
                 ("-", ""),
                 ("Properties", "file.properties"),
             ],
@@ -151,12 +203,14 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("Copy", "edit.copy"),
                 ("Paste", "edit.paste"),
                 ("Paste and Match Formatting", "edit.pasteText"),
+                ("Paste Special…", "app.pasteSpecial"),
                 ("-", ""),
                 ("Select All", "edit.selectAll"),
                 ("Duplicate", "edit.duplicate"),
                 ("Delete Slide", "slide.delete"),
                 ("-", ""),
-                ("Find…", "app.palette"),
+                ("Find…", "app.find"),
+                ("Replace…", "app.replace"),
             ],
         ),
         (
@@ -170,14 +224,20 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("Slide Show", "show.start"),
                 ("-", ""),
                 ("Slide Master", "view.slideMaster"),
+                ("Handout Master", "view.handoutMaster"),
+                ("Notes Master", "view.notesMaster"),
                 ("-", ""),
                 ("Ruler", "view.ruler"),
                 ("Gridlines", "view.gridlines"),
                 ("Guides", "view.guides"),
+                ("Grid Options…", "view.gridOptions"),
                 ("-", ""),
+                ("Zoom…", "view.zoomDialog"),
                 ("Zoom In", "view.zoomIn"),
                 ("Zoom Out", "view.zoomOut"),
                 ("Fit to Window", "view.fit"),
+                ("-", ""),
+                ("New Window", "view.newWindow"),
             ],
         ),
         (
@@ -195,6 +255,8 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("Table…", "insert.table"),
                 ("Chart", "insert.chart"),
                 ("Picture from File…", "app.insertPictureDialog"),
+                ("Photo Album…", "insert.photoAlbum"),
+                ("Edit Photo Album…", "insert.photoAlbumEdit"),
                 ("Audio from File…", "app.insertAudioDialog"),
                 ("Video from File…", "app.insertVideoDialog"),
             ],
@@ -202,6 +264,8 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
         (
             "Format",
             vec![
+                ("Font…", "format.fontDialog"),
+                ("Paragraph…", "format.paragraphDialog"),
                 ("Bold", "format.bold"),
                 ("Italic", "format.italic"),
                 ("Underline", "format.underline"),
@@ -211,6 +275,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("Align Right", "format.alignRight"),
                 ("Justify", "format.justify"),
                 ("-", ""),
+                ("Size and Position…", "shape.sizePosition"),
                 ("Right-to-Left Text Direction", "format.rtl"),
             ],
         ),
@@ -242,6 +307,32 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("Set Up Show…", "show.setup"),
             ],
         ),
-        ("Help", vec![("About DeckCraft", "app.about"), ("Command Palette", "app.palette")]),
+        ("Help", vec![("About DeckCraft", "app.about"), ("Check for Updates…", "app.checkUpdates"), ("Command Palette", "app.palette")]),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::palette_items;
+
+    /// #79: the palette listed two "Export…" entries and the first (`file.export`) failed with "missing `path`".
+    #[test]
+    fn palette_has_one_export_entry_that_opens_the_dialog() {
+        let session = deckcraft_engine::Session::with_new();
+        for query in ["exp", "export"] {
+            let exports: Vec<_> = palette_items(&session, query).into_iter().filter(|(_, label, _)| label == "Export…").collect();
+            assert_eq!(exports.len(), 1, "query {query}");
+            assert_eq!(exports[0].0, "app.exportDialog");
+        }
+        // Open…, Save As…, Audio/Video from File… and Notes had the same duplicates: every UI command is the only entry with its label.
+        // Commands that need a value (Set Zoom's percent) are left out of the palette.
+        for (id, label, _, params) in crate::UI_COMMANDS {
+            if deckcraft_engine::cmd::needs_arguments(params) {
+                continue;
+            }
+            let same: Vec<_> = palette_items(&session, &label.to_lowercase()).into_iter().filter(|(_, l, _)| l == label).collect();
+            assert_eq!(same.len(), 1, "{label}");
+            assert_eq!(same[0].0, *id, "{label}");
+        }
+    }
 }

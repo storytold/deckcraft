@@ -7,7 +7,7 @@
 
 use crate::Decoder;
 use crate::cabac::{Contexts, NEXT_STATE, RANGE_TAB_LPS, init_contexts};
-use crate::spec_tables::*;
+use crate::spec_tables::{CU_SKIP, NUM_CTX, PRED_MODE, SPLIT_CU};
 use deckcraft_bitstream::{BitWriter, escape_rbsp};
 
 const W: usize = 96;
@@ -617,4 +617,89 @@ fn slices_without_tiles() {
         Segment { start: 16, len: 8, dependent: false },
     ];
     run("slices", None, false, segs);
+}
+
+/// Decode with a memory budget of `budget` bytes; true if every picture came out without error.
+fn decodes_within(stream: &[u8], budget: u64) -> bool {
+    let mut dec = Decoder::with_threads(1);
+    dec.set_memory_budget(budget);
+    let mut pics = match dec.decode(stream, 0) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    pics.extend(dec.flush());
+    dec.take_error().is_none() && pics.len() == 5
+}
+
+#[test]
+fn picture_store_is_checked_against_the_memory_budget() {
+    let (stream, _) = sequence(&None, true, whole(WC * HC));
+    let sps_nal = sps(true);
+    let parsed = crate::params::Sps::parse(&deckcraft_bitstream::unescape_rbsp(&sps_nal[6..])).unwrap();
+    // 96x64 4:2:0 in 16-bit samples; the decoder holds the DPB, the current picture and up to
+    // threads + 2 in flight.
+    let one = (W * H + 2 * (W / 2) * (H / 2)) as u64 * 2;
+    let pictures = u64::from(parsed.max_dec_pic_buffering) + 1 + 3;
+    assert!(decodes_within(&stream, pictures * one));
+    assert!(!decodes_within(&stream, pictures * one - 1));
+    assert!(decodes_within(&stream, deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET));
+}
+
+#[test]
+fn hvcc_accepts_generated_vps_sps_and_pps() {
+    let sets = [vps(), sps(true), pps(0, &None, false)];
+    let mut hvcc = vec![0; 23];
+    hvcc[0] = 1;
+    hvcc[22] = sets.len() as u8;
+    for (kind, set) in [32, 33, 34].into_iter().zip(sets) {
+        let nal = &set[4..];
+        hvcc.extend_from_slice(&[kind, 0, 1]);
+        hvcc.extend_from_slice(&(nal.len() as u16).to_be_bytes());
+        hvcc.extend_from_slice(nal);
+    }
+    assert!(Decoder::from_hvcc(&hvcc).is_ok());
+}
+
+#[test]
+fn hvcc_rejects_a_valid_picture_slice_without_starting_a_picture() {
+    let sets = [vps(), sps(true), pps(0, &None, false)];
+    let mut stream = Vec::new();
+    let mut saved = None;
+    encode_picture(
+        &PicDesc {
+            nal_type: 19,
+            poc: 0,
+            intra: true,
+            cu: Cu::Pcm,
+            pps_id: 0,
+            st: vec![],
+            lt: vec![],
+            num_ref: 0,
+            list_entry: None,
+            segments: whole(WC * HC),
+        },
+        &None,
+        &content(0),
+        &mut stream,
+        &mut saved,
+    );
+
+    let mut hvcc = vec![0; 23];
+    hvcc[0] = 1;
+    hvcc[22] = 4;
+    for (kind, set) in [32, 33, 34].into_iter().zip(sets) {
+        let nal = &set[4..];
+        hvcc.extend_from_slice(&[kind, 0, 1]);
+        hvcc.extend_from_slice(&(nal.len() as u16).to_be_bytes());
+        hvcc.extend_from_slice(nal);
+    }
+    let slice = &stream[4..];
+    hvcc.extend_from_slice(&[19, 0, 1]);
+    hvcc.extend_from_slice(&(slice.len() as u16).to_be_bytes());
+    hvcc.extend_from_slice(slice);
+
+    let mut decoder = Decoder::with_threads(1);
+    assert!(decoder.configure_hvcc(&hvcc).is_err());
+    assert!(decoder.flush().is_empty());
+    assert_eq!(decoder.stats().pictures, 0);
 }

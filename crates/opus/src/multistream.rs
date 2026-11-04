@@ -32,6 +32,7 @@ impl Decoder {
 
     /// Creates a decoder for a parsed header at `sample_rate` (8/12/16/24/48 kHz).
     pub fn from_head(head: OpusHead, sample_rate: u32) -> Result<Decoder> {
+        head.validate()?;
         let mut streams = Vec::with_capacity(head.streams);
         for s in 0..head.streams {
             let ch = if s < head.coupled_streams { 2 } else { 1 };
@@ -168,4 +169,30 @@ fn reframe(p: &Packet) -> Vec<u8> {
         v.extend_from_slice(f);
     }
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn head(channels: usize, streams: usize, coupled: usize, mapping: Vec<u8>) -> OpusHead {
+        OpusHead { channels, pre_skip: 0, input_sample_rate: 48000, output_gain: 0, mapping_family: 1, streams, coupled_streams: coupled, mapping }
+    }
+
+    #[test]
+    fn from_head_rejects_inconsistent_headers() {
+        assert!(Decoder::from_head(head(1, 0, 0, vec![0]), 48000).is_err(), "zero streams");
+        assert!(Decoder::from_head(head(2, 1, 0, vec![0]), 48000).is_err(), "short mapping");
+        assert!(Decoder::from_head(head(1, 1, 0, vec![1]), 48000).is_err(), "mapping index out of range");
+        assert!(Decoder::from_head(head(1, 1, 2, vec![0]), 48000).is_err(), "more coupled than streams");
+        assert!(Decoder::from_head(head(0, 1, 0, vec![]), 48000).is_err(), "zero channels");
+    }
+
+    #[test]
+    fn from_head_accepts_valid_headers() {
+        assert!(Decoder::from_head(head(1, 1, 0, vec![0]), 48000).is_ok());
+        assert!(Decoder::from_head(head(2, 1, 1, vec![0, 1]), 48000).is_ok());
+        assert!(Decoder::from_head(head(3, 2, 1, vec![0, 1, 2]), 48000).is_ok());
+        assert!(Decoder::from_head(head(2, 1, 0, vec![0, 255]), 48000).is_ok());
+    }
 }

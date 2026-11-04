@@ -1,0 +1,251 @@
+# PowerPoint feature checklist
+
+> **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+
+> **Last updated:** 2026-11-03 · Community PR wave 10: reflection transforms survive resaves (row stays P, rendering partial); Reuse Slides fits the destination size and brings referenced custom table styles (row stays P, picker has no thumbnails); Compress Pictures measures grouped pictures at displayed size (stays D). Scores unchanged.
+>
+> **Previously (2026-11-02):** Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P. Scores unchanged.
+>
+> **Previously (2026-11-01):** Locked-shape and no-outline regressions added for #1621; fill row re-assessed: remains D; No Fill hit-testing now follows resolved appearance. Scores unchanged.
+
+The summary between `<!-- SUMMARY -->
+**Weighted breadth parity: 84%** over 191 features.
+
+| Priority | Features | Done | Partial | Missing | Parity |
+|---|---|---|---|---|---|
+| P0 | 72 | 61 | 11 | 0 | 92% |
+| P1 | 65 | 45 | 16 | 4 | 82% |
+| P2 | 54 | 18 | 24 | 12 | 56% |
+
+| Area | Parity |
+|---|---|
+| Application shell | 81% |
+| Files | 76% |
+| Slides | 92% |
+| Views | 98% |
+| Masters & themes | 92% |
+| Shapes | 91% |
+| Format | 83% |
+| Arrange | 100% |
+| Text | 83% |
+| Tables | 97% |
+| Charts | 65% |
+| SmartArt | 50% |
+| Pictures | 60% |
+| Media | 67% |
+| Transitions | 100% |
+| Animations | 85% |
+| Slide show | 68% |
+| Review | 70% |
+| Draw | 50% |
+| Undo & clipboard | 100% |
+| Automation (✱) | 100% |
+| Platforms (✱) | 67% |
+
+Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layout, Chart Design), Export to PDF (slides, notes pages, handouts; text layer, links, bookmarks; vector artwork pending), Format Shape pane, Font, size, bold, italic, underline, strikethrough (only Regular/Bold/Italic faces, #69), Edit chart data, Crop (and crop to shape, aspect ratio), Paste image from clipboard (fails on Windows, #1414; Linux not re-checked), Audio/video playback in the show (WMA/WMV not decodable yet), Animation pane (reorder, timing), Presenter view (notes, next slide, timer), macOS, Windows, Linux builds.
+
+## Rows
+
+| Area | Feature | Priority | Status |
+|---|---|---|---|
+| Application shell | Start screen (new, templates/themes, recent) | P0 | D |
+| Application shell | Ribbon with Home/Insert/Draw/Design/Transitions/Animations/Slide Show/Review/View tabs | P0 | D |
+| Application shell | Contextual tabs (Shape Format, Picture Format, Table Design/Layout, Chart Design) | P0 | P |
+| Application shell | Quick Access toolbar / title bar commands | P1 | D |
+| Application shell | Native menu bar (macOS) with every command | P1 | M |
+| Application shell | Command palette / Tell me search | P1 | D |
+| Application shell | Keyboard shortcuts for every common command | P0 | D |
+| Application shell | Status bar (slide counter, notes, comments, views, zoom) | P0 | D |
+| Application shell | Light and dark appearance | P1 | D |
+| Application shell | Multiple open presentations | P1 | P |
+| Application shell | Preferences (autosave, units, defaults) | P2 | P |
+| Files | New blank presentation | P0 | D |
+| Files | Native file format (open/save; chart package parts retained, `crates/engine/tests/it/chart_native.rs`) | P0 | D |
+| Files | Open PowerPoint .pptx | P0 | D |
+| Files | Save as PowerPoint .pptx | P0 | D |
+| Files | Open/save .potx/.ppsx/.pptm variants (.potx/.ppsx open and save with their own content types; no .pptm) | P2 | P |
+| Files | Legacy .ppt (binary) import | P2 | M |
+| Files | Save as template | P1 | D |
+| Files | Autosave and crash recovery | P0 | D |
+| Files | Document properties | P2 | D |
+| Files | Export to PDF (slides, notes pages, handouts; text layer, links, bookmarks; vector artwork pending) | P0 | P |
+| Files | Export slides as PNG/JPEG | P0 | D |
+| Files | Export outline / RTF | P2 | D |
+| Files | Export video (MP4) / animated GIF (GIF: one frame per slide, no transitions; no video) | P2 | P |
+| Files | Print (slides, handouts, notes, outline) | P1 | M |
+| Files | Password protection | P2 | M |
+| Files | Reuse slides from another file | P1 | P |
+| Files | Drag and drop files onto the window | P1 | D |
+| Files | OpenDocument .odp open/save | P2 | M |
+| Slides | New slide by layout | P0 | D |
+| Slides | Duplicate, delete, hide slides | P0 | D |
+| Slides | Reorder slides (thumbnails, sorter) | P0 | D |
+| Slides | Sections (add, rename, remove, move, collapse) | P1 | D |
+| Slides | Slide layouts (11 standard) | P0 | D |
+| Slides | Reset slide | P1 | D |
+| Slides | Slides from outline | P2 | D |
+| Slides | Copy/paste slides between decks | P1 | P |
+| Slides | Zoom (summary, section and slide zoom) | P2 | P |
+| Views | Normal view (thumbnails, slide, notes) | P0 | D |
+| Views | Outline view | P1 | D |
+| Views | Slide Sorter | P0 | D |
+| Views | Notes Page | P1 | D |
+| Views | Reading View | P1 | D |
+| Views | Zoom, fit to window | P0 | D |
+| Views | Rulers, gridlines, guides | P1 | D |
+| Views | Smart guides | P1 | D |
+| Views | Grayscale / black and white view | P2 | D |
+| Views | New window / arrange windows | P2 | P |
+| Masters & themes | Slide Master view (edit master and layouts) | P0 | D |
+| Masters & themes | Insert/rename/delete layouts, insert placeholders | P1 | D |
+| Masters & themes | Handout and Notes masters | P2 | M |
+| Masters & themes | Built-in themes (original designs) | P0 | D |
+| Masters & themes | Theme variants | P1 | D |
+| Masters & themes | Colour schemes (built-in and custom) | P0 | D |
+| Masters & themes | Font schemes (built-in and custom) | P0 | D |
+| Masters & themes | Effect schemes / background styles | P2 | P |
+| Masters & themes | Format background (solid, gradient, picture, pattern) | P0 | D |
+| Masters & themes | Hide background graphics | P1 | D |
+| Masters & themes | Slide size (16:9, 4:3, presets, custom) | P0 | D |
+| Masters & themes | Header & footer (date, slide number, footer) | P1 | D |
+| Masters & themes | Browse themes from .pptx/.thmx | P2 | D |
+| Masters & themes | Designer layout suggestions (offline) | P2 | M |
+| Shapes | Preset shapes (lines, rectangles, basic, arrows, equation, flowchart, stars, callouts) | P0 | D |
+| Shapes | Action buttons | P2 | D |
+| Shapes | Adjustment handles | P0 | D |
+| Shapes | Connectors (straight, elbow, curved) | P0 | D |
+| Shapes | Connector glue to connection sites | P1 | D |
+| Shapes | Freeform, curve and scribble tools | P1 | D |
+| Shapes | Edit points | P1 | P |
+| Shapes | Merge shapes (union, combine, fragment, intersect, subtract) | P1 | D |
+| Shapes | Change shape | P1 | D |
+| Shapes | Text boxes | P0 | D |
+| Shapes | WordArt | P1 | P |
+| Shapes | Text warp transforms | P2 | P |
+| Shapes | Shape quick styles | P1 | D |
+| Shapes | Set as default shape | P2 | D |
+| Format | Solid fill and transparency (No Fill interiors pass clicks through, #1621) | P0 | D |
+| Format | Gradient fill (linear, radial, rectangular, path) | P0 | D |
+| Format | Picture and texture fill | P1 | P |
+| Format | Pattern fill | P2 | P |
+| Format | Line colour, width, dash, compound, cap, join | P0 | D |
+| Format | Arrowheads | P0 | D |
+| Format | Shadow (outer, inner, presets) | P1 | D |
+| Format | Reflection, glow, soft edges | P2 | P |
+| Format | Bevel and 3-D rotation | P2 | P |
+| Format | Format Painter | P1 | D |
+| Format | Format Shape pane | P0 | P |
+| Arrange | Size and position (exact), lock aspect ratio | P0 | D |
+| Arrange | Rotate and flip | P0 | D |
+| Arrange | Bring forward / send backward / to front / to back | P0 | D |
+| Arrange | Align and distribute | P0 | D |
+| Arrange | Group, ungroup, regroup | P0 | D |
+| Arrange | Selection pane (names, visibility, order) | P1 | D |
+| Arrange | Nudge, duplicate with repeat offset | P1 | D |
+| Arrange | Lock shapes | P2 | D |
+| Arrange | Alt text | P1 | D |
+| Text | In-place text editing (caret, selection, mouse, keyboard) | P0 | D |
+| Text | Font, size, bold, italic, underline, strikethrough (only Regular/Bold/Italic faces, #69) | P0 | P |
+| Text | Font colour, highlight | P0 | D |
+| Text | Superscript, subscript, caps, character spacing | P1 | D |
+| Text | Change case, grow/shrink font, clear formatting | P1 | D |
+| Text | Text outline and text effects | P2 | P |
+| Text | Paragraph alignment, indents, spacing, line spacing | P0 | D |
+| Text | Bullets and numbering (including gray empty-line markers while editing) | P0 | D |
+| Text | Picture bullets, custom bullet symbols | P2 | P |
+| Text | List levels (Tab / Shift+Tab) | P0 | D |
+| Text | Tab stops | P2 | D |
+| Text | Columns | P2 | D |
+| Text | Vertical anchor, margins, wrap | P0 | D |
+| Text | Autofit (shrink on overflow, resize shape) | P0 | D |
+| Text | Text direction (rotated, stacked) | P1 | D |
+| Text | Find and replace, replace fonts | P1 | P |
+| Text | Spelling check | P1 | P |
+| Text | AutoCorrect and smart quotes | P2 | P |
+| Text | Thesaurus | P2 | P |
+| Text | Symbols and emoji | P1 | D |
+| Text | Equations | P2 | M |
+| Text | Hyperlinks (URL, slide, email) | P1 | D |
+| Text | Date/time and slide number fields | P1 | D |
+| Text | Right-to-left and complex scripts | P1 | P |
+| Text | East Asian text (CJK fonts, line breaking) | P1 | P |
+| Tables | Insert table (grid picker, dialog) | P0 | D |
+| Tables | Draw table | P2 | P |
+| Tables | Table styles and style options | P0 | D |
+| Tables | Insert/delete rows and columns | P0 | D |
+| Tables | Merge and split cells | P1 | D |
+| Tables | Distribute rows/columns, sizes | P1 | D |
+| Tables | Cell fill, borders, margins, alignment | P1 | D |
+| Tables | Keyboard navigation between cells | P0 | D |
+| Charts | Insert chart (column, bar, line, area, pie, doughnut, scatter) | P0 | D |
+| Charts | Other chart types (radar, stock, combo, waterfall, funnel, treemap, sunburst, histogram, box) | P2 | P |
+| Charts | Edit chart data | P0 | P |
+| Charts | Chart elements (title, legend, labels, axes, gridlines) | P1 | P |
+| Charts | Chart styles and colours | P2 | P |
+| SmartArt | Insert SmartArt (lists, processes, cycles, hierarchy) | P1 | P |
+| SmartArt | Text pane and layout switching | P2 | P |
+| Pictures | Insert picture (PNG, JPEG, GIF, WebP, BMP, TIFF) | P0 | D |
+| Pictures | SVG pictures | P1 | M |
+| Pictures | Crop (and crop to shape, aspect ratio) | P0 | P |
+| Pictures | Corrections, colour, transparency (recolor and Set Transparent Color done; sharpen/soften and colour temperature pending) | P1 | P |
+| Pictures | Artistic effects | P2 | P |
+| Pictures | Remove background | P2 | M |
+| Pictures | Picture styles and borders | P1 | D |
+| Pictures | Change / reset picture | P1 | D |
+| Pictures | Compress pictures | P2 | D |
+| Pictures | Paste image from clipboard (fails on Windows, #1414; Linux not re-checked) | P0 | P |
+| Pictures | Insert screenshot | P2 | M |
+| Media | Insert audio (any common format) | P0 | D |
+| Media | Insert video | P1 | D |
+| Media | Audio/video playback in the show (WMA/WMV not decodable yet) | P0 | P |
+| Media | Trim, fade in/out, volume, loop, play across slides | P2 | D |
+| Media | Record audio / screen recording | P2 | M |
+| Media | Icons, 3-D models, stock content | P2 | M |
+| Media | Embedded objects (OLE): insert; foreign objects kept on round trip | P2 | P |
+| Transitions | Transition gallery (fade, push, wipe, split, cover, uncover, zoom, morph…) | P0 | D |
+| Transitions | Effect options and duration | P0 | D |
+| Transitions | Advance on click / after time, apply to all | P0 | D |
+| Transitions | Transition sounds | P2 | D |
+| Transitions | Morph | P1 | D |
+| Animations | Entrance, emphasis, exit effects | P0 | D |
+| Animations | Motion paths | P1 | P |
+| Animations | Effect options, start (on click/with/after), duration, delay | P0 | D |
+| Animations | Animation pane (reorder, timing) | P0 | P |
+| Animations | By-paragraph text builds | P1 | D |
+| Animations | Triggers (separate click steps and paragraph builds round-trip; `crates/pptx/tests/it/trigger_steps.rs`) | P2 | D |
+| Animations | Animation Painter | P2 | D |
+| Animations | Preview in editor | P1 | D |
+| Slide show | Full-screen show from start / current | P0 | D |
+| Slide show | Navigation (keys, click, go to slide, blank screen) | P0 | D |
+| Slide show | Presenter view (notes, next slide, timer) | P0 | P |
+| Slide show | Pen and highlighter ink during the show | P1 | P |
+| Slide show | Laser pointer | P2 | P |
+| Slide show | Rehearse timings | P2 | D |
+| Slide show | Custom shows | P2 | D |
+| Slide show | Set up show (loop, kiosk, without animation) | P1 | D |
+| Slide show | Record slide show (narration) | P2 | M |
+| Slide show | Multi-monitor presenting | P1 | M |
+| Review | Comments (add, reply, resolve, delete) | P1 | D |
+| Review | Accessibility checker | P2 | D |
+| Review | Compare presentations | P2 | P |
+| Review | Track changes / version history | P2 | M |
+| Draw | Ink pens, highlighter, eraser | P1 | P |
+| Draw | Ink to shape / text | P2 | P |
+| Undo & clipboard | Unlimited undo/redo | P0 | D |
+| Undo & clipboard | Cut, copy, paste shapes and slides | P0 | D |
+| Undo & clipboard | Paste special (keep formatting, picture, text only) | P1 | D |
+| Automation (✱) | Every command scriptable (CLI, control channel, MCP; remote reply IDs, envelopes and framing validated, #718) | P0 | D |
+| Automation (✱) | Headless rendering and conversion | P0 | D |
+| Platforms (✱) | macOS, Windows, Linux builds | P0 | P |
+| Platforms (✱) | Web (WASM) build | P1 | D |
+| Platforms (✱) | BSD build | P2 | P |
+
+## Revision history
+
+| Date | Change | Summary |
+|---|---|---|
+| 2026-11-02 | trivial | Reflection transform/fade serialization retained; its P score stays because rendering remains partial |
+| 2026-11-03 | trivial | Reuse Slides transfers referenced custom table styles; row remains P because other reuse behavior is still partial, summary scores unchanged |
+| 2026-11-02 | trivial | Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P and summary scores are unchanged |
+| 2026-11-02 | trivial | Picture compression uses displayed dimensions through nested group transforms; Compress pictures remains D and summary scores are unchanged |
+| 2026-10-31 | trivial | No Fill interior hit-testing follows resolved fill (#1621); fill row remains D and summary scores are unchanged |

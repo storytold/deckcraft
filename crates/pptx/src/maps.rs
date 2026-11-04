@@ -17,7 +17,12 @@ pub fn transition_from_xml(e: &El) -> Option<(String, String)> {
     Some((k, if has_opts { o } else { String::new() }))
 }
 
+/// Preset transitions (`p15:prstTrans`) whose "Left" option PowerPoint writes with `invX="1"`
+/// (the others write it for "Right"), as observed on PowerPoint's own files.
+const INVX_LEFT: &[&str] = &["wind", "airplane", "origami"];
+
 fn transition_from_xml_raw(e: &El) -> Option<(String, String)> {
+    // Defaults are what PowerPoint leaves out: e.g. it writes Push Left as `<p:push/>`.
     let dir = |d: &str| e.attr("dir").unwrap_or(d).to_string();
     let k = |s: &str| s.to_string();
     Some(match e.local() {
@@ -25,16 +30,22 @@ fn transition_from_xml_raw(e: &El) -> Option<(String, String)> {
         "cut" => (k("cut"), if e.bool("thruBlk") == Some(true) { k("throughBlack") } else { String::new() }),
         "push" => (k("push"), dir("l")),
         "wipe" => (k("wipe"), dir("l")),
+        // Diagonal wipes.
+        "strips" => (k("wipe"), dir("lu")),
         "split" => {
             let o = e.attr("orient").unwrap_or("horz");
             let d = e.attr("dir").unwrap_or("out");
             (k("split"), format!("{o}{}", if d == "in" { "In" } else { "Out" }))
         }
-        "randomBar" => (k("randomBar"), dir("vert")),
+        "randomBar" => (k("randomBar"), dir("horz")),
         "circle" => (k("shape"), k("circle")),
         "diamond" => (k("shape"), k("diamond")),
         "plus" => (k("shape"), k("plus")),
-        "zoom" => (k("zoom"), dir("in")),
+        // Shape In / Out (the slide zooming in a box).
+        "zoom" => (k("shape"), if e.attr("dir") == Some("in") { k("in") } else { k("out") }),
+        // The Zoom transition, and its Zoom and Rotate option.
+        "warp" => (k("zoom"), if e.attr("dir") == Some("in") { k("in") } else { k("out") }),
+        "newsflash" => (k("zoom"), k("rotate")),
         "pull" => (k("uncover"), dir("l")),
         "cover" => (k("cover"), dir("l")),
         "checker" => (k("checker"), dir("horz")),
@@ -47,14 +58,22 @@ fn transition_from_xml_raw(e: &El) -> Option<(String, String)> {
         "switch" => (k("switch"), dir("r")),
         "flip" => (k("flip"), dir("r")),
         "ripple" => (k("ripple"), dir("center")),
-        "doors" => (k("doors"), dir("vert")),
-        "window" => (k("window"), dir("vert")),
+        "doors" => (k("doors"), dir("horz")),
+        "window" => (k("window"), dir("horz")),
         "ferris" => (k("ferris"), dir("l")),
         "gallery" => (k("gallery"), dir("l")),
         "conveyor" => (k("conveyor"), dir("l")),
-        "pan" => (k("pan"), dir("d")),
-        "glitter" => (k("glitter"), dir("l")),
-        "shred" => (k("shred"), if e.attr("pattern") == Some("crush") { k("particles") } else { k("strips") }),
+        "pan" => (k("pan"), dir("l")),
+        "glitter" => {
+            let d = dir("l");
+            if e.attr("pattern") == Some("hexagon") { (k("glitter"), format!("hex{}", d.to_ascii_uppercase())) } else { (k("glitter"), d) }
+        }
+        "shred" => {
+            // `crush` is what DeckCraft wrote before it knew PowerPoint's `rectangle`.
+            let particles = matches!(e.attr("pattern"), Some("rectangle" | "crush"));
+            let out = e.attr("dir") == Some("out");
+            (k("shred"), format!("{}{}", if particles { "particles" } else { "strips" }, if out { "Out" } else { "In" }))
+        }
         "reveal" => {
             let black = e.bool("thruBlk") == Some(true);
             let right = e.attr("dir") == Some("r");
@@ -78,11 +97,16 @@ fn transition_from_xml_raw(e: &El) -> Option<(String, String)> {
         }
         "prstTrans" => {
             let prst = e.attr("prst").unwrap_or("fallOver");
+            let inv = e.bool("invX") == Some(true);
+            if prst == "pageCurlSingle" {
+                return Some((k("pageCurlDouble"), if inv { k("singleR") } else { k("singleL") }));
+            }
             let known = deckcraft_model::anim::TRANSITIONS.iter().any(|t| t.0 == prst);
             if !known {
                 return None;
             }
-            (k(prst), if e.bool("invX") == Some(true) { k("r") } else { k("l") })
+            let left = if INVX_LEFT.contains(&prst) { inv } else { !inv };
+            (k(prst), if left { k("l") } else { k("r") })
         }
         "morph" => (
             k("morph"),
@@ -119,7 +143,10 @@ pub fn transition_to_xml(w: &mut W, kind: &str, option: &str) -> Option<&'static
         "fade" => w.empty("p:fade", A::new().t("thruBlk", option == "throughBlack")),
         "cut" => w.empty("p:cut", A::new().t("thruBlk", option == "throughBlack")),
         "push" => w.empty("p:push", A::new().a("dir", lrud("u"))),
-        "wipe" => w.empty("p:wipe", A::new().a("dir", lrud("r"))),
+        "wipe" => match option {
+            "lu" | "ru" | "ld" | "rd" => w.empty("p:strips", A::new().a("dir", option)),
+            _ => w.empty("p:wipe", A::new().a("dir", lrud("r"))),
+        },
         "split" => {
             let (o, d) = match option {
                 "vertIn" => ("vert", "in"),
@@ -136,7 +163,13 @@ pub fn transition_to_xml(w: &mut W, kind: &str, option: &str) -> Option<&'static
             "in" | "out" => w.empty("p:zoom", A::new().a("dir", option)),
             _ => w.empty0("p:circle"),
         },
-        "zoom" => w.empty("p:zoom", A::new().a("dir", if option == "out" { "out" } else { "in" })),
+        "zoom" => match option {
+            "rotate" => w.empty0("p:newsflash"),
+            _ => {
+                w.empty("p14:warp", A::new().a("dir", if option == "out" { "out" } else { "in" }));
+                return Some("p14");
+            }
+        },
         "uncover" => w.empty("p:pull", A::new().a("dir", eight("l"))),
         "cover" => w.empty("p:cover", A::new().a("dir", eight("l"))),
         "checker" => w.empty("p:checker", A::new().a("dir", hv("horz"))),
@@ -160,9 +193,15 @@ pub fn transition_to_xml(w: &mut W, kind: &str, option: &str) -> Option<&'static
             w.empty0("p14:flash");
             return Some("p14");
         }
-        "vortex" | "glitter" => {
-            let name = if kind == "vortex" { "p14:vortex" } else { "p14:glitter" };
-            w.empty(name, A::new().a("dir", lrud("l")));
+        "vortex" => {
+            w.empty("p14:vortex", A::new().a("dir", lrud("l")));
+            return Some("p14");
+        }
+        "glitter" => {
+            let hex = option.starts_with("hex");
+            let d = option.trim_start_matches("hex").to_ascii_lowercase();
+            let d = if matches!(d.as_str(), "l" | "r" | "u" | "d") { d } else { "l".to_string() };
+            w.empty("p14:glitter", A::new().a("dir", d).o("pattern", hex.then_some("hexagon")));
             return Some("p14");
         }
         "switch" | "flip" | "gallery" | "conveyor" | "ferris" => {
@@ -194,7 +233,11 @@ pub fn transition_to_xml(w: &mut W, kind: &str, option: &str) -> Option<&'static
             return Some("p14");
         }
         "shred" => {
-            w.empty("p14:shred", A::new().a("pattern", if option == "particles" { "crush" } else { "strip" }));
+            let particles = option.starts_with("particles");
+            w.empty(
+                "p14:shred",
+                A::new().a("pattern", if particles { "rectangle" } else { "strip" }).a("dir", if option.ends_with("Out") { "out" } else { "in" }),
+            );
             return Some("p14");
         }
         "reveal" => {
@@ -215,8 +258,13 @@ pub fn transition_to_xml(w: &mut W, kind: &str, option: &str) -> Option<&'static
             );
             return Some("p14");
         }
+        "pageCurlDouble" if option.starts_with("single") => {
+            w.empty("p15:prstTrans", A::new().a("prst", "pageCurlSingle").t("invX", option == "singleR"));
+            return Some("p15");
+        }
         "fallOver" | "drape" | "curtains" | "wind" | "prestige" | "fracture" | "crush" | "peelOff" | "pageCurlDouble" | "airplane" | "origami" => {
-            w.empty("p15:prstTrans", A::new().a("prst", kind).t("invX", option == "r"));
+            let inv = if INVX_LEFT.contains(&kind) { option == "l" } else { option == "r" };
+            w.empty("p15:prstTrans", A::new().a("prst", kind).t("invX", inv));
             return Some("p15");
         }
         "morph" => {
@@ -256,6 +304,12 @@ const SUBTYPES: &[(&str, &[(&str, u32)])] = &[
     ("blinds", HV),
     ("swivel", HV),
     ("swivelOut", HV),
+    ("blindsOut", HV),
+    ("boxOut", INOUT),
+    ("checkerboardOut", &[("across", 10), ("down", 5)]),
+    ("diamondOut", INOUT),
+    ("peekOut", DIR4),
+    ("stripsOut", &[("lu", 9), ("ru", 3), ("ld", 12), ("rd", 6)]),
     ("checkerboard", &[("across", 10), ("down", 5)]),
     ("wheel", WHEEL),
     ("wheelOut", WHEEL),
@@ -304,6 +358,10 @@ pub fn fallback_effect(class: AnimClass) -> &'static str {
 
 /// The preset id to write for an animation.
 pub fn preset_for(a: &deckcraft_model::Animation) -> u32 {
+    // Float Down is PowerPoint's preset 47 (Float Up is 42).
+    if matches!(a.effect.as_str(), "float" | "floatOut") && a.option == "d" {
+        return 47;
+    }
     if let Some(p) = a.preset_id {
         let consistent = match effect_for_preset(a.class, p) {
             Some(e) => e == a.effect,
@@ -329,6 +387,25 @@ mod tests {
     use super::*;
     use crate::xml::parse;
 
+    /// #147: these exits, with their directions, fell back to a plain fade (PowerPoint's ids).
+    #[test]
+    fn exit_presets_import_as_their_own_effects() {
+        for (preset, sub, effect, option) in [
+            (3, 10, "blindsOut", "horz"),
+            (4, 32, "boxOut", "out"),
+            (5, 5, "checkerboardOut", "down"),
+            (8, 16, "diamondOut", "in"),
+            (12, 4, "peekOut", "b"),
+            (18, 6, "stripsOut", "rd"),
+            (37, 0, "sinkDown", ""),
+            (49, 0, "spinnerOut", ""),
+            (55, 0, "contract", ""),
+        ] {
+            let e = effect_for_preset(AnimClass::Exit, preset).expect("known exit");
+            assert_eq!((e, option_from_subtype(e, sub).as_str()), (effect, option), "preset {preset}");
+        }
+    }
+
     #[test]
     fn every_transition_kind_round_trips() {
         for (kind, _, _, _, opts) in deckcraft_model::anim::TRANSITIONS {
@@ -342,16 +419,7 @@ mod tests {
                 assert!(!ns.is_empty());
                 let d = parse(w.s.as_bytes()).unwrap();
                 let (k, opt) = transition_from_xml(&d.root).unwrap_or_else(|| panic!("no read for {kind}"));
-                // `shape` in/out are written as zoom; everything else must come back.
-                if *kind == "shape" && (o == "in" || o == "out") {
-                    assert_eq!(k, "zoom");
-                    continue;
-                }
                 assert_eq!(k, *kind, "kind for {kind}/{o}");
-                // PresentationML wipes have no diagonal directions.
-                if *kind == "wipe" && o.len() == 2 {
-                    continue;
-                }
                 if !o.is_empty() {
                     assert_eq!(opt, o, "option for {kind}");
                 }
@@ -366,5 +434,16 @@ mod tests {
         assert_eq!(option_from_subtype("fade", 0), "");
         assert_eq!(effect_for_preset(AnimClass::Entrance, 2), Some("fly"));
         assert_eq!(effect_for_preset(AnimClass::Emphasis, 8), Some("spin"));
+    }
+
+    /// PowerPoint's own ids: Darken is 24 and Desaturate 25 (read back from its saved file).
+    #[test]
+    fn darken_and_desaturate_use_powerpoints_ids() {
+        assert_eq!(effect_for_preset(AnimClass::Emphasis, 24), Some("darken"));
+        assert_eq!(effect_for_preset(AnimClass::Emphasis, 25), Some("desaturate"));
+        for (effect, id) in [("darken", 24), ("desaturate", 25)] {
+            let a = deckcraft_model::Animation { class: AnimClass::Emphasis, effect: effect.into(), ..Default::default() };
+            assert_eq!(preset_for(&a), id, "{effect}");
+        }
     }
 }

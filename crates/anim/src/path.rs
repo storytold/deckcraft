@@ -49,7 +49,7 @@ fn tokenize(s: &str) -> Vec<Tok> {
                     n1.is_ascii_digit() || ((n1 == '-' || n1 == '+') && n2.is_ascii_digit())
                 } {
                     i += 2;
-                    while cs.get(i).is_some_and(|d| d.is_ascii_digit()) {
+                    while cs.get(i).is_some_and(char::is_ascii_digit) {
                         i += 1;
                     }
                     break;
@@ -288,6 +288,27 @@ pub fn default_path(effect: &str, option: &str) -> String {
             }
         },
         "loops" => "M 0 0 C 0.08 -0.1 0.16 0 0.08 0.05 C 0 0.1 -0.08 0.1 -0.08 0 C -0.08 -0.1 0 -0.05 0 0 E".into(),
-        _ => String::new(),
+        other => deckcraft_model::anim::preset_path(other).unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod preset_path_tests {
+    use super::*;
+
+    #[test]
+    fn every_extra_motion_path_preset_starts_at_its_shape_and_moves() {
+        use deckcraft_model::anim::{ANIMATIONS, AnimClass, preset_path};
+        let extra: Vec<_> = ANIMATIONS.iter().filter(|a| a.2 == AnimClass::Path && preset_path(a.0).is_some()).collect();
+        assert!(extra.len() >= 30);
+        for a in extra {
+            assert_eq!(default_path(a.0, ""), preset_path(a.0).unwrap_or_default());
+            let mp = MotionPath::parse(&default_path(a.0, ""));
+            let (x, y) = mp.at(0.0);
+            assert!(x.abs() < 1e-9 && y.abs() < 1e-9, "{} starts at its shape", a.0);
+            let far = mp.points.iter().map(|p| p.0.abs() + p.1.abs()).fold(0.0, f64::max);
+            assert!(far > 0.05, "{} moves", a.0);
+            assert!(mp.points.iter().all(|p| p.0.abs() < 0.5 && p.1.abs() < 0.5), "{} stays near its shape", a.0);
+        }
     }
 }

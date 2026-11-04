@@ -1,6 +1,10 @@
 //! The slide canvas: the rendered slide, zoom and fit, pointer input routed to the engine's tools,
 //! and the overlays drawn on top (selection box and handles, smart guides, marquee, drawing
 //! previews, the text caret and text selection).
+//!
+//! As in PowerPoint's Normal view, shapes, pictures and text that sit partly or wholly off the
+//! slide are drawn on the area around it (the pasteboard), where they can be selected and moved;
+//! the slide show, exports and thumbnails clip to the slide.
 
 use deckcraft_engine::tools::{Hit, box_handles};
 use deckcraft_engine::{Mods, PointerEvent, PointerKind, Target, ToolKind};
@@ -10,6 +14,32 @@ use serde_json::json;
 
 use crate::SlideApp;
 use crate::theme::{self, Tokens};
+
+mod context_menu;
+mod guides;
+mod ime;
+mod input;
+mod media;
+mod overlays;
+mod rulers;
+mod scroll;
+
+use context_menu::context_menu;
+use guides::{draw_grid, draw_guides, grid_line_step};
+pub use ime::ime_area;
+use ime::ime_output;
+#[cfg(test)]
+use input::resize_cursor;
+pub(crate) use input::{page_flick, trackpad_twist};
+use input::{pointer, trackpad_scroll, wheel_slide_target};
+use media::{gif_buttons, media_bar, media_frames};
+use overlays::overlays;
+#[cfg(test)]
+pub(crate) use overlays::text_marks;
+#[cfg(test)]
+pub(crate) use rulers::ruler_steps;
+use rulers::{ruler, ruler_markers};
+use scroll::{scroll_bar, visible_region};
 
 /// Slide-to-screen mapping.
 #[derive(Clone, Copy, Debug)]
@@ -34,10 +64,14 @@ fn mods(ui: &Ui) -> Mods {
 /// The slide's rect on screen for the current zoom.
 pub fn layout(app: &SlideApp, avail: Rect) -> (Rect, f32) {
     let Some(d) = app.session.active() else { return (avail, 1.0) };
-    let (sw, sh) = (d.doc.slide_size.width as f32, d.doc.slide_size.height as f32);
+    let page = deckcraft_engine::page_size(d);
+    // Loaded sizes are repaired; a zero or non-finite side would still make the fit infinite.
+    let side = |v: f64| if v.is_finite() { (v as f32).max(1.0) } else { 1.0 };
+    let (sw, sh) = (side(page.width), side(page.height));
     let margin = 28.0;
     let fit = ((avail.width() - margin * 2.0) / sw).min((avail.height() - margin * 2.0) / sh).max(0.05);
-    let scale = app.ui.zoom.unwrap_or(fit);
+    // A zoom from outside the editor's own controls (settings, the control protocol) is kept in range.
+    let scale = app.ui.zoom.filter(|z| z.is_finite() && *z > 0.0).map_or(fit, |z| z.clamp(*crate::ZOOM_RANGE.start(), *crate::ZOOM_RANGE.end()));
     let size = vec2(sw * scale, sh * scale);
     let mut r = Rect::from_center_size(avail.center(), size);
     if size.x > avail.width() {
@@ -49,138 +83,277 @@ pub fn layout(app: &SlideApp, avail: Rect) -> (Rect, f32) {
     (r, scale)
 }
 
+/// The mouse wheel or a trackpad flick turns slides when the canvas has nothing to scroll.
+fn wheel_navigation(app: &mut SlideApp, ui: &mut Ui, carry_id: egui::Id, doc_uid: u64) {
+    if app.anim_preview_active() || app.session.tool.marquee.is_some() || app.session.tool.dragging() {
+        return;
+    }
+    let (_, mut carry): (u64, f32) = ui.data_mut(|d| d.get_temp(carry_id).unwrap_or_default());
+    let wheel_step = app.session.active().and_then(|d| {
+        let current = d.selection.slide;
+        ui.input(|i| wheel_slide_target(&i.events, current, d.doc.slides.len(), &mut carry)).map(|target| (current, target))
+    });
+    ui.data_mut(|d| d.insert_temp(carry_id, (doc_uid, carry)));
+    if let Some((current, index)) = wheel_step {
+        if index != current {
+            let _ = app.run("slide.go", json!({"index": index}));
+        }
+    } else if let Some(next) = page_flick(ui.input(|i| trackpad_scroll(&i.events))) {
+        // Point-based trackpad gestures keep their cooldown. Raw input avoids reading
+        // the smoothed tail of a discrete mouse notch as another page turn.
+        let gate = ui.scope_id().with("wheel_gate");
+        let last: f64 = ui.data_mut(|d| d.get_temp(gate).unwrap_or(f64::NEG_INFINITY));
+        let now = ui.input(|i| i.time);
+        if now - last > 0.35 {
+            ui.data_mut(|d| d.insert_temp(gate, now));
+            let _ = app.run(if next { "slide.next" } else { "slide.previous" }, json!({}));
+        }
+    }
+}
+
+fn empty_deck_prompt(app: &mut SlideApp, ui: &mut Ui, avail: Rect, t: &Tokens) {
+    let resp = ui.allocate_rect(avail, Sense::click());
+    ui.painter().text(avail.center(), Align2::CENTER_CENTER, "Click to add first slide", theme::font(22.0), t.text_dim);
+    if resp.clicked() {
+        let _ = app.run("slide.new", json!({"layout": "title"}));
+    }
+}
+
+fn reset_wheel_carry(ui: &Ui, carry_id: egui::Id, doc_uid: u64) {
+    ui.data_mut(|d| {
+        if d.get_temp::<(u64, f32)>(carry_id).is_none_or(|(uid, _)| uid != doc_uid) {
+            d.insert_temp(carry_id, (doc_uid, 0.0_f32));
+        }
+    });
+}
+
+/// The scroll offset that keeps the slide point under `pointer` (or the canvas middle) fixed
+/// when the scale changed since the last frame.
+fn anchored_offset(last: Option<(Rect, f32)>, content_rect: Rect, scale: f32, pointer: Option<Pos2>, avail: Rect) -> Option<egui::Vec2> {
+    let (last_rect, last_scale) = last?;
+    if (scale - last_scale).abs() <= 1e-6 {
+        return None;
+    }
+    let anchor = pointer.unwrap_or(avail.center());
+    let at = (anchor - last_rect.min) / last_scale;
+    Some(content_rect.min + at * scale - anchor)
+}
+
+fn slide_gifs(app: &mut SlideApp, now: f64) -> Vec<crate::media::Gif> {
+    match app.session.active() {
+        Some(d) if d.selection.target == Target::Slides => app.media.gifs(d.uid, &d.doc, d.selection.slide, now, &app.session.gif_paused),
+        _ => vec![],
+    }
+}
+
+/// Paint the editing canvas, including rulers, selection handles, overlays, and current
+/// zoom/scroll state.
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let avail = ui.available_rect_before_wrap();
     app.canvas_rect = Some(avail);
     let Some(st) = app.session.active() else { return };
+    // The leftover fraction of a wheel line belongs to one presentation. Drop it whenever another
+    // one is drawn here, hovered or not, so switching away and back starts from zero.
+    let carry_id = ui.scope_id().with("wheel_carry");
+    let doc_uid = st.uid;
+    reset_wheel_carry(ui, carry_id, doc_uid);
     if st.doc.slides.is_empty() && st.selection.target == Target::Slides {
-        let resp = ui.allocate_rect(avail, Sense::click());
-        ui.painter().text(avail.center(), Align2::CENTER_CENTER, "Click to add first slide", theme::font(22.0), t.text_dim);
-        if resp.clicked() {
-            let _ = app.run("slide.new", json!({"layout": "title"}));
-        }
+        empty_deck_prompt(app, ui, avail, &t);
         return;
     }
-    let (content_rect, scale) = layout(app, avail);
     // Scroll when zoomed beyond the window.
-    let scroll_id = ui.id().with("canvas_scroll");
+    let scroll_id = ui.scope_id().with("canvas_scroll");
+    let last_id = scroll_id.with("last");
     let mut offset: egui::Vec2 = ui.data_mut(|d| d.get_temp(scroll_id).unwrap_or_default());
-    let overflow = vec2((content_rect.width() + 56.0 - avail.width()).max(0.0), (content_rect.height() + 56.0 - avail.height()).max(0.0));
+    let last: Option<(Rect, f32)> = ui.data_mut(|d| d.get_temp(last_id));
     let resp = ui.allocate_rect(avail, Sense::click_and_drag());
-    let (wheel, zoom_delta, pinch_pos) = ui.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos()));
-    if resp.hovered() {
-        if (zoom_delta - 1.0).abs() > 1e-3 {
-            let cur = app.ui.zoom.unwrap_or(scale);
-            app.ui.zoom = Some((cur * zoom_delta).clamp(0.1, 4.0));
-            let _ = pinch_pos;
-        } else if overflow != egui::Vec2::ZERO {
-            offset -= wheel;
-        } else if wheel.y.abs() > 18.0 && app.session.tool.marquee.is_none() && !app.session.tool.dragging() {
-            // Wheel over a fitted slide pages through slides (like PowerPoint).
-            let id = if wheel.y < 0.0 { "slide.next" } else { "slide.previous" };
-            let gate = ui.id().with("wheel_gate");
-            let last: f64 = ui.data_mut(|d| d.get_temp(gate).unwrap_or(0.0));
-            let now = ui.input(|i| i.time);
-            if now - last > 0.35 {
-                ui.data_mut(|d| d.insert_temp(gate, now));
-                let _ = app.run(id, json!({}));
+    let (wheel, zoom_delta, hover) = ui.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos()));
+    let zooming = resp.hovered() && (zoom_delta - 1.0).abs() > 1e-3;
+    if zooming {
+        let cur = app.ui.zoom.unwrap_or_else(|| layout(app, avail).1);
+        app.ui.zoom = Some((cur * zoom_delta).clamp(0.1, 4.0));
+    }
+    let (content_rect, scale) = layout(app, avail);
+    // A new zoom keeps the slide point under the pointer (wheel, pinch) or under the middle of the
+    // canvas (Zoom In/Out, the slider) where it was, instead of growing from the corner (#106).
+    if let Some(o) = anchored_offset(last, content_rect, scale, zooming.then_some(hover).flatten(), avail) {
+        offset = o;
+    }
+    let overflow = vec2((content_rect.width() + 56.0 - avail.width()).max(0.0), (content_rect.height() + 56.0 - avail.height()).max(0.0));
+    // Scroll bars on the axes that overflow (#1157). They sit over the canvas edge and take their
+    // presses before the slide does; the rulers keep their strips.
+    let inset = if app.ui.ruler { 16.0 } else { 0.0 };
+    let mut on_bar = false;
+    let mut bar_active = [false; 2];
+    for axis in 0..2 {
+        let Some((track, thumb, travel)) = scroll_bar(avail, inset, overflow, offset, axis) else { continue };
+        let bar_id = scroll_id.with(("bar", axis));
+        let bar = ui.interact(track, bar_id, Sense::click_and_drag());
+        on_bar |= bar.hovered();
+        bar_active[axis] = bar.hovered() || bar.dragged();
+        // Where the button went down and the offset then: egui calls a press a click until it
+        // moves 6 pt, so the release point can't tell the thumb from the track, and drag_delta
+        // misses those first points.
+        let grab_id = bar_id.with("grab");
+        if bar.is_pointer_button_down_on()
+            && let Some(origin) = ui.input(|i| i.pointer.primary_pressed().then(|| i.pointer.press_origin()).flatten())
+        {
+            ui.data_mut(|d| d.insert_temp(grab_id, (origin, offset[axis])));
+        }
+        let grab: Option<(Pos2, f32)> = ui.data_mut(|d| d.get_temp(grab_id));
+        if let Some((origin, start)) = grab {
+            if bar.dragged_by(egui::PointerButton::Primary)
+                && travel > 0.0
+                && let Some(p) = bar.interact_pointer_pos()
+            {
+                if last.is_some_and(|(_, s)| (scale - s).abs() > 1e-6) {
+                    // A zoom during the drag moved the slide about its anchor: carry on from there.
+                    ui.data_mut(|d| d.insert_temp(grab_id, (p, offset[axis])));
+                } else {
+                    offset[axis] = start + (p[axis] - origin[axis]) * overflow[axis] / travel;
+                }
+            } else if bar.clicked() && !thumb.contains(origin) {
+                // A click on the track beside the thumb moves one window's length toward it.
+                let page = avail.size()[axis] * 0.9;
+                offset[axis] += if origin[axis] < thumb.min[axis] { -page } else { page };
             }
+            if bar.drag_stopped() || bar.clicked() {
+                ui.data_mut(|d| d.remove_temp::<(Pos2, f32)>(grab_id));
+            }
+        }
+    }
+    if (resp.hovered() || on_bar) && !zooming {
+        if overflow != egui::Vec2::ZERO {
+            offset -= wheel;
+        } else {
+            wheel_navigation(app, ui, carry_id, doc_uid);
         }
     }
     offset.x = offset.x.clamp(0.0, overflow.x);
     offset.y = offset.y.clamp(0.0, overflow.y);
-    ui.data_mut(|d| d.insert_temp(scroll_id, offset));
-    let slide_rect = content_rect.translate(-offset);
+    // On the physical pixel grid, so the slide texture is one texel per device pixel (#184). The
+    // zoom anchor keeps the unsnapped rect, so snapping never accumulates into drift.
+    let ppp = ui.ctx().pixels_per_point();
+    let exact_rect = content_rect.translate(-offset);
+    let slide_rect = crate::textures::device_pixel_rect(exact_rect, ppp);
+    ui.data_mut(|d| {
+        d.insert_temp(scroll_id, offset);
+        d.insert_temp(last_id, (exact_rect, scale));
+    });
     app.slide_rect = Some(slide_rect);
     app.canvas_scale = scale;
     let xf = Xf { origin: slide_rect.min, scale };
     let painter = ui.painter_at(avail);
     // Shadow + slide.
     painter.rect_filled(slide_rect.translate(vec2(0.0, 1.5)).expand(1.0), CornerRadius::same(2), t.shadow);
-    let ppp = ui.ctx().pixels_per_point();
     let px = ((slide_rect.width() * ppp).round().max(1.0) as u32, (slide_rect.height() * ppp).round().max(1.0) as u32);
     let now = ui.input(|i| i.time);
-    let gifs = match app.session.active() {
-        Some(d) if d.selection.target == Target::Slides => app.media.gifs(&d.doc, d.selection.slide, now, &app.session.gif_paused),
-        _ => vec![],
-    };
+    let gifs = slide_gifs(app, now);
     crate::media::gif_repaint(ui.ctx(), &gifs);
     let times: Vec<_> = gifs.iter().map(|g| (g.id, g.t)).collect();
+    let anim = app.anim_preview_draw();
     let st = app.session.active();
+    // One texture pixel in screen points, and the canvas in pixels from the slide's corner.
+    let pixel = vec2(slide_rect.width() / px.0 as f32, slide_rect.height() / px.1 as f32);
+    let visible = visible_region(avail, slide_rect, pixel);
+    let typing_into = st.and_then(|d| d.selection.text.as_ref()).filter(|t| !t.notes).map(|t| t.shape);
     let tex = match st.map(|d| (d.selection.target, d)) {
         Some((Target::Slides, d)) => {
             let idx = d.selection.slide;
             let doc = d.doc.clone();
-            app.textures.slide(ui.ctx(), &doc, idx, px, true, crate::media::gif_key(&gifs), app.ui.grayscale, &times)
+            let frame = anim.as_ref().map(|(tl, t)| (tl, *t));
+            app.textures.slide(ui.ctx(), &doc, idx, px, visible, true, crate::media::gif_key(&gifs), app.ui.grayscale, &times, typing_into, frame)
         }
-        Some((Target::Master { master }, d)) => master_tex(ui.ctx(), &d.doc, master, None, px),
-        Some((Target::Layout { master, layout }, d)) => master_tex(ui.ctx(), &d.doc, master, Some(layout), px),
+        Some((Target::Master { master }, d)) => master_tex(ui.ctx(), &d.doc, master, None, px, visible, typing_into),
+        Some((Target::Layout { master, layout }, d)) => master_tex(ui.ctx(), &d.doc, master, Some(layout), px, visible, typing_into),
+        Some((t @ (Target::Handout | Target::NotesMaster), d)) => {
+            deckcraft_engine::master_page(&d.doc, t).and_then(|p| master_tex(ui.ctx(), &p, 0, None, px, visible, typing_into))
+        }
         None => None,
     };
-    if let Some(tex) = tex {
-        painter.image(tex.id(), slide_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+    if let Some((tex, region)) = tex {
+        let at = Rect::from_min_size(
+            slide_rect.min + vec2(region.x as f32 * pixel.x, region.y as f32 * pixel.y),
+            vec2(region.w as f32 * pixel.x, region.h as f32 * pixel.y),
+        );
+        app.canvas_region = Some(at);
+        painter.image(tex.id(), at, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
     app.perf.render_ms = app.textures.last_render_ms;
     media_frames(app, &painter, xf);
-    if app.ui.gridlines {
-        let step = 72.0 / 2.0 * scale;
-        let mut x = slide_rect.min.x + step;
-        while x < slide_rect.max.x {
-            painter.line_segment([pos2(x, slide_rect.min.y), pos2(x, slide_rect.max.y)], Stroke::new(0.5, Color32::from_black_alpha(40)));
-            x += step;
-        }
-        let mut y = slide_rect.min.y + step;
-        while y < slide_rect.max.y {
-            painter.line_segment([pos2(slide_rect.min.x, y), pos2(slide_rect.max.x, y)], Stroke::new(0.5, Color32::from_black_alpha(40)));
-            y += step;
+    // Notes Master view: the current slide inside the slide-image placeholder, as in PowerPoint.
+    let notes_preview = app.session.active().filter(|d| d.selection.target == Target::NotesMaster).and_then(|d| {
+        let frame = d.doc.notes_master.as_ref()?.shapes.iter().find(|s| s.ph_type() == Some(deckcraft_model::PhType::SlideImage))?.xfrm?;
+        Some((d.doc.clone(), d.selection.slide.min(d.doc.slides.len().saturating_sub(1)), frame))
+    });
+    if let Some((doc, idx, f)) = notes_preview
+        && f.w > 1.0
+        && f.h > 1.0
+    {
+        let aspect = doc.slide_size.width / doc.slide_size.height.max(1.0);
+        let (w, h) = if f.w / f.h > aspect { (f.h * aspect, f.h) } else { (f.w, f.w / aspect) };
+        let (x, y) = (f.x + (f.w - w) / 2.0, f.y + (f.h - h) / 2.0);
+        let r = Rect::from_min_size(
+            pos2(slide_rect.min.x + x as f32 * scale, slide_rect.min.y + y as f32 * scale),
+            vec2(w as f32 * scale, h as f32 * scale),
+        );
+        let mut budget = 2;
+        if let Some(tex) = app.textures.thumb(ui.ctx(), &doc, idx, (r.width() * ppp).round().max(1.0) as u32, &mut budget) {
+            painter.image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         }
     }
+    if let Some(d) = app.session.active().filter(|d| d.selection.target == Target::Handout) {
+        // Where the slides go on a printed handout, as in PowerPoint's preview.
+        let (n, s) = (d.doc.notes_size, d.doc.slide_size);
+        let aspect = s.width / s.height.max(1.0);
+        for b in deckcraft_engine::pdf::handout_boxes(app.ui.handout_per_page, (n.width, n.height), aspect) {
+            let r = Rect::from_min_max(
+                pos2(slide_rect.min.x + b.x0 as f32 * scale, slide_rect.min.y + b.y0 as f32 * scale),
+                pos2(slide_rect.min.x + b.x1 as f32 * scale, slide_rect.min.y + b.y1 as f32 * scale),
+            );
+            let dash = egui::Shape::dashed_line(
+                &[r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()],
+                Stroke::new(1.0, Color32::from_gray(140)),
+                4.0,
+                3.0,
+            );
+            painter.extend(dash);
+        }
+    }
+    if app.ui.gridlines
+        && let Some(step) = grid_line_step(app.session.prefs.grid_spacing, scale)
+    {
+        draw_grid(&painter, slide_rect, step);
+    }
+    app.session.tool.guides_visible = app.ui.guides;
     if app.ui.guides {
-        let c = slide_rect.center();
-        painter.line_segment(
-            [pos2(c.x, slide_rect.min.y), pos2(c.x, slide_rect.max.y)],
-            Stroke::new(1.0, Color32::from_rgba_unmultiplied(120, 120, 120, 160)),
-        );
-        painter.line_segment(
-            [pos2(slide_rect.min.x, c.y), pos2(slide_rect.max.x, c.y)],
-            Stroke::new(1.0, Color32::from_rgba_unmultiplied(120, 120, 120, 160)),
-        );
+        draw_guides(app, &painter, xf, slide_rect, &t);
     }
     if app.ui.ruler {
-        ruler(&painter, avail, slide_rect, scale, &t);
+        ruler(&painter, avail, slide_rect, scale, app.session.prefs.units, &t);
+        ruler_markers(app, ui, &painter, avail, xf, &t);
     }
     pointer(app, ui, &resp, xf);
-    overlays(app, ui, &painter, xf, &t);
-    media_bar(app, ui, xf);
-    gif_buttons(app, ui, xf, &gifs);
-    context_menu(app, &resp);
-}
-
-/// Play/pause on an animated GIF under the pointer or selected on its own.
-fn gif_buttons(app: &mut SlideApp, ui: &mut Ui, xf: Xf, gifs: &[crate::media::Gif]) {
-    let Some(d) = app.session.active() else { return };
-    if d.selection.text.is_some() || app.session.tool.dragging() {
-        return;
-    }
-    let only = if d.selection.shapes.len() == 1 { d.selection.shapes.first().copied() } else { None };
-    let pointer = ui.input(|i| i.pointer.hover_pos());
-    let mut toggle = None;
-    for g in gifs {
-        let r = screen_rect(xf, &g.rect);
-        if only != Some(g.id) && !pointer.is_some_and(|p| r.contains(p)) {
-            continue;
+    if !app.anim_preview_active() {
+        overlays(app, ui, &painter, xf, &t);
+        ime_output(app, ui, xf);
+        media_bar(app, ui, xf);
+        gif_buttons(app, ui, xf, &gifs);
+        if resp.secondary_clicked()
+            && let Some(p) = resp.interact_pointer_pos()
+        {
+            let word = app.session.active().and_then(|st| app.squiggles.word_at(st, xf.to_slide(p), 4.0 / xf.scale.max(0.01) as f64));
+            app.squiggles.menu_word = word;
         }
-        let b = crate::media::gif_button_rect(r);
-        // Sensing drags too keeps the press from reaching the canvas (selecting or moving the GIF).
-        let resp = ui.interact(b, ui.id().with(("gif_button", g.id.0)), Sense::click_and_drag());
-        crate::media::paint_gif_button(ui.painter(), b, g.paused, resp.hovered());
-        if resp.clicked() {
-            toggle = Some(g.id);
-        }
+        context_menu(app, &resp);
     }
-    if let Some(id) = toggle {
-        let _ = app.run("media.gifPlay", json!({"id": id}));
+    for (axis, active) in bar_active.into_iter().enumerate() {
+        if let Some((track, thumb, _)) = scroll_bar(avail, inset, overflow, offset, axis) {
+            painter.rect_filled(track, CornerRadius::ZERO, t.chrome);
+            let fill = if active { t.text_dim } else { t.text_faint };
+            painter.rect_filled(thumb.shrink(2.0), CornerRadius::same(3), fill);
+        }
     }
 }
 
@@ -189,422 +362,41 @@ fn screen_rect(xf: Xf, x: &Xfrm) -> Rect {
     Rect::from_min_max(xf.to_screen(Point::new(x.x, x.y)), xf.to_screen(Point::new(x.x + x.w, x.y + x.h)))
 }
 
-/// Video playing in the editor: its current frame over the poster.
-fn media_frames(app: &SlideApp, painter: &egui::Painter, xf: Xf) {
-    let Some(d) = app.session.active() else { return };
-    if d.selection.target != Target::Slides || !app.media.any_active() {
-        return;
-    }
-    for (id, x, clip) in crate::media::slide_media(&d.doc, d.selection.slide) {
-        if clip.video {
-            crate::media::paint_frame(painter, &app.media, id, screen_rect(xf, &x));
-        }
-    }
-}
-
-/// The play/pause and timeline bar under a selected audio or video (PowerPoint shows it on
-/// selection or hover).
-fn media_bar(app: &mut SlideApp, ui: &mut Ui, xf: Xf) {
-    let Some(d) = app.session.active() else { return };
-    if d.selection.target != Target::Slides || d.selection.text.is_some() || app.session.tool.dragging() {
-        return;
-    }
-    let pointer = ui.input(|i| i.pointer.hover_pos());
-    let media = crate::media::slide_media(&d.doc, d.selection.slide);
-    let pick = media.iter().find(|(id, _, _)| d.selection.shapes.len() == 1 && d.selection.shapes[0] == *id).or_else(|| {
-        media.iter().find(|(id, x, _)| {
-            let r = screen_rect(xf, x);
-            app.media.status(*id).is_some() || pointer.is_some_and(|p| r.expand2(vec2(0.0, 40.0)).contains(p))
-        })
-    });
-    let Some((id, x, clip)) = pick.cloned() else { return };
-    let doc = d.doc.clone();
-    let r = screen_rect(xf, &x);
-    let w = r.width().max(230.0);
-    let bar = Rect::from_min_size(pos2(r.center().x - w / 2.0, r.max.y + 6.0), vec2(w, 26.0));
-    let status = app.media.status(id);
-    match crate::media::control_bar(ui, bar, status.as_ref(), &clip) {
-        Some(crate::media::BarAction::Toggle) => app.media.toggle(&doc, id, &clip, crate::media::Owner::Editor),
-        Some(crate::media::BarAction::Seek(t)) => app.media.seek(&doc, id, &clip, t, crate::media::Owner::Editor),
-        Some(crate::media::BarAction::Nudge(dt)) => {
-            let pos = status.map(|s| s.position).unwrap_or(0.0);
-            app.media.seek(&doc, id, &clip, (pos + dt).max(0.0), crate::media::Owner::Editor);
-        }
-        None => {}
-    }
-}
-
 fn master_tex(
     ctx: &egui::Context,
     doc: &deckcraft_model::Presentation,
     master: usize,
     layout: Option<usize>,
     px: (u32, u32),
-) -> Option<egui::TextureHandle> {
+    visible: deckcraft_render::Region,
+    editing_text: Option<deckcraft_model::ShapeId>,
+) -> Option<(egui::TextureHandle, deckcraft_render::Region)> {
+    let scale = px.0 as f64 / doc.slide_size.width.max(1.0);
+    let region = crate::textures::fit_texture(
+        deckcraft_render::pasteboard_region(px, scale, deckcraft_render::layout_extent(doc, master, layout), visible),
+        visible,
+        crate::textures::max_side(ctx),
+    );
     let img = deckcraft_render::render_layout(
         doc,
         master,
         layout,
-        &deckcraft_render::RenderOpts { scale: px.0 as f64 / doc.slide_size.width.max(1.0), edit: true, size: Some(px), ..Default::default() },
+        &deckcraft_render::RenderOpts { scale, edit: true, editing_text, offset: region.offset(), size: Some(region.size()), ..Default::default() },
     );
-    Some(ctx.load_texture("master-canvas", crate::textures::to_color_image(&img, false), egui::TextureOptions::LINEAR))
+    Some((crate::textures::upload_editor(ctx, "master-canvas", crate::textures::to_color_image(&img, false)), region))
 }
 
-fn ruler(p: &egui::Painter, avail: Rect, slide: Rect, scale: f32, t: &Tokens) {
-    let top = Rect::from_min_max(avail.min, pos2(avail.max.x, avail.min.y + 16.0));
-    let left = Rect::from_min_max(avail.min, pos2(avail.min.x + 16.0, avail.max.y));
-    p.rect_filled(top, CornerRadius::ZERO, t.card);
-    p.rect_filled(left, CornerRadius::ZERO, t.card);
-    let inch = 72.0 * scale;
-    let mut k = 0;
-    loop {
-        let x = slide.min.x + k as f32 * inch / 4.0;
-        if x > slide.max.x {
-            break;
-        }
-        let h = if k % 4 == 0 {
-            8.0
-        } else if k % 2 == 0 {
-            5.0
-        } else {
-            3.0
-        };
-        p.line_segment([pos2(x, top.max.y - h), pos2(x, top.max.y)], Stroke::new(1.0, t.text_faint));
-        if k % 4 == 0 {
-            p.text(pos2(x + 2.0, top.min.y + 1.0), Align2::LEFT_TOP, format!("{}", k / 4), theme::font(8.0), t.text_dim);
-        }
-        k += 1;
-    }
-    let mut k = 0;
-    loop {
-        let y = slide.min.y + k as f32 * inch / 4.0;
-        if y > slide.max.y {
-            break;
-        }
-        let w = if k % 4 == 0 {
-            8.0
-        } else if k % 2 == 0 {
-            5.0
-        } else {
-            3.0
-        };
-        p.line_segment([pos2(left.max.x - w, y), pos2(left.max.x, y)], Stroke::new(1.0, t.text_faint));
-        k += 1;
-    }
-}
+pub(super) mod preview;
+pub mod squiggles;
+#[cfg(test)]
+mod tests;
 
-fn pointer(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) {
-    let tol = (4.0 / xf.scale) as f64;
-    let m = mods(ui);
-    let Some(pos) = resp.interact_pointer_pos().or(resp.hover_pos()) else { return };
-    let p = xf.to_slide(pos);
-    let ev = |kind| PointerEvent { kind, x: p.x, y: p.y, mods: m, tol };
-    let primary = ui.input(|i| i.pointer.primary_pressed());
-    if resp.hovered() && !app.session.tool.dragging() {
-        let _ = app.session.pointer(ev(PointerKind::Move));
-    }
-    let r = if resp.triple_clicked() {
-        app.session.pointer(ev(PointerKind::TripleClick))
-    } else if resp.double_clicked() {
-        app.session.pointer(ev(PointerKind::DoubleClick))
-    } else if primary && resp.hovered() && !resp.secondary_clicked() && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary)) {
-        app.session.pointer(ev(PointerKind::Down))
-    } else if resp.dragged_by(egui::PointerButton::Primary) || (app.session.tool.dragging() && ui.input(|i| i.pointer.primary_down())) {
-        app.session.pointer(ev(PointerKind::Drag))
-    } else if app.session.tool.dragging() && ui.input(|i| i.pointer.primary_released() || !i.pointer.primary_down()) {
-        app.session.pointer(ev(PointerKind::Up))
-    } else {
-        Ok(serde_json::Value::Null)
-    };
-    if let Err(e) = r {
-        app.set_status(e.to_string());
-    }
-    // Cursor.
-    let cursor = match (&app.session.tool.kind, &app.session.tool.hover) {
-        (ToolKind::Shape { .. }, _) => egui::CursorIcon::Crosshair,
-        (ToolKind::TextBox, _) => egui::CursorIcon::Text,
-        (ToolKind::Ink { .. }, _) => egui::CursorIcon::Crosshair,
-        (_, Some(Hit::Resize { handle, .. })) => match handle {
-            0 | 4 => egui::CursorIcon::ResizeNwSe,
-            2 | 6 => egui::CursorIcon::ResizeNeSw,
-            1 | 5 => egui::CursorIcon::ResizeVertical,
-            _ => egui::CursorIcon::ResizeHorizontal,
-        },
-        (_, Some(Hit::Rotate { .. })) => egui::CursorIcon::Alias,
-        (_, Some(Hit::Adjust { .. } | Hit::LineEnd { .. })) => egui::CursorIcon::PointingHand,
-        (_, Some(Hit::Shape { text: true, .. })) => {
-            if app.session.active().is_some_and(|d| d.selection.text.is_some()) {
-                egui::CursorIcon::Text
-            } else {
-                egui::CursorIcon::Move
-            }
-        }
-        (_, Some(Hit::Shape { .. })) => egui::CursorIcon::Move,
-        _ => egui::CursorIcon::Default,
-    };
-    if resp.hovered() {
-        ui.ctx().set_cursor_icon(cursor);
-    }
-    if app.session.tool.dragging() {
-        ui.ctx().request_repaint();
-    }
-}
+#[cfg(test)]
+mod ruler_tests;
 
-fn poly(p: &egui::Painter, pts: [Pos2; 4], stroke: Stroke) {
-    for i in 0..4 {
-        p.line_segment([pts[i], pts[(i + 1) % 4]], stroke);
-    }
-}
+#[cfg(test)]
+mod guides_tests;
 
-fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &Tokens) {
-    let Some(st) = app.session.active() else { return };
-    let sel_stroke = Stroke::new(1.0, t.selection);
-    let editing = st.selection.text.clone();
-    for id in &st.selection.shapes {
-        let Some(sh) = st.shape(*id) else { continue };
-        let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, sh);
-        let a = x.affine();
-        let corners = [Point::new(0.0, 0.0), Point::new(x.w, 0.0), Point::new(x.w, x.h), Point::new(0.0, x.h)].map(|q| xf.to_screen(a * q));
-        if sh.is_line() {
-            let (p0, p1) = (xf.to_screen(a * Point::new(0.0, 0.0)), xf.to_screen(a * Point::new(x.w, x.h)));
-            let glued = match sh.kind {
-                deckcraft_model::ShapeKind::Connector { start, end } => [start.is_some(), end.is_some()],
-                _ => [false, false],
-            };
-            for (q, g) in [p0, p1].into_iter().zip(glued) {
-                // Glued ends are filled with the accent, like attached connector ends.
-                let fill = if g { t.accent } else { t.handle_fill };
-                painter.circle(q, 4.5, fill, Stroke::new(1.0, if g { t.handle_fill } else { t.handle_stroke }));
-            }
-            continue;
-        }
-        let editing_this = editing.as_ref().is_some_and(|e| e.shape == *id && !e.notes);
-        if editing_this {
-            // Dashed box while editing text.
-            for i in 0..4 {
-                let (s, e) = (corners[i], corners[(i + 1) % 4]);
-                painter.add(egui::Shape::dashed_line(&[s, e], Stroke::new(1.0, t.selection), 4.0, 3.0));
-            }
-        } else {
-            poly(painter, corners, sel_stroke);
-        }
-        if st.selection.shapes.len() == 1 || !editing_this {
-            let (hs, rot) = box_handles(&x);
-            let rot_s = xf.to_screen(rot);
-            if !editing_this && sh.ph.as_ref().is_none_or(|_| true) {
-                let top_mid = xf.to_screen(hs[1]);
-                painter.line_segment([top_mid, rot_s], sel_stroke);
-                rotate_handle(painter, rot_s, t);
-            }
-            for h in hs {
-                painter.circle(xf.to_screen(h), 4.5, t.handle_fill, Stroke::new(1.0, t.handle_stroke));
-            }
-            let geo = deckcraft_render::shape_geometry(sh, x.w, x.h);
-            for hd in &geo.handles {
-                let q = xf.to_screen(a * hd.pos);
-                painter.circle(q, 4.5, Color32::from_rgb(0xFF, 0xD2, 0x3F), Stroke::new(1.0, Color32::from_rgb(0x8A, 0x6A, 0x00)));
-            }
-        }
-    }
-    // Caret / text selection.
-    if let Some(ts) = &editing
-        && !ts.notes
-        && ts.cell.is_none()
-        && let Some(sh) = st.shape(ts.shape)
-        && let Some(l) = deckcraft_engine::cmd::text::layout_for(st, ts)
-    {
-        let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, sh);
-        // Where the text is drawn: flips don't mirror it, vertical text is turned.
-        let tr = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
-        let m = deckcraft_render::text_transform(x.affine(), tr, l.rotation);
-        let (s0, s1) = ts.ordered();
-        for r in l.selection_rects(deckcraft_text::Pos { para: s0.0, ch: s0.1 }, deckcraft_text::Pos { para: s1.0, ch: s1.1 }) {
-            let pts = [Point::new(r.x0, r.y0), Point::new(r.x1, r.y0), Point::new(r.x1, r.y1), Point::new(r.x0, r.y1)].map(|q| xf.to_screen(m * q));
-            painter.add(egui::Shape::convex_polygon(pts.to_vec(), t.text_selection, Stroke::NONE));
-        }
-        if !ts.is_range() {
-            let blink = (ui.input(|i| i.time) * 1.6).fract() < 0.6;
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(300));
-            if blink && let Some((cx, top, bot)) = l.caret(deckcraft_text::Pos { para: ts.caret.0, ch: ts.caret.1 }) {
-                let (p0, p1) = (xf.to_screen(m * Point::new(cx, top)), xf.to_screen(m * Point::new(cx, bot)));
-                painter.line_segment([p0, p1], Stroke::new(1.5, t.caret));
-            }
-        }
-    }
-    // Table cell editing: outline the cell.
-    if let Some(ts) = &editing
-        && let (Some((r, c)), Some(sh)) = (ts.cell, st.shape(ts.shape))
-        && let deckcraft_model::ShapeKind::Table(tb) = &sh.kind
-    {
-        let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, sh);
-        let heights = deckcraft_engine::tools::table_rows(st, tb);
-        let y0: f64 = heights.iter().take(r).sum();
-        let x0: f64 = tb.cols.iter().take(c).sum();
-        let (w, h) = (tb.cols.get(c).copied().unwrap_or(0.0), heights.get(r).copied().unwrap_or(0.0));
-        let a = x.affine();
-        let pts = [Point::new(x0, y0), Point::new(x0 + w, y0), Point::new(x0 + w, y0 + h), Point::new(x0, y0 + h)].map(|q| xf.to_screen(a * q));
-        poly(painter, pts, Stroke::new(2.0, t.accent));
-    }
-    // Smart guides, marquee, previews.
-    for g in &app.session.tool.guides {
-        let (a, b) =
-            if g.vertical { (Point::new(g.pos, g.from), Point::new(g.pos, g.to)) } else { (Point::new(g.from, g.pos), Point::new(g.to, g.pos)) };
-        painter.add(egui::Shape::dashed_line(&[xf.to_screen(a), xf.to_screen(b)], Stroke::new(1.0, t.guide), 5.0, 3.0));
-    }
-    if let Some(m) = app.session.tool.marquee {
-        let r = Rect::from_two_pos(xf.to_screen(Point::new(m.x0, m.y0)), xf.to_screen(Point::new(m.x1, m.y1)));
-        painter.rect(
-            r,
-            CornerRadius::ZERO,
-            Color32::from_rgba_unmultiplied(80, 130, 230, 30),
-            Stroke::new(1.0, Color32::from_rgb(80, 130, 230)),
-            egui::StrokeKind::Inside,
-        );
-    }
-    if let Some(pv) = app.session.tool.preview {
-        draw_preview(app, painter, xf, pv, t);
-    }
-    // Freeform being drawn.
-    let path = &app.session.tool.path_preview;
-    if path.len() > 1 {
-        let pts: Vec<Point> = if app.session.tool.path_smooth && path.len() > 2 {
-            let d = deckcraft_engine::cmd::shape::freeform_path(path, false, true);
-            let mut v = vec![];
-            let bp = deckcraft_render::parse_path(&d);
-            deckcraft_geom::preset_flatten(&bp, &mut |el| match el {
-                deckcraft_geom::PathEl::MoveTo(q) | deckcraft_geom::PathEl::LineTo(q) => v.push(q),
-                _ => {}
-            });
-            v
-        } else {
-            path.clone()
-        };
-        painter.add(egui::Shape::line(pts.iter().map(|q| xf.to_screen(*q)).collect(), Stroke::new(1.5, t.accent)));
-        if app.session.tool.path_closing
-            && let Some(s0) = path.first()
-        {
-            painter.circle(xf.to_screen(*s0), 5.0, t.accent, Stroke::new(1.5, t.handle_fill));
-        }
-    }
-    // Connection sites of the shape under a connector end, and the site it would glue to.
-    for q in &app.session.tool.sites {
-        let c = xf.to_screen(*q);
-        painter.circle(c, 3.5, t.handle_fill, Stroke::new(1.0, t.handle_stroke));
-    }
-    if let Some(g) = app.session.tool.glue {
-        painter.circle(xf.to_screen(g), 5.0, t.accent, Stroke::new(1.5, t.handle_fill));
-    }
-    if app.session.tool.ink_preview.len() > 1
-        && let ToolKind::Ink { color, width, mode } = &app.session.tool.kind
-    {
-        let pts: Vec<Pos2> = app.session.tool.ink_preview.iter().map(|(x, y, _)| xf.to_screen(Point::new(*x, *y))).collect();
-        let c = theme::to_color32(*color);
-        let c = if mode == "highlighter" { c.gamma_multiply(0.45) } else { c };
-        painter.add(egui::Shape::line(pts, Stroke::new((*width as f32 * xf.scale).max(1.0), c)));
-    }
-}
-
-fn rotate_handle(p: &egui::Painter, c: Pos2, t: &Tokens) {
-    p.circle_filled(c, 6.0, t.handle_fill);
-    p.add(egui::Shape::Path(egui::epaint::PathShape {
-        points: (0..=20)
-            .map(|i| {
-                let a = -0.4 + i as f32 / 20.0 * 5.2;
-                pos2(c.x + 4.0 * a.cos(), c.y + 4.0 * a.sin())
-            })
-            .collect(),
-        closed: false,
-        fill: Color32::TRANSPARENT,
-        stroke: Stroke::new(1.3, t.handle_stroke).into(),
-    }));
-}
-
-fn draw_preview(app: &SlideApp, p: &egui::Painter, xf: Xf, x: Xfrm, t: &Tokens) {
-    let preset = match &app.session.tool.kind {
-        ToolKind::Shape { preset } => preset.clone(),
-        _ => "rect".into(),
-    };
-    if deckcraft_geom::preset::is_line_like(&preset) {
-        let a = x.affine();
-        p.line_segment([xf.to_screen(a * Point::new(0.0, 0.0)), xf.to_screen(a * Point::new(x.w, x.h))], Stroke::new(1.5, t.accent));
-        return;
-    }
-    let r = Rect::from_two_pos(xf.to_screen(Point::new(x.x, x.y)), xf.to_screen(Point::new(x.x + x.w, x.y + x.h)));
-    if r.width() < 1.0 || r.height() < 1.0 {
-        return;
-    }
-    crate::ribbon::paint_preset(p, r, &preset, t.accent.gamma_multiply(0.25), t.accent);
-}
-
-fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
-    resp.context_menu(|ui| {
-        let has_sel = app.session.active().is_some_and(|d| !d.selection.shapes.is_empty());
-        for (l, id) in [("Cut", "edit.cut"), ("Copy", "edit.copy"), ("Paste", "edit.paste")] {
-            if ui.add_enabled(crate::ribbon::enabled(app, id), egui::Button::new(l)).clicked() {
-                let _ = app.run(id, json!({}));
-                ui.close();
-            }
-        }
-        ui.separator();
-        if has_sel {
-            if ui.button("Edit Text").clicked() {
-                let _ = app.run("text.edit", json!({}));
-                ui.close();
-            }
-            ui.menu_button("Bring to Front", |ui| {
-                crate::ribbon::menu_item(app, ui, crate::icons::Icon::BringToFront, "Bring to Front", "arrange.bringToFront", json!({}));
-                crate::ribbon::menu_item(app, ui, crate::icons::Icon::BringForward, "Bring Forward", "arrange.bringForward", json!({}));
-            });
-            ui.menu_button("Send to Back", |ui| {
-                crate::ribbon::menu_item(app, ui, crate::icons::Icon::SendToBack, "Send to Back", "arrange.sendToBack", json!({}));
-                crate::ribbon::menu_item(app, ui, crate::icons::Icon::SendBackward, "Send Backward", "arrange.sendBackward", json!({}));
-            });
-            ui.menu_button("Group", |ui| {
-                crate::ribbon::menu_item(app, ui, crate::icons::Icon::Group, "Group", "arrange.group", json!({}));
-                crate::ribbon::menu_item(app, ui, crate::icons::Icon::Ungroup, "Ungroup", "arrange.ungroup", json!({}));
-            });
-            if ui.button("Link…").clicked() {
-                app.dialog = Some(crate::dialogs::Dialog::new("hyperlink"));
-                ui.close();
-            }
-            if ui.button("Edit Alt Text…").clicked() {
-                app.dialog = Some(crate::dialogs::Dialog::new("altText"));
-                ui.close();
-            }
-            if ui.button("Set as Default Shape").clicked() {
-                let _ = app.run("shape.setDefault", json!({}));
-                ui.close();
-            }
-            if ui.button("Format Shape…").clicked() {
-                let _ = app.run("view.pane", json!({"pane": "format"}));
-                ui.close();
-            }
-        } else {
-            ui.menu_button("Layout", |ui| {
-                let layouts: Vec<(String, u32)> = app
-                    .session
-                    .active()
-                    .and_then(|d| d.doc.masters.first().map(|m| m.layouts.iter().map(|l| (l.name.clone(), l.id.0)).collect()))
-                    .unwrap_or_default();
-                for (n, id) in layouts {
-                    if ui.button(n).clicked() {
-                        let _ = app.run("slide.layout", json!({"layout": id}));
-                        ui.close();
-                    }
-                }
-            });
-            if ui.button("Reset Slide").clicked() {
-                let _ = app.run("slide.reset", json!({}));
-                ui.close();
-            }
-            if ui.button("Format Background…").clicked() {
-                let _ = app.run("view.pane", json!({"pane": "background"}));
-                ui.close();
-            }
-            if ui.button("New Comment").clicked() {
-                app.dialog = Some(crate::dialogs::Dialog::new("comment"));
-                ui.close();
-            }
-        }
-    });
-}
+#[cfg(test)]
+#[path = "media_bar_tests.rs"]
+mod media_bar_tests;

@@ -1,6 +1,9 @@
 //! An in-process engine session that answers the engine-level control-channel methods itself.
 
 use deckcraft_engine::{Mods, PointerEvent, PointerKind, Session, ToolKind};
+use std::sync::Arc;
+
+use deckcraft_engine::file_access::{self, AutomationRoots};
 use serde_json::{Value, json};
 
 use crate::backend::Backend;
@@ -8,6 +11,7 @@ use crate::backend::Backend;
 /// Headless backend: a [`Session`] rendering slides on the CPU.
 pub struct Headless {
     pub session: Session,
+    roots: Option<Arc<AutomationRoots>>,
 }
 
 impl Default for Headless {
@@ -32,6 +36,7 @@ pub fn pointer_kind(k: &str) -> Option<PointerKind> {
         "move" => PointerKind::Move,
         "doubleclick" | "dblclick" => PointerKind::DoubleClick,
         "tripleclick" => PointerKind::TripleClick,
+        "contextclick" | "rightclick" => PointerKind::ContextClick,
         _ => return None,
     })
 }
@@ -58,12 +63,19 @@ pub fn tool_kind(name: &str, preset: Option<&str>) -> Option<ToolKind> {
 
 impl Headless {
     pub fn new() -> Self {
-        Self { session: Session::new() }
+        Self { session: Session::new(), roots: None }
     }
 
     /// A session with a fresh presentation.
     pub fn with_document() -> Self {
-        Self { session: Session::with_new() }
+        Self { session: Session::with_new(), roots: None }
+    }
+
+    /// Confine every file the session's commands read and write to `roots`
+    /// (`deckcraft-cli mcp --automation-read-root … --automation-write-root …`).
+    pub fn with_automation_roots(mut self, roots: Option<Arc<AutomationRoots>>) -> Self {
+        self.roots = roots;
+        self
     }
 
     fn exec(&mut self, id: &str, params: &Value) -> Result<Value, String> {
@@ -84,11 +96,13 @@ impl Headless {
         let mut last = Value::Null;
         for e in events {
             let kind = s(e, "kind").unwrap_or("");
-            let kind = pointer_kind(kind).ok_or_else(|| format!("unknown pointer kind `{kind}` (down|drag|up|move|doubleclick)"))?;
+            let kind = pointer_kind(kind)
+                .ok_or_else(|| format!("unknown pointer kind `{kind}` (down|drag|up|move|doubleclick|tripleclick|contextclick)"))?;
             let x = e.get("x").and_then(Value::as_f64).ok_or("pointer event needs `x`")?;
             let y = e.get("y").and_then(Value::as_f64).ok_or("pointer event needs `y`")?;
             let mods = e.get("mods").map(mods_from).unwrap_or(base);
-            last = self.session.pointer(PointerEvent { kind, x, y, mods, tol: 3.0 }).map_err(|e| e.to_string())?;
+            let pressure = e.get("pressure").and_then(Value::as_f64).map(|v| v as f32);
+            last = self.session.pointer(PointerEvent { kind, x, y, mods, tol: 3.0, pressure }).map_err(|e| e.to_string())?;
         }
         self.session.ui_requests.clear();
         Ok(json!({"result": last, "selection": self.session.active().map(|d| serde_json::to_value(&d.selection).unwrap_or_default())}))
@@ -106,9 +120,9 @@ impl Headless {
             i,
             &deckcraft_engine::render::RenderOpts { scale, edit: p.get("edit").and_then(Value::as_bool).unwrap_or(false), ..Default::default() },
         );
-        let png = img.to_png();
+        let png = img.to_png_at(deckcraft_engine::render::dpi_for_scale(scale));
         if let Some(path) = s(p, "path") {
-            std::fs::write(path, &png).map_err(|e| format!("{path}: {e}"))?;
+            deckcraft_engine::io::write_file(path, &png)?;
             return Ok(json!({"path": path, "width": img.width, "height": img.height}));
         }
         Ok(json!({"png": deckcraft_engine::cmd::base64_encode(&png), "width": img.width, "height": img.height, "slide": i}))
@@ -117,6 +131,19 @@ impl Headless {
 
 impl Backend for Headless {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let roots = self.roots.clone();
+        file_access::confine(roots.as_ref(), || self.answer(method, params))
+    }
+    fn has_ui(&self) -> bool {
+        false
+    }
+    fn describe(&self) -> String {
+        "headless (in-process engine; no window)".into()
+    }
+}
+
+impl Headless {
+    fn answer(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let p = &params;
         match method {
             "engine.execute" | "command" | "ui.menu.invoke" => {
@@ -149,11 +176,5 @@ impl Backend for Headless {
             m if m.starts_with("ui.") || m.starts_with("app.") => Err(format!("`{m}`: {NEEDS_APP}")),
             other => Err(format!("unknown method `{other}`")),
         }
-    }
-    fn has_ui(&self) -> bool {
-        false
-    }
-    fn describe(&self) -> String {
-        "headless (in-process engine; no window)".into()
     }
 }

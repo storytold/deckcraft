@@ -11,7 +11,9 @@ workspace = true
 [dependencies]
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
+deckcraft-metafile = { workspace = true }
 deckcraft-model = { workspace = true }
+deckcraft-anim = { workspace = true }
 deckcraft-fonts = { workspace = true }
 deckcraft-text = { workspace = true }
 vello_cpu = { workspace = true }
@@ -19,6 +21,7 @@ vello_common = { workspace = true }
 image = { workspace = true }
 log = { workspace = true }
 kurbo = { workspace = true }
+skrifa = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 vello_cpu = { workspace = true, features = ["multithreading"] }

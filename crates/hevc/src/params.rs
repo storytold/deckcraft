@@ -726,7 +726,11 @@ impl Pps {
         let num_ref_idx_l0_default = r.read_ue_plus(1)?;
         let num_ref_idx_l1_default = r.read_ue_plus(1)?;
         ensure!(num_ref_idx_l0_default <= 15 && num_ref_idx_l1_default <= 15, "num_ref_idx_default_active out of range");
-        let init_qp = 26 + r.read_se()?;
+        // init_qp_minus26 is −(26 + QpBdOffsetY) ..= 25. Bit depth is not known here (no SPS), so the
+        // widest legal window is 16-bit (QpBdOffsetY = 48). Reject before adding 26.
+        let init_qp_minus26 = r.read_se()?;
+        ensure!((-74..=25).contains(&init_qp_minus26), "init_qp_minus26 out of range");
+        let init_qp = 26 + init_qp_minus26;
         let constrained_intra_pred = r.read_flag()?;
         let transform_skip = r.read_flag()?;
         let cu_qp_delta_enabled = r.read_flag()?;
@@ -998,5 +1002,49 @@ mod tests {
             let b = w.finish();
             assert!(StRps::parse(&mut BitReader::new(&b), 0, &[], 1).is_err(), "ue {ue:#x}");
         }
+    }
+
+    fn pps_bits(init_qp_minus26: i32) -> Vec<u8> {
+        let mut w = BitWriter::new();
+        w.write_ue(0);
+        w.write_ue(0);
+        w.write_bit(false);
+        w.write_bit(false);
+        w.write_bits(0, 3);
+        w.write_bit(false);
+        w.write_bit(false);
+        w.write_ue(0);
+        w.write_ue(0);
+        w.write_se(init_qp_minus26);
+        w.write_bit(false);
+        w.write_bit(false);
+        w.write_bit(false);
+        w.write_se(0);
+        w.write_se(0);
+        w.write_bit(false);
+        w.write_bit(false);
+        w.write_bit(false);
+        w.write_bit(false);
+        w.write_bit(false);
+        w.write_bit(false);
+        w.write_bit(true); // loop filter across slices
+        w.write_bit(false); // deblocking
+        w.write_bit(false); // scaling list
+        w.write_bit(false);
+        w.write_ue(0); // log2_parallel_merge_level_minus2
+        w.write_bit(false);
+        w.write_bit(false);
+        w.rbsp_trailing();
+        w.finish()
+    }
+
+    #[test]
+    fn init_qp_is_checked_before_adding_26() {
+        assert_eq!(Pps::parse(&pps_bits(0)).unwrap().init_qp, 26);
+        assert_eq!(Pps::parse(&pps_bits(25)).unwrap().init_qp, 51);
+        assert_eq!(Pps::parse(&pps_bits(-74)).unwrap().init_qp, -48);
+        assert!(Pps::parse(&pps_bits(26)).is_err());
+        assert!(Pps::parse(&pps_bits(-75)).is_err());
+        assert!(Pps::parse(&pps_bits(i32::MAX)).is_err());
     }
 }

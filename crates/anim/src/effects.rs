@@ -44,6 +44,15 @@ pub(crate) fn exit_base(effect: &str) -> &str {
         "swivelOut" => "swivel",
         "bounceOut" => "bounce",
         "dissolveOut" => "dissolve",
+        "blindsOut" => "blinds",
+        "boxOut" => "box",
+        "checkerboardOut" => "checkerboard",
+        "diamondOut" => "diamond",
+        "peekOut" => "peek",
+        "stripsOut" => "strips",
+        "sinkDown" => "rise",
+        "spinnerOut" => "spinner",
+        "contract" => "expand",
         other => other,
     }
 }
@@ -69,6 +78,7 @@ pub(crate) fn emphasis_persists(effect: &str) -> bool {
 
 fn uses_default_smoothing(effect: &str) -> bool {
     matches!(effect, "fly" | "float" | "rise" | "peek" | "lines" | "arcs" | "turns" | "shapes" | "loops" | "customPath")
+        || deckcraft_model::anim::preset_path(effect).is_some()
 }
 
 impl EffectSpec {

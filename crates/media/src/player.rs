@@ -6,11 +6,14 @@
 //! heard. Without an output device (web, CI, no sound card) [`Player::tick`] advances the clocks on
 //! wall time instead, so playback, looping and video still work silently.
 //!
-//! Audio is decoded once per media item (on a worker thread where there are threads) and cached;
-//! a voice whose audio is still decoding holds at its start (`Loading`), one whose audio can't be
-//! decoded runs silently.
+//! Audio is decoded once per media item (on a worker thread where there are threads) and cached.
+//! The cache keeps those source bytes: its key is the allocation's address, which would otherwise
+//! be free to reuse for different media. A voice whose audio is still decoding holds at its start
+//! (`Loading`); one whose audio can't be decoded runs silently. Playing a voice again with a
+//! different source replaces its audio instead of keeping the previous clip.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::{Bytes, ClipParams, Pcm};
@@ -20,6 +23,12 @@ use crate::{Bytes, ClipParams, Pcm};
 pub trait AudioOut {
     fn start(&mut self, fill: Box<dyn FnMut(&mut [f32], usize, u32) + Send>) -> Result<(), String>;
     fn stop(&mut self);
+    /// Why the started stream has died, if it has (the device went away), reported once. Polled
+    /// by [`Player::tick`] on the host thread; must not block. Outputs that cannot tell return
+    /// `None`: the player also notices a stream whose callbacks stopped.
+    fn failure(&mut self) -> Option<String> {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,8 +75,17 @@ pub struct VoiceStatus {
 
 type Slot = Arc<OnceLock<Result<Arc<Pcm>, String>>>;
 
+/// One decoded item. `source` keeps the allocation `media_key` names alive for as long as the
+/// entry does, so a later buffer cannot be given that address and read this PCM.
+struct CachedAudio {
+    slot: Slot,
+    source: Bytes,
+}
+
 struct Voice {
     key: u64,
+    /// Identity of the bytes this voice is playing. A different key replaces `audio`.
+    media_key: u64,
     audio: Option<Slot>,
     spec: VoiceSpec,
     t: f64,
@@ -186,19 +204,49 @@ impl Mixer {
 /// Default mix rate when no device says otherwise.
 const DEFAULT_RATE: u32 = 48_000;
 
+/// Seconds without a single device callback, while a voice plays, after which the stream counts
+/// as stalled and the wall clock takes over.
+const STALL_SECS: f64 = 1.0;
+
+/// Seconds a just-started stream may take to ask for its first samples (Bluetooth and other slow
+/// devices) before it counts as stalled.
+const FIRST_CALLBACK_SECS: f64 = 5.0;
+
+/// Output failures after which the player stops retrying the device and plays silently.
+const MAX_OUTPUT_FAILURES: u32 = 3;
+
 pub struct Player {
     out: Option<Box<dyn AudioOut>>,
     streaming: bool,
     mixer: Arc<Mutex<Mixer>>,
     last_tick: Option<f64>,
     idle_since: Option<f64>,
-    cache: HashMap<u64, Slot>,
+    cache: HashMap<u64, CachedAudio>,
+    /// Device callbacks so far (the audio thread counts, [`Player::tick`] watches).
+    pulls: Arc<AtomicU64>,
+    /// The pull count last seen by `tick` and when it last changed.
+    pulls_seen: Option<(u64, f64)>,
+    /// Times the output failed or stalled after starting.
+    failures: u32,
+    /// `pulls` when the current stream started: callbacks beyond it mean the device is running.
+    pulls_at_start: u64,
 }
 
 impl Player {
     /// A player over `out` (`None`: silent, clocked by [`Player::tick`]).
     pub fn new(out: Option<Box<dyn AudioOut>>) -> Player {
-        Player { out, streaming: false, mixer: Arc::new(Mutex::new(Mixer::default())), last_tick: None, idle_since: None, cache: HashMap::new() }
+        Player {
+            out,
+            streaming: false,
+            mixer: Arc::new(Mutex::new(Mixer::default())),
+            last_tick: None,
+            idle_since: None,
+            cache: HashMap::new(),
+            pulls: Arc::new(AtomicU64::new(0)),
+            pulls_seen: None,
+            failures: 0,
+            pulls_at_start: 0,
+        }
     }
 
     pub fn has_output(&self) -> bool {
@@ -206,56 +254,68 @@ impl Player {
     }
 
     fn with<R>(&self, f: impl FnOnce(&mut Mixer) -> R) -> R {
-        let mut g = self.mixer.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.mixer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         f(&mut g)
     }
 
     /// The decoded audio of `bytes`, cached by `media_key` (decoding starts now).
     fn slot(&mut self, media_key: u64, bytes: &Bytes) -> Slot {
         if self.cache.len() > 16 {
-            // Forget audio no voice uses.
-            let used: Vec<u64> = self.cache.iter().filter(|(_, s)| Arc::strong_count(s) > 1).map(|(k, _)| *k).collect();
+            // Forget audio no voice uses. Dropping the entry drops its source bytes too.
+            let used: Vec<u64> = self.cache.iter().filter(|(_, c)| Arc::strong_count(&c.slot) > 1).map(|(k, _)| *k).collect();
             self.cache.retain(|k, _| used.contains(k));
         }
-        self.cache
-            .entry(media_key)
-            .or_insert_with(|| {
-                let slot: Slot = Arc::new(OnceLock::new());
-                let (s, b) = (slot.clone(), bytes.clone());
-                let job = move || {
-                    let _ = s.set(crate::audio::decode(&b).map(Arc::new).map_err(|e| e.to_string()));
-                };
-                if crate::THREADS {
-                    if std::thread::Builder::new().name("deckcraft-audio-decode".into()).spawn(job).is_err() {
-                        let _ = slot.set(Err("couldn't start the decoder".into()));
-                    }
-                } else {
-                    job();
-                }
-                slot
-            })
-            .clone()
+        if let Some(hit) = self.cache.get(&media_key)
+            && Arc::as_ptr(&hit.source) as u64 == media_key
+        {
+            return hit.slot.clone();
+        }
+        // A key whose bytes are gone is not this clip. Decode again.
+        self.cache.remove(&media_key);
+        let slot: Slot = Arc::new(OnceLock::new());
+        let (s, b) = (slot.clone(), bytes.clone());
+        let job = move || {
+            let _ = s.set(crate::audio::decode(&b).map(Arc::new).map_err(|e| e.to_string()));
+        };
+        if crate::THREADS {
+            if std::thread::Builder::new().name("deckcraft-audio-decode".into()).spawn(job).is_err() {
+                let _ = slot.set(Err("couldn't start the decoder".into()));
+            }
+        } else {
+            job();
+        }
+        let cached = CachedAudio { slot: slot.clone(), source: bytes.clone() };
+        self.cache.insert(media_key, cached);
+        slot
     }
 
     /// Play voice `key` (a shape) from `from` seconds (default: the trimmed start). Resumes a
-    /// paused voice when `from` is `None`.
+    /// paused voice when `from` is `None` and `media_key` is unchanged. A different `media_key`
+    /// replaces the decoded audio and starts the new clip (at `from`, or at its start).
     pub fn play(&mut self, key: u64, media_key: u64, bytes: &Bytes, spec: VoiceSpec, from: Option<f64>) {
         let audio = spec.audio.then(|| self.slot(media_key, bytes));
         self.with(|m| {
             if let Some(v) = m.voices.iter_mut().find(|v| v.key == key) {
+                let same = v.media_key == media_key;
+                v.media_key = media_key;
                 v.spec = spec;
-                if v.audio.is_none() {
+                if same {
+                    if v.audio.is_none() {
+                        v.audio = audio;
+                    }
+                    if let Some(t) = from {
+                        v.t = t;
+                    } else if v.state == PlayState::Ended {
+                        v.t = spec.clip.range(v.duration()).0;
+                    }
+                } else {
                     v.audio = audio;
-                }
-                if let Some(t) = from {
-                    v.t = t;
-                } else if v.state == PlayState::Ended {
-                    v.t = spec.clip.range(v.duration()).0;
+                    v.t = from.unwrap_or_else(|| spec.clip.range(spec.duration).0);
                 }
                 v.state = PlayState::Playing;
             } else {
-                let t = from.unwrap_or(spec.clip.range(spec.duration).0);
-                m.voices.push(Voice { key, audio, spec, t, state: PlayState::Playing });
+                let t = from.unwrap_or_else(|| spec.clip.range(spec.duration).0);
+                m.voices.push(Voice { key, media_key, audio, spec, t, state: PlayState::Playing });
             }
         });
         self.ensure_stream();
@@ -267,15 +327,21 @@ impl Player {
         }
         let Some(out) = self.out.as_mut() else { return };
         let m = self.mixer.clone();
+        let pulls = self.pulls.clone();
         let fill = Box::new(move |buf: &mut [f32], channels: usize, rate: u32| match m.lock() {
             Ok(mut g) => {
+                pulls.fetch_add(1, Ordering::Relaxed);
                 let frames = buf.len() / channels.max(1);
                 g.mix(Some(buf), frames, channels, rate)
             }
             Err(_) => buf.fill(0.0),
         });
         match out.start(fill) {
-            Ok(()) => self.streaming = true,
+            Ok(()) => {
+                self.streaming = true;
+                self.pulls_seen = None;
+                self.pulls_at_start = self.pulls.load(Ordering::Relaxed);
+            }
             Err(e) => {
                 log::warn!("audio output unavailable ({e}); media plays silently");
                 self.out = None;
@@ -338,6 +404,7 @@ impl Player {
     pub fn tick(&mut self, now: f64) {
         let dt = self.last_tick.map(|l| (now - l).clamp(0.0, 0.25)).unwrap_or(0.0);
         self.last_tick = Some(now);
+        self.check_output(now);
         if !self.streaming && dt > 0.0 {
             let frames = (dt * DEFAULT_RATE as f64).round() as usize;
             self.with(|m| m.mix(None, frames, 2, DEFAULT_RATE));
@@ -352,6 +419,56 @@ impl Player {
                 self.streaming = false;
                 self.idle_since = None;
             }
+        }
+    }
+
+    /// Drop a stream that died or stalled, so the voices fall back to the wall clock instead of
+    /// freezing. The next `play` tries the device again, up to [`MAX_OUTPUT_FAILURES`] times.
+    fn check_output(&mut self, now: f64) {
+        if !self.streaming {
+            return;
+        }
+        // Only a playing voice needs callbacks; an idle stream may legitimately sleep.
+        let playing = self.any_playing();
+        let Some(out) = self.out.as_mut() else { return };
+        let pulls = self.pulls.load(Ordering::Relaxed);
+        let running = pulls > self.pulls_at_start;
+        // A stream that delivers again has recovered: later failures start counting afresh.
+        if running {
+            self.failures = 0;
+        }
+        let limit = if running { STALL_SECS } else { FIRST_CALLBACK_SECS };
+        let reason = if let Some(e) = out.failure() {
+            Some(e)
+        } else {
+            match self.pulls_seen {
+                Some((seen, since)) if seen == pulls => {
+                    if !playing {
+                        self.pulls_seen = Some((pulls, now));
+                        None
+                    } else if now - since > limit {
+                        Some("the audio device stopped asking for samples".to_string())
+                    } else {
+                        None
+                    }
+                }
+                _ => {
+                    self.pulls_seen = Some((pulls, now));
+                    None
+                }
+            }
+        };
+        let Some(reason) = reason else { return };
+        out.stop();
+        self.streaming = false;
+        self.pulls_seen = None;
+        self.idle_since = None;
+        self.failures = self.failures.saturating_add(1);
+        if self.failures >= MAX_OUTPUT_FAILURES {
+            log::warn!("audio output failed ({reason}); giving up on the device, media plays silently");
+            self.out = None;
+        } else {
+            log::warn!("audio output failed ({reason}); media plays silently until it restarts");
         }
     }
 
@@ -398,108 +515,4 @@ impl Drop for Player {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn spec(duration: f64, looping: bool) -> VoiceSpec {
-        VoiceSpec { clip: ClipParams::default(), looping, duration, audio: false }
-    }
-
-    #[test]
-    fn wall_clock_advances_pauses_and_seeks() {
-        let mut p = Player::new(None);
-        let b: Bytes = Arc::new(vec![]);
-        p.play(1, 1, &b, spec(2.0, false), None);
-        p.tick(10.0);
-        p.tick(10.2);
-        p.tick(10.4);
-        let s = p.status(1).map(|s| s.position).unwrap_or(-1.0);
-        assert!((s - 0.4).abs() < 1e-3, "{s}");
-        p.pause(1);
-        p.tick(10.6);
-        assert!((p.status(1).map(|s| s.position).unwrap_or(-1.0) - 0.4).abs() < 1e-3);
-        assert_eq!(p.status(1).map(|s| s.state), Some(PlayState::Paused));
-        p.seek(1, 1.5);
-        p.play(1, 1, &b, spec(2.0, false), None);
-        p.tick(10.8);
-        p.tick(11.0);
-        p.tick(11.2);
-        p.tick(11.4);
-        let st = p.status(1);
-        assert_eq!(st.as_ref().map(|s| s.state), Some(PlayState::Ended));
-        assert_eq!(st.map(|s| s.position), Some(2.0));
-        // Playing an ended voice starts over.
-        p.play(1, 1, &b, spec(2.0, false), None);
-        assert_eq!(p.status(1).map(|s| s.position), Some(0.0));
-    }
-
-    #[test]
-    fn looping_wraps_within_the_trimmed_range() {
-        let mut p = Player::new(None);
-        let b: Bytes = Arc::new(vec![]);
-        let mut s = spec(1.0, true);
-        s.clip.trim_start = 0.5;
-        p.play(7, 7, &b, s, None);
-        p.tick(0.0);
-        for i in 1..=4 {
-            p.tick(i as f64 * 0.2);
-        }
-        // 0.8 s played in a 0.5 s loop starting at 0.5: 0.5 + (0.8 mod 0.5) = 0.8.
-        let pos = p.status(7).map(|s| s.position).unwrap_or(-1.0);
-        assert!((pos - 0.8).abs() < 1e-3, "{pos}");
-        assert_eq!(p.status(7).map(|s| s.state), Some(PlayState::Playing));
-    }
-
-    #[test]
-    fn mixer_applies_volume_fade_and_channel_mapping() {
-        let pcm = Arc::new(Pcm { rate: 10, channels: 1, samples: vec![1.0; 10] });
-        let slot: Slot = Arc::new(OnceLock::new());
-        let _ = slot.set(Ok(pcm));
-        let clip = ClipParams { fade_in: 0.5, volume: 0.5, ..Default::default() };
-        let mut m = Mixer {
-            voices: vec![Voice {
-                key: 1,
-                audio: Some(slot),
-                spec: VoiceSpec { clip, looping: false, duration: 1.0, audio: true },
-                t: 0.0,
-                state: PlayState::Playing,
-            }],
-        };
-        let mut buf = vec![0.0f32; 2 * 12];
-        m.mix(Some(&mut buf), 12, 2, 10);
-        // Frame 0: fade starts at 0; frame 3: 0.3/0.5 × 0.5 = 0.3; both channels carry the mono source.
-        assert_eq!(buf[0], 0.0);
-        assert!((buf[6] - 0.3).abs() < 1e-5 && (buf[7] - 0.3).abs() < 1e-5, "{buf:?}");
-        assert!((buf[16] - 0.5).abs() < 1e-5);
-        // Past the end: silence, and the voice has ended.
-        assert_eq!(buf[22], 0.0);
-        assert_eq!(m.voices[0].state, PlayState::Ended);
-    }
-
-    #[test]
-    fn device_clock_drives_position() {
-        struct Fake(Arc<Mutex<Option<Box<dyn FnMut(&mut [f32], usize, u32) + Send>>>>);
-        impl AudioOut for Fake {
-            fn start(&mut self, fill: Box<dyn FnMut(&mut [f32], usize, u32) + Send>) -> Result<(), String> {
-                *self.0.lock().map_err(|e| e.to_string())? = Some(fill);
-                Ok(())
-            }
-            fn stop(&mut self) {}
-        }
-        let cb = Arc::new(Mutex::new(None));
-        let mut p = Player::new(Some(Box::new(Fake(cb.clone()))));
-        let b: Bytes = Arc::new(vec![]);
-        p.play(3, 3, &b, spec(10.0, false), None);
-        // Wall time alone doesn't move a device-clocked voice…
-        p.tick(0.0);
-        p.tick(0.2);
-        assert_eq!(p.status(3).map(|s| s.position), Some(0.0));
-        // …the device pulling 4800 frames at 48 kHz does.
-        let mut buf = vec![0.0; 4800 * 2];
-        if let Some(f) = cb.lock().ok().and_then(|mut g| g.take()).as_mut() {
-            f(&mut buf, 2, 48_000);
-        }
-        let pos = p.status(3).map(|s| s.position).unwrap_or(-1.0);
-        assert!((pos - 0.1).abs() < 1e-6, "{pos}");
-    }
-}
+mod tests;

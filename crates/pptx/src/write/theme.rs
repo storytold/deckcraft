@@ -83,6 +83,8 @@ pub fn theme_xml(x: &mut Exp, o: &mut Out, t: &Theme) -> Vec<u8> {
         dml::effects(&mut w, e);
         if let Some(raw) = &e.raw3d {
             w.raw(raw);
+        } else if let Some(xml) = e.bevel.as_deref().and_then(dml::bevel_sp3d) {
+            w.raw(&xml);
         }
         w.close("a:effectStyle");
     }

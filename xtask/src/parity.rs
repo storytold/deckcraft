@@ -1,4 +1,4 @@
-//! `cargo xtask parity`: recompute the feature-parity summary in docs/parity.md from its row
+//! `cargo xtask parity`: recompute the feature-parity summary in docs/parity-checklist.md from its row
 //! table (each PowerPoint feature scored D / P / M, weighted by priority).
 
 use std::path::Path;
@@ -69,10 +69,10 @@ pub fn summary(rows: &[(String, String, u8, f64)]) -> String {
 }
 
 pub fn run(root: &Path) -> Result<(), String> {
-    let path = root.join("docs/parity.md");
+    let path = root.join("docs/parity-checklist.md");
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let (Some(a), Some(b)) = (text.find(START), text.find(ROWS)) else {
-        return Err("docs/parity.md needs a `<!-- SUMMARY -->` marker before `## Rows`".into());
+        return Err("docs/parity-checklist.md needs a `<!-- SUMMARY -->` marker before `## Rows`".into());
     };
     let rows = rows(&text[b..]);
     let s = summary(&rows);

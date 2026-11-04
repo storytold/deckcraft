@@ -1,7 +1,7 @@
 //! The browser shell: web `Services`, drag-and-drop, and the eframe web runner.
 
 use deckcraft_engine::Session;
-use deckcraft_ui_egui::{Inbox, Services, SlideApp};
+use deckcraft_ui_egui::{Inbox, InboxEvent, InboxFile, Services, SlideApp};
 use wasm_bindgen::JsCast as _;
 
 const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "txt", "md"];
@@ -11,6 +11,8 @@ const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm"];
 const CANVAS_ID: &str = "deckcraft_canvas";
 const LOADING_ID: &str = "deckcraft_loading";
 
+/// Start the browser shell: install logging, locate the canvas, launch the eframe runner,
+/// build the sample or blank deck, and replace the loading element when launch finishes.
 pub fn start() {
     eframe::WebLogger::init(log::LevelFilter::Info).ok();
     wasm_bindgen_futures::spawn_local(async {
@@ -35,6 +37,11 @@ pub fn start() {
                 Box::new(move |cc| {
                     if let Some(rs) = &cc.wgpu_render_state {
                         log::info!("deckcraft-web {}: wgpu backend {:?}", env!("CARGO_PKG_VERSION"), rs.adapter.get_info().backend);
+                    }
+                    deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
+                    if let Some(token) = crate::presenter::token() {
+                        let presenter = crate::presenter::Popup::new(token, cc.egui_ctx.clone()).map_err(std::io::Error::other)?;
+                        return Ok(Box::new(presenter) as Box<dyn eframe::App>);
                     }
                     let inbox: Inbox = Inbox::default();
                     let mut app = SlideApp::new(Session::new(), services(inbox.clone(), cc.egui_ctx.clone()));
@@ -74,27 +81,41 @@ struct WebShell {
 }
 
 impl eframe::App for WebShell {
+    /// Delegate one eframe logic pass to the wrapped application.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
-        for f in dropped {
+        self.app.logic(ctx);
+        if self.app.show.is_none()
+            && let Some(host) = self.app.services.presenter.as_mut()
+        {
+            host.close();
+        }
+    }
+
+    /// Consume browser drops with fresh input, capture the identity before the asynchronous read,
+    /// and deliver the id, name, and bytes through the inbox.
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        // Browsers cannot read dropped files synchronously. Consume this pass's drops here, with
+        // fresh input, and capture the document/slide before the asynchronous read finishes.
+        for f in std::mem::take(&mut raw.dropped_files) {
+            let id = self.app.begin_external_file("drop");
             let inbox = self.inbox.clone();
             let ctx = ctx.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped".into());
                 match f.bytes_async().await {
                     Ok(bytes) => {
-                        inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name, bytes));
+                        push_inbox(&inbox, InboxEvent::File(InboxFile { id, name, bytes }));
                         ctx.request_repaint();
                     }
-                    Err(e) => log::error!("couldn't read dropped file {name}: {e}"),
+                    Err(e) => {
+                        log::error!("couldn't read dropped file {name}: {e}");
+                        push_inbox(&inbox, InboxEvent::Cancelled { id });
+                        ctx.request_repaint();
+                    }
                 }
             });
         }
-        self.app.logic(ctx);
-    }
-
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
-        self.app.raw_input_hook(raw);
+        self.app.raw_input_hook(ctx, raw);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -106,8 +127,16 @@ impl eframe::App for WebShell {
 /// back to `open_async` (browser picker → inbox) and `download`.
 fn services(inbox: Inbox, ctx: egui::Context) -> Services {
     let open_inbox = inbox.clone();
+    let presenter = match crate::presenter::BrowserHost::new(ctx.clone()) {
+        Ok(host) => Some(Box::new(host) as Box<dyn deckcraft_ui_egui::presenter::Host>),
+        Err(error) => {
+            log::error!("Presenter window: {error}");
+            None
+        }
+    };
     Services {
-        open_async: Some(Box::new(move |purpose: &str| {
+        presenter,
+        open_async: Some(Box::new(move |purpose: &str, request: u64| {
             let inbox = open_inbox.clone();
             let ctx = ctx.clone();
             let dialog = match purpose {
@@ -118,10 +147,12 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
             };
             wasm_bindgen_futures::spawn_local(async move {
                 let Some(file) = dialog.pick_file().await else {
+                    push_inbox(&inbox, InboxEvent::Cancelled { id: request });
+                    ctx.request_repaint();
                     return;
                 };
                 let bytes = file.read().await;
-                inbox.lock().unwrap_or_else(|e| e.into_inner()).push((file.file_name(), bytes));
+                push_inbox(&inbox, InboxEvent::File(InboxFile { id: request, name: file.file_name(), bytes }));
                 ctx.request_repaint();
             });
         })),
@@ -134,6 +165,10 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
         inbox: Some(inbox),
         ..Default::default()
     }
+}
+
+fn push_inbox(inbox: &Inbox, event: InboxEvent) {
+    inbox.lock().unwrap_or_else(|e| e.into_inner()).push(event);
 }
 
 /// Trigger a browser download of `bytes` named after the last component of `path`.
@@ -168,6 +203,7 @@ fn mime_for(name: &str) -> &'static str {
         Some("png") => "image/png",
         Some("jpg" | "jpeg") => "image/jpeg",
         Some("pdf") => "application/pdf",
+        Some("gif") => "image/gif",
         Some("txt") => "text/plain",
         Some("pptx") => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         Some("deckcraft") => "application/zip",

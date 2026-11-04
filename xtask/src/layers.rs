@@ -47,6 +47,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("isobmff", Class::Layer(1)),
     ("media", Class::Layer(2)),
     ("color", Class::Layer(0)),
+    // WMF/EMF reader (ported from WordCraft).
+    ("metafile", Class::Layer(0)),
     ("model", Class::Layer(1)),
     ("fonts", Class::Layer(1)),
     ("text", Class::Layer(2)),
@@ -181,11 +183,11 @@ pub fn check(crates: &[Crate]) -> Vec<Violation> {
                 match classify(&d.name) {
                     // Unregistered deps are reported on their own entry.
                     None => {}
-                    Some(Class::Testkit) => {
-                        if d.kind != DepKind::Dev {
-                            out.push(Violation::TestkitAsNormalDep { krate: c.name.clone() });
-                        }
+                    Some(Class::Testkit) if d.kind != DepKind::Dev => {
+                        out.push(Violation::TestkitAsNormalDep { krate: c.name.clone() });
                     }
+                    // Test support is allowed as a dev-dependency, regardless of its layer.
+                    Some(Class::Testkit) => {}
                     Some(dc) => {
                         let to = dc.layer().unwrap_or(u8::MAX);
                         let dev_ok = d.kind == DepKind::Dev && DEV_EXCEPTIONS.contains(&(short_name(&c.name), short_name(&d.name)));
@@ -205,7 +207,7 @@ pub fn check(crates: &[Crate]) -> Vec<Violation> {
             }
         }
     }
-    out.sort_by_key(|v| v.to_string());
+    out.sort_by_key(ToString::to_string);
     out.dedup();
     out
 }
