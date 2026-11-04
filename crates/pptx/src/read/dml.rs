@@ -637,7 +637,7 @@ pub fn list_style(imp: &mut Imp, part: &Part, ls: &El) -> ListStyle {
 pub fn text_body(imp: &mut Imp, part: &Part, tx: &El) -> TextBody {
     let mut body = tx.child("bodyPr").map(body_pr).unwrap_or_default();
     if let Some(b) = tx.child("bodyPr") {
-        let raw3d: String = b.elements().filter(|c| matches!(c.local(), "scene3d" | "sp3d" | "flatTx")).map(|c| part.keep(c)).collect();
+        let raw3d: String = b.elements().filter(|c| matches!(c.local(), "scene3d" | "sp3d" | "flatTx")).map(|c| part.keep_inner(c)).collect();
         if !raw3d.is_empty() {
             body.raw3d = Some(raw3d);
         }

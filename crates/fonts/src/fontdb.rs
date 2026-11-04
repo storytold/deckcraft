@@ -421,9 +421,13 @@ fn ranges_hold(ranges: &[(u32, u32)], cp: u32) -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn coverage_ranges(path: &std::path::Path, reads: &mut usize) -> (Box<[(u32, u32)]>, bool) {
+fn coverage_ranges(path: &std::path::Path, reads: &mut usize) -> Option<(Box<[(u32, u32)]>, bool)> {
     *reads = reads.saturating_add(1);
-    let Ok(data) = std::fs::read(path) else { return (Box::new([]), true) };
+    let meta = std::fs::metadata(path).ok()?;
+    if !font_file_ok(&meta) {
+        return Some((Box::new([]), true));
+    }
+    let data = std::fs::read(path).ok()?;
     const MAX_MAPPINGS: usize = 4 * 0x11_0000;
     const MAX_RANGES: usize = 1 << 17;
     let indices = collection_face_indices(&data);
@@ -461,7 +465,7 @@ fn coverage_ranges(path: &std::path::Path, reads: &mut usize) -> (Box<[(u32, u32
             _ => compact.push((start, end)),
         }
     }
-    (compact.into_boxed_slice(), complete)
+    Some((compact.into_boxed_slice(), complete))
 }
 
 /// Does face `index` of `data` carry colour glyph tables?
@@ -1253,14 +1257,18 @@ impl FontDb {
                 coverage.files.push(CoverageFile { path: path.clone(), ranges: None, complete: true });
                 coverage.files.len().saturating_sub(1)
             };
-            if coverage.files.get(index).and_then(|file| file.ranges.as_ref()).is_none() {
-                let (ranges, complete) = coverage_ranges(&path, &mut coverage.reads);
-                if let Some(file) = coverage.files.get_mut(index) {
-                    file.ranges = Some(ranges);
-                    file.complete = complete;
-                }
+            if coverage.files.get(index).and_then(|file| file.ranges.as_ref()).is_none()
+                && let Some((ranges, complete)) = coverage_ranges(&path, &mut coverage.reads)
+                && let Some(file) = coverage.files.get_mut(index)
+            {
+                file.ranges = Some(ranges);
+                file.complete = complete;
             }
-            if coverage.files.get(index).is_some_and(|file| !file.complete || file.ranges.as_deref().is_some_and(|ranges| ranges_hold(ranges, cp))) {
+            if coverage
+                .files
+                .get(index)
+                .is_some_and(|file| file.ranges.is_none() || !file.complete || file.ranges.as_deref().is_some_and(|ranges| ranges_hold(ranges, cp)))
+            {
                 return true;
             }
         }

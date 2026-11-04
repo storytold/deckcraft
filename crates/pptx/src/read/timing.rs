@@ -215,9 +215,15 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         if e.is("cTn")
             && e.attr("nodeType") != Some("tmRoot")
             && let Some(st) = e.child("stCondLst")
-            && st.children_named("cond").any(|c| c.attr("evt").is_some() || c.attr("delay").map(str::trim) == Some("indefinite"))
         {
-            deferred = true;
+            let has_on_begin =
+                st.children_named("cond").any(|c| c.attr("evt") == Some("onBegin") && c.attr("delay").map(str::trim) != Some("indefinite"));
+            if st
+                .children_named("cond")
+                .any(|c| c.attr("evt").is_some_and(|v| v != "onBegin") || (!has_on_begin && c.attr("delay").map(str::trim) == Some("indefinite")))
+            {
+                deferred = true;
+            }
         }
         if e.is("video") || e.is("audio") {
             out.push((e, deferred));
