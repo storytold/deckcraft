@@ -4,24 +4,41 @@
 //! words. A shape with no text is copied as an image by the UI; this module only reads a picture
 //! back (Keynote's TIFF) as PNG bytes.
 
+use std::cell::RefCell;
+
+thread_local! {
+    static CLIPBOARD: RefCell<Option<arboard::Clipboard>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` on one clipboard handle that lives as long as the UI thread. On X11 arboard serves
+/// copied data only while a handle exists: dropping it after each copy hands the data to a
+/// clipboard manager and, with none running (xwayland-satellite, a bare window manager), the copy
+/// vanished before a second DeckCraft window could paste it.
+fn with<T>(f: impl FnOnce(&mut arboard::Clipboard) -> Option<T>) -> Option<T> {
+    CLIPBOARD.with(|cell| {
+        let mut slot = cell.try_borrow_mut().ok()?;
+        if slot.is_none() {
+            *slot = arboard::Clipboard::new().ok();
+        }
+        f(slot.as_mut()?)
+    })
+}
+
 /// HTML currently on the pasteboard, when there is some.
 pub fn html() -> Option<String> {
-    let mut cb = arboard::Clipboard::new().ok()?;
-    let html = cb.get().html().ok()?;
+    let html = with(|cb| cb.get().html().ok())?;
     let html = html.trim();
     if html.is_empty() { None } else { Some(html.to_string()) }
 }
 
 /// Write `html` and the plain alternative `text`. `false` when the pasteboard refuses it.
 pub fn set_html(html: &str, text: &str) -> bool {
-    let Ok(mut cb) = arboard::Clipboard::new() else { return false };
-    cb.set_html(html, Some(text)).is_ok()
+    with(|cb| cb.set_html(html, Some(text)).ok()).is_some()
 }
 
 /// The pasteboard picture as PNG bytes (TIFF on macOS is decoded by arboard).
 pub fn image_png() -> Option<Vec<u8>> {
-    let mut cb = arboard::Clipboard::new().ok()?;
-    let img = cb.get_image().ok()?;
+    let img = with(|cb| cb.get_image().ok())?;
     let width = u32::try_from(img.width).ok()?;
     let height = u32::try_from(img.height).ok()?;
     let rgba = image::RgbaImage::from_raw(width, height, img.bytes.into_owned())?;

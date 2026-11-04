@@ -264,9 +264,23 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
 }
 
 fn paste(s: &mut Session, p: &Value) -> Result<Value> {
+    // HTML written by another DeckCraft carries its copied shapes or slides: take them over, so the
+    // design arrives as it was. Our own copy comes back unchanged (and keeps its paste offset).
+    let adopted = match str_param(p, "html").and_then(crate::clipwire::blob) {
+        Some(blob) if crate::clipwire::encode(&s.clipboard).as_deref() == Some(blob) => true,
+        Some(blob) => match crate::clipwire::decode(blob) {
+            Some(clip) => {
+                s.clipboard = clip;
+                true
+            }
+            None => false,
+        },
+        None => false,
+    };
     // External plain text (from the system clipboard) wins when given and differs from ours.
     // HTML from Pages or Keynote keeps bold, italic and underline when it says the same words.
-    if let Some(t) = str_param(p, "text")
+    if !adopted
+        && let Some(t) = str_param(p, "text")
         && t != s.clipboard.plain
     {
         if let Some(html) = str_param(p, "html")
