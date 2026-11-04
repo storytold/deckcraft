@@ -81,6 +81,10 @@ pub(crate) struct RecordView {
     /// Notes text size in points and the scroll offset the pane last showed.
     pub(super) notes_px: f32,
     pub(super) notes_scroll: f32,
+    /// The notes editor's per-slide draft, focus and saving state.
+    pub(super) notes_edit: notes::EditState,
+    /// The Teleprompter overlay's scroll, speed and visibility.
+    pub(super) teleprompter: notes::TeleprompterState,
     /// The notes pane is part of the view.
     pub(super) notes_open: bool,
     /// Selected record view. Defined in [`views`] so the dropdown and the shell share it.
@@ -109,6 +113,8 @@ impl Default for RecordView {
             total: 0.0,
             notes_px: notes::NOTES_DEFAULT,
             notes_scroll: 0.0,
+            notes_edit: notes::EditState::default(),
+            teleprompter: notes::TeleprompterState::default(),
             notes_open: true,
             view: views::ViewKind::default(),
             views_open: false,
@@ -311,11 +317,15 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Pre
     ui.painter().rect_filled(layout.full, CornerRadius::ZERO, Color32::from_rgb(16, 16, 18));
     // The slide is drawn by the show before this call; the pane backgrounds sit around it.
     notes::ui(app, ui, show, &mut rec, doc, layout);
+    notes::overlay(ui, &rec, doc, show, layout);
     let top = top::ui(app, ui, show, &mut rec, now, layout);
     keep &= !top.close;
     let _ = bottom::ui(ui, show, &mut rec, doc, now, layout);
     canvas::bubble(ui, &rec, layout);
     let _ = views::ui(ui, &mut rec, layout);
+    if !keep {
+        notes::flush(app, &mut rec, doc, show.state.slide);
+    }
     if keep {
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
     }
