@@ -1,4 +1,4 @@
-use super::*;
+use super::{SlideApp, json};
 use crate::control;
 
 impl SlideApp {

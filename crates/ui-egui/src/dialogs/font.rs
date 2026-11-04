@@ -1,4 +1,4 @@
-use super::*;
+use super::{Dialog, SlideApp, Ui, buttons, check, choice, color_label, finite_pt, json, json_text, labeled_text, seed_once, vec2};
 
 fn seed_font_fields(d: &mut Dialog) {
     seed_once(d, "family", json_text(d.params.get("family"), ""));

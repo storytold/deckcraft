@@ -1,4 +1,4 @@
-use super::*;
+use super::{Align2, Color32, CornerRadius, Point, Pos2, Rect, Sense, SlideApp, Stroke, Tokens, Ui, Xf, json, pos2, theme, vec2};
 
 /// The ruler's numbered step in points and the ticks per step: quarter inches, or half
 /// centimetres. Any other unit (only a hand-edited `prefs.json` gives one) keeps inches, since a

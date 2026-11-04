@@ -1,4 +1,4 @@
-use super::*;
+use super::{Dialog, exact_of, field_of};
 
 /// A Slide Size field set to `pt`: two decimals of the unit shown, the exact points kept beside.
 pub(super) fn put_slide_dim(d: &mut Dialog, key: &str, pt: f64, ppu: f64) {

@@ -1,6 +1,6 @@
 use super::nodes::Item;
 use super::paint::{accent, deco, line_shape, paint, text_shape};
-use super::*;
+use super::{ColorRef, ColorTransform, Diagram, DiagramNode, Fill, Geom, Line, MAX_SHAPES, SchemeSlot, Xfrm};
 
 /// Organization Chart: [`hierarchy`] with elbow connectors, and assistants beside their parent on
 /// a row of their own between the parent and its other children. `half_circle` draws each node as
