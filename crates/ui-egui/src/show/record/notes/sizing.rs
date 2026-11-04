@@ -74,13 +74,9 @@ fn consume_shortcut(input: &mut egui::InputState, key: egui::Key) -> bool {
 /// The pane background is already painted by the caller; this only adds the title on the left and
 /// the A-/A+ group on the right, followed by the Teleprompter's controls when that view is shown.
 pub(super) fn header(ui: &mut Ui, rec: &mut RecordView, rect: Rect) -> Rect {
-    let row_rect = Rect::from_min_max(
-        egui::pos2(rect.min.x + super::INSET, rect.min.y + 2.0),
-        egui::pos2(rect.max.x - super::INSET, rect.min.y + HEADER_H),
-    );
-    let mut row = ui.new_child(
-        UiBuilder::new().max_rect(row_rect).layout(EguiLayout::left_to_right(Align::Center)),
-    );
+    let row_rect =
+        Rect::from_min_max(egui::pos2(rect.min.x + super::INSET, rect.min.y + 2.0), egui::pos2(rect.max.x - super::INSET, rect.min.y + HEADER_H));
+    let mut row = ui.new_child(UiBuilder::new().max_rect(row_rect).layout(EguiLayout::left_to_right(Align::Center)));
     row.spacing_mut().item_spacing.x = 4.0;
     row.label(RichText::new("Notes").size(12.0).color(TITLE));
 

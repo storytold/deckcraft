@@ -275,13 +275,7 @@ impl Session {
         let stroke = deckcraft_model::InkStroke { points, color, width, highlighter: mode == "highlighter" };
         // Strokes join the slide's own ink layer (one user ink shape per slide); Record Slide
         // Show keeps its strokes on a separate tagged layer that Clear Recording removes.
-        let existing = self
-            .doc()?
-            .shapes()
-            .iter()
-            .rev()
-            .find(|s| matches!(s.kind, ShapeKind::Ink { .. }) && !cmd::is_recorded_ink(s))
-            .map(|s| s.id);
+        let existing = self.doc()?.shapes().iter().rev().find(|s| matches!(s.kind, ShapeKind::Ink { .. }) && !cmd::is_recorded_ink(s)).map(|s| s.id);
         self.edit(|doc, sel| {
             let id = match existing {
                 Some(id) => id,
@@ -311,13 +305,7 @@ impl Session {
 
     pub(super) fn erase_at(&mut self, p: Point, tol: f64) -> Result<Value> {
         let st = self.doc()?;
-        let Some(ink) = st
-            .shapes()
-            .iter()
-            .rev()
-            .find(|s| matches!(s.kind, ShapeKind::Ink { .. }) && !cmd::is_recorded_ink(s))
-            .map(|s| s.id)
-        else {
+        let Some(ink) = st.shapes().iter().rev().find(|s| matches!(s.kind, ShapeKind::Ink { .. }) && !cmd::is_recorded_ink(s)).map(|s| s.id) else {
             return Ok(Value::Null);
         };
         let before = st.doc.clone();

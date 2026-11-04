@@ -7,9 +7,9 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use serde_json::json;
 
-use super::*;
-use super::super::views;
 use super::super::RecordStatus;
+use super::super::views;
+use super::*;
 
 fn app_with(notes: &[&str]) -> SlideApp {
     let mut session = deckcraft_engine::Session::with_new();
@@ -49,20 +49,8 @@ fn view(h: &Harness<'static, SlideApp>) -> &RecordView {
 }
 
 fn press(h: &mut Harness<'static, SlideApp>, key: egui::Key) {
-    h.input_mut().events.push(egui::Event::Key {
-        key,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers: egui::Modifiers::NONE,
-    });
-    h.input_mut().events.push(egui::Event::Key {
-        key,
-        physical_key: None,
-        pressed: false,
-        repeat: false,
-        modifiers: egui::Modifiers::NONE,
-    });
+    h.input_mut().events.push(egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE });
+    h.input_mut().events.push(egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: egui::Modifiers::NONE });
 }
 
 #[test]

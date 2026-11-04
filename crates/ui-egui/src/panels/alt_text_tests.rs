@@ -77,7 +77,10 @@ fn marking_the_cameo_decorative_is_undoable_and_disables_the_description() {
     let sh = h.state().session.active().unwrap().shape(id).unwrap().clone();
     assert!(sh.decorative);
     assert_eq!(sh.descr, "Camera preview", "ticking decorative keeps the description for when it is unticked");
-    assert!(h.get_by_role_and_label(Role::MultilineTextInput, "Description").accesskit_node().is_disabled(), "a decorative object needs no description");
+    assert!(
+        h.get_by_role_and_label(Role::MultilineTextInput, "Description").accesskit_node().is_disabled(),
+        "a decorative object needs no description"
+    );
     assert!(h.query_by_label_contains("screen readers skip it").is_some());
     h.state_mut().session.execute("edit.undo", &json!({})).unwrap();
     assert!(!h.state().session.active().unwrap().shape(id).unwrap().decorative);

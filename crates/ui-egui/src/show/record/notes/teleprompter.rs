@@ -6,11 +6,11 @@
 //! [`tick`] advances the offset once per frame while the take records, and [`header_controls`]
 //! draws the compact controls in the notes pane's header.
 
-use egui::{pos2, Rect, RichText, Ui};
+use egui::{Rect, RichText, Ui, pos2};
 
-use super::super::views::ViewKind;
 use super::super::RecordStatus;
-use super::{RecordLayout, RecordView, CONTROL};
+use super::super::views::ViewKind;
+use super::{CONTROL, RecordLayout, RecordView};
 
 /// The pace a fresh teleprompter scrolls at, in points per second.
 pub(super) const SPEED_DEFAULT: f32 = 24.0;
@@ -50,11 +50,7 @@ impl State {
 
 /// Keep a requested pace inside the teleprompter's range.
 pub(super) fn clamp_speed(speed: f32) -> f32 {
-    if speed.is_finite() {
-        speed.clamp(SPEED_MIN, SPEED_MAX)
-    } else {
-        SPEED_DEFAULT
-    }
+    if speed.is_finite() { speed.clamp(SPEED_MIN, SPEED_MAX) } else { SPEED_DEFAULT }
 }
 
 /// Move the scroll offset by one frame's worth of the pace.
@@ -69,11 +65,7 @@ pub(super) fn advance(offset: f32, speed: f32, dt: f64, playing: bool) -> f32 {
     }
     let step = f64::from(clamp_speed(speed)) * dt;
     let next = (f64::from(offset) + step) as f32;
-    if next.is_finite() && next >= 0.0 {
-        next
-    } else {
-        offset
-    }
+    if next.is_finite() && next >= 0.0 { next } else { offset }
 }
 
 /// Advance the teleprompter while it is the visible view of a recording take.

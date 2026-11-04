@@ -1457,7 +1457,8 @@ fn escape_leaves_a_record_preview_and_keeps_the_editor_slide() {
     harness.run_steps(3);
     assert!(harness.state().show.is_none(), "Escape ends the preview");
     assert_eq!(harness.state().session.active().expect("document").selection.slide, 0, "the editor stays on its own slide");
-=======
+}
+
 /// Ink tools: selecting the pen, highlighter or eraser sets the derived pointer flag and the
 /// active state the recording toolbar reads; the arrow turns both off.
 #[test]

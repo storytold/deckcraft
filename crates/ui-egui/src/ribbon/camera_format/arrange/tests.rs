@@ -35,8 +35,7 @@ fn cameo(s: &mut Session, x: f64) -> u32 {
 }
 
 fn rect(s: &mut Session, x: f64) -> u32 {
-    u32::try_from(s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, 100.0, 80.0, 60.0]})).unwrap()["id"].as_u64().unwrap())
-        .unwrap()
+    u32::try_from(s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, 100.0, 80.0, 60.0]})).unwrap()["id"].as_u64().unwrap()).unwrap()
 }
 
 fn order(h: &Harness<'_, SlideApp>) -> Vec<u32> {

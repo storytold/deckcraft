@@ -100,11 +100,8 @@ impl Preview {
             self.picked = Some(id.to_string());
         }
         self.status = self.source.start(self.picked.as_deref());
-        self.device = if self.status.is_on() {
-            self.picked.clone().or_else(|| self.devices.iter().find(|d| d.default).map(|d| d.id.clone()))
-        } else {
-            None
-        };
+        self.device =
+            if self.status.is_on() { self.picked.clone().or_else(|| self.devices.iter().find(|d| d.default).map(|d| d.id.clone())) } else { None };
         self.status
     }
 

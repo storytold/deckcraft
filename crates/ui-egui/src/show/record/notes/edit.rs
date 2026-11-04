@@ -61,20 +61,14 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, rec: &mut RecordView, doc: &Ar
 
     let look = Look { size: rec.notes_px, color: Some(Color32::from_gray(224)) };
     let output = notes_panel::editor(ui, &mut rec.notes_edit.draft, &look, |e| {
-        e.id(editor_id())
-            .desired_width(f32::INFINITY)
-            .desired_rows(2)
-            .frame(egui::Frame::NONE)
-            .hint_text("Click to add notes")
+        e.id(editor_id()).desired_width(f32::INFINITY).desired_rows(2).frame(egui::Frame::NONE).hint_text("Click to add notes")
     });
 
     if rec.notes_edit.draft.edited {
         // Clicking any other control blurs the field in this same frame, so the edit is not left
         // waiting for the next one.
-        let clicked_outside = ui.input(|i| {
-            i.pointer.primary_clicked()
-                && i.pointer.interact_pos().is_some_and(|p| !output.response.response.rect.contains(p))
-        });
+        let clicked_outside =
+            ui.input(|i| i.pointer.primary_clicked() && i.pointer.interact_pos().is_some_and(|p| !output.response.response.rect.contains(p)));
         if clicked_outside {
             ui.ctx().memory_mut(|m| m.surrender_focus(editor_id()));
         }

@@ -90,10 +90,7 @@ mod tests {
     fn preview_carries_an_explicit_state_and_device() {
         let mut s = with_cameo();
         s.execute("cameo.preview", &json!({"on": true, "device": "cam-2"})).expect("start");
-        assert_eq!(
-            s.ui_requests.pop(),
-            Some(UiRequest::CameraPreview { on: Some(true), device: Some("cam-2".into()) })
-        );
+        assert_eq!(s.ui_requests.pop(), Some(UiRequest::CameraPreview { on: Some(true), device: Some("cam-2".into()) }));
         s.execute("cameo.preview", &json!({"on": false})).expect("stop");
         assert_eq!(s.ui_requests.pop(), Some(UiRequest::CameraPreview { on: Some(false), device: None }));
     }
@@ -104,9 +101,6 @@ mod tests {
         assert_eq!(s.execute("cameo.preview.state", &json!({})).expect("state"), json!({"state": "off", "device": null}));
         s.camera_status = deckcraft_media::camera::CameraStatus::Live;
         s.camera_device = Some("Integrated Camera".into());
-        assert_eq!(
-            s.execute("cameo.preview.state", &json!({})).expect("state"),
-            json!({"state": "live", "device": "Integrated Camera"})
-        );
+        assert_eq!(s.execute("cameo.preview.state", &json!({})).expect("state"), json!({"state": "live", "device": "Integrated Camera"}));
     }
 }

@@ -23,8 +23,7 @@ fn rect(s: &mut Session, x: f64) -> u32 {
 }
 
 fn cameo(s: &mut Session, x: f64) -> u32 {
-    u32::try_from(s.execute("insert.cameo", &json!({"rect": [x, 100.0, 162.0, 162.0]})).expect("cameo")["id"].as_u64().expect("id"))
-        .expect("id fits")
+    u32::try_from(s.execute("insert.cameo", &json!({"rect": [x, 100.0, 162.0, 162.0]})).expect("cameo")["id"].as_u64().expect("id")).expect("id fits")
 }
 
 fn round_trip(p: &Presentation) -> Presentation {

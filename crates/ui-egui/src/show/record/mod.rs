@@ -271,7 +271,8 @@ pub(super) fn layout(full: Rect, doc: &Presentation, rec: &RecordView) -> Layout
     } else {
         Rect::NOTHING
     };
-    let canvas = Rect::from_min_max(pos2(full.min.x + EDGE, notes.max.y + 12.0), pos2(full.max.x - EDGE, (bottom.min.y - 14.0).max(notes.max.y + 12.0)));
+    let canvas =
+        Rect::from_min_max(pos2(full.min.x + EDGE, notes.max.y + 12.0), pos2(full.max.x - EDGE, (bottom.min.y - 14.0).max(notes.max.y + 12.0)));
     let slide = if canvas.width() > 1.0 && canvas.height() > 1.0 { fit(canvas, doc) } else { Rect::from_min_size(canvas.min, vec2(0.0, 0.0)) };
     let radius = (slide.height() * 0.14).clamp(48.0, 120.0);
     let camera = Rect::from_center_size(pos2(slide.max.x - radius - 16.0, slide.max.y - radius - 16.0), vec2(radius * 2.0, radius * 2.0));

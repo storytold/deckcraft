@@ -41,7 +41,7 @@ pub(super) fn pane(ui: &mut Ui, offset: f32, viewport: Rect, add: impl FnOnce(&m
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use egui::{pos2, vec2, Rect};
+    use egui::{Rect, pos2, vec2};
 
     use super::{clamp_offset, pane, sanitize};
 

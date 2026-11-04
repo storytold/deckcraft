@@ -150,7 +150,8 @@ mod tests {
     fn only_requesting_and_live_read_as_on_and_failures_are_errors() {
         assert!(CameraStatus::Requesting.is_on());
         assert!(CameraStatus::Live.is_on());
-        for st in [CameraStatus::Off, CameraStatus::Denied, CameraStatus::NoDevice, CameraStatus::Busy, CameraStatus::Lost, CameraStatus::Unsupported] {
+        for st in [CameraStatus::Off, CameraStatus::Denied, CameraStatus::NoDevice, CameraStatus::Busy, CameraStatus::Lost, CameraStatus::Unsupported]
+        {
             assert!(!st.is_on(), "{st:?}");
         }
         for st in [CameraStatus::Denied, CameraStatus::NoDevice, CameraStatus::Busy, CameraStatus::Lost, CameraStatus::Unsupported] {

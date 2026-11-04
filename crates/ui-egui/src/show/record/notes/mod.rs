@@ -30,8 +30,8 @@ use super::views::ViewKind;
 use super::{Layout as RecordLayout, RecordView, Show};
 use crate::SlideApp;
 
-pub(crate) use sizing::{NOTES_DEFAULT, NOTES_MAX, NOTES_MIN, NOTES_STEP, clamp_size};
 pub(crate) use edit::State as EditState;
+pub(crate) use sizing::{NOTES_DEFAULT, NOTES_MAX, NOTES_MIN, NOTES_STEP, clamp_size};
 pub(crate) use teleprompter::State as TeleprompterState;
 
 /// Keep a requested notes size inside the pane's usable range.
@@ -109,10 +109,7 @@ const INSET: f32 = 12.0;
 
 /// The body rect under the header, inside the pane's padding.
 fn body_rect(rect: egui::Rect, header_height: f32) -> egui::Rect {
-    egui::Rect::from_min_max(
-        egui::pos2(rect.min.x + INSET, rect.min.y + header_height + 2.0),
-        egui::pos2(rect.max.x - INSET, rect.max.y - 8.0),
-    )
+    egui::Rect::from_min_max(egui::pos2(rect.min.x + INSET, rect.min.y + header_height + 2.0), egui::pos2(rect.max.x - INSET, rect.max.y - 8.0))
 }
 
 /// The width available to the script.

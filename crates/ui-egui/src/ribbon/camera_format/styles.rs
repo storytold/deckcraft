@@ -4,19 +4,15 @@
 
 use super::super::galleries::{effects_menu, outline_menu, shapes_gallery};
 use super::super::{
-    Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, enabled, group, json, pos2, rows, run, scheme, small,
-    small_button_ex, vec2, widgets,
+    Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, enabled, group, json, pos2, rows, run, scheme, small, small_button_ex,
+    vec2, widgets,
 };
 use deckcraft_engine::cmd::camera::{STYLES, style_of};
 
 const TILE: egui::Vec2 = vec2(36.0, 34.0);
 
 pub(super) fn styles_section(app: &mut SlideApp, ui: &mut Ui) {
-    let current = app
-        .session
-        .active()
-        .and_then(|d| d.selected_shapes().first().and_then(|sh| style_of(sh)))
-        .unwrap_or("none");
+    let current = app.session.active().and_then(|d| d.selected_shapes().first().and_then(|sh| style_of(sh))).unwrap_or("none");
     let en = enabled(app, "camera.style");
     group(ui, |ui| {
         if let Some(id) = style_gallery(ui, current, en) {
@@ -81,9 +77,7 @@ fn paint_style(p: &egui::Painter, r: Rect, i: usize) {
     let Some(st) = STYLES.get(i) else { return };
     let r = r.shrink(5.0);
     let body = Color32::from_rgb(0x6F, 0xB8, 0xDD);
-    let stroke = st
-        .frame
-        .map_or(Stroke::new(0.8, Color32::from_gray(130)), |w| Stroke::new((w as f32 / 3.0).clamp(1.0, 3.0), Color32::WHITE));
+    let stroke = st.frame.map_or(Stroke::new(0.8, Color32::from_gray(130)), |w| Stroke::new((w as f32 / 3.0).clamp(1.0, 3.0), Color32::WHITE));
     if st.shadow {
         p.rect_filled(r.translate(vec2(1.5, 1.5)), CornerRadius::same(2), Color32::from_black_alpha(55));
     }

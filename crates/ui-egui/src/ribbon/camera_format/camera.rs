@@ -78,11 +78,7 @@ fn status_line(app: &SlideApp) -> String {
 /// Why the camera list is empty; a build without capture is not the same as a machine without a
 /// camera.
 fn empty_list(status: CameraStatus) -> &'static str {
-    if status == CameraStatus::Unsupported {
-        "Camera preview is not available in this build"
-    } else {
-        "No camera found"
-    }
+    if status == CameraStatus::Unsupported { "Camera preview is not available in this build" } else { "No camera found" }
 }
 
 fn tooltip(app: &SlideApp) -> String {

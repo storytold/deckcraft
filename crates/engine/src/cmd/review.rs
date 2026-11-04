@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 
 use super::edit::{remove_shapes, walk_mut};
 use super::{
-    CommandSpec, NO_ID_SPACE, RECORDED_INK, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text,
-    id_param, is_recorded_ink, mark_recorded, ok, recording_tag, str_param, usize_param,
+    CommandSpec, NO_ID_SPACE, RECORDED_INK, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text, id_param,
+    is_recorded_ink, mark_recorded, ok, recording_tag, str_param, usize_param,
 };
 use crate::{Result, Session, Target, UiRequest};
 
@@ -1955,12 +1955,7 @@ mod tests {
     }
 
     fn ink_layers(s: &Session, slide: usize) -> Vec<Shape> {
-        s.doc().unwrap().doc.slides[slide]
-            .shapes
-            .iter()
-            .filter(|sh| matches!(sh.kind, ShapeKind::Ink { .. }))
-            .cloned()
-            .collect()
+        s.doc().unwrap().doc.slides[slide].shapes.iter().filter(|sh| matches!(sh.kind, ShapeKind::Ink { .. })).cloned().collect()
     }
 
     fn cameo(s: &Session, id: ShapeId) -> deckcraft_model::Cameo {

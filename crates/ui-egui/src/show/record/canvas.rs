@@ -25,13 +25,7 @@ pub(super) fn bubble(ui: &Ui, rec: &RecordView, layout: &Layout) {
     painter.rect_filled(body, CornerRadius::same((r * 0.25) as u8), Color32::from_gray(150));
     let lens = egui::Rect::from_center_size(body.center(), egui::vec2(r * 0.8, r * 0.8));
     painter.circle_filled(lens.center(), r * 0.4, Color32::from_gray(60));
-    painter.text(
-        rect.center() + vec2(0.0, r * 1.25),
-        egui::Align2::CENTER_CENTER,
-        "Camera",
-        crate::theme::font(10.0),
-        Color32::from_gray(160),
-    );
+    painter.text(rect.center() + vec2(0.0, r * 1.25), egui::Align2::CENTER_CENTER, "Camera", crate::theme::font(10.0), Color32::from_gray(160));
 }
 
 /// The ink overlay is the show's own pen (`show.strokes`), so the shell only keeps the selection.
