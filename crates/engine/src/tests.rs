@@ -6304,6 +6304,18 @@ fn text_fill_outline_and_upright_commands() {
 }
 
 #[test]
+fn upright_formatting_targets_the_edited_table_cell() {
+    let mut s = session();
+    let id = table_at(&mut s, &[200.0], json!([["cell text"]]));
+    s.execute("text.edit", &json!({"id": id, "cell": [0, 0]})).unwrap();
+    s.execute("format.upright", &json!({"on": true})).unwrap();
+
+    let table = table_of(&s, id);
+    assert_eq!(table.cell(0, 0).map(|cell| cell.text.body.upright), Some(Some(true)));
+    assert!(s.doc().unwrap().shape(id).unwrap().text.is_none());
+}
+
+#[test]
 fn text_outline_edits_resolve_each_selected_shape() {
     use deckcraft_model::text::LevelStyle;
     use deckcraft_model::{Fill, Line, Rgba, ShapeId};
