@@ -15,6 +15,8 @@ use deckcraft_media::camera::{CameraError, CameraEvent, CameraFrame, CameraIn, C
 use deckcraft_model::{Presentation, ShapeId};
 use egui::{Color32, ColorImage, CornerRadius, Pos2, Rect, TextureHandle, TextureOptions, pos2};
 
+use crate::SlideApp;
+
 /// While the worker opens the camera or waits for permission, poll its state (no frames yet).
 const STARTING_REPAINT: Duration = Duration::from_millis(100);
 /// Live preview drain/upload cadence. The producer drops stale frames; this is not a frame clock.
