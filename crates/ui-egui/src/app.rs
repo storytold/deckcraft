@@ -246,6 +246,15 @@ impl SlideApp {
             ctx.request_repaint();
         }
         let closing = ctx.input(|i| i.viewport().close_requested()) && !self.quit_confirmed;
+        // A screen recording is not part of the document until it is inserted: stop it here, so
+        // closing the window keeps the take and the insert makes the deck dirty (which then asks
+        // the user), instead of dropping the worker with an unfinished MP4 in the temp folder.
+        if closing
+            && self.session.screen.is_recording()
+            && let Err(e) = self.session.execute("show.screenRecord", &serde_json::json!({"action": "stop"}))
+        {
+            self.set_status(e.to_string());
+        }
         // Closing during a take must not lose it, even when the deck itself is clean: nothing is
         // written until the take is saved, so end the show before the unsaved-changes check.
         if closing

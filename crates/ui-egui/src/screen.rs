@@ -240,10 +240,13 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
                         for (label, i) in [("x", 0), ("y", 1), ("w", 2), ("h", 3)] {
                             ui.label(label);
                             let mut v = app.screen.region[i];
-                            let span = i64::from(if i < 2 { size.0 } else { size.1 }).max(64);
-                            let hi = if i < 2 { (span - 64).max(0) } else { span };
-                            if ui.add(egui::DragValue::new(&mut v).range(0..=hi).speed(1.0)).changed() {
-                                app.screen.region[i] = v.clamp(0, hi);
+                            // `x` and `w` are measured across the target's width, `y` and `h`
+                            // down its height; the size fields start at the 64 px minimum.
+                            let along_width = matches!(i, 0 | 2);
+                            let span = i64::from(if along_width { size.0 } else { size.1 }).max(64);
+                            let (lo, hi) = if i < 2 { (0, (span - 64).max(0)) } else { (64, span) };
+                            if ui.add(egui::DragValue::new(&mut v).range(lo..=hi).speed(1.0)).changed() {
+                                app.screen.region[i] = v.clamp(lo, hi);
                             }
                         }
                     });
