@@ -31,14 +31,18 @@ pub trait AudioOut {
     }
 }
 
-/// A microphone. The host (cpal on desktop) fills a mono buffer the recording show drains per
-/// slide. Without one, Record Slide Show still keeps timings and ink.
+/// A microphone. The host (cpal on desktop) fills a mono buffer the recording show and the
+/// Record ▸ Audio take drain. Without one, timings and ink are still kept and the control is
+/// disabled.
 pub trait MicIn {
+    /// Open the default input device. Capture runs on the device's own callback thread; this call
+    /// only sets the stream up and may report why a device or permission is unavailable.
     fn start(&mut self) -> Result<(), String>;
     /// Mono samples captured since the last take, and their sample rate. `(0, empty)` when the
     /// microphone is not running.
     fn take(&mut self) -> (u32, Vec<f32>);
-    /// Samples waiting to be taken. The recording badge uses this to show the microphone is live.
+    /// Samples waiting to be taken. The record bar and recording badge use this to show the
+    /// microphone is live.
     fn captured(&self) -> usize {
         0
     }

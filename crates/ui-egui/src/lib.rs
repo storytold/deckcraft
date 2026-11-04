@@ -53,6 +53,7 @@ mod app;
 mod clock;
 mod ime_hooks;
 pub mod panels;
+mod record;
 mod services;
 mod state;
 
@@ -241,6 +242,8 @@ pub struct SlideApp {
     pub media: media::MediaHost,
     /// Live camera preview behind the Camera Format tab's Preview control.
     pub camera_preview: camera::Preview,
+    /// Record ▸ Audio: the take in progress and its elapsed time.
+    pub(crate) record: record::Recorder,
     pub status: Option<(String, f64)>,
     /// A presentation being read in the background, with its progress window ([`opening`]).
     pub opening: Option<opening::Opening>,
@@ -468,6 +471,8 @@ mod ime_tests;
 mod last_color_tests;
 #[cfg(test)]
 mod presenter_tests;
+#[cfg(test)]
+mod record_tests;
 #[cfg(test)]
 mod reflection_pane_tests;
 #[cfg(test)]

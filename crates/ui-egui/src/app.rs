@@ -7,7 +7,8 @@ use super::updates_ui;
 use super::{
     AnimPreview, ControlRequest, FileTarget, HashMap, ImeCancelled, ImeComposition, ImeResetPhase, ImeTerminalPending, InputTarget, Mods,
     PendingFile, Perf, Receiver, Session, SlideApp, Target, UI_COMMANDS, UiRequest, Value, backstage, camera, canvas, capture, dialogs, doc_window,
-    eyedropper, json, media, menus, notes, panes, preview, qat, ribbon, selpane, show, sorter, status, textures, theme, thumbs, toast, uifonts,
+    eyedropper, json, media, menus, notes, panes, preview, qat, record, ribbon, selpane, show, sorter, status, textures, theme, thumbs, toast,
+    uifonts,
 };
 
 mod clipboard;
@@ -57,6 +58,7 @@ impl SlideApp {
             reuse_target: None,
             media: media::MediaHost::new(audio_out),
             camera_preview: camera::Preview::new(camera),
+            record: record::Recorder::default(),
             status: None,
             opening: None,
             toast: None,
@@ -251,6 +253,10 @@ impl SlideApp {
         self.autosave_if_due(ctx);
         self.tick_media_clock(ctx);
         self.poll_camera(ctx);
+        self.tick_audio_recording();
+        if self.record.is_recording() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
         self.note_settled_composition(ctx);
         // In a full run_ui pass the UI callback after this logic half still owns the pass's final
         // IME descriptor. Only a standalone run_logic callback proves that no custom editor was
@@ -352,6 +358,7 @@ impl SlideApp {
         });
         toast::note_missing_fonts(self);
         toast::show(self, &ctx);
+        record::bar(self, &ctx);
         dialogs::show(self, &ctx);
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, &ctx);

@@ -1,11 +1,18 @@
-//! cpal audio output for media playback: the device pulls mixed samples from the
-//! `deckcraft_media::Player`, which makes it the playback clock video frames follow.
+//! cpal audio devices: output for media playback and the microphone for Record ▸ Audio.
+//!
+//! The output device pulls mixed samples from the `deckcraft_media::Player`, which makes it the
+//! playback clock video frames follow. The microphone runs the same way: a worker thread owns the
+//! input stream and its callback appends mono samples, so neither the app nor the UI thread ever
+//! runs the device loop.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use deckcraft_media::AudioOut;
+use deckcraft_media::{AudioOut, MicIn};
 
 /// The first stream error since it was last reported. cpal calls the error callback on its
 /// realtime audio thread (on ALSA in a loop while the device stays broken), which must not log:
@@ -72,8 +79,12 @@ fn push_mono(out: &mut Vec<f32>, interleaved: &[f32], channels: usize, cap: usiz
     }
 }
 
-/// Ten minutes of mono audio, so one slide cannot grow without bound.
+/// Ten minutes of mono audio at 48 kHz: one recording cannot grow without bound.
 const MAX_SAMPLES: usize = 48_000 * 60 * 10;
+
+/// How long the UI thread waits for the worker to open the input device. Device enumeration is
+/// fast; a permission dialog is not, and the record bar reports the failure asynchronously.
+const START_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
 struct Capture {
@@ -81,77 +92,54 @@ struct Capture {
     samples: Vec<f32>,
 }
 
-/// Default input device. The callback appends mono f32; the UI thread drains it.
+/// The default input device. A worker thread owns the stream, so opening the device and the
+/// realtime capture never run on the UI thread; the callback appends mono f32 and the UI drains it.
+#[derive(Default)]
 pub struct CpalIn {
-    stream: Option<cpal::Stream>,
     buf: Arc<Mutex<Capture>>,
     error: ErrorSlot,
-}
-
-impl Default for CpalIn {
-    fn default() -> Self {
-        CpalIn { stream: None, buf: Arc::new(Mutex::new(Capture::default())), error: ErrorSlot::default() }
-    }
+    stop: Option<Arc<(Mutex<bool>, Condvar)>>,
+    worker: Option<JoinHandle<()>>,
 }
 
 impl CpalIn {
-    fn report(&self) {
-        if let Some(e) = take_stream_error(&self.error) {
-            log::warn!("microphone stream error: {e}");
-        }
-    }
-}
-
-impl Drop for CpalIn {
-    fn drop(&mut self) {
-        self.stream = None;
-        self.report();
-    }
-}
-
-impl deckcraft_media::MicIn for CpalIn {
-    fn start(&mut self) -> Result<(), String> {
-        self.stop();
+    /// Open the default input device and start capturing into `buf`. Runs on the calling thread
+    /// only up to the worker's start handshake.
+    fn open(&self) -> Result<(cpal::Stream, u32), String> {
         let dev = cpal::default_host().default_input_device().ok_or_else(|| "no microphone".to_string())?;
         let cfg = dev.default_input_config().map_err(|e| e.to_string())?;
-        let channels = cfg.channels() as usize;
         let rate = cfg.sample_rate().0;
+        let channels = cfg.channels() as usize;
         if !(8_000..=192_000).contains(&rate) {
             return Err(format!("microphone sample rate {rate} is not supported"));
         }
-        {
-            let mut g = self.buf.lock().unwrap_or_else(PoisonError::into_inner);
-            g.rate = rate;
-            g.samples.clear();
+        if channels == 0 {
+            return Err("the microphone reports no channels".to_string());
         }
         let config: cpal::StreamConfig = cfg.clone().into();
         let buf = self.buf.clone();
         let slot = self.error.clone();
+        let err = move |e: cpal::StreamError| keep_stream_error(&slot, &e);
         let stream = match cfg.sample_format() {
-            cpal::SampleFormat::F32 => {
-                let err = move |e: cpal::StreamError| keep_stream_error(&slot, &e);
-                dev.build_input_stream(
-                    &config,
-                    move |data: &[f32], _| {
-                        if let Ok(mut g) = buf.try_lock() {
-                            push_mono(&mut g.samples, data, channels.max(1), MAX_SAMPLES);
-                        }
-                    },
-                    err,
-                    None,
-                )
-            }
+            cpal::SampleFormat::F32 => dev.build_input_stream(
+                &config,
+                move |data: &[f32], _| {
+                    if let Ok(mut g) = buf.try_lock() {
+                        push_mono(&mut g.samples, data, channels, MAX_SAMPLES);
+                    }
+                },
+                err,
+                None,
+            ),
             cpal::SampleFormat::I16 => {
-                let err = move |e: cpal::StreamError| keep_stream_error(&slot, &e);
+                let mut tmp = Vec::new();
                 dev.build_input_stream(
                     &config,
                     move |data: &[i16], _| {
                         if let Ok(mut g) = buf.try_lock() {
-                            let mut tmp = Vec::with_capacity(data.len());
-                            for s in data {
-                                tmp.push(*s as f32 / i16::MAX as f32);
-                            }
-                            push_mono(&mut g.samples, &tmp, channels.max(1), MAX_SAMPLES);
+                            tmp.clear();
+                            tmp.extend(data.iter().map(|s| *s as f32 / i16::MAX as f32));
+                            push_mono(&mut g.samples, &tmp, channels, MAX_SAMPLES);
                         }
                     },
                     err,
@@ -162,8 +150,77 @@ impl deckcraft_media::MicIn for CpalIn {
         }
         .map_err(|e| e.to_string())?;
         stream.play().map_err(|e| e.to_string())?;
-        self.stream = Some(stream);
-        Ok(())
+        Ok((stream, rate))
+    }
+
+    fn report(&self) {
+        if let Some(e) = take_stream_error(&self.error) {
+            log::warn!("microphone stream error: {e}");
+        }
+    }
+}
+
+impl Drop for CpalIn {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+impl MicIn for CpalIn {
+    fn start(&mut self) -> Result<(), String> {
+        self.stop();
+        {
+            let mut g = self.buf.lock().unwrap_or_else(PoisonError::into_inner);
+            g.rate = 0;
+            g.samples.clear();
+        }
+        let (tx, rx) = mpsc::sync_channel(1);
+        let stop = Arc::new((Mutex::new(false), Condvar::new()));
+        let worker_stop = stop.clone();
+        let this = CpalIn { buf: self.buf.clone(), error: self.error.clone(), stop: None, worker: None };
+        let handle = std::thread::Builder::new()
+            .name("deckcraft-mic".into())
+            .spawn(move || match this.open() {
+                Ok((stream, rate)) => {
+                    this.buf.lock().unwrap_or_else(PoisonError::into_inner).rate = rate;
+                    if tx.send(Ok(())).is_err() {
+                        return;
+                    }
+                    let (lock, cv) = &*worker_stop;
+                    let mut done = lock.lock().unwrap_or_else(PoisonError::into_inner);
+                    while !*done {
+                        done = cv.wait(done).unwrap_or_else(PoisonError::into_inner);
+                    }
+                    drop(done);
+                    drop(stream);
+                    this.report();
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e));
+                }
+            })
+            .map_err(|e| format!("couldn't start the microphone thread: {e}"))?;
+        match rx.recv_timeout(START_TIMEOUT) {
+            Ok(Ok(())) => {
+                self.stop = Some(stop);
+                self.worker = Some(handle);
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                let _ = handle.join();
+                Err(e)
+            }
+            Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {
+                let (lock, cv) = &*stop;
+                *lock.lock().unwrap_or_else(PoisonError::into_inner) = true;
+                cv.notify_all();
+                // The worker may be waiting on a permission prompt: do not block the UI thread
+                // joining it. The stop flag already set makes it exit (dropping the stream) as
+                // soon as the device call returns.
+                drop(handle);
+                Err("the microphone didn't start".to_string())
+            }
+        }
     }
 
     fn take(&mut self) -> (u32, Vec<f32>) {
@@ -178,7 +235,14 @@ impl deckcraft_media::MicIn for CpalIn {
     }
 
     fn stop(&mut self) {
-        self.stream = None;
+        if let Some(stop) = self.stop.take() {
+            let (lock, cv) = &*stop;
+            *lock.lock().unwrap_or_else(PoisonError::into_inner) = true;
+            cv.notify_all();
+        }
+        if let Some(handle) = self.worker.take() {
+            let _ = handle.join();
+        }
         self.report();
         self.buf.lock().unwrap_or_else(PoisonError::into_inner).samples.clear();
     }
@@ -256,6 +320,19 @@ mod tests {
     }
 
     #[test]
+    fn mono_capture_averages_channels_and_stops_at_the_cap() {
+        let mut out = Vec::new();
+        push_mono(&mut out, &[1.0, 0.0, 0.5, -0.5, f32::NAN, 1.0], 2, 8);
+        assert_eq!(out, vec![0.5, 0.0, 1.0], "frames averaged, a non-finite channel skipped");
+        let mut out = Vec::new();
+        push_mono(&mut out, &[0.1, 0.2, 0.3, 0.4], 1, 3);
+        assert_eq!(out, vec![0.1, 0.2, 0.3], "the cap stops capture growing without bound");
+        let mut out = Vec::new();
+        push_mono(&mut out, &[0.25], 0, 4);
+        assert_eq!(out, vec![0.25], "zero channels is treated as mono");
+    }
+
+    #[test]
     fn a_poisoned_slot_still_reports() {
         let slot = ErrorSlot::default();
         keep_stream_error(&slot, &"lost");
@@ -267,18 +344,5 @@ mod tests {
         .join();
         assert!(slot.is_poisoned());
         assert_eq!(take_stream_error(&slot).as_deref(), Some("lost"));
-    }
-
-    #[test]
-    fn mono_downmix_averages_channels_and_stops_at_the_cap() {
-        let mut out = Vec::new();
-        push_mono(&mut out, &[0.5, -0.5, 1.0, 1.0], 2, 10);
-        assert_eq!(out, vec![0.0, 1.0]);
-        push_mono(&mut out, &[f32::NAN, 0.5], 2, 10);
-        assert_eq!(out.len(), 3);
-        assert!((out[2] - 0.5).abs() < 1e-6);
-        let before = out.len();
-        push_mono(&mut out, &[0.25], 1, 3);
-        assert_eq!(out.len(), before);
     }
 }

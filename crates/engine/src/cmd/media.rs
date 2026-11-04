@@ -179,7 +179,7 @@ fn gif_play(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use deckcraft_model::ShapeId;
+    use deckcraft_model::{ShapeId, ShapeKind};
     use serde_json::json;
 
     use crate::cmd::base64_encode;
@@ -245,6 +245,36 @@ mod tests {
         for key in ["durationMs", "width", "height"] {
             assert_eq!(after[key], before[key], "{key}");
         }
+    }
+
+    #[test]
+    fn a_recorded_wav_reopened_from_pptx_keeps_its_audio_shape() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).expect("slide");
+        // What Record ▸ Audio hands to insert.audio: mono 16-bit PCM from a 48 kHz microphone.
+        let rate = 48_000u32;
+        let samples: Vec<f32> = (0..rate / 2).map(|i| (std::f64::consts::TAU * 440.0 * i as f64 / rate as f64).sin() as f32 * 0.4).collect();
+        let wav = deckcraft_media::wav_mono(rate, &samples).expect("wav");
+        let r = s.execute("insert.audio", &json!({"name": "Recording 1.wav", "data": base64_encode(&wav)})).expect("insert");
+        assert_eq!(r["durationMs"], 500);
+
+        let saved = s.execute("file.saveBytes", &json!({"format": "pptx"})).expect("save");
+        s.execute("file.openBytes", &json!({"name": "deck.pptx", "data": saved["data"]})).expect("open");
+
+        let doc = &s.doc().expect("doc").doc;
+        let audio: Vec<_> = doc.slides.iter().flat_map(|sl| sl.shapes.iter()).filter(|sh| matches!(sh.kind, ShapeKind::Media(_))).collect();
+        assert_eq!(audio.len(), 1, "the audio shape survives the round trip");
+        let ShapeKind::Media(clip) = &audio[0].kind else { return };
+        assert!(!clip.video && clip.duration_ms == 500);
+        let item = doc.media(clip.media).expect("media item");
+        assert_eq!((item.name.as_str(), item.content_type.as_str()), ("Recording 1.wav", "audio/wav"));
+        assert_eq!(item.data.as_slice(), wav.as_slice(), "the WAV bytes survive verbatim");
+        let info = s.execute("media.info", &json!({"id": audio[0].id})).expect("info");
+        assert_eq!(info["contentType"], "audio/wav");
+        assert_eq!(info["durationMs"], 500);
+        assert_eq!(info["probe"]["container"], "wav");
+        assert_eq!(info["probe"]["audio"]["channels"], 1);
+        assert_eq!(info["playable"], true);
     }
 
     #[test]
