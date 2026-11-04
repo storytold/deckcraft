@@ -289,6 +289,8 @@ pub struct SlideApp {
     pub palette: Option<(String, usize)>,
     /// Integrated title bar (macOS traffic lights over our chrome).
     pub integrated_titlebar: bool,
+    /// Linux/BSD: app-drawn window controls and resize borders replace system decorations.
+    pub window_controls: bool,
     /// The File tab's full-window view (Backstage). Over a presentation it replaces the ribbon,
     /// slides and status bar until Esc or Back; with nothing open it is the start screen. Opening,
     /// creating or closing a presentation leaves it.
