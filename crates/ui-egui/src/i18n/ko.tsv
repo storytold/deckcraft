@@ -348,7 +348,6 @@ Decimal	소수점
 Decimal Tab	소수점 탭
 DeckCraft	DeckCraft
 DeckCraft can't find “{}”.	“{}”을(를) 찾을 수 없습니다.
-DeckCraft has no accounts: there is nothing to sign in to, and your presentations stay on your device.	DeckCraft에는 계정이 없습니다. 로그인할 필요가 없으며 프레젠테이션은 사용자의 기기에만 저장됩니다.
 DeckCraft Presentation (*.deckcraft)	DeckCraft 프레젠테이션 (*.deckcraft)
 DeckCraft prints through a PDF: it downloads, ready to print from your browser or PDF viewer.	DeckCraft는 PDF를 거쳐 인쇄합니다. 다운로드한 PDF를 브라우저나 PDF 뷰어에서 인쇄하세요.
 DeckCraft prints through a PDF: it opens in your PDF viewer, where you choose the printer.	DeckCraft는 PDF를 거쳐 인쇄합니다. PDF 뷰어에서 열리면 프린터를 선택하세요.
@@ -1358,7 +1357,6 @@ The presentation has no sections. Add one with Home › Section.	프레젠테이
 The presentation keeps its own file	프레젠테이션 파일은 그대로 유지됩니다
 The slide titles and bullet text as plain text	슬라이드 제목과 글머리 기호 텍스트를 일반 텍스트로
 The spelling check is complete. No issues found.	맞춤법 검사를 마쳤습니다. 문제가 없습니다.
-The version, the people and models who built it, and where to find us.	버전, 만든 사람과 모델, 연락처를 확인합니다.
 Theme Colors	테마 색
 Theme Gallery	테마 갤러리
 Themes	테마
