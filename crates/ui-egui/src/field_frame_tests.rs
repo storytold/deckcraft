@@ -7,7 +7,7 @@ use egui::accesskit::Role;
 use egui::epaint::Shape;
 use egui::{Color32, Rect, Stroke};
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use serde_json::json;
 
 use crate::{Services, SlideApp, theme};
@@ -85,6 +85,11 @@ fn only_a_painted_fill_or_outline_stands_apart() {
     assert!(stands_apart(Color32::from_gray(200), Stroke::NONE, surface));
 }
 
+/// The text input that is not the ribbon's Font Size.
+fn dialog_field<'a>(h: &'a Harness<'_, SlideApp>) -> egui_kittest::Node<'a> {
+    h.query_all_by_role(Role::TextInput).find(|n| n.accesskit_node().label().as_deref() != Some("Font Size")).expect("the dialog's field")
+}
+
 #[test]
 fn light_text_fields_show_in_dialogs_panes_and_the_ribbon() {
     let light = theme::Tokens::light();
@@ -95,8 +100,9 @@ fn light_text_fields_show_in_dialogs_panes_and_the_ribbon() {
     h.run_steps(3);
     assert_visible(&h, "Find and Replace", h.ctx.global_style().visuals.window_fill);
     // Still visible with the keyboard in it.
-    let field = h.get_by_role(Role::TextInput).rect();
-    h.get_by_role(Role::TextInput).click();
+    // The ribbon's Font Size is a text input too: the dialog's field is the other one.
+    let field = dialog_field(&h).rect();
+    dialog_field(&h).click();
     h.run_steps(2);
     assert!(h.ctx.memory(|m| m.focused().is_some()), "the click puts the keyboard in the field");
     let (fill, stroke) = frame_at(&h, field);
