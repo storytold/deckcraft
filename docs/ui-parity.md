@@ -1,5 +1,6 @@
 # UI parity with PowerPoint
 
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (Record ▸ Edit offers Clear Recording and Reset to Cameo (#1817, #1818); laser colour, Clear and Record rows folded; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (dragging several selected slides moves them all; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -222,9 +223,9 @@ consistency is open (#73, #56).
 | 2026-10-14 | minor | Font dialog from Home › Font, the shape menu and Cmd+T |
 | 2026-10-13 | minor | Grid Options dialog: spacing, snap, and whether gridlines and guides are drawn; the on-screen grid uses that spacing |
 | 2026-10-13 | minor | WordArt adjust handles on a selected text warp; dragging one sets that `prstTxWarp` adjust |
-| 2026-10-14 | minor | Set Up Slide Show chooses the laser colour (red, green, blue). Slide Show ▸ Clear removes timings or narration on the current slide or all slides |
-| 2026-10-14 | minor | Record tab keeps per-slide narration and a laser trace. Cameo stays a placeholder |
-| 2026-10-14 | minor | Record tab and Slide Show ▸ Record start a recording show (timings and pen ink). Cameo stays a placeholder |
+| 2026-11-03 | minor | Set Up Slide Show chooses the laser colour (red, green, blue). Slide Show ▸ Clear removes timings or narration on the current slide or all slides |
+| 2026-11-03 | minor | Record tab keeps per-slide narration and a laser trace. Cameo stays a placeholder |
+| 2026-11-03 | minor | Record tab and Slide Show ▸ Record start a recording show (timings and pen ink). Cameo stays a placeholder |
 | 2026-10-12 | minor | File tab (Backstage) observed in PowerPoint for Windows and matched (#76); the start screen is File › Home |
 | 2026-10-12 | minor | Off-slide objects drawn and editable around the slide in Normal view (#270) |
 | 2026-10-12 | minor | Selection Pane matched to PowerPoint (#133): drag and drop, arrows, groups, eye, Lock |

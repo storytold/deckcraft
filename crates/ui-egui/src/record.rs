@@ -136,8 +136,9 @@ impl Recorder {
         }
     }
 
-    /// Stop the microphone, drain what is left and return the WAV. Any error leaves the recorder
-    /// idle, so a refused take never keeps a dead stream open.
+    /// Stop the microphone, drain what is left and return the WAV. A failed stop keeps the take, so
+    /// the caller can retry or discard it, and a rejected take keeps the microphone running: no
+    /// error path here ends the recording state without the caller choosing it.
     pub(crate) fn finish(&mut self, mut mic: Option<&mut (dyn MicIn + '_)>) -> Result<(Vec<u8>, crate::FileTarget), String> {
         if let Some(mic) = mic.as_mut() {
             self.tick(Some(&mut **mic));

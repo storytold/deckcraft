@@ -215,6 +215,14 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         "ui.move" | "ui.click" | "ui.drag" => {
             let (Some(x), Some(y)) = (f(p, "x"), f(p, "y")) else { return err("missing x/y") };
             let pos = egui::pos2(x, y);
+            // Validate the drag destination before queueing anything: returning after the
+            // `ModifiersChanged` event would leave the held modifiers active for the next request.
+            let drag_to = if req.method == "ui.drag" {
+                let (Some(tx), Some(ty)) = (f(p, "toX"), f(p, "toY")) else { return err("missing toX/toY") };
+                Some((tx, ty))
+            } else {
+                None
+            };
             // Egui keeps `ModifiersChanged` state until the next change, so a request that asks
             // for Ctrl must hand it back: otherwise the laser stays on and the next plain click
             // cannot advance the show.
@@ -233,8 +241,7 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
                     app.queue_input(egui::Event::PointerButton { pos, button, pressed: true, modifiers: egui::Modifiers::NONE });
                     app.queue_input(egui::Event::PointerButton { pos, button, pressed: false, modifiers: egui::Modifiers::NONE });
                 }
-            } else if req.method == "ui.drag" {
-                let (Some(tx), Some(ty)) = (f(p, "toX"), f(p, "toY")) else { return err("missing toX/toY") };
+            } else if let Some((tx, ty)) = drag_to {
                 let steps = p.get("steps").and_then(Value::as_u64).unwrap_or(8).clamp(1, 120);
                 app.queue_input(egui::Event::PointerButton {
                     pos,
