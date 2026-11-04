@@ -34,7 +34,7 @@ pub(super) fn pane(ui: &mut Ui, offset: f32, viewport: Rect, add: impl FnOnce(&m
         .scroll_bar_visibility(ScrollBarVisibility::VisibleWhenNeeded)
         .vertical_scroll_offset(sanitize(offset))
         .show(ui, add);
-    clamp_offset(out.state.offset.y, out.content_size.y, height)
+    clamp_offset(out.state.offset().y, out.content_size.y, height)
 }
 
 #[cfg(test)]

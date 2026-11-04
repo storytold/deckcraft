@@ -19,7 +19,7 @@ use super::RecordView;
 
 /// The notes editor's per-slide draft and the slide it belongs to.
 #[derive(Default)]
-pub(super) struct State {
+pub(crate) struct State {
     pub(super) slide: Option<usize>,
     draft: Draft,
 }

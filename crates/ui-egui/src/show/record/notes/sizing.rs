@@ -10,10 +10,10 @@ use egui::{Align, Color32, Layout as EguiLayout, Rect, RichText, Ui, UiBuilder};
 use super::super::views::ViewKind;
 use super::RecordView;
 
-pub(super) const NOTES_DEFAULT: f32 = 18.0;
-pub(super) const NOTES_MIN: f32 = 12.0;
-pub(super) const NOTES_MAX: f32 = 48.0;
-pub(super) const NOTES_STEP: f32 = 4.0;
+pub(crate) const NOTES_DEFAULT: f32 = 18.0;
+pub(crate) const NOTES_MIN: f32 = 12.0;
+pub(crate) const NOTES_MAX: f32 = 48.0;
+pub(crate) const NOTES_STEP: f32 = 4.0;
 
 /// Height of the header row, from the pane's top edge to the body.
 pub(super) const HEADER_H: f32 = 24.0;
@@ -24,13 +24,13 @@ const SAMPLE: Color32 = Color32::from_gray(200);
 /// Keep a requested notes size inside the pane's usable range.
 ///
 /// A non-finite request has no meaningful bound, so it falls back to [`NOTES_DEFAULT`].
-pub(super) fn clamp_size(px: f32) -> f32 {
+pub(crate) fn clamp_size(px: f32) -> f32 {
     if px.is_finite() { px.clamp(NOTES_MIN, NOTES_MAX) } else { NOTES_DEFAULT }
 }
 
 /// The size after a step, clamped. A non-finite step leaves the current size alone (still
 /// clamped), so a bad delta cannot reset the script to the default size.
-pub(super) fn size_after(px: f32, delta: f32) -> f32 {
+pub(crate) fn size_after(px: f32, delta: f32) -> f32 {
     if delta.is_finite() { clamp_size(px + delta) } else { clamp_size(px) }
 }
 

@@ -22,7 +22,7 @@ pub(super) const SPEED_MAX: f32 = 120.0;
 pub(super) const SPEED_STEP: f32 = 4.0;
 
 /// The teleprompter's scroll, pace and visibility switches.
-pub(super) struct State {
+pub(crate) struct State {
     /// The script's scroll offset in points.
     pub(super) offset: f32,
     /// The scroll pace in points per second.
