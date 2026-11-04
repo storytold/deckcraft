@@ -1,6 +1,7 @@
 use super::keys::{handle_keys, keyboard};
 use super::media::{
-    Pick, Under, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, shapes_under_pointer, show_media,
+    Pick, Under, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, run_pending_media, shapes_under_pointer,
+    show_media,
 };
 use super::presenter::{PresenterTimer, format_elapsed, presenter_window};
 use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
@@ -376,7 +377,8 @@ fn advance(app: &mut SlideApp, show: &mut Show, f: &Fr, out: &mut Out) {
         let step = show.state.step;
         show.cue_media(doc, step, now - show.step_start);
     }
-    show_media(app, show, doc_uid, doc);
+    show_media(app, show, doc_uid, doc, now);
+    run_pending_media(app, show, doc_uid, doc, now);
     run_media_cues(app, show, doc_uid, doc);
 }
 

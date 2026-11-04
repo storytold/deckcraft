@@ -184,6 +184,8 @@ pub struct Show {
     pub ended: bool,
     /// The slide whose media was last started (auto-play runs once per visit).
     media_slide: Option<usize>,
+    /// Autoplay clips that have not started yet: `(shape, seconds on the show clock)`.
+    pending_media: Vec<(ShapeId, f64)>,
     /// The slide shown before the current one (the Last Slide Viewed action).
     last_viewed: Option<usize>,
     /// Click areas on slide `.0`, in slide points: hyperlinks and shape actions, and the slide's
@@ -362,6 +364,7 @@ impl Show {
             last_swipe: f64::NEG_INFINITY,
             ended: false,
             media_slide: None,
+            pending_media: vec![],
             last_viewed: None,
             links: None,
             media_clock: None,

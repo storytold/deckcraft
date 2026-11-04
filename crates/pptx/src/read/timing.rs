@@ -232,7 +232,10 @@ fn walk_media(e: &El, interactive: bool, click: bool, delay: u32, ctx: &IdCtx, o
             && let Some(spid) = node.path(&["tgtEl", "spTgt"]).and_then(|s| s.u32("spid"))
             && let Some(shape) = ctx.lookup(spid)
         {
-            out.push(MediaCue { shape, video: e.is("video"), interactive, click, delay_ms: delay });
+            // The node's own time node carries the start condition our writer emits: read it too,
+            // or an export/import resets a delayed clip to zero.
+            let own = node.path(&["cTn", "stCondLst", "cond"]).and_then(|c| c.attr("delay")).and_then(|d| d.trim().parse::<u32>().ok()).unwrap_or(0);
+            out.push(MediaCue { shape, video: e.is("video"), interactive, click, delay_ms: delay.saturating_add(own) });
         }
         return;
     }
