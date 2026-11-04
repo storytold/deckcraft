@@ -30,8 +30,8 @@ pub fn gradient_json(g: &Gradient) -> Value {
     let stops: Vec<Value> = g.stops.iter().map(|s| json!([s.pos, cref_param(&s.color)])).collect();
     let flip = g.flip.map(GradientFlip::xml);
     match &g.shape {
-        GradientShape::Linear { angle, .. } => {
-            json!({"stops": stops, "kind": "linear", "angle": angle, "tile": g.tile, "rotateWithShape": g.rotate_with_shape, "flip": flip})
+        GradientShape::Linear { angle, scaled } => {
+            json!({"stops": stops, "kind": "linear", "angle": angle, "scaled": scaled, "tile": g.tile, "rotateWithShape": g.rotate_with_shape, "flip": flip})
         }
         GradientShape::Path { path, focus } => {
             let kind = match path.as_str() {
