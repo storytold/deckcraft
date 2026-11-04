@@ -76,16 +76,7 @@ fn a_plain_picture_keeps_picture_format_and_has_no_camera_tab() {
 fn the_tab_wires_the_camera_and_picture_commands() {
     for width in [1600.0, 1920.0] {
         let (h, _) = cameo_app(width);
-        for label in [
-            "Apply to All Slides",
-            "Camera Shape",
-            "Camera Border",
-            "Camera Effects",
-            "Alt Text",
-            "Crop",
-            "Height value",
-            "Width value",
-        ] {
+        for label in ["Apply to All Slides", "Camera Shape", "Camera Border", "Camera Effects", "Alt Text", "Crop", "Height value", "Width value"] {
             assert!(h.query_by_label(label).is_some(), "{label} missing at {width} px");
         }
         for style in deckcraft_engine::cmd::camera::STYLES.iter() {

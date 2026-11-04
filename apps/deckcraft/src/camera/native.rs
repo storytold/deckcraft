@@ -16,6 +16,10 @@ use deckcraft_media::camera::{
 const EVENT_CAPACITY: usize = 2;
 /// How long a frame read waits before the worker checks its command channel.
 const FRAME_WAIT: Duration = Duration::from_millis(100);
+/// A terminal event (`Failed`) may arrive while the UI has both slots full; the worker retries a
+/// bounded number of times so the reason is not lost, without stalling shutdown for long.
+const TERMINAL_TRIES: usize = 20;
+const TERMINAL_WAIT: Duration = Duration::from_millis(50);
 
 /// Told to the worker thread. `Start` always replaces any running camera first.
 enum Command {
@@ -131,7 +135,7 @@ fn run(commands: Receiver<Command>) {
                 }
                 Err(cameras::Error::Timeout) => {}
                 Err(error) => {
-                    let _ = current.events.try_send(CameraEvent::Failed(map_error(error)));
+                    send_terminal(&current.events, CameraEvent::Failed(map_error(error)));
                     running = None;
                 }
             }
@@ -163,18 +167,18 @@ fn open(request: &CameraRequest, events: SyncSender<CameraEvent>) -> Option<Runn
     let devices = match cameras::devices() {
         Ok(devices) => devices,
         Err(error) => {
-            let _ = events.try_send(CameraEvent::Failed(map_error(error)));
+            send_terminal(&events, CameraEvent::Failed(map_error(error)));
             return None;
         }
     };
     let Some(device) = pick_device(&devices, request.device.as_deref()) else {
-        let _ = events.try_send(CameraEvent::Failed(CameraError::NoDevice));
+        send_terminal(&events, CameraEvent::Failed(CameraError::NoDevice));
         return None;
     };
     let capabilities = match cameras::probe(device) {
         Ok(capabilities) => capabilities,
         Err(error) => {
-            let _ = events.try_send(CameraEvent::Failed(map_error(error)));
+            send_terminal(&events, CameraEvent::Failed(map_error(error)));
             return None;
         }
     };
@@ -191,7 +195,7 @@ fn open(request: &CameraRequest, events: SyncSender<CameraEvent>) -> Option<Runn
     let camera = match cameras::open(device, config) {
         Ok(camera) => camera,
         Err(error) => {
-            let _ = events.try_send(CameraEvent::Failed(map_error(error)));
+            send_terminal(&events, CameraEvent::Failed(map_error(error)));
             return None;
         }
     };
@@ -231,6 +235,21 @@ fn deliver(running: &mut Running, frame: cameras::Frame) -> bool {
 /// Send unless the UI is gone. A disconnected receiver means the session was abandoned.
 fn send(events: &SyncSender<CameraEvent>, event: CameraEvent) -> bool {
     !matches!(events.try_send(event), Err(TrySendError::Disconnected(_)))
+}
+
+/// Deliver the last event of a session. The channel holds two events, so a `Failed` sent into a
+/// full one would be dropped and the UI would only see `Disconnected` (reported as a plain "off").
+/// Retry briefly while it is full; give up when the receiver is gone.
+fn send_terminal(events: &SyncSender<CameraEvent>, mut event: CameraEvent) {
+    for _ in 0..TERMINAL_TRIES {
+        match events.try_send(event) {
+            Err(TrySendError::Full(back)) => {
+                event = back;
+                thread::sleep(TERMINAL_WAIT);
+            }
+            _ => return,
+        }
+    }
 }
 
 fn stream_config(request: &CameraRequest) -> cameras::StreamConfig {
@@ -311,5 +330,34 @@ fn map_error(error: cameras::Error) -> CameraError {
         }
         cameras::Error::Timeout => CameraError::Backend("timed out waiting for a frame".into()),
         other => CameraError::Backend(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_terminal_failure_survives_a_full_channel() {
+        let (tx, rx) = mpsc::sync_channel(EVENT_CAPACITY);
+        assert!(tx.try_send(CameraEvent::Closed).is_ok());
+        assert!(tx.try_send(CameraEvent::Closed).is_ok());
+        let worker = thread::spawn(move || send_terminal(&tx, CameraEvent::Failed(CameraError::Lost)));
+        // The UI drains the channel on a later pass, as it does while painting.
+        thread::sleep(Duration::from_millis(120));
+        assert!(matches!(rx.recv(), Ok(CameraEvent::Closed)));
+        assert!(matches!(rx.recv(), Ok(CameraEvent::Closed)));
+        assert!(matches!(rx.recv(), Ok(CameraEvent::Failed(CameraError::Lost))), "the reason reached the UI");
+        worker.join().expect("worker thread");
+    }
+
+    #[test]
+    fn a_terminal_failure_does_not_linger_over_a_gone_ui() {
+        let (tx, rx) = mpsc::sync_channel(EVENT_CAPACITY);
+        drop(rx);
+        let start = std::time::Instant::now();
+        send_terminal(&tx, CameraEvent::Failed(CameraError::Lost));
+        assert!(start.elapsed() < TERMINAL_WAIT, "gives up as soon as the receiver is gone");
     }
 }

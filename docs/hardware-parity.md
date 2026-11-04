@@ -73,6 +73,7 @@ alignment runs once per transition (#67), and the decoders run in software.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | The Cameo captures from the machine's camera through `cameras` — Media Foundation, AVFoundation and V4L2 behind a wasm-safe `CameraIn` — with device enumeration, named status (device loss, permission, busy) and the live preview; hardware video decode and the GPU paths are unchanged |
 | 2026-10-14 | minor | PNG and JPEG slide export record 144 dpi at the default 2 pixels per point, so a Retina picture opens at the slide's size |
 | 2026-10-13 | trivial | Editor slide rasters sit on the physical pixel grid (#184) |
 | 2026-10-14 | trivial | Community PR wave folded: one row each for pinch/two-finger gestures and pen pressure |

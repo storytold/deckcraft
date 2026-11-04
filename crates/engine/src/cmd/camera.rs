@@ -15,9 +15,7 @@ use serde_json::{Value, json};
 
 use super::edit::walk_mut;
 use super::insert::first_free_name;
-use super::{
-    CommandSpec, NO_ID_SPACE, always, bad, bool_or, cmd, edit_shapes, has_doc, has_slide, opt_usize_param, rect_param, str_param, targets,
-};
+use super::{CommandSpec, NO_ID_SPACE, always, bad, bool_or, cmd, edit_shapes, has_doc, has_slide, opt_usize_param, rect_param, str_param, targets};
 use crate::{Result, Session};
 
 /// Default side of an inserted cameo: 2.25 in.
@@ -27,15 +25,7 @@ pub const DEFAULT_MARGIN: f64 = 6.5;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(
-            "insert.cameo",
-            "Cameo",
-            ["Insert", "Images"],
-            None,
-            "{slide?: index, all?: bool, rect?: [x,y,w,h] pt}",
-            has_slide,
-            insert_cameo
-        ),
+        cmd!("insert.cameo", "Cameo", ["Insert", "Images"], None, "{slide?: index, all?: bool, rect?: [x,y,w,h] pt}", has_slide, insert_cameo),
         cmd!(
             "camera.style",
             "Camera Styles",

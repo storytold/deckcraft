@@ -103,7 +103,9 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
     if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Picture { .. }) && s.cameo.is_none()) {
         v.push("Picture Format");
     }
-    if shapes.iter().any(|s| s.is_cameo()) {
+    // The tab's galleries send the whole selection to `camera.style`, which only accepts Cameos;
+    // a mixed selection would show controls whose commands reject the click.
+    if !shapes.is_empty() && shapes.iter().all(|s| s.is_cameo()) {
         v.push("Camera Format");
     }
     if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Table(_))) || st.selection.text.as_ref().is_some_and(|t| t.cell.is_some()) {

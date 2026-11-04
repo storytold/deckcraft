@@ -10,12 +10,12 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
-use deckcraft_geom::Point;
+use deckcraft_geom::{Point, Xfrm};
 use deckcraft_media::camera::{
     CameraDesc, CameraError, CameraEvent, CameraFormat, CameraFrame, CameraId, CameraIn, CameraRequest, CameraSession, CameraState, CameraStatus,
 };
-use deckcraft_model::{Presentation, ShapeId};
-use egui::{Color32, ColorImage, CornerRadius, Pos2, Rect, TextureHandle, TextureOptions, pos2};
+use deckcraft_model::{Presentation, Shape, ShapeId};
+use egui::{Color32, ColorImage, Mesh, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
 
 use crate::SlideApp;
 
@@ -351,9 +351,8 @@ pub(crate) fn paint_preview(app: &SlideApp, painter: &egui::Painter, xf: crate::
         return;
     }
     let Some(slide) = doc.doc.slides.get(doc.selection.slide) else { return };
-    for (_, x) in cameo_boxes(&slide.shapes) {
-        let rect = Rect::from_min_max(xf.to_screen(Point::new(x.x, x.y)), xf.to_screen(Point::new(x.x + x.w, x.y + x.h)));
-        paint_fill(painter, &texture, rect);
+    for (shape, x) in cameo_boxes(&slide.shapes) {
+        paint_cameo(painter, &texture, shape, x, &|p| xf.to_screen(p));
     }
 }
 
@@ -366,9 +365,7 @@ pub(crate) fn paint_show(app: &SlideApp, painter: &egui::Painter, doc: &Presenta
         if hidden.contains(&shape.id) {
             continue;
         }
-        let a = slide_to_screen(srect, uv, x.x as f32 / sw.max(1.0), x.y as f32 / sh.max(1.0));
-        let b = slide_to_screen(srect, uv, (x.x + x.w) as f32 / sw.max(1.0), (x.y + x.h) as f32 / sh.max(1.0));
-        paint_fill(painter, &texture, Rect::from_min_max(a, b));
+        paint_cameo(painter, &texture, shape, x, &|p| slide_to_screen(srect, uv, p.x as f32 / sw.max(1.0), p.y as f32 / sh.max(1.0)));
     }
 }
 
@@ -385,13 +382,110 @@ fn slide_to_screen(srect: Rect, uv: Rect, nx: f32, ny: f32) -> Pos2 {
     pos2(srect.min.x + u * srect.width(), srect.min.y + v * srect.height())
 }
 
-/// Fill `rect` with the whole texture, cropping the longer side — a camera fills its cameo.
-fn paint_fill(painter: &egui::Painter, texture: &TextureHandle, rect: Rect) {
-    if !rect.is_positive() {
+/// Paint `texture` in one Cameo: masked to its Camera Shape, turned with the shape and crop-filled
+/// so a camera fills its frame instead of stretching.
+fn paint_cameo(painter: &egui::Painter, texture: &TextureHandle, shape: &Shape, x: Xfrm, to_screen: &dyn Fn(Point) -> Pos2) {
+    let polygons = cameo_polygons(shape, x.w, x.h);
+    if polygons.is_empty() {
         return;
     }
-    painter.rect_filled(rect, CornerRadius::ZERO, Color32::BLACK);
-    painter.image(texture.id(), rect, cover_uv(rect, texture.size()), Color32::WHITE);
+    let affine = x.affine();
+    // A dark backing inside the same outline, so a frame that arrives with transparency or not at
+    // all still reads as a camera and never as the slide behind it.
+    for poly in &polygons {
+        let points: Vec<Pos2> = poly.iter().map(|p| to_screen(affine * *p)).collect();
+        painter.add(egui::Shape::Path(egui::epaint::PathShape { points, closed: true, fill: Color32::BLACK, stroke: egui::Stroke::NONE.into() }));
+    }
+    painter.add(egui::Shape::mesh(cameo_mesh(&polygons, x, texture.id(), texture.size(), to_screen)));
+}
+
+/// The filled outline of `shape` as simple polygons in shape-local space (`0..w`, `0..h`),
+/// flattened, so a curved Camera Shape masks the frame instead of showing its box's corners.
+fn cameo_polygons(shape: &Shape, w: f64, h: f64) -> Vec<Vec<Point>> {
+    if !(w.is_finite() && h.is_finite()) || w <= 0.0 || h <= 0.0 {
+        return vec![];
+    }
+    let mut out: Vec<Vec<Point>> = vec![];
+    for sub in deckcraft_render::shape_geometry(shape, w, h).paths.iter().filter(|p| p.fill != deckcraft_geom::preset::FillMode::None) {
+        let mut cur: Vec<Point> = vec![];
+        deckcraft_geom::preset_flatten(&sub.path, &mut |el| match el {
+            deckcraft_geom::PathEl::MoveTo(p) => {
+                push_polygon(&mut cur, &mut out);
+                cur.push(p);
+            }
+            deckcraft_geom::PathEl::LineTo(p) => cur.push(p),
+            deckcraft_geom::PathEl::ClosePath => push_polygon(&mut cur, &mut out),
+            _ => {}
+        });
+        push_polygon(&mut cur, &mut out);
+    }
+    out
+}
+
+fn push_polygon(cur: &mut Vec<Point>, out: &mut Vec<Vec<Point>>) {
+    if cur.len() > 2 {
+        out.push(std::mem::take(cur));
+    } else {
+        cur.clear();
+    }
+}
+
+/// A textured mesh that covers `polygons` (shape-local) with the whole frame, using the shape's
+/// flip and rotation and the same centre crop as [`cover_uv`].
+fn cameo_mesh(polygons: &[Vec<Point>], x: Xfrm, tex: egui::TextureId, tex_size: [usize; 2], to_screen: &dyn Fn(Point) -> Pos2) -> Mesh {
+    let affine = x.affine();
+    let uv = cover_uv(Rect::from_min_size(Pos2::ZERO, vec2(x.w as f32, x.h as f32)), tex_size);
+    let uv_at = |p: Point| {
+        let u = (p.x / x.w) as f32;
+        let v = (p.y / x.h) as f32;
+        pos2(uv.min.x + u * uv.width(), uv.min.y + v * uv.height())
+    };
+    let mut mesh = Mesh::with_texture(tex);
+    for poly in polygons {
+        let points: Vec<Pos2> = poly.iter().map(|p| to_screen(affine * *p)).collect();
+        if points.len() < 3 {
+            continue;
+        }
+        let base = mesh.vertices.len() as u32;
+        for (p, at) in poly.iter().zip(&points) {
+            mesh.vertices.push(egui::epaint::Vertex { pos: *at, uv: uv_at(*p), color: Color32::WHITE });
+        }
+        for [a, b, c] in triangulate_polygon(&points) {
+            mesh.add_triangle(base + a, base + b, base + c);
+        }
+    }
+    mesh
+}
+
+/// Triangles for one simple polygon in screen space: a fan when it is convex (the usual Camera
+/// Shapes), ear clipping otherwise.
+fn triangulate_polygon(points: &[Pos2]) -> Vec<[u32; 3]> {
+    let n = points.len();
+    if n < 3 {
+        return vec![];
+    }
+    if is_convex(points) {
+        return (1..n as u32 - 1).map(|i| [0, i, i + 1]).collect();
+    }
+    crate::icons::triangulate(points)
+}
+
+fn is_convex(points: &[Pos2]) -> bool {
+    let n = points.len();
+    let mut sign = 0.0_f32;
+    for i in 0..n {
+        let (a, b, c) = (points[i], points[(i + 1) % n], points[(i + 2) % n]);
+        let cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+        if cross.abs() < 1e-6 {
+            continue;
+        }
+        if sign == 0.0 {
+            sign = cross;
+        } else if (cross > 0.0) != (sign > 0.0) {
+            return false;
+        }
+    }
+    sign != 0.0
 }
 
 /// Normalised texture rectangle that covers `rect` without stretching (centre crop).
@@ -635,5 +729,70 @@ mod tests {
         let portrait = cover_uv(rect, [480, 640]);
         assert_eq!(portrait.width(), 1.0);
         assert!((portrait.height() - 480.0 / 640.0).abs() < 1e-5);
+    }
+
+    /// A Cameo with Camera Shape `geom`, and its box, from the command that inserts one.
+    fn cameo(geom: &str) -> (Shape, Xfrm) {
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("insert.cameo", &serde_json::json!({})).expect("cameo");
+        let doc = session.active().expect("document");
+        let mut shape = doc.selected_shapes().first().map(|s| (*s).clone()).expect("a selected Cameo");
+        shape.geom = deckcraft_model::Geom::preset(geom);
+        let x = shape.xfrm.expect("the Cameo has a box");
+        (shape, x)
+    }
+
+    /// Slide points as pixels, so a test can reason in the shape's own coordinates.
+    fn identity(p: Point) -> Pos2 {
+        pos2(p.x as f32, p.y as f32)
+    }
+
+    #[test]
+    fn the_frame_is_masked_to_the_cameo_shape() {
+        // The Cameo is an ellipse by default: no painted vertex may reach the box's corners.
+        let (shape, x) = cameo("ellipse");
+        let mesh = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], &identity);
+        assert!(!mesh.indices.is_empty(), "the ellipse is painted");
+        let inv = x.affine().inverse();
+        let (cx, cy) = (x.w / 2.0, x.h / 2.0);
+        for v in &mesh.vertices {
+            let p = inv * Point::new(v.pos.x as f64, v.pos.y as f64);
+            let e = ((p.x - cx) / cx).powi(2) + ((p.y - cy) / cy).powi(2);
+            assert!(e <= 1.001, "a vertex at ({}, {}) falls outside the ellipse ({e})", p.x, p.y);
+            assert!((0.0..=1.0).contains(&v.uv.x) && (0.0..=1.0).contains(&v.uv.y), "uv {:?} leaves the frame", v.uv);
+        }
+    }
+
+    #[test]
+    fn a_rectangular_camera_shape_still_fills_its_box() {
+        let (shape, x) = cameo("rect");
+        let mesh = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], &identity);
+        for (dx, dy) in [(0.0, 0.0), (x.w, 0.0), (x.w, x.h), (0.0, x.h)] {
+            let (px, py) = (x.x + dx, x.y + dy);
+            let painted = mesh.vertices.iter().any(|v| (v.pos.x as f64 - px).abs() < 0.01 && (v.pos.y as f64 - py).abs() < 0.01);
+            assert!(painted, "the corner ({px}, {py}) is not painted");
+        }
+    }
+
+    #[test]
+    fn a_rotated_cameo_paints_its_frame_rotated() {
+        let (shape, mut x) = cameo("rect");
+        x.w = 200.0;
+        x.h = 100.0;
+        let flat = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], &identity);
+        x.rot = 45.0;
+        let turned = cameo_mesh(&cameo_polygons(&shape, x.w, x.h), x, egui::TextureId::User(1), [640, 480], &identity);
+        let inv = x.affine().inverse();
+        for v in &turned.vertices {
+            let p = inv * Point::new(v.pos.x as f64, v.pos.y as f64);
+            // The vertices round-trip through `f32` screen positions, hence the 0.01 pt slack.
+            assert!((-0.01..=x.w + 0.01).contains(&p.x) && (-0.01..=x.h + 0.01).contains(&p.y), "({}, {}) is outside the shape's box", p.x, p.y);
+        }
+        let outside = |v: &egui::epaint::Vertex| {
+            let (px, py) = (v.pos.x as f64, v.pos.y as f64);
+            px < x.x - 0.01 || px > x.x + x.w + 0.01 || py < x.y - 0.01 || py > x.y + x.h + 0.01
+        };
+        assert!(!flat.vertices.iter().any(outside), "an upright Cameo stays in its box");
+        assert!(turned.vertices.iter().any(outside), "the frame did not turn with the shape");
     }
 }
