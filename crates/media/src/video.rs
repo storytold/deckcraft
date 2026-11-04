@@ -10,9 +10,10 @@ use crate::yuv::{self, Matrix, Planes};
 use crate::{Bytes, Container, MediaError, Result};
 
 #[cfg(not(target_arch = "wasm32"))]
-const RGBA_PICTURE_SLOTS: u64 = 25; // Feed, sender, current/next, and the largest codec-ready batch.
+const RGBA_PICTURE_SLOTS: u64 = 25; // Six feed slots, sender, current/next, and 16 ready pictures.
 #[cfg(target_arch = "wasm32")]
-const RGBA_PICTURE_SLOTS: u64 = 18; // Current/next and the largest codec-ready batch.
+const RGBA_PICTURE_SLOTS: u64 = 18; // Current/next and 16 ready pictures.
+const RGBA_READY_BATCH: usize = 16;
 
 fn rgba_picture_bytes(width: u32, height: u32) -> Option<u64> {
     u64::from(width).checked_mul(u64::from(height))?.checked_mul(4)
@@ -49,6 +50,9 @@ struct Pic {
 trait Codec: Send {
     fn decode(&mut self, sample: &[u8], pts: i64) -> Result<Vec<Pic>>;
     fn flush(&mut self) -> Result<Vec<Pic>>;
+    fn drain(&mut self) -> Result<Vec<Pic>> {
+        Ok(Vec::new())
+    }
     fn reset(&mut self);
     fn set_memory_budget(&mut self, planes: u64, rgba_picture: u64);
 }
@@ -94,10 +98,18 @@ impl H264 {
 
 impl Codec for H264 {
     fn decode(&mut self, sample: &[u8], pts: i64) -> Result<Vec<Pic>> {
-        self.dec.decode(sample, pts).map_err(dec_err)?.into_iter().map(|p| H264::convert(p, self.rgba_picture_budget)).collect()
+        self.dec
+            .decode_limited(sample, pts, RGBA_READY_BATCH)
+            .map_err(dec_err)?
+            .into_iter()
+            .map(|p| H264::convert(p, self.rgba_picture_budget))
+            .collect()
     }
     fn flush(&mut self) -> Result<Vec<Pic>> {
-        self.dec.flush().into_iter().map(|p| H264::convert(p, self.rgba_picture_budget)).collect()
+        self.dec.flush_limited(RGBA_READY_BATCH).into_iter().map(|p| H264::convert(p, self.rgba_picture_budget)).collect()
+    }
+    fn drain(&mut self) -> Result<Vec<Pic>> {
+        self.dec.drain_ready(RGBA_READY_BATCH).into_iter().map(|p| H264::convert(p, self.rgba_picture_budget)).collect()
     }
     fn reset(&mut self) {
         if let Ok(d) = deckcraft_h264::Decoder::from_avcc(&self.avcc) {
@@ -484,6 +496,11 @@ impl VideoDecoder {
                     continue;
                 }
                 return Ok(Some(Frame { time, width: p.width, height: p.height, rgba: p.rgba }));
+            }
+            let pending = self.codec.drain()?;
+            if !pending.is_empty() {
+                self.ready.extend(pending);
+                continue;
             }
             if self.eos {
                 return Ok(None);
