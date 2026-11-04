@@ -44,7 +44,13 @@ pub fn start() {
                         return Ok(Box::new(presenter) as Box<dyn eframe::App>);
                     }
                     let inbox: Inbox = Inbox::default();
-                    let mut app = SlideApp::new(Session::new(), services(inbox.clone(), cc.egui_ctx.clone()));
+                    let mut services = services(inbox.clone(), cc.egui_ctx.clone());
+                    let provider = deckcraft_ui_egui::file_providers::Host::default();
+                    if let Err(error) = crate::file_providers::install(provider.clone(), cc.egui_ctx.clone()) {
+                        log::error!("file providers are unavailable: {error:?}");
+                    }
+                    services.file_providers = Some(provider);
+                    let mut app = SlideApp::new(Session::new(), services);
                     let q = query();
                     if !q.contains("blank") {
                         if let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
@@ -89,6 +95,9 @@ impl eframe::App for WebShell {
         {
             host.close();
         }
+        if let Some(host) = &self.app.services.file_providers {
+            crate::file_providers::publish(host);
+        }
     }
 
     /// Consume browser drops with fresh input, capture the identity before the asynchronous read,
@@ -120,6 +129,9 @@ impl eframe::App for WebShell {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.ui(ui);
+        if let Some(host) = &self.app.services.file_providers {
+            crate::file_providers::publish(host);
+        }
     }
 }
 
@@ -135,6 +147,7 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
         }
     };
     Services {
+        provider_download: Some(Box::new(download)),
         presenter,
         open_async: Some(Box::new(move |purpose: &str, request: u64| {
             let inbox = open_inbox.clone();

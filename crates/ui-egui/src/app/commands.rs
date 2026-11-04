@@ -166,8 +166,9 @@ impl SlideApp {
             }
             "show.presenter" => {
                 self.ui.presenter_view = self.flag(p, self.ui.presenter_view);
-                // The browser build has one viewport: presenter view is drawn inside the page.
-                return Ok(json!({"on": self.ui.presenter_view, "window": !cfg!(target_arch = "wasm32")}));
+                // Native hosts use an egui viewport; browser hosts can supply a popup transport.
+                let window = !cfg!(target_arch = "wasm32") || self.services.presenter.is_some();
+                return Ok(json!({"on": self.ui.presenter_view, "window": window}));
             }
             "show.keepCursor" => {
                 self.ui.show_keep_cursor = self.flag(p, self.ui.show_keep_cursor);

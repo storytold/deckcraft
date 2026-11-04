@@ -1,6 +1,7 @@
 pub type ReadFn = Box<dyn Fn(&str) -> Result<Vec<u8>, String>>;
 
 pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
+pub type ReadWriteDownload = Box<dyn Fn(&str, &[u8]) -> Result<(), String>>;
 
 pub type PickFn = Box<dyn FnMut(&str) -> Option<String>>;
 
@@ -36,6 +37,10 @@ pub type Inbox = std::sync::Arc<std::sync::Mutex<Vec<InboxEvent>>>;
 /// Platform services injected by the host (desktop or web).
 #[derive(Default)]
 pub struct Services {
+    /// Optional web file capability; no provider is registered by default.
+    pub file_providers: Option<crate::file_providers::Host>,
+    /// A device copy, separate from any provider persistence or acknowledgement.
+    pub provider_download: Option<ReadWriteDownload>,
     /// Browser-owned presenter popup; absent on native hosts.
     pub presenter: Option<Box<dyn crate::presenter::Host>>,
     /// Open-file dialog for a purpose (`open`, `picture`, `audio`, `video`) → path.
