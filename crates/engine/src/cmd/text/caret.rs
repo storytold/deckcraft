@@ -3,8 +3,8 @@ use super::editing::{inherited_aligns, insert_text, promote_rtl_if_needed};
 use super::ime::{composition_range, model_pos, walk_backward, walk_forward};
 use super::layout::{ctx_for, fit_text_box, layout_for, pos_param};
 use super::{
-    DocState, HistoryEntry, Pos, Result, Session, ShapeId, ShapeKind, TextBody, Value, bad, body_of, bool_or, ed, edit_shapes, edit_text, id_param,
-    json, ok, push_undo, str_param, xfrm_of,
+    AutoFit, DocState, HistoryEntry, Pos, Result, Session, ShapeId, ShapeKind, TextBody, Value, bad, body_of, bool_or, ed, edit_shapes, edit_text,
+    id_param, json, ok, push_undo, reset_shrink_scale, resolve, str_param, xfrm_of,
 };
 
 /// A table cell's text laid out the way it is drawn, mapped into slide coordinates.
