@@ -89,10 +89,11 @@ Code dependencies
 
 Linux Wayland window decorations
 -------------------------------
-sctk-adwaita 0.10.1 (https://github.com/PolyMeilex/sctk-adwaita,
-commit d5f343c45c04d4a026db57f76760819b7325db00) is used by winit on Linux
-for vector window controls. Its title-font features are disabled: no Cantarell
-font is embedded by this dependency and no font file is added to this repo.
+sctk-adwaita 0.10.1 (https://github.com/PolyMeilex/sctk-adwaita) is used by
+winit on Linux for vector window controls. Cargo.lock pins the crates.io package
+by version and checksum rather than by an upstream Git commit. Its title-font
+features are disabled: no Cantarell font is embedded by this dependency and no
+font file is added to this repo.
 
 sctk-adwaita's MIT licence:
 
