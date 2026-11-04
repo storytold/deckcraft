@@ -1,5 +1,7 @@
-use super::transitions::option_label;
-use super::*;
+use super::{
+    Align2, AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big, big_button, big_button_ex, dropdown, enabled, group, icons, json,
+    pos2, rows, run, theme, vec2, widgets,
+};
 
 // ---------- Animations ----------
 
@@ -78,12 +80,13 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
         let effect_rows = cur.as_ref().map(|c| animation_effect_rows(&c.effect, c.class, Some(c.option.as_str()))).unwrap_or_default();
+        let effect = cur.as_ref().map(|c| c.effect.as_str()).unwrap_or_default();
         let build = cur.as_ref().map(|c| text_build_id(c.text_build));
         let build_rows = marked_options(&["asOne", "byParagraph"], build);
         let r = big_button(ui, Icon::EffectOptions, "Effect\nOptions", !effect_rows.is_empty());
         egui::Popup::menu(&r).show(|ui| {
             for &(o, on) in &effect_rows {
-                if ui.selectable_label(on, option_label(o)).clicked() {
+                if ui.selectable_label(on, animation_option_label(effect, o)).clicked() {
                     run(app, "animation.options", json!({"option": o}));
                     ui.close();
                 }
@@ -100,24 +103,29 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         let r = big_button(ui, Icon::AddAnimation, "Add\nAnimation", has_sel);
+        // Every effect in one column is taller than a 1440p screen, so cap the height and scroll (#1370).
+        // The menu opens under the title bar and the ribbon; keep that chrome out of the cap.
+        let max_h = (r.ctx.viewport_rect().height() - 160.0).max(120.0);
         egui::Popup::menu(&r).width(260.0).show(|ui| {
-            for a in deckcraft_model::anim::ANIMATIONS.iter().filter(|a| a.2 != AnimClass::Media) {
-                if ui
-                    .button(format!(
-                        "{} — {}",
-                        a.1,
-                        match a.2 {
-                            AnimClass::Entrance => "Entrance",
-                            AnimClass::Emphasis => "Emphasis",
-                            AnimClass::Exit => "Exit",
-                            _ => "Motion",
-                        }
-                    ))
-                    .clicked()
-                {
-                    run(app, "animation.add", json!({"effect": a.0, "class": a.2.xml()}));
+            egui::ScrollArea::vertical().id_salt("add_animation").max_height(max_h).show(ui, |ui| {
+                for a in deckcraft_model::anim::ANIMATIONS.iter().filter(|a| a.2 != AnimClass::Media) {
+                    if ui
+                        .button(format!(
+                            "{} — {}",
+                            a.1,
+                            match a.2 {
+                                AnimClass::Entrance => "Entrance",
+                                AnimClass::Emphasis => "Emphasis",
+                                AnimClass::Exit => "Exit",
+                                _ => "Motion",
+                            }
+                        ))
+                        .clicked()
+                    {
+                        run(app, "animation.add", json!({"effect": a.0, "class": a.2.xml()}));
+                    }
                 }
-            }
+            });
         });
         big(app, ui, Icon::AnimationPane, "Animation\nPane", "view.pane", json!({"pane": "animation"}));
         let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
@@ -208,11 +216,117 @@ pub(super) fn animation_effect_rows(effect: &str, class: AnimClass, current: Opt
     marked_options(opts, current)
 }
 
+fn animation_option_label(effect: &str, option: &str) -> String {
+    let direction = match option {
+        "b" => Some("From Bottom"),
+        "lb" => Some("From Bottom-Left"),
+        "l" => Some("From Left"),
+        "lt" => Some("From Top-Left"),
+        "t" => Some("From Top"),
+        "rt" => Some("From Top-Right"),
+        "r" => Some("From Right"),
+        "rb" => Some("From Bottom-Right"),
+        _ => None,
+    };
+    if matches!(effect, "fly" | "flyOut" | "wipe" | "wipeOut" | "peek" | "peekOut" | "crawl" | "crawlOut")
+        && let Some(label) = direction
+    {
+        if matches!(effect, "flyOut" | "peekOut" | "crawlOut") {
+            return label.replacen("From", "To", 1);
+        }
+        return label.into();
+    }
+
+    match (effect, option) {
+        ("float" | "floatOut", "u") => "Up".into(),
+        ("float" | "floatOut", "d") => "Down".into(),
+        ("split" | "splitOut", "horzIn") => "Horizontal In".into(),
+        ("split" | "splitOut", "horzOut") => "Horizontal Out".into(),
+        ("split" | "splitOut", "vertIn") => "Vertical In".into(),
+        ("split" | "splitOut", "vertOut") => "Vertical Out".into(),
+        ("shape" | "shapeOut", o) if o.ends_with("In") => format!("{} In", title_first(shape_option_name(o))),
+        ("shape" | "shapeOut", o) if o.ends_with("Out") => format!("{} Out", title_first(shape_option_name(o))),
+        ("wheel" | "wheelOut", "1") => "1 Spoke".into(),
+        ("wheel" | "wheelOut", n) => format!("{n} Spokes"),
+        ("box" | "boxOut" | "circle" | "diamond" | "diamondOut", "in") => format!("{} In", title_first(effect.trim_end_matches("Out"))),
+        ("box" | "boxOut" | "circle" | "diamond" | "diamondOut", "out") => format!("{} Out", title_first(effect.trim_end_matches("Out"))),
+        ("zoom" | "zoomOut", "in") => "Zoom In".into(),
+        ("zoom" | "zoomOut", "out") => "Zoom Out".into(),
+        ("strips" | "stripsOut", "lu") => "Left Up".into(),
+        ("strips" | "stripsOut", "ru") => "Right Up".into(),
+        ("strips" | "stripsOut", "ld") => "Left Down".into(),
+        ("strips" | "stripsOut", "rd") => "Right Down".into(),
+        (_, "horz") => "Horizontal".into(),
+        (_, "vert") => "Vertical".into(),
+        (_, "across") => "Across".into(),
+        (_, "down") => "Down".into(),
+        (_, "up") => "Up".into(),
+        (_, "right") => "Right".into(),
+        (_, "left") => "Left".into(),
+        (_, "clockwise") => "Clockwise".into(),
+        (_, "counterClockwise") => "Counterclockwise".into(),
+        (_, "in") => "In".into(),
+        (_, "out") => "Out".into(),
+        (_, other) => super::transitions::option_label(other),
+    }
+}
+
+fn shape_option_name(option: &str) -> &str {
+    option.strip_suffix("In").or_else(|| option.strip_suffix("Out")).unwrap_or(option)
+}
+
+fn title_first(value: &str) -> String {
+    let mut chars = value.chars();
+    chars.next().map(|c| c.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()
+}
+
 pub(super) fn text_build_id(build: deckcraft_model::anim::TextBuild) -> &'static str {
     match build {
         deckcraft_model::anim::TextBuild::ByParagraph => "byParagraph",
         deckcraft_model::anim::TextBuild::ByWord => "byWord",
         deckcraft_model::anim::TextBuild::ByLetter => "byLetter",
         deckcraft_model::anim::TextBuild::AsOne => "asOne",
+    }
+}
+
+#[cfg(test)]
+mod animation_option_label_tests {
+    use super::animation_option_label;
+    use deckcraft_model::anim::ANIMATIONS;
+
+    #[test]
+    fn labels_every_animation_gallery_option_without_changing_its_code() {
+        for &(effect, _, _, _, _, options) in ANIMATIONS {
+            for &option in options {
+                let label = animation_option_label(effect, option);
+                assert!(!label.is_empty(), "{effect}/{option}");
+                assert_ne!(label, option, "raw option shown for {effect}/{option}");
+            }
+        }
+        assert_eq!(animation_option_label("fly", "lb"), "From Bottom-Left");
+        assert_eq!(animation_option_label("flyOut", "rt"), "To Top-Right");
+        assert_eq!(animation_option_label("flyOut", "b"), "To Bottom");
+        assert_eq!(animation_option_label("peekOut", "l"), "To Left");
+        assert_eq!(animation_option_label("wipe", "b"), "From Bottom");
+        assert_eq!(animation_option_label("wheel", "1"), "1 Spoke");
+        assert_eq!(animation_option_label("split", "vertOut"), "Vertical Out");
+        assert_eq!(animation_option_label("shape", "circleIn"), "Circle In");
+        assert_eq!(animation_option_label("diamond", "out"), "Diamond Out");
+        assert_eq!(animation_option_label("diamondOut", "in"), "Diamond In");
+        assert_eq!(animation_option_label("diamondOut", "out"), "Diamond Out");
+        assert_eq!(animation_option_label("strips", "lu"), "Left Up");
+        assert_eq!(animation_option_label("strips", "ru"), "Right Up");
+        assert_eq!(animation_option_label("strips", "ld"), "Left Down");
+        assert_eq!(animation_option_label("strips", "rd"), "Right Down");
+        assert_eq!(animation_option_label("crawl", "b"), "From Bottom");
+        assert_eq!(animation_option_label("crawl", "l"), "From Left");
+        assert_eq!(animation_option_label("crawl", "t"), "From Top");
+        assert_eq!(animation_option_label("crawl", "r"), "From Right");
+        assert_eq!(animation_option_label("crawlOut", "l"), "To Left");
+        assert_eq!(animation_option_label("crawlOut", "r"), "To Right");
+        assert_eq!(animation_option_label("plus", "in"), "In");
+        assert_eq!(animation_option_label("plus", "out"), "Out");
+        assert_eq!(animation_option_label("changeFontSize", "increase"), "Increase");
+        assert_eq!(animation_option_label("changeFontSize", "decrease"), "Decrease");
     }
 }

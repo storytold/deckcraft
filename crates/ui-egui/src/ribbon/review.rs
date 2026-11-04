@@ -1,4 +1,4 @@
-use super::*;
+use super::{Icon, SlideApp, Ui, Value, big, big_button, big_button_ex, enabled, group, json, rows, run, small_button, tip};
 
 fn comment_nav(app: &mut SlideApp, ui: &mut Ui, forward: bool) {
     let (icon, label, id) = if forward { (Icon::NextComment, "Next", "comment.next") } else { (Icon::PrevComment, "Previous", "comment.prev") };

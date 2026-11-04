@@ -1,6 +1,9 @@
 use super::arrange::{arrange_group, size_group};
 use super::galleries::{cref_param, effects_menu, outline_menu, quick_styles, shapes_gallery};
-use super::*;
+use super::{
+    Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, big, big_button, enabled, group, json, pos2, rows, run, scheme,
+    small_button, small_button_ex, theme, vec2, widgets,
+};
 
 // ---------- contextual tabs ----------
 

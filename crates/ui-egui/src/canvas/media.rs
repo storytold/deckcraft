@@ -1,4 +1,4 @@
-use super::*;
+use super::{Rect, Sense, SlideApp, Target, Ui, Xf, json, pos2, screen_rect, vec2};
 
 /// Play/pause on an animated GIF under the pointer or selected on its own.
 pub(super) fn gif_buttons(app: &mut SlideApp, ui: &mut Ui, xf: Xf, gifs: &[crate::media::Gif]) {

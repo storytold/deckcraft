@@ -131,9 +131,11 @@ fn place(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, parent: 
         }
         ShapeKind::Table(t) => {
             // Cell text, laid out exactly as the table draws it.
+            // The table's style is looked up once, not once per cell.
+            let def = table::resolve_style(rctx, t);
             for (r, c, rect) in table::cell_rects(t, &table::row_heights(rctx, t, fields)) {
                 let Some(cell) = t.cell(r, c).filter(|cell| !cell.text.is_empty()) else { continue };
-                let body = table::cell_body(rctx, t, r, c, cell);
+                let body = table::cell_body_with_def(rctx, def, t, r, c, cell);
                 let tmp = Shape::table_cell(body.clone());
                 place_text(out, rctx, fields, s.id, &tmp, &body, rect, m);
             }

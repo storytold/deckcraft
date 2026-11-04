@@ -262,7 +262,7 @@ fn color_label(v: &Value) -> String {
 fn choice(ui: &mut Ui, d: &mut Dialog, salt: &str, name: &str, key: &str, choices: &[(&str, &str)]) {
     let cur = d.get(key, "");
     let label = choices.iter().find(|(v, _)| *v == cur).map(|(_, l)| *l).unwrap_or(cur.as_str());
-    let combo = egui::ComboBox::from_id_salt(salt).selected_text(label).width(140.0).show_ui(ui, |ui| {
+    let combo = craft_ui::ComboBox::from_id_salt(salt).selected_text(label).width(140.0).show_ui(ui, |ui| {
         for (v, l) in choices {
             if ui.selectable_label(cur == *v, *l).clicked() {
                 d.fields.insert((*key).into(), (*v).into());

@@ -1,4 +1,4 @@
-use super::*;
+use super::{SlideApp, Value, json};
 
 /// Text put on the system clipboard when the copied objects (a rectangle, a picture, slides…)
 /// carry no text. egui-winit drops Ctrl+V when the system clipboard is empty, so without it the

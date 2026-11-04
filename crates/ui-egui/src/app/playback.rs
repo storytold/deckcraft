@@ -1,4 +1,4 @@
-use super::*;
+use super::{AnimPreview, SlideApp, Value, ViewMode, json, media, preview, show};
 
 impl SlideApp {
     /// Whether ⌘A should act on the slide list: always in the sorter, in Normal view once the
@@ -36,6 +36,7 @@ impl SlideApp {
             self.show_instance = self.show_instance.wrapping_add(1).max(1);
             let mut show = show::Show::new(&d.doc, from, reading, self.ui.presenter_view && !reading);
             show.instance = self.show_instance;
+            show.keep_cursor = self.ui.show_keep_cursor;
             self.show = Some(show);
         }
     }

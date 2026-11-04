@@ -65,15 +65,13 @@ impl Textures {
     }
 
     /// A SmartArt layout drawn small for a gallery (`nodes` for a preview of the selected
-    /// graphic's own outline), cached; drawn with the active presentation's theme.
+    /// graphic's own outline), cached; `look` is the layout kind, style and colours; drawn with the active presentation's theme.
     pub fn smartart(
         &mut self,
         ctx: &egui::Context,
         p: &deckcraft_model::Presentation,
         slide: usize,
-        kind: &str,
-        style: &str,
-        colors: &str,
+        (kind, style, colors): (&str, &str, &str),
         nodes: Option<&[deckcraft_model::DiagramNode]>,
         width_px: u32,
     ) -> Option<TextureHandle> {

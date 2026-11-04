@@ -118,16 +118,7 @@ fn small_icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> egu
     resp.on_hover_text(label)
 }
 
-/// Render the Selection Pane and route visibility, order, rename, and selection actions through
-/// engine commands.
-pub fn show(app: &mut SlideApp, ui: &mut Ui) {
-    let t = Tokens::get(ui.ctx());
-    let Some(st) = app.session.active() else { return };
-    app.selpane.bind(st.uid);
-    let rows = rows(st.shapes(), &app.selpane.collapsed);
-    let selected: Vec<u32> = st.selection.shapes.iter().map(|i| i.0).collect();
-    let has_sel = !selected.is_empty();
-
+fn toolbar(app: &mut SlideApp, ui: &mut Ui, t: &Tokens, has_sel: bool) {
     ui.horizontal(|ui| {
         if ui.add(egui::Button::new("Show All").stroke(Stroke::new(1.0, t.border))).clicked() {
             run(app, "selection.showAll", json!({}));
@@ -144,15 +135,49 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
     });
-    ui.add_space(6.0);
+}
 
-    // The list has the keyboard while one of its rows has focus.
+fn focus_lock(ui: &mut Ui, rows: &[Row]) -> Option<u32> {
     let focused_row = ui.memory(|m| m.focused()).and_then(|f| rows.iter().find(|r| row_id(r.id) == f).map(|r| r.id));
     if let Some(f) = focused_row {
         ui.memory_mut(|m| {
             m.set_focus_lock_filter(row_id(f), egui::EventFilter { tab: false, horizontal_arrows: true, vertical_arrows: true, escape: true })
         });
     }
+    focused_row
+}
+
+fn group_chevron(app: &mut SlideApp, ui: &mut Ui, row: &Row, painter: &egui::Painter, x0: f32, r: Rect, t: &Tokens) {
+    let open = !app.selpane.collapsed.contains(&row.id);
+    let cr = Rect::from_center_size(pos2(x0 + 6.0, r.center().y), vec2(14.0, 14.0));
+    let cresp = ui.interact(cr, ui.scope_id().with(("fold", row.id)), Sense::click());
+    let label = format!("{} {}", if open { "Collapse" } else { "Expand" }, row.name);
+    cresp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &label));
+    icons::paint(painter, cr, if open { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_dim, false);
+    if cresp.clicked() {
+        if open {
+            app.selpane.collapsed.insert(row.id);
+        } else {
+            app.selpane.collapsed.remove(&row.id);
+        }
+    }
+}
+
+/// Render the Selection Pane and route visibility, order, rename, and selection actions through
+/// engine commands.
+pub fn show(app: &mut SlideApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    let Some(st) = app.session.active() else { return };
+    app.selpane.bind(st.uid);
+    let rows = rows(st.shapes(), &app.selpane.collapsed);
+    let selected: Vec<u32> = st.selection.shapes.iter().map(|i| i.0).collect();
+    let has_sel = !selected.is_empty();
+
+    toolbar(app, ui, &t, has_sel);
+    ui.add_space(6.0);
+
+    // The list has the keyboard while one of its rows has focus.
+    let focused_row = focus_lock(ui, &rows);
     let mut rects: Vec<Rect> = Vec::with_capacity(rows.len());
     let width = ui.available_width();
     for (k, row) in rows.iter().enumerate() {
@@ -171,19 +196,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let x0 = r.min.x + 4.0 + INDENT * row.depth as f32;
         // Group chevron.
         if row.group {
-            let open = !app.selpane.collapsed.contains(&row.id);
-            let cr = Rect::from_center_size(pos2(x0 + 6.0, r.center().y), vec2(14.0, 14.0));
-            let cresp = ui.interact(cr, ui.scope_id().with(("fold", row.id)), Sense::click());
-            let label = format!("{} {}", if open { "Collapse" } else { "Expand" }, row.name);
-            cresp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &label));
-            icons::paint(&painter, cr, if open { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_dim, false);
-            if cresp.clicked() {
-                if open {
-                    app.selpane.collapsed.insert(row.id);
-                } else {
-                    app.selpane.collapsed.remove(&row.id);
-                }
-            }
+            group_chevron(app, ui, row, &painter, x0, r, &t);
         }
         let name_x = x0 + 16.0;
         let eye = Rect::from_center_size(pos2(r.max.x - 34.0, r.center().y), vec2(16.0, 16.0));
