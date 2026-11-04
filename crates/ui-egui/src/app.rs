@@ -240,6 +240,7 @@ impl SlideApp {
         // Closing the window with unsaved changes asks first.
         if ctx.input(|i| i.viewport().close_requested()) && !self.quit_confirmed && self.session.documents().iter().any(|d| d.is_dirty()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.stop_mic();
             self.show = None;
             if self.dialog.as_ref().is_none_or(|d| d.id != "quit") {
                 self.dialog = Some(dialogs::Dialog::new("quit"));

@@ -1,7 +1,7 @@
 use super::keys::keyboard;
 use super::render::{fit, next_rect};
 use super::zoom::{Zoom, grid_indices, paint_grid, see_all_hit, slide_aspect, toggle_blank, zoom_frame};
-use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, Stroke, Ui, pos2, theme, vec2};
+use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, SlideApp, Stroke, Ui, pos2, theme, vec2};
 
 pub(super) const NOTES_DEFAULT: f32 = 18.0;
 
@@ -82,7 +82,14 @@ fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) 
 }
 
 /// Render the presenter window and set `keep` false when the user ends or closes the show.
-pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, now: f64, keep: &mut bool) {
+pub(super) fn presenter_window(
+    app: &mut SlideApp,
+    ctx: &egui::Context,
+    show: &mut Show,
+    doc: &std::sync::Arc<Presentation>,
+    now: f64,
+    keep: &mut bool,
+) {
     let cur = show.state.slide;
     let next = show.state.peek_next(doc);
     let cur_tex = show.tex.as_ref().map(|(_, t)| t.clone());
@@ -284,6 +291,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
         },
     );
     for a in actions {
+        super::before_slide_change(app, show, &a);
         if !show.apply(a, doc, now) {
             *keep = false;
         }

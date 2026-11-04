@@ -27,6 +27,14 @@ impl SlideApp {
         Ok(Some(from))
     }
 
+    /// Stop the microphone, if the host gave us one. Recording ends through here so a
+    /// half-captured clip is dropped rather than left running.
+    pub(crate) fn stop_mic(&mut self) {
+        if let Some(mic) = self.services.mic.as_mut() {
+            mic.stop();
+        }
+    }
+
     /// Leave animation preview, stop editor-owned media, and create a show at the requested slide
     /// with the current reading/presenter configuration; an out-of-range slide starts an ended show.
     pub fn start_show(&mut self, from: usize, reading: bool) {

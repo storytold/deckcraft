@@ -618,7 +618,9 @@ fn media_node(w: &mut W, ids: &mut Ids, spid: u32, m: &MediaClip) {
     w.open("p:cTn", tn);
     w.open0("p:stCondLst");
     // `indefinite` waits for a click on the shape; a number starts on the slide's own clock.
-    w.empty("p:cond", A::new().a("delay", if m.autoplay { "0" } else { "indefinite" }));
+    // Narration plays with the slide even when it isn't marked autoplay (Record Slide Show).
+    let starts_alone = m.autoplay || m.narration;
+    w.empty("p:cond", A::new().a("delay", if starts_alone { "0" } else { "indefinite" }));
     w.close("p:stCondLst");
     w.open0("p:endCondLst");
     w.open("p:cond", A::new().a("evt", "onStopAudio").a("delay", "0"));
