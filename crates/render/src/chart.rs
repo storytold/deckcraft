@@ -339,7 +339,12 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     // Bars are drawn first and lines over them; a combo chart has both.
     let bar_kind = c.series.iter().map(|s| c.series_kind(s)).find(|k| k.is_bar_like());
     let horiz = if combo { bar_kind.is_some_and(ChartType::horizontal) } else { c.kind.horizontal() };
-    area = draw_axis_titles(ctx, rctx, &AxisTitleDrawing { chart: c, transform: m, base, text_color: text_col, horiz }, area);
+    let titles = AxisTitleDrawing { chart: c, transform: m, base, text_color: text_col, horiz };
+    if let Some(plot) = manual_plot {
+        draw_axis_titles(ctx, rctx, &titles, manual_axis_title_area(plot, base));
+    } else {
+        area = draw_axis_titles(ctx, rctx, &titles, area);
+    }
     // As many major units as the value axis has room for labels (PowerPoint's automatic unit).
     let axis_len = manual_plot.map_or_else(|| auto_axis_len(area, horiz, base), |plot| if horiz { plot.width() } else { plot.height() });
     let max_intervals = (axis_len / if horiz { base * 6.0 } else { base * 1.9 }).floor().clamp(2.0, 12.0) as usize;
@@ -517,6 +522,11 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
 
 fn manual_layout_rect(layout: deckcraft_model::chart::ManualLayout, width: f64, height: f64) -> Rect {
     Rect::new(layout.x * width, layout.y * height, (layout.x + layout.width) * width, (layout.y + layout.height) * height)
+}
+
+fn manual_axis_title_area(plot: Rect, base: f64) -> Rect {
+    let pad = base * 1.9;
+    Rect::new(plot.x0 - pad, plot.y0 - pad, plot.x1, plot.y1 + pad)
 }
 
 fn apply_manual_layout(c: &Chart, mut area: Rect, width: f64, height: f64, pie: bool) -> (Rect, Option<Rect>) {
@@ -1467,6 +1477,15 @@ mod tests {
         assert!((rect.y0 - 30.0).abs() < 1e-9);
         assert!((rect.x1 - 320.0).abs() < 1e-9);
         assert!((rect.y1 - 240.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn manual_plot_axis_title_area_tracks_the_plot_edges() {
+        let plot = Rect::new(80.0, 30.0, 320.0, 240.0);
+        let area = manual_axis_title_area(plot, 10.0);
+        assert_eq!((area.x0, area.y0, area.x1, area.y1), (61.0, 11.0, 320.0, 259.0));
+        assert_eq!((area.y0 + area.y1) / 2.0, (plot.y0 + plot.y1) / 2.0);
+        assert!(area.y1 - 10.0 * 1.6 >= plot.y1);
     }
 
     #[test]
