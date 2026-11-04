@@ -29,11 +29,19 @@ pub(super) fn scale_shapes(shapes: &mut [Shape], sx: f64, sy: f64, k: f64, ox: f
                         let margins = cell.margins.unwrap_or([7.2, 7.2, 3.6, 3.6]);
                         cell.margins = Some(margins.map(|margin| margin * k));
                     }
-                    deckcraft_model::edit::format_all(&mut cell.text, &|r| {
-                        if let Some(sz) = r.size.as_mut() {
-                            *sz = (*sz * k).max(1.0);
+                    for paragraph in &mut cell.text.paragraphs {
+                        if let Some(size) = paragraph.def_props.size.as_mut() {
+                            *size = (*size * k).max(1.0);
                         }
-                    });
+                        for run in &mut paragraph.runs {
+                            if let Some(size) = run.props.size.as_mut() {
+                                *size = (*size * k).max(1.0);
+                            } else if paragraph.def_props.size.is_none() && k != 1.0 {
+                                // Table cells without explicit sizes use the 18 pt model default.
+                                run.props.size = Some((18.0 * k).max(1.0));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -75,11 +83,12 @@ pub(super) fn slide_size(s: &mut Session, p: &Value) -> Result<Value> {
         };
         // Masters and layouts stretch to the new size; slides scale by mode.
         let (msx, msy) = (size.width / old.width.max(1.0), size.height / old.height.max(1.0));
+        let mk = msx.min(msy);
         for m in &mut doc.masters {
             let m = Arc::make_mut(m);
-            scale_shapes(&mut m.shapes, msx, msy, 1.0, 0.0, 0.0);
+            scale_shapes(&mut m.shapes, msx, msy, mk, 0.0, 0.0);
             for l in &mut m.layouts {
-                scale_shapes(&mut l.shapes, msx, msy, 1.0, 0.0, 0.0);
+                scale_shapes(&mut l.shapes, msx, msy, mk, 0.0, 0.0);
             }
         }
         for sl in &mut doc.slides {
@@ -383,6 +392,7 @@ mod table_scale_tests {
             }
             if let Some(cell) = table.cell_mut(1, 0) {
                 cell.margins = Some([8.0, 6.0, 4.0, 2.0]);
+                cell.text = deckcraft_model::text::TextBody::from_text("Default size");
             }
             let slide = doc.slides.get_mut(0).ok_or_else(|| super::bad("test", "no slide"))?;
             Arc::make_mut(slide).shapes.push(Shape {
@@ -421,6 +431,7 @@ mod table_scale_tests {
         assert_eq!(t.cell(0, 0).map(|cell| (cell.grid_span, cell.h_merge)), Some((2, false)));
         assert_eq!(t.cell(0, 1).map(|cell| cell.h_merge), Some(true));
         assert_eq!(t.cell(0, 0).and_then(|cell| cell.text.paragraphs.first()?.runs.first()?.props.size), Some(9.0));
+        assert_eq!(t.cell(1, 0).and_then(|cell| cell.text.paragraphs.first()?.runs.first()?.props.size), Some(9.0));
         assert_eq!(t.cell(0, 0).and_then(|cell| cell.margins), Some([3.6, 3.6, 1.8, 1.8]));
         assert_eq!(t.cell(1, 0).and_then(|cell| cell.margins), Some([4.0, 3.0, 2.0, 1.0]));
 
