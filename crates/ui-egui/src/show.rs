@@ -269,6 +269,27 @@ impl Show {
         }
     }
 
+    /// Play this slide's transition from the previous slide (or black for slide 0) as a preview (#1654).
+    pub fn start_transition_preview(&mut self, doc: &Presentation, now: f64) {
+        let i = self.state.slide;
+        let from = i.checked_sub(1);
+        let (kind, option, dur) = doc
+            .slides
+            .get(i)
+            .and_then(|s| s.transition.as_ref())
+            .map(|t| (t.kind.clone(), t.option.clone(), t.duration_ms as f64 / 1000.0))
+            .unwrap_or(("none".into(), String::new(), 0.0));
+        self.trans = if kind != "none" && dur > 0.0 && !doc.show.without_animation {
+            Some(Transition { old: None, from, morph: None, parts: None, start: now, kind, option, dur, reverse: false })
+        } else {
+            None
+        };
+        self.preview_only = true;
+        self.slide_start = now;
+        self.step_start = now;
+        self.step_end = now;
+    }
+
     /// Identity of the show state a queued window-point event belongs to.
     pub(crate) fn input_state(&self) -> ShowInputState {
         let bits = |v: f32| if v.is_finite() { v.to_bits() } else { 0 };
