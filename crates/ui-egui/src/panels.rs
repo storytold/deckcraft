@@ -10,6 +10,7 @@ use crate::ribbon::{cref_param, paint_anim_tile};
 use crate::theme::{self, Tokens};
 use crate::{SlideApp, widgets};
 
+mod alt_text;
 mod animation;
 mod background;
 mod comments;
@@ -19,6 +20,7 @@ mod format_shape;
 mod smartart;
 mod thesaurus;
 
+use alt_text::alt_text;
 use animation::animation;
 use background::background;
 use comments::{comments, revisions};
@@ -49,6 +51,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 "designer" => "Design Ideas",
                 "smartart" => "Text Pane",
                 "thesaurus" => "Thesaurus",
+                "altText" => "Alt Text",
                 "revisions" => "Revisions",
                 _ => "Pane",
             };
@@ -75,6 +78,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 "designer" => designer(app, ui),
                 "smartart" => smartart(app, ui),
                 "thesaurus" => thesaurus(app, ui),
+                "altText" => alt_text(app, ui),
                 "revisions" => revisions(app, ui),
                 _ => {}
             });
@@ -419,5 +423,7 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod alt_text_tests;
 #[cfg(test)]
 mod thesaurus_tests;
