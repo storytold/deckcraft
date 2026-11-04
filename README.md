@@ -224,6 +224,8 @@ DirectX 12 shaders are compiled with FXC, which is part of Windows, so no `dxcom
 
 RISC-V 64 (riscv64): `deckcraft-<ver>-linux-riscv64.tar.gz`, a tarball only (cross-compiled; needs glibc 2.39+, e.g. Ubuntu 24.04+).
 
+The AppImage also bundles the command-line tool: `./deckcraft-<ver>-linux-x86_64.AppImage --cli --help`, or `--cli mcp` to serve MCP on stdio. A leading `--cli` is removed and the other arguments, stdio and exit status pass through unchanged; CLI launches skip desktop integration. A symlink named `deckcraft-cli` to the AppImage also selects the CLI.
+
 **Runtime libraries.** The window-system, GPU and file-dialog libraries DeckCraft needs are opened
 when the app starts (`dlopen` through `x11-dl`, `xkbcommon-dl`, `ash`, `glutin` and `rfd`) instead
 of being linked in, so `ldd` shows none of them: an install that satisfies the linked dependencies
