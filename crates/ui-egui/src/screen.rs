@@ -5,9 +5,50 @@
 //! session ([`deckcraft_engine::screen`]), so the control window only drives `show.screenRecord`
 //! and reads its state. Errors are the command's one message; nothing here panics.
 
+use deckcraft_screen::CaptureStatus;
 use egui::{Align2, Color32, RichText, Vec2};
 
 use crate::SlideApp;
+
+/// How long the Record view trusts a cached capture status, in seconds.
+const STATUS_TTL: f64 = 1.0;
+
+/// The screen-capture status the Record view last read, and when it read it.
+///
+/// `ScreenState::status` asks the OS (`scap::is_supported` and `scap::has_permission`), and the
+/// Record view paints several times a second, so the answer is kept for [`STATUS_TTL`] instead of
+/// being asked on every frame. A take that starts or stops invalidates it, since those are the
+/// moments the host's answer can change.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ScreenStatusCache {
+    status: CaptureStatus,
+    /// The UI time the value was read at; [`f64::NEG_INFINITY`] means "never read".
+    read: f64,
+}
+
+impl Default for ScreenStatusCache {
+    fn default() -> Self {
+        ScreenStatusCache { status: CaptureStatus::Unsupported, read: f64::NEG_INFINITY }
+    }
+}
+
+impl ScreenStatusCache {
+    /// The cached status, re-read from `status` when it is older than [`STATUS_TTL`].
+    pub(crate) fn read(&mut self, now: f64, status: impl FnOnce() -> CaptureStatus) -> CaptureStatus {
+        // A NaN age (either clock is not a real time) counts as stale: re-read rather than guess.
+        if now - self.read < STATUS_TTL {
+            return self.status;
+        }
+        self.status = status();
+        self.read = now;
+        self.status
+    }
+
+    /// Forget the cached value: the next [`read`](Self::read) asks the OS again.
+    pub(crate) fn invalidate(&mut self) {
+        self.read = f64::NEG_INFINITY;
+    }
+}
 
 /// One capturable display or window.
 #[derive(Clone, Debug)]

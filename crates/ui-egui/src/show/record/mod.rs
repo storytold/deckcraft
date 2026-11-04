@@ -79,6 +79,8 @@ pub(crate) struct RecordView {
     pub(super) view: views::ViewKind,
     pub(super) ink: InkState,
     pub(super) devices: devices::Devices,
+    /// The host's capture status, cached so the frame does not query the OS for it.
+    pub(super) screen_status: crate::screen::ScreenStatusCache,
     /// The cameo bubble on the slide canvas is shown.
     pub(super) camera_bubble: bool,
     /// The separate camera preview window is shown.
@@ -104,6 +106,7 @@ impl Default for RecordView {
             view: views::ViewKind::default(),
             ink: InkState::default(),
             devices: devices::Devices::default(),
+            screen_status: crate::screen::ScreenStatusCache::default(),
             camera_bubble: true,
             camera_preview: false,
             captured: false,
@@ -154,6 +157,8 @@ impl RecordView {
         self.captured = true;
         self.frozen_slide_secs = None;
         self.ink.active = false;
+        // The take now holds the capture device: the cached status may be stale.
+        self.screen_status.invalidate();
         show.begin_recording(now);
     }
 
@@ -180,6 +185,8 @@ impl RecordView {
     /// reaches the saved timing.
     pub(super) fn stop(&mut self, show: &mut Show, now: f64) {
         if self.status != RecordStatus::Idle {
+            // The take is releasing the capture device: re-read the host's status next frame.
+            self.screen_status.invalidate();
             self.frozen_slide_secs = Some(show.captured_slide_seconds(now));
             // File the slide's segment now, so a navigation after Stop cannot move it.
             show.finalize_take_slide(show.state.slide, now);
@@ -328,8 +335,10 @@ fn views_rect(bottom: Rect) -> Rect {
 pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Presentation>, now: f64, layout: &Layout) -> bool {
     // Take the state out of the show so its sections can borrow both `show` and the shell state.
     let mut rec = std::mem::take(&mut show.record_view);
-    let screen = (app.session.screen.status(), app.session.screen.is_recording());
-    devices::connect(&mut rec, &app.services, show, screen);
+    // `ScreenState::status` queries the OS, so the frame uses `rec`'s cached value (re-read at
+    // most once a second, and whenever a take starts or stops) instead of asking every paint.
+    let (capture, recording) = (rec.screen_status.read(now, || app.session.screen.status()), app.session.screen.is_recording());
+    devices::connect(&mut rec, &app.services, show, (capture, recording));
     rec.read_total(doc);
     let mut keep = true;
     ui.painter().rect_filled(layout.full, CornerRadius::ZERO, Color32::from_rgb(16, 16, 18));

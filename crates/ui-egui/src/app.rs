@@ -29,6 +29,40 @@ pub use keys::key_name;
 /// How long a transient status message stays visible.
 const STATUS_LINGER_MS: f64 = 6000.0;
 
+/// What a logic pass does with a close request while a screen take is in flight.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ScreenClose {
+    /// Nothing waits for a take: the normal close path runs.
+    Normal,
+    /// Stop the take if it still records, cancel this close, and wait for the insert.
+    Wait,
+    /// The take has landed: close again, so the normal path sees the now-dirty deck.
+    Retry,
+}
+
+/// The close path for a screen take: a take is part of the document only once the session has
+/// inserted it, so a close request must wait for the encoder instead of dropping it.
+fn screen_close(recording: bool, finishing: bool, closing: bool, pending: bool, quit_confirmed: bool) -> ScreenClose {
+    if quit_confirmed {
+        // The user has already confirmed the quit: the take cannot be held back any longer.
+        return ScreenClose::Normal;
+    }
+    if closing {
+        // A fresh request supersedes a satisfied wait, and waits again while a take is in flight.
+        return if recording || finishing { ScreenClose::Wait } else { ScreenClose::Normal };
+    }
+    if pending && !(recording || finishing) {
+        return ScreenClose::Retry;
+    }
+    ScreenClose::Normal
+}
+
+/// egui data key: a close request is waiting for a screen take to land. Kept in the context's
+/// temporary data so the close path needs no extra [`SlideApp`] field.
+fn pending_close_key() -> egui::Id {
+    egui::Id::unique("deckcraft.pending_close")
+}
+
 impl SlideApp {
     /// Remove temporary PDFs created for printing.
     pub fn cleanup_print_previews(&mut self) {
@@ -201,6 +235,21 @@ impl SlideApp {
         }
     }
 
+    /// A screen take is still on the encoder: recording, or having its file written after Stop.
+    /// Either state needs [`Session::screen_tick`], since the finished take is only inserted there.
+    fn screen_take_busy(&self) -> bool {
+        self.session.screen.is_recording() || self.session.screen.is_finishing()
+    }
+
+    /// A close request is waiting for a screen take to land (see [`Self::logic`]).
+    fn pending_close(&self, ctx: &egui::Context) -> bool {
+        ctx.data(|d| d.get_temp::<bool>(pending_close_key()).unwrap_or(false))
+    }
+
+    fn set_pending_close(&self, ctx: &egui::Context, pending: bool) {
+        ctx.data_mut(|d| d.insert_temp(pending_close_key(), pending));
+    }
+
     /// Background work, run on every logic call (visible, hidden or `run_logic`).
     ///
     /// Only consumed queues and monotonic deadlines live here: control requests, asynchronous
@@ -238,31 +287,61 @@ impl SlideApp {
         // Queued/settling screenshots force the bounded hidden paints they need; issued ones
         // rely on the screenshot command and the completion callback, with only a deadline wake.
         self.capture.request_paint_if_needed(ctx, web_time::Instant::now());
-        if self.session.screen.is_recording() {
+        // A take keeps the encoder busy until its file is written: tick it while it records or
+        // finishes, so a stopped take is collected and inserted instead of being left behind in
+        // the worker. The repaint keeps the UI live while the worker writes the file.
+        if self.screen_take_busy() {
             self.session.screen_tick(monotonic_secs());
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
         if !self.synthetic.is_empty() || !self.synthetic_next.is_empty() || self.synthetic_pending {
             ctx.request_repaint();
         }
-        let closing = ctx.input(|i| i.viewport().close_requested()) && !self.quit_confirmed;
+        let mut closing = ctx.input(|i| i.viewport().close_requested()) && !self.quit_confirmed;
         // A screen recording is not part of the document until it is inserted: stop it here, so
         // closing the window keeps the take and the insert makes the deck dirty (which then asks
         // the user), instead of dropping the worker with an unfinished MP4 in the temp folder.
-        if closing && (self.session.screen.is_recording() || self.session.screen.is_finishing()) {
-            // A take that is still being written must land first: the insert dirties the deck, so
-            // the next close asks about it.
-            if self.session.screen.is_finishing() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        match screen_close(
+            self.session.screen.is_recording(),
+            self.session.screen.is_finishing(),
+            closing,
+            self.pending_close(ctx),
+            self.quit_confirmed,
+        ) {
+            ScreenClose::Wait => {
+                // If the take cannot be inserted (no slide to put it on, say), keep the window
+                // open: the message and the kept MP4 stay visible instead of the app closing over
+                // them.
+                let stopped = !self.session.screen.is_recording()
+                    || match self.session.execute("show.screenRecord", &serde_json::json!({"action": "stop"})) {
+                        Ok(_) => true,
+                        Err(e) => {
+                            self.set_status(e.to_string());
+                            // The status bar is hidden during a slide show: keep the recorder's
+                            // window up, which shows the message (and the kept take's path).
+                            self.screen.open = true;
+                            false
+                        }
+                    };
+                if stopped {
+                    // A take that is still being written must land first: the insert dirties the
+                    // deck, so the close is retried after it.
+                    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                    self.set_pending_close(ctx, true);
+                    closing = false;
+                }
             }
-            // If the take cannot be inserted (no slide to put it on, say), keep the window open:
-            // the message and the kept MP4 stay visible instead of the app closing over them.
-            if let Err(e) = self.session.execute("show.screenRecord", &serde_json::json!({"action": "stop"})) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                self.set_status(e.to_string());
-                // The status bar is hidden during a slide show: keep the recorder's window up,
-                // which shows the message (and the kept take's path).
-                self.screen.open = true;
+            ScreenClose::Retry => {
+                // The take has landed: close again, which re-enters the normal close path now
+                // that the insert has made the deck dirty.
+                self.set_pending_close(ctx, false);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            ScreenClose::Normal => {
+                if closing {
+                    // A fresh request (or a confirmed quit) owns the close from here.
+                    self.set_pending_close(ctx, false);
+                }
             }
         }
         // Closing during a take must not lose it, even when the deck itself is clean: nothing is
@@ -408,5 +487,25 @@ impl SlideApp {
 
     pub fn open_url(&mut self, url: &str) {
         self.pending_urls.push(url.to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ScreenClose, screen_close};
+
+    #[test]
+    fn close_waits_for_a_take_in_flight() {
+        // A close request while the take records or finishes is held back for the insert.
+        assert_eq!(screen_close(true, false, true, false, false), ScreenClose::Wait);
+        assert_eq!(screen_close(false, true, true, false, false), ScreenClose::Wait);
+        // The take has landed: close again, so the normal path sees the dirty deck.
+        assert_eq!(screen_close(false, false, false, true, false), ScreenClose::Retry);
+        // A fresh request or a confirmed quit runs the normal path (and clears the wait).
+        assert_eq!(screen_close(false, false, true, true, false), ScreenClose::Normal);
+        assert_eq!(screen_close(false, false, false, true, true), ScreenClose::Normal);
+        // A pending wait keeps waiting quietly while the take is still in flight.
+        assert_eq!(screen_close(false, true, false, true, false), ScreenClose::Normal);
+        assert_eq!(screen_close(false, false, false, false, false), ScreenClose::Normal);
     }
 }
