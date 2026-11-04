@@ -205,6 +205,13 @@ impl SlideApp {
         #[cfg(not(target_arch = "wasm32"))]
         for f in std::mem::take(&mut raw.dropped_files) {
             let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped file".into());
+            // A presentation dropped on the window opens in a window of its own when the person works that way.
+            if let Some(path) = f.path().to_str().filter(|p| crate::own_window::is_presentation_path(p))
+                && self.open_in_own_window(&[path.to_string()])
+            {
+                self.note_recent(path);
+                continue;
+            }
             match f.bytes() {
                 Ok(bytes) => self.open_or_insert_bytes(&name, &bytes),
                 Err(e) => self.set_status(e),

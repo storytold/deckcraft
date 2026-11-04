@@ -53,6 +53,8 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
             app.close_presentation();
             return true;
         }
+        // Through `run`, so a window that is in use starts another one (see `own_window`).
+        (N, true, false, false) => "file.new",
         (O, true, false, false) => "app.openDialog",
         (V, true, false, true) if app.session.active().is_some() => {
             app.dialog = Some(crate::dialogs::Dialog::new("pasteSpecial"));

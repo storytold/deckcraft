@@ -34,6 +34,10 @@ impl SlideApp {
     /// Open `path` without blocking the UI: the file is read on a thread and the progress window
     /// shows until it arrives. Without threads (the web build) it opens at once.
     pub fn open_path_in_background(&mut self, path: &str) {
+        if self.open_in_own_window(&[path.to_string()]) {
+            self.note_recent(path);
+            return;
+        }
         if let Some(o) = &self.opening {
             let name = o.name();
             self.set_status(format!("Still opening {name}"));

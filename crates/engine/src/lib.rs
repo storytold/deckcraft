@@ -7,6 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod clipboard_share;
 pub mod cmd;
 pub mod compare;
 pub mod connect;
@@ -454,7 +455,8 @@ pub struct MediaStatus {
 }
 
 /// Clipboard contents copied within the app.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Clipboard {
     pub shapes: Vec<Shape>,
     pub slides: Vec<Slide>,
@@ -475,6 +477,9 @@ pub struct Session {
     pub prefs: Prefs,
     pub journal: Vec<(String, Value)>,
     pub clipboard: Clipboard,
+    /// Counts every copy or cut (and every clipboard taken from another window), so a host can tell
+    /// when the clipboard changed; see [`clipboard_share`].
+    pub(crate) clipboard_serial: u64,
     pub ui_requests: Vec<UiRequest>,
     pub tool: tools::ToolState,
     pub(crate) untitled: u32,
@@ -523,6 +528,7 @@ impl Session {
             prefs: Prefs::default(),
             journal: vec![],
             clipboard: Clipboard::default(),
+            clipboard_serial: 0,
             ui_requests: vec![],
             tool: tools::ToolState::default(),
             untitled: 0,
