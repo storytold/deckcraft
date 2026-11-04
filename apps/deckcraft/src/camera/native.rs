@@ -1,13 +1,13 @@
 //! Windows/macOS/Linux camera capture over `cameras` (pinned `=0.3.2`).
 
-use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError, TrySendError};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError, TrySendError};
 use std::thread;
 use std::time::Duration;
 
 use deckcraft_media::camera::{
-    CameraDesc, CameraError, CameraEvent, CameraFormat, CameraFrame, CameraId, CameraInfo, CameraIn, CameraPosition, CameraRequest,
-    CameraSession, PixelFormat,
+    CameraDesc, CameraError, CameraEvent, CameraFormat, CameraFrame, CameraId, CameraIn, CameraInfo, CameraPosition, CameraRequest, CameraSession,
+    PixelFormat,
 };
 
 /// Two buffered frames: enough that a slow paint does not stall the worker, small enough that the
@@ -51,9 +51,7 @@ impl CameraIn for SystemCamera {
     fn start(&mut self, request: &CameraRequest) -> Result<CameraSession, CameraError> {
         let commands = self.ensure_worker()?;
         let (events, receiver) = mpsc::sync_channel(EVENT_CAPACITY);
-        commands
-            .send(Command::Start(request.clone(), events))
-            .map_err(|_| CameraError::Backend("the camera worker stopped".into()))?;
+        commands.send(Command::Start(request.clone(), events)).map_err(|_| CameraError::Backend("the camera worker stopped".into()))?;
         Ok(CameraSession { started_at: web_time::Instant::now(), events: receiver })
     }
 
@@ -263,12 +261,16 @@ fn pick_device<'a>(devices: &'a [cameras::Device], wanted: Option<&str>) -> Opti
 }
 
 fn desc(device: &cameras::Device) -> CameraDesc {
-    CameraDesc { id: device.id.0.clone(), name: device.name.clone(), position: match device.position {
-        cameras::Position::Front => CameraPosition::Front,
-        cameras::Position::Back => CameraPosition::Back,
-        cameras::Position::External => CameraPosition::External,
-        _ => CameraPosition::Unknown,
-    } }
+    CameraDesc {
+        id: device.id.0.clone(),
+        name: device.name.clone(),
+        position: match device.position {
+            cameras::Position::Front => CameraPosition::Front,
+            cameras::Position::Back => CameraPosition::Back,
+            cameras::Position::External => CameraPosition::External,
+            _ => CameraPosition::Unknown,
+        },
+    }
 }
 
 fn camera_format(found: &cameras::FormatDescriptor) -> CameraFormat {

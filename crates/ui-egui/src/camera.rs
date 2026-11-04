@@ -266,12 +266,7 @@ fn color_image(frame: &CameraFrame) -> Option<ColorImage> {
     if count == 0 || frame.rgba.len() < bytes {
         return None;
     }
-    let pixels = frame.rgba[..bytes]
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|c| Color32::from_rgba_premultiplied(c[0], c[1], c[2], c[3]))
-        .collect();
+    let pixels = frame.rgba[..bytes].as_chunks::<4>().0.iter().map(|c| Color32::from_rgba_premultiplied(c[0], c[1], c[2], c[3])).collect();
     Some(ColorImage::new([width, height], pixels))
 }
 
@@ -302,15 +297,7 @@ pub(crate) fn paint_preview(app: &SlideApp, painter: &egui::Painter, xf: crate::
 }
 
 /// Paint the live frame in every cameo of show slide `slide`, through the show's zoom window `uv`.
-pub(crate) fn paint_show(
-    app: &SlideApp,
-    painter: &egui::Painter,
-    doc: &Presentation,
-    slide: usize,
-    hidden: &[ShapeId],
-    srect: Rect,
-    uv: Rect,
-) {
+pub(crate) fn paint_show(app: &SlideApp, painter: &egui::Painter, doc: &Presentation, slide: usize, hidden: &[ShapeId], srect: Rect, uv: Rect) {
     let Some(texture) = app.camera.texture().cloned() else { return };
     let Some(slide) = doc.slides.get(slide) else { return };
     let (sw, sh) = (doc.slide_size.width as f32, doc.slide_size.height as f32);
@@ -523,7 +510,7 @@ mod tests {
         let doc = session.active().expect("document").doc.clone();
         let fake = FakeCamera::default();
         let mut host = CameraHost::new(Some(Box::new(fake.clone())));
-        host.set_show(Some(1), Some(&doc));
+        host.set_show(Some(1), Some(doc.as_ref()));
         assert_eq!(fake.starts(), 1);
         assert!(!host.preview_on());
         host.set_show(None, None);
@@ -536,7 +523,7 @@ mod tests {
         let doc = session.active().expect("document").doc.clone();
         let fake = FakeCamera::default();
         let mut host = CameraHost::new(Some(Box::new(fake.clone())));
-        host.set_show(Some(1), Some(&doc));
+        host.set_show(Some(1), Some(doc.as_ref()));
         assert_eq!(fake.starts(), 0);
         assert_eq!(host.status(), &CameraStatus::Off);
     }

@@ -2,7 +2,7 @@
 //!
 //! Nothing here names a platform API or an OS crate, so this module builds for `wasm32` and keeps
 //! `deckcraft-media` free of device dependencies. The host injects an implementation through
-//! [`crate::CameraIn`](CameraIn) — `SystemCamera` on the desktop, `None` on the web and in tests.
+//! [`CameraIn`] — `SystemCamera` on the desktop, `None` on the web and in tests.
 //!
 //! The contract is one worker per session:
 //!
@@ -18,8 +18,8 @@
 //! second conversion. The preview channel is deliberately latest-wins: if the UI falls behind,
 //! stale frames are dropped rather than queued, keeping live latency bounded.
 
-use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use web_time::Instant;
