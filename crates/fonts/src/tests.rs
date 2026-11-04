@@ -425,3 +425,11 @@ fn the_font_scan_skips_fifos_folders_and_link_loops() {
     assert!(fifo || n >= 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn disabling_system_fallback_gates_automatic_family_loads() {
+    let db = FontDb::with_font_dirs(Vec::new());
+    assert!(cfg!(target_arch = "wasm32") || db.system_fallback_enabled());
+    db.set_system_fallback(false);
+    assert!(!db.system_fallback_enabled());
+}
