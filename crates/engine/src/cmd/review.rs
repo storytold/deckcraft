@@ -1244,8 +1244,25 @@ fn media_used(doc: &deckcraft_model::Presentation, id: deckcraft_model::MediaId)
     false
 }
 
+/// Whether a hyperlink's action plays `id` (a link or a mouse-over can carry a sound).
+fn link_uses_media(link: Option<&deckcraft_model::text::Hyperlink>, id: deckcraft_model::MediaId) -> bool {
+    link.is_some_and(|l| l.sound == Some(id))
+}
+
 fn shape_uses_media(sh: &Shape, id: deckcraft_model::MediaId) -> bool {
     if matches!(&sh.fill, Some(deckcraft_model::style::Fill::Picture(p)) if p.media == id) {
+        return true;
+    }
+    // The shape's own action buttons, and every run's link or mouse-over.
+    if link_uses_media(sh.click.as_ref(), id) || link_uses_media(sh.hover.as_ref(), id) {
+        return true;
+    }
+    if let Some(t) = &sh.text
+        && t.paragraphs
+            .iter()
+            .flat_map(|p| p.runs.iter())
+            .any(|r| link_uses_media(r.props.link.as_ref(), id) || link_uses_media(r.props.hover.as_ref(), id))
+    {
         return true;
     }
     if let Some(t) = &sh.text {
@@ -1258,7 +1275,8 @@ fn shape_uses_media(sh: &Shape, id: deckcraft_model::MediaId) -> bool {
     match &sh.kind {
         ShapeKind::Media(c) => c.media == id || c.poster == Some(id),
         ShapeKind::Picture { fill } => fill.media == id,
-        ShapeKind::Opaque { preview, .. } => *preview == Some(id),
+        // An OLE object, SmartArt diagram… keeps the parts its XML points to.
+        ShapeKind::Opaque { preview, parts, .. } => *preview == Some(id) || parts.iter().any(|(_, _, media)| *media == id),
         ShapeKind::Model3d { media, poster } => *media == id || *poster == Some(id),
         _ => false,
     }

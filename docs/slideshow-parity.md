@@ -79,7 +79,7 @@ Reading View in a window with navigation: present (checklist row done).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-04 | minor | Record Slide Show keeps timings, per-slide narration, pen ink and a laser trace; `show.end` saves a running take, and the screen recorder's control window stays reachable during a show. Checklist breadth 71% |
+| 2026-11-04 | minor | Record Slide Show keeps timings, per-slide narration (played in the show, written to PPTX), pen ink and a laser trace; `show.end` saves a running take, and the screen recorder's control window stays reachable during a show. An ordinary show holds Ctrl for the laser pointer in the Set Up Slide Show colour, and Clear Timing / Clear Narration work on the current slide or all slides. Checklist breadth 71% |
 | 2026-10-27 | minor | Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows keep a still pointer, so clickable choices stay targetable; Reading View unchanged (#1445) |
 | 2026-10-22 | minor | See All Slides from presenter view opens in presenter view, not on the audience screen (#1130) |
 | 2026-10-14 | trivial | Community PR wave folded: one media playback row, the presenter pen/laser row matches the laser that exists, estimates keep only the open work (~9–16 h); checklist breadth 68% |
@@ -96,7 +96,4 @@ Reading View in a window with navigation: present (checklist row done).
 | 2026-10-14 | minor | See All Slides (G) and click-to-zoom (Z) during the show. Presenter view opens that grid and sets black, white and zoom. Checklist breadth stays 66% |
 | 2026-10-24 | minor | Ctrl+wheel (Cmd+wheel on a Mac) zooms the show in and out around the pointer, up to 4×; the plain wheel still turns the page (#1286) |
 | 2026-10-23 | trivial | Presenter view draws the notes with their formatting (bullets, numbers, indents, bold/italic) instead of plain text (#1128) |
-| 2026-10-14 | minor | Ordinary show: hold Ctrl for the laser pointer, colour in Set Up Slide Show. Clear Timing and Clear Narration on the current slide or all slides. Checklist breadth 71% |
-| 2026-10-14 | minor | Record Slide Show keeps per-slide narration (played in the show, written to PPTX) and a laser trace. Camera and screen capture stay open |
-| 2026-10-14 | minor | Record Slide Show keeps timings and pen ink. Narration audio, laser and camera stay open |
 | 2026-10-10 | major | Created: show, presenter view, rehearse and record, compared with PowerPoint 16.113's Slide Show tab and menu |

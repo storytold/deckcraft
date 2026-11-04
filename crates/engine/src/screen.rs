@@ -86,8 +86,6 @@ struct Worker {
     frames: u64,
     failure: Option<String>,
     finished: Option<Result<RecorderOutput, RecorderError>>,
-    /// The last job did not fit: the caller re-schedules the work instead of counting it.
-    busy: bool,
     /// The picture the queue refused, for the next interval.
     kept: Option<ScreenFrame>,
     /// A finish was requested: the worker writes the file when the queue drains.
@@ -129,7 +127,6 @@ impl Encoder {
                         frames: 0,
                         failure: None,
                         finished: None,
-                        busy: false,
                         kept: None,
                         finish,
                         cancel,
@@ -166,8 +163,8 @@ impl Encoder {
                     }
                     // A full queue is a busy encoder, not a picture: the caller keeps the frame for
                     // the next interval, and the count only moves for pictures the muxer gets.
+                    // The caller keeps the frame for the next interval and re-schedules it.
                     Err(TrySendError::Full(Job::Encode(frame))) => {
-                        w.busy = true;
                         w.kept = Some(frame);
                         false
                     }
@@ -200,10 +197,7 @@ impl Encoder {
                         w.frames += u64::from(n);
                         true
                     }
-                    Err(TrySendError::Full(_)) => {
-                        w.busy = true;
-                        false
-                    }
+                    Err(TrySendError::Full(_)) => false,
                     Err(_) => false,
                 }
             }
