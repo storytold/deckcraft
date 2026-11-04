@@ -107,7 +107,7 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
         s.clipboard = crate::Clipboard { text: Some(TextBody::from_text(&plain)), plain: plain.clone(), ..Default::default() };
         return Ok(plain);
     }
-    let shapes: Vec<Shape> = st
+    let mut shapes: Vec<Shape> = st
         .selection
         .shapes
         .iter()
@@ -120,19 +120,26 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
             })
         })
         .collect();
-    // A placeholder pastes on a slide as a regular shape; it keeps the look it inherited here.
-    let mut shapes = shapes;
-    if st.selection.target == crate::Target::Slides
-        && let Some(ctx) = st.current_slide().and_then(|sl| deckcraft_model::resolve::Ctx::for_slide(&st.doc, sl))
-    {
-        shapes.iter_mut().for_each(|sh| deckcraft_model::resolve::detach_placeholder(&ctx, sh));
-    }
+    // Copying is the last chance to read what a placeholder inherits: a cut removes it, and the
+    // paste can be in another deck. Slide Master view pastes the originals instead.
+    let placeholders: Vec<Shape> = shapes.iter().filter(|x| x.ph.is_some()).cloned().collect();
+    detach_on_slide(&st.doc, &st.selection, &mut shapes);
     let mids = crate::media_refs::shapes_media(&shapes);
     let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
     let plain = shapes.iter().filter_map(|x| x.text.as_ref().map(|t| t.text())).collect::<Vec<_>>().join("\n");
     let source_theme = st.current_slide().and_then(|sl| st.doc.master_for(sl)).map(|(m, _)| (m.scheme(), m.theme.fonts.clone()));
-    s.clipboard = crate::Clipboard { shapes, media, plain: plain.clone(), source_theme, ..Default::default() };
+    s.clipboard = crate::Clipboard { shapes, placeholders, media, plain: plain.clone(), source_theme, ..Default::default() };
     Ok(plain)
+}
+
+/// On a slide, a copy of a placeholder is a regular shape: give `shapes` the look they inherit
+/// there. In Slide Master view a copy stays a placeholder, so this changes nothing.
+pub(crate) fn detach_on_slide(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shapes: &mut [Shape]) {
+    if sel.target == crate::Target::Slides
+        && let Some(ctx) = super::text::ctx_for(doc, sel)
+    {
+        shapes.iter_mut().for_each(|sh| deckcraft_model::resolve::detach_placeholder(&ctx, sh));
+    }
 }
 
 fn copying_caret(s: &Session) -> bool {
@@ -326,6 +333,13 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         return s.edit(|doc, sel| {
             let media = bring_media("edit.paste", doc, &clip.media)?;
             let mut shapes = clip.shapes.clone();
+            if sel.target != crate::Target::Slides {
+                for sh in &mut shapes {
+                    if let Some(original) = clip.placeholders.iter().find(|p| p.id == sh.id) {
+                        sh.clone_from(original);
+                    }
+                }
+            }
             reid("edit.paste", doc, &mut shapes)?;
             crate::media_refs::visit_mut::shapes(&mut shapes, &mut remap_media(&media));
             let (mut taken, mut count) = super::current_names(doc, sel);
@@ -347,7 +361,8 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
                     x.x += off;
                     x.y += off;
                 }
-                // A pasted placeholder becomes a regular shape; copying gave it its look.
+                // A placeholder pasted on a slide becomes a regular shape. One copied from a slide
+                // already has its look; see `copy_inner`.
                 if sh.ph.is_some() && sel.target == crate::Target::Slides {
                     sh.ph = None;
                 }
@@ -413,6 +428,7 @@ fn paste_special(s: &mut Session, p: &Value) -> Result<Value> {
             let saved = s.clipboard.clone();
             if let Some((scheme, fonts)) = &saved.source_theme {
                 bake_theme(&mut s.clipboard.shapes, scheme, fonts);
+                bake_theme(&mut s.clipboard.placeholders, scheme, fonts);
             }
             let r = paste(s, &json!({}));
             let pastes = s.clipboard.pastes;
@@ -540,12 +556,7 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
         let mut copies: Vec<Shape> = list.iter().filter(|x| ids.contains(&x.id)).cloned().collect();
         let sources: Vec<ShapeId> = copies.iter().map(|c| c.id).collect();
         let boxes: Vec<_> = copies.iter().map(|c| xfrm_of(doc, sel, c)).collect();
-        // A duplicated placeholder becomes a regular shape that keeps the look it inherited.
-        if sel.target == crate::Target::Slides
-            && let Some(ctx) = doc.slides.get(sel.slide).and_then(|sl| deckcraft_model::resolve::Ctx::for_slide(doc, sl))
-        {
-            copies.iter_mut().for_each(|c| deckcraft_model::resolve::detach_placeholder(&ctx, c));
-        }
+        detach_on_slide(doc, sel, &mut copies);
         // Duplicating the copies of the last Duplicate again repeats how far they were moved
         // since (#966); anything else gets the usual offset.
         let (dx, dy) = last

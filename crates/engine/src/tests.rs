@@ -267,6 +267,63 @@ fn a_pasted_or_duplicated_placeholder_keeps_its_inherited_look() {
     assert!(s.doc().unwrap().doc.validate().is_empty());
 }
 
+/// Dragging a copy of a placeholder off it keeps the look too: the title's size and font, the
+/// body's bullets. `edit.duplicate` is not the only way to duplicate.
+#[test]
+fn a_placeholder_duplicated_by_dragging_keeps_its_look() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let phs: Vec<ShapeId> = s.doc().unwrap().current_slide().unwrap().shapes.iter().filter(|x| x.ph.is_some()).map(|x| x.id).collect();
+    assert!(phs.len() >= 2, "a title and a body placeholder");
+    for id in phs {
+        s.execute("text.set", &json!({"id": id.0, "text": "First\nSecond"})).unwrap();
+        let want = resolved_look(&s, id);
+        s.execute("selection.select", &json!({"id": id.0})).unwrap();
+        let st = s.doc().unwrap();
+        let x = crate::cmd::xfrm_of(&st.doc, &st.selection, st.shape(id).unwrap());
+        let (cx, cy) = (x.x + x.w / 2.0, x.y + x.h / 2.0);
+        let alt = |kind, x, y| PointerEvent { mods: Mods { alt: true, ..Default::default() }, ..tev(kind, x, y) };
+        s.pointer(alt(PointerKind::Down, cx, cy)).unwrap();
+        s.pointer(alt(PointerKind::Drag, cx + 30.0, cy + 30.0)).unwrap();
+        s.pointer(alt(PointerKind::Up, cx + 30.0, cy + 30.0)).unwrap();
+        let copy = s.doc().unwrap().selection.shapes[0];
+        assert_ne!(copy, id, "the drag made a copy");
+        assert!(s.doc().unwrap().shape(id).unwrap().ph.is_some(), "the original stays a placeholder");
+        assert!(s.doc().unwrap().shape(copy).unwrap().ph.is_none(), "the copy is a regular shape");
+        assert_eq!(resolved_look(&s, copy), want, "placeholder {}", id.0);
+    }
+}
+
+/// A slide's placeholder pasted in Slide Master view stays a placeholder that inherits from where
+/// it lands; only a paste on a slide turns it into a regular shape with the look it had.
+#[test]
+fn a_slide_placeholder_pasted_in_slide_master_view_stays_a_placeholder() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes.iter().find(|x| x.ph.is_some()).unwrap().id;
+    s.execute("text.set", &json!({"id": title.0, "text": "Title"})).unwrap();
+    let want = resolved_look(&s, title);
+    let source = s.doc().unwrap().shape(title).unwrap().clone();
+    s.execute("selection.select", &json!({"id": title.0})).unwrap();
+    s.execute("edit.copy", &json!({})).unwrap();
+
+    s.execute("view.slideMaster", &json!({})).unwrap();
+    for paste in ["edit.paste", "edit.pasteSpecial"] {
+        s.execute(paste, &json!({"as": "keepSource"})).unwrap();
+        let st = s.doc().unwrap();
+        let copy = st.shape(st.selection.shapes[0]).unwrap();
+        assert_eq!(copy.ph.as_ref().map(|p| p.kind), source.ph.as_ref().map(|p| p.kind), "{paste} keeps the placeholder");
+        let list = copy.text.as_ref().map(|t| t.list_style.clone());
+        assert_eq!(list, source.text.as_ref().map(|t| t.list_style.clone()), "{paste} adds no baked styles");
+    }
+    s.execute("view.closeMaster", &json!({})).unwrap();
+
+    s.execute("edit.paste", &json!({})).unwrap();
+    let copy = s.doc().unwrap().selection.shapes[0];
+    assert!(s.doc().unwrap().shape(copy).unwrap().ph.is_none(), "on a slide the copy is a regular shape");
+    assert_eq!(resolved_look(&s, copy), want);
+}
+
 /// The resolved fill, line and effects of shape `id` on the current slide, with their style colours.
 fn resolved_box(s: &Session, id: ShapeId) -> String {
     use deckcraft_model::resolve;

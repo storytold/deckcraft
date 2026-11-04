@@ -457,6 +457,9 @@ pub struct MediaStatus {
 #[derive(Clone, Debug, Default)]
 pub struct Clipboard {
     pub shapes: Vec<Shape>,
+    /// The copied placeholders as they were, by id. `shapes` holds a slide's placeholders as
+    /// regular shapes; a paste in Slide Master view takes these, which stay placeholders.
+    pub placeholders: Vec<Shape>,
     pub slides: Vec<Slide>,
     /// Media the copied shapes/slides reference.
     pub media: Vec<deckcraft_model::MediaItem>,
