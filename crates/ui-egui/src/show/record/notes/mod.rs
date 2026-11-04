@@ -38,6 +38,7 @@ pub(crate) use teleprompter::State as TeleprompterState;
 ///
 /// This is the shell's entry point (`RecordView::set_notes_size`); [`clamp_size`] is the same
 /// bound used by the pane's header and shortcuts.
+#[cfg(test)]
 pub(super) fn size_after(px: f32, delta: f32) -> f32 {
     sizing::size_after(px, delta)
 }
@@ -110,16 +111,6 @@ const INSET: f32 = 12.0;
 /// The body rect under the header, inside the pane's padding.
 fn body_rect(rect: egui::Rect, header_height: f32) -> egui::Rect {
     egui::Rect::from_min_max(egui::pos2(rect.min.x + INSET, rect.min.y + header_height + 2.0), egui::pos2(rect.max.x - INSET, rect.max.y - 8.0))
-}
-
-/// The width available to the script.
-fn body_width(rect: egui::Rect) -> f32 {
-    (rect.width() - INSET * 2.0).max(1.0)
-}
-
-/// A script's scrolling viewport height, never negative.
-fn body_height(rect: egui::Rect, header_height: f32) -> f32 {
-    body_rect(rect, header_height).height().max(0.0)
 }
 
 /// Size of the little resize handle widgets, used by the header layout.

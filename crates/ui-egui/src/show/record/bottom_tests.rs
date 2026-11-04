@@ -98,10 +98,10 @@ fn a_colour_outside_the_palette_changes_nothing() {
 fn the_palette_has_ten_distinct_opaque_colours() {
     assert_eq!(INK_COLORS.len(), 10);
     assert_eq!(INK_NAMES.len(), 10);
-    for i in 0..INK_COLORS.len() {
-        assert_eq!(INK_COLORS[i].a(), 255, "swatches paint solid");
-        for j in (i + 1)..INK_COLORS.len() {
-            assert_ne!(INK_COLORS[i], INK_COLORS[j], "swatch {i} and {j} are the same colour");
+    for (i, swatch) in INK_COLORS.iter().enumerate() {
+        assert_eq!(swatch.a(), 255, "swatches paint solid");
+        for (j, other) in INK_COLORS.iter().enumerate().skip(i + 1) {
+            assert_ne!(swatch, other, "swatch {i} and {j} are the same colour");
         }
     }
 }

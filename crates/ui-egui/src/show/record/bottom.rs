@@ -49,6 +49,7 @@ pub(super) fn ink_mode(tool: InkTool) -> InkMode {
 }
 
 /// The toolbar choice for the show's ink mode.
+#[cfg(test)]
 pub(super) fn ink_tool(mode: InkMode) -> InkTool {
     match mode {
         InkMode::Arrow => InkTool::Arrow,
@@ -145,12 +146,6 @@ pub(super) fn rects(bottom: Rect, reserve_right: f32) -> Rects {
     Rects { prev, next, count, progress, tools, swatches }
 }
 
-/// Result of a bottom-strip frame. The Record view stays open whatever the navigation did; the
-/// field mirrors the earlier shell stub so a caller can keep using it.
-pub(super) struct Out {
-    pub keep: bool,
-}
-
 /// Draw the strip and handle its clicks. `doc` is the live deck; the strip never captures the
 /// pointer, so a press outside a control falls through to the canvas.
 pub(super) fn ui(
@@ -161,7 +156,7 @@ pub(super) fn ui(
     doc: &Arc<Presentation>,
     now: f64,
     layout: &Layout,
-) -> Out {
+) {
     let bottom = layout.bottom;
     paint_strip(ui, bottom);
     // Keep the Views/camera-preview cluster's lower-right corner clear.
@@ -188,12 +183,12 @@ pub(super) fn ui(
     }
 
     let mut swatches = Vec::with_capacity(INK_COLORS.len());
-    for i in 0..INK_COLORS.len() {
+    for (i, ink_name) in INK_NAMES.iter().enumerate() {
         let name = format!("Ink colour {}", i + 1);
         let resp = ui.interact(r.swatch(i), ui.scope_id().with(("record_bottom_swatch", i)), Sense::click());
         let selected = rec.ink.color == i;
         resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &name));
-        let _ = resp.clone().on_hover_text(format!("{} {}", name, INK_NAMES[i]));
+        let _ = resp.clone().on_hover_text(format!("{name} {ink_name}"));
         swatches.push(resp);
     }
 
@@ -252,7 +247,6 @@ pub(super) fn ui(
     for (i, resp) in swatches.iter().enumerate() {
         paint_swatch(ui, r.swatch(i), INK_COLORS[i], rec.ink.color == i, resp.hovered());
     }
-    Out { keep: true }
 }
 
 /// The strip's own dark surface and the hairline that separates it from the canvas.

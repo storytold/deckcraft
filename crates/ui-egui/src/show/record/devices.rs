@@ -18,19 +18,12 @@ pub(super) enum DeviceStatus {
     Off,
     /// A device is present and capturing.
     On,
-    /// The system refused access.
-    Denied,
-    /// Another application holds the device.
-    Busy,
 }
 
 /// One selectable device and its current state.
 #[derive(Clone, Debug, Default)]
-pub(super) struct DeviceState {
+pub(in crate::show) struct DeviceState {
     pub status: DeviceStatus,
-    pub selected: Option<String>,
-    /// Microphone level, 0..=1, when the backend reports one.
-    pub level: f32,
 }
 
 impl DeviceState {

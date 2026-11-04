@@ -31,7 +31,7 @@ struct Fake {
 }
 
 impl Fake {
-    fn new(devices: Vec<CameraDevice>) -> (Box<dyn CameraSource>, Arc<Mutex<Log>>) {
+    fn with_devices(devices: Vec<CameraDevice>) -> (Box<dyn CameraSource>, Arc<Mutex<Log>>) {
         let log = Arc::new(Mutex::new(Log::default()));
         let fake = Fake { log: log.clone(), devices, start_status: CameraStatus::Requesting, poll_status: CameraStatus::Live };
         (Box::new(fake), log)
@@ -109,7 +109,7 @@ fn app(source: Box<dyn CameraSource>) -> Harness<'static, SlideApp> {
 
 #[test]
 fn the_preview_button_starts_then_stops_the_source() {
-    let (source, log) = Fake::new(devices());
+    let (source, log) = Fake::with_devices(devices());
     let mut h = app(source);
     assert_eq!(h.state().camera_preview.status(), CameraStatus::Off);
     assert_eq!(h.state().session.camera_status, CameraStatus::Off);
@@ -133,7 +133,7 @@ fn the_preview_button_starts_then_stops_the_source() {
 
 #[test]
 fn the_preview_is_editor_state_not_a_document_edit() {
-    let (source, _) = Fake::new(devices());
+    let (source, _) = Fake::with_devices(devices());
     let mut h = app(source);
     let (revision, undo, dirty) = {
         let doc = h.state().session.active().unwrap();
@@ -170,7 +170,7 @@ fn a_refused_or_missing_camera_keeps_the_editor_usable_and_says_why() {
 
 #[test]
 fn an_unplugged_camera_turns_live_into_lost_without_stopping_the_editor() {
-    let (source, log) = Fake::new(devices());
+    let (source, log) = Fake::with_devices(devices());
     let mut h = app(source);
     h.get_by_label("Enable Camera Preview").click();
     h.run_steps(2);
@@ -189,7 +189,7 @@ fn an_unplugged_camera_turns_live_into_lost_without_stopping_the_editor() {
 
 #[test]
 fn more_options_lists_the_cameras_and_picks_one() {
-    let (source, log) = Fake::new(devices());
+    let (source, log) = Fake::with_devices(devices());
     let mut h = app(source);
     h.get_by_label("More Options").click();
     h.run_steps(2);
@@ -209,7 +209,7 @@ fn more_options_lists_the_cameras_and_picks_one() {
 
 #[test]
 fn the_split_arrow_opens_the_same_menu_and_its_toggle_stops_the_preview() {
-    let (source, log) = Fake::new(devices());
+    let (source, log) = Fake::with_devices(devices());
     let mut h = app(source);
     h.get_by_label("Enable Camera Preview").click();
     h.run_steps(2);

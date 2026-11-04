@@ -29,12 +29,8 @@ impl ViewKind {
     }
 }
 
-pub(super) struct Out {
-    pub changed: bool,
-}
-
 /// Draw the Views dropdown in the bottom-right slot and the camera-preview icon beside it.
-pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, layout: &Layout) -> Out {
+pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, layout: &Layout) {
     let mut changed = false;
     let painter = ui.painter().clone();
     // Camera preview icon: a filled camera body when the preview is up.
@@ -87,8 +83,7 @@ pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, layout: &Layout) -> Out {
             changed = true;
         }
     });
-    let _ = MENU_BG;
-    Out { changed }
+    let _ = (MENU_BG, changed);
 }
 
 /// The bottom-right Views dropdown background colour, shared with section agents.

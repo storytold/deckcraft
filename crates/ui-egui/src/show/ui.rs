@@ -731,13 +731,12 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
     } else if erasing && !laser_on {
         let uv = show.zoom_uv();
-        if resp.drag_started() || resp.dragged() {
-            if let Some(p) = resp.interact_pointer_pos()
-                && let Some((nx, ny)) = norm_on_slide(srect, uv, p)
-            {
-                // The eraser is wide enough to feel like PowerPoint's; whole strokes go.
-                show.erase_ink_at(pos2(nx, ny), pos2(nx, ny), 0.015);
-            }
+        if (resp.drag_started() || resp.dragged())
+            && let Some(p) = resp.interact_pointer_pos()
+            && let Some((nx, ny)) = norm_on_slide(srect, uv, p)
+        {
+            // The eraser is wide enough to feel like PowerPoint's; whole strokes go.
+            show.erase_ink_at(pos2(nx, ny), pos2(nx, ny), 0.015);
         }
         ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
     } else if laser_on {

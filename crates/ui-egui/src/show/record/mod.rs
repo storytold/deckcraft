@@ -89,7 +89,6 @@ pub(crate) struct RecordView {
     pub(super) notes_open: bool,
     /// Selected record view. Defined in [`views`] so the dropdown and the shell share it.
     pub(super) view: views::ViewKind,
-    pub(super) views_open: bool,
     pub(super) more_open: bool,
     pub(super) ink: InkState,
     pub(in crate::show) devices: devices::Devices,
@@ -119,7 +118,6 @@ impl Default for RecordView {
             teleprompter: notes::TeleprompterState::default(),
             notes_open: true,
             view: views::ViewKind::default(),
-            views_open: false,
             more_open: false,
             ink: InkState::default(),
             devices: devices::Devices::default(),
@@ -253,8 +251,6 @@ pub(crate) struct Layout {
     pub views: Rect,
     /// Camera-preview icon, left of the Views dropdown.
     pub camera_preview: Rect,
-    /// Presenter view's next-slide strip, below the notes pane. None in the other views.
-    pub next: Option<Rect>,
 }
 
 /// Horizontal margin shared by the chrome.

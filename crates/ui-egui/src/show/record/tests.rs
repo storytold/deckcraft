@@ -82,7 +82,6 @@ fn the_shell_geometry_matches_the_powerpoint_layout() {
     assert!(layout.camera.center().x > layout.slide.center().x && layout.camera.center().y > layout.slide.center().y, "bottom-right");
     assert!(layout.views.max.x < layout.bottom.max.x, "Views menu inside the bottom strip");
     assert!(layout.camera_preview.max.x <= layout.views.min.x, "preview icon left of Views");
-    assert!(layout.next.is_none(), "only Presenter view reserves a next-slide strip");
 }
 
 #[test]
