@@ -102,10 +102,11 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
     // `r:link`; `r:embed` may only reference a part inside the package.
     let linked = x.media(pf.media).is_some_and(|m| m.data.is_empty() && m.link.is_some());
     // An SVG rides in Office's SVG extension. Without a raster fallback the blip itself names no
-    // image, as PowerPoint writes it.
-    let svg_rel = pf.svg.and_then(|m| x.media_rel(o, m, "image"));
-    let svg_linked = pf.svg.and_then(|m| x.media(m)).is_some_and(|m| m.data.is_empty() && m.link.is_some());
-    let svg_only = svg_rel.is_some() && pf.svg == Some(pf.media);
+    // image, as PowerPoint writes it; a picture whose own image is an SVG is written the same way.
+    let svg_id = pf.svg.or_else(|| x.media(pf.media).filter(|m| m.content_type == "image/svg+xml").map(|_| pf.media));
+    let svg_rel = svg_id.and_then(|m| x.media_rel(o, m, "image"));
+    let svg_linked = svg_id.and_then(|m| x.media(m)).is_some_and(|m| m.data.is_empty() && m.link.is_some());
+    let svg_only = svg_rel.is_some() && svg_id == Some(pf.media);
     let rid = if svg_only { None } else { Some(x.media_rel(o, pf.media, "image").unwrap_or_else(|| x.placeholder_rel(o))) };
     w.open(tag, A::new().a("rotWithShape", if pf.upright { "0" } else { "1" }));
     let adj = &pf.adjust;
