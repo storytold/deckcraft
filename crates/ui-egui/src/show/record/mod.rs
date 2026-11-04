@@ -251,6 +251,8 @@ pub(crate) struct Layout {
     pub views: Rect,
     /// Camera-preview icon, left of the Views dropdown.
     pub camera_preview: Rect,
+    /// Presenter view's next-slide strip, below the notes pane. None in the other views.
+    pub next: Option<Rect>,
 }
 
 /// Horizontal margin shared by the chrome.

@@ -156,6 +156,7 @@ mod tests {
             camera: Rect::NOTHING,
             views: Rect::NOTHING,
             camera_preview: Rect::NOTHING,
+            next: None,
         }
     }
 
