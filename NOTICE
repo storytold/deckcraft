@@ -87,10 +87,10 @@ Code dependencies
   licence is retained in licenses/pdf-writer/LICENSE-ICC.txt and exact files, sources
   and hashes are in ATTRIBUTION.md.
 
-Linux Wayland window decorations
--------------------------------
+Linux and FreeBSD Wayland window decorations
+--------------------------------------------
 sctk-adwaita 0.10.1 (https://github.com/PolyMeilex/sctk-adwaita) is used by
-winit on Linux for vector window controls. Cargo.lock pins the crates.io package
+winit on Linux and FreeBSD for vector window controls. Cargo.lock pins the crates.io package
 by version and checksum rather than by an upstream Git commit. Its title-font
 features are disabled: no Cantarell font is embedded by this dependency and no
 font file is added to this repo.
