@@ -141,7 +141,8 @@ fn inner_decls(root: &El, ns: &[(String, String)]) -> Vec<(String, String)> {
 const MAX_NS_VALUE: usize = 2048;
 
 /// Prefixes `el` and its descendants use in element and attribute names, and those listed in
-/// `mc:Ignorable` or `mc:MustUnderstand` (which must stay declared for the markup-compatibility rules to hold).
+/// `mc:Ignorable` or `mc:MustUnderstand` (which must stay declared for the markup-compatibility rules to hold),
+/// and those starting a QName-like attribute value.
 fn used_prefixes(el: &El) -> HashSet<&str> {
     fn rec<'a>(e: &'a El, used: &mut HashSet<&'a str>, depth: usize) {
         if depth > crate::xml::MAX_DEPTH {
@@ -158,6 +159,17 @@ fn used_prefixes(el: &El) -> HashSet<&str> {
                 used.insert(p);
                 if local == "Ignorable" || local == "MustUnderstand" {
                     used.extend(v.split_whitespace());
+                }
+            }
+            // QName-valued attributes (`xsi:type="q:Item"`) need their prefix declared too.
+            if k != "xmlns" && !k.starts_with("xmlns:") {
+                for t in v.split_whitespace() {
+                    if let Some((p, _)) = t.split_once(':')
+                        && !p.is_empty()
+                        && p.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+                    {
+                        used.insert(p);
+                    }
                 }
             }
         }
@@ -1507,6 +1519,16 @@ mod tests {
         resolve_mc(&mut d.root, 0);
         let kid = d.root.elements().next().unwrap();
         assert!(kid.attrs.iter().any(|(k, v)| k == "xmlns:q" && v == "urn:q"), "{:?}", kid.attrs);
+    }
+
+    #[test]
+    fn mc_branches_keep_prefixes_used_in_qname_values() {
+        let x = r#"<r xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:AlternateContent><mc:Fallback xmlns:q="urn:q" xmlns:z="urn:z"><n xmlns:xsi="urn:xsi" xsi:type="q:Item"/></mc:Fallback></mc:AlternateContent></r>"#;
+        let mut d = crate::xml::parse(x.as_bytes()).unwrap();
+        resolve_mc(&mut d.root, 0);
+        let kid = d.root.elements().next().unwrap();
+        assert!(kid.attrs.iter().any(|(k, v)| k == "xmlns:q" && v == "urn:q"), "{:?}", kid.attrs);
+        assert!(!kid.attrs.iter().any(|(k, _)| k == "xmlns:z"), "unused declarations stay out: {:?}", kid.attrs);
     }
 
     #[test]
