@@ -18,6 +18,7 @@
 #![forbid(unsafe_code)]
 
 pub mod audio;
+pub mod camera;
 pub mod clip;
 pub mod feed;
 mod mp4guard;

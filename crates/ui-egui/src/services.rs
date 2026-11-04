@@ -60,4 +60,7 @@ pub struct Services {
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
     /// Microphone for Record Slide Show (cpal on desktop). Without one, timings and ink are still kept.
     pub mic: Option<Box<dyn deckcraft_media::MicIn>>,
+    /// Live camera source for the Camera Format tab's preview. Without one the preview reports
+    /// that capture is unsupported.
+    pub camera: Option<Box<dyn deckcraft_media::camera::CameraSource>>,
 }
