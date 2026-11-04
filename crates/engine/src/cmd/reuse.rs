@@ -13,7 +13,7 @@ use deckcraft_model::text::{Action, Hyperlink, RunProps, TextBody};
 use deckcraft_model::{LayoutId, Master, MasterId, MediaId, Presentation, ShapeId, ShapeKind, Slide, SlideId};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, cmd, has_doc, usize_param};
+use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, cmd, has_doc, opt_usize_param};
 use crate::{Result, Session, media_refs};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -175,7 +175,7 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("slide.reuse", format!("{name} has no slides to reuse")));
     }
     let keep = bool_or(p, "keepFormatting", false);
-    let at = usize_param(p, "at");
+    let at = opt_usize_param(p, "at", "slide.reuse")?;
     s.edit(|doc, sel| {
         let at = at.unwrap_or(sel.slide + 1).min(doc.slides.len());
         // Media: what the slides use is copied under fresh ids.
