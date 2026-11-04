@@ -112,7 +112,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.zoom", "Set Zoom", None, "{percent}"),
     ("view.zoomDialog", "Zoom…", None, "{}"),
     ("view.fit", "Fit to Window", None, "{}"),
-    ("view.pane", "Task Pane", None, "{pane: format|animation|selection|comments|designer|background|smartart|null}"),
+    ("view.pane", "Task Pane", None, "{pane: format|animation|selection|comments|designer|background|smartart|thesaurus|altText|null, toggle?: bool}"),
     ("review.thesaurusPane", "Thesaurus", Some("Shift+F7"), "{word?}: open the Thesaurus pane on the selected word"),
     ("view.tab", "Ribbon Tab", None, "{tab}"),
     ("view.collapseRibbon", "Collapse the Ribbon", Some("Cmd+F1"), "{}"),
