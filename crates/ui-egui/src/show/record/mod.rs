@@ -220,7 +220,7 @@ impl RecordView {
     pub(super) fn undo(&mut self, now: f64) -> bool {
         let Some(secs) = self.undo_elapsed.take() else { return false };
         self.timer = PresenterTimer::start(now - secs.max(0.0));
-        if self.status == RecordStatus::Paused {
+        if self.status != RecordStatus::Recording {
             self.timer.toggle(now);
         }
         true

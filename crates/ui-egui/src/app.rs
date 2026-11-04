@@ -241,13 +241,19 @@ impl SlideApp {
         if !self.synthetic.is_empty() || !self.synthetic_next.is_empty() || self.synthetic_pending {
             ctx.request_repaint();
         }
-        // Closing the window with unsaved changes asks first.
-        if ctx.input(|i| i.viewport().close_requested()) && !self.quit_confirmed && self.session.documents().iter().any(|d| d.is_dirty()) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.stop_mic();
-            self.show = None;
-            if self.dialog.as_ref().is_none_or(|d| d.id != "quit") {
-                self.dialog = Some(dialogs::Dialog::new("quit"));
+        // Closing the window with unsaved changes asks first, and so does closing during a take:
+        // the recording only lives in the show, so it must survive the question either way.
+        if ctx.input(|i| i.viewport().close_requested()) {
+            let recording = self.show.as_ref().is_some_and(|s| s.record && s.capturing);
+            let dirty = self.session.documents().iter().any(|d| d.is_dirty());
+            if self.quit_confirmed {
+                self.stop_mic();
+                self.show = None;
+            } else if dirty || recording {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                if self.dialog.as_ref().is_none_or(|d| d.id != "quit") {
+                    self.dialog = Some(dialogs::Dialog::new("quit"));
+                }
             }
         }
         self.autosave_if_due(ctx);

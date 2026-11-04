@@ -1059,15 +1059,46 @@ fn narration(s: &mut Session, p: &Value) -> Result<Value> {
         let Some(sl) = doc.slides.get_mut(index) else {
             return Err(bad("show.narration", format!("no slide {index}")));
         };
+        let mut replaced = None;
         if let Some(sh) = deckcraft_model::find_shape_mut(&mut Arc::make_mut(sl).shapes, id) {
+            if let ShapeKind::Media(old) = &sh.kind {
+                replaced = Some(old.media);
+            }
             sh.name = "Narration".into();
             sh.hidden = true;
             sh.xfrm = Some(rect);
             sh.kind = ShapeKind::Media(clip);
         }
+        // A replaced take's bytes go with it: the old clip's media would otherwise stay in the
+        // file with nothing drawing it.
+        if let Some(old) = replaced
+            && !media_in_use(doc, old)
+        {
+            doc.media.retain(|m| m.id != old);
+        }
         Ok(id.0)
     })?;
     Ok(json!({"index": index, "id": id, "bytes": bytes_len, "durationMs": duration_ms}))
+}
+
+/// Whether any shape on any page of `doc` still draws the media `id`.
+fn media_in_use(doc: &deckcraft_model::Presentation, id: deckcraft_model::MediaId) -> bool {
+    let mut used = false;
+    let mut check = |shapes: &[Shape]| {
+        deckcraft_model::walk(shapes, &mut |sh, _| {
+            used |= shape_media_ids(sh).contains(&id);
+        });
+    };
+    for slide in &doc.slides {
+        check(&slide.shapes);
+    }
+    for master in &doc.masters {
+        check(&master.shapes);
+        for layout in &master.layouts {
+            check(&layout.shapes);
+        }
+    }
+    used
 }
 
 /// Replace the slide's recorded laser trace.

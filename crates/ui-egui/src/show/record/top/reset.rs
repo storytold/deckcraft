@@ -38,6 +38,20 @@ mod tests {
 
     use super::*;
 
+    /// A restored clock stays frozen unless a take is running: an idle view must not count up
+    /// between Reset and Undo.
+    #[test]
+    fn undo_off_a_take_leaves_the_clock_frozen() {
+        let mut rec = RecordView::default();
+        let doc = deckcraft_model::Presentation::default();
+        let mut show = Show::new(&doc, 0, false, false);
+        rec.start(&mut show, 0.0);
+        rec.reset(10.0);
+        rec.stop(&mut show, 10.0);
+        assert!(rec.undo(10.0));
+        assert_eq!(rec.elapsed(20.0), rec.elapsed(10.0), "nothing records, so nothing counts");
+    }
+
     #[test]
     fn fresh_view_has_nothing_to_undo() {
         let rec = RecordView::default();

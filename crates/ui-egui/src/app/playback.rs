@@ -28,16 +28,22 @@ impl SlideApp {
     }
 
     /// Stop the microphone, if the host gave us one. Recording ends through here so a
-    /// half-captured clip is dropped rather than left running.
+    /// half-captured clip is dropped rather than left running: the standalone take is cancelled
+    /// too, so the bar stops claiming to record and the next take can start.
     pub(crate) fn stop_mic(&mut self) {
-        if let Some(mic) = self.services.mic.as_mut() {
-            mic.stop();
-        }
+        let mic = self.services.mic.as_deref_mut();
+        self.record.cancel(mic);
     }
 
     /// Leave animation preview, stop editor-owned media, and create a show at the requested slide
     /// with the current reading/presenter configuration; an out-of-range slide starts an ended show.
     pub fn start_show(&mut self, from: usize, reading: bool) {
+        // The show and Record ▸ Audio share one microphone, and a show take needs all of it:
+        // finish the standalone take first rather than draining its samples.
+        if self.record.is_recording() {
+            let mic = self.services.mic.as_deref_mut();
+            self.record.cancel(mic);
+        }
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);
         if let Some(d) = self.session.active() {

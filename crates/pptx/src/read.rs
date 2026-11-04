@@ -1290,8 +1290,10 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
             }
         }
     }
+    // The trace is read before the rel-ref gate: a slide's comment extension carries an r:id,
+    // which would otherwise hide the laser trace beside it.
+    s.laser = root.child("extLst").and_then(laser_trace);
     if let Some(ext) = root.child("extLst").filter(|e| !has_rel_refs(e)) {
-        s.laser = laser_trace(ext);
         let kept: String = ext.elements().filter(|e| e.attr("uri") != Some(crate::LASER_EXT_URI)).map(|e| part.keep(e)).collect();
         if !kept.trim().is_empty() {
             s.raw_ext = Some(kept);

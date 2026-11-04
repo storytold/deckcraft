@@ -215,7 +215,11 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         "ui.move" | "ui.click" | "ui.drag" => {
             let (Some(x), Some(y)) = (f(p, "x"), f(p, "y")) else { return err("missing x/y") };
             let pos = egui::pos2(x, y);
-            if p.get("ctrl").is_some() || p.get("shift").is_some() || p.get("alt").is_some() || p.get("cmd").is_some() {
+            // Egui keeps `ModifiersChanged` state until the next change, so a request that asks
+            // for Ctrl must hand it back: otherwise the laser stays on and the next plain click
+            // cannot advance the show.
+            let modified = p.get("ctrl").is_some() || p.get("shift").is_some() || p.get("alt").is_some() || p.get("cmd").is_some();
+            if modified {
                 app.queue_input(egui::Event::ModifiersChanged(egui_mods(p)));
             }
             app.queue_input(egui::Event::PointerMoved(pos));
@@ -248,6 +252,10 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
                     pressed: false,
                     modifiers: egui::Modifiers::NONE,
                 });
+            }
+            if modified {
+                // The gesture is over: hand the keyboard state back so later plain input is plain.
+                app.queue_input(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
             }
             ctx.request_repaint();
             ok(json!({"queued": app.synthetic_queued_len()}))

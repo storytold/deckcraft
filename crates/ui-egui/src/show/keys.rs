@@ -36,7 +36,7 @@ pub(super) fn handle_keys(
         // The Record view's top bar owns Escape: it closes the view and asks before ending a
         // take. Ending the show here would skip that confirmation. While the confirmation is
         // up, every show key waits for it.
-        if show.record && (show.record_view.close_confirm || (k == egui::Key::Escape && plain(m))) {
+        if show.record && (show.record_view.close_confirm || (k == egui::Key::Escape && plain(m)) || record_shell_owns(k, m)) {
             continue;
         }
         let handled = if grid_open(show, presenter) && !matches!(k, egui::Key::Escape | egui::Key::Minus) {
@@ -66,7 +66,19 @@ pub(super) fn handle_keys(
     (keep, consumed)
 }
 
-/// Whether the grid that the presenter key G opens is showing in this viewport.
+/// The command chords the Record view's top bar owns while the shell is up. Ctrl+Shift+P is the
+/// take's Pause (the show's Ctrl+P is the pen), Ctrl+E is Export (the show's E erases the slide's
+/// ink) and Ctrl+R, Ctrl+Z start a take or undo its Reset. The top bar reads the keys itself, so
+/// the show must leave them alone.
+fn record_shell_owns(k: egui::Key, m: egui::Modifiers) -> bool {
+    match k {
+        egui::Key::P => m.command && m.shift,
+        egui::Key::E | egui::Key::R | egui::Key::Z => m.command,
+        _ => false,
+    }
+}
+
+/// Whether the grid that the presenter key G opens is showing in this viewport./// Whether the grid that the presenter key G opens is showing in this viewport.
 fn grid_open(show: &Show, presenter: bool) -> bool {
     if presenter { show.presenter_grid } else { show.grid }
 }

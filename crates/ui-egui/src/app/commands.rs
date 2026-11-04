@@ -1,6 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 use super::updates_ui;
-use super::{SlideApp, UI_COMMANDS, Value, ViewMode, backstage, dialogs, doc_window, json, media, qat, theme};
+use super::{SlideApp, UI_COMMANDS, Value, ViewMode, backstage, dialogs, doc_window, json, qat, theme};
 
 fn grid_options_touched(p: &Value) -> bool {
     ["spacing", "snap", "smartGuides", "gridlines", "guides"].iter().any(|k| p.get(*k).is_some())
@@ -176,9 +176,17 @@ impl SlideApp {
                 }
             }
             "show.end" => {
-                self.stop_mic();
-                self.show = None;
-                self.media.stop_owned(media::Owner::Show);
+                // End through the shell's own path: `finish` saves an active take's timings,
+                // narration, ink and laser before the show is dropped.
+                if self.show.is_some() {
+                    self.queue_input(egui::Event::Key {
+                        key: egui::Key::Escape,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
             }
             "animation.preview" => {
                 if p.get("on").and_then(Value::as_bool) == Some(false) {

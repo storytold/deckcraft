@@ -96,7 +96,7 @@ pub struct Show {
     /// A take is capturing right now. The Record view moves [`Self::record_view`] out while its
     /// shell draws, so the show cannot read the view's status during that frame; this flag is set
     /// by the view's own start/pause/resume/stop and is what the capture paths consult.
-    capturing: bool,
+    pub(crate) capturing: bool,
     /// The Record view shell's own state (clock, layout, sections, device hooks).
     pub(crate) record_view: record::RecordView,
     /// When a recording pause started; the show clock is shifted by the pause length.

@@ -1424,6 +1424,30 @@ fn a_record_preview_keeps_no_recorded_material() {
     assert!(show.narration.is_empty(), "no narration");
 }
 
+/// While the Record view is up its command chords belong to the top bar: the show must not flip
+/// the pen with Ctrl+Shift+P (the take's Pause) nor erase the slide's ink with Ctrl+E (Export).
+#[test]
+fn the_record_view_keeps_its_command_chords() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    show.strokes.push(InkStroke {
+        points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)],
+        mode: InkMode::Pen,
+        color: deckcraft_model::Rgba::BLACK,
+        width: 2.25,
+    });
+    let command = egui::Modifiers { command: true, ..Default::default() };
+    let command_shift = egui::Modifiers { command: true, shift: true, ..Default::default() };
+    let mut mic: crate::show::MicSlot = None;
+    let (_, consumed) = super::keys::handle_keys(&mut mic, &mut show, &doc, 0.0, vec![(egui::Key::P, command_shift), (egui::Key::E, command)], false);
+    assert!(consumed.is_empty(), "the top bar reads these: {consumed:?}");
+    assert!(!show.pen, "Ctrl+Shift+P is Pause, not the pen");
+    assert_eq!(show.strokes.len(), 1, "Ctrl+E is Export, not erase-all");
+}
+
 /// #1812: an open Record view that is not capturing keeps nothing. Browsing the deck before
 /// Record, or after Stop, must not write timings, ink or laser for the browsed slides.
 #[test]
