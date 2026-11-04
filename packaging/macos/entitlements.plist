@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Hardened-runtime entitlements for DeckCraft. Deliberately empty: the app is pure Rust,
-     loads no unsigned code, needs no JIT, and is not sandboxed (it opens files by path, from the
-     command line and drag-and-drop). Add exceptions here only with a reason in a comment. -->
+<!-- Hardened-runtime entitlements for DeckCraft. The app is pure Rust, loads no unsigned code,
+     needs no JIT, and is not sandboxed (it opens files by path, from the command line and
+     drag-and-drop). Add exceptions here only with a reason in a comment. -->
 <plist version="1.0">
 <dict>
+  <!-- Record Slide Show narration and Record >> Audio: the microphone needs the audio-input
+       entitlement under the hardened runtime, beside the Info.plist usage string. -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
 </dict>
 </plist>
