@@ -19,9 +19,18 @@ const PROBE_SEARCH_LIMIT: usize = 1024 * 1024;
 /// `ftyp` within its search window as the start of an MP4 (the size field 4 bytes before it), so
 /// the table check must start where that parser will, not at offset 0.
 pub(crate) fn probe_fits(b: &[u8]) -> bool {
-    let head = &b[..b.len().min(PROBE_SEARCH_LIMIT + 16)];
+    if crate::Container::sniff(b) == crate::Container::Mp4 && !tables_fit(b) {
+        return false;
+    }
+    // The probe reads leading ID3v2 tags as metadata and searches again after the last one.
+    let mut rest = b;
+    while rest.starts_with(b"ID3") {
+        let size = rest.get(6..10).map(|s| s.iter().fold(0usize, |a, &x| (a << 7) | (x & 0x7f) as usize)).unwrap_or(0);
+        rest = rest.get(10 + size..).unwrap_or(&[]);
+    }
+    let head = &rest[..rest.len().min(PROBE_SEARCH_LIMIT + 16)];
     match head.windows(4).position(|w| w == b"ftyp") {
-        Some(p) => tables_fit(&b[p.saturating_sub(4)..]),
+        Some(p) => tables_fit(&rest[p.saturating_sub(4)..]),
         None => true,
     }
 }
