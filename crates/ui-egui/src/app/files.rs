@@ -521,6 +521,7 @@ impl SlideApp {
                         self.media.request(uid, &doc, slide, &action, (shape, ms), owner);
                     }
                 }
+                UiRequest::CameraPreview { on, device } => self.apply_camera_request(on, device),
             }
         }
     }

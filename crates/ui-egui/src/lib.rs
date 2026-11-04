@@ -18,6 +18,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 pub mod backstage;
 pub mod canvas;
 pub mod capture;
+pub mod camera;
 pub mod control;
 pub mod dialogs;
 pub mod doc_window;
@@ -238,6 +239,8 @@ pub struct SlideApp {
     reuse_target: Option<FileTarget>,
     /// Audio/video playback (editor control bar, slide show, `media.*` commands).
     pub media: media::MediaHost,
+    /// Live camera preview behind the Camera Format tab's Preview control.
+    pub camera_preview: camera::Preview,
     pub status: Option<(String, f64)>,
     /// A presentation being read in the background, with its progress window ([`opening`]).
     pub opening: Option<opening::Opening>,
@@ -445,6 +448,8 @@ impl ImeResetPhase {
 mod animpane_tests;
 #[cfg(test)]
 mod browsetheme_tests;
+#[cfg(test)]
+mod camera_format_tests;
 #[cfg(test)]
 mod compare_tests;
 #[cfg(test)]

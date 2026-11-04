@@ -58,4 +58,7 @@ pub struct Services {
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
+    /// Live camera source for the Camera Format tab's preview. Without one the preview reports
+    /// that capture is unsupported.
+    pub camera: Option<Box<dyn deckcraft_media::camera::CameraSource>>,
 }
