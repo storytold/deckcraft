@@ -508,10 +508,11 @@ impl SlideApp {
                     self.dialog = Some(d);
                 }
                 UiRequest::Pane { id } => self.ui.pane = Some(id),
-                UiRequest::StartShow { from, record } => {
+                UiRequest::StartShow { from, record, preview } => {
                     self.start_show(from, false);
                     if let Some(show) = self.show.as_mut() {
-                        show.record = record;
+                        show.recording_preview = preview;
+                        show.record = record && !preview;
                     }
                 }
                 UiRequest::Message { text } => self.set_status(text),

@@ -1365,3 +1365,95 @@ fn laser_follows_the_slide_clock_then_goes_out() {
     assert_eq!(saved_status(true, false, true), "Recording saved: slide timings, narration and laser.");
     assert_eq!(saved_status(false, false, false), "Recording saved: slide timings.");
 }
+
+/// #1812: a Record preview follows the recorded timings and narration even when the deck turns
+/// Use Timings and Play Narrations off, because it shows what was recorded.
+#[test]
+fn a_record_preview_forces_timings_and_narration() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("show.setup", &json!({"useTimings": false, "noNarration": true})).unwrap();
+    s.execute("transition.timing", &json!({"index": 0, "after": 1000})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    assert!(!show.state.auto_advance_due(&doc, 2.0), "the deck does not use timings");
+    assert!(show.without_narration(&doc), "the deck turns narration off");
+
+    show.recording_preview = true;
+    assert!(show.auto_advance_due(&doc, 2.0), "the preview follows the recorded timing");
+    assert!(!show.auto_advance_due(&doc, 0.5), "not before its time");
+    assert!(!show.without_narration(&doc), "the preview plays the narration");
+    let mut actions = Vec::new();
+    show.queue_clock_actions(&doc, 2.0, &mut actions);
+    assert!(matches!(actions.as_slice(), [ShowAction::Slide(1)]), "the slide turns by itself: {actions:?}");
+    // Hidden playback keeps waking for the preview's timings too.
+    show.started = true;
+    assert!(show.hidden_time_driven(&doc));
+}
+
+/// #1812: a Record preview writes nothing, even if the show was flagged to record: no timings,
+/// ink, laser trace or narration end up in the recording buffers.
+#[test]
+fn a_record_preview_keeps_no_recorded_material() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    show.rehearse = true;
+    show.recording_preview = true;
+    assert!(!show.keeps_recording());
+    show.strokes.push(vec![pos2(0.1, 0.1), pos2(0.2, 0.2)]);
+    show.laser_live.push((0.5, 0.5, 10));
+    show.stash_ink(&doc, 0);
+    show.stash_laser(0);
+    show.apply(ShowAction::Slide(1), &doc, 1.0);
+    assert!(show.recorded.is_empty(), "no ink");
+    assert!(show.laser_saved.is_empty(), "no laser trace");
+    assert!(show.timings.is_empty(), "no slide timing");
+    assert!(show.narration.is_empty(), "no narration");
+}
+
+/// #1812: `show.preview` reaches the app as a preview that does not record, while `show.record`
+/// still starts a recording show.
+#[test]
+fn the_preview_command_turns_on_the_preview_not_the_recorder() {
+    let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+    app.session.execute("slide.new", &json!({})).unwrap();
+    app.run("show.preview", json!({"from": 0})).unwrap();
+    let show = app.show.as_ref().expect("the preview is up");
+    assert!(show.recording_preview);
+    assert!(!show.record, "a preview does not record");
+    app.run("show.record", json!({"from": 0})).unwrap();
+    let show = app.show.as_ref().expect("the recording show is up");
+    assert!(show.record);
+    assert!(!show.recording_preview, "a recording show is not a preview");
+}
+
+/// #1812: Esc still leaves a Record preview, and the editor keeps the slide it was on: a preview
+/// never moves the editor's selection.
+#[test]
+fn escape_leaves_a_record_preview_and_keeps_the_editor_slide() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    session.execute("slide.new", &json!({})).unwrap();
+    let mut app = SlideApp::new(session, crate::Services::default());
+    app.ui.presenter_view = false;
+    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run_steps(3);
+    harness.state_mut().start_show(2, false);
+    let show = harness.state_mut().show.as_mut().expect("preview is up");
+    show.recording_preview = true;
+    show.record = false;
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(3);
+    assert!(harness.state().show.is_none(), "Escape ends the preview");
+    assert_eq!(harness.state().session.active().expect("document").selection.slide, 0, "the editor stays on its own slide");
+}

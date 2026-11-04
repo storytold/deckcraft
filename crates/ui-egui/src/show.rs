@@ -44,6 +44,8 @@ pub struct Show {
     pub presenter: bool,
     /// Preview from the Transitions/Animations tab: exits after the current slide.
     pub preview_only: bool,
+    /// Preview from the Record tab: plays the recorded timings and narration, saving nothing.
+    pub recording_preview: bool,
     /// Play every step automatically (animation preview).
     pub autoplay: bool,
     pub rehearse: bool,
@@ -239,6 +241,7 @@ impl Show {
             reading,
             presenter,
             preview_only: false,
+            recording_preview: false,
             autoplay: false,
             rehearse: false,
             record: false,
@@ -357,9 +360,38 @@ impl Show {
         self.started
     }
 
+    /// Whether this show keeps timings, narration, ink and laser: Rehearse or Record, but never
+    /// a preview.
+    fn keeps_recording(&self) -> bool {
+        (self.rehearse || self.record) && !self.recording_preview
+    }
+
+    /// Seconds after which the current slide advances by itself. A Record preview follows the
+    /// recorded timings even when the deck's Use Timings is off, so it shows the recording.
+    fn auto_advance_after(&self, doc: &Presentation) -> Option<f64> {
+        if !self.recording_preview {
+            return self.state.advance_after(doc);
+        }
+        if self.ended {
+            return None;
+        }
+        doc.slides.get(self.state.slide).and_then(|s| s.transition.as_ref()).and_then(|t| t.advance_after_ms).map(|ms| ms as f64 / 1000.0)
+    }
+
+    /// Whether narration clips are left off while this show plays. A Record preview plays the
+    /// deck's narration even when Play Narrations is off, because it shows what was recorded.
+    fn without_narration(&self, doc: &Presentation) -> bool {
+        doc.show.without_narration && !self.recording_preview
+    }
+
+    /// Whether the slide has waited out its advance-after time and no animation is playing.
+    fn auto_advance_due(&self, doc: &Presentation, elapsed: f64) -> bool {
+        self.auto_advance_after(doc).is_some_and(|after| !self.state.playing && elapsed.is_finite() && elapsed >= after)
+    }
+
     /// Whether hidden logic still has time-driven work, so it must keep requesting wake-ups.
     pub(crate) fn hidden_time_driven(&self, doc: &Presentation) -> bool {
-        self.started && !self.ended && (self.state.playing || self.trans.is_some() || self.autoplay || self.state.advance_after(doc).is_some())
+        self.started && !self.ended && (self.state.playing || self.trans.is_some() || self.autoplay || self.auto_advance_after(doc).is_some())
     }
 
     /// Advance the show's own clocks and automatic steps on a hidden logic pass. Drawing is a
@@ -404,7 +436,7 @@ impl Show {
             let n_steps = self.timeline(doc).steps();
             let step_due = self.autoplay && cur_step < n_steps && idle > 0.3;
             let holding = self.grid || self.presenter_grid || self.zoom.is_some() || self.zoom_arm;
-            if !holding && (step_due || (!(self.rehearse || self.record) && self.state.auto_advance_due(doc, idle) && !self.ended)) {
+            if !holding && (step_due || (!(self.rehearse || self.record) && self.auto_advance_due(doc, idle) && !self.ended)) {
                 actions.push(self.state.next(doc));
             } else if self.preview_only && cur_step >= n_steps && idle > 0.8 {
                 return false;
@@ -560,7 +592,7 @@ impl Show {
                 self.zoom = None;
                 self.zoom_arm = false;
                 let left = self.timeline.as_ref().map(|t| t.0).unwrap_or(i);
-                if self.rehearse || self.record {
+                if self.keeps_recording() {
                     self.timings.push((left, now - self.slide_start));
                 }
                 self.stash_ink(doc, left);
@@ -653,7 +685,7 @@ impl Show {
         let strokes = std::mem::take(&mut self.strokes);
         let w = doc.slide_size.width;
         let h = doc.slide_size.height;
-        if !self.record || !(w > 0.0 && h > 0.0) {
+        if !self.keeps_recording() || !(w > 0.0 && h > 0.0) {
             return;
         }
         for stroke in strokes {
@@ -673,7 +705,7 @@ impl Show {
 
     fn stash_laser(&mut self, slide: usize) {
         let pts = std::mem::take(&mut self.laser_live);
-        if self.record && !pts.is_empty() {
+        if self.keeps_recording() && !pts.is_empty() {
             self.laser_saved.push((slide, pts));
         }
     }
@@ -694,7 +726,7 @@ impl Show {
     /// Whether the pointer is over the Record view's chrome: clicks there must not advance the
     /// show, take a stroke, or follow a link.
     fn record_bar_hit(&self, ctx: &egui::Context) -> bool {
-        if !self.record {
+        if !self.keeps_recording() {
             return false;
         }
         ctx.input(|i| i.pointer.interact_pos()).is_some_and(|p| self.record_view.chrome_contains(ctx.content_rect(), p))
@@ -802,13 +834,13 @@ fn laser_pos(points: &[deckcraft_model::LaserSample], elapsed_ms: u32) -> Option
 
 /// A slide change ends the microphone take and hands it to the slide being left.
 fn before_slide_change(app: &mut SlideApp, show: &mut Show, action: &ShowAction) {
-    if show.record && matches!(action, ShowAction::Slide(_)) {
+    if show.keeps_recording() && matches!(action, ShowAction::Slide(_)) {
         take_narration(app, show);
     }
 }
 
 fn take_narration(app: &mut SlideApp, show: &mut Show) {
-    if !show.record || !show.mic_ok {
+    if !show.keeps_recording() || !show.mic_ok {
         return;
     }
     let Some(mic) = app.services.mic.as_mut() else { return };
