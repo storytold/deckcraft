@@ -215,7 +215,7 @@ fn walk_media(e: &El, interactive: bool, click: bool, ctx: &IdCtx, out: &mut Vec
     let interactive = interactive || (e.is("cTn") && e.attr("nodeType") == Some("interactiveSeq"));
     // A time node that starts `indefinite` waits for a click: everything below it, the media
     // included, plays on that click. This is the click-group rule `collect` applies.
-    let click = click || (e.is("cTn") && e.path(&["stCondLst", "cond"]).and_then(|c| c.attr("delay")).map(str::trim) == Some("indefinite"));
+    let click = click || (e.is("cTn") && waits_for_click(e));
     if e.is("audio") || e.is("video") {
         if let Some(node) = e.child("cMediaNode")
             && let Some(spid) = node.path(&["tgtEl", "spTgt"]).and_then(|s| s.u32("spid"))
@@ -228,6 +228,22 @@ fn walk_media(e: &El, interactive: bool, click: bool, ctx: &IdCtx, out: &mut Vec
     for c in e.elements() {
         walk_media(c, interactive, click, ctx, out, depth + 1);
     }
+}
+
+/// Whether a time node's start conditions wait for a click. `delay="indefinite"` alone does:
+/// PowerPoint then waits for the presenter. A sibling `evt="onBegin"` condition starts the node
+/// itself — the form our writer emits for an automatically started first effect — so it is not a
+/// click, whatever the indefinite delay beside it says.
+fn waits_for_click(ctn: &El) -> bool {
+    let Some(list) = ctn.child("stCondLst") else { return false };
+    let mut indefinite = false;
+    for c in list.children_named("cond") {
+        if c.attr("evt").is_some_and(|v| v.trim() == "onBegin") {
+            return false;
+        }
+        indefinite |= c.attr("delay").map(str::trim) == Some("indefinite");
+    }
+    indefinite
 }
 
 /// Media nodes in the timing tree. Nodes without `presetClass` are not animations.

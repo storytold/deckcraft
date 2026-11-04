@@ -373,7 +373,8 @@ mod tests {
         let id = deckcraft_model::ShapeId(r["id"].as_u64().expect("id") as u32);
         let doc = s.doc().expect("doc");
         let sh = doc.doc.slides[0].shape(id).expect("shape");
-        assert_eq!(sh.name, "Camera 2");
+        // The number follows the shapes already on the slide, so only the prefix is fixed here.
+        assert!(sh.name.starts_with("Camera "), "a Cameo gets a Camera name, got {:?}", sh.name);
         assert!(sh.is_cameo());
         assert_eq!(sh.geom.preset_name(), Some("ellipse"));
         let x = sh.xfrm.expect("xfrm");
@@ -452,6 +453,10 @@ mod tests {
         s.execute("slide.new", &json!({})).expect("slide");
         s.execute("insert.cameo", &json!({"all": true})).expect("insert");
         s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 40, 40]})).expect("shape");
+        // Style one Cameo, then copy its formatting to all of them.
+        let slide = s.doc().expect("doc").selection.slide;
+        let cameo = s.doc().expect("doc").doc.slides[slide].shapes.iter().find(|sh| sh.is_cameo()).expect("cameo").id.0;
+        s.execute("selection.select", &json!({"ids": [cameo]})).expect("select");
         s.execute("camera.style", &json!({"style": "centerShadowCircle"})).expect("style");
         let r = s.execute("camera.applyToAll", &json!({})).expect("apply");
         assert_eq!(r["styled"], 2);
@@ -487,8 +492,9 @@ mod tests {
         let mut s = Session::with_new();
         s.execute("slide.new", &json!({})).expect("slide");
         s.execute("insert.cameo", &json!({"all": true})).expect("insert");
-        let before: Vec<Option<&'static str>> = cameo_shapes(&s).iter().map(super::style_of).collect();
         s.execute("camera.style", &json!({"style": "centerShadowHexagon"})).expect("style");
+        // `before` is the state applyToAll starts from: styling the selection is its own undo step.
+        let before: Vec<Option<&'static str>> = cameo_shapes(&s).iter().map(super::style_of).collect();
         s.execute("camera.applyToAll", &json!({})).expect("apply");
         assert!(cameo_shapes(&s).iter().all(|sh| super::style_of(sh) == Some("centerShadowHexagon")));
         s.execute("edit.undo", &json!({})).expect("undo");

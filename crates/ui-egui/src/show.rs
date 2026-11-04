@@ -585,6 +585,14 @@ impl Show {
         self.record_paused_at = None;
     }
 
+    /// The take stopped on the current slide: its time there is the last timing of the take.
+    fn end_take_timing(&mut self, now: f64) {
+        let secs = now - self.slide_start;
+        if secs.is_finite() && secs >= 0.0 {
+            self.timings.push((self.state.slide, secs));
+        }
+    }
+
     /// Pen and laser are different pointers: turning one on puts the other away.
     fn set_pen(&mut self, on: bool) {
         if on {
@@ -1003,10 +1011,31 @@ fn take_narration(mic: Option<&mut (dyn deckcraft_media::MicIn + 'static)>, show
     }
 }
 
-/// Whether any point of `stroke` lies within `radius` of the segment `a`–`b`, in normalized
-/// slide coordinates. The eraser removes the whole stroke, as PowerPoint's default eraser does.
+/// Whether `stroke` comes within `radius` of the eraser's segment `a`–`b`, in normalized slide
+/// coordinates. Each stroke segment is measured, so a stroke the eraser crosses between two
+/// samples is caught. The eraser removes the whole stroke, as PowerPoint's default eraser does.
 fn stroke_touched(stroke: &InkStroke, a: Pos2, b: Pos2, radius: f32) -> bool {
-    stroke.points.iter().any(|p| point_segment_distance(*p, a, b) <= radius)
+    match stroke.points.as_slice() {
+        [] => false,
+        [p] => point_segment_distance(*p, a, b) <= radius,
+        points => points.windows(2).any(|w| segment_distance(w[0], w[1], a, b) <= radius),
+    }
+}
+
+/// Distance between the segments `a`–`b` and `c`–`d`; zero when they cross.
+fn segment_distance(a: Pos2, b: Pos2, c: Pos2, d: Pos2) -> f32 {
+    if segments_cross(a, b, c, d) {
+        return 0.0;
+    }
+    point_segment_distance(a, c, d).min(point_segment_distance(b, c, d)).min(point_segment_distance(c, a, b)).min(point_segment_distance(d, a, b))
+}
+
+/// Whether the segments `a`–`b` and `c`–`d` cross, ends touching included.
+fn segments_cross(a: Pos2, b: Pos2, c: Pos2, d: Pos2) -> bool {
+    let side = |p: Pos2, q: Pos2, r: Pos2| (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+    let (ab_c, ab_d) = (side(a, b, c), side(a, b, d));
+    let (cd_a, cd_b) = (side(c, d, a), side(c, d, b));
+    (ab_c > 0.0) != (ab_d > 0.0) && (cd_a > 0.0) != (cd_b > 0.0)
 }
 
 /// Distance from `p` to the segment `a`–`b`; the segment of a click has zero length.

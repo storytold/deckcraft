@@ -41,7 +41,8 @@ fn open_record(h: &mut Harness<'static, SlideApp>, slide: usize) {
 }
 
 fn notes_editor<'a>(h: &'a Harness<'static, SlideApp>) -> egui_kittest::Node<'a> {
-    h.get_by_role_and_label(Role::MultilineTextInput, "Click to add notes")
+    // The script field is the shell's only multiline input; its hint is not a stable name.
+    h.get_by_role(Role::MultilineTextInput)
 }
 
 fn view<'a>(h: &'a Harness<'static, SlideApp>) -> &'a RecordView {
@@ -165,7 +166,7 @@ fn leaving_the_pane_saves_an_edit() {
     notes_editor(&h).type_text(" edit");
     h.run_steps(2);
     // Slide view hides the pane; the draft must be flushed before it disappears.
-    h.get_by_label("Views: Teleprompter").click();
+    h.get_by_role_and_label(Role::ComboBox, "Views").click();
     h.run_steps(2);
     h.get_by_label("Slide").click();
     h.run_steps(3);

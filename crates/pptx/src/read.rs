@@ -1268,6 +1268,7 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
             s.shapes.extend(pics);
         }
     }
+    adopt_media_names(imp, &s.shapes);
     if let Some(t) = root.child("transition") {
         s.transition = timing::transition(imp, part, t);
     }
@@ -1297,6 +1298,34 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
         }
     }
     s
+}
+
+/// PowerPoint names the media part `ppt/media/media1.wav` and keeps the original file name on the
+/// shape (`p:cNvPr/@name`). Adopt that name for the media item, so a save writes it back and the
+/// Audio Options and Record ▸ Audio names survive a round trip.
+fn adopt_media_names(imp: &mut Imp, shapes: &[deckcraft_model::Shape]) {
+    let mut found = Vec::new();
+    deckcraft_model::walk(shapes, &mut |sh, _| {
+        if let deckcraft_model::ShapeKind::Media(clip) = &sh.kind {
+            // `insert.audio`/`insert.video` keep the file name in `descr`; PowerPoint's own
+            // pictures name the shape after the file.
+            found.push((clip.media, if sh.descr.is_empty() { sh.name.clone() } else { sh.descr.clone() }));
+        }
+    });
+    for (media, name) in found {
+        // Only a generated part name is replaced: a name the file already carries is kept.
+        let Some(item) = imp.media.iter_mut().find(|m| m.id == media) else { continue };
+        let generated = item.name.rsplit_once('.').is_some_and(|(stem, _)| {
+            stem.strip_prefix("media").or_else(|| stem.strip_prefix("image")).is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        });
+        let same_ext = match (name.rsplit_once('.'), item.name.rsplit_once('.')) {
+            (Some((_, a)), Some((_, b))) => a.eq_ignore_ascii_case(b),
+            _ => false,
+        };
+        if generated && same_ext && !name.trim().is_empty() {
+            item.name = name;
+        }
+    }
 }
 
 fn laser_trace(ext: &El) -> Option<deckcraft_model::LaserTrace> {

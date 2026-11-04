@@ -24,6 +24,11 @@ impl PresenterTimer {
         PresenterTimer { origin: finite_time(now), frozen: 0.0, paused: false }
     }
 
+    /// A clock that is not counting: zero until something starts it.
+    pub(super) fn paused_at_zero() -> Self {
+        PresenterTimer { origin: 0.0, frozen: 0.0, paused: true }
+    }
+
     pub(super) fn elapsed(self, now: f64) -> f64 {
         if self.paused {
             return finite_secs(self.frozen);

@@ -20,7 +20,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Media Info",
             [],
             None,
-            "{id?} → {id, name, contentType, bytes, durationMs, video, width, height, probe: {container, audio?, video?}, options, status?}",
+            "{id?} → {id, name, contentType, bytes, durationMs, video, width, height, probe: {container, audio?, video?}, playable, options, status?}",
             has_doc,
             info
         ),
@@ -98,7 +98,10 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
     let (id, m) = target(s, p, "media.info")?;
     let st = s.doc()?;
     let item = st.doc.media(m.media).ok_or_else(|| EngineError::Other("the media data is missing".into()))?;
-    let probe = deckcraft_media::probe(&item.data).map(|i| probe_json(&i)).unwrap_or_else(|e| json!({"error": e.to_string()}));
+    let (probe, playable) = match deckcraft_media::probe(&item.data) {
+        Ok(i) => (probe_json(&i), i.playable()),
+        Err(e) => (json!({"error": e.to_string()}), false),
+    };
     Ok(json!({
         "id": id,
         "name": item.name,
@@ -110,6 +113,7 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
         "height": m.height,
         "poster": m.poster.is_some(),
         "probe": probe,
+        "playable": playable,
         "options": {
             "autoplay": m.autoplay, "loop": m.loop_play, "rewind": m.rewind, "acrossSlides": m.play_across_slides,
             "hide": m.hide_while_not_playing, "fullScreen": m.full_screen, "volume": m.volume,
@@ -269,7 +273,10 @@ mod tests {
         let item = doc.media(clip.media).expect("media item");
         assert_eq!((item.name.as_str(), item.content_type.as_str()), ("Recording 1.wav", "audio/wav"));
         assert_eq!(item.data.as_slice(), wav.as_slice(), "the WAV bytes survive verbatim");
-        let info = s.execute("media.info", &json!({"id": audio[0].id})).expect("info");
+        let slide = doc.slides.iter().position(|sl| sl.shapes.iter().any(|sh| sh.id == audio[0].id)).expect("slide");
+        let id = audio[0].id;
+        s.execute("slide.go", &json!({"index": slide})).expect("go");
+        let info = s.execute("media.info", &json!({"id": id})).expect("info");
         assert_eq!(info["contentType"], "audio/wav");
         assert_eq!(info["durationMs"], 500);
         assert_eq!(info["probe"]["container"], "wav");

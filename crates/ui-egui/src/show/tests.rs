@@ -1576,7 +1576,7 @@ fn the_eraser_removes_touched_strokes() {
     show.strokes.push(stroke(&[(0.8, 0.8), (0.9, 0.8)]));
     assert_eq!(show.stroke_count(), 2);
     assert!(show.has_ink());
-    assert_eq!(show.erase_ink_at(pos2(0.15, 0.5), pos2(0.15, 0.12), 0.02), 1, "only the touched stroke goes");
+    assert_eq!(show.erase_ink_at(pos2(0.15, 0.5), pos2(0.15, 0.11), 0.02), 1, "only the touched stroke goes");
     assert_eq!(show.stroke_count(), 1);
     assert_eq!(show.erase_ink_at(pos2(0.0, 0.0), pos2(1.0, 1.0), 0.02), 1, "the diagonal crosses the remaining stroke");
     assert!(!show.has_ink() && show.stroke_count() == 0);

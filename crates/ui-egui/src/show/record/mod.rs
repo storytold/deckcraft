@@ -110,7 +110,8 @@ impl Default for RecordView {
     fn default() -> Self {
         RecordView {
             status: RecordStatus::Idle,
-            timer: PresenterTimer::start(0.0),
+            // A paused clock reads zero until the first take starts it.
+            timer: PresenterTimer::paused_at_zero(),
             total: 0.0,
             notes_px: notes::NOTES_DEFAULT,
             notes_scroll: 0.0,
@@ -133,6 +134,7 @@ impl Default for RecordView {
 
 impl RecordView {
     /// Seconds recorded so far. A paused view keeps the value it had when it was paused.
+    /// Capture time so far. A view opens with a paused clock, so nothing is counted until Record.
     pub(super) fn elapsed(&self, now: f64) -> f64 {
         self.timer.elapsed(now)
     }
@@ -329,11 +331,15 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Pre
     let _ = bottom::ui(&mut app.services.mic, ui, show, &mut rec, doc, now, layout);
     canvas::bubble(ui, &rec, layout);
     let _ = views::ui(ui, &mut rec, layout);
-    // Pause or Stop ends capture: what was spoken belongs to the slide being left, and nothing
-    // spoken afterwards may reach a later slide's narration. Resume starts a fresh buffer.
+    // Pause or Stop ends capture. Everything the take gathered on the slide it stopped on — its
+    // narration, its ink, its laser trace and its time — moves into the take now, and nothing
+    // gathered afterwards may join it. Resume starts a fresh microphone buffer.
     if was_recording && rec.status != RecordStatus::Recording {
         take_narration(app.services.mic.as_deref_mut(), show);
         app.stop_mic();
+        show.stash_ink(doc, show.state.slide, true);
+        show.stash_laser(show.state.slide, true);
+        show.end_take_timing(now);
     }
     if !keep {
         notes::flush(app, &mut rec, doc, show.state.slide);

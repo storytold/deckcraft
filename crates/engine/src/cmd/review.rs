@@ -192,7 +192,7 @@ pub fn specs() -> Vec<CommandSpec> {
             ["Record", "Edit"],
             None,
             "{scope?: current|all, index?: slide} → {cleared, slides} (narration, recorded camera/screen media, recorded ink, laser and advance timings; ordinary media and user ink stay)",
-            has_recording,
+            has_doc,
             clear_recording
         ),
         cmd!(
@@ -1307,6 +1307,13 @@ fn bg_uses(bg: Option<&deckcraft_model::Background>, id: deckcraft_model::MediaI
 /// The slides a recording command applies to: `scope: "current"|"all"`, or the old `all: true`
 /// and `index` forms.
 fn recording_scope(s: &Session, p: &Value, id: &str) -> Result<Vec<usize>> {
+    // An explicit slide is validated even for `scope: "all"`, so a bad index is never ignored.
+    if p.get("index").is_some() {
+        let index = usize_param(p, "index").ok_or_else(|| bad(id, "index must be a slide number"))?;
+        if index >= s.doc()?.doc.slides.len() {
+            return Err(bad(id, format!("no slide {}", index + 1)));
+        }
+    }
     match str_param(p, "scope") {
         Some("all") => slide_scope(s, &with_all(p), id),
         Some("current") | None => slide_scope(s, p, id),
@@ -2038,7 +2045,8 @@ mod tests {
         let d = s.doc().unwrap();
         assert!(narrations(&s, 0).is_empty());
         assert!(d.doc.slides[0].laser.is_none());
-        assert!(d.doc.slides[0].transition.is_none());
+        // The recording's advance time goes; the deck's own transition stays.
+        assert!(d.doc.slides[0].transition.as_ref().is_none_or(|t| t.advance_after_ms.is_none()));
         assert_eq!(ink_layers(&s, 0).len(), 1, "the user's ink layer stays");
         assert_eq!(ink_layers(&s, 0)[0].id, user_ink);
         assert!(d.doc.slides[0].shapes.iter().any(|sh| sh.id == ordinary_id), "ordinary audio stays");
@@ -2066,7 +2074,7 @@ mod tests {
         assert_eq!(v["cleared"], 2, "the other slide's narration and timing");
         assert_eq!(v["slides"], 1);
         assert!(narrations(&s, 1).is_empty());
-        assert!(s.doc().unwrap().doc.slides[1].transition.is_none());
+        assert!(s.doc().unwrap().doc.slides[1].transition.as_ref().is_none_or(|t| t.advance_after_ms.is_none()));
 
         let v = s.execute("show.clearRecording", &json!({"scope": "all"})).unwrap();
         assert_eq!((v["cleared"].as_u64(), v["slides"].as_u64()), (Some(0), Some(0)));
@@ -2085,7 +2093,10 @@ mod tests {
         let default = doc_shape(&s, first).and_then(|sh| sh.xfrm).unwrap();
         let media = record_cameo(&mut s, first);
 
+        // Shape commands edit the slide they are on, so go to each Cameo's slide first.
+        s.execute("slide.go", &json!({"index": 0})).unwrap();
         s.execute("shape.setBounds", &json!({"x": 20.0, "y": 30.0, "w": 220.0, "h": 160.0, "ids": [first.0]})).unwrap();
+        s.execute("slide.go", &json!({"index": 1})).unwrap();
         s.execute("shape.setBounds", &json!({"x": 40.0, "y": 50.0, "w": 120.0, "h": 80.0, "ids": [second.0]})).unwrap();
         let moved = doc_shape(&s, first).and_then(|sh| sh.xfrm).unwrap();
         let second_moved = doc_shape(&s, second).and_then(|sh| sh.xfrm).unwrap();

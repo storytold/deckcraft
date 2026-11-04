@@ -90,6 +90,20 @@ fn a_click_triggered_clip_is_not_autoplay() {
     assert!(c[0].autoplay, "a slide-start clip still autoplays");
 }
 
+/// PowerPoint (and our own writer) starts an automatic effect with `indefinite` *and*
+/// `evt="onBegin"`: the event condition starts the node, so the clip is not click-triggered.
+#[test]
+fn an_on_begin_condition_is_a_slide_start() {
+    let auto = |tag: &str, spid: u32| {
+        format!(
+            r#"<p:par><p:cTn id="2" fill="hold"><p:stCondLst><p:cond delay="indefinite"/><p:cond evt="onBegin" delay="0"><p:tn val="2"/></p:cond></p:stCondLst><p:childTnLst><p:{tag}><p:cMediaNode><p:cTn id="3"/><p:tgtEl><p:spTgt spid="{spid}"/></p:tgtEl></p:cMediaNode></p:{tag}></p:childTnLst></p:cTn></p:par>"#
+        )
+    };
+    let c = clips(|v, a| format!("{}{}", auto("video", v), auto("audio", a)));
+    assert!(c[0].autoplay, "onBegin starts the video with the slide");
+    assert!(c[1].autoplay, "onBegin starts the audio with the slide");
+}
+
 #[test]
 fn a_slide_start_clip_is_autoplay() {
     let c = clips(|_, a| node("audio", "", a, "", ""));

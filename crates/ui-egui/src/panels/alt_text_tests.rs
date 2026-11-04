@@ -38,12 +38,12 @@ fn descr(h: &Harness<'_, SlideApp>, id: ShapeId) -> String {
 fn the_alt_text_button_opens_and_closes_the_pane() {
     let (mut h, _) = cameo_app();
     assert!(h.state().ui.pane.is_none());
-    h.get_by_label("Alt Text").click();
+    h.get_by_role_and_label(Role::Button, "Alt Text").click();
     h.run_steps(3);
     assert_eq!(h.state().ui.pane.as_deref(), Some("altText"));
     assert!(h.query_by_label("Description").is_some(), "the pane has the description field");
     // A second press closes it, as PowerPoint's button does.
-    h.get_by_label("Alt Text").click();
+    h.get_by_role_and_label(Role::Button, "Alt Text").click();
     h.run_steps(3);
     assert!(h.state().ui.pane.is_none());
 }
@@ -56,6 +56,14 @@ fn typing_a_description_writes_descr_and_undo_reverts_it() {
     h.run_steps(3);
     h.get_by_role_and_label(Role::MultilineTextInput, "Description").click();
     h.run_steps(2);
+    // The field shows the shape's current description: select it so typing replaces it.
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::A,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers { command: true, ..egui::Modifiers::NONE },
+    });
     h.get_by_role_and_label(Role::MultilineTextInput, "Description").type_text("A webcam view of the speaker");
     h.run_steps(2);
     // Leaving the field commits, as in the Format Shape pane.

@@ -34,6 +34,8 @@ pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, now: f64) -> bool {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+    use crate::show::Show;
+
     use super::*;
 
     #[test]
@@ -45,6 +47,9 @@ mod tests {
     #[test]
     fn reset_zeroes_the_clock_and_offers_undo() {
         let mut rec = RecordView::default();
+        let doc = deckcraft_model::Presentation::default();
+        let mut show = Show::new(&doc, 0, false, false);
+        rec.start(&mut show, 0.0);
         assert!(rec.elapsed(10.0) > 9.9);
 
         rec.reset(10.0);
@@ -55,6 +60,9 @@ mod tests {
     #[test]
     fn undo_restores_the_pre_reset_value_once() {
         let mut rec = RecordView::default();
+        let doc = deckcraft_model::Presentation::default();
+        let mut show = Show::new(&doc, 0, false, false);
+        rec.start(&mut show, 0.0);
         rec.reset(10.0);
 
         assert!(rec.undo(10.0));
