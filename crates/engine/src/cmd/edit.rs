@@ -127,7 +127,11 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
     let mids = crate::media_refs::shapes_media(&shapes);
     let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
     let plain = shapes.iter().filter_map(|x| x.text.as_ref().map(|t| t.text())).collect::<Vec<_>>().join("\n");
-    let source_theme = st.current_slide().and_then(|sl| st.doc.master_for(sl)).map(|(m, _)| (m.scheme(), m.theme.fonts.clone()));
+    // The scheme the slide draws with: its or its layout's colour map, else the master's.
+    let source_theme = st
+        .current_slide()
+        .and_then(|sl| deckcraft_model::resolve::Ctx::for_slide(&st.doc, sl))
+        .map(|ctx| (ctx.scheme.clone(), ctx.master.theme.fonts.clone()));
     s.clipboard = crate::Clipboard { shapes, placeholders, media, plain: plain.clone(), source_theme, ..Default::default() };
     Ok(plain)
 }

@@ -294,6 +294,48 @@ fn a_placeholder_duplicated_by_dragging_keeps_its_look() {
     }
 }
 
+/// Keep Source Formatting fixes a copy's theme colours as the source drew them: through the colour
+/// map of its slide or layout, not the master's. A title's inherited `tx1` stays the light colour
+/// an override gave it.
+#[test]
+fn keep_source_formatting_uses_the_slides_colour_map() {
+    use deckcraft_model::resolve;
+    let first_run_colour = |s: &Session, id: ShapeId| {
+        let st = s.doc().unwrap();
+        let ctx = resolve::Ctx::for_slide(&st.doc, st.current_slide().unwrap()).unwrap();
+        let sh = st.shape(id).unwrap();
+        let p = &sh.text.as_ref().unwrap().paragraphs[0];
+        resolve::text_color(&ctx, &resolve::run(&ctx, sh, p, &p.runs[0].props))
+    };
+    let swapped = || Some([("bg1", "dk1"), ("tx1", "lt1"), ("bg2", "dk2"), ("tx2", "lt2")].map(|(a, b)| (a.to_string(), b.to_string())).to_vec());
+    for on_layout in [false, true] {
+        let mut s = session();
+        s.execute("slide.new", &json!({})).unwrap();
+        let title = s.doc().unwrap().current_slide().unwrap().shapes.iter().find(|x| x.ph.is_some()).unwrap().id;
+        s.execute("text.set", &json!({"id": title.0, "text": "Title"})).unwrap();
+        let plain = first_run_colour(&s, title);
+        let st = s.doc_mut().unwrap();
+        let at = st.selection.slide;
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        if on_layout {
+            let layout = doc.slides[at].layout;
+            let m = std::sync::Arc::make_mut(&mut doc.masters[0]);
+            m.layouts.iter_mut().find(|l| l.id == layout).unwrap().color_map = swapped();
+        } else {
+            std::sync::Arc::make_mut(&mut doc.slides[at]).color_map = swapped();
+        }
+        let want = first_run_colour(&s, title);
+        assert_ne!(want, plain, "the override changes how the title draws");
+
+        s.execute("selection.select", &json!({"id": title.0})).unwrap();
+        s.execute("edit.copy", &json!({})).unwrap();
+        s.execute("edit.pasteSpecial", &json!({"as": "keepSource"})).unwrap();
+        let copy = s.doc().unwrap().selection.shapes[0];
+        assert_ne!(copy, title);
+        assert_eq!(first_run_colour(&s, copy), want, "override on the layout: {on_layout}");
+    }
+}
+
 /// A slide's placeholder pasted in Slide Master view stays a placeholder that inherits from where
 /// it lands; only a paste on a slide turns it into a regular shape with the look it had.
 #[test]
