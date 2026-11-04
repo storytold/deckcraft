@@ -688,4 +688,26 @@ mod tests {
         assert_eq!(listed, Some(ColorRef { base: ColorBase::Preset { name: "red".into() }, mods }));
         assert_eq!(color_value(&json!({"preset": "red", "mods": [{"op": "notATransform"}]})), None);
     }
+
+    #[test]
+    fn color_mods_lists_follow_keyed_transforms() {
+        use deckcraft_color::{ColorTransform, SchemeSlot};
+        use deckcraft_model::{ColorBase, ColorRef};
+        use serde_json::json;
+        let red = ColorRef { base: ColorBase::Preset { name: "red".into() }, mods: vec![] };
+        assert_eq!(color_value(&json!({"preset": "red", "mods": []})), Some(red.clone()), "an empty list adds no transforms");
+        let two = color_value(&json!({"preset": "red", "mods": [{"op": "lumMod", "val": 75_000}, {"op": "lumOff", "val": 10_000}]}));
+        assert_eq!(two, Some(red.with(ColorTransform::LumMod(75_000)).with(ColorTransform::LumOff(10_000))));
+        // The keyed `lumMod` comes first, then the list in order.
+        let both =
+            color_value(&json!({"scheme": "accent2", "lumMod": 75_000, "mods": [{"op": "lumOff", "val": 10_000}, {"op": "lumMod", "val": 50_000}]}));
+        let want = ColorRef::scheme(SchemeSlot::Accent2)
+            .with(ColorTransform::LumMod(75_000))
+            .with(ColorTransform::LumOff(10_000))
+            .with(ColorTransform::LumMod(50_000));
+        assert_eq!(both, Some(want));
+        // An unknown op anywhere in the list, or a `mods` value that is not a list, makes the color invalid.
+        assert_eq!(color_value(&json!({"scheme": "accent2", "lumMod": 75_000, "mods": [{"op": "lumOff", "val": 10_000}, {"op": "sparkle"}]})), None);
+        assert_eq!(color_value(&json!({"preset": "red", "mods": {"op": "inv"}})), None);
+    }
 }

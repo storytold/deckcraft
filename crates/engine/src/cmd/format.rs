@@ -423,6 +423,36 @@ mod tests {
     }
 
     #[test]
+    fn font_dialog_color_mods_round_trip_and_unknown_ops_are_errors() {
+        let two = ColorRef { base: ColorBase::Preset { name: "red".into() }, mods: vec![] }
+            .with(ColorTransform::LumMod(75_000))
+            .with(ColorTransform::LumOff(10_000));
+        let mut s = shape();
+        let fill = Fill::Solid { color: two.clone() };
+        format_run(&mut s, &|r| r.fill = Some(fill.clone())).unwrap();
+        s.ui_requests.clear();
+        s.execute("format.fontDialog", &json!({})).unwrap();
+        let Some(UiRequest::Dialog { params, .. }) = s.ui_requests.last().cloned() else { panic!("dialog request") };
+        assert_eq!(params["color"], json!({"preset": "red", "mods": [{"op": "lumMod", "val": 75_000}, {"op": "lumOff", "val": 10_000}]}));
+        s.execute("format.fontDialog", &json!({"color": params["color"]})).unwrap();
+        assert_eq!(props(&s).fill, Some(Fill::Solid { color: two.clone() }));
+        // An unknown op is an error, and the run keeps its color.
+        let n = s.doc().unwrap().history.undo.len();
+        let err = s.execute("format.fontDialog", &json!({"color": {"preset": "red", "mods": [{"op": "sparkle"}]}})).unwrap_err();
+        assert!(err.to_string().contains("color"), "{err}");
+        assert_eq!(s.doc().unwrap().history.undo.len(), n);
+        assert_eq!(props(&s).fill, Some(Fill::Solid { color: two }));
+        // An empty list gives the color with no transforms.
+        s.execute("format.fontDialog", &json!({"color": {"preset": "red", "mods": []}})).unwrap();
+        assert_eq!(props(&s).fill, Some(Fill::Solid { color: ColorRef { base: ColorBase::Preset { name: "red".into() }, mods: vec![] } }));
+        // A scheme color with a keyed `lumMod` and a list keeps both, the keyed one first.
+        s.execute("format.fontDialog", &json!({"color": {"scheme": "accent2", "lumMod": 75_000, "mods": [{"op": "lumOff", "val": 10_000}]}}))
+            .unwrap();
+        let scheme = ColorRef::scheme(SchemeSlot::Accent2).with(ColorTransform::LumMod(75_000)).with(ColorTransform::LumOff(10_000));
+        assert_eq!(props(&s).fill, Some(Fill::Solid { color: scheme }));
+    }
+
+    #[test]
     fn font_dialog_with_no_fields_asks_the_ui_to_open() {
         let mut s = shape();
         s.execute("format.italic", &json!({"on": true})).unwrap();
