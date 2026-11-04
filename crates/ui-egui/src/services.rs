@@ -63,6 +63,8 @@ pub struct Services {
     /// through `download`, which the host also points at the page: they are copies.
     pub host_save: Option<HostSaveFn>,
     pub inbox: Option<Inbox>,
+    /// Plain text on the system clipboard, when the host can read it.
+    pub clipboard_text: Option<Box<dyn FnMut() -> Option<String>>>,
     /// Image on the system clipboard (PNG bytes), when the host can read one.
     pub clipboard_image: Option<Box<dyn FnMut() -> Option<Vec<u8>>>>,
     /// HTML on the system clipboard (Pages, Keynote, and other apps that write `public.html`).

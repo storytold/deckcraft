@@ -7,13 +7,77 @@ use crate::show::Show;
 use crate::{SlideApp, UiState};
 
 /// One screen the host can show a window on.
+///
+/// `x` and `y` are the monitor's top-left corner in physical pixels, in the same
+/// space as `width` and `height`. Presenter View turns those into points with the
+/// window's own scale, so a 125% display still fills the monitor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScreenInfo {
     pub index: usize,
     pub name: String,
+    pub x: i32,
+    pub y: i32,
     pub width: u32,
     pub height: u32,
     pub primary: bool,
+}
+
+/// A monitor rectangle in physical pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ScreenFrame {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl ScreenInfo {
+    pub(crate) fn frame(&self) -> ScreenFrame {
+        ScreenFrame { x: self.x, y: self.y, width: self.width, height: self.height }
+    }
+}
+
+/// The same rectangle in egui points for a window whose scale is `pixels_per_point`.
+///
+/// Multiplying the result by that scale returns the physical pixels, so the window
+/// lands on the monitor instead of on a smaller point size.
+pub(crate) fn frame_in_points(frame: ScreenFrame, pixels_per_point: f32) -> Option<(egui::Pos2, egui::Vec2)> {
+    if !pixels_per_point.is_finite() || pixels_per_point <= 0.0 {
+        return None;
+    }
+    let x = frame.x as f32 / pixels_per_point;
+    let y = frame.y as f32 / pixels_per_point;
+    let w = frame.width as f32 / pixels_per_point;
+    let h = frame.height as f32 / pixels_per_point;
+    if ![x, y, w, h].into_iter().all(f32::is_finite) || w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    Some((egui::pos2(x, y), egui::vec2(w, h)))
+}
+
+/// Move and size this viewport so its physical pixels cover `frame`.
+///
+/// A point size such as 1100×700 is turned into physical pixels by the window scale.
+/// At 125% that is only 1375×875 on a 1920×1200 monitor, so the notes window never
+/// fills the screen. Correcting from the monitor's pixels, with this window's own
+/// scale, makes the physical size match the monitor.
+pub(crate) fn cover_monitor(ctx: &egui::Context, frame: ScreenFrame) {
+    let Some((pos, size)) = frame_in_points(frame, ctx.pixels_per_point()) else { return };
+    let (inner, outer) = ctx.input(|i| (i.viewport().inner_rect, i.viewport().outer_rect));
+    let Some(inner) = inner else { return };
+    let apart = |a: f32, b: f32| (a - b).abs() > 1.5;
+    let size_off = apart(inner.width(), size.x) || apart(inner.height(), size.y);
+    let pos_off = outer.is_none_or(|r| apart(r.min.x, pos.x) || apart(r.min.y, pos.y));
+    if !size_off && !pos_off {
+        return;
+    }
+    ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
+    if pos_off {
+        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
+    }
+    if size_off {
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+    }
 }
 
 impl ScreenInfo {
@@ -75,6 +139,7 @@ impl SlideApp {
         let (audience, notes) = assign(&self.screens, self.ui.show_screen, self.ui.notes_screen, show.presenter && !show.reading);
         show.audience_screen = audience;
         show.notes_screen = notes;
+        show.notes_frame = presenter_monitor(audience, notes).and_then(|index| self.screens.iter().find(|s| s.index == index).map(ScreenInfo::frame));
     }
 }
 
@@ -82,6 +147,60 @@ impl SlideApp {
 pub(crate) fn chosen(raw: &str, screens: &[ScreenInfo]) -> Option<usize> {
     let index = raw.parse::<usize>().ok()?;
     screens.iter().any(|s| s.index == index).then_some(index)
+}
+
+/// Where the editing window was before the slides took it over.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct EditorPlace {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub maximized: bool,
+}
+
+/// The root window's position and size, before a show moves it onto another screen.
+pub(crate) fn take_editor_place(ctx: &egui::Context) -> Option<EditorPlace> {
+    ctx.input(|i| {
+        let v = i.viewport();
+        let outer = v.outer_rect?;
+        let inner = v.inner_rect?;
+        let (x, y, w, h) = (outer.min.x, outer.min.y, inner.width(), inner.height());
+        if ![x, y, w, h].into_iter().all(f32::is_finite) || w < 1.0 || h < 1.0 {
+            return None;
+        }
+        Some(EditorPlace { x, y, width: w, height: h, maximized: v.maximized.unwrap_or(false) })
+    })
+}
+
+/// Leave fullscreen and put the editing window back at `place`.
+pub(crate) fn restore_editor_place(ctx: &egui::Context, place: EditorPlace) {
+    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(place.x, place.y)));
+    if place.maximized {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+    } else {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(place.width, place.height)));
+    }
+}
+
+/// True when the window is out of fullscreen and sits on the saved screen again.
+pub(crate) fn editor_place_matches(
+    place: EditorPlace,
+    outer_min: egui::Pos2,
+    inner: egui::Vec2,
+    maximized: Option<bool>,
+    fullscreen: Option<bool>,
+) -> bool {
+    if fullscreen == Some(true) {
+        return false;
+    }
+    let near = |a: f32, b: f32| (a - b).abs() < 24.0;
+    if !near(outer_min.x, place.x) || !near(outer_min.y, place.y) {
+        return false;
+    }
+    if place.maximized { maximized == Some(true) } else { maximized != Some(true) && near(inner.x, place.width) && near(inner.y, place.height) }
 }
 
 /// Drop a saved index the settings file could not have meant.
@@ -95,7 +214,7 @@ mod tests {
     use super::*;
 
     fn screen(index: usize, primary: bool) -> ScreenInfo {
-        ScreenInfo { index, name: format!(r"\\.\DISPLAY{}", index + 1), width: 1920, height: 1080, primary }
+        ScreenInfo { index, name: format!(r"\\.\DISPLAY{}", index + 1), x: (index as i32) * 1920, y: 0, width: 1920, height: 1080, primary }
     }
 
     #[test]
@@ -119,16 +238,24 @@ mod tests {
     #[test]
     fn names_hide_generic_display_paths() {
         assert_eq!(screen(0, true).label(), "Screen 1 (Primary, 1920×1080)");
-        let named = ScreenInfo { index: 1, name: "Dell U2720Q".into(), width: 2560, height: 1440, primary: false };
+        let named = ScreenInfo { index: 1, name: "Dell U2720Q".into(), x: 1920, y: 0, width: 2560, height: 1440, primary: false };
         assert_eq!(named.label(), "Screen 2: Dell U2720Q (Extended, 2560×1440)");
     }
 
     #[test]
+    fn the_editor_is_back_only_when_it_sits_where_it_started() {
+        let windowed = EditorPlace { x: 40.0, y: 20.0, width: 1200.0, height: 800.0, maximized: false };
+        assert!(editor_place_matches(windowed, egui::pos2(40.0, 20.0), egui::vec2(1200.0, 800.0), Some(false), Some(false)));
+        assert!(!editor_place_matches(windowed, egui::pos2(2000.0, 20.0), egui::vec2(1200.0, 800.0), Some(false), Some(false)));
+        assert!(!editor_place_matches(windowed, egui::pos2(40.0, 20.0), egui::vec2(1200.0, 800.0), Some(false), Some(true)));
+        let maximized = EditorPlace { maximized: true, ..windowed };
+        assert!(editor_place_matches(maximized, egui::pos2(40.0, 20.0), egui::vec2(1920.0, 1080.0), Some(true), Some(false)));
+        assert!(!editor_place_matches(maximized, egui::pos2(40.0, 20.0), egui::vec2(1920.0, 1080.0), Some(false), Some(false)));
+    }
+
+    #[test]
     fn a_saved_screen_past_the_list_is_dropped() {
-        let mut ui = UiState::default();
-        ui.show_screen = Some(99);
-        ui.notes_screen = Some(1);
-        let ui = ui.sanitized();
+        let ui = UiState { show_screen: Some(99), notes_screen: Some(1), ..UiState::default() }.sanitized();
         assert_eq!(ui.show_screen, None);
         assert_eq!(ui.notes_screen, Some(1));
     }
@@ -165,5 +292,33 @@ mod tests {
         let show = app.show.as_ref();
         assert_eq!(show.map(|s| s.audience_screen), Some(Some(0)));
         assert_eq!(show.map(|s| s.notes_screen), Some(Some(1)));
+        assert_eq!(show.map(|s| s.notes_frame), Some(Some(ScreenFrame { x: 1920, y: 0, width: 1920, height: 1080 })));
+    }
+
+    #[test]
+    fn notes_on_the_slides_screen_stay_in_a_window() {
+        let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+        app.set_screens(vec![screen(0, true), screen(1, false)]);
+        app.ui.show_screen = Some(0);
+        app.ui.notes_screen = Some(0);
+        app.ui.presenter_view = true;
+        app.start_show(0, false);
+        assert_eq!(app.show.as_ref().map(|s| s.notes_frame), Some(None));
+    }
+
+    #[test]
+    fn a_scaled_monitor_is_covered_in_physical_pixels() {
+        let frame = ScreenFrame { x: 0, y: 0, width: 1920, height: 1200 };
+        let scaled = frame_in_points(frame, 1.25);
+        let (pos, size) = scaled.unwrap_or((egui::pos2(0.0, 0.0), egui::vec2(0.0, 0.0)));
+        assert!(scaled.is_some());
+        assert_eq!(pos, egui::pos2(0.0, 0.0));
+        assert!((size.x - 1536.0).abs() < 0.01 && (size.y - 960.0).abs() < 0.01);
+        assert!((size.x * 1.25 - 1920.0).abs() < 0.01 && (size.y * 1.25 - 1200.0).abs() < 0.01);
+
+        let beside = ScreenFrame { x: 1920, y: 0, width: 1920, height: 1200 };
+        let (pos, _) = frame_in_points(beside, 1.25).unwrap_or((egui::pos2(0.0, 0.0), egui::vec2(0.0, 0.0)));
+        assert!((pos.x * 1.25 - 1920.0).abs() < 0.01);
+        assert!(frame_in_points(frame, 0.0).is_none());
     }
 }

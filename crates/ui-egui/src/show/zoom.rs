@@ -149,6 +149,9 @@ impl Show {
             "presenterPaused": self.timer.paused(),
             "presenterSecs": self.timer.elapsed(now),
             "notesPx": self.notes_px,
+            "nextSplit": self.next_split,
+            "currentSplit": self.current_split,
+            "haltLast": self.halt_last,
             "custom": self.state.custom_name(),
             "goto": if self.goto.is_empty() { None } else { Some(self.goto.clone()) },
         });

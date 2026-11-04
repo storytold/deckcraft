@@ -32,6 +32,15 @@ fn aggregate_accepts(total: usize, byte_len: usize) -> bool {
     total.checked_add(byte_len).is_some_and(|n| n <= MAX_AGGREGATE_BYTES)
 }
 
+/// egui memory key: families the notes editors asked to draw, written while laying notes out.
+pub const NOTE_FONT_REQUEST: &str = "deckcraft-note-fonts";
+/// egui memory key: `FontFamily::Name` keys installed for those families.
+pub const NOTE_FONT_READY: &str = "deckcraft-note-font-ready";
+
+/// A notes face larger than this is left to the interface fonts. Latin faces fit; a full CJK
+/// collection is not copied into egui a second time.
+const NOTE_FACE_MAX: usize = 4 << 20;
+
 /// Faces borrowed for the interface, and the characters already looked at.
 #[derive(Default)]
 pub struct UiFonts {
@@ -41,6 +50,8 @@ pub struct UiFonts {
     seen: HashSet<char>,
     /// The presentation last looked through: (uid, revision).
     doc: Option<(u64, u64)>,
+    /// Explicit families speaker notes asked to draw as themselves.
+    note_families: Vec<String>,
     /// Faces were added since the fonts were last installed.
     changed: bool,
 }
@@ -122,15 +133,57 @@ impl UiFonts {
         self.note(ctx, &text);
     }
 
+    /// Families the notes editors asked for last frame (`NOTE_FONT_REQUEST`).
+    pub fn take_note_requests(&mut self, ctx: &egui::Context) {
+        let wanted: Vec<String> = ctx.data(|d| d.get_temp(egui::Id::unique(NOTE_FONT_REQUEST))).unwrap_or_default();
+        if wanted != self.note_families {
+            self.note_families = wanted;
+            self.changed = true;
+        }
+    }
+
     /// Install the interface fonts again when faces were added. True if they were.
     pub fn apply(&mut self, ctx: &egui::Context) -> bool {
         if !std::mem::take(&mut self.changed) {
             return false;
         }
-        crate::theme::install_fonts_with(ctx, &self.faces);
+        let notes = note_faces(&self.note_families);
+        let ready: Vec<String> = notes.iter().map(|f| f.key.clone()).collect();
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique(NOTE_FONT_READY), ready));
+        ctx.set_fonts(crate::theme::font_definitions_named(&self.faces, &notes));
         ctx.request_repaint();
         true
     }
+}
+
+/// Named faces for the families speaker notes use. A face that is a colour font or larger than
+/// [`NOTE_FACE_MAX`] is skipped; the notes then draw in the interface font and still store the
+/// family.
+fn note_faces(families: &[String]) -> Vec<crate::theme::NoteFace> {
+    let mut out = Vec::new();
+    for family in families.iter().take(8) {
+        if family.is_empty() || family.starts_with('+') || family.len() > 200 {
+            continue;
+        }
+        let regular = FontDb::global().face(family, "Regular");
+        if note_face_ok(&regular) {
+            out.push(crate::theme::NoteFace { key: format!("notes:{family}"), face: regular });
+        }
+        let bold = FontDb::global().face(family, "Bold");
+        if note_bold_style(&bold.style) && note_face_ok(&bold) {
+            out.push(crate::theme::NoteFace { key: format!("notes:{family}:bold"), face: bold });
+        }
+    }
+    out
+}
+
+fn note_face_ok(face: &FontFace) -> bool {
+    !face.is_color() && face.data().len() <= NOTE_FACE_MAX
+}
+
+fn note_bold_style(style: &str) -> bool {
+    let s = style.to_ascii_lowercase();
+    s.contains("bold") || s.contains("black") || s.contains("semibold") || s.contains("demi")
 }
 
 /// The text of a presentation that the interface can show (not the slides' pictures of it).

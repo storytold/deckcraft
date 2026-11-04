@@ -31,6 +31,16 @@ pub(super) fn handle_keys(
     let mut keep = true;
     let mut actions = vec![];
     for (k, m) in keys {
+        // Editing notes uses the keyboard as a text field. Esc and F2 lock it again
+        // without ending the show; every other key is left for the editor.
+        if presenter && show.notes_editing && !grid_open(show, presenter) {
+            let leave = k == egui::Key::Escape || (k == egui::Key::F2 && plain(m));
+            if leave {
+                show.notes_editing = false;
+                consumed.push((k, m));
+            }
+            continue;
+        }
         let handled = if grid_open(show, presenter) && !matches!(k, egui::Key::Escape | egui::Key::Minus) {
             // See All Slides takes no other keys until a slide is chosen.
             if k == egui::Key::G && plain(m) {
@@ -152,6 +162,10 @@ fn tool_key(show: &mut Show, k: egui::Key, m: egui::Modifiers, now: f64, present
         R if plain(m) => show.timer.reset(now),
         OpenBracket if plain(m) => show.nudge_notes(-NOTES_STEP),
         CloseBracket if plain(m) => show.nudge_notes(NOTES_STEP),
+        F2 if presenter && plain(m) => {
+            show.notes_editing = true;
+            show.notes_focus = true;
+        }
         Num0 | Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9 => {
             if let Some(d) = k.name().chars().next() {
                 show.push_slide_number(d, now);
@@ -160,4 +174,59 @@ fn tool_key(show: &mut Show, k: egui::Key, m: egui::Modifiers, now: f64, present
         _ => return false,
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn show_at(presenter: bool) -> (deckcraft_model::Presentation, Show) {
+        let doc = deckcraft_model::Presentation::default();
+        let show = Show::new(&doc, 0, false, presenter);
+        (doc, show)
+    }
+
+    #[test]
+    fn f2_edits_notes_and_escape_keeps_the_show() {
+        let (doc, mut show) = show_at(true);
+        let (keep, consumed) = handle_keys(&mut show, &doc, 0.0, vec![(egui::Key::F2, egui::Modifiers::NONE)], true);
+        assert!(keep && show.notes_editing && show.notes_focus);
+        assert_eq!(consumed.len(), 1);
+
+        let (keep, consumed) =
+            handle_keys(&mut show, &doc, 0.0, vec![(egui::Key::ArrowRight, egui::Modifiers::NONE), (egui::Key::Escape, egui::Modifiers::NONE)], true);
+        assert!(keep);
+        assert!(!show.notes_editing);
+        assert!(consumed.iter().any(|(k, _)| *k == egui::Key::Escape));
+        assert!(consumed.iter().all(|(k, _)| *k != egui::Key::ArrowRight));
+    }
+
+    #[test]
+    fn halt_on_the_last_slide_keeps_arrows_and_a_clicker_from_ending_the_show() {
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &serde_json::json!({})).unwrap();
+        let doc = (*session.active().unwrap().doc).clone();
+        let mut show = Show::new(&doc, 0, false, true);
+        show.halt_last = true;
+        let (keep, _) = handle_keys(&mut show, &doc, 0.0, vec![(egui::Key::ArrowRight, egui::Modifiers::NONE)], true);
+        assert!(keep);
+        assert_eq!(show.state.slide, 1, "a slide before the last still advances");
+        for key in [egui::Key::ArrowRight, egui::Key::ArrowDown, egui::Key::Space, egui::Key::PageDown, egui::Key::N] {
+            let (keep, _) = handle_keys(&mut show, &doc, 0.0, vec![(key, egui::Modifiers::NONE)], true);
+            assert!(keep, "{key:?} must not leave the show");
+            assert!(!show.ended, "{key:?} must not open the end screen");
+            assert_eq!(show.state.slide, 1, "{key:?} stays on the last slide");
+        }
+        let (keep, _) = handle_keys(&mut show, &doc, 0.0, vec![(egui::Key::Escape, egui::Modifiers::NONE)], true);
+        assert!(!keep, "Escape still ends the show");
+    }
+
+    #[test]
+    fn f2_on_the_audience_window_does_nothing() {
+        let (doc, mut show) = show_at(false);
+        let (keep, consumed) = handle_keys(&mut show, &doc, 0.0, vec![(egui::Key::F2, egui::Modifiers::NONE)], false);
+        assert!(keep);
+        assert!(!show.notes_editing);
+        assert!(consumed.is_empty());
+    }
 }

@@ -46,6 +46,22 @@ pub enum ViewMode {
     Reading,
 }
 
+/// Fraction of the presenter-view notes column given to the next-slide preview.
+/// `0` hides the preview. Missing `ui.json` values use this, not `0` (which would hide it).
+pub(crate) const PRESENTER_NEXT_DEFAULT: f32 = 0.6;
+
+/// Fraction of the presenter window given to the current slide. `0` hides it.
+/// Missing `ui.json` values use this, not `0`.
+pub(crate) const PRESENTER_CURRENT_DEFAULT: f32 = 0.62;
+
+fn default_presenter_next() -> f32 {
+    PRESENTER_NEXT_DEFAULT
+}
+
+fn default_presenter_current() -> f32 {
+    PRESENTER_CURRENT_DEFAULT
+}
+
 /// Persisted UI state.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -56,6 +72,14 @@ pub struct UiState {
     pub view: ViewMode,
     pub notes: bool,
     pub notes_height: f32,
+    /// Presenter View: how much of the notes column the next-slide preview uses. `0` hides it.
+    #[serde(default = "default_presenter_next")]
+    pub presenter_next: f32,
+    /// Presenter View: how much of the window the current slide uses. `0` hides it.
+    #[serde(default = "default_presenter_current")]
+    pub presenter_current: f32,
+    /// Presenter View: arrows and a clicker do not leave the last slide.
+    pub halt_last: bool,
     pub thumbs_width: f32,
     /// Vertical scroll offset of the thumbnail pane, recorded each frame for the control
     /// channel and tests; not persisted.
@@ -112,6 +136,9 @@ impl Default for UiState {
             view: ViewMode::Normal,
             notes: true,
             notes_height: 52.0,
+            presenter_next: PRESENTER_NEXT_DEFAULT,
+            presenter_current: PRESENTER_CURRENT_DEFAULT,
+            halt_last: false,
             thumbs_width: 236.0,
             thumbs_scroll: 0.0,
             pane: None,
@@ -155,6 +182,8 @@ impl UiState {
         self.sorter_zoom = within(self.sorter_zoom, 0.5, 3.0, d.sorter_zoom);
         self.ui_scale = within(self.ui_scale, 0.5, 3.0, d.ui_scale);
         self.notes_height = within(self.notes_height, 0.0, 2000.0, d.notes_height);
+        self.presenter_next = within(self.presenter_next, 0.0, 0.85, d.presenter_next);
+        self.presenter_current = within(self.presenter_current, 0.0, 0.85, d.presenter_current);
         self.thumbs_width = within(self.thumbs_width, 60.0, 1000.0, d.thumbs_width);
         self.pane_width = within(self.pane_width, 240.0, 520.0, d.pane_width);
         let short = |s: &String| s.len() <= 64;

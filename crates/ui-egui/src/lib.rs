@@ -314,6 +314,13 @@ pub struct SlideApp {
     /// Quit was confirmed (changes saved or discarded): let the window close.
     pub quit_confirmed: bool,
     pub(crate) notes_buf: (u64, usize, notes::Draft),
+    /// The notes field had the keyboard on the last frame, so font shortcuts edit the notes.
+    pub(crate) notes_focused: bool,
+    /// The notes pane or Notes Page ran this frame and set [`Self::notes_focused`].
+    pub(crate) notes_touched: bool,
+    /// After a show that moved the window: the editing window's old place, and how many
+    /// frames we have spent putting it back.
+    pub(crate) restore_editor: Option<(screens::EditorPlace, u8)>,
     /// Faces borrowed from the font database for text the interface fonts can't draw (#101).
     pub ui_fonts: uifonts::UiFonts,
     /// Slide drag in the thumbnail pane or the Slide Sorter: the dragged slides and the drop gap.

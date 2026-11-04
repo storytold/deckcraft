@@ -38,9 +38,10 @@ fn refresh_screens(frame: &eframe::Frame, app: &mut SlideApp) {
         .enumerate()
         .map(|(index, monitor)| {
             let size = monitor.size();
+            let pos = monitor.position();
             let name = monitor.name().unwrap_or_default();
             let primary = primary.as_ref().is_some_and(|p| p == &monitor);
-            ScreenInfo { index, name, width: size.width, height: size.height, primary }
+            ScreenInfo { index, name, x: pos.x, y: pos.y, width: size.width, height: size.height, primary }
         })
         .collect();
     app.set_screens(screens);
@@ -153,6 +154,7 @@ fn services(native_wayland: bool) -> Services {
         pick_save: Some(Box::new(|name: &str| rfd::FileDialog::new().set_file_name(name).save_file().map(|p| p.to_string_lossy().to_string()))),
         read: Some(Box::new(|p: &str| std::fs::read(p).map_err(|e| e.to_string()))),
         write: Some(Box::new(|p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string()))),
+        clipboard_text: pasteboard.then(|| Box::new(pasteboard::text) as Box<dyn FnMut() -> Option<String>>),
         clipboard_image: pasteboard.then(|| Box::new(pasteboard::image_png) as Box<dyn FnMut() -> Option<Vec<u8>>>),
         clipboard_html: pasteboard.then(|| Box::new(pasteboard::html) as Box<dyn FnMut() -> Option<String>>),
         clipboard_set_html: pasteboard.then(|| Box::new(pasteboard::set_html) as Box<dyn FnMut(&str, &str) -> bool>),

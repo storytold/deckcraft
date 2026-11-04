@@ -33,6 +33,10 @@ arboard = { workspace = true, features = ["image-data"] }
 image = { workspace = true }
 cpal = "0.16"
 
+[target.'cfg(windows)'.dependencies]
+# CF_DIB and CF_BITMAP, which arboard does not read. Screenshots land in those formats.
+clipboard-win = "5.4"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # Finder double-click, Open With, Dock drops and `open -a DeckCraft deck.pptx` arrive as a
 # kAEOpenDocuments Apple event, which winit 0.30 doesn't handle. This audited crate (also used by
