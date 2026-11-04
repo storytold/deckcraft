@@ -344,7 +344,10 @@ fn advance(app: &mut SlideApp, show: &mut Show, f: &Fr, out: &mut Out) {
             out.keep = false;
         }
     }
-    show.ink_width = pen_width_slide(doc, full, show.reading);
+    // The Record view draws the slide in its own rect: measuring the pen from the whole window
+    // would persist a thinner `ink.stroke` width than the 3 px drawn there.
+    let slide_rect = f.layout.map_or(full, |l| l.slide);
+    show.ink_width = pen_width_slide(doc, slide_rect, show.reading);
     if show.state.playing {
         let step = show.state.step;
         show.cue_media(doc, step, now - show.step_start);
@@ -909,6 +912,7 @@ pub(crate) fn sync_mic(app: &mut SlideApp, show: &mut Show) {
                 Err(e) => {
                     log::info!("record narration: {e}");
                     show.mic_ok = false;
+                    app.set_status(format!("Narration is off: {e}"));
                 }
             },
             None => show.mic_ok = false,

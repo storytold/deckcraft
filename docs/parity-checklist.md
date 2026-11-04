@@ -32,7 +32,7 @@ The summary between `<!-- SUMMARY -->
 | Charts | 65% |
 | SmartArt | 50% |
 | Pictures | 60% |
-| Media | 67% |
+| Media | 75% |
 | Transitions | 100% |
 | Animations | 85% |
 | Slide show | 71% |
