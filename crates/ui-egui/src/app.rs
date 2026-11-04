@@ -317,9 +317,14 @@ impl SlideApp {
                         Ok(_) => true,
                         Err(e) => {
                             self.set_status(e.to_string());
+                            self.set_pending_close(ctx, false);
                             // The status bar is hidden during a slide show: keep the recorder's
                             // window up, which shows the message (and the kept take's path).
                             self.screen.open = true;
+                            // Nothing was inserted, so the deck may well be clean: a close that
+                            // went ahead would take the message and the kept take with it.
+                            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                            closing = false;
                             false
                         }
                     };

@@ -19,7 +19,7 @@ fn node(tag: &str, attrs: &str, spid: u32, media: &str, ctn: &str) -> String {
     )
 }
 
-fn clips(nodes: impl Fn(u32, u32) -> String) -> Vec<MediaClip> {
+fn imported(nodes: impl Fn(u32, u32) -> String) -> (Vec<MediaClip>, Vec<deckcraft_model::Animation>) {
     let mut p = defaults::new_presentation(None);
     let video = p.add_media("clip.mp4", "video/mp4", b"video".to_vec()).expect("media");
     let audio = p.add_media("clip.m4a", "audio/mp4", b"audio".to_vec()).expect("media");
@@ -59,14 +59,19 @@ fn clips(nodes: impl Fn(u32, u32) -> String) -> Vec<MediaClip> {
         out.write_all(&d).expect("write");
     }
     let q = deckcraft_pptx::import(&out.finish().expect("finish").into_inner()).expect("import");
-    q.slides[0]
+    let clips = q.slides[0]
         .shapes
         .iter()
         .filter_map(|s| match &s.kind {
             ShapeKind::Media(m) => Some(m.clone()),
             _ => None,
         })
-        .collect()
+        .collect();
+    (clips, q.slides[0].animations.clone())
+}
+
+fn clips(nodes: impl Fn(u32, u32) -> String) -> Vec<MediaClip> {
+    imported(nodes).0
 }
 
 #[test]
@@ -128,6 +133,22 @@ fn a_play_from_inside_a_click_effect_is_not_an_automatic_start() {
     let c = clips(|v, a| format!("{}{}{}{}", delayed_node("video", v, "0"), delayed_node("audio", a, "indefinite"), click(v), click(a)));
     assert!(!c[0].autoplay, "a clickEffect playFrom waits for the click, even with a numeric delay");
     assert!(!c[1].autoplay);
+}
+
+#[test]
+fn a_click_media_effect_without_a_grp_id_keeps_its_play() {
+    // An authored click-triggered media effect need not carry `grpId`: it waits for the click, so it
+    // is not the automatic-start behaviour and must survive import as a Play animation.
+    let click = |spid: u32| {
+        format!(
+            r#"<p:par><p:cTn id="14" presetID="1" presetClass="mediacall" presetSubtype="0" fill="hold" nodeType="clickEffect"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:cmd type="call" cmd="playFrom(0.0)"><p:cBhvr><p:cTn id="15" dur="1" fill="hold"/><p:tgtEl><p:spTgt spid="{spid}"/></p:tgtEl></p:cBhvr></p:cmd></p:childTnLst></p:cTn></p:par>"#
+        )
+    };
+    let (c, anims) = imported(|v, _| format!("{}{}", delayed_node("video", v, "indefinite"), click(v)));
+    assert!(!c[0].autoplay, "a clickEffect waits for the click even without a grpId");
+    let plays: Vec<_> = anims.iter().filter(|a| a.effect == "play" && a.class == deckcraft_model::anim::AnimClass::Media).collect();
+    assert_eq!(plays.len(), 1, "the authored click media effect keeps its Play: {anims:?}");
+    assert_eq!(plays[0].start, deckcraft_model::anim::AnimStart::OnClick);
 }
 
 #[test]

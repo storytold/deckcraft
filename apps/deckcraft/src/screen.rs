@@ -68,6 +68,11 @@ mod imp {
             // Dropping the receiver makes the worker's next send fail, so it stops capturing even
             // when no frame arrived after the flag was set. Dropping the ready slot discards a
             // failure the finished take will never be asked about.
+            //
+            // `scap` 0.0.8 has no cancellable receive: `get_next_frame` loops on a private
+            // receiver, and `stop_capture` needs the `&mut Capturer` that the blocked worker holds,
+            // so the device is released when the screen next produces a frame. Stopping itself
+            // never waits: the flag and the dropped receiver are all the worker needs to end.
             self.frames = None;
             self.ready = None;
         }
@@ -87,6 +92,15 @@ mod imp {
             let (tx, rx) = sync_channel::<Item>(1);
             drop(tx);
             ScapIn { frames: Some(rx), stop: None, ready: Some(Arc::new(Mutex::new(state))) }
+        }
+
+        /// A device whose worker has reported `state` and is still running: the frame channel is
+        /// open but nothing has been sent yet, as while the capturer is being built. The caller
+        /// keeps the returned sender alive; dropping it marks the worker as ended.
+        #[cfg(test)]
+        pub fn with_open_report(state: Outcome) -> (Self, std::sync::mpsc::SyncSender<Item>) {
+            let (tx, rx) = sync_channel::<Item>(1);
+            (ScapIn { frames: Some(rx), stop: None, ready: Some(Arc::new(Mutex::new(state))) }, tx)
         }
     }
 
@@ -262,7 +276,21 @@ mod imp {
             // slot is dropped, the frame channel says everything.
             if self.ready.is_some() {
                 match self.reported() {
-                    None => return Ok(None),
+                    None => {
+                        // The worker reports success before it sends any frame, so a frame channel
+                        // whose sender is gone before that report means it ended early (a panic
+                        // while building the capturer): say so instead of waiting forever.
+                        let Some(rx) = self.frames.as_ref() else { return Ok(None) };
+                        match rx.try_recv() {
+                            Err(TryRecvError::Empty) => return Ok(None),
+                            Err(TryRecvError::Disconnected) => {
+                                return Err(ScreenError::Failed("the screen capture stopped before it started".into()));
+                            }
+                            // Only possible if the worker published between the read above and
+                            // this poll; it is a real frame, so keep it.
+                            Ok(item) => return item.map(Some),
+                        }
+                    }
                     Some(Err(e)) => return Err(e),
                     Some(Ok(())) => self.ready = None,
                 }
@@ -332,9 +360,21 @@ mod tests {
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     #[test]
     fn a_worker_still_building_reports_no_frame_until_it_starts() {
-        let mut device = ScapIn::with_report(None);
+        // The sender stays alive: the worker exists, it just has no frame yet.
+        let (mut device, _worker) = ScapIn::with_open_report(None);
         // A Wayland picker can hold the worker here for minutes; that is not a failure.
         assert_eq!(device.frame(), Ok(None));
         assert_eq!(device.frame(), Ok(None));
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn a_worker_that_ended_before_starting_reports_it_through_frame() {
+        // `with_report` drops the sender, so the worker is gone without ever publishing a
+        // report: `frame` must say so rather than answer "no frame yet" forever.
+        let mut device = ScapIn::with_report(None);
+        assert_eq!(device.frame(), Err(deckcraft_screen::ScreenError::Failed("the screen capture stopped before it started".into())));
+        // A second poll keeps the failure instead of going quiet.
+        assert!(device.frame().is_err());
     }
 }

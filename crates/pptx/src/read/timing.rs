@@ -73,12 +73,15 @@ fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, 
     }
     for c in e.elements() {
         if c.is("cTn") && c.has_attr("presetClass") {
-            // A media behaviour with no `grpId` sits in a group that starts on a numeric delay: that
-            // is the writer's automatic-start trigger for an autoplay clip, not an effect the
-            // Animation Pane lists. Authored effects always carry `grpId` and live in a click group
-            // (or an interactive sequence), so a valid file's own media effect is kept.
+            // A media `afterEffect` with no `grpId`, outside every interactive sequence, whose own
+            // start delay is numeric: that is the writer's automatic-start trigger for an autoplay
+            // clip, not an effect the Animation Pane lists. Anything else (a click effect, or an
+            // effect inside an interactive sequence) is authored and stays an animation, even when
+            // it carries no `grpId`.
             let own_trigger = c.attr("presetClass") == Some("mediacall")
                 && !c.has_attr("grpId")
+                && at.trigger.is_none()
+                && c.attr("nodeType") == Some("afterEffect")
                 && c.path(&["stCondLst", "cond"]).and_then(|x| x.attr("delay")).map(str::trim).is_some_and(|d| d != "indefinite");
             if !own_trigger {
                 out.push(Found { ctn: c, trigger: at.trigger, group: at.group, offset: at.offset });

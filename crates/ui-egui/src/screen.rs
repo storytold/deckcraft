@@ -199,6 +199,11 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
     let mut cancel_now = false;
     let mut permission = false;
     let mut close = false;
+    // The status bar is not drawn during a slide show: a message it would carry (the path of a
+    // take that could not be inserted, for instance) belongs here too, and it has to expire like
+    // the status bar's does. `fresh_status` needs `&mut app`, so read it before the closure holds
+    // the borrow.
+    let status = app.fresh_status();
     egui::Window::new("Screen Recording")
         .id(egui::Id::new("deckcraft-screen-recording"))
         .anchor(Align2::RIGHT_BOTTOM, Vec2::new(-28.0, -28.0))
@@ -327,11 +332,11 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
             }
             // The status bar is not drawn during a slide show: a message it would carry (the path
             // of a take that could not be inserted, for instance) belongs here too.
-            if let Some((text, _)) = &app.status
-                && !text.is_empty()
+            if let Some(status) = &status
+                && !status.is_empty()
             {
                 ui.add_space(6.0);
-                ui.label(RichText::new(text).size(11.0).color(Color32::from_rgb(240, 200, 120)));
+                ui.label(RichText::new(status).size(11.0).color(Color32::from_rgb(240, 200, 120)));
             }
         });
     if close {

@@ -73,8 +73,16 @@ fn target_kind(p: &Value) -> Result<Option<deckcraft_screen::TargetKind>, crate:
 }
 
 fn state_json(s: &ScreenState) -> Value {
+    let state = if s.is_finishing() {
+        // Stop has asked for the file; the take is neither recording nor paused any more.
+        "stopping"
+    } else if s.is_paused() {
+        "paused"
+    } else {
+        "recording"
+    };
     json!({
-        "state": if s.is_paused() { "paused" } else { "recording" },
+        "state": state,
         "frames": s.frames(),
         "durationMs": s.elapsed_ms(),
     })
@@ -103,10 +111,16 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
             }))
         }
         "pause" => {
+            if s.screen.is_finishing() {
+                return Err(bad(CMD, "the recording is being written"));
+            }
             s.screen.pause().map_err(err)?;
             Ok(state_json(&s.screen))
         }
         "resume" => {
+            if s.screen.is_finishing() {
+                return Err(bad(CMD, "the recording is being written"));
+            }
             s.screen.resume().map_err(err)?;
             Ok(state_json(&s.screen))
         }
@@ -238,6 +252,25 @@ mod tests {
         assert_eq!(v["state"], "stopping", "{v}");
         let slide = s.active().expect("doc").selection.slide;
         assert!(pump_until_inserted(&mut s, slide), "the finished take is inserted on a tick");
+    }
+
+    #[test]
+    fn pause_and_resume_are_refused_while_the_take_is_written() {
+        let frames = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        let mut s = Session::with_new();
+        s.set_screen_host(Some(Box::new(FakeScreen { frames: frames.clone() })));
+        s.execute(CMD, &json!({"fps": 30})).expect("start");
+        frames.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [5, 6, 7, 255]));
+        s.screen_tick(0.0);
+        s.execute(CMD, &json!({"action": "stop"})).expect("stop");
+        // The take is the encoder's now: pausing it would neither stop nor resume the write.
+        for action in ["pause", "resume"] {
+            let e = s.execute(CMD, &json!({"action": action})).unwrap_err().to_string();
+            assert!(e.contains("being written"), "{action}: {e}");
+        }
+        assert_eq!(state_json(&s.screen)["state"], "stopping");
+        let slide = s.active().expect("doc").selection.slide;
+        assert!(pump_until_inserted(&mut s, slide), "the finished take is still inserted");
     }
 
     #[test]
