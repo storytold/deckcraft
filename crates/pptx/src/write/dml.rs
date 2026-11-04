@@ -500,7 +500,8 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
         .o("vertOverflow", b.vert_overflow.map(|v| v.xml()))
         .o("horzOverflow", deckcraft_model::text::TextOverflow::horz_xml(b.horz_overflow));
     let warp = b.warp.as_deref().filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()));
-    if warp.is_none() && b.autofit.is_none() {
+    let raw3d = b.raw3d.as_deref().filter(|s| !s.is_empty());
+    if warp.is_none() && b.autofit.is_none() && raw3d.is_none() {
         w.empty("a:bodyPr", a);
         return;
     }
@@ -533,6 +534,9 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
             w.empty("a:normAutofit", A::new().o("fontScale", fs).o("lnSpcReduction", (lr != 0).then_some(lr)));
         }
         None => {}
+    }
+    if let Some(raw) = raw3d {
+        w.raw(raw);
     }
     w.close("a:bodyPr");
 }

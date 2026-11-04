@@ -434,6 +434,7 @@ fn outline_ids(data: &El) -> Vec<(String, DiagramNode)> {
     let mut texts: HashMap<&str, String> = HashMap::new();
     let mut assistants: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut titles: HashMap<&str, String> = HashMap::new();
+    let mut pt_order: Vec<&str> = Vec::new();
     let mut doc: Option<&str> = None;
     for pt in pts.children_named("pt").take(MAX_NODES * 4) {
         let Some(id) = pt.attr("modelId") else { continue };
@@ -442,6 +443,7 @@ fn outline_ids(data: &El) -> Vec<(String, DiagramNode)> {
             ty @ ("node" | "asst") => {
                 let t = pt.child("t").map(paragraphs).unwrap_or_default();
                 texts.insert(id, t);
+                pt_order.push(id);
                 if ty == "asst" {
                     assistants.insert(id);
                 }
@@ -495,6 +497,23 @@ fn outline_ids(data: &El) -> Vec<(String, DiagramNode)> {
         ));
         if let Some(v) = kids.get(id) {
             stack.extend(v.iter().rev().map(|(_, c)| (*c, level.saturating_add(1))));
+        }
+    }
+    if out.is_empty() {
+        for id in pt_order {
+            if out.len() >= MAX_NODES || !seen.insert(id) {
+                continue;
+            }
+            out.push((
+                id.to_string(),
+                DiagramNode {
+                    text: texts.get(id).cloned().unwrap_or_default(),
+                    level: 0,
+                    picture: None,
+                    assistant: assistants.contains(id),
+                    title: titles.get(id).cloned().unwrap_or_default(),
+                },
+            ));
         }
     }
     out

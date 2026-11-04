@@ -1278,6 +1278,19 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
     if let Some(ext) = root.child("extLst").filter(|e| !has_rel_refs(e)) {
         s.raw_ext = Some(ext.elements().map(|e| part.keep(e)).collect());
     }
+    let mut has_diagram = false;
+    deckcraft_model::walk(&s.shapes, &mut |sh, _| {
+        if sh.diagram.is_some() {
+            has_diagram = true;
+        }
+    });
+    if !has_diagram {
+        for rel in part.rels.items.iter().filter(|r| r.ty == crate::dgm::RT_DRAWING && !r.external) {
+            if let Some(m) = imp.media_for(&rel.target) {
+                s.diagram_drawings.push(m);
+            }
+        }
+    }
     s
 }
 

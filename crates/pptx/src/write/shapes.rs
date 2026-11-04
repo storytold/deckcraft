@@ -335,6 +335,9 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             }
             if let Some(fx) = &s.effects {
                 dml::effects(w, fx);
+                if let Some(raw) = &fx.raw3d {
+                    w.raw(raw);
+                }
             }
             w.close("p:grpSpPr");
             shapes(w, x, o, cx, children, depth + 1);

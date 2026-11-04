@@ -637,6 +637,10 @@ pub struct Slide {
     /// Unmodelled XML kept for round-trip (custom data).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_ext: Option<String>,
+    /// Standalone SmartArt `diagramDrawing` parts (`ppt/diagrams/drawingN.xml`) referenced by the
+    /// slide's relationships when no modelled SmartArt graphic on the slide writes one.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub diagram_drawings: Vec<MediaId>,
 }
 
 impl Default for Slide {
@@ -656,6 +660,7 @@ impl Default for Slide {
             color_map: None,
             tags: vec![],
             raw_ext: None,
+            diagram_drawings: vec![],
         }
     }
 }

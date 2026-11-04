@@ -395,6 +395,10 @@ fn grp(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> Sha
         if let Some(fx) = pr.child("effectLst") {
             s.effects = Some(dml::effects(fx));
         }
+        let raw: String = pr.elements().filter(|c| c.is("scene3d")).map(|c| c.to_xml()).collect();
+        if !raw.is_empty() {
+            s.effects.get_or_insert_with(Effects::default).raw3d = Some(raw);
+        }
     }
     let children = sp_tree(imp, part, ctx, e, depth + 1);
     let child = child.or_else(|| s.xfrm.map(|x| Xfrm::new(x.x, x.y, x.w, x.h))).unwrap_or_default();
@@ -736,15 +740,17 @@ fn text_area(geom: &Geom, w: f64, h: f64) -> deckcraft_geom::Rect {
 /// parts kept to be written back.
 fn diagram_outline(imp: &Imp, part: &Part, rel_ids: &El, data: &El) -> Option<deckcraft_model::Diagram> {
     let nodes = crate::dgm::outline(data);
-    if nodes.is_empty() {
-        return None;
-    }
     let raw = |attr: &str| -> Option<String> {
         let rel = part.rels.get(rel_ids.attr(attr)?)?;
         let bytes = imp.pkg.get(&rel.target)?;
         (bytes.len() <= 4 << 20).then(|| String::from_utf8(bytes.to_vec()).ok()).flatten()
     };
     let layout_xml = raw("r:lo");
+    let style_xml = raw("r:qs");
+    let colors_xml = raw("r:cs");
+    if nodes.is_empty() && layout_xml.is_none() && style_xml.is_none() && colors_xml.is_none() {
+        return None;
+    }
     let (layout_id, cat) = layout_xml
         .as_deref()
         .and_then(|x| crate::xml::parse(x.as_bytes()).ok())
@@ -771,8 +777,8 @@ fn diagram_outline(imp: &Imp, part: &Part, rel_ids: &El, data: &El) -> Option<de
         imported: true,
         layout_id: id,
         layout_xml,
-        style_xml: raw("r:qs"),
-        colors_xml: raw("r:cs"),
+        style_xml,
+        colors_xml,
     })
 }
 

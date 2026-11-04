@@ -143,14 +143,21 @@ impl<'a> Exp<'a> {
         } else {
             m.content_type.clone()
         };
-        let name = if ct.starts_with("image/") {
+        let name = if ct == crate::dgm::CT_DRAWING {
+            let n = self.next_diagram();
+            format!("ppt/diagrams/drawing{n}.xml")
+        } else if ct.starts_with("image/") {
             self.n_image += 1;
             format!("ppt/media/image{}.{ext}", self.n_image)
         } else {
             self.n_media += 1;
             format!("ppt/media/media{}.{ext}", self.n_media)
         };
-        self.pkg.binary(&name, &ct, m.data.as_ref().clone());
+        if ct == crate::dgm::CT_DRAWING {
+            self.pkg.xml_part(&name, &ct, m.data.as_ref().clone());
+        } else {
+            self.pkg.binary(&name, &ct, m.data.as_ref().clone());
+        }
         self.media_parts.insert(id, name.clone());
         Some(name)
     }
@@ -689,6 +696,9 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
             let rid = so.rels.add(RT_COMMENTS_MODERN, &opc::relative(&sname, &mname), false);
             x.pkg.xml_part(&mname, CT_COMMENTS_MODERN, modern_comments_xml(&s.comments, &cname, &mut authors, &mut author_map));
             comment_rel = Some(rid);
+        }
+        for &d in &s.diagram_drawings {
+            let _ = x.media_rel(&mut so, d, crate::dgm::RT_DRAWING);
         }
         let xml = slide_xml(&mut x, &mut so, s, comment_rel.as_deref());
         x.pkg.xml_part(&sname, CT_SLIDE, xml);

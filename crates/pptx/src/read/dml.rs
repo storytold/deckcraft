@@ -400,6 +400,10 @@ pub fn body_pr(b: &El) -> BodyProps {
             _ => {}
         }
     }
+    let raw3d: String = b.elements().filter(|c| matches!(c.local(), "scene3d" | "sp3d" | "flatTx")).map(|c| c.to_xml()).collect();
+    if !raw3d.is_empty() {
+        p.raw3d = Some(raw3d);
+    }
     p
 }
 
