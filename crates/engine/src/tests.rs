@@ -5936,6 +5936,46 @@ fn crop_mode_handles_crop_move_and_scale_the_picture() {
 }
 
 #[test]
+fn a_crop_drag_with_many_moves_is_one_undo_step() {
+    let mut s = session();
+    let id = cropped_picture(&mut s);
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
+    let undos = |s: &Session| s.doc().unwrap().history.undo.len();
+    // Box 100..250 over the image 100..300, so the box's and the image's handles are apart.
+    s.execute("picture.crop", &json!({"ids": [id], "right": 0.25})).unwrap();
+    s.execute("picture.cropMode", &json!({"id": id})).unwrap();
+    let (before, n) = (crop_state(&s, id), undos(&s));
+    for part in ["frame", "image", "pan"] {
+        // The box's right crop handle, the image's bottom-right corner, or the image itself.
+        let (x0, y0) = match part {
+            "frame" => (250.0, 175.0),
+            "image" => (300.0, 250.0),
+            _ => (175.0, 175.0),
+        };
+        let hit = s.hit_test(deckcraft_geom::Point::new(x0, y0), 3.0);
+        let want = match part {
+            "frame" => matches!(hit, Some(tools::Hit::Crop { .. })),
+            "image" => matches!(hit, Some(tools::Hit::CropImage { .. })),
+            _ => matches!(hit, Some(tools::Hit::CropPan { .. })),
+        };
+        assert!(want, "{part}: {hit:?}");
+        s.pointer(ev(PointerKind::Down, x0, y0)).unwrap();
+        for k in 1..=12 {
+            let k = f64::from(k);
+            s.pointer(ev(PointerKind::Drag, x0 - 4.0 * k, y0 - 2.0 * k)).unwrap();
+        }
+        s.pointer(ev(PointerKind::Up, x0 - 48.0, y0 - 24.0)).unwrap();
+        assert_ne!(crop_state(&s, id), before, "{part}: the gesture changed something");
+        assert_eq!(undos(&s), n + 1, "{part}: twelve moves, one step");
+        assert_eq!(s.doc().unwrap().history.undo.last().map(|e| e.label.as_str()), Some("Crop"), "{part}");
+        s.execute("edit.undo", &json!({})).unwrap();
+        let (b, c) = crop_state(&s, id);
+        assert!(near(b, before.0) && near(c, before.1), "{part}: one undo takes it all back: {b:?} {c:?}");
+        assert_eq!(undos(&s), n, "{part}");
+    }
+}
+
+#[test]
 fn crop_frame_snaps_only_dragged_edges_and_keeps_the_image_in_place() {
     for target in ["guide", "slide", "center", "shape", "grid", "hidden", "disabled", "ctrl", "self"] {
         let mut s = session();
