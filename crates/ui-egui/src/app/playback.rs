@@ -69,8 +69,10 @@ impl SlideApp {
         }
         // The show and Record ▸ Audio share one microphone. A finished take is inserted on the
         // slide before the show opens, so starting Play never throws the samples away.
-        if self.record.is_recording() {
-            let _ = self.stop_audio_recording();
+        if self.record.is_recording() && self.stop_audio_recording().is_err() {
+            // The take is kept when it cannot be encoded; a show start discards it explicitly
+            // rather than leaving a dead recorder behind.
+            self.record.cancel(self.services.mic.as_deref_mut());
         }
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);

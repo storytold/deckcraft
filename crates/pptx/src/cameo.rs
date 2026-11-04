@@ -53,7 +53,9 @@ pub(crate) fn write_live_feed(w: &mut W, raw: Option<&str>) {
 /// its namespaces) reaches the output and a damaged or hostile string writes nothing extra.
 fn clean_feed(raw: &str) -> Option<String> {
     let doc = crate::xml::parse(raw.as_bytes()).ok()?;
-    if doc.root.local() != "liveFeedProps" {
+    // A feed naming a relationship cannot be written back: the export creates no such
+    // relationship, so PowerPoint would see a dangling reference in a repaired file.
+    if doc.root.local() != "liveFeedProps" || crate::read::has_rel_refs(&doc.root) {
         return None;
     }
     Some(crate::read::keep_xml(&doc.root, &doc.ns_decls()))

@@ -81,8 +81,6 @@ fn push_mono(out: &mut Vec<f32>, interleaved: &[f32], channels: usize, cap: usiz
 /// Ten minutes of mono audio at 48 kHz: one recording cannot grow without bound.
 const MAX_SAMPLES: usize = 48_000 * 60 * 10;
 
-/// How long the UI thread waits for the worker to open the input device. Device enumeration is
-
 #[derive(Default)]
 struct Capture {
     rate: u32,
