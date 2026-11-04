@@ -94,6 +94,10 @@ pub struct UiState {
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    /// File › New and File › Open start another window for the presentation instead of replacing
+    /// the one being edited (see [`crate::own_window`]); off, they open here. Only where the host
+    /// can start a window.
+    pub window_per_presentation: bool,
 }
 
 impl Default for UiState {
@@ -127,6 +131,7 @@ impl Default for UiState {
             grayscale: false,
             comment_focus: None,
             qat: qat::defaults(),
+            window_per_presentation: true,
         }
     }
 }

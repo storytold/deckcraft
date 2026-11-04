@@ -103,6 +103,19 @@ fn save_prefs(app: &SlideApp) {
     }
 }
 
+/// Start another DeckCraft window: this program again, with `args` (a file to open, or none for a
+/// new presentation). The control port is not passed on, so the new window doesn't fight for it.
+fn spawn_window(args: &[String]) -> bool {
+    let Ok(exe) = std::env::current_exe() else { return false };
+    std::process::Command::new(exe)
+        .args(args)
+        .env_remove("DECKCRAFT_CONTROL_PORT")
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| log::warn!("another window: {e}"))
+        .is_ok()
+}
+
 fn services() -> Services {
     Services {
         pick_open: Some(Box::new(|purpose: &str| {
@@ -129,6 +142,8 @@ fn services() -> Services {
         clipboard_image: Some(Box::new(pasteboard::image_png)),
         clipboard_html: Some(Box::new(pasteboard::html)),
         clipboard_set_html: Some(Box::new(pasteboard::set_html)),
+        spawn_window: Some(Box::new(spawn_window)),
+        shared_clipboard_dir: config_dir().map(|d| d.join("Clipboard")),
         // Media is mixed and clocked by the output device; `DECKCRAFT_NO_AUDIO` plays silently.
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()

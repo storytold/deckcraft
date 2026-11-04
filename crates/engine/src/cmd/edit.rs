@@ -84,7 +84,7 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
             let (a, b) = t.ordered();
             let plain = deckcraft_model::edit::text_range(&body, a, b);
             let sliced = deckcraft_model::edit::slice(&body, a, b);
-            s.clipboard = crate::Clipboard { text: Some(sliced), plain: plain.clone(), ..Default::default() };
+            s.set_clipboard(crate::Clipboard { text: Some(sliced), plain: plain.clone(), ..Default::default() });
             return Ok(plain);
         }
         return Ok(String::new());
@@ -99,12 +99,12 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
         }
         let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
         let plain = slides.iter().map(|x| x.title()).collect::<Vec<_>>().join("\n");
-        s.clipboard = crate::Clipboard { slides, media, plain: plain.clone(), ..Default::default() };
+        s.set_clipboard(crate::Clipboard { slides, media, plain: plain.clone(), ..Default::default() });
         return Ok(plain);
     }
     // Selected table cells copy as their text: a tab between cells and a paragraph per row.
     if let Some(plain) = super::table::selected_cells_text(st).filter(|_| p.get("id").is_none() && p.get("ids").is_none()) {
-        s.clipboard = crate::Clipboard { text: Some(TextBody::from_text(&plain)), plain: plain.clone(), ..Default::default() };
+        s.set_clipboard(crate::Clipboard { text: Some(TextBody::from_text(&plain)), plain: plain.clone(), ..Default::default() });
         return Ok(plain);
     }
     let shapes: Vec<Shape> = st
@@ -124,7 +124,7 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
     let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
     let plain = shapes.iter().filter_map(|x| x.text.as_ref().map(|t| t.text())).collect::<Vec<_>>().join("\n");
     let source_theme = st.current_slide().and_then(|sl| st.doc.master_for(sl)).map(|(m, _)| (m.scheme(), m.theme.fonts.clone()));
-    s.clipboard = crate::Clipboard { shapes, media, plain: plain.clone(), source_theme, ..Default::default() };
+    s.set_clipboard(crate::Clipboard { shapes, media, plain: plain.clone(), source_theme, ..Default::default() });
     Ok(plain)
 }
 
