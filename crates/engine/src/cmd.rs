@@ -71,7 +71,8 @@ pub struct CommandInfo {
 }
 
 impl CommandSpec {
-    /// Holds because `Session::execute` skips the selection check when `id` or `ids` is given.
+    /// Holds because `Session::execute` skips the selection check for named targets (`id`/`ids`)
+    /// and for commands that take `all: true`.
     pub fn acts_on(&self) -> Option<String> {
         let keys = param_keys(self.params).unwrap_or_default();
         let named = if keys.contains(&"ids") {
