@@ -134,7 +134,10 @@ fn text_glyphs_reports_fallback_and_missing_characters() {
         _ => assert!(option_env!("CRAFT_FONTS_REQUIRED").is_none(), "a required build bundles a kana face"),
     }
     if db.fallback_for('\u{10FFFD}', u32::MAX).is_none() {
-        assert_eq!(strings(r, "missingChars"), ["\u{10FFFD}"], "{r}");
+        // A build without a kana face (allowed while CRAFT_FONTS_REQUIRED is unset) draws the kana
+        // as an empty box too.
+        let want: &[&str] = if db.fallback_for('\u{3042}', u32::MAX).is_none() { &["\u{3042}", "\u{10FFFD}"] } else { &["\u{10FFFD}"] };
+        assert_eq!(strings(r, "missingChars"), want, "{r}");
     }
 
     let all = s.execute("text.glyphs", &json!({"slide": slide})).unwrap();
