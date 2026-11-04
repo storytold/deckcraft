@@ -341,8 +341,9 @@ pub fn has_cameo(s: &Session) -> std::result::Result<(), String> {
 /// Enabled state of `cameo.preview`: a Cameo is selected, or a preview is running — a preview can
 /// always be stopped, even after its Cameo was deselected or deleted.
 pub fn has_cameo_or_preview(s: &Session) -> std::result::Result<(), String> {
-    let running = s.camera_status != deckcraft_media::camera::CameraStatus::Off;
-    if running {
+    // Only an open (or opening) preview counts: Denied, Lost, Busy and Unsupported are errors,
+    // and a toggle in those states would just ask the camera to start again.
+    if s.camera_status.is_on() {
         return Ok(());
     }
     has_cameo(s)
