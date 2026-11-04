@@ -378,11 +378,15 @@ pub(crate) fn ok() -> Result<Value> {
 /// Parse a colour param: `"#RRGGBB"`, `"accent1"`…, or `{"scheme":"accent2","lumMod":75000}`.
 /// A preset or system colour keeps its base: `{"preset":"red"}`,
 /// `{"system":"windowText","last":"#000000"}`. `"mods"` lists transforms in order:
-/// `{"preset":"red","mods":[{"op":"inv"},{"op":"inv"}]}`.
+/// `{"preset":"red","mods":[{"op":"inv"},{"op":"inv"}]}`. A list longer than [`MAX_COLOR_MODS`]
+/// makes the color invalid.
 pub(crate) fn color_param(p: &Value, key: &str) -> Option<deckcraft_model::ColorRef> {
     let v = p.get(key)?;
     color_value(v)
 }
+
+/// Most transforms a color param's `"mods"` list may hold.
+pub(crate) const MAX_COLOR_MODS: usize = 256;
 
 pub(crate) fn color_value(v: &Value) -> Option<deckcraft_model::ColorRef> {
     use deckcraft_model::ColorRef;
@@ -420,7 +424,13 @@ pub(crate) fn color_value(v: &Value) -> Option<deckcraft_model::ColorRef> {
             }
             // `mods` lists transforms in order, repeats included: `[{"op":"inv"},{"op":"lumMod","val":50000}]`.
             if let Some(list) = o.get("mods") {
-                c.mods.extend(serde_json::from_value::<Vec<deckcraft_color::ColorTransform>>(list.clone()).ok()?);
+                let list = list.as_array()?;
+                if list.len() > MAX_COLOR_MODS {
+                    return None;
+                }
+                for m in list {
+                    c.mods.push(<deckcraft_color::ColorTransform as serde::Deserialize>::deserialize(m).ok()?);
+                }
             }
             Some(c)
         }
@@ -709,5 +719,14 @@ mod tests {
         // An unknown op anywhere in the list, or a `mods` value that is not a list, makes the color invalid.
         assert_eq!(color_value(&json!({"scheme": "accent2", "lumMod": 75_000, "mods": [{"op": "lumOff", "val": 10_000}, {"op": "sparkle"}]})), None);
         assert_eq!(color_value(&json!({"preset": "red", "mods": {"op": "inv"}})), None);
+    }
+
+    #[test]
+    fn color_mods_lists_longer_than_the_cap_are_invalid() {
+        use deckcraft_color::ColorTransform;
+        use serde_json::json;
+        let at_cap = color_value(&json!({"preset": "red", "mods": vec![json!({"op": "inv"}); MAX_COLOR_MODS]}));
+        assert_eq!(at_cap.map(|c| c.mods), Some(vec![ColorTransform::Inv; MAX_COLOR_MODS]));
+        assert_eq!(color_value(&json!({"preset": "red", "mods": vec![json!({"op": "inv"}); MAX_COLOR_MODS + 1]})), None);
     }
 }
