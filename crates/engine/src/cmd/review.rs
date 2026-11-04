@@ -1307,6 +1307,7 @@ mod tests {
     use serde_json::json;
 
     use crate::Session;
+    use crate::cmd::base64_encode;
     use crate::sample::open_sample;
 
     #[test]

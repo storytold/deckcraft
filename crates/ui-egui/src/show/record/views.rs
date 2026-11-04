@@ -66,13 +66,7 @@ pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, layout: &Layout) -> Out {
         theme::font(12.0),
         Color32::from_gray(220),
     );
-    painter.text(
-        pos2(r.max.x - 10.0, r.center().y),
-        egui::Align2::RIGHT_CENTER,
-        "▾",
-        theme::font(12.0),
-        Color32::from_gray(200),
-    );
+    painter.text(pos2(r.max.x - 10.0, r.center().y), egui::Align2::RIGHT_CENTER, "▾", theme::font(12.0), Color32::from_gray(200));
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Views"));
     let popup = egui::Popup::menu(&resp).width(190.0);
     popup.show(|ui| {

@@ -1280,11 +1280,12 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
             }
             let Some(sh) = deckcraft_model::find_shape_mut(&mut s.shapes, cue.shape) else { continue };
             let narration = !cue.video && sh.name.eq_ignore_ascii_case("Narration");
-            if let deckcraft_model::ShapeKind::Media(clip) = &mut sh.kind {
-                clip.autoplay = true;
-                if narration {
-                    clip.narration = true;
-                }
+            if let deckcraft_model::ShapeKind::Media(clip) = &mut sh.kind
+                && narration
+            {
+                // Autoplay was already decided by `media_settings` from the node's start delay:
+                // a click-to-play clip waits (`indefinite`), it does not start with the slide.
+                clip.narration = true;
             }
         }
     }
