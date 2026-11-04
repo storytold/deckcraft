@@ -9,9 +9,9 @@ use super::zoom::{
     wheel_zoom_lines,
 };
 use super::{
-    Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
-    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, before_slide_change, json, laser_pos, pen_width_slide, pointer_is_laser, record,
-    saved_status, show_fills_screen, state_for, take_narration, theme, vec2, viewport_visible, pos2,
+    Align2, BackKey, Click, Color32, CornerRadius, InkMode, InkStroke, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState,
+    Show, ShowAction, ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, before_slide_change, json, laser_pos, pen_width_slide,
+    pointer_is_laser, pos2, record, saved_status, show_fills_screen, state_for, take_narration, theme, vec2, viewport_visible,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -700,17 +700,24 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         painter.text(r.center(), Align2::CENTER_CENTER, label, theme::font(18.0), Color32::WHITE);
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
     }
-    // Pen.
+    // Ink: the pen and highlighter capture pointer drags; the eraser removes whole strokes.
     let ctrl = ctx.input(|i| i.modifiers.ctrl);
     let laser_on = pointer_is_laser(show.laser, ctrl, show.blank.is_some());
+    let erasing = show.ink_mode == InkMode::Eraser;
     let pen_rect = f.layout.map_or(full, |l| l.slide);
-    let resp = ui.interact(pen_rect, ui.scope_id().with("show_pen"), if show.pen && !laser_on { Sense::drag() } else { Sense::hover() });
-    if show.pen && !laser_on {
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Pen"));
+    let pointer = if (show.pen || erasing) && !laser_on { Sense::drag() } else { Sense::hover() };
+    let resp = ui.interact(pen_rect, ui.scope_id().with("show_pen"), pointer);
+    if (show.pen || erasing) && !laser_on {
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, show.ink_mode.label()));
     }
     if show.pen && !laser_on {
         if resp.drag_started() {
-            show.strokes.push(vec![]);
+            show.strokes.push(InkStroke {
+                points: vec![],
+                mode: show.ink_mode,
+                color: show.ink_color,
+                width: show.ink_width * show.ink_mode.width_scale(),
+            });
         }
         let uv = show.zoom_uv();
         if resp.dragged()
@@ -718,7 +725,18 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
             && let Some((nx, ny)) = norm_on_slide(srect, uv, p)
             && let Some(s) = show.strokes.last_mut()
         {
-            s.push(pos2(nx, ny));
+            s.points.push(pos2(nx, ny));
+        }
+        ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+    } else if erasing && !laser_on {
+        let uv = show.zoom_uv();
+        if resp.drag_started() || resp.dragged() {
+            if let Some(p) = resp.interact_pointer_pos()
+                && let Some((nx, ny)) = norm_on_slide(srect, uv, p)
+            {
+                // The eraser is wide enough to feel like PowerPoint's; whole strokes go.
+                show.erase_ink_at(pos2(nx, ny), pos2(nx, ny), 0.015);
+            }
         }
         ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
     } else if laser_on {
@@ -733,11 +751,21 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
-    let pen_col = theme::to_color32(doc.show.pen_color);
     let uv = show.zoom_uv();
     for s in &show.strokes {
-        let pts: Vec<Pos2> = s.iter().map(|q| slide_to_screen(srect, uv, q.x, q.y)).collect();
-        painter.add(egui::Shape::line(pts, Stroke::new(3.0, pen_col)));
+        let pts: Vec<Pos2> = s.points.iter().map(|q| slide_to_screen(srect, uv, q.x, q.y)).collect();
+        if pts.len() < 2 {
+            continue;
+        }
+        // Highlighter ink is translucent and three times wider; the pen is opaque and thin.
+        let k = srect.width() / doc.slide_size.width.max(1.0) as f32 / uv.width().max(1e-4);
+        let (width, alpha) = match s.mode {
+            InkMode::Highlighter => ((s.width as f32 * k).max(2.0), 0.4),
+            _ => (3.0, 1.0),
+        };
+        let c = theme::to_color32(s.color);
+        let c = Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (c.a() as f32 * alpha) as u8);
+        painter.add(egui::Shape::line(pts, Stroke::new(width, c)));
     }
     if laser_on
         && !show.ended
@@ -919,10 +947,18 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
                 let _ = app.run("transition.timing", json!({"index": i, "after": ms}));
             }
             if show.record {
-                let c = doc.show.pen_color;
-                for (i, pts) in &show.recorded {
+                for (i, pts, mode, color, width) in &show.recorded {
                     let points: Vec<_> = pts.iter().map(|(x, y)| json!([x, y, 0.5])).collect();
-                    let _ = app.run("ink.stroke", json!({"index": i, "points": points, "width": show.ink_width, "color": [c.r, c.g, c.b]}));
+                    let _ = app.run(
+                        "ink.stroke",
+                        json!({
+                            "index": i,
+                            "points": points,
+                            "width": width,
+                            "color": [color.r, color.g, color.b],
+                            "highlighter": *mode == InkMode::Highlighter,
+                        }),
+                    );
                 }
                 for (i, wav) in &show.narration {
                     let _ =
