@@ -1,16 +1,16 @@
-use super::keys::keyboard;
+use super::keys::{handle_keys, keyboard};
 use super::media::{
     Pick, Under, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, shapes_under_pointer, show_media,
 };
-use super::presenter::{PRESENTER_SIZE, PresenterTimer, presenter_window};
+use super::presenter::{PRESENTER_SIZE, PresenterTimer, format_elapsed, presenter_window};
 use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
 use super::zoom::{
     Zoom, grid_indices, norm_on_slide, paint_grid, see_all_hit, slide_aspect, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
     wheel_zoom_lines,
 };
 use super::{
-    Align2, BackKey, Click, Color32, CornerRadius, Key, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction, SlideApp,
-    Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
+    Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
+    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -58,6 +58,9 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let Some((doc_uid, doc)) = app.session.active().map(|d| (d.uid, d.doc.clone())) else {
         app.show = None;
+        if let Some(host) = app.services.presenter.as_mut() {
+            host.close();
+        }
         return;
     };
     let now = ctx.input(|i| i.time);
@@ -73,6 +76,33 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     show.observe_visible_frame(now, web_time::Instant::now());
     begin_show(app, &ctx, &mut show, &doc, now);
     let mut out = Out { keep: keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
+    if show.presenter
+        && !show.reading
+        && let Some(host) = app.services.presenter.as_mut()
+    {
+        if !show.remote_opened {
+            show.remote_opened = true;
+            if let Err(message) = host.open() {
+                app.status = Some((message, crate::now_ms()));
+            }
+        }
+        for command in host.commands() {
+            match command {
+                crate::presenter::Command::End => out.keep = false,
+                crate::presenter::Command::Zoom { x, y } if x.is_finite() && y.is_finite() && show.zoom_arm => {
+                    show.zoom = Some(Zoom::at(x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)));
+                    show.zoom_arm = false;
+                }
+                crate::presenter::Command::Key { name, command, shift, alt, ctrl } => {
+                    if let Some(key) = egui::Key::ALL.iter().copied().find(|key| key.name() == name) {
+                        let modifiers = egui::Modifiers { command, shift, alt, ctrl, mac_cmd: command && !ctrl };
+                        out.keep &= handle_keys(&mut show, &doc, now, vec![(key, modifiers)], false).0;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
     let (clicked, secondary, moved) = ctx.input(|i| (i.pointer.primary_clicked(), i.pointer.secondary_clicked(), i.pointer.delta().length() > 0.0));
     if moved {
         show.last_move = now;
@@ -94,6 +124,43 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     draw_pen_and_hints(ui, &mut show, &f, &painter, pointing);
     draw_bars(ui, &mut show, &f, &painter, &mut out);
     draw_extras(app, &mut show, &f, &painter, &mut out);
+    if out.keep
+        && show.presenter
+        && !show.reading
+        && let Some(host) = app.services.presenter.as_mut()
+    {
+        if now - show.remote_sent >= 0.2 {
+            let next = show.state.peek_next(&doc);
+            if let Some(n) = next
+                && show.remote_next.as_ref().is_none_or(|(old, _)| *old != n)
+            {
+                let size =
+                    crate::textures::fit_size((480, (480.0 * doc.slide_size.height / doc.slide_size.width.max(1.0)).clamp(1.0, 1e9) as u32), 640);
+                let image = deckcraft_render::render_slide(
+                    &doc,
+                    n,
+                    &RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), ..Default::default() },
+                );
+                show.remote_next = crate::presenter::Preview::from_image(&crate::textures::to_color_image(&image, false)).map(|image| (n, image));
+            }
+            host.update(crate::presenter::Snapshot {
+                slide: show.state.slide,
+                total: doc.slides.len(),
+                ended: show.ended,
+                notes: doc.slides.get(show.state.slide).map(|s| s.notes_text()).unwrap_or_default(),
+                elapsed: format_elapsed(show.timer.elapsed(now)),
+                paused: show.timer.paused(),
+                notes_px: show.notes_px,
+                blank: show.blank_name().map(str::to_owned),
+                grid: show.grid,
+                zoom_armed: show.zoom_arm,
+                current: show.remote_preview.clone(),
+                next: show.remote_next.as_ref().filter(|(n, _)| Some(*n) == next).map(|(_, image)| image.clone()),
+            });
+            show.remote_sent = now;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+    }
     finish(app, show, &f, out.keep);
 }
 
@@ -112,8 +179,10 @@ fn paint_hidden(ui: &Ui, doc: &Presentation, show: &Show) {
 
 fn begin_show(app: &SlideApp, ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) {
     if !show.started {
+        // A remote Presenter View (the web's second window) leaves the audience window as it is.
+        let full_screen = show_fills_screen(show.reading, &doc.show.show_type) && !(show.presenter && app.services.presenter.is_some());
         // Use the display selected in Set Up Slide Show, falling back when it was disconnected.
-        if show_fills_screen(show.reading, &doc.show.show_type) && app.displays.list.len() > 1 {
+        if full_screen && app.displays.list.len() > 1 {
             show.display = Some(app.displays.first_choice(app.ui.show_display));
         }
         show.started = true;
@@ -125,7 +194,7 @@ fn begin_show(app: &SlideApp, ctx: &egui::Context, show: &mut Show, doc: &Presen
         show.show_start = now;
         show.timer = PresenterTimer::start(now);
         show.last_move = now;
-        if show_fills_screen(show.reading, &doc.show.show_type) {
+        if full_screen {
             ctx.send_viewport_cmd(match show.display {
                 Some(i) => egui::ViewportCommand::SetMonitor(i),
                 None => egui::ViewportCommand::Fullscreen(true),
@@ -315,6 +384,9 @@ fn frame_texture(show: &mut Show, f: &Fr, sl: &Sl) -> Option<TextureHandle> {
                 render_frame(doc, idx, tl, step, sl.t, size, sl.hidden.clone(), &sl.times, render_threads(), &sl.plays, &sl.stamps, back.as_deref())
             }
         };
+        if show.remote_opened && show.presenter {
+            show.remote_preview = crate::presenter::Preview::from_image(&ci);
+        }
         let tex = match show.tex.take() {
             Some((_, mut h)) => {
                 crate::textures::replace(ctx, &mut h, ci);
@@ -400,10 +472,21 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
             if tr.parts.is_none() && deckcraft_anim::uses_slide_parts(&tr.kind, &tr.option) {
                 tr.parts = Some(part_textures(ctx, doc, tr.from, idx, size));
             }
+            if tr.old.is_none()
+                && let Some(prev) = tr.from
+                && !deckcraft_anim::uses_slide_parts(&tr.kind, &tr.option)
+            {
+                let threads =
+                    if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
+                let timeline = ShowState::timeline(doc, prev);
+                let step = timeline.steps();
+                let ci = render_frame(doc, prev, timeline, step, 0.0, size, vec![], &[], threads, &[], &[], None);
+                tr.old = Some(crate::textures::upload(ctx, "trans-old", ci));
+            }
             let aspect = doc.slide_size.width / doc.slide_size.height.max(1.0);
             let part = |k: usize| tr.parts.as_ref().and_then(|p| p.get(k).cloned().flatten());
             let parts = [part(0), part(1), part(2), part(3)];
-            for l in deckcraft_anim::transition_frame(&tr.kind, &tr.option, p, aspect) {
+            for l in transition_layers(&tr.kind, &tr.option, tr.reverse, p, aspect) {
                 let old_or_black = |t: Option<&TextureHandle>| match t {
                     Some(o) => quad_mesh(Some(o.id()), srect, &l, Color32::WHITE),
                     None => quad_mesh(None, srect, &l, Color32::BLACK),
@@ -431,6 +514,32 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
         }
     }
     drew
+}
+
+/// The layers of a transition at progress `p`. A reversed transition (going back, #1531) runs
+/// from its end to its start, so the slide being left plays the part of the new slide and the
+/// slide coming back the part of the old one.
+pub(super) fn transition_layers(kind: &str, option: &str, reverse: bool, p: f64, aspect: f64) -> Vec<Layer> {
+    if !reverse {
+        return deckcraft_anim::transition_frame(kind, option, p, aspect);
+    }
+    let mut layers = deckcraft_anim::transition_frame(kind, option, 1.0 - p, aspect);
+    for l in &mut layers {
+        l.source = swap_old_new(l.source);
+    }
+    layers
+}
+
+fn swap_old_new(s: Source) -> Source {
+    match s {
+        Source::Old => Source::New,
+        Source::New => Source::Old,
+        Source::OldBack => Source::NewBack,
+        Source::NewBack => Source::OldBack,
+        Source::OldContent => Source::NewContent,
+        Source::NewContent => Source::OldContent,
+        Source::Black | Source::White => s,
+    }
 }
 
 fn draw_videos(app: &mut SlideApp, show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, tex: &Option<TextureHandle>) -> (Vec<ShapeId>, bool) {
@@ -591,7 +700,7 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         ctx.set_cursor_icon(egui::CursorIcon::None);
     } else if show.zoom_arm || show.grid {
         ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
-    } else if !show.pointer_awake(now) && !show.reading {
+    } else if show.hides_idle_cursor(now) {
         // Idle first: a still pointer hides also over a clickable shape, such as a playing clip.
         ctx.set_cursor_icon(egui::CursorIcon::None);
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
@@ -716,7 +825,7 @@ fn draw_extras(app: &mut SlideApp, show: &mut Show, f: &Fr, painter: &egui::Pain
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
     // Presenter view in a second window.
-    if out.keep && show.presenter && !show.reading {
+    if out.keep && show.presenter && !show.reading && !show.remote_opened {
         let previous_display = show.display;
         presenter_window(ctx, show, doc, &app.displays, now, &mut out.keep);
         // Remembered for the next show, as PowerPoint does.
@@ -736,6 +845,9 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
     if keep {
         app.show = Some(show);
     } else {
+        if let Some(host) = app.services.presenter.as_mut() {
+            host.close();
+        }
         app.media.stop_owned(crate::media::Owner::Show);
         if !show.reading {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));

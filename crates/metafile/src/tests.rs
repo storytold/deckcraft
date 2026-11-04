@@ -1876,6 +1876,34 @@ fn emfplus_region_clip_intersects_rectangles() {
 }
 
 #[test]
+fn emfplus_region_path_cannot_read_into_its_sibling() {
+    let rect = |r: [f32; 4]| cat(vec![h32(0x1000_0000), f32s(&r)]);
+    // The path declares only its 12-byte header, but claims three points. The following
+    // rectangle must not supply those points or be parsed twice as the next node.
+    let path = cat(vec![h32(0x1000_0001), h32(12), h32(0), h32(3), h32(0)]);
+    let region = cat(vec![h32(0xDBC0_1002), h32(2), h32(1), path, rect([10.0, 10.0, 20.0, 20.0])]);
+    let fill = prec(0x400A, 0x8000, &cat(vec![h32(0xFF00_0000), h32(1), f32s(&[0.0, 0.0, 100.0, 100.0])]));
+    let p = plus_pic(vec![prec(0x4008, 0x0400 | 6, &region), prec(0x4034, 6, &[]), fill]);
+    assert_eq!(p.items.len(), 1);
+    assert_eq!((p.width, p.height), (100.0, 100.0));
+}
+
+#[test]
+fn emfplus_region_path_keeps_its_shape() {
+    let mut path_data = cat(vec![h32(0), h32(4), h32(0x4000)]);
+    for (x, y) in [(10i16, 10i16), (30, 10), (30, 30), (10, 30)] {
+        path_data.extend(x.to_le_bytes());
+        path_data.extend(y.to_le_bytes());
+    }
+    path_data.extend([0, 1, 1, 0x81]);
+    let path_node = cat(vec![h32(0x1000_0001), h32(path_data.len() as u32), path_data]);
+    let region = cat(vec![h32(0xDBC0_1002), h32(1), path_node]);
+    let fill = prec(0x400A, 0x8000, &cat(vec![h32(0xFF00_0000), h32(1), f32s(&[0.0, 0.0, 100.0, 100.0])]));
+    let p = plus_pic(vec![prec(0x4008, 0x0400 | 6, &region), prec(0x4034, 6, &[]), fill]);
+    assert_eq!((p.width, p.height), (20.0, 20.0));
+}
+
+#[test]
 fn emfplus_pie_and_arc() {
     // A quarter pie from 0 to 90 degrees in a 0..100 circle: centre, then (100, 50) round to (50, 100).
     let pie = prec(0x4010, 0x8000, &cat(vec![h32(0xFF00_0000), f32s(&[0.0, 90.0]), f32s(&[0.0, 0.0, 100.0, 100.0])]));

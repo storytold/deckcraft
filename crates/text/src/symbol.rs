@@ -275,7 +275,9 @@ pub fn map_symbol_bullet(c: &str, font: Option<&str>) -> String {
         };
         return m.to_string();
     }
-    if f.contains("wingdings") || f.contains("symbol") || ('\u{f000}'..='\u{f0ff}').contains(&first) {
+    // Only the legacy symbol fonts: "Noto Sans Symbols" and the like are Unicode fonts whose
+    // characters (❑ ❖) are drawn as they are. Private-use codes are mapped only when no font is named.
+    if f.contains("wingdings") || f == "symbol" || (font.is_none() && ('\u{f000}'..='\u{f0ff}').contains(&first)) {
         let code = (first as u32) & 0xff;
         // Wingdings 2 and 3 put different shapes at the same codes.
         if f.starts_with("wingdings 2") {

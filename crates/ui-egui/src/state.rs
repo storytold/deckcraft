@@ -80,6 +80,9 @@ pub struct UiState {
     pub presenter_window: Option<[i32; 4]>,
     /// The slide show display selected in Set Up Slide Show (also updated by Swap Displays).
     pub show_display: Option<usize>,
+    /// Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows never hide a still pointer,
+    /// for decks with clickable choices (#1445).
+    pub show_keep_cursor: bool,
     pub ui_scale: f32,
     /// Format Shape pane: tab (`fill`, `effects`, `size`, `picture`, `text`).
     pub format_tab: String,
@@ -121,6 +124,7 @@ impl Default for UiState {
             presenter_view: true,
             presenter_window: None,
             show_display: None,
+            show_keep_cursor: false,
             ui_scale: 1.0,
             format_tab: "fill".into(),
             smartart_row: 0,
