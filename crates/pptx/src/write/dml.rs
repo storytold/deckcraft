@@ -107,7 +107,7 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
     let a = if linked { A::new().a("r:link", &rid) } else { A::new().a("r:embed", &rid) };
     if has_kids {
         w.open("a:blip", a);
-        blip_effects(w, x, o, pf);
+        blip_effects(w, x, o, pf, None);
         w.close("a:blip");
     } else {
         w.empty("a:blip", a);
@@ -131,7 +131,9 @@ fn blip_has_effects(pf: &PictureFill) -> bool {
 }
 
 /// The effects PowerPoint keeps inside `a:blip`, shared by the ordinary and the SVG-Cameo form.
-fn blip_effects(w: &mut W, x: &mut Exp, o: &mut Out, pf: &PictureFill) {
+/// `svg` names the placeholder relationship a Cameo carries: it rides in the same single
+/// `a:extLst` as the artistic layer, which must come after every effect.
+fn blip_effects(w: &mut W, x: &mut Exp, o: &mut Out, pf: &PictureFill, svg: Option<&str>) {
     let adj = &pf.adjust;
     if let Some(c) = adj.clear_color {
         w.open0("a:clrChange");
@@ -166,21 +168,29 @@ fn blip_effects(w: &mut W, x: &mut Exp, o: &mut Out, pf: &PictureFill) {
     }
     // Artistic effect: the blip is the processed picture; the original rides in an
     // `a14:imgLayer` with the effect's name, as PowerPoint writes it.
-    if let Some(art) = &pf.artistic
-        && art.effect.starts_with("artistic")
-        && art.effect.chars().all(|c| c.is_ascii_alphanumeric())
-        && let Some(orig) = x.media_rel(o, art.original, "image")
-    {
+    let artistic = pf
+        .artistic
+        .as_ref()
+        .filter(|art| art.effect.starts_with("artistic") && art.effect.chars().all(|c| c.is_ascii_alphanumeric()))
+        .and_then(|art| x.media_rel(o, art.original, "image").map(|orig| (art, orig)));
+    if svg.is_some() || artistic.is_some() {
         w.open0("a:extLst");
-        w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
-        w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
-        w.open("a14:imgLayer", A::new().a("r:embed", &orig));
-        w.open0("a14:imgEffect");
-        w.empty0(&format!("a14:{}", art.effect));
-        w.close("a14:imgEffect");
-        w.close("a14:imgLayer");
-        w.close("a14:imgProps");
-        w.close("a:ext");
+        if let Some(rid) = svg {
+            w.open("a:ext", A::new().a("uri", crate::cameo::SVG_BLIP_URI));
+            w.empty("asvg:svgBlip", A::new().a("xmlns:asvg", crate::cameo::NS_ASVG).a("r:embed", rid));
+            w.close("a:ext");
+        }
+        if let Some((art, orig)) = artistic {
+            w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
+            w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
+            w.open("a14:imgLayer", A::new().a("r:embed", &orig));
+            w.open0("a14:imgEffect");
+            w.empty0(&format!("a14:{}", art.effect));
+            w.close("a14:imgEffect");
+            w.close("a14:imgLayer");
+            w.close("a14:imgProps");
+            w.close("a:ext");
+        }
         w.close("a:extLst");
     }
 }
@@ -228,13 +238,9 @@ pub fn cameo_blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &Pict
     let rid = x.media_rel(o, pf.media, "image").unwrap_or_else(|| x.placeholder_rel(o));
     w.open(tag, A::new().a("rotWithShape", if pf.upright { "0" } else { "1" }));
     w.open0("a:blip");
-    w.open0("a:extLst");
-    w.open("a:ext", A::new().a("uri", crate::cameo::SVG_BLIP_URI));
-    w.empty("asvg:svgBlip", A::new().a("xmlns:asvg", crate::cameo::NS_ASVG).a("r:embed", &rid));
-    w.close("a:ext");
-    w.close("a:extLst");
-    // The same effects the ordinary blip keeps, so a recoloured Cameo survives a save.
-    blip_effects(w, x, o, pf);
+    // The SVG placeholder and the effects share one extension list, in PowerPoint's order: the
+    // effects first, the `a:extLst` last.
+    blip_effects(w, x, o, pf, Some(&rid));
     w.close("a:blip");
     blip_tail(w, pf);
     w.close(tag);

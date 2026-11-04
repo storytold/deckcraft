@@ -319,7 +319,7 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     let names: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).map(|d| d.title()).collect();
     // A take is unsaved work too: the prompt must offer save, discard and cancel for it even when
     // no document is dirty.
-    let recording = app.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured));
+    let recording = app.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured)) || app.record.is_recording();
     if names.is_empty() && !recording {
         app.quit_confirmed = true;
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -342,6 +342,7 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
             // Discarding means the take goes too, not just the document's changes.
             app.show = None;
             app.stop_mic();
+            app.cancel_audio_recording();
             app.quit_confirmed = true;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             done = true;
@@ -349,8 +350,9 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
             if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                // A live take is written into the document first, so the file keeps it.
+                // Live takes are written into the document first, so the file keeps them.
                 app.end_show_now();
+                let _ = app.stop_audio_recording();
                 if app.save_all() {
                     app.quit_confirmed = true;
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

@@ -338,6 +338,9 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Pre
     // narration, its ink, its laser trace and its time — moves into the take now, and nothing
     // gathered afterwards may join it. Resume starts a fresh microphone buffer.
     if was_recording && rec.status != RecordStatus::Recording {
+        if let Some(e) = app.services.mic.as_ref().and_then(|mic| mic.failure()) {
+            show.mic_error = Some(e);
+        }
         take_narration(app.services.mic.as_deref_mut(), show, show.state.slide);
         app.stop_mic();
         show.stash_ink(doc, show.state.slide, true);

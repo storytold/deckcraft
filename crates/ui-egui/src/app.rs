@@ -250,10 +250,11 @@ impl SlideApp {
         if ctx.input(|i| i.viewport().close_requested()) {
             // A paused or stopped take still holds the whole recording in the show, so closing
             // must ask for that too, not only while it is capturing.
-            let recording = self.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured));
+            let recording = self.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured)) || self.record.is_recording();
             let dirty = self.session.documents().iter().any(|d| d.is_dirty());
             if self.quit_confirmed {
-                // The user said yes: the take is still saved, then the show goes.
+                // The user said yes: the take is still saved, then the show goes. A Record ▸ Audio
+                // take is only finished when the quit path asked for it to be saved.
                 self.end_show_now();
                 self.stop_mic();
             } else if dirty || recording {

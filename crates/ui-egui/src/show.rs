@@ -109,6 +109,8 @@ pub struct Show {
     eraser_from: Option<Pos2>,
     /// The frame clock of the last drawn pass, so a commanded end can date the take's last slide.
     pub(crate) last_now: f64,
+    /// Why the microphone stopped on its own during the take, kept so the save can say so.
+    pub(crate) mic_error: Option<String>,
     /// Set Up Slide Show ▸ Keep mouse cursor visible: a still pointer is not hidden (#1445).
     pub keep_cursor: bool,
     timeline: Option<(usize, Timeline)>,
@@ -310,6 +312,7 @@ impl Show {
             pause_slide: None,
             eraser_from: None,
             last_now: 0.0,
+            mic_error: None,
             keep_cursor: false,
             timeline: None,
             step_start: 0.0,
@@ -944,8 +947,9 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
     }
     let live = show.rehearse || show.record_view.status == record::RecordStatus::Recording;
     if let Some(e) = app.services.mic.as_ref().and_then(|mic| mic.failure()) {
-        // The take is no longer being captured: narrate what was recorded, but say why it stopped.
-        app.set_status(format!("Microphone stopped: {e}"));
+        // The take is no longer being captured: narrate what was recorded, but keep why it
+        // stopped so the saved status does not read as a complete take.
+        show.mic_error = Some(e);
     }
     if show.record {
         // The microphone's buffer belongs to the slide the show ends on.
@@ -987,7 +991,11 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
             let _ = app.run("show.laser", json!({"index": i, "points": points, "color": [lc.r, lc.g, lc.b]}));
         }
         let _ = app.run("show.setup", json!({"useTimings": true}));
-        app.set_status(saved_status(!show.narration.is_empty(), !show.recorded.is_empty(), !show.laser_saved.is_empty()));
+        match &show.mic_error {
+            // A microphone that stopped mid-take makes "saved" a half truth: say what happened.
+            Some(e) => app.set_status(format!("Recording saved, but the microphone stopped: {e}")),
+            None => app.set_status(saved_status(!show.narration.is_empty(), !show.recorded.is_empty(), !show.laser_saved.is_empty())),
+        }
     } else {
         app.set_status("Slide timings recorded.");
     }
