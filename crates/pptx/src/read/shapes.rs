@@ -338,7 +338,7 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
     let mut s = base(imp, part, ctx, nvp);
     let live = crate::cameo::is_live(nvp.and_then(|n| n.child("cNvPicPr")));
     if let Some(props) = crate::cameo::live_feed_props(nvp.and_then(|n| n.child("cNvPicPr"))) {
-        s.cameo = Some(deckcraft_model::Cameo { live: true, raw: Some(part.keep(props)), ..Default::default() });
+        s.cameo = Some(deckcraft_model::Cameo { live: true, raw: Some(part.keep_inner(props)), ..Default::default() });
     }
     if let Some(pr) = e.child("spPr") {
         sp_pr(imp, part, &mut s, pr);

@@ -29,6 +29,8 @@ pub struct H264Mp4Track {
     /// Pictures written since the last key picture.
     since_key: u32,
     frames: u64,
+    /// Encoded sample bytes written so far (the bulk of the finished MP4).
+    bytes: u64,
 }
 
 impl H264Mp4Track {
@@ -51,7 +53,7 @@ impl H264Mp4Track {
         let entry = SampleEntry::avc(avc, width as u16, height as u16);
         let mut mux = Mp4Writer::new(Cursor::new(Vec::new()), WriterOptions::new(Brand::Mp4)).map_err(mp4)?;
         let track = mux.add_track(TrackConfig::new(entry, fps)).map_err(mp4)?;
-        Ok(Self { enc, mux, track, fps, width, height, since_key: 0, frames: 0 })
+        Ok(Self { enc, mux, track, fps, width, height, since_key: 0, frames: 0, bytes: 0 })
     }
 
     pub fn width(&self) -> u32 {
@@ -71,6 +73,11 @@ impl H264Mp4Track {
         self.frames
     }
 
+    /// Encoded sample bytes written so far; a recording can stop before it holds too many.
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
     /// Encode one packed RGBA picture, exactly `width × height × 4` bytes. Returns whether it is a
     /// key picture. The first picture and every [`KEY_EVERY_S`] seconds are keys.
     pub fn push_rgba(&mut self, rgba: &[u8]) -> Result<bool> {
@@ -82,6 +89,7 @@ impl H264Mp4Track {
         let pic = self.enc.encode_rgba(rgba, key);
         let sample = pic.length_prefixed();
         self.mux.write_sample(self.track, WriteSample { data: &sample, duration: 1, composition_offset: 0, is_sync: pic.key }).map_err(mp4)?;
+        self.bytes += sample.len() as u64;
         self.frames += 1;
         self.since_key = if pic.key { 0 } else { self.since_key + 1 };
         Ok(pic.key)

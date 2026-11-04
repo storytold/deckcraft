@@ -191,12 +191,14 @@ impl CameoRun {
         clips
     }
 
-    /// Execute `show.cameo` for every finished clip. Returns how many were committed.
+    /// Execute `show.cameo` for every finished clip. Returns how many were committed; a clip that
+    /// fails is kept in [`CameoRun::clips`] with the reason, so the host can report or retry it.
     pub fn commit(&mut self, s: &mut Session, now_ms: u64) -> Result<usize> {
         let clips = self.finish(now_ms);
         let mut done = 0;
+        let mut first_err = None;
         for (slide, clip) in clips {
-            s.execute(
+            match s.execute(
                 "show.cameo",
                 &json!({
                     "index": slide,
@@ -204,10 +206,19 @@ impl CameoRun {
                     "data": crate::cmd::base64_encode(&clip.mp4),
                     "durationMs": clip.duration_ms,
                 }),
-            )?;
-            done += 1;
+            ) {
+                Ok(_) => done += 1,
+                Err(e) => {
+                    self.reason = Some(e.to_string());
+                    self.clips.push((slide, clip));
+                    first_err.get_or_insert(e);
+                }
+            }
         }
-        Ok(done)
+        match first_err {
+            Some(e) if done == 0 => Err(e),
+            _ => Ok(done),
+        }
     }
 
     fn close(&mut self, now_ms: u64) {
@@ -467,6 +478,26 @@ mod tests {
         run.poll(2_500);
         run.leave_slide(3_000);
         assert_eq!(run.finish(3_000).len(), 1);
+    }
+
+    #[test]
+    fn a_failed_clip_stays_for_the_host_instead_of_being_dropped() {
+        let mut s = Session::with_new();
+        let mut run = CameoRun::without_camera();
+        run.clips = vec![(0, small_clip()), (99, small_clip())];
+        let done = run.commit(&mut s, 0).expect("the clip that fits its slide commits");
+        assert_eq!(done, 1);
+        assert_eq!(run.clips().iter().map(|(sl, _)| *sl).collect::<Vec<_>>(), vec![99], "the rejected clip is kept");
+        assert!(run.reason().is_some(), "the failure is reported to the host");
+    }
+
+    /// A short real MP4, for tests that only need a clip.
+    fn small_clip() -> CameoClip {
+        let mut track = deckcraft_media::H264Mp4Track::new(32, 32, 15, 30).expect("track");
+        for i in 0..5 {
+            track.push_rgba(&frame(i, 32, 32).rgba).expect("push");
+        }
+        CameoClip { mp4: track.finish().expect("finish"), width: 32, height: 32, duration_ms: 333, frames: 5 }
     }
 
     #[test]

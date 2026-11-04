@@ -333,7 +333,9 @@ fn record_cameo(s: &mut Session, p: &Value) -> Result<Value> {
                     _ => [0.0; 4],
                 };
                 sh.kind = ShapeKind::Picture { fill: PictureFill { media: poster_media, crop, ..Default::default() } };
-                sh.cameo = Some(Cameo::recorded(media));
+                // Keep the imported feed (background in `raw`, device) with the new recording.
+                let kept = sh.cameo.take().unwrap_or_default();
+                sh.cameo = Some(Cameo { raw: kept.raw, device: kept.device, ..Cameo::recorded(media) });
                 if let Some(r) = rect {
                     sh.xfrm = Some(r);
                 }
@@ -595,6 +597,33 @@ mod tests {
         let r = s.execute("camera.applyToAll", &json!({})).expect("apply");
         assert_eq!(r["styled"], 2);
         assert!(cameo_shapes(&s).iter().all(|sh| sh.geom.preset_name() == Some("rect")), "the selected slide's Cameo is the source");
+    }
+
+    #[test]
+    fn recording_onto_an_imported_cameo_keeps_its_feed_properties() {
+        let mut s = Session::with_new();
+        let r = s.execute("insert.cameo", &json!({})).expect("insert");
+        let id = deckcraft_model::ShapeId(r["id"].as_u64().expect("id") as u32);
+        {
+            let doc = s.doc_mut().expect("doc");
+            let pres = std::sync::Arc::make_mut(&mut doc.doc);
+            let slide = std::sync::Arc::make_mut(&mut pres.slides[0]);
+            let cameo = slide.shape_mut(id).expect("cameo").cameo.get_or_insert_default();
+            cameo.raw = Some("<alf:liveFeedProps xmlns:alf=\"http://schemas.microsoft.com/office/drawing/2021/livefeed\"><alf:backgroundProps><alf:Blur/></alf:backgroundProps></alf:liveFeedProps>".into());
+            cameo.device = Some("FaceTime HD Camera".into());
+        }
+        let mut track = deckcraft_media::H264Mp4Track::new(32, 32, 15, 30).expect("track");
+        for i in 0..5 {
+            track.push_rgba(&vec![i as u8; 32 * 32 * 4]).expect("push");
+        }
+        let data = crate::cmd::base64_encode(&track.finish().expect("finish"));
+        s.execute("show.cameo", &json!({"data": data, "durationMs": 300})).expect("record");
+        let doc = s.doc().expect("doc");
+        let cameo = doc.doc.slides[0].shape(id).expect("shape").cameo.clone().expect("cameo");
+        assert!(!cameo.live);
+        assert!(cameo.recorded.is_some());
+        assert_eq!(cameo.device.as_deref(), Some("FaceTime HD Camera"), "the device is kept");
+        assert!(cameo.raw.as_deref().is_some_and(|r| r.contains("backgroundProps")), "the camera background is kept");
     }
 
     #[test]

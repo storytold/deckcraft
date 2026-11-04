@@ -141,6 +141,8 @@ pub struct CameoRecorder {
     /// The most recent frame, already fitted to the target.
     last: Option<Vec<u8>>,
     capped: bool,
+    /// Largest clip this recorder keeps, in MP4 bytes ([`MAX_CLIP_BYTES`] unless a test lowers it).
+    max_bytes: usize,
 }
 
 impl CameoRecorder {
@@ -158,6 +160,7 @@ impl CameoRecorder {
             written: 0,
             last: None,
             capped: false,
+            max_bytes: MAX_CLIP_BYTES,
         })
     }
 
@@ -173,9 +176,22 @@ impl CameoRecorder {
         self.written
     }
 
-    /// The clip reached [`MAX_CLIP_MS`]: stop the camera for this slide.
+    /// The clip reached [`MAX_CLIP_MS`] or its byte budget: stop the camera for this slide.
     pub fn capped(&self) -> bool {
         self.capped
+    }
+
+    /// Lower the clip's byte budget (tests only).
+    #[cfg(test)]
+    fn with_max_bytes(mut self, bytes: usize) -> Self {
+        self.max_bytes = bytes;
+        self
+    }
+
+    /// Sample bytes the clip may hold, leaving room for the MP4 container's own boxes.
+    fn byte_budget(&self) -> u64 {
+        let margin = (self.max_bytes / 64).max(1 << 10);
+        self.max_bytes.saturating_sub(margin) as u64
     }
 
     /// Fit and sample one frame. Frames may arrive late or early; only the target rate is written.
@@ -205,9 +221,14 @@ impl CameoRecorder {
         Ok(())
     }
 
-    /// Write the missing frames up to `want`, repeating `frame` (or the last frame).
+    /// Write the missing frames up to `want`, repeating `frame` (or the last frame). Stops at the
+    /// byte budget, keeping what is written, so an over-long slide keeps a truncated clip.
     fn fill_to(&mut self, want: u64, frame: Option<&[u8]>) -> crate::Result<()> {
         while self.written < want {
+            if self.track.bytes() >= self.byte_budget() {
+                self.capped = true;
+                break;
+            }
             let Some(frame) = frame.or(self.last.as_deref()) else { break };
             self.track.push_rgba(frame)?;
             self.written += 1;
@@ -294,6 +315,23 @@ mod tests {
         let clip = rec.finish(u64::from(MAX_CLIP_MS) + 5_000).expect("finish");
         assert_eq!(clip.duration_ms, MAX_CLIP_MS);
         assert!(clip.frames <= u64::from(MAX_CLIP_MS) / 1000);
+    }
+
+    #[test]
+    fn a_clip_stops_at_its_byte_budget_and_keeps_what_it_wrote() {
+        let mut rec = CameoRecorder::new((64, 64), 15, 30, 0).expect("recorder").with_max_bytes(8 << 10);
+        let mut now = 0u64;
+        for i in 0..1_000u64 {
+            now = i * 67;
+            rec.push(&frame(i, 64, 64, (i % 251) as u8), now).expect("push");
+            if rec.capped() {
+                break;
+            }
+        }
+        assert!(rec.capped(), "the byte budget ends the clip before the duration cap");
+        let clip = rec.finish(now).expect("the clip so far is kept, not rejected");
+        assert!(clip.frames > 0);
+        assert!(clip.mp4.len() <= MAX_CLIP_BYTES);
     }
 
     #[test]

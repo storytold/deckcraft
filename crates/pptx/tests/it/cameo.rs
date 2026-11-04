@@ -283,6 +283,25 @@ fn a_recorded_cameo_that_does_not_autoplay_gets_no_entry_timing() {
 }
 
 #[test]
+fn a_tagged_recorded_cameo_writes_the_video_before_cust_data() {
+    let mut p = recorded_deck();
+    if let Some(s) = p.slides.first_mut() {
+        for sh in &mut std::sync::Arc::make_mut(s).shapes {
+            if sh.cameo.is_some() {
+                sh.tags = vec![("tag1".into(), "value".into())];
+            }
+        }
+    }
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let xml = part(&bytes, "ppt/slides/slide1.xml");
+    let video = xml.find("<a:videoFile").expect("video element");
+    let cust = xml.find("<p:custDataLst").expect("tag list");
+    let ext = xml.find("{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}").expect("media extension");
+    assert!(video < cust, "p:nvPr puts the media element before p:custDataLst: {xml}");
+    assert!(cust < ext, "p:extLst comes last: {xml}");
+}
+
+#[test]
 fn a_linked_cameo_svg_is_written_as_a_link_not_an_embed() {
     let mut p = defaults::new_presentation(None);
     let media = deckcraft_model::MediaId(p.alloc_id().expect("id"));

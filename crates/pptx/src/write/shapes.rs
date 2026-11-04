@@ -183,20 +183,22 @@ fn nv_pr_with(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape, recorded: Option<d
                 .t("hasCustomPrompt", ph.has_custom_prompt),
         );
     }
-    super::cust_data(w, x, o, &s.tags);
+    // `p:nvPr` order: `p:ph`, the media element, `p:custDataLst`, `p:extLst`.
+    let mut embed = None;
     if let Some(media) = recorded {
         let link = x.media_rel(o, media, "video");
-        let embed = x.media_rel_new(o, media, crate::opc::RT_MEDIA);
+        embed = x.media_rel_new(o, media, crate::opc::RT_MEDIA);
         if let Some(l) = &link {
             w.empty("a:videoFile", A::new().a("r:link", l));
         }
-        if let Some(e) = &embed {
-            w.open0("p:extLst");
-            w.open("p:ext", A::new().a("uri", "{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}"));
-            w.empty("p14:media", A::new().a("xmlns:p14", crate::opc::NS_P14).a("r:embed", e));
-            w.close("p:ext");
-            w.close("p:extLst");
-        }
+    }
+    super::cust_data(w, x, o, &s.tags);
+    if let Some(e) = &embed {
+        w.open0("p:extLst");
+        w.open("p:ext", A::new().a("uri", "{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}"));
+        w.empty("p14:media", A::new().a("xmlns:p14", crate::opc::NS_P14).a("r:embed", e));
+        w.close("p:ext");
+        w.close("p:extLst");
     }
     w.close("p:nvPr");
 }
