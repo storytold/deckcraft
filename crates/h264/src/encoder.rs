@@ -516,6 +516,32 @@ impl Encoder {
         EncodedPicture { nals, key }
     }
 
+    /// A P picture whose macroblocks are all skipped: the previous picture, unchanged, with this
+    /// picture's own `frame_num`. A recorder repeating a static screen calls this instead of
+    /// writing the previous sample again, which would break H.264 7.4.3 (each reference picture
+    /// must advance `frame_num`). No pixels are converted or analysed.
+    pub fn encode_skip(&mut self) -> Option<EncodedPicture> {
+        self.prev.as_ref()?;
+        self.frame_num = (self.frame_num + 1) % 65_536;
+        self.nc_y.iter_mut().for_each(|n| *n = 0);
+        self.nc_u.iter_mut().for_each(|n| *n = 0);
+        self.nc_v.iter_mut().for_each(|n| *n = 0);
+        let mut b = Bits::default();
+        b.ue(0); // first_mb_in_slice
+        b.ue(5); // slice_type: all P
+        b.ue(0); // pic_parameter_set_id
+        b.put(self.frame_num, 16);
+        b.flag(false); // num_ref_idx_active_override_flag
+        b.flag(false); // ref_pic_list_modification_flag_l0
+        b.flag(false); // adaptive_ref_pic_marking_mode_flag
+        b.se(i32::from(self.cfg.qp) - 26); // slice_qp_delta
+        b.ue(1); // disable_deblocking_filter_idc: off
+        // One skip run over the whole picture, in raster order.
+        b.ue((self.mbw * self.mbh) as u32);
+        let slice = nal(0x41, &b.finish());
+        Some(EncodedPicture { nals: vec![slice], key: false })
+    }
+
     /// RGBA to padded BT.709 limited-range 4:2:0 (edges replicated into the padding).
     fn to_yuv(&self, rgba: &[u8]) -> Planes {
         let (w, h) = (self.cfg.width as usize, self.cfg.height as usize);
@@ -943,6 +969,26 @@ mod tests {
         assert_eq!(e.level_idc(), 61);
         let e = Encoder::new(EncoderConfig { width: 8192, height: 4320, fps: 120, qp: 26 }).unwrap();
         assert_eq!(e.level_idc(), 62);
+    }
+
+    #[test]
+    fn a_skip_picture_advances_frame_num_and_decodes_to_the_same_picture() {
+        let (w, h) = (64, 32);
+        let mut enc = Encoder::new(EncoderConfig { width: w, height: h, fps: 30, qp: 20 }).unwrap();
+        let mut dec = crate::Decoder::new();
+        let rgba = vec![90u8; (w * h * 4) as usize];
+        let first = enc.encode_rgba(&rgba, true);
+        assert!(first.key);
+        let skip = enc.encode_skip().expect("a P picture after the key picture");
+        assert!(!skip.key, "a repeat is not a key picture");
+        let mut stream = first.annex_b();
+        stream.extend(skip.annex_b());
+        let mut pics = dec.decode(&stream, 0).expect("decodes");
+        pics.extend(dec.flush());
+        assert_eq!(pics.len(), 2, "the repeat is a picture of its own");
+        // Every macroblock is skipped, so the picture is the previous one.
+        assert_eq!(pics[1].y, pics[0].y);
+        assert!(enc.encode_skip().is_some(), "further repeats follow the same rule");
     }
 
     #[test]
