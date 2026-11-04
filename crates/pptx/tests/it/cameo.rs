@@ -221,6 +221,70 @@ fn a_recorded_cameo_writes_video_links_and_a_media_timing_node() {
 }
 
 #[test]
+fn a_recorded_cameo_keeps_the_camera_background_it_was_imported_with() {
+    let raw = concat!(
+        "<alf:liveFeedProps xmlns:alf=\"http://schemas.microsoft.com/office/drawing/2021/livefeed\">",
+        "<alf:backgroundProps><alf:Blur/></alf:backgroundProps>",
+        "</alf:liveFeedProps>"
+    );
+    let mut p = recorded_deck();
+    if let Some(s) = p.slides.first_mut() {
+        for sh in &mut std::sync::Arc::make_mut(s).shapes {
+            if let Some(c) = &mut sh.cameo {
+                c.raw = Some(raw.to_string());
+            }
+        }
+    }
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let mut found = None;
+    deckcraft_model::walk(&q.slides[0].shapes, &mut |sh, _| {
+        if sh.name == "Camera 1" {
+            found = Some(sh.clone());
+        }
+    });
+    let cameo = found.expect("cameo shape").cameo.expect("cameo");
+    assert!(!cameo.live);
+    assert!(cameo.recorded.is_some(), "the recording survives the import");
+    let kept = cameo.raw.expect("the feed kept from the file");
+    assert!(kept.contains("backgroundProps") && kept.contains("Blur"), "{kept}");
+    // Attaching the recording must not turn the kept feed into an empty one on the next save.
+    let bytes = deckcraft_pptx::export(&q).expect("export");
+    assert!(part(&bytes, "ppt/slides/slide1.xml").contains("backgroundProps"));
+}
+
+#[test]
+fn a_linked_cameo_svg_is_written_as_a_link_not_an_embed() {
+    let mut p = defaults::new_presentation(None);
+    let media = deckcraft_model::MediaId(p.alloc_id().expect("id"));
+    p.media.push(deckcraft_model::MediaItem {
+        id: media,
+        name: "cameo-placeholder.svg".into(),
+        content_type: "image/svg+xml".into(),
+        data: std::sync::Arc::default(),
+        link: Some("file:///Users/me/cameo-placeholder.svg".into()),
+    });
+    let shape = Shape {
+        id: ShapeId(p.alloc_id().expect("id")),
+        name: "Camera 1".into(),
+        xfrm: Some(Xfrm::new(700.0, 360.0, 162.0, 162.0)),
+        kind: ShapeKind::Picture { fill: PictureFill { media, ..Default::default() } },
+        geom: Geom::preset("ellipse"),
+        cameo: Some(Cameo::live()),
+        ..Default::default()
+    };
+    if let Some(s) = p.slides.first_mut() {
+        std::sync::Arc::make_mut(s).shapes.push(shape);
+    }
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let xml = part(&bytes, "ppt/slides/slide1.xml");
+    assert!(xml.contains("<a:blip r:link=\"rId"), "a linked picture: {xml}");
+    assert!(!xml.contains("svgBlip"), "no embed of an external part: {xml}");
+    let rels = part(&bytes, "ppt/slides/_rels/slide1.xml.rels");
+    assert!(rels.contains("TargetMode=\"External\""), "{rels}");
+}
+
+#[test]
 fn a_live_cameo_gets_no_video_part_or_timing() {
     let p = deck("cameo-placeholder.svg", svg());
     let bytes = deckcraft_pptx::export(&p).expect("export");

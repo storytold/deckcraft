@@ -413,14 +413,7 @@ fn apply_to_all(s: &mut Session, p: &Value) -> Result<Value> {
     let source = {
         let doc = s.doc()?;
         let id = *ids.first().ok_or_else(|| bad("camera.applyToAll", "nothing selected"))?;
-        let mut found = None;
-        for slide in &doc.doc.slides {
-            if let Some(sh) = slide.shape(id).filter(|sh| sh.is_cameo()) {
-                found = Some(sh.clone());
-                break;
-            }
-        }
-        found.ok_or_else(|| bad("camera.applyToAll", "select a Cameo"))?
+        doc.shape(id).filter(|sh| sh.is_cameo()).cloned().ok_or_else(|| bad("camera.applyToAll", "select a Cameo"))?
     };
     let styled = s.edit(|doc, _| {
         let mut styled = 0usize;
@@ -580,6 +573,28 @@ mod tests {
         let doc = s.doc().expect("doc");
         let plain = doc.doc.slides[1].shapes.iter().find(|sh| sh.name.starts_with("Rectangle")).expect("rectangle");
         assert_ne!(plain.geom.preset_name(), Some("ellipse"));
+    }
+
+    #[test]
+    fn apply_to_all_copies_the_format_of_the_selected_slides_cameo() {
+        let mut s = Session::with_new();
+        s.execute("insert.cameo", &json!({})).expect("insert");
+        // Imported decks number each slide's shapes from 1 again, so two slides can share an id.
+        let same = s.doc().expect("doc").doc.slides[0].clone();
+        std::sync::Arc::make_mut(&mut s.doc_mut().expect("doc").doc).slides.push(same);
+        let id = cameo_shapes(&s)[0].id;
+        // The selected (second) slide's Cameo is a rectangle; the first slide's is the ellipse
+        // `insert.cameo` makes. `applyToAll` copies the selected one, not the first with that id.
+        {
+            let doc = s.doc_mut().expect("doc");
+            let pres = std::sync::Arc::make_mut(&mut doc.doc);
+            std::sync::Arc::make_mut(&mut pres.slides[1]).shape_mut(id).expect("cameo").geom = deckcraft_model::Geom::preset("rect");
+            doc.selection.slide = 1;
+            doc.selection.shapes = vec![id];
+        }
+        let r = s.execute("camera.applyToAll", &json!({})).expect("apply");
+        assert_eq!(r["styled"], 2);
+        assert!(cameo_shapes(&s).iter().all(|sh| sh.geom.preset_name() == Some("rect")), "the selected slide's Cameo is the source");
     }
 
     #[test]

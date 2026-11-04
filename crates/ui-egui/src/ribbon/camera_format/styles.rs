@@ -3,9 +3,7 @@
 //! every other picture command keeps working on a styled cameo.
 
 use super::super::galleries::{effects_menu, outline_menu, shapes_gallery};
-use super::super::{
-    Color32, CornerRadius, Icon, Rect, SlideApp, Stroke, Ui, group, json, pos2, rows, run, scheme, small, vec2, widgets,
-};
+use super::super::{Color32, CornerRadius, Icon, Rect, SlideApp, Stroke, Ui, group, json, pos2, rows, run, scheme, small, vec2, widgets};
 use deckcraft_engine::cmd::camera::{STYLES, style_of};
 
 const TILE: egui::Vec2 = vec2(34.0, 34.0);
@@ -47,9 +45,7 @@ fn paint_style(p: &egui::Painter, r: Rect, i: usize) {
     let Some(st) = STYLES.get(i) else { return };
     let r = r.shrink(5.0);
     let body = Color32::from_rgb(0x6F, 0xB8, 0xDD);
-    let stroke = st
-        .frame
-        .map_or(Stroke::new(0.8, Color32::from_gray(130)), |w| Stroke::new((w as f32 / 3.0).clamp(1.0, 3.0), Color32::WHITE));
+    let stroke = st.frame.map_or(Stroke::new(0.8, Color32::from_gray(130)), |w| Stroke::new((w as f32 / 3.0).clamp(1.0, 3.0), Color32::WHITE));
     if st.shadow {
         p.rect_filled(r.translate(vec2(1.5, 1.5)), CornerRadius::same(2), Color32::from_black_alpha(55));
     }
@@ -63,12 +59,7 @@ fn paint_style(p: &egui::Painter, r: Rect, i: usize) {
         }
         "diamond" => {
             let c = r.center();
-            let pts = vec![
-                pos2(c.x, r.top()),
-                pos2(r.right(), c.y),
-                pos2(c.x, r.bottom()),
-                pos2(r.left(), c.y),
-            ];
+            let pts = vec![pos2(c.x, r.top()), pos2(r.right(), c.y), pos2(c.x, r.bottom()), pos2(r.left(), c.y)];
             p.add(egui::Shape::convex_polygon(pts, body, stroke));
         }
         "hexagon" => {

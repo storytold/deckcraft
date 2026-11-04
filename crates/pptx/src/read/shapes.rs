@@ -392,7 +392,12 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
         None => log::warn!("pptx: picture {} in {} has no readable image", s.name, part.name),
     }
     if let Some(media) = recorded {
-        s.cameo = Some(deckcraft_model::Cameo::recorded(media));
+        // Attach the recording to the Cameo already read, so the `liveFeedProps` kept above
+        // (camera background, device) survives the round trip instead of an empty feed.
+        let cameo = s.cameo.get_or_insert_with(Default::default);
+        cameo.live = false;
+        cameo.recorded = Some(media);
+        cameo.autoplay = true;
     }
     s
 }

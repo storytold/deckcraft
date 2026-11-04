@@ -166,8 +166,11 @@ impl CameoRun {
         }
         if self.recorder.as_ref().is_some_and(CameoRecorder::capped) {
             self.close(now_ms);
-            self.status = CameoStatus::Capped;
-            self.reason = Some(format!("the clip reached {} minutes", MAX_CLIP_MS / 60_000));
+            if self.status == CameoStatus::Recording {
+                // The per-slide cap ends only this clip: the next slide records again.
+                self.status = CameoStatus::Ready;
+                self.reason = Some(format!("the clip reached {} minutes", MAX_CLIP_MS / 60_000));
+            }
         }
     }
 
@@ -210,16 +213,28 @@ impl CameoRun {
     fn close(&mut self, now_ms: u64) {
         let Some(rec) = self.recorder.take() else { return };
         let slide = self.slide.take();
-        if let Ok(clip) = rec.finish(now_ms) {
-            let total = self.bytes.saturating_add(clip.mp4.len());
-            if total > MAX_TOTAL_BYTES {
-                self.status = CameoStatus::Capped;
-                self.reason = Some(format!("the show's camera clips reached {} MB", MAX_TOTAL_BYTES >> 20));
-                return;
+        match rec.finish(now_ms) {
+            Ok(clip) => {
+                let total = self.bytes.saturating_add(clip.mp4.len());
+                if total > MAX_TOTAL_BYTES {
+                    self.status = CameoStatus::Capped;
+                    self.reason = Some(format!("the show's camera clips reached {} MB", MAX_TOTAL_BYTES >> 20));
+                    // Nothing more will be kept, so stop capturing frames that would be thrown away.
+                    self.stop_camera();
+                    return;
+                }
+                self.bytes = total;
+                if let Some(slide) = slide {
+                    self.clips.push((slide, clip));
+                }
             }
-            self.bytes = total;
-            if let Some(slide) = slide {
-                self.clips.push((slide, clip));
+            Err(e) => {
+                // The clip was rejected (too large, or it never got a frame). This ends only this
+                // slide, so the reason is reported and the next slide records again.
+                if self.status == CameoStatus::Recording {
+                    self.status = CameoStatus::Ready;
+                }
+                self.reason = Some(e.to_string());
             }
         }
     }
@@ -394,6 +409,64 @@ mod tests {
         assert_eq!(run.reason(), Some("camera access was denied"));
         run.enter_slide(0, (32, 32), 0);
         assert!(run.finish(100).is_empty());
+    }
+
+    #[test]
+    fn a_capped_clip_only_ends_its_own_slide() {
+        let (camera, events, _) = fake();
+        let mut run = CameoRun::start(Some(camera), &CameraConfig::default());
+        let cap = u64::from(MAX_CLIP_MS);
+        run.enter_slide(0, (32, 32), 0);
+        send(&events, CameraEvent::Frame(frame(0, 32, 32)));
+        run.poll(500);
+        // The cap is noticed on the next frame: a camera keeps delivering them.
+        send(&events, CameraEvent::Frame(frame(1, 32, 32)));
+        run.poll(cap + 1);
+        assert_eq!(run.status(), CameoStatus::Ready, "the per-slide cap does not stop the show");
+        assert!(run.reason().is_some_and(|r| r.contains("minutes")), "the reason says why the clip ended");
+        // The next slide records again: only the show-level cap stops Cameo recording.
+        run.enter_slide(1, (32, 32), cap + 2);
+        assert_eq!(run.status(), CameoStatus::Recording);
+        send(&events, CameraEvent::Frame(frame(1, 32, 32)));
+        run.poll(cap + 500);
+        run.leave_slide(cap + 1_000);
+        let clips = run.finish(cap + 1_000);
+        assert_eq!(clips.iter().map(|(s, _)| *s).collect::<Vec<_>>(), vec![0, 1]);
+    }
+
+    #[test]
+    fn the_show_cap_stops_the_camera_and_later_slides() {
+        let (camera, events, stopped) = fake();
+        let mut run = CameoRun::start(Some(camera), &CameraConfig::default());
+        run.enter_slide(0, (32, 32), 0);
+        send(&events, CameraEvent::Frame(frame(0, 32, 32)));
+        run.poll(500);
+        // Pretend the show has already used its whole byte budget; the next clip exceeds it.
+        run.bytes = MAX_TOTAL_BYTES;
+        run.leave_slide(1_000);
+        assert_eq!(run.status(), CameoStatus::Capped);
+        assert!(stopped.load(Ordering::SeqCst), "the camera stops when the show cap is reached");
+        assert!(run.clips().is_empty(), "the clip over the cap is not kept");
+        run.enter_slide(1, (32, 32), 2_000);
+        assert_eq!(run.status(), CameoStatus::Capped, "later slides do not record");
+        assert!(run.finish(3_000).is_empty());
+    }
+
+    #[test]
+    fn a_slide_with_no_frames_says_why_its_clip_is_missing() {
+        let (camera, events, _) = fake();
+        let mut run = CameoRun::start(Some(camera), &CameraConfig::default());
+        run.enter_slide(0, (32, 32), 0);
+        run.leave_slide(1_000);
+        assert_eq!(run.status(), CameoStatus::Ready);
+        assert!(run.reason().is_some_and(|r| r.contains("camera frames")), "the rejected clip reports why");
+        // A slide that does get frames still records.
+        run.enter_slide(1, (32, 32), 2_000);
+        assert_eq!(run.status(), CameoStatus::Recording);
+        send(&events, CameraEvent::Frame(frame(1, 32, 32)));
+        run.poll(2_500);
+        run.leave_slide(3_000);
+        assert_eq!(run.finish(3_000).len(), 1);
     }
 
     #[test]
