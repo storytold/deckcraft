@@ -386,6 +386,11 @@ impl SlideApp {
         if let Some(t) = self.pending_copy.take() {
             ctx.copy_text(t);
         }
+        // A description typed into the Alt Text pane is committed once that pane is no longer
+        // drawn: its field cannot report `lost_focus` after the pane closes.
+        if self.ui.pane.as_deref() != Some("altText") {
+            panes::flush_alt_text(self);
+        }
         self.drain_requests();
         doc_window::show(self, &ctx);
         self.perf.frame_ms = now_ms() - t0;

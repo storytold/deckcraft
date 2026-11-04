@@ -78,7 +78,7 @@ fn record_shell_owns(k: egui::Key, m: egui::Modifiers) -> bool {
     }
 }
 
-/// Whether the grid that the presenter key G opens is showing in this viewport./// Whether the grid that the presenter key G opens is showing in this viewport.
+/// Whether the grid that the presenter key G opens is showing in this viewport.
 fn grid_open(show: &Show, presenter: bool) -> bool {
     if presenter { show.presenter_grid } else { show.grid }
 }

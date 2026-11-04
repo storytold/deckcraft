@@ -27,7 +27,8 @@ pub(super) fn styles_section(app: &mut SlideApp, ui: &mut Ui) {
                 if let Some(p) = shapes_gallery(ui) {
                     // The drawing tools' gallery also lists freeform shapes; a Cameo can only take
                     // a preset `shape.change` knows.
-                    submit_camera_shape(app, p);
+                    let ids = super::cameo_ids(app);
+                    submit_camera_shape(app, p, &ids);
                 }
             });
             camera_border(app, ui, en);
@@ -121,13 +122,13 @@ fn paint_style(p: &egui::Painter, r: Rect, i: usize) {
 }
 
 /// Apply a gallery pick to a shape, ignoring the freeform tools the shared gallery also lists.
-pub(super) fn submit_camera_shape(app: &mut SlideApp, preset: &str) {
+pub(super) fn submit_camera_shape(app: &mut SlideApp, preset: &str, ids: &[u32]) {
     let draw_tool = matches!(preset, "curve" | "freeform" | "scribble");
     if draw_tool {
         app.set_status("Pick a shape preset for a Cameo");
         return;
     }
-    run(app, "shape.change", json!({"preset": preset}));
+    run(app, "shape.change", json!({"preset": preset, "ids": ids}));
 }
 
 #[cfg(test)]

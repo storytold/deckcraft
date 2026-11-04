@@ -32,6 +32,12 @@ use format_shape::{fill_transparency_to_apply, solid_fill_transparency_percent};
 use smartart::smartart;
 use thesaurus::thesaurus;
 
+/// Commit a description the Alt Text pane holds when that pane is no longer open. Called at the
+/// end of every UI pass: a field the pane stops drawing can never report `lost_focus`.
+pub fn flush_alt_text(app: &mut SlideApp) {
+    alt_text::flush(app);
+}
+
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(pane) = app.ui.pane.clone() else { return };

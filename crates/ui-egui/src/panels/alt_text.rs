@@ -6,13 +6,48 @@ use egui::Ui;
 use serde_json::json;
 
 use crate::SlideApp;
+use crate::state::AltTextDraft;
 use crate::theme::Tokens;
 use crate::widgets;
 
 use super::run;
 
+/// The object the pane would describe now, if the selection has one.
+fn selected(app: &SlideApp) -> Option<(u64, u32)> {
+    let st = app.session.active()?;
+    let id = st.selected_shapes().first()?.id.0;
+    Some((st.uid, id))
+}
+
+/// Commit a description the pane holds but the document does not, when the pane is closing or
+/// another object takes over. The field cannot report `lost_focus` once it is no longer drawn, so
+/// without this a typed description would be dropped with the pane.
+pub(crate) fn flush(app: &mut SlideApp) {
+    let Some(draft) = app.ui.alt_text_draft.take() else { return };
+    let Some(st) = app.session.active() else { return };
+    if st.uid != draft.uid {
+        return;
+    }
+    let id = deckcraft_model::ShapeId(draft.shape);
+    let Some(sh) = st.shape(id) else { return };
+    // Only a draft typed over the description the document still holds is written: an undo or
+    // another edit wins, and a draft equal to the document's text is nothing to write.
+    if sh.descr != draft.base || draft.text == draft.base {
+        return;
+    }
+    run(app, "shape.altText", json!({ "text": draft.text, "ids": [draft.shape] }));
+}
+
 pub(super) fn alt_text(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
+    // The draft belongs to the object it was typed for: another selection commits it first.
+    let keeps = match (&app.ui.alt_text_draft, selected(app)) {
+        (Some(d), Some((uid, id))) => d.uid == uid && d.shape == id,
+        _ => false,
+    };
+    if !keeps {
+        flush(app);
+    }
     let Some(st) = app.session.active() else { return };
     let uid = st.uid;
     let Some(sh) = st.selected_shapes().first().map(|s| (*s).clone()) else {
@@ -25,24 +60,26 @@ pub(super) fn alt_text(app: &mut SlideApp, ui: &mut Ui) {
 
     // The field keeps what is typed while the document still holds the text it started from, as
     // the Format Shape pane's does; an undo or another edit replaces the draft.
-    let id = ui.scope_id().with(("alt_text_pane", uid, sh.id.0));
-    let stored: Option<(String, String)> = ui.data_mut(|d| d.get_temp(id));
+    let stored = app.ui.alt_text_draft.as_ref().filter(|d| d.uid == uid && d.shape == sh.id.0).map(|d| (d.base.clone(), d.text.clone()));
     let mut draft = widgets::text_draft(stored, &sh.descr);
     let l = ui.label(egui::RichText::new("Description").color(t.text_dim));
     let r = ui
         .add_enabled(!sh.decorative, egui::TextEdit::multiline(&mut draft).hint_text("Alt text").desired_rows(5).desired_width(f32::INFINITY))
         .labelled_by(l.id);
-    if r.lost_focus() && draft != sh.descr {
-        run(app, "shape.altText", json!({ "text": draft.clone(), "ids": [sh.id.0] }));
-    }
-    ui.data_mut(|d| d.insert_temp(id, (sh.descr.clone(), draft.clone())));
+    let text_commit = r.lost_focus() && draft != sh.descr;
+    app.ui.alt_text_draft = Some(AltTextDraft { uid, shape: sh.id.0, base: sh.descr.clone(), text: draft.clone() });
 
     ui.add_space(6.0);
     let mut deco = sh.decorative;
-    if ui.checkbox(&mut deco, "Mark as decorative").changed() {
+    let toggled = ui.checkbox(&mut deco, "Mark as decorative").changed();
+    // One command carries the typed description and the flag: the click that takes the field's
+    // focus must not spend two undo steps.
+    if toggled {
         run(app, "shape.altText", json!({ "text": draft, "decorative": deco, "ids": [sh.id.0] }));
+    } else if text_commit {
+        run(app, "shape.altText", json!({ "text": draft, "ids": [sh.id.0] }));
     }
-    if sh.decorative {
+    if sh.decorative || toggled && deco {
         ui.label(egui::RichText::new("A decorative object needs no description: screen readers skip it.").color(t.text_dim));
     }
 }

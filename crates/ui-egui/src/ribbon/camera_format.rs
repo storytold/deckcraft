@@ -9,6 +9,12 @@ mod size;
 mod styles;
 use super::{SlideApp, Ui};
 
+/// The Cameos in the selection, in selection order. The tab also shows for a mixed selection, so a
+/// section that formats Cameos addresses these ids instead of every selected shape.
+pub(super) fn cameo_ids(app: &SlideApp) -> Vec<u32> {
+    app.session.active().map(|st| st.selected_shapes().iter().filter(|s| s.is_cameo()).map(|s| s.id.0).collect()).unwrap_or_default()
+}
+
 /// The Camera Format tab, in PowerPoint's group order.
 pub(super) fn camera_format(app: &mut SlideApp, ui: &mut Ui) {
     camera::camera_section(app, ui);

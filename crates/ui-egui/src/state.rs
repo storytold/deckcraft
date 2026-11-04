@@ -94,6 +94,20 @@ pub struct UiState {
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    /// Alt Text pane: the description typed for an object that the document does not hold yet, so
+    /// closing the pane or selecting another object can commit it. Not persisted.
+    #[serde(skip)]
+    pub alt_text_draft: Option<AltTextDraft>,
+}
+
+/// A description typed into the Alt Text pane, with the text the document held when typing
+/// started: an undo or another edit replaces the draft instead of overwriting it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AltTextDraft {
+    pub uid: u64,
+    pub shape: u32,
+    pub base: String,
+    pub text: String,
 }
 
 impl Default for UiState {
@@ -127,6 +141,7 @@ impl Default for UiState {
             grayscale: false,
             comment_focus: None,
             qat: qat::defaults(),
+            alt_text_draft: None,
         }
     }
 }

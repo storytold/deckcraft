@@ -93,3 +93,74 @@ fn marking_the_cameo_decorative_is_undoable_and_disables_the_description() {
     h.state_mut().session.execute("edit.undo", &json!({})).unwrap();
     assert!(!h.state().session.active().unwrap().shape(id).unwrap().decorative);
 }
+
+/// Focus the description field and replace its text, as `typing_a_description_writes_descr_and_undo_reverts_it`
+/// does, without leaving it.
+fn type_description(h: &mut Harness<'_, SlideApp>, text: &str) {
+    h.get_by_role_and_label(Role::MultilineTextInput, "Description").click();
+    h.run_steps(2);
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::A,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers { command: true, ..egui::Modifiers::NONE },
+    });
+    h.get_by_role_and_label(Role::MultilineTextInput, "Description").type_text(text);
+    h.run_steps(2);
+}
+
+#[test]
+fn closing_the_pane_commits_the_typed_description() {
+    let (mut h, id) = cameo_app();
+    let original = descr(&h, id);
+    h.state_mut().ui.pane = Some("altText".into());
+    h.run_steps(3);
+    type_description(&mut h, "A webcam view of the speaker");
+    // The field is still drawn and still holds the draft: nothing has been written yet.
+    assert_eq!(descr(&h, id), original);
+    assert!(h.state().ui.alt_text_draft.is_some(), "the pane keeps the typed text");
+    // The ribbon button closes the pane without the field ever losing focus to another widget.
+    h.get_by_role_and_label(Role::Button, "Alt Text").click();
+    h.run_steps(4);
+    assert!(h.state().ui.pane.is_none());
+    assert_eq!(descr(&h, id), "A webcam view of the speaker", "closing the pane keeps what was typed");
+    assert!(h.state().ui.alt_text_draft.is_none());
+    h.state_mut().session.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(descr(&h, id), original, "and the commit is one undo step");
+}
+
+#[test]
+fn selecting_another_object_commits_the_typed_description() {
+    let (mut h, id) = cameo_app();
+    let other =
+        h.state_mut().session.execute("insert.textBox", &json!({"rect": [40, 400, 200, 80], "text": "Other"})).unwrap()["id"].as_u64().unwrap();
+    // Inserting the box selects it; go back to the Cameo so the pane describes it.
+    h.state_mut().session.execute("edit.select", &json!({"ids": [id.0]})).unwrap();
+    h.state_mut().ui.pane = Some("altText".into());
+    h.run_steps(3);
+    type_description(&mut h, "Kept on selection change");
+    // Selecting the text box takes the pane away from the Cameo in the same frame.
+    h.state_mut().session.execute("edit.select", &json!({"ids": [other]})).unwrap();
+    h.run_steps(3);
+    assert_eq!(descr(&h, id), "Kept on selection change");
+}
+
+#[test]
+fn ticking_decorative_with_a_typed_description_is_one_undo_step() {
+    let (mut h, id) = cameo_app();
+    let original = descr(&h, id);
+    h.state_mut().ui.pane = Some("altText".into());
+    h.run_steps(3);
+    type_description(&mut h, "Typed over");
+    h.get_by_label("Mark as decorative").click();
+    h.run_steps(3);
+    let sh = h.state().session.active().unwrap().shape(id).unwrap().clone();
+    assert!(sh.decorative);
+    assert_eq!(sh.descr, "Typed over", "the click carries the typed description");
+    // One undo puts back both the flag and the description.
+    h.state_mut().session.execute("edit.undo", &json!({})).unwrap();
+    let sh = h.state().session.active().unwrap().shape(id).unwrap().clone();
+    assert!(!sh.decorative, "one undo step, not two");
+    assert_eq!(sh.descr, original);
+}

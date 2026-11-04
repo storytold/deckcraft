@@ -991,7 +991,8 @@ fn apply_laser_color(sh: &mut deckcraft_model::ShowSettings, p: &Value) -> Resul
     Ok(())
 }
 
-/// Embed a WAV as the slide's narration. A later recording replaces the shape named Narration.
+/// Embed a WAV as the slide's narration. A later recording replaces the slide's existing narration
+/// clip (a media shape with `narration: true`); a shape merely named "Narration" stays.
 fn narration(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let index = usize_param(p, "index").unwrap_or(st.selection.slide);

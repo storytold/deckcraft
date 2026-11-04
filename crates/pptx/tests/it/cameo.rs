@@ -3,7 +3,7 @@
 //! The decks are built in code, never produced by PowerPoint: an SVG placeholder we draw and an
 //! ordinary PNG for the checked-in-picture case.
 
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 
 use deckcraft_geom::Xfrm;
 use deckcraft_model::style::PictureFill;
@@ -151,4 +151,53 @@ fn an_ordinary_svg_picture_is_not_a_cameo() {
     let xml = part(&bytes, "ppt/slides/slide1.xml");
     assert!(!xml.contains("liveFeedProps"), "{xml}");
     assert!(xml.contains("<a:blip r:embed=\"rId"), "{xml}");
+}
+
+/// Some generators declare the feed's `alf` prefix on the enclosing `a:ext` instead of the feed
+/// element. The kept feed must carry that declaration, or the exported slide holds an unbound
+/// prefix and PowerPoint offers to repair it.
+#[test]
+fn a_feed_whose_prefix_is_bound_on_the_wrapper_exports_bound() {
+    let bytes = deckcraft_pptx::export(&deck("cameo-placeholder.svg", svg())).expect("export");
+    let mut src = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..src.len() {
+        let mut f = src.by_index(i).expect("entry");
+        let name = f.name().to_string();
+        let mut data = Vec::new();
+        f.read_to_end(&mut data).expect("read");
+        if name == "ppt/slides/slide1.xml" {
+            let xml = String::from_utf8(data).expect("utf8");
+            let moved = xml.replacen(
+                "<a:ext uri=\"{51228E76-BA90-4043-B771-695A4F85340A}\"><alf:liveFeedProps xmlns:alf=\"http://schemas.microsoft.com/office/drawing/2021/livefeed\"/>",
+                "<a:ext uri=\"{51228E76-BA90-4043-B771-695A4F85340A}\" xmlns:alf=\"http://schemas.microsoft.com/office/drawing/2021/livefeed\"><alf:liveFeedProps/>",
+                1,
+            );
+            assert_ne!(moved, xml, "the exported feed is rewritten onto the wrapper");
+            data = moved.into_bytes();
+        }
+        out.start_file(name, zip::write::SimpleFileOptions::default()).expect("start");
+        out.write_all(&data).expect("write");
+    }
+    let bytes = out.finish().expect("finish").into_inner();
+
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let mut found = None;
+    deckcraft_model::walk(&q.slides[0].shapes, &mut |sh, _| {
+        if sh.name == "Camera 1" {
+            found = Some(sh.clone());
+        }
+    });
+    let kept = found.expect("cameo").cameo.and_then(|c| c.raw).expect("kept feed");
+    assert!(kept.contains("xmlns:alf=\"http://schemas.microsoft.com/office/drawing/2021/livefeed\""), "{kept}");
+
+    let bytes = deckcraft_pptx::export(&q).expect("export");
+    let xml = part(&bytes, "ppt/slides/slide1.xml");
+    assert!(
+        xml.contains(
+            "<a:ext uri=\"{51228E76-BA90-4043-B771-695A4F85340A}\"><alf:liveFeedProps xmlns:alf=\"http://schemas.microsoft.com/office/drawing/2021/livefeed\"/></a:ext>"
+        ),
+        "{xml}"
+    );
+    assert!(!xml.contains("<alf:liveFeedProps/>"), "no unbound prefix: {xml}");
 }

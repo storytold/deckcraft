@@ -12,28 +12,30 @@ use super::super::{Icon, SlideApp, Ui, big_button, enabled, group, json, rows, r
 /// Smallest frame side the spinners allow, in points: below this a Cameo cannot be grabbed again.
 const MIN_SIDE: f64 = 1.0;
 
-/// The selected shape's effective frame, if there is a selection.
+/// The first selected Cameo's effective frame: the tab also shows for a mixed selection, and the
+/// spinners must show the same object they resize.
 fn selected_xfrm(app: &SlideApp) -> Option<deckcraft_geom::Xfrm> {
     let st = app.session.active()?;
-    let id = *st.selection.shapes.first()?;
+    let id = st.selected_shapes().iter().find(|s| s.is_cameo())?.id;
     let sh = st.shape(id)?;
     Some(deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, sh))
 }
 
 pub(super) fn size_section(app: &mut SlideApp, ui: &mut Ui) {
     let xfrm = selected_xfrm(app);
+    let ids = super::cameo_ids(app);
     group(ui, |ui| {
         let r = big_button(ui, Icon::Crop, "Crop", enabled(app, "picture.crop"));
         egui::Popup::menu(&r).show(|ui| {
             ui.label("Crop to Shape");
             if let Some(p) = shapes_gallery(ui) {
                 // The gallery lists the drawing tools too; `shape.change` only knows presets.
-                super::styles::submit_camera_shape(app, p);
+                super::styles::submit_camera_shape(app, p, &ids);
             }
             ui.separator();
             for (label, v) in [("Crop 10% each side", 0.1), ("Crop 20% each side", 0.2), ("Reset Crop", 0.0)] {
                 if ui.button(label).clicked() {
-                    run(app, "picture.crop", json!({"left": v, "top": v, "right": v, "bottom": v}));
+                    run(app, "picture.crop", json!({"left": v, "top": v, "right": v, "bottom": v, "ids": ids}));
                 }
             }
         });
@@ -51,18 +53,18 @@ pub(super) fn size_section(app: &mut SlideApp, ui: &mut Ui) {
                 ui.label("Height:");
                 if let Some(v) = widgets::spinner(ui, "ch", "Height", x.h / ppu, 0.1, suffix, width) {
                     // A zero side would collapse the frame; keep it above the smallest usable one.
-                    run(app, "shape.resize", json!({"h": (v * ppu).max(MIN_SIDE), "lockAspect": true}));
+                    run(app, "shape.resize", json!({"h": (v * ppu).max(MIN_SIDE), "lockAspect": true, "ids": ids}));
                 }
             });
             ui.horizontal(|ui| {
                 ui.label("Width: ");
                 if let Some(v) = widgets::spinner(ui, "cw", "Width", x.w / ppu, 0.1, suffix, width) {
-                    run(app, "shape.resize", json!({"w": (v * ppu).max(MIN_SIDE), "lockAspect": true}));
+                    run(app, "shape.resize", json!({"w": (v * ppu).max(MIN_SIDE), "lockAspect": true, "ids": ids}));
                 }
             });
             if ui.add_enabled(xfrm.is_some(), egui::Button::new("Size and Position…")).clicked() {
                 // A Cameo's aspect is locked in the file; open the dialog that way.
-                run(app, "shape.sizePosition", json!({"lockAspect": true}));
+                run(app, "shape.sizePosition", json!({"lockAspect": true, "ids": ids}));
             }
         });
     });
@@ -132,6 +134,38 @@ mod tests {
         let after = xfrm(h.state(), id);
         assert!((after.w - after.h).abs() < 1e-6, "a square Cameo stays square, got {} x {}", after.w, after.h);
         assert_eq!((after.x, after.y), (before.x, before.y));
+    }
+
+    /// A blank deck with a text box selected first and a Cameo behind it, on the Camera Format tab:
+    /// the tab shows for the Cameo, but the selection starts with another kind of shape.
+    fn mixed_app(width: f32) -> (Harness<'static, SlideApp>, ShapeId, ShapeId) {
+        let mut s = Session::with_new();
+        s.execute("slide.layout", &json!({"layout": "blank"})).unwrap();
+        let text = s.execute("insert.textBox", &json!({"rect": [500, 400, 200, 80], "text": "Hello"})).unwrap()["id"].as_u64().unwrap();
+        let cameo = s.execute("insert.cameo", &json!({"rect": [200, 100, 162, 162]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("edit.select", &json!({"ids": [text, cameo]})).unwrap();
+        let mut app = SlideApp::new(s, Services::default());
+        app.ui.tab = "Camera Format".into();
+        let mut h = Harness::builder().with_size(egui::vec2(width, 900.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        h.run_steps(4);
+        (h, ShapeId(u32::try_from(text).unwrap()), ShapeId(u32::try_from(cameo).unwrap()))
+    }
+
+    #[test]
+    fn a_mixed_selection_resizes_only_the_cameo() {
+        let (mut h, text, cameo) = mixed_app(1600.0);
+        let (text_before, cameo_before) = (xfrm(h.state(), text), xfrm(h.state(), cameo));
+        h.get_by_label("Increase Width").click();
+        h.run_steps(2);
+        let (text_after, cameo_after) = (xfrm(h.state(), text), xfrm(h.state(), cameo));
+        assert_eq!(text_after, text_before, "the text box is not a Cameo and keeps its frame");
+        assert!(cameo_after.w > cameo_before.w, "the Cameo grew: {cameo_before:?} -> {cameo_after:?}");
     }
 
     #[test]
