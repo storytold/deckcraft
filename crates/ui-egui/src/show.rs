@@ -17,7 +17,7 @@ mod media;
 mod presenter;
 mod record;
 mod render;
-mod ui;
+pub(crate) mod ui;
 mod zoom;
 
 #[cfg(test)]

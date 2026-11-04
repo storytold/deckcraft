@@ -204,6 +204,10 @@ impl SlideApp {
                 let Some(show) = self.show.as_mut().filter(|s| s.record) else { return Err("the Record view is not open".into()) };
                 let now = show.command_now();
                 let status = show.record_command(id, now)?;
+                // Pause, resume, stop and start change what the microphone should be doing; do it
+                // here so a hidden show (no frame to run `sync_mic`) is covered.
+                self.sync_record_state();
+                let Some(show) = self.show.as_ref() else { return Err("the Record view is not open".into()) };
                 let rec = &show.record_view;
                 return Ok(json!({
                     "status": status,

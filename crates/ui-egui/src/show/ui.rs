@@ -887,7 +887,7 @@ fn draw_extras(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter
 /// Keep the narration microphone in step with the take: it runs only while frames are captured,
 /// so a pause or a Stop neither captures silence into the next slide nor files audio recorded
 /// while the take was held. A pause keeps what was already captured on the current slide.
-fn sync_mic(app: &mut SlideApp, show: &mut Show) {
+pub(crate) fn sync_mic(app: &mut SlideApp, show: &mut Show) {
     let capturing = show.capturing();
     if capturing && show.mic_tried && show.mic_ok {
         // A device that failed mid-take (unplugged, or the ten minute limit): keep what it

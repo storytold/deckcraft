@@ -159,6 +159,14 @@ impl SlideApp {
         Ok(json!({"playing": true, "slide": slide, "duration": duration, "from": from_secs}))
     }
 
+    /// Run the frame's microphone bookkeeping now: a `record.*` command that pauses or stops a
+    /// take between frames must not leave the microphone recording into the next slide.
+    pub(crate) fn sync_record_state(&mut self) {
+        let Some(mut show) = self.show.take() else { return };
+        show::ui::sync_mic(self, &mut show);
+        self.show = Some(show);
+    }
+
     /// End the show now, through the path its last visible frame uses: close the presenter window,
     /// stop show-owned media, leave fullscreen and save a take. A hidden show a command ended calls
     /// this too, so its recording data is never dropped.
@@ -193,6 +201,8 @@ impl SlideApp {
         }
         let input_time = ctx.input(|i| i.time);
         let show_time = show.hidden_logic_time(input_time, now);
+        // Commands run between passes: a hidden show still needs a current clock for them.
+        show.last_now = show_time;
         let keep = show.advance_hidden(&doc, show_time);
         let time_driven = show.hidden_time_driven(&doc);
         if !keep {

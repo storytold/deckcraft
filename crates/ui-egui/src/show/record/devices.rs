@@ -6,6 +6,8 @@
 
 use egui::{Color32, RichText, Ui};
 
+use deckcraft_screen::CaptureStatus;
+
 use super::{RecordStatus, RecordView};
 
 /// What a device control knows about its backend.
@@ -47,21 +49,25 @@ pub(in crate::show) struct Devices {
 /// Show what the presentation services and the take actually have, once per frame. A missing host
 /// leaves the device [`DeviceStatus::Unavailable`]; a microphone the take is recording from is
 /// [`DeviceStatus::On`], and the buttons only report that state (no backend is wired to them).
-pub(super) fn connect(rec: &mut RecordView, services: &crate::Services, show: &crate::show::Show, screen: (bool, bool)) {
+pub(super) fn connect(rec: &mut RecordView, services: &crate::Services, show: &crate::show::Show, screen: (deckcraft_screen::CaptureStatus, bool)) {
     // The shell's own `rec` is out of `show` while this runs, so the take state comes from `rec`
     // and the microphone from what the show actually started.
-    let mic = services.mic.is_some();
-    rec.devices.mic.status = match (mic, rec.status == RecordStatus::Recording && show.mic_live()) {
-        (false, _) => DeviceStatus::Unavailable,
-        (true, true) => DeviceStatus::On,
-        (true, false) => DeviceStatus::Off,
+    // A host that is installed but whose start failed (no device, refused) is unavailable, not
+    // "off": the take is running without narration.
+    let attempted = rec.status == RecordStatus::Recording && show.mic_started();
+    rec.devices.mic.status = match (services.mic.is_some(), attempted, show.mic_live()) {
+        (false, _, _) => DeviceStatus::Unavailable,
+        (true, true, false) => DeviceStatus::Unavailable,
+        (true, _, true) => DeviceStatus::On,
+        (true, false, false) => DeviceStatus::Off,
     };
-    // The capture host lives in the session (it was moved there at start-up), not in the service.
-    let (host, recording) = screen;
-    rec.devices.screen.status = match (host, recording) {
-        (false, _) => DeviceStatus::Unavailable,
-        (true, true) => DeviceStatus::On,
-        (true, false) => DeviceStatus::Off,
+    // The capture state lives in the session (the host moved there at start-up): unsupported or a
+    // denied permission is unavailable, not "off".
+    let (capture, recording) = screen;
+    rec.devices.screen.status = match (capture, recording) {
+        (CaptureStatus::Ready, true) => DeviceStatus::On,
+        (CaptureStatus::Ready, false) => DeviceStatus::Off,
+        (CaptureStatus::Unsupported | CaptureStatus::PermissionDenied, _) => DeviceStatus::Unavailable,
     };
 }
 
