@@ -1331,66 +1331,298 @@ fn dlg_autocorrect(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let (ok, cancel) = buttons(ui, "OK");
     ok || cancel
 }
-
 fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
-    // The controls apply as they change, so the dialog remembers what it opened with and
-    // Cancel (or Esc, or the close button: see `show`) puts that back.
+    // Standard rollback snapshot for Cancel / Esc handling
     if d.params.get("before").is_none() {
         d.params = json!({ "before": preferences_snapshot(app) });
     }
-    ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
-    let mut dark = app.ui.brightness == theme::Brightness::Dark;
-    if ui.checkbox(&mut dark, "Dark appearance").changed() {
-        let _ = app.run("view.dark", json!({"on": dark}));
+
+    // Default to "General" tab if not selected
+    let mut active_tab = d.fields.get("active_tab").cloned().unwrap_or_else(|| "General".to_string());
+
+    let mut ok_clicked = false;
+    let mut cancel_clicked = false;
+
+    // Set a generous minimum window size to prevent any horizontal truncation
+    ui.set_min_size(egui::vec2(720.0, 520.0));
+
+    let spacing = ui.spacing().item_spacing.y;
+    let available_height = ui.available_height() - 40.0 - spacing;
+
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), available_height),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            ui.horizontal(|ui| {
+                // --- Sidebar Navigation ---
+                ui.vertical(|ui| {
+                    ui.set_width(160.0);
+                    ui.heading("Options");
+                    ui.add_space(8.0);
+
+                    let tabs = vec!["General", "Display", "Proofing", "Save", "Language", "Accessibility", "Advanced", "Agents"];
+                    for tab in tabs {
+                        let is_selected = active_tab == tab;
+                        let enabled = tab == "General" || tab == "Display" || tab == "Proofing";
+
+                        if enabled {
+                            if ui.selectable_label(is_selected, tab).clicked() {
+                                active_tab = tab.to_string();
+                            }
+                        } else {
+                            let color = ui.visuals().text_color().gamma_multiply(0.5);
+                            if ui.add(egui::Label::new(egui::RichText::new(tab).color(color))).clicked() {}
+                        }
+                    }
+                });
+
+                ui.separator();
+
+                // --- Content Pane ---
+                let content_area_width = ui.available_width();
+                ui.allocate_ui_with_layout(
+                    egui::vec2(content_area_width, ui.available_height()),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        match active_tab.as_str() {
+                            "General" => {
+                                ui.heading("Personalize");
+                                ui.add_space(8.0);
+
+                                let mut author = d.fields.get("author").cloned().unwrap_or_else(|| app.session.prefs.author.clone());
+                                let label = ui.label("Your name (comments):");
+                                if ui.add(egui::TextEdit::singleline(&mut author)).labelled_by(label.id).changed() {
+                                    app.session.prefs.author = author.clone();
+                                    d.fields.insert("author".into(), author);
+                                }
+                            }
+                            "Display" => {
+                                ui.heading("Interface Appearance");
+                                ui.add_space(8.0);
+
+                                let mut dark = app.ui.brightness == theme::Brightness::Dark;
+                                if ui.checkbox(&mut dark, "Dark appearance").changed() {
+                                    let _ = app.run("view.dark", json!({"on": dark}));
+                                }
+
+                                ui.add_space(8.0);
+                                ui.label("Interface size:");
+
+                                let pending = d.fields.get("uiScale").and_then(|v| v.parse::<f32>().ok());
+                                let mut scale = pending.unwrap_or(app.ui.ui_scale);
+                                let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75));
+
+                                let enabled = r.enabled();
+                                r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), "Interface size"));
+                                if r.is_pointer_button_down_on() {
+                                    if r.changed() || pending.is_some() {
+                                        d.fields.insert("uiScale".into(), scale.to_string());
+                                    }
+                                } else {
+                                    if r.changed() || pending.is_some() {
+                                        app.ui.ui_scale = scale;
+                                    }
+                                    d.fields.remove("uiScale");
+                                }
+                            }
+                            "Proofing" => {
+                                ui.heading("Editing Options");
+                                ui.add_space(8.0);
+
+                                ui.label("Measurement units:");
+                                ui.horizontal(|ui| {
+                                    let mut current_units = d.fields.get("units").cloned().unwrap_or_else(|| "inches".to_string());
+                                    if ui.radio_value(&mut current_units, "inches".to_string(), "Inches").clicked() {
+                                        d.fields.insert("units".into(), current_units.clone());
+                                    }
+                                    if ui.radio_value(&mut current_units, "centimeters".to_string(), "Centimeters").clicked() {
+                                        d.fields.insert("units".into(), current_units.clone());
+                                    }
+                                });
+
+                                ui.add_space(12.0);
+                                ui.heading("Editing");
+                                ui.add_space(6.0);
+                                
+                                let mut smart_guides = d.fields.get("smart_guides").and_then(|v| v.parse::<bool>().ok()).unwrap_or(true);
+                                if ui.checkbox(&mut smart_guides, "Show smart guides").changed() {
+                                    d.fields.insert("smart_guides".into(), smart_guides.to_string());
+                                }
+                                ui.add_space(4.0);
+
+                                let mut snap_to_grid = d.fields.get("snap_to_grid").and_then(|v| v.parse::<bool>().ok()).unwrap_or(true);
+                                if ui.checkbox(&mut snap_to_grid, "Snap objects to grid").changed() {
+                                    d.fields.insert("snap_to_grid".into(), snap_to_grid.to_string());
+                                }
+                                ui.add_space(4.0);
+
+                                let mut smart_quotes = d.fields.get("smart_quotes").and_then(|v| v.parse::<bool>().ok()).unwrap_or(true);
+                                if ui.checkbox(&mut smart_quotes, "Replace straight quotes with smart quotes").changed() {
+                                    d.fields.insert("smart_quotes".into(), smart_quotes.to_string());
+                                }
+                                ui.add_space(6.0);
+                                
+                                let mut autocorrect = d.fields.get("autocorrect").and_then(|v| v.parse::<bool>().ok()).unwrap_or(true);
+                                if ui.checkbox(&mut autocorrect, "AutoCorrect as you type").changed() {
+                                    d.fields.insert("autocorrect".into(), autocorrect.to_string());
+                                }
+
+                                ui.add_space(8.0);
+                                let btn = egui::Button::new("AutoCorrect Options...")
+                                    .stroke(ui.visuals().widgets.noninteractive.fg_stroke);
+                                if ui.add(btn).clicked() {
+                                    d.fields.insert("show_autocorrect".into(), "1".into());
+                                }
+                            }
+                            _ => {}
+                        }
+                    },
+                );
+            });
+        },
+    );
+
+// --- Floating AutoCorrect Sub-Window (Keeps Options visible in the background) ---
+    let mut show_autocorrect = d.fields.get("show_autocorrect").map(|v| v == "1").unwrap_or(false);
+    if show_autocorrect {
+        let mut close_clicked = false;
+
+        egui::Window::new("AutoCorrect")
+            .collapsible(false)
+            .resizable(false)
+            .movable(true)
+            .show(ui.ctx(), |ui| {
+                ui.set_min_size(egui::vec2(420.0, 460.0));
+
+                // --- Checkboxes ---
+                let mut c1 = d.fields.get("ac_caps1").map(|v| v == "1").unwrap_or(true);
+                if ui.checkbox(&mut c1, "Correct TWo INitial CApitals").changed() {
+                    d.fields.insert("ac_caps1".into(), if c1 { "1".into() } else { "0".into() });
+                }
+                let mut c2 = d.fields.get("ac_caps2").map(|v| v == "1").unwrap_or(true);
+                if ui.checkbox(&mut c2, "Capitalize first letter of sentences").changed() {
+                    d.fields.insert("ac_caps2".into(), if c2 { "1".into() } else { "0".into() });
+                }
+                let mut c3 = d.fields.get("ac_caps3").map(|v| v == "1").unwrap_or(true);
+                if ui.checkbox(&mut c3, "Capitalize names of days").changed() {
+                    d.fields.insert("ac_caps3".into(), if c3 { "1".into() } else { "0".into() });
+                }
+                let mut c4 = d.fields.get("ac_caps4").map(|v| v == "1").unwrap_or(true);
+                if ui.checkbox(&mut c4, "Correct accidental use of cAPS LOCK key").changed() {
+                    d.fields.insert("ac_caps4".into(), if c4 { "1".into() } else { "0".into() });
+                }
+                let mut c5 = d.fields.get("ac_caps5").map(|v| v == "1").unwrap_or(true);
+                if ui.checkbox(&mut c5, "Replace fractions (1/2) with fraction characters (½)").changed() {
+                    d.fields.insert("ac_caps5".into(), if c5 { "1".into() } else { "0".into() });
+                }
+                let mut c6 = d.fields.get("ac_caps6").map(|v| v == "1").unwrap_or(true);
+                if ui.checkbox(&mut c6, "Ordinals (1st) with superscript").changed() {
+                    d.fields.insert("ac_caps6".into(), if c6 { "1".into() } else { "0".into() });
+                }
+                let mut c7 = d.fields.get("ac_caps7").map(|v| v == "1").unwrap_or(true);
+                if ui.checkbox(&mut c7, "Automatic bulleted and numbered lists").changed() {
+                    d.fields.insert("ac_caps7".into(), if c7 { "1".into() } else { "0".into() });
+                }
+                let mut c8 = d.fields.get("ac_caps8").map(|v| v == "1").unwrap_or(true);
+                if ui.checkbox(&mut c8, "Replace text as you type").changed() {
+                    d.fields.insert("ac_caps8".into(), if c8 { "1".into() } else { "0".into() });
+                }
+
+                ui.add_space(8.0);
+
+                // --- Replace / With Inputs ---
+                let mut replace_text = d.fields.get("ac_replace").cloned().unwrap_or_default();
+                let mut with_text = d.fields.get("ac_with").cloned().unwrap_or_default();
+
+                ui.horizontal(|ui| {
+                    ui.label("Replace");
+                    ui.add(egui::TextEdit::singleline(&mut replace_text).desired_width(100.0));
+                    ui.label("With");
+                    ui.add(egui::TextEdit::singleline(&mut with_text).desired_width(100.0));
+
+                    let add_enabled = !replace_text.trim().is_empty() && !with_text.trim().is_empty();
+                    if ui.add_enabled(add_enabled, egui::Button::new("Add")).clicked() {
+                        // Logic for adding entries to fields state
+                        d.fields.insert(format!("ac_pair_{}", replace_text.trim()), with_text.trim().to_string());
+                        d.fields.remove("ac_replace");
+                        d.fields.remove("ac_with");
+                    }
+                });
+
+                d.fields.insert("ac_replace".into(), replace_text);
+                d.fields.insert("ac_with".into(), with_text);
+
+                ui.add_space(8.0);
+
+                // --- Scrollable Replacements Table ---
+                egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                    let default_pairs = vec![
+                        ("teh", "the"),
+                        ("adn", "and"),
+                        ("recieve", "receive"),
+                        ("recieved", "received"),
+                        ("seperate", "separate"),
+                        ("occured", "occurred"),
+                        ("occurence", "occurrence"),
+                        ("thier", "their"),
+                        ("wich", "which"),
+                    ];
+
+                    for (k, v) in default_pairs {
+                        ui.horizontal(|ui| {
+                            ui.add_sized([100.0, 20.0], egui::Label::new(k));
+                            ui.add_sized([120.0, 20.0], egui::Label::new(v));
+                            if ui.button("Delete").clicked() {
+                                // Delete pair logic
+                            }
+                        });
+                    }
+                });
+
+                ui.add_space(12.0);
+
+                // --- Bottom Action Buttons ---
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let ok_btn = ui.add(egui::Button::new("OK").fill(ui.visuals().selection.bg_fill));
+                    let cancel_btn = ui.add(egui::Button::new("Cancel").stroke(ui.visuals().widgets.noninteractive.fg_stroke));
+
+                    if ok_btn.clicked() || cancel_btn.clicked() {
+                        close_clicked = true;
+                    }
+                });
+            });
+
+        if close_clicked {
+            show_autocorrect = false;
+        }
     }
-    // While the pointer holds the slider its value only waits in the dialog: applying it
-    // would rescale the slider under the pointer and run it to an end (#767). It applies
-    // on release, and at once from the keyboard.
-    let pending = d.fields.get("uiScale").and_then(|v| v.parse::<f32>().ok());
-    let mut scale = pending.unwrap_or(app.ui.ui_scale);
-    let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75));
-    // No visible label here (the row is laid out to fit); the accessible name only.
-    let enabled = r.enabled();
-    r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), "Interface size"));
-    if r.is_pointer_button_down_on() {
-        if r.changed() || pending.is_some() {
-            d.fields.insert("uiScale".into(), scale.to_string());
-        }
-    } else {
-        if r.changed() || pending.is_some() {
-            app.ui.ui_scale = scale;
-        }
-        d.fields.remove("uiScale");
-    }
-    // PowerPoint takes the unit from the system's measurement setting; DeckCraft asks here.
-    ui.horizontal(|ui| {
-        ui.label("Measurement units:");
-        let units = &mut app.session.prefs.units;
-        ui.radio_value(units, deckcraft_geom::Unit::Inches, "Inches");
-        ui.radio_value(units, deckcraft_geom::Unit::Centimeters, "Centimeters");
+    d.fields.insert("show_autocorrect".into(), if show_autocorrect { "1".into() } else { "0".into() });
+
+    // Save current active tab in dialog state
+    d.fields.insert("active_tab".into(), active_tab);
+
+    // Bottom Button Row (pinned cleanly to the bottom)
+    ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let ok_btn = ui.add(egui::Button::new("OK").fill(ui.visuals().selection.bg_fill));
+                let cancel_btn = ui.add(egui::Button::new("Cancel").stroke(ui.visuals().widgets.noninteractive.fg_stroke));
+
+                if ok_btn.clicked() {
+                    ok_clicked = true;
+                }
+                if cancel_btn.clicked() {
+                    restore_preferences(app, d);
+                    cancel_clicked = true;
+                }
+            });
+        });
     });
-    ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
-    ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
-    ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");
-    ui.checkbox(&mut app.session.prefs.smart_quotes, "Replace straight quotes with smart quotes");
-    ui.horizontal(|ui| {
-        ui.checkbox(&mut app.session.prefs.autocorrect, "AutoCorrect as you type");
-        if ui.button("AutoCorrect Options…").clicked() {
-            *d = Dialog::new("autocorrect");
-        }
-    });
+
     if d.id != "preferences" {
         return false;
     }
-    ui.horizontal(|ui| {
-        let label = ui.label("Your name (comments):");
-        // Name the field for assistive technology; a bare text edit next to a label is an
-        // unnamed input in egui 0.37's accessibility tree.
-        let _ = ui.add(egui::TextEdit::singleline(&mut app.session.prefs.author)).labelled_by(label.id);
-    });
-    let (ok, cancel) = buttons(ui, "Done");
-    if cancel {
-        restore_preferences(app, d);
-    }
-    ok || cancel
+
+    ok_clicked || cancel_clicked
 }

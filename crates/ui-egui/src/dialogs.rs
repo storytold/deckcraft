@@ -49,7 +49,7 @@ fn title(id: &str) -> &'static str {
         "tabs" => "Tabs",
         "font" => "Font",
         "about" => "About DeckCraft",
-        "preferences" => "Preferences",
+        "preferences" => "Options",
         "autocorrect" => "AutoCorrect",
         "gridOptions" => "Grid Options",
         "columns" => "Columns",
@@ -83,11 +83,11 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let Some(mut d) = app.dialog.take() else { return };
     let mut open = true;
     let mut close = false;
-    let mut window = egui::Window::new(title(&d.id))
+let mut window = egui::Window::new(title(&d.id))
         .id(egui::Id::unique(("dialog", d.id.clone())))
         .collapsible(false)
         .resizable(false)
-        .anchor(Align2::CENTER_CENTER, vec2(0.0, -40.0))
+        .movable(true)
         .open(&mut open);
     // Two columns of colour rows plus Save must fit the first frame (Theme Colors), as must Save
     // in Theme Fonts. A later resize clips the buttons (the window size sticks) and clicks miss them.
