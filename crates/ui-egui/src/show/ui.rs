@@ -917,7 +917,7 @@ fn sync_mic(app: &mut SlideApp, show: &mut Show) {
         }
     } else if !capturing && show.mic_tried {
         // The take paused or stopped: hand what it captured to this slide, then stop the device.
-        if show.record && show.record_view.captured {
+        if show.take_captured() {
             take_narration(app, show);
         }
         app.stop_mic();
@@ -940,7 +940,7 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
         }
         // Only a take that captured is saved. Opening the Record view and leaving it without
         // pressing Record must not write browsing time over the deck's own timings.
-        let recording = show.record && show.record_view.captured;
+        let recording = show.take_captured();
         if show.rehearse || recording {
             if recording {
                 take_narration(app, &mut show);

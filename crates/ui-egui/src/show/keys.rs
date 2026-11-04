@@ -147,9 +147,10 @@ fn tool_key(show: &mut Show, k: egui::Key, m: egui::Modifiers, now: f64, present
         W | Comma => toggle_blank(show, Color32::WHITE),
         E => {
             show.strokes.clear();
-            // Erase clears the ink on screen. A take's laser samples are already recorded data: the
-            // finish path saves `laser_live`, so erasing must not drop them.
-            if !show.capturing() {
+            // Erase clears the ink on screen. A take's laser samples are already recorded data and
+            // are saved from `laser_live` when the take finishes, so erasing keeps them while the
+            // take exists at all (running, paused or stopped), not only while it captures.
+            if !show.take_captured() {
                 show.laser_live.clear();
             }
         }

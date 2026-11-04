@@ -751,6 +751,13 @@ impl Show {
         r
     }
 
+    /// Whether this show has a take at all: it captured something, whether that take is running,
+    /// paused or already stopped. Its ink, laser and narration are still waiting for the finish
+    /// path, so nothing may drop them.
+    pub(crate) fn take_captured(&self) -> bool {
+        self.record && self.record_view.captured
+    }
+
     /// Whether a take is capturing right now: the Record view is open *and* running. Timings,
     /// ink, laser and narration belong to the take, so browsing the Record view before Record,
     /// while paused, or after Stop must not collect them. `record` alone is the mode flag and is

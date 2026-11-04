@@ -1766,7 +1766,11 @@ fn ending_a_show_with_a_take_goes_through_the_finish_path() {
     app.run("show.end", json!({})).expect("end");
     assert!(app.show.is_none(), "no take: the show closes at once");
     app.start_show(0, false);
-    app.show.as_mut().unwrap().record_view.captured = true;
+    {
+        let show = app.show.as_mut().unwrap();
+        show.record = true;
+        show.record_view.captured = true;
+    }
     app.run("show.end", json!({})).expect("end");
     let show = app.show.as_ref().expect("a running take keeps the show for its finish pass");
     assert!(show.end_requested, "the next frame closes it through finish");

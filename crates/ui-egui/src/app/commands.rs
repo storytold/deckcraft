@@ -180,7 +180,7 @@ impl SlideApp {
                 // saves its timings, narration, ink and laser; stopping the microphone here would
                 // drop them with the show.
                 match self.show.as_mut() {
-                    Some(show) if show.record_view.captured => show.end_requested = true,
+                    Some(show) if show.take_captured() => show.end_requested = true,
                     _ => {
                         self.stop_mic();
                         self.show = None;
