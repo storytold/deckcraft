@@ -385,7 +385,7 @@ pub fn number_dropdown(
     let field = Rect::from_min_max(rect.min, pos2(arrow.min.x, rect.max.y));
     let edit_id = ui.scope_id().with(("number_dropdown", id));
     let was_focused = ui.memory(|m| m.has_focus(edit_id));
-    let mut text = if was_focused { ui.data(|d| d.get_temp::<String>(edit_id)).unwrap_or_else(|| current.to_string()) } else { current.to_string() };
+    let mut text = ui.data(|d| d.get_temp::<String>(edit_id)).unwrap_or_else(|| current.to_string());
     let hovered = ui.rect_contains_pointer(rect);
     let border = Stroke::new(
         1.0,
@@ -437,6 +437,8 @@ pub fn number_dropdown(
         if !escaped && text.trim() != current.trim() {
             committed = Some(text.clone());
         }
+        ui.data_mut(|d| d.remove_temp::<String>(edit_id));
+    } else if !out.has_focus() {
         ui.data_mut(|d| d.remove_temp::<String>(edit_id));
     }
     let resp = ui.interact(arrow, edit_id.with("arrow"), if enabled { Sense::click() } else { Sense::hover() });
