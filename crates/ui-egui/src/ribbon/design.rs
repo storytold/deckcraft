@@ -2,6 +2,7 @@ use super::{
     Align2, Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, big, big_button, enabled, group, json, pos2, run, scheme,
     small_button, theme, vec2, widgets,
 };
+use crate::i18n::tr;
 
 // ---------- Design ----------
 
@@ -28,7 +29,7 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
         {
             run(app, "design.theme", json!({"name": n}));
         }
-        if small_button(ui, Icon::Themes, "Browse for Themes…", enabled(app, "design.browseTheme"), false).clicked() {
+        if small_button(ui, Icon::Themes, tr("Browse for Themes…"), enabled(app, "design.browseTheme"), false).clicked() {
             run(app, "app.browseThemeDialog", json!({}));
         }
     });
@@ -56,8 +57,8 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
         });
     }
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Colors, "Colors", true);
-        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Colors"));
+        let r = big_button(ui, Icon::Colors, tr("Colors"), true);
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tr("Colors")));
         egui::Popup::menu(&r).width(240.0).show(|ui| {
             for cs in deckcraft_model::theme::builtin_color_schemes() {
                 ui.horizontal(|ui| {
@@ -78,13 +79,13 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
                 });
             }
             ui.separator();
-            if ui.button("Customize Colors…").clicked() {
+            if ui.button(tr("Customize Colors…")).clicked() {
                 run(app, "design.colors", json!({}));
                 ui.close();
             }
         });
-        let r = big_button(ui, Icon::Fonts, "Fonts", true);
-        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Fonts"));
+        let r = big_button(ui, Icon::Fonts, tr("Fonts"), true);
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tr("Fonts")));
         egui::Popup::menu(&r).width(220.0).show(|ui| {
             for fs in deckcraft_model::theme::builtin_font_schemes() {
                 if ui.button(format!("{}\n   {} / {}", fs.name, fs.major.latin, fs.minor.latin)).clicked() {
@@ -92,13 +93,13 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
                 }
             }
             ui.separator();
-            if ui.button("Customize Fonts…").clicked() {
+            if ui.button(tr("Customize Fonts…")).clicked() {
                 run(app, "design.fonts", json!({}));
                 ui.close();
             }
         });
-        let r = big_button(ui, Icon::ShapeEffects, "Effects", true);
-        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Effects"));
+        let r = big_button(ui, Icon::ShapeEffects, tr("Effects"), true);
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tr("Effects")));
         egui::Popup::menu(&r).width(180.0).show(|ui| {
             for fs in deckcraft_model::theme::builtin_format_schemes() {
                 if ui.button(&fs.name).clicked() {
@@ -107,7 +108,7 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
                 }
             }
         });
-        let r = big_button(ui, Icon::BackgroundStyles, "Background\nStyles", true);
+        let r = big_button(ui, Icon::BackgroundStyles, tr("Background\nStyles"), true);
         egui::Popup::menu(&r).show(|ui| {
             egui::Grid::new("bgstyles").show(ui, |ui| {
                 let sc = scheme(app);
@@ -135,21 +136,21 @@ pub(super) fn design(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 }
             });
-            if ui.button("Reset Slide Background").clicked() {
+            if ui.button(tr("Reset Slide Background")).clicked() {
                 run(app, "design.background", json!({"reset": true}));
             }
         });
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::SlideSize, "Slide\nSize", true);
+        let r = big_button(ui, Icon::SlideSize, tr("Slide\nSize"), true);
         egui::Popup::menu(&r).show(|ui| {
-            if ui.button("Standard (4:3)").clicked() {
+            if ui.button(tr("Standard (4:3)")).clicked() {
                 run(app, "design.slideSize", json!({"preset": "standard"}));
             }
-            if ui.button("Widescreen (16:9)").clicked() {
+            if ui.button(tr("Widescreen (16:9)")).clicked() {
                 run(app, "design.slideSize", json!({"preset": "widescreen"}));
             }
-            if ui.button("Page Setup…").clicked() {
+            if ui.button(tr("Page Setup…")).clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("slideSize"));
             }
         });

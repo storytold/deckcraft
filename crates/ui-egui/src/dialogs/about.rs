@@ -1,4 +1,5 @@
 use super::{Color32, CornerRadius, Rect, Sense, SlideApp, Stroke, Tokens, Ui, pos2, theme, vec2};
+use crate::i18n::{tr, trf};
 
 /// Room the About credits need for their table; the About tab keeps its compact size.
 pub(super) const CREDITS_SIZE: egui::Vec2 = vec2(640.0, 380.0);
@@ -20,17 +21,17 @@ pub fn about(_app: &mut SlideApp, ui: &mut Ui) {
     ui.vertical_centered(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
         paint_logo(ui.painter(), r);
-        ui.label(egui::RichText::new("DeckCraft").font(theme::bold(22.0)));
+        ui.label(egui::RichText::new(tr("DeckCraft")).font(theme::bold(22.0)));
         ui.label(egui::RichText::new(version_line()).color(t.text_dim));
         ui.add_space(6.0);
-        ui.label("Presentations and slide shows, rebuilt from scratch in pure Rust.");
-        ui.label("An open-source, clean-room project. Not affiliated with Microsoft.");
+        ui.label(tr("Presentations and slide shows, rebuilt from scratch in pure Rust."));
+        ui.label(tr("An open-source, clean-room project. Not affiliated with Microsoft."));
         ui.add_space(6.0);
         ui.hyperlink_to("Join our community on Discord", deckcraft_engine::links::DISCORD);
         ui.hyperlink_to("getartcraft.com/apps/deckcraft", deckcraft_engine::links::APP_PAGE);
         ui.hyperlink_to("Source on GitHub", deckcraft_engine::links::GITHUB);
         ui.add_space(6.0);
-        ui.label(egui::RichText::new("MIT OR Apache-2.0 · © 2026 ArtCraft Team and the DeckCraft contributors").size(11.0).color(t.text_faint));
+        ui.label(egui::RichText::new(tr("MIT OR Apache-2.0 · © 2026 ArtCraft Team and the DeckCraft contributors")).size(11.0).color(t.text_faint));
     });
 }
 
@@ -38,7 +39,7 @@ pub fn about(_app: &mut SlideApp, ui: &mut Ui) {
 /// from `[workspace.package] version` (the single source of truth, `cargo xtask version`); the
 /// release workflow sets `DECKCRAFT_BUILD_SHA` / `DECKCRAFT_BUILD_DATE` at build time.
 pub fn version_line() -> String {
-    let mut s = format!("Version {}", env!("CARGO_PKG_VERSION"));
+    let mut s = trf("Version {}", &[&env!("CARGO_PKG_VERSION")]);
     let sha = option_env!("DECKCRAFT_BUILD_SHA").map(|s| s.get(..9).unwrap_or(s)).filter(|s| !s.is_empty());
     let date = option_env!("DECKCRAFT_BUILD_DATE").filter(|s| !s.is_empty());
     match (sha, date) {

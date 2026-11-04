@@ -1,4 +1,5 @@
 use super::{Icon, SlideApp, Target, Ui, big, big_button, group, json, rows, run};
+use crate::i18n::{tr, trf};
 
 /// Preserve, and whether the open master or layout has a title or any footer placeholder.
 fn master_checks(app: &SlideApp) -> (bool, bool, bool) {
@@ -23,33 +24,33 @@ pub(super) fn slide_master(app: &mut SlideApp, ui: &mut Ui) {
         rows(ui, |ui| {
             let (preserve, title, footers) = master_checks(app);
             let mut on = preserve;
-            if ui.checkbox(&mut on, "Preserve").changed() {
+            if ui.checkbox(&mut on, tr("Preserve")).changed() {
                 run(app, "master.preserve", json!({"preserve": on}));
             }
             let mut on = title;
-            if ui.checkbox(&mut on, "Title").changed() {
+            if ui.checkbox(&mut on, tr("Title")).changed() {
                 run(app, "master.placeholders", json!({"title": on}));
             }
             let mut on = footers;
-            if ui.checkbox(&mut on, "Footers").changed() {
+            if ui.checkbox(&mut on, tr("Footers")).changed() {
                 run(app, "master.placeholders", json!({"footers": on}));
             }
         });
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Table, "Insert\nPlaceholder", true);
+        let r = big_button(ui, Icon::Table, tr("Insert\nPlaceholder"), true);
         egui::Popup::menu(&r).show(|ui| {
             for (l, k) in
                 [("Content", "content"), ("Text", "text"), ("Picture", "picture"), ("Chart", "chart"), ("Table", "table"), ("Media", "media")]
             {
-                if ui.button(l).clicked() {
+                if ui.button(tr(l)).clicked() {
                     run(app, "master.insertPlaceholder", json!({"kind": k}));
                 }
             }
         });
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Themes, "Themes", true);
+        let r = big_button(ui, Icon::Themes, tr("Themes"), true);
         egui::Popup::menu(&r).show(|ui| {
             for th in deckcraft_model::theme::builtin_themes() {
                 if ui.button(&th.name).clicked() {
@@ -57,14 +58,14 @@ pub(super) fn slide_master(app: &mut SlideApp, ui: &mut Ui) {
                 }
             }
             ui.separator();
-            if ui.button("Browse for Themes…").clicked() {
+            if ui.button(tr("Browse for Themes…")).clicked() {
                 run(app, "app.browseThemeDialog", json!({}));
             }
         });
         big(app, ui, Icon::FormatBackground, "Background\nStyles", "view.pane", json!({"pane": "background"}));
     });
     group(ui, |ui| {
-        if big_button(ui, Icon::Close, "Close\nMaster View", true).clicked() {
+        if big_button(ui, Icon::Close, tr("Close\nMaster View"), true).clicked() {
             run(app, "view.closeMaster", json!({}));
         }
     });
@@ -83,7 +84,7 @@ pub(super) fn notes_master(app: &mut SlideApp, ui: &mut Ui) {
             rows(ui, |ui| {
                 for (label, key, k) in col {
                     let mut on = shown(app, k);
-                    if ui.checkbox(&mut on, label).changed() {
+                    if ui.checkbox(&mut on, tr(label)).changed() {
                         run(app, "notes.placeholders", json!({ key: on }));
                     }
                 }
@@ -94,7 +95,7 @@ pub(super) fn notes_master(app: &mut SlideApp, ui: &mut Ui) {
         big(app, ui, Icon::FormatBackground, "Background\nStyles", "view.pane", json!({"pane": "background"}));
     });
     group(ui, |ui| {
-        if big_button(ui, Icon::Close, "Close\nMaster View", true).clicked() {
+        if big_button(ui, Icon::Close, tr("Close\nMaster View"), true).clicked() {
             run(app, "view.closeMaster", json!({}));
         }
     });
@@ -102,7 +103,7 @@ pub(super) fn notes_master(app: &mut SlideApp, ui: &mut Ui) {
 
 pub(super) fn handout_master(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Layout, &format!("Slides Per\nPage: {}", app.ui.handout_per_page), true);
+        let r = big_button(ui, Icon::Layout, &trf("Slides Per\nPage: {}", &[&app.ui.handout_per_page]), true);
         egui::Popup::menu(&r).show(|ui| {
             for n in [1u8, 2, 3, 4, 6, 9] {
                 if ui.selectable_label(app.ui.handout_per_page == n, format!("{n} Slide{}", if n == 1 { "" } else { "s" })).clicked() {
@@ -124,7 +125,7 @@ pub(super) fn handout_master(app: &mut SlideApp, ui: &mut Ui) {
                 ("Page Number", "pageNumber", PhType::SlideNum),
             ] {
                 let mut on = shown(app, k);
-                if ui.checkbox(&mut on, label).changed() {
+                if ui.checkbox(&mut on, tr(label)).changed() {
                     run(app, "handout.placeholders", json!({ key: on }));
                 }
             }
@@ -134,7 +135,7 @@ pub(super) fn handout_master(app: &mut SlideApp, ui: &mut Ui) {
         big(app, ui, Icon::FormatBackground, "Background\nStyles", "view.pane", json!({"pane": "background"}));
     });
     group(ui, |ui| {
-        if big_button(ui, Icon::Close, "Close\nMaster View", true).clicked() {
+        if big_button(ui, Icon::Close, tr("Close\nMaster View"), true).clicked() {
             run(app, "view.closeMaster", json!({}));
         }
     });

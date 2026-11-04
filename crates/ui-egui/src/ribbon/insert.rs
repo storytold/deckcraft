@@ -5,16 +5,17 @@ use super::{
     Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, big, big_button, big_button_ex, enabled, group, json, menu_item, pos2,
     run, tip, vec2,
 };
+use crate::i18n::{tr, trf};
 
 /// Photo Album is a split button: the main click starts a new album, the arrow edits one.
 fn photo_album_button(app: &mut SlideApp, ui: &mut Ui) {
     let en = enabled(app, "insert.photoAlbum");
-    let (main, arrow) = big_button_ex(ui, Icon::Picture, "Photo\nAlbum", en, true, false);
+    let (main, arrow) = big_button_ex(ui, Icon::Picture, tr("Photo\nAlbum"), en, true, false);
     let _ = main.clone().on_hover_text(tip("insert.photoAlbum", "Photo Album…"));
-    main.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, en, "Photo Album…"));
+    main.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, en, tr("Photo Album…")));
     if let Some(a) = &arrow {
-        let _ = a.clone().on_hover_text("Photo Album options");
-        a.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, en, "Photo Album options"));
+        let _ = a.clone().on_hover_text(tr("Photo Album options"));
+        a.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, en, tr("Photo Album options")));
     }
     if main.clicked() {
         run(app, "insert.photoAlbum", json!({}));
@@ -31,7 +32,7 @@ fn photo_album_button(app: &mut SlideApp, ui: &mut Ui) {
 
 pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
-        let (main, arrow) = big_button_ex(ui, Icon::NewSlide, "New\nSlide", enabled(app, "slide.new"), true, false);
+        let (main, arrow) = big_button_ex(ui, Icon::NewSlide, tr("New\nSlide"), enabled(app, "slide.new"), true, false);
         if main.clicked() {
             run(app, "slide.new", json!({}));
         }
@@ -40,18 +41,18 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
         }
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Table, "Table", enabled(app, "insert.table"));
+        let r = big_button(ui, Icon::Table, tr("Table"), enabled(app, "insert.table"));
         egui::Popup::menu(&r).show(|ui| {
             if let Some((rr, cc)) = table_grid_picker(ui) {
                 run(app, "insert.table", json!({"rows": rr, "cols": cc}));
                 ui.close();
             }
             ui.separator();
-            if ui.button("Insert Table…").clicked() {
+            if ui.button(tr("Insert Table…")).clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("table"));
                 ui.close();
             }
-            if ui.button("Draw Table").clicked() {
+            if ui.button(tr("Draw Table")).clicked() {
                 app.session.set_tool(deckcraft_engine::ToolKind::Shape { preset: deckcraft_engine::tools::DRAW_TABLE.into() });
                 ui.close();
             }
@@ -60,20 +61,20 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         big(app, ui, Icon::Picture, "Pictures", "app.insertPictureDialog", json!({}));
         photo_album_button(app, ui);
-        let r = big_button(ui, Icon::Screenshot, "Screenshot", false);
-        let _ = r.on_hover_text("Screenshot (not available yet)");
+        let r = big_button(ui, Icon::Screenshot, tr("Screenshot"), false);
+        let _ = r.on_hover_text(tr("Screenshot (not available yet)"));
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Shapes, "Shapes", enabled(app, "shape.insert"));
+        let r = big_button(ui, Icon::Shapes, tr("Shapes"), enabled(app, "shape.insert"));
         egui::Popup::menu(&r).show(|ui| {
             if let Some(p) = shapes_gallery(ui) {
                 app.session.set_tool(deckcraft_engine::ToolKind::Shape { preset: p.to_string() });
             }
         });
-        let r = big_button(ui, Icon::Icons, "Icons", enabled(app, "insert.icon"));
+        let r = big_button(ui, Icon::Icons, tr("Icons"), enabled(app, "insert.icon"));
         egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(340.0).show(|ui| icon_library(app, ui));
         big(app, ui, Icon::SmartArt, "SmartArt", "app.dialog", json!({"id": "smartart"}));
-        let r = big_button(ui, Icon::Chart, "Chart", enabled(app, "insert.chart"));
+        let r = big_button(ui, Icon::Chart, tr("Chart"), enabled(app, "insert.chart"));
         egui::Popup::menu(&r).show(|ui| {
             for k in chart_menu_types() {
                 if k.is_none() {
@@ -88,10 +89,10 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
         });
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Zoom, "Zoom", enabled(app, "insert.zoom"));
+        let r = big_button(ui, Icon::Zoom, tr("Zoom"), enabled(app, "insert.zoom"));
         egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(300.0).show(|ui| zoom_menu(app, ui));
         big(app, ui, Icon::Link, "Link", "app.dialog", json!({"id": "hyperlink"}));
-        let r = big_button(ui, Icon::Action, "Action", enabled(app, "insert.actionButton"));
+        let r = big_button(ui, Icon::Action, tr("Action"), enabled(app, "insert.actionButton"));
         egui::Popup::menu(&r).show(|ui| {
             for k in ["back", "forward", "beginning", "end", "home", "information", "return", "movie", "document", "sound", "help", "custom"] {
                 if ui.button(format!("Action Button: {k}")).clicked() {
@@ -100,7 +101,7 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
             }
             ui.separator();
             let has_sel = app.session.active().is_some_and(|s| !s.selection.shapes.is_empty());
-            if ui.add_enabled(has_sel, egui::Button::new("Action Settings…")).clicked() {
+            if ui.add_enabled(has_sel, egui::Button::new(tr("Action Settings…"))).clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("action"));
             }
         });
@@ -111,10 +112,10 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         big(app, ui, Icon::TextBox, "Text\nBox", "insert.textBox", json!({}));
         big(app, ui, Icon::HeaderFooter, "Header &\nFooter", "app.dialog", json!({"id": "headerFooter"}));
-        let r = big_button(ui, Icon::WordArt, "WordArt", enabled(app, "insert.wordArt"));
+        let r = big_button(ui, Icon::WordArt, tr("WordArt"), enabled(app, "insert.wordArt"));
         egui::Popup::menu(&r).show(|ui| {
             for i in 0..6 {
-                if ui.button(format!("WordArt style {}", i + 1)).clicked() {
+                if ui.button(trf("WordArt style {}", &[&(i + 1)])).clicked() {
                     run(app, "insert.wordArt", json!({"style": i}));
                 }
             }
@@ -139,7 +140,7 @@ pub fn table_grid_picker(ui: &mut Ui) -> Option<(usize, usize)> {
     let mut hover: (usize, usize) = ui.data_mut(|d| d.get_temp(id).unwrap_or((0, 0)));
     let cell = 16.0;
     let label = if hover.0 > 0 { format!("{}x{} Table", hover.1, hover.0) } else { "Insert Table".into() };
-    ui.label(label);
+    ui.label(tr(&label));
     let (rect, resp) = ui.allocate_exact_size(vec2(10.0 * (cell + 2.0), 8.0 * (cell + 2.0)), Sense::click());
     if let Some(p) = resp.hover_pos() {
         let c = ((p.x - rect.min.x) / (cell + 2.0)).floor() as usize + 1;
@@ -171,7 +172,7 @@ fn render_icon_categories(app: &mut SlideApp, ui: &mut Ui, icons: &[deckcraft_en
         }
     }
     for cat in cats {
-        ui.label(egui::RichText::new(cat).small().strong());
+        ui.label(egui::RichText::new(tr(cat)).small().strong());
         ui.horizontal_wrapped(|ui| {
             for icon in icons.iter().filter(|i| i.category == cat) {
                 icon_cell(app, ui, icon, color, hover);
@@ -191,7 +192,7 @@ fn render_filtered_icons(app: &mut SlideApp, ui: &mut Ui, icons: &[deckcraft_eng
         }
     });
     if n == 0 {
-        ui.label("No icons match.");
+        ui.label(tr("No icons match."));
     }
 }
 
@@ -201,7 +202,7 @@ fn icon_library(app: &mut SlideApp, ui: &mut Ui) {
     let (color, hover) = (t.text, t.hover);
     let id = ui.scope_id().with("icon-query");
     let mut query = ui.data_mut(|d| d.get_temp::<String>(id).unwrap_or_default());
-    ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search icons").desired_width(ui.available_width()));
+    ui.add(egui::TextEdit::singleline(&mut query).hint_text(tr("Search icons")).desired_width(ui.available_width()));
     let q = query.trim().to_lowercase();
     ui.data_mut(|d| d.insert_temp(id, query));
     let icons = deckcraft_engine::icons::icons();

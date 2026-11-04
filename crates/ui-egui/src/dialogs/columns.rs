@@ -1,4 +1,5 @@
 use super::{Color32, Dialog, SlideApp, Ui, Value, buttons, field, field_of, json, num_text};
+use crate::i18n::tr;
 
 /// The Columns dialog's changed fields as `format.columns` params: Number and Spacing (inches,
 /// sent in points). A field left as the dialog showed it is left out, so each selected text box
@@ -32,13 +33,13 @@ fn columns_value(d: &Dialog, shown_count: &str, shown_spacing: &str) -> Result<O
 pub(super) fn columns_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let count = d.params.get("count").and_then(Value::as_u64).unwrap_or(1).to_string();
     let spacing = num_text(d.params.get("spacing").and_then(Value::as_f64).unwrap_or(0.0) / 72.0);
-    field(ui, d, "Number:", "count", &count);
-    field(ui, d, "Spacing (in):", "spacing", &spacing);
+    field(ui, d, tr("Number:"), "count", &count);
+    field(ui, d, tr("Spacing (in):"), "spacing", &spacing);
     if let Some(err) = d.fields.get("error").cloned().filter(|s| !s.is_empty()) {
         ui.add_space(4.0);
-        ui.label(egui::RichText::new(err).color(Color32::from_rgb(0xB0, 0x30, 0x30)));
+        ui.label(egui::RichText::new(tr(&err)).color(Color32::from_rgb(0xB0, 0x30, 0x30)));
     }
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, tr("OK"));
     if ok {
         let applied = columns_value(d, &count, &spacing).and_then(|p| match p {
             Some(p) => app.run("format.columns", p).map(|_| ()),
