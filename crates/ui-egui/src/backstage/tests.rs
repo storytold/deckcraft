@@ -393,6 +393,35 @@ fn ctrl_w_asks_before_closing_unsaved_changes() {
     assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("close"));
 }
 
+/// Framed by a page that keeps the files (`?host=parent`), the Close prompt's Save is a real save:
+/// when the page doesn't get the file the presentation stays open with its changes, and when it
+/// does the presentation closes. (A plain browser download closes either way.)
+#[test]
+fn host_close_prompt_keeps_the_presentation_when_the_save_fails() {
+    for fail in [true, false] {
+        let services = Services {
+            host_save: Some(Box::new(move |_: &str, _: &[u8], _: bool| if fail { Err("the page is gone".into()) } else { Ok(()) })),
+            download: Some(Box::new(|_: &str, _: &[u8]| {})),
+            ..Default::default()
+        };
+        let mut h = harness(SlideApp::new(Session::with_new(), services));
+        h.state_mut().run("slide.new", json!({})).unwrap();
+        h.run_steps(2);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::W);
+        h.run_steps(3);
+        assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("close"));
+        // Enter is the prompt's Save.
+        h.key_press(Key::Enter);
+        h.run_steps(3);
+        assert!(h.state().dialog.is_none(), "fail={fail}");
+        let open = h.state().session.documents().len();
+        assert_eq!(open, usize::from(fail), "fail={fail}: open presentations");
+        if fail {
+            assert!(h.state().session.active().unwrap().is_dirty());
+        }
+    }
+}
+
 /// Info shows the presentation's counts and properties, and edits them through file.properties.
 #[test]
 fn info_shows_and_edits_the_properties() {

@@ -2,6 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (community PR wave 10: PPTX and native saves keep table cell centred anchoring, text overflow, compatible line spacing, normalised character height, Thai distributed alignment, RTL table direction, alternate run language and reflection transforms; imported effects placed by parent time-node delays; Reuse Slides fits the destination size and brings custom table styles; deleted slides leave custom shows; merged shapes drop their animations; Compress Pictures measures grouped pictures at displayed size; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -150,6 +151,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
 | 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
 | 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |
@@ -332,6 +334,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 |---|---|---|
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
 | 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |
+| 2026-11-03 | trivial | Progress log: web `?host=parent` bridge to a framing page; scores unchanged |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-11-02 | trivial | Progress log: tiled picture fills keep their size in scaled groups. Scores and milestone names unchanged |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
