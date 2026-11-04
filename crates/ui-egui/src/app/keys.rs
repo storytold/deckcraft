@@ -1,5 +1,5 @@
 use super::clipboard::OBJECTS_MARKER;
-use super::*;
+use super::{Mods, SlideApp, Value, backstage, json, menus};
 
 impl SlideApp {
     /// The app shortcuts that still make sense on the empty File/start screen: create, open,

@@ -1,4 +1,4 @@
-use super::*;
+use super::SlideApp;
 
 /// The selection's proofing language and whether it's marked Do Not Check Spelling: the run at
 /// the caret, else the first run of the first selected shape; US English when none says.
