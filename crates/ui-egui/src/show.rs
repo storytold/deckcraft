@@ -153,7 +153,7 @@ struct BackKey {
 
 /// A slide's backdrop (background, master and layout graphics), kept while the slide is shown so
 /// animation frames render only the slide's own shapes over it. The backdrop can cost far more
-/// than the shapes: a full-slide picture with a glow in the layout made animations crawl at 2â€“3
+/// than the shapes: a full-slide picture with a glow in the layout made animations crawl at 2–3
 /// frames a second. `rx` brings it from another thread when it is rendered ahead of time.
 struct Backdrop {
     /// The presentation it was rendered from, held so its address (in `key`) can't be reused by
@@ -170,7 +170,7 @@ struct Transition {
     from: Option<usize>,
     morph: Option<TextureHandle>,
     /// Backgrounds and contents of the old and new slides, rendered once when the transition
-    /// moves contents over backgrounds (Pan, Ferris Wheel, Revealâ€¦): old back, old content, new
+    /// moves contents over backgrounds (Pan, Ferris Wheel, Reveal…): old back, old content, new
     /// back, new content.
     parts: Option<[Option<TextureHandle>; 4]>,
     start: f64,
