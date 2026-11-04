@@ -11,8 +11,8 @@
 //! the process alive until it is dismissed; the exit code afterwards is still the error's.
 
 /// What the dialog and the log say. Any error `run_native` returns lands here. One from the app's
-/// own start-up (`AppCreation`, e.g. a `--control` file it can't write) says only that it couldn't
-/// start. Any other comes from the window or graphics, possibly after the window was up, so
+/// own start-up (`AppCreation`; DeckCraft's creator does not return one today) says only that it
+/// couldn't start. Any other comes from the window or graphics, possibly after the window was up, so
 /// graphics is named as the likely cause, not the certain one.
 pub(crate) fn message(error: &eframe::Error) -> String {
     match error {
