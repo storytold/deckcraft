@@ -389,14 +389,18 @@ fn paint_cameo(painter: &egui::Painter, texture: &TextureHandle, shape: &Shape, 
     if polygons.is_empty() {
         return;
     }
-    let affine = x.affine();
-    // A dark backing inside the same outline, so a frame that arrives with transparency or not at
-    // all still reads as a camera and never as the slide behind it.
-    for poly in &polygons {
-        let points: Vec<Pos2> = poly.iter().map(|p| to_screen(affine * *p)).collect();
-        painter.add(egui::Shape::Path(egui::epaint::PathShape { points, closed: true, fill: Color32::BLACK, stroke: egui::Stroke::NONE.into() }));
+    let mesh = cameo_mesh(&polygons, x, texture.id(), texture.size(), to_screen);
+    if mesh.is_empty() {
+        return;
     }
-    painter.add(egui::Shape::mesh(cameo_mesh(&polygons, x, texture.id(), texture.size(), to_screen)));
+    // A dark backing over the same triangles, so a frame that arrives with transparency or not at
+    // all still reads as a camera and never covers the slide outside the Camera Shape. `PathShape`
+    // fill would only be correct for convex outlines, and Camera Shape offers concave presets.
+    let mut backing = Mesh::default();
+    backing.indices.clone_from(&mesh.indices);
+    backing.vertices = mesh.vertices.iter().map(|v| egui::epaint::Vertex { pos: v.pos, uv: Pos2::ZERO, color: Color32::BLACK }).collect();
+    painter.add(egui::Shape::mesh(backing));
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 /// The filled outline of `shape` as simple polygons in shape-local space (`0..w`, `0..h`),
@@ -772,6 +776,35 @@ mod tests {
             let painted = mesh.vertices.iter().any(|v| (v.pos.x as f64 - px).abs() < 0.01 && (v.pos.y as f64 - py).abs() < 0.01);
             assert!(painted, "the corner ({px}, {py}) is not painted");
         }
+    }
+
+    #[test]
+    fn a_concave_camera_shape_is_filled_by_its_own_triangles() {
+        // Star reachable from Camera Shape: an ear-clipped fill, not a fan that spans the notches.
+        let (shape, x) = cameo("star5");
+        let polygons = cameo_polygons(&shape, x.w, x.h);
+        assert_eq!(polygons.len(), 1, "one filled outline");
+        let mesh = cameo_mesh(&polygons, x, egui::TextureId::User(1), [640, 480], &identity);
+        assert!(!mesh.indices.is_empty(), "the star is painted");
+        let inv = x.affine().inverse();
+        for t in mesh.indices.chunks(3) {
+            let [a, b, c] = [t[0], t[1], t[2]].map(|i| mesh.vertices[i as usize].pos);
+            let centroid = inv * Point::new(((a.x + b.x + c.x) / 3.0) as f64, ((a.y + b.y + c.y) / 3.0) as f64);
+            assert!(inside_polygon(&polygons[0], centroid), "a triangle at ({}, {}) fills a notch", centroid.x, centroid.y);
+        }
+    }
+
+    /// Even-odd containment for a simple polygon (test helper).
+    fn inside_polygon(pts: &[Point], p: Point) -> bool {
+        let n = pts.len();
+        let mut inside = false;
+        for i in 0..n {
+            let (a, b) = (pts[i], pts[(i + 1) % n]);
+            if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+                inside = !inside;
+            }
+        }
+        inside
     }
 
     #[test]
