@@ -541,13 +541,11 @@ impl SlideApp {
     /// when the page sent one with a presentation extension and the file is an intact
     /// presentation, so Save hands it back under that name and format; anything else (no name, an
     /// outline, a damaged file opened as a repaired copy) is untitled, and its first Save is a new
-    /// file. An untouched untitled presentation that was the only one open (the blank one the page
-    /// starts with) gives way to the presentation that opened.
+    /// file. The first presentation that opens takes the place of the empty one host mode started
+    /// with ([`Self::start_for_host`]), if that one is still open, untitled and unchanged; later
+    /// files open beside the others.
     pub fn open_from_host(&mut self, name: Option<&str>, bytes: &[u8]) {
-        let blank = match self.session.documents() {
-            [d] if d.path.is_none() && !d.is_dirty() => Some(d.uid),
-            _ => None,
-        };
+        let blank = self.host_start.filter(|&uid| self.session.documents().iter().any(|d| d.uid == uid && d.path.is_none() && !d.is_dirty()));
         let before = self.session.documents().len();
         let shown = name.unwrap_or("Presentation");
         let named = name.is_some_and(|n| is_presentation_name(&n.to_ascii_lowercase()));
@@ -562,8 +560,11 @@ impl SlideApp {
             self.notify(e.to_string());
         }
         self.drain_requests();
-        if self.session.documents().len() > before
-            && let Some(opened) = self.session.active().map(|d| d.uid)
+        if self.session.documents().len() <= before {
+            return;
+        }
+        self.host_start = None;
+        if let Some(opened) = self.session.active().map(|d| d.uid)
             && let Some(i) = self.session.documents().iter().position(|d| Some(d.uid) == blank)
         {
             self.session.close_document(i);
@@ -571,6 +572,14 @@ impl SlideApp {
                 self.session.set_active(i);
             }
         }
+    }
+
+    /// Host mode (`?host=parent`) starts with an empty presentation instead of the sample, for
+    /// the first file the page sends to take its place ([`Self::open_from_host`]).
+    pub fn start_for_host(&mut self) -> Result<(), String> {
+        self.run("file.new", json!({}))?;
+        self.host_start = self.session.active().map(|d| d.uid);
+        Ok(())
     }
 
     /// Act on requests commands left for the UI.

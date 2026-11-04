@@ -422,6 +422,35 @@ fn host_close_prompt_keeps_the_presentation_when_the_save_fails() {
     }
 }
 
+/// Framed by a page that keeps the files, Save As › Save under the presentation's own name goes
+/// back to the slide once the page has the file. The bug this prevents: that save leaves the
+/// file and the dirty flag as they were, so the Save As page stayed open and a second click sent
+/// the file again.
+#[test]
+fn host_save_as_under_the_same_name_returns_to_the_slide() {
+    let got: Rc<RefCell<Vec<(String, bool)>>> = Default::default();
+    let saves = got.clone();
+    let services = Services {
+        host_save: Some(Box::new(move |name: &str, _: &[u8], save_as: bool| {
+            saves.borrow_mut().push((name.to_string(), save_as));
+            Ok(())
+        })),
+        download: Some(Box::new(|_: &str, _: &[u8]| {})),
+        ..Default::default()
+    };
+    let mut app = SlideApp::new(Session::new(), services);
+    app.start_for_host().unwrap();
+    let deck = deckcraft_engine::cmd::file::save_bytes(&Session::with_new().doc().unwrap().doc, "pptx").unwrap();
+    app.open_from_host(Some("deck.pptx"), &deck);
+    let mut h = harness(app);
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Save");
+    h.run_steps(3);
+    assert_eq!(*got.borrow(), [("deck.pptx".to_string(), true)]);
+    assert!(h.state().backstage.is_none(), "the save returns to the slide");
+}
+
 /// Info shows the presentation's counts and properties, and edits them through file.properties.
 #[test]
 fn info_shows_and_edits_the_properties() {

@@ -29,8 +29,10 @@ fn host_app(fail: bool) -> (SlideApp, Got) {
         download: Some(Box::new(move |name: &str, bytes: &[u8]| downloads.borrow_mut().push((name.to_string(), false, bytes.to_vec())))),
         ..Default::default()
     };
-    // The page starts with a blank presentation, as the web shell does in host mode.
-    (SlideApp::new(Session::with_new(), services), got)
+    // Host mode starts as the web shell starts it: an empty presentation for the page's file.
+    let mut app = SlideApp::new(Session::new(), services);
+    app.start_for_host().unwrap();
+    (app, got)
 }
 
 /// A .pptx with `slides` slides, as the page would send it.
@@ -135,6 +137,19 @@ fn an_edited_start_presentation_stays_open() {
     edit(&mut app);
     app.open_from_host(Some("deck.pptx"), &pptx(1));
     assert_eq!(app.session.documents().len(), 2);
+    assert_eq!(path(&app).as_deref(), Some("deck.pptx"));
+}
+
+/// Only the first file from the page takes the start presentation's place. The bug this
+/// prevents: a file sent without a name opens untitled and unchanged, as the start presentation
+/// is, so the page's next file closed it.
+#[test]
+fn only_the_first_file_from_the_page_replaces_the_start_presentation() {
+    let (mut app, _) = host_app(false);
+    app.open_from_host(None, &pptx(2));
+    app.open_from_host(Some("deck.pptx"), &pptx(3));
+    let slides: Vec<usize> = app.session.documents().iter().map(|d| d.doc.slides.len()).collect();
+    assert_eq!(slides, [2, 3], "the file sent without a name stays open beside the next one");
     assert_eq!(path(&app).as_deref(), Some("deck.pptx"));
 }
 

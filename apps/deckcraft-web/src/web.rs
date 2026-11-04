@@ -58,7 +58,11 @@ pub fn start() {
                     }
                     let mut app = SlideApp::new(Session::new(), services);
                     // In host mode the parent sends the presentation to edit; no sample meanwhile.
-                    if app_bridge.is_none() && !query_has("blank") {
+                    if app_bridge.is_some() {
+                        if let Err(e) = app.start_for_host() {
+                            log::error!("new presentation: {e}");
+                        }
+                    } else if !query_has("blank") {
                         if let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
                             log::error!("sample deck: {e}");
                         }

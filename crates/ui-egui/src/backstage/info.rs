@@ -182,9 +182,12 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
         {
             let fmt = bs.file_type;
             let done = if matches!(fmt, "pptx" | "deckcraft") {
-                let before = app.session.active().map(|d| (d.path.clone(), d.is_dirty()));
+                // A save bumps the revision, also one under the same name that leaves the path
+                // and the dirty flag as they were; a cancelled dialog or a failed save doesn't.
+                let snapshot = |app: &SlideApp| app.session.active().map(|d| (d.path.clone(), d.is_dirty(), d.revision));
+                let before = snapshot(app);
                 app.save_as_dialog(fmt);
-                web || app.session.active().map(|d| (d.path.clone(), d.is_dirty())) != before
+                web || snapshot(app) != before
             } else {
                 app.export_as(fmt, json!({}))
             };

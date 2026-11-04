@@ -335,6 +335,9 @@ pub struct SlideApp {
     next_file_id: u64,
     /// Picks and drops whose bytes have not arrived yet.
     pending_files: Vec<PendingFile>,
+    /// The empty presentation host mode starts with ([`SlideApp::start_for_host`]), until the
+    /// first file the page sends takes its place.
+    host_start: Option<u64>,
     /// Owner/generation/cause bookkeeping for the canvas text IME producer.
     ime_tracker: egui::ime_context::ImeContextTracker,
     /// Canvas IME geometry for this pass: the caret while editing, or the selected shape.
