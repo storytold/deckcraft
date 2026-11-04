@@ -22,7 +22,11 @@ pub fn missing_fonts_message(fonts: &[String]) -> Option<String> {
         [a] => a.clone(),
         [a, b] => format!("{a} and {b}"),
         [a, b, c] => format!("{a}, {b} and {c}"),
-        [a, b, c, rest @ ..] => format!("{a}, {b}, {c} and {} more", rest.len()),
+        list => {
+            let (last, rest) = list.split_last()?;
+            let joined = rest.join(", ");
+            format!("{joined}, and {last}")
+        }
     };
     let (it, them) = if fonts.len() == 1 { ("isn't", "it") } else { ("aren't", "them") };
     Some(format!("{names} {it} installed on this computer. Text that uses {them} is shown in a similar font."))
@@ -60,6 +64,19 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
                 ui.set_max_width(520.0);
                 ui.horizontal(|ui| {
                     ui.add(egui::Label::new(egui::RichText::new(&text).font(theme::font(13.0)).color(t.text)).wrap());
+                    ui.add_space(8.0);
+                    // Copy button
+                    let (copy_r, copy_resp) = ui.allocate_exact_size(vec2(20.0, 20.0), egui::Sense::click());
+                    copy_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Copy"));
+                    if copy_resp.hovered() {
+                        ui.painter().rect_filled(copy_r, CornerRadius::same(4), t.hover);
+                    }
+                    icons::paint(ui.painter(), copy_r.shrink(3.0), Icon::Copy, t.text_dim, false);
+                    if copy_resp.on_hover_text("Copy warning to clipboard").clicked() {
+                        ui.ctx().copy_text(text.clone());
+                    }
+                    ui.add_space(4.0);
+                    // Close button
                     let (r, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), egui::Sense::click());
                     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close"));
                     if resp.hovered() {
@@ -90,6 +107,6 @@ mod tests {
         assert_eq!(f(&["Aptos"]).unwrap(), "Aptos isn't installed on this computer. Text that uses it is shown in a similar font.");
         assert!(f(&["Aptos", "Sora"]).unwrap().starts_with("Aptos and Sora aren't installed"));
         assert!(f(&["A", "B", "C"]).unwrap().starts_with("A, B and C aren't"));
-        assert!(f(&["A", "B", "C", "D", "E"]).unwrap().starts_with("A, B, C and 2 more aren't"));
+        assert!(f(&["A", "B", "C", "D", "E"]).unwrap().starts_with("A, B, C, D, and E aren't"));
     }
 }
