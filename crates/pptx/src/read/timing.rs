@@ -206,27 +206,38 @@ pub struct MediaCue {
     pub interactive: bool,
     /// The node waits for a click, so it is not slide-start media.
     pub click: bool,
+    /// Milliseconds the enclosing click group's start condition delays the clip (`0` = with the
+    /// slide). Kept so a delayed autoplay clip is written back with its delay.
+    pub delay_ms: u32,
 }
 
-fn walk_media(e: &El, interactive: bool, click: bool, ctx: &IdCtx, out: &mut Vec<MediaCue>, depth: usize) {
+fn walk_media(e: &El, interactive: bool, click: bool, delay: u32, ctx: &IdCtx, out: &mut Vec<MediaCue>, depth: usize) {
     if depth > 64 || out.len() >= 64 {
         return;
     }
     let interactive = interactive || (e.is("cTn") && e.attr("nodeType") == Some("interactiveSeq"));
     // A time node that starts `indefinite` waits for a click: everything below it, the media
-    // included, plays on that click. This is the click-group rule `collect` applies.
-    let click = click || (e.is("cTn") && waits_for_click(e));
+    // included, plays on that click. This is the click-group rule `collect` applies. A finite
+    // delay is how long after its click group (or the slide) the clip starts.
+    let starts_on_click = e.is("cTn") && waits_for_click(e);
+    let click = click || starts_on_click;
+    let delay = if starts_on_click {
+        0
+    } else {
+        let own = e.path(&["stCondLst", "cond"]).and_then(|c| c.attr("delay")).and_then(|d| d.trim().parse::<u32>().ok());
+        own.map_or(delay, |d| delay.saturating_add(d))
+    };
     if e.is("audio") || e.is("video") {
         if let Some(node) = e.child("cMediaNode")
             && let Some(spid) = node.path(&["tgtEl", "spTgt"]).and_then(|s| s.u32("spid"))
             && let Some(shape) = ctx.lookup(spid)
         {
-            out.push(MediaCue { shape, video: e.is("video"), interactive, click });
+            out.push(MediaCue { shape, video: e.is("video"), interactive, click, delay_ms: delay });
         }
         return;
     }
     for c in e.elements() {
-        walk_media(c, interactive, click, ctx, out, depth + 1);
+        walk_media(c, interactive, click, delay, ctx, out, depth + 1);
     }
 }
 
@@ -250,7 +261,7 @@ fn waits_for_click(ctn: &El) -> bool {
 pub fn media_cues(ctx: &IdCtx, timing: &El) -> Vec<MediaCue> {
     let Some(tn) = timing.child("tnLst") else { return vec![] };
     let mut out = Vec::new();
-    walk_media(tn, false, false, ctx, &mut out, 0);
+    walk_media(tn, false, false, 0, ctx, &mut out, 0);
     out
 }
 

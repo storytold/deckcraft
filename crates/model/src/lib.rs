@@ -254,6 +254,9 @@ pub struct MediaClip {
     pub height: u32,
     /// Recorded with Record Slide Show. The show skips it when Play Narrations is off.
     pub narration: bool,
+    /// Delay before slide-start media begins, from the timing tree's first start condition.
+    /// `None` starts with the slide; a click-triggered clip is not started by the slide at all.
+    pub start_delay_ms: Option<u32>,
 }
 
 /// A Cameo (Camera Format tab): PowerPoint's live camera feed on a picture shape. The shape stays

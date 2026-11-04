@@ -25,7 +25,9 @@ pub(super) fn styles_section(app: &mut SlideApp, ui: &mut Ui) {
             let r = widgets::small_button(ui, Icon::Shapes, "Camera Shape", en, false);
             egui::Popup::menu(&r).show(|ui| {
                 if let Some(p) = shapes_gallery(ui) {
-                    run(app, "shape.change", json!({"preset": p}));
+                    // The drawing tools' gallery also lists freeform shapes; a Cameo can only take
+                    // a preset `shape.change` knows.
+                    submit_camera_shape(app, p);
                 }
             });
             camera_border(app, ui, en);
@@ -71,7 +73,7 @@ fn camera_border(app: &mut SlideApp, ui: &mut Ui, enabled: bool) {
     }
     let Some(arrow) = arrow else { return };
     let sc = scheme(app);
-    widgets::arrow_popup(&main, &arrow).show(|ui| outline_menu(app, ui, &sc));
+    widgets::arrow_color_popup(&main, &arrow).show(|ui| outline_menu(app, ui, &sc));
 }
 
 /// A gallery tile: the style's shape, frame and shadow over a camera-blue body.
@@ -116,6 +118,16 @@ fn paint_style(p: &egui::Painter, r: Rect, i: usize) {
     let lens = r.center();
     let lr = (r.width().min(r.height()) * 0.18).max(1.5);
     p.add(egui::Shape::circle_filled(lens, lr, Color32::from_rgb(0x1B, 0x2A, 0x36)));
+}
+
+/// Apply a gallery pick to the Cameo, ignoring the freeform tools the shared gallery also lists.
+fn submit_camera_shape(app: &mut SlideApp, preset: &str) {
+    let draw_tool = matches!(preset, "curve" | "freeform" | "scribble");
+    if draw_tool {
+        app.set_status("Pick a shape preset for a Cameo");
+        return;
+    }
+    run(app, "shape.change", json!({"preset": preset}));
 }
 
 #[cfg(test)]

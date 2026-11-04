@@ -76,10 +76,15 @@ pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, layout: &Layout) {
             }
         }
         ui.separator();
-        if ui.checkbox(&mut rec.camera_preview, "Camera preview").changed() {
-            changed = true;
-        }
-        if ui.checkbox(&mut rec.notes_open, "Notes pane").changed() {
+        // The shell has no camera surface yet: the switch is offered, but reads as unavailable
+        // rather than toggling a preview nothing draws.
+        let camera = ui.add_enabled(false, egui::Checkbox::new(&mut rec.camera_preview, "Camera preview"));
+        let _ = camera.on_hover_text("The Record view's camera preview arrives with the camera section");
+        // Slide view hides the pane, so its switch has nothing to show.
+        let notes = ui.add_enabled(rec.view != ViewKind::Slide, egui::Checkbox::new(&mut rec.notes_open, "Notes pane"));
+        let changed_notes = notes.changed();
+        let _ = notes.on_hover_text("Slide view hides the script");
+        if changed_notes {
             changed = true;
         }
     });

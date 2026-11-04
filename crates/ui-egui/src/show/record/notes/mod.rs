@@ -46,9 +46,10 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
     }
     // Follow the slide and the view: a draft belongs to the slide it was written on, and a
     // teleprompter take restarts at the top when it is shown again.
-    if rec.notes_edit.slide != Some(slide) {
+    let slide_id = doc.slides.get(slide).map(|s| s.id);
+    if rec.notes_edit.slide != slide_id {
         edit::flush(app, rec, doc, slide);
-        rec.notes_edit.reset(slide);
+        rec.notes_edit.reset(slide_id);
         rec.notes_scroll = 0.0;
         rec.teleprompter.reset();
     }

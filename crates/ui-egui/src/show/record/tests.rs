@@ -136,7 +136,8 @@ fn record_and_stop_are_wired_to_show_record() {
     h.run_steps(3);
     assert_eq!(h.state().show.as_ref().unwrap().record_view.status, RecordStatus::Recording);
     assert!(h.state().show.as_ref().unwrap().record_view.captured, "the take is marked");
-    h.get_by_label("Record").click();
+    // The button is named after what it does: a running take offers Stop.
+    h.get_by_label("Stop").click();
     h.run_steps(3);
     assert_eq!(h.state().show.as_ref().unwrap().record_view.status, RecordStatus::Idle);
 }

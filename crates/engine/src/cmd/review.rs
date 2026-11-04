@@ -1427,11 +1427,13 @@ fn clear_recording(s: &mut Session, p: &Value) -> Result<Value> {
             let ids = recorded_shape_ids(&sl.shapes);
             let mut touched = false;
             if !ids.is_empty() {
-                for sh in &sl.shapes {
+                // The ids come from a tree walk, so the media must too: a recorded shape inside a
+                // group would otherwise leave its media behind.
+                deckcraft_model::walk(&sl.shapes, &mut |sh, _| {
                     if ids.contains(&sh.id) {
                         media.extend(shape_media_ids(sh));
                     }
-                }
+                });
                 let n = remove_shapes(&mut sl.shapes, &ids);
                 sl.animations.retain(|a| !ids.contains(&a.shape));
                 if sel.slide == *i {

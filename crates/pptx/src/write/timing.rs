@@ -594,9 +594,9 @@ fn shape_index<'a>(shapes: &'a [Shape], depth: usize, out: &mut std::collections
 
 /// Slide-start audio: narration and other clips set to play automatically. `(spid, volume in
 /// thousandths of a percent)`.
-fn autoplay_audio(shapes: &[Shape], idmap: &IdMap) -> Vec<(u32, u32)> {
+fn autoplay_audio(shapes: &[Shape], idmap: &IdMap) -> Vec<(u32, u32, u32, bool)> {
     let mut out = Vec::new();
-    fn walk(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<(u32, u32)>, depth: usize) {
+    fn walk(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<(u32, u32, u32, bool)>, depth: usize) {
         if depth > 8 || out.len() >= 32 {
             return;
         }
@@ -606,7 +606,7 @@ fn autoplay_audio(shapes: &[Shape], idmap: &IdMap) -> Vec<(u32, u32)> {
                     if let Some(spid) = idmap.get(s.id) {
                         let vol =
                             if m.volume.is_finite() { (m.volume.clamp(0.0, 1.0) * 100_000.0).round().clamp(0.0, 100_000.0) as u32 } else { 100_000 };
-                        out.push((spid, vol));
+                        out.push((spid, vol, m.start_delay_ms.unwrap_or(0), m.narration));
                     }
                 }
                 ShapeKind::Group { children, .. } => walk(children, idmap, out, depth + 1),
@@ -621,12 +621,13 @@ fn autoplay_audio(shapes: &[Shape], idmap: &IdMap) -> Vec<(u32, u32)> {
     out
 }
 
-fn audio_node(w: &mut W, ids: &mut Ids, spid: u32, vol: u32) {
+fn audio_node(w: &mut W, ids: &mut Ids, spid: u32, vol: u32, delay_ms: u32, narration: bool) {
     w.open0("p:audio");
-    w.open("p:cMediaNode", A::new().a("vol", vol.min(100_000)));
+    // The schema's own narration flag: PowerPoint uses it for Play Narrations.
+    w.open("p:cMediaNode", A::new().a("vol", vol.min(100_000)).o("isNarration", narration.then_some("1")));
     w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold").a("display", "0"));
     w.open0("p:stCondLst");
-    w.empty("p:cond", A::new().a("delay", 0));
+    w.empty("p:cond", A::new().a("delay", delay_ms));
     w.close("p:stCondLst");
     w.close("p:cTn");
     w.open0("p:tgtEl");
@@ -802,8 +803,8 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.close("p:nextCondLst");
         w.close("p:seq");
     }
-    for (spid, vol) in audio {
-        audio_node(w, &mut ids, spid, vol);
+    for (spid, vol, delay_ms, narration) in audio {
+        audio_node(w, &mut ids, spid, vol, delay_ms, narration);
     }
     w.close("p:childTnLst");
     w.close("p:cTn");

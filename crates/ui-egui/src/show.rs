@@ -571,6 +571,9 @@ impl Show {
         self.recorded.clear();
         self.laser_saved.clear();
         self.narration.clear();
+        // Strokes drawn before Record are the presenter's own browsing, not part of the take.
+        self.strokes.clear();
+        self.laser_live.clear();
     }
 
     /// Hold the slide clocks for as long as the recording is paused. The animation clock is

@@ -1284,6 +1284,9 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
             // A clip that waits for a click keeps `autoplay` off: the slide does not start it.
             if let deckcraft_model::ShapeKind::Media(clip) = &mut sh.kind {
                 clip.autoplay = !cue.click;
+                if !cue.click && cue.delay_ms > 0 {
+                    clip.start_delay_ms = Some(cue.delay_ms);
+                }
                 if narration && !cue.click {
                     clip.narration = true;
                 }
@@ -1309,9 +1312,11 @@ fn adopt_media_names(imp: &mut Imp, shapes: &[deckcraft_model::Shape]) {
     let mut found = Vec::new();
     deckcraft_model::walk(shapes, &mut |sh, _| {
         if let deckcraft_model::ShapeKind::Media(clip) = &sh.kind {
-            // `insert.audio`/`insert.video` keep the file name in `descr`; PowerPoint's own
-            // pictures name the shape after the file.
-            found.push((clip.media, if sh.descr.is_empty() { sh.name.clone() } else { sh.descr.clone() }));
+            // PowerPoint names the shape after the file; `insert.audio`/`insert.video` keep it in
+            // `descr` and leave `name` generated. Prefer whichever carries a real file name.
+            let file_like = |s: &str| s.rsplit_once('.').is_some_and(|(stem, ext)| !stem.is_empty() && !ext.is_empty() && ext.len() <= 5);
+            let name = if file_like(&sh.name) { sh.name.clone() } else { sh.descr.clone() };
+            found.push((clip.media, if name.is_empty() { sh.name.clone() } else { name }));
         }
     });
     for (media, name) in found {

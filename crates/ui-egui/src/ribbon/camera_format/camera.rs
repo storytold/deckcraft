@@ -40,7 +40,9 @@ fn preview_menu(app: &mut SlideApp, ui: &mut Ui) {
     ui.label(status_line(app));
     ui.separator();
     let on = app.camera_preview.is_on();
-    if ui.button(if on { "Turn Off Camera Preview" } else { "Turn On Camera Preview" }).clicked() {
+    // A running preview can always be stopped; starting one needs the command's own conditions.
+    let usable = on || enabled(app, "cameo.preview");
+    if ui.add_enabled(usable, egui::Button::new(if on { "Turn Off Camera Preview" } else { "Turn On Camera Preview" })).clicked() {
         run(app, "cameo.preview", json!({"on": !on}));
         ui.close();
     }
@@ -53,7 +55,8 @@ fn preview_menu(app: &mut SlideApp, ui: &mut Ui) {
     } else {
         for device in devices {
             let selected = picked.as_deref() == Some(device.id.as_str()) || (picked.is_none() && device.default);
-            if ui.selectable_label(selected, &device.name).clicked() {
+            let label = ui.add_enabled(usable, egui::Button::new(&device.name).selected(selected).frame(false));
+            if label.clicked() {
                 run(app, "cameo.preview", json!({"on": true, "device": device.id}));
                 ui.close();
             }

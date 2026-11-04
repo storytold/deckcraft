@@ -25,7 +25,12 @@ fn hint(status: RecordStatus) -> &'static str {
 /// Draw Record/Stop. Returns whether the take changed state this frame.
 pub(super) fn ui(ui: &mut Ui, show: &mut Show, rec: &mut RecordView, now: f64) -> bool {
     let button = ui.add(egui::Button::new(RichText::new(label(rec.status)).size(13.0).color(RED)).frame(false));
-    button.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Record"));
+    // Screen readers must hear what the button does, not what it used to be called.
+    let name = match rec.status {
+        RecordStatus::Idle => "Record",
+        RecordStatus::Recording | RecordStatus::Paused => "Stop",
+    };
+    button.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
     if button.on_hover_text(hint(rec.status)).clicked() {
         rec.toggle_record(show, now);
         return true;

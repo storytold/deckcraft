@@ -150,6 +150,13 @@ impl Recorder {
             }
             return Err(format!("The microphone stopped: {e}"));
         }
+        // A rejected take keeps its microphone running: the user can record more and stop again
+        // instead of being stuck with a stopped device and a frozen clock.
+        if let Some(take) = &self.take
+            && let Err(e) = check(take.rate, take.samples.len())
+        {
+            return Err(e);
+        }
         let Some(take) = self.take.take() else { return Err("No recording is in progress".into()) };
         if let Some(mic) = mic {
             mic.stop();

@@ -18,16 +18,19 @@ use crate::panels::notes::{self as notes_panel, Draft, Look};
 use super::RecordView;
 
 /// The notes editor's per-slide draft and the slide it belongs to.
+///
+/// The slide is held by id, not by index: the draft can outlive a `slide.move` or `slide.delete`
+/// while the field has focus, and an index would then write the text to a different slide.
 #[derive(Default)]
 pub(crate) struct State {
-    pub(super) slide: Option<usize>,
+    pub(super) slide: Option<deckcraft_model::SlideId>,
     draft: Draft,
 }
 
 impl State {
     /// Start a fresh draft for `slide`; the notes are loaded on the next [`ui`].
-    pub(super) fn reset(&mut self, slide: usize) {
-        self.slide = Some(slide);
+    pub(super) fn reset(&mut self, slide: Option<deckcraft_model::SlideId>) {
+        self.slide = slide;
         self.draft = Draft::default();
     }
 }
@@ -50,8 +53,9 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, rec: &mut RecordView, doc: &Ar
     // focused, is replaced by what the document holds now. An unsaved edit is kept: it is saved
     // once the field loses focus, so a refresh must not overwrite it first.
     let changed_elsewhere = !focused && !rec.notes_edit.draft.edited && rec.notes_edit.draft.body != notes;
-    if rec.notes_edit.slide != Some(slide) || changed_elsewhere {
-        rec.notes_edit.slide = Some(slide);
+    let slide_id = doc.slides.get(slide).map(|s| s.id);
+    if rec.notes_edit.slide != slide_id || changed_elsewhere {
+        rec.notes_edit.slide = slide_id;
         rec.notes_edit.draft = Draft::new(&notes);
     }
     // Escape leaves the field; it must not leave the Record view or stop the take.
@@ -83,7 +87,20 @@ pub(super) fn save(app: &mut SlideApp, rec: &mut RecordView, slide: usize) {
     if !rec.notes_edit.draft.edited {
         return;
     }
-    let index = rec.notes_edit.slide.unwrap_or(slide);
+    // Resolve the draft's slide id against the document as it is now. A slide deleted meanwhile
+    // means the edit has nowhere to go: skip it rather than write to whichever slide took the
+    // index.
+    let index = match (rec.notes_edit.slide, app.session.active()) {
+        (Some(id), Some(d)) => match d.doc.slide_index(id) {
+            Some(i) => i,
+            None => {
+                log::warn!("record notes: the slide this edit was written on is gone; the edit is dropped");
+                rec.notes_edit.draft.edited = false;
+                return;
+            }
+        },
+        _ => slide,
+    };
     rec.notes_edit.draft.edited = false;
     if let Err(e) = app.run("slide.notes", json!({"body": rec.notes_edit.draft.body.clone(), "index": index})) {
         log::warn!("record notes: edit to slide {index} not saved: {e}");
@@ -122,7 +139,7 @@ mod tests {
     fn flush_saves_an_edited_draft_and_is_idempotent() {
         let (mut app, doc) = app_with("original");
         let mut rec = RecordView::default();
-        rec.notes_edit.reset(0);
+        rec.notes_edit.reset(Some(doc.slides[0].id));
         rec.notes_edit.draft = Draft::new(&TextBody::from_text("edited"));
         rec.notes_edit.draft.edited = true;
 
@@ -140,7 +157,7 @@ mod tests {
     fn an_unedited_draft_is_not_saved() {
         let (mut app, doc) = app_with("keep me");
         let mut rec = RecordView::default();
-        rec.notes_edit.reset(0);
+        rec.notes_edit.reset(Some(doc.slides[0].id));
         rec.notes_edit.draft = Draft::new(&TextBody::from_text("discarded"));
 
         flush(&mut app, &mut rec, &doc, 0);
@@ -149,10 +166,11 @@ mod tests {
 
     #[test]
     fn reset_moves_the_draft_to_the_new_slide_and_clears_it() {
-        let mut rec = RecordView { notes_edit: State { slide: Some(0), draft: Draft::new(&TextBody::from_text("first")) }, ..Default::default() };
+        let (first, second) = (deckcraft_model::SlideId(1), deckcraft_model::SlideId(2));
+        let mut rec = RecordView { notes_edit: State { slide: Some(first), draft: Draft::new(&TextBody::from_text("first")) }, ..Default::default() };
 
-        rec.notes_edit.reset(2);
-        assert_eq!(rec.notes_edit.slide, Some(2));
+        rec.notes_edit.reset(Some(second));
+        assert_eq!(rec.notes_edit.slide, Some(second));
         assert_eq!(rec.notes_edit.draft, Draft::default(), "the old slide's text is not carried over");
     }
 }

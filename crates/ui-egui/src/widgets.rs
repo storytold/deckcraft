@@ -243,8 +243,20 @@ pub fn arrow_popup<'a>(main: &'a Response, arrow: &'a Response) -> egui::Popup<'
 
 /// A dropdown-only split whose menu contains a colour grid, retaining the Eyedropper hand-back.
 pub fn split_color_popup<'a>(main: &'a Response, arrow: &'a Response) -> egui::Popup<'a> {
+    color_hand_back(main, split_popup(main, arrow))
+}
+
+/// The arrow-only variant of [`split_color_popup`], for a split whose main half does the work
+/// (Camera Border): the Eyedropper's picked colour reopens this menu, not the shared one.
+pub fn arrow_color_popup<'a>(main: &'a Response, arrow: &'a Response) -> egui::Popup<'a> {
+    color_hand_back(main, arrow_popup(main, arrow))
+}
+
+/// Keep the Eyedropper talking to the right menu: reopen it when its result arrives, and note it
+/// as the open colour menu while it is up.
+fn color_hand_back<'a>(main: &'a Response, popup: egui::Popup<'a>) -> egui::Popup<'a> {
     let id = split_popup_id(main);
-    let mut popup = split_popup(main, arrow).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    let mut popup = popup.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
     if crate::eyedropper::result_waits_for(&main.ctx, id) {
         popup = popup.open_memory(egui::SetOpenCommand::Bool(true));
     }

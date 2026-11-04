@@ -9,6 +9,9 @@
 use super::super::galleries::shapes_gallery;
 use super::super::{Icon, SlideApp, Ui, big_button, enabled, group, json, rows, run, widgets};
 
+/// Smallest frame side the spinners allow, in points: below this a Cameo cannot be grabbed again.
+const MIN_SIDE: f64 = 1.0;
+
 /// The selected shape's effective frame, if there is a selection.
 fn selected_xfrm(app: &SlideApp) -> Option<deckcraft_geom::Xfrm> {
     let st = app.session.active()?;
@@ -46,13 +49,14 @@ pub(super) fn size_section(app: &mut SlideApp, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 ui.label("Height:");
                 if let Some(v) = widgets::spinner(ui, "ch", "Height", x.h / ppu, 0.1, suffix, width) {
-                    run(app, "shape.resize", json!({"h": v.max(0.0) * ppu, "lockAspect": true}));
+                    // A zero side would collapse the frame; keep it above the smallest usable one.
+                    run(app, "shape.resize", json!({"h": (v * ppu).max(MIN_SIDE), "lockAspect": true}));
                 }
             });
             ui.horizontal(|ui| {
                 ui.label("Width: ");
                 if let Some(v) = widgets::spinner(ui, "cw", "Width", x.w / ppu, 0.1, suffix, width) {
-                    run(app, "shape.resize", json!({"w": v.max(0.0) * ppu, "lockAspect": true}));
+                    run(app, "shape.resize", json!({"w": (v * ppu).max(MIN_SIDE), "lockAspect": true}));
                 }
             });
             if ui.add_enabled(xfrm.is_some(), egui::Button::new("Size and Position…")).clicked() {
