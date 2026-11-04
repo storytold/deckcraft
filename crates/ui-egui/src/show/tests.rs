@@ -1522,6 +1522,54 @@ fn a_transition_take_belongs_to_the_slide_being_left() {
     assert_eq!(show.narration[0].0, 0, "under the slide it was spoken on");
 }
 
+/// A microphone that opens and then fails, as a refused permission or a device unplugged mid-take
+/// does after `start` returned `Ok`.
+struct FailingMic {
+    rate: u32,
+    samples: Vec<f32>,
+    failure: Option<String>,
+}
+
+impl deckcraft_media::MicIn for FailingMic {
+    fn start(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn take(&mut self) -> (u32, Vec<f32>) {
+        (self.rate, std::mem::take(&mut self.samples))
+    }
+    fn failure(&self) -> Option<String> {
+        self.failure.clone()
+    }
+    fn stop(&mut self) {}
+}
+
+/// The device opens asynchronously, so a refused microphone shows up only through `failure()`:
+/// the take keeps what was captured, stops the microphone and says why.
+#[test]
+fn a_microphone_that_fails_mid_take_keeps_what_it_captured_and_says_so() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    show.begin_recording(0.0);
+    show.mic_ok = true;
+    let rate = 8_000;
+    let tone: Vec<f32> = (0..rate / 2).map(|i| (i as f32 * 0.5).sin() * 0.4).collect();
+    let mic = FailingMic { rate, samples: tone, failure: Some("no input device".into()) };
+    let mut app = crate::SlideApp::new(s, crate::Services { mic: Some(Box::new(mic)), ..Default::default() });
+    assert!(super::ui::mic_failure(&mut app, &mut show));
+    assert_eq!(show.narration.len(), 1, "the samples captured before the failure are kept");
+    assert_eq!(show.narration[0].0, 0, "under the slide they were spoken on");
+    assert!(!show.mic_ok, "the toolbar stops claiming a live microphone");
+    assert_eq!(show.mic_error.as_deref(), Some("no input device"));
+    assert!(show.record_view.devices.mic.failed);
+    assert_eq!(app.status.as_ref().map(|s| s.0.as_str()), Some("Microphone: no input device"));
+    // Nothing more to report: the next frame does not repeat the message or the handover.
+    assert!(!super::ui::mic_failure(&mut app, &mut show));
+    assert_eq!(show.narration.len(), 1);
+}
+
 /// A slide opened while the take is held starts its clock at resume: shifting its slide-entry
 /// time by the pause would undercount it, or make the timing negative after a long hold.
 #[test]

@@ -99,6 +99,9 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             None => show.mic_ok = false,
         }
     }
+    // `MicIn::start` can return before the device opens, and a device can be lost mid-take: both
+    // reach the caller only through `failure()`. Hand over what was captured, then stop and say so.
+    mic_failure(app, &mut show);
     // The toolbar's Microphone switch owns capture: turning it off stops the take's microphone.
     if !mic_on && show.mic_ok {
         if show.keeps_recording() {
@@ -205,6 +208,26 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
     }
     finish(app, show, &f, out.keep);
+}
+
+/// A microphone that fails after `start` returned — a refused permission, no input device, or one
+/// unplugged mid-take — reports only through [`deckcraft_media::MicIn::failure`]. Hand over what it
+/// captured, stop it, and tell the user instead of recording a silent take.
+pub(super) fn mic_failure(app: &mut SlideApp, show: &mut Show) -> bool {
+    if !show.mic_ok || !show.keeps_recording() {
+        return false;
+    }
+    let Some(e) = app.services.mic.as_ref().and_then(|m| m.failure()) else { return false };
+    let slide = show.state.slide;
+    super::take_narration(app.services.mic.as_deref_mut(), show, slide);
+    app.stop_mic();
+    show.mic_ok = false;
+    show.mic_error = Some(e.clone());
+    let device = &mut show.record_view.devices.mic;
+    device.failed = true;
+    device.status = super::record::devices::DeviceStatus::Unavailable;
+    app.set_status(format!("Microphone: {e}"));
+    true
 }
 
 fn paint_hidden(ui: &Ui, doc: &Presentation, show: &Show) {
