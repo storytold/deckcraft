@@ -367,7 +367,7 @@ fn spelling(s: &mut Session, p: &Value) -> Result<Value> {
             }
             out.push(v);
         }
-        let rep: Vec<usize> = crate::spell::repeated(para, &default).iter().map(|w| w.start).collect();
+        let rep: std::collections::HashSet<usize> = crate::spell::repeated(para, &default).iter().map(|w| w.start).collect();
         for w in crate::spell::paragraph_words(para, &default) {
             if ignore.contains(&w.text.to_lowercase()) || rep.contains(&w.start) {
                 continue;
@@ -421,22 +421,29 @@ fn add_to_dictionary(_s: &mut Session, p: &Value) -> Result<Value> {
 /// Replace whole-word `from` with `to` in `text`; how many were replaced.
 fn replace_word(text: &mut String, from: &str, to: &str, all: bool) -> usize {
     let is_word = |c: char| c.is_alphanumeric() || c == '\'' || c == '’';
-    let mut n = 0;
-    let mut at = 0;
+    // The result is built in one pass; the text is not edited in place for every match.
+    let mut out = String::new();
+    let (mut n, mut at, mut copied) = (0, 0, 0);
     while let Some(i) = text.get(at..).and_then(|t| t.find(from)).map(|i| i + at) {
         let end = i + from.len();
-        let before = text.get(..i).and_then(|t| t.chars().next_back()).is_some_and(is_word);
+        // The character before the match as the edited text would have it.
+        let before = text.get(copied..i).and_then(|t| t.chars().next_back()).or_else(|| out.chars().next_back()).is_some_and(is_word);
         let after = text.get(end..).and_then(|t| t.chars().next()).is_some_and(is_word);
         if before || after {
             at = end;
             continue;
         }
-        text.replace_range(i..end, to);
+        out.push_str(text.get(copied..i).unwrap_or_default());
+        out.push_str(to);
         n += 1;
-        at = i + to.len();
+        (at, copied) = (end, end);
         if !all {
             break;
         }
+    }
+    if n > 0 {
+        out.push_str(text.get(copied..).unwrap_or_default());
+        *text = out;
     }
     n
 }
@@ -764,6 +771,49 @@ fn end_compare(s: &mut Session, _: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    /// The replacement as it ran before: edited in place for every match.
+    fn replace_word_in_place(text: &mut String, from: &str, to: &str, all: bool) -> usize {
+        let is_word = |c: char| c.is_alphanumeric() || c == '\'' || c == '’';
+        let mut n = 0;
+        let mut at = 0;
+        while let Some(i) = text.get(at..).and_then(|t| t.find(from)).map(|i| i + at) {
+            let end = i + from.len();
+            let before = text.get(..i).and_then(|t| t.chars().next_back()).is_some_and(is_word);
+            let after = text.get(end..).and_then(|t| t.chars().next()).is_some_and(is_word);
+            if before || after {
+                at = end;
+                continue;
+            }
+            text.replace_range(i..end, to);
+            n += 1;
+            at = i + to.len();
+            if !all {
+                break;
+            }
+        }
+        n
+    }
+
+    #[test]
+    fn replace_word_matches_the_in_place_version() {
+        let cases = [
+            ("a a b a", "a", "x", true),
+            ("aa a. a", "a", "bb", true),
+            ("a-a -a-", "-", "ab", true),
+            ("foo. foo.", "foo.", "", true),
+            ("it's it", "it", "so", true),
+            ("x.x. x.", "x.", "y", true),
+            ("a a a", "a", "b", false),
+            ("none", "z", "q", true),
+            ("é é", "é", "e", true),
+        ];
+        for (text, from, to, all) in cases {
+            let (mut a, mut b) = (text.to_string(), text.to_string());
+            let (na, nb) = (replace_word(&mut a, from, to, all), replace_word_in_place(&mut b, from, to, all));
+            assert_eq!((na, a), (nb, b), "{text:?} {from:?} -> {to:?}");
+        }
+    }
+
     use super::*;
     use serde_json::json;
 
