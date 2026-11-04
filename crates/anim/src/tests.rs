@@ -1084,6 +1084,7 @@ fn show_returns_to_the_zoom_slide() {
         action: Action::Slide { slide: SlideId(1000 + to) },
         tooltip: String::new(),
         highlight_click: false,
+        use_text_color: false,
         zoom_return: last.map(|l| SlideId(1000 + l)),
         sound: None,
         stop_sound: false,

@@ -371,6 +371,8 @@ pub struct FontDb {
     outlines: Mutex<OutlineCache>,
     #[cfg(not(target_arch = "wasm32"))]
     catalog: RwLock<Vec<CatalogEntry>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    coverage: Mutex<CoverageIndex>,
     /// The folders the system font scan reads (the platform's font folders for [`FontDb::global`]).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     font_dirs: Vec<std::path::PathBuf>,
@@ -378,9 +380,7 @@ pub struct FontDb {
     /// scan, so what they find doesn't depend on what ran before them.
     #[cfg(not(target_arch = "wasm32"))]
     cataloged: std::sync::OnceLock<()>,
-    /// Families (lower case) whose cataloged files have all been loaded: a family's files load
-    /// together, so a lookup never settles for the one face another name loaded ("Segoe UI
-    /// Semibold" loads a face of the family "Segoe UI").
+    /// Families (lower case) whose cataloged files have all been loaded.
     #[cfg(not(target_arch = "wasm32"))]
     loaded_families: Mutex<std::collections::HashSet<String>>,
     /// System fallback state: enabled, and characters no system font covers.
@@ -395,9 +395,67 @@ pub struct FontDb {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
+struct CoverageIndex {
+    files: Vec<CoverageFile>,
+    reads: usize,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct CoverageFile {
+    path: std::path::PathBuf,
+    ranges: Option<Box<[(u32, u32)]>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
 struct SysFallback {
     enabled: bool,
     misses: std::collections::HashSet<char>,
+    tried: std::collections::HashSet<&'static str>,
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn ranges_hold(ranges: &[(u32, u32)], cp: u32) -> bool {
+    let i = ranges.partition_point(|r| r.1 < cp);
+    ranges.get(i).is_some_and(|r| r.0 <= cp)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn coverage_ranges(path: &std::path::Path, reads: &mut usize) -> Box<[(u32, u32)]> {
+    *reads = reads.saturating_add(1);
+    let Ok(data) = std::fs::read(path) else { return Box::new([]) };
+    const MAX_MAPPINGS: usize = 4 * 0x11_0000;
+    const MAX_RANGES: usize = 1 << 17;
+    let indices = collection_face_indices(&data);
+    let mut ranges = Vec::new();
+    let mut budget = MAX_MAPPINGS;
+    'faces: for i in indices {
+        let Ok(f) = skrifa::FontRef::from_index(&data, i) else { continue };
+        for (cp, _) in f.charmap().mappings() {
+            budget = match budget.checked_sub(1) {
+                Some(v) => v,
+                None => break 'faces,
+            };
+            match ranges.last_mut() {
+                Some((_, end)) if *end == cp.saturating_sub(1) => *end = cp,
+                Some((start, end)) if *start <= cp && cp <= *end => {}
+                _ => {
+                    if ranges.len() >= MAX_RANGES {
+                        break 'faces;
+                    }
+                    ranges.push((cp, cp));
+                }
+            }
+        }
+    }
+    ranges.sort_unstable();
+    let mut compact: Vec<(u32, u32)> = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        match compact.last_mut() {
+            Some((_, prior_end)) if start <= prior_end.saturating_add(1) => *prior_end = (*prior_end).max(end),
+            _ => compact.push((start, end)),
+        }
+    }
+    compact.into_boxed_slice()
 }
 
 /// Does face `index` of `data` carry colour glyph tables?
@@ -749,10 +807,8 @@ fn capped_named_instance_count(count: usize) -> usize {
     count.min(MAX_NAMED_INSTANCES_PER_FACE)
 }
 
-/// Parse every face in `data` (a font file or collection); a variable font yields one face per
-/// named instance (InDesign lists them as styles).
-fn enumerate_faces(data: &[u8]) -> Vec<Found> {
-    let indices = match FileRef::new(data) {
+fn collection_face_indices(data: &[u8]) -> Vec<u32> {
+    match FileRef::new(data) {
         Ok(FileRef::Font(_)) => vec![0],
         Ok(FileRef::Collection(c)) => {
             let entries = (0..c.len().min(MAX_COLLECTION_ENTRIES_SCANNED)).filter_map(|i| {
@@ -764,7 +820,13 @@ fn enumerate_faces(data: &[u8]) -> Vec<Found> {
             distinct_face_indices(entries)
         }
         Err(_) => Vec::new(),
-    };
+    }
+}
+
+/// Parse every face in `data` (a font file or collection); a variable font yields one face per
+/// named instance (InDesign lists them as styles).
+fn enumerate_faces(data: &[u8]) -> Vec<Found> {
+    let indices = collection_face_indices(data);
     let mut out = Vec::new();
     // Named instances read and plain faces kept, across the whole file.
     let mut budget = MAX_ENUMERATED_FACES;
@@ -953,6 +1015,8 @@ impl FontDb {
             outlines: Mutex::new(OutlineCache::default()),
             #[cfg(not(target_arch = "wasm32"))]
             catalog: RwLock::new(Vec::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            coverage: Mutex::new(CoverageIndex::default()),
             font_dirs,
             #[cfg(not(target_arch = "wasm32"))]
             cataloged: std::sync::OnceLock::new(),
@@ -1087,7 +1151,8 @@ impl FontDb {
     pub fn load_system_fonts(&self) -> usize {
         // Families load again from the new catalog when next looked up.
         self.loaded_families.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
-        // The first scan, or a rescan once it is done (never both at once).
+        self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner).tried.clear();
+        self.coverage.lock().unwrap_or_else(std::sync::PoisonError::into_inner).files.clear();
         let mut first = None;
         self.cataloged.get_or_init(|| first = Some(self.scan_font_dirs()));
         first.unwrap_or_else(|| self.scan_font_dirs())
@@ -1166,6 +1231,34 @@ impl FontDb {
         self.is_loaded(family)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn family_covers(&self, family: &str, c: char) -> bool {
+        let paths: Vec<std::path::PathBuf> =
+            self.read_catalog().iter().filter(|file| file.family.eq_ignore_ascii_case(family)).map(|file| file.path.clone()).collect();
+        if paths.is_empty() {
+            return false;
+        }
+        let cp = u32::from(c);
+        let mut coverage = self.coverage.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for path in paths {
+            let index = if let Some(index) = coverage.files.iter().position(|file| file.path == path) {
+                index
+            } else {
+                coverage.files.push(CoverageFile { path: path.clone(), ranges: None });
+                coverage.files.len().saturating_sub(1)
+            };
+            if coverage.files.get(index).and_then(|file| file.ranges.as_ref()).is_none() {
+                let ranges = coverage_ranges(&path, &mut coverage.reads);
+                if let Some(file) = coverage.files.get_mut(index) {
+                    file.ranges = Some(ranges);
+                }
+            }
+            if coverage.files.get(index).and_then(|file| file.ranges.as_deref()).is_some_and(|ranges| ranges_hold(ranges, cp)) {
+                return true;
+            }
+        }
+        false
+    }
     /// Resolve a family + style to a face, falling back to the closest style of the family, then to
     /// an open substitute ([`substitutes`]), then to Inter. Installed system fonts are found by name
     /// whatever ran before.
@@ -1402,11 +1495,18 @@ impl FontDb {
             return false;
         }
         for fam in SYSTEM_FALLBACKS {
-            if !self.is_loaded(fam) && cataloged.iter().any(|f| f.eq_ignore_ascii_case(fam)) {
-                self.load_family(fam, &loading);
-                if covered(self) {
-                    return true;
-                }
+            if self.is_loaded(fam) || !cataloged.iter().any(|f| f.eq_ignore_ascii_case(fam)) {
+                continue;
+            }
+            if !self.family_covers(fam, c) {
+                continue;
+            }
+            if !self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner).tried.insert(fam) {
+                continue;
+            }
+            self.load_family(fam, &loading);
+            if covered(self) {
+                return true;
             }
         }
         let mut paths: Vec<std::path::PathBuf> =

@@ -20,6 +20,7 @@ pub(super) fn hyperlink(s: &mut Session, p: &Value) -> Result<Value> {
         action,
         tooltip: str_param(p, "tooltip").unwrap_or("").to_string(),
         highlight_click: bool_or(p, "highlightClick", false),
+        use_text_color: false,
         sound: None,
         stop_sound: false,
         zoom_return: None,
@@ -71,7 +72,15 @@ pub(super) fn shape_action(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let highlight = bool_param(p, "highlight").unwrap_or(true);
     let tooltip = str_param(p, "tooltip").unwrap_or("").to_string();
-    let link = action.map(|action| Hyperlink { action, tooltip, highlight_click: highlight, sound: None, stop_sound: false, zoom_return: None });
+    let link = action.map(|action| Hyperlink {
+        action,
+        tooltip,
+        highlight_click: highlight,
+        use_text_color: false,
+        sound: None,
+        stop_sound: false,
+        zoom_return: None,
+    });
     edit_shapes(s, p, CMD, |sh| {
         if hover {
             sh.hover = link.clone();
@@ -108,6 +117,7 @@ pub(super) fn action_button(s: &mut Session, p: &Value) -> Result<Value> {
             action: a,
             tooltip: String::new(),
             highlight_click: true,
+            use_text_color: false,
             sound: None,
             stop_sound: false,
             zoom_return: None,
