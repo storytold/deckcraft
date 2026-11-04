@@ -591,7 +591,7 @@ pub fn find_in(dirs: &[PathBuf], lang: &str) -> Option<(PathBuf, PathBuf)> {
         (a.is_file() && b.is_file()).then_some((a, b))
     };
     for d in dirs {
-        if let Some(p) = pair(d, &full) {
+        if let Some(p) = pair(d, &full).or_else(|| pair(d, lang)) {
             return Some(p);
         }
     }
