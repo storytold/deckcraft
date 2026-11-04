@@ -583,7 +583,7 @@ const MAX_EFFECTS: usize = 100_000;
 /// Does the slide have a recorded Cameo? Its `p:video` node plays on entry or on a click.
 pub fn has_recorded_cameo(shapes: &[Shape]) -> bool {
     fn at(shapes: &[Shape], depth: usize) -> bool {
-        if depth > 64 {
+        if depth > super::shapes::MAX_SHAPE_DEPTH {
             return false;
         }
         shapes.iter().any(|s| s.cameo.as_ref().is_some_and(|c| c.recorded.is_some()) || at(s.children(), depth + 1))
@@ -594,7 +594,7 @@ pub fn has_recorded_cameo(shapes: &[Shape]) -> bool {
 /// The shapes a recorded Cameo plays on, in document order, each with whether it starts with the
 /// slide (`autoplay`) or waits for a click.
 fn cameo_spids(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<(u32, bool)>, depth: usize) {
-    if depth > 64 {
+    if depth > super::shapes::MAX_SHAPE_DEPTH {
         return;
     }
     for s in shapes {

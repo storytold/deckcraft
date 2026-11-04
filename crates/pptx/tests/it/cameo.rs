@@ -303,6 +303,39 @@ fn a_tagged_recorded_cameo_writes_the_video_before_cust_data() {
 }
 
 #[test]
+fn a_cameo_below_the_writer_depth_is_not_timed() {
+    let mut p = defaults::new_presentation(None);
+    let video = p.add_media("cameo.mp4", "video/mp4", mp4()).expect("video");
+    let poster = p.add_media("cameo-poster.png", "image/png", png()).expect("poster");
+    let mut shape = Shape {
+        id: ShapeId(p.alloc_id().expect("id")),
+        name: "Camera 1".into(),
+        xfrm: Some(Xfrm::new(10.0, 10.0, 162.0, 162.0)),
+        kind: ShapeKind::Picture { fill: PictureFill { media: poster, ..Default::default() } },
+        geom: Geom::preset("ellipse"),
+        cameo: Some(Cameo::recorded(video)),
+        ..Default::default()
+    };
+    // The writer stops at depth 32; a Cameo past it must not get a `p:video` target either.
+    for i in 0..34 {
+        shape = Shape {
+            id: ShapeId(p.alloc_id().expect("id")),
+            name: format!("Group {i}"),
+            xfrm: Some(Xfrm::new(0.0, 0.0, 400.0, 300.0)),
+            kind: ShapeKind::Group { children: vec![shape], child: Xfrm::new(0.0, 0.0, 400.0, 300.0) },
+            ..Default::default()
+        };
+    }
+    if let Some(s) = p.slides.first_mut() {
+        std::sync::Arc::make_mut(s).shapes.push(shape);
+    }
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let xml = part(&bytes, "ppt/slides/slide1.xml");
+    assert!(!xml.contains("<p:video>"), "no timing target without the picture: {xml}");
+    assert!(!xml.contains("Camera 1"), "the Cameo past the depth limit is not written: {xml}");
+}
+
+#[test]
 fn a_linked_cameo_svg_is_written_as_a_link_not_an_embed() {
     let mut p = defaults::new_presentation(None);
     let media = deckcraft_model::MediaId(p.alloc_id().expect("id"));

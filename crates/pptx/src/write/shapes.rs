@@ -284,8 +284,12 @@ fn sp_pr_tag(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape, geom: bool, tag: &s
 }
 
 /// Write the children of a shape tree.
+/// How deep a shape tree is written; the timing writer collects media and cameo targets to the
+/// same depth, so every target it names has a serialized picture.
+pub(crate) const MAX_SHAPE_DEPTH: usize = 32;
+
 pub fn shapes(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, list: &[Shape], depth: usize) {
-    if depth > 32 {
+    if depth > MAX_SHAPE_DEPTH {
         return;
     }
     for s in list {
@@ -340,7 +344,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             }
             w.close("p:pic");
         }
-        ShapeKind::Group { children, child } if s.diagram.is_some() && depth < 32 => {
+        ShapeKind::Group { children, child } if s.diagram.is_some() && depth < MAX_SHAPE_DEPTH => {
             if let Some(d) = &s.diagram {
                 diagram(w, x, o, cx, s, d, children, child);
             }
