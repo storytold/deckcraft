@@ -204,11 +204,11 @@ fn behaviour_auto_reverses(c: &El) -> bool {
     !behaviours.is_empty() && behaviours.iter().all(|b| b.child("cTn").and_then(|t| t.bool("autoRev")).unwrap_or(false))
 }
 
-/// Does this time node wait for a click? Its start condition is `indefinite` or names the click.
+/// Does this time node wait for a click? Every condition in its start list must: a list that also
+/// names `onBegin` (or a delay) starts on its own, as automatic groups do.
 fn starts_on_click(e: &El) -> bool {
-    e.child("stCondLst")
-        .and_then(|s| s.child("cond"))
-        .is_some_and(|c| c.attr("delay").is_some_and(|d| d.trim() == "indefinite") || c.attr("evt") == Some("onClick"))
+    let conds: Vec<&El> = e.child("stCondLst").map(|s| s.elements().filter(|c| c.is("cond")).collect()).unwrap_or_default();
+    !conds.is_empty() && conds.iter().all(|c| c.attr("delay").is_some_and(|d| d.trim() == "indefinite") || c.attr("evt") == Some("onClick"))
 }
 
 /// The `p:video`/`p:audio` nodes, each with whether an enclosing time node waits for a click.
@@ -432,5 +432,10 @@ mod tests {
         assert!(!autoplay_of(&click_step), "an enclosing click step keeps delay 0 on the inner node");
         let waiting = ENTRY.replace(r#"<p:cond delay="0"/>"#, r#"<p:cond delay="indefinite"/>"#);
         assert!(!autoplay_of(&waiting), "an indefinite delay waits for a click");
+        // A group that also starts `onBegin` runs by itself, so it is not a click step.
+        let automatic = ENTRY
+            .replace("<p:video>", r#"<p:par><p:cTn id="9"><p:stCondLst><p:cond delay="indefinite"/><p:cond evt="onBegin" delay="0"><p:tn val="2"/></p:cond></p:stCondLst><p:childTnLst><p:video>"#)
+            .replace("</p:video>", "</p:video></p:childTnLst></p:cTn></p:par>");
+        assert!(autoplay_of(&automatic), "an automatic group is not a click wait");
     }
 }
