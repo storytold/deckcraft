@@ -59,6 +59,24 @@ fn stop_freezes_the_slide_timing() {
     assert!((rec.frozen_slide_seconds().expect("frozen while paused") - 3.0).abs() < 1e-9);
 }
 
+/// The keyboard path: `ShowState` enters the destination before `apply` runs, and the frame's
+/// trigger tick has already rebuilt the timeline cache for it. The departing slide must still keep
+/// its timing.
+#[test]
+fn a_slide_change_files_the_departing_slide_after_the_state_moved() {
+    let doc = doc_with(2);
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    let mut rec = RecordView::default();
+    rec.start(&mut show, 100.0);
+    show.record_view = rec;
+    let action = show.state.next(&doc);
+    let _ = show.timeline(&doc);
+    let _ = show.apply(action, &doc, 105.0);
+    assert_eq!(show.applied_slide, 1, "the show applied the new slide");
+    assert_eq!(show.timings, vec![(0, 5.0)], "the departing slide keeps its timing");
+}
+
 /// A stopped take keeps its slide's timing when the user navigates before leaving the view, and
 /// the slide shown afterwards gets no timing it never captured.
 #[test]

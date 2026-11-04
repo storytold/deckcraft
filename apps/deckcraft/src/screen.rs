@@ -152,7 +152,13 @@ mod imp {
                             .collect();
                         match matches.len() {
                             1 => matches.into_iter().next(),
-                            0 => None,
+                            // The picked surface is gone (a closed window, an unplugged display):
+                            // recording the primary display instead would film something the user
+                            // never chose.
+                            0 => {
+                                let _ = ready_tx.send(Err(ScreenError::NoDevice));
+                                return;
+                            }
                             // Without a kind the id is ambiguous: record nothing rather than a
                             // surface the user did not pick.
                             _ => {

@@ -52,6 +52,9 @@ pub struct Show {
     /// The UI clock of the last frame. A command runs between frames and needs the same time base
     /// the shell and the show's timers use.
     pub(crate) last_now: f64,
+    /// The slide the show has applied (the one on screen). `ShowState` enters the destination
+    /// before `apply` runs, so the capture paths must not read `state.slide`.
+    applied_slide: usize,
     /// The slide whose take segment is open: its length is not in `timings` yet. Cleared when the
     /// segment is filed, so a stopped take is never attributed to the slide shown afterwards.
     take_slide: Option<usize>,
@@ -254,6 +257,7 @@ impl Show {
             record: false,
             record_view: record::RecordView::default(),
             last_now: 0.0,
+            applied_slide: from.min(doc.slides.len().saturating_sub(1)),
             take_slide: None,
             record_paused_at: None,
             keep_cursor: false,
@@ -468,7 +472,7 @@ impl Show {
         self.last_move = now;
         self.record_paused_at = None;
         self.mic_tried = false;
-        self.take_slide = Some(self.state.slide);
+        self.take_slide = Some(self.applied_slide);
     }
 
     /// Hold the slide clocks for as long as the recording is paused. The animation clock is
@@ -576,7 +580,8 @@ impl Show {
                 self.ended = false;
                 self.zoom = None;
                 self.zoom_arm = false;
-                let left = self.timeline.as_ref().map(|t| t.0).unwrap_or(i);
+                let left = self.applied_slide;
+                self.applied_slide = i;
                 if self.rehearse {
                     self.timings.push((left, now - self.slide_start));
                 } else if self.take_captured() {
@@ -784,13 +789,13 @@ impl Show {
         if recording {
             // Whatever was drawn or pointed at during the take is filed under its slide even if
             // Stop came before the show closed.
-            self.keep_ink(doc, self.state.slide);
-            self.keep_laser(self.state.slide);
-            self.finalize_take_slide(self.state.slide, now);
+            self.keep_ink(doc, self.applied_slide);
+            self.keep_laser(self.applied_slide);
+            self.finalize_take_slide(self.applied_slide, now);
         } else {
-            self.stash_ink(doc, self.state.slide);
-            self.stash_laser(self.state.slide);
-            self.timings.push((self.state.slide, now - self.slide_start));
+            self.stash_ink(doc, self.applied_slide);
+            self.stash_laser(self.applied_slide);
+            self.timings.push((self.applied_slide, now - self.slide_start));
         }
         for (i, secs) in self.timings.clone() {
             let ms = if secs.is_finite() { (secs.max(0.0) * 1000.0).round() as u64 } else { 0 };
@@ -996,8 +1001,8 @@ fn take_narration(app: &mut SlideApp, show: &mut Show) {
         return;
     }
     // `ShowState::next`/`prev`/`goto` already moved the state to the new slide; the take belongs
-    // to the one being left, which is the slide `Show::apply` reads its cached timeline for.
-    let slide = show.timeline.as_ref().map(|t| t.0).unwrap_or(show.state.slide);
+    // to the one the show has applied, which is the slide being left.
+    let slide = show.applied_slide;
     let same_visit = show.narration_slide == Some(slide);
     if let Some(i) = show.narration.iter().position(|(s, _, _)| *s == slide).filter(|_| same_visit) {
         // A take paused on this slide and resumed: the microphone restarted, so only the samples
