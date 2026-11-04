@@ -1609,3 +1609,13 @@ More Picture Styles	다른 그림 스타일
 Credits	만든 사람들
 The people and models who built DeckCraft.	DeckCraft를 만든 사람과 모델입니다.
 Play this slide's transition	이 슬라이드의 전환 재생
+{} value	{} 값
+Increase {}	{} 늘리기
+Decrease {}	{} 줄이기
+Duration	재생 시간
+Delay	지연
+After	이후
+a dictionaries folder	사전 폴더
+Width: enter {} to {} pixels	너비: {}~{}픽셀 사이로 입력하세요
+Seconds per slide: enter {} to {}	슬라이드당 초: {}~{} 사이로 입력하세요
+Slides: choose a range from 1 to {}	슬라이드: 1~{} 범위에서 고르세요

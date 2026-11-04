@@ -2408,9 +2408,11 @@ fn comments_pane_keeps_its_width_and_resizes() {
 
 /// The interface in Korean: `app.language` (and Preferences › Language) switch the ribbon,
 /// dialogs and placeholder prompts; Cancel in Preferences puts the language back.
+/// It checks labels, not pixels, so it runs without craft-fonts or a system Hangul face: missing
+/// glyphs draw as boxes instead of failing the frame.
 #[test]
 fn korean_interface_switches_and_cancel_restores_it() {
-    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).allow_missing_glyphs().build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);

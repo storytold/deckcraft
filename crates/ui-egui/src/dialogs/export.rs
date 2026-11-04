@@ -1,5 +1,5 @@
 use super::{Dialog, SlideApp, Ui, Value, check, field, json, num, vec2};
-use crate::i18n::tr;
+use crate::i18n::{tr, trf};
 
 /// The export dialog's Animated GIF options (size, seconds per slide, loop, slide range, hidden
 /// slides) as `file.export` params; a slide range that doesn't fit the deck is an error message.
@@ -41,7 +41,7 @@ pub(super) fn gif_options(app: &SlideApp, ui: &mut Ui, d: &mut Dialog) -> Result
     let width = if size == "custom" {
         let w = num(d, "gifWidth", 960.0).round();
         if !(f64::from(MIN_WIDTH)..=f64::from(MAX_WIDTH)).contains(&w) {
-            return Err(format!("Width: enter {MIN_WIDTH} to {MAX_WIDTH} pixels"));
+            return Err(trf("Width: enter {} to {} pixels", &[&MIN_WIDTH, &MAX_WIDTH]));
         }
         json!(w as u32)
     } else {
@@ -49,12 +49,12 @@ pub(super) fn gif_options(app: &SlideApp, ui: &mut Ui, d: &mut Dialog) -> Result
     };
     let seconds = num(d, "gifSeconds", f64::NAN);
     if deckcraft_engine::gif_export::check_seconds(seconds).is_err() {
-        return Err(format!("Seconds per slide: enter {MIN_SECONDS} to {MAX_SECONDS}"));
+        return Err(trf("Seconds per slide: enter {} to {}", &[&MIN_SECONDS, &MAX_SECONDS]));
     }
     let mut p = json!({"width": width, "secondsPerSlide": seconds, "loop": forever, "includeHidden": hidden});
     let (from, to) = (num(d, "gifFrom", 1.0).round(), num(d, "gifTo", n as f64).round());
     if !(from >= 1.0 && from <= to && to <= n as f64) {
-        return Err(format!("Slides: choose a range from 1 to {n}"));
+        return Err(trf("Slides: choose a range from 1 to {}", &[&n]));
     }
     if from > 1.0 || to < n as f64 {
         p["slides"] = json!(((from as usize - 1)..(to as usize)).collect::<Vec<_>>());

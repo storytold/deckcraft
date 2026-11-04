@@ -264,7 +264,7 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let names: Vec<String> = app.session.active().map(|s| s.doc.custom_shows.iter().map(|c| c.name.clone()).collect()).unwrap_or_default();
     let chosen = d.fields.entry("custom".into()).or_insert_with(|| sh.custom_show.clone().unwrap_or_default()).clone();
     let field = ui.label(tr("Slides"));
-    let label = if chosen.is_empty() { "All slides".to_string() } else { chosen.clone() };
+    let label = if chosen.is_empty() { tr("All slides").to_string() } else { chosen.clone() };
     let combo = craft_ui::ComboBox::from_id_salt("setup_custom").selected_text(label).show_ui(ui, |ui| {
         if ui.selectable_label(chosen.is_empty(), tr("All slides")).clicked() {
             d.fields.insert("custom".into(), String::new());
@@ -429,7 +429,7 @@ fn dlg_bullets(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.horizontal(|ui| {
         let field = ui.add_sized(vec2(120.0, 20.0), egui::Label::new(tr("Color:")));
         let combo = craft_ui::ComboBox::from_id_salt("bullet-color")
-            .selected_text(colors.iter().find(|c| c.0 == color).map_or("Automatic", |c| c.1))
+            .selected_text(tr(colors.iter().find(|c| c.0 == color).map_or("Automatic", |c| c.1)))
             .show_ui(ui, |ui| {
                 for (k, l) in colors {
                     if ui.selectable_label(color == k, tr(l)).clicked() {
@@ -777,7 +777,7 @@ fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     }
     let gif_params = if fmt == "gif" { gif_options(app, ui, d) } else { Ok(Value::Null) };
     if let Err(e) = &gif_params {
-        ui.label(egui::RichText::new(tr(e)).color(Tokens::get(ui.ctx()).text_dim));
+        ui.label(egui::RichText::new(e).color(Tokens::get(ui.ctx()).text_dim));
     }
     let pdf_params = {
         let (layout, per) = match pdf_layout.as_str() {
@@ -934,14 +934,17 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ui.label(egui::RichText::new(trf("Dictionary: {}", &[&info.get("lang").and_then(Value::as_str).unwrap_or("")])).small().weak())
         }
         _ => ui.label(
-            egui::RichText::new(format!(
+            egui::RichText::new(trf(
                 "No {} dictionary is installed, so only common misspellings are found. Put a Hunspell .aff/.dic pair in {}.",
-                info.get("lang").and_then(Value::as_str).unwrap_or("en-US"),
-                info.get("folders")
-                    .and_then(Value::as_array)
-                    .and_then(|a| a.get(1).or(a.first()))
-                    .and_then(Value::as_str)
-                    .unwrap_or("a dictionaries folder")
+                &[
+                    &info.get("lang").and_then(Value::as_str).unwrap_or("en-US"),
+                    &info
+                        .get("folders")
+                        .and_then(Value::as_array)
+                        .and_then(|a| a.get(1).or(a.first()))
+                        .and_then(Value::as_str)
+                        .unwrap_or(tr("a dictionaries folder")),
+                ],
             ))
             .small()
             .weak(),
