@@ -66,6 +66,43 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
+    #[test]
+    fn desktop_appearance_old_preferences_remain_explicit() {
+        for name in ["light", "dark"] {
+            let ui: UiState = serde_json::from_value(serde_json::json!({"brightness": name})).unwrap();
+            assert!(!ui.system_theme);
+            assert_eq!(ui.brightness == crate::theme::Brightness::Dark, name == "dark");
+        }
+        let ui = UiState { system_theme: true, ..Default::default() };
+        let restored: UiState = serde_json::from_value(serde_json::to_value(ui).unwrap()).unwrap();
+        assert!(restored.system_theme);
+    }
+
+    #[test]
+    fn desktop_appearance_follows_changes_but_preserves_explicit_override() {
+        let mut app = crate::SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+        app.run("view.theme", serde_json::json!({"mode": "system"})).unwrap();
+        app.set_desktop_dark(Some(true));
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut crate::SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        h.run_steps(2);
+        assert_eq!(h.state().ui.brightness, crate::theme::Brightness::Dark);
+        h.state_mut().set_desktop_dark(Some(false));
+        h.run_steps(2);
+        assert_eq!(h.state().ui.brightness, crate::theme::Brightness::Light);
+        h.state_mut().run("view.dark", serde_json::json!({"on": true})).unwrap();
+        h.run_steps(2);
+        assert_eq!(h.state().ui.brightness, crate::theme::Brightness::Dark);
+        assert!(!h.state().ui.system_theme);
+        assert!(h.state_mut().run("view.theme", serde_json::json!({"mode": "invalid"})).is_err());
+        assert_eq!(h.state().ui.brightness, crate::theme::Brightness::Dark);
+    }
+
     fn dir(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("deckcraft-settings-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);

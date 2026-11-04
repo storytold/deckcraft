@@ -131,53 +131,68 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let rect = ui.max_rect();
         // Tabs. File comes first and opens the File tab's full-window view (Backstage), as in
         // PowerPoint.
-        let mut x = rect.min.x + 12.0;
-        let y = rect.min.y + 2.0;
-        {
-            let w = ui.fonts_mut(|f| f.layout_no_wrap("File".to_string(), theme::font(13.0), t.text).size().x) + 18.0;
-            let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
-            let resp = ui.interact(r, ui.scope_id().with("tab_file"), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "File"));
-            if resp.hovered() {
-                ui.painter().rect_filled(r.shrink2(vec2(2.0, 2.0)), CornerRadius::same(4), t.hover);
-            }
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, "File", theme::font(13.0), t.text);
-            if resp.on_hover_text("File (Alt+F)").clicked() {
-                app.open_backstage(crate::backstage::Page::Home);
-            }
-            x += w + 2.0;
-        }
-        let all: Vec<(&str, bool)> = TABS.iter().map(|s| (*s, false)).chain(ctx_tabs.iter().map(|s| (*s, true))).collect();
-        for (name, contextual) in all {
-            let font = theme::font(13.0);
-            let w = ui.fonts_mut(|f| f.layout_no_wrap(name.to_string(), font.clone(), t.text).size().x) + 18.0;
-            let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
-            let resp = ui.interact(r, ui.scope_id().with(("tab", name)), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
-            let active = app.ui.tab == name;
-            if resp.hovered() && !active {
-                ui.painter().rect_filled(r.shrink2(vec2(2.0, 2.0)), CornerRadius::same(4), t.hover);
-            }
-            let col = if contextual { t.contextual } else { t.text };
-            let f = if active { theme::bold(13.0) } else { font };
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, name, f, col);
-            if active {
-                let uw = (w - 20.0).max(16.0);
-                ui.painter().rect_filled(Rect::from_center_size(pos2(r.center().x, r.max.y - 1.0), vec2(uw, 3.0)), CornerRadius::same(1), t.accent);
-            }
-            if resp.clicked() {
-                if active {
-                    app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;
-                } else {
-                    app.ui.tab = name.to_string();
-                    app.ui.ribbon_collapsed = false;
-                }
-            }
-            if resp.double_clicked() {
-                app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;
-            }
-            x += w + 2.0;
-        }
+        let tab_rect = Rect::from_min_size(rect.min + vec2(12.0, 2.0), vec2((rect.width() - 24.0).max(0.0), 24.0));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(tab_rect), |ui| {
+            egui::ScrollArea::horizontal()
+                .id_salt("ribbon_tabs_scroll")
+                .auto_shrink([false, false])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    let start = ui.cursor().min;
+                    let mut x = start.x;
+                    let y = start.y;
+                    {
+                        let w = ui.fonts_mut(|f| f.layout_no_wrap("File".to_string(), theme::font(13.0), t.text).size().x) + 18.0;
+                        let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
+                        let resp = ui.interact(r, ui.scope_id().with("tab_file"), Sense::click());
+                        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "File"));
+                        if resp.hovered() {
+                            ui.painter().rect_filled(r.shrink2(vec2(2.0, 2.0)), CornerRadius::same(4), t.hover);
+                        }
+                        ui.painter().text(r.center(), Align2::CENTER_CENTER, "File", theme::font(13.0), t.text);
+                        if resp.on_hover_text("File (Alt+F)").clicked() {
+                            app.open_backstage(crate::backstage::Page::Home);
+                        }
+                        x += w + 2.0;
+                    }
+                    let all: Vec<(&str, bool)> = TABS.iter().map(|s| (*s, false)).chain(ctx_tabs.iter().map(|s| (*s, true))).collect();
+                    for (name, contextual) in all {
+                        let font = theme::font(13.0);
+                        let w = ui.fonts_mut(|f| f.layout_no_wrap(name.to_string(), font.clone(), t.text).size().x) + 18.0;
+                        let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
+                        let resp = ui.interact(r, ui.scope_id().with(("tab", name)), Sense::click());
+                        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+                        let active = app.ui.tab == name;
+                        if resp.hovered() && !active {
+                            ui.painter().rect_filled(r.shrink2(vec2(2.0, 2.0)), CornerRadius::same(4), t.hover);
+                        }
+                        let col = if contextual { t.contextual } else { t.text };
+                        let f = if active { theme::bold(13.0) } else { font };
+                        ui.painter().text(r.center(), Align2::CENTER_CENTER, name, f, col);
+                        if active {
+                            let uw = (w - 20.0).max(16.0);
+                            ui.painter().rect_filled(
+                                Rect::from_center_size(pos2(r.center().x, r.max.y - 1.0), vec2(uw, 3.0)),
+                                CornerRadius::same(1),
+                                t.accent,
+                            );
+                        }
+                        if resp.clicked() {
+                            if active {
+                                app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;
+                            } else {
+                                app.ui.tab = name.to_string();
+                                app.ui.ribbon_collapsed = false;
+                            }
+                        }
+                        if resp.double_clicked() {
+                            app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;
+                        }
+                        x += w + 2.0;
+                    }
+                    ui.allocate_rect(Rect::from_min_max(start, pos2(x, y + 24.0)), Sense::hover());
+                });
+        });
         if app.ui.ribbon_collapsed {
             return;
         }
@@ -451,6 +466,81 @@ mod title_bar_tests {
         assert!(control <= h - 8.0);
         // Other platforms keep their system frame and the original bar.
         assert_eq!(title_geometry(false), (TITLE_H, 10.0, 26.0));
+    }
+}
+
+#[cfg(test)]
+mod desktop_overflow_tests {
+    use super::*;
+    use egui_kittest::kittest::Queryable;
+
+    #[test]
+    fn desktop_ribbon_tabs_remain_reachable_at_fractional_scales() {
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+            let app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+            let mut h = egui_kittest::Harness::builder()
+                .with_context_setup(theme::install_fonts)
+                .with_size(vec2(400.0, 200.0))
+                .with_pixels_per_point(scale)
+                .build_ui_state(
+                    |ui, app: &mut SlideApp| {
+                        app.logic(ui.ctx());
+                        show(app, ui);
+                    },
+                    app,
+                );
+            h.run_steps(3);
+            h.hover_at(pos2(200.0, 15.0));
+            h.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(-2000.0, 0.0),
+                modifiers: egui::Modifiers::NONE,
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+            });
+            h.run_steps(8);
+            let view = h.get_by_label("View");
+            let rect = view.rect();
+            assert!(rect.min.x >= 0.0 && rect.max.x <= 400.0, "scale {scale}: {rect:?}");
+            view.click();
+            h.run_steps(2);
+            assert_eq!(h.state().ui.tab, "View", "scale {scale}");
+            if let Some(dir) = std::env::var_os("DECKCRAFT_RIBBON_CAPTURE_DIR") {
+                let path = std::path::PathBuf::from(dir).join(format!("ribbon-tabs-{scale}.png"));
+                h.render().expect("render narrow ribbon").save(path).expect("save narrow ribbon capture");
+            }
+        }
+    }
+
+    #[test]
+    fn desktop_ribbon_groups_scroll_to_the_last_control() {
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+            let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+            app.ui.tab = "Insert".into();
+            let mut h = egui_kittest::Harness::builder()
+                .with_context_setup(theme::install_fonts)
+                .with_size(vec2(400.0, 200.0))
+                .with_pixels_per_point(scale)
+                .build_ui_state(
+                    |ui, app: &mut SlideApp| {
+                        app.logic(ui.ctx());
+                        show(app, ui);
+                    },
+                    app,
+                );
+            h.run_steps(3);
+            h.hover_at(pos2(200.0, 70.0));
+            h.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(-4000.0, 0.0),
+                modifiers: egui::Modifiers::NONE,
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+            });
+            h.run_steps(8);
+            let rect = h.get_by_label("Audio").rect();
+            assert!(rect.min.x >= 0.0 && rect.max.x <= 400.0, "scale {scale}: {rect:?}");
+        }
     }
 }
 

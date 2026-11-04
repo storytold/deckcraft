@@ -14,7 +14,7 @@ workspace = true
 deckcraft-engine = { workspace = true }
 deckcraft-ui-egui = { workspace = true }
 deckcraft-media = { workspace = true }
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "links", "wayland", "x11"] }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "links", "clipboard", "wayland", "x11"] }
 egui = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
@@ -30,6 +30,12 @@ rfd = { workspace = true }
 arboard = { workspace = true, features = ["image-data"] }
 image = { workspace = true }
 cpal = "0.16"
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+arboard = { workspace = true, features = ["wayland-data-control"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+craft-desktop = { path = "../../vendor/craft-desktop", features = ["linux", "portal"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Finder double-click, Open With, Dock drops and `open -a DeckCraft deck.pptx` arrive as a

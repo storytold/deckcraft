@@ -1,5 +1,19 @@
 # Attribution
 
+## Vendored winit source assets
+
+These upstream documentation/example assets are kept with the audited winit 0.30.13 source;
+they are not used as application artwork. Source: https://github.com/rust-windowing/winit/tree/v0.30.13.
+Licence: Apache-2.0, retained in `vendor/winit/LICENSE`.
+
+| Asset | Author | Source | Licence | Use |
+|---|---|---|---|---|
+| `vendor/winit/examples/data/icon.png` | winit contributors | https://github.com/rust-windowing/winit/blob/v0.30.13/examples/data/icon.png | Apache-2.0 | Upstream source example/documentation |
+| `vendor/winit/examples/data/gradient.png` | winit contributors | https://github.com/rust-windowing/winit/blob/v0.30.13/examples/data/gradient.png | Apache-2.0 | Upstream source example/documentation |
+| `vendor/winit/examples/data/cross2.png` | winit contributors | https://github.com/rust-windowing/winit/blob/v0.30.13/examples/data/cross2.png | Apache-2.0 | Upstream source example/documentation |
+| `vendor/winit/examples/data/cross.png` | winit contributors | https://github.com/rust-windowing/winit/blob/v0.30.13/examples/data/cross.png | Apache-2.0 | Upstream source example/documentation |
+
+
 Every asset DeckCraft includes, bundles, embeds at build time or shows in its documentation, with
 its author, source and licence. The policy is in [AGENTS.md](AGENTS.md) §1. `cargo xtask assets`
 fails if a file under `assets/`, `docs/images/` or `docs/brand/` is missing from this table.

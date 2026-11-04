@@ -1,6 +1,6 @@
 # DeckCraft architecture
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: minor, community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-21 · **Last updated:** 2026-10-21 · **Change:** minor (shared Linux desktop layer and application-owned menu adapter) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
@@ -72,6 +72,12 @@ overlays an invisible real-text layer with embedded font subsets.
 
 ## Quality gates
 
+Linux integration uses `vendor/craft-desktop` for portal appearance and the platform transport,
+with `ui-egui::desktop_menu` adapting the application's existing menu catalogue. Interactive
+Save, dialogs and clipboard routes stay application-owned. The menu transport does not depend
+on the engine or egui. The bundled winit snapshot adds a safe same-connection Wayland surface
+accessor; provenance and the patch boundary are in `vendor/winit/CRAFT_PATCH.md`.
+
 `cargo xtask ci`: rustfmt check, clippy `-D warnings`, tests, layering, asset attribution
 (`cargo xtask assets`), wasm32 check. CI runs it on Ubuntu for every PR and push to `main`;
 macOS is built and tested by the release workflow only. Releases (pushes to `release`) build signed
@@ -81,6 +87,7 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | Desktop-menu model, optional system appearance, native Linux decoration hints, retained clipboard owner and scrollable ribbon; see KDE.md for verification boundaries |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-14 | minor | Community PR wave folded: one L2/L5/L6 row each; command registry 320 (`cmd!` registrations in `cmd/*`), 41 dialogs (titled in `dialogs.rs`), 202k lines, 24 crates (`metafile` added at L0), 1,641 tests. The per-PR rows below give the counts each PR saw on its own branch |
 | 2026-10-14 | minor | Size and Position dialog (`shape.sizePosition`): position, size, rotation, scale and lock aspect in one undo step. 227 commands, 28 dialogs |

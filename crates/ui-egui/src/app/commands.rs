@@ -152,6 +152,18 @@ impl SlideApp {
             "view.dark" => {
                 let on = self.flag(p, self.ui.brightness == theme::Brightness::Dark);
                 self.ui.brightness = if on { theme::Brightness::Dark } else { theme::Brightness::Light };
+                self.ui.system_theme = false;
+                self.restyle = true;
+            }
+            "view.theme" => {
+                match p.get("mode").and_then(Value::as_str) {
+                    Some("system") => self.ui.system_theme = true,
+                    Some(mode @ ("light" | "dark")) => {
+                        self.ui.system_theme = false;
+                        self.ui.brightness = if mode == "dark" { theme::Brightness::Dark } else { theme::Brightness::Light };
+                    }
+                    _ => return Err("appearance mode must be system, light, or dark".into()),
+                }
                 self.restyle = true;
             }
             "view.grayscale" => self.ui.grayscale = self.flag(p, self.ui.grayscale),

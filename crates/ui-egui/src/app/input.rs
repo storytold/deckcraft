@@ -202,6 +202,18 @@ impl SlideApp {
     /// delivered exactly once in the next real UI pass. `ViewportInfo::visible()` is not a phase
     /// signal: a hidden root still gets a full pass for a screenshot or `RequestPaintWhileHidden`.
     pub fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        for request in &mut self.desktop_clipboard {
+            request.rejected |= raw.viewport_id != request.viewport || !raw.focused;
+        }
+        // A logic-only pass may carry our previous synthetic batch in RawInput. It is not
+        // evidence that winit canceled its transfer; exclude it when checking native input.
+        let mut native_events = raw.events.clone();
+        self.drain_synthetic_from(&mut native_events);
+        let canceled = Self::desktop_clipboard_input_changes(&native_events);
+        self.guard_desktop_clipboard_events(ctx, &mut raw.events, false);
+        if canceled {
+            self.desktop_clipboard.clear();
+        }
         #[cfg(not(target_arch = "wasm32"))]
         for f in std::mem::take(&mut raw.dropped_files) {
             let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped file".into());

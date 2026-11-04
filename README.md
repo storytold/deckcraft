@@ -134,6 +134,9 @@ emerge --ask app-office/deckcraft-bin
 
 ### Logs
 
+Linux/KDE appearance, ribbon overflow, clipboard behaviour and reproducible desktop checks:
+[`docs/KDE.md`](docs/KDE.md).
+
 The desktop app writes its `log` records to standard error and to `logs/deckcraft.log` in the
 settings directory, beside `ui.json` and `prefs.json` (Linux `~/.config/deckcraft/logs/`, or
 `$XDG_CONFIG_HOME/deckcraft/logs/`; macOS `~/Library/Application Support/DeckCraft/logs/`; Windows

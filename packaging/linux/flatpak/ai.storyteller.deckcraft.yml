@@ -26,6 +26,8 @@ finish-args:
   - --share=ipc
   # GPU access for the wgpu renderer (Vulkan, or GL as a fallback).
   - --device=dri
+  # Global Menu on X11/XWayland; Wayland associates the same export with its surface.
+  - --talk-name=com.canonical.AppMenu.Registrar
   # Sound for audio and video in slide shows (cpal over ALSA, routed to PulseAudio/PipeWire by
   # the runtime's ALSA plugin).
   - --socket=pulseaudio
