@@ -59,6 +59,46 @@ fn stop_freezes_the_slide_timing() {
     assert!((rec.frozen_slide_seconds().expect("frozen while paused") - 3.0).abs() < 1e-9);
 }
 
+/// A stopped take keeps its slide's timing when the user navigates before leaving the view, and
+/// the slide shown afterwards gets no timing it never captured.
+#[test]
+fn a_stopped_take_keeps_its_slide_timing_across_navigation() {
+    let doc = doc_with(2);
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    let mut rec = RecordView::default();
+    rec.start(&mut show, 100.0);
+    show.record_view = rec;
+    let _ = show.timeline(&doc); // the frame draws the current slide before anything navigates
+    let _ = show.record_command("record.stop", 105.0).expect("stop");
+    assert_eq!(show.timings, vec![(0, 5.0)], "Stop files the slide it froze");
+    let action = show.state.next(&doc);
+    let _ = show.apply(action, &doc, 106.0);
+    // What `finish` does for the slide on screen when the show closes.
+    show.finalize_take_slide(show.state.slide, 120.0);
+    assert_eq!(show.timings, vec![(0, 5.0)], "slide 1 was never captured");
+}
+
+/// A paused take that navigates keeps both slides: the departing one up to the pause, the new one
+/// from its own start, without the old pause folded into it.
+#[test]
+fn a_paused_take_files_both_slides() {
+    let doc = doc_with(2);
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    let mut rec = RecordView::default();
+    rec.start(&mut show, 100.0);
+    rec.pause(&mut show, 103.0);
+    show.record_view = rec;
+    let _ = show.timeline(&doc);
+    let action = show.state.next(&doc);
+    let _ = show.apply(action, &doc, 110.0);
+    let _ = show.record_command("record.resume", 112.0).expect("resume");
+    let _ = show.record_command("record.stop", 116.0).expect("stop");
+    show.finalize_take_slide(show.state.slide, 120.0);
+    assert_eq!(show.timings, vec![(0, 3.0), (1, 4.0)]);
+}
+
 /// Erasing ink keeps the laser samples a paused or stopped take still has to save: only a show
 /// with no take clears them.
 #[test]
@@ -86,6 +126,9 @@ fn record_commands_share_the_shell_state_machine() {
     assert_eq!(command(&mut rec, &mut show, "record.reset", 17.0).expect("reset"), "idle");
     assert_eq!(command(&mut rec, &mut show, "record.undo", 18.0).expect("undo"), "idle");
     assert!(command(&mut rec, &mut show, "record.jump", 19.0).is_err(), "an unknown command is refused");
+    // Start over a running take would restart its clocks and clear the microphone buffer.
+    command(&mut rec, &mut show, "record.start", 20.0).expect("start again");
+    assert!(command(&mut rec, &mut show, "record.start", 21.0).is_err(), "a take is already recording");
 }
 
 #[test]

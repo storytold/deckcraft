@@ -150,6 +150,20 @@ impl SlideApp {
         Ok(json!({"playing": true, "slide": slide, "duration": duration, "from": from_secs}))
     }
 
+    /// End the show now, through the path its last visible frame uses: close the presenter window,
+    /// stop show-owned media, leave fullscreen and save a take. A hidden show a command ended calls
+    /// this too, so its recording data is never dropped.
+    pub(crate) fn end_show(&mut self, ctx: &egui::Context, mut show: show::Show, doc: &std::sync::Arc<deckcraft_model::Presentation>, now: f64) {
+        if let Some(host) = self.services.presenter.as_mut() {
+            host.close();
+        }
+        self.media.stop_owned(media::Owner::Show);
+        if !show.reading {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+        }
+        show.save_take(self, doc, now);
+    }
+
     /// Keep a hidden show playing from logic alone. `run_logic` does not refresh
     /// `InputState::time`, so the show anchors its last visible time to this monotonic instant
     /// and advances from there. A forced hidden paint draws the current state but does not
@@ -172,8 +186,14 @@ impl SlideApp {
         let show_time = show.hidden_logic_time(input_time, now);
         let keep = show.advance_hidden(&doc, show_time);
         let time_driven = show.hidden_time_driven(&doc);
-        if !keep {
-            self.show = None;
+        // A command's `show.end` waits for a frame; a hidden show has no visible one, so finish it
+        // here through the same end path (a running take still saves its data).
+        let ended = show.end_requested;
+        if !keep || ended {
+            let Some(show) = self.show.take() else { return };
+            let last = show.state.slide;
+            self.end_show(ctx, show, &doc, show_time);
+            let _ = self.run("slide.go", json!({"index": last}));
             return;
         }
         if time_driven {

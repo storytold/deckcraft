@@ -10,8 +10,8 @@ use super::zoom::{
 };
 use super::{
     Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
-    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, before_slide_change, json, laser_pos, narration_wav, pen_width_slide, pointer_is_laser,
-    pos2, record, saved_status, show_fills_screen, state_for, take_narration, theme, vec2, viewport_visible,
+    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, before_slide_change, json, laser_pos, pen_width_slide, pointer_is_laser, pos2, record,
+    show_fills_screen, state_for, take_narration, theme, vec2, viewport_visible,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -926,71 +926,13 @@ fn sync_mic(app: &mut SlideApp, show: &mut Show) {
     }
 }
 
-fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
+fn finish(app: &mut SlideApp, show: Show, f: &Fr, keep: bool) {
     let Fr { ctx, doc, now, .. } = *f;
     if keep {
         app.show = Some(show);
     } else {
-        if let Some(host) = app.services.presenter.as_mut() {
-            host.close();
-        }
-        app.media.stop_owned(crate::media::Owner::Show);
-        if !show.reading {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
-        }
-        // Only a take that captured is saved. Opening the Record view and leaving it without
-        // pressing Record must not write browsing time over the deck's own timings.
-        let recording = show.take_captured();
-        if show.rehearse || recording {
-            if recording {
-                take_narration(app, &mut show);
-            }
-            if show.mic_tried {
-                app.stop_mic();
-            }
-            if recording {
-                // Whatever was drawn or pointed at during the take is filed under its slide even
-                // if Stop came before the show closed.
-                show.keep_ink(doc, show.state.slide);
-                show.keep_laser(show.state.slide);
-            } else {
-                show.stash_ink(doc, show.state.slide);
-                show.stash_laser(show.state.slide);
-            }
-            // Stop froze the slide's captured length: time after Stop, or the rest of a pause, is
-            // not part of the take.
-            let last_secs = show.record_view.frozen_slide_seconds().unwrap_or_else(|| show.captured_slide_seconds(now));
-            show.timings.push((show.state.slide, last_secs));
-            for (i, secs) in show.timings.clone() {
-                let ms = if secs.is_finite() { (secs.max(0.0) * 1000.0).round() as u64 } else { 0 };
-                let _ = app.run("transition.timing", json!({"index": i, "after": ms}));
-            }
-            if recording {
-                let c = doc.show.pen_color;
-                for (i, pts) in &show.recorded {
-                    let points: Vec<_> = pts.iter().map(|(x, y)| json!([x, y, 0.5])).collect();
-                    let _ = app.run("ink.stroke", json!({"index": i, "points": points, "width": show.ink_width, "color": [c.r, c.g, c.b]}));
-                }
-                let mut narrations = 0usize;
-                for (i, rate, samples) in &show.narration {
-                    if let Some(wav) = narration_wav(*rate, samples) {
-                        let _ = app
-                            .run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(&wav)}));
-                        narrations += 1;
-                    }
-                }
-                let lc = doc.show.laser_color;
-                for (i, pts) in &show.laser_saved {
-                    let points: Vec<_> = pts.iter().map(|(x, y, t)| json!([x, y, t])).collect();
-                    let _ = app.run("show.laser", json!({"index": i, "points": points, "color": [lc.r, lc.g, lc.b]}));
-                }
-                let _ = app.run("show.setup", json!({"useTimings": true}));
-                app.set_status(saved_status(narrations > 0, !show.recorded.is_empty(), !show.laser_saved.is_empty()));
-            } else {
-                app.set_status("Slide timings recorded.");
-            }
-        }
         let last = show.state.slide;
+        app.end_show(ctx, show, doc, now);
         let _ = app.run("slide.go", json!({"index": last}));
     }
 }

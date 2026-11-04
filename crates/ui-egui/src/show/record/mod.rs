@@ -181,6 +181,8 @@ impl RecordView {
     pub(super) fn stop(&mut self, show: &mut Show, now: f64) {
         if self.status != RecordStatus::Idle {
             self.frozen_slide_secs = Some(show.captured_slide_seconds(now));
+            // File the slide's segment now, so a navigation after Stop cannot move it.
+            show.finalize_take_slide(show.state.slide, now);
         }
         match self.status {
             RecordStatus::Recording => {
@@ -241,7 +243,10 @@ impl RecordView {
 /// command channel share this one implementation; returns the take's status after it.
 pub(super) fn command(rec: &mut RecordView, show: &mut Show, id: &str, now: f64) -> Result<&'static str, String> {
     match id {
-        "record.start" => rec.start(show, now),
+        // Starting over a running or paused take would restart the slide clocks (losing the
+        // current slide's timing) and clear the microphone buffer; Stop first.
+        "record.start" if rec.status == RecordStatus::Idle => rec.start(show, now),
+        "record.start" => return Err(format!("a take is already {}", rec.status_name())),
         "record.toggle" => rec.toggle_record(show, now),
         "record.pause" => rec.pause(show, now),
         "record.resume" => rec.resume(show, now),

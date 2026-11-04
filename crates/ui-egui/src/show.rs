@@ -55,6 +55,9 @@ pub struct Show {
     /// The UI clock of the last frame. A command runs between frames and needs the same time base
     /// the shell and the show's timers use.
     pub(crate) last_now: f64,
+    /// The slide whose take segment is open: its length is not in `timings` yet. Cleared when the
+    /// segment is filed, so a stopped take is never attributed to the slide shown afterwards.
+    take_slide: Option<usize>,
     /// The Record view shell's own state (clock, layout, sections, device hooks).
     pub(crate) record_view: record::RecordView,
     /// When a recording pause started; the show clock is shifted by the pause length.
@@ -252,6 +255,7 @@ impl Show {
             record_view: record::RecordView::default(),
             end_requested: false,
             last_now: 0.0,
+            take_slide: None,
             record_paused_at: None,
             keep_cursor: false,
             timeline: None,
@@ -461,6 +465,7 @@ impl Show {
         self.last_move = now;
         self.record_paused_at = None;
         self.mic_tried = false;
+        self.take_slide = Some(self.state.slide);
     }
 
     /// Hold the slide clocks for as long as the recording is paused. The animation clock is
@@ -569,8 +574,21 @@ impl Show {
                 self.zoom = None;
                 self.zoom_arm = false;
                 let left = self.timeline.as_ref().map(|t| t.0).unwrap_or(i);
-                if self.rehearse || self.capturing() {
+                if self.rehearse {
                     self.timings.push((left, now - self.slide_start));
+                } else if self.take_captured() {
+                    // A take that is running, paused or stopped still owns the slide being left:
+                    // file its segment under that slide now, so leaving never loses it and finish
+                    // never attributes it to the slide shown afterwards.
+                    self.finalize_take_slide(left, now);
+                    if self.record_view.status != record::RecordStatus::Idle {
+                        self.take_slide = Some(i);
+                        if self.record_paused_at.is_some() {
+                            // The pause belonged to the slide left behind; the new slide's pause,
+                            // if any, starts now.
+                            self.record_paused_at = Some(now);
+                        }
+                    }
                 }
                 self.stash_ink(doc, left);
                 self.stash_laser(left);
@@ -660,7 +678,7 @@ impl Show {
     /// Move the pen's strokes into the recording, in slide points, when a take is capturing.
     /// Always clears the live strokes.
     fn stash_ink(&mut self, doc: &Presentation, slide: usize) {
-        if self.capturing() {
+        if self.take_captured() {
             self.keep_ink(doc, slide);
         } else {
             self.strokes.clear();
@@ -693,7 +711,7 @@ impl Show {
 
     /// File the live laser trace under `slide` when a take is capturing; always clears it.
     fn stash_laser(&mut self, slide: usize) {
-        if self.capturing() {
+        if self.take_captured() {
             self.keep_laser(slide);
         } else {
             self.laser_live.clear();
@@ -727,6 +745,72 @@ impl Show {
     /// stop the stream it owns).
     pub(crate) fn mic_started(&self) -> bool {
         self.mic_tried
+    }
+
+    /// File the open take segment's length under `slide`, once. Stop froze it; a running segment
+    /// is measured to `now`. A segment under a millisecond is not a visit and is dropped, so
+    /// navigating never writes a zero advance.
+    fn finalize_take_slide(&mut self, slide: usize, now: f64) {
+        if self.take_slide.take().is_none() {
+            return;
+        }
+        let secs = self.record_view.frozen_slide_seconds().unwrap_or_else(|| self.captured_slide_seconds(now));
+        if secs.is_finite() && secs * 1000.0 >= 1.0 {
+            self.timings.push((slide, secs));
+        }
+    }
+
+    /// Save what a take captured (timings, narration, ink and laser) and stop the microphone.
+    /// `end_show` calls this for the visible and the hidden end of a show alike.
+    pub(crate) fn save_take(&mut self, app: &mut SlideApp, doc: &Presentation, now: f64) {
+        let recording = self.take_captured();
+        if !(self.rehearse || recording) {
+            return;
+        }
+        if recording {
+            take_narration(app, self);
+        }
+        if self.mic_tried {
+            app.stop_mic();
+        }
+        if recording {
+            // Whatever was drawn or pointed at during the take is filed under its slide even if
+            // Stop came before the show closed.
+            self.keep_ink(doc, self.state.slide);
+            self.keep_laser(self.state.slide);
+            self.finalize_take_slide(self.state.slide, now);
+        } else {
+            self.stash_ink(doc, self.state.slide);
+            self.stash_laser(self.state.slide);
+            self.timings.push((self.state.slide, now - self.slide_start));
+        }
+        for (i, secs) in self.timings.clone() {
+            let ms = if secs.is_finite() { (secs.max(0.0) * 1000.0).round() as u64 } else { 0 };
+            let _ = app.run("transition.timing", json!({"index": i, "after": ms}));
+        }
+        if !recording {
+            app.set_status("Slide timings recorded.");
+            return;
+        }
+        let c = doc.show.pen_color;
+        for (i, pts) in &self.recorded {
+            let points: Vec<_> = pts.iter().map(|(x, y)| json!([x, y, 0.5])).collect();
+            let _ = app.run("ink.stroke", json!({"index": i, "points": points, "width": self.ink_width, "color": [c.r, c.g, c.b]}));
+        }
+        let mut narrations = 0usize;
+        for (i, rate, samples) in &self.narration {
+            if let Some(wav) = narration_wav(*rate, samples) {
+                let _ = app.run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(&wav)}));
+                narrations += 1;
+            }
+        }
+        let lc = doc.show.laser_color;
+        for (i, pts) in &self.laser_saved {
+            let points: Vec<_> = pts.iter().map(|(x, y, t)| json!([x, y, t])).collect();
+            let _ = app.run("show.laser", json!({"index": i, "points": points, "color": [lc.r, lc.g, lc.b]}));
+        }
+        let _ = app.run("show.setup", json!({"useTimings": true}));
+        app.set_status(saved_status(narrations > 0, !self.recorded.is_empty(), !self.laser_saved.is_empty()));
     }
 
     /// The UI clock of the last frame, for a command that runs between frames.

@@ -189,7 +189,9 @@ impl SlideApp {
                 }
             }
             "record.start" | "record.toggle" | "record.pause" | "record.resume" | "record.stop" | "record.reset" | "record.undo" => {
-                let Some(show) = self.show.as_mut() else { return Err("the Record view is not open".into()) };
+                // The commands act on the Record view, not on an ordinary slide show: without the
+                // view there is no shell state to start, stop or reset.
+                let Some(show) = self.show.as_mut().filter(|s| s.record) else { return Err("the Record view is not open".into()) };
                 let now = show.command_now();
                 let status = show.record_command(id, now)?;
                 let rec = &show.record_view;
