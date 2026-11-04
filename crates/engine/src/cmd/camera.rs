@@ -15,9 +15,7 @@ use serde_json::{Value, json};
 
 use super::edit::walk_mut;
 use super::insert::first_free_name;
-use super::{
-    CommandSpec, NO_ID_SPACE, always, bad, bool_or, cmd, edit_shapes, has_doc, has_slide, opt_usize_param, rect_param, str_param, targets,
-};
+use super::{CommandSpec, NO_ID_SPACE, always, bad, bool_or, cmd, edit_shapes, has_doc, has_slide, opt_usize_param, rect_param, str_param, targets};
 use crate::{Result, Session};
 
 /// Default side of an inserted cameo: 2.25 in.
@@ -27,15 +25,7 @@ pub const DEFAULT_MARGIN: f64 = 6.5;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(
-            "insert.cameo",
-            "Cameo",
-            ["Insert", "Images"],
-            None,
-            "{slide?: index, all?: bool, rect?: [x,y,w,h] pt}",
-            has_slide,
-            insert_cameo
-        ),
+        cmd!("insert.cameo", "Cameo", ["Insert", "Images"], None, "{slide?: index, all?: bool, rect?: [x,y,w,h] pt}", has_slide, insert_cameo),
         cmd!(
             "camera.style",
             "Camera Styles",
@@ -497,7 +487,7 @@ mod tests {
         let id = deckcraft_model::ShapeId(r["id"].as_u64().expect("id") as u32);
         let doc = s.doc().expect("doc");
         let sh = doc.doc.slides[0].shape(id).expect("shape");
-        assert_eq!(sh.name, "Camera 2");
+        assert_eq!(sh.name, "Camera 3");
         assert!(sh.is_cameo());
         assert_eq!(sh.geom.preset_name(), Some("ellipse"));
         let x = sh.xfrm.expect("xfrm");
@@ -576,6 +566,10 @@ mod tests {
         s.execute("slide.new", &json!({})).expect("slide");
         s.execute("insert.cameo", &json!({"all": true})).expect("insert");
         s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 40, 40]})).expect("shape");
+        // `shape.insert` moved the selection to the new rectangle on the current (second) slide;
+        // address the Cameo there explicitly.
+        let cameo = cameo_shapes(&s).into_iter().next_back().expect("cameo").id;
+        s.doc_mut().expect("doc").selection.shapes = vec![cameo];
         s.execute("camera.style", &json!({"style": "centerShadowCircle"})).expect("style");
         let r = s.execute("camera.applyToAll", &json!({})).expect("apply");
         assert_eq!(r["styled"], 2);

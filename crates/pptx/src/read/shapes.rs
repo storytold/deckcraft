@@ -378,11 +378,8 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
                         clip.fade_out_ms = ms(f.attr("out"));
                     }
                     if let Some(l) = m.child("bmkLst") {
-                        clip.bookmarks = l
-                            .children_named("bmk")
-                            .take(1000)
-                            .map(|b| (b.attr("name").unwrap_or("").to_string(), ms(b.attr("time"))))
-                            .collect();
+                        clip.bookmarks =
+                            l.children_named("bmk").take(1000).map(|b| (b.attr("name").unwrap_or("").to_string(), ms(b.attr("time")))).collect();
                     }
                 }
                 s.kind = ShapeKind::Media(clip);

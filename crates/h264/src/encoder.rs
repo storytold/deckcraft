@@ -559,6 +559,9 @@ impl Encoder {
         combine(a, t)
     }
 
+    // One macroblock's prediction, transform, quantisation and CAVLC form a single H.264 clause;
+    // splitting it would hide the bit-exactness the decoder tests check.
+    #[allow(clippy::cognitive_complexity)]
     fn intra_mb(&mut self, b: &mut Bits, src: &Planes, mx: usize, my: usize, in_p: bool) {
         let qp = self.cfg.qp;
         let stride = self.recon.w;

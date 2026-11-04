@@ -250,7 +250,7 @@ mod tests {
 
     fn frame(seq: u64, w: u32, h: u32, shade: u8) -> CameraFrame {
         let mut rgba = vec![0u8; (w * h * 4) as usize];
-        for p in rgba.chunks_exact_mut(4) {
+        for p in rgba.chunks_mut(4) {
             p.copy_from_slice(&[shade, 255 - shade, shade / 2, 255]);
         }
         CameraFrame { seq, at: Instant::now(), width: w, height: h, rgba: Arc::from(rgba) }

@@ -9,7 +9,7 @@
 //! so far is kept, later slides record no camera, and the status says why.
 
 use deckcraft_geom::Xfrm;
-use deckcraft_media::{CameraConfig, CameraError, CameraEvent, CameraIn, CameraSession, CameoClip, CameoRecorder, MAX_CLIP_MS};
+use deckcraft_media::{CameoClip, CameoRecorder, CameraConfig, CameraError, CameraEvent, CameraIn, CameraSession, MAX_CLIP_MS};
 use serde_json::json;
 
 use crate::{Result, Session};
@@ -299,7 +299,7 @@ mod tests {
 
     fn frame(seq: u64, w: u32, h: u32) -> CameraFrame {
         let mut rgba = vec![0u8; (w * h * 4) as usize];
-        for (i, p) in rgba.chunks_exact_mut(4).enumerate() {
+        for (i, p) in rgba.chunks_mut(4).enumerate() {
             p.copy_from_slice(&[(i % 251) as u8, (seq % 251) as u8, 90, 255]);
         }
         CameraFrame { seq, at: Instant::now(), width: w, height: h, rgba: Arc::from(rgba) }
@@ -388,11 +388,7 @@ mod tests {
     #[test]
     fn a_camera_that_never_opens_reports_no_camera() {
         let events = Arc::new(Mutex::new(None));
-        let camera = Box::new(Fake {
-            events,
-            fail_start: Some(CameraError::PermissionDenied),
-            stopped: Arc::new(AtomicBool::new(false)),
-        });
+        let camera = Box::new(Fake { events, fail_start: Some(CameraError::PermissionDenied), stopped: Arc::new(AtomicBool::new(false)) });
         let mut run = CameoRun::start(Some(camera), &CameraConfig::default());
         assert_eq!(run.status(), CameoStatus::NoCamera);
         assert_eq!(run.reason(), Some("camera access was denied"));

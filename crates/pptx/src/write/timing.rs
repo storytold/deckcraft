@@ -582,18 +582,27 @@ const MAX_EFFECTS: usize = 100_000;
 
 /// Does the slide have a recorded Cameo that plays when the slide appears?
 pub fn has_recorded_cameo(shapes: &[Shape]) -> bool {
-    shapes.iter().any(|s| s.cameo.as_ref().is_some_and(|c| c.recorded.is_some()) || has_recorded_cameo(s.children()))
+    fn at(shapes: &[Shape], depth: usize) -> bool {
+        if depth > 64 {
+            return false;
+        }
+        shapes.iter().any(|s| s.cameo.as_ref().is_some_and(|c| c.recorded.is_some()) || at(s.children(), depth + 1))
+    }
+    at(shapes, 0)
 }
 
 /// The shapes a recorded Cameo plays on: `p:video` for each, in document order.
-fn cameo_spids(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<u32>) {
+fn cameo_spids(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<u32>, depth: usize) {
+    if depth > 64 {
+        return;
+    }
     for s in shapes {
         if s.cameo.as_ref().is_some_and(|c| c.recorded.is_some())
             && let Some(spid) = idmap.get(s.id)
         {
             out.push(spid);
         }
-        cameo_spids(s.children(), idmap, out);
+        cameo_spids(s.children(), idmap, out, depth + 1);
     }
 }
 
@@ -637,7 +646,7 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
     let mut by_id = std::collections::HashMap::new();
     shape_index(shapes, 0, &mut by_id);
     let mut media_spids = vec![];
-    cameo_spids(shapes, idmap, &mut media_spids);
+    cameo_spids(shapes, idmap, &mut media_spids, 0);
     let mut roles_of: std::collections::HashMap<ShapeId, Vec<BuildRole>> = Default::default();
     let mut effect_count = 0usize;
     let mut warned = false;

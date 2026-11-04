@@ -76,19 +76,12 @@ impl H264Mp4Track {
     pub fn push_rgba(&mut self, rgba: &[u8]) -> Result<bool> {
         let need = self.width as usize * self.height as usize * 4;
         if rgba.len() != need {
-            return Err(MediaError::Corrupt(format!(
-                "a {}×{} frame is {need} bytes, not {}",
-                self.width,
-                self.height,
-                rgba.len()
-            )));
+            return Err(MediaError::Corrupt(format!("a {}×{} frame is {need} bytes, not {}", self.width, self.height, rgba.len())));
         }
-        let key = self.frames == 0 || self.since_key >= self.fps * KEY_EVERY_S;
+        let key = self.frames == 0 || self.since_key + 1 >= self.fps * KEY_EVERY_S;
         let pic = self.enc.encode_rgba(rgba, key);
         let sample = pic.length_prefixed();
-        self.mux
-            .write_sample(self.track, WriteSample { data: &sample, duration: 1, composition_offset: 0, is_sync: pic.key })
-            .map_err(mp4)?;
+        self.mux.write_sample(self.track, WriteSample { data: &sample, duration: 1, composition_offset: 0, is_sync: pic.key }).map_err(mp4)?;
         self.frames += 1;
         self.since_key = if pic.key { 0 } else { self.since_key + 1 };
         Ok(pic.key)
@@ -114,10 +107,7 @@ pub fn fitted_rgba(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -
     }
     let need = src_w as usize * src_h as usize * 4;
     if src.len() < need {
-        return Err(MediaError::Corrupt(format!(
-            "a {src_w}×{src_h} frame is {need} bytes, not {}",
-            src.len()
-        )));
+        return Err(MediaError::Corrupt(format!("a {src_w}×{src_h} frame is {need} bytes, not {}", src.len())));
     }
     let (src_wf, src_hf) = (f64::from(src_w), f64::from(src_h));
     let (dst_wf, dst_hf) = (f64::from(dst_w), f64::from(dst_h));
@@ -163,7 +153,7 @@ mod tests {
 
     fn frame(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
         let mut v = vec![0u8; (w * h * 4) as usize];
-        for p in v.chunks_exact_mut(4) {
+        for p in v.chunks_mut(4) {
             p.copy_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
         }
         v
@@ -194,10 +184,10 @@ mod tests {
         for i in 0..45 {
             keys.push(track.push_rgba(&frame(w, h, [i as u8, 0, 0])).expect("push"));
         }
-        assert_eq!(keys[0], true);
-        assert_eq!(keys[19], false);
-        assert_eq!(keys[20], true);
-        assert_eq!(keys[40], true);
+        assert!(keys[0]);
+        assert!(!keys[19]);
+        assert!(keys[20]);
+        assert!(keys[40]);
     }
 
     #[test]
@@ -219,13 +209,19 @@ mod tests {
         for y in 0..4 {
             for x in 0..8 {
                 let i = (y * 8 + x) * 4;
-                let (r, g, b) = if x < 2 { (255, 0, 0) } else if x > 5 { (0, 0, 255) } else { (0, 255, 0) };
+                let (r, g, b) = if x < 2 {
+                    (255, 0, 0)
+                } else if x > 5 {
+                    (0, 0, 255)
+                } else {
+                    (0, 255, 0)
+                };
                 src[i..i + 4].copy_from_slice(&[r, g, b, 255]);
             }
         }
         let out = fitted_rgba(&src, 8, 4, 4, 4).expect("fit");
         assert_eq!(out.len(), 4 * 4 * 4);
-        for p in out.chunks_exact(4) {
+        for p in out.chunks(4) {
             assert_eq!(&p[..3], &[0, 255, 0], "no red or blue bars survive the crop");
         }
     }
