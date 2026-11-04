@@ -24,6 +24,8 @@ pub struct Pcm {
     pub samples: Vec<f32>,
 }
 
+const MAX_PCM_SAMPLES: usize = 64 * 1024 * 1024;
+
 impl Pcm {
     /// Sample frames (samples per channel).
     pub fn frames(&self) -> usize {
@@ -47,8 +49,10 @@ impl Pcm {
 
     fn push_planar(planes: &[Vec<f32>], out: &mut Vec<f32>) {
         let n = planes.iter().map(Vec::len).min().unwrap_or(0);
-        out.reserve(n * planes.len());
-        for i in 0..n {
+        let remaining = MAX_PCM_SAMPLES.saturating_sub(out.len());
+        let to_push = n.min(remaining / planes.len().max(1));
+        out.reserve(to_push * planes.len());
+        for i in 0..to_push {
             for p in planes {
                 out.push(p[i]);
             }
@@ -96,7 +100,13 @@ fn decode_ogg_opus(bytes: &Bytes) -> Option<Result<Pcm>> {
         let timing = deckcraft_ogg::OpusTiming::of(stream, dec.pre_skip() as u32).map_err(|e| MediaError::Corrupt(e.to_string()))?;
         let mut out = Vec::new();
         for i in 0..stream.packets.len() {
+            if MAX_PCM_SAMPLES.saturating_sub(out.len()) < channels.max(1) as usize {
+                break;
+            }
             let Ok(p) = file.read_packet(src, s, i) else { continue };
+            if p.is_empty() {
+                continue;
+            }
             match dec.decode(Some(&p)) {
                 Ok(planes) => Pcm::push_planar(&planes, &mut out),
                 Err(e) => log::debug!("opus packet {i}: {e}"),
@@ -126,7 +136,13 @@ fn decode_mkv_opus(bytes: &Bytes) -> Option<Result<Pcm>> {
         let mut out = Vec::new();
         let n = file.tracks.get(ti).map(|t| t.samples.len()).unwrap_or(0);
         for i in 0..n {
+            if MAX_PCM_SAMPLES.saturating_sub(out.len()) < channels.max(1) as usize {
+                break;
+            }
             let Ok(p) = file.read_sample(src, ti, i) else { continue };
+            if p.is_empty() {
+                continue;
+            }
             match dec.decode(Some(&p)) {
                 Ok(planes) => Pcm::push_planar(&planes, &mut out),
                 Err(e) => log::debug!("opus packet {i}: {e}"),

@@ -65,6 +65,7 @@ fn reject_all_empties_the_pane_and_keeps_the_deck() {
 #[test]
 #[ignore = "writes a screenshot for review"]
 fn screenshot() {
+    let _gpu = crate::gpu_lock::gpu_lock();
     let (mut h, _) = harness();
     // Review tab.
     h.state_mut().ui.tab = "Review".into();
