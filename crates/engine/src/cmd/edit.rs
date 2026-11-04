@@ -22,7 +22,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Batch Edit",
             [],
             None,
-            "{commands: [{command, params?}]} → {results: [{command, result}]} — runs the commands in order as one step: when one fails, the presentation, the selection, the default shape look, the Format and Animation Painters and whether a shape.rotate gesture is open are as they were before the batch and the error names the step; one undo undoes them all. At most 1000 commands; file.*, window.*, edit.undo, edit.redo, edit.batch, show.fromStart, show.fromCurrent, text.compose and text.commit are refused before any command runs",
+            "{commands: [{command, params?}]} → {results: [{command, result}]} — runs the commands in order as one step; one undo undoes them all. The batch fails when a command fails, or when a shape.rotate gesture a command started is still open after the last one (end it in the batch with gesture: end). A failed batch names the step in its error and leaves the presentation, the selection, the default shape look, the Format and Animation Painters, whether a gesture is open, the AutoCorrect options, which GIFs are paused and Edit Points as they were, and no dialog, pane or playback a step asked for reaches the app. Some state is not rolled back, such as the clipboard and the user dictionary. At most 1000 commands; file.*, window.*, edit.undo, edit.redo, edit.batch, show.fromStart, show.fromCurrent, text.compose and text.commit are refused before any command runs",
             has_doc,
             batch
         ),
@@ -750,12 +750,15 @@ fn batch_refuses(id: &str) -> bool {
 }
 
 /// Run several commands as one step. The steps run nested, so none of them adds an undo step or
-/// a journal record of its own; when one fails, the outer command puts the presentation back and
-/// this puts back the selection, the list of missing fonts, the record of the last Duplicate, the
-/// comparison in progress (Review ▸ Compare), the default shape look, the Format and Animation
-/// Painters and whether a gesture is open. Undo entries a step pushes itself (Delete Text) are
-/// dropped with the history saved before the first step, so the batch stays one undo step either
-/// way.
+/// a journal record of its own. The batch fails at the first step that fails, or after the last
+/// step when a gesture a step started is still open (see `run_steps`). Then the outer command puts
+/// the presentation back, and this puts back the selection, the list of missing fonts, the record
+/// of the last Duplicate, the comparison in progress (Review ▸ Compare), the default shape look,
+/// the Format and Animation Painters, whether a gesture is open, the AutoCorrect options, which
+/// animated GIFs are paused, Edit Points and the requests to the app. Some state is not rolled
+/// back, such as the clipboard and the user dictionary. Undo entries a step pushes itself (Delete
+/// Text) are dropped with the history saved before the first step, so the batch stays one undo
+/// step either way.
 fn batch(s: &mut Session, p: &Value) -> Result<Value> {
     let list = p.get("commands").and_then(Value::as_array).ok_or_else(|| bad("edit.batch", "missing `commands`: [{command, params?}]"))?;
     if list.len() > MAX_BATCH {
@@ -787,40 +790,96 @@ fn batch(s: &mut Session, p: &Value) -> Result<Value> {
         (st.history.clone(), st.selection.clone(), st.missing_fonts.clone(), st.last_duplicate.clone(), st.compare.clone(), st.interaction.clone())
     };
     let (default_look, painter, anim_painter) = (s.default_look.clone(), s.painter.clone(), s.anim_painter.clone());
-    let mut results = Vec::with_capacity(steps.len());
-    for (i, (id, params)) in steps.iter().enumerate() {
-        match s.execute(id, params) {
-            Ok(r) => results.push(json!({"command": id, "result": r})),
-            Err(e) => {
-                // The outer command puts the presentation back only when it changed; steps that
-                // only selected still moved the selection, font.replace listed the missing fonts
-                // of a presentation that is now put back, edit.duplicate recorded copies that are
-                // gone (the next Duplicate would lose the offset it repeats), and review.compare
-                // and review.endCompare opened or closed a comparison, which is not an undo step.
-                // shape.setDefault, the two painters (format.painter, animation.painter; edit.deselect
-                // clears both) and a shape.rotate gesture are not undo steps either. A gesture left
-                // open would hold back the undo steps of the edits after the batch, and the step that
-                // ends it would go back to the presentation as it was partway through the batch.
-                if let Ok(st) = s.doc_mut() {
-                    st.history = history;
-                    st.selection = selection;
-                    st.missing_fonts = missing_fonts;
-                    st.last_duplicate = last_duplicate;
-                    st.compare = compare;
-                    st.interaction = interaction;
-                }
-                s.default_look = default_look;
-                s.painter = painter;
-                s.anim_painter = anim_painter;
-                return Err(bad("edit.batch", format!("step {i} (`{id}`) failed, so the presentation was left as it was: {e}")));
+    let (prefs, gif_paused, ui_requests) = (s.prefs.clone(), s.gif_paused.clone(), s.ui_requests.clone());
+    let (edit_points, edit_vertex, edit_segment) = (s.tool.edit_points, s.tool.edit_vertex, s.tool.edit_segment);
+    match run_steps(s, &steps) {
+        Ok(results) => {
+            // The outer command adds the batch's one undo step after this returns.
+            if let Ok(st) = s.doc_mut() {
+                st.history = history;
             }
+            Ok(json!({"results": results}))
+        }
+        Err(e) => {
+            // The outer command puts the presentation back only when it changed; steps that
+            // only selected still moved the selection, font.replace listed the missing fonts
+            // of a presentation that is now put back, edit.duplicate recorded copies that are
+            // gone (the next Duplicate would lose the offset it repeats), and review.compare
+            // and review.endCompare opened or closed a comparison, which is not an undo step.
+            // shape.setDefault, the two painters (format.painter, animation.painter; edit.deselect
+            // clears both) and a shape.rotate gesture are not undo steps either. A gesture left
+            // open would hold back the undo steps of the edits after the batch, and the step that
+            // ends it would go back to the presentation as it was partway through the batch.
+            // text.autocorrect changes preferences the app saves when it quits, media.gifPlay
+            // pauses or plays a GIF, and shape.editPoints turns Edit Points on or off and drops
+            // the point or segment picked in it (the outer command puts back the point type it
+            // remembers). Requests to open a dialog or a pane or to play media reach the app
+            // after the command, failed or not, and a step's error reaches it in the batch's
+            // error, so the queue goes back to what it was.
+            if let Ok(st) = s.doc_mut() {
+                st.history = history;
+                st.selection = selection;
+                st.missing_fonts = missing_fonts;
+                st.last_duplicate = last_duplicate;
+                st.compare = compare;
+                st.interaction = interaction;
+            }
+            s.default_look = default_look;
+            s.painter = painter;
+            s.anim_painter = anim_painter;
+            s.prefs = prefs;
+            s.gif_paused = gif_paused;
+            s.ui_requests = ui_requests;
+            s.tool.edit_points = edit_points;
+            s.tool.edit_vertex = edit_vertex;
+            s.tool.edit_segment = edit_segment;
+            Err(e)
         }
     }
-    // The outer command adds the batch's one undo step after this returns.
-    if let Ok(st) = s.doc_mut() {
-        st.history = history;
+}
+
+/// Run the steps of a batch in order, stopping at the first that fails. A gesture a step started
+/// that is still open after the last step fails the batch too: its undo step would begin partway
+/// through the batch, so undoing it would leave the batch's earlier edits behind, to go with the
+/// undo step before the batch. A gesture that was open before the batch and is still open after
+/// it takes the batch's edits into its undo step, as it does any command's.
+fn run_steps(s: &mut Session, steps: &[(&str, Value)]) -> Result<Vec<Value>> {
+    // One gesture is told from the next by the presentation it began with (`Session::begin`
+    // keeps it), compared after every step. One step cannot end a gesture and start another:
+    // `shape.rotate` with `gesture: "end"` starts none, and `begin` does nothing while one is
+    // open. `open` keeps the presentation alive, so a later one cannot take over its address.
+    let mut open = gesture_start(s);
+    let mut began = None;
+    let mut results = Vec::with_capacity(steps.len());
+    for (i, (id, params)) in steps.iter().enumerate() {
+        let r =
+            s.execute(id, params).map_err(|e| bad("edit.batch", format!("step {i} (`{id}`) failed, so the presentation was left as it was: {e}")))?;
+        results.push(json!({"command": id, "result": r}));
+        let now = gesture_start(s);
+        let same = match (&open, &now) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        };
+        if !same {
+            began = now.as_ref().map(|_| (i, *id));
+            open = now;
+        }
     }
-    Ok(json!({"results": results}))
+    if let Some((i, id)) = began {
+        return Err(bad(
+            "edit.batch",
+            format!(
+                "step {i} (`{id}`) started a gesture that is still open after the last step, so the presentation was left as it was: end it in the same batch with `shape.rotate` and `gesture: \"end\"`, or run the gesture outside a batch"
+            ),
+        ));
+    }
+    Ok(results)
+}
+
+/// The presentation the open gesture began with, if one is open.
+fn gesture_start(s: &Session) -> Option<Arc<deckcraft_model::Presentation>> {
+    s.active().and_then(|st| st.interaction.as_ref()).map(|g| g.doc.clone())
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@
 use serde_json::{Value, json};
 
 use crate::Session;
+use crate::cmd::base64_encode;
 
 fn depth(s: &mut Session) -> (u64, u64) {
     let d = s.execute("document.inspect", &json!({})).unwrap();
@@ -291,6 +292,194 @@ fn a_failing_batch_that_ends_a_gesture_leaves_it_open() {
     // One undo takes back the whole twist.
     s.execute("edit.undo", &json!({})).unwrap();
     assert!(rotation(&mut s).abs() < 1e-9, "rotation {} after one undo", rotation(&mut s));
+}
+
+/// A batch that leaves open a twist it started fails and leaves the presentation as it was. The
+/// twist's undo step would begin partway through the batch: undoing it would leave the batch's
+/// earlier edits behind, to go with the undo step before the batch.
+#[test]
+fn a_batch_that_leaves_open_a_gesture_it_started_fails_and_leaves_the_presentation_as_it_was() {
+    let mut s = blank();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80]})).unwrap()["id"].clone();
+    let before = snapshot(&s);
+    let steps = depth(&mut s);
+    let open = json!([
+        {"command": "shape.insert", "params": {"preset": "ellipse", "rect": [300, 200, 80, 80]}},
+        {"command": "shape.rotate", "params": {"by": 10.0, "gesture": "move"}},
+    ]);
+    let r = s.execute("edit.batch", &json!({"commands": open}));
+    let e = r.as_ref().err().map(ToString::to_string).unwrap_or_default();
+    assert!(e.contains("step 1 (`shape.rotate`) started a gesture"), "{r:?}");
+    assert!(e.contains("`gesture: \"end\"`"), "{e}");
+    assert_eq!(snapshot(&s), before, "the ellipse or the twist stayed");
+    assert_eq!(depth(&mut s), steps);
+    assert!(s.doc().unwrap().interaction.is_none(), "a gesture is still open");
+    // The next edit is an undo step of its own.
+    s.execute("shape.move", &json!({"ids": [id], "dx": 10.0, "dy": 0.0})).unwrap();
+    assert_eq!(depth(&mut s), (steps.0 + 1, 0));
+}
+
+/// The same holds for a batch that ends a twist open before it and starts another.
+#[test]
+fn a_batch_that_ends_a_gesture_and_leaves_its_own_open_fails_and_leaves_the_presentation_as_it_was() {
+    let mut s = blank();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80]})).unwrap()["id"].clone();
+    let rotation = |s: &mut Session| s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"]["rot"].as_f64().unwrap_or(0.0);
+    let (undo, _) = depth(&mut s);
+    s.execute("shape.rotate", &json!({"by": 10.0, "gesture": "move"})).unwrap();
+    let before = snapshot(&s);
+    let swap = json!([
+        {"command": "shape.rotate", "params": {"gesture": "end"}},
+        {"command": "shape.insert", "params": {"preset": "ellipse", "rect": [300, 200, 80, 80]}},
+        {"command": "shape.rotate", "params": {"by": 10.0, "gesture": "move"}},
+    ]);
+    let r = s.execute("edit.batch", &json!({"commands": swap}));
+    let e = r.as_ref().err().map(ToString::to_string).unwrap_or_default();
+    assert!(e.contains("step 2 (`shape.rotate`) started a gesture"), "{r:?}");
+    assert_eq!(snapshot(&s), before);
+    assert_eq!(depth(&mut s), (undo, 0));
+    // The twist open before the batch is still open, and ending it makes it one undo step.
+    s.execute("shape.rotate", &json!({"gesture": "end"})).unwrap();
+    assert_eq!(depth(&mut s), (undo + 1, 0));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(rotation(&mut s).abs() < 1e-9, "rotation {} after one undo", rotation(&mut s));
+}
+
+/// A batch run while a twist is open, which leaves that twist open, goes through: its edits join
+/// the twist's undo step, as any command's do while a twist is open.
+#[test]
+fn a_batch_run_inside_an_open_gesture_joins_its_undo_step() {
+    let mut s = blank();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80]})).unwrap()["id"].clone();
+    let rotation = |s: &mut Session| s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"]["rot"].as_f64().unwrap_or(0.0);
+    let shapes = names(&s).len();
+    let (undo, _) = depth(&mut s);
+    s.execute("shape.rotate", &json!({"by": 10.0, "gesture": "move"})).unwrap();
+    let steps = json!([
+        {"command": "shape.insert", "params": {"preset": "ellipse", "rect": [300, 200, 80, 80]}},
+        {"command": "shape.rotate", "params": {"ids": [id], "by": 10.0, "gesture": "move"}},
+    ]);
+    s.execute("edit.batch", &json!({"commands": steps})).unwrap();
+    assert_eq!(names(&s).len(), shapes + 1);
+    assert_eq!(depth(&mut s), (undo, 0), "an undo step while the twist is open");
+    s.execute("shape.rotate", &json!({"gesture": "end"})).unwrap();
+    assert!((rotation(&mut s) - 20.0).abs() < 1e-9, "rotation {}", rotation(&mut s));
+    assert_eq!(depth(&mut s), (undo + 1, 0));
+    // One undo takes back the twist and the batch.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(rotation(&mut s).abs() < 1e-9, "rotation {} after one undo", rotation(&mut s));
+    assert_eq!(names(&s).len(), shapes);
+}
+
+/// A batch that starts a twist and ends it goes through as one undo step.
+#[test]
+fn a_batch_that_starts_and_ends_a_gesture_is_one_undo_step() {
+    let mut s = blank();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80]})).unwrap();
+    let shapes = names(&s).len();
+    let (undo, _) = depth(&mut s);
+    let steps = json!([
+        {"command": "shape.insert", "params": {"preset": "ellipse", "rect": [300, 200, 80, 80]}},
+        {"command": "shape.rotate", "params": {"by": 10.0, "gesture": "move"}},
+        {"command": "shape.rotate", "params": {"by": 10.0, "gesture": "move"}},
+        {"command": "shape.rotate", "params": {"gesture": "end"}},
+    ]);
+    s.execute("edit.batch", &json!({"commands": steps})).unwrap();
+    assert!(s.doc().unwrap().interaction.is_none(), "a gesture is still open");
+    assert_eq!(depth(&mut s), (undo + 1, 0));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(names(&s).len(), shapes);
+    assert_eq!(depth(&mut s), (undo, 1));
+}
+
+/// AutoCorrect's options and replacement list are preferences, which the app saves when it quits;
+/// changing them is not an undo step. A failing batch leaves them as they were.
+#[test]
+fn a_failing_batch_leaves_the_autocorrect_options_as_they_were() {
+    let mut s = blank();
+    let options = |s: &mut Session| s.execute("text.autocorrect", &json!({})).unwrap();
+    let before = options(&mut s);
+    let change = json!({"command": "text.autocorrect", "params": {"on": false, "add": ["dkc", "DeckCraft"]}});
+    let e = s.execute("edit.batch", &json!({"commands": [change, bad_rename()]})).unwrap_err().to_string();
+    assert!(e.contains("step 1 (`shape.rename`)"), "{e}");
+    assert_eq!(options(&mut s), before, "the failed batch changed the AutoCorrect options");
+    // Without the failing step the change goes through.
+    s.execute("edit.batch", &json!({"commands": [change]})).unwrap();
+    let after = options(&mut s);
+    assert_eq!(after["on"], false);
+    assert!(after["entries"].as_array().unwrap().iter().any(|e| e[0] == "dkc"), "{after}");
+}
+
+/// An animated GIF of two frames.
+fn gif() -> Vec<u8> {
+    use image::{Delay, Frame, Rgba, RgbaImage};
+    let frame = |c: [u8; 4]| Frame::from_parts(RgbaImage::from_pixel(8, 8, Rgba(c)), 0, 0, Delay::from_numer_denom_ms(100, 1));
+    let mut gif = Vec::new();
+    image::codecs::gif::GifEncoder::new(&mut gif).encode_frames([frame([255, 0, 0, 255]), frame([0, 0, 255, 255])]).unwrap();
+    gif
+}
+
+/// Pausing an animated GIF (media.gifPlay) is not an undo step. A failing batch leaves each GIF
+/// playing or paused, as it was before the batch.
+#[test]
+fn a_failing_batch_leaves_gifs_playing_or_paused_as_they_were() {
+    let mut s = blank();
+    let id = s.execute("insert.picture", &json!({"name": "a.gif", "data": base64_encode(&gif())})).unwrap()["id"].clone();
+    let pause = json!({"command": "media.gifPlay", "params": {"id": id, "play": false}});
+    let e = s.execute("edit.batch", &json!({"commands": [pause, bad_rename()]})).unwrap_err().to_string();
+    assert!(e.contains("step 1 (`shape.rename`)"), "{e}");
+    assert!(s.gif_paused.is_empty(), "the failed batch paused the GIF");
+    // Paused before the batch, it stays paused when a step of the failing batch plays it.
+    s.execute("media.gifPlay", &json!({"id": id, "play": false})).unwrap();
+    let play = json!({"command": "media.gifPlay", "params": {"id": id, "play": true}});
+    assert!(s.execute("edit.batch", &json!({"commands": [play, bad_rename()]})).is_err());
+    assert_eq!(s.gif_paused.len(), 1);
+}
+
+/// Edit Points is a mode, not an undo step. A failing batch leaves it on or off, as it was before
+/// the batch, with the same point picked.
+#[test]
+fn a_failing_batch_leaves_edit_points_as_it_was() {
+    let mut s = blank();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 50, 100, 80]})).unwrap();
+    // The first Edit Points makes the rectangle a freeform; after that, turning it on changes
+    // nothing in the presentation.
+    let id = s.execute("shape.editPoints", &json!({"on": true})).unwrap()["editing"].as_u64().unwrap();
+    s.execute("shape.editPoints", &json!({"on": false})).unwrap();
+    let editing = |s: &Session| s.tool.editing_points(s.doc().unwrap()).map(|x| u64::from(x.0));
+    let on = json!({"command": "shape.editPoints", "params": {"on": true}});
+    let e = s.execute("edit.batch", &json!({"commands": [on, bad_rename()]})).unwrap_err().to_string();
+    assert!(e.contains("step 1 (`shape.rename`)"), "{e}");
+    assert_eq!(editing(&s), None, "the failed batch turned Edit Points on");
+    // On before the batch with a point picked (a click on it in the app), it stays on with that
+    // point when a step of the failing batch turns it off.
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    s.tool.edit_vertex = Some((0, 2));
+    let off = json!({"command": "shape.editPoints", "params": {"on": false}});
+    assert!(s.execute("edit.batch", &json!({"commands": [off, bad_rename()]})).is_err());
+    assert_eq!(editing(&s), Some(id));
+    assert_eq!(s.tool.edit_vertex, Some((0, 2)));
+}
+
+/// Commands that open a dialog or a pane ask the app to (`Session::ui_requests`), and the app acts
+/// on the requests after every command, failed or not. A failing batch drops the requests its
+/// steps made, so no dialog opens over the presentation it put back.
+#[test]
+fn a_failing_batch_drops_the_dialogs_its_steps_asked_for() {
+    let mut s = blank();
+    s.ui_requests.clear();
+    let colors = json!({"command": "design.colors"});
+    let e = s.execute("edit.batch", &json!({"commands": [colors, bad_rename()]})).unwrap_err().to_string();
+    assert!(e.contains("step 1 (`shape.rename`)"), "{e}");
+    assert!(s.ui_requests.is_empty(), "the failed batch asked for the Theme Colors dialog: {:?}", s.ui_requests);
+    // Requests made before the batch stay, and a batch that goes through keeps its own.
+    s.execute("design.colors", &json!({})).unwrap();
+    let queued = s.ui_requests.clone();
+    assert_eq!(queued.len(), 1);
+    assert!(s.execute("edit.batch", &json!({"commands": [colors, bad_rename()]})).is_err());
+    assert_eq!(s.ui_requests, queued);
+    s.execute("edit.batch", &json!({"commands": [colors]})).unwrap();
+    assert_eq!(s.ui_requests.len(), 2);
 }
 
 #[test]

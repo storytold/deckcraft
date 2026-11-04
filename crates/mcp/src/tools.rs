@@ -84,7 +84,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "batch",
             "Run several commands",
-            "Run commands in order; stops at the first error unless keepGoing. Returns each result. With atomic, every change to the presentation is made or none, as one undo step, and a failing batch also puts back the selection, the default shape look, the Format and Animation Painters and whether a shape.rotate gesture is open; some state is not rolled back, such as the clipboard (edit.copy, edit.cut) and the user dictionary (review.addToDictionary).",
+            "Run commands in order; stops at the first error unless keepGoing. Returns each result. With atomic, every change to the presentation is made or none, as one undo step. An atomic batch also fails when a shape.rotate gesture one of its commands started is still open after the last one (end it in the batch with gesture: end). A failing atomic batch also puts back the selection, the default shape look, the Format and Animation Painters, whether a shape.rotate gesture is open, the AutoCorrect options, which GIFs are paused and Edit Points, and drops the dialogs, panes and playback its commands asked for; some state is not rolled back, such as the clipboard (edit.copy, edit.cut) and the user dictionary (review.addToDictionary).",
             obj(
                 json!({
                     "commands": {"type": "array", "items": obj(json!({"command": string("id"), "params": {"type": "object"}}), &["command"])},
