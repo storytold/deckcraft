@@ -63,7 +63,15 @@ impl SlideApp {
     /// Leave animation preview, stop editor-owned media, and create a show at the requested slide
     /// with the current reading/presenter configuration; an out-of-range slide starts an ended show.
     pub fn start_show(&mut self, from: usize, reading: bool) {
-        // A show replaces the current one, so a take it holds is saved before the swap.
+        // A show replaces the current one: an unsaved script edit goes back to its slide first,
+        // and a take it holds is saved.
+        if let Some(mut show) = self.show.take() {
+            if let Some(doc) = self.session.active().map(|d| d.doc.clone()) {
+                let slide = show.state.slide;
+                show::record::notes::flush(self, &mut show.record_view, &doc, slide);
+            }
+            self.show = Some(show);
+        }
         if self.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured)) {
             self.end_show_now();
         }

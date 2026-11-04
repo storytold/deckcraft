@@ -989,6 +989,17 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
     if live {
         show.timings.push((show.state.slide, now - show.slide_start));
     }
+    // The take replaces what these slides had recorded, ink included: `ink.stroke` appends to the
+    // slide's recorded layer, so clear the slides the take covers first.
+    let mut touched: Vec<usize> = show.timings.iter().map(|(i, _)| *i).collect();
+    touched.extend(show.recorded.iter().map(|(i, ..)| *i));
+    touched.extend(show.narration.iter().map(|(i, ..)| *i));
+    touched.extend(show.laser_saved.iter().map(|(i, _)| *i));
+    touched.sort_unstable();
+    touched.dedup();
+    for i in touched {
+        let _ = app.run("show.clearRecording", json!({"scope": "current", "index": i}));
+    }
     for (i, secs) in show.timings.clone() {
         let ms = if secs.is_finite() { (secs.max(0.0) * 1000.0).round() as u64 } else { 0 };
         let _ = app.run("transition.timing", json!({"index": i, "after": ms}));
