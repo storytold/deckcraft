@@ -136,12 +136,8 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             {
                 let size =
                     crate::textures::fit_size((480, (480.0 * doc.slide_size.height / doc.slide_size.width.max(1.0)).clamp(1.0, 1e9) as u32), 640);
-                let image = deckcraft_render::render_slide(
-                    &doc,
-                    n,
-                    &RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), ..Default::default() },
-                );
-                show.remote_next = crate::presenter::Preview::from_image(&crate::textures::to_color_image(&image, false)).map(|image| (n, image));
+                let image = super::presenter::render_preview(&doc, n, size, 0);
+                show.remote_next = crate::presenter::Preview::from_image(&image).map(|image| (n, image));
             }
             host.update(crate::presenter::Snapshot {
                 slide: show.state.slide,

@@ -81,7 +81,7 @@ fn media_bar_rect(shape: Rect) -> Rect {
     }
 }
 fn current_hidden(show: &Show, doc: &Presentation, slide: usize) -> Vec<ShapeId> {
-    show.tex.as_ref().map(|(k, _)| k.hidden.clone()).unwrap_or_else(|| super::render::hidden_on_entry(doc, slide))
+    show.tex.as_ref().filter(|(k, _)| k.slide == slide).map(|(k, _)| k.hidden.clone()).unwrap_or_else(|| super::render::hidden_on_entry(doc, slide))
 }
 
 pub(super) fn slide_media_bars(
