@@ -1,7 +1,7 @@
 //! Camera Format ▸ Size: Crop (with Crop to Shape), Height, Width and Size and Position.
 
 use super::super::arrange::size_group;
-use super::super::galleries::preset_gallery;
+use super::super::galleries::mask_gallery;
 use super::super::{Icon, SlideApp, Ui, big_button, enabled, group, json, run};
 
 pub(super) fn size_section(app: &mut SlideApp, ui: &mut Ui) {
@@ -9,7 +9,7 @@ pub(super) fn size_section(app: &mut SlideApp, ui: &mut Ui) {
         let r = big_button(ui, Icon::Crop, "Crop", enabled(app, "picture.crop"));
         egui::Popup::menu(&r).show(|ui| {
             ui.label("Crop to Shape");
-            if let Some(p) = preset_gallery(ui) {
+            if let Some(p) = mask_gallery(ui) {
                 run(app, "shape.change", json!({"preset": p}));
             }
             ui.separator();

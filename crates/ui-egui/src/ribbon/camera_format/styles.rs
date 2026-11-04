@@ -2,7 +2,7 @@
 //! Camera Border, Camera Effects and Format Object. A style is plain DrawingML on the picture, so
 //! every other picture command keeps working on a styled cameo.
 
-use super::super::galleries::{effects_menu, outline_menu, preset_gallery};
+use super::super::galleries::{effects_menu, mask_gallery, outline_menu};
 use super::super::{Color32, CornerRadius, Icon, Rect, SlideApp, Stroke, Ui, enabled, group, json, pos2, rows, run, scheme, small, vec2, widgets};
 use deckcraft_engine::cmd::camera::{STYLES, style_of};
 
@@ -30,7 +30,7 @@ pub(super) fn styles_section(app: &mut SlideApp, ui: &mut Ui) {
             small(app, ui, Icon::ApplyToAll, "Apply to All Slides", "camera.applyToAll", json!({}));
             let r = widgets::small_button(ui, Icon::Shapes, "Camera Shape", true, false);
             egui::Popup::menu(&r).show(|ui| {
-                if let Some(p) = preset_gallery(ui) {
+                if let Some(p) = mask_gallery(ui) {
                     run(app, "shape.change", json!({"preset": p}));
                 }
             });

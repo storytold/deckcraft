@@ -132,9 +132,47 @@ pub fn shapes_gallery(ui: &mut Ui) -> Option<&'static str> {
 }
 
 /// Preset-only shapes gallery: the freeform entries are not presets, so the menus behind
-/// `shape.change` and Crop to Shape must not offer them.
+/// `shape.change` must not offer them.
 pub fn preset_gallery(ui: &mut Ui) -> Option<&'static str> {
     gallery(ui, false)
+}
+
+/// Picture-mask gallery (Crop to Shape, Camera Shape): only presets that enclose an area. An open
+/// preset (a line, a connector, an arc) has nothing to clip a picture to, so the picture would
+/// vanish.
+pub fn mask_gallery(ui: &mut Ui) -> Option<&'static str> {
+    let keep = deckcraft_geom::preset::fills_area;
+    ui.set_max_width(330.0);
+    let mut out = None;
+    egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+        let t = Tokens::get(ui.ctx());
+        for cat in deckcraft_geom::preset::Category::ALL {
+            let names: Vec<&deckcraft_geom::preset::PresetInfo> =
+                deckcraft_geom::preset::CATALOG.iter().filter(|p| p.category == cat && keep(p.name)).collect();
+            if names.is_empty() {
+                continue;
+            }
+            ui.label(egui::RichText::new(cat.label()).font(theme::bold(12.0)));
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
+                for p in names {
+                    let (r, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
+                    if resp.hovered() {
+                        ui.painter().rect_filled(r, CornerRadius::same(3), t.hover);
+                    }
+                    paint_preset(ui.painter(), r.shrink(4.0), p.name, Color32::TRANSPARENT, t.text);
+                    if resp.on_hover_text(p.label).clicked() {
+                        out = Some(p.name);
+                    }
+                }
+            });
+            ui.add_space(4.0);
+        }
+    });
+    if out.is_some() {
+        ui.close();
+    }
+    out
 }
 
 fn gallery(ui: &mut Ui, freeform: bool) -> Option<&'static str> {
