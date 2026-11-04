@@ -353,7 +353,7 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
 }
 
 fn advance(app: &mut SlideApp, show: &mut Show, f: &Fr, out: &mut Out) {
-    let Fr { doc, doc_uid, now, .. } = *f;
+    let Fr { ctx, doc, doc_uid, now, .. } = *f;
     // Apply input first: a step started by this click must restart the clock before it is read.
     for a in out.actions.drain(..) {
         before_slide_change(app, show, &a);
@@ -379,6 +379,10 @@ fn advance(app: &mut SlideApp, show: &mut Show, f: &Fr, out: &mut Out) {
     }
     show_media(app, show, doc_uid, doc, now);
     run_pending_media(app, show, doc_uid, doc, now);
+    if let Some(due) = show.pending_media.iter().map(|(_, due)| *due).reduce(f64::min) {
+        // Nothing else may ask for a frame in a static Reading View: wake at the deadline.
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64((due - now).max(0.0)));
+    }
     run_media_cues(app, show, doc_uid, doc);
 }
 

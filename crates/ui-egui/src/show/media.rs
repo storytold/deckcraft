@@ -77,6 +77,8 @@ pub(super) fn run_pending_media(app: &mut SlideApp, show: &mut Show, doc_uid: u6
 pub(super) fn run_media_cues(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentation) {
     for (id, effect) in std::mem::take(&mut show.media_cues) {
         let Some(clip) = crate::media::find_clip(doc, id, Some(show.state.slide)) else { continue };
+        // The presenter took over the clip: a start scheduled for it must not fire later.
+        show.pending_media.retain(|(pending, _)| *pending != id);
         match effect.as_str() {
             "pause" => app.media.toggle(doc_uid, doc, id, &clip, crate::media::Owner::Show),
             "stop" => app.media.stop(id),

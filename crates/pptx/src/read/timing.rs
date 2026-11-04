@@ -233,9 +233,22 @@ fn walk_media(e: &El, interactive: bool, click: bool, delay: u32, ctx: &IdCtx, o
             && let Some(shape) = ctx.lookup(spid)
         {
             // The node's own time node carries the start condition our writer emits: read it too,
-            // or an export/import resets a delayed clip to zero.
-            let own = node.path(&["cTn", "stCondLst", "cond"]).and_then(|c| c.attr("delay")).and_then(|d| d.trim().parse::<u32>().ok()).unwrap_or(0);
-            out.push(MediaCue { shape, video: e.is("video"), interactive, click, delay_ms: delay.saturating_add(own) });
+            // or an export/import resets a delayed clip to zero. `delay="indefinite"` there makes
+            // the clip click-start, exactly as it does on an ancestor.
+            let own_ctn = node.child("cTn");
+            let own_click = own_ctn.is_some_and(waits_for_click);
+            let own_delay = own_ctn
+                .and_then(|c| c.path(&["stCondLst", "cond"]))
+                .and_then(|c| c.attr("delay"))
+                .and_then(|d| d.trim().parse::<u32>().ok())
+                .unwrap_or(0);
+            out.push(MediaCue {
+                shape,
+                video: e.is("video"),
+                interactive,
+                click: click || own_click,
+                delay_ms: if own_click { delay } else { delay.saturating_add(own_delay) },
+            });
         }
         return;
     }
