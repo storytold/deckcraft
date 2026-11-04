@@ -157,7 +157,7 @@ pub fn mask_gallery(ui: &mut Ui) -> Option<&'static str> {
                 ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
                 for p in names {
                     let (r, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
-                    if resp.hovered() {
+                    if resp.hovered() || resp.has_focus() {
                         ui.painter().rect_filled(r, CornerRadius::same(3), t.hover);
                     }
                     paint_preset(ui.painter(), r.shrink(4.0), p.name, Color32::TRANSPARENT, t.text);
@@ -186,7 +186,7 @@ fn gallery(ui: &mut Ui, freeform: bool) -> Option<&'static str> {
                 ui.spacing_mut().item_spacing = vec2(1.0, 1.0);
                 for p in deckcraft_geom::preset::CATALOG.iter().filter(|p| p.category == cat) {
                     let (r, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
-                    if resp.hovered() {
+                    if resp.hovered() || resp.has_focus() {
                         ui.painter().rect_filled(r, CornerRadius::same(3), t.hover);
                     }
                     paint_preset(ui.painter(), r.shrink(4.0), p.name, Color32::TRANSPARENT, t.text);
@@ -197,7 +197,7 @@ fn gallery(ui: &mut Ui, freeform: bool) -> Option<&'static str> {
                 if freeform && cat == deckcraft_geom::preset::Category::Lines {
                     for (name, label) in deckcraft_engine::tools::FREEFORM_TOOLS {
                         let (r, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
-                        if resp.hovered() {
+                        if resp.hovered() || resp.has_focus() {
                             ui.painter().rect_filled(r, CornerRadius::same(3), t.hover);
                         }
                         paint_freeform_icon(ui.painter(), r.shrink(5.0), name, t.text);
@@ -413,7 +413,7 @@ pub(super) fn quick_styles(app: &mut SlideApp, ui: &mut Ui) {
                 };
                 p.rect(rect.shrink(2.0), CornerRadius::same(3), fill, Stroke::new(1.5, stroke), egui::StrokeKind::Inside);
                 p.text(rect.center(), Align2::CENTER_CENTER, "Abc", theme::font(11.0), text);
-                if resp.hovered() {
+                if resp.hovered() || resp.has_focus() {
                     p.rect_stroke(rect, CornerRadius::same(3), Stroke::new(1.5, Tokens::get(ui.ctx()).accent), egui::StrokeKind::Inside);
                 }
                 if resp.clicked() {
