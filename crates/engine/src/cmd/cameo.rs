@@ -6,7 +6,7 @@
 
 use serde_json::{Value, json};
 
-use super::camera::has_cameo;
+use super::camera::has_cameo_or_preview;
 use super::{CommandSpec, always, cmd};
 use crate::{Result, Session, UiRequest};
 
@@ -18,7 +18,7 @@ pub fn specs() -> Vec<CommandSpec> {
             ["Camera Format", "Camera"],
             None,
             "{on?: bool, device?: string} → {on, device}",
-            has_cameo,
+            has_cameo_or_preview,
             preview
         ),
         cmd!(

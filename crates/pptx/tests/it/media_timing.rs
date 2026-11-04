@@ -109,3 +109,26 @@ fn a_slide_start_clip_is_autoplay() {
     let c = clips(|_, a| node("audio", "", a, "", ""));
     assert!(c[1].autoplay, "no click node: the slide starts it");
 }
+
+/// `isNarration` is an attribute of `p:audio` in the schema — not of `p:cMediaNode`, which a strict
+/// reader would reject or ask to repair.
+#[test]
+fn narration_audio_carries_the_schema_flag_on_the_audio_node() {
+    let mut p = defaults::new_presentation(None);
+    let audio = p.add_media("tone.wav", "audio/wav", b"audio".to_vec()).expect("media");
+    let id = ShapeId(p.alloc_id().expect("id"));
+    Arc::make_mut(&mut p.slides[0]).shapes.push(deckcraft_model::Shape {
+        id,
+        name: "Narration".into(),
+        xfrm: Some(Xfrm::new(40.0, 40.0, 200.0, 100.0)),
+        kind: ShapeKind::Media(MediaClip { media: audio, narration: true, autoplay: true, ..Default::default() }),
+        ..Default::default()
+    });
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let mut z = zip::ZipArchive::new(Cursor::new(&bytes)).expect("zip");
+    let mut xml = String::new();
+    z.by_name("ppt/slides/slide1.xml").expect("slide").read_to_string(&mut xml).expect("read");
+    assert!(xml.contains("<p:audio isNarration=\"1\""), "the flag rides on p:audio: {xml}");
+    let media_node = xml.split("<p:cMediaNode").nth(1).and_then(|s| s.split('>').next()).unwrap_or_default();
+    assert!(!media_node.contains("isNarration"), "p:cMediaNode does not declare it: {media_node}");
+}

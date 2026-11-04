@@ -622,9 +622,10 @@ fn autoplay_audio(shapes: &[Shape], idmap: &IdMap) -> Vec<(u32, u32, u32, bool)>
 }
 
 fn audio_node(w: &mut W, ids: &mut Ids, spid: u32, vol: u32, delay_ms: u32, narration: bool) {
-    w.open0("p:audio");
-    // The schema's own narration flag: PowerPoint uses it for Play Narrations.
-    w.open("p:cMediaNode", A::new().a("vol", vol.min(100_000)).o("isNarration", narration.then_some("1")));
+    // `isNarration` belongs to `p:audio` (`CT_TLMediaNodeAudio`); `p:cMediaNode` does not declare
+    // it, and a strict reader would reject or repair the timing part.
+    w.open("p:audio", A::new().o("isNarration", narration.then_some("1")));
+    w.open("p:cMediaNode", A::new().a("vol", vol.min(100_000)));
     w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold").a("display", "0"));
     w.open0("p:stCondLst");
     w.empty("p:cond", A::new().a("delay", delay_ms));

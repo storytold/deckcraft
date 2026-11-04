@@ -209,6 +209,9 @@ pub struct MediaCue {
     /// Milliseconds the enclosing click group's start condition delays the clip (`0` = with the
     /// slide). Kept so a delayed autoplay clip is written back with its delay.
     pub delay_ms: u32,
+    /// `isNarration` from the node (PowerPoint writes it on `p:audio`; older DeckCraft files put
+    /// it on `p:cMediaNode`).
+    pub narration: bool,
 }
 
 fn walk_media(e: &El, interactive: bool, click: bool, delay: u32, ctx: &IdCtx, out: &mut Vec<MediaCue>, depth: usize) {
@@ -242,12 +245,14 @@ fn walk_media(e: &El, interactive: bool, click: bool, delay: u32, ctx: &IdCtx, o
                 .and_then(|c| c.attr("delay"))
                 .and_then(|d| d.trim().parse::<u32>().ok())
                 .unwrap_or(0);
+            let narration = e.bool("isNarration") == Some(true) || node.bool("isNarration") == Some(true);
             out.push(MediaCue {
                 shape,
                 video: e.is("video"),
                 interactive,
                 click: click || own_click,
                 delay_ms: if own_click { delay } else { delay.saturating_add(own_delay) },
+                narration,
             });
         }
         return;

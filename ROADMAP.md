@@ -151,7 +151,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | Date | What landed |
 |---|---|
 | 2026-11-03 | Record ▸ Preview (`show.preview`): plays the deck with the timings and narration already recorded, even when Use Timings / Play Narrations are off; it writes no timing, ink, narration or laser and leaves the editor's slide selection where it was (#1812) |
-| 2026-11-03 | Record ▸ Edit: Clear Recording on current/all slides drops recorded narration, camera/screen media, ink, laser and advance timings in one undo step and keeps ordinary media and user ink; Reset to Cameo returns the live feed and the default placement (#1817, #1818) |
+| 2026-11-03 | Record ▸ Edit: Clear Recording on current/all slides drops recorded narration, camera/screen media, ink, laser and advance timings in one undo step and keeps ordinary media and user ink; Reset to Cameo returns the default placement and marks the Cameo live again (#1817, #1818); live camera capture itself waits on #1837 |
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
 | 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
 | 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |

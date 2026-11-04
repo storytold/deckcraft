@@ -1280,7 +1280,9 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
                 continue;
             }
             let Some(sh) = deckcraft_model::find_shape_mut(&mut s.shapes, cue.shape) else { continue };
-            let narration = !cue.video && sh.name.eq_ignore_ascii_case("Narration");
+            // PowerPoint keeps the flag on `p:audio`; older DeckCraft files wrote it on the media
+            // node, and DeckCraft's own narration is named for it. Accept all three.
+            let narration = !cue.video && (cue.narration || sh.name.eq_ignore_ascii_case("Narration"));
             // A clip that waits for a click keeps `autoplay` off: the slide does not start it.
             if let deckcraft_model::ShapeKind::Media(clip) = &mut sh.kind {
                 clip.autoplay = !cue.click;
