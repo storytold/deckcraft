@@ -214,7 +214,14 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
     for node in nodes.into_iter().take(10_000) {
         let Some(cm) = node.child("cMediaNode") else { continue };
         let Some(id) = cm.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|f| ctx.lookup(f)) else { continue };
-        let Some(ShapeKind::Media(clip)) = find_shape_mut(shapes, id).map(|s| &mut s.kind) else { continue };
+        let Some(shape) = find_shape_mut(shapes, id) else { continue };
+        let ShapeKind::Media(clip) = &mut shape.kind else {
+            // A recorded Cameo's video is in the picture's timing node, not a media shape.
+            if let Some(cameo) = shape.cameo.as_mut().filter(|c| c.recorded.is_some()) {
+                cameo.autoplay = true;
+            }
+            continue;
+        };
         if let Some(v) = cm.attr("vol").and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite()) {
             clip.volume = (v / 100_000.0).clamp(0.0, 1.0);
         }

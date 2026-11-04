@@ -580,6 +580,40 @@ fn click_pars(w: &mut W, x: &mut Exp, ids: &mut Ids, clicks: &Groups, interactiv
 /// Most effects one slide's timing writes; animations past it are left out.
 const MAX_EFFECTS: usize = 100_000;
 
+/// Does the slide have a recorded Cameo that plays when the slide appears?
+pub fn has_recorded_cameo(shapes: &[Shape]) -> bool {
+    shapes.iter().any(|s| s.cameo.as_ref().is_some_and(|c| c.recorded.is_some()) || has_recorded_cameo(s.children()))
+}
+
+/// The shapes a recorded Cameo plays on: `p:video` for each, in document order.
+fn cameo_spids(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<u32>) {
+    for s in shapes {
+        if s.cameo.as_ref().is_some_and(|c| c.recorded.is_some())
+            && let Some(spid) = idmap.get(s.id)
+        {
+            out.push(spid);
+        }
+        cameo_spids(s.children(), idmap, out);
+    }
+}
+
+/// One `p:video`/`p:audio` time node for a media shape.
+fn media_node(w: &mut W, ids: &mut Ids, spid: u32, video: bool) {
+    let tag = if video { "p:video" } else { "p:audio" };
+    w.open0(tag);
+    w.open("p:cMediaNode", A::new().a("vol", "100000").a("showWhenStopped", "0"));
+    w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold").a("display", "0"));
+    w.open0("p:stCondLst");
+    w.empty("p:cond", A::new().a("delay", "0"));
+    w.close("p:stCondLst");
+    w.close("p:cTn");
+    w.open0("p:tgtEl");
+    w.empty("p:spTgt", A::new().a("spid", spid));
+    w.close("p:tgtEl");
+    w.close("p:cMediaNode");
+    w.close(tag);
+}
+
 /// The shapes of the tree by id, the first in document order for a repeated id (as `find_shape`
 /// finds it), so each animation resolves its shape without a tree walk.
 fn shape_index<'a>(shapes: &'a [Shape], depth: usize, out: &mut std::collections::HashMap<ShapeId, &'a Shape>) {
@@ -602,6 +636,8 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
     let mut prev_para: Option<(ShapeId, AnimClass, Option<ShapeId>, u32)> = None;
     let mut by_id = std::collections::HashMap::new();
     shape_index(shapes, 0, &mut by_id);
+    let mut media_spids = vec![];
+    cameo_spids(shapes, idmap, &mut media_spids);
     let mut roles_of: std::collections::HashMap<ShapeId, Vec<BuildRole>> = Default::default();
     let mut effect_count = 0usize;
     let mut warned = false;
@@ -686,7 +722,7 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             None => main.extend(effs),
         }
     }
-    if main.is_empty() && triggered.is_empty() {
+    if main.is_empty() && triggered.is_empty() && media_spids.is_empty() {
         return;
     }
     let mut ids = Ids(0);
@@ -718,6 +754,9 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.close("p:cond");
         w.close("p:nextCondLst");
         w.close("p:seq");
+    }
+    for spid in media_spids {
+        media_node(w, &mut ids, spid, true);
     }
     for (trig, effs) in triggered {
         // The first step starts with the button's click. Later On Click effects must remain

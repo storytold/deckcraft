@@ -46,6 +46,15 @@ pub fn specs() -> Vec<CommandSpec> {
             style
         ),
         cmd!(
+            "show.cameo",
+            "Record Cameo",
+            ["Slide Show", "Record"],
+            None,
+            "{index?: index, data: base64 mp4 | path, name?, durationMs?, rect?: [x,y,w,h] pt} → the slide's recorded Cameo video",
+            has_slide,
+            record_cameo
+        ),
+        cmd!(
             "camera.applyToAll",
             "Apply to All Slides",
             ["Camera Format", "Camera Styles"],
@@ -266,6 +275,106 @@ fn insert_cameo(s: &mut Session, p: &Value) -> Result<Value> {
         Ok((target, ids, first))
     })?;
     Ok(json!({"id": id, "ids": ids, "slide": target}))
+}
+
+/// Largest recorded clip one slide's Cameo may hold.
+const MAX_CAMEO_BYTES: usize = deckcraft_media::MAX_CLIP_BYTES;
+
+/// Commit a recorded camera clip as the slide's Cameo: the picture keeps its frame and format,
+/// its fill becomes the poster (first frame), and the MP4 plays from the slide's start.
+fn record_cameo(s: &mut Session, p: &Value) -> Result<Value> {
+    let (name, bytes) = super::insert::media_bytes(p, "show.cameo")?;
+    let ct = super::insert::content_type(&name, &bytes);
+    if !matches!(ct, "video/mp4" | "video/quicktime") {
+        return Err(bad("show.cameo", format!("{name} is not an MP4 video ({ct})")));
+    }
+    if bytes.len() > MAX_CAMEO_BYTES {
+        return Err(bad("show.cameo", format!("{name} is larger than the {} MB a Cameo may hold", MAX_CAMEO_BYTES >> 20)));
+    }
+    let data = Arc::new(bytes);
+    let info = deckcraft_media::probe(&data).map_err(|e| bad("show.cameo", format!("{name}: {e}")))?;
+    let Some(video) = info.video.as_ref() else {
+        return Err(bad("show.cameo", format!("{name} has no video")));
+    };
+    let (width, height) = (video.width, video.height);
+    let duration_ms = match p.get("durationMs").and_then(Value::as_u64) {
+        Some(v) => v.min(u64::from(u32::MAX)) as u32,
+        None => info.duration_ms.min(u64::from(u32::MAX)) as u32,
+    };
+    if duration_ms == 0 {
+        return Err(bad("show.cameo", format!("{name} has no duration")));
+    }
+    let (poster, poster_ct) = match crate::cmd::media::poster_png(&data, 0) {
+        Some(png) => (png, "image/png"),
+        // A clip we cannot decode still plays in PowerPoint; its Cameo shows our placeholder.
+        None => (PLACEHOLDER_SVG.as_bytes().to_vec(), "image/svg+xml"),
+    };
+    let rect = rect_param(p, "rect").filter(|r| r.w >= 1.0 && r.h >= 1.0);
+    let wanted = opt_usize_param(p, "index", "show.cameo")?;
+    let data = Arc::try_unwrap(data).unwrap_or_else(|a| (*a).clone());
+    let (target, id, media, poster_id) = s.edit(move |doc, sel| {
+        let n = doc.slides.len();
+        if n == 0 {
+            return Err(bad("show.cameo", "no slides"));
+        }
+        let target = match wanted {
+            Some(i) if i < n => i,
+            Some(i) => return Err(bad("show.cameo", format!("no slide {}", i + 1))),
+            None => sel.slide.min(n - 1),
+        };
+        let size = doc.slide_size;
+        let media = doc.add_media(&name, ct, data).ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?;
+        let poster_media = doc.add_media(&format!("{name}-poster.png"), poster_ct, poster).ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?;
+        let next_id = ShapeId(doc.alloc_id().ok_or_else(|| bad("show.cameo", NO_ID_SPACE))?);
+        let slide = Arc::make_mut(&mut doc.slides[target]);
+        let mut existing = None;
+        walk_mut(&mut slide.shapes, &mut |sh| {
+            if existing.is_none() && sh.is_cameo() {
+                existing = Some(sh.id);
+            }
+        });
+        let id = match existing {
+            Some(id) => {
+                let Some(sh) = slide.shape_mut(id) else {
+                    return Err(bad("show.cameo", "the Cameo is missing"));
+                };
+                let crop = match &sh.kind {
+                    ShapeKind::Picture { fill } => fill.crop,
+                    _ => [0.0; 4],
+                };
+                sh.kind = ShapeKind::Picture { fill: PictureFill { media: poster_media, crop, ..Default::default() } };
+                sh.cameo = Some(Cameo::recorded(media));
+                if let Some(r) = rect {
+                    sh.xfrm = Some(r);
+                }
+                id
+            }
+            None => {
+                let (taken, count) = slide_names(&slide.shapes);
+                let name = first_free_name("Camera", &taken, count);
+                let box_ = rect.unwrap_or_else(|| default_rect(size));
+                let mut shape = cameo(next_id, name, box_, poster_media);
+                shape.cameo = Some(Cameo::recorded(media));
+                shape.descr = "Recorded camera clip".into();
+                slide.shapes.push(shape);
+                next_id
+            }
+        };
+        sel.target = crate::Target::Slides;
+        sel.slide = target;
+        sel.text = None;
+        sel.shapes = vec![id];
+        Ok((target, id, media, poster_media))
+    })?;
+    Ok(json!({
+        "slide": target,
+        "id": id,
+        "media": media.0,
+        "poster": poster_id.0,
+        "durationMs": duration_ms,
+        "width": width,
+        "height": height,
+    }))
 }
 
 fn style(s: &mut Session, p: &Value) -> Result<Value> {

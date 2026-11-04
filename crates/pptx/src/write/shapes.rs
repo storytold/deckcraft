@@ -157,7 +157,12 @@ fn cnvpr(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape) {
 }
 
 fn nv_pr(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape) {
-    if s.ph.is_none() && s.tags.is_empty() {
+    nv_pr_with(w, x, o, s, None);
+}
+
+/// `p:nvPr`, plus the video part of a recorded Cameo (`a:videoFile`, `p14:media`).
+fn nv_pr_with(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape, recorded: Option<deckcraft_model::MediaId>) {
+    if s.ph.is_none() && s.tags.is_empty() && recorded.is_none() {
         w.empty0("p:nvPr");
         return;
     }
@@ -179,6 +184,20 @@ fn nv_pr(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape) {
         );
     }
     super::cust_data(w, x, o, &s.tags);
+    if let Some(media) = recorded {
+        let link = x.media_rel(o, media, "video");
+        let embed = x.media_rel_new(o, media, crate::opc::RT_MEDIA);
+        if let Some(l) = &link {
+            w.empty("a:videoFile", A::new().a("r:link", l));
+        }
+        if let Some(e) = &embed {
+            w.open0("p:extLst");
+            w.open("p:ext", A::new().a("uri", "{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}"));
+            w.empty("p14:media", A::new().a("xmlns:p14", crate::opc::NS_P14).a("r:embed", e));
+            w.close("p:ext");
+            w.close("p:extLst");
+        }
+    }
     w.close("p:nvPr");
 }
 
@@ -302,7 +321,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
                 crate::cameo::write_live_feed(w, c.raw.as_deref());
             }
             w.close("p:cNvPicPr");
-            nv_pr(w, x, o, s);
+            nv_pr_with(w, x, o, s, s.cameo.as_ref().and_then(|c| c.recorded));
             w.close("p:nvPicPr");
             if s.cameo.is_some() {
                 dml::cameo_blip_fill(w, x, o, "p:blipFill", fill);

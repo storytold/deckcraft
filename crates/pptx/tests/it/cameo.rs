@@ -152,3 +152,80 @@ fn an_ordinary_svg_picture_is_not_a_cameo() {
     assert!(!xml.contains("liveFeedProps"), "{xml}");
     assert!(xml.contains("<a:blip r:embed=\"rId"), "{xml}");
 }
+
+/// The smallest MP4 header worth writing: the writer only stores bytes, and the reader takes the
+/// type from the package, so no real H.264 payload is needed here (the media tests cover that).
+fn mp4() -> Vec<u8> {
+    let mut v = vec![0u8, 0, 0, 0x18];
+    v.extend_from_slice(b"ftypisom");
+    v.extend_from_slice(&[0, 0, 2, 0]);
+    v.extend_from_slice(b"isomiso2avc1mp41");
+    v
+}
+
+fn recorded_deck() -> Presentation {
+    let mut p = defaults::new_presentation(None);
+    let video = p.add_media("cameo.mp4", "video/mp4", mp4()).expect("video");
+    let poster = p.add_media("cameo-poster.png", "image/png", png()).expect("poster");
+    let shape = Shape {
+        id: ShapeId(p.alloc_id().expect("id")),
+        name: "Camera 1".into(),
+        xfrm: Some(Xfrm::new(700.0, 360.0, 162.0, 162.0)),
+        kind: ShapeKind::Picture { fill: PictureFill { media: poster, ..Default::default() } },
+        geom: Geom::preset("ellipse"),
+        cameo: Some(Cameo::recorded(video)),
+        descr: "Recorded camera clip".into(),
+        ..Default::default()
+    };
+    if let Some(s) = p.slides.first_mut() {
+        std::sync::Arc::make_mut(s).shapes.push(shape);
+    }
+    p
+}
+
+#[test]
+fn a_recorded_cameo_writes_video_links_and_a_media_timing_node() {
+    let p = recorded_deck();
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let xml = part(&bytes, "ppt/slides/slide1.xml");
+    assert!(xml.contains("<alf:liveFeedProps"), "still a Cameo: {xml}");
+    assert!(xml.contains("<a:videoFile r:link=\"rId"), "the video relationship: {xml}");
+    assert!(xml.contains("<p14:media xmlns:p14="), "the embedded media part: {xml}");
+    assert!(xml.contains("<p:video><p:cMediaNode vol=\"100000\" showWhenStopped=\"0\">"), "plays on entry: {xml}");
+    assert!(xml.contains("<p:spTgt spid=\""), "targets the cameo picture: {xml}");
+    // The poster stays the picture's image, not a second part the timing points at.
+    assert!(xml.contains("<a:blip r:embed=\"rId"), "{xml}");
+    let rels = part(&bytes, "ppt/slides/_rels/slide1.xml.rels");
+    assert!(rels.contains("/relationships/video"), "{rels}");
+    assert!(rels.contains("office/2007/relationships/media"), "{rels}");
+
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let mut found = None;
+    deckcraft_model::walk(&q.slides[0].shapes, &mut |sh, _| {
+        if sh.name == "Camera 1" {
+            found = Some(sh.clone());
+        }
+    });
+    let sh = found.expect("cameo shape");
+    assert!(sh.is_cameo());
+    let cameo = sh.cameo.as_ref().expect("cameo");
+    assert!(!cameo.live);
+    assert!(cameo.autoplay, "the p:video node means it plays when the slide appears");
+    let recorded = cameo.recorded.expect("recording");
+    assert_eq!(q.media(recorded).map(|m| m.content_type.as_str()), Some("video/mp4"));
+    let poster = match &sh.kind {
+        ShapeKind::Picture { fill } => fill.media,
+        _ => panic!("the recording stays a picture shape"),
+    };
+    assert_eq!(q.media(poster).map(|m| m.content_type.as_str()), Some("image/png"));
+}
+
+#[test]
+fn a_live_cameo_gets_no_video_part_or_timing() {
+    let p = deck("cameo-placeholder.svg", svg());
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let xml = part(&bytes, "ppt/slides/slide1.xml");
+    assert!(!xml.contains("a:videoFile"), "{xml}");
+    assert!(!xml.contains("<p:video>"), "{xml}");
+    assert!(!xml.contains("<p:timing"), "{xml}");
+}

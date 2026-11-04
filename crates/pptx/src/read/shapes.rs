@@ -336,7 +336,9 @@ fn read_model_alternate(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> 
 fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
     let nvp = e.child("nvPicPr");
     let mut s = base(imp, part, ctx, nvp);
-    if let Some(props) = crate::cameo::live_feed_props(nvp.and_then(|n| n.child("cNvPicPr"))) {
+    let live_props = crate::cameo::live_feed_props(nvp.and_then(|n| n.child("cNvPicPr")));
+    let live = live_props.is_some();
+    if let Some(props) = live_props {
         s.cameo = Some(deckcraft_model::Cameo { live: true, raw: Some(part.keep(props)), ..Default::default() });
     }
     if let Some(pr) = e.child("spPr") {
@@ -350,38 +352,51 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
     let vf = nvpr.and_then(|n| n.child("videoFile"));
     let af = nvpr.and_then(|n| n.child("audioFile"));
     let p14 = nvpr.and_then(|n| n.child("extLst")).and_then(|x| x.find("media"));
+    let mut recorded = None;
     if vf.is_some() || af.is_some() || p14.is_some() {
         let media = p14.and_then(|m| dml::media_ref(imp, part, m)).or_else(|| vf.or(af).and_then(|f| dml::media_ref(imp, part, f)));
         if let Some(media) = media {
-            let mut clip = MediaClip {
-                media,
-                video: vf.is_some() || af.is_none(),
-                poster: pf.as_ref().map(|p| p.media),
-                crop: pf.as_ref().map(|p| p.crop).unwrap_or_default(),
-                volume: 1.0,
-                ..Default::default()
-            };
-            if let Some(m) = p14 {
-                if let Some(t) = m.child("trim") {
-                    clip.trim_start_ms = ms(t.attr("st"));
-                    clip.trim_end_ms = ms(t.attr("end"));
+            // The Cameo marker plus a video part: the recording the cameo plays. Its blipFill is
+            // the poster; the shape stays a picture so cropping and formatting keep working.
+            if live {
+                recorded = Some(media);
+            } else {
+                let mut clip = MediaClip {
+                    media,
+                    video: vf.is_some() || af.is_none(),
+                    poster: pf.as_ref().map(|p| p.media),
+                    crop: pf.as_ref().map(|p| p.crop).unwrap_or_default(),
+                    volume: 1.0,
+                    ..Default::default()
+                };
+                if let Some(m) = p14 {
+                    if let Some(t) = m.child("trim") {
+                        clip.trim_start_ms = ms(t.attr("st"));
+                        clip.trim_end_ms = ms(t.attr("end"));
+                    }
+                    if let Some(f) = m.child("fade") {
+                        clip.fade_in_ms = ms(f.attr("in"));
+                        clip.fade_out_ms = ms(f.attr("out"));
+                    }
+                    if let Some(l) = m.child("bmkLst") {
+                        clip.bookmarks = l
+                            .children_named("bmk")
+                            .take(1000)
+                            .map(|b| (b.attr("name").unwrap_or("").to_string(), ms(b.attr("time"))))
+                            .collect();
+                    }
                 }
-                if let Some(f) = m.child("fade") {
-                    clip.fade_in_ms = ms(f.attr("in"));
-                    clip.fade_out_ms = ms(f.attr("out"));
-                }
-                if let Some(l) = m.child("bmkLst") {
-                    clip.bookmarks =
-                        l.children_named("bmk").take(1000).map(|b| (b.attr("name").unwrap_or("").to_string(), ms(b.attr("time")))).collect();
-                }
+                s.kind = ShapeKind::Media(clip);
+                return s;
             }
-            s.kind = ShapeKind::Media(clip);
-            return s;
         }
     }
     match pf {
         Some(fill) => s.kind = ShapeKind::Picture { fill },
         None => log::warn!("pptx: picture {} in {} has no readable image", s.name, part.name),
+    }
+    if let Some(media) = recorded {
+        s.cameo = Some(deckcraft_model::Cameo::recorded(media));
     }
     s
 }

@@ -273,12 +273,19 @@ pub struct Cameo {
     /// camera background set in PowerPoint survives a save. `None` writes a plain live feed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
+    /// A recorded clip plays when the slide appears (`p:video` in the timing tree).
+    pub autoplay: bool,
 }
 
 impl Cameo {
     /// A live feed from the default camera.
     pub fn live() -> Self {
         Cameo { live: true, ..Default::default() }
+    }
+
+    /// A recorded clip in the cameo's frame, played from the slide's start.
+    pub fn recorded(media: MediaId) -> Self {
+        Cameo { live: false, recorded: Some(media), autoplay: true, ..Default::default() }
     }
 }
 
