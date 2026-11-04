@@ -15,6 +15,7 @@ use crate::theme;
 mod keys;
 mod media;
 mod presenter;
+mod record;
 mod render;
 mod ui;
 mod zoom;
@@ -48,6 +49,10 @@ pub struct Show {
     pub rehearse: bool,
     /// Record Slide Show: keep timings, narration, pen ink and laser when the show ends.
     pub record: bool,
+    /// The Record view shell's own state (clock, layout, sections, device hooks).
+    pub(crate) record_view: record::RecordView,
+    /// When a recording pause started; the show clock is shifted by the pause length.
+    record_paused_at: Option<f64>,
     /// Set Up Slide Show ▸ Keep mouse cursor visible: a still pointer is not hidden (#1445).
     pub keep_cursor: bool,
     timeline: Option<(usize, Timeline)>,
@@ -237,6 +242,8 @@ impl Show {
             autoplay: false,
             rehearse: false,
             record: false,
+            record_view: record::RecordView::default(),
+            record_paused_at: None,
             keep_cursor: false,
             timeline: None,
             step_start: 0.0,
@@ -433,6 +440,38 @@ impl Show {
     /// cursor visible is on. Reading View always keeps it.
     fn hides_idle_cursor(&self, now: f64) -> bool {
         !self.pointer_awake(now) && !self.reading && !self.keep_cursor
+    }
+
+    /// The red Record button starts capture: restart the slide clocks so the recorded timing
+    /// begins at this frame, and let the microphone start for this take.
+    fn begin_recording(&mut self, now: f64) {
+        self.step_start = now;
+        self.slide_start = now;
+        self.step_end = now;
+        self.show_start = now;
+        self.last_move = now;
+        self.record_paused_at = None;
+        self.mic_tried = false;
+    }
+
+    /// Hold the slide clocks for as long as the recording is paused. The animation clock is
+    /// shifted on resume, so recorded timings do not count the pause.
+    fn pause_recording(&mut self, now: f64) {
+        if self.record_paused_at.is_none() {
+            self.record_paused_at = Some(now);
+        }
+    }
+
+    fn resume_recording(&mut self, now: f64) {
+        let Some(at) = self.record_paused_at.take() else { return };
+        let dt = (now - at).max(0.0);
+        if dt.is_finite() {
+            self.step_start += dt;
+            self.slide_start += dt;
+            self.step_end += dt;
+            self.show_start += dt;
+            self.last_move += dt;
+        }
     }
 
     /// Pen and laser are different pointers: turning one on puts the other away.
@@ -652,12 +691,13 @@ impl Show {
         self.laser_live.push((x, y, t_ms));
     }
 
-    /// Whether the recording badge is under the pointer: clicks there must not advance.
+    /// Whether the pointer is over the Record view's chrome: clicks there must not advance the
+    /// show, take a stroke, or follow a link.
     fn record_bar_hit(&self, ctx: &egui::Context) -> bool {
         if !self.record {
             return false;
         }
-        ctx.input(|i| i.pointer.interact_pos()).is_some_and(|p| record_bar_rect(ctx.content_rect()).contains(p))
+        ctx.input(|i| i.pointer.interact_pos()).is_some_and(|p| self.record_view.chrome_contains(ctx.content_rect(), p))
     }
 }
 
@@ -685,10 +725,6 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPl
 /// Whether starting the show takes the whole screen. Reading view and "Browsed by an individual (window)" stay in the window.
 fn show_fills_screen(reading: bool, show_type: &str) -> bool {
     !reading && show_type != "browsed"
-}
-
-fn record_bar_rect(full: Rect) -> Rect {
-    Rect::from_min_size(pos2(full.min.x + 12.0, full.min.y + 12.0), vec2(420.0, 32.0))
 }
 
 /// Slide points per on-screen pixel, so the 3px stroke keeps its width in the deck.
