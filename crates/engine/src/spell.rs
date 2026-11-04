@@ -945,7 +945,7 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
             b"8\na/X\naa/X\naaa/X\naaaa/X\naaaaa/X\naaaaaa/X\naaaaaaa/X\naaaaaaaa/X\n".as_slice(),
         );
         assert!(!d.check(&format!("{}b", "a".repeat(99))));
-        assert!(d.check(&"a".repeat(5)));
+        assert!(d.check(&"a".repeat(20)));
     }
 
     #[test]
