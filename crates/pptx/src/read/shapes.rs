@@ -393,7 +393,8 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
         // back to the placeholder image for the empty fill.
         None if recorded.is_some() => {
             log::warn!("pptx: picture {} in {} has no readable poster", s.name, part.name);
-            s.kind = ShapeKind::Picture { fill: deckcraft_model::style::PictureFill::default() };
+            let media = imp.cameo_poster();
+            s.kind = ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media, ..Default::default() } };
         }
         None => log::warn!("pptx: picture {} in {} has no readable image", s.name, part.name),
     }

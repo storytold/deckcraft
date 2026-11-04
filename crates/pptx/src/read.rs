@@ -57,6 +57,18 @@ impl Imp<'_> {
         self.next
     }
     /// Media item for an internal part, read once.
+    /// A visible camera placeholder for a recorded Cameo whose poster cannot be read, registered
+    /// once per import.
+    pub fn cameo_poster(&mut self) -> MediaId {
+        if let Some(id) = self.media.iter().find(|m| m.name == "cameo-poster.svg").map(|m| m.id) {
+            return id;
+        }
+        let id = MediaId(self.alloc());
+        let data = crate::cameo::POSTER_SVG.as_bytes().to_vec();
+        self.media.push(MediaItem { id, name: "cameo-poster.svg".into(), content_type: "image/svg+xml".into(), data: Arc::new(data), link: None });
+        id
+    }
+
     pub fn media_for(&mut self, part: &str) -> Option<MediaId> {
         let key = opc::norm(part);
         if let Some(m) = self.media_by_part.get(&key) {

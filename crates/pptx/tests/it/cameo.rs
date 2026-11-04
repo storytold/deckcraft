@@ -290,6 +290,19 @@ fn a_recorded_cameo_without_a_readable_poster_stays_a_picture() {
     assert!(sh.is_cameo());
     let cameo = sh.cameo.as_ref().expect("cameo");
     assert!(cameo.recorded.is_some(), "the recording survives a missing poster");
+    // The fallback poster is visible art, not the transparent placeholder.
+    let poster = match &sh.kind {
+        ShapeKind::Picture { fill } => fill.media,
+        _ => panic!("picture"),
+    };
+    let m = q.media(poster).expect("fallback poster");
+    assert_eq!(m.content_type, "image/svg+xml");
+    assert!(!m.data.is_empty());
+    // And it is written back as a picture.
+    let bytes = deckcraft_pptx::export(&q).expect("export");
+    let xml = part(&bytes, "ppt/slides/slide1.xml");
+    assert!(xml.contains("<asvg:svgBlip"), "the cameo keeps a picture: {xml}");
+    assert!(xml.contains("<p:video>"), "the recording still plays: {xml}");
 }
 
 #[test]
