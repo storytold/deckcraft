@@ -6264,18 +6264,77 @@ fn every_way_out_of_a_crop_gesture_leaves_it_as_one_undo_step() {
     assert!(near(crop_state(&s, id).1, [0.0, 0.0, 0.375, 0.0]));
     s.execute("edit.redo", &json!({})).unwrap();
     assert!(near(crop_state(&s, id).1, [0.0, 0.0, 0.5, 0.0]));
-    // Panning the picture off the box stores the crop the renderer draws.
+    // Panning the picture off the box stops while 1% of it still shows.
     assert_eq!(s.tool.crop, Some(deckcraft_model::ShapeId(id as _)));
     s.pointer(ev(PointerKind::Down, 150.0, 175.0)).unwrap();
     s.pointer(ev(PointerKind::Drag, 550.0, 175.0)).unwrap();
     s.pointer(ev(PointerKind::Up, 550.0, 175.0)).unwrap();
     let c = crop_state(&s, id).1;
-    assert!(c.iter().all(|v| (-10.0..=0.99).contains(v)) && c[2] == 0.99, "{c:?}");
+    assert!(deckcraft_model::style::crop_shows_enough(c) && (c[2] - 0.99).abs() < 1e-6, "{c:?}");
     // keepFrame can't crop the whole picture away either.
     assert!(s.execute("picture.crop", &json!({"ids": [id], "left": 0.6, "right": 0.6, "keepFrame": true})).is_err());
     // Crop mode needs exactly one picture selected.
     s.execute("edit.select", &json!({"ids": [id, rect]})).unwrap();
     assert!(s.execute("picture.cropMode", &json!({})).is_err());
+}
+
+#[test]
+fn no_crop_gesture_or_command_leaves_nothing_of_the_picture() {
+    let mut s = session();
+    let id = cropped_picture(&mut s);
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
+    let shows = |s: &Session| deckcraft_model::style::crop_shows_enough(crop_state(s, id).1);
+    // Box 100..250 over the image 100..300 (200 × 150).
+    s.execute("picture.crop", &json!({"ids": [id], "right": 0.25})).unwrap();
+    s.execute("picture.cropMode", &json!({"id": id})).unwrap();
+    let start = crop_state(&s, id);
+    let gesture = |s: &mut Session, from: (f64, f64), to: (f64, f64)| {
+        s.pointer(ev(PointerKind::Down, from.0, from.1)).unwrap();
+        s.pointer(ev(PointerKind::Drag, (from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0)).unwrap();
+        s.pointer(ev(PointerKind::Drag, to.0, to.1)).unwrap();
+        s.pointer(ev(PointerKind::Up, to.0, to.1)).unwrap();
+    };
+    // The box's right edge dragged far past its left one: it keeps 1% of the image, 2 points.
+    gesture(&mut s, (250.0, 175.0), (-5000.0, 175.0));
+    let (b, c) = crop_state(&s, id);
+    assert!(shows(&s) && (b[2] - 2.0).abs() < 1e-3 && (c[2] - 0.99).abs() < 1e-6, "{b:?} {c:?}");
+    s.execute("edit.undo", &json!({})).unwrap();
+    // The image shrunk from its corner to nothing: it stops where the padding is as wide as drawn.
+    gesture(&mut s, (300.0, 250.0), (100.0, 100.0));
+    let c = crop_state(&s, id).1;
+    assert!(shows(&s) && (c.iter().copied().fold(f64::INFINITY, f64::min) + 10.0).abs() < 1e-6, "{c:?}");
+    s.execute("edit.undo", &json!({})).unwrap();
+    // The image panned right off the box: 1% of it stays in.
+    gesture(&mut s, (175.0, 175.0), (175.0, 5000.0));
+    let c = crop_state(&s, id).1;
+    assert!(shows(&s) && (c[3] - 0.99).abs() < 1e-6, "{c:?}");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(crop_state(&s, id), start);
+    // Aspect Ratio and Fit refuse what would show too little, and change nothing.
+    assert!(s.execute("picture.cropAspect", &json!({"ids": [id], "ratio": "1:100"})).is_err());
+    assert_eq!(crop_state(&s, id), start);
+    s.execute("picture.cropAspect", &json!({"ids": [id], "ratio": "100:1"})).unwrap();
+    assert!(shows(&s));
+    let wide = crop_state(&s, id);
+    assert!(s.execute("picture.cropFill", &json!({"ids": [id], "mode": "fit"})).is_err(), "padding past what is drawn");
+    assert_eq!(crop_state(&s, id), wide);
+    s.execute("picture.cropFill", &json!({"ids": [id], "mode": "fill"})).unwrap();
+    assert!(shows(&s));
+    // A crop showing nothing, from an older file, can still be cropped back from crop mode.
+    s.edit(|doc, sel| {
+        let list = crate::shapes_mut(doc, sel).unwrap();
+        if let Some(sh) = deckcraft_model::find_shape_mut(list, ShapeId(id as _))
+            && let deckcraft_model::ShapeKind::Picture { fill } = &mut sh.kind
+        {
+            sh.xfrm = Some(deckcraft_geom::Xfrm::new(100.0, 100.0, 200.0, 150.0));
+            fill.crop = [0.5, 0.0, 0.5, 0.0];
+        }
+        Ok(())
+    })
+    .unwrap();
+    s.execute("picture.cropMode", &json!({"on": true, "id": id})).unwrap();
+    gesture(&mut s, (200.0, 175.0), (210.0, 175.0));
+    assert!(shows(&s), "{:?}", crop_state(&s, id));
 }
 
 #[test]

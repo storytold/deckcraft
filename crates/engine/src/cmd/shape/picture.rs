@@ -13,7 +13,7 @@ pub(super) fn crop(s: &mut Session, p: &Value) -> Result<Value> {
                 }
             }
             // Keep at least a sliver showing, as without keepFrame.
-            if fill.crop[0] + fill.crop[2] > 0.99 || fill.crop[1] + fill.crop[3] > 0.99 {
+            if !deckcraft_model::style::crop_shows_enough(fill.crop) {
                 return Err(bad("picture.crop", "the crop leaves nothing of the picture"));
             }
         }

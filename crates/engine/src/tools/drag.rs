@@ -34,32 +34,55 @@ impl Session {
                 if !(d.x.is_finite() && d.y.is_finite()) {
                     return Ok(Value::Null);
                 }
-                let (nx, nc) = match part {
-                    CropPart::Frame(h) => {
-                        let f = cmd::crop::drag_frame(orig.w, orig.h, h, d);
-                        let f = self.snap_crop_rect(f, &orig, Some(h), id, tol, !mods.cmd);
-                        let c = cmd::crop::crop_of(f.width(), f.height(), img - f.origin().to_vec2());
-                        (cmd::crop::frame_xfrm(&orig, f), c)
+                if matches!(part, CropPart::Pan) && mods.shift {
+                    if d.x.abs() > d.y.abs() {
+                        d.y = 0.0;
+                    } else {
+                        d.x = 0.0;
                     }
-                    CropPart::Image(h) => {
-                        let image = cmd::crop::drag_image(img, h, d, mods.shift);
-                        let image = self.snap_crop_rect(image, &orig, Some(h), id, tol, !mods.cmd);
-                        (orig, cmd::crop::crop_of(orig.w, orig.h, image))
-                    }
-                    CropPart::Pan => {
-                        if mods.shift {
-                            if d.x.abs() > d.y.abs() {
-                                d.y = 0.0;
-                            } else {
-                                d.x = 0.0;
-                            }
+                }
+                let free = mods.shift;
+                // The box and crop the gesture gives when dragged by local `d`.
+                let at = |s: &mut Session, d: Vec2, snap: bool| -> Option<(Xfrm, [f64; 4])> {
+                    match part {
+                        CropPart::Frame(h) => {
+                            let f = cmd::crop::drag_frame(orig.w, orig.h, h, d);
+                            let f = s.snap_crop_rect(f, &orig, Some(h), id, tol, snap);
+                            let c = cmd::crop::crop_of(f.width(), f.height(), img - f.origin().to_vec2())?;
+                            Some((cmd::crop::frame_xfrm(&orig, f), c))
                         }
-                        let image = self.snap_crop_rect(img + d, &orig, None, id, tol, !mods.cmd);
-                        (orig, cmd::crop::crop_of(orig.w, orig.h, image))
+                        CropPart::Image(h) => {
+                            let image = cmd::crop::drag_image(img, h, d, free);
+                            let image = s.snap_crop_rect(image, &orig, Some(h), id, tol, snap);
+                            Some((orig, cmd::crop::crop_of(orig.w, orig.h, image)?))
+                        }
+                        CropPart::Pan => {
+                            let image = s.snap_crop_rect(img + d, &orig, None, id, tol, snap);
+                            Some((orig, cmd::crop::crop_of(orig.w, orig.h, image)?))
+                        }
                     }
                 };
-                // Stored as the renderer draws it, so the next gesture starts from what is shown.
-                if let Some(c) = nc.map(|c| c.map(|v| v.clamp(-10.0, 0.99))) {
+                let enough = |v: &(Xfrm, [f64; 4])| deckcraft_model::style::crop_shows_enough(v.1);
+                let mut got = at(self, d, !mods.cmd).filter(enough);
+                if got.is_none() {
+                    // Dragged past where the picture would be cropped away, panned off the box or
+                    // shrunk to nothing: the gesture stops at the last point that still shows some.
+                    let (mut lo, mut hi) = (0.0, 1.0);
+                    for _ in 0..40 {
+                        let mid = (lo + hi) / 2.0;
+                        match at(self, d * mid, false).filter(enough) {
+                            Some(v) => {
+                                got = Some(v);
+                                lo = mid;
+                            }
+                            None => hi = mid,
+                        }
+                    }
+                    self.tool.guides.clear();
+                    // A picture whose crop showed nothing to begin with gets one that does.
+                    got = got.or_else(|| at(self, d, false).map(|(x, c)| (x, deckcraft_model::style::sane_crop(c))));
+                }
+                if let Some((nx, c)) = got {
                     cmd::crop::store(self, "crop", &[(id, Some(nx), c)])?;
                 }
             }

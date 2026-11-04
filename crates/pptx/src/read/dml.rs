@@ -185,8 +185,13 @@ pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
         }
     }
     if let Some(r) = bf.child("srcRect") {
-        pf.crop = [pct(r, "l").unwrap_or(0.0), pct(r, "t").unwrap_or(0.0), pct(r, "r").unwrap_or(0.0), pct(r, "b").unwrap_or(0.0)]
-            .map(|v| v.clamp(-10.0, 1.0));
+        // A crop that would leave nothing of the picture (l + r ≥ 100%…) keeps a sliver of it.
+        pf.crop = deckcraft_model::style::sane_crop([
+            pct(r, "l").unwrap_or(0.0),
+            pct(r, "t").unwrap_or(0.0),
+            pct(r, "r").unwrap_or(0.0),
+            pct(r, "b").unwrap_or(0.0),
+        ]);
     }
     if let Some(t) = bf.child("tile") {
         pf.mode = PictureMode::Tile {

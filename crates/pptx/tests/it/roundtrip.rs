@@ -782,6 +782,27 @@ fn pictures_media_and_ink_round_trip() {
 }
 
 #[test]
+fn a_src_rect_that_crops_everything_away_still_shows_a_sliver() {
+    // `l` + `r` past 100%, `t` + `b` exactly 100%, and padding beyond what is drawn.
+    for bad in [[0.6, 0.5, 0.6, 0.5], [-40.0, 0.0, 0.3, 0.0]] {
+        let mut p = rich_deck();
+        let slide = Arc::make_mut(&mut p.slides[2]);
+        let Some(ShapeKind::Picture { fill }) = slide.shapes.iter_mut().find(|s| s.name == "Picture").map(|s| &mut s.kind) else {
+            panic!("no picture")
+        };
+        fill.crop = bad;
+        let q = round(&p);
+        let ShapeKind::Picture { fill } = &by_name(&q.slides[2], "Picture").kind else { panic!("not a picture") };
+        assert!(deckcraft_model::style::crop_shows_enough(fill.crop), "{bad:?} read as {:?}", fill.crop);
+        // Sides already within bounds keep their value.
+        if bad[0] < 0.0 {
+            let want = [-10.0, 0.0, 0.3, 0.0];
+            assert!(fill.crop.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-4), "{:?}", fill.crop);
+        }
+    }
+}
+
+#[test]
 fn pressured_ink_exports_at_its_mean_width() {
     let mut p = Presentation::default();
     let id = ShapeId(p.alloc_id().expect("id"));

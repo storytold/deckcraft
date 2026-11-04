@@ -10,6 +10,7 @@
 //! rotated and flipped pictures alike.
 
 use deckcraft_geom::{Point, Rect, Xfrm};
+use deckcraft_model::style::{crop_shows_enough, sane_crop};
 use deckcraft_model::{ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
@@ -65,8 +66,10 @@ pub fn has_one_picture(s: &Session) -> std::result::Result<(), String> {
 }
 
 /// The whole image in the box's local points (`w`×`h` box, `crop` = left, top, right, bottom).
+/// A crop that shows nothing of the image (from an older file) is taken as its [`sane_crop`], so
+/// such a picture can still be cropped back.
 pub fn image_rect(w: f64, h: f64, crop: [f64; 4]) -> Option<Rect> {
-    let [l, t, r, b] = crop;
+    let [l, t, r, b] = sane_crop(crop);
     let (fx, fy) = (1.0 - l - r, 1.0 - t - b);
     if !(fx > 1e-6 && fy > 1e-6 && w.is_finite() && h.is_finite()) {
         return None;
@@ -235,8 +238,12 @@ fn pictures(s: &Session, p: &Value) -> Result<Vec<(ShapeId, Xfrm, [f64; 4])>> {
         .collect())
 }
 
-/// Store a new box and crop on each picture (`None` leaves the box).
+/// Store a new box and crop on each picture (`None` leaves the box). Nothing is stored if any crop
+/// would leave less than a sliver of its picture ([`crop_shows_enough`]).
 pub(crate) fn store(s: &mut Session, cmd: &str, items: &[(ShapeId, Option<Xfrm>, [f64; 4])]) -> Result<Value> {
+    if items.iter().any(|(_, _, c)| !crop_shows_enough(*c)) {
+        return Err(bad(cmd, "the crop leaves too little of the picture showing"));
+    }
     s.edit(|doc, sel| {
         let list = crate::shapes_mut(doc, sel).ok_or_else(|| bad(cmd, "no slide"))?;
         for (id, x, c) in items {
@@ -266,8 +273,8 @@ pub(crate) fn crop_keeping_scale(s: &mut Session, p: &Value, want: [Option<f64>;
                 *slot = v.clamp(-10.0, 0.95);
             }
         }
-        // Keep at least a sliver showing either way.
-        if c[0] + c[2] > 0.99 || c[1] + c[3] > 0.99 {
+        // Keep at least a sliver showing either way (`store` checks again).
+        if !crop_shows_enough(c) {
             return Err(bad("picture.crop", "the crop leaves nothing of the picture"));
         }
         let (iw, ih) = (img.width(), img.height());
@@ -343,7 +350,10 @@ mod tests {
         for (a, b) in back.iter().zip(c) {
             assert!((a - b).abs() < 1e-9);
         }
-        assert!(image_rect(10.0, 10.0, [0.5, 0.0, 0.5, 0.0]).is_none());
+        // A crop that shows nothing is read as one showing a sliver: 1% of the image fills the box.
+        let img = image_rect(10.0, 10.0, [0.5, 0.0, 0.5, 0.0]).unwrap();
+        assert!((img.width() - 1000.0).abs() < 1e-6 && (img.x0 + 495.0).abs() < 1e-6, "{img:?}");
+        assert!(image_rect(f64::NAN, 10.0, [0.0; 4]).is_none());
     }
 
     #[test]
