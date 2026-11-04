@@ -121,9 +121,10 @@ pub fn diff(cur: &Presentation, rev: &Presentation, by_position: bool) -> Vec<Ch
     let cur_matched: HashSet<usize> = pairs.iter().map(|p| p.0).collect();
     let rev_matched: HashSet<usize> = pairs.iter().map(|p| p.1).collect();
     let mut out = vec![];
+    let mut media = Media::new(cur, rev);
     for (i, j) in &pairs {
         let (Some(a), Some(b)) = (cur.slides.get(*i), rev.slides.get(*j)) else { continue };
-        let details = slide_details(cur, a, rev, b);
+        let details = slide_details(cur, a, rev, b, &mut media);
         if !details.is_empty() {
             out.push(Change { kind: ChangeKind::Changed, slide: *i, number: i.saturating_add(1), only_in: None, revised: Some(*j), details });
         }
@@ -140,10 +141,18 @@ pub fn diff(cur: &Presentation, rev: &Presentation, by_position: bool) -> Vec<Ch
             });
         }
     }
+    // Each revised slide's open match (the first pair naming it).
+    let mut rev_to_cur: HashMap<usize, usize> = HashMap::new();
+    for p in &pairs {
+        rev_to_cur.entry(p.1).or_insert(p.0);
+    }
+    // After the open slide that matches the nearest matched revised slide before it.
+    let mut at = 0;
     for (j, s) in rev.slides.iter().enumerate() {
+        if let Some(i) = rev_to_cur.get(&j) {
+            at = i + 1;
+        }
         if !rev_matched.contains(&j) {
-            // After the open slide that matches the revised slide before it.
-            let at = (0..j).rev().find_map(|k| pairs.iter().find(|p| p.1 == k).map(|p| p.0 + 1)).unwrap_or(0);
             out.push(Change {
                 kind: ChangeKind::Inserted,
                 slide: at,
@@ -174,8 +183,34 @@ fn shape_label(s: &Shape) -> String {
     if s.name.trim().is_empty() { format!("Shape {}", s.id.0) } else { s.name.clone() }
 }
 
-fn media_bytes(p: &Presentation, id: MediaId) -> Option<&[u8]> {
-    p.media(id).map(|m| m.data.as_slice())
+/// Both decks' media bytes by id, and which picture pairs were already compared: a deck can
+/// show one picture many times, and its bytes are compared once per pair.
+struct Media<'a> {
+    cur: HashMap<MediaId, &'a [u8]>,
+    rev: HashMap<MediaId, &'a [u8]>,
+    same: HashMap<(MediaId, MediaId), bool>,
+}
+
+impl<'a> Media<'a> {
+    fn new(cur: &'a Presentation, rev: &'a Presentation) -> Self {
+        // The first item with an id wins, as in `Presentation::media`.
+        let index = |p: &'a Presentation| {
+            let mut m = HashMap::new();
+            for x in &p.media {
+                m.entry(x.id).or_insert(x.data.as_slice());
+            }
+            m
+        };
+        Media { cur: index(cur), rev: index(rev), same: HashMap::new() }
+    }
+    /// Whether the pictures (by media id, `None` for a shape that is not a picture) differ.
+    fn differ(&mut self, a: Option<MediaId>, b: Option<MediaId>) -> bool {
+        let (ba, bb) = (a.and_then(|x| self.cur.get(&x)), b.and_then(|y| self.rev.get(&y)));
+        match (a, b) {
+            (Some(x), Some(y)) if ba.is_some() && bb.is_some() => !*self.same.entry((x, y)).or_insert_with(|| ba == bb),
+            _ => ba.is_some() || bb.is_some(),
+        }
+    }
 }
 
 /// A shape without its ids (shape and media), for comparing across decks.
@@ -204,7 +239,7 @@ fn turn(ctx: Option<&Ctx>, s: &Shape) -> (f64, bool, bool) {
     drawn_box(ctx, s).map_or((0.0, false, false), |x| (x.rot, x.flip_h, x.flip_v))
 }
 
-fn shape_details(cp: &Presentation, ca: Option<&Ctx>, a: &Shape, rp: &Presentation, cb: Option<&Ctx>, b: &Shape, out: &mut Vec<String>) {
+fn shape_details(ca: Option<&Ctx>, a: &Shape, cb: Option<&Ctx>, b: &Shape, media: &mut Media, out: &mut Vec<String>) {
     let label = shape_label(b);
     let text = |s: &Shape| s.text.as_ref().map(|t| t.text()).unwrap_or_default();
     let mut what = vec![];
@@ -234,11 +269,11 @@ fn shape_details(cp: &Presentation, ca: Option<&Ctx>, a: &Shape, rp: &Presentati
     if a.fill != b.fill || a.line != b.line || a.style != b.style || a.effects != b.effects {
         what.push("formatting");
     }
-    let pic = |p: &Presentation, s: &Shape| match &s.kind {
-        ShapeKind::Picture { fill } => media_bytes(p, fill.media).map(|b| b.to_vec()),
+    let pic = |s: &Shape| match &s.kind {
+        ShapeKind::Picture { fill } => Some(fill.media),
         _ => None,
     };
-    if pic(cp, a) != pic(rp, b) {
+    if media.differ(pic(a), pic(b)) {
         what.push("picture");
     }
     // Anything the checks above do not cover (alt text, hidden, a link…) is reported too, also
@@ -265,21 +300,32 @@ fn shape_details(cp: &Presentation, ca: Option<&Ctx>, a: &Shape, rp: &Presentati
     }
 }
 
-fn slide_details(cp: &Presentation, a: &Slide, rp: &Presentation, b: &Slide) -> Vec<String> {
+fn slide_details(cp: &Presentation, a: &Slide, rp: &Presentation, b: &Slide, media: &mut Media) -> Vec<String> {
     let mut out = vec![];
     let mut used: HashSet<usize> = HashSet::new();
     let (ca, cb) = (Ctx::for_slide(cp, a), Ctx::for_slide(rp, b));
+    // The revised shapes by id (first wins) and by name (in order, with a cursor past used ones).
+    let mut by_id: HashMap<ShapeId, usize> = HashMap::new();
+    let mut by_name: HashMap<&str, (Vec<usize>, usize)> = HashMap::new();
+    for (k, x) in b.shapes.iter().enumerate() {
+        by_id.entry(x.id).or_insert(k);
+        if !x.name.is_empty() {
+            by_name.entry(x.name.as_str()).or_default().0.push(k);
+        }
+    }
     for sa in &a.shapes {
-        let k = b
-            .shapes
-            .iter()
-            .position(|x| x.id == sa.id)
-            .or_else(|| b.shapes.iter().enumerate().position(|(k, x)| !used.contains(&k) && x.name == sa.name && !x.name.is_empty()));
+        let k = by_id.get(&sa.id).copied().or_else(|| {
+            let (ks, next) = by_name.get_mut(sa.name.as_str())?;
+            while ks.get(*next).is_some_and(|k| used.contains(k)) {
+                *next += 1;
+            }
+            ks.get(*next).copied()
+        });
         match k {
             Some(k) if !used.contains(&k) => {
                 used.insert(k);
                 if let Some(sb) = b.shapes.get(k) {
-                    shape_details(cp, ca.as_ref(), sa, rp, cb.as_ref(), sb, &mut out);
+                    shape_details(ca.as_ref(), sa, cb.as_ref(), sb, media, &mut out);
                 }
             }
             _ => out.push(format!("{} deleted (only in the deck)", shape_label(sa))),
@@ -334,19 +380,34 @@ pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacin
     let mut sl = slide.clone();
     // Media.
     let mut media_map: HashMap<MediaId, MediaId> = HashMap::new();
+    // Both decks' media by id (the first item with an id wins, as in `Presentation::media`),
+    // looked up once per reference instead of searched.
+    let mut rev_at: HashMap<MediaId, usize> = HashMap::new();
+    for (i, m) in rev.media.iter().enumerate() {
+        rev_at.entry(m.id).or_insert(i);
+    }
+    let mut doc_at: HashMap<MediaId, usize> = HashMap::new();
+    for (i, m) in doc.media.iter().enumerate() {
+        doc_at.entry(m.id).or_insert(i);
+    }
     for id in crate::media_refs::slide_media(&sl) {
-        let Some(m) = rev.media(id) else { continue };
-        match doc.media(id) {
+        let Some(m) = rev_at.get(&id).and_then(|&i| rev.media.get(i)) else { continue };
+        match doc_at.get(&id).and_then(|&i| doc.media.get(i)) {
             Some(x) if x.data == m.data => {}
             None => {
                 // Keeps the revision's id, so later ids must start past it.
+                doc_at.insert(id, doc.media.len());
                 doc.media.push(m.clone());
                 doc.next_id = doc.next_id.max(id.0);
             }
             Some(_) => {
+                let before = doc.media.len();
                 let new = doc
                     .add_media(&m.name, &m.content_type, m.data.as_ref().clone())
                     .ok_or_else(|| crate::cmd::bad("review.accept", crate::cmd::NO_ID_SPACE))?;
+                if doc.media.len() > before {
+                    doc_at.entry(new).or_insert(before);
+                }
                 media_map.insert(id, new);
             }
         }
@@ -517,6 +578,39 @@ mod tests {
         let at = ins["slide"].as_u64().unwrap() as usize;
         assert_eq!(at, n, "after the open slide matching the revised one before it");
         assert_eq!(s.doc().unwrap().doc.slides.len(), n, "comparing alone changes nothing");
+    }
+
+    #[test]
+    fn many_inserted_slides_and_same_named_pictures_compare_by_index() {
+        use std::sync::Arc;
+
+        use deckcraft_model::style::PictureFill;
+        use deckcraft_model::{Shape, ShapeId, ShapeKind, SlideId, defaults};
+
+        // One slide of 3,000 pictures of one image, all named "Box"; the revision has the same
+        // pictures under other ids (matched by name, in order) and 3,000 slides inserted after it.
+        let mut cur = defaults::new_presentation(None);
+        let img = cur.add_media("a.png", "image/png", vec![7; 4096]).unwrap();
+        let mut rev = cur.clone();
+        let pic = |id: u32| Shape {
+            id: ShapeId(id),
+            name: "Box".into(),
+            xfrm: Some(deckcraft_model::Xfrm::new(10.0, 10.0, 50.0, 50.0)),
+            kind: ShapeKind::Picture { fill: PictureFill { media: img, ..Default::default() } },
+            ..Default::default()
+        };
+        Arc::make_mut(&mut cur.slides[0]).shapes = (0..3000).map(|k| pic(100_000 + k)).collect();
+        Arc::make_mut(&mut rev.slides[0]).shapes = (0..3000).map(|k| pic(200_000 + k)).collect();
+        let mut base = (*rev.slides[0]).clone();
+        base.shapes.clear();
+        for k in 0..3000 {
+            let mut s = base.clone();
+            s.id = SlideId(300_000 + k);
+            rev.slides.push(Arc::new(s));
+        }
+        let changes = super::diff(&cur, &rev, false);
+        assert_eq!(changes.len(), 3000, "only the inserted slides differ");
+        assert!(changes.iter().all(|c| c.kind == super::ChangeKind::Inserted && c.slide == 1));
     }
 
     /// A deck with one slide: a table whose cell has a picture fill, a picture background and a
