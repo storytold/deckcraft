@@ -172,7 +172,7 @@ fn list_styles(_s: &mut Session, _p: &Value) -> Result<Value> {
 /// Our own cameo placeholder: a camera body and lens drawn as an SVG, no vendor artwork. It is
 /// embedded as the picture's image, so PowerPoint shows it and the capture layer can swap it for
 /// the live feed.
-pub const PLACEHOLDER_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320" viewBox="0 0 320 320">
+pub const PLACEHOLDER_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320" viewBox="0 0 320 320">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#33404f"/>
@@ -185,7 +185,7 @@ pub const PLACEHOLDER_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" wid
   <circle cx="160" cy="176" r="40" fill="#0d1218" stroke="#e8eef7" stroke-width="11"/>
   <circle cx="160" cy="176" r="17" fill="#8fd3ff"/>
   <circle cx="244" cy="128" r="6" fill="#8fd3ff"/>
-</svg>"#;
+</svg>"##;
 
 /// Bottom-right default box for a slide.
 pub(super) fn default_rect(size: deckcraft_geom::Size) -> Xfrm {
@@ -350,7 +350,7 @@ pub fn has_cameo(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
     let doc = s.active().ok_or_else(|| "no presentation open".to_string())?;
     let shapes = doc.selected_shapes();
-    if !shapes.is_empty() && shapes.iter().all(Shape::is_cameo) { Ok(()) } else { Err("no Cameo selected".into()) }
+    if !shapes.is_empty() && shapes.iter().all(|sh| sh.is_cameo()) { Ok(()) } else { Err("no Cameo selected".into()) }
 }
 
 #[cfg(test)]

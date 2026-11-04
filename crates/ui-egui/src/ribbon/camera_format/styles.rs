@@ -4,7 +4,7 @@
 
 use super::super::galleries::{effects_menu, outline_menu, shapes_gallery};
 use super::super::{
-    Color32, CornerRadius, Icon, Rect, SlideApp, Stroke, Ui, big_button, group, json, pos2, rows, run, scheme, small, vec2, widgets,
+    Color32, CornerRadius, Icon, Rect, SlideApp, Stroke, Ui, group, json, pos2, rows, run, scheme, small, vec2, widgets,
 };
 use deckcraft_engine::cmd::camera::{STYLES, style_of};
 
