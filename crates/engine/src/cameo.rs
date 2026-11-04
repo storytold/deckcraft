@@ -9,7 +9,9 @@
 //! so far is kept, later slides record no camera, and the status says why.
 
 use deckcraft_geom::Xfrm;
-use deckcraft_media::{CameoClip, CameoRecorder, CameraConfig, CameraError, CameraEvent, CameraIn, CameraSession, MAX_CLIP_MS};
+use deckcraft_media::{
+    CameoCap, CameoClip, CameoRecorder, CameraConfig, CameraError, CameraEvent, CameraIn, CameraSession, MAX_CLIP_BYTES, MAX_CLIP_MS,
+};
 use serde_json::json;
 
 use crate::{Result, Session};
@@ -164,12 +166,15 @@ impl CameoRun {
             self.reason = Some(e.to_string());
             return;
         }
-        if self.recorder.as_ref().is_some_and(CameoRecorder::capped) {
+        if let Some(cap) = self.recorder.as_ref().and_then(CameoRecorder::cap) {
             self.close(now_ms);
             if self.status == CameoStatus::Recording {
                 // The per-slide cap ends only this clip: the next slide records again.
                 self.status = CameoStatus::Ready;
-                self.reason = Some(format!("the clip reached {} minutes", MAX_CLIP_MS / 60_000));
+                self.reason = Some(match cap {
+                    CameoCap::Duration => format!("the clip reached {} minutes", MAX_CLIP_MS / 60_000),
+                    CameoCap::Bytes => format!("the clip reached {} MB", MAX_CLIP_BYTES >> 20),
+                });
             }
         }
     }

@@ -116,6 +116,15 @@ pub const MAX_CLIP_MS: u32 = 10 * 60 * 1000;
 /// Largest MP4 one slide may record.
 pub const MAX_CLIP_BYTES: usize = 64 << 20;
 
+/// Why a clip stopped before its slide did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CameoCap {
+    /// The slide recorded [`MAX_CLIP_MS`].
+    Duration,
+    /// The clip reached [`MAX_CLIP_BYTES`].
+    Bytes,
+}
+
 /// A finished recording, as the model's media part.
 #[derive(Clone, Debug)]
 pub struct CameoClip {
@@ -140,7 +149,7 @@ pub struct CameoRecorder {
     written: u64,
     /// The most recent frame, already fitted to the target.
     last: Option<Vec<u8>>,
-    capped: bool,
+    capped: Option<CameoCap>,
     /// Largest clip this recorder keeps, in MP4 bytes ([`MAX_CLIP_BYTES`] unless a test lowers it).
     max_bytes: usize,
 }
@@ -159,7 +168,7 @@ impl CameoRecorder {
             start_ms,
             written: 0,
             last: None,
-            capped: false,
+            capped: None,
             max_bytes: MAX_CLIP_BYTES,
         })
     }
@@ -178,6 +187,11 @@ impl CameoRecorder {
 
     /// The clip reached [`MAX_CLIP_MS`] or its byte budget: stop the camera for this slide.
     pub fn capped(&self) -> bool {
+        self.capped.is_some()
+    }
+
+    /// Which limit stopped the clip, for the show's status line.
+    pub fn cap(&self) -> Option<CameoCap> {
         self.capped
     }
 
@@ -210,7 +224,7 @@ impl CameoRecorder {
         }
         let elapsed = now_ms - self.start_ms;
         if elapsed >= u64::from(MAX_CLIP_MS) {
-            self.capped = true;
+            self.capped = Some(CameoCap::Duration);
             self.fill_to(self.max_frames(), None)?;
             return Ok(());
         }
@@ -226,7 +240,7 @@ impl CameoRecorder {
     fn fill_to(&mut self, want: u64, frame: Option<&[u8]>) -> crate::Result<()> {
         while self.written < want {
             if self.track.bytes() >= self.byte_budget() {
-                self.capped = true;
+                self.capped = Some(CameoCap::Bytes);
                 break;
             }
             let Some(frame) = frame.or(self.last.as_deref()) else { break };
@@ -329,6 +343,7 @@ mod tests {
             }
         }
         assert!(rec.capped(), "the byte budget ends the clip before the duration cap");
+        assert_eq!(rec.cap(), Some(CameoCap::Bytes), "the limit that stopped it is reported");
         let clip = rec.finish(now).expect("the clip so far is kept, not rejected");
         assert!(clip.frames > 0);
         assert!(clip.mp4.len() <= MAX_CLIP_BYTES);

@@ -31,7 +31,8 @@ use std::sync::Arc;
 
 pub use audio::Pcm;
 pub use camera::{
-    CameoClip, CameoRecorder, CameraConfig, CameraError, CameraEvent, CameraFrame, CameraIn, CameraInfo, CameraSession, MAX_CLIP_BYTES, MAX_CLIP_MS,
+    CameoCap, CameoClip, CameoRecorder, CameraConfig, CameraError, CameraEvent, CameraFrame, CameraIn, CameraInfo, CameraSession, MAX_CLIP_BYTES,
+    MAX_CLIP_MS,
 };
 pub use clip::ClipParams;
 pub use encode::{H264Mp4Track, fitted_rgba};
