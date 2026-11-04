@@ -428,8 +428,14 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
     if let (Some((from, m)), Some(tr)) = (morph, show.trans.as_mut()) {
         let f = |id: ShapeId| ShapeState { opacity: m.opacity_of(id), ..Default::default() };
         let threads = if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
+        let (mw, mh) = if size.0 > 960 {
+            let k = 960.0 / size.0 as f64;
+            (960, (size.1 as f64 * k).round().max(1.0) as u32)
+        } else {
+            size
+        };
         let opts =
-            RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), state: Some(&f), threads, ..Default::default() };
+            RenderOpts { scale: mw as f64 / doc.slide_size.width.max(1.0), size: Some((mw, mh)), state: Some(&f), threads, ..Default::default() };
         let text: Vec<deckcraft_render::TextMorph> =
             m.text.iter().map(|x| deckcraft_render::TextMorph { old: x.old, new: x.new, from: x.from, to: x.to, chars: x.chars, t: m.mix }).collect();
         let paths: Vec<deckcraft_render::PathMorph> = m
