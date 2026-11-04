@@ -462,3 +462,6 @@ mod inktoshape_tests;
 
 #[cfg(test)]
 mod picture_styles_tests;
+
+#[cfg(test)]
+mod save_show_tests;

@@ -71,8 +71,22 @@ pub(super) fn record(app: &mut SlideApp, ui: &mut Ui) {
         }
     });
     group(ui, |ui| {
+        let label = "Save as\nShow";
+        let hint = "Save a copy as a PowerPoint Show (.ppsx) that starts the slide show when opened";
+        if big_button(ui, Icon::SaveAs, label, true).on_hover_text(hint).clicked() {
+            save_as_show(app);
+        }
+    });
+    group(ui, |ui| {
         if big_button(ui, Icon::Help, "Learn\nMore", true).clicked() {
             app.open_url(deckcraft_engine::links::APP_PAGE);
         }
     });
+}
+
+/// Record ▸ Export ▸ Save as Show: write a `.ppsx` copy of the active presentation through the
+/// normal Save dialog, as PowerPoint does. The copy starts the slide show when opened; the
+/// presentation keeps its own file. The status bar names the copy, or why it wasn't written.
+fn save_as_show(app: &mut SlideApp) {
+    app.export_as("ppsx", json!({}));
 }
