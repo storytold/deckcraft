@@ -97,6 +97,8 @@ pub(crate) struct RecordView {
     pub(super) pending: Option<RecordCommand>,
     /// A take has started in this view, so leaving it should save the recording.
     pub(super) captured: bool,
+    /// Leaving the view while a take is running asks for a confirmation first.
+    pub(super) close_confirm: bool,
     /// The clock value replaced by the last Reset, so Undo can put it back.
     undo_elapsed: Option<f64>,
 }
@@ -119,6 +121,7 @@ impl Default for RecordView {
             camera_preview: false,
             pending: None,
             captured: false,
+            close_confirm: false,
             undo_elapsed: None,
         }
     }
