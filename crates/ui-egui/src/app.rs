@@ -20,6 +20,7 @@ mod input;
 mod keys;
 mod playback;
 
+pub(crate) use clipboard::CopiedContent;
 #[cfg(test)]
 pub(crate) use clipboard::{OBJECTS_MARKER, system_clipboard_text};
 #[cfg(test)]
@@ -355,9 +356,7 @@ impl SlideApp {
         for url in std::mem::take(&mut self.pending_urls) {
             ctx.open_url(egui::OpenUrl::new_tab(url));
         }
-        if let Some(t) = self.pending_copy.take() {
-            ctx.copy_text(t);
-        }
+        self.flush_clipboard(&ctx);
         self.drain_requests();
         doc_window::show(self, &ctx);
         self.perf.frame_ms = now_ms() - t0;

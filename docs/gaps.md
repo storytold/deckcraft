@@ -1,6 +1,9 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Copy/Cut revision changes notify the IME tracker; current main integrated; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+
 > **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-03 · **Change:** trivial (run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** trivial (caret-only Copy/Cut preserves the host clipboard; Copy/Cut publication unified; OS clipboard feature remains an open desktop integration gap, #1419/#1620) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -270,6 +273,10 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
   back, which PowerPoint does not.
 - **Estimate:** 1–2 h (bundle openly licensed dictionaries; under 1 h for the AutoFormat option).
 
+### Desktop clipboard integration
+- **Evidence:** desktop eframe features omit `clipboard`, so egui can paste from an in-memory clipboard while rich-text Copy writes directly to the OS pasteboard (#1620). PR #1419 enables the OS clipboard. Caret-only Copy/Cut preserves the host clipboard. Copy/Cut publication is shared by semantic events, raw shortcuts and UI commands, but that does not replace the missing integration feature.
+- **Validation:** native macOS Cmd+C/Cmd+V passed on an owned synthetic deck with the OS clipboard feature enabled locally; a released build with #1419, plus external-app and cross-window checks, remains to be verified.
+
 ### Copying text and cell ranges
 - **Evidence:** a copied text range carries no media, so a picture bullet in it is lost when
   pasted into another deck; the writer saves a bullet whose picture is missing as `•`. A copied
@@ -368,10 +375,13 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | trivial | Copy/Cut text mutations notify the IME tracker; main documentation conflicts reconciled, clipboard score unchanged (#1620) |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
+| 2026-11-01 | trivial | Caret-only Copy/Cut preserves the host clipboard and pending payload; command/shortcut text ranges and dialog focus covered (#1620). Scores unchanged |
+| 2026-10-31 | trivial | Copy/Cut publication unified; OS clipboard feature remains an open desktop integration gap, #1419/#1620 |
 | 2026-10-30 | minor | Slide-show click targets use each shape’s own animation state; scale and rotation test added |
 | 2026-10-28 | trivial | Automatic lists now run independently of Replace text as you type; proofing gap description updated |
 | 2026-10-27 | minor | Refreshed against merged PRs: removed the Morph alignment entry (#67 merged 2026-10-14); #77 (animation rewind, PR #83) is fixed, leaving #74 in the round-trip gap; #75 was closed unmerged, so #60 stays open with no fix PR; #53 is closed and the image-paste gap is now Windows #1414; Reuse Slides (#1103) and Compare reject (#850) noted in the smaller rows; the duplicate header line is gone |

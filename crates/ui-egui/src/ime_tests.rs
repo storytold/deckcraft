@@ -633,6 +633,30 @@ fn mixed_application_and_ime_edits_report_other() {
     assert_eq!(payload.text, "axy");
 }
 
+/// Clipboard text deletion is an application edit even beside an IME commit in the same pass.
+#[test]
+fn raw_and_semantic_cut_report_application_edits_to_the_ime_tracker() {
+    for raw in [true, false] {
+        let mut h = harness(Session::with_new());
+        let title = h.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
+        h.state_mut().run("text.edit", json!({"id": title})).unwrap();
+        h.state_mut().session.execute("text.insert", &json!({"text": "ab"})).unwrap();
+        h.state_mut().session.execute("text.select", &json!({"anchor": [0, 1], "caret": [0, 2]})).unwrap();
+        h.run_steps(2);
+        h.input_mut().events.push(if raw {
+            Event::Key { key: egui::Key::X, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND }
+        } else {
+            Event::Cut
+        });
+        h.input_mut().events.push(Event::Ime(ImeEvent::Commit("y".into())));
+        h.run_steps(1);
+        assert_eq!(title_text(h.state()), "ay");
+        assert_eq!(h.state().session.clipboard.plain, "b");
+        let ime = h.output().platform_output.ime.as_ref().unwrap();
+        assert_eq!(ime.change_cause, egui::output::ImeChangeCause::Other, "raw: {raw}");
+    }
+}
+
 /// An empty commit is a no-op: it must not claim an IME mutation. An empty body is still an
 /// available surrounding context, not `Unavailable`.
 #[test]
