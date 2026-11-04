@@ -186,6 +186,43 @@ fn zoom_commands_keep_the_middle_of_the_view() {
     assert_near(mid, slide_point(&h, c), "zoom out");
 }
 
+/// In the Slide Sorter the zoom commands change the thumbnail zoom and leave the editing view zoom alone (#1753).
+#[test]
+fn zoom_commands_in_the_sorter_change_the_sorter_zoom() {
+    let mut h = harness();
+    h.state_mut().ui.view = crate::ViewMode::Sorter;
+    let before = h.state().ui.zoom;
+    h.state_mut().run("view.zoomIn", serde_json::json!({})).unwrap();
+    assert!(h.state().ui.sorter_zoom > 1.0);
+    h.state_mut().run("view.zoom", serde_json::json!({"percent": 50})).unwrap();
+    assert_eq!(h.state().ui.sorter_zoom, 0.5);
+    h.state_mut().run("view.zoomOut", serde_json::json!({})).unwrap();
+    assert_eq!(h.state().ui.sorter_zoom, 0.5);
+    h.state_mut().run("view.fit", serde_json::json!({})).unwrap();
+    assert_eq!(h.state().ui.sorter_zoom, 1.0);
+    assert_eq!(h.state().ui.zoom, before);
+}
+
+/// The Zoom dialog (View > Zoom, or a click on the status-bar percent) sets the thumbnail zoom in the Slide Sorter (#1753).
+#[test]
+fn zoom_dialog_in_the_sorter_sets_the_sorter_zoom() {
+    let mut h = harness();
+    h.state_mut().ui.view = crate::ViewMode::Sorter;
+    h.run_steps(2);
+    let before = h.state().ui.zoom;
+    h.state_mut().run("view.zoomDialog", serde_json::json!({})).unwrap();
+    h.run_steps(2);
+    let d = h.state_mut().dialog.as_mut().unwrap();
+    assert_eq!(d.fields.get("percent").map(String::as_str), Some("100"), "the dialog opens on the sorter zoom");
+    d.fields.insert("percent".into(), "200".into());
+    h.run_steps(1);
+    h.get_by_label("OK").click();
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none());
+    assert_eq!(h.state().ui.sorter_zoom, 2.0);
+    assert_eq!(h.state().ui.zoom, before);
+}
+
 /// Drags with the primary button from `a` to `b`; `during` runs after every move.
 fn drag_with(h: &mut Harness<'_, SlideApp>, a: Pos2, b: Pos2, mut during: impl FnMut(&SlideApp)) {
     h.hover_at(a);

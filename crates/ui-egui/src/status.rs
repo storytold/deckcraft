@@ -56,9 +56,11 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         );
         right.spacing_mut().item_spacing.x = 4.0;
         if small_icon(&mut right, Icon::FitSmall, "Fit slide to current window", false).clicked() {
-            app.ui.zoom = None;
+            let _ = app.run("view.fit", json!({}));
         }
-        let pct = (app.canvas_scale * 100.0).round();
+        // In the Slide Sorter the zoom controls show and change the thumbnail zoom.
+        let sorter = app.ui.view == ViewMode::Sorter;
+        let pct = ((if sorter { app.ui.sorter_zoom } else { app.canvas_scale }) * 100.0).round();
         let lbl = right.add(egui::Label::new(egui::RichText::new(format!("{pct}%")).size(12.0).color(t.text_dim)).sense(Sense::click()));
         lbl.widget_info(|| named_with_value("Zoom level", &format!("{pct}%")));
         if lbl.clicked() {
@@ -68,7 +70,7 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
             let _ = app.run("view.zoomIn", json!({}));
         }
         // Slider 10%–400% (log scale).
-        let mut z = app.ui.zoom.unwrap_or(app.canvas_scale).clamp(0.1, 4.0);
+        let mut z = if sorter { app.ui.sorter_zoom } else { app.ui.zoom.unwrap_or(app.canvas_scale) }.clamp(0.1, 4.0);
         let mut zp = z * 100.0;
         // egui 0.37 gives a slider its own width and the theme's control height; ask for exactly
         // those so the status row stays consistent with every other control without hard-coding
@@ -82,7 +84,11 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         s.widget_info(|| egui::WidgetInfo { current_text_value: Some(shown.clone()), ..egui::WidgetInfo::slider(enabled, f64::from(zp), "Zoom") });
         if s.changed() {
             z = zp / 100.0;
-            app.ui.zoom = Some(z);
+            if sorter {
+                app.ui.sorter_zoom = z.clamp(0.5, 3.0);
+            } else {
+                app.ui.zoom = Some(z);
+            }
         }
         if small_icon(&mut right, Icon::ZoomOut, "Zoom Out", false).clicked() {
             let _ = app.run("view.zoomOut", json!({}));

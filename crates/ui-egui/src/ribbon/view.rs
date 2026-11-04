@@ -73,7 +73,7 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
             });
         }
         if big_button(ui, Icon::FitToWindow, "Fit to\nWindow", true).clicked() {
-            app.ui.zoom = None;
+            let _ = app.run("view.fit", json!({}));
         }
     });
     group(ui, |ui| {
