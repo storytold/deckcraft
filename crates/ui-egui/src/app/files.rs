@@ -511,6 +511,11 @@ impl SlideApp {
                     self.start_show(from, false);
                     if let Some(show) = self.show.as_mut() {
                         show.record = record;
+                        if record {
+                            // A Record show draws its own full-screen shell; a separate Presenter
+                            // View window would fight it for the show.
+                            show.presenter = false;
+                        }
                     }
                 }
                 UiRequest::Message { text } => self.set_status(text),

@@ -677,12 +677,20 @@ impl ScreenState {
         }
         let mut why = None;
         if active.due {
-            active.due = false;
-            if active.pending.is_some() || active.frames > 0 {
-                let (_, e) = schedule_pictures(active, 1);
+            // The start waits for the first picture: keeping `due` set means a late first frame
+            // (the capturer may still be building) starts the schedule rather than becoming
+            // hundreds of owed repeats of itself.
+            let scheduled = if active.pending.is_some() || active.frames > 0 {
+                let (n, e) = schedule_pictures(active, 1);
                 why = e;
+                n
+            } else {
+                0
+            };
+            if scheduled > 0 {
+                active.due = false;
+                active.next_at = now + interval;
             }
-            active.next_at = now + interval;
         } else if now + 1.0e-9 >= active.next_at {
             // Every interval that passed is owed one picture; one job carries them all.
             let owed = ((now - active.next_at) / interval).floor() as u32 + 1;
@@ -918,6 +926,25 @@ mod tests {
         assert_eq!(s.start(CaptureOptions::default(), RecorderConfig::new(30)), Err(ScreenError::Unavailable));
         assert_eq!(s.stop(), Err(ScreenError::NotRecording));
         assert_eq!(s.tick(1.0), None);
+    }
+
+    /// A start waits for the capturer's first picture (a picker can delay it for minutes): the
+    /// ticks before it must not turn into owed intervals that replay the first frame.
+    #[test]
+    fn waiting_for_the_first_frame_does_not_owe_pictures() {
+        let (host, queue) = FakeScreen::ready((160, 120));
+        let mut s = state_with(host);
+        s.start(CaptureOptions::default(), RecorderConfig::new(30)).expect("start");
+        for i in 0..10 {
+            assert_eq!(s.tick(f64::from(i) * 0.1), None);
+            assert_eq!(s.frames(), 0, "no picture has arrived yet");
+        }
+        queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [7, 7, 7, 255]));
+        assert_eq!(s.tick(1.0), None);
+        assert_eq!(s.frames(), 1, "the first picture is not replayed for the waiting time");
+        s.stop().expect("stop");
+        let stopped = pump(&mut s);
+        let _ = std::fs::remove_file(&stopped.path);
     }
 
     #[test]
