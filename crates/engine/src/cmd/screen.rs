@@ -77,7 +77,8 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
         "start" => {
             let fps = fps(p)?;
             let region = region(p)?;
-            let options = CaptureOptions { target: target(p), region, fps, show_cursor: bool_or(p, "cursor", false) };
+            let show_cursor = bool_or(p, "cursor", false);
+            let options = CaptureOptions { target: target(p), region, fps, show_cursor };
             let mut cfg = deckcraft_screen::RecorderConfig::new(fps);
             cfg.region = region;
             cfg.quality = quality(p)?;
@@ -86,7 +87,7 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
                 "state": "recording",
                 "fps": fps,
                 "region": region.map(CaptureRegion::to_array),
-                "cursor": options.show_cursor,
+                "cursor": show_cursor,
             }))
         }
         "pause" => {
