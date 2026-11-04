@@ -166,7 +166,6 @@ fn used_prefixes(el: &El) -> HashSet<&str> {
                 for t in v.split_whitespace() {
                     if let Some((p, _)) = t.split_once(':')
                         && !p.is_empty()
-                        && p.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
                     {
                         used.insert(p);
                     }
@@ -347,10 +346,15 @@ fn kept_parts(pkg: &Package, pres_path: &str) -> Vec<deckcraft_model::KeptPart> 
             // The part's own relationships (customXml item → itemProps) and their targets.
             let rp = opc::rels_path(&name);
             if let Some(rels_xml) = text(&rp) {
+                let mut capped = false;
                 for sub in pkg.rels(&name).items.iter().filter(|s| !s.external && keepable(&s.target)) {
                     // Checked before the part is read: repeated relationships to one large part
                     // must not copy it again each time.
-                    if out.len() >= 400 || out.iter().any(|k| k.name.eq_ignore_ascii_case(&sub.target)) {
+                    if out.iter().any(|k| k.name.eq_ignore_ascii_case(&sub.target)) {
+                        continue;
+                    }
+                    if out.len() >= 400 {
+                        capped = true;
                         continue;
                     }
                     if let Some(x) = text(&sub.target) {
@@ -362,7 +366,9 @@ fn kept_parts(pkg: &Package, pres_path: &str) -> Vec<deckcraft_model::KeptPart> 
                         });
                     }
                 }
-                out.push(KeptPart { name: rp, xml: rels_xml, ..Default::default() });
+                if !capped {
+                    out.push(KeptPart { name: rp, xml: rels_xml, ..Default::default() });
+                }
             }
         }
     }
