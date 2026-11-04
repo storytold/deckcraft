@@ -1,6 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (no break after `?`, `!`, `}`, `+` inside a word; previous: trivial, Animations shortfall: preview from the selected effect is in; before that: major, community PR wave 2026-10-14: breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) after `cargo xtask parity`; area table and What works today folded to one row or bullet each; 320 engine commands; ready ~55% and stage alpha unchanged; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** trivial (reused slide contents fit the destination size; thumbnails remain; parity estimates unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The authoritative answer to "how close is DeckCraft to PowerPoint, and how much work is left?".
 [ROADMAP.md](../ROADMAP.md) summarizes it; [gaps.md](gaps.md) itemizes every shortfall;
@@ -179,7 +179,7 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Area | Weight | Breadth (measured) | Ready (est.) | Hours | Main shortfalls | Doc |
 |---|---:|---:|---:|---|---|---|
 | Application shell | 5 | 81% | ~55% | 8–14 | No native macOS menu bar, contextual tabs and multiple-window handling thinner than PowerPoint's | [ui-parity.md](ui-parity.md) |
-| Files (commands) | 4 | 75% | ~50% | see file formats | Print, passwords, legacy and macro formats, video export; reuse slides is partial | [file-format-parity.md](file-format-parity.md) |
+| Files (commands) | 4 | 75% | ~50% | see file formats | Print, passwords, legacy and macro formats, video export; reuse content now fits destination size, but the picker still lacks thumbnails | [file-format-parity.md](file-format-parity.md) |
 | Slides and sections | 6 | 92% | ~85% | 3–5 | Zoom (summary/section/slide) is partial, copying slides between decks keeps formatting only partly | [parity-checklist.md](parity-checklist.md) |
 | Views | 4 | 98% | ~80% | 3–6 | Arrange All (Grid Options and New Window are in) | [ui-parity.md](ui-parity.md) |
 | Masters and themes | 7 | 92% | ~70% | 8–14 | Notes/Handout master view polish, effect-scheme depth, Designer suggestions | [parity-checklist.md](parity-checklist.md) |
@@ -288,6 +288,7 @@ scored done (16 open issues).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | trivial | Reused slide content scales to the destination; picker thumbnails remain; parity estimates unchanged |
 | 2026-10-22 | trivial | Animations shortfall: preview from the selected effect (Play From) is in. Percentages unchanged |
 | 2026-10-17 | trivial | A word no longer breaks after `?`, `!`, `}` or `+` (a URL's query wraps at the edge as in PowerPoint 2016 for Windows), as it already didn't after `/` and `\`. Headline percentages unchanged |
 | 2026-10-16 | trivial | Arrange shortfall: Align to Slide and Align Selected Objects are in the Align menu. Percentages unchanged |
