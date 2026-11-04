@@ -468,4 +468,6 @@ mod inktoshape_tests;
 
 #[cfg(test)]
 mod camera_format_tests;
+
+#[cfg(test)]
 mod picture_styles_tests;
