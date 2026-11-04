@@ -110,6 +110,8 @@ fn start(app: &mut SlideApp) {
     });
     if let Some(t) = app.screen.targets.get(app.screen.selected) {
         p["target"] = serde_json::json!(t.id);
+        // Ids are only unique within a kind: a display and a window can share one.
+        p["targetKind"] = serde_json::json!(t.kind);
     }
     if !app.screen.full {
         p["region"] = serde_json::json!(app.screen.region);

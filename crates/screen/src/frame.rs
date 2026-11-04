@@ -136,6 +136,9 @@ impl ScreenFrame {
 pub struct CaptureOptions {
     /// A target from [`ScreenIn::targets`]; `None` is the primary display.
     pub target: Option<u64>,
+    /// What kind of surface `target` is. Ids are only unique within a kind (a display and a window
+    /// can share one), so the host matches this when it is set.
+    pub kind: Option<TargetKind>,
     /// The part of the target to record; `None` records all of it.
     pub region: Option<CaptureRegion>,
     pub fps: u32,
@@ -145,7 +148,7 @@ pub struct CaptureOptions {
 
 impl Default for CaptureOptions {
     fn default() -> Self {
-        CaptureOptions { target: None, region: None, fps: 30, show_cursor: false }
+        CaptureOptions { target: None, kind: None, region: None, fps: 30, show_cursor: false }
     }
 }
 

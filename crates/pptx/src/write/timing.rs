@@ -549,7 +549,9 @@ fn automatic_media(shapes: &[Shape], idmap: &IdMap, main: &[Eff], depth: usize) 
         if let ShapeKind::Media(m) = &s.kind
             && (m.autoplay || m.narration)
             && let Some(spid) = idmap.get(s.id)
-            && !main.iter().any(|e| e.spid == spid && matches!(e.a.class, AnimClass::Media))
+            // Only a media "play" starts the clip; a "pause" or "stop" effect writes another
+            // command, so the automatic start is still needed.
+            && !main.iter().any(|e| e.spid == spid && matches!(e.a.class, AnimClass::Media) && e.a.effect == "play")
         {
             out.push(spid);
         }

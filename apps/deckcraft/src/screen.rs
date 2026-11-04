@@ -127,6 +127,7 @@ mod imp {
             // Only primitives cross the thread boundary: `scap::Target` holds platform handles
             // and is not guaranteed `Send`. The worker looks the target up itself.
             let wanted = options.target;
+            let kind = options.kind;
             let fps = options.fps.clamp(1, 60);
             let cursor = options.show_cursor;
             let stop = Arc::new(AtomicBool::new(false));
@@ -137,18 +138,28 @@ mod imp {
             let (ready_tx, ready_rx) = channel::<Result<(), ScreenError>>();
             let spawned = std::thread::Builder::new().name("deckcraft-screen".into()).spawn(move || {
                 // A target that disappeared since the picker listed it must fail here: `scap`
-                // would record the primary display instead, a surface the user did not choose.
+                // would record the primary display instead, a surface the user did not choose. The
+                // kind picks the right variant when a display and a window share an id.
                 let target = match wanted {
                     Some(id) => {
-                        let found = scap::get_all_targets().into_iter().find(|t| match t {
-                            scap::Target::Display(d) => u64::from(d.id) == id,
-                            scap::Target::Window(w) => u64::from(w.id) == id,
-                        });
-                        if found.is_none() {
-                            let _ = ready_tx.send(Err(ScreenError::NoDevice));
-                            return;
+                        let matches: Vec<scap::Target> = scap::get_all_targets()
+                            .into_iter()
+                            .filter(|t| match (t, kind) {
+                                (scap::Target::Display(d), None | Some(TargetKind::Display)) => u64::from(d.id) == id,
+                                (scap::Target::Window(w), None | Some(TargetKind::Window)) => u64::from(w.id) == id,
+                                _ => false,
+                            })
+                            .collect();
+                        match matches.len() {
+                            1 => matches.into_iter().next(),
+                            0 => None,
+                            // Without a kind the id is ambiguous: record nothing rather than a
+                            // surface the user did not pick.
+                            _ => {
+                                let _ = ready_tx.send(Err(ScreenError::Failed("that id is both a display and a window; pick one".into())));
+                                return;
+                            }
                         }
-                        found
                     }
                     None => None,
                 };

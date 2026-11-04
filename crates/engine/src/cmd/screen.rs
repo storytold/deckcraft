@@ -19,7 +19,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Screen Recording",
         ["Record", "Record"],
         None,
-        "{action?: start|pause|resume|stop|cancel|targets|permission, target?: id, region?: [x,y,w,h] px, fps?: 1-60, cursor?: bool, quality?: 10-51} → {state, …}",
+        "{action?: start|pause|resume|stop|cancel|targets|permission, target?: id, targetKind?: display|window, region?: [x,y,w,h] px, fps?: 1-60, cursor?: bool, quality?: 10-51} → {state, …}",
         always,
         run
     )]
@@ -62,6 +62,16 @@ fn target(p: &Value) -> Option<u64> {
     p.get("target").and_then(Value::as_u64)
 }
 
+fn target_kind(p: &Value) -> Result<Option<deckcraft_screen::TargetKind>, crate::EngineError> {
+    match str_param(p, "targetKind").map(|k| k.trim().to_ascii_lowercase()) {
+        None => Ok(None),
+        Some(k) if k.is_empty() => Ok(None),
+        Some(k) if k == "display" => Ok(Some(deckcraft_screen::TargetKind::Display)),
+        Some(k) if k == "window" => Ok(Some(deckcraft_screen::TargetKind::Window)),
+        Some(other) => Err(bad(CMD, format!("`targetKind` “{other}” isn't display or window"))),
+    }
+}
+
 fn state_json(s: &ScreenState) -> Value {
     json!({
         "state": if s.is_paused() { "paused" } else { "recording" },
@@ -80,7 +90,7 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
             let fps = fps(p)?;
             let region = region(p)?;
             let show_cursor = bool_or(p, "cursor", false);
-            let options = CaptureOptions { target: target(p), region, fps, show_cursor };
+            let options = CaptureOptions { target: target(p), kind: target_kind(p)?, region, fps, show_cursor };
             let mut cfg = deckcraft_screen::RecorderConfig::new(fps);
             cfg.region = region;
             cfg.quality = quality(p)?;
@@ -205,6 +215,14 @@ mod tests {
         assert_eq!(quality(&json!({})).expect("default"), 24);
         assert!(quality(&json!({"quality": 9})).is_err());
         assert!(quality(&json!({"quality": 52})).is_err());
+    }
+
+    #[test]
+    fn a_picked_target_kind_is_read_and_unknown_kinds_are_refused() {
+        assert_eq!(target_kind(&json!({})).expect("absent"), None);
+        assert_eq!(target_kind(&json!({"targetKind": "window"})).expect("window"), Some(deckcraft_screen::TargetKind::Window));
+        assert_eq!(target_kind(&json!({"targetKind": "Display"})).expect("display"), Some(deckcraft_screen::TargetKind::Display));
+        assert!(target_kind(&json!({"targetKind": "monitor"})).is_err(), "an unknown kind is refused");
     }
 
     #[test]
