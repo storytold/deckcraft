@@ -308,19 +308,35 @@ fn play_from(e: &El, spid: u32, interactive: bool, clicked: bool, depth: usize) 
         return Some(!(interactive || clicked));
     }
     let mut found = None;
+    let mut clicked_so_far = clicked;
     for c in e.elements() {
         // A new click group starts its own sequence: the click that opened the previous group does
         // not trigger this one.
         let new_group = c.is("cTn") && c.path(&["stCondLst", "cond"]).and_then(|x| x.attr("delay")).map(str::trim) == Some("indefinite");
-        let child_clicked = if new_group { false } else { clicked };
+        let child_clicked = if new_group { false } else { clicked_so_far };
         match play_from(c, spid, interactive, child_clicked, depth + 1) {
             // A start without a click wins over a click one, whichever the file lists first.
             Some(true) => return Some(true),
             Some(false) => found = Some(false),
             None => {}
         }
+        // Siblings in one click group play in order: once a click effect has run, every later
+        // effect in that group waits for it. A group's clicks stay inside the group.
+        if new_group {
+            clicked_so_far = clicked;
+        } else if click_effect_inside(c, 0) {
+            clicked_so_far = true;
+        }
     }
     found
+}
+
+/// Whether this subtree holds a click effect (bounded).
+fn click_effect_inside(e: &El, depth: usize) -> bool {
+    if depth > 16 {
+        return false;
+    }
+    (e.is("cTn") && e.attr("nodeType") == Some("clickEffect")) || e.elements().any(|c| click_effect_inside(c, depth + 1))
 }
 
 /// Flatten the timing tree into the Animation Pane list.

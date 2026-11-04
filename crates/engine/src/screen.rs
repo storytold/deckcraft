@@ -82,6 +82,10 @@ struct Worker {
     frames: u64,
     failure: Option<String>,
     finished: Option<Result<RecorderOutput, RecorderError>>,
+    /// The last job did not fit: the caller re-schedules the work instead of counting it.
+    busy: bool,
+    /// The picture the queue refused, for the next interval.
+    kept: Option<ScreenFrame>,
 }
 
 /// The recorder on the caller's thread (the web build).
@@ -108,6 +112,8 @@ impl Encoder {
                         frames: 0,
                         failure: None,
                         finished: None,
+                        busy: false,
+                        kept: None,
                     });
                 }
                 // No thread to be had: fall back to encoding here rather than losing the take.
@@ -127,44 +133,62 @@ impl Encoder {
         }
     }
 
-    /// Queue a picture. A full queue drops it: encoding slower than the schedule is a reason to
-    /// record fewer pictures, never to grow memory.
-    fn encode(&mut self, frame: ScreenFrame) {
+    /// Queue a picture; `false` when the queue is full and the caller must keep it.
+    fn encode(&mut self, frame: ScreenFrame) -> bool {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Encoder::Worker(w) => {
-                if let Some(jobs) = w.jobs.as_ref()
-                    && matches!(jobs.try_send(Job::Encode(frame)), Ok(()) | Err(TrySendError::Full(_)))
-                {
-                    w.frames += 1;
+                let Some(jobs) = w.jobs.as_ref() else { return false };
+                match jobs.try_send(Job::Encode(frame)) {
+                    Ok(()) => {
+                        w.frames += 1;
+                        true
+                    }
+                    // A full queue is a busy encoder, not a picture: the caller keeps the frame for
+                    // the next interval, and the count only moves for pictures the muxer gets.
+                    Err(TrySendError::Full(Job::Encode(frame))) => {
+                        w.busy = true;
+                        w.kept = Some(frame);
+                        false
+                    }
+                    Err(_) => false,
                 }
             }
             Encoder::Inline(i) => {
-                let Some(recorder) = i.recorder.as_mut() else { return };
+                let Some(recorder) = i.recorder.as_mut() else { return false };
                 if let Err(e) = recorder.push(&frame) {
                     i.failure = Some(e.to_string());
                 }
                 i.frames = recorder.frames();
+                true
             }
         }
     }
 
-    /// Queue `n` repeats of the last picture (one burst, so a delayed tick stays one job).
-    fn repeat(&mut self, n: u32) {
+    /// Queue `n` repeats of the last picture (one burst, so a delayed tick stays one job);
+    /// `false` when the queue is full.
+    fn repeat(&mut self, n: u32) -> bool {
         if n == 0 {
-            return;
+            return false;
         }
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Encoder::Worker(w) => {
-                if let Some(jobs) = w.jobs.as_ref()
-                    && matches!(jobs.try_send(Job::Repeat(n)), Ok(()) | Err(TrySendError::Full(_)))
-                {
-                    w.frames += u64::from(n);
+                let Some(jobs) = w.jobs.as_ref() else { return false };
+                match jobs.try_send(Job::Repeat(n)) {
+                    Ok(()) => {
+                        w.frames += u64::from(n);
+                        true
+                    }
+                    Err(TrySendError::Full(_)) => {
+                        w.busy = true;
+                        false
+                    }
+                    Err(_) => false,
                 }
             }
             Encoder::Inline(i) => {
-                let Some(recorder) = i.recorder.as_mut() else { return };
+                let Some(recorder) = i.recorder.as_mut() else { return false };
                 for _ in 0..n {
                     // Nothing to repeat yet, or a key frame is due: the take waits for the next
                     // captured picture instead of writing a sample that does not exist.
@@ -173,6 +197,7 @@ impl Encoder {
                     }
                 }
                 i.frames = recorder.frames();
+                true
             }
         }
     }
@@ -189,6 +214,15 @@ impl Encoder {
                     Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
                 }
             }
+        }
+    }
+
+    /// The picture the queue refused, if any.
+    fn take_kept(&mut self) -> Option<ScreenFrame> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Encoder::Worker(w) => w.kept.take(),
+            Encoder::Inline(_) => None,
         }
     }
 
@@ -217,14 +251,16 @@ impl Encoder {
                 if let Some(jobs) = w.jobs.take() {
                     let _ = jobs.send(Job::Finish);
                 }
-                // The worker reports the finished file (or its failure) and returns.
+                // The worker reports the finished file (or its failure) and returns. A closed
+                // channel means it is gone: nothing more will arrive, so stop waiting.
                 let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
                 while w.finished.is_none() && std::time::Instant::now() < deadline {
                     match w.events.recv_timeout(std::time::Duration::from_millis(50)) {
                         Ok(Event::Finished(out)) => w.finished = Some(out),
                         Ok(Event::Failed(e)) => w.failure = Some(e),
                         Ok(Event::Encoded) => {}
-                        Err(_) => {}
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                     }
                 }
                 if let Some(handle) = w.handle.take() {
@@ -268,7 +304,7 @@ fn encode_loop(recorder: ScreenRecorder, jobs: &Receiver<Job>, events: &std::syn
             Job::Encode(frame) => match rec.push(&frame) {
                 Ok(()) => last = Some(frame),
                 Err(e) => {
-                    let _ = events.send(Event::Failed(e.to_string()));
+                    finish_after_failure(&mut recorder, events, e.to_string());
                     return;
                 }
             },
@@ -281,7 +317,7 @@ fn encode_loop(recorder: ScreenRecorder, jobs: &Receiver<Job>, events: &std::syn
                         None => Ok(()),
                     });
                     if let Err(e) = r {
-                        let _ = events.send(Event::Failed(e.to_string()));
+                        finish_after_failure(&mut recorder, events, e.to_string());
                         return;
                     }
                 }
@@ -294,6 +330,15 @@ fn encode_loop(recorder: ScreenRecorder, jobs: &Receiver<Job>, events: &std::syn
         }
         let _ = events.send(Event::Encoded);
     }
+}
+
+/// The encoder failed mid-take: write the file with what it holds (the caller keeps and inserts
+/// it), report the reason and the file in one go, so nothing waits on a channel nobody answers.
+#[cfg(not(target_arch = "wasm32"))]
+fn finish_after_failure(recorder: &mut Option<ScreenRecorder>, events: &std::sync::mpsc::Sender<Event>, why: String) {
+    let out = recorder.take().map(ScreenRecorder::finish).unwrap_or(Err(RecorderError::Empty));
+    let _ = events.send(Event::Failed(why));
+    let _ = events.send(Event::Finished(out));
 }
 
 /// The session's screen capture and recording state.
@@ -574,10 +619,21 @@ fn schedule_picture(active: &mut Active, pictures: u32) -> Option<String> {
     }
     match active.pending.take() {
         Some(frame) => {
-            active.encoder.encode(frame);
-            active.encoder.repeat(pictures - 1);
+            // A refused picture goes back to the front of the queue and is retried next interval:
+            // no tick is counted that the muxer did not get.
+            if !active.encoder.encode(frame) {
+                active.pending = active.encoder.take_kept();
+                return active.encoder.failure().map(str::to_string);
+            }
+            if pictures > 1 && !active.encoder.repeat(pictures - 1) {
+                return active.encoder.failure().map(str::to_string);
+            }
         }
-        None => active.encoder.repeat(pictures),
+        None => {
+            if !active.encoder.repeat(pictures) {
+                return active.encoder.failure().map(str::to_string);
+            }
+        }
     }
     active.encoder.failure().map(str::to_string)
 }

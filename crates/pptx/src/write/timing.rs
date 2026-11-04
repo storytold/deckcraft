@@ -827,8 +827,6 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
     w.open0("p:par");
     w.open("p:cTn", A::new().a("id", ids.next()).a("dur", "indefinite").a("restart", "never").a("nodeType", "tmRoot"));
     w.open0("p:childTnLst");
-    // Media behaviour comes before the animation sequence, as PowerPoint writes it.
-    media_nodes(w, &mut ids, shapes, idmap, 0);
     // PowerPoint reads a clip's automatic start from a main-sequence `playFrom(0.0)`, not from the
     // media node's delay: emit one for every autoplay or narration clip that has no media "play"
     // animation of its own, before any click group so it starts with the slide.
@@ -858,6 +856,9 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.close("p:nextCondLst");
         w.close("p:seq");
     }
+    // Media behaviour after the sequence, so the main sequence keeps `id="2"` (PowerPoint's own
+    // numbering) whatever the media nodes need.
+    media_nodes(w, &mut ids, shapes, idmap, 0);
     for (trig, effs) in triggered {
         // The first step starts with the button's click. Later On Click effects must remain
         // separate steps; With/After Previous effects still belong to their preceding step.

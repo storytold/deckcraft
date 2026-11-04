@@ -175,6 +175,11 @@ impl ScreenRecorder {
             return Err(RecorderError::BadFrame);
         }
         let Some((data, key)) = self.last_sample.as_ref() else { return Err(RecorderError::BadFrame) };
+        // Two IDR access units in a row must not share an `idr_pic_id` (H.264 7.4.3): a key sample
+        // is never repeated, the caller encodes the next picture instead.
+        if *key {
+            return Err(RecorderError::BadFrame);
+        }
         let Some(mux) = self.mux.as_mut() else { return Err(RecorderError::Muxer("the muxer is not ready".into())) };
         mux.write_sample(self.track, WriteSample { data, duration: 1, composition_offset: 0, is_sync: *key })
             .map_err(|e| RecorderError::Muxer(e.to_string()))?;
@@ -374,16 +379,21 @@ mod tests {
         let file = create(&path);
         let mut rec = ScreenRecorder::new(Box::new(file), RecorderConfig::new(30)).expect("recorder");
         rec.push(&ScreenFrame::solid(96, 64, [9, 9, 9, 255])).expect("push");
-        rec.push_repeat().expect("a repeat of the first picture");
-        assert_eq!(rec.frames(), 2);
+        // The first picture is an IDR: repeating it would put two IDRs with the same idr_pic_id in
+        // the stream, so the caller has to encode the next picture instead.
+        assert_eq!(rec.push_repeat(), Err(RecorderError::BadFrame), "a key sample is never repeated");
+        rec.push(&ScreenFrame::solid(96, 64, [9, 9, 9, 255])).expect("the next picture encodes");
+        rec.push_repeat().expect("a repeat of a P picture");
+        assert_eq!(rec.frames(), 3);
         let out = rec.finish().expect("finish");
-        assert_eq!((out.frames, out.width, out.height), (2, 96, 64));
+        assert_eq!((out.frames, out.width, out.height), (3, 96, 64));
         let _ = std::fs::remove_file(&path);
         // A key frame that is due is never a repeat: the caller must encode one.
         let file = create(&scratch("repeat-key"));
         let mut rec = ScreenRecorder::new(Box::new(file), RecorderConfig::new(1)).expect("recorder");
         rec.push(&ScreenFrame::solid(96, 64, [9, 9, 9, 255])).expect("push");
-        rec.push_repeat().expect("a repeat");
+        assert_eq!(rec.push_repeat(), Err(RecorderError::BadFrame), "a key sample is never repeated");
+        rec.push(&ScreenFrame::solid(96, 64, [9, 9, 9, 255])).expect("push");
         // The interval is two frames at 1 fps: the third is a key frame, which must be encoded.
         assert_eq!(rec.push_repeat(), Err(RecorderError::BadFrame), "a due key frame is never a repeat");
     }

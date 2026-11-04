@@ -219,6 +219,7 @@ fn a_media_play_after_a_click_round_trips_as_click_triggered() {
     let mut p = defaults::new_presentation(None);
     let video = p.add_media("clip.mp4", "video/mp4", b"video".to_vec()).expect("media");
     let id = ShapeId(p.alloc_id().expect("id"));
+    let text = ShapeId(p.alloc_id().expect("id"));
     let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
     slide.shapes.push(deckcraft_model::Shape {
         id,
@@ -227,19 +228,25 @@ fn a_media_play_after_a_click_round_trips_as_click_triggered() {
         kind: ShapeKind::Media(MediaClip { media: video, video: true, autoplay: false, ..Default::default() }),
         ..Default::default()
     });
-    // On Click first, then the media play after it: both land in the same click group, so the
-    // play must not come back as an automatic start.
+    // Fade (On Click) on another shape, then Play media (After Previous): both land in the same
+    // click group, in sibling paragraphs, so the play must wait for that click too.
+    slide.shapes.push(deckcraft_model::Shape {
+        id: text,
+        name: "Text".into(),
+        xfrm: Some(Xfrm::new(40.0, 200.0, 200.0, 60.0)),
+        ..Default::default()
+    });
     slide.animations.push(deckcraft_model::Animation {
-        shape: id,
-        class: deckcraft_model::anim::AnimClass::Media,
-        effect: "play".into(),
+        shape: text,
+        class: deckcraft_model::anim::AnimClass::Entrance,
+        effect: "fade".into(),
         start: deckcraft_model::anim::AnimStart::OnClick,
         ..Default::default()
     });
     slide.animations.push(deckcraft_model::Animation {
         shape: id,
-        class: deckcraft_model::anim::AnimClass::Entrance,
-        effect: "fade".into(),
+        class: deckcraft_model::anim::AnimClass::Media,
+        effect: "play".into(),
         start: deckcraft_model::anim::AnimStart::AfterPrevious,
         ..Default::default()
     });
