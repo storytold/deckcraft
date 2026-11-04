@@ -13,7 +13,5 @@
 mod frame;
 mod recorder;
 
-pub use frame::{
-    CaptureOptions, CaptureRegion, CaptureStatus, CaptureTarget, MIN_REGION, NoScreen, ScreenError, ScreenFrame, ScreenIn, TargetKind,
-};
+pub use frame::{CaptureOptions, CaptureRegion, CaptureStatus, CaptureTarget, MIN_REGION, NoScreen, ScreenError, ScreenFrame, ScreenIn, TargetKind};
 pub use recorder::{MAX_FRAMES, MAX_SIDE, RecorderConfig, RecorderError, RecorderOutput, RecorderSink, ScreenRecorder};

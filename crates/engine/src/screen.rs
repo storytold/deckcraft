@@ -106,7 +106,12 @@ impl ScreenState {
             return Err(ScreenError::NoDevice);
         }
         let path = temp_path();
-        let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(&path)
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
             .map_err(|e| ScreenError::Failed(format!("couldn't start a screen recording: {e}")))?;
         let recorder = match ScreenRecorder::new(Box::new(file), recorder) {
             Ok(r) => r,
@@ -223,10 +228,7 @@ mod tests {
     impl FakeScreen {
         fn ready(size: (u32, u32)) -> (Self, Arc<Mutex<std::collections::VecDeque<deckcraft_screen::ScreenFrame>>>) {
             let frames = Arc::new(Mutex::new(std::collections::VecDeque::new()));
-            (
-                FakeScreen { frames: frames.clone(), status: CaptureStatus::Ready, size },
-                frames,
-            )
+            (FakeScreen { frames: frames.clone(), status: CaptureStatus::Ready, size }, frames)
         }
     }
 

@@ -444,6 +444,7 @@ Detail in [localization-parity.md](localization-parity.md).
 | 2026-10-14 | minor | Laser pointer during a show (hold Ctrl, red/green/blue). Clear Timing and Clear Narration on the current slide or all slides |
 | 2026-10-14 | minor | Record Slide Show keeps narration audio and a laser trace. Screen capture and camera stay open |
 | 2026-10-14 | minor | Record Slide Show keeps timings and pen ink. Audio and screen capture stay open |
+| 2026-11-03 | minor | Screen recording (#1815): display, window or region through scap; H.264/MP4 take inserted as a video clip with poster and click-to-play timing |
 | 2026-10-13 | minor | Shape, picture and table rendering checked against PowerPoint on ~150 synthetic edge-case slides; 3-D bevels, cameras and face lighting now render approximately (gap narrowed to extrusion, rigs and the 3-D pane) |
 | 2026-10-13 | minor | Interactive decks: triggers, return-to-slide state and click rules landed in the slide show; the remaining pieces are one new entry under Features |
 | 2026-10-12 | minor | IME composition in slide text and notes, and CJK interface text with real glyphs (#101): the IME gap is now Korean on the web and table-cell underlines |

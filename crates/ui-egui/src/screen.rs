@@ -5,7 +5,7 @@
 //! session ([`deckcraft_engine::screen`]), so the control window only drives `show.screenRecord`
 //! and reads its state. Errors are the command's one message; nothing here panics.
 
-use egui::{Align2, Color32, RichText, Ui, Vec2, vec2};
+use egui::{Align2, Color32, RichText, Vec2};
 
 use crate::SlideApp;
 
@@ -21,11 +21,7 @@ struct TargetRow {
 
 impl TargetRow {
     fn label(&self) -> String {
-        if self.title.trim().is_empty() {
-            format!("{} {}", self.kind, self.id)
-        } else {
-            format!("{} — {}", self.kind, self.title)
-        }
+        if self.title.trim().is_empty() { format!("{} {}", self.kind, self.id) } else { format!("{} — {}", self.kind, self.title) }
     }
 }
 
@@ -143,6 +139,7 @@ fn clock(ms: u64) -> String {
 }
 
 /// Draw the picker or the live control. Called once per UI pass, after the dialogs.
+#[allow(deprecated)] // `Id::new` is the stable way to give a window one identity across passes.
 pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
     let recording = app.session.screen.is_recording();
     if !app.screen.open && !recording {
@@ -152,11 +149,11 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
     let dark = Color32::from_rgb(22, 22, 26);
     let text = Color32::from_rgb(228, 228, 232);
     let accent = Color32::from_rgb(232, 72, 72);
-    let mut start = false;
-    let mut pause = false;
-    let mut resume = false;
-    let mut stop = false;
-    let mut cancel = false;
+    let mut begin = false;
+    let mut pause_now = false;
+    let mut resume_now = false;
+    let mut stop_now = false;
+    let mut cancel_now = false;
     let mut permission = false;
     let mut close = false;
     egui::Window::new("Screen Recording")
@@ -166,7 +163,12 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
         .resizable(false)
         .title_bar(false)
         .open(&mut open)
-        .frame(egui::Frame::window(&ctx.style()).fill(dark).inner_margin(egui::Margin::same(16)).corner_radius(egui::CornerRadius::same(10)))
+        .frame(
+            egui::Frame::window(ctx.style_of(egui::Theme::Dark).as_ref())
+                .fill(dark)
+                .inner_margin(egui::Margin::same(16))
+                .corner_radius(egui::CornerRadius::same(10)),
+        )
         .show(ctx, |ui| {
             ui.set_min_width(300.0);
             ui.visuals_mut().override_text_color = Some(text);
@@ -187,19 +189,19 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
                     ui.add_space(8.0);
                     if app.session.screen.is_paused() {
                         if ui.button("Resume").clicked() {
-                            resume = true;
+                            resume_now = true;
                         }
                     } else if ui.button("Pause").clicked() {
-                        pause = true;
+                        pause_now = true;
                     }
                 });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.add(egui::Button::new(RichText::new("Stop and insert").color(Color32::WHITE)).fill(accent)).clicked() {
-                        stop = true;
+                        stop_now = true;
                     }
                     if ui.button("Cancel").clicked() {
-                        cancel = true;
+                        cancel_now = true;
                     }
                 });
                 ui.add_space(4.0);
@@ -235,9 +237,9 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
                         for (label, i) in [("x", 0), ("y", 1), ("w", 2), ("h", 3)] {
                             ui.label(label);
                             let mut v = app.screen.region[i];
-                            let range = if i < 2 { 0..=100_000 } else { 64..=100_000 };
-                            if ui.add(egui::DragValue::new(&mut v).range(range).speed(1.0)).changed() {
-                                app.screen.region[i] = v.clamp(*range.start(), *range.end());
+                            let (lo, hi) = if i < 2 { (0, 100_000) } else { (64, 100_000) };
+                            if ui.add(egui::DragValue::new(&mut v).range(lo..=hi).speed(1.0)).changed() {
+                                app.screen.region[i] = v.clamp(lo, hi);
                             }
                         }
                     });
@@ -255,7 +257,7 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
                 ui.add_space(8.0);
                 let ready = app.screen.status == "ready" && !app.screen.targets.is_empty();
                 if ui.add_enabled(ready, egui::Button::new(RichText::new("Record").color(Color32::WHITE)).fill(accent)).clicked() {
-                    start = true;
+                    begin = true;
                 }
                 if !ready && !app.screen.status.is_empty() && app.screen.status != "ready" {
                     let why = if app.screen.status == "permissionDenied" { "permission is needed" } else { "screen capture is unavailable here" };
@@ -274,23 +276,23 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
         command(app, "permission");
         reload(app);
     }
-    if start {
+    if begin {
         start(app);
     }
-    if pause {
+    if pause_now {
         command(app, "pause");
     }
-    if resume {
+    if resume_now {
         command(app, "resume");
     }
-    if stop {
+    if stop_now {
         let ok = command(app, "stop");
         if ok {
             open = false;
             app.notify("Screen recording inserted on the current slide");
         }
     }
-    if cancel {
+    if cancel_now {
         command(app, "cancel");
         open = false;
     }

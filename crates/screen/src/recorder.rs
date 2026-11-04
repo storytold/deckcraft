@@ -166,12 +166,8 @@ impl ScreenRecorder {
         let enc = Encoder::new(EncoderConfig { width: w, height: h, fps: self.cfg.fps, qp: self.cfg.quality })
             .map_err(|e| RecorderError::Encoder(e.to_string()))?;
         let avc = AvcConfig::new(vec![enc.sps()], vec![enc.pps()], 4);
-        let entry = SampleEntry::video(
-            FourCc(*b"avc1"),
-            CodecConfig::Avc(avc),
-            u16::try_from(w).unwrap_or(u16::MAX),
-            u16::try_from(h).unwrap_or(u16::MAX),
-        );
+        let entry =
+            SampleEntry::video(FourCc(*b"avc1"), CodecConfig::Avc(avc), u16::try_from(w).unwrap_or(u16::MAX), u16::try_from(h).unwrap_or(u16::MAX));
         let Some(sink) = self.sink.take() else { return Err(RecorderError::Muxer("the recording sink is gone".into())) };
         let mut mux = Mp4Writer::new(sink, WriterOptions::new(Brand::Mp4)).map_err(|e| RecorderError::Muxer(e.to_string()))?;
         self.track = mux.add_track(TrackConfig::new(entry, self.cfg.fps)).map_err(|e| RecorderError::Muxer(e.to_string()))?;

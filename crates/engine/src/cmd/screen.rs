@@ -10,21 +10,19 @@ use deckcraft_screen::{CaptureOptions, CaptureRegion};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, bad, bool_or, cmd, has_slide, str_param, usize_param};
-use crate::screen::ScreenState;
 use crate::Session;
+use crate::screen::ScreenState;
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![
-        cmd!(
-            "show.screenRecord",
-            "Screen Recording",
-            ["Record", "Record"],
-            None,
-            "{action?: start|pause|resume|stop|cancel|targets|permission, target?: id, region?: [x,y,w,h] px, fps?: 1-60, cursor?: bool, quality?: 10-51} → {state, …}",
-            has_slide,
-            run
-        ),
-    ]
+    vec![cmd!(
+        "show.screenRecord",
+        "Screen Recording",
+        ["Record", "Record"],
+        None,
+        "{action?: start|pause|resume|stop|cancel|targets|permission, target?: id, region?: [x,y,w,h] px, fps?: 1-60, cursor?: bool, quality?: 10-51} → {state, …}",
+        has_slide,
+        run
+    )]
 }
 
 const CMD: &str = "show.screenRecord";
@@ -134,9 +132,7 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
             let targets = s.screen.targets().map_err(err)?;
             let list: Vec<Value> = targets
                 .iter()
-                .map(|t| {
-                    json!({"id": t.id, "kind": t.kind.as_str(), "title": t.title, "width": t.width, "height": t.height})
-                })
+                .map(|t| json!({"id": t.id, "kind": t.kind.as_str(), "title": t.title, "width": t.width, "height": t.height}))
                 .collect();
             Ok(json!({"targets": list, "status": status_str(s.screen.status())}))
         }
