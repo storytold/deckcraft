@@ -428,6 +428,9 @@ pub enum UiRequest {
         /// Record timings and pen ink, rather than only playing the show.
         #[serde(default)]
         record: bool,
+        /// Play the deck with the timings and narration already recorded, saving nothing.
+        #[serde(default)]
+        preview: bool,
     },
     Message {
         text: String,

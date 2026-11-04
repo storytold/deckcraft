@@ -114,6 +114,15 @@ pub fn specs() -> Vec<CommandSpec> {
             record_show
         ),
         cmd!(
+            noundo "show.preview",
+            "Preview",
+            ["Slide Show", "Record"],
+            None,
+            "{from?: index} → plays the deck with the timings and narration already recorded, saving nothing",
+            has_slide,
+            preview_show
+        ),
+        cmd!(
             "ink.stroke",
             "Record Ink",
             ["Slide Show", "Record"],
@@ -650,7 +659,7 @@ fn dictionary_info(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn start(s: &mut Session, from: usize) -> Result<Value> {
-    s.ui_requests.push(UiRequest::StartShow { from, record: false });
+    s.ui_requests.push(UiRequest::StartShow { from, record: false, preview: false });
     Ok(json!({"from": from}))
 }
 
@@ -660,8 +669,18 @@ fn record_show(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("show.record", "no slides"));
     }
     let from = usize_param(p, "from").unwrap_or(0).min(n - 1);
-    s.ui_requests.push(UiRequest::StartShow { from, record: true });
+    s.ui_requests.push(UiRequest::StartShow { from, record: true, preview: false });
     Ok(json!({"from": from, "record": true}))
+}
+
+fn preview_show(s: &mut Session, p: &Value) -> Result<Value> {
+    let n = s.doc()?.doc.slides.len();
+    if n == 0 {
+        return Err(bad("show.preview", "no slides"));
+    }
+    let from = usize_param(p, "from").unwrap_or(0).min(n - 1);
+    s.ui_requests.push(UiRequest::StartShow { from, record: false, preview: true });
+    Ok(json!({"from": from, "preview": true}))
 }
 
 fn setup(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1307,6 +1326,7 @@ mod tests {
     use serde_json::json;
 
     use crate::Session;
+    use crate::cmd::base64_encode;
     use crate::sample::open_sample;
 
     #[test]
@@ -1398,7 +1418,21 @@ mod tests {
         let v = s.execute("show.record", &json!({"from": 2})).unwrap();
         assert_eq!(v["from"], 2);
         assert_eq!(v["record"], true);
-        assert!(matches!(s.ui_requests.last(), Some(UiRequest::StartShow { from: 2, record: true })));
+        assert!(matches!(s.ui_requests.last(), Some(UiRequest::StartShow { from: 2, record: true, preview: false })));
+    }
+
+    #[test]
+    fn preview_requests_a_show_that_saves_nothing() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let v = s.execute("show.preview", &json!({"from": 2})).unwrap();
+        assert_eq!(v["from"], 2);
+        assert_eq!(v["preview"], true);
+        assert_eq!(v.get("record"), None, "a preview is not a recording");
+        assert!(matches!(s.ui_requests.last(), Some(UiRequest::StartShow { from: 2, record: false, preview: true })));
+        // The start slide is clamped to the deck, as `show.record` does.
+        let last = s.execute("show.preview", &json!({"from": 99})).unwrap();
+        assert_eq!(last["from"].as_u64(), Some(s.doc().unwrap().doc.slides.len() as u64 - 1));
     }
 
     #[test]

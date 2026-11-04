@@ -76,7 +76,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     }
     show.observe_visible_frame(now, web_time::Instant::now());
     begin_show(&ctx, &mut show, &doc, now, app.services.presenter.is_some());
-    if show.record && !show.mic_tried {
+    if show.record && !show.recording_preview && !show.mic_tried {
         show.mic_tried = true;
         match app.services.mic.as_mut() {
             Some(mic) => match mic.start() {
@@ -736,7 +736,7 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         painter.circle_filled(p, 16.0, Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 70));
         painter.circle_filled(p, 5.5, c);
     }
-    if show.record && laser_on {
+    if show.keeps_recording() && laser_on {
         if let Some(p) = ctx.input(|i| i.pointer.hover_pos()) {
             let nx = (p.x - srect.min.x) / srect.width().max(1.0);
             let ny = (p.y - srect.min.y) / srect.height().max(1.0);
@@ -747,7 +747,7 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
                 }
             }
         }
-    } else if !show.record
+    } else if !show.keeps_recording()
         && let Some(sl) = doc.slides.get(show.state.slide)
         && let Some(trace) = &sl.laser
     {
@@ -927,7 +927,8 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
         if !show.reading {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         }
-        if show.rehearse || show.record {
+        // A Record preview plays the recording; it never writes timings, ink, narration or laser.
+        if show.keeps_recording() {
             if show.record {
                 take_narration(app, &mut show);
             }
@@ -962,7 +963,10 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
                 app.set_status("Slide timings recorded.");
             }
         }
-        let last = show.state.slide;
-        let _ = app.run("slide.go", json!({"index": last}));
+        // A preview is a look at the recording: the editor keeps the slide it had.
+        if !show.recording_preview {
+            let last = show.state.slide;
+            let _ = app.run("slide.go", json!({"index": last}));
+        }
     }
 }

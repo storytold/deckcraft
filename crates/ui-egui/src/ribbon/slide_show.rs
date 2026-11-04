@@ -86,6 +86,12 @@ pub(super) fn record(app: &mut SlideApp, ui: &mut Ui) {
             let i = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
             let _ = app.run("show.record", json!({"from": i}));
         }
+        if big_button(ui, Icon::Preview, "Preview", true)
+            .on_hover_text("Play the recording with its timings and narration. Nothing is saved or changed.")
+            .clicked()
+        {
+            let _ = app.run("show.preview", json!({"from": app.show_start_index()}));
+        }
     });
     group(ui, |ui| {
         if big_button(ui, Icon::Help, "Learn\nMore", true).clicked() {
