@@ -92,6 +92,10 @@ struct Worker {
     kept: Option<ScreenFrame>,
     /// A finish was requested: the worker writes the file when the queue drains.
     finish: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// A discard was requested: the worker stops before the next job, and the file is not written.
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The worker's event channel closed: it ended without reporting a finished file.
+    gone: bool,
 }
 
 /// The recorder on the caller's thread (the web build).
@@ -111,8 +115,11 @@ impl Encoder {
             let (event_tx, event_rx) = std::sync::mpsc::channel::<Event>();
             let finish = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let worker_finish = finish.clone();
-            let spawned =
-                std::thread::Builder::new().name("deckcraft-encode".into()).spawn(move || encode_loop(recorder, &job_rx, &event_tx, &worker_finish));
+            let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let worker_cancel = cancel.clone();
+            let spawned = std::thread::Builder::new()
+                .name("deckcraft-encode".into())
+                .spawn(move || encode_loop(recorder, &job_rx, &event_tx, &worker_finish, &worker_cancel));
             match spawned {
                 Ok(handle) => {
                     return Encoder::Worker(Worker {
@@ -125,6 +132,8 @@ impl Encoder {
                         busy: false,
                         kept: None,
                         finish,
+                        cancel,
+                        gone: false,
                     });
                 }
                 // No thread to be had: fall back to encoding here rather than losing the take.
@@ -222,7 +231,14 @@ impl Encoder {
                     Ok(Event::Encoded) => {}
                     Ok(Event::Failed(e)) => w.failure = Some(e),
                     Ok(Event::Finished(out)) => w.finished = Some(out),
-                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        // The worker ended: either it finished (the event is already queued and
+                        // taken above) or it died without writing the file. Remember it so the
+                        // take does not wait for a report that will never come.
+                        w.gone = true;
+                        break;
+                    }
                 }
             }
         }
@@ -279,6 +295,12 @@ impl Encoder {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Encoder::Worker(w) => {
+                // A worker that ended without `Finished` (a panic, or an exit before it wrote the
+                // file) leaves the take stopping forever: report the failure so `tick` cleans up.
+                if w.gone && w.finished.is_none() {
+                    let why = w.failure.clone().unwrap_or_else(|| "the encoder stopped".into());
+                    w.finished = Some(Err(RecorderError::Muxer(why)));
+                }
                 if w.finished.is_some()
                     && let Some(handle) = w.handle.take()
                 {
@@ -333,6 +355,9 @@ impl Encoder {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Encoder::Worker(w) => {
+                // Tell the worker to stop before dropping the sender: it checks the flag before
+                // each queued job, so the join below does not wait for a backlog to drain.
+                w.cancel.store(true, Ordering::Relaxed);
                 w.jobs = None;
                 if let Some(handle) = w.handle.take() {
                     let _ = handle.join();
@@ -344,11 +369,25 @@ impl Encoder {
 }
 
 /// The encoder thread: encode or repeat each scheduled picture, then write the file on `Finish`.
+/// A set `cancel` stops it at the next job boundary without writing the file, so a discard's join
+/// is short even with a full queue.
 #[cfg(not(target_arch = "wasm32"))]
-fn encode_loop(recorder: ScreenRecorder, jobs: &Receiver<Job>, events: &std::sync::mpsc::Sender<Event>, finish: &std::sync::atomic::AtomicBool) {
+fn encode_loop(
+    recorder: ScreenRecorder,
+    jobs: &Receiver<Job>,
+    events: &std::sync::mpsc::Sender<Event>,
+    finish: &std::sync::atomic::AtomicBool,
+    cancel: &std::sync::atomic::AtomicBool,
+) {
     let mut recorder = Some(recorder);
     let mut last: Option<ScreenFrame> = None;
-    while let Ok(job) = jobs.recv() {
+    while !cancel.load(Ordering::Relaxed)
+        && let Ok(job) = jobs.recv()
+    {
+        // The job may have waited behind a cancel; drop it rather than encode it.
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
         let Some(rec) = recorder.as_mut() else { return };
         match job {
             Job::Encode(frame) => match rec.push(&frame) {
@@ -360,6 +399,10 @@ fn encode_loop(recorder: ScreenRecorder, jobs: &Receiver<Job>, events: &std::syn
             },
             Job::Repeat(n) => {
                 for _ in 0..n {
+                    // A discard stops mid-burst: the remaining intervals are not encoded.
+                    if cancel.load(Ordering::Relaxed) {
+                        return;
+                    }
                     // A key frame that is due (or nothing encoded yet) is encoded from the picture
                     // the worker already holds, so a repeat never loses the schedule.
                     let r = rec.push_repeat().or_else(|_| match last.as_ref() {
@@ -380,8 +423,10 @@ fn encode_loop(recorder: ScreenRecorder, jobs: &Receiver<Job>, events: &std::syn
         }
         let _ = events.send(Event::Encoded);
     }
-    // The queue drained: a requested finish writes the file, a discard leaves it unwritten.
-    if finish.load(Ordering::Relaxed)
+    // The queue drained: a requested finish writes the file, a discard leaves it unwritten (the
+    // recorder is dropped with the thread, which closes the file).
+    if !cancel.load(Ordering::Relaxed)
+        && finish.load(Ordering::Relaxed)
         && let Some(rec) = recorder.take()
     {
         let _ = events.send(Event::Finished(rec.finish()));
@@ -952,5 +997,66 @@ mod tests {
         assert_eq!(s.tick(2.0), None);
         assert_eq!(s.frames(), 2);
         let _ = s.cancel();
+    }
+
+    /// A worker that ends without a `Finished` event must not leave the take stopping forever:
+    /// the tick reports the failure and the unfinished file is removed.
+    #[test]
+    fn a_worker_that_disappears_without_finishing_fails_the_take() {
+        let (host, queue) = FakeScreen::ready((160, 120));
+        let mut s = state_with(host);
+        s.start(CaptureOptions::default(), RecorderConfig::new(30)).expect("start");
+        queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [1, 2, 3, 255]));
+        assert_eq!(s.tick(0.0), None);
+        let path = s.active.as_ref().expect("an active take").path.clone();
+        {
+            // Take the worker apart the way a panic does: it ends without a finish request, so it
+            // never sends `Finished` and the event channel closes.
+            let active = s.active.as_mut().expect("an active take");
+            let Encoder::Worker(w) = &mut active.encoder else { panic!("the test runs with an encoder thread") };
+            w.jobs = None;
+            if let Some(handle) = w.handle.take() {
+                handle.join().expect("the worker exits");
+            }
+            assert!(w.finished.is_none(), "the worker wrote no file");
+        }
+        // Stop asks for a file nobody will write; the next tick must answer instead of waiting.
+        s.stop().expect("stop");
+        assert!(s.is_finishing());
+        let why = s.tick(0.0).expect("the missing encoder is reported");
+        assert!(why.contains("couldn't be written"), "{why}");
+        assert!(!s.is_recording() && !s.is_finishing(), "the take is over");
+        assert!(s.take_ended().is_none(), "there is no file to insert");
+        assert!(!path.exists(), "the unfinished file is removed");
+    }
+
+    /// A discard must not sit in the join while the worker works through its queued backlog.
+    #[test]
+    fn cancel_is_prompt_with_a_queued_backlog() {
+        let (host, queue) = FakeScreen::ready((320, 240));
+        let mut s = state_with(host);
+        s.start(CaptureOptions::default(), RecorderConfig::new(30)).expect("start");
+        queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(320, 240, [9, 9, 9, 255]));
+        assert_eq!(s.tick(0.0), None);
+        let mut queued = 0;
+        {
+            let active = s.active.as_mut().expect("an active take");
+            let Encoder::Worker(w) = &mut active.encoder else { panic!("the test runs with an encoder thread") };
+            let jobs = w.jobs.as_ref().expect("the queue");
+            // Whole catch-up bursts: draining them all would keep the join busy for a while.
+            for _ in 0..JOB_QUEUE {
+                if jobs.try_send(Job::Repeat(MAX_CATCH_UP)).is_err() {
+                    break;
+                }
+                queued += 1;
+            }
+        }
+        assert!(queued >= JOB_QUEUE - 1, "the queue holds a backlog, got {queued} jobs");
+        let path = s.active.as_ref().expect("an active take").path.clone();
+        let started = std::time::Instant::now();
+        assert!(s.cancel(), "a take was running");
+        let elapsed = started.elapsed();
+        assert!(elapsed < std::time::Duration::from_secs(1), "cancel waited on the queued jobs: {elapsed:?}");
+        assert!(!path.exists(), "a cancelled take leaves no file");
     }
 }
