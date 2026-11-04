@@ -201,11 +201,16 @@ impl SlideApp {
         let input_time = ctx.input(|i| i.time);
         let show_time = show.hidden_logic_time(input_time, now);
         let keep = show.advance_hidden(&doc, show_time);
+        let doc_uid = self.session.active().map_or(0, |d| d.uid);
+        // A delayed automatic clip is due on the same clock the visible pass uses: start the
+        // queue here too, or a hidden window leaves it silent until the next visible frame.
+        let Some(mut show) = self.show.take() else { return };
+        show::start_due_media(self, &mut show, doc_uid, &doc, show_time);
         let time_driven = show.hidden_time_driven(&doc);
         if !keep {
-            self.show = None;
             return;
         }
+        self.show = Some(show);
         if time_driven {
             // A hidden event loop has no draw to piggyback on. A delayed repaint keeps the
             // logic clock ticking; with no paint request pending eframe services it as a

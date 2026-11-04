@@ -385,6 +385,21 @@ mod tests {
         assert_eq!(show.pending_media.len(), 1);
     }
 
+    /// The hidden logic tick must keep waking for a pending start, or a hidden window leaves the
+    /// clip silent past its deadline.
+    #[test]
+    fn a_pending_start_keeps_hidden_playback_awake() {
+        let mut app = app_with_delayed_clip(Some(2_000));
+        let doc = app.session.active().unwrap().doc.clone();
+        let uid = app.session.active().unwrap().uid;
+        let mut show = Show::new(&doc, 0, false, false);
+        show.started = true;
+        show_media(&mut app, &mut show, uid, &doc, 10.0);
+        assert!(show.hidden_time_driven(&doc), "the pending clip is time-driven");
+        show.pending_media.clear();
+        assert!(!show.hidden_time_driven(&doc), "nothing is left to wake for");
+    }
+
     /// A clip with no delay is started by the slide itself, so nothing is scheduled.
     #[test]
     fn a_clip_without_a_delay_is_not_scheduled() {

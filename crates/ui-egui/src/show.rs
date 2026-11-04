@@ -474,7 +474,14 @@ impl Show {
 
     /// Whether hidden logic still has time-driven work, so it must keep requesting wake-ups.
     pub(crate) fn hidden_time_driven(&self, doc: &Presentation) -> bool {
-        self.started && !self.ended && (self.state.playing || self.trans.is_some() || self.autoplay || self.auto_advance_after(doc).is_some())
+        self.started
+            && !self.ended
+            && (self.state.playing
+                || self.trans.is_some()
+                || self.autoplay
+                || self.auto_advance_after(doc).is_some()
+                // A delayed automatic clip is still waiting for its deadline.
+                || !self.pending_media.is_empty())
     }
 
     /// Advance the show's own clocks and automatic steps on a hidden logic pass. Drawing is a
@@ -947,6 +954,12 @@ fn play_on_enter(clip: &deckcraft_model::MediaClip, without_narration: bool) -> 
 /// The microphone a take writes into: the app's service slot, borrowed so a section can hand the
 /// take over without holding the whole app.
 pub(crate) type MicSlot = Option<Box<dyn deckcraft_media::MicIn>>;
+
+/// Start the automatic clips whose slide-start delay has come. The visible pass and the hidden
+/// logic tick both call this, on the same step clock.
+pub(crate) fn start_due_media(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentation, now: f64) {
+    media::run_pending_media(app, show, doc_uid, doc, now);
+}
 
 /// Write the take's buffered timings, narration, ink and laser into the deck. The shell's finish
 /// path, a commanded `show.end` and a confirmed quit all end here, so no path can drop a take.
