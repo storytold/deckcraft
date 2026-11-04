@@ -939,9 +939,11 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
 
     #[test]
     fn overlapping_compound_roots_with_a_failing_ending_stay_cheap() {
-        // Every split of "aaa…ab" reaches the same (tail, part) states; unmemoized this is
-        // ~C(99, 7) searches.
-        let d = Dictionary::parse(b"COMPOUNDFLAG X\nCOMPOUNDMIN 1\n".as_slice(), b"1\na/X\n".as_slice());
+        // Roots a..aaaaaaaa overlap, so many splits of "aaa…ab" reach the same (tail, part) state; unmemoized that is millions of searches.
+        let d = Dictionary::parse(
+            b"COMPOUNDFLAG X\nCOMPOUNDMIN 1\n".as_slice(),
+            b"8\na/X\naa/X\naaa/X\naaaa/X\naaaaa/X\naaaaaa/X\naaaaaaa/X\naaaaaaaa/X\n".as_slice(),
+        );
         assert!(!d.check(&format!("{}b", "a".repeat(99))));
         assert!(d.check(&"a".repeat(5)));
     }
