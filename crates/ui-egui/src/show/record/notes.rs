@@ -65,7 +65,11 @@ pub(super) fn ui(_app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Re
 }
 
 /// Whether a notes editor owns the keyboard this frame. The shell skips show navigation while it
-/// does. The editing section agent replaces this with its real editor id.
-pub(super) fn has_focus(ctx: &egui::Context) -> bool {
-    ctx.egui_wants_keyboard_input()
+/// does.
+///
+/// Nothing in the Record view owns text input yet: the notes pane is read-only, so the show's
+/// navigation keys must keep working even when a button holds focus. A notes editor that lands
+/// later replaces this with its own id (`ctx.memory(|m| m.has_focus(id))`).
+pub(super) fn has_focus(_ctx: &egui::Context) -> bool {
+    false
 }

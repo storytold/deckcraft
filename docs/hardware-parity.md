@@ -73,13 +73,12 @@ alignment runs once per transition (#67), and the decoders run in software.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-04 | minor | Screen recording from the Record tab captures a display, window or region with the pointer; the clip is video only (neither the microphone nor system audio), and the recording show keeps its pen and laser samples |
+| 2026-11-04 | minor | Screen recording from the Record tab captures a display, window or region with the pointer; the clip is video only (neither the microphone nor system audio), while the recording show captures the default microphone for narration and keeps its pen and laser samples |
 | 2026-10-14 | minor | PNG and JPEG slide export record 144 dpi at the default 2 pixels per point, so a Retina picture opens at the slide's size |
 | 2026-10-13 | trivial | Editor slide rasters sit on the physical pixel grid (#184) |
 | 2026-10-14 | trivial | Community PR wave folded: one row each for pinch/two-finger gestures and pen pressure |
 | 2026-10-14 | minor | A two-finger twist on the trackpad rotates the selected shapes, as one undo step. Pinch-zoom is unchanged |
 | 2026-10-14 | minor | A sideways trackpad swipe turns the page in Normal view (when the slide fits) and in the show. Pinch-zoom is unchanged |
 | 2026-10-14 | minor | Pen pressure scales ink width; tilt, pinch zoom and trackpad gestures remain (estimate 3–6 h → 2–5 h) |
-| 2026-10-14 | minor | Record Slide Show captures the default microphone |
 | 2026-10-12 | minor | IME input methods (#101) |
 | 2026-10-10 | major | Created: rendering, media, displays, input and performance against PowerPoint 16.113 |

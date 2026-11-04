@@ -264,6 +264,25 @@ fn pause_and_resume_are_buttons_on_the_top_bar() {
     assert_eq!(h.state().show.as_ref().unwrap().record_view.status, RecordStatus::Recording);
 }
 
+/// A focused button must not take the keyboard away from the show: nothing in the Record view
+/// edits text, so the navigation keys keep working while a take records.
+#[test]
+fn a_focused_button_keeps_the_show_navigation_keys_and_the_take() {
+    let mut h = harness(app_with(3));
+    open_record(&mut h, 0);
+    h.get_by_label("Record").click();
+    h.run_steps(3);
+    assert_eq!(h.state().show.as_ref().unwrap().record_view.status, RecordStatus::Recording);
+    // Tab hands the keyboard to a widget (the shell draws only buttons and the read-only notes),
+    // which must not take the show's keys away.
+    h.key_press(egui::Key::Tab);
+    h.run_steps(2);
+    h.key_press(egui::Key::ArrowRight);
+    h.run_steps(3);
+    assert_eq!(h.state().show.as_ref().unwrap().state.slide, 1, "ArrowRight turns the page with a button focused");
+    assert_eq!(h.state().show.as_ref().unwrap().record_view.status, RecordStatus::Recording, "the take keeps recording across the navigation");
+}
+
 #[test]
 fn the_bottom_chevrons_navigate_the_show() {
     let mut h = harness(app_with(3));
