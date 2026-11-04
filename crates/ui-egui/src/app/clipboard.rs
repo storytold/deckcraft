@@ -33,9 +33,13 @@ impl SlideApp {
     /// back into DeckCraft still uses the internal clipboard. A textless shape leaves the
     /// invisible [`OBJECTS_MARKER`] rather than a picture: with only an image on the clipboard
     /// egui-winit drops Ctrl+V, and the shortcut could no longer paste the shape here (#182).
-    pub(super) fn copy_clipboard(&mut self, cut: bool) {
+    pub(super) fn copy_clipboard(&mut self, ctx: &egui::Context, cut: bool) {
+        let revision = self.session.active().map(|d| d.revision);
         let cmd = if cut { "edit.cut" } else { "edit.copy" };
         let _ = self.run(cmd, json!({}));
+        if self.session.active().map(|d| d.revision) != revision {
+            self.note_application_edit(ctx);
+        }
     }
 
     /// Commands from every UI entry point publish through the same rich-text/marker policy.

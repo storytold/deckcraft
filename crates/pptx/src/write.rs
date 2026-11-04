@@ -53,6 +53,8 @@ pub struct Exp<'a> {
     pub p: &'a Presentation,
     pub pkg: PackageOut,
     media_parts: HashMap<MediaId, String>,
+    /// Each media id's item in `p.media` (the first with the id, as `Presentation::media`).
+    media_at: HashMap<MediaId, usize>,
     n_image: u32,
     n_media: u32,
     n_chart: u32,
@@ -63,6 +65,8 @@ pub struct Exp<'a> {
     n_kept: u32,
     pub slide_parts: HashMap<SlideId, String>,
     pub table_styles: Vec<String>,
+    /// The ids in `table_styles`, for checking membership without a scan.
+    pub table_style_set: std::collections::HashSet<String>,
     placeholder: Option<String>,
 }
 
@@ -119,12 +123,17 @@ fn ext_for(content_type: &str, name: &str, data: &[u8]) -> String {
     if !e.is_empty() && e.len() <= 5 && e.chars().all(|c| c.is_ascii_alphanumeric()) { e } else { "bin".into() }
 }
 
-impl Exp<'_> {
+impl<'a> Exp<'a> {
+    /// The media item `id`, found through the index rather than a scan of every item.
+    pub fn media(&self, id: MediaId) -> Option<&'a deckcraft_model::MediaItem> {
+        let p: &'a Presentation = self.p;
+        self.media_at.get(&id).and_then(|&i| p.media.get(i))
+    }
     fn media_part(&mut self, id: MediaId) -> Option<String> {
         if let Some(p) = self.media_parts.get(&id) {
             return Some(p.clone());
         }
-        let m = self.p.media(id)?;
+        let m = self.media(id)?;
         if m.data.is_empty() {
             return None;
         }
@@ -147,7 +156,7 @@ impl Exp<'_> {
     }
     /// A relationship from `o` to a media item (embedded part, or external link).
     pub fn media_rel(&mut self, o: &mut Out, id: MediaId, kind: &str) -> Option<String> {
-        let m = self.p.media(id)?;
+        let m = self.media(id)?;
         if m.data.is_empty() {
             let link = m.link.clone()?;
             return Some(o.rels.add(kind, &link, true));
@@ -156,7 +165,7 @@ impl Exp<'_> {
         Some(o.rels.add(kind, &opc::relative(&o.name, &part), false))
     }
     pub fn media_rel_new(&mut self, o: &mut Out, id: MediaId, kind: &str) -> Option<String> {
-        let m = self.p.media(id)?;
+        let m = self.media(id)?;
         if m.data.is_empty() {
             return None;
         }
@@ -489,7 +498,8 @@ fn valid_date(s: &str) -> bool {
 /// A copy of the presentation with every slide pointing at a layout that exists.
 fn sanitized(p: &Presentation) -> std::borrow::Cow<'_, Presentation> {
     let mut need = p.masters.is_empty() || p.masters.iter().any(|m| m.layouts.is_empty());
-    need |= p.slides.iter().any(|s| p.layout(s.layout).is_none());
+    let layouts: std::collections::HashSet<_> = p.masters.iter().flat_map(|m| m.layouts.iter().map(|l| l.id)).collect();
+    need |= p.slides.iter().any(|s| !layouts.contains(&s.layout));
     if !need {
         return std::borrow::Cow::Borrowed(p);
     }
@@ -532,6 +542,13 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
         p,
         pkg: PackageOut::default(),
         media_parts: HashMap::new(),
+        media_at: {
+            let mut m = HashMap::new();
+            for (i, item) in p.media.iter().enumerate() {
+                m.entry(item.id).or_insert(i);
+            }
+            m
+        },
         n_image: 0,
         n_media: 0,
         n_chart: 0,
@@ -541,6 +558,7 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
         n_kept: 0,
         slide_parts: HashMap::new(),
         table_styles: vec![],
+        table_style_set: Default::default(),
         placeholder: None,
     };
     for (i, s) in p.slides.iter().enumerate() {
@@ -959,9 +977,16 @@ fn section_slides(p: &Presentation) -> Vec<(String, Vec<usize>)> {
     if out.is_empty() {
         return out;
     }
+    // Each slide's first section, found once: a section may name a slide many times.
+    let mut first: HashMap<SlideId, usize> = HashMap::new();
+    for (k, sec) in p.sections.iter().enumerate() {
+        for id in &sec.slides {
+            first.entry(*id).or_insert(k);
+        }
+    }
     let mut cur = 0usize;
     for (i, s) in p.slides.iter().enumerate() {
-        if let Some(k) = p.sections.iter().position(|sec| sec.slides.contains(&s.id))
+        if let Some(&k) = first.get(&s.id)
             && k >= cur
         {
             cur = k;
@@ -1027,7 +1052,7 @@ fn write_embedded_fonts(x: &mut Exp, o: &mut Out) -> Vec<WrittenFont> {
         if let Some(rid) = seen_part.get(&id) {
             return Some(rid.clone());
         }
-        let m = x.p.media(id)?;
+        let m = x.media(id)?;
         if m.data.is_empty() || m.data.len() > 32 * 1024 * 1024 {
             return None;
         }

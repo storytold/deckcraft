@@ -112,6 +112,21 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     }
 }
 
+/// Slide index -> the first section starting there, built once instead of searched per slide.
+fn section_starts(doc: &deckcraft_model::Presentation) -> std::collections::HashMap<usize, usize> {
+    let mut index_of = std::collections::HashMap::new();
+    for (i, s) in doc.slides.iter().enumerate() {
+        index_of.entry(s.id).or_insert(i);
+    }
+    let mut starts = std::collections::HashMap::new();
+    for (si, s) in doc.sections.iter().enumerate() {
+        if let Some(&i) = s.slides.first().and_then(|id| index_of.get(id)) {
+            starts.entry(i).or_insert(si);
+        }
+    }
+    starts
+}
+
 /// Render the scrollable thumbnail list, scrolling the current slide into view when it changes.
 fn list(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
@@ -135,11 +150,10 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
     let ppp = ui.ctx().pixels_per_point();
     let mut budget = 3u32;
     let mut rects = vec![];
-    let section_starts: Vec<(usize, usize)> =
-        doc.sections.iter().enumerate().filter_map(|(si, s)| s.slides.first().and_then(|id| doc.slide_index(*id)).map(|i| (i, si))).collect();
+    let section_starts = section_starts(&doc);
     let mut need_more = false;
     for i in 0..doc.slides.len() {
-        if let Some((_, si)) = section_starts.iter().find(|(start, _)| *start == i)
+        if let Some(si) = section_starts.get(&i)
             && let Some(sec) = doc.sections.get(*si)
         {
             ui.add_space(4.0);
@@ -432,6 +446,26 @@ mod tests {
         );
         h.run_steps(3);
         h
+    }
+
+    #[test]
+    fn section_starts_map_each_first_slide_to_its_first_section() {
+        let mut s = Session::with_new();
+        for _ in 0..3 {
+            s.execute("slide.new", &json!({})).unwrap();
+        }
+        let mut doc = (*s.active().unwrap().doc).clone();
+        let ids: Vec<_> = doc.slides.iter().map(|sl| sl.id).collect();
+        doc.sections = vec![
+            deckcraft_model::Section { name: "a".into(), slides: vec![ids[0], ids[1]] },
+            deckcraft_model::Section { name: "dup".into(), slides: vec![ids[0]] },
+            deckcraft_model::Section { name: "c".into(), slides: vec![ids[2]] },
+            deckcraft_model::Section { name: "empty".into(), slides: vec![] },
+        ];
+        let starts = section_starts(&doc);
+        assert_eq!(starts.get(&0), Some(&0), "the first section starting at a slide wins");
+        assert_eq!(starts.get(&2), Some(&2));
+        assert_eq!(starts.len(), 2);
     }
 
     /// Vertical scroll offset of the thumbnail pane, as recorded each frame by `show`.

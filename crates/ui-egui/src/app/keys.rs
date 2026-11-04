@@ -145,8 +145,8 @@ impl SlideApp {
                     }
                 }
                 egui::Event::Ime(ime) => self.ime_event(ctx, &ime),
-                egui::Event::Copy => self.copy_clipboard(false),
-                egui::Event::Cut => self.copy_clipboard(true),
+                egui::Event::Copy => self.copy_clipboard(ctx, false),
+                egui::Event::Cut => self.copy_clipboard(ctx, true),
                 egui::Event::Paste(text) => {
                     // Our own marker for objects without text: paste what the session copied.
                     let text = if text == OBJECTS_MARKER { String::new() } else { text };
@@ -203,7 +203,7 @@ impl SlideApp {
                         && let Some((cut, semantic)) = clipboard
                     {
                         if !semantic {
-                            self.copy_clipboard(cut);
+                            self.copy_clipboard(ctx, cut);
                         }
                         continue;
                     }
