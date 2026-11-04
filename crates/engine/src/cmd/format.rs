@@ -67,7 +67,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Font",
             ["Home", "Font"],
             None,
-            "{family, eastAsia?: family, complexScript?: family} — `family` is the Latin typeface (`a:latin`); the other two set              the East Asian (`a:ea`) and complex-script (`a:cs`) typefaces, which are left alone when not given",
+            "{family, eastAsia?: family, complexScript?: family} — `family` is the Latin typeface (`a:latin`); the other two set the East Asian (`a:ea`) and complex-script (`a:cs`) typefaces, which are left alone when not given",
             has_text_or_shapes,
             font
         ),

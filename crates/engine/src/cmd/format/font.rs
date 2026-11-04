@@ -50,8 +50,7 @@ pub(super) fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
 /// Absent, as `opt_usize_param` and `id_param` read an absent key, so a call that leaves a script
 /// out keeps that typeface. Present but not a string is refused: `str_param` answers `None` to
 /// both, so `{"family": "Lato", "eastAsia": 42}` used to set the Latin typeface, leave the East
-/// Asian one alone and report success -- the one thing the caller asked for silently not done
-/// (noted in review).
+/// Asian one alone and report success -- the one thing the caller asked for silently not done.
 fn typeface_param(p: &Value, key: &str) -> Result<Option<String>> {
     let v = match p.get(key) {
         None | Some(Value::Null) => return Ok(None),
