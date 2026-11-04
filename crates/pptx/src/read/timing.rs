@@ -209,6 +209,8 @@ fn walk_media(e: &El, interactive: bool, ctx: &IdCtx, out: &mut Vec<MediaCue>, d
     if depth > 64 || out.len() >= 64 {
         return;
     }
+    // A click effect (DeckCraft's own writer puts On Click media "play" here) and an interactive
+    // sequence both wait for a click, so a `playFrom` inside either is not an automatic start.
     let interactive = interactive || (e.is("cTn") && e.attr("nodeType") == Some("interactiveSeq"));
     if e.is("audio") || e.is("video") {
         if let Some(node) = e.child("cMediaNode")
@@ -282,13 +284,16 @@ fn starts_alone(timing: &El, spid: u32, delay: Option<&str>) -> bool {
     }
 }
 
-/// `Some(true)` when a `playFrom` behaviour for `spid` sits in the main sequence, `Some(false)`
-/// when the only ones sit in interactive (click) sequences, `None` when there is none at all.
+/// `Some(true)` when a `playFrom` behaviour for `spid` starts without a click, `Some(false)` when
+/// the only ones sit in a click-triggered effect or an interactive sequence, `None` when there is
+/// none at all.
 fn play_from(e: &El, spid: u32, interactive: bool, depth: usize) -> Option<bool> {
     if depth > 64 {
         return None;
     }
-    let interactive = interactive || (e.is("cTn") && e.attr("nodeType") == Some("interactiveSeq"));
+    // A click effect (DeckCraft's own writer puts an On Click media "play" here) and an interactive
+    // sequence both wait for a click, so a `playFrom` inside either is not an automatic start.
+    let interactive = interactive || (e.is("cTn") && matches!(e.attr("nodeType"), Some("interactiveSeq" | "clickEffect")));
     if e.is("cmd")
         && e.attr("cmd").is_some_and(|c| c.trim().to_ascii_lowercase().starts_with("playfrom"))
         && e.path(&["cBhvr", "tgtEl", "spTgt"]).and_then(|t| t.u32("spid")) == Some(spid)

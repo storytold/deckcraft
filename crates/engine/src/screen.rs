@@ -236,6 +236,11 @@ impl ScreenState {
                 active.next_at += interval;
                 pushed += 1;
             }
+            if pushed >= MAX_CATCH_UP && now + 1.0e-9 >= active.next_at {
+                // The backlog past the cap is dropped, not split into bursts: a one minute stall
+                // must not keep the UI thread encoding 240 frames per tick afterwards.
+                active.next_at = now + interval;
+            }
         }
         active.frames = active.recorder.frames();
         let recorded = active.frames > 0;
@@ -402,6 +407,13 @@ mod tests {
         // A UI tick that arrives a second late encodes the intervals it missed.
         assert_eq!(s.tick(1.0), None);
         assert!(s.frames() >= 30 && s.frames() <= 32, "one second at 30 fps is about 30 frames, got {}", s.frames());
+        // A stall longer than the catch-up cap drops the rest of the backlog instead of bursting
+        // it on every later tick.
+        assert_eq!(s.tick(30.0), None);
+        let after_stall = s.frames();
+        assert!(after_stall - 31 <= u64::from(MAX_CATCH_UP), "one tick is capped");
+        assert_eq!(s.tick(30.0 + 1.0 / 30.0), None);
+        assert!(s.frames() - after_stall <= 2, "the next interval is one frame again, got {}", s.frames() - after_stall);
         let stopped = s.stop().expect("stop");
         assert!(stopped.frames >= 30);
         let _ = std::fs::remove_file(&stopped.path);

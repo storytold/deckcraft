@@ -246,8 +246,15 @@ impl SlideApp {
         // Closing the window with unsaved changes asks first.
         if ctx.input(|i| i.viewport().close_requested()) && !self.quit_confirmed && self.session.documents().iter().any(|d| d.is_dirty()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            // Leaving the show for the quit dialog must not lose a running take: end it the way
+            // the show's own end does (timings, narration, ink and laser), then ask.
+            if let Some(show) = self.show.take() {
+                let now = show.command_now();
+                if let Some(doc) = self.session.active().map(|d| d.doc.clone()) {
+                    self.end_show(ctx, show, &doc, now);
+                }
+            }
             self.stop_mic();
-            self.show = None;
             if self.dialog.as_ref().is_none_or(|d| d.id != "quit") {
                 self.dialog = Some(dialogs::Dialog::new("quit"));
             }
@@ -307,6 +314,9 @@ impl SlideApp {
             self.anim_preview = None;
             show::ui(self, ui);
             doc_window::show(self, &ctx);
+            // A screen recording started before the show keeps its control window, so "Stop and
+            // insert" is reachable while the show runs.
+            screen::window(self, &ctx);
             self.perf.frame_ms = now_ms() - t0;
             self.ui_end(&ctx);
             return;

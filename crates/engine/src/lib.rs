@@ -562,6 +562,8 @@ impl Session {
         let reason = self.screen.tick(now);
         if let Some(stopped) = self.screen.take_ended() {
             let why = reason.unwrap_or_else(|| "the screen capture stopped".into());
+            // The error texts carry no closing period; the status bar reads complete sentences.
+            let why = if why.ends_with(['.', '!', '?']) { why } else { format!("{why}.") };
             let text = match cmd::screen::insert_take(self, &stopped) {
                 Ok(_) => format!("{why} The recording so far was inserted on this slide."),
                 Err(e) => format!("{why} The recording so far couldn't be inserted: {e}"),

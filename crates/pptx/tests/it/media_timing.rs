@@ -117,6 +117,54 @@ fn autoplay_comes_from_the_main_sequence_not_the_media_nodes_start_delay() {
 }
 
 #[test]
+fn a_play_from_inside_a_click_effect_is_not_an_automatic_start() {
+    // DeckCraft's own writer emits an On Click media "play" as a main-sequence `clickEffect` with
+    // a `playFrom(0.0)`: it must not come back as autoplay.
+    let click = |spid: u32| {
+        format!(
+            r#"<p:par><p:cTn id="12" presetID="1" presetClass="mediacall" presetSubtype="0" fill="hold" nodeType="clickEffect"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:cmd type="call" cmd="playFrom(0.0)"><p:cBhvr><p:cTn id="13" dur="1" fill="hold"/><p:tgtEl><p:spTgt spid="{spid}"/></p:tgtEl></p:cBhvr></p:cmd></p:childTnLst></p:cTn></p:par>"#
+        )
+    };
+    let c = clips(|v, a| format!("{}{}{}{}", delayed_node("video", v, "0"), delayed_node("audio", a, "indefinite"), click(v), click(a)));
+    assert!(!c[0].autoplay, "a clickEffect playFrom waits for the click, even with a numeric delay");
+    assert!(!c[1].autoplay);
+}
+
+#[test]
+fn an_on_click_media_play_animation_round_trips_without_autoplay() {
+    let mut p = defaults::new_presentation(None);
+    let video = p.add_media("clip.mp4", "video/mp4", b"video".to_vec()).expect("media");
+    let id = ShapeId(p.alloc_id().expect("id"));
+    let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+    slide.shapes.push(deckcraft_model::Shape {
+        id,
+        name: "Clip".into(),
+        xfrm: Some(Xfrm::new(40.0, 40.0, 200.0, 100.0)),
+        kind: ShapeKind::Media(MediaClip { media: video, video: true, autoplay: false, ..Default::default() }),
+        ..Default::default()
+    });
+    slide.animations.push(deckcraft_model::Animation {
+        shape: id,
+        class: deckcraft_model::anim::AnimClass::Media,
+        effect: "play".into(),
+        start: deckcraft_model::anim::AnimStart::OnClick,
+        ..Default::default()
+    });
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let clip = q.slides[0]
+        .shapes
+        .iter()
+        .find_map(|s| match &s.kind {
+            ShapeKind::Media(m) if m.video => Some(m.clone()),
+            _ => None,
+        })
+        .expect("the video");
+    assert!(!clip.autoplay, "an On Click media play stays click-triggered after a round trip");
+    assert!(!q.slides[0].animations.is_empty(), "the play animation round-trips");
+}
+
+#[test]
 fn a_numeric_start_delay_alone_is_still_an_automatic_start() {
     // DeckCraft's own writer marks autoplay with the media node's delay and no behaviour node.
     let c = clips(|v, _| delayed_node("video", v, "0"));
