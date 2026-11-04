@@ -176,6 +176,7 @@ impl SlideApp {
                 }
             }
             "show.end" => {
+                self.stop_mic();
                 self.show = None;
                 self.media.stop_owned(media::Owner::Show);
             }

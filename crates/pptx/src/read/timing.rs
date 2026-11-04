@@ -1,7 +1,7 @@
 //! Slide transitions (`p:transition`) and animations (`p:timing`).
 
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, TextBuild, Transition, build_filled, paragraph_build_roles};
-use deckcraft_model::{Shape, ShapeKind, TextBody, find_shape, find_shape_mut};
+use deckcraft_model::{Shape, ShapeId, ShapeKind, TextBody, find_shape, find_shape_mut};
 
 use super::shapes::IdCtx;
 use super::{Imp, Part, dml};
@@ -197,6 +197,41 @@ fn max_dur(e: &El, depth: usize) -> Option<u32> {
     best
 }
 
+/// A slide-start media node (`p:audio` / `p:video` outside a click sequence). Its volume, mute
+/// and playback options come from [`media_settings`].
+pub struct MediaCue {
+    pub shape: ShapeId,
+    pub video: bool,
+    pub interactive: bool,
+}
+
+fn walk_media(e: &El, interactive: bool, ctx: &IdCtx, out: &mut Vec<MediaCue>, depth: usize) {
+    if depth > 64 || out.len() >= 64 {
+        return;
+    }
+    let interactive = interactive || (e.is("cTn") && e.attr("nodeType") == Some("interactiveSeq"));
+    if e.is("audio") || e.is("video") {
+        if let Some(node) = e.child("cMediaNode")
+            && let Some(spid) = node.path(&["tgtEl", "spTgt"]).and_then(|s| s.u32("spid"))
+            && let Some(shape) = ctx.lookup(spid)
+        {
+            out.push(MediaCue { shape, video: e.is("video"), interactive });
+        }
+        return;
+    }
+    for c in e.elements() {
+        walk_media(c, interactive, ctx, out, depth + 1);
+    }
+}
+
+/// Media nodes in the timing tree. Nodes without `presetClass` are not animations.
+pub fn media_cues(ctx: &IdCtx, timing: &El) -> Vec<MediaCue> {
+    let Some(tn) = timing.child("tnLst") else { return vec![] };
+    let mut out = Vec::new();
+    walk_media(tn, false, ctx, &mut out, 0);
+    out
+}
+
 /// Does every behaviour time node (`p:cBhvr/p:cTn`) under the effect node `c` carry `autoRev`?
 fn behaviour_auto_reverses(c: &El) -> bool {
     let mut behaviours = vec![];
@@ -232,7 +267,6 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         }
     }
 }
-
 /// Flatten the timing tree into the Animation Pane list.
 pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: &[Shape]) -> Vec<Animation> {
     let _ = (imp, part);

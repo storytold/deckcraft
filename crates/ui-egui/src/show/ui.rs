@@ -10,7 +10,8 @@ use super::zoom::{
 };
 use super::{
     Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
-    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
+    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, before_slide_change, json, laser_pos, pen_width_slide, pointer_is_laser,
+    record_bar_rect, saved_status, show_fills_screen, state_for, take_narration, theme, vec2, viewport_visible, pos2,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -75,6 +76,19 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     }
     show.observe_visible_frame(now, web_time::Instant::now());
     begin_show(&ctx, &mut show, &doc, now, app.services.presenter.is_some());
+    if show.record && !show.mic_tried {
+        show.mic_tried = true;
+        match app.services.mic.as_mut() {
+            Some(mic) => match mic.start() {
+                Ok(()) => show.mic_ok = true,
+                Err(e) => {
+                    log::info!("record narration: {e}");
+                    show.mic_ok = false;
+                }
+            },
+            None => show.mic_ok = false,
+        }
+    }
     let mut out = Out { keep: keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
     if show.presenter
         && !show.reading
@@ -122,8 +136,8 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     painter.rect_filled(full, CornerRadius::ZERO, Color32::BLACK);
     draw_slide(app, ui, &mut show, &f, &painter);
     draw_pen_and_hints(ui, &mut show, &f, &painter, pointing);
-    draw_bars(ui, &mut show, &f, &painter, &mut out);
-    draw_extras(&mut show, &f, &painter, &mut out);
+    draw_bars(app, ui, &mut show, &f, &painter, &mut out);
+    draw_extras(app, ui, &mut show, &f, &painter, &mut out);
     if out.keep
         && show.presenter
         && !show.reading
@@ -197,14 +211,17 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
 
 fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: &mut Out) -> bool {
     let Fr { ctx, doc, doc_uid, now, full, srect, clicked, secondary, pointer } = *f;
+    let ctrl = ctx.input(|i| i.modifiers.ctrl);
+    let laser_on = pointer_is_laser(show.laser, ctrl, show.blank.is_some());
     let on_slide = !show.grid
         && !show.pen
-        && !show.laser
+        && !laser_on
         && !show.ended
         && show.blank.is_none()
         && show.zoom.is_none()
         && !show.zoom_arm
         && !show.reading_bar_hit(ctx)
+        && !show.record_bar_hit(ctx)
         && !pointer_on_media_bar(ctx, ui, doc, show, now);
     // The button is drawn only while the pointer is awake; a hidden button takes no click.
     let gif_click =
@@ -245,7 +262,13 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
         }
     } else if clicked && show.zoom.is_some() && !show.pen && !show.reading_bar_hit(ctx) {
         show.dismiss_zoom();
-    } else if clicked && !show.pen && !show.reading_bar_hit(ctx) && !pointer_on_media_bar(ctx, ui, doc, show, now) {
+    } else if clicked
+        && !show.pen
+        && !laser_on
+        && !show.reading_bar_hit(ctx)
+        && !show.record_bar_hit(ctx)
+        && !pointer_on_media_bar(ctx, ui, doc, show, now)
+    {
         if show.ended {
             out.keep = false;
         } else if show.blank.is_some() {
@@ -261,7 +284,7 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
             }
         }
     }
-    if secondary && !show.ended && !show.grid && show.zoom.is_none() && !show.zoom_arm {
+    if secondary && !show.ended && !laser_on && !show.record_bar_hit(ctx) && !show.grid && show.zoom.is_none() && !show.zoom_arm {
         out.actions.push(show.state.prev(doc));
     }
     pointing
@@ -301,9 +324,10 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
 }
 
 fn advance(app: &mut SlideApp, show: &mut Show, f: &Fr, out: &mut Out) {
-    let Fr { doc, doc_uid, now, .. } = *f;
+    let Fr { doc, doc_uid, now, full, .. } = *f;
     // Apply input first: a step started by this click must restart the clock before it is read.
     for a in out.actions.drain(..) {
+        before_slide_change(app, show, &a);
         if !show.apply(a, doc, now) {
             out.keep = false;
         }
@@ -313,10 +337,12 @@ fn advance(app: &mut SlideApp, show: &mut Show, f: &Fr, out: &mut Out) {
         out.keep = false;
     }
     for a in std::mem::take(&mut out.actions) {
+        before_slide_change(app, show, &a);
         if !show.apply(a, doc, now) {
             out.keep = false;
         }
     }
+    show.ink_width = pen_width_slide(doc, full, show.reading);
     if show.state.playing {
         let step = show.state.step;
         show.cue_media(doc, step, now - show.step_start);
@@ -665,11 +691,13 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
     }
     // Pen.
-    let resp = ui.interact(full, ui.scope_id().with("show_pen"), if show.pen { Sense::drag() } else { Sense::hover() });
-    if show.pen {
+    let ctrl = ctx.input(|i| i.modifiers.ctrl);
+    let laser_on = pointer_is_laser(show.laser, ctrl, show.blank.is_some());
+    let resp = ui.interact(full, ui.scope_id().with("show_pen"), if show.pen && !laser_on { Sense::drag() } else { Sense::hover() });
+    if show.pen && !laser_on {
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Pen"));
     }
-    if show.pen {
+    if show.pen && !laser_on {
         if resp.drag_started() {
             show.strokes.push(vec![]);
         }
@@ -682,7 +710,7 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
             s.push(pos2(nx, ny));
         }
         ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
-    } else if show.laser {
+    } else if laser_on {
         ctx.set_cursor_icon(egui::CursorIcon::None);
     } else if show.zoom_arm || show.grid {
         ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
@@ -700,13 +728,39 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         let pts: Vec<Pos2> = s.iter().map(|q| slide_to_screen(srect, uv, q.x, q.y)).collect();
         painter.add(egui::Shape::line(pts, Stroke::new(3.0, pen_col)));
     }
-    if show.laser
+    if laser_on
         && !show.ended
         && let Some(p) = ctx.input(|i| i.pointer.hover_pos())
     {
         let c = theme::to_color32(doc.show.laser_color);
         painter.circle_filled(p, 16.0, Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 70));
         painter.circle_filled(p, 5.5, c);
+    }
+    if show.record && laser_on {
+        if let Some(p) = ctx.input(|i| i.pointer.hover_pos()) {
+            let nx = (p.x - srect.min.x) / srect.width().max(1.0);
+            let ny = (p.y - srect.min.y) / srect.height().max(1.0);
+            if (0.0..=1.0).contains(&nx) && (0.0..=1.0).contains(&ny) {
+                let ms = (now - show.slide_start).max(0.0) * 1000.0;
+                if ms.is_finite() {
+                    show.note_laser(nx as f64 * doc.slide_size.width, ny as f64 * doc.slide_size.height, ms.min(3_600_000.0) as u32);
+                }
+            }
+        }
+    } else if !show.record
+        && let Some(sl) = doc.slides.get(show.state.slide)
+        && let Some(trace) = &sl.laser
+    {
+        let elapsed = (now - show.slide_start).max(0.0) * 1000.0;
+        if elapsed.is_finite()
+            && let Some((x, y)) = laser_pos(&trace.points, elapsed.min(3_600_000.0) as u32)
+        {
+            let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
+            let p = pos2(srect.min.x + x as f32 * k, srect.min.y + y as f32 * k);
+            painter.circle_filled(p, 7.0, theme::to_color32(trace.color));
+            painter.circle_stroke(p, 11.0, Stroke::new(2.0, Color32::from_white_alpha(200)));
+            ctx.request_repaint();
+        }
     }
     if show.zoom_arm && !show.grid {
         painter.text(
@@ -719,7 +773,7 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
     }
 }
 
-fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
+fn draw_bars(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
     let Fr { ctx, doc, now, full, .. } = *f;
     // Reading view bar / on-screen controls.
     if show.reading {
@@ -742,12 +796,14 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
         }
         if child.button("▶").clicked() {
             let a = show.state.next(doc);
+            before_slide_change(app, show, &a);
             if !show.apply(a, doc, now) {
                 out.keep = false;
             }
         }
         if child.button("◀").clicked() {
             let a = show.state.prev(doc);
+            before_slide_change(app, show, &a);
             show.apply(a, doc, now);
         }
     } else if !show.grid && (show.pointer_awake(now) || show.zoom_arm) {
@@ -758,10 +814,12 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
         let b = |ui: &mut Ui, s: &str| ui.add(egui::Button::new(egui::RichText::new(s).color(Color32::WHITE).size(15.0)).frame(false));
         if b(&mut child, "◀").clicked() {
             let a = show.state.prev(doc);
+            before_slide_change(app, show, &a);
             show.apply(a, doc, now);
         }
         if b(&mut child, "▶").clicked() {
             let a = show.state.next(doc);
+            before_slide_change(app, show, &a);
             if !show.apply(a, doc, now) {
                 out.keep = false;
             }
@@ -791,12 +849,15 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
     }
 }
 
-fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
+fn draw_extras(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
     let Fr { ctx, doc, now, full, .. } = *f;
     if show.grid && !show.ended {
         paint_grid(painter, ctx, show, doc, full);
     }
-    if show.rehearse {
+    if show.record {
+        let mic_samples = app.services.mic.as_ref().map(|m| m.captured()).unwrap_or(0);
+        out.keep = recording_bar(ui, painter, ctx, full, now, show, mic_samples) && out.keep;
+    } else if show.rehearse {
         let t = now - show.slide_start;
         let total = now - show.show_start;
         let r = Rect::from_min_size(pos2(full.min.x + 12.0, full.min.y + 12.0), vec2(220.0, 30.0));
@@ -812,12 +873,50 @@ fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) 
     }
     // Presenter view in a second window.
     if out.keep && show.presenter && !show.reading && !show.remote_opened {
-        presenter_window(ctx, show, doc, now, &mut out.keep);
+        presenter_window(app, ctx, show, doc, now, &mut out.keep);
     }
 }
 
+/// The recording badge. Returns false when Stop was clicked.
+fn recording_bar(ui: &mut Ui, painter: &egui::Painter, ctx: &egui::Context, full: Rect, now: f64, show: &mut Show, mic_samples: usize) -> bool {
+    let t = now - show.slide_start;
+    let secs = if t.is_finite() { t.max(0.0) } else { 0.0 };
+    let r = record_bar_rect(full);
+    painter.rect_filled(r, CornerRadius::same(6), Color32::from_black_alpha(180));
+    painter.circle_filled(pos2(r.min.x + 16.0, r.center().y), 5.0, Color32::from_rgb(220, 40, 40));
+    let clock = format!("{:02}:{:04.1}", (secs / 60.0) as u32, secs % 60.0);
+    let label = if show.mic_tried && !show.mic_ok {
+        format!("Recording  {clock}  · no mic")
+    } else if mic_samples >= 800 {
+        format!("Recording  {clock}  · mic")
+    } else {
+        format!("Recording  {clock}")
+    };
+    painter.text(pos2(r.min.x + 30.0, r.center().y), Align2::LEFT_CENTER, label, theme::font(13.0), Color32::WHITE);
+    let laser = Rect::from_min_size(pos2(r.max.x - 124.0, r.min.y + 4.0), vec2(56.0, 24.0));
+    let lresp = ui.interact(laser, ui.scope_id().with("record_laser"), Sense::click());
+    if lresp.clicked() {
+        show.set_laser(!show.laser);
+    }
+    let laser_fill = if show.laser {
+        Color32::from_rgb(180, 40, 40)
+    } else if lresp.hovered() {
+        Color32::from_rgb(80, 80, 80)
+    } else {
+        Color32::from_rgb(50, 50, 50)
+    };
+    painter.rect_filled(laser, CornerRadius::same(4), laser_fill);
+    painter.text(laser.center(), Align2::CENTER_CENTER, "Laser", theme::font(12.0), Color32::WHITE);
+    let stop = Rect::from_min_size(pos2(r.max.x - 62.0, r.min.y + 4.0), vec2(54.0, 24.0));
+    let resp = ui.interact(stop, ui.scope_id().with("record_stop"), Sense::click());
+    painter.rect_filled(stop, CornerRadius::same(4), if resp.hovered() { Color32::from_rgb(180, 40, 40) } else { Color32::from_rgb(140, 32, 32) });
+    painter.text(stop.center(), Align2::CENTER_CENTER, "Stop", theme::font(12.0), Color32::WHITE);
+    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    !resp.clicked()
+}
+
 fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
-    let Fr { ctx, now, .. } = *f;
+    let Fr { ctx, doc, now, .. } = *f;
     if keep {
         app.show = Some(show);
     } else {
@@ -828,15 +927,40 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
         if !show.reading {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         }
-        if show.rehearse {
-            if let Some((_, tl)) = &show.timeline {
-                let _ = tl;
+        if show.rehearse || show.record {
+            if show.record {
+                take_narration(app, &mut show);
             }
+            if show.mic_tried {
+                app.stop_mic();
+            }
+            show.stash_ink(&doc, show.state.slide);
+            show.stash_laser(show.state.slide);
             show.timings.push((show.state.slide, now - show.slide_start));
             for (i, secs) in show.timings.clone() {
-                let _ = app.run("transition.timing", json!({"index": i, "after": (secs * 1000.0).round() as u64}));
+                let ms = if secs.is_finite() { (secs.max(0.0) * 1000.0).round() as u64 } else { 0 };
+                let _ = app.run("transition.timing", json!({"index": i, "after": ms}));
             }
-            app.set_status("Slide timings recorded.");
+            if show.record {
+                let c = doc.show.pen_color;
+                for (i, pts) in &show.recorded {
+                    let points: Vec<_> = pts.iter().map(|(x, y)| json!([x, y, 0.5])).collect();
+                    let _ = app.run("ink.stroke", json!({"index": i, "points": points, "width": show.ink_width, "color": [c.r, c.g, c.b]}));
+                }
+                for (i, wav) in &show.narration {
+                    let _ =
+                        app.run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(wav)}));
+                }
+                let lc = doc.show.laser_color;
+                for (i, pts) in &show.laser_saved {
+                    let points: Vec<_> = pts.iter().map(|(x, y, t)| json!([x, y, t])).collect();
+                    let _ = app.run("show.laser", json!({"index": i, "points": points, "color": [lc.r, lc.g, lc.b]}));
+                }
+                let _ = app.run("show.setup", json!({"useTimings": true}));
+                app.set_status(saved_status(!show.narration.is_empty(), !show.recorded.is_empty(), !show.laser_saved.is_empty()));
+            } else {
+                app.set_status("Slide timings recorded.");
+            }
         }
         let last = show.state.slide;
         let _ = app.run("slide.go", json!({"index": last}));

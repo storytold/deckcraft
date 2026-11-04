@@ -46,6 +46,8 @@ pub struct Show {
     /// Play every step automatically (animation preview).
     pub autoplay: bool,
     pub rehearse: bool,
+    /// Record Slide Show: keep timings, narration, pen ink and laser when the show ends.
+    pub record: bool,
     /// Set Up Slide Show ▸ Keep mouse cursor visible: a still pointer is not hidden (#1445).
     pub keep_cursor: bool,
     timeline: Option<(usize, Timeline)>,
@@ -95,6 +97,17 @@ pub struct Show {
     /// Speaker-notes size in presenter view, in points.
     notes_px: f32,
     timings: Vec<(usize, f64)>,
+    /// Pen strokes kept while recording, in slide points, with the slide they were drawn on.
+    recorded: Vec<(usize, Vec<(f64, f64)>)>,
+    /// Laser samples kept while recording: slide points and milliseconds from the slide start.
+    laser_live: Vec<(f64, f64, u32)>,
+    laser_saved: Vec<(usize, Vec<(f64, f64, u32)>)>,
+    /// WAV bytes per slide, taken from the microphone when the slide is left.
+    narration: Vec<(usize, Vec<u8>)>,
+    mic_tried: bool,
+    mic_ok: bool,
+    /// Pen width in slide points, matching the 3px stroke on screen.
+    ink_width: f64,
     last_move: f64,
     /// The last trackpad flick or mouse-wheel notch, so one gesture turns one page.
     last_swipe: f64,
@@ -223,6 +236,7 @@ impl Show {
             preview_only: false,
             autoplay: false,
             rehearse: false,
+            record: false,
             keep_cursor: false,
             timeline: None,
             step_start: 0.0,
@@ -257,6 +271,13 @@ impl Show {
             timer: PresenterTimer::start(0.0),
             notes_px: NOTES_DEFAULT,
             timings: vec![],
+            recorded: vec![],
+            laser_live: vec![],
+            laser_saved: vec![],
+            narration: vec![],
+            mic_tried: false,
+            mic_ok: false,
+            ink_width: 2.25,
             last_move: 0.0,
             last_swipe: f64::NEG_INFINITY,
             ended: false,
@@ -376,7 +397,7 @@ impl Show {
             let n_steps = self.timeline(doc).steps();
             let step_due = self.autoplay && cur_step < n_steps && idle > 0.3;
             let holding = self.grid || self.presenter_grid || self.zoom.is_some() || self.zoom_arm;
-            if !holding && (step_due || (!self.rehearse && self.state.auto_advance_due(doc, idle) && !self.ended)) {
+            if !holding && (step_due || (!(self.rehearse || self.record) && self.state.auto_advance_due(doc, idle) && !self.ended)) {
                 actions.push(self.state.next(doc));
             } else if self.preview_only && cur_step >= n_steps && idle > 0.8 {
                 return false;
@@ -499,9 +520,12 @@ impl Show {
                 self.ended = false;
                 self.zoom = None;
                 self.zoom_arm = false;
-                if self.rehearse {
-                    self.timings.push((self.timeline.as_ref().map(|t| t.0).unwrap_or(i), now - self.slide_start));
+                let left = self.timeline.as_ref().map(|t| t.0).unwrap_or(i);
+                if self.rehearse || self.record {
+                    self.timings.push((left, now - self.slide_start));
                 }
+                self.stash_ink(doc, left);
+                self.stash_laser(left);
                 // Take the old slide's texture rather than cloning its handle: the new slide is
                 // otherwise rendered into the same texture, and the transition blends the new
                 // slide with itself (#33).
@@ -584,6 +608,57 @@ impl Show {
         self.media_cues.extend(effects);
         self.media_clock = if t.is_finite() { Some((k, t)) } else { None };
     }
+
+    /// Move the pen's strokes into the recording, in slide points. Always clears the live strokes.
+    fn stash_ink(&mut self, doc: &Presentation, slide: usize) {
+        let strokes = std::mem::take(&mut self.strokes);
+        let w = doc.slide_size.width;
+        let h = doc.slide_size.height;
+        if !self.record || !(w > 0.0 && h > 0.0) {
+            return;
+        }
+        for stroke in strokes {
+            let mut pts = Vec::new();
+            for q in stroke.iter().take(4096) {
+                let x = q.x as f64 * w;
+                let y = q.y as f64 * h;
+                if x.is_finite() && y.is_finite() {
+                    pts.push((x, y));
+                }
+            }
+            if pts.len() >= 2 {
+                self.recorded.push((slide, pts));
+            }
+        }
+    }
+
+    fn stash_laser(&mut self, slide: usize) {
+        let pts = std::mem::take(&mut self.laser_live);
+        if self.record && !pts.is_empty() {
+            self.laser_saved.push((slide, pts));
+        }
+    }
+
+    fn note_laser(&mut self, x: f64, y: f64, t_ms: u32) {
+        if !x.is_finite() || !y.is_finite() || self.laser_live.len() >= 4096 {
+            return;
+        }
+        if let Some((px, py, pt)) = self.laser_live.last() {
+            let moved = (x - px).hypot(y - py) >= 1.5;
+            if t_ms.saturating_sub(*pt) < 40 && !moved {
+                return;
+            }
+        }
+        self.laser_live.push((x, y, t_ms));
+    }
+
+    /// Whether the recording badge is under the pointer: clicks there must not advance.
+    fn record_bar_hit(&self, ctx: &egui::Context) -> bool {
+        if !self.record {
+            return false;
+        }
+        ctx.input(|i| i.pointer.interact_pos()).is_some_and(|p| record_bar_rect(ctx.content_rect()).contains(p))
+    }
 }
 
 fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPlay], stamps: &[StepStamp]) -> ShapeState {
@@ -610,6 +685,103 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPl
 /// Whether starting the show takes the whole screen. Reading view and "Browsed by an individual (window)" stay in the window.
 fn show_fills_screen(reading: bool, show_type: &str) -> bool {
     !reading && show_type != "browsed"
+}
+
+fn record_bar_rect(full: Rect) -> Rect {
+    Rect::from_min_size(pos2(full.min.x + 12.0, full.min.y + 12.0), vec2(420.0, 32.0))
+}
+
+/// Slide points per on-screen pixel, so the 3px stroke keeps its width in the deck.
+fn pen_width_slide(doc: &Presentation, full: Rect, reading: bool) -> f64 {
+    let avail = if reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
+    let srect = render::fit(avail, doc);
+    let scale = srect.width() / doc.slide_size.width.max(1.0) as f32;
+    if scale.is_finite() && scale > 0.01 { (3.0 / scale) as f64 } else { 2.25 }
+}
+
+/// A narration clip is left off when Play Narrations is unchecked; other media still plays.
+fn play_on_enter(clip: &deckcraft_model::MediaClip, without_narration: bool) -> bool {
+    clip.autoplay && !(clip.narration && without_narration)
+}
+
+/// Skip near-silence and clips shorter than 0.2 s so an idle microphone adds no shape.
+fn narration_wav(rate: u32, samples: &[f32]) -> Option<Vec<u8>> {
+    if !(8_000..=192_000).contains(&rate) {
+        return None;
+    }
+    let min_n = (rate as u64).saturating_mul(200) / 1000;
+    let mut sum = 0.0f64;
+    let mut n = 0u64;
+    for s in samples.iter().take(48_000 * 60 * 10) {
+        if s.is_finite() {
+            let v = *s as f64;
+            sum += v * v;
+            n += 1;
+        }
+    }
+    if n < min_n.max(1) {
+        return None;
+    }
+    let rms = (sum / n as f64).sqrt();
+    if !rms.is_finite() || rms < 0.008 {
+        return None;
+    }
+    deckcraft_media::wav_mono(rate, samples).ok()
+}
+
+fn saved_status(narr: bool, ink: bool, laser: bool) -> &'static str {
+    match (narr, ink, laser) {
+        (false, false, false) => "Recording saved: slide timings.",
+        (true, false, false) => "Recording saved: slide timings and narration.",
+        (false, true, false) => "Recording saved: slide timings and ink.",
+        (false, false, true) => "Recording saved: slide timings and laser.",
+        (true, true, false) => "Recording saved: slide timings, narration and ink.",
+        (true, false, true) => "Recording saved: slide timings, narration and laser.",
+        (false, true, true) => "Recording saved: slide timings, ink and laser.",
+        (true, true, true) => "Recording saved: slide timings, narration, ink and laser.",
+    }
+}
+
+/// The laser dot: the button (or L while recording) leaves it on, and holding Ctrl shows it
+/// in any show. A blank screen hides it. It never draws ink.
+fn pointer_is_laser(sticky: bool, ctrl: bool, blank: bool) -> bool {
+    !blank && (sticky || ctrl)
+}
+
+fn laser_pos(points: &[deckcraft_model::LaserSample], elapsed_ms: u32) -> Option<(f64, f64)> {
+    let last = points.last()?;
+    if elapsed_ms > last.t_ms.saturating_add(300) {
+        return None;
+    }
+    let mut chosen = &points[0];
+    for p in points {
+        if p.t_ms <= elapsed_ms {
+            chosen = p;
+        } else {
+            break;
+        }
+    }
+    Some((chosen.x, chosen.y))
+}
+
+/// A slide change ends the microphone take and hands it to the slide being left.
+fn before_slide_change(app: &mut SlideApp, show: &mut Show, action: &ShowAction) {
+    if show.record && matches!(action, ShowAction::Slide(_)) {
+        take_narration(app, show);
+    }
+}
+
+fn take_narration(app: &mut SlideApp, show: &mut Show) {
+    if !show.record || !show.mic_ok {
+        return;
+    }
+    let Some(mic) = app.services.mic.as_mut() else { return };
+    let (rate, samples) = mic.take();
+    if let Some(wav) = narration_wav(rate, &samples) {
+        let slide = show.state.slide;
+        show.narration.retain(|(i, _)| *i != slide);
+        show.narration.push((slide, wav));
+    }
 }
 
 #[cfg(test)]
