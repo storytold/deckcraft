@@ -345,6 +345,22 @@ pub fn info(name: &str) -> Option<&'static PresetInfo> {
     CATALOG.iter().find(|p| p.name == name)
 }
 
+/// Adjust-value defaults of presets we draw but don't offer in the gallery: PowerPoint routes
+/// connectors with them, and a file may give some of the values and rely on these for the rest
+/// (ECMA-376 presetShapeDefinitions).
+static UNLISTED_DEFAULTS: &[(&str, &[f64])] = &[
+    ("bentConnector4", &[50000.0, 50000.0]),
+    ("bentConnector5", &[50000.0, 50000.0, 50000.0]),
+    ("curvedConnector4", &[50000.0, 50000.0]),
+    ("curvedConnector5", &[50000.0, 50000.0, 50000.0]),
+];
+
+/// The adjust values preset `name` takes when a file or the user gives none: its gallery entry's,
+/// or for a preset outside the gallery the spec's. Empty for a preset without adjust values.
+pub fn adjust_defaults(name: &str) -> &'static [f64] {
+    info(name).map(|i| i.defaults).or_else(|| UNLISTED_DEFAULTS.iter().find(|(n, _)| *n == name).map(|(_, d)| *d)).unwrap_or(&[])
+}
+
 /// Whether PowerPoint joins this preset's outline with sharp (miter) corners when the line names
 /// no join (it rounds them otherwise). Observed per preset on its export: the plus, the right,
 /// up and down block arrows (not the left one), chevrons, stars from five points up, the

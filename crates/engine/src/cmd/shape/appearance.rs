@@ -9,7 +9,7 @@ pub(super) fn adjust(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "value").ok_or_else(|| bad("shape.adjust", "missing `value`"))?;
     edit_geometry(s, p, "shape.adjust", |sh| {
         if let Geom::Preset { name, adj } = &mut sh.geom {
-            let defaults = deckcraft_geom::preset::info(name).map(|x| x.defaults).unwrap_or(&[]);
+            let defaults = deckcraft_geom::preset::adjust_defaults(name);
             while adj.len() <= i {
                 let k = adj.len();
                 adj.push(defaults.get(k).copied().unwrap_or(0.0));
