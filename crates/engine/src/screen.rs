@@ -7,9 +7,11 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError};
 
 use deckcraft_screen::{
-    CaptureOptions, CaptureStatus, CaptureTarget, RecorderConfig, RecorderOutput, ScreenError, ScreenFrame, ScreenIn, ScreenRecorder,
+    CaptureOptions, CaptureStatus, CaptureTarget, RecorderConfig, RecorderError, RecorderOutput, ScreenError, ScreenFrame, ScreenIn, ScreenRecorder,
 };
 
 /// The most frames one delayed tick may catch up with, so a stall cannot encode a burst forever.
@@ -26,7 +28,7 @@ pub struct StoppedRecording {
 }
 
 struct Active {
-    recorder: ScreenRecorder,
+    encoder: Encoder,
     path: PathBuf,
     fps: u32,
     paused: bool,
@@ -34,10 +36,264 @@ struct Active {
     due: bool,
     /// Earliest time (seconds, UI clock) for the next frame.
     next_at: f64,
+    /// Pictures the UI scheduled (the recorder's own count settles when the take finishes).
     frames: u64,
-    /// The last captured picture. A tick with no new frame repeats it, so a static screen still
-    /// records its time and a delayed tick catches up with the schedule.
-    last: Option<ScreenFrame>,
+    /// The newest captured picture waiting for its slot; a later capture replaces it.
+    pending: Option<ScreenFrame>,
+}
+
+/// One scheduled picture for the encoder thread.
+#[cfg(not(target_arch = "wasm32"))]
+enum Job {
+    /// Encode this picture (the first one, or one that changed).
+    Encode(ScreenFrame),
+    /// Mux the last sample again for `n` intervals (the picture did not change). One job carries a
+    /// whole catch-up burst, so a delayed tick cannot flood the queue.
+    Repeat(u32),
+    /// Write the file and hand the output back.
+    Finish,
+}
+
+/// What the encoder thread reports.
+#[cfg(not(target_arch = "wasm32"))]
+enum Event {
+    Encoded,
+    Failed(String),
+    Finished(Result<RecorderOutput, RecorderError>),
+}
+
+/// How many jobs may wait for the encoder before the UI drops a repeat.
+#[cfg(not(target_arch = "wasm32"))]
+const JOB_QUEUE: usize = 4;
+
+/// The recorder. Where the target has threads it runs on one, so the UI thread never encodes; on
+/// the web, threads are unavailable and it runs inline.
+enum Encoder {
+    #[cfg(not(target_arch = "wasm32"))]
+    Worker(Worker),
+    Inline(Inline),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct Worker {
+    jobs: Option<SyncSender<Job>>,
+    events: Receiver<Event>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    frames: u64,
+    failure: Option<String>,
+    finished: Option<Result<RecorderOutput, RecorderError>>,
+}
+
+/// The recorder on the caller's thread (the web build).
+struct Inline {
+    recorder: Option<ScreenRecorder>,
+    frames: u64,
+    failure: Option<String>,
+}
+
+impl Encoder {
+    /// Start the encoder for a fresh recorder.
+    fn new(recorder: ScreenRecorder) -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let (job_tx, job_rx) = std::sync::mpsc::sync_channel::<Job>(JOB_QUEUE);
+            let (event_tx, event_rx) = std::sync::mpsc::channel::<Event>();
+            let spawned = std::thread::Builder::new().name("deckcraft-encode".into()).spawn(move || encode_loop(recorder, &job_rx, &event_tx));
+            match spawned {
+                Ok(handle) => {
+                    return Encoder::Worker(Worker {
+                        jobs: Some(job_tx),
+                        events: event_rx,
+                        handle: Some(handle),
+                        frames: 0,
+                        failure: None,
+                        finished: None,
+                    });
+                }
+                // No thread to be had: fall back to encoding here rather than losing the take.
+                Err(e) => {
+                    log::warn!("screen recording: no encoder thread ({e}); recording inline");
+                    let _ = job_rx;
+                }
+            }
+            // The recorder moved into the closure only when the thread started; on failure the
+            // closure was never called, so it is gone. That path cannot happen with the handle
+            // above unless the spawn failed, which drops it — recoverable only by a new recorder.
+            Encoder::Inline(Inline { recorder: None, frames: 0, failure: Some("couldn't start the encoder".into()) })
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Encoder::Inline(Inline { recorder: Some(recorder), frames: 0, failure: None })
+        }
+    }
+
+    /// Queue a picture. A full queue drops it: encoding slower than the schedule is a reason to
+    /// record fewer pictures, never to grow memory.
+    fn encode(&mut self, frame: ScreenFrame) {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Encoder::Worker(w) => {
+                if let Some(jobs) = w.jobs.as_ref()
+                    && matches!(jobs.try_send(Job::Encode(frame)), Ok(()) | Err(TrySendError::Full(_)))
+                {
+                    w.frames += 1;
+                }
+            }
+            Encoder::Inline(i) => {
+                let Some(recorder) = i.recorder.as_mut() else { return };
+                if let Err(e) = recorder.push(&frame) {
+                    i.failure = Some(e.to_string());
+                }
+                i.frames = recorder.frames();
+            }
+        }
+    }
+
+    /// Queue `n` repeats of the last picture (one burst, so a delayed tick stays one job).
+    fn repeat(&mut self, n: u32) {
+        if n == 0 {
+            return;
+        }
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Encoder::Worker(w) => {
+                if let Some(jobs) = w.jobs.as_ref()
+                    && matches!(jobs.try_send(Job::Repeat(n)), Ok(()) | Err(TrySendError::Full(_)))
+                {
+                    w.frames += u64::from(n);
+                }
+            }
+            Encoder::Inline(i) => {
+                let Some(recorder) = i.recorder.as_mut() else { return };
+                for _ in 0..n {
+                    // Nothing to repeat yet, or a key frame is due: the take waits for the next
+                    // captured picture instead of writing a sample that does not exist.
+                    if recorder.push_repeat().is_err() {
+                        break;
+                    }
+                }
+                i.frames = recorder.frames();
+            }
+        }
+    }
+
+    /// Drain what the worker reported.
+    fn poll(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Encoder::Worker(w) = self {
+            loop {
+                match w.events.try_recv() {
+                    Ok(Event::Encoded) => {}
+                    Ok(Event::Failed(e)) => w.failure = Some(e),
+                    Ok(Event::Finished(out)) => w.finished = Some(out),
+                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+                }
+            }
+        }
+    }
+
+    fn frames(&self) -> u64 {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Encoder::Worker(w) => w.frames,
+            Encoder::Inline(i) => i.frames,
+        }
+    }
+
+    fn failure(&self) -> Option<&str> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Encoder::Worker(w) => w.failure.as_deref(),
+            Encoder::Inline(i) => i.failure.as_deref(),
+        }
+    }
+
+    /// Write the file and hand back what it holds. The worker is joined here, so the file is
+    /// complete when this returns.
+    fn finish(&mut self) -> Result<RecorderOutput, RecorderError> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Encoder::Worker(w) => {
+                if let Some(jobs) = w.jobs.take() {
+                    let _ = jobs.send(Job::Finish);
+                }
+                // The worker reports the finished file (or its failure) and returns.
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+                while w.finished.is_none() && std::time::Instant::now() < deadline {
+                    match w.events.recv_timeout(std::time::Duration::from_millis(50)) {
+                        Ok(Event::Finished(out)) => w.finished = Some(out),
+                        Ok(Event::Failed(e)) => w.failure = Some(e),
+                        Ok(Event::Encoded) => {}
+                        Err(_) => {}
+                    }
+                }
+                if let Some(handle) = w.handle.take() {
+                    let _ = handle.join();
+                }
+                match w.finished.take() {
+                    Some(out) => out,
+                    None => Err(RecorderError::Muxer(w.failure.clone().unwrap_or_else(|| "the recording didn't finish".into()))),
+                }
+            }
+            Encoder::Inline(i) => match i.recorder.take() {
+                Some(recorder) => recorder.finish(),
+                None => Err(RecorderError::Empty),
+            },
+        }
+    }
+
+    /// Throw the take away: the worker stops without writing the file.
+    fn discard(&mut self) {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Encoder::Worker(w) => {
+                w.jobs = None;
+                if let Some(handle) = w.handle.take() {
+                    let _ = handle.join();
+                }
+            }
+            Encoder::Inline(i) => i.recorder = None,
+        }
+    }
+}
+
+/// The encoder thread: encode or repeat each scheduled picture, then write the file on `Finish`.
+#[cfg(not(target_arch = "wasm32"))]
+fn encode_loop(recorder: ScreenRecorder, jobs: &Receiver<Job>, events: &std::sync::mpsc::Sender<Event>) {
+    let mut recorder = Some(recorder);
+    let mut last: Option<ScreenFrame> = None;
+    while let Ok(job) = jobs.recv() {
+        let Some(rec) = recorder.as_mut() else { return };
+        match job {
+            Job::Encode(frame) => match rec.push(&frame) {
+                Ok(()) => last = Some(frame),
+                Err(e) => {
+                    let _ = events.send(Event::Failed(e.to_string()));
+                    return;
+                }
+            },
+            Job::Repeat(n) => {
+                for _ in 0..n {
+                    // A key frame that is due (or nothing encoded yet) is encoded from the picture
+                    // the worker already holds, so a repeat never loses the schedule.
+                    let r = rec.push_repeat().or_else(|_| match last.as_ref() {
+                        Some(frame) => rec.push(frame),
+                        None => Ok(()),
+                    });
+                    if let Err(e) = r {
+                        let _ = events.send(Event::Failed(e.to_string()));
+                        return;
+                    }
+                }
+            }
+            Job::Finish => {
+                let out = recorder.take().map(ScreenRecorder::finish).unwrap_or(Err(RecorderError::Empty));
+                let _ = events.send(Event::Finished(out));
+                return;
+            }
+        }
+        let _ = events.send(Event::Encoded);
+    }
 }
 
 /// The session's screen capture and recording state.
@@ -53,10 +309,11 @@ pub struct ScreenState {
 impl ScreenState {
     /// Install the host device; `None` makes capture unavailable (headless tests, wasm).
     pub fn set_host(&mut self, host: Option<Box<dyn ScreenIn>>) {
-        if let Some(active) = self.active.take() {
+        if let Some(mut active) = self.active.take() {
             if let Some(host) = self.host.as_mut() {
                 host.stop();
             }
+            active.encoder.discard();
             let _ = std::fs::remove_file(active.path);
         }
         self.host = host;
@@ -136,7 +393,16 @@ impl ScreenState {
             let _ = std::fs::remove_file(&path);
             return Err(e);
         }
-        self.active = Some(Active { recorder, path, fps: options.fps.clamp(1, 240), paused: false, due: true, next_at: 0.0, frames: 0, last: None });
+        self.active = Some(Active {
+            encoder: Encoder::new(recorder),
+            path,
+            fps: options.fps.clamp(1, 240),
+            paused: false,
+            due: true,
+            next_at: 0.0,
+            frames: 0,
+            pending: None,
+        });
         Ok(())
     }
 
@@ -156,12 +422,12 @@ impl ScreenState {
     /// Finish the recording and hand back its file. The caller inserts it and deletes the file;
     /// on an error nothing is left behind.
     pub fn stop(&mut self) -> Result<StoppedRecording, ScreenError> {
-        let Some(active) = self.active.take() else { return Err(ScreenError::NotRecording) };
+        let Some(mut active) = self.active.take() else { return Err(ScreenError::NotRecording) };
         if let Some(host) = self.host.as_mut() {
             host.stop();
         }
         let path = active.path;
-        let out: RecorderOutput = match active.recorder.finish() {
+        let out: RecorderOutput = match active.encoder.finish() {
             Ok(o) => o,
             Err(e) => {
                 let _ = std::fs::remove_file(&path);
@@ -173,44 +439,44 @@ impl ScreenState {
 
     /// Throw the recording away. `true` when one was running.
     pub fn cancel(&mut self) -> bool {
-        let Some(active) = self.active.take() else { return false };
+        let Some(mut active) = self.active.take() else { return false };
         if let Some(host) = self.host.as_mut() {
             host.stop();
         }
+        active.encoder.discard();
         let _ = std::fs::remove_file(&active.path);
         true
     }
 
-    /// Pull a captured frame and encode every picture the schedule is owed. Returns a message when
-    /// the capture failed; the take then keeps what it recorded
+    /// Pull a captured frame and schedule every picture the schedule is owed. Returns a message
+    /// when the capture or the encoder failed; the take then keeps what it recorded
     /// ([`take_ended`](Self::take_ended)) unless it had no frames.
     pub fn tick(&mut self, now: f64) -> Option<String> {
         let active = self.active.as_mut()?;
+        active.encoder.poll();
+        if let Some(f) = active.encoder.failure().map(str::to_string) {
+            let why = format!("the screen recording stopped: {f}");
+            return if active.frames > 0 {
+                Some(self.end_keeping(&why))
+            } else {
+                self.cancel();
+                Some(why)
+            };
+        }
         if active.paused {
             // Nothing is encoded while the take is held, but the newest picture is kept: a backend
             // that only sends frames when the screen changes would otherwise resume on the
             // pre-pause content for the whole static period.
-            if let Some(Ok(frame)) = self.host.as_mut().map(|h| h.frame())
-                && frame.is_some()
-            {
-                active.last = frame;
+            if let Some(Ok(Some(frame))) = self.host.as_mut().map(|h| h.frame()) {
+                active.pending = Some(frame);
             }
             return None;
         }
         let interval = 1.0 / f64::from(active.fps.max(1));
-        let shot = match self.host.as_mut() {
-            Some(host) => host.frame(),
-            None => Err(ScreenError::Unavailable),
-        };
-        let mut fresh = false;
-        match shot {
-            Ok(frame) => {
-                if frame.is_some() {
-                    fresh = frame.is_some();
-                    active.last = frame;
-                }
-            }
-            Err(e) => {
+        match self.host.as_mut().map(|h| h.frame()) {
+            Some(Ok(Some(frame))) => active.pending = Some(frame),
+            Some(Ok(None)) => {}
+            Some(Err(e)) => {
                 let why = e.to_string();
                 return if active.frames > 0 {
                     Some(self.end_keeping(&why))
@@ -219,38 +485,44 @@ impl ScreenState {
                     Some(why)
                 };
             }
+            None => {
+                let why = ScreenError::Unavailable.to_string();
+                return if active.frames > 0 {
+                    Some(self.end_keeping(&why))
+                } else {
+                    self.cancel();
+                    Some(why)
+                };
+            }
         }
-        // One picture per interval. The start anchors the schedule; a later tick repeats the last
-        // picture for every interval that passed, so idle time and a delayed UI tick are recorded.
         let mut why = None;
         if active.due {
             active.due = false;
-            if let Some(e) = push_picture(active, fresh) {
-                why = Some(format!("the screen recording stopped: {e}"));
+            if active.pending.is_some() || active.frames > 0 {
+                why = schedule_picture(active, 1);
             }
             active.next_at = now + interval;
         } else if now + 1.0e-9 >= active.next_at {
-            let mut pushed = 0;
-            while now + 1.0e-9 >= active.next_at && pushed < MAX_CATCH_UP {
-                if active.last.is_none() {
-                    break;
-                }
-                // Only the first picture of a catch-up encodes the new frame; the rest repeat it.
-                let encode = fresh && pushed == 0;
-                if let Some(e) = push_picture(active, encode) {
-                    why = Some(format!("the screen recording stopped: {e}"));
-                    break;
-                }
-                active.next_at += interval;
-                pushed += 1;
+            // Every interval that passed is owed one picture; one job carries them all.
+            let owed = ((now - active.next_at) / interval).floor() as u32 + 1;
+            let pictures = owed.clamp(1, MAX_CATCH_UP);
+            if active.pending.is_some() || active.frames > 0 {
+                why = schedule_picture(active, pictures);
             }
-            if pushed >= MAX_CATCH_UP && now + 1.0e-9 >= active.next_at {
+            active.next_at += f64::from(pictures) * interval;
+            if owed > MAX_CATCH_UP {
                 // The backlog past the cap is dropped, not split into bursts: a one minute stall
-                // must not keep the UI thread encoding 240 frames per tick afterwards.
+                // must not keep the encoder busy for minutes afterwards.
                 active.next_at = now + interval;
             }
         }
-        active.frames = active.recorder.frames();
+        active.encoder.poll();
+        if why.is_none()
+            && let Some(e) = active.encoder.failure().map(str::to_string)
+        {
+            why = Some(format!("the screen recording stopped: {e}"));
+        }
+        active.frames = active.frames.max(active.encoder.frames());
         let recorded = active.frames > 0;
         match why {
             Some(w) if recorded => Some(self.end_keeping(&w)),
@@ -271,11 +543,11 @@ impl ScreenState {
     /// End the take the way a source failure should: stop the host, write the MP4 and keep it.
     /// Nothing recorded means nothing to keep, so the file is removed.
     fn end_keeping(&mut self, why: &str) -> String {
-        let Some(active) = self.active.take() else { return why.to_string() };
+        let Some(mut active) = self.active.take() else { return why.to_string() };
         if let Some(host) = self.host.as_mut() {
             host.stop();
         }
-        match active.recorder.finish() {
+        match active.encoder.finish() {
             Ok(out) if out.frames > 0 => {
                 self.ended = Some(StoppedRecording {
                     path: active.path,
@@ -294,18 +566,20 @@ impl ScreenState {
     }
 }
 
-/// Encode the last picture when `encode` is set, otherwise repeat the last sample. `Some` is the
-/// recorder error when the picture could not be written.
-fn push_picture(active: &mut Active, encode: bool) -> Option<deckcraft_screen::RecorderError> {
-    if encode {
-        let frame = active.last.as_ref()?;
-        return active.recorder.push(frame).err();
+/// Schedule one picture: the newest capture if one is waiting, else a repeat of the last. `Some`
+/// is the encoder error when the picture could not be queued.
+fn schedule_picture(active: &mut Active, pictures: u32) -> Option<String> {
+    if pictures == 0 {
+        return None;
     }
-    match active.recorder.push_repeat() {
-        Ok(()) => None,
-        // No sample to repeat yet (or a key frame is due): encode it.
-        Err(_) => active.last.as_ref().and_then(|frame| active.recorder.push(frame).err()),
+    match active.pending.take() {
+        Some(frame) => {
+            active.encoder.encode(frame);
+            active.encoder.repeat(pictures - 1);
+        }
+        None => active.encoder.repeat(pictures),
     }
+    active.encoder.failure().map(str::to_string)
 }
 
 /// A fresh file in the temporary folder for one recording.
