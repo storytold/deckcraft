@@ -27,7 +27,7 @@ because it mostly follows from hardware use.
 | 4K video in the show | smooth on hardware decode | unmeasured; likely CPU-bound |
 | Audio output | Core Audio / WASAPI | `cpal` (Core Audio, WASAPI, ALSA); browser Web Audio |
 | Microphone (record audio, narration) | yes | no |
-| Camera (Cameo, record with camera) | yes | no |
+| Camera (Cameo, record with camera) | yes | partial: capture trait and H.264 MP4 recording pipeline (`deckcraft-media`); the desktop device backend is separate |
 | Screen recording | yes | no |
 
 ## Displays
@@ -73,6 +73,7 @@ alignment runs once per transition (#67), and the decoders run in software.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | Camera row partial: `CameraIn` capture contract and the H.264 MP4 recording pipeline exist; the desktop device backend is separate work |
 | 2026-10-14 | minor | PNG and JPEG slide export record 144 dpi at the default 2 pixels per point, so a Retina picture opens at the slide's size |
 | 2026-10-13 | trivial | Editor slide rasters sit on the physical pixel grid (#184) |
 | 2026-10-14 | trivial | Community PR wave folded: one row each for pinch/two-finger gestures and pen pressure |

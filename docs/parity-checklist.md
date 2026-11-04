@@ -224,6 +224,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Slide show | Custom shows | P2 | D |
 | Slide show | Set up show (loop, kiosk, without animation) | P1 | D |
 | Slide show | Record slide show (narration) | P2 | M |
+| Slide show | Recorded Cameo (camera clip per slide, `show.cameo`) | P2 | P |
 | Slide show | Multi-monitor presenting | P1 | M |
 | Review | Comments (add, reply, resolve, delete) | P1 | D |
 | Review | Accessibility checker | P2 | D |

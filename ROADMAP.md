@@ -150,6 +150,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-03 | Recorded Cameo (#1813): camera frames encode to a video-only H.264 MP4 per slide (our encoder and `craft-media` MP4 writer), committed as the slide's Cameo picture with a first-frame poster and a `p:video` timing node; `show.cameo` replaces the cameo in one undo step, the model and PPTX round-trip `a:videoFile`/`p14:media`, and the capture state machine caps each clip at 10 min/64 MB and the show at 512 MB. Narration stays a separate per-slide WAV |
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
 | 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
 | 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |

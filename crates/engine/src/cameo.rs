@@ -353,11 +353,11 @@ mod tests {
     fn each_slide_with_a_cameo_gets_its_own_clip() {
         let (camera, events, _) = fake();
         let mut run = CameoRun::start(Some(camera), &CameraConfig::default());
-        for slide in 0..3 {
-            run.enter_slide(slide, (32, 32), u64::from(slide) * 1_000);
-            send(&events, CameraEvent::Frame(frame(slide as u64, 32, 32)));
-            run.poll(u64::from(slide) * 1_000 + 500);
-            run.leave_slide(u64::from(slide) * 1_000 + 1_000);
+        for slide in 0..3u64 {
+            run.enter_slide(slide as usize, (32, 32), slide * 1_000);
+            send(&events, CameraEvent::Frame(frame(slide, 32, 32)));
+            run.poll(slide * 1_000 + 500);
+            run.leave_slide(slide * 1_000 + 1_000);
         }
         let clips = run.finish(3_000);
         assert_eq!(clips.iter().map(|(s, _)| *s).collect::<Vec<_>>(), vec![0, 1, 2]);
