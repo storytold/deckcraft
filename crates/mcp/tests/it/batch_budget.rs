@@ -56,3 +56,15 @@ fn the_batch_tool_charges_the_escaped_reply() {
     assert!(reply.len() < (64 << 20) + (4 << 20), "{} bytes", reply.len());
     assert!(reply.contains("64 MiB"));
 }
+
+#[test]
+fn the_batch_tool_charges_failures_too() {
+    // Each unknown command's error echoes its ~1 MiB id; with keepGoing none of them is a result.
+    let mut server = Server::new(Box::new(Headless::with_document()));
+    let id = "x".repeat(1 << 20);
+    let commands = vec![json!({"command": id}); 70];
+    let line = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "batch", "arguments": {"commands": commands, "keepGoing": true}}});
+    let reply = server.handle_line(&line.to_string()).unwrap();
+    assert!(reply.len() < (64 << 20) + (4 << 20), "{} bytes", reply.len());
+    assert!(reply.contains("64 MiB"));
+}
