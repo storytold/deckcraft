@@ -2087,6 +2087,23 @@ fn clip_polygon_charges_actual_work_not_projected_growth() {
 }
 
 #[test]
+fn clip_work_is_shared_by_fill_and_stroke() {
+    use crate::canvas::Raw;
+    use crate::geom::Op;
+    // One zigzag subpath crossing a 512-gon's edge: about 510k point-edge tests per pass, so a
+    // fill alone fits the allowance but a fill plus a stroke would spend it twice.
+    let clip: Vec<(f64, f64)> =
+        (0..512).map(|i| (i as f64 / 512.0 * std::f64::consts::TAU).sin_cos()).map(|(s, c)| (100.0 + 100.0 * c, 100.0 + 100.0 * s)).collect();
+    let mut ops = vec![Op::M((0.0, 95.0))];
+    ops.extend((1..1000).map(|i| Op::L((i as f64 * 0.19, if i % 2 == 0 { 95.0 } else { 300.0 }))));
+    ops.push(Op::Z);
+    let raw = |fill, stroke| Raw::Path { ops: ops.clone(), fill, stroke, even_odd: false, region: None };
+    let black = [0, 0, 0, 255];
+    assert!(!crate::cliprect::clip_raw(raw(Some(black), None), &clip).is_empty(), "a fill alone is within the allowance");
+    assert!(crate::cliprect::clip_raw(raw(Some(black), Some((black, 1.0))), &clip).is_empty(), "fill and stroke share one allowance");
+}
+
+#[test]
 fn clip_work_is_bounded_across_subpaths() {
     use crate::canvas::Raw;
     use crate::geom::Op;

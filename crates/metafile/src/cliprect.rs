@@ -168,7 +168,7 @@ pub(crate) fn clip_raw(raw: Raw, clip: &[P]) -> Vec<Raw> {
                 return Vec::new();
             }
             let subs = flatten(&ops);
-            if too_much_work(&subs, clip) {
+            if too_much_work(&subs, clip, usize::from(fill.is_some()) + usize::from(stroke.is_some())) {
                 return Vec::new();
             }
             let mut out = Vec::new();
@@ -195,7 +195,7 @@ pub(crate) fn clip_raw(raw: Raw, clip: &[P]) -> Vec<Raw> {
                 return Vec::new();
             }
             let subs = flatten(&ops);
-            if too_much_work(&subs, clip) {
+            if too_much_work(&subs, clip, 1) {
                 return Vec::new();
             }
             let f = clip_fill(&subs, clip).unwrap_or_default();
@@ -248,9 +248,11 @@ pub(crate) fn flatten(ops: &[Op]) -> Vec<(Vec<P>, bool)> {
 }
 
 /// Whether cutting every subpath of one item by `clip` would exceed [`MAX_CLIP_WORK`]; the
-/// per-polygon check alone lets many small subpaths each spend the whole allowance.
-fn too_much_work(subs: &[(Vec<P>, bool)], clip: &[P]) -> bool {
-    subs.iter().map(|s| s.0.len() + 1).sum::<usize>().saturating_mul(clip.len()) > MAX_CLIP_WORK
+/// per-polygon check alone lets many small subpaths each spend the whole allowance. `passes` is
+/// how many clipping passes the item gets (fill and stroke each cut every subpath), so one item
+/// shares a single allowance between them.
+fn too_much_work(subs: &[(Vec<P>, bool)], clip: &[P], passes: usize) -> bool {
+    subs.iter().map(|s| s.0.len() + 1).sum::<usize>().saturating_mul(clip.len()).saturating_mul(passes) > MAX_CLIP_WORK
 }
 
 /// The clipped fill of every subpath, its clipping work shared by all of them: `None` (the whole
