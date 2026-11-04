@@ -577,7 +577,7 @@ fn a_tiled_pictures_reflection_keeps_the_tile_size_inside_a_scaled_group() {
         let mut p = Presentation::default();
         let media = p.add_media("t.png", "image/png", half_red_half_blue()).expect("media");
         let mode = PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 10.0, sy: 10.0, flip: "none".into(), align: "tl".into() };
-        let rf = Reflection { blur: 0.0, start_alpha: 1.0, end_alpha: 0.0, end_pos: 0.5, dist: 0.0 };
+        let rf = Reflection { blur: 0.0, start_alpha: 1.0, end_alpha: 0.0, end_pos: 0.5, dist: 0.0, ..Default::default() };
         let img = in_a_scaled_group(kx, ky, p, |w, h| Shape {
             id: ShapeId(22),
             xfrm: Some(Xfrm::new(0.0, 0.0, w, h)),
@@ -935,7 +935,7 @@ fn a_picture_reflects_its_pixels() {
     let mut p = picture_deck(None);
     let s = std::sync::Arc::make_mut(&mut p.slides[0]);
     if let Some(sh) = s.shapes.first_mut() {
-        let rf = deckcraft_model::style::Reflection { blur: 0.0, start_alpha: 1.0, end_alpha: 0.0, end_pos: 0.5, dist: 0.0 };
+        let rf = deckcraft_model::style::Reflection { blur: 0.0, start_alpha: 1.0, end_alpha: 0.0, end_pos: 0.5, dist: 0.0, ..Default::default() };
         sh.effects = Some(deckcraft_model::Effects { reflection: Some(rf), ..Default::default() });
     }
     let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
@@ -990,4 +990,37 @@ fn a_tiny_dash_on_a_huge_shape_draws_without_running_out_of_memory() {
     p.line_to((4.0e6, 0.0));
     let pat = limit_dash_count(&p, vec![1.0, 1.0]);
     assert!((4.0e6 / (pat[0] + pat[1]) - MAX_DASHES).abs() < 1.0, "{pat:?}");
+    // A custom pattern of 1,000 dashes counts each of them: the limit is on dashes drawn.
+    let pat = limit_dash_count(&p, vec![1.0; 2000]);
+    let period: f64 = pat.iter().sum();
+    assert!((4.0e6 / period * 1000.0 - MAX_DASHES).abs() < 1.0, "{}", period);
+}
+
+/// A bar chart with 20,000 points, each with its own fill, and a sparse scatter of the same size:
+/// the per-point fills and the scatter's "has any x" are looked up, not searched per point.
+#[test]
+fn many_point_fills_and_sparse_scatter_x_render() {
+    use deckcraft_model::ShapeKind;
+    use deckcraft_model::chart::{Chart, ChartType};
+    use deckcraft_model::style::Fill;
+    let n = 20_000;
+    let chart = |kind: ChartType| {
+        let mut c = Chart::sample(kind);
+        c.series.truncate(1);
+        c.categories = (0..n).map(|i| i.to_string()).collect();
+        c.series[0].values = (0..n).map(|i| Some(i as f64)).collect();
+        c
+    };
+    let mut bars = chart(ChartType::Column);
+    bars.series[0].point_fills = (0..n).rev().map(|i| (i, Fill::solid(ColorRef::rgb(Rgba::rgb(200, 0, 0))))).collect();
+    let mut scatter = chart(ChartType::Scatter);
+    scatter.series[0].x_values = (0..n).map(|i| (i + 1 == n).then_some(1.0)).collect();
+    let shape = |id: u32, c: Chart| Shape {
+        id: ShapeId(id),
+        xfrm: Some(Xfrm::new(10.0, 10.0, 400.0, 300.0)),
+        kind: ShapeKind::Chart(Box::new(c)),
+        ..Default::default()
+    };
+    let img = render(vec![shape(2, bars), shape(3, scatter)]);
+    assert!(img.width > 0);
 }

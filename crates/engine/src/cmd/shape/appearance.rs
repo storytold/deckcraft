@@ -371,9 +371,9 @@ pub(super) fn effects(s: &mut Session, p: &Value) -> Result<Value> {
     let soft = p.get("softEdges").map(|v| v.as_f64().filter(|x| *x > 0.0).map(|x| x.min(100.0)));
     let refl = str_param(p, "reflection").map(|r| match r {
         "none" => None,
-        "half" => Some(Reflection { blur: 0.5, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.55, dist: 4.0 }),
-        "full" => Some(Reflection { blur: 0.5, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.9, dist: 4.0 }),
-        _ => Some(Reflection { blur: 0.5, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.35, dist: 0.0 }),
+        "half" => Some(Reflection { blur: 0.5, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.55, dist: 4.0, ..Default::default() }),
+        "full" => Some(Reflection { blur: 0.5, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.9, dist: 4.0, ..Default::default() }),
+        _ => Some(Reflection { blur: 0.5, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.35, dist: 0.0, ..Default::default() }),
     });
     let three_d = p.get("threeD").filter(|v| v.is_object());
     let bevel = str_param(p, "bevel").map(|b| if b == "none" { None } else { Some(b.to_string()) });
@@ -467,7 +467,14 @@ pub(super) fn effects(s: &mut Session, p: &Value) -> Result<Value> {
             e.glow = (g.radius > 0.0).then_some(g);
         }
         if let Some(v) = &refl_props {
-            let mut r = e.reflection.take().unwrap_or(Reflection { blur: 0.5, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.35, dist: 0.0 });
+            let mut r = e.reflection.take().unwrap_or(Reflection {
+                blur: 0.5,
+                start_alpha: 0.5,
+                end_alpha: 0.0,
+                end_pos: 0.35,
+                dist: 0.0,
+                ..Default::default()
+            });
             if let Some(t) = num(v, "transparency") {
                 r.start_alpha = 1.0 - t.clamp(0.0, 1.0);
             }
