@@ -404,12 +404,8 @@ impl Outline<'_> {
             b'\\' | b'{' | b'}' => self.line.push(n as char),
             b'~' => self.line.push('\u{a0}'),
             b'_' => self.line.push('\u{2011}'),
-<<<<<<< HEAD
             b'\n' | b'\r' => self.flush(true),
-=======
-            b'\n' | b'\r' => self.flush(),
             _ if !n.is_ascii() => self.line.extend(c),
->>>>>>> origin/main
             _ => {}
         }
     }
@@ -594,6 +590,18 @@ mod tests {
         let mut p = deckcraft_model::defaults::blank_presentation(deckcraft_model::defaults::WIDE, Default::default(), false);
         assert_eq!(rtf_to_slides(&mut p, rtf), 1);
         assert_eq!(crate::slides_to_outline(&p), "Café é\n\t\t\t\t\t\t\t\t\tDeep\n");
+    }
+
+    #[test]
+    fn escaped_unicode_titles_and_levels_beyond_nine_survive_slide_import() {
+        let rtf = r"{\rtf1\ansi\pard\outlinelevel0 Caf\'e9 \uc1\u233?\par\pard\outlinelevel10 Deep\par}";
+        let mut p = deckcraft_model::defaults::blank_presentation(deckcraft_model::defaults::WIDE, Default::default(), false);
+        assert_eq!(rtf_to_slides(&mut p, rtf), 1);
+        let expected = "Café é\n\t\t\t\t\t\t\t\t\tDeep\n";
+        assert_eq!(crate::slides_to_outline(&p), expected);
+        let mut reopened = deckcraft_model::defaults::blank_presentation(deckcraft_model::defaults::WIDE, Default::default(), false);
+        rtf_to_slides(&mut reopened, &slides_to_rtf(&p));
+        assert_eq!(crate::slides_to_outline(&reopened), expected);
     }
 
     #[test]

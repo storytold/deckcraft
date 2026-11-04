@@ -2062,6 +2062,13 @@ fn plain_outlines_are_unchanged() {
     assert_eq!(p.slides.first().map(|s| s.title()).as_deref(), Some("# Intro"));
 }
 
+#[test]
+fn rtf_without_heading_paragraphs_opens_as_one_blank_slide() {
+    let p = crate::cmd::file::open_presentation("empty.rtf", br"{\rtf1\ansi}").unwrap();
+    assert_eq!(p.slides.len(), 1);
+    assert_eq!(p.slides[0].title(), "");
+}
+
 fn text_box_xfrm(s: &Session, id: u64) -> deckcraft_geom::Xfrm {
     let st = s.doc().unwrap();
     cmd::xfrm_of(&st.doc, &st.selection, st.shape(deckcraft_model::ShapeId(id as u32)).unwrap())
