@@ -177,6 +177,13 @@ fn reset_shrink_scale(body: &mut deckcraft_model::text::BodyProps) {
 /// Edit the active text body and selection; refits auto-sizing text boxes afterwards.
 pub(crate) fn edit_text<T>(s: &mut Session, f: impl FnOnce(&mut TextBody, &mut TextSel) -> T) -> Result<T> {
     let t0 = s.doc()?.selection.text.clone().ok_or_else(|| bad("text", NO_TEXT_POINT))?;
+    // A placeholder that inherits shrink-on-overflow takes it on its own body, so the new text is fitted.
+    let inherits_shrink = !t0.notes
+        && t0.cell.is_none()
+        && s.doc().ok().and_then(|st| {
+            let ctx = ctx_for(&st.doc, &st.selection)?;
+            Some(matches!(resolve::body(&ctx, st.shape(t0.shape)?).autofit, Some(AutoFit::Shrink { .. })))
+        }) == Some(true);
     // Materialise an inherited placeholder box before editing (so autofit can change it).
     let r = s.edit(|doc, sel| {
         let mut t = t0.clone();
@@ -185,6 +192,9 @@ pub(crate) fn edit_text<T>(s: &mut Session, f: impl FnOnce(&mut TextBody, &mut T
         // The saved shrink-on-overflow scale was for the old text: fit the new text afresh. A
         // body whose file carried no `fontScale` keeps none (100 %) here; `fit_shrink_scale`
         // below fills in the computed scale when the new text overflows (#724).
+        if inherits_shrink && body.body.autofit.is_none() {
+            body.body.autofit = Some(AutoFit::Shrink { font_scale: None, line_reduction: 0.0 });
+        }
         reset_shrink_scale(&mut body.body);
         sel.text = Some(t);
         Ok(r)
