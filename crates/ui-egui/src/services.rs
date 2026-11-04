@@ -58,4 +58,7 @@ pub struct Services {
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
+    /// Camera capture for the Cameo live preview (the desktop app injects one); without one the
+    /// preview reports that capture is unavailable, as on the web and in tests.
+    pub camera_in: Option<Box<dyn deckcraft_media::camera::CameraIn>>,
 }

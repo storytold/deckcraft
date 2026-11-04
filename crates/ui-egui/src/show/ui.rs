@@ -642,6 +642,9 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
         if !draw_transition(show, f, &sl, painter, &tex) {
             show.trans = None;
             let (framed, full_screen) = draw_videos(app, show, f, &sl, painter, &tex);
+            if !full_screen {
+                crate::camera::paint_show(app, painter, f.doc.as_ref(), sl.idx, &sl.hidden, srect, show.zoom_uv());
+            }
             draw_overlay(show, f, &sl, painter, &framed, full_screen);
             draw_media_controls(app, ui, show, f, &sl, painter);
         }

@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Hardened-runtime entitlements for DeckCraft. Deliberately empty: the app is pure Rust,
-     loads no unsigned code, needs no JIT, and is not sandboxed (it opens files by path, from the
-     command line and drag-and-drop). Add exceptions here only with a reason in a comment. -->
+<!-- Hardened-runtime entitlements for DeckCraft. The app is pure Rust, loads no unsigned code,
+     needs no JIT, and is not sandboxed (it opens files by path, from the command line and
+     drag-and-drop), so only the camera entitlement is listed. The Hardened Runtime refuses camera
+     access without this entitlement, sandboxed or not; TCC still asks the user, using
+     NSCameraUsageDescription in Info.plist. Add exceptions here only with a reason in a comment. -->
 <plist version="1.0">
 <dict>
+  <!-- The Cameo live camera preview. -->
+  <key>com.apple.security.device.camera</key>
+  <true/>
 </dict>
 </plist>
