@@ -225,7 +225,7 @@ mod wasm_smoke_tests {
 
         assert!(session.execute("file.new", &serde_json::json!({})).is_ok(), "a presentation must be active before shape commands");
 
-        let bad_font = session.execute("font.add", &serde_json::json!({"data": "%%%"}));
+        let bad_font = session.execute("font.add", &serde_json::json!({"data": "AAAA"}));
         assert!(bad_font.is_err(), "invalid font data must return an error");
 
         let bad_geometry = session.execute("shape.insert", &serde_json::json!({"preset": "not-a-shape"}));
