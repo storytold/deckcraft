@@ -1550,6 +1550,25 @@ mod tests {
     }
 
     #[test]
+    fn a_laser_trace_survives_a_slide_that_also_has_comments() {
+        // The writer puts the comments relationship and the laser trace in the same `p:extLst`:
+        // the import used to skip the whole list for a slide with comments and lose the trace.
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let v = s.execute("comment.add", &json!({"text": "mark this"})).unwrap();
+        assert!(v.get("index").is_some() || v.get("id").is_some(), "{v}");
+        s.execute("show.laser", &json!({"index": 0, "points": [[30.0, 40.0, 0], [50.0, 60.0, 300]], "color": [10, 20, 30]})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.slides[0].comments.len(), 1, "the slide has a comment");
+        let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
+        let q = deckcraft_pptx::import(&bytes).unwrap();
+        assert_eq!(q.slides[0].comments.len(), 1, "the comment round-trips");
+        let laser = q.slides[0].laser.as_ref().expect("the laser trace round-trips with a comment on the slide");
+        assert_eq!(laser.color, Rgba::rgb(10, 20, 30));
+        assert_eq!(laser.points.len(), 2);
+        assert_eq!(laser.points[1].t_ms, 300);
+    }
+
+    #[test]
     fn laser_replaces_and_undoes() {
         let mut s = Session::new();
         open_sample(&mut s).unwrap();

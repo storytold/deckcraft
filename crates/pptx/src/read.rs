@@ -1289,11 +1289,16 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
             }
         }
     }
-    if let Some(ext) = root.child("extLst").filter(|e| !has_rel_refs(e)) {
+    if let Some(ext) = root.child("extLst") {
+        // The writer puts the comments relationship and the laser trace in the same `p:extLst`, so
+        // a slide with comments was skipping the trace entirely. The relationship guard only
+        // decides whether the rest of the extension list is safe to keep as raw XML.
         s.laser = laser_trace(ext);
-        let kept: String = ext.elements().filter(|e| e.attr("uri") != Some(crate::LASER_EXT_URI)).map(|e| part.keep(e)).collect();
-        if !kept.trim().is_empty() {
-            s.raw_ext = Some(kept);
+        if !has_rel_refs(ext) {
+            let kept: String = ext.elements().filter(|e| e.attr("uri") != Some(crate::LASER_EXT_URI)).map(|e| part.keep(e)).collect();
+            if !kept.trim().is_empty() {
+                s.raw_ext = Some(kept);
+            }
         }
     }
     s

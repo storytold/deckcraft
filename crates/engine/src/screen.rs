@@ -8,7 +8,12 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use deckcraft_screen::{CaptureOptions, CaptureStatus, CaptureTarget, RecorderConfig, RecorderOutput, ScreenError, ScreenIn, ScreenRecorder};
+use deckcraft_screen::{
+    CaptureOptions, CaptureStatus, CaptureTarget, RecorderConfig, RecorderOutput, ScreenError, ScreenFrame, ScreenIn, ScreenRecorder,
+};
+
+/// The most frames one delayed tick may catch up with, so a stall cannot encode a burst forever.
+const MAX_CATCH_UP: u32 = 240;
 
 /// What a stopped recording left on disk.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,6 +35,9 @@ struct Active {
     /// Earliest time (seconds, UI clock) for the next frame.
     next_at: f64,
     frames: u64,
+    /// The last captured picture. A tick with no new frame repeats it, so a static screen still
+    /// records its time and a delayed tick catches up with the schedule.
+    last: Option<ScreenFrame>,
 }
 
 /// The session's screen capture and recording state.
@@ -127,7 +135,7 @@ impl ScreenState {
             let _ = std::fs::remove_file(&path);
             return Err(e);
         }
-        self.active = Some(Active { recorder, path, fps: options.fps.clamp(1, 240), paused: false, due: true, next_at: 0.0, frames: 0 });
+        self.active = Some(Active { recorder, path, fps: options.fps.clamp(1, 240), paused: false, due: true, next_at: 0.0, frames: 0, last: None });
         Ok(())
     }
 
@@ -172,8 +180,9 @@ impl ScreenState {
         true
     }
 
-    /// Pull the next frame when one is due. Returns a message when the capture failed; the take
-    /// then keeps what it recorded ([`take_ended`](Self::take_ended)) unless it had no frames.
+    /// Pull a captured frame and encode every picture the schedule is owed. Returns a message when
+    /// the capture failed; the take then keeps what it recorded
+    /// ([`take_ended`](Self::take_ended)) unless it had no frames.
     pub fn tick(&mut self, now: f64) -> Option<String> {
         let active = self.active.as_mut()?;
         if active.paused {
@@ -185,43 +194,58 @@ impl ScreenState {
             return None;
         }
         let interval = 1.0 / f64::from(active.fps.max(1));
-        if !active.due && now + 1.0e-9 < active.next_at {
-            return None;
-        }
         let shot = match self.host.as_mut() {
             Some(host) => host.frame(),
             None => Err(ScreenError::Unavailable),
         };
         match shot {
-            Ok(Some(frame)) => {
-                let why = match active.recorder.push(&frame) {
-                    Ok(()) => {
-                        active.frames = active.recorder.frames();
-                        active.due = false;
-                        active.next_at = now + interval;
-                        return None;
-                    }
-                    Err(e) => format!("the screen recording stopped: {e}"),
-                };
-                active.frames = active.recorder.frames();
-                let recorded = active.frames > 0;
-                if recorded {
-                    Some(self.end_keeping(&why))
-                } else {
-                    self.cancel();
-                    Some(why)
+            Ok(frame) => {
+                if frame.is_some() {
+                    active.last = frame;
                 }
             }
-            Ok(None) => None,
             Err(e) => {
                 let why = e.to_string();
-                if active.frames > 0 {
+                return if active.frames > 0 {
                     Some(self.end_keeping(&why))
                 } else {
                     self.cancel();
                     Some(why)
-                }
+                };
             }
+        }
+        // One picture per interval. The start anchors the schedule; a later tick repeats the last
+        // picture for every interval that passed, so idle time and a delayed UI tick are recorded.
+        let mut why = None;
+        if active.due {
+            active.due = false;
+            if let Some(frame) = active.last.as_ref()
+                && let Err(e) = active.recorder.push(frame)
+            {
+                why = Some(format!("the screen recording stopped: {e}"));
+            }
+            active.next_at = now + interval;
+        } else if now + 1.0e-9 >= active.next_at {
+            let mut pushed = 0;
+            while now + 1.0e-9 >= active.next_at && pushed < MAX_CATCH_UP {
+                let Some(frame) = active.last.as_ref() else { break };
+                if let Err(e) = active.recorder.push(frame) {
+                    why = Some(format!("the screen recording stopped: {e}"));
+                    break;
+                }
+                active.next_at += interval;
+                pushed += 1;
+            }
+        }
+        active.frames = active.recorder.frames();
+        let recorded = active.frames > 0;
+        match why {
+            Some(w) if recorded => Some(self.end_keeping(&w)),
+            Some(w) => {
+                self.cancel();
+                Some(w)
+            }
+            None => None,
         }
     }
 
@@ -362,6 +386,25 @@ mod tests {
         assert_eq!(s.start(CaptureOptions::default(), RecorderConfig::new(30)), Err(ScreenError::Unavailable));
         assert_eq!(s.stop(), Err(ScreenError::NotRecording));
         assert_eq!(s.tick(1.0), None);
+    }
+
+    #[test]
+    fn a_static_screen_records_every_interval_and_a_delayed_tick_catches_up() {
+        let (host, queue) = FakeScreen::ready((160, 120));
+        let mut s = state_with(host);
+        s.start(CaptureOptions::default(), RecorderConfig::new(30)).expect("start");
+        queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [0, 0, 255, 255]));
+        assert_eq!(s.tick(0.0), None);
+        assert_eq!(s.frames(), 1);
+        // The device has nothing new, but the schedule is owed one picture per interval.
+        assert_eq!(s.tick(0.04), None);
+        assert_eq!(s.frames(), 2, "a static screen keeps recording");
+        // A UI tick that arrives a second late encodes the intervals it missed.
+        assert_eq!(s.tick(1.0), None);
+        assert!(s.frames() >= 30 && s.frames() <= 32, "one second at 30 fps is about 30 frames, got {}", s.frames());
+        let stopped = s.stop().expect("stop");
+        assert!(stopped.frames >= 30);
+        let _ = std::fs::remove_file(&stopped.path);
     }
 
     #[test]

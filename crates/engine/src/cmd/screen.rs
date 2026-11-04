@@ -141,10 +141,21 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
 /// Insert a finished take on the current slide and delete its temporary file. Both the `stop`
 /// action and a recording that a capture failure ended use this, so the shape is the same.
 pub(crate) fn insert_take(s: &mut Session, stopped: &crate::screen::StoppedRecording) -> crate::Result<Value> {
-    // Hide the temporary file name from the deck: the shape is named "Screen Recording".
-    let insert = s.execute("insert.video", &json!({"path": stopped.path.to_string_lossy(), "name": "Screen Recording.mp4"}));
-    let _ = std::fs::remove_file(&stopped.path);
-    let inserted = insert?;
+    // Hide the temporary file name from the deck: the shape is named "Screen Recording". The file
+    // is the recorder's own (not a caller's path), so it is read outside the automation roots a
+    // command may be confined to; a failed insert keeps the take instead of deleting it.
+    let path = stopped.path.to_string_lossy().to_string();
+    let insert = crate::file_access::unconfined(|| s.execute("insert.video", &json!({"path": path, "name": "Screen Recording.mp4"})));
+    let inserted = match insert {
+        Ok(v) => {
+            let _ = std::fs::remove_file(&stopped.path);
+            v
+        }
+        Err(e) => {
+            s.ui_requests.push(crate::UiRequest::Message { text: format!("the recording is kept at {}", stopped.path.display()) });
+            return Err(e);
+        }
+    };
     // Tag the shape so Clear Recording can remove takes without touching ordinary videos.
     if let Some(id) = inserted.get("id").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok()) {
         let id = deckcraft_model::ShapeId(id);

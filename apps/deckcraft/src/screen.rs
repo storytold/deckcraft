@@ -132,12 +132,22 @@ mod imp {
             let (tx, rx) = sync_channel::<Item>(2);
             let (ready_tx, ready_rx) = channel::<Result<(), ScreenError>>();
             let spawned = std::thread::Builder::new().name("deckcraft-screen".into()).spawn(move || {
-                let target = wanted.and_then(|id| {
-                    scap::get_all_targets().into_iter().find(|t| match t {
-                        scap::Target::Display(d) => u64::from(d.id) == id,
-                        scap::Target::Window(w) => u64::from(w.id) == id,
-                    })
-                });
+                // A target that disappeared since the picker listed it must fail here: `scap`
+                // would record the primary display instead, a surface the user did not choose.
+                let target = match wanted {
+                    Some(id) => {
+                        let found = scap::get_all_targets().into_iter().find(|t| match t {
+                            scap::Target::Display(d) => u64::from(d.id) == id,
+                            scap::Target::Window(w) => u64::from(w.id) == id,
+                        });
+                        if found.is_none() {
+                            let _ = ready_tx.send(Err(ScreenError::NoDevice));
+                            return;
+                        }
+                        found
+                    }
+                    None => None,
+                };
                 let opts = scap::capturer::Options {
                     fps,
                     show_cursor: cursor,
