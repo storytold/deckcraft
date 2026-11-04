@@ -69,7 +69,7 @@ fn camera_border(app: &mut SlideApp, ui: &mut Ui, enabled: bool) {
     }
     let Some(arrow) = arrow else { return };
     let sc = scheme(app);
-    widgets::split_popup(&main, &arrow).show(|ui| outline_menu(app, ui, &sc));
+    widgets::arrow_popup(&main, &arrow).show(|ui| outline_menu(app, ui, &sc));
 }
 
 /// A gallery tile: the style's shape, frame and shadow over a camera-blue body.

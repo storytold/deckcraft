@@ -51,6 +51,10 @@ fn view<'a>(h: &'a Harness<'static, SlideApp>) -> &'a RecordView {
 
 fn press(h: &mut Harness<'static, SlideApp>, key: egui::Key) {
     h.input_mut().events.push(egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE });
+    // A real key press also produces its text, which is what a focused field inserts.
+    if key == egui::Key::Space {
+        h.input_mut().events.push(egui::Event::Text(" ".into()));
+    }
     h.input_mut().events.push(egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: egui::Modifiers::NONE });
 }
 
@@ -135,8 +139,11 @@ fn the_teleprompter_scrolls_only_while_recording() {
     h.get_by_label("Record").click();
     h.run_steps(10);
     assert!(view(&h).teleprompter.offset > 0.0, "the script advances with the take");
-    let before = view(&h).teleprompter.offset;
     h.get_by_label("Pause").click();
+    h.run_steps(3);
+    // The press and release land on separate frames; measure from the settled paused state.
+    assert_eq!(view(&h).status, RecordStatus::Paused);
+    let before = view(&h).teleprompter.offset;
     h.run_steps(10);
     assert!((view(&h).teleprompter.offset - before).abs() < 1e-6, "pausing stops the teleprompter");
 }

@@ -177,8 +177,10 @@ fn the_notes_pane_shows_the_current_slides_script_and_its_size_controls() {
     app.ui.presenter_view = false;
     let mut h = harness(app);
     open_record(&mut h, 0);
-    assert!(h.query_by_label_contains("Open with the market chart").is_some(), "slide 1 notes");
-    assert!(h.query_by_label_contains("Then the roadmap").is_none(), "not the next slide's notes");
+    // The script is the editor's value; its accessible label is only the empty-state hint.
+    let script = |h: &Harness<'static, SlideApp>| h.get_by_role(egui::accesskit::Role::MultilineTextInput).value().unwrap_or_default();
+    assert!(script(&h).contains("Open with the market chart"), "slide 1 notes: {}", script(&h));
+    assert!(!script(&h).contains("Then the roadmap"), "not the next slide's notes: {}", script(&h));
     let before = h.state().show.as_ref().unwrap().record_view.notes_px;
     h.get_by_label("A+").click();
     h.run_steps(2);

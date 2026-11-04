@@ -24,7 +24,7 @@ pub(super) fn camera_section(app: &mut SlideApp, ui: &mut Ui) {
             if arrow.clicked() {
                 app.camera_preview.refresh_devices();
             }
-            widgets::split_popup(&main, &arrow).show(|ui| preview_menu(app, ui));
+            widgets::arrow_popup(&main, &arrow).show(|ui| preview_menu(app, ui));
         }
         let more = big_button(ui, Icon::Preview, "More\nOptions", true).on_hover_text("Camera preview options");
         if more.clicked() {

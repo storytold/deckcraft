@@ -1384,12 +1384,13 @@ fn a_record_preview_forces_timings_and_narration() {
     assert!(show.auto_advance_due(&doc, 2.0), "the preview follows the recorded timing");
     assert!(!show.auto_advance_due(&doc, 0.5), "not before its time");
     assert!(!show.without_narration(&doc), "the preview plays the narration");
+    // Hidden playback keeps waking for the preview's timings: the wake-up is asked for while the
+    // timing is still pending, before the turn is queued.
+    show.started = true;
+    assert!(show.hidden_time_driven(&doc));
     let mut actions = Vec::new();
     show.queue_clock_actions(&doc, 2.0, &mut actions);
     assert!(matches!(actions.as_slice(), [ShowAction::Slide(1)]), "the slide turns by itself: {actions:?}");
-    // Hidden playback keeps waking for the preview's timings too.
-    show.started = true;
-    assert!(show.hidden_time_driven(&doc));
 }
 
 /// #1812: a Record preview writes nothing, even if the show was flagged to record: no timings,
@@ -1520,6 +1521,8 @@ fn escape_leaves_a_record_preview_and_keeps_the_editor_slide() {
         app,
     );
     harness.run_steps(3);
+    // The editor's own slide: `slide.new` selects each new slide, so it starts on the last one.
+    let editor_slide = harness.state().session.active().expect("document").selection.slide;
     harness.state_mut().start_show(2, false);
     let show = harness.state_mut().show.as_mut().expect("preview is up");
     show.recording_preview = true;
@@ -1528,7 +1531,7 @@ fn escape_leaves_a_record_preview_and_keeps_the_editor_slide() {
     harness.key_press(egui::Key::Escape);
     harness.run_steps(3);
     assert!(harness.state().show.is_none(), "Escape ends the preview");
-    assert_eq!(harness.state().session.active().expect("document").selection.slide, 0, "the editor stays on its own slide");
+    assert_eq!(harness.state().session.active().expect("document").selection.slide, editor_slide, "the editor stays on its own slide");
 }
 
 /// Ink tools: selecting the pen, highlighter or eraser sets the derived pointer flag and the

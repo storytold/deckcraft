@@ -273,6 +273,10 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if let Some(c) = &color {
             l.fill = Some(Fill::solid(c.clone()));
+            // An outline with no width yet gets PowerPoint's 1 pt, so the colour is visible.
+            if l.width.is_none() && !none {
+                l.width = Some(1.0);
+            }
         }
         if width.is_some() {
             l.width = width;

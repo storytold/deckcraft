@@ -62,7 +62,6 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
     if body_rect.height() < 1.0 {
         return;
     }
-    teleprompter::tick(ui.ctx(), rec);
     let mut body = ui.new_child(UiBuilder::new().max_rect(body_rect));
     body.visuals_mut().override_text_color = Some(Color32::from_gray(224));
     rec.notes_scroll = scroll::pane(&mut body, rec.notes_scroll, body_rect, |ui| {
@@ -83,6 +82,12 @@ pub(super) fn overlay(ui: &mut Ui, rec: &RecordView, doc: &Presentation, show: &
     let slide = doc.slides.get(show.state.slide);
     let body = slide.map_or_else(deckcraft_model::text::TextBody::default, |s| s.notes.clone());
     display::overlay(ui, rect, &body, &rec.teleprompter, rec.notes_px);
+}
+
+/// Advance the script's scroll for this frame. The shell calls it after the top bar, so a
+/// Record or Pause click takes effect on the same frame.
+pub(super) fn tick(ctx: &egui::Context, rec: &mut RecordView) {
+    teleprompter::tick(ctx, rec);
 }
 
 /// Whether a notes editor owns the keyboard this frame. The shell skips show navigation while it

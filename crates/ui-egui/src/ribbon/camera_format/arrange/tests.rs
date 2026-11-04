@@ -229,8 +229,9 @@ fn the_cameo_groups_with_another_shape_and_keeps_its_marker() {
     let (mut single, _) = harness(|s| vec![cameo(s, 200.0)], &[0]);
     single.get_by_label("Group options").click();
     single.run_steps(2);
+    // The ribbon keeps its own button beside the menu's copy, so count rather than get.
     for label in ["Group", "Ungroup", "Regroup"] {
-        assert!(single.query_by_label(label).is_some(), "{label} in the Group menu");
+        assert!(single.query_all_by_label(label).count() >= 1, "{label} in the Group menu");
     }
 }
 

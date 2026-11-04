@@ -329,6 +329,8 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Pre
     notes::overlay(ui, &rec, doc, show, layout);
     let top = top::ui(app, ui, show, &mut rec, now, layout);
     keep &= !top.close;
+    // The script scrolls with the take, so it follows this frame's Record/Pause click.
+    notes::tick(ui.ctx(), &mut rec);
     bottom::ui(&mut app.services.mic, ui, show, &mut rec, doc, now, layout);
     canvas::bubble(ui, &rec, layout);
     views::ui(ui, &mut rec, layout);
