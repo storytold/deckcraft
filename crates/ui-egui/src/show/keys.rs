@@ -31,6 +31,12 @@ pub(super) fn handle_keys(
     let mut keep = true;
     let mut actions = vec![];
     for (k, m) in keys {
+        // The Record view's top bar owns Escape: it closes the view and asks before ending a
+        // take. Ending the show here would skip that confirmation. While the confirmation is
+        // up, every show key waits for it.
+        if show.record && (show.record_view.close_confirm || (k == egui::Key::Escape && plain(m))) {
+            continue;
+        }
         let handled = if grid_open(show, presenter) && !matches!(k, egui::Key::Escape | egui::Key::Minus) {
             // See All Slides takes no other keys until a slide is chosen.
             if k == egui::Key::G && plain(m) {

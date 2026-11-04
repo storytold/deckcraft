@@ -4,14 +4,25 @@
 //! Every button acts on [`RecordView`] or [`Show`] itself. Device controls call the
 //! [`super::devices`] hooks, and Export leaves an explicit [`RecordCommand`] for the section that
 //! eventually owns video export: nothing here reports success it did not have.
+//!
+//! The bar also owns the Record view's shortcuts. They are chosen so they cannot shadow the
+//! show's own navigation: Ctrl/⌘R records, Ctrl/⌘Shift+P pauses, Ctrl/⌘Z undoes a Reset,
+//! Ctrl/⌘E asks for Export, and Escape closes the view (asking first while a take is running).
+
+mod edit;
+mod export;
+mod more;
+mod pause;
+mod record;
+mod reset;
+mod timer;
 
 use egui::{Align, Color32, CornerRadius, Layout as EguiLayout, Rect, RichText, Ui, UiBuilder, vec2};
 
-use super::{RecordCommand, RecordStatus, RecordView, clock_total};
 use super::devices;
+use super::{Layout, RecordCommand, RecordStatus, RecordView};
 use crate::show::Show;
-use crate::theme;
-use crate::SlideApp;
+use crate::{SlideApp, theme};
 
 pub(super) struct Out {
     pub close: bool,
@@ -21,44 +32,90 @@ const FG: Color32 = Color32::from_gray(226);
 const DIM: Color32 = Color32::from_gray(150);
 const RED: Color32 = Color32::from_rgb(224, 62, 62);
 
-/// Draw the top bar. Returns `close` when Edit was pressed.
-pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut RecordView, now: f64, layout: &super::Layout) -> Out {
+/// What a top-bar shortcut asks for. Kept apart from the widgets so the mapping is testable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shortcut {
+    Record,
+    Pause,
+    UndoReset,
+    Close,
+    Export,
+}
+
+/// The shortcut a key press means in the Record view, if any.
+///
+/// `command` is Ctrl on Windows/Linux and ⌘ on macOS. Plain keys are deliberately not taken:
+/// they stay with the show (Space/arrows advance, R resets the show's own timer).
+fn shortcut(key: egui::Key, m: egui::Modifiers, status: RecordStatus) -> Option<Shortcut> {
+    let command = m.command && !m.alt && !m.shift;
+    let command_shift = m.command && !m.alt && m.shift;
+    match key {
+        egui::Key::Escape if !m.command && !m.ctrl && !m.alt && !m.shift => Some(Shortcut::Close),
+        egui::Key::R if command => Some(Shortcut::Record),
+        egui::Key::P if command_shift => (status != RecordStatus::Idle).then_some(Shortcut::Pause),
+        egui::Key::Z if command => Some(Shortcut::UndoReset),
+        egui::Key::E if command => Some(Shortcut::Export),
+        _ => None,
+    }
+}
+
+/// Draw the top bar. Returns `close` when Edit (or Escape, confirmed) asked to leave.
+pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut RecordView, now: f64, layout: &Layout) -> Out {
     let rect = layout.top;
     let painter = ui.painter().clone();
     painter.rect_filled(rect, CornerRadius::same(10), Color32::from_rgb(30, 30, 34));
     painter.rect_stroke(rect, CornerRadius::same(10), egui::Stroke::new(1.0, Color32::from_gray(64)), egui::StrokeKind::Inside);
 
     let mut out = Out { close: false };
+    // Shortcuts are read before the widgets so a focused button does not also act on the key.
+    // While the close confirmation is up the modal owns Escape.
+    let mut close_requested = false;
+    if !rec.close_confirm && ui.memory(|m| m.focused().is_none()) {
+        let presses: Vec<(egui::Key, egui::Modifiers)> = ui.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::Key { key, pressed: true, modifiers, .. } => Some((*key, *modifiers)),
+                    _ => None,
+                })
+                .collect()
+        });
+        for (key, modifiers) in presses {
+            let Some(action) = shortcut(key, modifiers, rec.status) else { continue };
+            ui.ctx().input_mut(|i| i.consume_key(modifiers, key));
+            match action {
+                Shortcut::Record => rec.toggle_record(show, now),
+                Shortcut::Pause => match rec.status {
+                    RecordStatus::Recording => rec.pause(show, now),
+                    RecordStatus::Paused => rec.resume(show, now),
+                    RecordStatus::Idle => {}
+                },
+                Shortcut::UndoReset => {
+                    rec.undo(now);
+                }
+                Shortcut::Close => close_requested = true,
+                Shortcut::Export => {
+                    export::request(rec);
+                    app.set_status("Export is waiting for the recording pipeline.");
+                }
+            }
+        }
+    }
+
     let inner = rect.shrink2(vec2(10.0, 6.0));
-    let mut child = ui.new_child(
-        UiBuilder::new().max_rect(inner).layout(EguiLayout::left_to_right(Align::Center)),
-    );
+    let mut child = ui.new_child(UiBuilder::new().max_rect(inner).layout(EguiLayout::left_to_right(Align::Center)));
     child.spacing_mut().item_spacing.x = 6.0;
     child.visuals_mut().override_text_color = Some(FG);
 
-    if child.add(egui::Button::new(RichText::new("‹ Edit").size(13.0).color(FG)).frame(false)).on_hover_text("Leave the Record view").clicked() {
-        rec.stop(now);
-        // Only a take that actually captured something is saved when the view closes.
-        show.record = rec.captured;
-        out.close = true;
+    let edit_clicked = edit::ui(&mut child, rec);
+    if edit_clicked || close_requested {
+        if close_now(show, rec, now) {
+            out.close = true;
+        }
     }
 
     // The clock sits in the middle of the bar, whatever the groups on either side.
-    let elapsed = rec.elapsed(now);
-    let clock = clock_total(elapsed, rec.total_seconds());
-    let status = match rec.status {
-        RecordStatus::Idle => DIM,
-        RecordStatus::Recording => RED,
-        RecordStatus::Paused => Color32::from_rgb(230, 168, 58),
-    };
-    painter.circle_filled(egui::pos2(rect.center().x - 66.0, rect.center().y), 4.0, status);
-    painter.text(
-        egui::pos2(rect.center().x - 54.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        clock,
-        theme::font(14.0),
-        FG,
-    );
+    timer::paint(&painter, rect, rec, now);
 
     // Right-hand group, laid out from the right edge inward.
     let right = Rect::from_min_max(egui::pos2(rect.center().x + 40.0, inner.min.y), inner.max);
@@ -66,67 +123,141 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
     right_ui.spacing_mut().item_spacing.x = 6.0;
     right_ui.visuals_mut().override_text_color = Some(FG);
 
-    let export = button(&mut right_ui, "Export ›", true);
-    if export.on_hover_text("Export the finished recording (not wired yet)").clicked() {
-        // A section agent consumes this request; the shell never claims an export happened.
-        rec.pending = Some(RecordCommand::Export);
+    if export::ui(&mut right_ui, rec) {
         app.set_status("Export is waiting for the recording pipeline.");
     }
-    let more = button(&mut right_ui, "…", true);
-    more.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "More"));
-    let more_resp = more.on_hover_text("More recording options");
-    egui::Popup::menu(&more_resp).width(220.0).show(|ui| {
-        ui.checkbox(&mut rec.notes_open, "Notes pane");
-        ui.checkbox(&mut rec.camera_bubble, "Camera bubble");
-        ui.checkbox(&mut rec.camera_preview, "Camera preview");
-        ui.separator();
-        ui.add_enabled(false, egui::Button::new("Recording settings…"));
-    });
+    more::ui(&mut right_ui, rec, now);
     if devices::screen_button(&mut right_ui, rec, now) {
-        // The screen section owns the recorder behind this flag.
+        // Screen capture is still a device hook: queue the export work rather than pretend a
+        // screen recording was written.
+        rec.pending = Some(RecordCommand::Export);
     }
     let _ = devices::mic_button(&mut right_ui, rec, now);
     if devices::camera_button(&mut right_ui, rec, now) {
         rec.camera_bubble = rec.devices.camera.is_on();
     }
-
-    let pause_label = if rec.status == RecordStatus::Paused { "Resume" } else { "Pause" };
-    let pause = right_ui.add_enabled(rec.status != RecordStatus::Idle, egui::Button::new(RichText::new(pause_label).size(13.0)).frame(false));
-    if pause.clicked() {
-        match rec.status {
-            RecordStatus::Recording => rec.pause(show, now),
-            RecordStatus::Paused => rec.resume(show, now),
-            RecordStatus::Idle => {}
-        }
-    }
-    let record_label = if rec.status == RecordStatus::Recording { "■ Stop" } else { "● Record" };
-    let record = right_ui.add(egui::Button::new(RichText::new(record_label).size(13.0).color(RED)).frame(false));
-    record.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Record"));
-    if record.on_hover_text("Start recording").clicked() {
-        rec.toggle_record(show, now);
-    }
-    let undo = right_ui.add_enabled(rec.undo_elapsed.is_some(), egui::Button::new(RichText::new("Undo").size(13.0)).frame(false));
-    if undo.clicked() {
-        rec.undo(now);
-    }
-    if right_ui.add(egui::Button::new(RichText::new("Reset").size(13.0)).frame(false)).on_hover_text("Reset the capture clock").clicked() {
-        rec.reset(now);
-    }
+    pause::ui(&mut right_ui, show, rec, now);
+    record::ui(&mut right_ui, show, rec, now);
+    reset::ui(&mut right_ui, rec, now);
 
     painter.text(
         egui::pos2(inner.max.x - 2.0, inner.max.y - 8.0),
         egui::Align2::RIGHT_BOTTOM,
-        match rec.status {
-            RecordStatus::Idle => "Ready",
-            RecordStatus::Recording => "Recording",
-            RecordStatus::Paused => "Paused",
-        },
+        status_label(rec.status),
         theme::font(10.0),
-        status,
+        timer::dot_color(rec.status),
     );
+
+    if let Some(verdict) = edit::confirm(ui, rec, now) {
+        if verdict == edit::Verdict::End {
+            end_and_close(show, rec, now);
+            out.close = true;
+        }
+    }
     out
+}
+
+/// Handle Edit/Escape. Returns whether the view can close now; otherwise it raises the
+/// confirmation for a running or paused take.
+fn close_now(show: &mut Show, rec: &mut RecordView, now: f64) -> bool {
+    match edit::intent(rec) {
+        edit::Closing::Now => {
+            end_and_close(show, rec, now);
+            true
+        }
+        edit::Closing::Confirm => {
+            rec.close_confirm = true;
+            false
+        }
+    }
+}
+
+/// Stop the take (freezing the clock) and hand the save decision back to the show: only a take
+/// that actually captured something is kept.
+fn end_and_close(show: &mut Show, rec: &mut RecordView, now: f64) {
+    rec.stop(now);
+    rec.close_confirm = false;
+    show.record = rec.captured;
+}
+
+fn status_label(status: RecordStatus) -> &'static str {
+    match status {
+        RecordStatus::Idle => "Ready",
+        RecordStatus::Recording => "Recording",
+        RecordStatus::Paused => "Paused",
+    }
 }
 
 fn button(ui: &mut Ui, label: &str, enabled: bool) -> egui::Response {
     ui.add_enabled(enabled, egui::Button::new(RichText::new(label).size(13.0)).frame(false))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+
+    fn plain() -> egui::Modifiers {
+        egui::Modifiers::NONE
+    }
+
+    fn command() -> egui::Modifiers {
+        egui::Modifiers { command: true, ..egui::Modifiers::NONE }
+    }
+
+    fn command_shift() -> egui::Modifiers {
+        egui::Modifiers { command: true, shift: true, ..egui::Modifiers::NONE }
+    }
+
+    fn show() -> Show {
+        let session = deckcraft_engine::Session::with_new();
+        let doc = session.active().unwrap().doc.clone();
+        Show::new(&doc, 0, false, false)
+    }
+
+    /// Ctrl/⌘R is the only Record shortcut; plain R stays with the show's timer reset.
+    #[test]
+    fn record_shortcuts_do_not_shadow_the_show_keys() {
+        assert_eq!(shortcut(egui::Key::R, command(), RecordStatus::Idle), Some(Shortcut::Record));
+        assert_eq!(shortcut(egui::Key::R, plain(), RecordStatus::Idle), None);
+        assert_eq!(shortcut(egui::Key::P, command_shift(), RecordStatus::Recording), Some(Shortcut::Pause));
+        assert_eq!(shortcut(egui::Key::P, command_shift(), RecordStatus::Idle), None, "nothing to pause");
+        assert_eq!(shortcut(egui::Key::P, command(), RecordStatus::Recording), None, "Ctrl+P is the show's pen");
+        assert_eq!(shortcut(egui::Key::Z, command(), RecordStatus::Idle), Some(Shortcut::UndoReset));
+        assert_eq!(shortcut(egui::Key::Z, plain(), RecordStatus::Idle), None, "plain Z is the show's zoom");
+        assert_eq!(shortcut(egui::Key::E, command(), RecordStatus::Idle), Some(Shortcut::Export));
+        assert_eq!(shortcut(egui::Key::Escape, plain(), RecordStatus::Recording), Some(Shortcut::Close));
+        assert_eq!(shortcut(egui::Key::Escape, command(), RecordStatus::Recording), None);
+        assert_eq!(shortcut(egui::Key::Space, plain(), RecordStatus::Recording), None);
+    }
+
+    /// Edit/Escape closes at once when idle, and raises the confirmation while a take runs.
+    #[test]
+    fn close_asks_first_only_for_a_running_take() {
+        let mut show = show();
+        let mut rec = RecordView::default();
+        assert!(close_now(&mut show, &mut rec, 1.0));
+        assert!(!rec.captured, "an idle view never claims a recording");
+
+        let mut show = show();
+        let mut rec = RecordView::default();
+        rec.start(&mut show, 0.0);
+        assert!(!close_now(&mut show, &mut rec, 2.0), "a running take asks first");
+        assert!(rec.close_confirm);
+        assert_eq!(rec.status, RecordStatus::Recording);
+    }
+
+    /// Ending from the confirmation stops the clock and closes; the take is marked captured.
+    #[test]
+    fn ending_a_confirmed_take_stops_and_closes() {
+        let mut show = show();
+        let mut rec = RecordView::default();
+        rec.start(&mut show, 0.0);
+        rec.close_confirm = true;
+        end_and_close(&mut show, &mut rec, 5.0);
+        assert_eq!(rec.status, RecordStatus::Idle);
+        assert!(!rec.close_confirm);
+        assert!(rec.captured);
+        assert!(show.record, "a captured take is handed to the save path");
+    }
 }
