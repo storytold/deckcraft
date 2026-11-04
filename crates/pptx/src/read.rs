@@ -60,12 +60,12 @@ impl Imp<'_> {
     /// A visible camera placeholder for a recorded Cameo whose poster cannot be read, registered
     /// once per import.
     pub fn cameo_poster(&mut self) -> MediaId {
-        if let Some(id) = self.media.iter().find(|m| m.name == "cameo-poster.svg").map(|m| m.id) {
+        if let Some(id) = self.media.iter().find(|m| m.name == "cameo-poster.png").map(|m| m.id) {
             return id;
         }
         let id = MediaId(self.alloc());
-        let data = crate::cameo::POSTER_SVG.as_bytes().to_vec();
-        self.media.push(MediaItem { id, name: "cameo-poster.svg".into(), content_type: "image/svg+xml".into(), data: Arc::new(data), link: None });
+        let data = crate::png::cameo_poster();
+        self.media.push(MediaItem { id, name: "cameo-poster.png".into(), content_type: "image/png".into(), data: Arc::new(data), link: None });
         id
     }
 

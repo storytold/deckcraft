@@ -296,12 +296,12 @@ fn a_recorded_cameo_without_a_readable_poster_stays_a_picture() {
         _ => panic!("picture"),
     };
     let m = q.media(poster).expect("fallback poster");
-    assert_eq!(m.content_type, "image/svg+xml");
+    assert_eq!(m.content_type, "image/png", "the renderer decodes PNG, not SVG");
     assert!(!m.data.is_empty());
     // And it is written back as a picture.
     let bytes = deckcraft_pptx::export(&q).expect("export");
     let xml = part(&bytes, "ppt/slides/slide1.xml");
-    assert!(xml.contains("<asvg:svgBlip"), "the cameo keeps a picture: {xml}");
+    assert!(xml.contains("<a:blip r:embed=\"rId"), "the cameo keeps a picture: {xml}");
     assert!(xml.contains("<p:video>"), "the recording still plays: {xml}");
 }
 
