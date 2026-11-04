@@ -216,11 +216,12 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
             && e.attr("nodeType") != Some("tmRoot")
             && let Some(st) = e.child("stCondLst")
         {
-            let has_on_begin =
-                st.children_named("cond").any(|c| c.attr("evt") == Some("onBegin") && c.attr("delay").map(str::trim) != Some("indefinite"));
+            let is_auto_begin =
+                |c: &El| c.attr("evt") == Some("onBegin") && c.attr("delay").map(str::trim) == Some("0") && c.child("tgtEl").is_none();
+            let has_on_begin = st.children_named("cond").any(is_auto_begin);
             if st
                 .children_named("cond")
-                .any(|c| c.attr("evt").is_some_and(|v| v != "onBegin") || (!has_on_begin && c.attr("delay").map(str::trim) == Some("indefinite")))
+                .any(|c| (c.attr("evt").is_some() && !is_auto_begin(c)) || (!has_on_begin && c.attr("delay").map(str::trim) == Some("indefinite")))
             {
                 deferred = true;
             }
