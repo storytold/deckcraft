@@ -513,6 +513,7 @@ impl OpusTiming {
                     c = timing_add(c, i64::from(durations[k]))?;
                     ends[k] = Some(c);
                 }
+                cursor = Some(c);
                 break;
             }
             let Some(g) = stream.packets[j].granule else { break };
