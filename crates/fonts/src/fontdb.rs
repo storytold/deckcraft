@@ -1260,9 +1260,8 @@ impl FontDb {
     fn instance(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
         let open = style.find('{')?;
         let base = self.find(family, style[..open].trim())?;
-        if base.skrifa().is_none_or(|f| f.axes().is_empty()) {
-            return Some(base);
-        }
+        let Some(font) = base.skrifa().filter(|f| !f.axes().is_empty()) else { return Some(base) };
+        let axis_tags: Vec<[u8; 4]> = font.axes().iter().map(|a| a.tag().to_be_bytes()).collect();
         let mut coords = base.coords.clone();
         for kv in style[open + 1..].trim_end_matches('}').split(',') {
             let (k, v) = kv.split_once(':')?;
@@ -1272,6 +1271,11 @@ impl FontDb {
                 return None;
             }
             let tag = [k[0], k[1], k[2], k[3]];
+            // A tag the font has no axis for changes nothing; keeping it would grow the list with
+            // every distinct tag in the style text.
+            if !axis_tags.contains(&tag) {
+                continue;
+            }
             match coords.iter_mut().find(|(t, _)| *t == tag) {
                 Some(c) => c.1 = v,
                 None => coords.push((tag, v)),
