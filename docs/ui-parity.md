@@ -221,9 +221,7 @@ consistency is open (#73, #56).
 | 2026-10-14 | minor | Font dialog from Home › Font, the shape menu and Cmd+T |
 | 2026-10-13 | minor | Grid Options dialog: spacing, snap, and whether gridlines and guides are drawn; the on-screen grid uses that spacing |
 | 2026-10-13 | minor | WordArt adjust handles on a selected text warp; dragging one sets that `prstTxWarp` adjust |
-| 2026-10-14 | minor | Set Up Slide Show chooses the laser colour (red, green, blue). Slide Show ▸ Clear removes timings or narration on the current slide or all slides |
-| 2026-10-14 | minor | Record tab keeps per-slide narration and a laser trace. Cameo stays a placeholder |
-| 2026-10-14 | minor | Record tab and Slide Show ▸ Record start a recording show (timings and pen ink). Cameo stays a placeholder |
+| 2026-11-04 | minor | Record tab and Slide Show ▸ Record start a recording show: slide timings, per-slide narration, pen ink and a laser trace are kept, and the take can end through `show.end`. Set Up Slide Show chooses the laser colour (red, green or blue) and Slide Show ▸ Clear removes timings or narration on the current slide or all slides. Screen recording from the Record tab lands its clip as a video; Cameo stays a placeholder |
 | 2026-10-12 | minor | File tab (Backstage) observed in PowerPoint for Windows and matched (#76); the start screen is File › Home |
 | 2026-10-12 | minor | Off-slide objects drawn and editable around the slide in Normal view (#270) |
 | 2026-10-12 | minor | Selection Pane matched to PowerPoint (#133): drag and drop, arrows, groups, eye, Lock |

@@ -7,8 +7,8 @@ use deckcraft_model::{Comment, InkStroke, LaserSample, LaserTrace, MediaClip, Rg
 use serde_json::{Value, json};
 
 use super::{
-    CommandSpec, NO_ID_SPACE, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text, id_param, ok, str_param,
-    usize_param,
+    CommandSpec, NO_ID_SPACE, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text, id_param, ok,
+    opt_usize_param, str_param, usize_param,
 };
 use crate::{Result, Session, Target, UiRequest};
 
@@ -856,7 +856,7 @@ fn end_compare(s: &mut Session, _: &Value) -> Result<Value> {
 
 fn ink_stroke(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let index = usize_param(p, "index").unwrap_or(st.selection.slide);
+    let index = opt_usize_param(p, "index", "ink.stroke")?.unwrap_or(st.selection.slide);
     if index >= st.doc.slides.len() {
         return Err(bad("ink.stroke", format!("no slide {index}")));
     }
@@ -960,7 +960,7 @@ const _: () = assert!(MAX_NARRATION_BYTES > 48_000_000);
 /// Embed a WAV as the slide's narration. A later recording replaces the shape named Narration.
 fn narration(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let index = usize_param(p, "index").unwrap_or(st.selection.slide);
+    let index = opt_usize_param(p, "index", "show.narration")?.unwrap_or(st.selection.slide);
     if index >= st.doc.slides.len() {
         return Err(bad("show.narration", format!("no slide {index}")));
     }
@@ -1040,7 +1040,7 @@ fn narration(s: &mut Session, p: &Value) -> Result<Value> {
 /// Replace the slide's recorded laser trace.
 fn laser(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let index = usize_param(p, "index").unwrap_or(st.selection.slide);
+    let index = opt_usize_param(p, "index", "show.laser")?.unwrap_or(st.selection.slide);
     if index >= st.doc.slides.len() {
         return Err(bad("show.laser", format!("no slide {index}")));
     }
@@ -1095,7 +1095,7 @@ fn slide_scope(s: &Session, p: &Value, id: &str) -> Result<Vec<usize>> {
     if bool_or(p, "all", false) {
         return Ok((0..st.doc.slides.len()).collect());
     }
-    let index = usize_param(p, "index").unwrap_or(st.selection.slide);
+    let index = opt_usize_param(p, "index", id)?.unwrap_or(st.selection.slide);
     if index >= st.doc.slides.len() {
         return Err(bad(id, format!("no slide {index}")));
     }
@@ -1547,6 +1547,24 @@ mod tests {
             })
             .unwrap();
         assert!(!auto.narration && auto.autoplay);
+    }
+
+    #[test]
+    fn an_invalid_slide_index_is_an_error_not_the_selection() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        for bad_index in [json!(-1), json!("0"), json!(1.5)] {
+            for cmd in ["show.narration", "show.laser", "ink.stroke", "show.clearTiming", "show.clearNarration"] {
+                let mut p = json!({"index": bad_index});
+                if cmd == "show.laser" {
+                    p["points"] = json!([[0.0, 0.0, 0]]);
+                }
+                if cmd == "ink.stroke" {
+                    p["points"] = json!([[1.0, 1.0, 0.5], [2.0, 2.0, 0.5]]);
+                }
+                assert!(s.execute(cmd, &p).is_err(), "{cmd} with index {bad_index}");
+            }
+        }
     }
 
     #[test]

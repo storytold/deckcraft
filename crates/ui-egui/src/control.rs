@@ -218,7 +218,8 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
             // egui keeps the last modifiers it was told about, so every pointer request states
             // them: a request without modifier fields clears them rather than leaving the previous
             // request's Ctrl (which would keep the laser on) in force.
-            app.queue_input(egui::Event::ModifiersChanged(egui_mods(p)));
+            let modifiers = egui_mods(p);
+            app.queue_input(egui::Event::ModifiersChanged(modifiers));
             app.queue_input(egui::Event::PointerMoved(pos));
             if req.method == "ui.click" {
                 let button = match s("button") {
@@ -227,18 +228,13 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 };
                 let count = p.get("count").and_then(Value::as_u64).unwrap_or(1).clamp(1, 3);
                 for _ in 0..count {
-                    app.queue_input(egui::Event::PointerButton { pos, button, pressed: true, modifiers: egui::Modifiers::NONE });
-                    app.queue_input(egui::Event::PointerButton { pos, button, pressed: false, modifiers: egui::Modifiers::NONE });
+                    app.queue_input(egui::Event::PointerButton { pos, button, pressed: true, modifiers });
+                    app.queue_input(egui::Event::PointerButton { pos, button, pressed: false, modifiers });
                 }
             } else if req.method == "ui.drag" {
                 let (Some(tx), Some(ty)) = (f(p, "toX"), f(p, "toY")) else { return err("missing toX/toY") };
                 let steps = p.get("steps").and_then(Value::as_u64).unwrap_or(8).clamp(1, 120);
-                app.queue_input(egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: egui::Modifiers::NONE,
-                });
+                app.queue_input(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers });
                 for k in 1..=steps {
                     let a = k as f32 / steps as f32;
                     app.queue_input(egui::Event::PointerMoved(egui::pos2(x + (tx - x) * a, y + (ty - y) * a)));

@@ -317,11 +317,16 @@ fn the_views_menu_switches_layouts() {
 fn devices_report_unavailable_instead_of_faking_success() {
     let mut h = harness(app_with(1));
     open_record(&mut h, 0);
-    assert_eq!(h.state().show.as_ref().unwrap().record_view.devices.camera.status, devices::DeviceStatus::Unavailable);
-    // The buttons are disabled without a host, so a click cannot turn a missing camera on.
+    let rec = &h.state().show.as_ref().unwrap().record_view.devices;
+    assert_eq!(rec.camera.status, devices::DeviceStatus::Unavailable);
+    assert_eq!(rec.mic.status, devices::DeviceStatus::Unavailable, "no microphone host");
+    assert_eq!(rec.screen.status, devices::DeviceStatus::Unavailable, "no capture host");
+    // The buttons cannot turn a missing device on.
     h.get_by_label("Camera").click();
     h.run_steps(2);
-    assert_eq!(h.state().show.as_ref().unwrap().record_view.devices.camera.status, devices::DeviceStatus::Unavailable);
+    let rec = &h.state().show.as_ref().unwrap().record_view.devices;
+    assert_eq!(rec.camera.status, devices::DeviceStatus::Unavailable);
+    assert_eq!(rec.mic.status, devices::DeviceStatus::Unavailable);
 }
 
 #[test]

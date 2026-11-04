@@ -9,7 +9,7 @@
 use deckcraft_screen::{CaptureOptions, CaptureRegion};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, bad, bool_or, cmd, has_slide, str_param, usize_param};
+use super::{CommandSpec, always, bad, bool_or, cmd, has_slide, str_param, usize_param};
 use crate::Session;
 use crate::screen::ScreenState;
 
@@ -20,7 +20,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ["Record", "Record"],
         None,
         "{action?: start|pause|resume|stop|cancel|targets|permission, target?: id, region?: [x,y,w,h] px, fps?: 1-60, cursor?: bool, quality?: 10-51} → {state, …}",
-        has_slide,
+        always,
         run
     )]
 }
@@ -73,6 +73,9 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
     let action = str_param(p, "action").unwrap_or("start").trim().to_ascii_lowercase();
     match action.as_str() {
         "start" => {
+            // Every other action only drives the recorder: a document closed (or all its slides
+            // deleted) must still be able to stop the capture and keep the take.
+            has_slide(s).map_err(|e| bad(CMD, e))?;
             let fps = fps(p)?;
             let region = region(p)?;
             let show_cursor = bool_or(p, "cursor", false);
@@ -201,6 +204,25 @@ mod tests {
         assert_eq!(quality(&json!({})).expect("default"), 24);
         assert!(quality(&json!({"quality": 9})).is_err());
         assert!(quality(&json!({"quality": 52})).is_err());
+    }
+
+    #[test]
+    fn stopping_and_cancelling_need_no_slide() {
+        // Closing the document (or deleting every slide) must not strand a running capture: only
+        // `start` needs a slide to insert the take on.
+        let frames = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        let mut s = Session::with_new();
+        s.set_screen_host(Some(Box::new(FakeScreen { frames: frames.clone() })));
+        s.execute(CMD, &json!({"fps": 30})).expect("start");
+        frames.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [1, 2, 3, 255]));
+        s.screen_tick(0.0);
+        // No document at all: the recorder still stops, though a start needs a slide to insert on.
+        let mut empty = Session::new();
+        empty.set_screen_host(Some(Box::new(FakeScreen { frames: std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())) })));
+        assert!(empty.execute(CMD, &json!({"action": "start"})).is_err(), "start still needs a slide");
+        empty.execute(CMD, &json!({"action": "cancel"})).expect("cancel needs no slide");
+        let v = s.execute(CMD, &json!({"action": "stop"})).expect("stop with a slide");
+        assert!(v.get("id").and_then(Value::as_u64).is_some(), "{v}");
     }
 
     #[test]

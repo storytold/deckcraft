@@ -6,7 +6,7 @@
 
 use egui::{Color32, RichText, Ui};
 
-use super::RecordView;
+use super::{RecordStatus, RecordView};
 
 /// What a device control knows about its backend.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -44,22 +44,55 @@ pub(in crate::show) struct Devices {
     pub screen: DeviceState,
 }
 
-/// Attach the presentation services' device hosts to the shell once per frame. Until the device
-/// section lands, every service is absent and the states stay explicitly [`DeviceStatus::Unavailable`].
-pub(super) fn connect(rec: &mut RecordView, services: &crate::Services) {
-    let _ = (rec, services);
+/// Show what the presentation services and the take actually have, once per frame. A missing host
+/// leaves the device [`DeviceStatus::Unavailable`]; a microphone the take is recording from is
+/// [`DeviceStatus::On`], and the buttons only report that state (no backend is wired to them).
+pub(super) fn connect(rec: &mut RecordView, services: &crate::Services, show: &crate::show::Show) {
+    let mic = services.mic.is_some();
+    rec.devices.mic.status = match (mic, show.capturing() && show.mic_started()) {
+        (false, _) => DeviceStatus::Unavailable,
+        (true, true) => DeviceStatus::On,
+        (true, false) => DeviceStatus::Off,
+    };
+    rec.devices.screen.status = match (services.screen_in.is_some(), rec.status) {
+        (false, _) => DeviceStatus::Unavailable,
+        (true, RecordStatus::Recording) => DeviceStatus::On,
+        (true, _) => DeviceStatus::Off,
+    };
 }
 
 pub(super) fn camera_button(ui: &mut Ui, rec: &mut RecordView, _now: f64) -> bool {
     toggle(ui, &mut rec.devices.camera, "Camera")
 }
 
+/// The microphone is driven by the take, not by this label: it reports whether narration is being
+/// captured, and never pretends a click changed it.
 pub(super) fn mic_button(ui: &mut Ui, rec: &mut RecordView, _now: f64) -> bool {
-    toggle(ui, &mut rec.devices.mic, "Microphone")
+    status(ui, &rec.devices.mic, "Microphone")
 }
 
+/// Screen capture is driven by the Record tab's picker: this label reports whether the host has a
+/// capture device and whether the take is using it.
 pub(super) fn screen_button(ui: &mut Ui, rec: &mut RecordView, _now: f64) -> bool {
-    toggle(ui, &mut rec.devices.screen, "Screen recording")
+    status(ui, &rec.devices.screen, "Screen recording")
+}
+
+/// One status-only device label. Returns false: it never reports a state change.
+fn status(ui: &mut Ui, state: &DeviceState, name: &str) -> bool {
+    let label = match state.status {
+        DeviceStatus::On => format!("{name} on"),
+        DeviceStatus::Off => format!("{name} off"),
+        DeviceStatus::Unavailable => format!("{name} — unavailable"),
+    };
+    let color = if state.status == DeviceStatus::On { Color32::from_rgb(120, 200, 140) } else { Color32::from_gray(200) };
+    let detail = match state.status {
+        DeviceStatus::Unavailable => "No device found",
+        DeviceStatus::On | DeviceStatus::Off => "Available",
+    };
+    let resp = ui.add(egui::Label::new(RichText::new(label).size(12.0).color(color)).sense(egui::Sense::hover()));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, state.is_on(), name));
+    resp.on_hover_text(detail);
+    false
 }
 
 /// One status-capable toggle. Returns whether the requested state changed; an unavailable,

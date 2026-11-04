@@ -186,10 +186,13 @@ impl ScreenState {
     pub fn tick(&mut self, now: f64) -> Option<String> {
         let active = self.active.as_mut()?;
         if active.paused {
-            // Nothing is captured while the take is held: drop what the device produced so the
-            // recording resumes on live frames rather than on the pause.
-            if let Some(host) = self.host.as_mut() {
-                let _ = host.frame();
+            // Nothing is encoded while the take is held, but the newest picture is kept: a backend
+            // that only sends frames when the screen changes would otherwise resume on the
+            // pre-pause content for the whole static period.
+            if let Some(Ok(frame)) = self.host.as_mut().map(|h| h.frame())
+                && frame.is_some()
+            {
+                active.last = frame;
             }
             return None;
         }
@@ -463,7 +466,7 @@ mod tests {
         s.pause().expect("pause");
         assert_eq!(s.tick(1.0), None);
         assert_eq!(s.frames(), 1, "a held take records nothing");
-        assert!(queue.lock().expect("queue").is_empty(), "the paused frame is dropped, not queued");
+        assert!(queue.lock().expect("queue").is_empty(), "the paused frame is drained, not queued");
         s.resume().expect("resume");
         queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [255, 0, 0, 255]));
         assert_eq!(s.tick(2.0), None);
