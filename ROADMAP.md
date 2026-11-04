@@ -152,7 +152,6 @@ app's JSON control channel (`deckcraft --control PORT`).
 | Date | What landed |
 |---|---|
 | 2026-10-26 | Format Shape ▸ Text Options: Text Fill (No fill, Solid, Gradient with its angle), Text Outline (No line, Solid line, colour, width, dash type), Text direction and Do not rotate text; `format.textFill`, `format.upright`, and `format.textOutline` takes `dash` and keeps the parts it is not given. Dashed text outlines draw, and upright text counters the shape's rotation as PowerPoint draws it |
-
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
 | 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
 | 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |
@@ -334,7 +333,6 @@ app's JSON control channel (`deckcraft --control PORT`).
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-26 | trivial | Progress log: Format Shape ▸ Text Options depth. Scores and milestone names unchanged |
-
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
 | 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
