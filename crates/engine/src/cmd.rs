@@ -4,6 +4,7 @@ pub mod animation;
 pub mod arrange;
 pub mod artistic;
 pub mod background;
+pub mod camera;
 pub mod compress;
 pub mod design;
 pub mod edit;
@@ -167,6 +168,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(slide::specs());
         v.extend(reuse::specs());
         v.extend(insert::specs());
+        v.extend(camera::specs());
         v.extend(smartart::specs());
         v.extend(shape::specs());
         v.extend(background::specs());

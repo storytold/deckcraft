@@ -334,7 +334,11 @@ fn read_model_alternate(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> 
 }
 
 fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
-    let mut s = base(imp, part, ctx, e.child("nvPicPr"));
+    let nvp = e.child("nvPicPr");
+    let mut s = base(imp, part, ctx, nvp);
+    if crate::cameo::is_live(nvp.and_then(|n| n.child("cNvPicPr"))) {
+        s.cameo = Some(deckcraft_model::Cameo::live());
+    }
     if let Some(pr) = e.child("spPr") {
         sp_pr(imp, part, &mut s, pr);
     }
