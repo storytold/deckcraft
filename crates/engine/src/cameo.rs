@@ -137,12 +137,17 @@ impl CameoRun {
     /// Drain the camera: write frames, and close the clip on a failure. Never blocks.
     pub fn poll(&mut self, now_ms: u64) {
         let Some(session) = &self.session else { return };
+        let events = session.drain();
+        // Time each frame by its own receipt, not by this poll: a batch that queued up while the
+        // show was busy would otherwise land on one sample position.
+        let newest = events.iter().filter_map(|e| if let CameraEvent::Frame(f) = e { Some(f.at) } else { None }).max();
         let mut lost = None;
-        for event in session.drain() {
+        for event in events {
             match event {
                 CameraEvent::Frame(frame) => {
+                    let at_ms = newest.map_or(now_ms, |n| now_ms.saturating_sub(frame.lag_ms(n)));
                     if let Some(rec) = &mut self.recorder
-                        && let Err(e) = rec.push(&frame, now_ms)
+                        && let Err(e) = rec.push(&frame, at_ms)
                     {
                         lost = Some(CameraError::Backend(e.to_string()));
                         break;

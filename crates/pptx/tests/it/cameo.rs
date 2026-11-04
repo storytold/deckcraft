@@ -3,7 +3,7 @@
 //! The decks are built in code, never produced by PowerPoint: an SVG placeholder we draw and an
 //! ordinary PNG for the checked-in-picture case.
 
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 
 use deckcraft_geom::Xfrm;
 use deckcraft_model::style::PictureFill;
@@ -251,6 +251,45 @@ fn a_recorded_cameo_keeps_the_camera_background_it_was_imported_with() {
     // Attaching the recording must not turn the kept feed into an empty one on the next save.
     let bytes = deckcraft_pptx::export(&q).expect("export");
     assert!(part(&bytes, "ppt/slides/slide1.xml").contains("backgroundProps"));
+}
+
+/// The same package with every part whose name matches `drop` removed.
+fn without_parts(bytes: &[u8], drop: &dyn Fn(&str) -> bool) -> Vec<u8> {
+    let mut z = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("zip");
+    let mut w = zip::ZipWriter::new(Cursor::new(vec![]));
+    let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for i in 0..z.len() {
+        let mut f = z.by_index(i).expect("entry");
+        let name = f.name().to_string();
+        let mut buf = vec![];
+        f.read_to_end(&mut buf).expect("read");
+        if drop(&name) {
+            continue;
+        }
+        w.start_file(name, opts).expect("start");
+        w.write_all(&buf).expect("write");
+    }
+    w.finish().expect("finish").into_inner()
+}
+
+#[test]
+fn a_recorded_cameo_without_a_readable_poster_stays_a_picture() {
+    let p = recorded_deck();
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    // The poster image is gone, so the picture's fill cannot be read; the recording remains.
+    let bytes = without_parts(&bytes, &|name| name.starts_with("ppt/media/") && name.ends_with(".png"));
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let mut found = None;
+    deckcraft_model::walk(&q.slides[0].shapes, &mut |sh, _| {
+        if sh.name == "Camera 1" {
+            found = Some(sh.clone());
+        }
+    });
+    let sh = found.expect("cameo shape");
+    assert!(matches!(sh.kind, ShapeKind::Picture { .. }), "the cameo keeps its picture shape");
+    assert!(sh.is_cameo());
+    let cameo = sh.cameo.as_ref().expect("cameo");
+    assert!(cameo.recorded.is_some(), "the recording survives a missing poster");
 }
 
 #[test]

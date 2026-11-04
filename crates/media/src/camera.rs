@@ -49,6 +49,15 @@ pub struct CameraFrame {
     pub rgba: Arc<[u8]>,
 }
 
+impl CameraFrame {
+    /// How long before `newest` this frame was received (0 for `newest` itself), so a host that
+    /// drains a batch of frames can time each one instead of the whole batch.
+    pub fn lag_ms(&self, newest: Instant) -> u64 {
+        let lag = newest.saturating_duration_since(self.at).as_millis();
+        u64::try_from(lag).unwrap_or(u64::MAX)
+    }
+}
+
 /// Why a camera did not open, or stopped.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum CameraError {
@@ -347,6 +356,17 @@ mod tests {
         let clip = rec.finish(now).expect("the clip so far is kept, not rejected");
         assert!(clip.frames > 0);
         assert!(clip.mp4.len() <= MAX_CLIP_BYTES);
+    }
+
+    #[test]
+    fn a_queued_frame_knows_how_old_it_is() {
+        let now = Instant::now();
+        let mut a = frame(0, 16, 16, 10);
+        let mut b = frame(1, 16, 16, 20);
+        a.at = now;
+        b.at = now + std::time::Duration::from_millis(70);
+        assert_eq!(a.lag_ms(b.at), 70);
+        assert_eq!(b.lag_ms(b.at), 0);
     }
 
     #[test]

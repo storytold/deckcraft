@@ -389,6 +389,12 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
     }
     match pf {
         Some(fill) => s.kind = ShapeKind::Picture { fill },
+        // A recorded Cameo keeps its video even when the poster cannot be read; the writer falls
+        // back to the placeholder image for the empty fill.
+        None if recorded.is_some() => {
+            log::warn!("pptx: picture {} in {} has no readable poster", s.name, part.name);
+            s.kind = ShapeKind::Picture { fill: deckcraft_model::style::PictureFill::default() };
+        }
         None => log::warn!("pptx: picture {} in {} has no readable image", s.name, part.name),
     }
     if let Some(media) = recorded {
