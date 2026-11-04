@@ -244,7 +244,9 @@ impl SlideApp {
         // Closing the window with unsaved changes asks first, and so does closing during a take:
         // the recording only lives in the show, so it must survive the question either way.
         if ctx.input(|i| i.viewport().close_requested()) {
-            let recording = self.show.as_ref().is_some_and(|s| s.record && s.capturing);
+            // A paused or stopped take still holds the whole recording in the show, so closing
+            // must ask for that too, not only while it is capturing.
+            let recording = self.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured));
             let dirty = self.session.documents().iter().any(|d| d.is_dirty());
             if self.quit_confirmed {
                 self.stop_mic();

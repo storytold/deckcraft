@@ -1484,6 +1484,44 @@ fn an_idle_record_view_keeps_no_recorded_material() {
     assert_eq!(show.timings.len(), 1);
 }
 
+/// A microphone that hands over one take of a steady tone, so narration_wav accepts it.
+struct ToneMic {
+    rate: u32,
+    samples: Vec<f32>,
+}
+
+impl deckcraft_media::MicIn for ToneMic {
+    fn start(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn take(&mut self) -> (u32, Vec<f32>) {
+        (self.rate, std::mem::take(&mut self.samples))
+    }
+    fn stop(&mut self) {}
+}
+
+/// The take a slide change ends belongs to the slide being left, not to the one that opened:
+/// navigation has already entered the destination when the shell hands the audio over.
+#[test]
+fn a_transition_take_belongs_to_the_slide_being_left() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    show.begin_recording(0.0);
+    show.mic_ok = true;
+    // Cache the slide 0 timeline the way a frame does, then enter slide 1.
+    let _ = show.timeline(&doc);
+    show.state.slide = 1;
+    let rate = 8_000;
+    let tone: Vec<f32> = (0..rate / 2).map(|i| (i as f32 * 0.5).sin() * 0.4).collect();
+    let mut mic: crate::show::MicSlot = Some(Box::new(ToneMic { rate, samples: tone }));
+    super::before_slide_change_with(&mut mic, &mut show, &ShowAction::Slide(1));
+    assert_eq!(show.narration.len(), 1, "the take is kept");
+    assert_eq!(show.narration[0].0, 0, "under the slide it was spoken on");
+}
+
 /// A slide opened while the take is held starts its clock at resume: shifting its slide-entry
 /// time by the pause would undercount it, or make the timing negative after a long hold.
 #[test]

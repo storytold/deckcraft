@@ -99,7 +99,7 @@ pub(crate) struct RecordView {
     /// A shell button asked for work that only a section can do.
     pub(super) pending: Option<RecordCommand>,
     /// A take has started in this view, so leaving it should save the recording.
-    pub(super) captured: bool,
+    pub(crate) captured: bool,
     /// Leaving the view while a take is running asks for a confirmation first.
     pub(super) close_confirm: bool,
     /// The clock value replaced by the last Reset, so Undo can put it back.
@@ -338,7 +338,7 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Pre
     // narration, its ink, its laser trace and its time — moves into the take now, and nothing
     // gathered afterwards may join it. Resume starts a fresh microphone buffer.
     if was_recording && rec.status != RecordStatus::Recording {
-        take_narration(app.services.mic.as_deref_mut(), show);
+        take_narration(app.services.mic.as_deref_mut(), show, show.state.slide);
         app.stop_mic();
         show.stash_ink(doc, show.state.slide, true);
         show.stash_laser(show.state.slide, true);

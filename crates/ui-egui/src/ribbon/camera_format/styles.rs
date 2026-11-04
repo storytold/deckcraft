@@ -12,7 +12,9 @@ use deckcraft_engine::cmd::camera::{STYLES, style_of};
 const TILE: egui::Vec2 = vec2(36.0, 34.0);
 
 pub(super) fn styles_section(app: &mut SlideApp, ui: &mut Ui) {
-    let current = app.session.active().and_then(|d| d.selected_shapes().first().and_then(|sh| style_of(sh))).unwrap_or("none");
+    // Empty means "no preset tile matches", which covers both No Style and a hand-picked
+    // border or effect: highlighting No Style for those would be wrong.
+    let current = app.session.active().and_then(|d| d.selected_shapes().first().and_then(|sh| style_of(sh))).unwrap_or("");
     let en = enabled(app, "camera.style");
     group(ui, |ui| {
         if let Some(id) = style_gallery(ui, current, en) {

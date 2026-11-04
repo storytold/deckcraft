@@ -267,14 +267,16 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
             sh.line = None;
             return Ok(());
         }
+        // Only a Cameo takes the frame default; other shapes may inherit their width.
+        let cameo = sh.is_cameo();
         let l = sh.line.get_or_insert_with(Line::default);
         if none {
             l.fill = Some(Fill::None);
         }
         if let Some(c) = &color {
             l.fill = Some(Fill::solid(c.clone()));
-            // An outline with no width yet gets PowerPoint's 1 pt, so the colour is visible.
-            if l.width.is_none() && !none {
+            // A Cameo's outline with no width yet gets PowerPoint's 1 pt, so it is visible.
+            if cameo && l.width.is_none() && !none {
                 l.width = Some(1.0);
             }
         }

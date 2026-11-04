@@ -335,7 +335,7 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
 }
 
 fn advance(app: &mut SlideApp, show: &mut Show, f: &Fr, out: &mut Out) {
-    let Fr { doc, doc_uid, now, full, .. } = *f;
+    let Fr { doc, doc_uid, now, .. } = *f;
     // Apply input first: a step started by this click must restart the clock before it is read.
     for a in out.actions.drain(..) {
         before_slide_change(app, show, &a);
@@ -353,7 +353,8 @@ fn advance(app: &mut SlideApp, show: &mut Show, f: &Fr, out: &mut Out) {
             out.keep = false;
         }
     }
-    show.ink_width = pen_width_slide(doc, full, show.reading);
+    // The Record view draws the slide smaller than the window: measure the rect it uses.
+    show.ink_width = pen_width_slide(doc, f.srect);
     if show.state.playing {
         let step = show.state.step;
         show.cue_media(doc, step, now - show.step_start);
@@ -944,7 +945,8 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
             let live = show.rehearse || show.record_view.status == record::RecordStatus::Recording;
             if show.record {
                 // The microphone's buffer belongs to the slide the show ends on.
-                take_narration(app.services.mic.as_deref_mut(), &mut show);
+                let ending = show.state.slide;
+                take_narration(app.services.mic.as_deref_mut(), &mut show, ending);
             }
             if show.mic_tried {
                 app.stop_mic();

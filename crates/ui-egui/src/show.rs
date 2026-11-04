@@ -917,10 +917,9 @@ fn show_fills_screen(reading: bool, show_type: &str) -> bool {
     !reading && show_type != "browsed"
 }
 
-/// Slide points per on-screen pixel, so the 3px stroke keeps its width in the deck.
-fn pen_width_slide(doc: &Presentation, full: Rect, reading: bool) -> f64 {
-    let avail = if reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
-    let srect = render::fit(avail, doc);
+/// Slide points per on-screen pixel, so the 3px stroke keeps its width in the deck. `srect` is
+/// the rectangle the slide is actually drawn in — the Record view's is smaller than the window.
+fn pen_width_slide(doc: &Presentation, srect: Rect) -> f64 {
     let scale = srect.width() / doc.slide_size.width.max(1.0) as f32;
     if scale.is_finite() && scale > 0.01 { (3.0 / scale) as f64 } else { 2.25 }
 }
@@ -1010,20 +1009,22 @@ fn before_slide_change(app: &mut SlideApp, show: &mut Show, action: &ShowAction)
 /// The same, for a section that holds the microphone rather than the whole app.
 fn before_slide_change_with(mic: &mut MicSlot, show: &mut Show, action: &ShowAction) {
     if show.keeps_recording() && matches!(action, ShowAction::Slide(_)) {
-        take_narration(mic.as_deref_mut(), show);
+        // Navigation has already entered the destination: the take belongs to the slide left,
+        // the same index `Show::apply` records its timing under.
+        let left = show.timeline.as_ref().map(|t| t.0).unwrap_or(show.state.slide);
+        take_narration(mic.as_deref_mut(), show, left);
     }
 }
 
 /// Hand the microphone's buffer to the show's current slide. The callers decide whether a take is
 /// running: the end of a take also saves what was spoken on the slide it stopped on.
-fn take_narration(mic: Option<&mut (dyn deckcraft_media::MicIn + 'static)>, show: &mut Show) {
+fn take_narration(mic: Option<&mut (dyn deckcraft_media::MicIn + 'static)>, show: &mut Show, slide: usize) {
     if !show.mic_ok {
         return;
     }
     let Some(mic) = mic else { return };
     let (rate, samples) = mic.take();
     if let Some(wav) = narration_wav(rate, &samples) {
-        let slide = show.state.slide;
         show.narration.retain(|(i, _)| *i != slide);
         show.narration.push((slide, wav));
     }

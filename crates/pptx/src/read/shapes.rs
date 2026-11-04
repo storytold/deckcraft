@@ -337,7 +337,10 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
     let nvp = e.child("nvPicPr");
     let mut s = base(imp, part, ctx, nvp);
     if let Some(props) = crate::cameo::live_feed_props(nvp.and_then(|n| n.child("cNvPicPr"))) {
-        s.cameo = Some(deckcraft_model::Cameo { live: true, raw: Some(part.keep(props)), ..Default::default() });
+        // Kept verbatim, the feed would carry `r:id`/`r:embed` attributes whose relationships the
+        // export never recreates: keep it only when it names none.
+        let raw = (!super::has_rel_refs(props)).then(|| part.keep(props));
+        s.cameo = Some(deckcraft_model::Cameo { live: true, raw, ..Default::default() });
     }
     if let Some(pr) = e.child("spPr") {
         sp_pr(imp, part, &mut s, pr);
