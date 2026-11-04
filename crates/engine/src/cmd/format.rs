@@ -423,6 +423,24 @@ mod tests {
     }
 
     #[test]
+    fn font_dialog_ok_accepts_preset_and_system_names_it_does_not_know() {
+        use deckcraft_color::Rgba;
+        let last = Rgba::rgb(0x12, 0x34, 0x56);
+        let preset = ColorRef { base: ColorBase::Preset { name: "notAColor".into() }, mods: vec![] }.with(ColorTransform::LumMod(50_000));
+        let system = ColorRef { base: ColorBase::System { name: "notAColor".into(), last }, mods: vec![] };
+        for (color, drawn) in [(preset, ColorRef::rgb(Rgba::BLACK).with(ColorTransform::LumMod(50_000))), (system, ColorRef::rgb(last))] {
+            let mut s = shape();
+            let fill = Fill::Solid { color };
+            format_run(&mut s, &|r| r.fill = Some(fill.clone())).unwrap();
+            s.ui_requests.clear();
+            s.execute("format.fontDialog", &json!({})).unwrap();
+            let Some(UiRequest::Dialog { params, .. }) = s.ui_requests.last().cloned() else { panic!("dialog request") };
+            s.execute("format.fontDialog", &json!({"color": params["color"], "size": 20.0})).unwrap();
+            assert_eq!(props(&s).fill, Some(Fill::Solid { color: drawn }), "{}", params["color"]);
+        }
+    }
+
+    #[test]
     fn font_dialog_color_mods_round_trip_and_unknown_ops_are_errors() {
         let two = ColorRef { base: ColorBase::Preset { name: "red".into() }, mods: vec![] }
             .with(ColorTransform::LumMod(75_000))
