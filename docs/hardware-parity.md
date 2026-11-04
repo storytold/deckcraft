@@ -28,7 +28,7 @@ because it mostly follows from hardware use.
 | Audio output | Core Audio / WASAPI | `cpal` (Core Audio, WASAPI, ALSA); browser Web Audio |
 | Microphone (record audio, narration) | yes | yes during Record Slide Show (cpal default input, one clip per slide); no free-standing recorder |
 | Camera (Cameo, record with camera) | yes | no |
-| Screen recording | yes | yes: a display, window or region (minimum 64×64), with the pointer, through `scap` on Windows, macOS and Linux; unavailable on FreeBSD and the web |
+| Screen recording | yes | yes: a display, window or region (minimum 64×64), with the pointer, through `scap` on Windows, macOS and Linux; the clip is video only (no microphone and no system audio); unavailable on FreeBSD and the web |
 
 ## Displays
 
@@ -73,7 +73,7 @@ alignment runs once per transition (#67), and the decoders run in software.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-04 | minor | Screen recording from the Record tab captures a display, window or region with the pointer; the recording show keeps its pen and laser samples |
+| 2026-11-04 | minor | Screen recording from the Record tab captures a display, window or region with the pointer; the clip is video only (neither the microphone nor system audio), and the recording show keeps its pen and laser samples |
 | 2026-10-14 | minor | PNG and JPEG slide export record 144 dpi at the default 2 pixels per point, so a Retina picture opens at the slide's size |
 | 2026-10-13 | trivial | Editor slide rasters sit on the physical pixel grid (#184) |
 | 2026-10-14 | trivial | Community PR wave folded: one row each for pinch/two-finger gestures and pen pressure |

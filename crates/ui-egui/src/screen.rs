@@ -89,7 +89,7 @@ fn reload(app: &mut SlideApp) {
             let n = app.screen.targets.len();
             app.screen.selected = app.screen.selected.min(n.saturating_sub(1));
             if let Some(t) = app.screen.targets.get(app.screen.selected) {
-                app.screen.region = [0, 0, i64::from(t.width.max(64)), i64::from(t.height.max(64))];
+                app.screen.region = [0, 0, i64::from(t.width).max(64), i64::from(t.height).max(64)];
             }
             app.screen.error = None;
         }
@@ -224,7 +224,7 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
                             for (i, t) in app.screen.targets.iter().enumerate() {
                                 if ui.selectable_label(app.screen.selected == i, t.label()).clicked() {
                                     app.screen.selected = i;
-                                    app.screen.region = [0, 0, i64::from(t.width.max(64)), i64::from(t.height.max(64))];
+                                    app.screen.region = [0, 0, i64::from(t.width).max(64), i64::from(t.height).max(64)];
                                 }
                             }
                         });
@@ -241,10 +241,17 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
                             ui.label(label);
                             let mut v = app.screen.region[i];
                             // `x` and `w` are measured across the target's width, `y` and `h`
-                            // down its height; the size fields start at the 64 px minimum.
+                            // down its height; the size fields start at the 64 px minimum. A host
+                            // that cannot report a target's size (0) leaves the region free — the
+                            // recorder clips it to the frame anyway.
                             let along_width = matches!(i, 0 | 2);
-                            let span = i64::from(if along_width { size.0 } else { size.1 }).max(64);
-                            let (lo, hi) = if i < 2 { (0, (span - 64).max(0)) } else { (64, span) };
+                            let known = if along_width { size.0 } else { size.1 };
+                            let (lo, hi) = if known == 0 {
+                                if i < 2 { (0, 100_000) } else { (64, 100_000) }
+                            } else {
+                                let span = i64::from(known).max(64);
+                                if i < 2 { (0, (span - 64).max(0)) } else { (64, span) }
+                            };
                             if ui.add(egui::DragValue::new(&mut v).range(lo..=hi).speed(1.0)).changed() {
                                 app.screen.region[i] = v.clamp(lo, hi);
                             }

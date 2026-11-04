@@ -288,7 +288,8 @@ Zoom: live thumbnails, the zoom-in animation and the native `p166:sldZm` element
 artistic effects (3–6 h for the other 15 of 22; 7 approximated and round-tripped), remove
 background (6–10 h; needs a model or a classical matte), insert screenshot (2–3 h), screen
 capture while recording (4–8 h; Record Slide Show keeps timings, narration, pen ink and a laser trace), standalone audio recording (2–4 h; narration is
-captured through Record Slide Show, an audio-only Record is not offered), compare presentations beyond accepting and rejecting each revision, or all (#850; per-object accept and reject, markers on the slide: 2–4 h), password protection (4–6 h, ECMA-376
+captured through Record Slide Show, an audio-only Record is not offered), system audio in screen recordings (3–6 h; a take
+is video plus the pointer only, so a demonstration that expects game or call audio is silent), compare presentations beyond accepting and rejecting each revision, or all (#850; per-object accept and reject, markers on the slide: 2–4 h), password protection (4–6 h, ECMA-376
 agile encryption), ink to text and math beyond Ink to Shape (6–10 h), 3-D models and stock content
 (6–10 h; Insert › Icons places a Lucide stroke set).
 

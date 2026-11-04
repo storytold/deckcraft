@@ -118,6 +118,9 @@ pub struct Show {
     narration: Vec<(usize, u32, Vec<f32>)>,
     mic_tried: bool,
     mic_ok: bool,
+    /// The slide the last narration samples were filed under. Pause/resume on one visit appends;
+    /// coming back to a slide in the same take replaces what it had.
+    narration_slide: Option<usize>,
     /// Pen width in slide points, matching the 3px stroke on screen.
     ink_width: f64,
     last_move: f64,
@@ -293,6 +296,7 @@ impl Show {
             narration: vec![],
             mic_tried: false,
             mic_ok: false,
+            narration_slide: None,
             ink_width: 2.25,
             last_move: 0.0,
             last_swipe: f64::NEG_INFINITY,
@@ -991,13 +995,18 @@ fn take_narration(app: &mut SlideApp, show: &mut Show) {
     // `ShowState::next`/`prev`/`goto` already moved the state to the new slide; the take belongs
     // to the one being left, which is the slide `Show::apply` reads its cached timeline for.
     let slide = show.timeline.as_ref().map(|t| t.0).unwrap_or(show.state.slide);
-    if let Some(i) = show.narration.iter().position(|(s, _, _)| *s == slide) {
+    let same_visit = show.narration_slide == Some(slide);
+    if let Some(i) = show.narration.iter().position(|(s, _, _)| *s == slide).filter(|_| same_visit) {
         // A take paused on this slide and resumed: the microphone restarted, so only the samples
         // are appended. A changed rate keeps the first take's rate (the two would not line up).
         show.narration[i].2.extend_from_slice(&samples);
     } else {
+        // A new visit to the slide replaces what it had: the timing and the laser keep the last
+        // visit too, so the audio must not be longer than the slide's recorded advance.
+        show.narration.retain(|(s, _, _)| *s != slide);
         show.narration.push((slide, rate, samples));
     }
+    show.narration_slide = Some(slide);
 }
 
 #[cfg(test)]

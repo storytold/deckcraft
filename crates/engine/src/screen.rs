@@ -544,17 +544,23 @@ impl ScreenState {
         if active.due {
             active.due = false;
             if active.pending.is_some() || active.frames > 0 {
-                why = schedule_picture(active, 1);
+                let (_, e) = schedule_pictures(active, 1);
+                why = e;
             }
             active.next_at = now + interval;
         } else if now + 1.0e-9 >= active.next_at {
             // Every interval that passed is owed one picture; one job carries them all.
             let owed = ((now - active.next_at) / interval).floor() as u32 + 1;
             let pictures = owed.clamp(1, MAX_CATCH_UP);
+            let mut scheduled = 0;
             if active.pending.is_some() || active.frames > 0 {
-                why = schedule_picture(active, pictures);
+                let (n, e) = schedule_pictures(active, pictures);
+                scheduled = n;
+                why = e;
             }
-            active.next_at += f64::from(pictures) * interval;
+            // Only the pictures the queue took move the schedule: the rest stay owed and are tried
+            // again on the next tick.
+            active.next_at += f64::from(scheduled) * interval;
             if owed > MAX_CATCH_UP {
                 // The backlog past the cap is dropped, not split into bursts: a one minute stall
                 // must not keep the encoder busy for minutes afterwards.
@@ -613,29 +619,32 @@ impl ScreenState {
 
 /// Schedule one picture: the newest capture if one is waiting, else a repeat of the last. `Some`
 /// is the encoder error when the picture could not be queued.
-fn schedule_picture(active: &mut Active, pictures: u32) -> Option<String> {
+fn schedule_pictures(active: &mut Active, pictures: u32) -> (u32, Option<String>) {
     if pictures == 0 {
-        return None;
+        return (0, None);
     }
+    // How many of the owed pictures the queue took: the caller only advances the schedule for
+    // those, so a busy encoder catches up instead of shortening the take.
+    let mut scheduled = 0;
     match active.pending.take() {
         Some(frame) => {
-            // A refused picture goes back to the front of the queue and is retried next interval:
-            // no tick is counted that the muxer did not get.
+            // A refused picture goes back to the front of the queue and is retried next interval.
             if !active.encoder.encode(frame) {
                 active.pending = active.encoder.take_kept();
-                return active.encoder.failure().map(str::to_string);
+                return (0, active.encoder.failure().map(str::to_string));
             }
-            if pictures > 1 && !active.encoder.repeat(pictures - 1) {
-                return active.encoder.failure().map(str::to_string);
+            scheduled = 1;
+            if pictures > 1 && active.encoder.repeat(pictures - 1) {
+                scheduled += pictures - 1;
             }
         }
         None => {
-            if !active.encoder.repeat(pictures) {
-                return active.encoder.failure().map(str::to_string);
+            if active.encoder.repeat(pictures) {
+                scheduled = pictures;
             }
         }
     }
-    active.encoder.failure().map(str::to_string)
+    (scheduled, active.encoder.failure().map(str::to_string))
 }
 
 /// A fresh file in the temporary folder for one recording.
