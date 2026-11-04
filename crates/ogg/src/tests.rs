@@ -274,3 +274,13 @@ fn a_budget_too_small_to_search_is_spent() {
     let f = opus_file(6, 312, 0);
     assert_eq!(scanner.find(&f, 0, f.len() as u64).unwrap(), None);
 }
+
+#[test]
+fn read_packet_checks_its_ranges_against_the_source_before_allocating() {
+    let f = opus_file(10, 312, 500);
+    let o = open(&f).unwrap();
+    let s = o.stream_of(Codec::Opus).unwrap();
+    // The last packet lies past the end of a source cut short: an error, not a read of missing bytes.
+    let short = &f[..f.len() / 2];
+    assert!(matches!(o.read_packet(&short, s, 9), Err(Error::Invalid(_))));
+}
