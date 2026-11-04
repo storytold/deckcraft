@@ -160,16 +160,6 @@ fn place(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, parent: 
 fn place_text(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, owner: ShapeId, s: &Shape, body: &TextBody, tr: Rect, m: Affine) {
     let layout = deckcraft_text::layout(rctx, s, body, &Opts { rect: tr, fields, prompt_color: None, no_shrink: false });
     let m = crate::text_transform(m, tr, layout.rotation);
-    // Text hyperlinks: one box per line segment of a linked run.
-    for run in layout.runs.iter().filter(|r| r.link && !r.glyphs.is_empty()) {
-        let Some(link) = run_link(body, run.para, run.chars.0) else { continue };
-        let Some(line) = layout.lines.iter().find(|l| l.para == run.para && l.start <= run.chars.0 && run.chars.0 <= l.end) else { continue };
-        // The run's visual extent (right-to-left runs run from right to left).
-        let first = run.glyphs.first().map(|g| g.1).unwrap_or(0.0);
-        let (x0, x1) = line.span(run.chars.0, run.chars.1).unwrap_or((first, first));
-        let r = Rect::new(x0, line.top, x1, line.bottom);
-        out.links.push(PlacedLink { rect: m.transform_rect_bbox(r), link, shape: owner, text: true });
-    }
     // Field runs carry their saved text (`‹#›`); the layout drew their values, so the body that
     // goes with it (character offsets, text layer) must hold the same values.
     let mut placed = body.clone();
@@ -184,6 +174,16 @@ fn place_text(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, owner: ShapeId
                 out_run.kind = RunKind::Text;
             }
         }
+    }
+    // Text hyperlinks: one box per line segment of a linked run.
+    for run in layout.runs.iter().filter(|r| r.link && !r.glyphs.is_empty()) {
+        let Some(link) = run_link(&placed, run.para, run.chars.0) else { continue };
+        let Some(line) = layout.lines.iter().find(|l| l.para == run.para && l.start <= run.chars.0 && run.chars.0 <= l.end) else { continue };
+        // The run's visual extent (right-to-left runs run from right to left).
+        let first = run.glyphs.first().map(|g| g.1).unwrap_or(0.0);
+        let (x0, x1) = line.span(run.chars.0, run.chars.1).unwrap_or((first, first));
+        let r = Rect::new(x0, line.top, x1, line.bottom);
+        out.links.push(PlacedLink { rect: m.transform_rect_bbox(r), link, shape: owner, text: true });
     }
     out.texts.push(PlacedText { layout, transform: m, body: placed });
 }
