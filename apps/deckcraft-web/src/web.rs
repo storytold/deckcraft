@@ -138,15 +138,7 @@ impl eframe::App for WebShell {
         {
             host.close();
         }
-        // eframe's web runner ignores `ViewportCommand::Title`: put the same window title on the
-        // page, which a host embedding it reads to tell which presentation a drop opened (#1058).
-        let title = self.app.window_title();
-        if title != self.page_title
-            && let Some(doc) = web_sys::window().and_then(|w| w.document())
-        {
-            doc.set_title(&title);
-            self.page_title = title;
-        }
+        self.sync_page_title();
     }
 
     /// Consume browser drops with fresh input, capture the identity before the asynchronous read,
@@ -178,6 +170,23 @@ impl eframe::App for WebShell {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.ui(ui);
+        self.sync_page_title();
+    }
+}
+
+impl WebShell {
+    /// eframe's web runner ignores `ViewportCommand::Title`: put the same window title on the
+    /// page, which a host embedding it reads to tell which presentation a drop opened (#1058).
+    /// After `logic` and after each UI pass, as the window title is, so an edit made in the pass
+    /// marks the page title in that same pass.
+    fn sync_page_title(&mut self) {
+        let title = self.app.window_title();
+        if title != self.page_title
+            && let Some(doc) = web_sys::window().and_then(|w| w.document())
+        {
+            doc.set_title(&title);
+            self.page_title = title;
+        }
     }
 }
 
