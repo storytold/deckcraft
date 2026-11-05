@@ -60,7 +60,8 @@ impl SlideApp {
 
     /// Send the window title when it changed: a viewport command schedules a repaint, so sending
     /// it every frame would keep an idle window redrawing. Runs from `logic`, so a document opened
-    /// or renamed while the window is hidden updates it too.
+    /// or renamed while the window is hidden updates it too, and again at the end of each UI pass
+    /// ([`Self::ui_end`]), so an edit made in the pass marks the title in that same pass.
     pub(super) fn sync_window_title(&mut self, ctx: &egui::Context) {
         let title = self.window_title();
         if title != self.sent_title {
@@ -72,6 +73,9 @@ impl SlideApp {
     /// Issue due screenshots and finish pass-local UI bookkeeping. Call once at the end of a real
     /// pass after layout; the outer [`Self::ui`] wrapper observes IME output after this returns.
     pub(super) fn ui_end(&mut self, ctx: &egui::Context) {
+        if !ctx.will_discard() {
+            self.sync_window_title(ctx);
+        }
         self.ime_frame_viewport = None;
         self.capture.observe_ui(ctx);
         if !ctx.will_discard() {

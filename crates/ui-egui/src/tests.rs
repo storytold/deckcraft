@@ -2364,7 +2364,11 @@ fn overdue_visible_logic_does_not_reanchor_a_later_hidden_show() {
 
 /// The `ViewportCommand::Title`s one logic tick sends to the window.
 fn sent_titles(app: &mut SlideApp, ctx: &egui::Context) -> Vec<String> {
-    let out = ctx.run_ui(egui::RawInput::default(), |ui| app.logic(ui.ctx()));
+    titles_sent(ctx.run_ui(egui::RawInput::default(), |ui| app.logic(ui.ctx())))
+}
+
+/// The `ViewportCommand::Title`s in a pass's output.
+fn titles_sent(out: egui::FullOutput) -> Vec<String> {
     let titles = out
         .viewport_output
         .values()
@@ -2410,6 +2414,32 @@ fn the_window_title_follows_the_dropped_presentation_and_its_changes() {
 
     app.session.execute("file.close", &json!({})).unwrap();
     assert_eq!(sent_titles(&mut app, &ctx), ["DeckCraft"]);
+}
+
+/// An edit made by the UI pass itself (a click, a key) marks the title in that same pass: the end
+/// of the pass sends it too, so the • doesn't wait for whatever repaints the window next.
+#[test]
+fn an_edit_in_the_ui_pass_marks_the_title_in_the_same_pass() {
+    let mut app = SlideApp::new(Session::new(), Services::default());
+    let data = Session::with_new().execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
+    app.session.execute("file.openBytes", &json!({"name": "Plan.deckcraft", "data": data})).unwrap();
+    let ctx = egui::Context::default();
+    // A first full pass installs the interface fonts (that pass is discarded and run again).
+    let titles = titles_sent(ctx.run_ui(egui::RawInput::default(), |ui| {
+        app.logic(ui.ctx());
+        app.ui(ui);
+    }));
+    assert_eq!(titles, ["Plan — DeckCraft"]);
+    let mut edited = false;
+    let titles = titles_sent(ctx.run_ui(egui::RawInput::default(), |ui| {
+        app.logic(ui.ctx());
+        // What a button the pass draws would do.
+        if !std::mem::replace(&mut edited, true) {
+            app.session.execute("slide.new", &json!({})).unwrap();
+        }
+        app.ui(ui);
+    }));
+    assert_eq!(titles, ["Plan • — DeckCraft"]);
 }
 
 /// X11 window titles are C strings (a NUL panicked there in a sibling app): a file name sent with a
