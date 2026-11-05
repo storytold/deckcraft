@@ -475,7 +475,10 @@ fn generated_equation_without_omml_round_trips() {
     let mut p = Presentation::default();
     let mut slide = new_slide(&mut p, "Math Slide");
     let mut eq = shape(&mut p, "GenEq", 50.0, 50.0, 200.0, 50.0);
-    let original_nodes = deckcraft_model::math::parse_linear("a^2+b^2=c^2");
+    let mut original_nodes = deckcraft_model::math::parse_linear("x+y=z");
+    if let Some(deckcraft_model::math::MNode::Run(r)) = original_nodes.first_mut() {
+        r.font = Some("Cambria Math".into());
+    }
     eq.text = Some(TextBody {
         paragraphs: vec![Paragraph {
             runs: vec![Run {
@@ -497,6 +500,42 @@ fn generated_equation_without_omml_round_trips() {
     let q = round(&p);
     let slide_q = q.slides.last().expect("slide");
     let eq_q = by_name(slide_q, "GenEq");
+    let run_q = &eq_q.text.as_ref().expect("text").paragraphs[0].runs[0];
+    if let RunKind::Math { math, display, .. } = &run_q.kind {
+        assert!(display);
+        assert_eq!(math.nodes, original_nodes);
+    } else {
+        panic!("expected RunKind::Math, got {run_q:?}");
+    }
+}
+
+#[test]
+fn phasor_equation_roundtrips_cleanly_into_omml_and_back() {
+    let mut p = Presentation::default();
+    let mut slide = new_slide(&mut p, "Phasor Slide");
+    let mut eq = shape(&mut p, "PhasorEq", 50.0, 50.0, 200.0, 50.0);
+    let original_nodes = deckcraft_model::math::parse_linear("V∠(θ)");
+    eq.text = Some(TextBody {
+        paragraphs: vec![Paragraph {
+            runs: vec![Run {
+                text: "V∠(θ)".into(),
+                props: RunProps::default(),
+                kind: RunKind::Math {
+                    omml: String::new(),
+                    math: deckcraft_model::math::Math { nodes: original_nodes.clone(), ..Default::default() },
+                    display: true,
+                },
+            }],
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    slide.shapes.push(eq);
+    p.slides.push(Arc::new(slide));
+
+    let q = round(&p);
+    let slide_q = q.slides.last().expect("slide");
+    let eq_q = by_name(slide_q, "PhasorEq");
     let run_q = &eq_q.text.as_ref().expect("text").paragraphs[0].runs[0];
     if let RunKind::Math { math, display, .. } = &run_q.kind {
         assert!(display);

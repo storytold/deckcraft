@@ -491,8 +491,7 @@ fn type_text(s: &mut Session, v: &Value) -> Result<Value> {
     result(s)
 }
 
-fn insert_structure(s: &mut Session, v: &Value) -> Result<Value> {
-    let nodes = nodes_from(v).ok_or_else(|| bad("equation.insertStructure", "give an id, linear or latex"))?;
+pub(crate) fn insert_nodes_into_active(s: &mut Session, nodes: Vec<MNode>) -> Result<Value> {
     let Some(m) = s.doc()?.selection.math.clone() else {
         return insert_nodes_as_equation(s, nodes, &json!({}));
     };
@@ -511,6 +510,11 @@ fn insert_structure(s: &mut Session, v: &Value) -> Result<Value> {
         me_st.caret = pos;
     }
     result(s)
+}
+
+fn insert_structure(s: &mut Session, v: &Value) -> Result<Value> {
+    let nodes = nodes_from(v).ok_or_else(|| bad("equation.insertStructure", "give an id, linear or latex"))?;
+    insert_nodes_into_active(s, nodes)
 }
 
 fn insert_symbol(s: &mut Session, v: &Value) -> Result<Value> {
@@ -1117,5 +1121,48 @@ mod tests {
         let undo_count_after = s.active().unwrap().history.undo.len();
         assert!(undo_count_after > undo_count_before);
         assert_eq!(s.active().unwrap().history.undo.last().unwrap().label, "Build Up");
+    }
+
+    #[test]
+    fn test_equation_paste_internal_vs_external() {
+        let mut s = Session::with_new();
+        s.execute("insert.textBox", &json!({"rect": [100.0, 100.0, 300.0, 50.0], "text": ""})).unwrap();
+        s.execute("insert.equation", &json!({"linear": "1/2", "edit": true})).unwrap();
+
+        // Copy internal equation (stored in s.clipboard as structured TextBody with RunKind::Math)
+        let copied = s.execute("edit.copy", &json!({})).unwrap();
+        assert_eq!(copied["text"], "1/2");
+
+        // Create a new equation and paste internal clipboard
+        s.execute("equation.exit", &json!({"before": false})).unwrap();
+        s.execute("insert.equation", &json!({"edit": true})).unwrap();
+        s.execute("edit.paste", &json!({})).unwrap();
+
+        let val = s.execute("equation.get", &json!({})).unwrap();
+        assert_eq!(val["linear"], "1/2");
+
+        // Paste external text (differs from clipboard plain)
+        s.execute("edit.paste", &json!({"text": "+y"})).unwrap();
+        let val2 = s.execute("equation.get", &json!({})).unwrap();
+        assert!(val2["linear"].as_str().unwrap().contains("+y"));
+    }
+
+    #[test]
+    fn test_phasor_insert_structure_and_latex() {
+        let mut s = Session::with_new();
+        s.execute("insert.textBox", &json!({"rect": [100.0, 100.0, 300.0, 50.0], "text": ""})).unwrap();
+
+        // 1. Insert via gallery template id
+        s.execute("insert.equation", &json!({"edit": true})).unwrap();
+        s.execute("equation.insertStructure", &json!({"id": "acc.phasor"})).unwrap();
+        let val = s.execute("equation.get", &json!({})).unwrap();
+        assert!(val["linear"].as_str().unwrap().starts_with("∠"));
+
+        // 2. Insert via LaTeX \phase{30}
+        s.execute("equation.exit", &json!({"before": false})).unwrap();
+        s.execute("insert.equation", &json!({"edit": true})).unwrap();
+        s.execute("equation.insertStructure", &json!({"latex": r"\phase{30}"})).unwrap();
+        let val2 = s.execute("equation.get", &json!({})).unwrap();
+        assert_eq!(val2["linear"], "∠30");
     }
 }

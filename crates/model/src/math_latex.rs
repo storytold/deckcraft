@@ -458,6 +458,7 @@ impl Lp {
             }
             "overline" => one(MNode::Bar { top: true, e: self.arg() }),
             "underline" => one(MNode::Bar { top: false, e: self.arg() }),
+            "phase" | "phasor" => one(MNode::Phasor { e: self.arg() }),
             "boxed" | "fbox" => one(MNode::BorderBox { hide: [false; 4], strike: [false; 4], e: self.arg() }),
             "phantom" => one(MNode::Phant { show: false, zero_wid: false, zero_asc: false, zero_desc: false, e: self.arg() }),
             "overbrace" | "underbrace" | "overparen" | "underparen" | "overbracket" | "underbracket" => {
@@ -881,6 +882,10 @@ fn node(node: &MNode, output: &mut String, depth: usize) {
             output.push_str(if *top { "\\overline" } else { "\\underline" });
             braced(e, output, depth);
         }
+        MNode::Phasor { e } => {
+            output.push_str("\\phase");
+            braced(e, output, depth);
+        }
         MNode::BorderBox { e, .. } => {
             output.push_str("\\boxed");
             braced(e, output, depth);
@@ -1238,5 +1243,19 @@ mod tests {
         };
         let tex = to_latex(&[delim]);
         assert!(tex.contains(r"\middle\|"), "Expected \\middle\\|, got: {tex}");
+    }
+
+    #[test]
+    fn phasor_steinmetz_notation() {
+        let n = parse_latex(r"V\phase{\theta}");
+        assert_eq!(n.len(), 2);
+        assert!(matches!(&n[1], MNode::Phasor { e } if crate::math::to_linear(e) == "θ"));
+        let tex = to_latex(&n);
+        assert_eq!(tex, r"V\phase{\theta }");
+        assert_eq!(parse_latex(&tex), n);
+
+        let n2 = parse_latex(r"\phasor{30^\circ}");
+        assert!(matches!(&n2[0], MNode::Phasor { .. }));
+        assert_eq!(parse_latex(&to_latex(&n2)), n2);
     }
 }

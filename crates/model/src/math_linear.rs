@@ -82,7 +82,7 @@ fn is_closer(c: char) -> bool {
 
 /// Prefix characters that make a structure from the operand after them.
 fn is_prefix(c: char) -> bool {
-    matches!(c, '√' | '∛' | '∜' | '█' | '■' | '▭' | '□' | '¯' | '▁' | '⟡' | '⏞' | '⏟' | '⏜' | '⏝' | '⎴' | '⎵') || is_nary_char(c)
+    matches!(c, '√' | '∛' | '∜' | '█' | '■' | '▭' | '□' | '¯' | '▁' | '⟡' | '⏞' | '⏟' | '⏜' | '⏝' | '⎴' | '⎵' | '∠') || is_nary_char(c)
 }
 
 /// Combining marks used as accents.
@@ -383,6 +383,7 @@ impl P {
             '¯' => MNode::Bar { top: true, e: self.operand(stops) },
             '▁' => MNode::Bar { top: false, e: self.operand(stops) },
             '⟡' => MNode::Phant { show: false, zero_wid: false, zero_asc: false, zero_desc: false, e: self.operand(stops) },
+            '∠' => MNode::Phasor { e: self.operand(stops) },
             // A label (`┴`/`┬`) after the operand belongs to the whole brace.
             '⏞' | '⏜' | '⎴' | '⏟' | '⏝' | '⎵' => {
                 self.no_limits += 1;
@@ -814,6 +815,7 @@ pub fn map_args(n: MNode, f: &dyn Fn(Arg) -> Arg) -> MNode {
         MNode::BorderBox { hide, strike, e } => MNode::BorderBox { hide, strike, e: f(e) },
         MNode::Boxed { e } => MNode::Boxed { e: f(e) },
         MNode::GroupChr { chr, top, e } => MNode::GroupChr { chr, top, e: f(e) },
+        MNode::Phasor { e } => MNode::Phasor { e: f(e) },
         MNode::EqArr { rows } => MNode::EqArr { rows: rows.into_iter().map(f).collect() },
         MNode::Matrix { rows, col_jc } => MNode::Matrix { rows: rows.into_iter().map(|r| r.into_iter().map(f).collect()).collect(), col_jc },
         MNode::Phant { show, zero_wid, zero_asc, zero_desc, e } => MNode::Phant { show, zero_wid, zero_asc, zero_desc, e: f(e) },

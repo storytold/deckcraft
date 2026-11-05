@@ -368,6 +368,7 @@ pub const STRUCTURES: &[Gallery] = &[
             ),
             ("Boxed Formulas", &[t("acc.boxed", "Boxed Formula", "▭(⬚)"), t("acc.boxedPythagoras", "Boxed Formula (example)", "▭(a^2=b^2+c^2)")]),
             ("Overbars and Underbars", &[t("acc.overbar", "Overbar", "¯(⬚)"), t("acc.underbar", "Underbar", "▁(⬚)")]),
+            ("Phasor", &[t("acc.phasor", "Phasor (Steinmetz)", "∠(⬚)"), t("acc.phasorExample", "Phasor Example", "V∠(θ)")]),
             (
                 "Common Accent Objects",
                 &[

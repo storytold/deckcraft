@@ -378,6 +378,10 @@ pub enum MNode {
         zero_desc: bool,
         e: Arg,
     },
+    /// Phasor / Steinmetz angle notation (`\phase{e}` / `∠(e)`).
+    Phasor {
+        e: Arg,
+    },
 }
 
 fn yes() -> bool {
@@ -702,6 +706,10 @@ fn lin_node(n: &MNode, s: &mut String, depth: usize) {
             s.push(*chr);
             lin_operand(e, s, depth);
         }
+        MNode::Phasor { e } => {
+            s.push('∠');
+            lin_operand(e, s, depth);
+        }
         // A numbered equation (`E=mc^2#(1)`) is written as its one row.
         MNode::EqArr { rows } if rows.len() == 1 && rows.first().is_some_and(|r| has_number_mark(r)) => {
             if let Some(r) = rows.first() {
@@ -857,6 +865,7 @@ fn each_arg<'a>(n: &'a MNode, f: &mut impl FnMut(&'a [MNode])) {
         | MNode::BorderBox { e, .. }
         | MNode::Boxed { e }
         | MNode::GroupChr { e, .. }
+        | MNode::Phasor { e }
         | MNode::Phant { e, .. } => f(e),
         MNode::EqArr { rows } => rows.iter().for_each(|a| f(a)),
         MNode::Matrix { rows, .. } => rows.iter().flatten().for_each(|a| f(a)),
@@ -942,6 +951,8 @@ mod tests {
             "lim┬(n→∞)⁡a_n",
             "A⃗+x̂",
             "▭(a)+¯(b)+▁(c)",
+            "∠(θ)",
+            "V∠(30°)",
             "(a│b)",
             "E=mc^2#(1)",
         ] {

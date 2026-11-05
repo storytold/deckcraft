@@ -56,7 +56,13 @@ pub fn child_count(n: &MNode) -> usize {
         MNode::Delim { elems, .. } => elems.len(),
         MNode::EqArr { rows } => rows.len(),
         MNode::Matrix { rows, .. } => rows.iter().map(|r| r.len()).sum(),
-        MNode::Acc { .. } | MNode::Bar { .. } | MNode::BorderBox { .. } | MNode::Boxed { .. } | MNode::GroupChr { .. } | MNode::Phant { .. } => 1,
+        MNode::Acc { .. }
+        | MNode::Bar { .. }
+        | MNode::BorderBox { .. }
+        | MNode::Boxed { .. }
+        | MNode::GroupChr { .. }
+        | MNode::Phasor { .. }
+        | MNode::Phant { .. } => 1,
     }
 }
 
@@ -86,6 +92,7 @@ pub fn child(n: &MNode, i: usize) -> Option<&Arg> {
             | MNode::BorderBox { e, .. }
             | MNode::Boxed { e }
             | MNode::GroupChr { e, .. }
+            | MNode::Phasor { e }
             | MNode::Phant { e, .. },
             0,
         ) => Some(e),
@@ -118,6 +125,7 @@ pub fn child_mut(n: &mut MNode, i: usize) -> Option<&mut Arg> {
             | MNode::BorderBox { e, .. }
             | MNode::Boxed { e }
             | MNode::GroupChr { e, .. }
+            | MNode::Phasor { e }
             | MNode::Phant { e, .. },
             0,
         ) => Some(e),
@@ -812,6 +820,7 @@ fn builds(s: &str) -> bool {
                 | '⟡'
                 | '⏞'
                 | '⏟'
+                | '∠'
                 | '('
                 | '['
                 | '{'

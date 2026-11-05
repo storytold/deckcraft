@@ -260,6 +260,17 @@ fn node(w: &mut W, n: &MNode, depth: usize) {
             arg(w, "m:e", e, depth);
             w.close("m:box");
         }
+        MNode::Phasor { e } => {
+            w.open0("m:borderBox");
+            w.open0("m:borderBoxPr");
+            val(w, "m:hideTop", "1");
+            val(w, "m:hideLeft", "1");
+            val(w, "m:hideRight", "1");
+            val(w, "m:strikeBLTR", "1");
+            w.close("m:borderBoxPr");
+            arg(w, "m:e", e, depth);
+            w.close("m:borderBox");
+        }
         MNode::GroupChr { chr, top, e } => {
             w.open0("m:groupChr");
             w.open0("m:groupChrPr");

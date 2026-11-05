@@ -467,6 +467,32 @@ impl Ctx {
                 out
             }
             MNode::Boxed { e } => self.sub(0, e, st, d),
+            MNode::Phasor { e } => {
+                let b = self.sub(0, e, st, d);
+                let em = self.em(st);
+                let t = self.k(C::FractionRuleThickness, st).max(0.4);
+                let gap = self.k(C::UnderbarVerticalGap, st).max(em * 0.08);
+                let pad_top = em * 0.08;
+                let pad_x = em * 0.12;
+                let pad_right = em * 0.08;
+
+                let (a, dd) = (b.a, b.d);
+                let y_bot = -dd - gap - t;
+                let y_top = a + pad_top;
+                let h = (y_top - y_bot).max(em * 0.6);
+                let leg_w = (h * 0.42).max(em * 0.25);
+
+                let total_w = leg_w + pad_x + b.w + pad_right;
+                let mut out = Bx { w: total_w, ..Default::default() };
+                out.put(b, leg_w + pad_x, 0.0);
+
+                let color = self.color;
+                out.rect(0.0, y_bot, total_w, t, color);
+                out.items.push(MItem::Line { x0: 0.0, y0: y_bot + t * 0.5, x1: leg_w, y1: y_top, width: t, color, dotted: false });
+                out.a = out.a.max(y_top);
+                out.d = out.d.max(-y_bot);
+                out
+            }
             MNode::GroupChr { chr, top, e } => {
                 let b = self.sub(0, e, st, d);
                 let size = self.size(st);

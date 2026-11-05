@@ -158,11 +158,19 @@ fn node(k: &El, depth: usize, out: &mut Arg) {
         "bar" => out.push(MNode::Bar { top: val(k.child("barPr"), "pos") == Some("top"), e: sub_arg(k, "e", d) }),
         "borderBox" => {
             let pr = k.child("borderBoxPr");
-            out.push(MNode::BorderBox {
-                hide: [prop(pr, "hideTop", false), prop(pr, "hideBot", false), prop(pr, "hideLeft", false), prop(pr, "hideRight", false)],
-                strike: [prop(pr, "strikeH", false), prop(pr, "strikeV", false), prop(pr, "strikeBLTR", false), prop(pr, "strikeTLBR", false)],
-                e: sub_arg(k, "e", d),
-            });
+            let ht = prop(pr, "hideTop", false);
+            let hb = prop(pr, "hideBot", false);
+            let hl = prop(pr, "hideLeft", false);
+            let hr = prop(pr, "hideRight", false);
+            let sh = prop(pr, "strikeH", false);
+            let sv = prop(pr, "strikeV", false);
+            let bltr = prop(pr, "strikeBLTR", false);
+            let tlbr = prop(pr, "strikeTLBR", false);
+            if ht && hl && hr && !hb && bltr && !sh && !sv && !tlbr {
+                out.push(MNode::Phasor { e: sub_arg(k, "e", d) });
+            } else {
+                out.push(MNode::BorderBox { hide: [ht, hb, hl, hr], strike: [sh, sv, bltr, tlbr], e: sub_arg(k, "e", d) });
+            }
         }
         "box" => out.push(MNode::Boxed { e: sub_arg(k, "e", d) }),
         "groupChr" => {
@@ -278,5 +286,11 @@ fn wrpr(pr: &El, out: &mut MRun) {
     }
     if let Some(c) = pr.child("color").and_then(|c| c.attr("val")).or_else(|| pr.find("srgbClr").and_then(|c| c.attr("val"))).and_then(Rgb::parse) {
         out.color = Some(c);
+    }
+    if let Some(f) = pr.child("latin").and_then(|l| l.attr("typeface")).or_else(|| pr.child("rFonts").and_then(|r| r.attr("ascii"))) {
+        let f = f.trim();
+        if !f.is_empty() {
+            out.font = Some(f.to_string());
+        }
     }
 }

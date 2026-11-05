@@ -248,6 +248,8 @@ pub const SYMBOLS: &[(&str, char)] = &[
     ("daleth", 'ℸ'),
     ("degree", '°'),
     ("angle", '∠'),
+    ("phase", '∠'),
+    ("phasor", '∠'),
     ("measuredangle", '∡'),
     ("sphericalangle", '∢'),
     ("rightangle", '∟'),

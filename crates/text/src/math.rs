@@ -290,4 +290,25 @@ mod tests {
             assert!(y0 < -10.0, "subscript 0 should be near bottom of integral, got {y0}");
         }
     }
+
+    #[test]
+    fn test_phasor_layout() {
+        let base_size = 20.0;
+        let ml = layout_equation(
+            &deckcraft_model::math::Math::default(),
+            "V∠(θ)",
+            base_size,
+            Rgb(0, 0, 0),
+            "Calibri",
+            true,
+            500.0,
+            &MathProps::default(),
+            &mut 0,
+        );
+        assert!(ml.width > 20.0);
+        let has_slant_line = ml.items.iter().any(|it| matches!(it, MItem::Line { width, dotted: false, .. } if *width > 0.0));
+        let has_bottom_rect = ml.items.iter().any(|it| matches!(it, MItem::Rect { w, h, .. } if *w > 10.0 && *h > 0.0));
+        assert!(has_slant_line, "Slanted phasor leg should be drawn as an MItem::Line");
+        assert!(has_bottom_rect, "Horizontal rule should be drawn as an MItem::Rect under the phasor argument");
+    }
 }
