@@ -396,7 +396,9 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
             v
         }
         Some(Value::String(t)) if !t.trim().is_empty() => super::file::parse_slide_range(t, n)?,
-        _ => (0..n).collect(),
+        // Omitted, null or a blank string keep the default of every slide.
+        None | Some(Value::Null) | Some(Value::String(_)) => (0..n).collect(),
+        Some(_) => return Err(bad("slide.reuse", "slides must be an array of 0-based indices or a range string such as \"1-3,5\"")),
     };
     if picked.is_empty() {
         return Err(bad("slide.reuse", format!("{name} has no slides to reuse")));
@@ -594,6 +596,23 @@ mod tests {
             assert!(reopened.table_styles.iter().any(|style| style.id == CUSTOM_STYLE));
             assert_eq!(first_table_style(&reopened.slides.get(1).expect("reused slide").shapes).as_deref(), Some(CUSTOM_STYLE));
         }
+    }
+
+    #[test]
+    fn a_slides_value_of_the_wrong_type_is_refused() {
+        let source = styled_table_presentation(CUSTOM_STYLE, "FF0000");
+        let data = super::super::base64_encode(&deckcraft_format::save(&source).expect("save source"));
+        let mut s = Session::with_new();
+        for bad_value in [json!(1), json!(true), json!({"a": 1})] {
+            let err = s
+                .execute("slide.reuse", &json!({"data": data, "name": "source.deckcraft", "slides": bad_value}))
+                .expect_err("wrong type")
+                .to_string();
+            assert!(err.contains("slides must be an array of 0-based indices or a range string"), "{err}");
+        }
+        assert_eq!(s.doc().expect("doc").doc.slides.len(), 1, "a refused reuse inserts nothing");
+        s.execute("slide.reuse", &json!({"data": data, "name": "source.deckcraft", "slides": null})).expect("null means every slide");
+        assert_eq!(s.doc().expect("doc").doc.slides.len(), 1 + source.slides.len());
     }
 
     #[test]
