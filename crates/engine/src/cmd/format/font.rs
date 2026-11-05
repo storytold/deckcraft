@@ -116,19 +116,27 @@ fn step(cur: f64, up: bool) -> f64 {
     }
 }
 
-/// The size a SmartArt graphic's text shows: the one set for every node, else its first node's.
+/// The size a SmartArt graphic's text shows: the one set for every node, else its first node's
+/// times the shrink scale saved on its shapes (PowerPoint steps from the size you see).
 fn graphic_size(s: &Session, gid: ShapeId) -> f64 {
     let Some(g) = s.doc().ok().and_then(|st| st.shape(gid)) else { return 18.0 };
     if let Some(z) = g.diagram.as_ref().and_then(|d| d.font_size) {
         return z;
     }
-    let mut size = None;
+    let mut shown = None;
     deckcraft_model::walk(std::slice::from_ref(g), &mut |x, _| {
-        if size.is_none() {
-            size = x.text.as_ref().and_then(|t| t.paragraphs.iter().flat_map(|p| &p.runs).find_map(|r| r.props.size));
+        if shown.is_none()
+            && let Some(t) = x.text.as_ref()
+            && let Some(size) = t.paragraphs.iter().flat_map(|p| &p.runs).find_map(|r| r.props.size)
+        {
+            let scale = match t.body.autofit {
+                Some(deckcraft_model::text::AutoFit::Shrink { font_scale: Some(f), .. }) if f.is_finite() && f > 0.0 => f.min(1.0),
+                _ => 1.0,
+            };
+            shown = Some(size * scale);
         }
     });
-    size.unwrap_or(18.0)
+    shown.unwrap_or(18.0)
 }
 
 fn grow_shrink(s: &mut Session, up: bool) -> Result<Value> {

@@ -6662,6 +6662,40 @@ fn grow_and_shrink_on_a_smartart_graphic_step_every_node() {
     assert!(grown > first, "{first} grew to {grown}");
 }
 
+/// An automatically sized graphic whose text overflows is shown shrunk (the scale saved on its
+/// shapes), and Decrease and Increase Font Size step from that shown size, not the larger run size:
+/// shrinking never enlarges the text.
+#[test]
+fn grow_and_shrink_on_a_shrunk_smartart_graphic_step_from_the_shown_size() {
+    let mut s = session();
+    let items: Vec<String> = (0..6).map(|i| format!("Item number {i} with a rather long line of text to wrap")).collect();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "verticalList", "items": items})).unwrap()["id"].as_u64().unwrap();
+    let run = smartart_runs(&s, gid)[0].0.unwrap();
+    let scale = {
+        let st = s.doc().unwrap();
+        let mut f = None;
+        if let Some(deckcraft_model::ShapeKind::Group { children, .. }) = st.shape(ShapeId(gid as u32)).map(|x| &x.kind) {
+            for c in children {
+                if let Some(deckcraft_model::text::AutoFit::Shrink { font_scale: Some(v), .. }) = c.text.as_ref().and_then(|t| t.body.autofit) {
+                    f = Some(v);
+                }
+            }
+        }
+        f.unwrap_or(1.0)
+    };
+    assert!(scale < 1.0, "the graphic overflows and shrinks: {scale}");
+    let shown = run * scale;
+    let size_of = |s: &Session| s.doc().unwrap().shape(ShapeId(gid as u32)).unwrap().diagram.as_ref().unwrap().font_size.unwrap();
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.shrink", &json!({})).unwrap();
+    let down = size_of(&s);
+    assert!(down < shown, "shrink from the shown {shown} (run {run}) gives {down}");
+    s.execute("smartArt.fontSize", &json!({"id": gid, "size": null})).unwrap();
+    s.execute("format.grow", &json!({})).unwrap();
+    let up = size_of(&s);
+    assert!(up > shown && up <= run.max(shown) + 8.0, "grow from the shown {shown} gives {up}");
+}
+
 /// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
 /// end is set to the grouped shape and follows it when the group moves. The glue was dropped at
 /// once (the end stayed `None`) because rerouting only looked at the slide's top-level shapes,
