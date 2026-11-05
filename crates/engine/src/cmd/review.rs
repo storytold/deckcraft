@@ -219,7 +219,7 @@ fn neighbour(s: &mut Session, p: &Value, forward: bool) -> Result<Value> {
     let cmd = if forward { "comment.next" } else { "comment.prev" };
     let (threads, slide, index) = {
         let st = s.doc()?;
-        (comment_threads(&st.doc), usize_param(p, "slide").unwrap_or(st.selection.slide), usize_param(p, "index"))
+        (comment_threads(&st.doc), usize_param(p, "slide").unwrap_or(st.selection.slide), super::opt_usize_param(p, "index", cmd)?)
     };
     if threads.is_empty() {
         return Err(bad(cmd, "no comments"));
@@ -367,7 +367,7 @@ fn spelling(s: &mut Session, p: &Value) -> Result<Value> {
             }
             out.push(v);
         }
-        let rep: Vec<usize> = crate::spell::repeated(para, &default).iter().map(|w| w.start).collect();
+        let rep: std::collections::HashSet<usize> = crate::spell::repeated(para, &default).iter().map(|w| w.start).collect();
         for w in crate::spell::paragraph_words(para, &default) {
             if ignore.contains(&w.text.to_lowercase()) || rep.contains(&w.start) {
                 continue;
@@ -421,22 +421,29 @@ fn add_to_dictionary(_s: &mut Session, p: &Value) -> Result<Value> {
 /// Replace whole-word `from` with `to` in `text`; how many were replaced.
 fn replace_word(text: &mut String, from: &str, to: &str, all: bool) -> usize {
     let is_word = |c: char| c.is_alphanumeric() || c == '\'' || c == '’';
-    let mut n = 0;
-    let mut at = 0;
+    // The result is built in one pass; the text is not edited in place for every match.
+    let mut out = String::new();
+    let (mut n, mut at, mut copied) = (0, 0, 0);
     while let Some(i) = text.get(at..).and_then(|t| t.find(from)).map(|i| i + at) {
         let end = i + from.len();
-        let before = text.get(..i).and_then(|t| t.chars().next_back()).is_some_and(is_word);
+        // The character before the match as the edited text would have it.
+        let before = text.get(copied..i).and_then(|t| t.chars().next_back()).or_else(|| out.chars().next_back()).is_some_and(is_word);
         let after = text.get(end..).and_then(|t| t.chars().next()).is_some_and(is_word);
         if before || after {
             at = end;
             continue;
         }
-        text.replace_range(i..end, to);
+        out.push_str(text.get(copied..i).unwrap_or_default());
+        out.push_str(to);
         n += 1;
-        at = i + to.len();
+        (at, copied) = (end, end);
         if !all {
             break;
         }
+    }
+    if n > 0 {
+        out.push_str(text.get(copied..).unwrap_or_default());
+        *text = out;
     }
     n
 }
@@ -764,6 +771,49 @@ fn end_compare(s: &mut Session, _: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    /// The replacement as it ran before: edited in place for every match.
+    fn replace_word_in_place(text: &mut String, from: &str, to: &str, all: bool) -> usize {
+        let is_word = |c: char| c.is_alphanumeric() || c == '\'' || c == '’';
+        let mut n = 0;
+        let mut at = 0;
+        while let Some(i) = text.get(at..).and_then(|t| t.find(from)).map(|i| i + at) {
+            let end = i + from.len();
+            let before = text.get(..i).and_then(|t| t.chars().next_back()).is_some_and(is_word);
+            let after = text.get(end..).and_then(|t| t.chars().next()).is_some_and(is_word);
+            if before || after {
+                at = end;
+                continue;
+            }
+            text.replace_range(i..end, to);
+            n += 1;
+            at = i + to.len();
+            if !all {
+                break;
+            }
+        }
+        n
+    }
+
+    #[test]
+    fn replace_word_matches_the_in_place_version() {
+        let cases = [
+            ("a a b a", "a", "x", true),
+            ("aa a. a", "a", "bb", true),
+            ("a-a -a-", "-", "ab", true),
+            ("foo. foo.", "foo.", "", true),
+            ("it's it", "it", "so", true),
+            ("x.x. x.", "x.", "y", true),
+            ("a a a", "a", "b", false),
+            ("none", "z", "q", true),
+            ("é é", "é", "e", true),
+        ];
+        for (text, from, to, all) in cases {
+            let (mut a, mut b) = (text.to_string(), text.to_string());
+            let (na, nb) = (replace_word(&mut a, from, to, all), replace_word_in_place(&mut b, from, to, all));
+            assert_eq!((na, a), (nb, b), "{text:?} {from:?} -> {to:?}");
+        }
+    }
+
     use super::*;
     use serde_json::json;
 
@@ -810,6 +860,40 @@ mod tests {
         s.execute("slide.go", &json!({"index": 0})).unwrap();
         let here = s.execute("comment.next", &json!({})).unwrap();
         assert_eq!(here["text"], "on first");
+    }
+
+    #[test]
+    fn malformed_comment_navigation_index_does_not_change_selection() {
+        let mut s = Session::with_new();
+        s.execute("comment.add", &json!({"text": "first"})).unwrap();
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 40.0, 40.0]})).unwrap();
+        s.execute("slide.new", &json!({})).unwrap();
+        s.execute("comment.add", &json!({"text": "second"})).unwrap();
+        s.execute("slide.go", &json!({"index": 0})).unwrap();
+        let shape = s.doc().unwrap().doc.slides.first().and_then(|slide| slide.shapes.first()).map(|shape| shape.id).unwrap();
+        s.doc_mut().unwrap().selection.shapes = vec![shape];
+
+        for (command, value) in [
+            ("comment.next", json!(-1)),
+            ("comment.next", json!(1.5)),
+            ("comment.next", json!("bad")),
+            ("comment.prev", json!(-1)),
+            ("comment.prev", json!(1.5)),
+            ("comment.prev", json!("bad")),
+        ] {
+            let before = s.doc().unwrap().selection.clone();
+            let error = s.execute(command, &json!({"index": value})).unwrap_err();
+            assert!(error.to_string().contains("valid index"), "{command} {value}: {error}");
+            assert_eq!(s.doc().unwrap().selection, before, "{command} {value}");
+        }
+
+        let zero = s.execute("comment.next", &json!({"slide": 0, "index": 0})).unwrap();
+        assert_eq!(zero["slide"], 1);
+        assert_eq!(zero["index"], 0);
+        s.execute("slide.go", &json!({"index": 0})).unwrap();
+        let omitted = s.execute("comment.next", &json!({})).unwrap();
+        assert_eq!(omitted["slide"], 0);
+        assert_eq!(omitted["index"], 0);
     }
 
     #[test]
