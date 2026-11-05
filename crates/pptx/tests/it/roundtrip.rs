@@ -185,17 +185,26 @@ pub fn rich_deck() -> Presentation {
     let (c1, c2) = (child1.id, child2.id);
     let mut g = shape(&mut p, "Group", 600.0, 120.0, 220.0, 100.0);
     g.kind = ShapeKind::Group { children: vec![child1, child2], child: Xfrm::new(0.0, 0.0, 110.0, 50.0) };
-    // A grouped symbol: a member with pins of its own; a connector glued to the group's second
-    // site (the member's own site 1).
+    // A grouped symbol: a member with pins of its own, a group within holding another, and a
+    // connector inside the symbol between the two; a connector on the slide glued to the
+    // member's own site 1.
     let mut pin = shape(&mut p, "Lead", 0.0, 20.0, 60.0, 10.0);
     pin.geom = Geom::Custom { paths: vec![CustomPath { w: 60.0, h: 10.0, d: "M 0 5 L 60 5".into(), ..Default::default() }] };
     pin.sites = vec![ConnectionSite::new(0.0, 0.5), ConnectionSite::new(1.0, 0.5)];
     let pin_id = pin.id;
+    let mut pin2 = shape(&mut p, "Inner Lead", 0.0, 0.0, 20.0, 10.0);
+    pin2.geom = pin.geom.clone();
+    pin2.sites = vec![ConnectionSite::new(0.0, 0.5), ConnectionSite::new(1.0, 0.5)];
+    let pin2_id = pin2.id;
+    let mut inner = shape(&mut p, "Inner", 20.0, 35.0, 20.0, 10.0);
+    inner.kind = ShapeKind::Group { children: vec![pin2], child: Xfrm::new(0.0, 0.0, 20.0, 10.0) };
+    let mut inner_wire = shape(&mut p, "Inner Wire", 0.0, 25.0, 20.0, 15.0);
+    inner_wire.kind = ShapeKind::Connector { start: Some((pin_id, 0)), end: Some((pin2_id, 1)) };
+    inner_wire.geom = Geom::preset("straightConnector1");
     let mut symbol = shape(&mut p, "Symbol", 100.0, 300.0, 120.0, 100.0);
-    symbol.kind = ShapeKind::Group { children: vec![pin], child: Xfrm::new(0.0, 0.0, 60.0, 50.0) };
-    let symbol_id = symbol.id;
+    symbol.kind = ShapeKind::Group { children: vec![pin, inner, inner_wire], child: Xfrm::new(0.0, 0.0, 60.0, 50.0) };
     let mut wire = shape(&mut p, "Wire", 220.0, 325.0, 100.0, 0.0);
-    wire.kind = ShapeKind::Connector { start: Some((symbol_id, 1)), end: None };
+    wire.kind = ShapeKind::Connector { start: Some((pin_id, 1)), end: Some((pin2_id, 0)) };
     wire.geom = Geom::preset("straightConnector1");
     let mut cx = shape(&mut p, "Connector", 600.0, 300.0, 200.0, 0.0);
     cx.kind = ShapeKind::Connector { start: Some((c1, 2)), end: Some((c2, 0)) };
@@ -211,7 +220,6 @@ pub fn rich_deck() -> Presentation {
     let mut bgs = shape(&mut p, "Uses background", 450.0, 400.0, 60.0, 60.0);
     bgs.fill = Some(Fill::Background);
     s.shapes.extend([a, b, c, g, cx, tb, bgs, symbol, wire]);
-    let _ = pin_id;
     s.background = Some(Background::Fill { fill: Fill::solid(ColorRef::rgb(Rgba::rgb(250, 248, 240))) });
     s.transition = Some(Transition { kind: "morph".into(), option: "words".into(), duration_ms: 2000, ..Default::default() });
     let ids: Vec<ShapeId> = s.shapes.iter().map(|x| x.id).collect();
@@ -536,22 +544,20 @@ fn shapes_fills_lines_effects_round_trip() {
     let (c1, c2) = (by_name(&q.slides[1], "Child 1").id, by_name(&q.slides[1], "Child 2").id);
     assert!(matches!(c.kind, ShapeKind::Connector { start: Some((s, 2)), end: Some((e, 0)) } if s == c1 && e == c2), "{:?}", c.kind);
     assert_eq!(c.line, by_name(&p.slides[1], "Connector").line);
-    // A connector glued to a group's site is written to the member and its own site (what
-    // Open XML can name), and comes back glued to the group by that site's position.
-    let (symbol, pin) = (by_name(&p.slides[1], "Symbol"), by_name(&p.slides[1], "Lead"));
+    // A connector glued to a group member names the member and its own site, in the file and
+    // back: on the slide, and inside the group to a member of a group within.
     let xml = deckcraft_pptx::export(&p).expect("export");
     let slide2 = zip_part(&xml, "ppt/slides/slide2.xml");
-    let member_id = find_cnvpr_id(&slide2, "Lead");
-    assert!(slide2.contains(&format!(r#"<a:stCxn id="{member_id}" idx="1"/>"#)), "stCxn names the member: {}", pin.id.0);
-    assert!(!slide2.contains(&format!(r#"<a:stCxn id="{}""#, find_cnvpr_id(&slide2, "Symbol"))), "not the group");
-    let wire = by_name(&q.slides[1], "Wire");
-    let back_symbol = by_name(&q.slides[1], "Symbol");
-    assert!(
-        matches!(wire.kind, ShapeKind::Connector { start: Some((s, 1)), end: None } if s == back_symbol.id),
-        "{:?} (symbol {:?})",
-        wire.kind,
-        symbol.id
-    );
+    let (lead, inner_lead) = (find_cnvpr_id(&slide2, "Lead"), find_cnvpr_id(&slide2, "Inner Lead"));
+    assert!(slide2.contains(&format!(r#"<a:stCxn id="{lead}" idx="1"/><a:endCxn id="{inner_lead}" idx="0"/>"#)), "{slide2}");
+    assert!(slide2.contains(&format!(r#"<a:stCxn id="{lead}" idx="0"/><a:endCxn id="{inner_lead}" idx="1"/>"#)), "{slide2}");
+    let ends = |name: &str| match by_name(&q.slides[1], name).kind {
+        ShapeKind::Connector { start, end } => (start, end),
+        ref k => panic!("{name}: {k:?}"),
+    };
+    let (lead, inner_lead) = (by_name(&q.slides[1], "Lead").id, by_name(&q.slides[1], "Inner Lead").id);
+    assert_eq!(ends("Wire"), (Some((lead, 1)), Some((inner_lead, 0))));
+    assert_eq!(ends("Inner Wire"), (Some((lead, 0)), Some((inner_lead, 1))));
     // Ids are kept.
     assert_eq!(by_name(&q.slides[1], "Group").id, by_name(&p.slides[1], "Group").id);
 }

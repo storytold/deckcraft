@@ -236,7 +236,13 @@ impl Session {
                 }
             }
             // A connector dragged away from shapes that stay put comes unglued at those ends.
-            let moved: Vec<ShapeId> = origs2.iter().map(|o| o.0).collect();
+            // Members of a moved group move too, so an end glued to one stays.
+            let mut moved: Vec<ShapeId> = origs2.iter().map(|o| o.0).collect();
+            let mut members = vec![];
+            for sh in list.iter().filter(|s| moved.contains(&s.id)) {
+                deckcraft_model::walk(sh.children(), &mut |c, _| members.push(c.id));
+            }
+            moved.extend(members);
             for sh in list.iter_mut().filter(|s| moved.contains(&s.id)) {
                 if let ShapeKind::Connector { start, end } = &mut sh.kind {
                     for c in [start, end] {

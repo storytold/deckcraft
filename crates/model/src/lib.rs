@@ -312,6 +312,8 @@ pub enum ShapeKind {
         /// Child coordinate space.
         child: Xfrm,
     },
+    /// Each end glued to a shape and that shape's own connection site index (`stCxn`/`endCxn`);
+    /// the shape may be a group member, a group itself has no sites.
     Connector {
         start: Option<(ShapeId, u32)>,
         end: Option<(ShapeId, u32)>,
@@ -525,47 +527,74 @@ pub fn walk<'a>(shapes: &'a [Shape], f: &mut dyn FnMut(&'a Shape, usize)) {
     rec(shapes, 0, f);
 }
 
-/// The connection sites a group offers, in a fixed order: its members' own sites
-/// (`Shape::sites`, groups within walked too), lines and ink left out. `f` gets the member, the
-/// index of the site in the member's own list, the site mapped through `a` (the group's child
-/// space to wherever the caller works), and whether it is visible (neither the member nor a
-/// group above it hidden). A hidden member keeps its place in the walk, so a connector glued to
-/// a later member's site keeps meaning that site; the caller leaves hidden sites out of what it
-/// offers for snapping. A connector glued to a group refers to a position in this walk; a file
-/// names the member and its own index ([`group_site_targets`]).
-pub fn group_member_sites(children: &[Shape], a: deckcraft_geom::Affine, f: &mut dyn FnMut(&Shape, u32, deckcraft_geom::Point, bool)) {
-    fn rec(children: &[Shape], a: deckcraft_geom::Affine, visible: bool, f: &mut dyn FnMut(&Shape, u32, deckcraft_geom::Point, bool), depth: usize) {
+/// What a connector glued to a group meant before connectors named the member: `.deckcraft`
+/// files saved by the first version of group glue store the position of the site in this walk
+/// over the members' own `Shape::sites` (groups within walked, lines, ink and members without a
+/// transform left out, hidden members kept in place), each the member and its own site index.
+fn legacy_group_sites(children: &[Shape]) -> Vec<(ShapeId, u32)> {
+    fn rec(children: &[Shape], out: &mut Vec<(ShapeId, u32)>, depth: usize) {
         if depth > 64 {
             return;
         }
-        for c in children {
-            let Some(cx) = c.xfrm else { continue };
-            let visible = visible && !c.hidden;
+        for c in children.iter().filter(|c| c.xfrm.is_some()) {
             match &c.kind {
-                ShapeKind::Group { children, child } => {
-                    rec(children, a * deckcraft_geom::group_child_affine(&cx, child.rect()), visible, f, depth + 1)
-                }
+                ShapeKind::Group { children, .. } => rec(children, out, depth + 1),
                 ShapeKind::Ink { .. } => {}
                 _ if c.is_line() => {}
-                _ => {
-                    let m = a * cx.affine();
-                    for (i, q) in c.sites.iter().enumerate() {
-                        f(c, i as u32, m * deckcraft_geom::Point::new(q.x * cx.w, q.y * cx.h), visible);
-                    }
-                }
+                _ => out.extend((0..c.sites.len()).map(|i| (c.id, i as u32))),
             }
         }
     }
-    rec(children, a, true, f, 0);
+    let mut v = vec![];
+    rec(children, &mut v, 0);
+    v
 }
 
-/// `(member id, the member's own site index)` for every site a group offers, in the order of
-/// [`group_member_sites`]: position `k` is what a connector glued to the group with site `k`
-/// means, and what a file writes as the connector's end.
-pub fn group_site_targets(children: &[Shape]) -> Vec<(ShapeId, u32)> {
-    let mut v = vec![];
-    group_member_sites(children, deckcraft_geom::Affine::IDENTITY, &mut |s, i, _, _| v.push((s.id, i)));
-    v
+/// Glue every connector end in `shapes` (groups within included) that names a group of `shapes`
+/// to the member and site its index meant (`legacy_group_sites`; an index past the walk means its
+/// first site, as rerouting then took it): a connector names the shape it is glued to and that
+/// shape's own site, a group member included, as Open XML's `stCxn`/`endCxn` do. An end whose
+/// group has no such site is left as it is.
+pub fn retarget_group_glue(shapes: &mut [Shape]) {
+    fn ends(shapes: &mut [Shape], f: &mut dyn FnMut(&mut Option<(ShapeId, u32)>), depth: usize) {
+        if depth > 64 {
+            return;
+        }
+        for s in shapes {
+            match &mut s.kind {
+                ShapeKind::Connector { start, end } => {
+                    f(start);
+                    f(end);
+                }
+                ShapeKind::Group { children, .. } => ends(children, f, depth + 1),
+                _ => {}
+            }
+        }
+    }
+    let mut glued_to = std::collections::HashSet::new();
+    ends(shapes, &mut |e| glued_to.extend(e.map(|(id, _)| id)), 0);
+    let mut groups: std::collections::HashMap<ShapeId, Vec<(ShapeId, u32)>> = std::collections::HashMap::new();
+    walk(shapes, &mut |s, _| {
+        if let ShapeKind::Group { children, .. } = &s.kind
+            && glued_to.contains(&s.id)
+        {
+            groups.insert(s.id, legacy_group_sites(children));
+        }
+    });
+    if groups.is_empty() {
+        return;
+    }
+    ends(
+        shapes,
+        &mut |e| {
+            if let Some((id, k)) = *e
+                && let Some(t) = groups.get(&id).and_then(|v| v.get(k as usize).or(v.first()))
+            {
+                *e = Some(*t);
+            }
+        },
+        0,
+    );
 }
 
 pub fn find_shape(shapes: &[Shape], id: ShapeId) -> Option<&Shape> {

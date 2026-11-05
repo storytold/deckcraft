@@ -358,12 +358,13 @@ fn connection_sites_serialize_as_fractions_and_default_to_none() {
     assert!(old.sites.is_empty());
 }
 
-/// A group's sites are its members' own, in walk order (groups within too), lines and ink left
-/// out; a hidden member keeps its place (its sites are just not visible), so a connector glued
-/// to a later site keeps meaning it. `group_site_targets` names the member and its index.
+/// A connector saved glued to a group stores the position of the site in a walk over the
+/// members' own sites (groups within too, lines and ink left out, hidden members kept in place).
+/// `retarget_group_glue` glues it to the member and that member's own site instead, which keeps
+/// meaning the same pin when members are added, removed or reordered.
 #[test]
-fn group_site_targets_follow_the_members_in_order_and_keep_hidden_ones_in_place() {
-    use super::{ConnectionSite, group_member_sites, group_site_targets};
+fn legacy_glue_to_a_group_is_retargeted_to_the_member_and_its_own_site() {
+    use super::{ConnectionSite, retarget_group_glue};
     let member = |id: u32, x: f64, sites: Vec<ConnectionSite>, hidden: bool| Shape {
         id: ShapeId(id),
         xfrm: Some(Xfrm::new(x, 0.0, 10.0, 10.0)),
@@ -383,15 +384,32 @@ fn group_site_targets_follow_the_members_in_order_and_keep_hidden_ones_in_place(
     };
     let line =
         Shape { id: ShapeId(6), geom: super::Geom::preset("line"), sites: vec![ConnectionSite::new(0.0, 0.0)], ..member(6, 90.0, vec![], false) };
-    let children = vec![a, hidden, none, nested, line];
-    assert_eq!(group_site_targets(&children), vec![(ShapeId(1), 0), (ShapeId(1), 1), (ShapeId(2), 0), (ShapeId(4), 0)]);
-    let mut pts = vec![];
-    group_member_sites(&children, deckcraft_geom::Affine::IDENTITY, &mut |_, _, p, visible| pts.push((p.x, p.y, visible)));
-    // The nested group's child space (10×10) maps onto its 20×20 box at x = 60; the hidden
-    // member's site is there, flagged.
-    assert_eq!(pts, vec![(0.0, 5.0, true), (10.0, 5.0, true), (25.0, 5.0, false), (70.0, 20.0, true)]);
-    // Hiding a member changes no other site's position in the list.
-    let mut shown = children.clone();
-    shown[1].hidden = false;
-    assert_eq!(group_site_targets(&shown), group_site_targets(&children));
+    let group = |id: u32, children: Vec<Shape>| Shape {
+        id: ShapeId(id),
+        xfrm: Some(Xfrm::new(0.0, 0.0, 100.0, 20.0)),
+        kind: ShapeKind::Group { children, child: Xfrm::new(0.0, 0.0, 100.0, 20.0) },
+        ..Default::default()
+    };
+    let wire = |id: u32, start: Option<(u32, u32)>, end: Option<(u32, u32)>| Shape {
+        id: ShapeId(id),
+        kind: ShapeKind::Connector { start: start.map(|(s, i)| (ShapeId(s), i)), end: end.map(|(s, i)| (ShapeId(s), i)) },
+        ..Default::default()
+    };
+    let empty = group(11, vec![member(12, 0.0, vec![], false)]);
+    // Walk: (1, 0), (1, 1), (2, 0), (4, 0); the line's site is not part of it.
+    let mut shapes = vec![
+        group(10, vec![a, hidden, none, nested, line]),
+        empty,
+        wire(20, Some((10, 2)), Some((10, 3))),
+        wire(21, Some((10, 99)), Some((11, 0))),
+        group(30, vec![wire(31, Some((10, 1)), Some((7, 2))), member(32, 0.0, vec![], false)]),
+    ];
+    retarget_group_glue(&mut shapes);
+    let ends = |s: &Shape| match s.kind {
+        ShapeKind::Connector { start, end } => (start.map(|(s, i)| (s.0, i)), end.map(|(s, i)| (s.0, i))),
+        _ => (None, None),
+    };
+    assert_eq!(ends(&shapes[2]), (Some((2, 0)), Some((4, 0))), "a hidden member keeps its place; a nested group's member");
+    assert_eq!(ends(&shapes[3]), (Some((1, 0)), Some((11, 0))), "past the end: the first site; a group without any: left");
+    assert_eq!(ends(&shapes[4].children()[0]), (Some((1, 1)), Some((7, 2))), "a connector inside a group; a plain shape: left");
 }

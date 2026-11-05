@@ -12,31 +12,24 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("shape.connect", "missing `from` / `to`"));
     };
     let st = s.doc()?;
-    // Sites with their index (a hidden member's are not offered, but keep the numbering).
-    let site_list = |id| -> Vec<(usize, deckcraft_geom::Point)> {
+    // Offered sites with their index in `shape.sites` (a hidden member's are listed, not offered).
+    let site_list = |id| -> Vec<(usize, crate::connect::Site)> {
         st.shape(id)
-            .map(|sh| {
-                crate::connect::snap_sites(&st.doc, &st.selection, sh)
-                    .into_iter()
-                    .enumerate()
-                    .filter(|(_, (_, o))| *o)
-                    .map(|(i, (q, _))| (i, q))
-                    .collect()
-            })
+            .map(|sh| crate::connect::site_list(&st.doc, &st.selection, sh).into_iter().enumerate().filter(|(_, q)| q.offered).collect())
             .unwrap_or_default()
     };
     let (a, b) = (site_list(from), site_list(to));
     if a.is_empty() || b.is_empty() {
         return Err(bad("shape.connect", "both shapes need connection sites (lines have none, nor a group of shapes without any or hidden)"));
     }
-    let pick = |v: &[(usize, deckcraft_geom::Point)], key: &str| usize_param(p, key).filter(|i| v.iter().any(|(k, _)| k == i));
+    let pick = |v: &[(usize, crate::connect::Site)], key: &str| usize_param(p, key).filter(|i| v.iter().any(|(k, _)| k == i));
     let (ia, ib) = match (pick(&a, "fromSite"), pick(&b, "toSite")) {
         (Some(i), Some(j)) => (i, j),
         (fi, fj) => {
             let mut best = (f64::MAX, 0, 0);
-            for (i, pa) in a.iter().filter(|(i, _)| fi.is_none_or(|f| f == *i)) {
-                for (j, pb) in b.iter().filter(|(j, _)| fj.is_none_or(|f| f == *j)) {
-                    let d = (*pa - *pb).hypot();
+            for (i, qa) in a.iter().filter(|(i, _)| fi.is_none_or(|f| f == *i)) {
+                for (j, qb) in b.iter().filter(|(j, _)| fj.is_none_or(|f| f == *j)) {
+                    let d = (qa.at - qb.at).hypot();
                     if d < best.0 {
                         best = (d, *i, *j);
                     }
@@ -45,8 +38,11 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
             (best.1, best.2)
         }
     };
-    let at = |v: &[(usize, deckcraft_geom::Point)], i: usize| v.iter().find(|(k, _)| *k == i).map(|(_, q)| *q).unwrap_or_default();
-    let (p0, p1) = (at(&a, ia), at(&b, ib));
+    let at = |v: &[(usize, crate::connect::Site)], i: usize| v.iter().find(|(k, _)| *k == i).map(|(_, q)| *q);
+    let (Some(sa), Some(sb)) = (at(&a, ia), at(&b, ib)) else {
+        return Err(bad("shape.connect", "no such connection site"));
+    };
+    let (p0, p1) = (sa.at, sb.at);
     let id = match id_param(p, "id", "shape.connect")? {
         Some(id) => id,
         None => {
@@ -62,7 +58,8 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad("shape.connect", "`id` is not a line or connector"));
         }
         sh.xfrm = Some(crate::tools::line_xfrm(p0, p1, 0.0));
-        sh.kind = deckcraft_model::ShapeKind::Connector { start: Some((from, ia as u32)), end: Some((to, ib as u32)) };
+        // A group's site names its member and the member's own site, as the file does.
+        sh.kind = deckcraft_model::ShapeKind::Connector { start: Some(sa.target), end: Some(sb.target) };
         Ok(())
     })?;
     Ok(json!({"id": id.0, "fromSite": ia, "toSite": ib}))

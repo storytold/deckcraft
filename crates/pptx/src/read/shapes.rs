@@ -82,11 +82,10 @@ pub fn sp_tree(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, tree: &El, depth: us
             out.push(s);
         }
     }
+    // `stCxn`/`endCxn` name the shape and its own site, a group member included, which is
+    // what a connector holds: only the file's ids need mapping (connectors in groups too).
     if depth == 0 {
         remap_connectors(&mut out, ctx, 0);
-    }
-    if depth == 0 {
-        glue_to_groups(&mut out);
     }
     out
 }
@@ -409,40 +408,6 @@ fn grp(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> Sha
     let child = child.or_else(|| s.xfrm.map(|x| Xfrm::new(x.x, x.y, x.w, x.h))).unwrap_or_default();
     s.kind = ShapeKind::Group { children, child };
     s
-}
-
-/// A connector the file glues to a shape inside a group (`stCxn`/`endCxn` name the member and
-/// its own site) is glued here to the top-level group and the site's position in the group's
-/// list (`group_site_targets`): that is where `connect::sites` offers it, so a move of the group
-/// reroutes the connector. A reference to a site the member does not have stays as it is.
-fn glue_to_groups(list: &mut [Shape]) {
-    let mut owner: HashMap<ShapeId, ShapeId> = HashMap::new();
-    let mut targets: HashMap<ShapeId, Vec<(ShapeId, u32)>> = HashMap::new();
-    for s in list.iter() {
-        if let ShapeKind::Group { children, .. } = &s.kind {
-            deckcraft_model::walk(children, &mut |m, _| {
-                owner.insert(m.id, s.id);
-            });
-            targets.insert(s.id, deckcraft_model::group_site_targets(children));
-        }
-    }
-    if owner.is_empty() {
-        return;
-    }
-    let map = |e: &mut Option<(ShapeId, u32)>| {
-        if let Some((id, idx)) = *e
-            && let Some(g) = owner.get(&id)
-            && let Some(k) = targets.get(g).and_then(|t| t.iter().position(|t| *t == (id, idx)))
-        {
-            *e = Some((*g, k as u32));
-        }
-    };
-    for s in list.iter_mut() {
-        if let ShapeKind::Connector { start, end } = &mut s.kind {
-            map(start);
-            map(end);
-        }
-    }
 }
 
 fn cxn(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {

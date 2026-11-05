@@ -54,10 +54,6 @@ pub struct Ctx<'a> {
     pub ids: &'a mut IdMap,
     /// The shape id written for the shape currently being written (duplicate model ids get fresh ones).
     pub written: HashSet<u32>,
-    /// For each top-level group, the member and the member's own site index behind each site the
-    /// group offers (`group_site_targets`): a connector glued to a group is written to the member,
-    /// which is what Open XML's `stCxn`/`endCxn` can name.
-    pub group_sites: HashMap<ShapeId, Vec<(ShapeId, u32)>>,
 }
 
 /// The shape's extent in EMU, the space a custom geometry's connection sites are written in; a
@@ -280,15 +276,6 @@ pub fn shapes(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, list: &[Shape],
     if depth > 32 {
         return;
     }
-    if depth == 0 {
-        cx.group_sites = list
-            .iter()
-            .filter_map(|s| match &s.kind {
-                ShapeKind::Group { children, .. } => Some((s.id, deckcraft_model::group_site_targets(children))),
-                _ => None,
-            })
-            .collect();
-    }
     for s in list {
         shape(w, x, o, cx, s, depth);
     }
@@ -367,10 +354,9 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             w.open0("p:cxnSp");
             w.open0("p:nvCxnSpPr");
             cnvpr(w, x, o, id, s);
-            // A site of a group is one of a member's: the file names the member.
-            let member = |(sid, site): (ShapeId, u32)| cx.group_sites.get(&sid).and_then(|t| t.get(site as usize)).copied().unwrap_or((sid, site));
-            let st = start.map(member).and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
-            let en = end.map(member).and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
+            // A connector glued to a group member names the member, as the file does.
+            let st = start.and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
+            let en = end.and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
             if st.is_none() && en.is_none() && !s.locked {
                 w.empty0("p:cNvCxnSpPr");
             } else {
