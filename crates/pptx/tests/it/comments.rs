@@ -161,8 +161,9 @@ fn owned_modern_part_still_suppresses_later_legacy() {
     let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for i in 0..z.len() {
         let mut f = z.by_index(i).expect("entry");
-        out.start_file(f.name(), zip::write::SimpleFileOptions::default()).expect("start");
-        if f.name() == "ppt/slides/_rels/slide2.xml.rels" {
+        let name = f.name().unwrap().into_owned();
+        out.start_file(name.clone(), zip::write::SimpleFileOptions::default()).expect("start");
+        if name == "ppt/slides/_rels/slide2.xml.rels" {
             std::io::Write::write_all(&mut out, rels2.as_bytes()).expect("write");
         } else {
             std::io::copy(&mut f, &mut out).expect("copy");
