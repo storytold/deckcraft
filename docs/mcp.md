@@ -111,8 +111,7 @@ range (`no slide at index 8; indices run 0 through 7`) and changes nothing, and 
 `slide.new` and `slide.reuse` is an insertion position, so one past the end is clamped to the end;
 `section.add`'s `at` is the slide the new section starts at, so one past the last slide is refused.
 An index that is not a non-negative integer (`-1`, `1.5`, `"2"`) is refused, never read as omitted
-(`null` is the same as leaving the key out), and so is a table `cells` entry that is not
-`[row, col]` or names a cell outside the table.
+(`null` is the same as leaving the key out).
 
 A tool refuses an argument that is not in its schema (`insert_chart: unknown argument "data" (expected: categories, h, series, title, type, w, x, y)`). Keys inside `run_command`'s `params` are that command's parameters.
 
