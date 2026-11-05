@@ -6489,7 +6489,8 @@ fn repeated_target_ids_edit_the_shape_once() {
     let mut s = session();
     let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 100], "text": "x".repeat(100_000)})).unwrap();
     let id = r["id"].as_u64().unwrap();
-    s.execute("shape.fill", &json!({"ids": vec![id; 50_000], "color": "#ff0000"})).unwrap();
+    let edited = s.execute("shape.fill", &json!({"ids": vec![id; 50_000], "color": "#ff0000"})).unwrap();
+    assert_eq!(edited, json!(1));
     let v = s.execute("shape.inspect", &json!({"id": id})).unwrap();
     assert_eq!(v["shape"]["fill"]["color"]["base"]["rgb"], json!({"a": 255, "b": 0, "g": 0, "r": 255}));
 }
