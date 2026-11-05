@@ -249,7 +249,8 @@ fn act(app: &mut SlideApp, nav: Nav, current: Page) -> Option<Page> {
     match nav {
         Nav::Page(p) => Some(p),
         Nav::Save => {
-            let web = app.services.pick_save.is_none() && app.services.download.is_some();
+            // A page that keeps the files (`host_save`) saves as the desktop does.
+            let web = app.services.pick_save.is_none() && app.services.download.is_some() && app.services.host_save.is_none();
             let has_path = app.session.active().is_some_and(|d| d.path.is_some());
             if !has_path && !web {
                 // A presentation that was never saved goes to Save As first, as in PowerPoint.
