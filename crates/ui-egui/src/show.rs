@@ -18,6 +18,7 @@ mod presenter;
 mod render;
 mod ui;
 mod zoom;
+pub(crate) use zoom::GRID_CAP;
 
 #[cfg(test)]
 use media::{on_screen, pointer_on_media_bar, shown_slide_rect, slide_media_bars};

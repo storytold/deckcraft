@@ -228,7 +228,7 @@ impl View {
             }
         });
         ui.separator();
-        if snapshot.grid && !snapshot.ended {
+        if snapshot.grid {
             // All slides opens here, as in the desktop Presenter View; the audience keeps the current slide.
             self.grid_ui(ui, snapshot, &mut commands);
             return commands;
@@ -303,8 +303,8 @@ impl View {
         }
         ui.heading("All slides");
         ui.label("Choose a slide to show it, or press G to return.");
-        if snapshot.total > slides.len() && !slides.is_empty() {
-            ui.label(format!("First {} slides", slides.len()));
+        if snapshot.total > crate::show::GRID_CAP {
+            ui.label(format!("First {} slides", crate::show::GRID_CAP));
         }
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {

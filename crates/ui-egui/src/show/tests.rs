@@ -1133,6 +1133,7 @@ fn remote_presenter_uses_the_audience_state_and_closes_with_the_show() {
         closes: usize,
         commands: Vec<Command>,
         last: Option<Snapshot>,
+        gone: bool,
     }
     struct Mock(Rc<RefCell<Bridge>>);
     impl Host for Mock {
@@ -1141,7 +1142,7 @@ fn remote_presenter_uses_the_audience_state_and_closes_with_the_show() {
             Ok(())
         }
         fn is_open(&self) -> bool {
-            true
+            !self.0.borrow().gone
         }
         fn commands(&mut self) -> Vec<Command> {
             std::mem::take(&mut self.0.borrow_mut().commands)
@@ -1194,11 +1195,21 @@ fn remote_presenter_uses_the_audience_state_and_closes_with_the_show() {
     let last = bridge.borrow().last.clone().unwrap();
     assert!(last.grid);
     assert_eq!(last.slides.as_ref().map(Vec::len), Some(3), "the popup gets a thumbnail per slide");
+    assert!(last.slides.iter().flatten().all(|p| p.width.max(p.height) <= 96), "thumbnails stay small enough for one message");
+    assert!(last.current.is_none() && last.next.is_none(), "the grid replaces both previews");
     bridge.borrow_mut().commands.push(Command::Goto { slide: 2 });
     h.run_steps(2);
     let show = h.state().show.as_ref().unwrap();
     assert!(!show.presenter_grid && !show.grid);
     assert_eq!(show.state.slide, 2);
+    // Closing the popup with its grid open must not hold auto-advance for the rest of the show.
+    bridge.borrow_mut().commands.push(Command::Key { name: "G".into(), command: false, shift: false, alt: false, ctrl: false });
+    h.run_steps(2);
+    assert!(h.state().show.as_ref().unwrap().presenter_grid);
+    bridge.borrow_mut().gone = true;
+    h.run_steps(2);
+    assert!(!h.state().show.as_ref().unwrap().presenter_grid);
+    bridge.borrow_mut().gone = false;
     bridge.borrow_mut().commands.push(Command::End);
     h.run_steps(2);
     assert!(h.state().show.is_none());
