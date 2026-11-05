@@ -306,16 +306,18 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
             done = true;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(84.0, 24.0)));
-                if save.clicked() && app.save_all() {
-                    app.quit_confirmed = true;
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                    done = true;
-                }
+        let save = ui.add(egui::Button::new("Save").color(t.accent_text()).fill(t.accent).min_size(vec2(84.0, 24.0)));
+        if save.clicked() && app.save_all() {
+            app.quit_confirmed = true;
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            done = true;
+        }
         if ui.add(egui::Button::new("Cancel").min_size(vec2(84.0, 24.0)).stroke(egui::Stroke::new(1.0, t.border))).clicked() {
             done = true;
-}
+        }
+    });
 });
+done
 
 fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     // File › Close and Ctrl+W on a presentation with unsaved changes.
