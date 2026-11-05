@@ -182,7 +182,7 @@ const WHEEL_NOTCHES_PER_DOUBLING: f32 = 4.0;
 /// PowerPoint's slide show magnifier goes up to 400%.
 const WHEEL_ZOOM_MAX: f32 = 4.0;
 
-pub(super) const GRID_CAP: usize = 48;
+pub(crate) const GRID_CAP: usize = 48;
 
 const TOOL_BAR_W: f32 = 520.0;
 
