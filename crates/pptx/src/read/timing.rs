@@ -232,6 +232,9 @@ pub struct MediaCue {
     pub shape: ShapeId,
     pub video: bool,
     pub interactive: bool,
+    /// PresentationML's own narration flag (`p:audio/@isNarration`): PowerPoint marks narration
+    /// clips with it, whatever the shape is called.
+    pub narration: bool,
 }
 
 fn walk_media(e: &El, interactive: bool, ctx: &IdCtx, out: &mut Vec<MediaCue>, depth: usize) {
@@ -246,7 +249,7 @@ fn walk_media(e: &El, interactive: bool, ctx: &IdCtx, out: &mut Vec<MediaCue>, d
             && let Some(spid) = node.path(&["tgtEl", "spTgt"]).and_then(|s| s.u32("spid"))
             && let Some(shape) = ctx.lookup(spid)
         {
-            out.push(MediaCue { shape, video: e.is("video"), interactive });
+            out.push(MediaCue { shape, video: e.is("video"), interactive, narration: e.bool("isNarration") == Some(true) });
         }
         return;
     }

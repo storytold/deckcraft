@@ -676,6 +676,11 @@ fn media_node(w: &mut W, ids: &mut Ids, spid: u32, m: &MediaClip) {
     if m.full_screen && m.video {
         outer = outer.a("fullScrn", "1");
     }
+    if m.narration {
+        // PresentationML's own flag: without it PowerPoint keeps playing a narration clip when
+        // "Play Narrations" is off.
+        outer = outer.a("isNarration", "1");
+    }
     w.open(tag, outer);
     let volume = if m.volume.is_finite() { m.volume.clamp(0.0, 1.0) } else { 1.0 };
     let mut node = A::new().a("vol", (volume * 100_000.0).round() as u32);

@@ -333,11 +333,11 @@ fn views_rect(bottom: Rect) -> Rect {
     Rect::from_min_size(pos2(bottom.max.x - EDGE - 118.0, bottom.min.y + 58.0), vec2(118.0, 30.0))
 }
 
-/// Draw the shell. Returns false when Edit asked to leave the Record view (the show's normal
-/// finish path then saves the recording and returns to the editor).
 /// The Record view's background, painted by the show under the slide (bars and panes sit on it).
 pub(super) const BACKDROP: Color32 = Color32::from_rgb(16, 16, 18);
 
+/// Draw the shell. Returns false when Edit asked to leave the Record view (the show's normal
+/// finish path then saves the recording and returns to the editor).
 pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Presentation>, now: f64, layout: &Layout) -> bool {
     // Take the state out of the show so its sections can borrow both `show` and the shell state.
     let mut rec = std::mem::take(&mut show.record_view);

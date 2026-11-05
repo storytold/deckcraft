@@ -285,31 +285,44 @@ fn pause_and_resume_are_buttons_on_the_top_bar() {
 /// driver (its label used to spell the whole status out).
 #[test]
 fn the_right_control_group_stays_clear_of_the_clock() {
-    // A narrow window is where the labels used to run over the clock.
-    let mut app = app_with(1);
-    app.ui.presenter_view = false;
-    let mut h = egui_kittest::Harness::builder().with_size(vec2(900.0, 620.0)).with_step_dt(0.05).build_ui_state(
-        |ui, app: &mut SlideApp| {
-            app.logic(ui.ctx());
-            app.ui(ui);
-        },
-        app,
-    );
-    open_record(&mut h, 0);
-    h.run_steps(3);
-    let top = {
-        let app = h.state();
-        let doc = app.session.active().expect("a document").doc.clone();
-        super::layout(h.ctx.content_rect(), &doc, &app.show.as_ref().expect("a show").record_view).top
-    };
-    let limit = top.center().x + 40.0;
-    for label in ["Reset", "Undo", "Record", "Pause", "Export ›", "More", "Camera", "Mic", "Screen"] {
-        let Some(node) = h.query_by_label(label) else {
-            // A control that a state hides (Record becomes Stop recording) is checked there.
-            continue;
+    // A narrow bar drops the optional controls; a wide one shows them all. Neither may run into
+    // the clock, which owns the middle of the bar.
+    let wide = [
+        "Reset",
+        "Undo",
+        "Record",
+        "Pause",
+        "Export ›",
+        "More",
+        "Camera — unavailable",
+        "Microphone — unavailable",
+        "Screen recording — unavailable",
+    ];
+    let narrow = ["Reset", "Undo", "Record", "Pause"];
+    for (width, expected) in [(900.0, narrow.as_slice()), (1600.0, wide.as_slice())] {
+        let mut app = app_with(1);
+        app.ui.presenter_view = false;
+        let mut h = egui_kittest::Harness::builder().with_size(vec2(width, 620.0)).with_step_dt(0.05).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        open_record(&mut h, 0);
+        h.run_steps(3);
+        let top = {
+            let app = h.state();
+            let doc = app.session.active().expect("a document").doc.clone();
+            super::layout(h.ctx.content_rect(), &doc, &app.show.as_ref().expect("a show").record_view).top
         };
-        let b = node.rect();
-        assert!(b.min.x >= limit - 0.5, "{label} starts at {} but the clock's side ends at {limit}", b.min.x);
+        let limit = top.center().x + 40.0;
+        for label in expected {
+            // `get_by_label` fails the test when the control is missing, so each width checks the
+            // controls it must show.
+            let b = h.get_by_label(label).rect();
+            assert!(b.min.x >= limit - 0.5, "{label} at {width}: starts at {} but the clock's side ends at {limit}", b.min.x);
+        }
     }
 }
 

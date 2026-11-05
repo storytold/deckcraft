@@ -74,6 +74,10 @@ fn push_mono(out: &mut Vec<f32>, interleaved: &[f32], channels: usize, cap: usiz
     full
 }
 
+/// Skipped input callbacks that mean audio is really being lost, not one callback that lost a
+/// lock race with the UI's own short lock.
+const SKIPPED_CALLBACKS_TO_REPORT: u64 = 8;
+
 /// Ten minutes of mono audio at `rate`, so one slide cannot grow without bound. The limit follows
 /// the device: a 96 kHz stream must not stop after five minutes.
 fn max_samples(rate: u32) -> usize {
@@ -213,7 +217,9 @@ impl deckcraft_media::MicIn for CpalIn {
         if let Some(e) = take_stream_error(&self.error) {
             return Some(format!("the microphone stopped ({e})"));
         }
-        if self.skipped.swap(0, std::sync::atomic::Ordering::Relaxed) > 0 {
+        // The UI's own short locks can make a callback skip, so one skip is not a failure: report
+        // only a run of them, which means the capture is actually losing audio.
+        if self.skipped.swap(0, std::sync::atomic::Ordering::Relaxed) >= SKIPPED_CALLBACKS_TO_REPORT {
             return Some("some microphone audio was dropped while the recorder was busy".to_string());
         }
         let mut g = self.buf.lock().unwrap_or_else(PoisonError::into_inner);

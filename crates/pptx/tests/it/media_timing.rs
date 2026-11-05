@@ -74,6 +74,41 @@ fn clips(nodes: impl Fn(u32, u32) -> String) -> Vec<MediaClip> {
     imported(nodes).0
 }
 
+/// Narration is PresentationML's own flag on the media node, so a clip whose shape is not called
+/// "Narration" still comes back as narration (and PowerPoint skips it with Play Narrations off).
+#[test]
+fn narration_is_marked_on_the_media_node_and_read_back() {
+    let mut p = defaults::new_presentation(None);
+    let audio = p.add_media("take.wav", "audio/wav", b"RIFF".to_vec()).expect("media");
+    let id = ShapeId(p.alloc_id().expect("id"));
+    Arc::make_mut(&mut p.slides[0]).shapes.push(deckcraft_model::Shape {
+        id,
+        name: "Audio 1".into(),
+        xfrm: Some(Xfrm::new(40.0, 40.0, 200.0, 100.0)),
+        kind: ShapeKind::Media(MediaClip { media: audio, video: false, autoplay: true, narration: true, ..Default::default() }),
+        ..Default::default()
+    });
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let xml = {
+        let mut z = zip::ZipArchive::new(Cursor::new(&bytes)).expect("zip");
+        let mut f = z.by_name("ppt/slides/slide1.xml").expect("slide");
+        let mut s = String::new();
+        f.read_to_string(&mut s).expect("read");
+        s
+    };
+    assert!(xml.contains(r#"isNarration="1""#), "the media node carries PowerPoint's narration flag");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let clip = q.slides[0]
+        .shapes
+        .iter()
+        .find_map(|s| match &s.kind {
+            ShapeKind::Media(m) if !m.video => Some(m.clone()),
+            _ => None,
+        })
+        .expect("the audio");
+    assert!(clip.narration, "the flag is read back, not only the shape name");
+}
+
 #[test]
 fn video_settings_are_read_from_the_timing_tree() {
     let c = clips(|v, _| node("video", r#" fullScrn="1""#, v, r#" vol="80000" showWhenStopped="0""#, r#" repeatCount="indefinite""#));

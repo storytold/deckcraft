@@ -43,6 +43,9 @@ struct Active {
     /// Stop was asked for while a full queue held work back: later ticks send what was kept
     /// before the file is requested, without capturing anything.
     draining: bool,
+    /// The UI clock when draining began: the take owes nothing past it, however long the queue
+    /// takes to accept the retained work.
+    drain_from: Option<f64>,
     /// Stop asked for the file to be written: the encoder finishes it while the UI keeps running.
     stopping: bool,
     /// Why the take is ending, for the message the session shows when it inserts the file.
@@ -573,6 +576,7 @@ impl ScreenState {
             frames: 0,
             pending: None,
             draining: false,
+            drain_from: None,
             stopping: false,
             reason: String::new(),
         });
@@ -610,6 +614,7 @@ impl ScreenState {
         // the file is asked for keeps the take's last frame and its length (see `tick`).
         if active.pending.is_some() || !active.due {
             active.draining = true;
+            active.drain_from = None;
         } else {
             active.stopping = true;
             active.encoder.request_finish();
@@ -645,11 +650,14 @@ impl ScreenState {
                 active.stopping = true;
                 active.encoder.request_finish();
             } else {
-                if let Some(e) = drain_retained(active, now) {
+                // The take owes intervals only up to the Stop: the wait for a slot must not turn
+                // into extra pictures (and extra duration) for every tick it takes.
+                let at = *active.drain_from.get_or_insert(now);
+                if let Some(e) = drain_retained(active, at) {
                     let reason = format!("the screen recording stopped: {e}");
                     active.reason = reason;
                 }
-                if active.pending.is_some() || owed_pictures(active, now) > 0 {
+                if active.pending.is_some() || owed_pictures(active, at) > 0 {
                     return None;
                 }
                 active.draining = false;
@@ -776,6 +784,7 @@ impl ScreenState {
         active.reason = why.to_string();
         if active.pending.is_some() || !active.due {
             active.draining = true;
+            active.drain_from = None;
         } else {
             active.stopping = true;
             active.encoder.request_finish();

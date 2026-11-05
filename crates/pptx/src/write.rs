@@ -104,6 +104,7 @@ fn ext_for(content_type: &str, name: &str, data: &[u8]) -> String {
         "audio/x-ms-wma" => "wma",
         "audio/ogg" => "ogg",
         "audio/flac" => "flac",
+        "audio/aac" => "aac",
         "model/gltf-binary" => "glb",
         _ => "",
     };

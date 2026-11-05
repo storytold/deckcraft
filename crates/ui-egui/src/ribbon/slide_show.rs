@@ -35,7 +35,9 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
             .on_hover_text("Records slide timings, the microphone and pen ink. Laser follows the pointer.")
             .clicked()
         {
-            let _ = app.run("show.record", json!({}));
+            // The same start the Record tab's "From Beginning" uses: the first slide of the show
+            // order, not always slide 0 (which may be hidden or outside a custom show).
+            let _ = app.run("show.record", json!({"from": app.show_start_index()}));
         }
     });
     group(ui, |ui| {
