@@ -29,6 +29,10 @@ fn selection_handles(app: &SlideApp, st: &DocState, painter: &egui::Painter, xf:
             continue;
         }
         let editing_this = editing.as_ref().is_some_and(|e| e.shape == *id && !e.notes);
+        if app.session.tool.cropping(st) == Some(sh.id) {
+            crop_handles(painter, xf, &x, sh, t);
+            continue;
+        }
         if app.session.tool.editing_points(st) == Some(sh.id) {
             // Edit Points: the outline's vertices are the handles.
             // No selection box: the outline and its vertices are what's edited.
@@ -95,6 +99,44 @@ fn selection_handles(app: &SlideApp, st: &DocState, painter: &egui::Painter, xf:
                 painter.circle(q, 4.5, Color32::from_rgb(0xFF, 0xD2, 0x3F), Stroke::new(1.0, Color32::from_rgb(0x8A, 0x6A, 0x00)));
             }
         }
+    }
+}
+
+/// Crop mode on a picture: the cropped-away parts of the picture dimmed around the frame, the
+/// whole picture's outline, and black crop marks at the frame's corners and edge middles.
+fn crop_handles(painter: &egui::Painter, xf: Xf, x: &Xfrm, sh: &deckcraft_model::Shape, t: &Tokens) {
+    let deckcraft_model::ShapeKind::Picture { fill } = &sh.kind else { return };
+    let a = x.affine();
+    let frame = [Point::new(0.0, 0.0), Point::new(x.w, 0.0), Point::new(x.w, x.h), Point::new(0.0, x.h)].map(|q| xf.to_screen(a * q));
+    let picture = deckcraft_engine::tools::crop_picture_corners(x, fill.crop).map(|q| xf.to_screen(q));
+    // The parts cut off: the picture's area outside the frame, shaded.
+    let shade = Color32::from_rgba_unmultiplied(40, 40, 40, 110);
+    for i in 0..4 {
+        let (p0, p1, f0, f1) = (picture[i], picture[(i + 1) % 4], frame[i], frame[(i + 1) % 4]);
+        painter.add(egui::Shape::convex_polygon(vec![p0, p1, f1, f0], shade, Stroke::NONE));
+    }
+    for i in 0..4 {
+        painter.add(egui::Shape::dashed_line(&[picture[i], picture[(i + 1) % 4]], Stroke::new(1.0, t.selection), 4.0, 3.0));
+    }
+    poly(painter, frame, Stroke::new(1.0, t.selection));
+    // Marks: an L at each corner, a bar at each edge middle, black with a white rim.
+    let len = 12.0_f32;
+    let along = |from: Pos2, to: Pos2| {
+        let d = to - from;
+        let n = d.length().max(1.0);
+        from + d * (len.min(n / 3.0) / n)
+    };
+    let mark = |s: Pos2, e: Pos2| {
+        painter.line_segment([s, e], Stroke::new(6.0, Color32::WHITE));
+        painter.line_segment([s, e], Stroke::new(4.0, Color32::BLACK));
+    };
+    for i in 0..4 {
+        let (c, next, prev) = (frame[i], frame[(i + 1) % 4], frame[(i + 3) % 4]);
+        mark(c, along(c, next));
+        mark(c, along(c, prev));
+        let mid = c + (next - c) * 0.5;
+        let half = (next - c).normalized() * (len * 0.7);
+        mark(mid - half, mid + half);
     }
 }
 

@@ -14,6 +14,25 @@ pub(super) fn crop(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// Crop mode on the selected picture (toggled), as Picture Format › Crop does in PowerPoint.
+pub(super) fn crop_mode(s: &mut Session, p: &Value) -> Result<Value> {
+    let on = p.get("on").and_then(Value::as_bool).unwrap_or_else(|| s.active().is_none_or(|st| s.tool.cropping(st).is_none()));
+    if !on {
+        s.tool.crop = None;
+        return Ok(json!({"cropping": Value::Null}));
+    }
+    let st = s.doc()?;
+    let id = match st.selection.shapes.as_slice() {
+        [id] if st.shape(*id).is_some_and(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Picture { .. })) => *id,
+        _ => return Err(bad("picture.cropMode", "select one picture to crop")),
+    };
+    if st.shape(id).is_some_and(|sh| sh.locked) {
+        return Err(bad("picture.cropMode", "the picture is locked"));
+    }
+    s.tool.crop = Some(id);
+    Ok(json!({"cropping": id.0}))
+}
+
 pub(super) fn picture_adjust(s: &mut Session, p: &Value) -> Result<Value> {
     edit_shapes(s, p, "picture.adjust", |sh| {
         if let deckcraft_model::ShapeKind::Picture { fill } = &mut sh.kind {

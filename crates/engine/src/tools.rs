@@ -12,11 +12,13 @@ use crate::cmd::{self, xfrm_of};
 use crate::{HistoryEntry, Result, Session, TextSel};
 
 mod click;
+mod crop;
 mod drag;
 mod geometry;
 mod hit;
 mod pointer;
 
+pub use crop::{CROP_PAN, crop_drag, crop_picture_corners};
 pub use hit::{line_xfrm, resize_box, table_rows, text_pos};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +84,12 @@ pub enum ToolKind {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum Hit {
+    /// Crop mode: a crop handle of the picture's frame (0..8: NW, N, NE, E, SE, S, SW, W), or
+    /// [`CROP_PAN`] inside the frame (dragging the picture under it).
+    Crop {
+        id: ShapeId,
+        handle: u8,
+    },
     /// Resize handle 0..8: NW, N, NE, E, SE, S, SW, W.
     Resize {
         id: ShapeId,
@@ -154,6 +162,13 @@ enum Drag {
         ids: Vec<ShapeId>,
         handle: u8,
         origs: Vec<(ShapeId, Xfrm)>,
+        start: Point,
+    },
+    Crop {
+        id: ShapeId,
+        handle: u8,
+        orig: Xfrm,
+        crop: [f64; 4],
         start: Point,
     },
     LineEnd {
@@ -275,6 +290,8 @@ pub struct ToolState {
     pub path_preview: Vec<Point>,
     pub path_smooth: bool,
     pub path_closing: bool,
+    /// The picture in crop mode (Picture Format › Crop): its frame shows crop handles.
+    pub crop: Option<ShapeId>,
     /// The shape in Edit Points: its vertices are handles instead of the box's.
     pub edit_points: Option<ShapeId>,
     /// The vertex (path, index) whose control handles show in Edit Points.
