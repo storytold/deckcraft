@@ -616,17 +616,36 @@ fn kept_with_file_ids(kept: &[KeptSequence], idmap: &IdMap) -> (Vec<El>, Vec<El>
     (seqs, builds)
 }
 
-/// Write `p:timing` for a slide's animations and the sequences kept verbatim from its file.
-pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], kept: &[KeptSequence], shapes: &[Shape], idmap: &IdMap) {
-    let (kept, kept_builds) = kept_with_file_ids(kept, idmap);
-    let mut grp_count: std::collections::HashMap<u32, u32> = Default::default();
-    // Groups (`grpId`) the kept builds use stay theirs.
-    for b in &kept_builds {
+/// The next group (`grpId`) of each shape after those the kept builds use, which stay theirs.
+fn kept_groups(kept_builds: &[El]) -> std::collections::HashMap<u32, u32> {
+    let mut grp_count = std::collections::HashMap::new();
+    for b in kept_builds {
         if let (Some(spid), Some(g)) = (b.u32("spid"), b.u32("grpId")) {
             let c = grp_count.entry(spid).or_insert(0);
             *c = (*c).max(g.saturating_add(1));
         }
     }
+    grp_count
+}
+
+/// Write the kept sequences with time-node ids after ours; a condition naming a node (`p:tn`) follows it.
+fn write_kept(w: &mut W, ids: &mut Ids, kept: Vec<El>) {
+    for mut seq in kept {
+        let mut renumbered = std::collections::HashMap::new();
+        seq.map_attr(Some("cTn"), "id", &mut |old| {
+            let id = ids.next();
+            renumbered.insert(old, id);
+            Some(id)
+        });
+        seq.map_attr(Some("tn"), "val", &mut |old| Some(renumbered.get(&old).copied().unwrap_or(old)));
+        w.raw(&seq.to_xml());
+    }
+}
+
+/// Write `p:timing` for a slide's animations and the sequences kept verbatim from its file.
+pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], kept: &[KeptSequence], shapes: &[Shape], idmap: &IdMap) {
+    let (kept, kept_builds) = kept_with_file_ids(kept, idmap);
+    let mut grp_count = kept_groups(&kept_builds);
     let mut main: Vec<Eff> = vec![];
     let mut triggered: Vec<(u32, Vec<Eff>)> = vec![];
     let mut bld: Vec<(u32, u32, bool)> = vec![];
@@ -668,7 +687,7 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], kept: &[KeptSequence]
             _ => {
                 let c = grp_count.entry(spid).or_insert(0);
                 let g = *c;
-                *c += 1;
+                *c = c.saturating_add(1);
                 g
             }
         };
@@ -789,17 +808,7 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], kept: &[KeptSequence]
         w.close("p:nextCondLst");
         w.close("p:seq");
     }
-    for mut seq in kept {
-        // Time-node ids continue after ours; a condition naming a node (`p:tn`) follows it.
-        let mut renumbered = std::collections::HashMap::new();
-        seq.map_attr(Some("cTn"), "id", &mut |old| {
-            let id = ids.next();
-            renumbered.insert(old, id);
-            Some(id)
-        });
-        seq.map_attr(Some("tn"), "val", &mut |old| Some(renumbered.get(&old).copied().unwrap_or(old)));
-        w.raw(&seq.to_xml());
-    }
+    write_kept(w, &mut ids, kept);
     w.close("p:childTnLst");
     w.close("p:cTn");
     w.close("p:par");
