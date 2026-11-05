@@ -398,7 +398,12 @@ impl SlideApp {
         match result {
             Ok(()) => {
                 self.reuse_target = None;
-                self.set_status(crate::i18n::format("Inserted {} slides", &[&picked.len().to_string()]));
+                let msg = if picked.len() == 1 {
+                    crate::i18n::tr("Inserted 1 slide").to_string()
+                } else {
+                    crate::i18n::format("Inserted {} slides", &[&picked.len().to_string()])
+                };
+                self.set_status(msg);
                 true
             }
             Err(e) => {

@@ -73,5 +73,6 @@ pub struct Services {
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
     /// How many displays are connected, when the host can tell: Presenter View needs a second.
     pub displays: Option<Box<dyn FnMut() -> Option<usize>>>,
+    /// System or browser locale tag (e.g. `pt-BR`, `en-US`), used to resolve the initial interface language.
     pub system_locale: Option<String>,
 }
