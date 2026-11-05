@@ -1,6 +1,7 @@
 # DeckCraft architecture
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (native macOS menus and window shortcuts) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-05 · **Last updated:** 2026-11-05 · **Change:** minor (native macOS menus through craft-menu, the shared Craft menu layer) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: minor, community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
@@ -46,11 +47,14 @@ channel (`deckcraft --control PORT`, [control-protocol.md](control-protocol.md))
 Programmatic calls never open dialogs. Pointer gestures go through `Session::pointer`, keys through
 `Session::key`.
 
-The macOS desktop host owns `muda` menus in `apps/deckcraft/src/native_menu.rs`. It builds
-application menus from `menus::menu_tree()`, forwards activations to the egui event loop and
-updates changed labels, enabled states and checks. `menu_actions` routes clipboard/text editing
-through egui, and document commands through the existing UI handlers after field edits. The
-menu dependency is macOS-only; engine and web code do not depend on native menu types.
+The macOS menu bar uses craft-menu (craft-libs `crates/menu`), the menu layer the Craft apps
+share. `menu_actions` in `deckcraft-ui-egui` builds the bar from `menus::menu_tree()` and the
+commands' shortcuts, gives each item its state (enabled, checks, Undo/Redo names) and runs clicks
+through the existing UI handlers after field edits; it has no platform types and is tested in the
+egui harness. The desktop host (`apps/deckcraft/src/native_menu.rs`) installs it with
+`craft_menu::mac` and drives it each frame. Key equivalents go back to egui, so the app's own key
+handling runs them and text fields keep their edit keys. The engine doesn't depend on it, and its
+native backend builds on macOS only (the rest is platform-free and builds for the web).
 
 ## Rendering and the show
 
@@ -70,8 +74,10 @@ overlays an invisible real-text layer with embedded font subsets.
 - **PPTX** (`crates/pptx`): lenient reader (unknown parts skipped, malformed parts logged and
   ignored, sizes and depths bounded, zip bombs capped), writer that PowerPoint opens without
   repair. Unknown elements round-trip through `Opaque` and `raw_ext` fields.
-- **Native** (`crates/format`): zip with `mimetype`, `presentation.json` and `media/<id>`; readers
-  ignore unknown fields; `.slidecraft` files from before the rename still open.
+- **Native** (`crates/format`): zip with `mimetype`, `presentation.json`, `media/<id>` and
+  `chart-parts/<index>`. Chart relationships and payload references stay in the manifest; binary
+  chart parts use bounded ZIP reads and share the media byte/item budgets. Earlier inline chart
+  bytes still load and migrate on save; `.slidecraft` files from before the rename still open.
 - Formats and their gaps: [file-format-parity.md](file-format-parity.md).
 
 ## Quality gates
@@ -85,7 +91,8 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-15 | minor | Native macOS menus from the existing command catalogue; focus-aware edit actions, native window controls, and safe empty-window Close |
+| 2026-11-05 | minor | Native macOS menus through craft-menu (the Craft apps' shared menu layer) from the existing command catalogue; text fields keep their own edit keys, native window controls, and ⌘W closes the window in front |
+| 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-14 | minor | Community PR wave folded: one L2/L5/L6 row each; command registry 320 (`cmd!` registrations in `cmd/*`), 41 dialogs (titled in `dialogs.rs`), 202k lines, 24 crates (`metafile` added at L0), 1,641 tests. The per-PR rows below give the counts each PR saw on its own branch |
 | 2026-10-14 | minor | Size and Position dialog (`shape.sizePosition`): position, size, rotation, scale and lock aspect in one undo step. 227 commands, 28 dialogs |
 | 2026-10-14 | trivial | Command registry: 228 (`comment.next`, `comment.prev`) |

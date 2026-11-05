@@ -7,21 +7,36 @@ mod automation_args;
 mod help;
 
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use deckcraft_engine::Session;
 use serde_json::{Value, json};
 
+static STDOUT_CLOSED: AtomicBool = AtomicBool::new(false);
+
 macro_rules! outln {
     ($($arg:tt)*) => {{
-        use std::io::Write as _;
-        if let Err(e) = writeln!(std::io::stdout(), $($arg)*) {
+        if !STDOUT_CLOSED.load(Ordering::Relaxed) && let Err(e) = stdout_line(format_args!($($arg)*)) {
             if e.kind() == std::io::ErrorKind::BrokenPipe {
-                std::process::exit(0);
+                STDOUT_CLOSED.store(true, Ordering::Relaxed);
+            } else {
+                eprintln!("deckcraft-cli: can't write to stdout: {e}");
+                std::process::exit(1);
             }
-            eprintln!("deckcraft-cli: can't write to stdout: {e}");
-            std::process::exit(1);
         }
     }};
+}
+
+fn stdout_line(args: std::fmt::Arguments<'_>) -> std::io::Result<()> {
+    use std::io::Write as _;
+    #[cfg(unix)]
+    let mut stdout = {
+        use std::os::fd::AsFd as _;
+        std::fs::File::from(std::io::stdout().as_fd().try_clone_to_owned()?)
+    };
+    #[cfg(not(unix))]
+    let mut stdout = std::io::stdout();
+    stdout.write_all(format!("{args}\n").as_bytes())
 }
 
 fn main() -> ExitCode {
@@ -73,7 +88,7 @@ fn main() -> ExitCode {
         Some("app") => report(app(rest)),
         Some("mcp") => report(mcp(rest)),
         Some("links") => {
-            use deckcraft_engine::links::*;
+            use deckcraft_engine::links::{APP_PAGE, DISCORD, GITHUB, WEBSITE};
             outln!("Discord   {DISCORD}\nWebsite   {WEBSITE}\nApp page  {APP_PAGE}\nGitHub    {GITHUB}");
             ExitCode::SUCCESS
         }
@@ -117,8 +132,24 @@ fn open(s: &mut Session, input: Option<&str>, sample: bool) -> Result<(), String
         return deckcraft_engine::sample::open_sample(s).map_err(|e| e.to_string());
     }
     match input {
-        Some(p) => s.execute("file.open", &json!({"path": p})).map(|_| ()).map_err(|e| e.to_string()),
+        Some(p) => {
+            let opened = s.execute("file.open", &json!({"path": p})).map_err(|e| e.to_string())?;
+            warn_if_damaged(p, &opened);
+            Ok(())
+        }
         None => s.execute("file.new", &json!({})).map(|_| ()).map_err(|e| e.to_string()),
+    }
+}
+
+/// Say on stderr what a file lost on opening, so a saved copy doesn't silently miss it (#203).
+fn warn_if_damaged(path: &str, opened: &serde_json::Value) {
+    let count = |key: &str| opened.get(key).and_then(|v| v.as_array()).map_or(0, |a| a.len());
+    let (slides, media) = (count("lostSlides"), count("damagedMedia"));
+    if slides > 0 {
+        eprintln!("deckcraft-cli: warning: {path}: {slides} slide{} couldn't be read and left out", if slides == 1 { "" } else { "s" });
+    }
+    if media > 0 {
+        eprintln!("deckcraft-cli: warning: {path}: {media} picture or media file{} couldn't be read", if media == 1 { "" } else { "s" });
     }
 }
 
@@ -130,9 +161,13 @@ fn time_ms(runs: usize, mut f: impl FnMut() -> Result<(), String>) -> Result<(f6
         f()?;
         ms.push(t.elapsed().as_secs_f64() * 1000.0);
     }
+    Ok(summarize_ms(ms))
+}
+
+/// Summarize one population of measurements; each maximum must come from that population.
+fn summarize_ms(mut ms: Vec<f64>) -> (f64, f64) {
     ms.sort_by(f64::total_cmp);
-    let median = ms.get(ms.len() / 2).copied().unwrap_or(0.0);
-    Ok((median, ms.last().copied().unwrap_or(0.0)))
+    (ms.get(ms.len() / 2).copied().unwrap_or(0.0), ms.last().copied().unwrap_or(0.0))
 }
 
 /// Peak resident memory of this process in MiB (Linux `VmHWM`); `None` elsewhere.
@@ -192,11 +227,15 @@ fn bench(args: &[String]) -> Result<(), String> {
         ("save .deckcraft", time_ms(runs, || save_bytes(&doc, "deckcraft").map(|_| ()).map_err(e))?),
         ("save .pptx", time_ms(runs, || save_bytes(&doc, "pptx").map(|_| ()).map_err(e))?),
         ("open .pptx", time_ms(runs, || open_presentation("bench.pptx", &pptx).map(|_| ()).map_err(e))?),
-        ("export .pdf", time_ms(runs.min(3), || save_bytes(&doc, "pdf").map(|_| ()).map_err(e))?),
+        ("export .pdf", time_ms(runs, || save_bytes(&doc, "pdf").map(|_| ()).map_err(e))?),
     ];
-    let render_total: f64 = per_slide.iter().map(|m| m.0).sum();
-    let render_max = per_slide.iter().map(|m| m.1).fold(0.0, f64::max);
-    steps.insert(1, ("render all slides (1×)", (render_total, render_max)));
+    let render_all = time_ms(runs, || {
+        for i in 0..slides {
+            deckcraft_engine::render::render_slide(&doc, i, &opts);
+        }
+        Ok(())
+    })?;
+    steps.insert(1, ("render all slides (1×)", render_all));
     let peak = peak_rss_mib();
     if as_json {
         let v = json!({
@@ -244,11 +283,13 @@ fn render(args: &[String]) -> Result<(), String> {
     let mut all = false;
     let mut scale = 2.0;
     let mut edit = false;
+    let mut transparent = false;
     let mut out = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--sample" => sample = true,
+            "--transparent" => transparent = true,
             "--slide" => slide = Some(it.next().and_then(|v| v.parse().ok()).ok_or("--slide needs a number")?),
             "--all" => all = true,
             "--edit" => edit = true,
@@ -281,7 +322,7 @@ fn render(args: &[String]) -> Result<(), String> {
         std::fs::create_dir_all(&out).map_err(|e| format!("{out}: {e}"))?;
     }
     for i in list {
-        let (png, w, h) = deckcraft_engine::cmd::file::render_png(&st.doc, i, scale, edit);
+        let (png, w, h) = deckcraft_engine::cmd::file::render_png_with(&st.doc, i, scale, edit, transparent);
         let path = if all { format!("{out}/slide-{:02}.png", i + 1) } else { out.clone() };
         std::fs::write(&path, png).map_err(|e| format!("{path}: {e}"))?;
         outln!("{path} ({w}×{h})");
@@ -389,7 +430,7 @@ fn frame_paths(out: &str, ts: &[f64]) -> Result<Vec<String>, String> {
         return Ok(vec![out.to_string()]);
     }
     let p = std::path::Path::new(out);
-    let stem = p.file_stem().and_then(|x| x.to_str()).unwrap_or("frame");
+    let stem = p.file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("frame");
     let mut paths: Vec<String> = Vec::with_capacity(ts.len());
     for t in ts {
         let path = p.with_file_name(format!("{stem}-t{t:.3}.png")).to_string_lossy().into_owned();
@@ -432,6 +473,69 @@ fn output_format(path: &str) -> Result<&'static str, String> {
     })
 }
 
+enum CommandSource {
+    Inline(String),
+    File(String),
+}
+
+const MAX_COMMAND_FILE_LINE_BYTES: usize = 16 * 1024 * 1024;
+
+fn read_command_file_line(reader: &mut impl std::io::BufRead, line: &mut Vec<u8>) -> std::io::Result<bool> {
+    line.clear();
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return Ok(!line.is_empty());
+        }
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let count = newline.unwrap_or(available.len());
+        line.len().checked_add(count).filter(|length| *length <= MAX_COMMAND_FILE_LINE_BYTES).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, format!("command line exceeds {MAX_COMMAND_FILE_LINE_BYTES} byte limit"))
+        })?;
+        line.extend_from_slice(&available[..count]);
+        reader.consume(count + usize::from(newline.is_some()));
+        if newline.is_some() {
+            return Ok(true);
+        }
+    }
+}
+
+/// The same command syntax and execution path for --cmd and each command-file line.
+fn run_command(s: &mut Session, command: &str, print: bool) -> Result<(), String> {
+    let (id, params) = match command.split_once('=') {
+        Some((id, j)) => (id, serde_json::from_str::<Value>(j).map_err(|e| format!("{id}: bad JSON: {e}"))?),
+        None => (command, json!({})),
+    };
+    let r = s.execute(id, &params).map_err(|e| e.to_string())?;
+    if print {
+        outln!("{id} → {r}");
+    }
+    Ok(())
+}
+
+fn run_command_file(s: &mut Session, path: &str, print: bool) -> Result<(), String> {
+    use std::io::BufReader;
+
+    let file = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut reader = BufReader::new(file);
+    let mut bytes = Vec::new();
+    let mut line_number = 0usize;
+    loop {
+        line_number = line_number.checked_add(1).ok_or_else(|| format!("{path}: too many lines"))?;
+        if !read_command_file_line(&mut reader, &mut bytes).map_err(|e| format!("{path}:{line_number}: {e}"))? {
+            break;
+        }
+        let line = std::str::from_utf8(&bytes).map_err(|e| format!("{path}:{line_number}: invalid UTF-8: {e}"))?;
+        let line = if line_number == 1 { line.trim_start_matches('\u{feff}') } else { line };
+        let command = line.trim();
+        if command.is_empty() || command.starts_with('#') {
+            continue;
+        }
+        run_command(s, command, print).map_err(|e| format!("{path}:{line_number}: {e}"))?;
+    }
+    Ok(())
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     let mut input = None;
     let mut sample = false;
@@ -445,7 +549,8 @@ fn run(args: &[String]) -> Result<(), String> {
         match a.as_str() {
             "--in" => input = Some(it.next().cloned().ok_or("--in needs a file")?),
             "--sample" => sample = true,
-            "--cmd" => cmds.push(it.next().cloned().ok_or("--cmd needs COMMAND[=PARAMS]")?),
+            "--cmd" => cmds.push(CommandSource::Inline(it.next().cloned().ok_or("--cmd needs COMMAND[=PARAMS]")?)),
+            "--cmd-file" => cmds.push(CommandSource::File(it.next().cloned().ok_or("--cmd-file needs a file")?)),
             "--save" => save = Some(it.next().cloned().ok_or("--save needs a path")?),
             "--export" => export = Some(it.next().cloned().ok_or("--export needs a path")?),
             "--export-params" => {
@@ -468,14 +573,10 @@ fn run(args: &[String]) -> Result<(), String> {
     }
     let mut s = Session::new();
     open(&mut s, input.as_deref(), sample)?;
-    for c in cmds {
-        let (id, p) = match c.split_once('=') {
-            Some((id, j)) => (id.to_string(), serde_json::from_str::<Value>(j).map_err(|e| format!("{id}: bad JSON: {e}"))?),
-            None => (c.clone(), json!({})),
-        };
-        let r = s.execute(&id, &p).map_err(|e| e.to_string())?;
-        if print {
-            outln!("{id} → {r}");
+    for source in cmds {
+        match source {
+            CommandSource::Inline(command) => run_command(&mut s, &command, print)?,
+            CommandSource::File(path) => run_command_file(&mut s, &path, print)?,
         }
     }
     if let Some(p) = save {
@@ -606,7 +707,7 @@ fn mcp(args: &[String]) -> Result<(), String> {
             other => return Err(format!("unknown mcp option `{other}`")),
         }
     }
-    let roots = AutomationRoots::new(roots_args.read_root.as_deref(), roots_args.write_root.as_deref())?;
+    let roots = AutomationRoots::new(&roots_args.read_roots, &roots_args.write_roots)?;
     if roots.is_some() && connect.is_some() {
         return Err("--automation-read-root and --automation-write-root confine the in-process server; a running app is not confined by them, \
 so drop --connect (or use --connect without the roots)"
@@ -623,8 +724,12 @@ so drop --connect (or use --connect without the roots)"
             if let Some(roots) = roots {
                 // Every thread of this process, not only the server's: nothing reaches past the roots.
                 file_access::confine_process(roots.clone());
-                let show = |root: Option<&std::path::Path>| root.map_or_else(|| "none".to_string(), |r| r.display().to_string());
-                eprintln!("deckcraft-cli: files confined: read root {}, write root {}", show(roots.read_root()), show(roots.write_root()));
+                let show = |roots: Vec<String>| if roots.is_empty() { "none".to_string() } else { roots.join(", ") };
+                eprintln!(
+                    "deckcraft-cli: files confined: read roots {}, write roots {}",
+                    show(roots.read_roots().map(|r| r.display().to_string()).collect()),
+                    show(roots.write_roots().map(|r| r.display().to_string()).collect())
+                );
                 h = h.with_automation_roots(Some(roots));
             }
             Box::new(h)
@@ -643,6 +748,16 @@ mod tests {
 
     fn args(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn timing_summary_keeps_median_and_max_from_one_population() {
+        let slide_medians = [8.99, 16.565];
+        let whole_deck = summarize_ms(vec![17.0, 18.0, 16.0]);
+        assert_eq!(whole_deck, (17.0, 18.0));
+        assert!(whole_deck.1 >= whole_deck.0);
+        assert!(slide_medians.iter().sum::<f64>() > whole_deck.1, "fixture must expose summing independent slide medians");
+        assert_eq!(summarize_ms(vec![]), (0.0, 0.0));
     }
 
     #[test]
@@ -678,6 +793,21 @@ mod tests {
             assert!(e.contains(&format!("unknown option `{flag}`")), "{flag}: {e}");
             assert!(!out.exists(), "{flag}: rendered anyway");
         }
+    }
+
+    /// `render --transparent` leaves the slide background out (#784): the corner is transparent.
+    #[test]
+    fn render_transparent_leaves_the_background_out() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-cli-transparent-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let alpha = |path: &std::path::Path| deckcraft_engine::render::decode_image(&std::fs::read(path).unwrap()).unwrap().get_pixel(1, 1).0[3];
+        let opaque = dir.join("opaque.png");
+        render(&args(&["--sample", "--scale", "0.25", &opaque.to_string_lossy()])).unwrap();
+        assert_eq!(alpha(&opaque), 255);
+        let clear = dir.join("clear.png");
+        render(&args(&["--sample", "--transparent", "--scale", "0.25", &clear.to_string_lossy()])).unwrap();
+        assert_eq!(alpha(&clear), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `run --export OUT.gif --export-params JSON` and `convert IN OUT.gif` write animated GIFs.

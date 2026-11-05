@@ -7,10 +7,15 @@ use crate::cabac::{Cabac, Contexts, init_contexts};
 use crate::error::{Result, ensure, invalid};
 use crate::inter;
 use crate::intra::{self, Refs};
+use crate::mvpred::PbGeom;
 use crate::params::{Layout, Pps, Sps};
 use crate::picture::{FrameRef, RefPic};
 use crate::slice::{SliceHeader, SliceType};
-use crate::spec_tables::*;
+use crate::spec_tables::{
+    ABS_MVD_GT0, ABS_MVD_GT1, CBF_CHROMA, CBF_LUMA, CODED_SUB_BLOCK, CU_QP_DELTA_ABS, CU_SKIP, CU_TRANSQUANT_BYPASS, GT1, GT2, INTER_PRED_IDC,
+    INTRA_CHROMA, LAST_X_PREFIX, LAST_Y_PREFIX, MERGE_FLAG, MERGE_IDX, MVP_FLAG, PART_MODE, PRED_MODE, PREV_INTRA_LUMA, REF_IDX, RQT_ROOT_CBF,
+    SAO_MERGE, SAO_TYPE, SIG_COEFF, SPLIT_CU, SPLIT_TRANSFORM, TRANSFORM_SKIP,
+};
 use crate::tables::{CTX_IDX_MAP, LEVEL_SCALE, SCAN_4, qpc_420, scan_order};
 use crate::transform;
 use std::sync::Arc;
@@ -272,6 +277,30 @@ pub struct SliceDecoder<'a> {
     pub ctb_y: i32,
 }
 
+/// Scaling process (8.6.3): dequantises the top-left `max_x` × `max_y` coefficients of the `n` × `n`
+/// block `coeffs` with scaling matrix `m` (flat when `None`).
+fn dequantize(coeffs: &mut [i32], n: usize, (max_x, max_y): (usize, usize), m: Option<&[u8]>, scale: i64, round: i64, bd_shift: u32) {
+    for y in 0..=max_y {
+        for x in 0..=max_x {
+            let v = coeffs[y * n + x];
+            if v != 0 {
+                let f = m.map_or(16, |m| m[y * n + x] as i64);
+                coeffs[y * n + x] = ((v as i64 * f * scale + round) >> bd_shift).clamp(-32768, 32767) as i32;
+            }
+        }
+    }
+}
+
+/// Adds the `n` × `n` residual `coeffs` to the samples of `plane` at (x0, y0), clipped to 0..=`max`.
+fn add_residual(plane: &mut [u16], stride: usize, (x0, y0): (usize, usize), n: usize, coeffs: &[i32], max: i32) {
+    for y in 0..n {
+        let row = &mut plane[(y0 + y) * stride + x0..][..n];
+        for (x, s) in row.iter_mut().enumerate() {
+            *s = (*s as i32 + coeffs[y * n + x]).clamp(0, max) as u16;
+        }
+    }
+}
+
 impl<'a> SliceDecoder<'a> {
     #[inline(always)]
     fn dd(&mut self, ctx: usize) -> u32 {
@@ -393,6 +422,37 @@ impl<'a> SliceDecoder<'a> {
         d.decode_data()
     }
 
+    /// Context initialisation / synchronisation at the start of a CTB (9.3.1, 9.3.2.1).
+    fn init_ctb_contexts(&mut self, layout: &Layout, ts: u32, rs: u32, wctb: u32, first: bool) -> Result<()> {
+        let ctb = 1i32 << self.sps.log2_ctb;
+        let first_in_tile = ts == 0 || layout.tile_id[ts as usize] != layout.tile_id[ts as usize - 1];
+        let wpp_row_start = self.pps.entropy_coding_sync
+            && (rs.is_multiple_of(wctb) || layout.tile_id[ts as usize] != layout.tile_id[layout.rs_to_ts[rs as usize - 1] as usize]);
+        if first_in_tile {
+            if !first {
+                init_contexts(&mut self.c.ctx, self.slice_qp, self.init_type);
+            }
+            self.last_qp = self.slice_qp;
+        } else if wpp_row_start {
+            let (x0, y0) = (self.ctb_x, self.ctb_y);
+            let avail = self.pic.zavail(x0, y0, x0 + ctb, y0 - ctb, self.slice_addr);
+            match (&self.pic.wpp_ctx, avail) {
+                (Some(saved), true) => self.c.ctx = **saved,
+                _ => init_contexts(&mut self.c.ctx, self.slice_qp, self.init_type),
+            }
+            self.last_qp = self.slice_qp;
+        } else if first && self.sh.dependent {
+            match &self.pic.ds_ctx {
+                Some((saved, qp)) => {
+                    self.c.ctx = **saved;
+                    self.last_qp = *qp;
+                }
+                None => return invalid("dependent slice segment without stored contexts"),
+            }
+        }
+        Ok(())
+    }
+
     fn decode_data(&mut self) -> Result<()> {
         let layout = self.pic.layout.clone();
         let wctb = self.pic.wctb as u32;
@@ -408,32 +468,7 @@ impl<'a> SliceDecoder<'a> {
             self.ctb_y = ry * ctb;
             self.pic.ctb_slice[rs as usize] = self.slice_idx;
             self.pic.ctb_addr[rs as usize] = self.slice_addr;
-            // context initialisation / synchronisation (9.3.1, 9.3.2.1)
-            let first_in_tile = ts == 0 || layout.tile_id[ts as usize] != layout.tile_id[ts as usize - 1];
-            let wpp_row_start = self.pps.entropy_coding_sync
-                && (rs.is_multiple_of(wctb) || layout.tile_id[ts as usize] != layout.tile_id[layout.rs_to_ts[rs as usize - 1] as usize]);
-            if first_in_tile {
-                if !first {
-                    init_contexts(&mut self.c.ctx, self.slice_qp, self.init_type);
-                }
-                self.last_qp = self.slice_qp;
-            } else if wpp_row_start {
-                let (x0, y0) = (self.ctb_x, self.ctb_y);
-                let avail = self.pic.zavail(x0, y0, x0 + ctb, y0 - ctb, self.slice_addr);
-                match (&self.pic.wpp_ctx, avail) {
-                    (Some(saved), true) => self.c.ctx = **saved,
-                    _ => init_contexts(&mut self.c.ctx, self.slice_qp, self.init_type),
-                }
-                self.last_qp = self.slice_qp;
-            } else if first && self.sh.dependent {
-                match &self.pic.ds_ctx {
-                    Some((saved, qp)) => {
-                        self.c.ctx = **saved;
-                        self.last_qp = *qp;
-                    }
-                    None => return invalid("dependent slice segment without stored contexts"),
-                }
-            }
+            self.init_ctb_contexts(&layout, ts, rs, wctb, first)?;
             first = false;
             if self.sh.sao_luma || self.sh.sao_chroma {
                 self.parse_sao(rx, ry, rs)?;
@@ -502,54 +537,58 @@ impl<'a> SliceDecoder<'a> {
         let mut p = SaoParams::default();
         for c in 0..3 {
             let enabled = if c == 0 { self.sh.sao_luma } else { self.sh.sao_chroma };
-            if !enabled {
-                continue;
-            }
-            if c == 2 {
-                p.type_idx[2] = p.type_idx[1];
-                p.eo_class[2] = p.eo_class[1];
-            } else {
-                p.type_idx[c] = if self.dd(SAO_TYPE) == 0 {
-                    0
-                } else if self.bypass() == 0 {
-                    1
-                } else {
-                    2
-                };
-            }
-            if p.type_idx[c] == 0 {
-                continue;
-            }
-            let bd = if c == 0 { self.pic.bd_y } else { self.pic.bd_c };
-            let cmax = (1u32 << (bd.min(10) - 5)) - 1;
-            let mut abs = [0i16; 4];
-            for a in abs.iter_mut() {
-                let mut v = 0;
-                while v < cmax && self.bypass() == 1 {
-                    v += 1;
-                }
-                *a = v as i16;
-            }
-            if p.type_idx[c] == 1 {
-                for a in abs.iter_mut() {
-                    if *a != 0 && self.bypass() == 1 {
-                        *a = -*a;
-                    }
-                }
-                p.band_pos[c] = self.bypass_bits(5) as u8;
-                p.offsets[c] = abs;
-            } else {
-                p.offsets[c] = [abs[0], abs[1], -abs[2], -abs[3]];
-                if c == 0 {
-                    p.eo_class[0] = self.bypass_bits(2) as u8;
-                }
-                if c == 1 {
-                    p.eo_class[1] = self.bypass_bits(2) as u8;
-                }
+            if enabled {
+                self.parse_sao_component(&mut p, c);
             }
         }
         self.pic.sao[rs as usize] = p;
         Ok(())
+    }
+
+    /// SAO syntax of one enabled colour component `c` (7.3.8.3).
+    fn parse_sao_component(&mut self, p: &mut SaoParams, c: usize) {
+        if c == 2 {
+            p.type_idx[2] = p.type_idx[1];
+            p.eo_class[2] = p.eo_class[1];
+        } else {
+            p.type_idx[c] = if self.dd(SAO_TYPE) == 0 {
+                0
+            } else if self.bypass() == 0 {
+                1
+            } else {
+                2
+            };
+        }
+        if p.type_idx[c] == 0 {
+            return;
+        }
+        let bd = if c == 0 { self.pic.bd_y } else { self.pic.bd_c };
+        let cmax = (1u32 << (bd.min(10) - 5)) - 1;
+        let mut abs = [0i16; 4];
+        for a in abs.iter_mut() {
+            let mut v = 0;
+            while v < cmax && self.bypass() == 1 {
+                v += 1;
+            }
+            *a = v as i16;
+        }
+        if p.type_idx[c] == 1 {
+            for a in abs.iter_mut() {
+                if *a != 0 && self.bypass() == 1 {
+                    *a = -*a;
+                }
+            }
+            p.band_pos[c] = self.bypass_bits(5) as u8;
+            p.offsets[c] = abs;
+        } else {
+            p.offsets[c] = [abs[0], abs[1], -abs[2], -abs[3]];
+            if c == 0 {
+                p.eo_class[0] = self.bypass_bits(2) as u8;
+            }
+            if c == 1 {
+                p.eo_class[1] = self.bypass_bits(2) as u8;
+            }
+        }
     }
 
     fn coding_quadtree(&mut self, x0: i32, y0: i32, log2: u32, depth: u32) -> Result<()> {
@@ -664,7 +703,7 @@ impl<'a> SliceDecoder<'a> {
         self.mark_edges(x0, y0, n, n, E_TU_V | E_PU_V, E_TU_H | E_PU_H);
         if skip {
             self.cu_intra = false;
-            self.prediction_unit(x0, y0, n, x0, y0, n, n, 0, PartMode::P2Nx2N, true)?;
+            self.prediction_unit(PbGeom { xc: x0, yc: y0, ncb: n, xp: x0, yp: y0, w: n, h: n, part_idx: 0 }, PartMode::P2Nx2N, true)?;
             self.finish_cu(x0, y0, n);
             return Ok(());
         }
@@ -693,7 +732,7 @@ impl<'a> SliceDecoder<'a> {
             }
             self.parse_intra_modes(x0, y0, n, part)?;
             self.max_trafo_depth = self.sps.max_th_depth_intra + self.intra_split as u32;
-            self.transform_tree(x0, y0, x0, y0, log2, 0, 0, [true, true])?;
+            self.transform_tree((x0, y0), (x0, y0), log2, 0, 0, [true, true])?;
         } else {
             self.intra_split = false;
             let mut merge2nx2n = false;
@@ -710,7 +749,8 @@ impl<'a> SliceDecoder<'a> {
                 PartMode::PNxN => &[(0, 0, h, h), (h, 0, h, h), (0, h, h, h), (h, h, h, h)],
             };
             for (i, &(px, py, pw, ph)) in parts.iter().enumerate() {
-                let merge = self.prediction_unit(x0, y0, n, x0 + px, y0 + py, pw, ph, i, part, false)?;
+                let merge =
+                    self.prediction_unit(PbGeom { xc: x0, yc: y0, ncb: n, xp: x0 + px, yp: y0 + py, w: pw, h: ph, part_idx: i }, part, false)?;
                 if part == PartMode::P2Nx2N {
                     merge2nx2n = merge;
                 }
@@ -724,7 +764,7 @@ impl<'a> SliceDecoder<'a> {
             let root_cbf = if !merge2nx2n { self.dd(RQT_ROOT_CBF) == 1 } else { true };
             if root_cbf {
                 self.max_trafo_depth = self.sps.max_th_depth_inter;
-                self.transform_tree(x0, y0, x0, y0, log2, 0, 0, [true, true])?;
+                self.transform_tree((x0, y0), (x0, y0), log2, 0, 0, [true, true])?;
             }
         }
         self.finish_cu(x0, y0, n);
@@ -822,6 +862,34 @@ impl<'a> SliceDecoder<'a> {
         self.c.init_engine()
     }
 
+    /// Most probable luma intra modes of the block at (xp, yp) (8.4.2).
+    fn mpm_list(&self, xp: i32, yp: i32) -> [u32; 3] {
+        let cand_a = if self.pic.zavail(xp, yp, xp - 1, yp, self.slice_addr) {
+            let b = self.pic.blk_at(xp - 1, yp);
+            if b.flags & F_INTRA != 0 { b.ipm as u32 } else { 1 }
+        } else {
+            1
+        };
+        let cand_b = if self.pic.zavail(xp, yp, xp, yp - 1, self.slice_addr) && yp > ((yp >> self.sps.log2_ctb) << self.sps.log2_ctb) {
+            let b = self.pic.blk_at(xp, yp - 1);
+            if b.flags & F_INTRA != 0 { b.ipm as u32 } else { 1 }
+        } else {
+            1
+        };
+        if cand_a == cand_b {
+            if cand_a < 2 { [0, 1, 26] } else { [cand_a, 2 + ((cand_a + 29) % 32), 2 + ((cand_a - 2 + 1) % 32)] }
+        } else {
+            let c = if cand_a != 0 && cand_b != 0 {
+                0
+            } else if cand_a != 1 && cand_b != 1 {
+                1
+            } else {
+                26
+            };
+            [cand_a, cand_b, c]
+        }
+    }
+
     fn parse_intra_modes(&mut self, x0: i32, y0: i32, n: i32, part: PartMode) -> Result<()> {
         let nb = if part == PartMode::PNxN { 2 } else { 1 };
         let pb = n / nb;
@@ -834,31 +902,7 @@ impl<'a> SliceDecoder<'a> {
             for i in 0..nb {
                 let k = (j * nb + i) as usize;
                 let (xp, yp) = (x0 + i * pb, y0 + j * pb);
-                // candidate modes (8.4.2)
-                let cand_a = if self.pic.zavail(xp, yp, xp - 1, yp, self.slice_addr) {
-                    let b = self.pic.blk_at(xp - 1, yp);
-                    if b.flags & F_INTRA != 0 { b.ipm as u32 } else { 1 }
-                } else {
-                    1
-                };
-                let cand_b = if self.pic.zavail(xp, yp, xp, yp - 1, self.slice_addr) && yp > ((yp >> self.sps.log2_ctb) << self.sps.log2_ctb) {
-                    let b = self.pic.blk_at(xp, yp - 1);
-                    if b.flags & F_INTRA != 0 { b.ipm as u32 } else { 1 }
-                } else {
-                    1
-                };
-                let mut list = if cand_a == cand_b {
-                    if cand_a < 2 { [0, 1, 26] } else { [cand_a, 2 + ((cand_a + 29) % 32), 2 + ((cand_a - 2 + 1) % 32)] }
-                } else {
-                    let c = if cand_a != 0 && cand_b != 0 {
-                        0
-                    } else if cand_a != 1 && cand_b != 1 {
-                        1
-                    } else {
-                        26
-                    };
-                    [cand_a, cand_b, c]
-                };
+                let mut list = self.mpm_list(xp, yp);
                 let mode = if prev[k] {
                     let idx = if self.bypass() == 0 {
                         0
@@ -894,7 +938,7 @@ impl<'a> SliceDecoder<'a> {
         Ok(())
     }
 
-    fn transform_tree(&mut self, x0: i32, y0: i32, xb: i32, yb: i32, log2: u32, depth: u32, blk_idx: u32, parent_cbf_c: [bool; 2]) -> Result<()> {
+    fn transform_tree(&mut self, (x0, y0): (i32, i32), base: (i32, i32), log2: u32, depth: u32, blk_idx: u32, parent_cbf_c: [bool; 2]) -> Result<()> {
         let split =
             if log2 <= self.sps.log2_max_tb && log2 > self.sps.log2_min_tb && depth < self.max_trafo_depth && !(self.intra_split && depth == 0) {
                 self.dd(SPLIT_TRANSFORM + (5 - log2 as usize)) == 1
@@ -919,10 +963,10 @@ impl<'a> SliceDecoder<'a> {
         }
         if split {
             let h = 1 << (log2 - 1);
-            self.transform_tree(x0, y0, x0, y0, log2 - 1, depth + 1, 0, cbf_c)?;
-            self.transform_tree(x0 + h, y0, x0, y0, log2 - 1, depth + 1, 1, cbf_c)?;
-            self.transform_tree(x0, y0 + h, x0, y0, log2 - 1, depth + 1, 2, cbf_c)?;
-            self.transform_tree(x0 + h, y0 + h, x0, y0, log2 - 1, depth + 1, 3, cbf_c)?;
+            self.transform_tree((x0, y0), (x0, y0), log2 - 1, depth + 1, 0, cbf_c)?;
+            self.transform_tree((x0 + h, y0), (x0, y0), log2 - 1, depth + 1, 1, cbf_c)?;
+            self.transform_tree((x0, y0 + h), (x0, y0), log2 - 1, depth + 1, 2, cbf_c)?;
+            self.transform_tree((x0 + h, y0 + h), (x0, y0), log2 - 1, depth + 1, 3, cbf_c)?;
             return Ok(());
         }
         let cbf_luma =
@@ -931,36 +975,50 @@ impl<'a> SliceDecoder<'a> {
         if depth > 0 {
             self.mark_edges(x0, y0, n, n, E_TU_V, E_TU_H);
         }
-        self.transform_unit(x0, y0, xb, yb, log2, blk_idx, cbf_luma, cbf_c)
+        self.transform_unit((x0, y0), base, log2, blk_idx, cbf_luma, cbf_c)
     }
 
-    fn transform_unit(&mut self, x0: i32, y0: i32, xb: i32, yb: i32, log2: u32, blk_idx: u32, cbf_luma: bool, cbf_c: [bool; 2]) -> Result<()> {
+    /// cu_qp_delta_abs / sign and QP update (7.3.8.14).
+    fn parse_cu_qp_delta(&mut self) -> Result<()> {
+        // cu_qp_delta_abs: prefix TU(5) with ctx 0,1,1,1,1, suffix EG0
+        let mut v = 0;
+        while v < 5 && self.dd(CU_QP_DELTA_ABS + if v == 0 { 0 } else { 1 }) == 1 {
+            v += 1;
+        }
+        if v == 5 {
+            let mut k = 0;
+            while self.bypass() == 1 {
+                v += 1 << k;
+                k += 1;
+                ensure!(k < 32, "invalid cu_qp_delta_abs");
+            }
+            v += self.bypass_bits(k) as i32;
+        }
+        if v != 0 && self.bypass() == 1 {
+            v = -v;
+        }
+        let off = 6 * (self.pic.bd_y as i32 - 8);
+        ensure!(v >= -(26 + off / 2) && v <= 25 + off / 2, "CuQpDeltaVal out of range");
+        self.is_cu_qp_delta_coded = true;
+        self.cu_qp_delta = v;
+        self.update_qp();
+        Ok(())
+    }
+
+    fn transform_unit(
+        &mut self,
+        (x0, y0): (i32, i32),
+        (xb, yb): (i32, i32),
+        log2: u32,
+        blk_idx: u32,
+        cbf_luma: bool,
+        cbf_c: [bool; 2],
+    ) -> Result<()> {
         let n = 1i32 << log2;
         let chroma_here = log2 > 2 || blk_idx == 3;
         let cbf_chroma = cbf_c[0] || cbf_c[1];
         if (cbf_luma || cbf_chroma) && self.pps.cu_qp_delta_enabled && !self.is_cu_qp_delta_coded {
-            // cu_qp_delta_abs: prefix TU(5) with ctx 0,1,1,1,1, suffix EG0
-            let mut v = 0;
-            while v < 5 && self.dd(CU_QP_DELTA_ABS + if v == 0 { 0 } else { 1 }) == 1 {
-                v += 1;
-            }
-            if v == 5 {
-                let mut k = 0;
-                while self.bypass() == 1 {
-                    v += 1 << k;
-                    k += 1;
-                    ensure!(k < 32, "invalid cu_qp_delta_abs");
-                }
-                v += self.bypass_bits(k) as i32;
-            }
-            if v != 0 && self.bypass() == 1 {
-                v = -v;
-            }
-            let off = 6 * (self.pic.bd_y as i32 - 8);
-            ensure!(v >= -(26 + off / 2) && v <= 25 + off / 2, "CuQpDeltaVal out of range");
-            self.is_cu_qp_delta_coded = true;
-            self.cu_qp_delta = v;
-            self.update_qp();
+            self.parse_cu_qp_delta()?;
         }
         // luma
         if self.cu_intra {
@@ -1047,7 +1105,52 @@ impl<'a> SliceDecoder<'a> {
         let n = 1usize << log2;
         let bypass = self.cu_transquant_bypass;
         let ts = if self.pps.transform_skip && !bypass && log2 == 2 { self.dd(TRANSFORM_SKIP + (c > 0) as usize) == 1 } else { false };
-        // last significant coefficient
+        let scan_idx = self.scan_idx(x0, y0, log2, c);
+        let (mut lx, mut ly) = self.last_sig_coeff_pos(log2, c);
+        if scan_idx == 2 {
+            std::mem::swap(&mut lx, &mut ly);
+        }
+        ensure!((lx as usize) < n && (ly as usize) < n, "last significant coefficient outside the block");
+        let t = TbCtx { c, log2, scan_idx, sdh: self.pps.sign_data_hiding && !bypass };
+        let log2sb = log2 - 2;
+        let sb_scan = scan_order(log2sb, scan_idx);
+        let pos_scan = &SCAN_4[scan_idx];
+        let sb_w = 1usize << log2sb;
+        let last_sb = sb_scan.iter().position(|&(x, y)| x as u32 == lx >> 2 && y as u32 == ly >> 2).unwrap_or(0);
+        let last_pos = pos_scan.iter().position(|&(x, y)| x as u32 == lx & 3 && y as u32 == ly & 3).unwrap_or(0);
+        self.coeffs[..n * n].fill(0);
+        let mut csbf = [0u8; 64];
+        let mut prev_g1: Option<u32> = None;
+        let (mut max_x, mut max_y) = (0usize, 0usize);
+        for i in (0..=last_sb).rev() {
+            let sb = SubBlock { xs: sb_scan[i].0 as usize, ys: sb_scan[i].1 as usize };
+            let right = if sb.xs + 1 < sb_w { csbf[sb.ys * 8 + sb.xs + 1] } else { 0 };
+            let below = if sb.ys + 1 < sb_w { csbf[(sb.ys + 1) * 8 + sb.xs] } else { 0 };
+            let mut infer_dc = false;
+            if i < last_sb && i > 0 {
+                let inc = (right | below).min(1) as usize + if c > 0 { 2 } else { 0 };
+                csbf[sb.ys * 8 + sb.xs] = self.c.decode_decision(CODED_SUB_BLOCK + inc) as u8;
+                infer_dc = true;
+            } else {
+                csbf[sb.ys * 8 + sb.xs] = 1;
+            }
+            if csbf[sb.ys * 8 + sb.xs] == 0 {
+                continue;
+            }
+            let (sig, nsig) = self.sig_coeff_flags(&t, &sb, right + (below << 1), infer_dc, (i == last_sb).then_some(last_pos));
+            if nsig == 0 {
+                continue;
+            }
+            let g = self.greater_flags(&t, i, nsig, &mut prev_g1);
+            let (mx, my) = self.store_levels(&t, &sb, &sig[..nsig], &g)?;
+            max_x = max_x.max(mx);
+            max_y = max_y.max(my);
+        }
+        self.reconstruct((x0, y0), log2, c, qp, ts, (max_x, max_y))
+    }
+
+    /// Decodes last_sig_coeff_{x,y}_prefix / suffix (before any scan-order swap).
+    fn last_sig_coeff_pos(&mut self, log2: u32, c: usize) -> (u32, u32) {
         let cmax = (log2 << 1) - 1;
         let (off, shift) = if c == 0 { (3 * (log2 - 2) + ((log2 - 1) >> 2), (log2 + 1) >> 2) } else { (15, log2 - 2) };
         let mut px = 0;
@@ -1058,209 +1161,144 @@ impl<'a> SliceDecoder<'a> {
         while py < cmax && self.dd(LAST_Y_PREFIX + (off + (py >> shift)) as usize) == 1 {
             py += 1;
         }
-        let mut lx = px;
-        if px > 3 {
-            let nb = (px >> 1) - 1;
-            lx = (1 << nb) * (2 + (px & 1)) + self.bypass_bits(nb);
+        let lx = self.last_pos_with_suffix(px);
+        let ly = self.last_pos_with_suffix(py);
+        (lx, ly)
+    }
+
+    fn last_pos_with_suffix(&mut self, prefix: u32) -> u32 {
+        if prefix > 3 {
+            let nb = (prefix >> 1) - 1;
+            (1 << nb) * (2 + (prefix & 1)) + self.bypass_bits(nb)
+        } else {
+            prefix
         }
-        let mut ly = py;
-        if py > 3 {
-            let nb = (py >> 1) - 1;
-            ly = (1 << nb) * (2 + (py & 1)) + self.bypass_bits(nb);
+    }
+
+    /// scanIdx (7.4.9.11): 0 diagonal, 1 horizontal, 2 vertical.
+    fn scan_idx(&self, x0: i32, y0: i32, log2: u32, c: usize) -> usize {
+        if !(self.cu_intra && (log2 == 2 || (log2 == 3 && c == 0))) {
+            return 0;
         }
-        // scanIdx (7.4.9.11)
-        let scan_idx = if self.cu_intra && (log2 == 2 || (log2 == 3 && c == 0)) {
-            let m = if c == 0 { self.pic.blk_at(x0, y0).ipm as u32 } else { self.intra_chroma_mode };
-            if (6..=14).contains(&m) {
-                2
-            } else if (22..=30).contains(&m) {
-                1
-            } else {
-                0
-            }
+        let m = if c == 0 { self.pic.blk_at(x0, y0).ipm as u32 } else { self.intra_chroma_mode };
+        if (6..=14).contains(&m) {
+            2
+        } else if (22..=30).contains(&m) {
+            1
         } else {
             0
-        };
-        if scan_idx == 2 {
-            std::mem::swap(&mut lx, &mut ly);
         }
-        ensure!((lx as usize) < n && (ly as usize) < n, "last significant coefficient outside the block");
-        let log2sb = log2 - 2;
-        let sb_scan = scan_order(log2sb, scan_idx);
-        let pos_scan = &SCAN_4[scan_idx];
-        let sb_w = 1usize << log2sb;
-        let last_sb = sb_scan.iter().position(|&(x, y)| x as u32 == lx >> 2 && y as u32 == ly >> 2).unwrap_or(0);
-        let last_pos = pos_scan.iter().position(|&(x, y)| x as u32 == lx & 3 && y as u32 == ly & 3).unwrap_or(0);
-        self.coeffs[..n * n].fill(0);
-        let mut csbf = [0u8; 64];
-        let mut prev_g1: Option<u32> = None;
-        let sdh = self.pps.sign_data_hiding && !bypass;
-        let (mut max_x, mut max_y) = (0usize, 0usize);
-        let c_off_sig = if c == 0 { 0 } else { 27 };
-        for i in (0..=last_sb).rev() {
-            let (xs, ys) = (sb_scan[i].0 as usize, sb_scan[i].1 as usize);
-            let mut infer_dc = false;
-            let right = if xs + 1 < sb_w { csbf[ys * 8 + xs + 1] } else { 0 };
-            let below = if ys + 1 < sb_w { csbf[(ys + 1) * 8 + xs] } else { 0 };
-            if i < last_sb && i > 0 {
-                let inc = (right | below).min(1) as usize + if c > 0 { 2 } else { 0 };
-                csbf[ys * 8 + xs] = self.c.decode_decision(CODED_SUB_BLOCK + inc) as u8;
-                infer_dc = true;
-            } else {
-                csbf[ys * 8 + xs] = 1;
-            }
-            // significance map
-            let mut sig = [0u8; 16]; // scan positions n of significant coefficients, descending
-            let mut nsig = 0;
-            let start: i32 = if i == last_sb {
-                sig[0] = last_pos as u8;
+    }
+
+    /// Significance map of one coded sub-block: scan positions of the significant coefficients, in
+    /// descending order, and their count.
+    fn sig_coeff_flags(&mut self, t: &TbCtx, sb: &SubBlock, prev_csbf: u8, infer_dc: bool, last_pos: Option<usize>) -> ([u8; 16], usize) {
+        let pos_scan = &SCAN_4[t.scan_idx];
+        let c_off_sig = if t.c == 0 { 0 } else { 27 };
+        let mut infer_dc = infer_dc;
+        let mut sig = [0u8; 16];
+        let mut nsig = 0;
+        let start: i32 = match last_pos {
+            Some(lp) => {
+                sig[0] = lp as u8;
                 nsig = 1;
-                last_pos as i32 - 1
+                lp as i32 - 1
+            }
+            None => 15,
+        };
+        for np in (0..=start).rev() {
+            let (xp, yp) = (pos_scan[np as usize].0 as usize, pos_scan[np as usize].1 as usize);
+            if np > 0 || !infer_dc {
+                let ctx = sig_coeff_ctx(t, sb, prev_csbf, (xp, yp));
+                if self.c.decode_decision(SIG_COEFF + c_off_sig + ctx) == 1 {
+                    sig[nsig] = np as u8;
+                    nsig += 1;
+                    infer_dc = false;
+                }
             } else {
-                15
-            };
-            if csbf[ys * 8 + xs] != 0 {
-                let prev_csbf = right + (below << 1);
-                let mut np = start;
-                while np >= 0 {
-                    let (xp, yp) = (pos_scan[np as usize].0 as usize, pos_scan[np as usize].1 as usize);
-                    let (xc, yc) = (xs * 4 + xp, ys * 4 + yp);
-                    if np > 0 || !infer_dc {
-                        let sig_ctx = if log2 == 2 {
-                            CTX_IDX_MAP[(yc << 2) + xc] as usize
-                        } else if xc + yc == 0 {
-                            0
-                        } else {
-                            let mut s = match prev_csbf {
-                                0 => {
-                                    if xp + yp == 0 {
-                                        2
-                                    } else if xp + yp < 3 {
-                                        1
-                                    } else {
-                                        0
-                                    }
-                                }
-                                1 => {
-                                    if yp == 0 {
-                                        2
-                                    } else if yp == 1 {
-                                        1
-                                    } else {
-                                        0
-                                    }
-                                }
-                                2 => {
-                                    if xp == 0 {
-                                        2
-                                    } else if xp == 1 {
-                                        1
-                                    } else {
-                                        0
-                                    }
-                                }
-                                _ => 2,
-                            };
-                            if c == 0 {
-                                if xs + ys > 0 {
-                                    s += 3;
-                                }
-                                s += if log2 == 3 { if scan_idx == 0 { 9 } else { 15 } } else { 21 };
-                            } else {
-                                s += if log2 == 3 { 9 } else { 12 };
-                            }
-                            s
-                        };
-                        if self.c.decode_decision(SIG_COEFF + c_off_sig + sig_ctx) == 1 {
-                            sig[nsig] = np as u8;
-                            nsig += 1;
-                            infer_dc = false;
-                        }
-                    } else {
-                        // np == 0 with inferSbDcSigCoeffFlag
-                        sig[nsig] = 0;
-                        nsig += 1;
-                    }
-                    np -= 1;
-                }
-            }
-            if nsig == 0 {
-                continue;
-            }
-            // greater1 / greater2 flags
-            let mut ctx_set = if i == 0 || c > 0 { 0 } else { 2 };
-            if let Some(g) = prev_g1
-                && g == 0
-            {
-                ctx_set += 1;
-            }
-            let mut g1ctx = 1u32;
-            let mut gt1 = [0u8; 16];
-            let mut first_g1: Option<usize> = None;
-            let c_off_g1 = if c > 0 { 16 } else { 0 };
-            for k in 0..nsig.min(8) {
-                let inc = ctx_set * 4 + g1ctx.min(3) as usize + c_off_g1;
-                let f = self.c.decode_decision(GT1 + inc);
-                gt1[k] = f as u8;
-                if f == 1 {
-                    g1ctx = 0;
-                    if first_g1.is_none() {
-                        first_g1 = Some(k);
-                    }
-                } else if g1ctx > 0 {
-                    g1ctx += 1;
-                }
-            }
-            prev_g1 = Some(g1ctx);
-            let mut gt2 = 0u8;
-            if let Some(k) = first_g1 {
-                gt2 = self.c.decode_decision(GT2 + ctx_set + if c > 0 { 4 } else { 0 }) as u8;
-                let _ = k;
-            }
-            // signs
-            let last_sig_pos = sig[0] as i32;
-            let first_sig_pos = sig[nsig - 1] as i32;
-            let sign_hidden = sdh && last_sig_pos - first_sig_pos > 3;
-            let nsigns = if sign_hidden { nsig - 1 } else { nsig };
-            let mut signs = if nsigns > 0 { self.bypass_bits(nsigns as u32) << (32 - nsigns) } else { 0 };
-            // remaining levels
-            let mut rice = 0u32;
-            let mut sum_abs = 0i32;
-            for k in 0..nsig {
-                let mut base = 1 + gt1[k] as i32;
-                if Some(k) == first_g1 {
-                    base += gt2 as i32;
-                }
-                let thresh = if k < 8 { if Some(k) == first_g1 { 3 } else { 2 } } else { 1 };
-                let mut level = base;
-                if base == thresh {
-                    let rem = self.coeff_abs_level_remaining(rice)?;
-                    level = base + rem;
-                    if level > 3 * (1 << rice) {
-                        rice = (rice + 1).min(4);
-                    }
-                }
-                let np = sig[k] as usize;
-                let (xc, yc) = (xs * 4 + pos_scan[np].0 as usize, ys * 4 + pos_scan[np].1 as usize);
-                let mut v = level;
-                if !(sign_hidden && k == nsig - 1) {
-                    if signs & 0x8000_0000 != 0 {
-                        v = -v;
-                    }
-                    signs <<= 1;
-                }
-                if sign_hidden {
-                    sum_abs += level;
-                    if k == nsig - 1 && sum_abs & 1 == 1 {
-                        v = -v;
-                    }
-                }
-                self.coeffs[yc * n + xc] = v;
-                max_x = max_x.max(xc);
-                max_y = max_y.max(yc);
+                // np == 0 with inferSbDcSigCoeffFlag
+                sig[nsig] = 0;
+                nsig += 1;
             }
         }
-        self.reconstruct(x0, y0, log2, c, qp, ts, max_x, max_y)
+        (sig, nsig)
+    }
+
+    /// coeff_abs_level_greater1_flag / greater2_flag of one sub-block with `nsig` significant coefficients.
+    fn greater_flags(&mut self, t: &TbCtx, sb_index: usize, nsig: usize, prev_g1: &mut Option<u32>) -> GreaterFlags {
+        let mut ctx_set = if sb_index == 0 || t.c > 0 { 0 } else { 2 };
+        if *prev_g1 == Some(0) {
+            ctx_set += 1;
+        }
+        let mut g1ctx = 1u32;
+        let mut g = GreaterFlags { gt1: [0u8; 16], first_g1: None, gt2: 0 };
+        let c_off_g1 = if t.c > 0 { 16 } else { 0 };
+        for k in 0..nsig.min(8) {
+            let inc = ctx_set * 4 + g1ctx.min(3) as usize + c_off_g1;
+            let f = self.c.decode_decision(GT1 + inc);
+            g.gt1[k] = f as u8;
+            if f == 1 {
+                g1ctx = 0;
+                if g.first_g1.is_none() {
+                    g.first_g1 = Some(k);
+                }
+            } else if g1ctx > 0 {
+                g1ctx += 1;
+            }
+        }
+        *prev_g1 = Some(g1ctx);
+        if g.first_g1.is_some() {
+            g.gt2 = self.c.decode_decision(GT2 + ctx_set + if t.c > 0 { 4 } else { 0 }) as u8;
+        }
+        g
+    }
+
+    /// Reads signs and remaining levels of one sub-block and stores the coefficients. Returns the
+    /// largest x and y coefficient position written.
+    fn store_levels(&mut self, t: &TbCtx, sb: &SubBlock, sig: &[u8], g: &GreaterFlags) -> Result<(usize, usize)> {
+        let nsig = sig.len();
+        let n = 1usize << t.log2;
+        let pos_scan = &SCAN_4[t.scan_idx];
+        let sign_hidden = t.sdh && sig[0] as i32 - sig[nsig - 1] as i32 > 3;
+        let nsigns = if sign_hidden { nsig - 1 } else { nsig };
+        let mut signs = if nsigns > 0 { self.bypass_bits(nsigns as u32) << (32 - nsigns) } else { 0 };
+        let mut rice = 0u32;
+        let mut sum_abs = 0i32;
+        let (mut max_x, mut max_y) = (0usize, 0usize);
+        for k in 0..nsig {
+            let mut base = 1 + g.gt1[k] as i32;
+            if Some(k) == g.first_g1 {
+                base += g.gt2 as i32;
+            }
+            let thresh = if k < 8 { if Some(k) == g.first_g1 { 3 } else { 2 } } else { 1 };
+            let mut level = base;
+            if base == thresh {
+                let rem = self.coeff_abs_level_remaining(rice)?;
+                level = base + rem;
+                if level > 3 * (1 << rice) {
+                    rice = (rice + 1).min(4);
+                }
+            }
+            let np = sig[k] as usize;
+            let (xc, yc) = (sb.xs * 4 + pos_scan[np].0 as usize, sb.ys * 4 + pos_scan[np].1 as usize);
+            let mut v = level;
+            if !(sign_hidden && k == nsig - 1) {
+                if signs & 0x8000_0000 != 0 {
+                    v = -v;
+                }
+                signs <<= 1;
+            }
+            if sign_hidden {
+                sum_abs += level;
+                if k == nsig - 1 && sum_abs & 1 == 1 {
+                    v = -v;
+                }
+            }
+            self.coeffs[yc * n + xc] = v;
+            max_x = max_x.max(xc);
+            max_y = max_y.max(yc);
+        }
+        Ok((max_x, max_y))
     }
 
     fn coeff_abs_level_remaining(&mut self, rice: u32) -> Result<i32> {
@@ -1279,7 +1317,7 @@ impl<'a> SliceDecoder<'a> {
     }
 
     /// Scaling, transform and addition to the prediction.
-    fn reconstruct(&mut self, x0: i32, y0: i32, log2: u32, c: usize, qp: i32, ts: bool, max_x: usize, max_y: usize) -> Result<()> {
+    fn reconstruct(&mut self, (x0, y0): (i32, i32), log2: u32, c: usize, qp: i32, ts: bool, (max_x, max_y): (usize, usize)) -> Result<()> {
         let n = 1usize << log2;
         let bd = if c == 0 { self.pic.bd_y } else { self.pic.bd_c };
         let coeffs = &mut self.coeffs[..n * n];
@@ -1297,15 +1335,7 @@ impl<'a> SliceDecoder<'a> {
                 }
                 _ => None,
             };
-            for y in 0..=max_y {
-                for x in 0..=max_x {
-                    let v = coeffs[y * n + x];
-                    if v != 0 {
-                        let f = m.map_or(16, |m| m[y * n + x] as i64);
-                        coeffs[y * n + x] = ((v as i64 * f * scale + round) >> bd_shift).clamp(-32768, 32767) as i32;
-                    }
-                }
-            }
+            dequantize(coeffs, n, (max_x, max_y), m, scale, round, bd_shift);
             let bd_shift = 20 - bd;
             if ts {
                 transform::transform_skip(coeffs, n, bd_shift);
@@ -1321,106 +1351,112 @@ impl<'a> SliceDecoder<'a> {
         let _ = dc_only;
         let (stride, max) = (if c == 0 { self.pic.width } else { self.pic.cwidth }, (1i32 << bd) - 1);
         let plane = &mut self.pic.planes[c];
-        for y in 0..n {
-            let row = &mut plane[(y0 as usize + y) * stride + x0 as usize..][..n];
-            for (x, s) in row.iter_mut().enumerate() {
-                *s = (*s as i32 + coeffs[y * n + x]).clamp(0, max) as u16;
-            }
-        }
+        add_residual(plane, stride, (x0 as usize, y0 as usize), n, coeffs, max);
         Ok(())
     }
 
     /// prediction_unit(): parse, derive motion, store it and predict. Returns merge_flag.
-    fn prediction_unit(
-        &mut self,
-        xc: i32,
-        yc: i32,
-        ncb: i32,
-        xp: i32,
-        yp: i32,
-        w: i32,
-        h: i32,
-        part_idx: usize,
-        part: PartMode,
-        skip: bool,
-    ) -> Result<bool> {
+    fn prediction_unit(&mut self, g: PbGeom, part: PartMode, skip: bool) -> Result<bool> {
         let merge = if skip { true } else { self.dd(MERGE_FLAG) == 1 };
         let mvf = if merge {
-            let idx = if self.sh.max_num_merge_cand > 1 {
-                let mut i = 0;
-                if self.dd(MERGE_IDX) == 1 {
-                    i = 1;
-                    while i < self.sh.max_num_merge_cand - 1 && self.bypass() == 1 {
-                        i += 1;
-                    }
-                }
-                i
-            } else {
-                0
-            };
-            self.derive_merge(xc, yc, ncb, xp, yp, w, h, part_idx, part, idx as usize)
+            let idx = self.merge_idx();
+            self.derive_merge(g, part, idx as usize)
         } else {
-            let pred_idc = if self.sh.is_b() {
-                if w + h != 12 {
-                    let depth = self.pic.blk_at(xc, yc).depth as usize;
-                    if self.dd(INTER_PRED_IDC + depth) == 1 { 2 } else { self.dd(INTER_PRED_IDC + 4) }
-                } else {
-                    self.dd(INTER_PRED_IDC + 4)
-                }
-            } else {
-                0
-            };
-            let mut ref_idx = [-1i8; 2];
-            let mut mvd = [[0i32; 2]; 2];
-            let mut mvp_flag = [0u32; 2];
-            for l in 0..2 {
-                let used = if l == 0 { pred_idc != 1 } else { pred_idc != 0 };
-                if !used {
-                    continue;
-                }
-                let nref = self.sh.num_ref_idx[l];
-                let mut ri = 0;
-                if nref > 1 {
-                    while ri < nref - 1 {
-                        let bin = if ri < 2 { self.dd(REF_IDX + ri as usize) } else { self.bypass() };
-                        if bin == 0 {
-                            break;
-                        }
-                        ri += 1;
-                    }
-                }
-                ref_idx[l] = ri as i8;
-                if l == 1 && self.sh.mvd_l1_zero && pred_idc == 2 {
-                    mvd[1] = [0, 0];
-                } else {
-                    mvd[l] = self.mvd_coding()?;
-                }
-                mvp_flag[l] = self.dd(MVP_FLAG);
-            }
-            let mut f = MvField { mv: [[0; 2]; 2], ref_idx };
-            for l in 0..2 {
-                if ref_idx[l] < 0 {
-                    continue;
-                }
-                let mvp = self.derive_amvp(xc, yc, ncb, xp, yp, w, h, part_idx, l, ref_idx[l] as usize, mvp_flag[l] as usize);
-                // mvLX = (mvp + mvd) wrapped to 16 bits (8-94)
-                f.mv[l] = [(mvp[0] as i32 + mvd[l][0]) as i16, (mvp[1] as i32 + mvd[l][1]) as i16];
-            }
-            f
+            self.amvp_motion(g)?
         };
         for l in 0..2 {
             if mvf.ref_idx[l] >= 0 {
                 ensure!((mvf.ref_idx[l] as usize) < self.refs[l].len(), "reference index out of range");
             }
         }
-        // store motion
+        self.store_motion(g.xp, g.yp, g.w, g.h, mvf);
+        self.motion_compensate(g.xp, g.yp, g.w as usize, g.h as usize, &mvf);
+        Ok(merge)
+    }
+
+    /// merge_idx(): the merge candidate index, truncated unary (0 when there is one candidate).
+    fn merge_idx(&mut self) -> u32 {
+        if self.sh.max_num_merge_cand <= 1 {
+            return 0;
+        }
+        let mut i = 0;
+        if self.dd(MERGE_IDX) == 1 {
+            i = 1;
+            while i < self.sh.max_num_merge_cand - 1 && self.bypass() == 1 {
+                i += 1;
+            }
+        }
+        i
+    }
+
+    /// inter_pred_idc: 0 = list 0, 1 = list 1, 2 = both.
+    fn inter_pred_idc(&mut self, xc: i32, yc: i32, w: i32, h: i32) -> u32 {
+        if !self.sh.is_b() {
+            return 0;
+        }
+        if w + h != 12 {
+            let depth = self.pic.blk_at(xc, yc).depth as usize;
+            if self.dd(INTER_PRED_IDC + depth) == 1 { 2 } else { self.dd(INTER_PRED_IDC + 4) }
+        } else {
+            self.dd(INTER_PRED_IDC + 4)
+        }
+    }
+
+    /// ref_idx_lX: truncated unary, the first two bins context-coded.
+    fn ref_idx(&mut self, l: usize) -> u32 {
+        let nref = self.sh.num_ref_idx[l];
+        let mut ri = 0;
+        if nref > 1 {
+            while ri < nref - 1 {
+                let bin = if ri < 2 { self.dd(REF_IDX + ri as usize) } else { self.bypass() };
+                if bin == 0 {
+                    break;
+                }
+                ri += 1;
+            }
+        }
+        ri
+    }
+
+    /// The AMVP branch: parse each used list's reference index, mvd and predictor flag, then add
+    /// every mvd to its predictor.
+    fn amvp_motion(&mut self, g: PbGeom) -> Result<MvField> {
+        let pred_idc = self.inter_pred_idc(g.xc, g.yc, g.w, g.h);
+        let mut ref_idx = [-1i8; 2];
+        let mut mvd = [[0i32; 2]; 2];
+        let mut mvp_flag = [0u32; 2];
+        for l in 0..2 {
+            let used = if l == 0 { pred_idc != 1 } else { pred_idc != 0 };
+            if !used {
+                continue;
+            }
+            ref_idx[l] = self.ref_idx(l) as i8;
+            if l == 1 && self.sh.mvd_l1_zero && pred_idc == 2 {
+                mvd[1] = [0, 0];
+            } else {
+                mvd[l] = self.mvd_coding()?;
+            }
+            mvp_flag[l] = self.dd(MVP_FLAG);
+        }
+        let mut f = MvField { mv: [[0; 2]; 2], ref_idx };
+        for l in 0..2 {
+            if ref_idx[l] < 0 {
+                continue;
+            }
+            let mvp = self.derive_amvp(g, l, ref_idx[l] as usize, mvp_flag[l] as usize);
+            // mvLX = (mvp + mvd) wrapped to 16 bits (8-94)
+            f.mv[l] = [(mvp[0] as i32 + mvd[l][0]) as i16, (mvp[1] as i32 + mvd[l][1]) as i16];
+        }
+        Ok(f)
+    }
+
+    /// Writes a prediction block's motion into the picture's 4x4 motion field.
+    fn store_motion(&mut self, xp: i32, yp: i32, w: i32, h: i32, mvf: MvField) {
         let w4 = self.pic.w4;
         for by in (yp >> 2)..((yp + h) >> 2) {
             let o = by as usize * w4;
             self.pic.mvf[o + (xp >> 2) as usize..o + ((xp + w) >> 2) as usize].fill(mvf);
         }
-        self.motion_compensate(xp, yp, w as usize, h as usize, &mvf);
-        Ok(merge)
     }
 
     fn mvd_coding(&mut self) -> Result<[i32; 2]> {
@@ -1500,12 +1536,80 @@ impl<'a> SliceDecoder<'a> {
             if bi {
                 let (w0, o0) = get(0);
                 let (w1, o1) = get(1);
-                inter::put_weighted_bi(&self.pred0, &self.pred1, bw, bh, bd, log2wd, w0, w1, o0, o1, dst, stride);
+                inter::put_weighted_bi(&self.pred0, &self.pred1, (bw, bh), bd, (log2wd, w0, w1, o0, o1), dst, stride);
             } else {
                 let l = if lists[0] { 0 } else { 1 };
                 let (wt, o) = get(l);
-                inter::put_weighted_uni(&self.pred0, bw, bh, bd, log2wd, wt, o, dst, stride);
+                inter::put_weighted_uni(&self.pred0, (bw, bh), bd, (log2wd, wt, o), dst, stride);
             }
         }
+    }
+}
+
+/// Per-transform-block parameters of residual coding.
+struct TbCtx {
+    c: usize,
+    log2: u32,
+    scan_idx: usize,
+    sdh: bool,
+}
+
+/// Position of a 4x4 sub-block in the sub-block grid.
+struct SubBlock {
+    xs: usize,
+    ys: usize,
+}
+
+/// Greater-than-1 / greater-than-2 flags of one sub-block.
+struct GreaterFlags {
+    gt1: [u8; 16],
+    first_g1: Option<usize>,
+    gt2: u8,
+}
+
+/// sigCtx (9.3.4.2.5) for the coefficient at (`xp`, `yp`) inside the sub-block.
+fn sig_coeff_ctx(t: &TbCtx, sb: &SubBlock, prev_csbf: u8, (xp, yp): (usize, usize)) -> usize {
+    let (xc, yc) = (sb.xs * 4 + xp, sb.ys * 4 + yp);
+    if t.log2 == 2 {
+        CTX_IDX_MAP[(yc << 2) + xc] as usize
+    } else if xc + yc == 0 {
+        0
+    } else {
+        sig_ctx_neighbourhood(prev_csbf, xp, yp) + sig_ctx_offset(t, sb.xs + sb.ys > 0)
+    }
+}
+
+/// Base sigCtx from the coded-sub-block flags of the right and below neighbours.
+fn sig_ctx_neighbourhood(prev_csbf: u8, xp: usize, yp: usize) -> usize {
+    let near = |v: usize| match v {
+        0 => 2,
+        1 => 1,
+        _ => 0,
+    };
+    match prev_csbf {
+        0 => {
+            if xp + yp == 0 {
+                2
+            } else if xp + yp < 3 {
+                1
+            } else {
+                0
+            }
+        }
+        1 => near(yp),
+        2 => near(xp),
+        _ => 2,
+    }
+}
+
+/// Offset added to sigCtx for the block size, colour component and sub-block position.
+fn sig_ctx_offset(t: &TbCtx, not_first_sb: bool) -> usize {
+    if t.c == 0 {
+        let size_off = if t.log2 == 3 { if t.scan_idx == 0 { 9 } else { 15 } } else { 21 };
+        size_off + if not_first_sb { 3 } else { 0 }
+    } else if t.log2 == 3 {
+        9
+    } else {
+        12
     }
 }
