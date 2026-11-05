@@ -26,11 +26,13 @@ fn diagram_group(shapes: &[Shape], id: ShapeId) -> Option<&Shape> {
 /// After text in a node changed: fit the graphic's text afresh at one shared scale, so the nodes
 /// that were not edited do not keep a scale from the old text (PowerPoint sizes them alike).
 pub(crate) fn share_after_edit(s: &mut Session, id: ShapeId) -> Result<()> {
+    // Look before cloning: most text edits are not in a graphic.
+    let st = s.doc()?;
+    let Some(gid) = current_shapes(&st.doc, &st.selection).and_then(|l| diagram_group(l, id)).map(|g| g.id) else { return Ok(()) };
     let st = s.doc_mut()?;
     let mut d = (*st.doc).clone();
     let sel = st.selection.clone();
     let Some(list) = crate::shapes_mut(&mut d, &sel) else { return Ok(()) };
-    let Some(gid) = diagram_group(list, id).map(|g| g.id) else { return Ok(()) };
     let Some(ShapeKind::Group { children, .. }) = deckcraft_model::find_shape(list, gid).map(|g| g.kind.clone()) else { return Ok(()) };
     let mut kids = children;
     for sh in &mut kids {
@@ -52,6 +54,26 @@ pub(crate) fn share_after_edit(s: &mut Session, id: ShapeId) -> Result<()> {
         st.revision += 1;
     }
     Ok(())
+}
+
+/// The size a graphic's text shows: the one set for every node, else the smallest explicit run size
+/// of its nodes times the scale shrink-on-overflow lays them out at (PowerPoint steps from what you see).
+pub(crate) fn shown_size(s: &Session, gid: ShapeId) -> Option<f64> {
+    let st = s.doc().ok()?;
+    let g = st.shape(gid)?;
+    if let Some(z) = g.diagram.as_ref().and_then(|d| d.font_size) {
+        return Some(z);
+    }
+    let ctx = crate::cmd::text::ctx_for(&st.doc, &st.selection)?;
+    let mut shown: Option<f64> = None;
+    deckcraft_model::walk(std::slice::from_ref(g), &mut |x, _| {
+        let Some(t) = x.text.as_ref() else { return };
+        let scale = super::paint::fitted(&ctx, x).map_or(1.0, |f| f.0);
+        for size in t.paragraphs.iter().flat_map(|p| &p.runs).filter_map(|r| r.props.size) {
+            shown = Some(shown.map_or(size * scale, |m| m.min(size * scale)));
+        }
+    });
+    shown
 }
 
 /// The SmartArt graphic the selection is (or is inside), with its outline as the Text Pane shows it.

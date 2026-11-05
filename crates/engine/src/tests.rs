@@ -6725,6 +6725,59 @@ fn grow_on_a_smartart_graphic_clamps_an_imported_scale_like_the_renderer() {
     assert_eq!(z, Some(10.5), "100 pt at the clamped 0.1 shows 10 pt; grow gives 10.5");
 }
 
+/// A node whose runs differ in size (a 20 pt title over 14 pt body) steps from the smallest, so
+/// Decrease and Increase never enlarge the body text.
+#[test]
+fn shrink_on_a_smartart_graphic_steps_from_the_smallest_run_size() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), ShapeId(gid as u32)).unwrap();
+        if let deckcraft_model::ShapeKind::Group { children, .. } = &mut g.kind {
+            for t in children.iter_mut().filter_map(|c| c.text.as_mut()) {
+                t.body.autofit = Some(deckcraft_model::text::AutoFit::None);
+                let mut second = t.paragraphs[0].runs[0].clone();
+                second.props.size = Some(14.0);
+                t.paragraphs[0].runs[0].props.size = Some(20.0);
+                t.paragraphs[0].runs.push(second);
+            }
+        }
+    }
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.shrink", &json!({})).unwrap();
+    let z = s.doc().unwrap().shape(ShapeId(gid as u32)).unwrap().diagram.as_ref().unwrap().font_size;
+    assert_eq!(z, Some(12.0), "14 pt is the smallest shown size, so shrink gives 12");
+}
+
+/// A shape saved with a scale of 1.0 whose text overflows is drawn shrunk by the renderer, so a
+/// step starts from that drawn size and Decrease never enlarges the text.
+#[test]
+fn shrink_on_a_smartart_graphic_steps_from_the_renderer_calculated_scale() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), ShapeId(gid as u32)).unwrap();
+        if let deckcraft_model::ShapeKind::Group { children, .. } = &mut g.kind {
+            for t in children.iter_mut().filter_map(|c| c.text.as_mut()) {
+                t.body.autofit = Some(deckcraft_model::text::AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
+                for r in t.paragraphs.iter_mut().flat_map(|p| p.runs.iter_mut()) {
+                    r.props.size = Some(200.0);
+                }
+            }
+        }
+    }
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.shrink", &json!({})).unwrap();
+    let z = s.doc().unwrap().shape(ShapeId(gid as u32)).unwrap().diagram.as_ref().unwrap().font_size.unwrap();
+    assert!(z < 200.0 * 0.6, "200 pt drawn much smaller steps down from the drawn size, not from 200: {z}");
+}
+
 /// Editing one node's text refits the whole graphic at one scale, so the other nodes do not keep
 /// the scale of the old text and Increase Font Size steps from what every node shows.
 #[test]
