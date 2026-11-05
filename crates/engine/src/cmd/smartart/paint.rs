@@ -4,6 +4,7 @@ use super::{
     Align, AutoFit, ColorRef, ColorTransform, Diagram, DiagramNode, Effects, Fill, Geom, Gradient, GradientShape, GradientStop, Line, MAX_LEVEL,
     Paragraph, SchemeSlot, Shadow, Shape, ShapeStyle, TextBody, Xfrm,
 };
+use deckcraft_model::text::RunKind;
 
 fn slot(i: usize) -> SchemeSlot {
     [SchemeSlot::Accent1, SchemeSlot::Accent2, SchemeSlot::Accent3, SchemeSlot::Accent4, SchemeSlot::Accent5, SchemeSlot::Accent6][i % 6]
@@ -296,14 +297,30 @@ fn word_scale(sh: &Shape, stretch: f64) -> f64 {
     let mut scale: f64 = 1.0;
     for p in &body.paragraphs {
         let line = avail - p.props.margin_left.unwrap_or(0.0).max(0.0);
+        // A word split across runs by formatting is one word: sum its fragments' widths, and end
+        // it only at whitespace or a line break.
+        let mut word = 0.0;
+        let mut fit = |word: &mut f64| {
+            if *word > 0.0 {
+                scale = scale.min(line.max(0.0) / *word);
+            }
+            *word = 0.0;
+        };
         for r in &p.runs {
+            if matches!(r.kind, RunKind::Break) {
+                fit(&mut word);
+                continue;
+            }
             let size = r.props.size.unwrap_or(18.0);
-            let word = r.text.split_whitespace().map(|t| t.chars().count()).max().unwrap_or(0) as f64;
-            let need = word * size * CHAR_W;
-            if need > 0.0 {
-                scale = scale.min(line.max(0.0) / need);
+            for c in r.text.chars() {
+                if c.is_whitespace() {
+                    fit(&mut word);
+                } else {
+                    word += size * CHAR_W;
+                }
             }
         }
+        fit(&mut word);
     }
     scale.max(MIN_SCALE)
 }
@@ -340,4 +357,30 @@ pub(super) fn picture_shape(d: &Diagram, preset: &str, x: Xfrm, i: usize, node: 
         sh.line = Some(Line::solid(ColorRef::scheme(SchemeSlot::Lt1), 1.5));
     }
     sh
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deckcraft_model::text::Run;
+
+    fn shape(runs: Vec<Run>) -> Shape {
+        let mut sh = Shape { xfrm: Some(Xfrm::new(0.0, 0.0, 100.0, 40.0)), ..Default::default() };
+        sh.text = Some(TextBody { paragraphs: vec![Paragraph { runs, ..Default::default() }], ..Default::default() });
+        sh
+    }
+
+    #[test]
+    fn a_word_split_across_runs_is_measured_whole() {
+        let run = |t: &str| Run::new(t);
+        // 10 characters at 18 pt need 108 pt; the line is 100 - 14.4 = 85.6 pt. Each half (54 pt) fits.
+        let whole = word_scale(&shape(vec![run("Internatio")]), 1.0);
+        assert!(whole < 1.0);
+        let split = word_scale(&shape(vec![run("Inter"), run("natio")]), 1.0);
+        assert!((split - whole).abs() < 1e-9, "{split} vs {whole}");
+        // A space or a line break between the fragments ends the word.
+        assert_eq!(word_scale(&shape(vec![run("Inter "), run("natio")]), 1.0), 1.0);
+        let brk = Run { kind: RunKind::Break, ..Run::new("") };
+        assert_eq!(word_scale(&shape(vec![run("Inter"), brk, run("natio")]), 1.0), 1.0);
+    }
 }
