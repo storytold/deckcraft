@@ -166,36 +166,39 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                     ui.add_space(12.0);
                     ui.label(egui::RichText::new(clock.clone()).size(16.0).color(Color32::from_gray(200)));
                     ui.add_space(20.0);
-                    ui.label(egui::RichText::new(format!("Slide {} of {}", cur + 1, doc.slides.len())).size(16.0).color(Color32::from_gray(200)));
+                    let cur_s = (cur + 1).to_string();
+                    let total_s = doc.slides.len().to_string();
+                    let counter = crate::i18n::format("Slide {} of {}", &[&cur_s, &total_s]);
+                    ui.label(egui::RichText::new(counter).size(16.0).color(Color32::from_gray(200)));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if button(ui, "End Show").clicked() {
+                        if button(ui, &crate::i18n::tr("End Show")).clicked() {
                             *keep = false;
                         }
-                        if button(ui, "Next ▶").clicked() {
+                        if button(ui, &crate::i18n::tr("Next ▶")).clicked() {
                             actions.push(show.state.next(doc));
                         }
-                        if button(ui, "◀ Previous").clicked() {
+                        if button(ui, &crate::i18n::tr("◀ Previous")).clicked() {
                             actions.push(show.state.prev(doc));
                         }
                     });
                 });
                 ui.horizontal(|ui| {
-                    if button(ui, if paused { "Resume" } else { "Pause" }).clicked() {
+                    if button(ui, &crate::i18n::tr(if paused { "Resume" } else { "Pause" })).clicked() {
                         show.timer.toggle(now);
                     }
-                    if button(ui, "Reset").clicked() {
+                    if button(ui, &crate::i18n::tr("Reset")).clicked() {
                         show.timer.reset(now);
                     }
-                    if button(ui, if show.blank == Some(Color32::BLACK) { "Black on" } else { "Black" }).clicked() {
+                    if button(ui, &crate::i18n::tr(if show.blank == Some(Color32::BLACK) { "Black on" } else { "Black" })).clicked() {
                         toggle_blank(show, Color32::BLACK);
                     }
-                    if button(ui, if show.blank == Some(Color32::WHITE) { "White on" } else { "White" }).clicked() {
+                    if button(ui, &crate::i18n::tr(if show.blank == Some(Color32::WHITE) { "White on" } else { "White" })).clicked() {
                         toggle_blank(show, Color32::WHITE);
                     }
-                    if button(ui, if show.presenter_grid { "All slides on" } else { "All slides" }).clicked() {
+                    if button(ui, &crate::i18n::tr(if show.presenter_grid { "All slides on" } else { "All slides" })).clicked() {
                         show.presenter_grid = !show.presenter_grid;
                     }
-                    if button(ui, show.zoom_label()).clicked() {
+                    if button(ui, &crate::i18n::tr(show.zoom_label())).clicked() {
                         show.zoom_key();
                     }
                 });
@@ -245,7 +248,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                     ui.painter().rect_filled(cr, CornerRadius::ZERO, c);
                 }
                 let nr = next_rect(right, doc);
-                ui.painter().text(right.min, Align2::LEFT_TOP, "Next", theme::font(13.0), Color32::from_gray(170));
+                ui.painter().text(right.min, Align2::LEFT_TOP, crate::i18n::tr("Next"), theme::font(13.0), Color32::from_gray(170));
                 match &next_tex {
                     Some(t) => {
                         ui.painter().image(t.id(), nr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
@@ -254,14 +257,14 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                         ui.painter().rect_filled(nr, CornerRadius::ZERO, Color32::from_gray(40));
                         // A next slide whose preview is still on its way is not the end.
                         if next.is_none() {
-                            ui.painter().text(nr.center(), Align2::CENTER_CENTER, "End of slide show", theme::font(13.0), Color32::from_gray(170));
+                            ui.painter().text(nr.center(), Align2::CENTER_CENTER, crate::i18n::tr("End of slide show"), theme::font(13.0), Color32::from_gray(170));
                         }
                     }
                 }
                 let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
                 let mut head = ui.new_child(egui::UiBuilder::new().max_rect(notes_head));
                 head.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Notes").size(13.0).color(Color32::from_gray(170)));
+                    ui.label(egui::RichText::new(crate::i18n::tr("Notes")).size(13.0).color(Color32::from_gray(170)));
                     if ui.button("A-").clicked() {
                         show.nudge_notes(-NOTES_STEP);
                     }

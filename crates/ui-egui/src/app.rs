@@ -127,7 +127,9 @@ impl SlideApp {
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
-        self.status = Some((msg.into(), now_ms()));
+        let text = msg.into();
+        let translated = crate::i18n::tr(&text).to_owned();
+        self.status = Some((translated, now_ms()));
     }
 
     /// Turn on the automatic check for a newer release at start-up (desktop shell only; tests and
@@ -213,6 +215,7 @@ impl SlideApp {
     /// opening/inbox results, screenshot completions/deadlines, AutoRecover pacing and media
     /// clocks. UI events are handled in [`Self::ui`], where a forced hidden paint also arrives.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        crate::i18n::set_language(self.ui.interface_language.resolve(self.services.system_locale.as_deref()));
         if !Self::root_viewport_admitted(ctx) {
             log::debug!("ignoring SlideApp::logic for render-only viewport {:?}", ctx.viewport_id());
             return;

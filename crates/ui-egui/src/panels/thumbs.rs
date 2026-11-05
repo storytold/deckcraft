@@ -295,7 +295,7 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
     // Click on empty space below: new slide prompt.
     let (r, resp) = ui.allocate_exact_size(vec2(width, 40.0), Sense::click());
     if resp.hovered() {
-        ui.painter().text(r.center(), Align2::CENTER_CENTER, "+ New Slide", theme::font(12.0), t.text_faint);
+        ui.painter().text(r.center(), Align2::CENTER_CENTER, crate::i18n::tr("+ New Slide"), theme::font(12.0), t.text_faint);
     }
     if resp.clicked() {
         let _ = app.run("slide.new", json!({}));
@@ -311,52 +311,52 @@ pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
         ("Copy", "edit.copy", json!({"scope": "slides"})),
         ("Paste", "edit.paste", json!({"scope": "slides"})),
     ] {
-        if ui.button(l).clicked() {
+        if ui.button(crate::i18n::tr(l)).clicked() {
             let _ = app.run(id, p);
             ui.close();
         }
     }
     ui.separator();
-    if ui.button("New Slide").clicked() {
+    if ui.button(crate::i18n::tr("New Slide")).clicked() {
         let _ = app.run("slide.new", json!({}));
         ui.close();
     }
-    if ui.button("Duplicate Slide").clicked() {
+    if ui.button(crate::i18n::tr("Duplicate Slide")).clicked() {
         let _ = app.run("slide.duplicate", json!({}));
         ui.close();
     }
-    if ui.button("Delete Slide").clicked() {
+    if ui.button(crate::i18n::tr("Delete Slide")).clicked() {
         let _ = app.run("slide.delete", json!({}));
         ui.close();
     }
     ui.separator();
-    if ui.button("Add Section").clicked() {
+    if ui.button(crate::i18n::tr("Add Section")).clicked() {
         let _ = app.run("section.add", json!({"at": i}));
         ui.close();
     }
-    ui.menu_button("Layout", |ui| {
+    ui.menu_button(crate::i18n::tr("Layout"), |ui| {
         let layouts: Vec<(String, u32)> = app
             .session
             .active()
             .and_then(|d| d.doc.masters.first().map(|m| m.layouts.iter().map(|l| (l.name.clone(), l.id.0)).collect()))
             .unwrap_or_default();
         for (n, id) in layouts {
-            if ui.button(n).clicked() {
+            if ui.button(&n).clicked() {
                 let _ = app.run("slide.layout", json!({"layout": id}));
                 ui.close();
             }
         }
     });
-    if ui.button("Reset Slide").clicked() {
+    if ui.button(crate::i18n::tr("Reset Slide")).clicked() {
         let _ = app.run("slide.reset", json!({}));
         ui.close();
     }
-    if ui.button("Format Background…").clicked() {
+    if ui.button(crate::i18n::tr("Format Background…")).clicked() {
         let _ = app.run("view.pane", json!({"pane": "background"}));
         ui.close();
     }
     let hidden = app.session.active().and_then(|d| d.doc.slides.get(i).map(|s| s.hidden)).unwrap_or(false);
-    if ui.button(if hidden { "Show Slide" } else { "Hide Slide" }).clicked() {
+    if ui.button(crate::i18n::tr(if hidden { "Show Slide" } else { "Hide Slide" })).clicked() {
         let _ = app.run("slide.hide", json!({"index": i}));
         ui.close();
     }

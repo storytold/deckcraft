@@ -1054,6 +1054,7 @@ dependencies = [
  "log",
  "rfd",
  "serde_json",
+ "sys-locale",
  "winit",
  "winresource",
 ]
