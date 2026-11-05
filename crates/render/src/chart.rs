@@ -286,9 +286,9 @@ pub(crate) fn value_axis_intervals(c: &Chart, axis_len: f64, base: f64, horiz: b
         let fewest = if axis_len >= 4.0 * extent { 4.0 } else { 2.0 };
         (axis_len / room.max(1e-9)).floor().clamp(fewest, 12.0) as usize
     };
-    if c.y_hidden || c.y_min.is_some() || c.y_max.is_some() || c.y_log_base.is_some() {
+    if c.y_hidden || c.y_min.is_some() || c.y_max.is_some() || c.y_major.is_some() || c.y_log_base.is_some() {
         // Hidden labels take no room: the plain length budget, as before labels were measured. A
-        // fixed bound or a logarithmic scale keeps it too: the measuring below reads the labels of
+        // fixed bound or unit, or a logarithmic scale, keeps it too: the measuring below reads the labels of
         // the linear scale the data picks, which is not the scale such an axis draws.
         (axis_len / if horiz { base * 6.0 } else { base * 1.9 }).floor().clamp(2.0, 12.0) as usize
     } else if horiz {

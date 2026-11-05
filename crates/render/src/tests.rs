@@ -3232,7 +3232,7 @@ fn a_stacked_value_axis_ends_near_the_tallest_stack() {
 }
 
 /// The label-measured budget changes only an automatic, linear, horizontal value axis. A vertical
-/// one, or one with a fixed bound or a logarithmic scale, keeps the length budget it had before:
+/// one, or one with a fixed bound or unit or a logarithmic scale, keeps the length budget it had before:
 /// on a vertical axis the floor of four intervals applies only where the length allows more than
 /// four anyway.
 #[test]
@@ -3249,10 +3249,12 @@ fn the_value_axis_budget_changes_only_automatic_linear_horizontal_axes() {
     fixed.y_max = Some(80.0);
     let mut lower = c.clone();
     lower.y_min = Some(10.0);
+    let mut unit = c.clone();
+    unit.y_major = Some(10.0);
     let mut log = c.clone();
     log.y_log_base = Some(10.0);
     for len in (10..600).map(|l| l as f64) {
-        for (name, c) in [("fixed maximum", &fixed), ("fixed minimum", &lower), ("logarithmic", &log)] {
+        for (name, c) in [("fixed maximum", &fixed), ("fixed minimum", &lower), ("fixed unit", &unit), ("logarithmic", &log)] {
             assert_eq!(crate::chart::value_axis_intervals(c, len, base, true), old(len, true), "{name}, {len}");
         }
     }
