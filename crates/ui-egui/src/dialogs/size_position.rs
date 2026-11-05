@@ -161,6 +161,8 @@ fn size_position_value(d: &Dialog) -> Result<Option<Value>, String> {
     let rot = shown_number(d, "rot", "Rotation")?;
     let base_w = parse_shown(&field_of(d, "baseW")).unwrap_or(1.0);
     let base_h = parse_shown(&field_of(d, "baseH")).unwrap_or(1.0);
+    let scale_w = if edited(d, "scaleW") { shown_number(d, "scaleW", "Scale width").unwrap_or(100.0) } else { 100.0 };
+    let scale_h = if edited(d, "scaleH") { shown_number(d, "scaleH", "Scale height").unwrap_or(100.0) } else { 100.0 };
     let mut w = if edited(d, "w") {
         shown_points(d, "w", "Width")?
     } else if edited(d, "scaleW") {
@@ -186,9 +188,15 @@ fn size_position_value(d: &Dialog) -> Result<Option<Value>, String> {
     }
     let mut p = json!({"lockAspect": lock});
     // Only what the user changed: a geometry field they left alone would push this dialog's seed
-    // onto every target.
+    // onto every target. A percentage is sent as a percentage, which the command applies per
+    // target; the absolute size computed from the first target's base would pin them all to it.
     for (key, value) in [("x", x), ("y", y), ("w", w), ("h", h), ("rot", rot)] {
-        if edited(d, key) || (key != "rot" && (edited(d, "scaleW") || edited(d, "scaleH")) && (key == "w" || key == "h")) {
+        if edited(d, key) {
+            p[key] = json!(value);
+        }
+    }
+    for (key, value) in [("scaleW", scale_w), ("scaleH", scale_h)] {
+        if edited(d, key) {
             p[key] = json!(value);
         }
     }

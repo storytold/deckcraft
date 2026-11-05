@@ -97,18 +97,17 @@ pub(super) fn record(app: &mut SlideApp, ui: &mut Ui) {
         if r.on_hover_text(tip).clicked() {
             let _ = app.start_audio_recording();
         }
-        if big_button(ui, Icon::PlayFromStart, "From\nBeginning", !recording).on_hover_text(busy).clicked() {
+        let from_beginning = big_button(ui, Icon::PlayFromStart, "From\nBeginning", !recording);
+        // An empty tooltip still draws a box, so the reason is attached only while it applies.
+        if (if recording { from_beginning.on_hover_text(busy) } else { from_beginning }).clicked() {
             let _ = app.run("show.record", json!({"from": app.show_start_index()}));
         }
-        if big_button(ui, Icon::PlayFromCurrent, "From\nCurrent Slide", !recording).on_hover_text(busy).clicked() {
+        if big_button(ui, Icon::PlayFromCurrent, "From\nCurrent Slide", !recording).clicked() {
             let i = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
             let _ = app.run("show.record", json!({"from": i}));
         }
-        if big_button(ui, Icon::Preview, "Preview", !recording)
-            .on_hover_text("Play the recording with its timings and narration. Nothing is saved or changed.")
-            .on_hover_text(busy)
-            .clicked()
-        {
+        let preview_hint = if recording { busy } else { "Play the recording with its timings and narration. Nothing is saved or changed." };
+        if big_button(ui, Icon::Preview, "Preview", !recording).on_hover_text(preview_hint).clicked() {
             let _ = app.run("show.preview", json!({"from": app.show_start_index()}));
         }
     });
