@@ -348,7 +348,7 @@ impl MediaHost {
 
     /// Carry out a `media.*` request from the engine for presentation `doc_uid`.
     /// `slide` is the slide the request comes from: shape ids are only unique per slide.
-    pub fn request(&mut self, doc_uid: u64, doc: &Presentation, slide: usize, action: &str, id: ShapeId, ms: Option<u64>, owner: Owner) {
+    pub fn request(&mut self, doc_uid: u64, doc: &Presentation, slide: usize, action: &str, (id, ms): (ShapeId, Option<u64>), owner: Owner) {
         self.ensure_doc(doc_uid);
         let Some(clip) = find_clip(doc, id, Some(slide)) else { return };
         let t = ms.map(|v| v as f64 / 1000.0);
@@ -472,6 +472,9 @@ pub enum BarAction {
 pub fn control_bar(ui: &mut Ui, rect: Rect, status: Option<&VoiceStatus>, clip: &MediaClip) -> Option<BarAction> {
     let painter = ui.painter_at(rect.expand(2.0));
     painter.rect_filled(rect, CornerRadius::same(4), Color32::from_rgba_unmultiplied(28, 28, 32, 230));
+    // Sensing drags too keeps a press on the bar from reaching the editor canvas: there it would
+    // start a selection marquee, which hides the bar before the click lands.
+    ui.interact(rect, ui.scope_id().with("media_bar_back"), Sense::click_and_drag());
     let playing = status.is_some_and(|s| matches!(s.state, PlayState::Playing | PlayState::Loading));
     let duration = status.map(|s| s.duration).filter(|d| *d > 0.0).unwrap_or(clip.duration_ms as f64 / 1000.0);
     let pos = status.map(|s| s.position).unwrap_or(clip.trim_start_ms as f64 / 1000.0);
@@ -481,7 +484,7 @@ pub fn control_bar(ui: &mut Ui, rect: Rect, status: Option<&VoiceStatus>, clip: 
     let button = |ui: &mut Ui, x: &mut f32, id: &str, paint: &dyn Fn(&egui::Painter, Rect)| -> bool {
         let r = Rect::from_min_size(pos2(*x, rect.min.y + 2.0), vec2(h - 4.0, h - 4.0));
         *x += h - 2.0;
-        let resp = ui.interact(r, ui.scope_id().with(("media_bar", id)), Sense::click());
+        let resp = ui.interact(r, ui.scope_id().with(("media_bar", id)), Sense::click_and_drag());
         let name = match id {
             "play" => "Play or pause media",
             "back" => "Back 0.25 seconds",

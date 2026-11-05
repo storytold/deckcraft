@@ -147,6 +147,86 @@ pub fn look(ctx: &Ctx, t: &Table, r: usize, c: usize) -> CellLook {
     look_with_def(ctx, resolve_style(ctx, t), t, r, c)
 }
 
+/// Which parts of the table a cell sits in, for the preset styles.
+#[derive(Clone, Copy)]
+struct PresetPart {
+    header: bool,
+    total: bool,
+    first_col: bool,
+    last_col: bool,
+    banded: bool,
+}
+
+impl PresetPart {
+    /// In a header, total, first or last column: the parts a preset style makes strong.
+    fn strong(self) -> bool {
+        self.header || self.total || self.first_col || self.last_col
+    }
+}
+
+/// Tint `k` of accent `a`.
+fn tint(a: Rgba, k: i32) -> Rgba {
+    deckcraft_color::apply(a, &[ColorTransform::Tint(k)])
+}
+
+fn light1_look(a: Rgba, p: PresetPart, on: impl Fn(Rgba) -> Rgba) -> CellLook {
+    let fill = p.banded.then(|| tint(a, 20000));
+    CellLook { fill, text: fill.map(on), bold: p.strong(), border: if p.header { Some((a, 1.0)) } else { None }, sides: [None; 4], paint: None }
+}
+
+fn light2_look(a: Rgba, p: PresetPart) -> CellLook {
+    CellLook {
+        fill: if p.header { Some(a) } else { None },
+        text: if p.header { Some(Rgba::WHITE) } else { None },
+        bold: p.header || p.total || p.first_col,
+        border: Some((a, 1.0)),
+        sides: [None; 4],
+        paint: None,
+    }
+}
+
+fn dark1_look(a: Rgba, p: PresetPart) -> CellLook {
+    CellLook {
+        fill: Some(if p.header {
+            Rgba::BLACK
+        } else if p.banded {
+            deckcraft_color::apply(a, &[ColorTransform::Shade(60000)])
+        } else {
+            deckcraft_color::apply(a, &[ColorTransform::Shade(75000)])
+        }),
+        text: Some(Rgba::WHITE),
+        bold: p.header || p.total || p.first_col,
+        border: Some((Rgba::WHITE, 1.0)),
+        sides: [None; 4],
+        paint: None,
+    }
+}
+
+fn medium4_look(a: Rgba, p: PresetPart, on: impl Fn(Rgba) -> Rgba) -> CellLook {
+    let fill = if p.header || p.banded { tint(a, 40000) } else { tint(a, 20000) };
+    CellLook { fill: Some(fill), text: Some(on(fill)), bold: p.strong(), border: Some((a, 0.75)), sides: [None; 4], paint: None }
+}
+
+/// medium2: strong header, banded light tints, white grid.
+fn medium2_look(a: Rgba, p: PresetPart, on: impl Fn(Rgba) -> Rgba) -> CellLook {
+    let strong = p.strong();
+    let fill = if strong {
+        a
+    } else if p.banded {
+        tint(a, 40000)
+    } else {
+        tint(a, 20000)
+    };
+    CellLook {
+        fill: Some(fill),
+        text: Some(if strong { Rgba::WHITE } else { on(fill) }),
+        bold: strong,
+        border: Some((Rgba::WHITE, 1.0)),
+        sides: [None; 4],
+        paint: None,
+    }
+}
+
 pub fn look_with_def(ctx: &Ctx, def: Option<&TableStyleDef>, t: &Table, r: usize, c: usize) -> CellLook {
     if let Some(def) = def {
         return look_def(ctx, def, t, r, c);
@@ -160,8 +240,7 @@ pub fn look_with_def(ctx: &Ctx, def: Option<&TableStyleDef>, t: &Table, r: usize
     let body_r = if t.first_row { r.wrapping_sub(1) } else { r };
     let band = t.band_row && !header && !total && body_r % 2 == 0;
     let band_c = t.band_col && c.is_multiple_of(2);
-    let tint = |k: i32| deckcraft_color::apply(a, &[ColorTransform::Tint(k)]);
-    let white = Rgba::WHITE;
+    let p = PresetPart { header, total, first_col, last_col, banded: band || band_c };
     let text_color = ctx.color(&ColorRef::scheme(SchemeSlot::Tx1), None);
     // Text on a tinted cell never inherits the text colour, which a dark theme makes light and
     // unreadable on the light tint: PowerPoint's medium styles set it to the theme's dark colour
@@ -173,69 +252,11 @@ pub fn look_with_def(ctx: &Ctx, def: Option<&TableStyleDef>, t: &Table, r: usize
     match kind {
         "none" => CellLook { fill: None, text: None, bold: false, border: None, sides: [None; 4], paint: None },
         "grid" => CellLook { fill: None, text: None, bold: false, border: Some((text_color, 0.75)), sides: [None; 4], paint: None },
-        "light1" => {
-            let fill = (band || band_c).then(|| tint(20000));
-            CellLook {
-                fill,
-                text: fill.map(on),
-                bold: header || total || first_col || last_col,
-                border: if header { Some((a, 1.0)) } else { None },
-                sides: [None; 4],
-                paint: None,
-            }
-        }
-        "light2" => CellLook {
-            fill: if header { Some(a) } else { None },
-            text: if header { Some(white) } else { None },
-            bold: header || total || first_col,
-            border: Some((a, 1.0)),
-            sides: [None; 4],
-            paint: None,
-        },
-        "dark1" => CellLook {
-            fill: Some(if header {
-                Rgba::BLACK
-            } else if band || band_c {
-                deckcraft_color::apply(a, &[ColorTransform::Shade(60000)])
-            } else {
-                deckcraft_color::apply(a, &[ColorTransform::Shade(75000)])
-            }),
-            text: Some(white),
-            bold: header || total || first_col,
-            border: Some((white, 1.0)),
-            sides: [None; 4],
-            paint: None,
-        },
-        "medium4" => {
-            let fill = if header || band || band_c { tint(40000) } else { tint(20000) };
-            CellLook {
-                fill: Some(fill),
-                text: Some(on(fill)),
-                bold: header || total || first_col || last_col,
-                border: Some((a, 0.75)),
-                sides: [None; 4],
-                paint: None,
-            }
-        }
-        _ => {
-            // medium2: strong header, banded light tints, white grid.
-            let strong = header || total || first_col || last_col;
-            let fill = if strong {
-                a
-            } else if band || band_c {
-                tint(40000)
-            } else {
-                tint(20000)
-            };
-            CellLook {
-                fill: Some(fill),
-                text: Some(if strong { white } else { on(fill) }),
-                bold: strong,
-                border: Some((white, 1.0)),
-                sides: [None; 4],
-                paint: None,
-            }
-        }
+        "light1" => light1_look(a, p, on),
+        "light2" => light2_look(a, p),
+        "dark1" => dark1_look(a, p),
+        "medium4" => medium4_look(a, p, on),
+        _ => medium2_look(a, p, on),
     }
 }
 

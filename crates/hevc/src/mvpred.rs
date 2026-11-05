@@ -261,68 +261,59 @@ impl<'a> SliceDecoder<'a> {
         if cur.long_term || col_diff == cur_diff { Some(mv) } else { Some(scale_mv(mv, col_diff, cur_diff)) }
     }
 
+    /// AMVP neighbour motion with the target's reference picture (no scaling), 8.5.3.2.7.
+    fn amvp_exact(&self, f: &MvField, l: usize, tpoc: i32) -> Option<[i16; 2]> {
+        let y = 1 - l;
+        if f.pred(l) && self.ref_pic(l, f.ref_idx[l]).poc == tpoc {
+            Some(f.mv[l])
+        } else if f.pred(y) && self.ref_pic(y, f.ref_idx[y]).poc == tpoc {
+            Some(f.mv[y])
+        } else {
+            None
+        }
+    }
+
+    /// AMVP neighbour motion with a long-term-compatible reference, scaled when both are short-term.
+    fn amvp_scaled(&self, f: &MvField, l: usize, tpoc: i32, tlt: bool, cur_poc: i32) -> Option<[i16; 2]> {
+        let y = 1 - l;
+        let pick = if f.pred(l) && self.ref_pic(l, f.ref_idx[l]).long_term == tlt {
+            Some((f.mv[l], self.ref_pic(l, f.ref_idx[l])))
+        } else if f.pred(y) && self.ref_pic(y, f.ref_idx[y]).long_term == tlt {
+            Some((f.mv[y], self.ref_pic(y, f.ref_idx[y])))
+        } else {
+            None
+        };
+        pick.map(|(mv, r)| if r.poc != tpoc && !r.long_term && !tlt { scale_mv(mv, cur_poc - r.poc, cur_poc - tpoc) } else { mv })
+    }
+
+    /// The first neighbour whose position is available and whose motion `pick` accepts.
+    fn first_amvp_neighbour(&self, pos: &[(i32, i32)], avail: &[bool], pick: impl Fn(&MvField) -> Option<[i16; 2]>) -> Option<[i16; 2]> {
+        pos.iter().zip(avail).find_map(|(&(x, y), &ok)| if ok { pick(&self.mv_at(x, y)) } else { None })
+    }
+
     /// AMVP predictor (8.5.3.2.6, 8.5.3.2.7).
     pub fn derive_amvp(&self, g: PbGeom, l: usize, ref_idx: usize, mvp_flag: usize) -> [i16; 2] {
         let PbGeom { xp, yp, w, h, .. } = g;
         let target = &self.refs[l][ref_idx];
         let (tpoc, tlt) = (target.poc, target.long_term);
         let cur_poc = self.pic.poc;
-        let y = 1 - l;
-        // exact reference match (no scaling)
-        let unscaled = |f: &MvField| -> Option<[i16; 2]> {
-            if f.pred(l) && self.ref_pic(l, f.ref_idx[l]).poc == tpoc {
-                Some(f.mv[l])
-            } else if f.pred(y) && self.ref_pic(y, f.ref_idx[y]).poc == tpoc {
-                Some(f.mv[y])
-            } else {
-                None
-            }
-        };
-        // long-term-compatible match, scaled when both references are short-term
-        let scaled = |f: &MvField| -> Option<[i16; 2]> {
-            let pick = if f.pred(l) && self.ref_pic(l, f.ref_idx[l]).long_term == tlt {
-                Some((f.mv[l], self.ref_pic(l, f.ref_idx[l])))
-            } else if f.pred(y) && self.ref_pic(y, f.ref_idx[y]).long_term == tlt {
-                Some((f.mv[y], self.ref_pic(y, f.ref_idx[y])))
-            } else {
-                None
-            };
-            pick.map(|(mv, r)| if r.poc != tpoc && !r.long_term && !tlt { scale_mv(mv, cur_poc - r.poc, cur_poc - tpoc) } else { mv })
-        };
+        let exact = |f: &MvField| self.amvp_exact(f, l, tpoc);
+        let scaled = |f: &MvField| self.amvp_scaled(f, l, tpoc, tlt, cur_poc);
         let pa = [(xp - 1, yp + h), (xp - 1, yp + h - 1)];
         let av_a = [self.pb_avail(&g, pa[0].0, pa[0].1), self.pb_avail(&g, pa[1].0, pa[1].1)];
         let is_scaled = av_a[0] || av_a[1];
-        let mut a = None;
-        for k in 0..2 {
-            if av_a[k] && a.is_none() {
-                a = unscaled(&self.mv_at(pa[k].0, pa[k].1));
-            }
-        }
+        let mut a = self.first_amvp_neighbour(&pa, &av_a, exact);
         if a.is_none() {
-            for k in 0..2 {
-                if av_a[k] && a.is_none() {
-                    a = scaled(&self.mv_at(pa[k].0, pa[k].1));
-                }
-            }
+            a = self.first_amvp_neighbour(&pa, &av_a, scaled);
         }
         let pb = [(xp + w, yp - 1), (xp + w - 1, yp - 1), (xp - 1, yp - 1)];
         let av_b = [0, 1, 2].map(|k| self.pb_avail(&g, pb[k].0, pb[k].1));
-        let mut b = None;
-        for k in 0..3 {
-            if av_b[k] && b.is_none() {
-                b = unscaled(&self.mv_at(pb[k].0, pb[k].1));
-            }
-        }
+        let mut b = self.first_amvp_neighbour(&pb, &av_b, exact);
         if !is_scaled && b.is_some() {
             a = b;
         }
         if !is_scaled {
-            b = None;
-            for k in 0..3 {
-                if av_b[k] && b.is_none() {
-                    b = scaled(&self.mv_at(pb[k].0, pb[k].1));
-                }
-            }
+            b = self.first_amvp_neighbour(&pb, &av_b, scaled);
         }
         let mut list: [[i16; 2]; 3] = [[0; 2]; 3];
         let mut n = 0;
