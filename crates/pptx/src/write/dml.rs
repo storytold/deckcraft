@@ -820,10 +820,10 @@ pub fn paragraph(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: bool,
                     }
                     w.close("a14:m");
                 } else {
-                    let fb = if !r.text.is_empty() {
-                        std::borrow::Cow::Borrowed(r.text.as_str())
-                    } else {
+                    let fb = if !m.is_empty() && (!m.linear || r.text.is_empty()) {
                         std::borrow::Cow::Owned(deckcraft_model::math::to_linear(&m.nodes))
+                    } else {
+                        std::borrow::Cow::Borrowed(r.text.as_str())
                     };
                     run_text(w, x, o, &fb, &r.props);
                 }

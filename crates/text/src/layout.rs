@@ -189,6 +189,7 @@ fn next_number(numbering: &mut [u32], run_start: &mut [u32], lvl: usize, start_a
 fn shape_paragraphs(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts, scale: f64, upright: Upright) -> Vec<ParaShaped> {
     let mut numbering: Vec<u32> = vec![0; 9];
     let mut run_start: Vec<u32> = vec![0; 9];
+    let mut eq_counter = 0u32;
     let mut shaped_paras: Vec<ParaShaped> = Vec::with_capacity(body.paragraphs.len());
     for (pi, para) in body.paragraphs.iter().enumerate() {
         let lvl = para.level.min(8) as usize;
@@ -198,7 +199,7 @@ fn shape_paragraphs(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts, scal
             _ => None,
         };
         let number = next_number(&mut numbering, &mut run_start, lvl, start_at, para.is_empty());
-        shaped_paras.push(shape_para(ctx, shape, body, pi, scale, opts, number, upright));
+        shaped_paras.push(shape_para(ctx, shape, body, pi, scale, opts, number, upright, &mut eq_counter));
     }
     shaped_paras
 }

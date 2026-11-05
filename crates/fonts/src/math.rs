@@ -144,6 +144,7 @@ fn coverage(b: &[u8], at: usize) -> Vec<u32> {
         }
         Some(2) => {
             let n = u16_at(b, at + 2).unwrap_or(0) as usize;
+            let mut budget = 70_000usize;
             for i in 0..n {
                 let r = at + 4 + i * 6;
                 let (Some(s), Some(e), Some(idx)) = (u16_at(b, r), u16_at(b, r + 2), u16_at(b, r + 4)) else { break };
@@ -151,6 +152,10 @@ fn coverage(b: &[u8], at: usize) -> Vec<u32> {
                     continue;
                 }
                 for g in s..=e {
+                    if budget == 0 {
+                        return out;
+                    }
+                    budget -= 1;
                     let k = idx as usize + (g - s) as usize;
                     if k >= 70_000 {
                         break;

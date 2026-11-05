@@ -336,7 +336,23 @@ fn run(w: &mut W, r: &MRun) {
         }
         w.close("m:rPr");
     }
-    let _ = (&r.font, r.color, r.size);
+    if r.size.is_some() || r.color.is_some() || r.font.is_some() {
+        let a = A::new().o("sz", r.size.map(|s| (s.clamp(1.0, 4000.0) * 100.0).round() as i64));
+        if r.color.is_none() && r.font.is_none() {
+            w.empty("a:rPr", a);
+        } else {
+            w.open("a:rPr", a);
+            if let Some(c) = r.color {
+                w.open0("a:solidFill");
+                w.empty("a:srgbClr", A::new().a("val", c.hex()));
+                w.close("a:solidFill");
+            }
+            if let Some(f) = &r.font {
+                w.empty("a:latin", A::new().a("typeface", f));
+            }
+            w.close("a:rPr");
+        }
+    }
     w.elt("m:t", &r.text);
     w.close("m:r");
 }

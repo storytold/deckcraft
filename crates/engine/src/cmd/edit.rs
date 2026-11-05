@@ -301,10 +301,7 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
 fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     let in_math = s.doc()?.selection.math.is_some();
     if in_math {
-        let text = str_param(p, "text")
-            .map(str::to_string)
-            .or_else(|| s.clipboard.text.as_ref().and_then(|b| b.paragraphs.first()).and_then(|p| p.runs.first()).map(|r| r.text.clone()))
-            .unwrap_or_else(|| s.clipboard.plain.clone());
+        let text = str_param(p, "text").map(str::to_string).unwrap_or_else(|| s.clipboard.plain.clone());
         if !text.is_empty() {
             return s.execute("equation.type", &json!({"text": text}));
         }

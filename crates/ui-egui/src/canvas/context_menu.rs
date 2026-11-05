@@ -43,19 +43,24 @@ pub(super) fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
 }
 
 pub(super) fn equation_items(app: &mut SlideApp, ui: &mut egui::Ui) {
-    let actions: Vec<(String, String)> = app
+    let actions: Vec<(usize, String, String)> = app
         .session
         .execute("equation.structureActions", &json!({}))
         .ok()
-        .and_then(|v| v.as_array().cloned())
+        .and_then(|v| v.get("actions").and_then(|a| a.as_array()).cloned())
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|a| Some((a.get("id")?.as_str()?.to_string(), a.get("label")?.as_str()?.to_string())))
+        .filter_map(|a| {
+            let level = a.get("level").and_then(|l| l.as_u64()).unwrap_or(0) as usize;
+            let act = a.get("action")?.as_str()?.to_string();
+            let label = a.get("label")?.as_str()?.to_string();
+            Some((level, act, label))
+        })
         .collect();
     if !actions.is_empty() {
-        for (id, label) in actions {
+        for (level, act, label) in actions {
             if ui.button(label).clicked() {
-                let _ = app.run("equation.structure", json!({"action": id}));
+                let _ = app.run("equation.structure", json!({"action": act, "level": level}));
                 ui.close();
             }
         }

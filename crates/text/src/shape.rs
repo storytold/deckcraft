@@ -17,6 +17,7 @@ pub(crate) fn shape_para(
     opts: &Opts,
     number: Option<u32>,
     vertical: Upright,
+    eq_counter: &mut u32,
 ) -> ParaShaped {
     let db = FontDb::global();
     let Some(para) = body.paragraphs.get(pi) else {
@@ -42,7 +43,6 @@ pub(crate) fn shape_para(
     let mut text = String::new();
     let mut char_style: Vec<usize> = vec![];
     let mut math_runs: Vec<(usize, usize, Arc<crate::math::MathLayout>, bool)> = vec![];
-    let mut eq_counter = 0u32;
     let avail_w = (opts.rect.width() - 14.4).max(1.0) as f32;
     for run in &para.runs {
         let rp = resolve::run(ctx, shape, para, &run.props);
@@ -65,7 +65,7 @@ pub(crate) fn shape_para(
                     *display,
                     avail_w,
                     &deckcraft_model::math::MathProps::default(),
-                    &mut eq_counter,
+                    eq_counter,
                 );
                 math_runs.push((start_ch, end_ch, Arc::new(ml), *display));
                 s

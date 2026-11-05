@@ -882,6 +882,7 @@ fn get(s: &mut Session, _: &Value) -> Result<Value> {
         "display": *display,
         "jc": math.jc,
         "linearForm": math.linear,
+        "numbered": matches!(math.nodes.as_slice(), [MNode::EqArr { rows }] if rows.iter().any(|r| has_number_mark(r))),
         "editing": st.selection.math.is_some(),
         "pos": st.selection.math.as_ref().map(|m| serde_json::to_value(&m.caret).unwrap_or(Value::Null)),
         "at": [at.0, at.1],
@@ -1039,5 +1040,82 @@ mod tests {
         } else {
             panic!("expected Math run");
         }
+    }
+
+    #[test]
+    fn test_equation_commands() {
+        let mut s = Session::with_new();
+        let _id = s.execute("insert.textBox", &json!({"rect": [100.0, 100.0, 300.0, 50.0], "text": ""})).unwrap()["id"].as_u64().unwrap() as u32;
+        s.execute("insert.equation", &json!({"linear": "(x+1)", "edit": true})).unwrap();
+
+        // equation.display
+        s.execute("equation.display", &json!({"value": false})).unwrap();
+        let val = s.execute("equation.get", &json!({})).unwrap();
+        assert_eq!(val["display"], false);
+        s.execute("equation.display", &json!({"value": true})).unwrap();
+        let val = s.execute("equation.get", &json!({})).unwrap();
+        assert_eq!(val["display"], true);
+
+        // equation.justify
+        s.execute("equation.justify", &json!({"jc": "left"})).unwrap();
+        let val = s.execute("equation.get", &json!({})).unwrap();
+        assert_eq!(val["jc"], "left");
+        s.execute("equation.justify", &json!({"jc": "right"})).unwrap();
+        let val = s.execute("equation.get", &json!({})).unwrap();
+        assert_eq!(val["jc"], "right");
+        s.execute("equation.justify", &json!({"jc": "center"})).unwrap();
+
+        // equation.number toggling on and off
+        s.execute("equation.number", &json!({})).unwrap();
+        let val = s.execute("equation.get", &json!({})).unwrap();
+        assert!(val["numbered"].as_bool().unwrap_or(false));
+        s.execute("equation.number", &json!({})).unwrap();
+        let val = s.execute("equation.get", &json!({})).unwrap();
+        assert!(!val["numbered"].as_bool().unwrap_or(true));
+
+        // equation.convert: linear & professional, scope current & all
+        s.execute("equation.convert", &json!({"to": "linear"})).unwrap();
+        let val = s.execute("equation.get", &json!({})).unwrap();
+        assert_eq!(val["linearForm"], true);
+        s.execute("equation.convert", &json!({"to": "professional"})).unwrap();
+        let val = s.execute("equation.get", &json!({})).unwrap();
+        assert_eq!(val["linearForm"], false);
+        s.execute("equation.convert", &json!({"to": "linear", "scope": "all"})).unwrap();
+        let val = s.execute("equation.get", &json!({})).unwrap();
+        assert_eq!(val["linearForm"], true);
+        s.execute("equation.convert", &json!({"to": "professional", "scope": "all"})).unwrap();
+
+        // equation.structureActions and equation.structure
+        let acts = s.execute("equation.structureActions", &json!({})).unwrap();
+        assert!(acts["actions"].is_array());
+
+        // equation.deleteSurrounding error when not applicable
+        assert!(s.execute("equation.deleteSurrounding", &json!({})).is_err());
+
+        // equation.exit with before: false
+        s.execute("equation.exit", &json!({"before": false})).unwrap();
+        assert!(s.active().unwrap().selection.math.is_none());
+        assert!(s.active().unwrap().selection.text.is_some());
+
+        // Insert new equation and exit with before: true
+        s.execute("insert.equation", &json!({"edit": true})).unwrap();
+        assert!(s.active().unwrap().selection.math.is_some());
+        s.execute("equation.exit", &json!({"before": true})).unwrap();
+        assert!(s.active().unwrap().selection.math.is_none());
+    }
+
+    #[test]
+    fn test_equation_move_build_up() {
+        let mut s = Session::with_new();
+        s.execute("insert.textBox", &json!({"rect": [100.0, 100.0, 300.0, 50.0], "text": ""})).unwrap();
+        s.execute("insert.equation", &json!({"edit": true})).unwrap();
+        // Insert text that can build up via autocorrect (\alpha) without space yet
+        s.execute("equation.type", &json!({"text": "\\alpha"})).unwrap();
+        let undo_count_before = s.active().unwrap().history.undo.len();
+        // Move caret triggers autocorrect/build_up and records "Build Up" undo step
+        s.execute("equation.move", &json!({"dir": "right"})).unwrap();
+        let undo_count_after = s.active().unwrap().history.undo.len();
+        assert!(undo_count_after > undo_count_before);
+        assert_eq!(s.active().unwrap().history.undo.last().unwrap().label, "Build Up");
     }
 }
