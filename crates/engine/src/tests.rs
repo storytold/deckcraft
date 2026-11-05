@@ -6509,3 +6509,27 @@ fn save_to_image_path_is_an_error_not_zip_bytes() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn flip_is_refused_on_a_smartart_graphic_and_leaves_it_a_graphic() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("insert.textBox", &json!({"text": "Goals\nRevenue"})).unwrap();
+    let gid = s.execute("smartArt.fromText", &json!({"kind": "blockList"})).unwrap()["id"].as_u64().unwrap();
+    for cmd in ["arrange.flipHorizontal", "arrange.flipVertical", "shape.flip"] {
+        let e = s.execute(cmd, &json!({"ids": [gid]})).unwrap_err().to_string();
+        assert!(e.contains("SmartArt") && e.contains("smartArt.layout"), "{cmd}: {e}");
+    }
+    // Grouped with another shape it cannot be flipped either: ungrouping would hand it the flip.
+    let other = s.execute("insert.textBox", &json!({"text": "x"})).unwrap()["id"].as_u64().unwrap();
+    let group = s.execute("arrange.group", &json!({"ids": [gid, other]})).unwrap()["id"].as_u64().unwrap();
+    let e = s.execute("shape.flip", &json!({"ids": [group]})).unwrap_err().to_string();
+    assert!(e.contains("SmartArt"), "{e}");
+    s.execute("arrange.ungroup", &json!({"ids": [group]})).unwrap();
+    // Still a SmartArt graphic: smartArt commands keep working.
+    s.execute("smartArt.layout", &json!({"id": gid, "kind": "cycle"})).unwrap();
+    // Ordinary shapes still flip.
+    let b = s.execute("insert.textBox", &json!({"text": "x"})).unwrap();
+    let id = b["id"].as_u64().unwrap();
+    assert_eq!(s.execute("arrange.flipHorizontal", &json!({"ids": [id]})).unwrap(), json!(1));
+}
