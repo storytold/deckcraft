@@ -378,6 +378,11 @@ mod tests {
         assert_eq!(d.doc.media(fill.media).unwrap().data.as_ref(), b"far away");
         assert!(d.doc.next_id < u32::MAX, "ids are left for later edits");
         b.execute("edit.paste", &json!({"text": "box"})).expect("pasting again still finds ids");
+        let media = |b: &Session| b.doc().unwrap().doc.media.iter().filter(|m| m.data.as_ref() == b"far away").count();
+        assert_eq!(media(&b), 1, "the second paste reuses the picture's bytes");
+        b.clipboard.token = 0;
+        b.execute("edit.paste", &json!({"text": "box", "payload": encode(&a.clipboard).unwrap()})).unwrap();
+        assert_eq!(media(&b), 1, "adopting the same copy again reuses them too");
     }
 
     #[test]

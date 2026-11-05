@@ -300,11 +300,18 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
     for m in media {
         match doc.media(m.id) {
             None => {
-                // A fresh id: the foreign one may name a slide or shape here, or sit at the top of
+                // The same bytes already here (an earlier paste of this copy) are reused. Otherwise
+                // a fresh id: the foreign one may name a slide or shape here, or sit at the top of
                 // the id space (a payload from another window is untrusted), and keeping it would
                 // leave no ids for the paste.
-                let id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
-                doc.media.push(deckcraft_model::MediaItem { id, ..m.clone() });
+                let id = match doc.media.iter().find(|x| x.data == m.data) {
+                    Some(x) => x.id,
+                    None => {
+                        let id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
+                        doc.media.push(deckcraft_model::MediaItem { id, ..m.clone() });
+                        id
+                    }
+                };
                 map.insert(m.id, id);
             }
             Some(x) if x.data == m.data => {}
