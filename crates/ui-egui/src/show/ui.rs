@@ -941,7 +941,9 @@ pub(crate) fn sync_mic(app: &mut SlideApp, show: &mut Show) {
             take_narration(app, show);
             app.stop_mic();
             show.mic_ok = false;
-            app.set_status(format!("{why}. Narration for this slide ends here."));
+            // The microphone is not restarted for the rest of the take (only a pause and resume
+            // restarts it), so the message says that, not just "this slide".
+            app.set_status(format!("{why}. Narration is off for the rest of the take; pause and resume to try again."));
         }
         return;
     }

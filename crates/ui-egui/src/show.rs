@@ -595,7 +595,7 @@ impl Show {
                     // A take that is running, paused or stopped still owns the slide being left:
                     // file its segment under that slide now, so leaving never loses it and finish
                     // never attributes it to the slide shown afterwards.
-                    self.finalize_take_slide(left, now);
+                    self.finalize_take_slide(now);
                     if self.record_view.status != record::RecordStatus::Idle {
                         self.take_slide = Some(i);
                         if self.record_paused_at.is_some() {
@@ -770,13 +770,14 @@ impl Show {
     /// File the open take segment's length under `slide`, once. Stop froze it; a running segment
     /// is measured to `now`. A segment under a millisecond is not a visit and is dropped, so
     /// navigating never writes a zero advance.
-    fn finalize_take_slide(&mut self, slide: usize, now: f64) {
-        if self.take_slide.take().is_none() {
-            return;
-        }
+    /// File the segment a take has open, under the slide that owns it: `take_slide` records it, and
+    /// the caller's idea of the current slide can already be the destination (a Stop click in the
+    /// same frame as a page turn arrives after `state.slide` moved).
+    fn finalize_take_slide(&mut self, now: f64) {
+        let Some(owner) = self.take_slide.take() else { return };
         let secs = self.record_view.frozen_slide_seconds().unwrap_or_else(|| self.captured_slide_seconds(now));
         if secs.is_finite() && secs * 1000.0 >= 1.0 {
-            self.timings.push((slide, secs));
+            self.timings.push((owner, secs));
         }
     }
 
@@ -798,7 +799,7 @@ impl Show {
             // Stop came before the show closed.
             self.keep_ink(doc, self.applied_slide);
             self.keep_laser(self.applied_slide);
-            self.finalize_take_slide(self.applied_slide, now);
+            self.finalize_take_slide(now);
         } else {
             self.stash_ink(doc, self.applied_slide);
             self.stash_laser(self.applied_slide);

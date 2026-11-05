@@ -93,11 +93,20 @@ pub struct CpalIn {
     stream: Option<cpal::Stream>,
     buf: Arc<Mutex<Capture>>,
     error: ErrorSlot,
+    /// Callbacks that found the buffer locked and dropped their samples: a gap in the narration.
+    /// The callback must never block on the UI thread's mutex, so it counts the gap here (a shared
+    /// atomic) and `problem` reports it.
+    skipped: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Default for CpalIn {
     fn default() -> Self {
-        CpalIn { stream: None, buf: Arc::new(Mutex::new(Capture::default())), error: ErrorSlot::default() }
+        CpalIn {
+            stream: None,
+            buf: Arc::new(Mutex::new(Capture::default())),
+            error: ErrorSlot::default(),
+            skipped: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
     }
 }
 
@@ -132,20 +141,26 @@ impl deckcraft_media::MicIn for CpalIn {
             g.samples.clear();
             g.truncated = false;
         }
+        self.skipped.store(0, std::sync::atomic::Ordering::Relaxed);
         let config: cpal::StreamConfig = cfg.clone().into();
         let buf = self.buf.clone();
         let slot = self.error.clone();
+        let counter = self.skipped.clone();
         let stream = match cfg.sample_format() {
             cpal::SampleFormat::F32 => {
                 let err = move |e: cpal::StreamError| keep_stream_error(&slot, &e);
                 dev.build_input_stream(
                     &config,
-                    move |data: &[f32], _| {
-                        if let Ok(mut g) = buf.try_lock() {
+                    move |data: &[f32], _| match buf.try_lock() {
+                        Ok(mut g) => {
                             let cap = max_samples(g.rate);
                             if push_mono(&mut g.samples, data, channels.max(1), cap) {
                                 g.truncated = true;
                             }
+                        }
+                        // Never block the realtime callback: count the gap and report it.
+                        Err(_) => {
+                            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
                     },
                     err,
@@ -156,8 +171,8 @@ impl deckcraft_media::MicIn for CpalIn {
                 let err = move |e: cpal::StreamError| keep_stream_error(&slot, &e);
                 dev.build_input_stream(
                     &config,
-                    move |data: &[i16], _| {
-                        if let Ok(mut g) = buf.try_lock() {
+                    move |data: &[i16], _| match buf.try_lock() {
+                        Ok(mut g) => {
                             let mut tmp = Vec::with_capacity(data.len());
                             for s in data {
                                 tmp.push(*s as f32 / i16::MAX as f32);
@@ -166,6 +181,9 @@ impl deckcraft_media::MicIn for CpalIn {
                             if push_mono(&mut g.samples, &tmp, channels.max(1), cap) {
                                 g.truncated = true;
                             }
+                        }
+                        Err(_) => {
+                            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
                     },
                     err,
@@ -194,6 +212,9 @@ impl deckcraft_media::MicIn for CpalIn {
     fn problem(&mut self) -> Option<String> {
         if let Some(e) = take_stream_error(&self.error) {
             return Some(format!("the microphone stopped ({e})"));
+        }
+        if self.skipped.swap(0, std::sync::atomic::Ordering::Relaxed) > 0 {
+            return Some("some microphone audio was dropped while the recorder was busy".to_string());
         }
         let mut g = self.buf.lock().unwrap_or_else(PoisonError::into_inner);
         std::mem::take(&mut g.truncated).then(|| "the take reached its ten minute limit, so later audio was dropped".to_string())

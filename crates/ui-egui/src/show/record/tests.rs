@@ -93,7 +93,7 @@ fn a_stopped_take_keeps_its_slide_timing_across_navigation() {
     let action = show.state.next(&doc);
     let _ = show.apply(action, &doc, 106.0);
     // What `finish` does for the slide on screen when the show closes.
-    show.finalize_take_slide(show.state.slide, 120.0);
+    show.finalize_take_slide(120.0);
     assert_eq!(show.timings, vec![(0, 5.0)], "slide 1 was never captured");
 }
 
@@ -113,7 +113,7 @@ fn a_paused_take_files_both_slides() {
     let _ = show.apply(action, &doc, 110.0);
     let _ = show.record_command("record.resume", 112.0).expect("resume");
     let _ = show.record_command("record.stop", 116.0).expect("stop");
-    show.finalize_take_slide(show.state.slide, 120.0);
+    show.finalize_take_slide(120.0);
     assert_eq!(show.timings, vec![(0, 3.0), (1, 4.0)]);
 }
 

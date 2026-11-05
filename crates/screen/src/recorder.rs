@@ -22,8 +22,11 @@ const MIN_SIDE: u32 = 16;
 /// H.264 level 5.1's picture budget in macroblocks (an 8192×1152 picture). PowerPoint's decoder
 /// can refuse a bigger level, and a screen recording is played there before anywhere else, so a
 /// bigger capture is recorded smaller rather than at a level it may not play. Level 5.1 allows
-/// 36,864 macroblocks in a picture.
+/// 36,864 macroblocks in a picture and 983,040 per second, so the frame rate counts too: 4K at
+/// 60 fps is over the per-second budget even though one of its pictures fits.
 const LEVEL_51_MAX_MBS: u64 = 36_864;
+/// Level 5.1's macroblock rate (macroblocks per second).
+const LEVEL_51_MAX_MBS_PER_S: u64 = 983_040;
 /// The largest whole downscale the recorder applies (8K records at 4K).
 const MAX_DOWNSCALE: u32 = 8;
 /// A key frame at least this often (seconds), so players can seek.
@@ -195,11 +198,12 @@ impl ScreenRecorder {
 
     /// The picture size to encode for a cropped capture `w`×`h` and its whole downscale: the
     /// capture itself, or the smallest downscale that fits H.264 level 5.1 so PowerPoint plays
-    /// the take.
+    /// the take (both its picture budget and its macroblock rate at the take's frame rate).
     fn scaled(&self, w: u32, h: u32) -> (u32, u32, u32) {
+        let fps = u64::from(self.cfg.fps.max(1));
         let fits = |n: u32| {
             let mbs = u64::from((w / n).div_ceil(16)) * u64::from((h / n).div_ceil(16));
-            mbs <= LEVEL_51_MAX_MBS
+            mbs <= LEVEL_51_MAX_MBS && mbs.saturating_mul(fps) <= LEVEL_51_MAX_MBS_PER_S
         };
         let n = (1..=MAX_DOWNSCALE).find(|n| fits(*n)).unwrap_or(MAX_DOWNSCALE);
         (n, (w / n) & !1, (h / n) & !1)
@@ -383,7 +387,11 @@ mod tests {
     fn the_picture_is_downscaled_only_until_it_fits_level_51() {
         let file = create(&scratch("scaled"));
         let rec = ScreenRecorder::new(Box::new(file), RecorderConfig::new(30)).expect("recorder");
-        assert_eq!(rec.scaled(3840, 2160), (1, 3840, 2160), "4K fits level 5.1 as captured");
+        assert_eq!(rec.scaled(3840, 2160), (1, 3840, 2160), "4K at 30 fps fits level 5.1 as captured");
+        // The same capture at 60 fps is over level 5.1's macroblock rate: it records at half size.
+        let fast = ScreenRecorder::new(Box::new(create(&scratch("scaled-60"))), RecorderConfig::new(60)).expect("recorder");
+        assert_eq!(fast.scaled(3840, 2160), (2, 1920, 1080), "4K at 60 fps is downscaled to keep level 5.1");
+        assert_eq!(fast.scaled(1920, 1080), (1, 1920, 1080), "1080p at 60 fps still fits");
         assert_eq!(rec.scaled(5120, 2880), (2, 2560, 1440), "a 5K display records at half size");
         assert_eq!(rec.scaled(7680, 4320), (2, 3840, 2160), "8K records at 4K");
     }

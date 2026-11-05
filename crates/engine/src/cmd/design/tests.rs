@@ -239,6 +239,21 @@ fn fonts_dialog_custom_overrides(s: &mut Session) {
     assert_eq!(font_scheme(s).minor.latin, "Open Sans");
 }
 
+/// An inline `picture` is what gets stored, so it also decides the type: a `path` beside it names
+/// bytes nobody reads, and must not turn an SVG into an unknown file.
+#[test]
+fn a_background_picture_is_typed_from_the_bytes_it_reads() {
+    let mut s = Session::with_new();
+    // The tag sits past the 512 bytes the sniffer scans, so only the name can say `svg`.
+    let svg =
+        format!("<?xml version=\"1.0\"?><!--{}--><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"/></svg>", "x".repeat(600));
+    s.execute("design.background", &json!({"picture": crate::cmd::base64_encode(svg.as_bytes()), "name": "drawing.svg", "path": "C:/old/photo.png"}))
+        .expect("a background from inline bytes");
+    let pf = picture(&s);
+    let m = s.doc().unwrap().doc.media(pf.media).expect("the media");
+    assert_eq!(m.content_type, "image/svg+xml", "the inline bytes decide the type, not the path");
+}
+
 #[test]
 fn background_picture_options_tile_transparency_and_copy() {
     let mut s = Session::with_new();

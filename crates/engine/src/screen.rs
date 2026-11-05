@@ -664,6 +664,9 @@ impl ScreenState {
             let done = active.encoder.take_finished()?;
             let path = active.path.clone();
             let reason = active.reason.clone();
+            // A take whose first frame failed to encode reports `Empty` and the failure together:
+            // keep the failure so the message says why, not just that nothing was recorded.
+            let failed = active.encoder.failure().map(str::to_string).or_else(|| (!reason.is_empty()).then(|| reason.clone()));
             self.active = None;
             return match done {
                 Ok(out) if out.frames > 0 => {
@@ -673,10 +676,14 @@ impl ScreenState {
                     None
                 }
                 // No file was written for an empty take, and the recorder says so: that is not a
-                // write failure, so it gets the plain "nothing in it" message.
+                // write failure, so it gets the plain "nothing in it" message — unless the encoder
+                // failed first, which is worth saying.
                 Ok(_) | Err(RecorderError::Empty) => {
                     let _ = std::fs::remove_file(&path);
-                    Some("the screen recording had nothing in it".into())
+                    match failed {
+                        Some(why) => Some(format!("the screen recording stopped: {why}")),
+                        None => Some("the screen recording had nothing in it".into()),
+                    }
                 }
                 Err(e) => {
                     let _ = std::fs::remove_file(&path);

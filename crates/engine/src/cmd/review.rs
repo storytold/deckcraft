@@ -1003,9 +1003,16 @@ fn narration(s: &mut Session, p: &Value) -> Result<Value> {
         };
         // Only a narration clip is replaced: a text box or picture that happens to be called
         // "Narration" keeps its content.
-        let existing = doc.slides.get(index).and_then(|sl| {
-            sl.shapes.iter().find(|sh| sh.name == "Narration" && matches!(&sh.kind, ShapeKind::Media(m) if m.narration)).map(|sh| sh.id)
+        let replaced = doc.slides.get(index).and_then(|sl| {
+            sl.shapes.iter().find(|sh| sh.name == "Narration" && matches!(&sh.kind, ShapeKind::Media(m) if m.narration)).map(|sh| {
+                let old = match &sh.kind {
+                    ShapeKind::Media(m) => [Some(m.media), m.poster].into_iter().flatten().collect(),
+                    _ => Vec::new(),
+                };
+                (sh.id, old)
+            })
         });
+        let existing = replaced.as_ref().map(|(id, _)| *id);
         let id = if let Some(id) = existing {
             id
         } else {
@@ -1031,6 +1038,13 @@ fn narration(s: &mut Session, p: &Value) -> Result<Value> {
             sh.hidden = true;
             sh.xfrm = Some(rect);
             sh.kind = ShapeKind::Media(clip);
+        }
+        // The take this one replaces is unreferenced now: drop its media unless something else in
+        // the document points at it (`clear_narration`'s rule), or repeated takes keep the dropped
+        // audio in memory for the life of the document.
+        if let Some((_, old)) = &replaced {
+            let drop: Vec<_> = old.iter().copied().filter(|id| !media_used(doc, *id)).collect();
+            doc.media.retain(|m| !drop.contains(&m.id));
         }
         Ok(id.0)
     })?;
@@ -1761,6 +1775,23 @@ mod tests {
         }
         assert_eq!(s.execute("show.clearNarrationAll", &json!({})).unwrap()["cleared"], 1);
         assert!(s.doc().unwrap().doc.media(media).is_some(), "the table cell and the link still use this media");
+    }
+
+    /// Recording a new take on a slide replaces the old audio: the old media must not stay in the
+    /// document (a ten minute take is tens of MB), unless something else still points at it.
+    #[test]
+    fn a_new_narration_take_drops_the_audio_it_replaced() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let first = tone(4000);
+        let second = tone(3200);
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&first)})).unwrap();
+        let old = narrations(&s, 0)[0].media;
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&second)})).unwrap();
+        let new = narrations(&s, 0)[0].media;
+        assert_ne!(old, new, "a different recording is a new media item");
+        assert!(s.doc().unwrap().doc.media(old).is_none(), "the replaced take's audio is gone");
+        assert!(s.doc().unwrap().doc.media(new).is_some(), "the new take's audio stays");
     }
 
     #[test]

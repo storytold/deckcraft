@@ -189,7 +189,7 @@ impl RecordView {
             self.screen_status.invalidate();
             self.frozen_slide_secs = Some(show.captured_slide_seconds(now));
             // File the slide's segment now, so a navigation after Stop cannot move it.
-            show.finalize_take_slide(show.state.slide, now);
+            show.finalize_take_slide(now);
         }
         match self.status {
             RecordStatus::Recording => {
