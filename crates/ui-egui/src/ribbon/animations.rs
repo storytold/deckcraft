@@ -137,6 +137,20 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             run(app, "view.pane", json!({"pane": "animation"}));
         }
     }
+
+    let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
+    egui::Popup::menu(&r).show(|ui| {
+        if ui.button("On Click of... (none)").clicked() {
+            run(app, "animation.timing", json!({"trigger": null}));
+        }
+        let shapes: Vec<(u32, String)> =
+            app.session.active().map(|d| d.shapes().iter().map(|s| (s.id.0, s.name.clone())).collect()).unwrap_or_default();
+        for (id, name) in shapes {
+            if ui.button(format!("On Click of {name}")).clicked() {
+                run(app, "animation.timing", json!({"trigger": id}));
+            }
+        }
+    });
         });
         let on = app.session.anim_painter.is_some();
         let en = enabled(app, "animation.painter");
