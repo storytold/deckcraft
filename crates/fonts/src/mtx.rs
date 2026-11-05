@@ -404,8 +404,10 @@ fn glyph(glyf: &mut Cur, push: &mut Cur, code: &mut Cur) -> Option<Vec<u8>> {
     if n == -1 {
         out.extend(n.to_be_bytes());
         out.extend(glyf.take(8)?);
+        let mut has_instructions = false;
         loop {
             let flags = glyf.u16()?;
+            has_instructions |= flags & 0x100 != 0;
             out.extend(flags.to_be_bytes());
             let args = if flags & 1 != 0 { 4 } else { 2 };
             let scale = if flags & 0x08 != 0 {
@@ -419,7 +421,7 @@ fn glyph(glyf: &mut Cur, push: &mut Cur, code: &mut Cur) -> Option<Vec<u8>> {
             };
             out.extend(glyf.take(2 + args + scale)?);
             if flags & 0x20 == 0 {
-                if flags & 0x100 != 0 {
+                if has_instructions {
                     let p = program(glyf, push, code)?;
                     out.extend((p.len() as u16).to_be_bytes());
                     out.extend(p);
@@ -459,8 +461,8 @@ fn glyph(glyf: &mut Cur, push: &mut Cur, code: &mut Cur) -> Option<Vec<u8>> {
             if neg { -(v + delta) } else { v + delta }
         };
         let (dx, dy) = (step(t.x_bits, 0, t.dx, t.x_neg), step(t.y_bits, t.x_bits, t.dy, t.y_neg));
-        x += dx;
-        y += dy;
+        x = x.wrapping_add(dx);
+        y = y.wrapping_add(dy);
         (min, max) = ((min.0.min(x), min.1.min(y)), (max.0.max(x), max.1.max(y)));
         steps.push((dx as i16, dy as i16));
     }
