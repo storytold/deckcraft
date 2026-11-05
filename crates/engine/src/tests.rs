@@ -7658,3 +7658,41 @@ fn shape_adjust_and_quick_style_reject_invalid_index() {
     assert_eq!(s.doc().unwrap().shape(id).unwrap().style, before.style);
     s.execute("shape.adjust", &json!({"value": 0.4})).unwrap();
 }
+
+/// Font Color on a graphic opened from a file keeps the file's drawing (PowerPoint only recolours its text): the
+/// children keep their ids and geometry, their runs and end marks take the colour, and it is recorded.
+#[test]
+fn format_color_on_an_imported_smartart_graphic_keeps_its_drawing() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    let id = ShapeId(gid as u32);
+    let children = |s: &Session| match s.doc().unwrap().shape(id).unwrap().kind.clone() {
+        deckcraft_model::ShapeKind::Group { children, .. } => children,
+        _ => panic!("group"),
+    };
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), id).unwrap();
+        g.diagram.as_mut().unwrap().imported = true;
+    }
+    let before: Vec<_> = children(&s).iter().map(|c| (c.id, c.xfrm)).collect();
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.color", &json!({"color": "#00AA00"})).unwrap();
+    let after = children(&s);
+    assert_eq!(before, after.iter().map(|c| (c.id, c.xfrm)).collect::<Vec<_>>(), "the drawing's ids and geometry stay");
+    let green = deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(0, 0xAA, 0));
+    let d = s.doc().unwrap().shape(id).unwrap().diagram.clone().unwrap();
+    assert!(d.imported, "still an imported graphic");
+    assert_eq!(d.text_color, Some(green.clone()));
+    let want = Some(deckcraft_model::Fill::solid(green));
+    let texts: Vec<_> = after.iter().filter_map(|c| c.text.as_ref()).collect();
+    assert!(!texts.is_empty());
+    for t in texts {
+        for p in &t.paragraphs {
+            assert_eq!(p.end_props.fill, want);
+            assert!(p.runs.iter().all(|r| r.props.fill == want));
+        }
+    }
+}

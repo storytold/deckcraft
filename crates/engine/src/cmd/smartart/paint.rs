@@ -280,7 +280,7 @@ pub(super) fn set_size(sh: &mut Shape, size: f64) {
     body.body.autofit = Some(AutoFit::None);
 }
 
-fn set_color(sh: &mut Shape, c: &ColorRef) {
+pub(super) fn set_color(sh: &mut Shape, c: &ColorRef) {
     let Some(body) = &mut sh.text else { return };
     for p in &mut body.paragraphs {
         for r in &mut p.runs {
