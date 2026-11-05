@@ -138,9 +138,14 @@ impl Table {
         }
         let grows = |m: &Merge| matches!(neighbour, Some(n) if m.gs > 1 && m.c <= n && n < m.c + m.gs && (at == m.c || at == m.c + m.gs));
         // A merge that grows to the left starts at the new cell, which takes the anchor's text and
-        // formatting; the old anchor becomes a covered, empty cell.
+        // formatting; the old anchor becomes a covered cell that keeps its formatting (a later
+        // split shows it) and loses its text.
         for m in merges.iter().filter(|m| grows(m) && at == m.c) {
+            let old = self.cell(m.r, at + 1).cloned();
             self.move_anchor((m.r, at + 1), (m.r, at));
+            if let (Some(old), Some(x)) = (old, self.cell_mut(m.r, at + 1)) {
+                *x = Cell { text: Cell::new("").text, ..old };
+            }
         }
         self.set_merges(merges.into_iter().map(|m| if grows(&m) { Merge { gs: m.gs + 1, ..m } } else { m.insert_col(at) }));
     }
@@ -662,8 +667,14 @@ mod tests {
     #[test]
     fn a_column_inserted_left_of_a_merge_keeps_the_text_in_its_anchor() {
         let mut t = merged();
+        if let Some(c) = t.cell_mut(1, 1) {
+            c.fill = Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0))));
+        }
         t.insert_col_beside(1, Some(1));
         assert_topology(&t);
+        // The old anchor keeps the fill, so a split shows it; the text is the new anchor's.
+        assert_eq!(t.cell(1, 2).unwrap().fill, t.cell(1, 1).unwrap().fill);
+        assert!(t.cell(1, 2).unwrap().fill.is_some());
         let a = t.cell(1, 1).unwrap();
         assert_eq!((a.grid_span, a.row_span), (3, 2));
         assert_eq!(anchor_text(&t, 1, 1), "M");
