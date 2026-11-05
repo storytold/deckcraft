@@ -1,0 +1,15 @@
+[package]
+name = "deckcraft-screen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft screen capture: the host screen-capture contract and the screen-recording H.264/MP4 encoder"
+
+[lints]
+workspace = true
+
+[dependencies]
+deckcraft-h264 = { workspace = true }
+deckcraft-isobmff = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }

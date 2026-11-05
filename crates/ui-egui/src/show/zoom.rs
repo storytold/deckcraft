@@ -151,6 +151,8 @@ impl Show {
             "notesPx": self.notes_px,
             "custom": self.state.custom_name(),
             "goto": if self.goto.is_empty() { None } else { Some(self.goto.clone()) },
+            "record": self.record,
+            "rehearse": self.rehearse,
         });
         if self.grid {
             let slides = grid_indices(n_slides);
@@ -344,6 +346,17 @@ pub(super) fn slide_to_screen(srect: Rect, uv: Rect, nx: f32, ny: f32) -> Pos2 {
     pos2(srect.min.x + u * srect.width(), srect.min.y + v * srect.height())
 }
 
+/// Where a recorded laser sample (slide points) lands on screen: mapped through the zoom the
+/// slide is drawn with. `None` when the point lies outside the visible crop, so a zoomed show does
+/// not paint it somewhere else on the slide.
+pub(super) fn laser_playback_pos(srect: Rect, uv: Rect, (slide_w, slide_h): (f32, f32), (x, y): (f64, f64)) -> Option<Pos2> {
+    let (nx, ny) = ((x / f64::from(slide_w.max(1.0))) as f32, (y / f64::from(slide_h.max(1.0))) as f32);
+    if !nx.is_finite() || !ny.is_finite() || !uv.contains(pos2(nx, ny)) {
+        return None;
+    }
+    Some(slide_to_screen(srect, uv, nx, ny))
+}
+
 pub(super) fn slide_box(srect: Rect, uv: Rect, (slide_w, slide_h): (f32, f32), (x, y, w, h): (f32, f32, f32, f32)) -> Rect {
     let a = slide_to_screen(srect, uv, x / slide_w.max(1.0), y / slide_h.max(1.0));
     let b = slide_to_screen(srect, uv, (x + w) / slide_w.max(1.0), (y + h) / slide_h.max(1.0));
@@ -399,5 +412,25 @@ pub(super) fn paint_grid(painter: &egui::Painter, ctx: &egui::Context, show: &mu
             theme::font(13.0),
             if current { Color32::WHITE } else { Color32::from_gray(180) },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A recorded laser point is in slide coordinates: a zoomed show draws it where the zoom puts
+    /// that part of the slide, and leaves out what the zoom crops away.
+    #[test]
+    fn a_saved_laser_point_follows_the_zoom() {
+        let srect = Rect::from_min_size(pos2(100.0, 50.0), vec2(800.0, 600.0));
+        let (w, h) = (960.0, 720.0);
+        let unit = unit_uv();
+        let p = laser_playback_pos(srect, unit, (w, h), (480.0, 360.0)).expect("the middle of the slide is on screen");
+        assert!((p.x - srect.center().x).abs() < 0.5 && (p.y - srect.center().y).abs() < 0.5, "{p:?}");
+        let uv = zoom_uv(0.25, 0.25, ZOOM_SCALE);
+        let zoomed = laser_playback_pos(srect, uv, (w, h), (0.25 * 960.0, 0.25 * 720.0)).expect("the zoomed spot is on screen");
+        assert!((zoomed.x - srect.center().x).abs() < 0.5 && (zoomed.y - srect.center().y).abs() < 0.5, "{zoomed:?}");
+        assert_eq!(laser_playback_pos(srect, uv, (w, h), (0.95 * 960.0, 0.95 * 720.0)), None, "the zoom crops that part away");
     }
 }

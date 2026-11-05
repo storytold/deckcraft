@@ -1,6 +1,6 @@
 # DeckCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (beta item 9 drops Play From, now in; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: PPTX corpus, presenter and show controls, review navigation, starter decks, Grid Options and New Window, WordArt gallery and handles, pen pressure; beta items 9 and 10 narrowed; duplicated rows and headers folded; previous: minor, core-workflow alpha gate added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (screen recording from the Record tab: display, window or region capture into a video clip; Record Slide Show keeps timings, narration, pen ink and a laser trace; previous: trivial, beta item 9 drops Play From, now in) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Forward-looking: where DeckCraft is going and in what order. The one-page summary is
 [ROADMAP.md](../ROADMAP.md); every shortfall is in [gaps.md](gaps.md); numbers are in
@@ -62,7 +62,7 @@ reference renders, a Windows tester with the affected GPUs, native speakers to r
 ## After beta: toward full parity (~245–440 h more)
 
 SmartArt depth, the remaining animation effects and motion paths, edit-point segment types and
-3-D depth, bundled proofing dictionaries, Zoom depth, recording, video export, legacy `.ppt` import
+3-D depth, bundled proofing dictionaries, Zoom depth, screen capture *within* Record Slide Show (the Record tab's own recorder ships; the shell's screen button is still a placeholder), video export, legacy `.ppt` import
 and `.odp` (owner decision), GPU rasterization, hardware video decode, pen tilt (pressure already
 scales ink width) and pinch zoom, the other 21 languages with RTL mirroring, a larger template
 gallery (six original starters ship), and local AI features (owner decision on models). Itemized
@@ -81,7 +81,7 @@ From the local execution plan (`plan/execution-plan.md`, gitignored). Status as 
 | M4 | Design | mostly | Notes/Handout masters, variants, Designer |
 | M5 | Pictures and media | mostly | SVG/EMF, remove background, compress, icons, WMA/WMV |
 | M6 | Transitions and animations | mostly | Animation Pane timeline, remaining effects, transition sounds |
-| M7 | Slide show | mostly | second-display placement, laser, record |
+| M7 | Slide show | mostly | second-display placement, highlighter, screen capture within Record Slide Show |
 | M8 | Tables and charts | partly | chart data grid, elements, chartex types, draw table |
 | M9 | SmartArt, equations, WordArt | partly | SmartArt layouts and PowerPoint-diagram fidelity, equations (PR #55); the text pane, warp gallery and warp handles are in |
 | M10 | Views | done | Arrange All (grid options and New Window are in) |
@@ -113,6 +113,7 @@ plan above.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | minor | Screen recording (#1815) from the Record tab: display, window or region capture into a video clip. The recording show keeps timings, narration, pen ink and a laser trace; Clear Timing and Clear Narration work on the current slide or all slides |
 | 2026-10-22 | trivial | Beta item 9: Animation Pane ▸ Play From landed, the item keeps effect options (3–6 h) |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native save/reopen retains imported chart workbooks and related parts; headless command tests cover a PPTX → native → PPTX cycle and stale-workbook rejection. Milestone scope and scores unchanged |

@@ -253,8 +253,12 @@ impl SlideApp {
         }
         self.synthetic_generation = self.synthetic_generation.wrapping_add(1).max(1);
         log::debug!("injecting synthetic input batch {}", self.synthetic_generation);
-        let n = match self.synthetic.first() {
-            Some(egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. }) => 1,
+        // A control pointer request leads with the `ModifiersChanged` that belongs to its first
+        // pointer event: send that event with its modifiers in one pass, and only that one, so a
+        // drag's down, drag and up steps still reach the canvas one pass at a time.
+        let lead = self.synthetic.iter().take_while(|e| matches!(e, egui::Event::ModifiersChanged(_))).count();
+        let n = match self.synthetic.get(lead) {
+            Some(egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. }) => lead + 1,
             _ => self.synthetic.iter().position(|e| matches!(e, egui::Event::Key { pressed: false, .. })).map_or(self.synthetic.len(), |i| i + 1),
         };
         let n = n.min(self.synthetic.len());

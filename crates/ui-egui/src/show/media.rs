@@ -41,7 +41,7 @@ pub(super) fn show_media(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc:
     }
     if let Some(i) = cur {
         for (id, _, clip) in crate::media::slide_media(doc, i) {
-            if clip.autoplay && !keep.contains(&id) {
+            if super::play_on_enter(&clip, doc.show.without_narration) && !keep.contains(&id) {
                 app.media.play(doc_uid, doc, id, &clip, None, crate::media::Owner::Show);
             }
         }

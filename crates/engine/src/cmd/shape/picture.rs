@@ -59,7 +59,8 @@ pub(super) fn picture_reset(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(super) fn picture_change(s: &mut Session, p: &Value) -> Result<Value> {
     let (name, bytes) = crate::cmd::insert::media_bytes(p, "picture.change")?;
-    let ct = crate::cmd::insert::content_type(&name, &bytes);
+    // The type comes from the name the bytes came from, as `insert.picture` does.
+    let ct = crate::cmd::insert::content_type(&crate::cmd::insert::detect_name(p, &name), &bytes);
     let media = s.edit(|doc, _| doc.add_media(&name, ct, bytes).ok_or_else(|| bad("picture.change", NO_ID_SPACE)))?;
     edit_shapes(s, p, "picture.change", |sh| {
         if let deckcraft_model::ShapeKind::Picture { fill } = &mut sh.kind {

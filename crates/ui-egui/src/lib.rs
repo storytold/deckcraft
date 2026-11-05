@@ -28,6 +28,7 @@ pub mod menus;
 pub mod opening;
 pub mod presenter;
 pub mod ribbon;
+pub mod screen;
 pub mod settings;
 pub mod show;
 pub mod sorter;
@@ -127,6 +128,13 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ),
     ("show.keepCursor", "Keep Mouse Cursor Visible", None, "{on?: bool}"),
     ("show.end", "End Show", None, "{}"),
+    ("record.start", "Record Slide Show", None, "{} → {status, captured, elapsed, slide}"),
+    ("record.toggle", "Record / Stop", None, "{} → {status, captured, elapsed, slide}"),
+    ("record.pause", "Pause Recording", None, "{} → {status, captured, elapsed, slide}"),
+    ("record.resume", "Resume Recording", None, "{} → {status, captured, elapsed, slide}"),
+    ("record.stop", "Stop Recording", None, "{} → {status, captured, elapsed, slide}"),
+    ("record.reset", "Reset the Recording Clock", None, "{} → {status, captured, elapsed, slide}"),
+    ("record.undo", "Undo the Recording Reset", None, "{} → {status, captured, elapsed, slide}"),
     ("animation.preview", "Preview Animations", None, "{on?: bool, from?: effect index}"),
     ("app.home", "Home", None, "{on?}"),
     ("app.backstage", "File", Some("Alt+F"), "{page?: home|new|open|info|saveAs|print|export|about, on?: bool}"),
@@ -223,6 +231,8 @@ pub struct SlideApp {
     pub table_pen: serde_json::Value,
     pub session: Session,
     pub services: Services,
+    /// Screen recording picker and control window.
+    pub screen: screen::ScreenUi,
     pub ui: UiState,
     pub textures: textures::Textures,
     pub control_rx: Option<Receiver<ControlRequest>>,
@@ -246,6 +256,9 @@ pub struct SlideApp {
     /// Documents (by uid) whose missing fonts have been mentioned.
     fonts_noted: std::collections::HashSet<u64>,
     pub perf: Perf,
+    /// The egui context of the last pass: a command that has to act on the window (ending a show)
+    /// runs between passes and needs it.
+    pub(crate) last_ctx: Option<egui::Context>,
     /// Synthetic input events (control channel `ui.click` etc.), injected one per frame.
     pub(crate) synthetic: Vec<egui::Event>,
     /// A synthetic batch has been injected but the UI pass has not acknowledged it. While this

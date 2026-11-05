@@ -2,11 +2,13 @@
 
 use std::sync::Arc;
 
-use deckcraft_model::Comment;
+use deckcraft_geom::Xfrm;
+use deckcraft_model::{Comment, InkStroke, LaserSample, LaserTrace, MediaClip, Rgba, Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
 use super::{
-    CommandSpec, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text, id_param, ok, str_param, usize_param,
+    CommandSpec, NO_ID_SPACE, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text, id_param, ok,
+    opt_usize_param, str_param, usize_param,
 };
 use crate::{Result, Session, Target, UiRequest};
 
@@ -89,7 +91,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Up Slide Show…",
             ["Slide Show", "Set Up"],
             None,
-            "{type?: speaker|browsed|kiosk, loop?: bool, noNarration?, noAnimation?, useTimings?, showMediaControls?, from?, to?, custom?: name}",
+            "{type?: speaker|browsed|kiosk, loop?: bool, noNarration?, noAnimation?, useTimings?, showMediaControls?, from?, to?, custom?: name, laserColor?: red|green|blue|[r,g,b]}",
             has_doc,
             setup
         ),
@@ -101,6 +103,78 @@ pub fn specs() -> Vec<CommandSpec> {
             "{name, slides: [index]} | {name, delete: true}",
             has_doc,
             custom_show
+        ),
+        cmd!(
+            noundo "show.record",
+            "Record Slide Show",
+            ["Slide Show", "Record"],
+            None,
+            "{from?: index} → starts the show and keeps timings, narration, pen ink and laser",
+            has_slide,
+            record_show
+        ),
+        cmd!(
+            "ink.stroke",
+            "Record Ink",
+            ["Slide Show", "Record"],
+            None,
+            "{points: [[x, y, pressure?]], index?: slide, width?, color?: [r, g, b], highlighter?}",
+            has_slide,
+            ink_stroke
+        ),
+        cmd!(
+            "show.narration",
+            "Record Narration",
+            ["Slide Show", "Record"],
+            None,
+            "{data: base64 wav | path, name?, index?: slide} → replaces the slide's Narration audio",
+            has_slide,
+            narration
+        ),
+        cmd!(
+            "show.laser",
+            "Record Laser",
+            ["Slide Show", "Record"],
+            None,
+            "{points: [[x, y, tMs]], index?: slide, color?: [r, g, b]} → replaces the slide's laser trace",
+            has_slide,
+            laser
+        ),
+        cmd!(
+            "show.clearTiming",
+            "Clear Timing on Current Slide",
+            ["Slide Show", "Clear"],
+            None,
+            "{index?: slide} → clears that slide's advance-after time",
+            has_slide,
+            clear_timing
+        ),
+        cmd!(
+            "show.clearTimingAll",
+            "Clear Timing on All Slides",
+            ["Slide Show", "Clear"],
+            None,
+            "{} → clears every slide's advance-after time",
+            has_slide,
+            clear_timing_all
+        ),
+        cmd!(
+            "show.clearNarration",
+            "Clear Narration on Current Slide",
+            ["Slide Show", "Clear"],
+            None,
+            "{index?: slide} → removes that slide's narration audio",
+            has_slide,
+            clear_narration
+        ),
+        cmd!(
+            "show.clearNarrationAll",
+            "Clear Narration on All Slides",
+            ["Slide Show", "Clear"],
+            None,
+            "{} → removes narration audio from every slide",
+            has_slide,
+            clear_narration_all
         ),
     ]
 }
@@ -576,8 +650,18 @@ fn dictionary_info(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn start(s: &mut Session, from: usize) -> Result<Value> {
-    s.ui_requests.push(UiRequest::StartShow { from });
+    s.ui_requests.push(UiRequest::StartShow { from, record: false });
     Ok(json!({"from": from}))
+}
+
+fn record_show(s: &mut Session, p: &Value) -> Result<Value> {
+    let n = s.doc()?.doc.slides.len();
+    if n == 0 {
+        return Err(bad("show.record", "no slides"));
+    }
+    let from = opt_usize_param(p, "from", "show.record")?.unwrap_or(0).min(n - 1);
+    s.ui_requests.push(UiRequest::StartShow { from, record: true });
+    Ok(json!({"from": from, "record": true}))
 }
 
 fn setup(s: &mut Session, p: &Value) -> Result<Value> {
@@ -604,6 +688,7 @@ fn setup(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(v) = bool_param(p, "showMediaControls") {
             sh.show_media_controls = v;
         }
+        apply_laser_color(sh, p)?;
         match (p.get("from").and_then(Value::as_u64), p.get("to").and_then(Value::as_u64)) {
             (Some(a), Some(b)) => sh.range = Some((a.min(u32::MAX as u64) as u32, b.min(u32::MAX as u64) as u32)),
             (None, None) if p.get("all").is_some() => sh.range = None,
@@ -769,6 +854,459 @@ fn end_compare(s: &mut Session, _: &Value) -> Result<Value> {
     ok()
 }
 
+fn ink_stroke(s: &mut Session, p: &Value) -> Result<Value> {
+    let st = s.doc()?;
+    let index = opt_usize_param(p, "index", "ink.stroke")?.unwrap_or(st.selection.slide);
+    if index >= st.doc.slides.len() {
+        return Err(bad("ink.stroke", format!("no slide {index}")));
+    }
+    let points = ink_points(p)?;
+    if points.len() < 2 {
+        return Err(bad("ink.stroke", "need at least two points"));
+    }
+    let width = p.get("width").and_then(Value::as_f64).filter(|w| w.is_finite()).unwrap_or(2.25).clamp(0.25, 40.0);
+    let color = ink_color(p).unwrap_or(st.doc.show.pen_color);
+    let highlighter = bool_or(p, "highlighter", false);
+    let n = points.len();
+    let stroke = InkStroke { points, color, width, highlighter };
+    s.edit(|doc, _| {
+        let Some(sl) = doc.slides.get_mut(index) else {
+            return Err(bad("ink.stroke", format!("no slide {index}")));
+        };
+        let existing = Arc::make_mut(sl).shapes.iter().rev().find(|sh| matches!(sh.kind, ShapeKind::Ink { .. })).map(|sh| sh.id);
+        let id = if let Some(id) = existing {
+            id
+        } else {
+            let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("ink.stroke", NO_ID_SPACE))?);
+            let size = doc.slide_size;
+            let Some(sl) = doc.slides.get_mut(index) else {
+                return Err(bad("ink.stroke", format!("no slide {index}")));
+            };
+            Arc::make_mut(sl).shapes.push(Shape {
+                id,
+                name: "Ink".into(),
+                xfrm: Some(Xfrm::new(0.0, 0.0, size.width, size.height)),
+                kind: ShapeKind::Ink { strokes: vec![] },
+                ..Default::default()
+            });
+            id
+        };
+        let Some(sl) = doc.slides.get_mut(index) else {
+            return Err(bad("ink.stroke", format!("no slide {index}")));
+        };
+        if let Some(sh) = deckcraft_model::find_shape_mut(&mut Arc::make_mut(sl).shapes, id)
+            && let ShapeKind::Ink { strokes } = &mut sh.kind
+        {
+            strokes.push(stroke);
+        }
+        Ok(())
+    })?;
+    Ok(json!({"index": index, "points": n}))
+}
+
+/// Up to 4096 finite points. A missing pressure is 0.5.
+fn ink_points(p: &Value) -> Result<Vec<(f64, f64, f32)>> {
+    let raw = p.get("points").and_then(Value::as_array).ok_or_else(|| bad("ink.stroke", "missing `points`"))?;
+    let mut out = Vec::new();
+    for pt in raw.iter().take(4096) {
+        let Some(a) = pt.as_array() else { continue };
+        let (Some(x), Some(y)) = (a.first().and_then(Value::as_f64), a.get(1).and_then(Value::as_f64)) else { continue };
+        if !x.is_finite() || !y.is_finite() || x.abs() > 1.0e7 || y.abs() > 1.0e7 {
+            continue;
+        }
+        let pressure = a.get(2).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.5).clamp(0.0, 1.0);
+        out.push((x, y, pressure as f32));
+    }
+    Ok(out)
+}
+
+fn ink_color(p: &Value) -> Option<Rgba> {
+    p.get("color").and_then(rgba_value)
+}
+
+fn rgba_value(v: &Value) -> Option<Rgba> {
+    let a = v.as_array()?;
+    let byte = |i: usize| -> Option<u8> {
+        let v = a.get(i)?;
+        let n = v.as_u64().or_else(|| v.as_f64().filter(|x| x.is_finite()).map(|x| x.round() as u64))?;
+        Some(n.min(255) as u8)
+    };
+    Some(Rgba::rgb(byte(0)?, byte(1)?, byte(2)?))
+}
+
+/// PowerPoint's three laser-pointer colours, or an explicit `[r, g, b]`.
+fn apply_laser_color(sh: &mut deckcraft_model::ShowSettings, p: &Value) -> Result<()> {
+    let Some(v) = p.get("laserColor") else { return Ok(()) };
+    let c = match v {
+        Value::String(s) => match s.to_ascii_lowercase().as_str() {
+            "red" => Rgba::rgb(255, 0, 0),
+            "green" => Rgba::rgb(0, 255, 0),
+            "blue" => Rgba::rgb(0, 0, 255),
+            _ => return Err(bad("show.setup", "laserColor is red, green, blue, or [r, g, b]")),
+        },
+        Value::Array(_) => rgba_value(v).ok_or_else(|| bad("show.setup", "laserColor needs three channels"))?,
+        _ => return Err(bad("show.setup", "laserColor is red, green, blue, or [r, g, b]")),
+    };
+    sh.laser_color = c;
+    Ok(())
+}
+
+/// The largest WAV a narration take can be: `wav_mono`'s 44-byte header plus its ten minutes of
+/// 16-bit mono samples, which is what the Record view's microphone writes.
+const MAX_NARRATION_BYTES: usize = 44 + deckcraft_media::MAX_WAV_SAMPLES * 2;
+// A ten-minute 48 kHz take is 57,600,044 bytes; the old 48,000,000 cap silently dropped it.
+const _: () = assert!(MAX_NARRATION_BYTES > 48_000_000);
+
+/// Embed a WAV as the slide's narration. A later recording replaces the shape named Narration.
+fn narration(s: &mut Session, p: &Value) -> Result<Value> {
+    let st = s.doc()?;
+    let index = opt_usize_param(p, "index", "show.narration")?.unwrap_or(st.selection.slide);
+    if index >= st.doc.slides.len() {
+        return Err(bad("show.narration", format!("no slide {index}")));
+    }
+    let (name, bytes) = super::insert::media_bytes(p, "show.narration")?;
+    if bytes.len() > MAX_NARRATION_BYTES {
+        return Err(bad("show.narration", "audio is too long"));
+    }
+    if bytes.len() < 44 {
+        return Err(bad("show.narration", "audio is too short"));
+    }
+    let name = if name.is_empty() || name == "media" { "narration.wav".to_string() } else { name };
+    let ct = super::insert::content_type(&super::insert::detect_name(p, &name), &bytes);
+    if !ct.starts_with("audio/") {
+        return Err(bad("show.narration", format!("{name} is not an audio file")));
+    }
+    let owned = Arc::new(bytes);
+    let info = deckcraft_media::probe(&owned).map_err(|e| bad("show.narration", e.to_string()))?;
+    if info.audio.is_none() {
+        return Err(bad("show.narration", format!("{name} has no audio")));
+    }
+    let duration_ms = info.duration_ms.min(u32::MAX as u64) as u32;
+    if duration_ms < 200 {
+        return Err(bad("show.narration", "shorter than 0.2 s"));
+    }
+    let data = Arc::try_unwrap(owned).unwrap_or_else(|a| (*a).clone());
+    let bytes_len = data.len();
+    let id = s.edit(|doc, _| {
+        let media = doc.add_media(&name, ct, data).ok_or_else(|| bad("show.narration", NO_ID_SPACE))?;
+        let size = doc.slide_size;
+        let rect = Xfrm::new((size.width - 36.0).max(0.0), (size.height - 36.0).max(0.0), 32.0, 32.0);
+        let clip = MediaClip {
+            media,
+            video: false,
+            volume: 1.0,
+            autoplay: true,
+            narration: true,
+            hide_while_not_playing: true,
+            duration_ms,
+            ..Default::default()
+        };
+        // Only a narration clip is replaced: a text box or picture that happens to be called
+        // "Narration" keeps its content.
+        let replaced = doc.slides.get(index).and_then(|sl| {
+            sl.shapes.iter().find(|sh| sh.name == "Narration" && matches!(&sh.kind, ShapeKind::Media(m) if m.narration)).map(|sh| {
+                let old = match &sh.kind {
+                    ShapeKind::Media(m) => [Some(m.media), m.poster].into_iter().flatten().collect(),
+                    _ => Vec::new(),
+                };
+                (sh.id, old)
+            })
+        });
+        let existing = replaced.as_ref().map(|(id, _)| *id);
+        let id = if let Some(id) = existing {
+            id
+        } else {
+            let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("show.narration", NO_ID_SPACE))?);
+            let Some(sl) = doc.slides.get_mut(index) else {
+                return Err(bad("show.narration", format!("no slide {index}")));
+            };
+            Arc::make_mut(sl).shapes.push(Shape {
+                id,
+                name: "Narration".into(),
+                xfrm: Some(rect),
+                kind: ShapeKind::Media(MediaClip::default()),
+                hidden: true,
+                ..Default::default()
+            });
+            id
+        };
+        let Some(sl) = doc.slides.get_mut(index) else {
+            return Err(bad("show.narration", format!("no slide {index}")));
+        };
+        if let Some(sh) = deckcraft_model::find_shape_mut(&mut Arc::make_mut(sl).shapes, id) {
+            sh.name = "Narration".into();
+            sh.hidden = true;
+            sh.xfrm = Some(rect);
+            sh.kind = ShapeKind::Media(clip);
+        }
+        // The take this one replaces is unreferenced now: drop its media unless something else in
+        // the document points at it (`clear_narration`'s rule), or repeated takes keep the dropped
+        // audio in memory for the life of the document.
+        if let Some((_, old)) = &replaced {
+            let drop: Vec<_> = old.iter().copied().filter(|id| !media_used(doc, *id)).collect();
+            doc.media.retain(|m| !drop.contains(&m.id));
+        }
+        Ok(id.0)
+    })?;
+    Ok(json!({"index": index, "id": id, "bytes": bytes_len, "durationMs": duration_ms}))
+}
+
+/// Replace the slide's recorded laser trace.
+fn laser(s: &mut Session, p: &Value) -> Result<Value> {
+    let st = s.doc()?;
+    let index = opt_usize_param(p, "index", "show.laser")?.unwrap_or(st.selection.slide);
+    if index >= st.doc.slides.len() {
+        return Err(bad("show.laser", format!("no slide {index}")));
+    }
+    let points = laser_points(p)?;
+    if points.is_empty() {
+        return Err(bad("show.laser", "need at least one point"));
+    }
+    let color = ink_color(p).unwrap_or(st.doc.show.laser_color);
+    let n = points.len();
+    let trace = LaserTrace { color, points };
+    s.edit(|doc, _| {
+        let Some(sl) = doc.slides.get_mut(index) else {
+            return Err(bad("show.laser", format!("no slide {index}")));
+        };
+        Arc::make_mut(sl).laser = Some(trace);
+        Ok(())
+    })?;
+    Ok(json!({"index": index, "points": n}))
+}
+
+fn laser_points(p: &Value) -> Result<Vec<LaserSample>> {
+    let raw = p.get("points").and_then(Value::as_array).ok_or_else(|| bad("show.laser", "missing `points`"))?;
+    let mut out = Vec::new();
+    for pt in raw.iter().take(4096) {
+        let Some(a) = pt.as_array() else { continue };
+        let (Some(x), Some(y)) = (a.first().and_then(Value::as_f64), a.get(1).and_then(Value::as_f64)) else { continue };
+        if !x.is_finite() || !y.is_finite() || x.abs() > 1.0e7 || y.abs() > 1.0e7 {
+            continue;
+        }
+        let t = a
+            .get(2)
+            .and_then(|v| v.as_u64().or_else(|| v.as_f64().filter(|x| x.is_finite() && *x >= 0.0).map(|x| x.round().clamp(0.0, 3_600_000.0) as u64)))
+            .unwrap_or(0);
+        out.push(LaserSample { x, y, t_ms: t.min(3_600_000) as u32 });
+    }
+    out.sort_by_key(|p| p.t_ms);
+    Ok(out)
+}
+
+fn with_all(p: &Value) -> Value {
+    let mut q = p.clone();
+    if let Some(obj) = q.as_object_mut() {
+        obj.insert("all".into(), Value::Bool(true));
+        q
+    } else {
+        json!({"all": true})
+    }
+}
+
+fn slide_scope(s: &Session, p: &Value, id: &str) -> Result<Vec<usize>> {
+    let st = s.doc()?;
+    if bool_or(p, "all", false) {
+        return Ok((0..st.doc.slides.len()).collect());
+    }
+    let index = opt_usize_param(p, "index", id)?.unwrap_or(st.selection.slide);
+    if index >= st.doc.slides.len() {
+        return Err(bad(id, format!("no slide {index}")));
+    }
+    Ok(vec![index])
+}
+
+fn clear_timing_all(s: &mut Session, p: &Value) -> Result<Value> {
+    let q = with_all(p);
+    clear_timing(s, &q)
+}
+
+fn clear_narration_all(s: &mut Session, p: &Value) -> Result<Value> {
+    let q = with_all(p);
+    clear_narration(s, &q)
+}
+
+/// Drop advance-after on the current slide, or on every slide. A transition effect stays.
+fn clear_timing(s: &mut Session, p: &Value) -> Result<Value> {
+    let list = slide_scope(s, p, "show.clearTiming")?;
+    let any = {
+        let st = s.doc()?;
+        list.iter().any(|i| st.doc.slides.get(*i).and_then(|sl| sl.transition.as_ref()).is_some_and(|t| t.advance_after_ms.is_some()))
+    };
+    if !any {
+        return Ok(json!({"cleared": 0}));
+    }
+    let n = s.edit(|doc, _| {
+        let mut n = 0u32;
+        for i in &list {
+            let Some(sl) = doc.slides.get_mut(*i) else { continue };
+            let sl = Arc::make_mut(sl);
+            let had = sl.transition.as_ref().is_some_and(|t| t.advance_after_ms.is_some());
+            if let Some(t) = sl.transition.as_mut() {
+                t.advance_after_ms = None;
+            }
+            if had {
+                n += 1;
+            }
+            // A transition that still sets something (a sound, Stop Previous Sound, or its raw
+            // XML) stays: only the timing is cleared.
+            let bare = sl.transition.as_ref().is_some_and(|t| {
+                t.kind == "none"
+                    && t.option.is_empty()
+                    && t.advance_on_click
+                    && t.sound.is_none()
+                    && !t.sound_loop
+                    && !t.stop_sound
+                    && t.raw.is_none()
+            });
+            if bare {
+                sl.transition = None;
+            }
+        }
+        Ok(n)
+    })?;
+    Ok(json!({"cleared": n}))
+}
+
+/// Remove narration clips (the flag Record Slide Show sets). Other audio stays.
+fn clear_narration(s: &mut Session, p: &Value) -> Result<Value> {
+    let list = slide_scope(s, p, "show.clearNarration")?;
+    let any = {
+        let st = s.doc()?;
+        list.iter().any(|i| st.doc.slides.get(*i).is_some_and(|sl| !narration_ids(&sl.shapes).is_empty()))
+    };
+    if !any {
+        return Ok(json!({"cleared": 0}));
+    }
+    let n = s.edit(|doc, sel| {
+        let mut n = 0u32;
+        let mut media = Vec::new();
+        for i in &list {
+            let Some(sl) = doc.slides.get(*i) else { continue };
+            let found = narration_ids(&sl.shapes);
+            if found.is_empty() {
+                continue;
+            }
+            let ids: Vec<ShapeId> = found.iter().map(|(id, _, _)| *id).collect();
+            for (_, m, poster) in &found {
+                media.push(*m);
+                if let Some(p) = poster {
+                    media.push(*p);
+                }
+            }
+            n += ids.len() as u32;
+            let Some(sl) = doc.slides.get_mut(*i) else { continue };
+            let sl = Arc::make_mut(sl);
+            super::edit::remove_shapes(&mut sl.shapes, &ids);
+            sl.animations.retain(|a| !ids.contains(&a.shape));
+            if sel.slide == *i {
+                sel.shapes.retain(|id| !ids.contains(id));
+            }
+        }
+        media.sort_by_key(|m| m.0);
+        media.dedup();
+        let drop: Vec<_> = media.into_iter().filter(|id| !media_used(doc, *id)).collect();
+        doc.media.retain(|m| !drop.contains(&m.id));
+        Ok(n)
+    })?;
+    Ok(json!({"cleared": n}))
+}
+
+fn narration_ids(shapes: &[Shape]) -> Vec<(ShapeId, deckcraft_model::MediaId, Option<deckcraft_model::MediaId>)> {
+    let mut out = Vec::new();
+    deckcraft_model::walk(shapes, &mut |sh, _| {
+        if let ShapeKind::Media(c) = &sh.kind
+            && c.narration
+        {
+            out.push((sh.id, c.media, c.poster));
+        }
+    });
+    out
+}
+
+fn shapes_use_media(shapes: &[Shape], id: deckcraft_model::MediaId) -> bool {
+    let mut used = false;
+    deckcraft_model::walk(shapes, &mut |sh, _| {
+        if shape_uses_media(sh, id) {
+            used = true;
+        }
+    });
+    used
+}
+
+fn media_used(doc: &deckcraft_model::Presentation, id: deckcraft_model::MediaId) -> bool {
+    if doc.embedded_fonts.iter().any(|f| f.faces().contains(&Some(id))) {
+        return true;
+    }
+    for sl in &doc.slides {
+        if sl.transition.as_ref().is_some_and(|t| t.sound == Some(id))
+            || sl.animations.iter().any(|a| a.sound == Some(id))
+            || bg_uses(sl.background.as_ref(), id)
+            || shapes_use_media(&sl.shapes, id)
+        {
+            return true;
+        }
+    }
+    for m in &doc.masters {
+        if bg_uses(m.background.as_ref(), id) || shapes_use_media(&m.shapes, id) {
+            return true;
+        }
+        for l in &m.layouts {
+            if bg_uses(l.background.as_ref(), id) || shapes_use_media(&l.shapes, id) {
+                return true;
+            }
+        }
+    }
+    for m in [doc.notes_master.as_ref(), doc.handout_master.as_ref()].into_iter().flatten() {
+        if bg_uses(m.background.as_ref(), id) || shapes_use_media(&m.shapes, id) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether a hyperlink's action plays `id` (a link or a mouse-over can carry a sound).
+fn link_uses_media(link: Option<&deckcraft_model::text::Hyperlink>, id: deckcraft_model::MediaId) -> bool {
+    link.is_some_and(|l| l.sound == Some(id))
+}
+
+/// Whether a text body's picture bullets or linked runs point at `id`.
+fn text_uses_media(t: Option<&deckcraft_model::text::TextBody>, id: deckcraft_model::MediaId) -> bool {
+    let Some(t) = t else { return false };
+    t.paragraphs.iter().any(|p| {
+        matches!(p.props.bullet, Some(deckcraft_model::text::Bullet::Picture { media }) if media == id)
+            || p.runs.iter().any(|r| link_uses_media(r.props.link.as_ref(), id) || link_uses_media(r.props.hover.as_ref(), id))
+    })
+}
+
+fn shape_uses_media(sh: &Shape, id: deckcraft_model::MediaId) -> bool {
+    if matches!(&sh.fill, Some(deckcraft_model::style::Fill::Picture(p)) if p.media == id) {
+        return true;
+    }
+    // The shape's own action buttons, its text, and a table's cell text (which a table keeps in
+    // the cells rather than in the shape's own body).
+    if link_uses_media(sh.click.as_ref(), id) || link_uses_media(sh.hover.as_ref(), id) || text_uses_media(sh.text.as_ref(), id) {
+        return true;
+    }
+    if let ShapeKind::Table(t) = &sh.kind
+        && t.rows.iter().flat_map(|r| r.cells.iter()).any(|c| text_uses_media(Some(&c.text), id))
+    {
+        return true;
+    }
+    match &sh.kind {
+        ShapeKind::Media(c) => c.media == id || c.poster == Some(id),
+        ShapeKind::Picture { fill } => fill.media == id,
+        // An OLE object, SmartArt diagram… keeps the parts its XML points to.
+        ShapeKind::Opaque { preview, parts, .. } => *preview == Some(id) || parts.iter().any(|(_, _, media)| *media == id),
+        ShapeKind::Model3d { media, poster } => *media == id || *poster == Some(id),
+        _ => false,
+    }
+}
+
+fn bg_uses(bg: Option<&deckcraft_model::Background>, id: deckcraft_model::MediaId) -> bool {
+    matches!(bg, Some(deckcraft_model::Background::Fill { fill: deckcraft_model::style::Fill::Picture(p) }) if p.media == id)
+}
+
 #[cfg(test)]
 mod tests {
     /// The replacement as it ran before: edited in place for every match.
@@ -818,6 +1356,8 @@ mod tests {
     use serde_json::json;
 
     use crate::Session;
+    use crate::cmd::base64_encode;
+    use crate::sample::open_sample;
 
     #[test]
     fn previous_and_next_comment_walk_the_deck() {
@@ -933,6 +1473,385 @@ mod tests {
         assert!(s.active().unwrap().doc.show.range.is_none());
         s.execute("show.setup", &json!({"custom": ""})).unwrap();
         assert!(s.active().unwrap().doc.show.custom_show.is_none());
+    }
+
+    #[test]
+    fn record_requests_a_recording_show() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let v = s.execute("show.record", &json!({"from": 2})).unwrap();
+        assert_eq!(v["from"], 2);
+        assert_eq!(v["record"], true);
+        assert!(matches!(s.ui_requests.last(), Some(UiRequest::StartShow { from: 2, record: true })));
+    }
+
+    #[test]
+    fn recorded_ink_joins_one_layer_and_undoes() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        s.execute(
+            "ink.stroke",
+            &json!({"index": 0, "points": [[10.0, 20.0, 0.8], [30.0, 40.0, 0.2], [null, 1.0], [1.0e20, 0.0]], "width": 2.0, "color": [200, 30, 30]}),
+        )
+        .unwrap();
+        s.execute("ink.stroke", &json!({"index": 0, "points": [[50.0, 60.0], [70.0, 80.0]]})).unwrap();
+        let strokes = ink_on(&s, 0);
+        assert_eq!(strokes.len(), 2);
+        assert_eq!(strokes[0].points, vec![(10.0, 20.0, 0.8), (30.0, 40.0, 0.2)]);
+        assert_eq!(strokes[0].color, Rgba::rgb(200, 30, 30));
+        assert!((strokes[0].width - 2.0).abs() < 1e-9);
+        assert_eq!(strokes[1].points[0].2, 0.5);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(ink_on(&s, 0).len(), 1);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert!(ink_on(&s, 0).is_empty());
+    }
+
+    #[test]
+    fn recorded_ink_rejects_a_short_or_missing_stroke() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        assert!(s.execute("ink.stroke", &json!({"points": [[1.0, 2.0]]})).is_err());
+        assert!(s.execute("ink.stroke", &json!({"points": [[1.0e20, 0.0], ["no", 2.0]]})).is_err());
+        assert!(s.execute("ink.stroke", &json!({"index": 99, "points": [[0.0, 0.0], [1.0, 1.0]]})).is_err());
+    }
+
+    fn ink_on(s: &Session, slide: usize) -> Vec<InkStroke> {
+        let st = s.doc().unwrap();
+        st.doc.slides[slide]
+            .shapes
+            .iter()
+            .find_map(|sh| match &sh.kind {
+                ShapeKind::Ink { strokes } => Some(strokes.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    fn tone(n: usize) -> Vec<u8> {
+        let samples: Vec<f32> = (0..n).map(|i| (i as f32 * 0.2).sin() * 0.3).collect();
+        deckcraft_media::wav_mono(8000, &samples).unwrap()
+    }
+
+    fn narrations(s: &Session, slide: usize) -> Vec<MediaClip> {
+        s.doc().unwrap().doc.slides[slide]
+            .shapes
+            .iter()
+            .filter(|sh| sh.name == "Narration" && sh.hidden)
+            .filter_map(|sh| match &sh.kind {
+                ShapeKind::Media(m) => Some(m.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn narration_embeds_replaces_and_undoes() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let wav = tone(4000);
+        let v = s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        assert_eq!(v["durationMs"], 500);
+        let clips = narrations(&s, 0);
+        assert_eq!(clips.len(), 1);
+        assert!(clips[0].autoplay && clips[0].narration && !clips[0].video);
+        assert!((clips[0].volume - 1.0).abs() < 1e-9);
+        let longer = tone(8000);
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&longer)})).unwrap();
+        let clips = narrations(&s, 0);
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].duration_ms, 1000);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(narrations(&s, 0)[0].duration_ms, 500);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert!(narrations(&s, 0).is_empty());
+    }
+
+    #[test]
+    fn narration_rejects_short_junk_and_a_missing_slide() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        assert!(s.execute("show.narration", &json!({})).is_err());
+        assert!(s.execute("show.narration", &json!({"data": base64_encode(b"hello"), "name": "x.wav"})).is_err());
+        let short = tone(100);
+        assert!(s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&short)})).is_err());
+        assert!(s.execute("show.narration", &json!({"index": 99, "name": "narration.wav", "data": base64_encode(&tone(4000))})).is_err());
+        assert!(narrations(&s, 0).is_empty());
+    }
+
+    #[test]
+    fn narration_and_laser_round_trip_through_pptx() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let before = s.doc().unwrap().doc.slides[0].animations.len();
+        let wav = tone(4000);
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        s.execute("show.laser", &json!({"index": 0, "points": [[30.0, 40.0, 500], [10.0, 20.0, 0], [1.0e20, 0.0, 1]], "color": [0, 180, 40]}))
+            .unwrap();
+        let inserted = s.execute("insert.audio", &json!({"name": "tone.wav", "data": base64_encode(&wav)})).unwrap();
+        let id = inserted["id"].as_u64().unwrap();
+        s.execute("media.options", &json!({"autoplay": true, "ids": [id]})).unwrap();
+        let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
+        let q = deckcraft_pptx::import(&bytes).unwrap();
+        assert_eq!(q.slides[0].animations.len(), before);
+        let narr = q.slides[0].shapes.iter().find(|sh| sh.name == "Narration").unwrap();
+        let m = match &narr.kind {
+            ShapeKind::Media(m) => m,
+            _ => {
+                assert!(narr.name.is_empty(), "narration shape is media");
+                return;
+            }
+        };
+        assert!(m.autoplay && m.narration);
+        let item = q.media(m.media).unwrap();
+        assert_eq!(&item.data[..], &wav[..]);
+        let laser = q.slides[0].laser.as_ref().unwrap();
+        assert_eq!(laser.color, Rgba::rgb(0, 180, 40));
+        assert_eq!(laser.points.len(), 2);
+        assert_eq!(laser.points[0].t_ms, 0);
+        assert!((laser.points[0].x - 10.0).abs() < 0.01);
+        assert_eq!(laser.points[1].t_ms, 500);
+        let auto = q.slides[0]
+            .shapes
+            .iter()
+            .find_map(|sh| match &sh.kind {
+                ShapeKind::Media(c) if !c.narration && c.autoplay => Some(c),
+                _ => None,
+            })
+            .unwrap();
+        assert!(!auto.narration && auto.autoplay);
+    }
+
+    #[test]
+    fn an_invalid_slide_index_is_an_error_not_the_selection() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        for bad_index in [json!(-1), json!("0"), json!(1.5)] {
+            for cmd in ["show.narration", "show.laser", "ink.stroke", "show.clearTiming", "show.clearNarration"] {
+                let mut p = json!({"index": bad_index});
+                if cmd == "show.laser" {
+                    p["points"] = json!([[0.0, 0.0, 0]]);
+                }
+                if cmd == "ink.stroke" {
+                    p["points"] = json!([[1.0, 1.0, 0.5], [2.0, 2.0, 0.5]]);
+                }
+                assert!(s.execute(cmd, &p).is_err(), "{cmd} with index {bad_index}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_laser_trace_survives_a_slide_that_also_has_comments() {
+        // The writer puts the comments relationship and the laser trace in the same `p:extLst`:
+        // the import used to skip the whole list for a slide with comments and lose the trace.
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let v = s.execute("comment.add", &json!({"text": "mark this"})).unwrap();
+        assert!(v.get("index").is_some() || v.get("id").is_some(), "{v}");
+        s.execute("show.laser", &json!({"index": 0, "points": [[30.0, 40.0, 0], [50.0, 60.0, 300]], "color": [10, 20, 30]})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.slides[0].comments.len(), 1, "the slide has a comment");
+        let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
+        let q = deckcraft_pptx::import(&bytes).unwrap();
+        assert_eq!(q.slides[0].comments.len(), 1, "the comment round-trips");
+        let laser = q.slides[0].laser.as_ref().expect("the laser trace round-trips with a comment on the slide");
+        assert_eq!(laser.color, Rgba::rgb(10, 20, 30));
+        assert_eq!(laser.points.len(), 2);
+        assert_eq!(laser.points[1].t_ms, 300);
+    }
+
+    #[test]
+    fn laser_replaces_and_undoes() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        s.execute("show.laser", &json!({"index": 0, "points": [[1.0, 2.0, 10], [3.0, 4.0, 20]]})).unwrap();
+        s.execute("show.laser", &json!({"index": 0, "points": [[8.0, 9.0, 30]]})).unwrap();
+        let trace = s.doc().unwrap().doc.slides[0].laser.clone().unwrap();
+        assert_eq!(trace.points.len(), 1);
+        assert!((trace.points[0].x - 8.0).abs() < 1e-9);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.slides[0].laser.as_ref().unwrap().points.len(), 2);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert!(s.doc().unwrap().doc.slides[0].laser.is_none());
+        assert!(s.execute("show.laser", &json!({"points": []})).is_err());
+        assert!(s.execute("show.laser", &json!({"index": 99, "points": [[0.0, 0.0, 0]]})).is_err());
+    }
+
+    #[test]
+    fn laser_color_choices_round_trip_and_reject_unknown_names() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        assert_eq!(s.doc().unwrap().doc.show.laser_color, Rgba::rgb(255, 0, 0));
+        s.execute("show.setup", &json!({"laserColor": "green"})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.show.laser_color, Rgba::rgb(0, 255, 0));
+        s.execute("show.setup", &json!({"laserColor": [0, 0, 255]})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.show.laser_color, Rgba::rgb(0, 0, 255));
+        assert!(s.execute("show.setup", &json!({"laserColor": "purple"})).is_err());
+        assert_eq!(s.doc().unwrap().doc.show.laser_color, Rgba::rgb(0, 0, 255));
+        let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
+        let q = deckcraft_pptx::import(&bytes).unwrap();
+        assert_eq!(q.show.laser_color, Rgba::rgb(0, 0, 255));
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.show.laser_color, Rgba::rgb(0, 255, 0));
+    }
+
+    #[test]
+    fn clear_timing_keeps_the_effect_and_can_cover_every_slide() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).unwrap();
+        s.execute("transition.timing", &json!({"index": 0, "after": 800})).unwrap();
+        s.execute("transition.set", &json!({"kind": "fade", "index": 1})).unwrap();
+        s.execute("transition.timing", &json!({"index": 1, "after": 2500})).unwrap();
+        let use_timings = s.doc().unwrap().doc.show.use_timings;
+        let v = s.execute("show.clearTiming", &json!({"index": 0})).unwrap();
+        assert_eq!(v["cleared"], 1);
+        assert!(s.doc().unwrap().doc.slides[0].transition.is_none());
+        assert_eq!(s.doc().unwrap().doc.slides[1].transition.as_ref().unwrap().advance_after_ms, Some(2500));
+        assert_eq!(s.doc().unwrap().doc.show.use_timings, use_timings);
+        s.execute("show.clearTiming", &json!({"index": 1})).unwrap();
+        let t = s.doc().unwrap().doc.slides[1].transition.clone().unwrap();
+        assert_eq!(t.kind, "fade");
+        assert!(t.advance_after_ms.is_none());
+        s.execute("edit.undo", &json!({})).unwrap();
+        s.execute("transition.timing", &json!({"index": 0, "after": 400})).unwrap();
+        s.execute("show.clearTimingAll", &json!({})).unwrap();
+        assert!(s.doc().unwrap().doc.slides[0].transition.is_none());
+        assert!(s.doc().unwrap().doc.slides[1].transition.as_ref().unwrap().advance_after_ms.is_none());
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.slides[1].transition.as_ref().unwrap().advance_after_ms, Some(2500));
+        assert!(s.execute("show.clearTiming", &json!({"index": 99})).is_err());
+        assert_eq!(s.execute("show.clearTiming", &json!({"index": 1})).unwrap()["cleared"], 1);
+        assert_eq!(s.execute("show.clearTiming", &json!({"index": 1})).unwrap()["cleared"], 0);
+    }
+
+    /// Clearing the timing must not take another transition setting with it: a slide with no
+    /// effect but Stop Previous Sound keeps its transition when its advance time goes.
+    #[test]
+    fn clear_timing_keeps_a_transition_that_stops_the_previous_sound() {
+        let mut s = Session::with_new();
+        s.execute("transition.timing", &json!({"index": 0, "after": 800})).unwrap();
+        {
+            let doc = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+            let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+            let t = slide.transition.as_mut().expect("a transition");
+            t.stop_sound = true;
+        }
+        assert_eq!(s.execute("show.clearTiming", &json!({"index": 0})).unwrap()["cleared"], 1);
+        let t = s.doc().unwrap().doc.slides[0].transition.clone().expect("the transition stays for its stop-sound");
+        assert!(t.stop_sound, "Stop Previous Sound is not timing");
+        assert!(t.advance_after_ms.is_none(), "the advance time is gone");
+    }
+
+    /// A narration clip can share its media with another reference (bytes are deduplicated): a
+    /// table cell's picture bullet or a link's sound must keep it when the narration is cleared.
+    #[test]
+    fn clear_narration_keeps_media_a_table_cell_or_a_link_still_points_to() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let wav = tone(4000);
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        let media = narrations(&s, 0)[0].media;
+        {
+            let state = s.doc_mut().unwrap();
+            let doc = std::sync::Arc::make_mut(&mut state.doc);
+            let mut cell_text = deckcraft_model::text::TextBody::default();
+            let mut para = deckcraft_model::text::Paragraph::default();
+            para.props.bullet = Some(deckcraft_model::text::Bullet::Picture { media });
+            cell_text.paragraphs.push(para);
+            let cell = deckcraft_model::table::Cell { text: cell_text, ..Default::default() };
+            let table =
+                deckcraft_model::table::Table { rows: vec![deckcraft_model::table::Row { height: 20.0, cells: vec![cell] }], ..Default::default() };
+            let linked = deckcraft_model::text::Hyperlink {
+                action: deckcraft_model::text::Action::NextSlide,
+                tooltip: String::new(),
+                highlight_click: false,
+                sound: Some(media),
+                stop_sound: false,
+                zoom_return: None,
+            };
+            let mut deck_shape = Shape { kind: ShapeKind::Table(table), ..Default::default() };
+            deck_shape.text = Some(deckcraft_model::text::TextBody::default());
+            deck_shape.hover = Some(linked);
+            std::sync::Arc::make_mut(&mut doc.slides[1]).shapes.push(deck_shape);
+        }
+        assert_eq!(s.execute("show.clearNarrationAll", &json!({})).unwrap()["cleared"], 1);
+        assert!(s.doc().unwrap().doc.media(media).is_some(), "the table cell and the link still use this media");
+    }
+
+    /// Recording a new take on a slide replaces the old audio: the old media must not stay in the
+    /// document (a ten minute take is tens of MB), unless something else still points at it.
+    #[test]
+    fn a_new_narration_take_drops_the_audio_it_replaced() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let first = tone(4000);
+        let second = tone(3200);
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&first)})).unwrap();
+        let old = narrations(&s, 0)[0].media;
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&second)})).unwrap();
+        let new = narrations(&s, 0)[0].media;
+        assert_ne!(old, new, "a different recording is a new media item");
+        assert!(s.doc().unwrap().doc.media(old).is_none(), "the replaced take's audio is gone");
+        assert!(s.doc().unwrap().doc.media(new).is_some(), "the new take's audio stays");
+    }
+
+    #[test]
+    fn clear_narration_leaves_other_audio_and_undoes() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let wav = tone(4000);
+        let other = tone(3200);
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        s.execute("show.narration", &json!({"index": 1, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        s.execute("slide.go", &json!({"index": 0})).unwrap();
+        s.execute("insert.audio", &json!({"name": "tone.wav", "data": base64_encode(&other)})).unwrap();
+        let shared = narrations(&s, 0)[0].media;
+        assert_eq!(narrations(&s, 1)[0].media, shared);
+        let v = s.execute("show.clearNarration", &json!({"index": 0})).unwrap();
+        assert_eq!(v["cleared"], 1);
+        assert!(narrations(&s, 0).is_empty());
+        assert_eq!(narrations(&s, 1).len(), 1);
+        assert!(s.doc().unwrap().doc.media(shared).is_some());
+        assert!(s.doc().unwrap().doc.slides[0].shapes.iter().any(|sh| matches!(&sh.kind, ShapeKind::Media(m) if !m.narration)));
+        s.execute("show.clearNarrationAll", &json!({})).unwrap();
+        assert!(narrations(&s, 1).is_empty());
+        assert!(s.doc().unwrap().doc.media(shared).is_none());
+        assert!(s.doc().unwrap().doc.slides[0].shapes.iter().any(|sh| matches!(&sh.kind, ShapeKind::Media(_))));
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(narrations(&s, 0).len(), 0);
+        assert_eq!(narrations(&s, 1).len(), 1);
+        assert!(s.doc().unwrap().doc.media(shared).is_some());
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(narrations(&s, 0).len(), 1);
+        assert!(s.execute("show.clearNarration", &json!({"index": 99})).is_err());
+    }
+
+    #[test]
+    fn recording_a_narration_leaves_a_shape_named_narration_alone() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let v = s.execute("insert.textBox", &json!({"text": "Not a clip"})).unwrap();
+        let tb = ShapeId(u32::try_from(v["id"].as_u64().expect("id")).expect("a shape id"));
+        s.edit(|doc, sel| {
+            if let Some(sl) = doc.slides.get_mut(sel.slide)
+                && let Some(sh) = std::sync::Arc::make_mut(sl).shape_mut(tb)
+            {
+                sh.name = "Narration".into();
+            }
+            Ok(())
+        })
+        .expect("rename");
+        let wav = tone(4000);
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        let doc = s.doc().unwrap().doc.clone();
+        let text = doc.slides[0].shapes.iter().find(|sh| sh.id == tb).expect("the text box is still there");
+        assert!(matches!(text.kind, ShapeKind::Shape), "a text box named Narration keeps its content");
+        assert!(text.text.as_ref().is_some_and(|t| t.text().contains("Not a clip")));
+        assert!(!text.hidden);
+        assert_eq!(narrations(&s, 0).len(), 1, "the narration is its own clip");
+        // A second take replaces the narration clip, not a new shape.
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        assert_eq!(narrations(&s, 0).len(), 1);
+        assert!(s.doc().unwrap().doc.slides[0].shapes.iter().any(|sh| sh.id == tb && sh.name == "Narration"));
     }
 
     #[test]

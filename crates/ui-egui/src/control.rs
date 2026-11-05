@@ -215,6 +215,11 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         "ui.move" | "ui.click" | "ui.drag" => {
             let (Some(x), Some(y)) = (f(p, "x"), f(p, "y")) else { return err("missing x/y") };
             let pos = egui::pos2(x, y);
+            // egui keeps the last modifiers it was told about, so every pointer request states
+            // them: a request without modifier fields clears them rather than leaving the previous
+            // request's Ctrl (which would keep the laser on) in force.
+            let modifiers = egui_mods(p);
+            app.queue_input(egui::Event::ModifiersChanged(modifiers));
             app.queue_input(egui::Event::PointerMoved(pos));
             if req.method == "ui.click" {
                 let button = match s("button") {
@@ -223,18 +228,13 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 };
                 let count = p.get("count").and_then(Value::as_u64).unwrap_or(1).clamp(1, 3);
                 for _ in 0..count {
-                    app.queue_input(egui::Event::PointerButton { pos, button, pressed: true, modifiers: egui::Modifiers::NONE });
-                    app.queue_input(egui::Event::PointerButton { pos, button, pressed: false, modifiers: egui::Modifiers::NONE });
+                    app.queue_input(egui::Event::PointerButton { pos, button, pressed: true, modifiers });
+                    app.queue_input(egui::Event::PointerButton { pos, button, pressed: false, modifiers });
                 }
             } else if req.method == "ui.drag" {
                 let (Some(tx), Some(ty)) = (f(p, "toX"), f(p, "toY")) else { return err("missing toX/toY") };
                 let steps = p.get("steps").and_then(Value::as_u64).unwrap_or(8).clamp(1, 120);
-                app.queue_input(egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: egui::Modifiers::NONE,
-                });
+                app.queue_input(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers });
                 for k in 1..=steps {
                     let a = k as f32 / steps as f32;
                     app.queue_input(egui::Event::PointerMoved(egui::pos2(x + (tx - x) * a, y + (ty - y) * a)));
@@ -335,15 +335,20 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         }
         "show.start" => {
             let reading = p.get("reading").and_then(Value::as_bool).unwrap_or(false);
-            if let Some(name) = p.get("custom").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-                app.start_custom_show(name, reading);
+            let record = p.get("record").and_then(Value::as_bool).unwrap_or(false);
+            let custom = p.get("custom").and_then(Value::as_str).filter(|s| !s.is_empty());
+            // A custom show plays from its own first slide, so `from` is neither used nor checked
+            // for it; a plain show takes `from`, absent meaning "where Play from Start begins".
+            let from = if custom.is_some() {
+                None
             } else {
-                let from = match app.show_from(p) {
-                    Ok(from) => from.unwrap_or_else(|| app.show_start_index()),
+                match app.show_from(p) {
+                    Ok(from) => from,
                     Err(e) => return err(e),
-                };
-                app.start_show(from, reading);
-            }
+                }
+            };
+            // Record and UI starts share one path (see `SlideApp::start_show_request`).
+            app.start_show_request(custom, from, reading, record);
             ok(Value::Null)
         }
         "show.end" => {
@@ -375,6 +380,11 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         }
         other => err(format!("unknown method `{other}`")),
     }
+}
+
+fn egui_mods(p: &Value) -> egui::Modifiers {
+    let b = |n: &str| p.get(n).and_then(Value::as_bool).unwrap_or(false);
+    egui::Modifiers { alt: b("alt"), ctrl: b("ctrl"), shift: b("shift"), mac_cmd: false, command: b("cmd") }
 }
 
 fn mods_from(p: &Value) -> Mods {

@@ -2,6 +2,20 @@ use deckcraft_model::ShapeKind;
 use deckcraft_model::style::LineJoin;
 
 use super::*;
+use crate::cmd::insert::detect_name;
+
+/// A display name may replace the file name (`name: "Narration"`), so the content type is detected
+/// from the source path's own extension: the narration command uses this too.
+#[test]
+fn the_content_type_is_detected_from_the_source_paths_name() {
+    assert_eq!(detect_name(&json!({"path": "C:/tmp/take.mka"}), "Narration"), "take.mka");
+    assert_eq!(detect_name(&json!({"path": "/tmp/take.wav", "name": "Narration"}), "Narration"), "take.wav");
+    // Inline bytes have only the display name to go on, even when a path is also present.
+    assert_eq!(detect_name(&json!({"data": "AAAA", "name": "narration.wav"}), "narration.wav"), "narration.wav");
+    assert_eq!(detect_name(&json!({"data": "AAAA", "path": "old.mp4", "name": "clip.m4a"}), "clip.m4a"), "clip.m4a");
+    assert_eq!(detect_name(&json!({"data": "AAAA", "path": "old.mp4"}), "media"), "media");
+    assert_eq!(detect_name(&json!({"data": "AAAA"}), "media"), "media");
+}
 
 /// 8×8 red PNG.
 fn png() -> Vec<u8> {

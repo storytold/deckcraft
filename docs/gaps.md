@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-04 · **Change:** trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (screen recording captures a display, window or region as an H.264/MP4 video with the pointer; Record Slide Show keeps timings, narration, pen ink and a laser trace, with the Ctrl laser pointer and Clear Timing / Clear Narration in an ordinary show; standalone audio recording, system audio while recording, camera capture while recording and a picker with thumbnails remain gaps; previous: trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -286,8 +286,13 @@ Zoom: live thumbnails, the zoom-in animation and the native `p166:sldZm` element
 `insert.zoom` makes linked pictures with Return to Zoom), reuse slides pane with thumbnails
 (1–2 h; `slide.reuseList` picks which slides of a file to insert, #1103; reused content now fits the destination size), laser pointer from the presenter window (1–2 h),
 artistic effects (3–6 h for the other 15 of 22; 7 approximated and round-tripped), remove
-background (6–10 h; needs a model or a classical matte), insert screenshot (2–3 h), record
-audio/screen and record slide show (8–12 h), compare presentations beyond accepting and rejecting each revision, or all (#850; per-object accept and reject, markers on the slide: 2–4 h), password protection (4–6 h, ECMA-376
+background (6–10 h; needs a model or a classical matte), insert screenshot (2–3 h), screen
+capture while recording (4–8 h; Record Slide Show keeps timings, narration, pen ink and a laser trace), camera capture while recording (4–8 h; a take is the screen, so a presenter's camera is not in the video), standalone audio recording (2–4 h; narration is
+captured through Record Slide Show, an audio-only Record is not offered), system audio in screen recordings (3–6 h; a take
+is video plus the pointer only, so a demonstration that expects game or call audio is silent),
+microphone audio in screen recordings (2–4 h; narrating over a take means Record Slide Show, whose
+narration is per slide — the screen recorder writes no audio track yet, so mixing the microphone
+into the MP4 is the follow-up), compare presentations beyond accepting and rejecting each revision, or all (#850; per-object accept and reject, markers on the slide: 2–4 h), password protection (4–6 h, ECMA-376
 agile encryption), ink to text and math beyond Ink to Shape (6–10 h), 3-D models and stock content
 (6–10 h; Insert › Icons places a Lucide stroke set).
 
@@ -368,6 +373,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | minor | Screen recording (#1815): display, window or region through scap into an H.264/MP4 take, inserted as a video clip with a poster and click-to-play timing (pointer only, no system audio). Record Slide Show keeps timings, narration, pen ink and a laser trace; an ordinary show holds Ctrl for the laser pointer and Clear Timing / Clear Narration work on the current slide or all slides. Camera capture while recording stays open |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |
