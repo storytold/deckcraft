@@ -6528,6 +6528,34 @@ fn chart_options_gap_width_is_drawn_and_survives_pptx() {
     let pie = s.execute("insert.chart", &json!({"type": "pie"})).unwrap()["id"].clone();
     let e = s.execute("chart.options", &json!({"id": pie, "gapWidth": 50})).unwrap_err().to_string();
     assert!(e.contains("bar and column"), "{e}");
+    // A combo chart takes it for its column series, and is refused once none is left.
+    let combo = s.execute("insert.chart", &json!({"type": "combo"})).unwrap()["id"].clone();
+    let combo_id = deckcraft_model::ShapeId(combo.as_u64().unwrap() as u32);
+    let combo_gap = |s: &Session| {
+        let st = s.doc().unwrap();
+        let deckcraft_model::ShapeKind::Chart(c) = &st.shape(combo_id).unwrap().kind else { panic!("not a chart") };
+        c.gap_width
+    };
+    s.execute("chart.options", &json!({"id": combo, "gapWidth": 30})).unwrap();
+    assert!((combo_gap(&s) - 0.3).abs() < 1e-9, "{}", combo_gap(&s));
+    s.edit(|doc, _| {
+        for slide in &mut doc.slides {
+            for sh in &mut std::sync::Arc::make_mut(slide).shapes {
+                if sh.id == combo_id
+                    && let deckcraft_model::ShapeKind::Chart(c) = &mut sh.kind
+                {
+                    for x in &mut c.series {
+                        x.kind = Some(deckcraft_model::chart::ChartType::Line);
+                    }
+                }
+            }
+        }
+        Ok(())
+    })
+    .unwrap();
+    let e = s.execute("chart.options", &json!({"id": combo, "gapWidth": 50})).unwrap_err().to_string();
+    assert!(e.contains("bar and column"), "{e}");
+    assert!((combo_gap(&s) - 0.3).abs() < 1e-9, "a refused value changes nothing");
 }
 
 #[test]

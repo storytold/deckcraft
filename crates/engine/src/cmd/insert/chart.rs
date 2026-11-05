@@ -202,7 +202,9 @@ pub(super) fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
     with_chart(s, p, "chart.options", |c| {
         if let Some(g) = gap_width {
             use deckcraft_model::chart::ChartType as T;
-            if !matches!(c.kind, T::Column | T::StackedColumn | T::PercentColumn | T::Bar | T::StackedBar | T::PercentBar) {
+            let bars = |k: T| matches!(k, T::Column | T::StackedColumn | T::PercentColumn | T::Bar | T::StackedBar | T::PercentBar);
+            // A combo chart's gap applies to its bar and column series.
+            if !(bars(c.kind) || c.kind == T::Combo && c.series.iter().any(|s| bars(c.series_kind(s)))) {
                 return Err(bad("chart.options", "`gapWidth` is for bar and column charts"));
             }
             c.gap_width = g;
