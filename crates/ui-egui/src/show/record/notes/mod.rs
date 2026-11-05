@@ -51,7 +51,7 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
         edit::flush(app, rec, doc, slide);
         rec.notes_edit.reset(slide_id);
         rec.notes_scroll = 0.0;
-        rec.teleprompter.reset();
+        rec.teleprompter.rewind();
     }
 
     let painter = ui.painter();

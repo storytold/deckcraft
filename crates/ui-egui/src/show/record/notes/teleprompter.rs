@@ -42,9 +42,10 @@ impl Default for State {
 }
 
 impl State {
-    /// Put the teleprompter back at the top with its default pace and switches.
-    pub(super) fn reset(&mut self) {
-        *self = State::default();
+    /// Back to the top of the script, keeping the pace, the overlay switch and whether the scroll
+    /// is playing: a slide change restarts where the reading starts, not the user's settings.
+    pub(super) fn rewind(&mut self) {
+        self.offset = 0.0;
     }
 }
 
@@ -228,14 +229,12 @@ mod tests {
     }
 
     #[test]
-    fn reset_restores_the_top_of_the_script_and_the_defaults() {
+    fn rewinding_keeps_the_pace_the_overlay_and_the_paused_state() {
         let mut state = State { offset: 220.0, speed: SPEED_MAX, overlay: false, playing: false, last: 7.0 };
-        state.reset();
-        assert_eq!(state.offset, 0.0);
-        assert!((state.speed - SPEED_DEFAULT).abs() < f32::EPSILON);
-        assert!(state.overlay);
-        assert!(state.playing);
-        assert_eq!(state.last, 0.0);
+        state.rewind();
+        assert_eq!(state.offset, 0.0, "back to the top");
+        assert!((state.speed - SPEED_MAX).abs() < f32::EPSILON, "the user's pace stays");
+        assert!(!state.overlay && !state.playing, "and their switches");
     }
 
     #[test]

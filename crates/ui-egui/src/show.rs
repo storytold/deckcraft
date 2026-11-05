@@ -981,7 +981,11 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
         return;
     }
     let live = show.rehearse || show.record_view.status == record::RecordStatus::Recording;
-    if let Some(e) = app.services.mic.as_ref().and_then(|mic| mic.failure()) {
+    // Only this take's microphone counts: `failure()` stays set after a device is lost until the
+    // next `start`, so an unrelated earlier take must not colour this one's status.
+    if show.mic_tried
+        && let Some(e) = app.services.mic.as_ref().and_then(|mic| mic.failure())
+    {
         // The take is no longer being captured: narrate what was recorded, but keep why it
         // stopped so the saved status does not read as a complete take.
         show.mic_error = Some(e);
