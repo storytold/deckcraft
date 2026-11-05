@@ -11,7 +11,7 @@ default-run = "deckcraft"
 workspace = true
 
 [dependencies]
-deckcraft-engine = { workspace = true, default-features = true }
+deckcraft-engine = { workspace = true, features = ["video"] }
 deckcraft-ui-egui = { workspace = true }
 deckcraft-media = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "links", "wayland", "x11"] }
