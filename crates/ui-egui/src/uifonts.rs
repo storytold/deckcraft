@@ -25,7 +25,7 @@ const MAX_AGGREGATE_BYTES: usize = 3 * MAX_FACE_BYTES;
 /// fonts only: DeckCraft bundles no CJK face, per the asset policy.
 #[cfg(not(target_arch = "wasm32"))]
 const TRADITIONAL_FAMILIES: &[&str] =
-    &["Microsoft JhengHei", "PingFang TC", "Heiti TC", "Songti TC", "MingLiU", "DFKai-SB", "AR PL UMing TW", "WenQuanYi Zen Hei"];
+    &["Microsoft JhengHei", "MingLiU", "DFKai-SB", "PingFang TC", "Heiti TC", "Songti TC", "AR PL UMing TW", "WenQuanYi Zen Hei"];
 
 /// Whether a face may be borrowed for the interface: not a colour face, and within the per-face
 /// byte limit.
@@ -86,22 +86,40 @@ impl UiFonts {
     /// shell picks Taiwan's glyph forms rather than whatever CJK face the generic fallback finds
     /// first. Nothing is bundled: with no matching installed family this does nothing and the
     /// existing per-character fallback still applies.
+    ///
+    /// Candidates are tried in [`TRADITIONAL_FAMILIES`] order and the first usable one wins, so a
+    /// family that is installed but unusable (no Traditional glyph, colour, too large) does not
+    /// hide a later one. A face that is already borrowed but sits behind another is moved to the
+    /// front and reports a change.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn prefer_traditional(&mut self) -> bool {
         let db = FontDb::global();
-        let Some(family) = TRADITIONAL_FAMILIES.iter().copied().find(|family| db.has_family(family)) else { return false };
-        let face = db.face(family, "Regular");
-        if !face.covers('繁') || self.faces.iter().any(|f| f.id() == face.id()) {
-            return false;
-        }
-        // The preferred face goes through the same per-face and aggregate limits as the normal
-        // per-character lookup; a large installed CJK collection is not copied into egui.
         let total: usize = self.faces.iter().map(|f| f.data().len()).sum();
-        if !accepts_face(face.data().len(), face.is_color()) || !aggregate_accepts(total, face.data().len()) {
-            return false;
+        for family in TRADITIONAL_FAMILIES {
+            if !db.has_family(family) {
+                continue;
+            }
+            let face = db.face(family, "Regular");
+            if !face.covers('繁') {
+                continue;
+            }
+            if let Some(index) = self.faces.iter().position(|f| f.id() == face.id()) {
+                if index == 0 {
+                    return false;
+                }
+                let face = self.faces.remove(index);
+                self.faces.insert(0, face);
+                return true;
+            }
+            // The preferred face goes through the same per-face and aggregate limits as the normal
+            // per-character lookup; a large installed CJK collection is not copied into egui.
+            if !accepts_face(face.data().len(), face.is_color()) || !aggregate_accepts(total, face.data().len()) {
+                continue;
+            }
+            self.faces.insert(0, face);
+            return true;
         }
-        self.faces.insert(0, face);
-        true
+        false
     }
 
     /// The web build has no installed fonts and bundles no CJK face, so there is nothing to
