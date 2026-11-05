@@ -213,13 +213,19 @@ pub(super) fn layout_items(d: &Diagram, area: Xfrm) -> Vec<Item> {
     v
 }
 
-/// The font scale and line reduction shrink-on-overflow gives the text of `sh` (None: it does not shrink).
-pub(super) fn fitted(ctx: &deckcraft_model::resolve::Ctx<'_>, sh: &Shape) -> Option<(f64, f64)> {
-    let body = sh.text.as_ref().filter(|b| matches!(b.body.autofit, Some(AutoFit::Shrink { .. })))?;
+/// The text of `sh` laid out as the renderer draws it (None: no text or no box).
+pub(super) fn laid_out(ctx: &deckcraft_model::resolve::Ctx<'_>, sh: &Shape) -> Option<deckcraft_text::TextLayout> {
+    let body = sh.text.as_ref()?;
     let x = sh.xfrm?;
     let rect = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
     let opts = deckcraft_text::Opts { rect, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false };
-    let l = deckcraft_text::layout(ctx, sh, body, &opts);
+    Some(deckcraft_text::layout(ctx, sh, body, &opts))
+}
+
+/// The font scale and line reduction shrink-on-overflow gives the text of `sh` (None: it does not shrink).
+pub(super) fn fitted(ctx: &deckcraft_model::resolve::Ctx<'_>, sh: &Shape) -> Option<(f64, f64)> {
+    sh.text.as_ref().filter(|b| matches!(b.body.autofit, Some(AutoFit::Shrink { .. })))?;
+    let l = laid_out(ctx, sh)?;
     Some((l.font_scale, l.line_reduction))
 }
 

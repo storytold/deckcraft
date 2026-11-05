@@ -341,9 +341,9 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
     flow.prev_after = spacing_pts(props.space_after, p.lead_size).max(0.0);
 }
 
-/// Max ascent / descent / size over the line's styles (or the lead style if empty).
-fn line_extent(p: &ParaShaped, rl: &RawLine) -> (f64, f64, f64) {
-    let (mut asc, mut desc, mut size) = (0.0f64, 0.0f64, 0.0f64);
+/// Max ascent / descent / size over the line's styles (or the lead style if empty), and the smallest size.
+fn line_extent(p: &ParaShaped, rl: &RawLine) -> (f64, f64, f64, f64) {
+    let (mut asc, mut desc, mut size, mut least) = (0.0f64, 0.0f64, 0.0f64, f64::INFINITY);
     for c in p.cells.get(rl.start..rl.end.max(rl.start)).unwrap_or(&[]) {
         if let (Some(st), Some(face)) = (p.styles.get(c.style), p.faces.get(c.face)) {
             let sz = st.size;
@@ -355,6 +355,7 @@ fn line_extent(p: &ParaShaped, rl: &RawLine) -> (f64, f64, f64) {
             asc = asc.max(a);
             desc = desc.max(d);
             size = size.max(sz);
+            least = least.min(sz);
         }
     }
     if size == 0.0 {
@@ -370,9 +371,9 @@ fn line_extent(p: &ParaShaped, rl: &RawLine) -> (f64, f64, f64) {
             None => (&p.lead_face, p.lead_size),
         };
         let (a, d) = line_metrics(face, sz);
-        return (a, d, sz);
+        return (a, d, sz, sz);
     }
-    (asc, desc, size)
+    (asc, desc, size, least)
 }
 
 /// Logical advance of each cell on the line (tabs measure from the start edge) and their sum.
@@ -499,7 +500,7 @@ fn line_bullet(env: &ParaEnv, align: Align, content_shift: f64, baseline: f64) -
 fn place_line(env: &ParaEnv, pi: usize, rl: &RawLine, li: usize, is_last: bool, flow: &mut Flow) -> PlacedLine {
     let (p, g) = (env.p, env.g);
     let props = &p.props;
-    let (asc, desc, size) = line_extent(p, rl);
+    let (asc, desc, size, least) = line_extent(p, rl);
     let natural = (asc + desc).max(size * 1.0);
     let lh = match props.line_spacing {
         // The reduction comes off the percentage (90 % less 20 % is 70 %), as PowerPoint
@@ -549,6 +550,7 @@ fn place_line(env: &ParaEnv, pi: usize, rl: &RawLine, li: usize, is_last: bool, 
             top,
             baseline,
             bottom: flow.y,
+            size: least,
             caret_x,
             column: 0,
             rtl: p.rtl,

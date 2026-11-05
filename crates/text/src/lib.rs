@@ -71,6 +71,9 @@ pub struct LineInfo {
     pub top: f64,
     pub baseline: f64,
     pub bottom: f64,
+    /// Smallest font size of the characters on the line, after any autofit scale (an empty line:
+    /// the size of the break or end mark that closes it).
+    pub size: f64,
     /// Caret x for each character boundary start..=end (len = end - start + 1), downstream: the
     /// leading edge of the character after the boundary (its right edge if it is right-to-left);
     /// the last entry is the trailing edge of the line's last character.

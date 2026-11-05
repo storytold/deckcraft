@@ -57,8 +57,8 @@ pub(crate) fn share_after_edit(s: &mut Session, id: ShapeId) -> Result<()> {
 }
 
 /// The size a graphic's text shows: for a generated graphic the one set for every node (regeneration
-/// applies it), else the smallest resolved run size of its nodes times the scale shrink-on-overflow
-/// lays them out at (PowerPoint steps from what you see). An imported graphic keeps its drawing,
+/// applies it), else the smallest size of any line the text layout puts down, which already has the scale
+/// shrink-on-overflow lays the nodes out at (PowerPoint steps from what you see). An imported graphic keeps its drawing,
 /// so what that drawing shows wins over the size read from the data model.
 pub(crate) fn shown_size(s: &Session, gid: ShapeId) -> Option<f64> {
     let st = s.doc().ok()?;
@@ -70,26 +70,12 @@ pub(crate) fn shown_size(s: &Session, gid: ShapeId) -> Option<f64> {
         return Some(z);
     }
     let ctx = crate::cmd::text::ctx_for(&st.doc, &st.selection)?;
+    // The smallest size of any line the text layout puts down, so what the renderer draws.
     let mut shown: Option<f64> = None;
     deckcraft_model::walk(std::slice::from_ref(g), &mut |x, _| {
-        let Some(t) = x.text.as_ref() else { return };
-        let scale = super::paint::fitted(&ctx, x).map_or(1.0, |f| f.0);
-        for p in &t.paragraphs {
-            // A run's size is its own, else the paragraph's `defRPr`, else the level style's. A run
-            // counts when it carries visible text; a line with none (empty, or only a break) shows
-            // its break's or end mark's size.
-            let visible = |r: &&deckcraft_model::text::Run| !r.text.is_empty() && !matches!(r.kind, deckcraft_model::text::RunKind::Break);
-            let props: Vec<&_> = if p.runs.iter().any(|r| visible(&r)) {
-                p.runs.iter().filter(visible).map(|r| &r.props).collect()
-            } else if p.runs.is_empty() {
-                vec![&p.end_props]
-            } else {
-                p.runs.iter().map(|r| &r.props).collect()
-            };
-            for rp in props {
-                if let Some(size) = deckcraft_model::resolve::run(&ctx, x, p, rp).size {
-                    shown = Some(shown.map_or(size * scale, |m| m.min(size * scale)));
-                }
+        if let Some(l) = super::paint::laid_out(&ctx, x) {
+            for line in l.lines.iter().filter(|ln| ln.size > 0.0) {
+                shown = Some(shown.map_or(line.size, |m| m.min(line.size)));
             }
         }
     });
