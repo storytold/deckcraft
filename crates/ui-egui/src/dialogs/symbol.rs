@@ -78,10 +78,7 @@ impl SymbolForm {
         if self.face_id == Some(face.id()) {
             return;
         }
-        self.chars = face
-            .skrifa()
-            .map(|font| bounded_chars(font.charmap().mappings().map(|(cp, gid)| (cp, gid.to_u32()))))
-            .unwrap_or_default();
+        self.chars = face.skrifa().map(|font| bounded_chars(font.charmap().mappings().map(|(cp, gid)| (cp, gid.to_u32())))).unwrap_or_default();
         self.face_id = Some(face.id());
         if self.selected.is_none_or(|c| self.chars.binary_search(&c).is_err()) {
             self.selected = self.chars.iter().copied().find(|c| !c.is_whitespace());
