@@ -447,6 +447,16 @@ fn no_axis_line(w: &mut W) {
     w.close("c:spPr");
 }
 
+fn axis_line(w: &mut W) {
+    w.open0("c:spPr");
+    w.open("a:ln", A::new().a("w", 9525));
+    w.open0("a:solidFill");
+    w.empty("a:srgbClr", A::new().a("val", "BFBFBF"));
+    w.close("a:solidFill");
+    w.close("a:ln");
+    w.close("c:spPr");
+}
+
 fn axes(w: &mut W, c: &Chart, g: Group) {
     let horizontal = c.kind.horizontal() && g == Group::Bar;
     let (cat_pos, val_pos) = if horizontal { ("l", "b") } else { ("b", "l") };
@@ -465,7 +475,7 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.val("c:majorTickMark", "out");
         w.val("c:minorTickMark", "none");
         w.val("c:tickLblPos", "nextTo");
-        no_axis_line(w);
+        axis_line(w);
         tx_pr(w, c);
         w.val("c:crossAx", AX_VAL);
         w.val("c:crosses", "autoZero");
@@ -486,7 +496,7 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.val("c:majorTickMark", "none");
         w.val("c:minorTickMark", "none");
         w.val("c:tickLblPos", "nextTo");
-        no_axis_line(w);
+        axis_line(w);
         tx_pr(w, c);
         w.val("c:crossAx", AX_VAL);
         w.val("c:crosses", "autoZero");
@@ -1100,8 +1110,7 @@ mod tests {
     use deckcraft_model::ColorRef;
     use deckcraft_model::chart::{Chart, ChartType};
 
-    /// Gridlines are written light grey and the axes without a line, as DeckCraft draws them
-    /// (PowerPoint's bare defaults are black lines).
+    /// Gridlines and the category axis are styled as DeckCraft draws them; the value axis is hidden.
     #[test]
     fn gridlines_and_axis_lines_are_styled() {
         let mut c = Chart::sample(ChartType::Column);
@@ -1110,7 +1119,15 @@ mod tests {
         let xml = String::from_utf8(super::chart_xml(&c).0).unwrap();
         assert!(xml.contains(r#"<c:majorGridlines><c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="D9D9D9"/>"#), "{xml}");
         assert!(xml.contains(r#"<c:minorGridlines><c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="F2F2F2"/>"#), "{xml}");
-        assert_eq!(xml.matches("<c:spPr><a:ln><a:noFill/></a:ln></c:spPr>").count(), 2, "{xml}");
+        assert_eq!(xml.matches("<c:spPr><a:ln><a:noFill/></a:ln></c:spPr>").count(), 1, "{xml}");
+        assert!(xml.contains(r#"<c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="BFBFBF"/></a:solidFill></a:ln></c:spPr>"#), "{xml}");
+    }
+
+    #[test]
+    fn scatter_x_axis_is_styled_and_value_axis_is_hidden() {
+        let xml = String::from_utf8(super::chart_xml(&Chart::sample(ChartType::Scatter)).0).unwrap();
+        assert_eq!(xml.matches("val=\"BFBFBF\"").count(), 1, "{xml}");
+        assert_eq!(xml.matches("<a:noFill/>").count(), 1, "{xml}");
     }
 
     /// The chart's text colour is written where PowerPoint keeps it (`c:txPr` on the axes, legend,
