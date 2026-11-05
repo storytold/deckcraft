@@ -462,6 +462,8 @@ impl SlideApp {
                     Err(e) => self.set_status(e.to_string()),
                 }
             }
+        } else if self.services.host_save.is_some() {
+            let _ = self.save_to_host(Some(ext));
         } else if let Some(dl) = self.services.download.as_mut()
             && let Some(d) = self.session.active()
         {
@@ -487,6 +489,10 @@ impl SlideApp {
     }
 
     pub fn save(&mut self) {
+        if self.services.host_save.is_some() {
+            let _ = self.save_to_host(None);
+            return;
+        }
         if self.session.active().and_then(|d| d.path.clone()).is_some() {
             match self.session.execute("file.save", &json!({})) {
                 Ok(_) => self.set_status("Saved"),
@@ -495,6 +501,85 @@ impl SlideApp {
         } else {
             self.save_as_dialog("deckcraft");
         }
+    }
+
+    /// Saves to the page that keeps the files ([`Services::host_save`](crate::Services::host_save)).
+    /// Save (`ext` `None`) writes the presentation's own file (the one the page sent, or the
+    /// last one saved there) in that file's format, as the desktop app does; a presentation with
+    /// no file of its own is a new `.deckcraft` file, the name Save suggests on the desktop. Save
+    /// As (`pptx`, `deckcraft`) is a new file named after the presentation. Once the page has the
+    /// bytes, the presentation is saved and that name is its file. Returns the name, or why it
+    /// wasn't saved (also shown in the status bar).
+    pub(super) fn save_to_host(&mut self, ext: Option<&str>) -> Result<String, String> {
+        use deckcraft_engine::cmd::file::{format_for_path, mark_saved, save_bytes};
+        let Some(d) = self.session.active() else { return Err("no presentation is open".into()) };
+        let own = d.path.as_deref().and_then(|p| std::path::Path::new(p).file_name()).map(|n| n.to_string_lossy().to_string());
+        let (name, save_as) = match (ext, own) {
+            (None, Some(own)) => (own, false),
+            (ext, _) => (format!("{}.{}", d.title(), ext.unwrap_or("deckcraft")), true),
+        };
+        let saved = save_bytes(&d.doc, format_for_path(&name)).map_err(|e| e.to_string()).and_then(|bytes| {
+            let host = self.services.host_save.as_mut().ok_or("no page to save to")?;
+            host(&name, &bytes, save_as).map_err(|e| format!("Couldn't save {name}: {e}"))?;
+            mark_saved(&mut self.session, Some(name.clone())).map_err(|e| e.to_string())
+        });
+        match saved {
+            Ok(()) => {
+                self.set_status(format!("Saved {name}"));
+                Ok(name)
+            }
+            Err(e) => {
+                self.set_status(e.clone());
+                Err(e)
+            }
+        }
+    }
+
+    /// A file the page that keeps the files sent (`?host=parent`), with the name it sent, if any.
+    /// It opens as File › Open opens it on the desktop: a presentation as itself, an outline
+    /// (.txt, .md, .rtf) as a new untitled presentation. The name is the presentation's file only
+    /// when the page sent one with a presentation extension and the file is an intact
+    /// presentation, so Save hands it back under that name and format; anything else (no name, an
+    /// outline, a damaged file opened as a repaired copy) is untitled, and its first Save is a new
+    /// file. The first presentation that opens takes the place of the empty one host mode started
+    /// with ([`Self::start_for_host`]), if that one is still open, untitled and unchanged; later
+    /// files open beside the others.
+    pub fn open_from_host(&mut self, name: Option<&str>, bytes: &[u8]) {
+        let blank = self.host_start.filter(|&uid| self.session.documents().iter().any(|d| d.uid == uid && d.path.is_none() && !d.is_dirty()));
+        let before = self.session.documents().len();
+        let shown = name.unwrap_or("Presentation");
+        let named = name.is_some_and(|n| is_presentation_name(&n.to_ascii_lowercase()));
+        let opened = deckcraft_engine::cmd::file::loaded_file(shown, bytes).and_then(|mut f| {
+            // `file.adopt` keeps the path only for a native file; a name the page didn't send
+            // for a presentation must not become one.
+            f.native &= named;
+            let token = self.session.stage_loaded(f);
+            self.session.execute("file.adopt", &json!({"path": shown, "token": token}))
+        });
+        if let Err(e) = opened {
+            self.notify(e.to_string());
+        }
+        self.drain_requests();
+        if self.session.documents().len() <= before {
+            return;
+        }
+        self.host_start = None;
+        if let Some(opened) = self.session.active().map(|d| d.uid)
+            && let Some(i) = self.session.documents().iter().position(|d| Some(d.uid) == blank)
+        {
+            self.session.close_document(i);
+            if let Some(i) = self.session.documents().iter().position(|d| d.uid == opened) {
+                self.session.set_active(i);
+            }
+        }
+    }
+
+    /// Host mode (`?host=parent`) starts with an empty presentation instead of the sample, for
+    /// the first file the page sends to take its place ([`Self::open_from_host`]).
+    pub fn start_for_host(&mut self) -> Result<(), String> {
+        self.run("file.new", json!({}))?;
+        self.host_start = self.session.active().map(|d| d.uid);
+        Ok(())
     }
 
     /// Act on requests commands left for the UI.
