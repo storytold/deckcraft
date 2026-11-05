@@ -599,7 +599,7 @@ pub(crate) fn edit_path(
 }
 
 fn index_param(p: &Value, key: &str, cmd: &str) -> Result<usize> {
-    p.get(key).and_then(Value::as_u64).map(|v| v as usize).ok_or_else(|| bad(cmd, format!("give `{key}`")))
+    p.get(key).and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok()).ok_or_else(|| bad(cmd, format!("give `{key}`")))
 }
 
 fn move_point(s: &mut Session, p: &Value) -> Result<Value> {
