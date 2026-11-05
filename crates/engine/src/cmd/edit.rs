@@ -292,16 +292,20 @@ fn remap_media(map: &HashMap<MediaId, MediaId>) -> impl FnMut(&mut MediaId) + '_
     }
 }
 
-/// Add the clipboard's media to `doc` and return the ids that changed: an id already used in
-/// `doc` by other bytes (another deck) gets a fresh id, and the pasted shapes must use it.
+/// Add the clipboard's media to `doc` and return the ids that changed: media `doc` doesn't have,
+/// or has under the same id with other bytes (another deck), get a fresh id, and the pasted
+/// shapes must use it.
 fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deckcraft_model::MediaItem]) -> Result<HashMap<MediaId, MediaId>> {
     let mut map = HashMap::new();
     for m in media {
         match doc.media(m.id) {
             None => {
-                // Keeps the foreign id, so later ids must start past it.
-                doc.media.push(m.clone());
-                doc.next_id = doc.next_id.max(m.id.0);
+                // A fresh id: the foreign one may name a slide or shape here, or sit at the top of
+                // the id space (a payload from another window is untrusted), and keeping it would
+                // leave no ids for the paste.
+                let id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
+                doc.media.push(deckcraft_model::MediaItem { id, ..m.clone() });
+                map.insert(m.id, id);
             }
             Some(x) if x.data == m.data => {}
             Some(_) => {

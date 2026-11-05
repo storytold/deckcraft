@@ -186,7 +186,8 @@ pub fn extract(html: &str) -> Option<&str> {
 /// Make `payload` the session's clipboard, unless its token says it is the session's own copy
 /// (the internal clipboard then stays, pastes offset included). `Ok(true)` when it was adopted.
 pub fn adopt(s: &mut Session, payload: &str) -> Result<bool, String> {
-    if token_of(payload).is_some_and(|t| t == s.clipboard.token) {
+    // Token 0 is a session that has copied nothing yet, never a copy of its own.
+    if token_of(payload).is_some_and(|t| t != 0 && t == s.clipboard.token) {
         return Ok(false);
     }
     s.clipboard = decode(payload)?;
@@ -339,6 +340,44 @@ mod tests {
         // Pasting the same payload again goes through the internal clipboard (the pastes offset).
         b.execute("edit.paste", &json!({"text": "box", "payload": encode(&a.clipboard).unwrap()})).unwrap();
         assert_eq!(b.clipboard.pastes, 2);
+    }
+
+    #[test]
+    fn a_payload_with_token_zero_still_pastes_into_a_fresh_session() {
+        let mut a = deck_with_a_picture(b"zero");
+        a.execute("edit.copy", &json!({})).unwrap();
+        a.clipboard.token = 0;
+        let payload = encode(&a.clipboard).unwrap();
+        let mut b = Session::with_new();
+        assert_eq!(b.clipboard.token, 0, "a fresh session has copied nothing");
+        let r = b.execute("edit.paste", &json!({"text": "box", "payload": payload})).unwrap();
+        assert_eq!(r["ids"].as_array().map(Vec::len), Some(2), "token 0 is not b's own copy");
+    }
+
+    #[test]
+    fn foreign_media_ids_get_fresh_ids_and_leave_room_to_grow() {
+        let mut a = deck_with_a_picture(b"far away");
+        a.execute("edit.copy", &json!({})).unwrap();
+        let old = a.clipboard.media[0].id;
+        let far = MediaId(u32::MAX);
+        a.clipboard.media[0].id = far;
+        for sh in &mut a.clipboard.shapes {
+            if let ShapeKind::Picture { fill } = &mut sh.kind
+                && fill.media == old
+            {
+                fill.media = far;
+            }
+        }
+        let payload = encode(&a.clipboard).unwrap();
+        let mut b = Session::with_new();
+        b.execute("edit.paste", &json!({"text": "box", "payload": payload})).unwrap();
+        let d = b.doc().unwrap();
+        let pic = d.doc.slides[0].shapes.iter().find(|x| matches!(x.kind, ShapeKind::Picture { .. })).expect("picture");
+        let ShapeKind::Picture { fill } = &pic.kind else { panic!("not a picture") };
+        assert_ne!(fill.media, far, "the foreign id is replaced");
+        assert_eq!(d.doc.media(fill.media).unwrap().data.as_ref(), b"far away");
+        assert!(d.doc.next_id < u32::MAX, "ids are left for later edits");
+        b.execute("edit.paste", &json!({"text": "box"})).expect("pasting again still finds ids");
     }
 
     #[test]
