@@ -436,7 +436,9 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             w.open0("p:nvGrpSpPr");
             cnvpr(w, x, o, id, s);
             w.empty0("p:cNvGrpSpPr");
-            w.empty0("p:nvPr");
+            // The group's tags (the recorded-ink marker among them) ride on `p:nvPr`, as they do
+            // for shapes; an empty element dropped the marker and reopen lost it.
+            nv_pr(w, x, o, s);
             w.close("p:nvGrpSpPr");
             w.open0("p:grpSpPr");
             dml::xfrm(w, "a:xfrm", &xf, Some(&xf));
