@@ -391,12 +391,13 @@ fn copy_cell_format(dst: &mut Cell, src: &Cell) {
     dst.margins = src.margins;
     dst.anchor = src.anchor;
     dst.vertical = src.vertical;
-    let para = src.text.paragraphs.first().map(|p0| deckcraft_model::text::Paragraph {
-        level: p0.level,
-        props: p0.props.clone(),
-        runs: vec![],
-        def_props: p0.def_props.clone(),
-        end_props: p0.runs.first().map_or_else(|| p0.end_props.clone(), |r| r.props.clone()),
+    dst.anchor_ctr = src.anchor_ctr;
+    dst.horz_overflow = src.horz_overflow;
+    let para = src.text.paragraphs.first().map(|p0| {
+        let mut end_props = p0.runs.first().map_or_else(|| p0.end_props.clone(), |r| r.props.clone());
+        end_props.link = None;
+        end_props.hover = None;
+        deckcraft_model::text::Paragraph { level: p0.level, props: p0.props.clone(), runs: vec![], def_props: p0.def_props.clone(), end_props }
     });
     dst.text = deckcraft_model::text::TextBody {
         body: src.text.body.clone(),
