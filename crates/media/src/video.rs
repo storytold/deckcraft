@@ -76,6 +76,10 @@ impl H264 {
         Ok(H264 { avcc, dec, plane_budget: deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET, rgba_picture_budget: 0 })
     }
     fn convert(p: deckcraft_h264::Picture, budget: u64) -> Result<Pic> {
+        let bytes = rgba_picture_bytes(p.width, p.height).ok_or_else(|| MediaError::Corrupt("RGBA picture size overflows".into()))?;
+        if bytes > budget {
+            return Err(MediaError::Unsupported(format!("H.264 resolution change needs {bytes} RGBA bytes, exceeding its reserved {budget} bytes")));
+        }
         let (w, h) = (p.width as usize, p.height as usize);
         let planes = Planes {
             y: &p.y,
@@ -185,10 +189,18 @@ impl Hevc {
 
 impl Codec for Hevc {
     fn decode(&mut self, sample: &[u8], pts: i64) -> Result<Vec<Pic>> {
-        self.dec.decode(sample, pts).map_err(dec_err)?.into_iter().map(|p| Hevc::convert(p, self.rgba_picture_budget)).collect()
+        self.dec
+            .decode_limited(sample, pts, RGBA_READY_BATCH)
+            .map_err(dec_err)?
+            .into_iter()
+            .map(|p| Hevc::convert(p, self.rgba_picture_budget))
+            .collect()
     }
     fn flush(&mut self) -> Result<Vec<Pic>> {
-        self.dec.flush().into_iter().map(|p| Hevc::convert(p, self.rgba_picture_budget)).collect()
+        self.dec.flush_limited(RGBA_READY_BATCH).into_iter().map(|p| Hevc::convert(p, self.rgba_picture_budget)).collect()
+    }
+    fn drain(&mut self) -> Result<Vec<Pic>> {
+        self.dec.drain_ready(RGBA_READY_BATCH).into_iter().map(|p| Hevc::convert(p, self.rgba_picture_budget)).collect()
     }
     fn reset(&mut self) {
         if let Ok(d) = deckcraft_hevc::Decoder::from_hvcc(&self.hvcc) {
@@ -522,6 +534,9 @@ impl VideoDecoder {
                     self.ready.extend(pics);
                 }
                 Err(e) => {
+                    if matches!(&e, MediaError::Unsupported(_)) {
+                        return Err(e);
+                    }
                     // A corrupt sample: carry on (the picture is lost), give up after many.
                     self.errors += 1;
                     log::debug!("video sample {i}: {e}");
@@ -586,6 +601,28 @@ pub fn poster_png(bytes: &Bytes, t: f64) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn h264_resolution_change_is_rejected_before_rgba_conversion() {
+        let p = deckcraft_h264::Picture {
+            width: 2,
+            height: 2,
+            chroma_width: 1,
+            chroma_height: 1,
+            y: vec![],
+            u: vec![],
+            v: vec![],
+            y_stride: 2,
+            uv_stride: 1,
+            pts: 0,
+            poc: 0,
+            key: false,
+            color: deckcraft_h264::ColorInfo { full_range: false, primaries: 0, transfer: 0, matrix: 0 },
+            sar: (0, 0),
+            draft: false,
+        };
+        assert!(matches!(H264::convert(p, 15), Err(MediaError::Unsupported(_))));
+    }
 
     #[test]
     fn rgba_queue_budget_rejects_when_yuv_store_fits_alone() {

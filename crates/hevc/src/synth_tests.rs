@@ -646,6 +646,35 @@ fn picture_store_is_checked_against_the_memory_budget() {
 }
 
 #[test]
+fn limited_output_keeps_remaining_pictures_queued() {
+    let (stream, _) = sequence(&None, true, whole(WC * HC));
+    let mut decoder = Decoder::with_threads(1);
+    let mut pictures = decoder.decode_limited(&stream, 0, 1).unwrap();
+    assert!(pictures.len() <= 1);
+    loop {
+        let batch = decoder.drain_ready(1);
+        assert!(batch.len() <= 1);
+        if batch.is_empty() {
+            break;
+        }
+        pictures.extend(batch);
+    }
+    let batch = decoder.flush_limited(1);
+    assert!(batch.len() <= 1);
+    pictures.extend(batch);
+    loop {
+        let batch = decoder.drain_ready(1);
+        assert!(batch.len() <= 1);
+        if batch.is_empty() {
+            break;
+        }
+        pictures.extend(batch);
+    }
+    assert_eq!(pictures.len(), 5);
+    assert!(decoder.take_error().is_none());
+}
+
+#[test]
 fn hvcc_accepts_generated_vps_sps_and_pps() {
     let sets = [vps(), sps(true), pps(0, &None, false)];
     let mut hvcc = vec![0; 23];
