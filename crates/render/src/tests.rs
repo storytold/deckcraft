@@ -85,6 +85,27 @@ fn a_placeholder_no_layout_placeholder_pairs_with_has_no_frame() {
 }
 
 #[test]
+fn a_placeholder_no_layout_placeholder_pairs_with_is_not_placed_without_a_frame() {
+    use deckcraft_model::text::{Action, Hyperlink};
+    let link =
+        Hyperlink { action: Action::NextSlide, tooltip: String::new(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None };
+    let placeholder = |idx: u32, frame: bool| Shape {
+        id: ShapeId(912),
+        xfrm: frame.then(|| Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        ph: Some(Placeholder { kind: PhType::Obj, idx, ..Default::default() }),
+        click: Some(link.clone()),
+        text: Some(TextBody::from_text("Unseen")),
+        ..Default::default()
+    };
+    let placed = |s: Shape| place_slide(&deck_with(vec![s]), 0);
+    let none = placed(placeholder(7, false));
+    assert!(none.texts.is_empty() && none.links.is_empty() && none.shapes.is_empty(), "nothing drawn, nothing to click or export");
+    let with = placed(placeholder(7, true));
+    assert!(!with.texts.is_empty() && !with.links.is_empty() && !with.shapes.is_empty(), "with a frame of its own it is placed");
+    assert!(!placed(placeholder(u32::MAX, false)).shapes.is_empty(), "the orphan idx takes the master's frame");
+}
+
+#[test]
 fn render_shapes_draws_the_selection_on_a_transparent_canvas() {
     let sh = Shape {
         id: ShapeId(880),

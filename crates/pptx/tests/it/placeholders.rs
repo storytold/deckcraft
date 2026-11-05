@@ -154,3 +154,24 @@ fn an_orphan_placeholder_takes_nothing_from_a_layout_picture_placeholder() {
     // So does idx 0 in a layout with no placeholder of idx 0: nothing pairs by type.
     assert!(matches!(geom_of("Bare"), Geom::Custom { paths } if paths.is_empty()), "{:?}", geom_of("Bare"));
 }
+
+#[test]
+fn an_unpaired_placeholder_with_a_fill_keeps_its_geometry_unset_through_a_save() {
+    // A placeholder no layout placeholder pairs with has no geometry, so a fill of its own is not
+    // drawn; saving must not give it a rectangle that draws it.
+    let mut p = defaults::new_presentation(None);
+    let shape = Shape {
+        id: ShapeId(p.alloc_id().expect("ids")),
+        name: "Unpaired".into(),
+        xfrm: Some(Xfrm::new(40.0, 40.0, 300.0, 100.0)),
+        geom: Geom::Custom { paths: vec![] },
+        fill: Some(deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0)))),
+        ph: Some(Placeholder { kind: PhType::Obj, idx: 7, ..Default::default() }),
+        ..Default::default()
+    };
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![shape];
+    let q = deckcraft_pptx::import(&deckcraft_pptx::export(&p).expect("export")).expect("import");
+    let back = q.slides[0].shapes.iter().find(|s| s.name == "Unpaired").expect("shape");
+    assert!(matches!(&back.geom, Geom::Custom { paths } if paths.is_empty()), "{:?}", back.geom);
+    assert!(back.fill.is_some(), "the fill itself is kept");
+}
