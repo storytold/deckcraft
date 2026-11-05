@@ -103,9 +103,12 @@ fn text_overlays(st: &DocState, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
     // Caret / text selection, in a shape or a table cell.
     if let Some(ts) = &editing {
         // The renderer shades the selection behind the glyphs; what it doesn't draw (WordArt) is veiled here.
-        let veil = text_highlight(st, t).is_none();
-        for quad in text_marks(st, ts).iter().filter(|_| veil).flat_map(|m| &m.selection) {
-            painter.add(egui::Shape::convex_polygon(quad.iter().map(|q| xf.to_screen(*q)).collect(), t.text_selection, Stroke::NONE));
+        if text_highlight(st, t).is_none()
+            && let Some(marks) = text_marks(st, ts)
+        {
+            for quad in &marks.selection {
+                painter.add(egui::Shape::convex_polygon(quad.iter().map(|q| xf.to_screen(*q)).collect(), t.text_selection, Stroke::NONE));
+            }
         }
         // An input method's composition: underlined in place, thicker under the part being converted.
         for (a, b, thick) in deckcraft_engine::cmd::text::composition_underlines(st) {

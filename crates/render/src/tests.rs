@@ -3191,3 +3191,56 @@ fn the_selection_shade_sets_off_the_selected_text_colours() {
     assert!(drawn, "the shade is drawn");
     assert!(black.contrast(shade) >= 4.4 && white.contrast(shade) >= 4.4, "both colours read on {shade:?}");
 }
+
+/// The master's and layout's graphics are drawn with the slide's options, and shape ids repeat from
+/// part to part: a selection in the slide's shape 77 must not shade the master's own shape 77.
+#[test]
+fn a_selection_does_not_shade_a_master_shape_that_shares_the_id() {
+    use super::TextHighlight;
+    let mut master_text = text_shape(77, "Master words", 40.0, 40.0);
+    master_text.xfrm = Some(Xfrm::new(40.0, 40.0, 600.0, 100.0));
+    let mut slide_text = text_shape(77, "Slide words", 40.0, 300.0);
+    slide_text.xfrm = Some(Xfrm::new(40.0, 300.0, 600.0, 100.0));
+    let mut p = deck_with(vec![slide_text]);
+    std::sync::Arc::make_mut(&mut p.masters[0]).shapes.push(master_text);
+    // Black text: the selection is shaded in the pale tone of the base colour.
+    let pale = [173, 200, 241, 255];
+    let h = TextHighlight { shape: ShapeId(77), cell: None, from: (0, 0), to: (0, 5), color: Rgba::rgb(0x33, 0x75, 0xDB) };
+    let img = render_slide(&p, 0, &RenderOpts { edit: true, editing_text: Some(ShapeId(77)), text_highlight: Some(h), ..Default::default() });
+    let blue_in =
+        |rows: std::ops::Range<u32>| rows.flat_map(|y| (0..img.width).map(move |x| (x, y))).filter(|&(x, y)| img.pixel(x, y) == pale).count();
+    assert!(blue_in(300..400) > 500, "the slide's own text is shaded");
+    assert_eq!(blue_in(0..200), 0, "the master's text is not");
+}
+
+/// Gradient text is drawn from its stops, not from the colour the run reports (its first stop):
+/// black to white must not get the pale shade that only black reads on.
+#[test]
+fn the_selection_shade_counts_every_stop_of_a_gradient_run() {
+    use deckcraft_model::style::{Fill, Gradient, GradientShape, GradientStop};
+    let base = Rgba::rgb(0x33, 0x75, 0xDB);
+    let stop = |pos, v| GradientStop { pos, color: ColorRef::rgb(Rgba::rgb(v, v, v)) };
+    let mut sh = text_shape(930, "Selected words", 40.0, 40.0);
+    if let Some(run) = sh.text.as_mut().and_then(|t| t.paragraphs[0].runs.first_mut()) {
+        run.props.fill = Some(Fill::Gradient(Gradient {
+            tile: [0.0; 4],
+            stops: vec![stop(0.0, 0), stop(1.0, 255)],
+            shape: GradientShape::Linear { angle: 0.0, scaled: false },
+            rotate_with_shape: true,
+            flip: None,
+        }));
+    }
+    let p = deck_with(vec![sh]);
+    let rctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let s = &p.slides[0].shapes[0];
+    let body = s.text.as_ref().unwrap();
+    let tr = crate::shape_geometry(s, 600.0, 120.0).text_rect;
+    let l = deckcraft_text::layout(
+        &rctx,
+        s,
+        body,
+        &deckcraft_text::Opts { rect: tr, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false },
+    );
+    let shade = super::selection_shade(&l, (0, 0), (0, 14), base);
+    assert_eq!(shade, base, "both ends of the gradient read on the mid tone");
+}

@@ -141,8 +141,8 @@ impl Renderer {
 
     /// Background plus the master and layout graphics the slide shows.
     fn backdrop(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, slide: &Slide, view: Affine) {
-        // Backdrop graphics never take shape states: their ids may clash with the slide's shapes.
-        let bopts = RenderOpts { state: None, date_text: f.opts.date_text.clone(), ..*f.opts };
+        // Backdrop graphics never take shape states or the text selection: their ids may clash with the slide's shapes.
+        let bopts = RenderOpts { state: None, text_highlight: None, date_text: f.opts.date_text.clone(), ..*f.opts };
         let bf = Frame { pres: f.pres, opts: &bopts, fields: f.fields.clone() };
         let f = &bf;
         self.background(ctx, f, rctx, Some(slide), view);

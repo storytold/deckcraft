@@ -104,13 +104,28 @@ pub fn text_warp(rctx: &Ctx, s: &Shape, tr: Rect) -> Option<deckcraft_geom::warp
     deckcraft_geom::warp::warp(name, &bp.warp_adj, tr)
 }
 
+/// The stops of a text gradient as drawn: position and colour.
+fn gradient_stops(g: &deckcraft_model::style::Gradient) -> Vec<(f64, Rgba)> {
+    let scheme = deckcraft_color::ColorScheme { name: String::new(), colors: [Rgba::BLACK; 12] };
+    g.stops.iter().map(|s| (s.pos, s.color.resolve(&scheme, None))).collect()
+}
+
 /// The shading for the text between `from` and `to` of `l`, from `base`: `base` itself, or that
 /// colour lightened when that sets the selected glyphs' colours off better (black text reads best
 /// on a pale shade; white and mixed text on the mid tone, which also stays visible against the
 /// dark shapes white text sits on, where a deeper shade would vanish).
 pub fn selection_shade(l: &deckcraft_text::TextLayout, from: (usize, usize), to: (usize, usize), base: Rgba) -> Rgba {
-    let colors: Vec<Rgba> =
-        l.runs.iter().filter(|r| r.alpha > 0.0 && r.color.a > 0 && (r.para, r.chars.1) > from && (r.para, r.chars.0) < to).map(|r| r.color).collect();
+    // What the glyphs are drawn in: a run's colour, or every stop of its gradient.
+    let colors: Vec<Rgba> = l
+        .runs
+        .iter()
+        .filter(|r| r.alpha > 0.0 && (r.para, r.chars.1) > from && (r.para, r.chars.0) < to)
+        .flat_map(|r| match r.gradient.as_ref().filter(|g| !g.stops.is_empty()) {
+            Some(g) => gradient_stops(g).into_iter().map(|(_, c)| c).collect(),
+            None if r.color.a > 0 => vec![r.color],
+            None => vec![],
+        })
+        .collect();
     let worst = |shade: Rgba| colors.iter().map(|c| c.with_alpha(255).contrast(shade)).fold(f64::INFINITY, f64::min);
     let pale = base.lerp(Rgba::WHITE.with_alpha(base.a), 0.6);
     if worst(pale) > worst(base) { pale } else { base }
@@ -190,8 +205,7 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
             };
             let li = lines_of.line_at(run.para, *y);
             if !grads.iter().any(|(i, _)| *i == li) {
-                let scheme = deckcraft_color::ColorScheme { name: String::new(), colors: [Rgba::BLACK; 12] };
-                let stops = g.stops.iter().map(|s| (s.pos, s.color.resolve(&scheme, None))).collect();
+                let stops = gradient_stops(g);
                 let bounds = l.lines.get(li).and_then(line_bounds).unwrap_or(tr);
                 grads.push((li, paint::gradient(&g.shape, stops, bounds, run.alpha * ps.opacity)));
             }
