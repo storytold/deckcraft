@@ -660,10 +660,11 @@ impl Session {
             let extra = self
                 .active()
                 .map(|d| {
-                    let current = cmd::text::ctx_for(&d.doc, &d.selection).map(|c| c.master.id);
-                    let mut masters: Vec<&deckcraft_model::Master> = d.doc.masters.iter().map(|m| m.as_ref()).collect();
-                    masters.sort_by_key(|m| Some(m.id) != current);
-                    masters.into_iter().flat_map(|m| m.theme.colors.extra.iter().map(|e| (e.name.clone(), e.color))).collect()
+                    // The edited master may be a slide master or the handout or notes master,
+                    // which is not in `masters`.
+                    let current = cmd::text::ctx_for(&d.doc, &d.selection).map(|c| c.master);
+                    let others = d.doc.masters.iter().map(|m| m.as_ref()).filter(|m| current.is_none_or(|c| c.id != m.id));
+                    current.into_iter().chain(others).flat_map(|m| m.theme.colors.extra.iter().map(|e| (e.name.clone(), e.color))).collect()
                 })
                 .unwrap_or_default();
             cmd::set_extra_colors(extra);

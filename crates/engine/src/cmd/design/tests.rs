@@ -595,6 +595,24 @@ fn an_extra_colour_name_two_masters_share_takes_the_edited_masters_colour() {
 }
 
 #[test]
+fn an_extra_colour_name_on_the_handout_master_takes_its_own_colour() {
+    use deckcraft_color::{ExtraColor, Rgba};
+    let mut s = kth_like_session();
+    s.execute("view.handoutMaster", &json!({})).unwrap();
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = Arc::make_mut(&mut st.doc);
+        let h = Arc::make_mut(doc.handout_master.as_mut().expect("the view makes a handout master"));
+        h.theme.colors.extra.retain(|e| e.name != "Sand");
+        h.theme.colors.extra.push(ExtraColor { name: "Sand".into(), color: Rgba::rgb(4, 5, 6), tints: None });
+    }
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.fill", &json!({"color": "Sand"})).unwrap();
+    let shape = s.doc().unwrap().selected_shapes()[0].clone();
+    assert_eq!(shape.fill, Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(4, 5, 6)))), "the handout master's own Sand");
+}
+
+#[test]
 fn extra_colours_are_names_in_colour_parameters() {
     use deckcraft_color::Rgba;
     let mut s = kth_like_session();
