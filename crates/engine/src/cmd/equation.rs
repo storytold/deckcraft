@@ -183,6 +183,7 @@ pub fn find_math_run_at(body: &TextBody, pos: (usize, usize)) -> Option<(usize, 
     None
 }
 
+/// Finds mutable `RunKind::Math` run starting at `pos = (para, ch_start)` in `body`.
 fn find_math_run_mut(body: &mut TextBody, pos: (usize, usize)) -> Option<(usize, usize, &mut Run)> {
     let para = body.paragraphs.get_mut(pos.0)?;
     let mut ch = 0usize;
@@ -229,6 +230,7 @@ pub fn equation_at_caret_in(st: &DocState) -> Option<(usize, usize)> {
     None
 }
 
+/// Flattens a slice of math nodes into unformatted plain text.
 fn plain(nodes: &[MNode]) -> String {
     let mut s = String::new();
     for n in nodes {
@@ -239,6 +241,7 @@ fn plain(nodes: &[MNode]) -> String {
     s
 }
 
+/// Applies a mutating closure to the equation at position `at`.
 fn with_eq<R>(s: &mut Session, at: (usize, usize), f: impl FnOnce(&mut Math, &mut bool) -> R) -> Result<R> {
     edit_text(s, |body, t| {
         let Some((ch_start, _, r)) = find_math_run_mut(body, at) else {
@@ -259,6 +262,7 @@ fn with_eq<R>(s: &mut Session, at: (usize, usize), f: impl FnOnce(&mut Math, &mu
     })?
 }
 
+/// Returns the nodes of the equation at `at`, parsing if not yet loaded.
 fn nodes_of(st: &DocState, at: (usize, usize)) -> Option<Arg> {
     let t = st.selection.text.as_ref()?;
     let body = body_of(st, t)?;
@@ -267,6 +271,7 @@ fn nodes_of(st: &DocState, at: (usize, usize)) -> Option<Arg> {
     Some(if math.nodes.is_empty() && !r.text.is_empty() && !math.linear { parse_linear(&r.text) } else { math.nodes.clone() })
 }
 
+/// Builds the JSON response describing current equation state.
 fn result(s: &Session) -> Result<Value> {
     let st = s.doc()?;
     let Some(m) = &st.selection.math else {
@@ -451,8 +456,12 @@ fn set_literal(nodes: &mut Arg) {
     }
 }
 
+/// Types text into the active equation, triggering autocorrect or build-up on delimiters.
 fn type_text(s: &mut Session, v: &Value) -> Result<Value> {
     let text = str_param(v, "text").ok_or_else(|| bad("equation.type", "missing `text`"))?.to_string();
+    if text.chars().count() > MAX_EQUATION_TYPE_CHARS {
+        return Err(bad("equation.type", format!("text exceeds maximum of {MAX_EQUATION_TYPE_CHARS} characters")));
+    }
     let m = current(s)?;
     if text.is_empty() {
         return result(s);
@@ -462,12 +471,11 @@ fn type_text(s: &mut Session, v: &Value) -> Result<Value> {
     let mut pos = m.caret.clone();
     with_eq(s, m.pos, |math, _| {
         if math.linear {
-            let text: String = text.chars().take(MAX_EQUATION_TYPE_CHARS).collect();
             pos = me::insert_text(&mut math.nodes, &pos, &text, TypeStyle::default());
             set_literal(&mut math.nodes);
             return;
         }
-        for c in text.chars().take(MAX_EQUATION_TYPE_CHARS) {
+        for c in text.chars() {
             let rel = matches!(math_class(c), deckcraft_model::math::MClass::Rel);
             if !style.nor && (c == ' ' || c == '\t' || rel) {
                 let mut changed = false;
@@ -1169,5 +1177,19 @@ mod tests {
         s.execute("equation.insertStructure", &json!({"latex": r"\phase{30}"})).unwrap();
         let val2 = s.execute("equation.get", &json!({})).unwrap();
         assert_eq!(val2["linear"], "∠(30)");
+    }
+
+    #[test]
+    fn test_equation_type_length_limit() {
+        let mut s = Session::with_new();
+        s.execute("insert.textBox", &json!({"rect": [100.0, 100.0, 300.0, 50.0], "text": ""})).unwrap();
+        s.execute("insert.equation", &json!({"edit": true})).unwrap();
+
+        let ok_str = "x".repeat(MAX_EQUATION_TYPE_CHARS);
+        s.execute("equation.type", &json!({"text": ok_str})).unwrap();
+
+        let too_long = "x".repeat(MAX_EQUATION_TYPE_CHARS + 1);
+        let err = s.execute("equation.type", &json!({"text": too_long})).unwrap_err();
+        assert!(err.to_string().contains("text exceeds maximum"));
     }
 }

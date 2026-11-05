@@ -22,6 +22,7 @@ pub struct MathPos {
 }
 
 impl MathPos {
+    /// Creates a new math position at the given path and offset.
     pub fn new(path: Vec<(usize, usize)>, off: usize) -> MathPos {
         MathPos { path, off }
     }
@@ -102,6 +103,7 @@ pub fn child(n: &MNode, i: usize) -> Option<&Arg> {
     }
 }
 
+/// Mutable reference to child argument `i` of a node.
 pub fn child_mut(n: &mut MNode, i: usize) -> Option<&mut Arg> {
     match (n, i) {
         (MNode::Frac { num, .. }, 0) => Some(num),
@@ -178,6 +180,7 @@ pub fn arg_at<'a>(root: &'a Arg, path: &[(usize, usize)]) -> Option<&'a Arg> {
     Some(a)
 }
 
+/// Mutable reference to the argument at `path` from `root`.
 pub fn arg_at_mut<'a>(root: &'a mut Arg, path: &[(usize, usize)]) -> Option<&'a mut Arg> {
     let mut a = root;
     for (n, c) in path {

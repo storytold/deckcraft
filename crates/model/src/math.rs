@@ -30,9 +30,11 @@ impl Rgb {
         let p = |i: usize| s.get(i..i + 2).and_then(|h| u8::from_str_radix(h, 16).ok());
         Some(Rgb(p(0)?, p(2)?, p(4)?))
     }
+    /// Converts this RGB color into an RGBA color with full opacity.
     pub fn to_rgba(self) -> Rgba {
         Rgba::rgb(self.0, self.1, self.2)
     }
+    /// Creates an RGB color from the RGB channels of an RGBA color.
     pub fn from_rgba(c: Rgba) -> Self {
         Rgb(c.r, c.g, c.b)
     }
@@ -66,6 +68,7 @@ fn is_default<T: Default + PartialEq>(v: &T) -> bool {
 }
 
 impl Math {
+    /// Returns true if this equation contains no nodes.
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
@@ -202,9 +205,11 @@ pub struct MRun {
 }
 
 impl MRun {
+    /// Creates a new math run with default styling.
     pub fn new(text: impl Into<String>) -> MRun {
         MRun { text: text.into(), ..Default::default() }
     }
+    /// Creates a new math run with plain (upright) styling.
     pub fn plain(text: impl Into<String>) -> MRun {
         MRun { text: text.into(), sty: Some(MSty::Plain), ..Default::default() }
     }
