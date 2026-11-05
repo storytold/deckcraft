@@ -390,6 +390,7 @@ impl Canvas {
             return;
         }
         raw.set_region(self.clip.clone());
+        let region_cost = self.clip.as_ref().map_or(0, |c| c.len() * std::mem::size_of::<[f64; 4]>());
         let cost = match &raw {
             Raw::Path { ops, .. } => ops.len() * std::mem::size_of::<Op>(),
             // A tile shared with its brush is counted once (by the brush); one made for this fill
@@ -400,7 +401,7 @@ impl Canvas {
             }
             Raw::Bitmap { img, .. } => img.px.len(),
             Raw::Text { text: t, .. } => t.text.len() + t.dx.len() * 4 + t.font.family.len() + 128,
-        };
+        } + region_cost;
         if self.items.len() >= MAX_ITEMS || self.used.saturating_add(cost) > MAX_BYTES {
             self.full = true;
         } else {

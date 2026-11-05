@@ -39,6 +39,7 @@ fn date_run(h: &Harness<'_, SlideApp>) -> Option<deckcraft_model::Run> {
         .cloned()
 }
 
+/// Insert opens date/time settings, and OK inserts exactly one field.
 #[test]
 fn insert_opens_the_dialog_and_ok_inserts_one_field() {
     let mut h = harness();
@@ -46,7 +47,7 @@ fn insert_opens_the_dialog_and_ok_inserts_one_field() {
     h.run_steps(2);
     assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("dateTime"));
     let _ = h.get_by_label("Update automatically");
-    let _ = h.get_by_label("English (United States)");
+    assert_eq!(h.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Language").value().as_deref(), Some("English (United States)"));
     let now = deckcraft_text::datetime::DateTime::now_local().unwrap();
     let sample = deckcraft_text::datetime::field_text("datetime2", Some("en-US"), now).unwrap();
     h.get_by_label(&sample).click();

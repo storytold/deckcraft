@@ -50,6 +50,8 @@ const MAX_CHARS: usize = 32_768;
 const MAX_OBJECT_BYTES: usize = 64 * 1024 * 1024;
 /// Nesting depth of region nodes.
 const MAX_REGION_DEPTH: usize = 32;
+/// Region nodes and path points parsed together, including nodes in sibling branches.
+const MAX_REGION_WORK: usize = MAX_POINTS;
 
 const TA_RIGHT: u32 = 2;
 const TA_CENTER: u32 = 6;
@@ -93,7 +95,7 @@ impl Fill {
                 if w == 0.0 || h == 0.0 {
                     return [0, 0, 0, 0];
                 }
-                if *wrap == 4 && !(0.0..w).contains(&p.0) || *wrap == 4 && !(0.0..h).contains(&p.1) {
+                if *wrap == 4 && !((0.0..w).contains(&p.0) && (0.0..h).contains(&p.1)) {
                     return [0, 0, 0, 0];
                 }
                 let x = (p.0.rem_euclid(w) as usize).min(img.w - 1);
@@ -222,6 +224,7 @@ pub(crate) struct Plus {
     /// Convex device clip polygon; None is unclipped.
     clip: Area,
     objects: Vec<Option<Obj>>,
+    object_bytes: usize,
     stack: Vec<Saved>,
     partial: Option<Partial>,
     /// The picture frame in device units (`[x, y, w, h]`), what Clear paints.
@@ -237,6 +240,7 @@ impl Plus {
             page: 1.0,
             clip: None,
             objects: vec![None; MAX_OBJECTS],
+            object_bytes: 0,
             stack: Vec::new(),
             partial: None,
             frame: None,
@@ -247,14 +251,16 @@ impl Plus {
     pub fn comment(&mut self, cv: &mut Canvas, data: Bytes) {
         let mut pos = 0usize;
         while !cv.full() {
-            let (Some(typ), Some(flags), Some(size), Some(dsize)) = (data.u16(pos), data.u16(pos + 2), data.u32(pos + 4), data.u32(pos + 8)) else {
+            let Some(tail) = data.0.get(pos..) else { break };
+            let tail = Bytes(tail);
+            let (Some(typ), Some(flags), Some(size), Some(dsize)) = (tail.u16(0), tail.u16(2), tail.u32(4), tail.u32(8)) else {
                 break;
             };
             let (size, dsize) = (size as usize, dsize as usize);
             if size < 12 || dsize > size - 12 {
                 break;
             }
-            let Some(rec) = data.slice(pos + 12, dsize) else { break };
+            let Some(rec) = tail.slice(12, dsize) else { break };
             let _ = self.record(cv, typ, flags, Bytes(rec));
             let Some(next) = pos.checked_add(size) else { break };
             pos = next;
@@ -282,14 +288,27 @@ impl Plus {
         if !self.active {
             return None;
         }
+        match typ {
+            0x4008 => self.object(flags, r),
+            0x4009 | 0x4013 | 0x401A..=0x401C | 0x4036 => self.record_image_text_region(cv, typ, flags, r),
+            0x4025..=0x4035 => self.record_state(cv, typ, flags, r),
+            0x4010..=0x4012 | 0x4016..=0x4019 => self.record_curve(cv, typ, flags, r),
+            _ => self.record_shape(cv, typ, flags, r),
+        }
+    }
+
+    /// Rectangle, polygon, ellipse and path records.
+    fn record_shape(&mut self, cv: &mut Canvas, typ: u16, flags: u16, r: Bytes) -> Option<()> {
         let compressed = flags & 0x4000 != 0;
         let id = usize::from(flags & 0xFF);
         match typ {
-            0x4008 => self.object(flags, r),
             0x400A => {
                 let fill = self.brush_of(flags, r.u32(0)?)?;
                 let p = self.painter();
                 for rc in rects(r, 8, r.u32(4)? as usize, compressed)? {
+                    if cv.full() {
+                        break;
+                    }
                     p.fill(cv, &rect_ops(rc), &fill);
                 }
                 Some(())
@@ -298,6 +317,9 @@ impl Plus {
                 let pen = self.pen(id)?;
                 let p = self.painter();
                 for rc in rects(r, 4, r.u32(0)? as usize, compressed)? {
+                    if cv.full() {
+                        break;
+                    }
                     p.stroke(cv, &rect_ops(rc), pen);
                 }
                 Some(())
@@ -338,6 +360,15 @@ impl Plus {
                 self.painter().stroke(cv, &ops, pen);
                 Some(())
             }
+            _ => None,
+        }
+    }
+
+    /// Curve, bezier and arc records.
+    fn record_curve(&mut self, cv: &mut Canvas, typ: u16, flags: u16, r: Bytes) -> Option<()> {
+        let compressed = flags & 0x4000 != 0;
+        let id = usize::from(flags & 0xFF);
+        match typ {
             0x4019 => {
                 let pen = self.pen(id)?;
                 let pts = points(r, 4, r.u32(0)? as usize, compressed)?;
@@ -370,6 +401,29 @@ impl Plus {
                 self.painter().stroke(cv, &curve_ops(&pts, tension, false, offset, segments), pen);
                 Some(())
             }
+            0x4010 => {
+                let fill = self.brush_of(flags, r.u32(0)?)?;
+                let [start, sweep] = floats::<2>(r, 4)?;
+                let rect = *rects(r, 12, 1, compressed)?.first()?;
+                self.painter().fill(cv, &arc_ops(rect, start, sweep, true), &fill);
+                Some(())
+            }
+            0x4011 | 0x4012 => {
+                let pen = self.pen(id)?;
+                let [start, sweep] = floats::<2>(r, 0)?;
+                let rect = *rects(r, 8, 1, compressed)?.first()?;
+                self.painter().stroke(cv, &arc_ops(rect, start, sweep, typ == 0x4011), pen);
+                Some(())
+            }
+            _ => None,
+        }
+    }
+
+    /// Clear, region fill, image and text records.
+    fn record_image_text_region(&mut self, cv: &mut Canvas, typ: u16, flags: u16, r: Bytes) -> Option<()> {
+        let compressed = flags & 0x4000 != 0;
+        let id = usize::from(flags & 0xFF);
+        match typ {
             // Clear: the whole picture in one colour, whatever the clip (a transparent clear
             // leaves nothing to draw).
             0x4009 => {
@@ -409,6 +463,14 @@ impl Plus {
             }
             0x401C => self.draw_string(cv, flags, r),
             0x4036 => self.draw_driver_string(cv, flags, r),
+            _ => None,
+        }
+    }
+
+    /// Save / restore, transform and clip records.
+    fn record_state(&mut self, cv: &mut Canvas, typ: u16, flags: u16, r: Bytes) -> Option<()> {
+        let id = usize::from(flags & 0xFF);
+        match typ {
             0x4025 | 0x4028 => r.u32(0).map(|i| self.push(i)),
             0x4027 => r.u32(24).map(|i| self.push(i)),
             0x4026 | 0x4029 => r.u32(0).map(|i| self.pop(i)),
@@ -458,20 +520,6 @@ impl Plus {
                         *p = (p.0 + ox, p.1 + oy);
                     }
                 }
-                Some(())
-            }
-            0x4010 => {
-                let fill = self.brush_of(flags, r.u32(0)?)?;
-                let [start, sweep] = floats::<2>(r, 4)?;
-                let rect = *rects(r, 12, 1, compressed)?.first()?;
-                self.painter().fill(cv, &arc_ops(rect, start, sweep, true), &fill);
-                Some(())
-            }
-            0x4011 | 0x4012 => {
-                let pen = self.pen(id)?;
-                let [start, sweep] = floats::<2>(r, 0)?;
-                let rect = *rects(r, 8, 1, compressed)?.first()?;
-                self.painter().stroke(cv, &arc_ops(rect, start, sweep, typ == 0x4011), pen);
                 Some(())
             }
             _ => None,
@@ -550,8 +598,28 @@ impl Plus {
     }
 
     fn store(&mut self, id: usize, obj: Option<Obj>) {
-        if let Some(slot) = self.objects.get_mut(id) {
-            *slot = obj;
+        let Some(slot) = self.objects.get_mut(id) else { return };
+        if let Some(old) = slot.take() {
+            self.object_bytes = self.object_bytes.saturating_sub(Self::obj_cost(&old));
+        }
+        if let Some(new_obj) = obj {
+            let cost = Self::obj_cost(&new_obj);
+            if self.object_bytes.saturating_add(cost) <= crate::MAX_BYTES {
+                self.object_bytes += cost;
+                *slot = Some(new_obj);
+            }
+        }
+    }
+
+    fn obj_cost(obj: &Obj) -> usize {
+        match obj {
+            Obj::Image(img) => match img.as_ref() {
+                ImageData::Bitmap(rgba) => rgba.px.len(),
+                ImageData::Meta(pic) => pic.items.len().saturating_mul(128),
+            },
+            Obj::Brush(Fill::Texture { img, .. }) => img.px.len(),
+            Obj::Path(ops) => ops.len().saturating_mul(std::mem::size_of::<Op>()),
+            _ => 0,
         }
     }
 
@@ -1040,12 +1108,14 @@ fn path(r: Bytes) -> Option<Vec<Op>> {
 /// A region object as a convex area in world units (non-convex parts become their bounding
 /// rectangle).
 fn region(r: Bytes) -> Option<Obj> {
-    region_node(r, 8, 0).map(|(a, _)| Obj::Region(a))
+    let mut work = 0;
+    region_node(r, 8, 0, &mut work).map(|(a, _)| Obj::Region(a))
 }
 
 /// One region node at `off`: its area and its length in bytes.
-fn region_node(r: Bytes, off: usize, depth: usize) -> Option<(Area, usize)> {
-    if depth > MAX_REGION_DEPTH {
+fn region_node(r: Bytes, off: usize, depth: usize, work: &mut usize) -> Option<(Area, usize)> {
+    *work = work.checked_add(1)?;
+    if depth > MAX_REGION_DEPTH || *work > MAX_REGION_WORK {
         return None;
     }
     match r.u32(off)? {
@@ -1055,14 +1125,23 @@ fn region_node(r: Bytes, off: usize, depth: usize) -> Option<(Area, usize)> {
         }
         0x1000_0001 => {
             let size = r.u32(off + 4)? as usize;
-            let area = path(r.tail(off + 8)?).map(|ops| area_of_ops(&ops)).unwrap_or_default();
+            if size < 12 {
+                return None;
+            }
+            let data = Bytes(r.slice(off + 8, size)?);
+            let points = (data.u32(4)? as usize).min(MAX_POINTS);
+            *work = work.checked_add(points)?;
+            if *work > MAX_REGION_WORK {
+                return None;
+            }
+            let area = area_of_ops(&path(data)?);
             Some((Some(area), 8usize.checked_add(size)?))
         }
         0x1000_0002 => Some((Some(Vec::new()), 4)),
         0x1000_0003 => Some((None, 4)),
         mode @ 0..=5 => {
-            let (a, la) = region_node(r, off + 4, depth + 1)?;
-            let (b, lb) = region_node(r, off.checked_add(4 + la)?, depth + 1)?;
+            let (a, la) = region_node(r, off + 4, depth + 1, work)?;
+            let (b, lb) = region_node(r, off.checked_add(4 + la)?, depth + 1, work)?;
             let out = match mode {
                 0 => b,
                 1 => area_intersect(a, b),
@@ -1187,7 +1266,7 @@ fn image(r: Bytes) -> Option<ImageData> {
 fn metafile(r: Bytes) -> Option<Picture> {
     let size = r.u32(12)? as usize;
     let data = r.slice(16, size).or_else(|| r.tail(16).map(|t| t.0))?;
-    let depth = NESTING.with(|n| n.get());
+    let depth = NESTING.with(std::cell::Cell::get);
     if depth >= MAX_NESTING {
         return None;
     }
@@ -1282,11 +1361,18 @@ fn decode_compressed(bytes: &[u8]) -> Option<Rgba> {
     limits.max_image_height = Some(1 << 15);
     limits.max_alloc = Some((crate::MAX_PIXELS * 4) as u64);
     reader.limits(limits);
-    let img = reader.decode().ok()?.to_rgba8();
-    let (w, h) = (img.width() as usize, img.height() as usize);
-    if w.checked_mul(h)? > crate::MAX_PIXELS {
+    let (w, h) = reader.into_dimensions().ok()?;
+    let (w, h) = (w as usize, h as usize);
+    if w == 0 || h == 0 || w.checked_mul(h)? > crate::MAX_PIXELS {
         return None;
     }
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(1 << 15);
+    limits.max_image_height = Some(1 << 15);
+    limits.max_alloc = Some((crate::MAX_PIXELS * 4) as u64);
+    reader.limits(limits);
+    let img = reader.decode().ok()?.to_rgba8();
     Some(Rgba { w, h, bottom_up: false, px: img.into_raw() })
 }
 
@@ -1406,31 +1492,61 @@ fn wrap_line(line: &[u16], width: f64, em: f64) -> Vec<Vec<u16>> {
     if em <= 0.0 || !width.is_finite() {
         return vec![line.to_vec()];
     }
-    let fits = |l: &[u16]| l.iter().map(|u| char_em(*u) * em).sum::<f64>() <= width;
+    let trimmed = |v: &[u16]| v.iter().rposition(|u| *u != 0x20).map_or(0, |i| i + 1);
+    let measure = |v: &[u16]| v.iter().map(|u| char_em(*u) * em).sum::<f64>();
+
     let mut out: Vec<Vec<u16>> = Vec::new();
     let mut cur: Vec<u16> = Vec::new();
+    let mut cur_total_w = 0.0;
+
     for word in line.split_inclusive(|u| *u == 0x20) {
-        let mut cand = cur.clone();
-        cand.extend_from_slice(word);
-        let trimmed = |v: &[u16]| v.iter().rposition(|u| *u != 0x20).map_or(0, |i| i + 1);
-        if fits(&cand[..trimmed(&cand)]) || cur.is_empty() && fits(&word[..trimmed(word)]) {
-            cur = cand;
+        let n_non_space = trimmed(word);
+        let word_non_space_w = measure(&word[..n_non_space]);
+        let word_total_w = measure(word);
+
+        if cur.is_empty() {
+            if word_non_space_w <= width {
+                cur.extend_from_slice(word);
+                cur_total_w = word_total_w;
+                continue;
+            }
+        } else if cur_total_w + word_non_space_w <= width {
+            cur.extend_from_slice(word);
+            cur_total_w += word_total_w;
             continue;
         }
+
         if !cur.is_empty() {
             let n = trimmed(&cur);
             cur.truncate(n);
             out.push(std::mem::take(&mut cur));
         }
+
+        if word_non_space_w <= width {
+            cur.extend_from_slice(word);
+            cur_total_w = word_total_w;
+            continue;
+        }
+
         // A word wider than the line on its own: break it between characters.
+        let mut cur_w = 0.0;
         for &u in word {
-            cur.push(u);
-            if !fits(&cur[..trimmed(&cur)]) && cur.len() > 1 {
-                cur.pop();
+            let u_w = char_em(u) * em;
+            if cur.is_empty() {
+                cur.push(u);
+                cur_w = u_w;
+            } else if cur_w + u_w <= width {
+                cur.push(u);
+                cur_w += u_w;
+            } else {
+                let n = trimmed(&cur);
+                cur.truncate(n);
                 out.push(std::mem::take(&mut cur));
                 cur.push(u);
+                cur_w = u_w;
             }
         }
+        cur_total_w = cur_w;
     }
     let n = cur.iter().rposition(|u| *u != 0x20).map_or(0, |i| i + 1);
     cur.truncate(n);

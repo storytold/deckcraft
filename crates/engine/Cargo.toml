@@ -25,6 +25,7 @@ i_overlay = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 image = { workspace = true }
+chrono = { workspace = true }
 
 [dev-dependencies]
 deckcraft-anim = { workspace = true }
