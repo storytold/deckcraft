@@ -299,9 +299,16 @@ fn text(w: &mut W, t: &str, d: Option<&Diagram>) {
     w.close("dgm:t");
 }
 
+/// The runs and fields of a paragraph that carry text: what [`outline`] reads (line breaks and
+/// empty runs carry none).
+fn text_carriers(p: &El) -> Vec<&El> {
+    p.elements().filter(|e| (e.is("r") || e.is("fld")) && e.child("t").is_some_and(|t| !t.text().is_empty())).collect()
+}
+
 /// The size (points) every node's text shares in a data part, as [`data_xml`] writes it (and
-/// PowerPoint, when Font Size is set on the whole graphic): from every run (or the end of a paragraph
-/// with none) of every node, and only when all of them agree.
+/// PowerPoint, when Font Size is set on the whole graphic): from every run and field that carries
+/// text in the paragraphs [`outline`] keeps, or from the paragraph ends of a node with no text, and
+/// only when all of them agree. Line breaks and the end marks of paragraphs with text do not count.
 pub fn text_size(data: &El) -> Option<f64> {
     let pts = data.child("ptLst")?;
     let mut sizes = vec![];
@@ -310,20 +317,24 @@ pub fn text_size(data: &El) -> Option<f64> {
             continue;
         }
         let t = pt.child("t")?;
-        let mut paras = 0;
-        for p in t.children_named("p") {
-            paras += 1;
-            // A run without `a:rPr` inherits its size, so it counts as unsized like one without `sz`.
-            let mut rprs: Vec<Option<&El>> = p.children_named("r").map(|r| r.child("rPr")).collect();
-            if p.child("r").is_none() {
-                rprs.push(p.child("endParaRPr"));
-            }
-            for r in rprs {
-                sizes.push(r.and_then(|r| r.f64("sz")).map(|v| v / 100.0).filter(|v| (1.0..=4000.0).contains(v)));
-            }
-        }
-        if paras == 0 {
+        let paras: Vec<&El> = t.children_named("p").collect();
+        if paras.is_empty() {
             return None;
+        }
+        // `outline` drops paragraphs whose text is blank.
+        let kept: Vec<&El> = paras
+            .iter()
+            .copied()
+            .filter(|p| !text_carriers(p).iter().filter_map(|r| r.child("t")).map(|t| t.text()).collect::<String>().trim().is_empty())
+            .collect();
+        // A run without `a:rPr` inherits its size, so it counts as unsized like one without `sz`.
+        let rprs: Vec<Option<&El>> = if kept.is_empty() {
+            paras.iter().map(|p| p.child("endParaRPr")).collect()
+        } else {
+            kept.iter().flat_map(|p| text_carriers(p)).map(|r| r.child("rPr")).collect()
+        };
+        for r in rprs {
+            sizes.push(r.and_then(|r| r.f64("sz")).map(|v| v / 100.0).filter(|v| (1.0..=4000.0).contains(v)));
         }
     }
     let first = (*sizes.first()?)?;
@@ -868,6 +879,22 @@ mod tests {
         // A run with no `a:rPr` inherits its size, so it is unsized too.
         let bare_run = xml.replacen("</a:r>", "</a:r><a:r><a:t>x</a:t></a:r>", 1);
         assert_eq!(text_size(&crate::xml::parse(bare_run.as_bytes()).unwrap().root), None);
+        // A field counts like a run: unsized, or at another size, it is no shared size.
+        let sized = |extra: &str| text_size(&crate::xml::parse(xml.replacen("</a:r>", &format!("</a:r>{extra}"), 1).as_bytes()).unwrap().root);
+        assert_eq!(sized("<a:fld id=\"{1}\" type=\"x\"><a:t>1</a:t></a:fld>"), None);
+        assert_eq!(sized("<a:fld id=\"{1}\" type=\"x\"><a:rPr sz=\"2000\"/><a:t>1</a:t></a:fld>"), None);
+        assert_eq!(sized("<a:fld id=\"{1}\" type=\"x\"><a:rPr sz=\"1850\"/><a:t>1</a:t></a:fld>"), Some(18.5));
+        // Line breaks, runs with no text and blank paragraphs carry no text (the outline drops
+        // them), and the end mark of a paragraph with text is not text: none of them count.
+        assert_eq!(sized("<a:br><a:rPr sz=\"2000\"/></a:br>"), Some(18.5));
+        assert_eq!(sized("<a:r><a:rPr sz=\"2000\"/><a:t></a:t></a:r>"), Some(18.5));
+        assert_eq!(sized("<a:endParaRPr sz=\"2000\"/>"), Some(18.5));
+        assert_eq!(sized("</a:p><a:p><a:r><a:rPr sz=\"2000\"/><a:t> </a:t></a:r><a:endParaRPr sz=\"2000\"/>"), Some(18.5));
+        // A field alone is the node's text, so its size is the node's.
+        let only_field = xml.replacen("<a:r>", "<a:fld id=\"{1}\" type=\"x\">", 1).replacen("</a:r>", "</a:fld>", 1);
+        assert_eq!(text_size(&crate::xml::parse(only_field.as_bytes()).unwrap().root), Some(18.5));
+        let field_other = only_field.replacen("sz=\"1850\"", "sz=\"2000\"", 1);
+        assert_eq!(text_size(&crate::xml::parse(field_other.as_bytes()).unwrap().root), None);
     }
 
     #[test]
