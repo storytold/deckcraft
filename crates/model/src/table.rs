@@ -138,13 +138,14 @@ impl Table {
         }
         let grows = |m: &Merge| matches!(neighbour, Some(n) if m.gs > 1 && m.c <= n && n < m.c + m.gs && (at == m.c || at == m.c + m.gs));
         // A merge that grows to the left starts at the new cell, which takes the anchor's text and
-        // formatting; the old anchor becomes a covered cell that keeps its formatting (a later
-        // split shows it) and loses its text.
+        // formatting; the old anchor becomes a covered cell that keeps its formatting, text body
+        // properties included (a later split shows it), and loses its text.
         for m in merges.iter().filter(|m| grows(m) && at == m.c) {
             let old = self.cell(m.r, at + 1).cloned();
             self.move_anchor((m.r, at + 1), (m.r, at));
             if let (Some(old), Some(x)) = (old, self.cell_mut(m.r, at + 1)) {
-                *x = Cell { text: Cell::new("").text, ..old };
+                *x = old;
+                crate::edit::delete(&mut x.text, (0, 0), (usize::MAX, usize::MAX));
             }
         }
         self.set_merges(merges.into_iter().map(|m| if grows(&m) { Merge { gs: m.gs + 1, ..m } } else { m.insert_col(at) }));
@@ -508,6 +509,21 @@ pub fn table_styles() -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_left_growing_merge_clears_the_old_anchor_without_resetting_its_body() {
+        let mut t = Table::new(1, 3, 300.0, 30.0);
+        t.cell_mut(0, 0).unwrap().text = TextBody::from_text("title");
+        t.cell_mut(0, 0).unwrap().text.body.anchor = Some(crate::text::Anchor::Middle);
+        assert!(t.merge(0, 0, 0, 2));
+        t.insert_col_beside(0, Some(0));
+        assert_eq!(t.cell(0, 0).unwrap().grid_span, 4);
+        assert_eq!(t.cell(0, 0).unwrap().text.text(), "title");
+        let old = t.cell(0, 1).unwrap();
+        assert!(old.h_merge);
+        assert_eq!(old.text.text(), "");
+        assert_eq!(old.text.body.anchor, Some(crate::text::Anchor::Middle), "the body properties stay");
+    }
 
     /// Every cell is owned by exactly one anchor (itself or a span over it), and no span leaves the grid.
     fn assert_topology(t: &Table) {
