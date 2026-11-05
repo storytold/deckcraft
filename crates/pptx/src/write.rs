@@ -1245,7 +1245,14 @@ fn pres_props_xml(p: &Presentation) -> Vec<u8> {
     w.open0("p:penClr");
     w.val("a:srgbClr", s.pen_color.hex());
     w.close("p:penClr");
+    // One extension list carries both: PowerPoint's "show media controls" when it is off (absent
+    // means shown), and the laser colour a show records.
     w.open0("p:extLst");
+    if !s.show_media_controls {
+        w.open("p:ext", A::new().a("uri", "{2FDB2607-1784-4EEB-B798-7EB5836EED8A}"));
+        w.empty("p14:showMediaCtrls", A::new().a("xmlns:p14", NS_P14).a("val", 0));
+        w.close("p:ext");
+    }
     w.open("p:ext", A::new().a("uri", crate::LASER_CLR_URI));
     w.open("p14:laserClr", A::new().a("xmlns:p14", NS_P14));
     w.val("a:srgbClr", s.laser_color.hex());
