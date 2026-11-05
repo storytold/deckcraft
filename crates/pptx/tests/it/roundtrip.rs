@@ -2258,6 +2258,34 @@ fn default_durations_match_powerpoint() {
     }
 }
 
+/// Show media controls is PowerPoint's `p14:showMediaCtrls` extension inside `p:showPr`: off is
+/// written there, under its extension uri and with the p14 namespace declared on the element;
+/// on (the default) writes nothing.
+#[test]
+fn hidden_media_controls_survive_save_and_reopen() {
+    let props = |p: &Presentation| {
+        let bytes = deckcraft_pptx::export(p).expect("export");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("zip");
+        let mut x = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name("ppt/presProps.xml").expect("presProps"), &mut x).expect("read");
+        x
+    };
+    let mut p = Presentation::default();
+    p.show.show_media_controls = false;
+    let xml = props(&p);
+    let show = xml.split("<p:showPr").nth(1).and_then(|r| r.split("</p:showPr>").next()).expect("p:showPr");
+    assert!(
+        show.contains(
+            "<p:ext uri=\"{2FDB2607-1784-4EEB-B798-7EB5836EED8A}\"><p14:showMediaCtrls xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\" val=\"0\"/></p:ext>"
+        ),
+        "{xml}"
+    );
+    assert!(!round(&p).show.show_media_controls);
+    let default = Presentation::default();
+    assert!(!props(&default).contains("showMediaCtrls"));
+    assert!(round(&default).show.show_media_controls);
+}
+
 #[test]
 fn reflection_angles_and_skews_out_of_range_are_written_inside_the_schema() {
     let mut p = Presentation::default();

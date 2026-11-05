@@ -451,6 +451,13 @@ fn degenerate_slide_sizes_are_repaired() {
     }
 }
 
+#[test]
+fn repair_bounds_the_notes_page_size() {
+    let mut p = Presentation { notes_size: deckcraft_model::Size::new(1e12, 0.01), ..Default::default() };
+    repair(&mut p);
+    assert_eq!((p.notes_size.width, p.notes_size.height), (4032.0, 72.0));
+}
+
 /// A file whose slide size is null, a string or missing a side (written by hand or by
 /// another tool; NaN is also saved as null) opens with the default size rather than failing
 /// as damaged.
