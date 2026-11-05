@@ -794,6 +794,24 @@ mod tests {
         }
     }
 
+    /// A link with a frame's name left in the staging folder is not written through: the export
+    /// fails and the file it points at is as it was.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_the_staging_folder_is_not_written_through() {
+        let dir = std::env::temp_dir().join(format!("dc-frames-stage-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(STAGING)).unwrap();
+        let victim = dir.join("victim.txt");
+        std::fs::write(&victim, b"keep").unwrap();
+        std::os::unix::fs::symlink(&victim, dir.join(STAGING).join(frame_name(1))).unwrap();
+        let doc = deckcraft_model::defaults::new_presentation(None);
+        let opts = FramesOptions::from_params(&json!({"fps": 1, "secondsPerSlide": 1, "width": 32})).unwrap();
+        assert!(export(&doc, &opts, &dir.to_string_lossy()).is_err());
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A move of the new frames that fails part way (here onto a folder with a frame's name) puts
     /// the earlier frames back and removes the new ones it placed: no half sequence, no backup.
     #[cfg(unix)]
@@ -867,6 +885,8 @@ mod tests {
         let jobs = |n: usize| (0..n).map(|i| Job { numbers: vec![2 * i + 1, 2 * i + 2], image: image.clone() });
         assert_eq!(run_jobs(&dir, jobs(2), 4 * png), Ok(()), "four copies fit exactly");
         assert!(dir.join(frame_name(4)).exists());
+        // Frames are created new, so the first run's files are cleared as an export's staging is.
+        crate::io::remove_files(&dir.to_string_lossy(), &is_frame_name).unwrap();
         let e = run_jobs(&dir, jobs(3), 5 * png).unwrap_err();
         assert!(e.contains("bytes") && e.contains("width"), "{e}");
         let _ = std::fs::remove_dir_all(&dir);

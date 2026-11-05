@@ -235,11 +235,14 @@ pub fn is_link(_path: &str) -> bool {
 
 /// Write `bytes` straight to `path` inside the automation write root: no temporary sibling and no
 /// sync, for the many generated files of a frame sequence, which are rebuilt rather than precious.
-/// The folder must exist ([`create_folder`]).
+/// The file is created new and an existing name (a link included) is an error, so nothing already
+/// there is followed or overwritten. The folder must exist ([`create_folder`]).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn write_file_direct(path: &str, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
     crate::file_access::check_write(path)?;
-    std::fs::write(path, bytes).map_err(|e| format!("{path}: {e}"))
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(|e| format!("{path}: {e}"))?;
+    file.write_all(bytes).map_err(|e| format!("{path}: {e}"))
 }
 
 #[cfg(target_arch = "wasm32")]
