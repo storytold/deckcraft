@@ -86,7 +86,7 @@ Messages are plain objects with a `type`:
 
 | Message | Direction | Fields |
 |---|---|---|
-| `deckcraft:ready` | to the page | `version`. The app runs and listens: send the file now. |
+| `deckcraft:ready` | to the page | `version`, `appVersion`. The app runs and listens: send the file now. |
 | `deckcraft:open` | from the page | `name` (a bare file name, such as `Talk.pptx`), `bytes` (`ArrayBuffer` or `Uint8Array`). Opens like File › Open: a presentation (.pptx, .potx, .ppsx, .deckcraft) has that name as its file; an outline (.txt, .md, .rtf), a file sent without a name and a damaged file open untitled. |
 | `deckcraft:save` | to the page | `name`, `saveAs`, `bytes` (a transferred `ArrayBuffer`), for every file DeckCraft would otherwise download. The page stores it. |
 | `deckcraft:dirty` | to the page | `dirty`, whenever unsaved changes appear or go away. |
@@ -133,6 +133,8 @@ beside it. The page guards leaving itself (DeckCraft adds no guard of its own), 
   });
 </script>
 ```
+
+The messages and both transports are the shared contract of [`craft-web-host`](https://github.com/storytold/craft-libs/tree/main/crates/web-host) (storytold/craft-libs#420), the same for every Craft app: its README lists every message, including `saved`, with the compatibility notes. In `deckcraft:ready`, `version` is the contract's (`"1"`) and `appVersion` is this app's release. DeckCraft reads bytes, so a host sends `bytes`, not a `File`.
 
 ## Renderer selection and fallback flags
 
