@@ -56,12 +56,17 @@ pub(crate) fn share_after_edit(s: &mut Session, id: ShapeId) -> Result<()> {
     Ok(())
 }
 
-/// The size a graphic's text shows: the one set for every node, else the smallest explicit run size
-/// of its nodes times the scale shrink-on-overflow lays them out at (PowerPoint steps from what you see).
+/// The size a graphic's text shows: for a generated graphic the one set for every node (regeneration
+/// applies it), else the smallest explicit run size of its nodes times the scale shrink-on-overflow
+/// lays them out at (PowerPoint steps from what you see). An imported graphic keeps its drawing,
+/// so what that drawing shows wins over the size read from the data model.
 pub(crate) fn shown_size(s: &Session, gid: ShapeId) -> Option<f64> {
     let st = s.doc().ok()?;
     let g = st.shape(gid)?;
-    if let Some(z) = g.diagram.as_ref().and_then(|d| d.font_size) {
+    let set = g.diagram.as_ref().and_then(|d| d.font_size);
+    if !g.diagram.as_ref().is_some_and(|d| d.imported)
+        && let Some(z) = set
+    {
         return Some(z);
     }
     let ctx = crate::cmd::text::ctx_for(&st.doc, &st.selection)?;
@@ -73,7 +78,7 @@ pub(crate) fn shown_size(s: &Session, gid: ShapeId) -> Option<f64> {
             shown = Some(shown.map_or(size * scale, |m| m.min(size * scale)));
         }
     });
-    shown
+    shown.or(set)
 }
 
 /// The SmartArt graphic the selection is (or is inside), with its outline as the Text Pane shows it.
