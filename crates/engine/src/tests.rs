@@ -6990,6 +6990,85 @@ fn format_size_on_a_mixed_selection_reaches_the_other_shapes_and_keeps_the_selec
     assert!(graphic.text.is_none(), "the run formatting skipped the graphic itself, which has no text of its own");
 }
 
+/// Font Color on a SmartArt graphic colours every node's text (it answered ok and changed
+/// nothing).
+#[test]
+fn format_color_on_a_smartart_graphic_colours_every_node() {
+    let mut s = session();
+    let r = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "\tScope", "Build"]})).unwrap();
+    let gid = r["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.color", &json!({"color": "#00AA00"})).unwrap();
+    let want = Some(deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(0, 0xAA, 0))));
+    let runs = smartart_runs(&s, gid);
+    assert!(runs.len() >= 3 && runs.iter().all(|r| r.1 == want), "{runs:?}");
+    s.execute("smartArt.addNode", &json!({"id": gid, "text": "Ship"})).unwrap();
+    assert!(smartart_runs(&s, gid).iter().all(|r| r.1 == want), "the colour survives a regenerate");
+    let colors: Vec<_> = smartart_after_pptx(&s).into_iter().map(|d| d.text_color).collect();
+    assert_eq!(colors, vec![Some(deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(0, 0xAA, 0)))], "the .pptx keeps it");
+}
+
+/// A picture's own fill shows behind its transparent pixels, as PowerPoint's Format Picture ▸ Fill
+/// sets it: `shape.fill` sets it on a picture and the .pptx keeps it.
+#[test]
+fn shape_fill_on_a_picture_sets_the_fill_behind_it() {
+    const PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf,
+        0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60,
+        0x82,
+    ];
+    let mut s = session();
+    let id = s.execute("insert.picture", &json!({"data": cmd::base64_encode(PNG), "name": "a.png"})).unwrap()["id"].clone();
+    let sid = ShapeId(id.as_u64().unwrap() as u32);
+    s.execute("shape.fill", &json!({"id": id, "color": "#FF0000"})).unwrap();
+    let pic = s.doc().unwrap().shape(sid).unwrap().clone();
+    assert!(format!("{:?}", pic.fill).contains("r: 255"), "{:?}", pic.fill);
+    let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
+    let back = deckcraft_pptx::import(&bytes).unwrap();
+    let pic = back.slides.iter().flat_map(|sl| sl.shapes.iter()).find(|x| matches!(x.kind, deckcraft_model::ShapeKind::Picture { .. })).unwrap();
+    assert!(format!("{:?}", pic.fill).contains("r: 255"), "the fill survives a save: {:?}", pic.fill);
+    // No Fill takes it away again.
+    s.execute("shape.fill", &json!({"id": id, "none": true})).unwrap();
+    assert!(s.doc().unwrap().shape(sid).unwrap().fill.as_ref().is_none_or(|f| f.is_none()));
+}
+
+/// SmartArt colours are theme references (accent slots), so a theme change recolours the
+/// graphic, as in PowerPoint where Change Colors sets are theme-bound.
+#[test]
+fn a_theme_change_recolours_a_smartart_graphic() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let r = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "Scope", "Build"]})).unwrap();
+    let id = r["id"].clone();
+    let sl = s.execute("slide.inspect", &json!({})).unwrap();
+    let b = sl["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).unwrap()["box"].clone();
+    let (x0, y0, w, h) = (b[0].as_f64().unwrap(), b[1].as_f64().unwrap(), b[2].as_f64().unwrap(), b[3].as_f64().unwrap());
+    let sample = |s: &mut Session| -> std::collections::BTreeSet<String> {
+        let mut out = std::collections::BTreeSet::new();
+        for i in 0..12 {
+            for j in 0..8 {
+                let v = s
+                    .execute(
+                        "slide.colorAt",
+                        &json!({"x": x0 + w * (f64::from(i) + 0.5) / 12.0, "y": y0 + h * (f64::from(j) + 0.5) / 8.0, "scale": 1}),
+                    )
+                    .unwrap();
+                out.insert(v["color"].as_str().unwrap().to_string());
+            }
+        }
+        out
+    };
+    let bg = |s: &mut Session| s.execute("slide.colorAt", &json!({"x": 1, "y": 1, "scale": 1})).unwrap()["color"].as_str().unwrap().to_string();
+    let (bg_before, mut before) = (bg(&mut s), sample(&mut s));
+    s.execute("design.theme", &json!({"name": "Ember"})).unwrap();
+    let (bg_after, mut after) = (bg(&mut s), sample(&mut s));
+    before.remove(&bg_before);
+    after.remove(&bg_after);
+    assert!(!before.is_empty(), "the graphic is drawn: {before:?}");
+    assert_ne!(before, after, "the graphic keeps its old colours after a theme change");
+}
+
 /// Increase and Decrease Font Size on a selected SmartArt graphic step every node's text from the
 /// size they share, as Font Size sets it, and the step survives a regenerate; a text box selected
 /// with it steps from its own size.

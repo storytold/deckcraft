@@ -274,8 +274,8 @@ fn guid(seed: u32, n: usize) -> String {
     format!("{{{seed:08X}-D1A6-4C0A-9E5B-{n:012X}}}")
 }
 
-/// A point's text. `d` is the diagram for a node's own text, whose runs carry the size set for
-/// every node (`Diagram::font_size`); None for the other points.
+/// A point's text. `d` is the diagram for a node's own text, whose runs carry the size and colour
+/// set for every node (`Diagram::font_size`, `Diagram::text_color`); None for the other points.
 fn text(w: &mut W, t: &str, d: Option<&Diagram>) {
     w.open0("dgm:t");
     w.empty0("a:bodyPr");
@@ -290,7 +290,14 @@ fn text(w: &mut W, t: &str, d: Option<&Diagram>) {
     if let Some(sz) = d.and_then(|d| d.font_size).filter(|v| v.is_finite()) {
         a = a.a("sz", (sz * 100.0).round().clamp(100.0, 400_000.0) as i64);
     }
-    w.empty(tag, a);
+    match d.and_then(|d| d.text_color.as_ref()) {
+        Some(c) => {
+            w.open(tag, a);
+            crate::write::dml::solid(w, c);
+            w.close(tag);
+        }
+        None => w.empty(tag, a),
+    }
     if !t.is_empty() {
         w.elt("a:t", t);
         w.close("a:r");
@@ -305,21 +312,23 @@ fn text_carriers(p: &El) -> Vec<&El> {
     p.elements().filter(|e| (e.is("r") || e.is("fld")) && e.child("t").is_some_and(|t| !t.text().is_empty())).collect()
 }
 
-/// The size (points) every node's text shares in a data part, as [`data_xml`] writes it (and
-/// PowerPoint, when Font Size is set on the whole graphic): from every run and field that carries
-/// text in the paragraphs [`outline`] keeps, or from the paragraph ends of a node with no text, and
-/// only when all of them agree. Line breaks and the end marks of paragraphs with text do not count.
-pub fn text_size(data: &El) -> Option<f64> {
-    let pts = data.child("ptLst")?;
+/// The size (points) and colour every node's text shares in a data part, as [`data_xml`] writes
+/// them (and PowerPoint, when Font Size or Font Color is set on the whole graphic): each from every
+/// run and field that carries text in the paragraphs [`outline`] keeps, or from the paragraph ends
+/// of a node with no text, and only when all of them agree. Line breaks and the end marks of
+/// paragraphs with text do not count.
+pub fn text_look(data: &El) -> (Option<f64>, Option<deckcraft_model::style::ColorRef>) {
+    let Some(pts) = data.child("ptLst") else { return (None, None) };
     let mut sizes = vec![];
+    let mut colors = vec![];
     for pt in pts.children_named("pt").take(MAX_NODES * 4) {
         if !matches!(pt.attr("type").unwrap_or("node"), "node" | "asst") {
             continue;
         }
-        let t = pt.child("t")?;
+        let Some(t) = pt.child("t") else { return (None, None) };
         let paras: Vec<&El> = t.children_named("p").collect();
         if paras.is_empty() {
-            return None;
+            return (None, None);
         }
         // `outline` drops paragraphs whose text is blank.
         let kept: Vec<&El> = paras
@@ -327,7 +336,7 @@ pub fn text_size(data: &El) -> Option<f64> {
             .copied()
             .filter(|p| !text_carriers(p).iter().filter_map(|r| r.child("t")).map(|t| t.text()).collect::<String>().trim().is_empty())
             .collect();
-        // A run without `a:rPr` inherits its size, so it counts as unsized like one without `sz`.
+        // A run without `a:rPr` inherits its size and colour, so it counts as unsized and uncoloured.
         let rprs: Vec<Option<&El>> = if kept.is_empty() {
             // A whitespace-only node is a styled run with no paragraph end mark.
             paras.iter().map(|p| p.child("endParaRPr").or_else(|| text_carriers(p).first().and_then(|r| r.child("rPr")))).collect()
@@ -336,10 +345,14 @@ pub fn text_size(data: &El) -> Option<f64> {
         };
         for r in rprs {
             sizes.push(r.and_then(|r| r.f64("sz")).map(|v| v / 100.0).filter(|v| (1.0..=4000.0).contains(v)));
+            colors.push(r.and_then(|r| r.child("solidFill")).and_then(crate::read::dml::color));
         }
     }
-    let first = (*sizes.first()?)?;
-    sizes.iter().all(|x| *x == Some(first)).then_some(first)
+    fn uniform<T: PartialEq + Clone>(v: &[Option<T>]) -> Option<T> {
+        let first = v.first()?.clone()?;
+        v.iter().all(|x| x.as_ref() == Some(&first)).then_some(first)
+    }
+    (uniform(&sizes), uniform(&colors))
 }
 
 /// `ppt/diagrams/dataN.xml` for the outline. `drawing_rel` is the slide's relationship id of the
@@ -858,49 +871,59 @@ mod tests {
         assert_eq!(outline(&doc.root), d.nodes);
     }
 
-    /// The size set for every node is on each node's runs (the paragraph end for an empty node)
-    /// and read back only when all the nodes agree.
+    /// The size and colour set for every node are on each node's runs (the paragraph end for an
+    /// empty node) and read back only when all the nodes agree.
     #[test]
-    fn a_size_for_every_node_survives_the_data_model() {
+    fn a_size_and_colour_for_every_node_survive_the_data_model() {
         let mut d = Diagram { kind: "process".into(), nodes: nodes(&[("A", 0), ("B", 0), ("", 0)]), ..Default::default() };
         let doc = crate::xml::parse(&data_xml(&d, 4, "rId1", &[])).unwrap();
-        assert_eq!(text_size(&doc.root), None, "automatic");
+        assert_eq!(text_look(&doc.root), (None, None), "automatic");
         d.font_size = Some(18.5);
+        d.text_color = Some(deckcraft_model::style::ColorRef::scheme(deckcraft_color::SchemeSlot::Accent2));
         let xml = String::from_utf8(data_xml(&d, 4, "rId1", &[])).unwrap();
         assert_eq!(xml.matches("sz=\"1850\"").count(), 3, "{xml}");
         let doc = crate::xml::parse(xml.as_bytes()).unwrap();
-        assert_eq!(text_size(&doc.root), d.font_size);
+        assert_eq!(text_look(&doc.root), (d.font_size, d.text_color.clone()));
         assert_eq!(outline(&doc.root), d.nodes);
-        // Nodes that differ have no size for the whole graphic.
+        // Nodes that differ have no size for the whole graphic; the colour they share stays.
         let mixed = xml.replacen("sz=\"1850\"", "sz=\"2000\"", 1);
-        assert_eq!(text_size(&crate::xml::parse(mixed.as_bytes()).unwrap().root), None);
-        // So do runs of one node: a later run at another size is not skipped.
+        assert_eq!(text_look(&crate::xml::parse(mixed.as_bytes()).unwrap().root), (None, d.text_color.clone()));
+        // So do runs of one node: a later run at another size (and with no colour) is not skipped.
         let two_runs = xml.replacen("</a:r>", "</a:r><a:r><a:rPr lang=\"en-US\" sz=\"2000\"/><a:t>x</a:t></a:r>", 1);
-        assert_eq!(text_size(&crate::xml::parse(two_runs.as_bytes()).unwrap().root), None);
-        // A run with no `a:rPr` inherits its size, so it is unsized too.
+        assert_eq!(text_look(&crate::xml::parse(two_runs.as_bytes()).unwrap().root), (None, None));
+        // A run with no `a:rPr` inherits its size and colour, so it is unsized and uncoloured too.
         let bare_run = xml.replacen("</a:r>", "</a:r><a:r><a:t>x</a:t></a:r>", 1);
-        assert_eq!(text_size(&crate::xml::parse(bare_run.as_bytes()).unwrap().root), None);
-        // A field counts like a run: unsized, or at another size, it is no shared size.
-        let sized = |extra: &str| text_size(&crate::xml::parse(xml.replacen("</a:r>", &format!("</a:r>{extra}"), 1).as_bytes()).unwrap().root);
-        assert_eq!(sized("<a:fld id=\"{1}\" type=\"x\"><a:t>1</a:t></a:fld>"), None);
-        assert_eq!(sized("<a:fld id=\"{1}\" type=\"x\"><a:rPr sz=\"2000\"/><a:t>1</a:t></a:fld>"), None);
-        assert_eq!(sized("<a:fld id=\"{1}\" type=\"x\"><a:rPr sz=\"1850\"/><a:t>1</a:t></a:fld>"), Some(18.5));
+        assert_eq!(text_look(&crate::xml::parse(bare_run.as_bytes()).unwrap().root), (None, None));
+        // A field counts like a run: unsized, uncoloured or at another size, it is no shared look.
+        let look = |extra: &str| text_look(&crate::xml::parse(xml.replacen("</a:r>", &format!("</a:r>{extra}"), 1).as_bytes()).unwrap().root);
+        let fld = |rpr: &str| format!("<a:fld id=\"{{1}}\" type=\"x\">{rpr}<a:t>1</a:t></a:fld>");
+        assert_eq!(look(&fld("")), (None, None));
+        assert_eq!(look(&fld("<a:rPr sz=\"2000\"/>")), (None, None));
+        let same = format!(
+            "<a:rPr sz=\"1850\">{}</a:rPr>",
+            xml.split("<a:solidFill>")
+                .nth(1)
+                .map(|f| format!("<a:solidFill>{}", f.split("</a:solidFill>").next().unwrap()) + "</a:solidFill>")
+                .unwrap()
+        );
+        assert_eq!(look(&fld(&same)), (d.font_size, d.text_color.clone()));
         // Line breaks, runs with no text and blank paragraphs carry no text (the outline drops
         // them), and the end mark of a paragraph with text is not text: none of them count.
-        assert_eq!(sized("<a:br><a:rPr sz=\"2000\"/></a:br>"), Some(18.5));
-        assert_eq!(sized("<a:r><a:rPr sz=\"2000\"/><a:t></a:t></a:r>"), Some(18.5));
-        assert_eq!(sized("<a:endParaRPr sz=\"2000\"/>"), Some(18.5));
-        assert_eq!(sized("</a:p><a:p><a:r><a:rPr sz=\"2000\"/><a:t> </a:t></a:r><a:endParaRPr sz=\"2000\"/>"), Some(18.5));
-        // A node of only whitespace keeps its size on its run, with no paragraph end mark.
+        let kept = (d.font_size, d.text_color.clone());
+        assert_eq!(look("<a:br><a:rPr sz=\"2000\"/></a:br>"), kept);
+        assert_eq!(look("<a:r><a:rPr sz=\"2000\"/><a:t></a:t></a:r>"), kept);
+        assert_eq!(look("<a:endParaRPr sz=\"2000\"/>"), kept);
+        assert_eq!(look("</a:p><a:p><a:r><a:rPr sz=\"2000\"/><a:t> </a:t></a:r><a:endParaRPr sz=\"2000\"/>"), kept);
+        // A node of only whitespace keeps its size and colour on its run, with no paragraph end mark.
         let blank = xml.replacen("<a:t>A</a:t>", "<a:t> </a:t>", 1);
-        assert_eq!(text_size(&crate::xml::parse(blank.as_bytes()).unwrap().root), Some(18.5));
+        assert_eq!(text_look(&crate::xml::parse(blank.as_bytes()).unwrap().root), kept);
         let blank_other = blank.replacen("sz=\"1850\"", "sz=\"2000\"", 1);
-        assert_eq!(text_size(&crate::xml::parse(blank_other.as_bytes()).unwrap().root), None);
-        // A field alone is the node's text, so its size is the node's.
+        assert_eq!(text_look(&crate::xml::parse(blank_other.as_bytes()).unwrap().root).0, None);
+        // A field alone is the node's text, so its look is the node's.
         let only_field = xml.replacen("<a:r>", "<a:fld id=\"{1}\" type=\"x\">", 1).replacen("</a:r>", "</a:fld>", 1);
-        assert_eq!(text_size(&crate::xml::parse(only_field.as_bytes()).unwrap().root), Some(18.5));
+        assert_eq!(text_look(&crate::xml::parse(only_field.as_bytes()).unwrap().root), kept);
         let field_other = only_field.replacen("sz=\"1850\"", "sz=\"2000\"", 1);
-        assert_eq!(text_size(&crate::xml::parse(field_other.as_bytes()).unwrap().root), None);
+        assert_eq!(text_look(&crate::xml::parse(field_other.as_bytes()).unwrap().root).0, None);
     }
 
     #[test]

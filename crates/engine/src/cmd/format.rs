@@ -66,7 +66,15 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
-        cmd!("format.color", "Font Color", ["Home", "Font"], None, "{color: #RRGGBB|accent1..6|tx1…|{scheme, lumMod…}}", has_text_or_shapes, color),
+        cmd!(
+            "format.color",
+            "Font Color",
+            ["Home", "Font"],
+            None,
+            "{color: #RRGGBB|accent1..6|tx1…|{scheme, lumMod…}} (with a SmartArt graphic selected it colours all its nodes' text)",
+            has_text_or_shapes,
+            color
+        ),
         cmd!(
             "format.textTransparency",
             "Text Transparency",

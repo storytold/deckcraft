@@ -28,7 +28,7 @@ use edit::{
     to_shapes, to_text,
 };
 pub use edit::{insert, selected};
-pub(crate) use edit::{selected_graphics, set_font_size, share_after_edit, shown_size};
+pub(crate) use edit::{selected_graphics, set_font_size, set_text_color, share_after_edit, shown_size};
 pub use nodes::{add, demote_node, nodes_from_lines, normalize, promote_node, remove};
 pub use paint::{BRICK_CAMERA, is_3d, layout};
 #[cfg(test)]

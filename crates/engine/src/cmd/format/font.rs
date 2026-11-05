@@ -180,6 +180,13 @@ pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
                 return ok();
             }
         }
+        // A selected SmartArt graphic: the colour of all its nodes' text.
+        let tc = c.clone();
+        let graphic = move |s: &mut Session, gid| crate::cmd::smartart::set_text_color(s, gid, tc.clone(), "format.color");
+        let fill = c.clone();
+        if let Some(r) = on_graphics(s, graphic, move |s| format_run(s, &move |r| r.fill = Some(Fill::solid(fill.clone())))) {
+            return r;
+        }
     }
     format_run(s, &move |r| r.fill = Some(Fill::solid(c.clone())))
 }

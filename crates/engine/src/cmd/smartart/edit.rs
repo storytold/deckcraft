@@ -1,8 +1,8 @@
 use super::nodes::{add, demote_node, nodes_from_lines, normalize, promote_node, remove, sync_text};
 use super::paint::{layout, set_size};
 use super::{
-    AutoFit, COLORS, Diagram, DiagramNode, EngineError, Geom, MAX_LEVEL, NO_ID_SPACE, Paragraph, Presentation, Result, STYLES, Session, Shape,
-    ShapeId, ShapeKind, TextBody, Value, Xfrm, bad, bool_or, current_shapes, is_kind, json, shape_of, str_param, targets, xfrm_of,
+    AutoFit, COLORS, ColorRef, Diagram, DiagramNode, EngineError, Geom, MAX_LEVEL, NO_ID_SPACE, Paragraph, Presentation, Result, STYLES, Session,
+    Shape, ShapeId, ShapeKind, TextBody, Value, Xfrm, bad, bool_or, current_shapes, is_kind, json, shape_of, str_param, targets, xfrm_of,
 };
 
 /// The SmartArt group that `id` is, or is inside.
@@ -469,6 +469,14 @@ pub(crate) fn set_font_size(s: &mut Session, gid: ShapeId, size: Option<f64>, cm
     }
     edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
         d.font_size = size;
+        Ok(())
+    })
+}
+
+/// Colour every node's text of graphic `gid`.
+pub(crate) fn set_text_color(s: &mut Session, gid: ShapeId, color: ColorRef, cmd: &str) -> Result<()> {
+    edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
+        d.text_color = Some(color);
         Ok(())
     })
 }
