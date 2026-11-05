@@ -370,14 +370,10 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
             ok(Value::Null)
         }
         "show.end" => {
+            // End it here: a recording show turns a queued Escape into the Record view's close
+            // question, while this command must always leave the show.
             if app.show.is_some() {
-                app.queue_input(egui::Event::Key {
-                    key: egui::Key::Escape,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers::NONE,
-                });
+                app.end_show_now();
             }
             ok(Value::Null)
         }
@@ -499,6 +495,22 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+
+    /// `show.end` leaves the show here, not through a queued Escape that a recording show turns
+    /// into the Record view's close question.
+    #[test]
+    fn ending_a_show_from_the_control_channel_closes_it() {
+        let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+        app.start_show(0, false);
+        assert!(app.show.is_some(), "the show started");
+        let ctx = egui::Context::default();
+        let (req, _rx) = ControlRequest::new("show.end", json!({}));
+        match handle(&mut app, &ctx, &req) {
+            Outcome::Done(v) => assert_eq!(v["ok"], true, "{v}"),
+            _ => panic!("expected a done reply"),
+        }
+        assert!(app.show.is_none(), "the show is gone");
+    }
 
     /// A path reply writes the PNG and returns no base64 text; an inline reply returns PNG
     /// bytes base64-encoded once. Both go through the same checked memory plan.

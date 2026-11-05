@@ -594,6 +594,12 @@ impl SlideApp {
                 }
                 UiRequest::Pane { id } => self.ui.pane = Some(id),
                 UiRequest::StartShow { from, record, preview } => {
+                    // One microphone: a Record ▸ Audio take in progress owns it, so a recording
+                    // show would split the captured audio and later cancel the clip.
+                    if record && self.audio_recording() {
+                        self.set_status("Stop or cancel the audio recording first: it owns the microphone");
+                        continue;
+                    }
                     self.start_show(from, false);
                     if let Some(show) = self.show.as_mut() {
                         show.recording_preview = preview;

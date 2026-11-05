@@ -297,8 +297,11 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
     let Fr { ctx, doc, doc_uid, now, full, srect, clicked, secondary, pointer, .. } = *f;
     let ctrl = ctx.input(|i| i.modifiers.ctrl);
     let laser_on = pointer_is_laser(show.laser, ctrl, show.blank.is_some());
+    // With the eraser out a tap aims at ink, not at the slide: it must not advance the show.
+    let eraser = show.ink_mode == InkMode::Eraser;
     let on_slide = !show.grid
         && !show.pen
+        && !eraser
         && !laser_on
         && !show.ended
         && show.blank.is_none()
@@ -348,6 +351,7 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
         show.dismiss_zoom();
     } else if clicked
         && !show.pen
+        && !eraser
         && !laser_on
         && !show.reading_bar_hit(ctx)
         && !show.record_bar_hit(ctx)
@@ -368,7 +372,7 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
             }
         }
     }
-    if secondary && !show.ended && !laser_on && !show.record_bar_hit(ctx) && !show.grid && show.zoom.is_none() && !show.zoom_arm {
+    if secondary && !show.ended && !laser_on && !eraser && !show.record_bar_hit(ctx) && !show.grid && show.zoom.is_none() && !show.zoom_arm {
         out.actions.push(show.state.prev(doc));
     }
     pointing

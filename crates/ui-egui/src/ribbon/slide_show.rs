@@ -3,6 +3,9 @@ use super::{Icon, SlideApp, Ui, big, big_button, big_button_ex, group, json, row
 // ---------- Slide Show / Record / Review / View ----------
 
 pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
+    // One microphone: a Record ▸ Audio take in progress blocks starting a show that records.
+    let recording = app.audio_recording();
+    let busy = if recording { "A Record ▸ Audio take owns the microphone: stop or cancel it first" } else { "" };
     group(ui, |ui| {
         if big_button(ui, Icon::PlayFromStart, "Play from\nStart", true).clicked() {
             app.start_show(app.show_start_index(), false);
@@ -31,10 +34,9 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
                 s.rehearse = true;
             }
         }
-        if big_button(ui, Icon::Record, "Record", true)
-            .on_hover_text("Records slide timings, the microphone and pen ink. Laser follows the pointer.")
-            .clicked()
-        {
+        let r = big_button(ui, Icon::Record, "Record", !recording)
+            .on_hover_text("Records slide timings, the microphone and pen ink. Laser follows the pointer.");
+        if r.on_hover_text(busy).clicked() {
             let _ = app.run("show.record", json!({}));
         }
     });
@@ -76,10 +78,13 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
 }
 
 pub(super) fn record(app: &mut SlideApp, ui: &mut Ui) {
+    // Record Slide Show and Record ▸ Audio share one microphone: a take in progress owns it, and
+    // a show take would split the captured audio and cancel the clip when it stops.
+    let recording = app.audio_recording();
+    let busy = if recording { "A Record ▸ Audio take owns the microphone: stop or cancel it first" } else { "" };
     group(ui, |ui| {
         let r = big_button(ui, Icon::Cameo, "Cameo", false);
         let _ = r.on_hover_text("Camera capture is not available yet");
-        let recording = app.audio_recording();
         let has_mic = app.has_mic();
         let r = big_button(ui, Icon::Audio, "Audio", has_mic && !recording);
         let tip = if !has_mic {
@@ -92,10 +97,10 @@ pub(super) fn record(app: &mut SlideApp, ui: &mut Ui) {
         if r.on_hover_text(tip).clicked() {
             let _ = app.start_audio_recording();
         }
-        if big_button(ui, Icon::PlayFromStart, "From\nBeginning", true).clicked() {
+        if big_button(ui, Icon::PlayFromStart, "From\nBeginning", !recording).on_hover_text(busy).clicked() {
             let _ = app.run("show.record", json!({"from": app.show_start_index()}));
         }
-        if big_button(ui, Icon::PlayFromCurrent, "From\nCurrent Slide", true).clicked() {
+        if big_button(ui, Icon::PlayFromCurrent, "From\nCurrent Slide", !recording).on_hover_text(busy).clicked() {
             let i = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
             let _ = app.run("show.record", json!({"from": i}));
         }
