@@ -27,6 +27,27 @@ fn shapes_above_a_playing_video_are_the_overlay() {
 }
 
 /// #968: over a shape a click acts on (a clip with its play trigger, a link) the pointing hand
+/// A command's message must reach the status bar even while the show draws (and so before the
+/// recorder's window reads it): the keep-open path shows the kept file's path there.
+#[test]
+fn a_queued_message_reaches_the_status_bar_during_a_show() {
+    let session = deckcraft_engine::Session::with_new();
+    let app = SlideApp::new(session, crate::Services::default());
+    let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).with_step_dt(0.25).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.state_mut().start_show(0, false);
+    h.run_steps(2);
+    h.state_mut().session.ui_requests.push(deckcraft_engine::UiRequest::Message { text: "the take is kept at C:/tmp/take.mp4".into() });
+    h.run_steps(2);
+    let status = h.state_mut().fresh_status().unwrap_or_default();
+    assert!(status.contains("take.mp4"), "the recorder window shows the kept take: {status:?}");
+}
+
 /// never gave way to the idle hide, so a still pointer stayed on the playing video.
 #[test]
 fn a_still_cursor_hides_over_a_clickable_shape() {

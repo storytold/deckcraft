@@ -105,7 +105,10 @@ fn fitted(s: &Session, bytes: &[u8]) -> (f64, f64) {
 
 pub(super) fn picture(s: &mut Session, p: &Value) -> Result<Value> {
     let (name, bytes) = media_bytes(p, "insert.picture")?;
-    let ct = content_type(&name, &bytes);
+    // The type comes from the name the bytes came from (a path's file name, else the display
+    // name), the same rule `insert.video`/`insert.audio` use: `{"path": "drawing.svg", "name":
+    // "Drawing"}` is an SVG even when the sniffer cannot see the tag in the first bytes.
+    let ct = content_type(&detect_name(p, &name), &bytes);
     if !ct.starts_with("image/") {
         return Err(bad("insert.picture", format!("{name} is not a picture")));
     }
@@ -260,4 +263,28 @@ pub(super) fn audio(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(super) fn video(s: &mut Session, p: &Value) -> Result<Value> {
     media(s, p, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A picture opened from a path takes its type from the file name: the display name need not
+    /// carry the extension, and the sniffer cannot see an `<svg` tag past its first bytes.
+    #[test]
+    fn a_picture_from_a_path_is_typed_by_the_file_names_extension() {
+        let mut s = Session::with_new();
+        let dir = std::env::temp_dir().join(format!("deckcraft-svg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("drawing.svg");
+        // The tag sits past the 512 bytes the sniffer scans, so only the file name can say `svg`.
+        let svg =
+            format!("<?xml version=\"1.0\"?><!--{}--><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"/></svg>", "x".repeat(600));
+        std::fs::write(&path, svg.as_bytes()).unwrap();
+        let v = s
+            .execute("insert.picture", &json!({"path": path.to_string_lossy(), "name": "Drawing"}))
+            .expect("an svg named only by its path is a picture");
+        assert!(v.get("id").is_some(), "{v}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

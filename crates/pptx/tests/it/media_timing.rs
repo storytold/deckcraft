@@ -151,6 +151,29 @@ fn a_click_media_effect_without_a_grp_id_keeps_its_play() {
     assert_eq!(plays[0].start, deckcraft_model::anim::AnimStart::OnClick);
 }
 
+/// A `mediacall` `afterEffect` with no `grpId` inside a group the deck starts on its own (an
+/// indefinite delay) is an authored effect, not the writer's automatic-start trigger.
+fn play_after_indefinite(spid: u32) -> String {
+    format!(
+        r#"<p:par><p:cTn id="20" fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst><p:par><p:cTn id="21" presetID="1" presetClass="mediacall" presetSubtype="0" fill="hold" nodeType="afterEffect"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:cmd type="call" cmd="playFrom(0.0)"><p:cBhvr><p:cTn id="22" dur="1" fill="hold"/><p:tgtEl><p:spTgt spid="{spid}"/></p:tgtEl></p:cBhvr></p:cmd></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par>"#
+    )
+}
+
+#[test]
+fn a_media_after_effect_inside_an_indefinite_group_keeps_its_play() {
+    let click = |spid: u32| {
+        format!(
+            r#"<p:par><p:cTn id="14" presetID="1" presetClass="mediacall" presetSubtype="0" fill="hold" nodeType="clickEffect"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:cmd type="call" cmd="playFrom(0.0)"><p:cBhvr><p:cTn id="15" dur="1" fill="hold"/><p:tgtEl><p:spTgt spid="{spid}"/></p:tgtEl></p:cBhvr></p:cmd></p:childTnLst></p:cTn></p:par>"#
+        )
+    };
+    // Both effects wait for a click (the second group starts after the first, and the clip's own
+    // `playFrom` in the first group is the click effect), so autoplay itself is not the point
+    // here: the grouped effect must stay an animation the Animation Pane lists.
+    let (_, anims) = imported(|v, _| format!("{}{}{}", delayed_node("video", v, "indefinite"), click(v), play_after_indefinite(v)));
+    let plays: Vec<_> = anims.iter().filter(|a| a.effect == "play" && a.class == deckcraft_model::anim::AnimClass::Media).collect();
+    assert_eq!(plays.len(), 2, "the click effect and the grouped afterEffect both stay: {anims:?}");
+}
+
 #[test]
 fn an_on_click_media_play_animation_round_trips_without_autoplay() {
     let mut p = defaults::new_presentation(None);

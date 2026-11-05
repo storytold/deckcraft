@@ -80,6 +80,9 @@ fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, 
             // it carries no `grpId`.
             let own_trigger = c.attr("presetClass") == Some("mediacall")
                 && !c.has_attr("grpId")
+                // Only the writer's own trigger sits in the main sequence's first group: an
+                // afterEffect inside a group after another effect is authored and stays.
+                && at.group == 0
                 && at.trigger.is_none()
                 && c.attr("nodeType") == Some("afterEffect")
                 && c.path(&["stCondLst", "cond"]).and_then(|x| x.attr("delay")).map(str::trim).is_some_and(|d| d != "indefinite");

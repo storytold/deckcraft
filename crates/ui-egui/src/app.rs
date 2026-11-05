@@ -43,21 +43,38 @@ enum ScreenClose {
     KeepOpen,
 }
 
+/// What the close path sees when it decides about a screen take.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+struct ScreenCloseState {
+    /// A take is recording.
+    recording: bool,
+    /// A take is being written (Stop or a failure asked for the file, or retained pictures drain).
+    finishing: bool,
+    /// The window was asked to close this pass.
+    closing: bool,
+    /// A close request is already waiting for a take to land.
+    pending: bool,
+    /// The finished take could not be inserted (its file is kept).
+    insert_failed: bool,
+    /// The user has confirmed the quit.
+    quit_confirmed: bool,
+}
+
 /// The close path for a screen take: a take is part of the document only once the session has
 /// inserted it, so a close request must wait for the encoder instead of dropping it.
-fn screen_close(recording: bool, finishing: bool, closing: bool, pending: bool, insert_failed: bool, quit_confirmed: bool) -> ScreenClose {
-    if quit_confirmed {
+fn screen_close(s: ScreenCloseState) -> ScreenClose {
+    if s.quit_confirmed {
         // The user has already confirmed the quit: the take cannot be held back any longer.
         return ScreenClose::Normal;
     }
-    if closing {
+    if s.closing {
         // A fresh request supersedes a satisfied wait, and waits again while a take is in flight.
-        return if recording || finishing { ScreenClose::Wait } else { ScreenClose::Normal };
+        return if s.recording || s.finishing { ScreenClose::Wait } else { ScreenClose::Normal };
     }
-    if pending && !(recording || finishing) {
+    if s.pending && !(s.recording || s.finishing) {
         // A failed insert leaves the take on disk with a message saying where: closing again would
         // take the message (and the retry's dirty-deck check) away from a deck that may be clean.
-        return if insert_failed { ScreenClose::KeepOpen } else { ScreenClose::Retry };
+        return if s.insert_failed { ScreenClose::KeepOpen } else { ScreenClose::Retry };
     }
     ScreenClose::Normal
 }
@@ -306,14 +323,14 @@ impl SlideApp {
         // A screen recording is not part of the document until it is inserted: stop it here, so
         // closing the window keeps the take and the insert makes the deck dirty (which then asks
         // the user), instead of dropping the worker with an unfinished MP4 in the temp folder.
-        match screen_close(
-            self.session.screen.is_recording(),
-            self.session.screen.is_finishing(),
+        match screen_close(ScreenCloseState {
+            recording: self.session.screen.is_recording(),
+            finishing: self.session.screen.is_finishing(),
             closing,
-            self.pending_close(ctx),
-            self.session.screen_insert_failed,
-            self.quit_confirmed,
-        ) {
+            pending: self.pending_close(ctx),
+            insert_failed: self.session.screen_insert_failed,
+            quit_confirmed: self.quit_confirmed,
+        }) {
             ScreenClose::Wait => {
                 // If the take cannot be inserted (no slide to put it on, say), keep the window
                 // open: the message and the kept MP4 stay visible instead of the app closing over
@@ -438,6 +455,9 @@ impl SlideApp {
         if self.show.is_some() {
             self.anim_preview = None;
             show::ui(self, ui);
+            // Requests a command (or the take's tick) queued become the status text below: drain
+            // them before the recorder's window reads it, or the kept file's path stays invisible.
+            self.drain_requests();
             doc_window::show(self, &ctx);
             // A screen recording started before the show keeps its control window, so "Stop and
             // insert" is reachable while the show runs.
@@ -514,35 +534,40 @@ impl SlideApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{ScreenClose, screen_close};
+    use super::{ScreenClose, ScreenCloseState, screen_close};
+
+    /// The state a test asks about: named fields, so no two flags can be swapped by position.
+    fn state(recording: bool, finishing: bool, closing: bool, pending: bool, insert_failed: bool, quit_confirmed: bool) -> ScreenCloseState {
+        ScreenCloseState { recording, finishing, closing, pending, insert_failed, quit_confirmed }
+    }
 
     #[test]
     fn close_waits_for_a_take_in_flight() {
         // A close request while the take records or finishes is held back for the insert.
-        assert_eq!(screen_close(true, false, true, false, false, false), ScreenClose::Wait);
-        assert_eq!(screen_close(false, true, true, false, false, false), ScreenClose::Wait);
+        assert_eq!(screen_close(state(true, false, true, false, false, false)), ScreenClose::Wait);
+        assert_eq!(screen_close(state(false, true, true, false, false, false)), ScreenClose::Wait);
         // The take has landed: close again, so the normal path sees the dirty deck.
-        assert_eq!(screen_close(false, false, false, true, false, false), ScreenClose::Retry);
+        assert_eq!(screen_close(state(false, false, false, true, false, false)), ScreenClose::Retry);
         // A fresh request or a confirmed quit runs the normal path (and clears the wait).
-        assert_eq!(screen_close(false, false, true, true, false, false), ScreenClose::Normal);
-        assert_eq!(screen_close(false, false, false, true, false, true), ScreenClose::Normal);
+        assert_eq!(screen_close(state(false, false, true, true, false, false)), ScreenClose::Normal);
+        assert_eq!(screen_close(state(false, false, false, true, false, true)), ScreenClose::Normal);
         // A pending wait keeps waiting quietly while the take is still in flight.
-        assert_eq!(screen_close(false, true, false, true, false, false), ScreenClose::Normal);
-        assert_eq!(screen_close(false, false, false, false, false, false), ScreenClose::Normal);
+        assert_eq!(screen_close(state(false, true, false, true, false, false)), ScreenClose::Normal);
+        assert_eq!(screen_close(state(false, false, false, false, false, false)), ScreenClose::Normal);
     }
 
     #[test]
     fn a_failed_insert_keeps_the_window_up() {
         // The take has landed but its insert failed: no retry may close a deck that the kept take
         // never touched, so the wait is dropped and the recorder's message stays reachable.
-        assert_eq!(screen_close(false, false, false, true, true, false), ScreenClose::KeepOpen);
+        assert_eq!(screen_close(state(false, false, false, true, true, false)), ScreenClose::KeepOpen);
         // While the take is still in flight the insert cannot have failed yet: wait as usual.
-        assert_eq!(screen_close(false, true, false, true, true, false), ScreenClose::Normal);
-        assert_eq!(screen_close(true, false, true, false, true, false), ScreenClose::Wait);
+        assert_eq!(screen_close(state(false, true, false, true, true, false)), ScreenClose::Normal);
+        assert_eq!(screen_close(state(true, false, true, false, true, false)), ScreenClose::Wait);
         // The flag alone never holds a fresh close: only a waiting close reads it.
-        assert_eq!(screen_close(false, false, true, false, true, false), ScreenClose::Normal);
-        assert_eq!(screen_close(false, false, false, false, true, false), ScreenClose::Normal);
+        assert_eq!(screen_close(state(false, false, true, false, true, false)), ScreenClose::Normal);
+        assert_eq!(screen_close(state(false, false, false, false, true, false)), ScreenClose::Normal);
         // A confirmed quit is the user's decision, even over a kept take.
-        assert_eq!(screen_close(false, false, false, true, true, true), ScreenClose::Normal);
+        assert_eq!(screen_close(state(false, false, false, true, true, true)), ScreenClose::Normal);
     }
 }
