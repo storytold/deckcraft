@@ -92,10 +92,10 @@ pub fn kept_sequences(part: &Part, ctx: &IdCtx, timing: &El) -> Vec<KeptSequence
             .into_iter()
             .filter_map(|b| {
                 let mut b = b.clone();
-                b.map_attr(None, "spid", &mut to_model).then(|| part.keep(&b))
+                b.map_attr(None, "spid", &mut to_model).then(|| part.keep_inner(&b))
             })
             .collect();
-        out.push(KeptSequence { xml: part.keep(&el), builds });
+        out.push(KeptSequence { xml: part.keep_inner(&el), builds });
     }
     out
 }

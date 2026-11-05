@@ -629,15 +629,31 @@ fn kept_groups(kept_builds: &[El]) -> std::collections::HashMap<u32, u32> {
 }
 
 /// Write the kept sequences with time-node ids after ours; a condition naming a node (`p:tn`) follows it.
-fn write_kept(w: &mut W, ids: &mut Ids, kept: Vec<El>) {
-    for mut seq in kept {
-        let mut renumbered = std::collections::HashMap::new();
-        seq.map_attr(Some("cTn"), "id", &mut |old| {
-            let id = ids.next();
-            renumbered.insert(old, id);
-            Some(id)
-        });
-        seq.map_attr(Some("tn"), "val", &mut |old| Some(renumbered.get(&old).copied().unwrap_or(old)));
+fn write_kept(w: &mut W, ids: &mut Ids, mut kept: Vec<El>) {
+    // Every kept node is numbered first, so a condition in one kept sequence can name a node in
+    // another. A sequence's own nodes come first: two copies of one sequence share their old ids.
+    let mut all = std::collections::HashMap::new();
+    let own: Vec<std::collections::HashMap<u32, u32>> = kept
+        .iter_mut()
+        .map(|seq| {
+            let mut own = std::collections::HashMap::new();
+            seq.map_attr(Some("cTn"), "id", &mut |old| {
+                let id = ids.next();
+                own.insert(old, id);
+                all.entry(old).or_insert(id);
+                Some(id)
+            });
+            own
+        })
+        .collect();
+    for (mut seq, own) in kept.into_iter().zip(own) {
+        // A node outside the kept sequences is written anew under an id of ours, so a condition
+        // naming it would point at another node: such a sequence is left out, as one naming a
+        // deleted shape is.
+        if !seq.map_attr(Some("tn"), "val", &mut |old| own.get(&old).or_else(|| all.get(&old)).copied()) {
+            log::warn!("pptx: a kept animation sequence names a time node that is not kept and was left out");
+            continue;
+        }
         w.raw(&seq.to_xml());
     }
 }
@@ -685,9 +701,15 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], kept: &[KeptSequence]
         let grp = match prev_para {
             Some((.., g)) if joins => g,
             _ => {
+                // Past the groups the kept builds use; none is left after a kept `grpId` at the
+                // top of the range, and the effect is left out rather than share one.
                 let c = grp_count.entry(spid).or_insert(0);
                 let g = *c;
-                *c = c.saturating_add(1);
+                let Some(next) = c.checked_add(1) else {
+                    log::warn!("pptx: no build group left for an animation on shape {spid}; it was left out");
+                    continue;
+                };
+                *c = next;
                 g
             }
         };

@@ -231,3 +231,101 @@ fn a_kept_sequence_is_written_with_file_ids_its_own_time_nodes_and_groups() {
     assert_eq!(xml.matches(&format!(r#"<p:bldP spid="{c}" grpId="0""#)).count(), 1, "{xml}");
     assert_eq!(slide_xml(&round(&p)).matches(r#"grpId="0" animBg="1""#).count(), 1);
 }
+
+/// A condition in one kept sequence may name a node in another kept sequence: the reference follows
+/// that node's new id. One naming a node that is not kept (the main sequence, written anew) would
+/// point at another node, so that sequence is left out.
+#[test]
+fn a_kept_reference_into_another_kept_sequence_follows_it_and_a_dangling_one_is_left_out() {
+    let mut p = deck();
+    let ns = r#"xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main""#;
+    let button = p.slides[0].shapes[0].id.0;
+    let seq = |root: u32, node: u32, marker: u32, cond: &str| deckcraft_model::KeptSequence {
+        xml: format!(
+            r#"<p:seq {ns} concurrent="1"><p:cTn id="{root}" nodeType="interactiveSeq"><p:stCondLst><p:cond evt="onMediaBookmark" delay="0"><p:tgtEl><p:spTgt spid="{button}"/></p:tgtEl></p:cond></p:stCondLst><p:childTnLst><p:par><p:cTn id="{node}" presetID="{marker}" fill="hold">{cond}</p:cTn></p:par></p:childTnLst></p:cTn></p:seq>"#
+        ),
+        builds: vec![],
+    };
+    let slide = Arc::make_mut(&mut p.slides[0]);
+    slide.kept_sequences.push(seq(7, 8, 11, ""));
+    slide.kept_sequences.push(seq(20, 21, 22, r#"<p:stCondLst><p:cond evt="onEnd" delay="0"><p:tn val="8"/></p:cond></p:stCondLst>"#));
+    slide.kept_sequences.push(seq(30, 31, 33, r#"<p:stCondLst><p:cond evt="onEnd" delay="0"><p:tn val="2"/></p:cond></p:stCondLst>"#));
+    let xml = slide_xml(&p);
+    let id_of = |marker: &str| {
+        let at = xml.find(&format!(r#"presetID="{marker}""#)).expect("node");
+        let head = &xml[..at];
+        let id = &head[head.rfind(r#"<p:cTn id=""#).expect("cTn") + 11..];
+        id[..id.find('"').expect("end")].to_string()
+    };
+    let target = id_of("11");
+    assert_ne!(target, "8", "renumbered");
+    assert!(xml.contains(&format!(r#"<p:tn val="{target}"/>"#)), "the reference follows the node: {xml}");
+    assert!(xml.contains(r#"presetID="22""#), "{xml}");
+    assert!(!xml.contains(r#"presetID="33""#), "the dangling sequence is left out: {xml}");
+    assert_eq!(round(&p).slides[0].kept_sequences.len(), 2);
+}
+
+/// A kept build at the top of the group range leaves no group for a modelled animation on the same
+/// shape: the animation is left out rather than share the kept build's group, and saving does not
+/// overflow.
+#[test]
+fn a_kept_build_group_at_the_top_of_the_range_is_not_shared() {
+    let mut p = deck();
+    let slide = Arc::make_mut(&mut p.slides[0]);
+    let content = slide.shapes[2].id;
+    slide.animations.push(Animation { shape: content, effect: "fade".into(), text_build: TextBuild::AsOne, ..Default::default() });
+    let ns = r#"xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main""#;
+    slide.kept_sequences.push(deckcraft_model::KeptSequence {
+        xml: format!(r#"<p:seq {ns} concurrent="1"><p:cTn id="7" nodeType="interactiveSeq"/></p:seq>"#),
+        builds: vec![format!(r#"<p:bldP spid="{}" grpId="4294967295" animBg="1" {ns}/>"#, content.0)],
+    });
+    let xml = slide_xml(&p);
+    assert_eq!(xml.matches(r#"grpId="4294967295""#).count(), 1, "only the kept build has that group: {xml}");
+    assert!(!xml.contains(r#"grpId="0""#), "{xml}");
+}
+
+/// A prefix the file binds on `p:timing`, not on the slide root, stays bound in a kept sequence and
+/// its build entry once they are saved on their own.
+#[test]
+fn a_prefix_bound_on_the_timing_element_stays_bound_in_a_kept_sequence() {
+    use std::io::Write;
+    let mut p = deck();
+    let ids: Vec<_> = p.slides[0].shapes.iter().map(|s| s.id).collect();
+    let slide = Arc::make_mut(&mut p.slides[0]);
+    slide.animations.push(Animation {
+        shape: ids[2],
+        trigger: Some(ids[0]),
+        effect: "appear".into(),
+        text_build: TextBuild::AsOne,
+        ..Default::default()
+    });
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let mut z = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..z.len() {
+        let mut f = z.by_index(i).expect("entry");
+        let mut data = Vec::new();
+        f.read_to_end(&mut data).expect("read");
+        if f.name() == "ppt/slides/slide1.xml" {
+            let xml = String::from_utf8(data).expect("utf8");
+            assert!(!xml.contains("xmlns:zz="), "the prefix is not bound on the root");
+            let xml = xml
+                .replace(r#"evt="onClick""#, r#"evt="onMediaBookmark""#)
+                .replace("<p:timing>", r#"<p:timing xmlns:zz="urn:deckcraft-test">"#)
+                .replacen(r#"nodeType="interactiveSeq""#, r#"nodeType="interactiveSeq" zz:mark="1""#, 1)
+                .replacen("<p:bldP ", r#"<p:bldP zz:mark="2" "#, 1);
+            data = xml.into_bytes();
+        }
+        out.start_file(f.name(), zip::write::SimpleFileOptions::default()).expect("start");
+        out.write_all(&data).expect("write");
+    }
+    let q = deckcraft_pptx::import(&out.finish().expect("finish").into_inner()).expect("import");
+    let k = &q.slides[0].kept_sequences;
+    assert_eq!(k.len(), 1, "{k:?}");
+    assert!(k[0].xml.contains(r#"zz:mark="1""#) && k[0].xml.contains(r#"xmlns:zz="urn:deckcraft-test""#), "{}", k[0].xml);
+    assert_eq!(k[0].builds.len(), 1);
+    assert!(k[0].builds[0].contains(r#"xmlns:zz="urn:deckcraft-test""#), "{}", k[0].builds[0]);
+    // The saved slide parses: every prefix it uses is bound.
+    let again = deckcraft_pptx::import(&deckcraft_pptx::export(&q).expect("export")).expect("import");
+    assert_eq!(again.slides[0].kept_sequences.len(), 1);
+}
