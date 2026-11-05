@@ -271,9 +271,15 @@ fn style(s: &mut Session, p: &Value) -> Result<Value> {
         })?;
         return Ok(json!({"style": id, "all": true}));
     }
-    let ids = targets(s, p)?;
+    let mut ids = targets(s, p)?;
     if ids.is_empty() {
         return Err(bad("camera.style", "nothing selected"));
+    }
+    // The Camera Format tab stays enabled for a mixed selection: without explicit ids, style the
+    // Cameos in it and leave the ordinary shapes alone.
+    if p.get("ids").is_none() {
+        let doc = s.doc()?;
+        ids.retain(|id| doc.shape(*id).is_some_and(Shape::is_cameo));
     }
     {
         let doc = s.doc()?;
@@ -281,7 +287,12 @@ fn style(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad("camera.style", "select a Cameo"));
         }
     }
-    edit_shapes(s, p, "camera.style", |sh| {
+    // The edit itself must address those ids, or it would style the whole selection again.
+    let mut params = p.clone();
+    if params.get("ids").is_none() {
+        params["ids"] = json!(ids.iter().map(|id| id.0).collect::<Vec<_>>());
+    }
+    edit_shapes(s, &params, "camera.style", |sh| {
         apply(sh, &id);
         Ok(())
     })?;
@@ -295,7 +306,12 @@ fn copy_format(from: &Shape, to: &mut Shape) {
 }
 
 fn apply_to_all(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids = targets(s, p)?;
+    let mut ids = targets(s, p)?;
+    // A mixed selection keeps the tab: without explicit ids the Cameos in it are the source.
+    if p.get("ids").is_none() {
+        let doc = s.doc()?;
+        ids.retain(|id| doc.shape(*id).is_some_and(Shape::is_cameo));
+    }
     let source = {
         let doc = s.doc()?;
         let id = *ids.first().ok_or_else(|| bad("camera.applyToAll", "nothing selected"))?;
@@ -466,7 +482,8 @@ mod tests {
     }
 
     /// The Camera Format tab stays usable when a Cameo shares the selection with an ordinary
-    /// shape; the commands address the Cameo ids, so the other shape is untouched.
+    /// shape; the commands address the Cameo ids, so the other shape is untouched. Calls with no
+    /// `ids` narrow the selection the same way.
     #[test]
     fn a_mixed_selection_styles_only_the_cameo() {
         let mut s = Session::with_new();
@@ -474,7 +491,8 @@ mod tests {
         let rect = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 40, 40]})).expect("rect")["id"].as_u64().expect("id") as u32;
         s.execute("selection.select", &json!({"ids": [rect, cam]})).expect("select");
         assert!(super::has_cameo(&s).is_ok(), "the tab's tools stay available");
-        s.execute("camera.style", &json!({"style": "centerShadowCircle", "ids": [cam]})).expect("style");
+        // No `ids`: the command narrows the mixed selection to its Cameo itself.
+        s.execute("camera.style", &json!({"style": "centerShadowCircle"})).expect("style");
         let doc = s.doc().expect("doc");
         let cameo = doc.shapes().iter().find(|sh| sh.id.0 == cam).expect("cameo");
         assert_eq!(super::style_of(cameo), Some("centerShadowCircle"));

@@ -83,7 +83,9 @@ fn toggle(ui: &mut Ui, state: &mut DeviceState, name: &str) -> bool {
     // A refused device is still clickable: the click asks it to open again.
     let usable = state.can_toggle() || state.failed;
     let resp = ui.add_enabled(usable, egui::Button::new(RichText::new(label).size(12.0).color(color)).frame(false));
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::CheckBox, state.is_on(), name));
+    // The enabled flag is `usable`, not the on/off state: an Off or refused device is still a
+    // working control, and the state itself rides along as `selected`.
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, usable, state.is_on(), name));
     let detail = match state.status {
         DeviceStatus::Unavailable if state.failed => "The device could not be opened",
         DeviceStatus::Unavailable => "No device found",
