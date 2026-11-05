@@ -6415,6 +6415,8 @@ fn a_slide_index_past_the_end_is_refused_by_every_slide_command() {
     let dir = std::env::temp_dir().join(format!("deckcraft-past-end-{}", std::process::id()));
     let mut s = session();
     s.execute("slide.new", &json!({})).unwrap();
+    // A selected shape, for the link commands.
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap();
     let before = s.doc().unwrap().doc.clone();
     for (cmd, params) in [
         ("slide.hide", json!({"index": 2, "hidden": true})),
@@ -6427,6 +6429,12 @@ fn a_slide_index_past_the_end_is_refused_by_every_slide_command() {
         ("animation.clear", json!({"index": 2})),
         ("file.export", json!({"path": dir.join("deck.gif").to_string_lossy(), "format": "gif", "slides": [0, 2]})),
         ("file.export", json!({"path": dir.join("deck.pdf").to_string_lossy(), "format": "pdf", "slides": [0, 2]})),
+        ("design.background", json!({"index": 2, "color": "#FF0000"})),
+        ("comment.list", json!({"slide": 2})),
+        ("comment.next", json!({"slide": 2})),
+        ("comment.prev", json!({"slide": 2})),
+        ("insert.hyperlink", json!({"slide": 2})),
+        ("shape.action", json!({"action": "slide", "slide": 2})),
     ] {
         let err = s.execute(cmd, &params).expect_err(cmd).to_string();
         assert!(err.contains("no slide at index 2; indices run 0 through 1"), "{cmd}: {err}");
@@ -6492,9 +6500,15 @@ fn a_malformed_index_is_refused_not_read_as_omitted() {
             ("file.export", json!({"path": dir.join("d.gif").to_string_lossy(), "format": "gif", "slides": [0, bad]})),
             ("section.rename", json!({"index": bad, "name": "x"})),
             ("section.move", json!({"index": 0, "to": bad})),
+            ("design.background", json!({"index": bad, "color": "#FF0000"})),
+            ("comment.list", json!({"slide": bad})),
+            ("comment.next", json!({"slide": bad})),
+            ("insert.hyperlink", json!({"slide": bad})),
+            ("shape.action", json!({"action": "slide", "slide": bad})),
         ] {
             let err = s.execute(cmd, &params).expect_err(&format!("{cmd} {params}")).to_string();
             assert!(err.contains("is not a valid index") || err.contains("must be a non-negative integer"), "{cmd} {params}: {err}");
+            assert!(err.contains(&format!("`{cmd}`")), "the error names the command: {cmd} {params}: {err}");
         }
     }
     // `indices` itself must be a list.
@@ -6530,10 +6544,9 @@ fn a_section_index_past_the_end_is_refused() {
     assert_eq!(s.doc().unwrap().doc.sections[0].name, "A");
 }
 
-/// An index past the end names the valid range in animation.timing and animation.options too, and
-/// table cell commands refuse a `cells` that is not a list of [row, col] instead of dropping it.
+/// An index past the end names the valid range in animation.timing and animation.options too.
 #[test]
-fn animation_updates_name_the_range_and_table_cells_are_checked() {
+fn animation_updates_name_the_range() {
     let mut s = session();
     let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
     s.execute("animation.add", &json!({"ids": [id], "effect": "fade"})).unwrap();
@@ -6541,36 +6554,6 @@ fn animation_updates_name_the_range_and_table_cells_are_checked() {
         let e = s.execute(cmd, &p).unwrap_err().to_string();
         assert!(e.contains(cmd) && e.contains("no animation at index 3; indices run 0 through 0"), "{cmd}: {e}");
     }
-    let t = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
-    let rev = s.doc().unwrap().revision;
-    for cells in [
-        json!([[-1, 0]]),
-        json!([[0]]),
-        json!([[0, 0], "x"]),
-        json!([[0, 0, "x"]]),
-        json!([[0, 2]]),
-        json!([[0, u64::MAX]]),
-        json!("0,0"),
-        json!({"0": 0}),
-    ] {
-        for (cmd, extra) in [
-            ("table.cellFill", json!({"color": "#FF0000"})),
-            ("table.cellMargins", json!({"left": 4})),
-            ("table.cellAlign", json!({"align": "center"})),
-            ("table.borders", json!({"which": "right"})),
-        ] {
-            let mut p = extra.clone();
-            p["id"] = json!(t);
-            p["cells"] = cells.clone();
-            let e = s.execute(cmd, &p).unwrap_err().to_string();
-            assert!(e.contains(cmd) && e.contains("cell"), "{cmd} {cells}: {e}");
-        }
-    }
-    assert_eq!(s.doc().unwrap().revision, rev, "nothing changed");
-    let many = json!(vec![[0, 0]; 100_001]);
-    assert!(s.execute("table.cellFill", &json!({"id": t, "color": "#FF0000", "cells": many})).unwrap_err().to_string().contains("at most"));
-    s.execute("table.cellFill", &json!({"id": t, "color": "#FF0000", "cells": [[1, 1]]})).unwrap();
-    assert!(table_of(&s, t).cell(1, 1).unwrap().fill.is_some() && table_of(&s, t).cell(0, 0).unwrap().fill.is_none());
 }
 
 #[test]

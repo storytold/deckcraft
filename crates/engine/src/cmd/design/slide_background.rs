@@ -9,6 +9,12 @@ pub(super) fn background(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // Check the index before anything is edited: a picture is added to the media first.
     let index = opt_usize_param(p, "index", "design.background")?;
+    if let Some(i) = index {
+        let n = s.doc()?.doc.slides.len();
+        if i >= n {
+            return Err(crate::cmd::no_slide("design.background", i, n));
+        }
+    }
     let props = p.get("pictureProps").filter(|v| v.is_object()).cloned();
     let transparency = f64_param(p, "transparency");
     let reset = bool_or(p, "reset", false);

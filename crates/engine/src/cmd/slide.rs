@@ -190,7 +190,7 @@ fn body_placeholder(shapes: &mut [deckcraft_model::Shape]) -> Option<&mut deckcr
 /// The slide `index` names (the current one by default), or `cmd`'s error for one past the end.
 fn index_of(s: &Session, p: &Value, cmd: &str) -> Result<usize> {
     let st = s.doc()?;
-    let i = opt_usize_param(p, "index", "slide")?.unwrap_or(st.selection.slide);
+    let i = opt_usize_param(p, "index", cmd)?.unwrap_or(st.selection.slide);
     if i >= st.doc.slides.len() {
         return Err(super::no_slide(cmd, i, st.doc.slides.len()));
     }
