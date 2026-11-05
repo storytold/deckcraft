@@ -144,6 +144,22 @@ fn missing_or_corrupt_media_is_reported() {
 }
 
 #[test]
+fn archive_name_index_matches_zip_lookup_for_referenced_entries() {
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for name in ["presentation.json", "media/one", "chart-parts/2", "unused"] {
+        out.start_file(name, zip::write::SimpleFileOptions::default()).expect("start");
+        std::io::Write::write_all(&mut out, b"entry").expect("write");
+    }
+    let bytes = out.finish().expect("finish").into_inner();
+    let z = zip::ZipArchive::new(std::io::Cursor::new(bytes.as_slice())).expect("zip");
+    let wanted = HashSet::from(["media/one".to_owned(), "chart-parts/2".to_owned(), "missing".to_owned()]);
+    let index = ArchiveIndex::build(&z, &wanted);
+    for name in ["media/one", "chart-parts/2", "missing"] {
+        assert_eq!(index.index_for_name(name), z.index_for_name(name), "{name}");
+    }
+}
+
+#[test]
 fn media_budget_is_cumulative() {
     let mut p = Presentation::default();
     p.add_media("a.bin", "application/octet-stream", vec![1; 600]);

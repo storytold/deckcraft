@@ -11,6 +11,7 @@ pub mod rtf;
 #[cfg(test)]
 mod chart_parts_tests;
 
+use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
@@ -126,6 +127,7 @@ fn read_entry(z: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Vec<
 
 /// Read one member, refusing it before inflating if it declares more than `max` bytes, and
 /// stopping at `max` if it inflates further than it declared.
+#[cfg(test)]
 fn read_entry_max(z: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str, max: u64) -> Result<Vec<u8>> {
     read_entry_counted(z, name, max, &mut 0)
 }
@@ -138,9 +140,14 @@ fn read_entry_charged_index(z: &mut zip::ZipArchive<Cursor<&[u8]>>, index: usize
 }
 
 /// [`read_entry_max`], adding the bytes inflated to `spent` whether or not the read succeeds.
+#[cfg(test)]
 fn read_entry_counted(z: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str, max: u64, spent: &mut u64) -> Result<Vec<u8>> {
     let index = z.index_for_name(name).ok_or_else(|| FormatError::Damaged(format!("{name}: specified file not found in archive")))?;
     read_entry_counted_index(z, index, name, max, spent)
+}
+
+fn read_entry_max_index(z: &mut zip::ZipArchive<Cursor<&[u8]>>, index: usize, name: &str, max: u64) -> Result<Vec<u8>> {
+    read_entry_counted_index(z, index, name, max, &mut 0)
 }
 
 fn read_entry_counted_index(z: &mut zip::ZipArchive<Cursor<&[u8]>>, index: usize, name: &str, max: u64, spent: &mut u64) -> Result<Vec<u8>> {
@@ -159,6 +166,42 @@ fn read_entry_counted_index(z: &mut zip::ZipArchive<Cursor<&[u8]>>, index: usize
     Ok(out)
 }
 
+/// Index only names referenced by the presentation, keeping exact raw-name matches ahead of
+/// decoded-name fallbacks like `ZipArchive::index_for_name` does.
+struct ArchiveIndex {
+    raw: HashMap<String, usize>,
+    decoded: HashMap<String, usize>,
+}
+
+impl ArchiveIndex {
+    fn build(z: &zip::ZipArchive<Cursor<&[u8]>>, wanted: &HashSet<String>) -> ArchiveIndex {
+        if wanted.is_empty() {
+            return ArchiveIndex { raw: HashMap::new(), decoded: HashMap::new() };
+        }
+        let mut raw = HashMap::with_capacity(wanted.len());
+        let mut decoded = HashMap::with_capacity(wanted.len());
+        for (i, name) in z.file_names_raw().enumerate() {
+            if let Ok(name) = std::str::from_utf8(name) {
+                if wanted.contains(name) {
+                    raw.entry(name.to_owned()).or_insert(i);
+                }
+            }
+        }
+        for (i, name) in z.file_names().enumerate() {
+            if let Ok(name) = name {
+                if wanted.contains(name.as_ref()) {
+                    decoded.entry(name.into_owned()).or_insert(i);
+                }
+            }
+        }
+        ArchiveIndex { raw, decoded }
+    }
+
+    fn index_for_name(&self, name: &str) -> Option<usize> {
+        self.raw.get(name).or_else(|| self.decoded.get(name)).copied()
+    }
+}
+
 /// Read a presentation. Missing media/chart parts are left empty; use [`load_checked`] to
 /// learn which. A damaged chart member refuses the file before further chart inflation.
 pub fn load(bytes: &[u8]) -> Result<Presentation> {
@@ -174,10 +217,8 @@ pub fn load_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
 
 fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String>)> {
     let mut z = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| FormatError::NotOurs(e.to_string()))?;
-    if z.index_for_name("presentation.json").is_none() {
-        return Err(FormatError::NotOurs("no presentation.json".into()));
-    }
-    let json = read_entry_max(&mut z, "presentation.json", budget.manifest)?;
+    let manifest_index = z.index_for_name("presentation.json").ok_or_else(|| FormatError::NotOurs("no presentation.json".into()))?;
+    let json = read_entry_max_index(&mut z, manifest_index, "presentation.json", budget.manifest)?;
     let m = parse_manifest(&json)?;
     if m.format != "deckcraft" {
         return Err(FormatError::NotOurs(m.format));
@@ -192,10 +233,13 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
     // and the deck can be saved again (a zip can't hold two `media/<id>`).
     let mut seen = std::collections::HashSet::new();
     p.media.retain(|m| seen.insert(m.id));
+    let mut wanted: HashSet<String> = p.media.iter().map(|m| format!("media/{}", m.id.0)).collect();
+    wanted.extend(chart_parts::referenced_entries(&p, budget.items.saturating_sub(items))?);
+    let names = ArchiveIndex::build(&z, &wanted);
     let mut left = budget.total;
     for item in &mut p.media {
         let name = format!("media/{}", item.id.0);
-        let Some(index) = z.index_for_name(&name) else {
+        let Some(index) = names.index_for_name(&name) else {
             if item.link.is_none() {
                 damaged.push(format!("{name}: specified file not found in archive"));
             }
@@ -210,7 +254,7 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
             Err(e) => damaged.push(e.to_string()),
         }
     }
-    chart_parts::restore(&mut p, &mut z, &mut left, items, budget.items, &mut damaged)?;
+    chart_parts::restore(&mut p, &mut z, &names, &mut left, items, budget.items, &mut damaged)?;
     repair(&mut p);
     Ok((p, damaged))
 }
