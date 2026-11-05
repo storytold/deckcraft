@@ -275,11 +275,16 @@ fn style(s: &mut Session, p: &Value) -> Result<Value> {
     if ids.is_empty() {
         return Err(bad("camera.style", "nothing selected"));
     }
-    // The Camera Format tab stays enabled for a mixed selection: without explicit ids, style the
-    // Cameos in it and leave the ordinary shapes alone.
-    if p.get("ids").is_none() {
+    // The Camera Format tab stays enabled for a mixed selection: without an explicit target, style
+    // the Cameos in it and leave the ordinary shapes alone. An explicit `id`/`ids` is the caller's
+    // choice and is checked as given.
+    let explicit = p.get("ids").is_some() || p.get("id").is_some();
+    if !explicit {
         let doc = s.doc()?;
         ids.retain(|id| doc.shape(*id).is_some_and(Shape::is_cameo));
+    }
+    if ids.is_empty() {
+        return Err(bad("camera.style", "select a Cameo"));
     }
     {
         let doc = s.doc()?;
@@ -307,8 +312,8 @@ fn copy_format(from: &Shape, to: &mut Shape) {
 
 fn apply_to_all(s: &mut Session, p: &Value) -> Result<Value> {
     let mut ids = targets(s, p)?;
-    // A mixed selection keeps the tab: without explicit ids the Cameos in it are the source.
-    if p.get("ids").is_none() {
+    // A mixed selection keeps the tab: without an explicit target the Cameos in it are the source.
+    if p.get("ids").is_none() && p.get("id").is_none() {
         let doc = s.doc()?;
         ids.retain(|id| doc.shape(*id).is_some_and(Shape::is_cameo));
     }
