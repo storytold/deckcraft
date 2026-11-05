@@ -46,6 +46,11 @@ pub trait MicIn {
     fn captured(&self) -> usize {
         0
     }
+    /// Whether the device's buffer filled and later samples were dropped (a slide longer than the
+    /// take allowance). `take` cannot see them, so the recorder asks here.
+    fn dropped(&self) -> bool {
+        false
+    }
     /// Why capture stopped on its own (the device was unplugged, the stream errored), if it did.
     /// `start` clears it; a recorder that sees one must not present the take as complete.
     fn failure(&self) -> Option<String> {

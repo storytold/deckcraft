@@ -78,8 +78,11 @@ fn push_mono(out: &mut Vec<f32>, interleaved: &[f32], channels: usize, cap: usiz
     }
 }
 
-/// Ten minutes of mono audio at 48 kHz: one recording cannot grow without bound.
-const MAX_SAMPLES: usize = 48_000 * 60 * 10;
+/// Ten minutes of mono audio at the device's own rate: one recording cannot grow without bound,
+/// and a 96 kHz device keeps the same ten minutes instead of being cut at five.
+fn max_samples_for(rate: u32) -> usize {
+    (rate as usize).saturating_mul(60 * 10)
+}
 
 #[derive(Default)]
 struct Capture {
@@ -95,6 +98,8 @@ pub struct CpalIn {
     error: ErrorSlot,
     /// The device went away while capturing: the take ends, unlike a single dropped buffer.
     dead: Arc<AtomicBool>,
+    /// The buffer hit its cap and later samples were dropped: `take` cannot see them.
+    dropped: Arc<AtomicBool>,
     /// The worker's start handshake, polled from the UI loop so opening a device (and any
     /// permission prompt) never blocks a frame. Failure reaches the UI through `failure()`.
     #[allow(dead_code)]
@@ -118,9 +123,11 @@ impl CpalIn {
             return Err("the microphone reports no channels".to_string());
         }
         let config: cpal::StreamConfig = cfg.clone().into();
+        let cap = max_samples_for(cfg.sample_rate().0);
         let buf = self.buf.clone();
         let slot = self.error.clone();
         let dead = self.dead.clone();
+        let full = self.dropped.clone();
         let err = move |e: cpal::StreamError| {
             dead.store(true, Ordering::Relaxed);
             keep_stream_error(&slot, &e);
@@ -130,7 +137,7 @@ impl CpalIn {
                 &config,
                 move |data: &[f32], _| {
                     if let Ok(mut g) = buf.try_lock() {
-                        push_mono(&mut g.samples, data, channels, MAX_SAMPLES);
+                        push_mono(&mut g.samples, data, channels, cap);
                     }
                 },
                 err,
@@ -144,7 +151,10 @@ impl CpalIn {
                         if let Ok(mut g) = buf.try_lock() {
                             tmp.clear();
                             tmp.extend(data.iter().map(|s| *s as f32 / i16::MAX as f32));
-                            push_mono(&mut g.samples, &tmp, channels, MAX_SAMPLES);
+                            if g.samples.len() >= cap {
+                                full.store(true, Ordering::Relaxed);
+                            }
+                            push_mono(&mut g.samples, &tmp, channels, cap);
                         }
                     },
                     err,
@@ -180,12 +190,21 @@ impl MicIn for CpalIn {
             g.samples.clear();
         }
         self.dead.store(false, Ordering::Relaxed);
+        self.dropped.store(false, Ordering::Relaxed);
         // A previous failure has been reported; the new take starts clean.
         let _ = take_stream_error(&self.error);
         let (tx, rx) = mpsc::sync_channel(1);
         let stop = Arc::new((Mutex::new(false), Condvar::new()));
         let worker_stop = stop.clone();
-        let this = CpalIn { buf: self.buf.clone(), error: self.error.clone(), dead: self.dead.clone(), startup: None, stop: None, worker: None };
+        let this = CpalIn {
+            buf: self.buf.clone(),
+            error: self.error.clone(),
+            dead: self.dead.clone(),
+            dropped: self.dropped.clone(),
+            startup: None,
+            stop: None,
+            worker: None,
+        };
         let handle = std::thread::Builder::new()
             .name("deckcraft-mic".into())
             .spawn(move || match this.open() {
@@ -233,6 +252,10 @@ impl MicIn for CpalIn {
 
     fn captured(&self) -> usize {
         self.buf.lock().unwrap_or_else(PoisonError::into_inner).samples.len()
+    }
+
+    fn dropped(&self) -> bool {
+        self.dropped.load(Ordering::Relaxed)
     }
 
     fn failure(&self) -> Option<String> {

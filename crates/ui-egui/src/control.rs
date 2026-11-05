@@ -353,6 +353,12 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         }
         "show.start" => {
             let reading = p.get("reading").and_then(Value::as_bool).unwrap_or(false);
+            let recording = p.get("record").and_then(Value::as_bool) == Some(true);
+            // One microphone: a Record ▸ Audio take in progress owns it, so a recording show is
+            // refused here as it is in `UiRequest::StartShow` — before any show starts.
+            if recording && app.audio_recording() {
+                return err("stop or cancel the audio recording first: it owns the microphone");
+            }
             if let Some(name) = p.get("custom").and_then(Value::as_str).filter(|s| !s.is_empty()) {
                 app.start_custom_show(name, reading);
             } else {
@@ -362,9 +368,7 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 };
                 app.start_show(from, reading);
             }
-            if p.get("record").and_then(Value::as_bool) == Some(true)
-                && let Some(show) = app.show.as_mut()
-            {
+            if recording && let Some(show) = app.show.as_mut() {
                 show.record = true;
             }
             ok(Value::Null)

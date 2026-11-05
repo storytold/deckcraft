@@ -1205,6 +1205,11 @@ fn take_narration(mic: Option<&mut (dyn deckcraft_media::MicIn + 'static)>, show
         return;
     }
     let Some(mic) = mic else { return };
+    // The device drops samples once its buffer is full; `take` cannot show them, so the take is
+    // reported as cut rather than complete.
+    if mic.dropped() {
+        show.narration_cut = true;
+    }
     let (rate, samples) = mic.take();
     if samples.is_empty() || !(8_000..=192_000).contains(&rate) {
         return;
