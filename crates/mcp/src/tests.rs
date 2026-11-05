@@ -346,3 +346,41 @@ fn control_token_file_is_private() {
     assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), "tok-1123456789abcdef");
     std::fs::remove_file(&path).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn a_group_readable_token_file_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    if std::env::var(crate::control_auth::TOKEN_ENV).is_ok_and(|t| !t.trim().is_empty()) {
+        eprintln!("skipped: DECKCRAFT_CONTROL_TOKEN is set (it wins over the token file)");
+        return;
+    }
+    // A range of its own, below the ephemeral ports: a parallel test's listener on :0 must not
+    // own this token file, and no two tests of the token file may share one.
+    let port = 10_000 + (std::process::id() % 2_000) as u16;
+    let path = crate::control_auth::write_token_file(port, "tok-0123456789abcdef").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let error = crate::control_auth::client_token(&format!("127.0.0.1:{port}")).expect_err("refused");
+    assert!(error.contains("readable beyond its user"), "{error}");
+    std::fs::remove_file(&path).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_token_file_behind_a_link_is_refused() {
+    if std::env::var(crate::control_auth::TOKEN_ENV).is_ok_and(|t| !t.trim().is_empty()) {
+        eprintln!("skipped: DECKCRAFT_CONTROL_TOKEN is set (it wins over the token file)");
+        return;
+    }
+    let port = 12_000 + (std::process::id() % 2_000) as u16;
+    let path = crate::control_auth::write_token_file(port, "tok-0123456789abcdef").unwrap();
+    // A planted link stands where the app wrote its file: the token path itself points
+    // somewhere else, and the read must not follow it.
+    let target = path.with_extension("elsewhere");
+    std::fs::rename(&path, &target).unwrap();
+    std::os::unix::fs::symlink(&target, &path).unwrap();
+    let error = crate::control_auth::client_token(&format!("127.0.0.1:{port}")).expect_err("refused");
+    assert!(error.contains("is a link"), "{error}");
+    std::fs::remove_file(&path).unwrap();
+    std::fs::remove_file(&target).unwrap();
+}

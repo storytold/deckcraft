@@ -95,9 +95,25 @@ pub fn client_token(addr: &str) -> Result<String, String> {
         return Ok(t.trim().to_string());
     }
     let path = port_of(addr).and_then(token_path).ok_or_else(|| format!("no control token: set {TOKEN_ENV}"))?;
+    let missing = || format!("no control token: set {TOKEN_ENV}, or start the app on this machine and user (it writes {})", path.display());
+    // The token is a secret: never read it through a link (a planted one would point the read
+    // somewhere else), and only while it is readable by its user alone. The app writes the file
+    // into a folder only the user can open (mode 0700), so a file readable beyond its user, or
+    // one another user owns, is not one the app wrote.
+    let meta = std::fs::symlink_metadata(&path).map_err(|_| missing())?;
+    if meta.file_type().is_symlink() {
+        return Err(format!("the control token file {} is a link; remove it and let the app write it again", path.display()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o077 != 0 {
+            return Err(format!("the control token file {} is readable beyond its user; remove it and let the app write it again", path.display()));
+        }
+    }
     match std::fs::read_to_string(&path) {
         Ok(t) if !t.trim().is_empty() => Ok(t.trim().to_string()),
-        _ => Err(format!("no control token: set {TOKEN_ENV}, or start the app on this machine and user (it writes {})", path.display())),
+        _ => Err(missing()),
     }
 }
 
@@ -132,4 +148,12 @@ pub fn write_token_file(port: u16, token: &str) -> std::io::Result<PathBuf> {
     f.write_all(token.as_bytes())?;
     f.write_all(b"\n")?;
     Ok(path)
+}
+
+/// Remove the token file for `port`: a run that chose its own token writes no file, and one an
+/// earlier run left behind would still answer a client that reads it instead of the real secret.
+pub fn remove_token_file(port: u16) {
+    if let Some(path) = token_path(port) {
+        let _ = std::fs::remove_file(path);
+    }
 }
