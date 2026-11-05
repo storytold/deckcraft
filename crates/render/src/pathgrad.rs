@@ -29,6 +29,10 @@ const MIN_POLY_EDGES: usize = 8;
 /// focus rect `focus` (fractions inset from left, top, right, bottom), `outline` being the
 /// shape's flattened polygon(s) for `shape`.
 pub fn position(kind: &str, bounds: Rect, focus: [f64; 4], outline: &[Vec<Point>], p: Point) -> f64 {
+    position_in_tile(kind, bounds, bounds, focus, outline, p)
+}
+
+fn position_in_tile(kind: &str, bounds: Rect, tile: Rect, focus: [f64; 4], outline: &[Vec<Point>], p: Point) -> f64 {
     let f = Rect::new(
         bounds.x0 + bounds.width() * focus[0].clamp(0.0, 1.0),
         bounds.y0 + bounds.height() * focus[1].clamp(0.0, 1.0),
@@ -74,7 +78,7 @@ pub fn position(kind: &str, bounds: Rect, focus: [f64; 4], outline: &[Vec<Point>
                     0.0
                 }
             };
-            axis(p.x, f.x0, f.x1, bounds.x0, bounds.x1).max(axis(p.y, f.y0, f.y1, bounds.y0, bounds.y1)).clamp(0.0, 1.0)
+            axis(p.x, f.x0, f.x1, tile.x0, tile.x1).max(axis(p.y, f.y0, f.y1, tile.y0, tile.y1)).clamp(0.0, 1.0)
         }
     }
 }
@@ -224,15 +228,32 @@ pub fn ramp(stops: &[(f64, Rgba)]) -> Vec<Rgba> {
 /// `ramp::expand`) over `bounds`, faded by `alpha`; `m` maps the path to the output.
 #[allow(clippy::too_many_arguments)]
 pub fn fill(ctx: &mut RenderContext, kind: &str, focus: [f64; 4], stops: &[(f64, Rgba)], bounds: Rect, path: &BezPath, m: Affine, alpha: f64) {
+    fill_tiled(ctx, kind, focus, stops, bounds, bounds, path, m, alpha);
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn fill_tiled(
+    ctx: &mut RenderContext,
+    kind: &str,
+    focus: [f64; 4],
+    stops: &[(f64, Rgba)],
+    bounds: Rect,
+    tile: Rect,
+    path: &BezPath,
+    m: Affine,
+    alpha: f64,
+) {
     if bounds.width() <= 0.0 || bounds.height() <= 0.0 || !bounds.is_finite() || stops.is_empty() {
         return;
     }
+    let tile = if tile.is_finite() && tile.width() > 0.0 && tile.height() > 0.0 { tile } else { bounds };
+    let untiled = tile == bounds;
     let k = crate::scale_of(m);
     let k = if k.is_finite() && k > 0.0 { k } else { 1.0 };
     let longest = bounds.width().max(bounds.height()) * k;
     let s = (MAX_SIDE / longest).min(1.0) * k;
     let (pw, ph) = (((bounds.width() * s).ceil() as u32).clamp(1, 4096), ((bounds.height() * s).ceil() as u32).clamp(1, 4096));
-    let outline = if kind == "shape" {
+    let mut outline = if kind == "shape" {
         let pixels = u64::from(pw).saturating_mul(u64::from(ph)).max(1);
         let max_edges = usize::try_from(MAX_EDGE_WORK / pixels).unwrap_or(usize::MAX).max(MIN_POLY_EDGES);
         let pixel = (bounds.width() / f64::from(pw)).min(bounds.height() / f64::from(ph));
@@ -240,13 +261,21 @@ pub fn fill(ctx: &mut RenderContext, kind: &str, focus: [f64; 4], stops: &[(f64,
     } else {
         Vec::new()
     };
+    if !untiled {
+        for poly in &mut outline {
+            for p in poly {
+                p.x = tile.x0 + (p.x - bounds.x0) * tile.width() / bounds.width();
+                p.y = tile.y0 + (p.y - bounds.y0) * tile.height() / bounds.height();
+            }
+        }
+    }
     let lut = ramp(stops);
     let a = alpha.clamp(0.0, 1.0);
     let mut data = Vec::with_capacity((pw * ph) as usize);
     for j in 0..ph {
         for i in 0..pw {
             let p = Point::new(bounds.x0 + (i as f64 + 0.5) / pw as f64 * bounds.width(), bounds.y0 + (j as f64 + 0.5) / ph as f64 * bounds.height());
-            let t = position(kind, bounds, focus, &outline, p);
+            let t = if untiled { position(kind, bounds, focus, &outline, p) } else { position_in_tile(kind, bounds, tile, focus, &outline, p) };
             let c = lut.get((t * 255.0).round().clamp(0.0, 255.0) as usize).copied().unwrap_or(Rgba::BLACK);
             let ca = (c.a as f64 * a).round().clamp(0.0, 255.0);
             let mul = |v: u8| (v as f64 * ca / 255.0).round().clamp(0.0, 255.0) as u8;

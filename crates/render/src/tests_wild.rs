@@ -398,6 +398,31 @@ fn a_linear_gradient_spans_its_tile_rect() {
 }
 
 #[test]
+fn a_rectangular_gradient_spans_its_tile_rect() {
+    let mut sh = radial([0.5; 4]);
+    if let Some(Fill::Gradient(g)) = &mut sh.fill {
+        g.shape = deckcraft_model::style::GradientShape::Path { path: "rect".into(), focus: [0.5; 4] };
+        g.tile = [0.25, 0.0, 0.25, 0.0];
+    }
+    let img = render(vec![sh]);
+    assert!(img.pixel(300, 200)[0] > 240, "center {:?}", img.pixel(300, 200));
+    assert!(img.pixel(395, 200)[0] < 80, "tile edge {:?}", img.pixel(395, 200));
+}
+
+#[test]
+fn a_shape_gradient_spans_its_tile_rect() {
+    let mut sh = radial([0.5; 4]);
+    sh.geom = Geom::Preset { name: "ellipse".into(), adj: vec![] };
+    if let Some(Fill::Gradient(g)) = &mut sh.fill {
+        g.shape = deckcraft_model::style::GradientShape::Path { path: "shape".into(), focus: [0.5; 4] };
+        g.tile = [0.25, 0.0, 0.25, 0.0];
+    }
+    let img = render(vec![sh]);
+    assert!(img.pixel(300, 200)[0] > 240, "center {:?}", img.pixel(300, 200));
+    assert!(img.pixel(395, 200)[0] < 80, "tile edge {:?}", img.pixel(395, 200));
+}
+
+#[test]
 fn a_3d_pictures_border_stays_centred_on_its_edge() {
     let mut p = picture_deck(Some(Line::solid(ColorRef::rgb(RED), 8.0)));
     let s = std::sync::Arc::make_mut(&mut p.slides[0]);
