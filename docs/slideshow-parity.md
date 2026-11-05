@@ -99,5 +99,5 @@ Reading View in a window with navigation: present (checklist row done).
 | 2026-10-23 | trivial | Presenter view draws the notes with their formatting (bullets, numbers, indents, bold/italic) instead of plain text (#1128) |
 | 2026-11-03 | minor | Ordinary show: hold Ctrl for the laser pointer, colour in Set Up Slide Show. Clear Timing and Clear Narration on the current slide or all slides. Checklist breadth 71% |
 | 2026-11-03 | minor | Record Slide Show keeps per-slide narration (played in the show, written to PPTX) and a laser trace. Camera and screen capture stay open |
-| 2026-11-03 | minor | Record Slide Show keeps timings and pen ink. Narration audio, laser and camera stay open |
+| 2026-11-03 | minor | Record Slide Show keeps timings and pen ink. Camera and screen capture stay open |
 | 2026-10-10 | major | Created: show, presenter view, rehearse and record, compared with PowerPoint 16.113's Slide Show tab and menu |
