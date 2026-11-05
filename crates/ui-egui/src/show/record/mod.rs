@@ -223,10 +223,14 @@ impl RecordView {
     }
 
     /// Put back the clock value the last Reset replaced. Returns whether anything was undone.
+    ///
+    /// The timer's own state decides whether the restored clock runs: after Stop the status is
+    /// `Idle` but the clock is frozen, and Undo must keep it frozen.
     pub(super) fn undo(&mut self, now: f64) -> bool {
         let Some(secs) = self.undo_elapsed.take() else { return false };
+        let was_paused = self.timer.paused();
         self.timer = PresenterTimer::start(now - secs.max(0.0));
-        if self.status == RecordStatus::Paused {
+        if was_paused {
             self.timer.toggle(now);
         }
         true

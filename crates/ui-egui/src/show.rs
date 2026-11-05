@@ -19,6 +19,7 @@ mod record;
 mod render;
 pub(crate) mod ui;
 mod zoom;
+pub(crate) use zoom::GRID_CAP;
 
 #[cfg(test)]
 use media::{on_screen, pointer_on_media_bar, shown_slide_rect, slide_media_bars};
@@ -81,6 +82,8 @@ pub struct Show {
     preview_spawns: usize,
     remote_preview: Option<crate::presenter::Preview>,
     remote_next: Option<(usize, crate::presenter::Preview)>,
+    /// All slides thumbnails sent to the web presenter window while its grid is open (#1866).
+    remote_grid: Vec<crate::presenter::Preview>,
     remote_sent: f64,
     remote_opened: bool,
     /// The next slide's first frame, rendered in the background while this one is shown so
@@ -274,6 +277,7 @@ impl Show {
             preview_spawns: 0,
             remote_preview: None,
             remote_next: None,
+            remote_grid: vec![],
             remote_sent: f64::NEG_INFINITY,
             remote_opened: false,
             prefetch: None,

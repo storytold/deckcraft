@@ -178,6 +178,22 @@ fn reset_and_undo_move_the_clock() {
     assert!(!rec.undo(108.0), "one Undo per Reset");
 }
 
+/// A stopped clock is frozen, and Undo after a Reset must not start it: the record status is
+/// `Idle` after Stop, so the timer's own paused state has to decide.
+#[test]
+fn undo_after_a_stop_keeps_the_clock_frozen() {
+    let doc = doc_with(1);
+    let mut show = Show::new(&doc, 0, false, false);
+    let mut rec = RecordView::default();
+    rec.start(&mut show, 100.0);
+    rec.stop(&mut show, 105.0);
+    assert_eq!(rec.status, RecordStatus::Idle);
+    assert!((rec.elapsed(105.0) - 5.0).abs() < 1e-9);
+    rec.reset(105.0);
+    assert!(rec.undo(106.0));
+    assert!((rec.elapsed(200.0) - 5.0).abs() < 1e-9, "the stopped clock does not count up again");
+}
+
 #[test]
 fn the_shell_geometry_matches_the_powerpoint_layout() {
     let doc = doc_with(3);

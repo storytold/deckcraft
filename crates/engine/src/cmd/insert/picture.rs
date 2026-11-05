@@ -20,10 +20,14 @@ pub(crate) fn media_bytes(p: &Value, cmd: &str) -> Result<(String, Vec<u8>)> {
     Err(bad(cmd, "missing `path` or `data`"))
 }
 
-/// The name a content type is detected from: the source path's own file name (extension
-/// included), or the display name when the bytes came inline. A display name may have been replaced
+/// The name a content type is detected from: `typeName` when the caller knows the source file's
+/// name (the photo album forwards a path's bytes inline), else the source path's own file name, or
+/// the display name when the bytes came inline. A display name may have been replaced
 /// (`name: "Narration"`), so it must not decide whether a Matroska file is audio or video.
 pub(crate) fn detect_name(p: &Value, name: &str) -> String {
+    if let Some(source) = str_param(p, "typeName").filter(|n| !n.is_empty()) {
+        return source.to_string();
+    }
     // `media_bytes` prefers `data` when both are given, so the display name describes those bytes;
     // only a path that supplied the bytes has an extension to go on.
     if p.get("data").and_then(Value::as_str).is_some() {
