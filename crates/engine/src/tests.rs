@@ -7028,3 +7028,42 @@ fn outline_export_skips_footer_date_and_slide_number() {
     assert!(rtf.contains("Agenda") && rtf.contains("First point"), "{rtf:?}");
     assert!(!rtf.contains("Company Confidential") && !rtf.contains("1 May 2026"), "{rtf:?}");
 }
+
+/// A line break (`a:br`) with no size of its own resolves to the paragraph default, but it does not
+/// decide a nonempty line's size: 40 pt text with a 12 pt break shows 40, so Increase Font Size
+/// goes to 44. A line holding only a break shows the break's size, so there 12 grows to 14.
+#[test]
+fn grow_on_an_imported_smartart_graphic_ignores_breaks_on_nonempty_lines() {
+    use deckcraft_model::text::{Run, RunKind};
+    let grow_from = |text_run: bool| {
+        let mut s = session();
+        let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A"]})).unwrap()["id"].as_u64().unwrap();
+        {
+            let st = s.doc_mut().unwrap();
+            let doc = std::sync::Arc::make_mut(&mut st.doc);
+            let sel = st.selection.clone();
+            let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), ShapeId(gid as u32)).unwrap();
+            let d = g.diagram.as_mut().unwrap();
+            d.imported = true;
+            d.font_size = Some(40.0);
+            if let deckcraft_model::ShapeKind::Group { children, .. } = &mut g.kind {
+                let t = children.iter_mut().find_map(|c| c.text.as_mut()).unwrap();
+                t.body.autofit = None;
+                let p = &mut t.paragraphs[0];
+                p.def_props.size = Some(12.0);
+                p.runs.clear();
+                if text_run {
+                    let mut r = Run::new("Plan");
+                    r.props.size = Some(40.0);
+                    p.runs.push(r);
+                }
+                p.runs.push(Run { kind: RunKind::Break, ..Run::new("") });
+            }
+        }
+        s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+        s.execute("format.grow", &json!({})).unwrap();
+        s.doc().unwrap().shape(ShapeId(gid as u32)).unwrap().diagram.as_ref().unwrap().font_size
+    };
+    assert_eq!(grow_from(true), Some(44.0), "the 12 pt break beside 40 pt text does not set the size");
+    assert_eq!(grow_from(false), Some(14.0), "a line of only a break shows the break's size");
+}

@@ -75,9 +75,17 @@ pub(crate) fn shown_size(s: &Session, gid: ShapeId) -> Option<f64> {
         let Some(t) = x.text.as_ref() else { return };
         let scale = super::paint::fitted(&ctx, x).map_or(1.0, |f| f.0);
         for p in &t.paragraphs {
-            // A run's size is its own, else the paragraph's `defRPr`, else the level style's; an
-            // empty paragraph shows its end mark's.
-            let props: Vec<&_> = if p.runs.is_empty() { vec![&p.end_props] } else { p.runs.iter().map(|r| &r.props).collect() };
+            // A run's size is its own, else the paragraph's `defRPr`, else the level style's. A run
+            // counts when it carries visible text; a line with none (empty, or only a break) shows
+            // its break's or end mark's size.
+            let visible = |r: &&deckcraft_model::text::Run| !r.text.is_empty() && !matches!(r.kind, deckcraft_model::text::RunKind::Break);
+            let props: Vec<&_> = if p.runs.iter().any(|r| visible(&r)) {
+                p.runs.iter().filter(visible).map(|r| &r.props).collect()
+            } else if p.runs.is_empty() {
+                vec![&p.end_props]
+            } else {
+                p.runs.iter().map(|r| &r.props).collect()
+            };
             for rp in props {
                 if let Some(size) = deckcraft_model::resolve::run(&ctx, x, p, rp).size {
                     shown = Some(shown.map_or(size * scale, |m| m.min(size * scale)));
