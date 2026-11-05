@@ -329,7 +329,8 @@ pub fn text_size(data: &El) -> Option<f64> {
             .collect();
         // A run without `a:rPr` inherits its size, so it counts as unsized like one without `sz`.
         let rprs: Vec<Option<&El>> = if kept.is_empty() {
-            paras.iter().map(|p| p.child("endParaRPr")).collect()
+            // A whitespace-only node is a styled run with no paragraph end mark.
+            paras.iter().map(|p| p.child("endParaRPr").or_else(|| text_carriers(p).first().and_then(|r| r.child("rPr")))).collect()
         } else {
             kept.iter().flat_map(|p| text_carriers(p)).map(|r| r.child("rPr")).collect()
         };
@@ -890,6 +891,11 @@ mod tests {
         assert_eq!(sized("<a:r><a:rPr sz=\"2000\"/><a:t></a:t></a:r>"), Some(18.5));
         assert_eq!(sized("<a:endParaRPr sz=\"2000\"/>"), Some(18.5));
         assert_eq!(sized("</a:p><a:p><a:r><a:rPr sz=\"2000\"/><a:t> </a:t></a:r><a:endParaRPr sz=\"2000\"/>"), Some(18.5));
+        // A node of only whitespace keeps its size on its run, with no paragraph end mark.
+        let blank = xml.replacen("<a:t>A</a:t>", "<a:t> </a:t>", 1);
+        assert_eq!(text_size(&crate::xml::parse(blank.as_bytes()).unwrap().root), Some(18.5));
+        let blank_other = blank.replacen("sz=\"1850\"", "sz=\"2000\"", 1);
+        assert_eq!(text_size(&crate::xml::parse(blank_other.as_bytes()).unwrap().root), None);
         // A field alone is the node's text, so its size is the node's.
         let only_field = xml.replacen("<a:r>", "<a:fld id=\"{1}\" type=\"x\">", 1).replacen("</a:r>", "</a:fld>", 1);
         assert_eq!(text_size(&crate::xml::parse(only_field.as_bytes()).unwrap().root), Some(18.5));
