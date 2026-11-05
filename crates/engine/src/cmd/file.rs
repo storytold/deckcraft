@@ -345,6 +345,7 @@ pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
         "rtf" => Ok(deckcraft_format::rtf::slides_to_rtf(doc).into_bytes()),
         "pdf" => deckcraft_pdf::export(doc, &Default::default()).map_err(|e| EngineError::Other(e.to_string())),
         "gif" => gif_bytes(doc, &Value::Null),
+        "png" | "jpeg" | "jpg" => Err(EngineError::Other("saving a presentation as a single image isn't supported; use file.export".into())),
         _ => deckcraft_format::save(doc).map_err(|e| EngineError::Other(e.to_string())),
     }
 }
@@ -359,7 +360,13 @@ pub fn pdf_options(p: &Value, count: usize) -> Result<deckcraft_pdf::PdfOptions>
     let mut o = deckcraft_pdf::PdfOptions { layout: deckcraft_pdf::PageLayout::Slides, ..Default::default() };
     o.layout = match str_param(p, "layout").unwrap_or("slides") {
         "notes" => deckcraft_pdf::PageLayout::Notes,
-        "handouts" => deckcraft_pdf::PageLayout::Handouts { per_page: usize_param(p, "perPage").unwrap_or(6).clamp(1, 9) as u8 },
+        "handouts" => {
+            let per_page = opt_usize_param(p, "perPage", "file.export")?.unwrap_or(6);
+            if ![1, 2, 3, 4, 6, 9].contains(&per_page) {
+                return Err(bad("file.export", format!("perPage {per_page} isn't one of 1, 2, 3, 4, 6, 9")));
+            }
+            deckcraft_pdf::PageLayout::Handouts { per_page: per_page as u8 }
+        }
         _ => deckcraft_pdf::PageLayout::Slides,
     };
     o.dpi = f64_or(p, "dpi", o.dpi).clamp(36.0, 600.0);
@@ -390,6 +397,7 @@ pub fn pdf_options(p: &Value, count: usize) -> Result<deckcraft_pdf::PdfOptions>
 pub fn parse_slide_range(text: &str, count: usize) -> Result<Vec<usize>> {
     let invalid = || bad("file.export", format!("“{text}” isn't a valid slide range: use numbers and ranges such as 1-3, 5"));
     let mut out: Vec<usize> = vec![];
+    let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for part in text.split([',', ';']).map(str::trim).filter(|p| !p.is_empty()) {
         let (a, b) = match part.split_once('-') {
             Some((a, b)) => (a.trim(), b.trim()),
@@ -405,7 +413,7 @@ pub fn parse_slide_range(text: &str, count: usize) -> Result<Vec<usize>> {
             return Err(bad("file.export", format!("the presentation has {count} slides; “{part}” is outside them")));
         }
         for i in lo - 1..hi {
-            if !out.contains(&i) {
+            if seen.insert(i) {
                 out.push(i);
             }
         }
@@ -768,6 +776,16 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::{parse_slide_range, write_file};
+
+    #[test]
+    fn broad_and_repeated_slide_ranges_expand_once() {
+        // 200 copies of a 100,000-slide range: each index once, in order, without a scan per index.
+        let text = vec!["1-100000"; 200].join(",");
+        let v = parse_slide_range(&text, 100_000).unwrap();
+        assert_eq!(v.len(), 100_000);
+        assert!(v.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(parse_slide_range("3, 1-3, 2", 3).unwrap(), vec![2, 0, 1]);
+    }
 
     #[test]
     fn slide_range_rejects_plus_sign() {

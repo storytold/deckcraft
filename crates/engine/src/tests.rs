@@ -2410,6 +2410,23 @@ fn pdf_options_take_paper_and_orientation() {
     assert!(cmd::file::pdf_options(&json!({"orientation": "sideways"}), 1).is_err());
 }
 
+/// Handout `perPage` accepts only 1, 2, 3, 4, 6 and 9; anything else is an error, not a 9-up page.
+#[test]
+fn pdf_options_reject_unsupported_per_page() {
+    for n in [1, 2, 3, 4, 6, 9] {
+        let o = cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": n}), 1).unwrap();
+        assert!(matches!(o.layout, deckcraft_pdf::PageLayout::Handouts { per_page } if per_page as usize == n));
+    }
+    for n in [0, 5, 7, 8, 10] {
+        let e = cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": n}), 1).unwrap_err();
+        assert!(e.to_string().contains("1, 2, 3, 4, 6, 9"), "perPage {n}: {e}");
+    }
+    // Not a count at all: refused too, instead of falling back to 6.
+    for v in [json!(-1), json!(5.5), json!("6")] {
+        assert!(cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": v}), 1).is_err(), "perPage {v}");
+    }
+}
+
 #[test]
 fn shape_line_sets_compound_and_arrow_sizes() {
     // The Format Shape pane's Line page: compound type, arrowheads and their sizes.
@@ -3206,6 +3223,7 @@ fn numbering_takes_color_and_size() {
         props.bullet_font_follow_text = Some(true);
         props.bullet_color_follow_text = Some(true);
         props.bullet_size_follow_text = Some(true);
+        props.bullet_size_points = Some(12.0);
     }
     s.execute("format.numbering", &json!({"on": true, "scheme": "romanUcPeriod", "start": 3, "color": "accent2", "size": 150})).unwrap();
     let para = |s: &Session| {
@@ -3219,9 +3237,11 @@ fn numbering_takes_color_and_size() {
     assert_eq!(pp.bullet_font_follow_text, Some(true));
     assert_eq!(pp.bullet_color_follow_text, None);
     assert_eq!(pp.bullet_size_follow_text, None);
+    assert_eq!(pp.bullet_size_points, None);
     assert_eq!(pp.bullet_color, Some(deckcraft_model::ColorRef::scheme(deckcraft_color::SchemeSlot::Accent2)));
     s.execute("format.bullets", &json!({"on": true, "char": "★", "size": 9000})).unwrap();
     assert_eq!(para(&s).bullet_size, Some(4.0));
+    assert_eq!(para(&s).bullet_size_points, None);
     assert_eq!(para(&s).bullet_font_follow_text, None);
 }
 
@@ -4301,6 +4321,9 @@ fn shape_fill_documents_each_gradient_key_and_kind() {
     let params = cmd::parse_params(find_command("shape.fill").unwrap().params).unwrap();
     let about = params.iter().find(|p| p.name == "gradient").unwrap().about;
     assert_eq!(cmd::param_keys(about).unwrap(), ["stops", "kind", "angle", "focus", "rotateWithShape"]);
+    // The renderer keeps only linear and radial gradients upright (`paint::fill_path`).
+    let rotate = cmd::parse_params(about).unwrap().into_iter().find(|p| p.name == "rotateWithShape").unwrap().about;
+    assert!(rotate.contains("rectangular and path gradients turn with the shape"), "{rotate}");
     for kind in ["linear", "radial", "rectangular", "path"] {
         assert!(about.contains(kind), "{kind}: {about}");
         let g = cmd::shape::gradient_param(&json!({
@@ -5342,7 +5365,8 @@ fn opening_a_file_caps_absurd_effect_sizes() {
                 e.soft_edge = Some(f64::NAN);
                 let sw = e.outer_shadow.as_mut().unwrap();
                 (sw.blur, sw.dist, sw.sx) = (huge, huge, huge);
-                *e.reflection.as_mut().unwrap() = Reflection { blur: huge, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.5, dist: huge };
+                *e.reflection.as_mut().unwrap() =
+                    Reflection { blur: huge, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.5, dist: huge, ..Default::default() };
             }
             let glow = Some(Glow { color: deckcraft_model::style::ColorRef::rgb(deckcraft_color::Rgba::BLACK), radius: huge });
             let runs: Vec<&mut deckcraft_model::text::Run> = match &mut sh.kind {
@@ -6457,4 +6481,189 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     s.execute("format.shrink", &json!({})).unwrap();
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
+}
+
+#[test]
+fn slide_master_view_rejects_invalid_indices() {
+    let mut s = Session::with_new();
+    for p in [json!({"master": -1}), json!({"master": 0.5}), json!({"master": 0, "layout": -1}), json!({"master": 0, "layout": 1.5})] {
+        let r = s.execute("view.slideMaster", &p);
+        assert!(r.is_err(), "invalid index accepted for {p}: {r:?}");
+    }
+    assert!(s.execute("view.slideMaster", &json!({})).is_ok());
+    assert!(s.execute("view.slideMaster", &json!({"master": 0})).is_ok());
+}
+
+#[test]
+fn save_to_image_path_is_an_error_not_zip_bytes() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-save-img-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (cmd, name) in [("file.save", "a.png"), ("file.saveAs", "a.jpg"), ("file.save", "a.jpeg")] {
+        let mut s = Session::new();
+        sample::open_sample(&mut s).unwrap();
+        let path = dir.join(name).to_string_lossy().to_string();
+        let before = s.doc().unwrap().path.clone();
+        assert!(s.execute(cmd, &json!({"path": path})).is_err(), "{cmd} {name} should fail");
+        assert!(!std::path::Path::new(&path).exists(), "{name} must not be written");
+        assert_eq!(s.doc().unwrap().path, before);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
+/// end is set to the grouped shape and follows it when the group moves. The glue was dropped at
+/// once (the end stayed `None`) because rerouting only looked at the slide's top-level shapes,
+/// and the sites of a grouped shape were computed in the group's child space.
+#[test]
+fn shape_connect_glues_to_a_shape_inside_a_group() {
+    use deckcraft_model::{ShapeId, ShapeKind};
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 200, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let g = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+    let c = s.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let glue = |s: &Session, id: u64| {
+        let st = s.doc().unwrap();
+        match st.shape(ShapeId(id as u32)).unwrap().kind {
+            ShapeKind::Connector { start, end } => (start.map(|(i, _)| i.0 as u64), end.map(|(i, _)| i.0 as u64)),
+            _ => (None, None),
+        }
+    };
+    let near = |p: deckcraft_geom::Point, x: f64, y: f64| (p.x - x).abs() < 1e-6 && (p.y - y).abs() < 1e-6;
+    // A new connector into the group.
+    let r = s.execute("shape.connect", &json!({"from": c, "to": a})).unwrap();
+    let k = r["id"].as_u64().unwrap();
+    assert_eq!(glue(&s, k), (Some(c), Some(a)), "{r}");
+    let (p0, p1) = line_ends(&s, k);
+    assert!(near(p0, 400.0, 35.0), "from C's left site: {p0:?}");
+    assert!(near(p1, 110.0, 35.0), "to A's right site in slide space: {p1:?}");
+    s.execute("shape.move", &json!({"ids": [g], "dy": 100})).unwrap();
+    assert_eq!(glue(&s, k), (Some(c), Some(a)), "the glue survives the move");
+    let (_, p1) = line_ends(&s, k);
+    assert!(near(p1, 110.0, 135.0), "the connector follows the grouped shape: {p1:?}");
+    // Re-gluing an existing line with `id`.
+    let l = s.execute("shape.insert", &json!({"preset": "straightConnector1", "rect": [600, 400, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("shape.connect", &json!({"id": l, "from": c, "to": b})).unwrap();
+    assert_eq!(r["id"], l, "{r}");
+    assert_eq!(glue(&s, l), (Some(c), Some(b)), "{r}");
+    let (_, p1) = line_ends(&s, l);
+    assert!(near(p1, 110.0, 325.0), "to B's right site (C is mostly to its right) in slide space, B moved with the group: {p1:?}");
+    s.execute("shape.move", &json!({"ids": [g], "dx": 50})).unwrap();
+    assert_eq!(glue(&s, l), (Some(c), Some(b)));
+    let (_, p1) = line_ends(&s, l);
+    assert!(near(p1, 160.0, 325.0), "{p1:?}");
+    // shape.sites answers in slide space, as shape.connect uses them: A's right site, A moved
+    // with the group.
+    let v = s.execute("shape.sites", &json!({"id": a})).unwrap();
+    assert!(
+        v.as_array().unwrap().iter().any(|q| near(deckcraft_geom::Point::new(q[0].as_f64().unwrap(), q[1].as_f64().unwrap()), 160.0, 135.0)),
+        "{v}"
+    );
+    // A line inside a group is refused as `id`: its ends would be written in slide space into
+    // the group's space, and rerouting does not follow grouped connectors.
+    let m = s.execute("shape.insert", &json!({"preset": "line", "rect": [600, 300, 50, 0]})).unwrap()["id"].as_u64().unwrap();
+    let n = s.execute("shape.insert", &json!({"preset": "rect", "rect": [600, 450, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("arrange.group", &json!({"ids": [m, n]})).unwrap();
+    let before = s.doc().unwrap().doc.clone();
+    let e = s.execute("shape.connect", &json!({"id": m, "from": c, "to": b})).unwrap_err().to_string();
+    assert!(e.contains("inside a group"), "{e}");
+    assert_eq!(s.doc().unwrap().doc, before, "nothing changed");
+    // A grouped shape that is not a line is refused as not a line, not as a grouped line.
+    let e = s.execute("shape.connect", &json!({"id": n, "from": c, "to": b})).unwrap_err().to_string();
+    assert!(e.contains("not a line"), "{e}");
+    assert_eq!(s.doc().unwrap().doc, before, "nothing changed");
+}
+
+#[test]
+fn flip_is_refused_on_a_smartart_graphic_and_leaves_it_a_graphic() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("insert.textBox", &json!({"text": "Goals\nRevenue"})).unwrap();
+    let gid = s.execute("smartArt.fromText", &json!({"kind": "blockList"})).unwrap()["id"].as_u64().unwrap();
+    for cmd in ["arrange.flipHorizontal", "arrange.flipVertical", "shape.flip"] {
+        let e = s.execute(cmd, &json!({"ids": [gid]})).unwrap_err().to_string();
+        assert!(e.contains("SmartArt") && e.contains("smartArt.layout"), "{cmd}: {e}");
+    }
+    // Grouped with another shape it cannot be flipped either: ungrouping would hand it the flip.
+    let other = s.execute("insert.textBox", &json!({"text": "x"})).unwrap()["id"].as_u64().unwrap();
+    let group = s.execute("arrange.group", &json!({"ids": [gid, other]})).unwrap()["id"].as_u64().unwrap();
+    let e = s.execute("shape.flip", &json!({"ids": [group]})).unwrap_err().to_string();
+    assert!(e.contains("SmartArt"), "{e}");
+    s.execute("arrange.ungroup", &json!({"ids": [group]})).unwrap();
+    // Still a SmartArt graphic: smartArt commands keep working.
+    s.execute("smartArt.layout", &json!({"id": gid, "kind": "cycle"})).unwrap();
+    // Ordinary shapes still flip.
+    let b = s.execute("insert.textBox", &json!({"text": "x"})).unwrap();
+    let id = b["id"].as_u64().unwrap();
+    assert_eq!(s.execute("arrange.flipHorizontal", &json!({"ids": [id]})).unwrap(), json!(1));
+}
+
+/// Table cell commands refuse a `cells` that is not a list of [row, col] cells in the table,
+/// instead of dropping the entry or reading the list as absent (which acts on the selection).
+#[test]
+fn table_cell_commands_refuse_a_malformed_cells_list() {
+    let mut s = session();
+    let t = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    let rev = s.doc().unwrap().revision;
+    for cells in [
+        json!([[-1, 0]]),
+        json!([[0]]),
+        json!([[0, 0], "x"]),
+        json!([[0, 0, "x"]]),
+        json!([[0, 2]]),
+        json!([[0, u64::MAX]]),
+        json!("0,0"),
+        json!({"0": 0}),
+    ] {
+        for (cmd, extra) in [
+            ("table.cellFill", json!({"color": "#FF0000"})),
+            ("table.cellMargins", json!({"left": 4})),
+            ("table.cellAlign", json!({"align": "center"})),
+            ("table.borders", json!({"which": "right"})),
+        ] {
+            let mut p = extra.clone();
+            p["id"] = json!(t);
+            p["cells"] = cells.clone();
+            let e = s.execute(cmd, &p).unwrap_err().to_string();
+            assert!(e.contains(cmd) && e.contains("cell"), "{cmd} {cells}: {e}");
+        }
+    }
+    assert_eq!(s.doc().unwrap().revision, rev, "nothing changed");
+    let many = json!(vec![[0, 0]; 100_001]);
+    assert!(s.execute("table.cellFill", &json!({"id": t, "color": "#FF0000", "cells": many})).unwrap_err().to_string().contains("at most"));
+    s.execute("table.cellFill", &json!({"id": t, "color": "#FF0000", "cells": [[1, 1]]})).unwrap();
+    assert!(table_of(&s, t).cell(1, 1).unwrap().fill.is_some() && table_of(&s, t).cell(0, 0).unwrap().fill.is_none());
+}
+
+/// The outline exports (PowerPoint's outline view) holds titles and body text only: footer,
+/// date and slide-number placeholders are not body lines.
+#[test]
+fn outline_export_skips_footer_date_and_slide_number() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "Agenda", "body": "First point\nSecond point"})).unwrap();
+    s.execute(
+        "design.headerFooter",
+        &json!({"footer": true, "footerText": "Company Confidential", "slideNumber": true, "date": true, "dateText": "1 May 2026"}),
+    )
+    .unwrap();
+    let dir = std::env::temp_dir().join(format!("deckcraft-outline-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("deck.md");
+    s.execute("file.export", &json!({"path": path.to_string_lossy(), "format": "outline"})).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(text.contains("Agenda") && text.contains("First point") && text.contains("Second point"), "{text:?}");
+    assert!(!text.contains("Company Confidential"), "footer text is not a body line: {text:?}");
+    assert!(!text.contains("‹#›"), "the slide-number field is not a body line: {text:?}");
+    assert!(!text.contains("1 May 2026"), "the date is not a body line: {text:?}");
+    // The RTF outline (Save As ▸ Outline/RTF) too.
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("deck.rtf");
+    s.execute("file.export", &json!({"path": path.to_string_lossy(), "format": "rtf"})).unwrap();
+    let rtf = std::fs::read_to_string(&path).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(rtf.contains("Agenda") && rtf.contains("First point"), "{rtf:?}");
+    assert!(!rtf.contains("Company Confidential") && !rtf.contains("1 May 2026"), "{rtf:?}");
 }
