@@ -476,7 +476,7 @@ fn outline_estimate(s: &deckcraft_model::Slide) -> f32 {
     let lines: usize = s
         .shapes
         .iter()
-        .filter(|x| !x.ph_type().is_some_and(|k| k.is_title()))
+        .filter(|x| !x.ph_type().is_some_and(|k| k.is_title() || k.is_footer_kind()))
         .filter_map(|x| x.text.as_ref())
         .filter(|tb| !tb.is_empty())
         .map(|tb| tb.paragraphs.len().max(1))
@@ -512,7 +512,8 @@ fn outline_slide(app: &mut SlideApp, ui: &mut Ui, t: &Tokens, i: usize, s: &deck
             ui.data_mut(|d| d.insert_temp(id, v));
         }
     });
-    for sh in s.shapes.iter().filter(|x| !x.ph_type().is_some_and(|k| k.is_title())) {
+    // Footer, date and slide-number placeholders are not outline text, as in PowerPoint.
+    for sh in s.shapes.iter().filter(|x| !x.ph_type().is_some_and(|k| k.is_title() || k.is_footer_kind())) {
         let Some(tb) = &sh.text else { continue };
         if tb.is_empty() {
             continue;
