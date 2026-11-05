@@ -129,7 +129,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("show.end", "End Show", None, "{}"),
     ("animation.preview", "Preview Animations", None, "{on?: bool, from?: effect index}"),
     ("app.home", "Home", None, "{on?}"),
-    ("app.backstage", "File", Some("Alt+F"), "{page?: home|new|open|info|saveAs|print|export|account, on?: bool}"),
+    ("app.backstage", "File", Some("Alt+F"), "{page?: home|new|open|info|saveAs|print|export|about, on?: bool}"),
     ("app.closePresentation", "Close", Some("Cmd+W"), "{}"),
     (
         "app.print",

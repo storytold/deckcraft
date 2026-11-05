@@ -1173,6 +1173,12 @@ fn remote_presenter_uses_the_audience_state_and_closes_with_the_show() {
         h.run_steps(2);
         assert_eq!(h.state().show.as_ref().unwrap().state.slide, slide);
     }
+    // #1864: the web popup's Previous/Next buttons send the DOM key names.
+    for (name, slide) in [("ArrowRight", 1), ("ArrowLeft", 0)] {
+        bridge.borrow_mut().commands.push(Command::Key { name: name.into(), command: false, shift: false, alt: false, ctrl: false });
+        h.run_steps(2);
+        assert_eq!(h.state().show.as_ref().unwrap().state.slide, slide, "{name}");
+    }
     bridge.borrow_mut().commands.push(Command::End);
     h.run_steps(2);
     assert!(h.state().show.is_none());
@@ -1297,4 +1303,38 @@ fn a_preview_of_an_edited_presentation_is_rendered_again() {
     }
     let tex = harness.state().1.next_tex.as_ref().map(|(d, k, _)| (std::sync::Arc::ptr_eq(d, &edited), *k));
     assert_eq!(tex, Some((true, 1)), "the preview comes from the edited presentation");
+}
+
+/// #1654: Preview on the Transitions ribbon plays the current slide's transition from the
+/// previous slide into the current slide, and exits when finished.
+#[test]
+fn transition_preview_plays_from_the_previous_slide() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("transition.set", &json!({"kind": "push", "index": 1, "duration": 1000})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 1, true, false);
+    show.start_transition_preview(&doc, 10.0);
+    assert!(show.preview_only);
+    let tr = show.trans.as_ref().expect("transition preview is playing");
+    assert_eq!(tr.kind, "push");
+    assert_eq!(tr.from, Some(0), "enters from slide 0 into slide 1");
+    assert_eq!(tr.dur, 1.0);
+    assert!(!tr.reverse);
+    assert_eq!(tr.start, 10.0);
+}
+
+/// #1654: Transition preview for slide 0 plays with from = None (transitioning from black).
+#[test]
+fn transition_preview_for_first_slide_transitions_from_black() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("transition.set", &json!({"kind": "fade", "index": 0, "duration": 500})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, true, false);
+    show.start_transition_preview(&doc, 5.0);
+    assert!(show.preview_only);
+    let tr = show.trans.as_ref().expect("fade transition preview is playing");
+    assert_eq!(tr.kind, "fade");
+    assert_eq!(tr.from, None, "slide 0 transitions from black (None)");
+    assert_eq!(tr.dur, 0.5);
 }
