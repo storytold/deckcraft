@@ -10,7 +10,7 @@ use super::zoom::{
 };
 use super::{
     Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
-    SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
+    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -94,7 +94,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                     show.zoom_arm = false;
                 }
                 crate::presenter::Command::Key { name, command, shift, alt, ctrl } => {
-                    if let Some(key) = egui::Key::ALL.iter().copied().find(|key| key.name() == name) {
+                    if let Some(key) = egui::Key::from_name(&name) {
                         let modifiers = egui::Modifiers { command, shift, alt, ctrl, mac_cmd: command && !ctrl };
                         out.keep &= handle_keys(&mut show, &doc, now, vec![(key, modifiers)], false).0;
                     }
@@ -457,6 +457,17 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
             // every frame only composites cached textures.
             if tr.parts.is_none() && deckcraft_anim::uses_slide_parts(&tr.kind, &tr.option) {
                 tr.parts = Some(part_textures(ctx, doc, tr.from, idx, size));
+            }
+            if tr.old.is_none()
+                && let Some(prev) = tr.from
+                && !deckcraft_anim::uses_slide_parts(&tr.kind, &tr.option)
+            {
+                let threads =
+                    if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
+                let timeline = ShowState::timeline(doc, prev);
+                let step = timeline.steps();
+                let ci = render_frame(doc, prev, timeline, step, 0.0, size, vec![], &[], threads, &[], &[], None);
+                tr.old = Some(crate::textures::upload(ctx, "trans-old", ci));
             }
             let aspect = doc.slide_size.width / doc.slide_size.height.max(1.0);
             let part = |k: usize| tr.parts.as_ref().and_then(|p| p.get(k).cloned().flatten());

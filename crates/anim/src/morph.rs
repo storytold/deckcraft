@@ -1,5 +1,7 @@
 //! Morph: matching shapes between two slides, interpolating their boxes and building the frames.
 
+use std::collections::{HashMap, HashSet, VecDeque};
+
 use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::{ColorRef, Fill, Geom, Presentation, Rgba, Shape, ShapeId, ShapeKind, Slide, Xfrm, walk};
 
@@ -15,46 +17,64 @@ fn text_of(s: &Shape) -> String {
 /// kind and preset geometry if neither carries text. A text box with neither a name nor its text on
 /// the other slide stays unpaired and fades in place, as in PowerPoint (#119). Each shape is used
 /// once; top-level shapes only (groups move whole).
+///
+/// Each pass compares a key of the two shapes, so the shapes of `b` are indexed by key once per
+/// pass: matching costs the sum of the two shape lists, not their product.
 pub fn morph_pairs(a: &Slide, b: &Slide) -> Vec<(ShapeId, ShapeId)> {
     let mut pairs: Vec<(ShapeId, ShapeId)> = Vec::new();
     let mut used_a = vec![false; a.shapes.len()];
     let mut used_b = vec![false; b.shapes.len()];
-    let passes: [&dyn Fn(&Shape, &Shape) -> bool; 4] = [
-        &|x, y| x.name.starts_with("!!") && x.name == y.name,
-        &|x, y| !x.name.is_empty() && x.name == y.name,
-        &|x, y| {
-            if x.kind_name() != y.kind_name() {
-                return false;
+    // Each shape's text, worked out once rather than inside every comparison.
+    let text_a: Vec<String> = a.shapes.iter().map(text_of).collect();
+    let text_b: Vec<String> = b.shapes.iter().map(text_of).collect();
+    let forced = |s: &Shape, _: &str| (s.name.starts_with("!!")).then(|| MorphKey::Name(s.name.clone()));
+    let named = |s: &Shape, _: &str| (!s.name.is_empty()).then(|| MorphKey::Name(s.name.clone()));
+    let same_text = |s: &Shape, t: &str| (!t.trim().is_empty()).then(|| MorphKey::Text(s.kind_name(), t.to_string()));
+    let same_geom = |s: &Shape, t: &str| match s.geom.preset_name() {
+        Some(g) if t.trim().is_empty() => Some(MorphKey::Geom(s.kind_name(), g.to_string())),
+        _ => None,
+    };
+    let passes: [&dyn Fn(&Shape, &str) -> Option<MorphKey>; 4] = [&forced, &named, &same_text, &same_geom];
+    for key in passes {
+        // Unused shapes of `b` by key, in slide order: the front of each queue is the first unused
+        // match, which is the one a search through `b` would find.
+        let mut index: HashMap<MorphKey, VecDeque<usize>> = HashMap::new();
+        for (j, sb) in b.shapes.iter().enumerate() {
+            if used_b.get(j).copied().unwrap_or(true) {
+                continue;
             }
-            let tx = text_of(x);
-            !tx.trim().is_empty() && tx == text_of(y)
-        },
-        &|x, y| {
-            x.kind_name() == y.kind_name()
-                && x.geom.preset_name().is_some()
-                && x.geom.preset_name() == y.geom.preset_name()
-                && text_of(x).trim().is_empty()
-                && text_of(y).trim().is_empty()
-        },
-    ];
-    for pass in passes {
+            if let Some(k) = key(sb, text_b.get(j).map_or("", String::as_str)) {
+                index.entry(k).or_default().push_back(j);
+            }
+        }
+        if index.is_empty() {
+            continue;
+        }
         for (i, sa) in a.shapes.iter().enumerate() {
             if used_a.get(i).copied().unwrap_or(true) {
                 continue;
             }
-            let found = b.shapes.iter().enumerate().find(|(j, sb)| !used_b.get(*j).copied().unwrap_or(true) && pass(sa, sb));
-            if let Some((j, sb)) = found {
-                if let Some(u) = used_a.get_mut(i) {
-                    *u = true;
-                }
-                if let Some(u) = used_b.get_mut(j) {
-                    *u = true;
-                }
-                pairs.push((sa.id, sb.id));
+            let Some(k) = key(sa, text_a.get(i).map_or("", String::as_str)) else { continue };
+            let Some(j) = index.get_mut(&k).and_then(VecDeque::pop_front) else { continue };
+            let Some(sb) = b.shapes.get(j) else { continue };
+            if let Some(u) = used_a.get_mut(i) {
+                *u = true;
             }
+            if let Some(u) = used_b.get_mut(j) {
+                *u = true;
+            }
+            pairs.push((sa.id, sb.id));
         }
     }
     pairs
+}
+
+/// What one [`morph_pairs`] pass matches shapes on.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum MorphKey {
+    Name(String),
+    Text(&'static str, String),
+    Geom(&'static str, String),
 }
 
 fn lerp(a: f64, b: f64, t: f64) -> f64 {
@@ -256,13 +276,23 @@ pub fn morph_frame(pres: &Presentation, a: &Slide, b: &Slide, t: f64, hidden_b: 
         f.shapes.push((sh, old));
         id
     };
+    // Lookups by id, built once (the first shape or pair with an id wins, as a search would).
+    let paired_a: HashSet<ShapeId> = pairs.iter().map(|(ia, _)| *ia).collect();
+    let mut partner: HashMap<ShapeId, ShapeId> = HashMap::with_capacity(pairs.len());
+    for (ia, ib) in &pairs {
+        partner.entry(*ib).or_insert(*ia);
+    }
+    let mut a_by_id: HashMap<ShapeId, &Shape> = HashMap::with_capacity(a.shapes.len());
+    for x in &a.shapes {
+        a_by_id.entry(x.id).or_insert(x);
+    }
     for sa in &a.shapes {
-        if !pairs.iter().any(|(ia, _)| *ia == sa.id) {
+        if !paired_a.contains(&sa.id) {
             push(sa.clone(), true, 1.0 - s);
         }
     }
     for sb in &b.shapes {
-        let pair = pairs.iter().find(|(_, ib)| *ib == sb.id).and_then(|(ia, _)| a.shapes.iter().find(|x| x.id == *ia));
+        let pair = partner.get(&sb.id).and_then(|ia| a_by_id.get(ia).copied());
         let Some(sa) = pair else {
             if !hidden_b(sb.id) {
                 push(sb.clone(), false, s);
