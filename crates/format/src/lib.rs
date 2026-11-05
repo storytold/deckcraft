@@ -687,9 +687,14 @@ pub fn markdown_to_slides(p: &mut Presentation, text: &str) -> usize {
 }
 
 /// The deck as outline text (titles unindented, body paragraphs tab-indented by level).
-pub fn slides_to_outline(p: &Presentation) -> String {
+/// Hidden slides are skipped unless `include_hidden`: the outline is what the show reads out,
+/// not the file's full content (a file save keeps hidden slides, as `pptx` does).
+pub fn slides_to_outline(p: &Presentation, include_hidden: bool) -> String {
     let mut out = String::new();
     for s in &p.slides {
+        if !include_hidden && s.hidden {
+            continue;
+        }
         // One line per title: a newline would start another slide on re-import.
         out.push_str(&s.title().replace('\n', " "));
         out.push('\n');
@@ -747,7 +752,7 @@ fn outline_table_rows_are_indented_and_do_not_become_slides() {
     s.shapes.push(tbl);
     p.slides = vec![std::sync::Arc::new(s)];
 
-    let out = slides_to_outline(&p);
+    let out = slides_to_outline(&p, true);
     let mut q = defaults::new_presentation(None);
     q.slides.clear();
     assert_eq!(outline_to_slides(&mut q, &out), 1, "table rows became slides: {out:?}");
