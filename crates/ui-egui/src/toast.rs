@@ -30,6 +30,15 @@ pub fn missing_fonts_message(fonts: &[String]) -> Option<String> {
     Some(format!("{names} {it} installed on this computer. Text that uses {them} is shown in a similar font."))
 }
 
+/// Show `text` for a few seconds — unless a sticky notice is up. That one is a failure the user
+/// must read, so a transient note waits instead of replacing it unseen.
+pub fn note(app: &mut SlideApp, text: impl Into<String>) {
+    if app.toast.as_ref().is_some_and(|t| t.sticky) {
+        return;
+    }
+    app.toast = Some(Toast { text: text.into(), at: crate::now_ms(), sticky: false });
+}
+
 /// Toast the active presentation's missing fonts, once per opened document.
 pub fn note_missing_fonts(app: &mut SlideApp) {
     let Some(d) = app.session.active() else { return };
@@ -37,7 +46,7 @@ pub fn note_missing_fonts(app: &mut SlideApp) {
         return;
     }
     if let Some(text) = missing_fonts_message(&d.missing_fonts) {
-        app.toast = Some(Toast { text, at: crate::now_ms(), sticky: false });
+        note(app, text);
     }
 }
 

@@ -195,3 +195,15 @@ fn a_microphone_lost_mid_take_cancels_the_recording_and_says_why() {
     assert!(toast.sticky, "the notice stays until it is closed");
     assert!(toast.text.contains("unplugged"), "{}", toast.text);
 }
+
+#[test]
+fn a_sticky_microphone_notice_is_not_replaced_by_a_transient_one() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).expect("slide");
+    let mut app = SlideApp::new(s, Services { mic: Some(Box::new(LostMic)), ..Default::default() });
+    app.start_audio_recording().expect("start");
+    app.tick_audio_recording();
+    let before = app.toast.as_ref().map(|t| t.text.clone()).expect("the failure notice");
+    app.notify("Saved");
+    assert_eq!(app.toast.as_ref().map(|t| t.text.clone()), Some(before), "the failure stays until closed");
+}
