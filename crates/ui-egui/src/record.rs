@@ -211,6 +211,13 @@ impl SlideApp {
         if !self.record.is_recording() {
             return;
         }
+        // The device opens asynchronously: a refused permission or a lost microphone shows up only
+        // here, and the take must not keep a running clock over a stream that recorded nothing.
+        if let Some(e) = self.services.mic.as_ref().and_then(|m| m.failure()) {
+            self.cancel_audio_recording();
+            self.set_status(format!("The microphone stopped: {e}. The take was cancelled"));
+            return;
+        }
         let mic = self.services.mic.as_deref_mut();
         self.record.tick(mic);
     }

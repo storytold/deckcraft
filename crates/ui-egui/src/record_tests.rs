@@ -162,3 +162,33 @@ fn recording_inserts_one_undoable_audio_shape() {
     let after = app.session.active().expect("doc").doc.slides.iter().map(|sl| sl.shapes.len()).sum::<usize>();
     assert_eq!(after, before, "one undo removes the recording");
 }
+
+/// A microphone that opens and then loses its device, as an unplugged one does: `start` succeeds
+/// and `failure()` reports why capture stopped.
+struct LostMic;
+
+impl MicIn for LostMic {
+    fn start(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn take(&mut self) -> (u32, Vec<f32>) {
+        (8_000, tone(8_000, 0.5))
+    }
+    fn failure(&self) -> Option<String> {
+        Some("the device was unplugged".into())
+    }
+    fn stop(&mut self) {}
+}
+
+#[test]
+fn a_microphone_lost_mid_take_cancels_the_recording_and_says_why() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).expect("slide");
+    let mut app = SlideApp::new(s, Services { mic: Some(Box::new(LostMic)), ..Default::default() });
+    app.start_audio_recording().expect("start");
+    assert!(app.record.is_recording(), "the take runs");
+    app.tick_audio_recording();
+    assert!(!app.record.is_recording(), "the take is cancelled, not left counting");
+    let status = app.status.as_ref().map(|(m, _)| m.clone()).unwrap_or_default();
+    assert!(status.contains("The microphone stopped") && status.contains("unplugged"), "{status}");
+}
