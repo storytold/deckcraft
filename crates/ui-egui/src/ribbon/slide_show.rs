@@ -103,7 +103,8 @@ pub(super) fn record(app: &mut SlideApp, ui: &mut Ui) {
         if (if recording { from_beginning.on_hover_text(busy) } else { from_beginning }).clicked() {
             let _ = app.run("show.record", json!({"from": app.show_start_index()}));
         }
-        if big_button(ui, Icon::PlayFromCurrent, "From\nCurrent Slide", !recording).clicked() {
+        let from_current = big_button(ui, Icon::PlayFromCurrent, "From\nCurrent Slide", !recording);
+        if (if recording { from_current.on_hover_text(busy) } else { from_current }).clicked() {
             let i = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
             let _ = app.run("show.record", json!({"from": i}));
         }

@@ -132,3 +132,26 @@ fn narration_audio_carries_the_schema_flag_on_the_audio_node() {
     let media_node = xml.split("<p:cMediaNode").nth(1).and_then(|s| s.split('>').next()).unwrap_or_default();
     assert!(!media_node.contains("isNarration"), "p:cMediaNode does not declare it: {media_node}");
 }
+
+/// An imported video that plays on slide entry keeps that start: the writer emits a `p:video`
+/// slide-start node for it, so a save and reopen does not turn it back into a click-to-play clip.
+#[test]
+fn an_autoplay_video_keeps_its_slide_start_node() {
+    let mut p = defaults::new_presentation(None);
+    let video = p.add_media("clip.mp4", "video/mp4", b"video".to_vec()).expect("media");
+    let id = ShapeId(p.alloc_id().expect("id"));
+    Arc::make_mut(&mut p.slides[0]).shapes.push(deckcraft_model::Shape {
+        id,
+        name: "Clip".into(),
+        xfrm: Some(Xfrm::new(40.0, 40.0, 200.0, 100.0)),
+        kind: ShapeKind::Media(MediaClip { media: video, video: true, autoplay: true, ..Default::default() }),
+        ..Default::default()
+    });
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let mut z = zip::ZipArchive::new(Cursor::new(&bytes)).expect("zip");
+    let mut xml = String::new();
+    z.by_name("ppt/slides/slide1.xml").expect("slide").read_to_string(&mut xml).expect("read");
+    assert!(xml.contains("<p:video>"), "the video has its slide-start node: {xml}");
+    assert!(!xml.contains("<p:audio"), "and no audio node is invented for it: {xml}");
+    assert!(xml.contains(&format!("<p:spTgt spid=\"{}\"/>", id.0)), "the node targets the video: {xml}");
+}
