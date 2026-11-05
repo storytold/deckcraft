@@ -297,8 +297,7 @@ pub(crate) fn value_axis_intervals(c: &Chart, axis_len: f64, base: f64, horiz: b
         // the scale it selects until it stops shrinking.
         let widest_at = |intervals: usize| {
             let (lo, hi, st) = c.axis_scale(false, intervals).unwrap_or((0.0, 1.0, 0.2));
-            let n = (((hi - lo) / st.max(1e-12)).round() as i64).clamp(1, 50);
-            (0..=n).map(|k| c.axis_label(false, lo + k as f64 * st).chars().count()).max().unwrap_or(1) as f64
+            axis_ticks((lo, hi, st)).map(|v| c.axis_label(false, v).chars().count()).max().unwrap_or(1) as f64
         };
         let mut intervals = 12;
         for _ in 0..12 {
