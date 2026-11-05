@@ -39,9 +39,11 @@ pub(super) fn reuse_thumb(app: &mut SlideApp, ui: &mut Ui, index: usize, budget:
     let r = device_pixel_rect(r, ppp);
     let drawable = index < REUSE_THUMBS && doc.is_some_and(|d| d.slides.get(index).is_some());
     let near = ui.clip_rect().expand2(vec2(0.0, 2.0 * th)).intersects(r);
+    // In Grayscale view, as the slide pane's thumbnails are.
+    let grayscale = app.ui.grayscale;
     let tex = match app.reuse_preview.as_mut() {
         Some(ReusePreview { doc: Some(doc), textures }) if drawable && near => {
-            textures.thumb(ui.ctx(), doc, index, (r.width() * ppp).round().max(1.0) as u32, budget)
+            textures.thumb(ui.ctx(), doc, index, (r.width() * ppp).round().max(1.0) as u32, grayscale, budget)
         }
         _ => None,
     };
