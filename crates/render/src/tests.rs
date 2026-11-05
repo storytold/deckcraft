@@ -3244,3 +3244,75 @@ fn the_selection_shade_counts_every_stop_of_a_gradient_run() {
     let shade = super::selection_shade(&l, (0, 0), (0, 14), base);
     assert_eq!(shade, base, "both ends of the gradient read on the mid tone");
 }
+
+/// A group's outer shadow is its children drawn again, recoloured and offset: the selection being
+/// edited in one of them is no part of that silhouette.
+#[test]
+fn a_selection_in_a_grouped_shape_casts_no_shadow() {
+    use super::TextHighlight;
+    let mut body = TextBody::from_text("Selected words");
+    body.paragraphs[0].runs[0].props.size = Some(24.0);
+    let child = Shape { id: ShapeId(601), xfrm: Some(Xfrm::new(0.0, 0.0, 400.0, 100.0)), text: Some(body), ..Default::default() };
+    let shadow = deckcraft_model::style::Shadow {
+        color: ColorRef::rgb(Rgba::BLACK),
+        blur: 0.0,
+        dist: 120.0,
+        dir: 90.0,
+        inner: false,
+        sx: 1.0,
+        sy: 1.0,
+        kx: 0.0,
+        ky: 0.0,
+        align: String::new(),
+        rotate_with_shape: false,
+    };
+    let g = Shape {
+        id: ShapeId(600),
+        xfrm: Some(Xfrm::new(100.0, 40.0, 400.0, 100.0)),
+        kind: ShapeKind::Group { children: vec![child], child: Xfrm::new(0.0, 0.0, 400.0, 100.0) },
+        effects: Some(deckcraft_model::Effects { outer_shadow: Some(shadow), ..Default::default() }),
+        ..Default::default()
+    };
+    let p = deck_with(vec![g]);
+    let h = TextHighlight { shape: ShapeId(601), cell: None, from: (0, 0), to: (0, 14), color: Rgba::rgb(0x33, 0x75, 0xDB) };
+    let render = |highlight| {
+        render_slide(&p, 0, &RenderOpts { edit: true, editing_text: Some(ShapeId(601)), text_highlight: highlight, ..Default::default() })
+    };
+    let (bare, shaded) = (render(None), render(Some(h)));
+    let w = bare.width as usize;
+    let rows = |img: &Image| img.pixels[w * 4 * 150..w * 4 * 300].to_vec();
+    assert_ne!(bare.pixels, shaded.pixels, "the selection itself is drawn");
+    assert!(rows(&bare).chunks(4).any(|px| px[0] < 60), "the group casts a shadow below it");
+    assert_eq!(rows(&bare), rows(&shaded), "and the selection adds nothing to it");
+}
+
+/// Editing a layout draws the master's shapes under it with the same options; a selection in the
+/// layout's shape 77 must not shade the master's own shape 77.
+#[test]
+fn a_selection_in_a_layout_does_not_shade_a_master_shape_that_shares_the_id() {
+    use super::TextHighlight;
+    let mut p = Presentation::default();
+    let at = |y: f64| {
+        let mut sh = text_shape(77, "Words here", 40.0, y);
+        sh.xfrm = Some(Xfrm::new(40.0, y, 600.0, 100.0));
+        sh
+    };
+    let (master_text, layout_text) = (at(40.0), at(300.0));
+    let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+    m.shapes.push(master_text);
+    let layout = m.layouts.first_mut().expect("layout");
+    layout.show_master_shapes = true;
+    layout.shapes.push(layout_text);
+    let pale = [173, 200, 241, 255];
+    let h = TextHighlight { shape: ShapeId(77), cell: None, from: (0, 0), to: (0, 5), color: Rgba::rgb(0x33, 0x75, 0xDB) };
+    let img = super::render_layout(
+        &p,
+        0,
+        Some(0),
+        &RenderOpts { edit: true, editing_text: Some(ShapeId(77)), text_highlight: Some(h), ..Default::default() },
+    );
+    let shaded =
+        |rows: std::ops::Range<u32>| rows.flat_map(|y| (0..img.width).map(move |x| (x, y))).filter(|&(x, y)| img.pixel(x, y) == pale).count();
+    assert!(shaded(300..400) > 500, "the layout's own text is shaded");
+    assert_eq!(shaded(0..200), 0, "the master's text is not");
+}
