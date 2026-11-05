@@ -450,6 +450,23 @@ pub(crate) fn set_font_size(s: &mut Session, gid: ShapeId, size: Option<f64>, cm
     {
         return Ok(());
     }
+    // Automatic again on an imported graphic: the file's drawing stays; shrink-on-overflow comes back on its
+    // text and the nodes share one scale. The sizes the runs carry are not recoverable and stay as they are.
+    if size.is_none()
+        && restyle_imported(
+            s,
+            gid,
+            cmd,
+            |d| d.font_size = None,
+            |sh| {
+                if let Some(t) = sh.text.as_mut() {
+                    t.body.autofit = Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
+                }
+            },
+        )?
+    {
+        return share_after_edit(s, gid);
+    }
     edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
         d.font_size = size;
         Ok(())

@@ -7189,4 +7189,16 @@ fn format_size_on_an_imported_smartart_graphic_keeps_its_drawing() {
             assert!(p.runs.iter().all(|r| r.props.size == Some(31.0)));
         }
     }
+    // Automatic again: still the file's drawing, with shrink-on-overflow back on and no recorded size.
+    s.execute("smartArt.fontSize", &json!({"id": gid.0, "size": null})).unwrap();
+    let again = snapshot(&s);
+    assert_eq!(before, again.iter().map(|c| (c.id, c.xfrm)).collect::<Vec<_>>(), "ids and geometry stay after automatic");
+    let d = s.doc().unwrap().shape(gid).unwrap().diagram.clone().unwrap();
+    assert!(d.imported, "still an imported graphic");
+    assert_eq!(d.font_size, None);
+    let texts: Vec<_> = again.iter().filter_map(|c| c.text.as_ref()).collect();
+    assert!(!texts.is_empty());
+    for t in texts {
+        assert!(matches!(t.body.autofit, Some(deckcraft_model::text::AutoFit::Shrink { .. })), "shrink on overflow is back");
+    }
 }
