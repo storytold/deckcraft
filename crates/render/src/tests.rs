@@ -3316,3 +3316,30 @@ fn a_selection_in_a_layout_does_not_shade_a_master_shape_that_shares_the_id() {
     assert!(shaded(300..400) > 500, "the layout's own text is shaded");
     assert_eq!(shaded(0..200), 0, "the master's text is not");
 }
+
+/// A run's highlight marker is drawn behind its text; the selection goes over the marker, not under
+/// it, or selected highlighted text would show no selection at all. Shapes and table cells alike.
+#[test]
+fn a_selection_is_shaded_over_a_highlight_marker() {
+    use super::TextHighlight;
+    let yellow = Rgba::rgb(255, 255, 0);
+    let pale = [173, 200, 241, 255];
+    let marked = |on: bool| {
+        let mut sh = text_shape(940, "Selected words", 40.0, 40.0);
+        if on && let Some(run) = sh.text.as_mut().and_then(|t| t.paragraphs[0].runs.first_mut()) {
+            run.props.highlight = Some(ColorRef::rgb(yellow));
+        }
+        deck_with(vec![sh])
+    };
+    let h = TextHighlight { shape: ShapeId(940), cell: None, from: (0, 0), to: (0, 14), color: Rgba::rgb(0x33, 0x75, 0xDB) };
+    let shaded = |p: &Presentation| {
+        let img = render_slide(p, 0, &RenderOpts { edit: true, editing_text: Some(ShapeId(940)), text_highlight: Some(h), ..Default::default() });
+        let n = |c: [u8; 4]| img.pixels.as_chunks::<4>().0.iter().filter(|px| **px == c).count();
+        (n(pale), n([255, 255, 0, 255]))
+    };
+    let (plain_shade, _) = shaded(&marked(false));
+    let (marked_shade, yellow_left) = shaded(&marked(true));
+    assert!(plain_shade > 500, "the selection shows: {plain_shade}");
+    assert_eq!(marked_shade, plain_shade, "and the highlight marker doesn't eat into it");
+    assert!(yellow_left < 100, "the marker is under the selection, not beside it: {yellow_left}");
+}

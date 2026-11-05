@@ -5,7 +5,7 @@ use super::opts::{RenderOpts, ShapeState, SlideFields};
 use super::raster::Image;
 use super::slide::{SlidePart, needs_filters, output_size};
 use super::stroke::{arrowheads, head_trims, stroke, trim_ends};
-use super::text_draw::{draw_layout_with, draw_text, fill_selection, line_bounds, preview_empty_bullets, prompt_body, text_transform, text_warp};
+use super::text_draw::{draw_layout_selected, draw_text, line_bounds, preview_empty_bullets, prompt_body, text_transform, text_warp};
 use super::*;
 
 pub struct Renderer {
@@ -1110,13 +1110,14 @@ impl Renderer {
                 }
                 let warped = text_warp(rctx, s, tr).filter(|_| l.rotation == 0.0);
                 // WordArt bends its lines; their straight selection boxes would miss the glyphs.
-                if let Some(h) = f.opts.text_highlight.filter(|h| editing && !shadow_pass && h.shape == s.id && h.cell.is_none() && warped.is_none())
-                {
-                    fill_selection(ctx, &l, tr, m, h.from, h.to, h.color);
-                }
+                let selection = f
+                    .opts
+                    .text_highlight
+                    .filter(|h| editing && !shadow_pass && h.shape == s.id && h.cell.is_none() && warped.is_none())
+                    .map(|h| (h.from, h.to, h.color));
                 match warped {
                     Some(w) => warp::draw(ctx, &l, tr, m, &st.paras, &w),
-                    None => draw_layout_with(ctx, &l, tr, m, &st.paras),
+                    None => draw_layout_selected(ctx, &l, tr, m, &st.paras, selection),
                 }
             } else if f.opts.edit && s.ph.is_some() {
                 let kind = s.ph_type().unwrap_or(PhType::Body);

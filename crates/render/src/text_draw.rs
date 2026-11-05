@@ -161,6 +161,23 @@ pub fn draw_layout(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: 
 
 /// Draw a laid-out text block with per-paragraph animation states.
 pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine, paras: &[(usize, ParaState)]) {
+    draw_layout_selected(ctx, l, tr, m, paras, None);
+}
+
+/// A selected range to shade: from and to (paragraph, char), and the shading's base colour.
+pub type Shaded = ((usize, usize), (usize, usize), Rgba);
+
+/// [`draw_layout_with`], shading `selection` ([`fill_selection`]) over the run highlight markers
+/// and under the glyphs, so a selected highlighted word still shows its selection.
+pub fn draw_layout_selected(
+    ctx: &mut RenderContext,
+    l: &deckcraft_text::TextLayout,
+    tr: Rect,
+    m: Affine,
+    paras: &[(usize, ParaState)],
+    selection: Option<Shaded>,
+) {
+    let outer = m;
     let para = |i: usize| paras.iter().find(|(p, _)| *p == i).map(|(_, s)| *s).unwrap_or_default();
     let m = text_transform(m, tr, l.rotation);
     let lines_of = LineIndex::new(l);
@@ -175,6 +192,9 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
     };
     for d in l.decos.iter().filter(|d| d.behind) {
         deco(ctx, d);
+    }
+    if let Some((from, to, c)) = selection {
+        fill_selection(ctx, l, tr, outer, from, to, c);
     }
     // Text shadows, then glows, under all the text.
     for pass in [TextEffect::Shadow, TextEffect::Glow] {

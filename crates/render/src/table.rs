@@ -481,10 +481,8 @@ pub fn draw(
         if editing {
             crate::preview_empty_bullets(&mut l);
         }
-        if let Some(h) = highlight.filter(|h| h.cell == Some((*r, *c))) {
-            crate::fill_selection(ctx, &l, *rect, m, h.from, h.to, h.color);
-        }
-        crate::draw_layout(ctx, &l, *rect, m);
+        let selection = highlight.filter(|h| h.cell == Some((*r, *c))).map(|h| (h.from, h.to, h.color));
+        crate::draw_layout_selected(ctx, &l, *rect, m, &[], selection);
         let _ = peniko::Fill::NonZero;
     }
     covered
