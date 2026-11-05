@@ -12,6 +12,7 @@ use super::{
     Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
     ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
 };
+use crate::displays::{EditorPlace, EditorRestore};
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
 
@@ -209,13 +210,21 @@ fn paint_hidden(ui: &Ui, doc: &Presentation, show: &Show) {
     }
 }
 
-fn begin_show(app: &SlideApp, ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) {
+fn begin_show(app: &mut SlideApp, ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) {
     if !show.started {
         // A remote Presenter View (the web's second window) leaves the audience window as it is.
         let full_screen = show_fills_screen(show.reading, &doc.show.show_type) && !(show.presenter && app.services.presenter.is_some());
         // Use the display selected in Set Up Slide Show, falling back when it was disconnected.
+        if full_screen {
+            app.refresh_displays();
+        }
         if full_screen && app.displays.list.len() > 1 {
-            show.display = Some(app.displays.first_choice(app.ui.show_display));
+            show.display = Some(app.displays.first_choice(app.ui.show_display, app.ui.show_display_id.as_ref()));
+            // The show may move the editor window to another display: put it back afterwards. A
+            // restore still pending from the last show keeps the place from before that one.
+            let ppp = ctx.pixels_per_point();
+            let place = app.editor_restore.map(|r| r.place).or_else(|| ctx.input(|i| EditorPlace::of(i.viewport(), ppp)));
+            app.editor_restore = place.map(EditorRestore::new);
         }
         show.started = true;
         show.slide_start = now;
@@ -867,7 +876,7 @@ fn draw_extras(app: &mut SlideApp, show: &mut Show, f: &Fr, painter: &egui::Pain
         // Only an explicit Swap Displays changes the preference; automatic/fallback placement
         // must not replace the user's saved choice.
         if show.display != previous_display {
-            app.ui.show_display = show.display;
+            app.ui.set_show_display(show.display, &app.displays);
         }
     }
 }
@@ -881,7 +890,8 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
             host.close();
         }
         app.media.stop_owned(crate::media::Owner::Show);
-        if !show.reading {
+        // A show on another display also puts the editor window back ([`SlideApp::restore_editor`]).
+        if !show.reading && app.editor_restore.is_none() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         }
         if show.rehearse {

@@ -111,6 +111,11 @@ fn place_presenter(ctx: &egui::Context, show: &mut Show) {
     }
 }
 
+/// Presenter View's window level: on top of a show that fills the screen, else an ordinary window.
+pub(super) fn presenter_level(reading: bool, show_type: &str) -> egui::WindowLevel {
+    if show_fills_screen(reading, show_type) { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal }
+}
+
 /// The Presenter View's preview of slide `n`, `size` pixels.
 fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) -> egui::ColorImage {
     let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, ..Default::default() };
@@ -191,13 +196,14 @@ pub(super) fn presenter_window(
     };
     ctx.show_viewport_immediate(
         egui::ViewportId::from_hash_of("deckcraft_presenter"),
-        // On top, so the full-screen show never hides it when they share a display.
+        // On top of a full-screen show, which would otherwise hide it when they share a display. A
+        // show browsed in a window is an ordinary window beside it.
         // On Wayland, set_outer_position and set_window_level are unsupported: the
         // compositor chooses Presenter View's display and stacking order instead.
         egui::ViewportBuilder::default()
             .with_title("Presenter View — DeckCraft")
             .with_inner_size(PRESENTER_SIZE)
-            .with_window_level(egui::WindowLevel::AlwaysOnTop),
+            .with_window_level(presenter_level(show.reading, &doc.show.show_type)),
         |ui, _| {
             if !keyboard(ui.ctx(), show, doc, now, true) {
                 *keep = false;

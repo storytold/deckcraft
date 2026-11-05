@@ -1381,7 +1381,7 @@ fn the_show_uses_the_saved_display_without_asking() {
     let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
     app.ui.presenter_view = true;
     app.displays = Displays {
-        list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }],
+        list: vec![Display { name: None, x: 0, y: 0, w: 1920, h: 1080 }, Display { name: None, x: 1920, y: 0, w: 1280, h: 720 }],
         editor: Some(0),
         primary: Some(0),
     };
@@ -1435,7 +1435,7 @@ fn browsed_show_neither_selects_nor_swaps_displays() {
     app.ui.presenter_view = true;
     app.ui.show_display = Some(1);
     app.displays = Displays {
-        list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }],
+        list: vec![Display { name: None, x: 0, y: 0, w: 1920, h: 1080 }, Display { name: None, x: 1920, y: 0, w: 1280, h: 720 }],
         editor: Some(0),
         primary: Some(0),
     };
@@ -1480,7 +1480,7 @@ fn setup_show_display_selection_can_be_cancelled_or_saved() {
 
     let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
     app.displays = Displays {
-        list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }],
+        list: vec![Display { name: None, x: 0, y: 0, w: 1920, h: 1080 }, Display { name: None, x: 1920, y: 0, w: 1280, h: 720 }],
         editor: Some(0),
         primary: Some(0),
     };
@@ -1511,8 +1511,10 @@ fn setup_show_display_selection_can_be_cancelled_or_saved() {
     }
     let saved = serde_json::to_value(&h.state().ui).unwrap();
     assert_eq!(saved["showDisplay"], json!(1));
+    assert_eq!(saved["showDisplayId"], json!({"x": 1920, "y": 0, "w": 1280, "h": 720}), "the display itself, to find it again");
     let restored: crate::UiState = serde_json::from_value(saved).unwrap();
     assert_eq!(restored.show_display, Some(1));
+    assert_eq!(restored.show_display_id, Some(Display { name: None, x: 1920, y: 0, w: 1280, h: 720 }));
     h.state_mut().start_show(0, false);
     h.run_steps(2);
     assert!(h.state().show.as_ref().unwrap().started);
@@ -1540,7 +1542,7 @@ fn saved_display_is_used_without_presenter_view() {
     app.ui.presenter_view = false;
     app.ui.show_display = Some(1);
     app.displays = Displays {
-        list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }],
+        list: vec![Display { name: None, x: 0, y: 0, w: 1920, h: 1080 }, Display { name: None, x: 1920, y: 0, w: 1280, h: 720 }],
         editor: Some(0),
         primary: Some(0),
     };
@@ -1558,4 +1560,171 @@ fn saved_display_is_used_without_presenter_view() {
     assert_eq!(show.display, Some(1));
     assert!(!show.presenter);
     assert!(show.presenter_place.is_none());
+}
+
+/// `ui.json` files saved before the display itself was (`showDisplay` only) still choose it.
+#[test]
+fn an_old_saved_display_index_is_still_read() {
+    use crate::displays::{Display, Displays};
+    let old: crate::UiState = serde_json::from_value(json!({"showDisplay": 1, "presenterView": true})).unwrap();
+    let old = old.sanitized();
+    assert_eq!(old.show_display, Some(1));
+    assert_eq!(old.show_display_id, None);
+    let displays = Displays {
+        list: vec![Display { name: None, x: 0, y: 0, w: 1920, h: 1080 }, Display { name: None, x: 1920, y: 0, w: 1280, h: 720 }],
+        editor: Some(0),
+        primary: Some(0),
+    };
+    assert_eq!(displays.first_choice(old.show_display, old.show_display_id.as_ref()), 1);
+    // Nothing saved writes nothing new.
+    let fresh = serde_json::to_value(crate::UiState::default()).unwrap();
+    assert!(fresh.get("showDisplayId").is_none());
+    // A damaged display is dropped; the index is kept.
+    let bad: crate::UiState = serde_json::from_value(json!({"showDisplay": 1, "showDisplayId": {"x": 0, "y": 0, "w": 0, "h": 0}})).unwrap();
+    assert_eq!(bad.sanitized().show_display_id, None);
+}
+
+/// A saved display that is not connected while Set Up Slide Show is open stays saved on OK.
+#[test]
+fn setup_show_keeps_a_saved_display_that_is_not_connected() {
+    use crate::displays::{Display, Displays};
+    use egui_kittest::kittest::Queryable;
+
+    let projector = Display { name: Some(r"\.\DISPLAY2".into()), x: 1920, y: 0, w: 1280, h: 720 };
+    let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+    app.ui.show_display = Some(1);
+    app.ui.show_display_id = Some(projector.clone());
+    app.displays = Displays {
+        list: vec![
+            Display { name: Some(r"\.\DISPLAY1".into()), x: 0, y: 0, w: 1920, h: 1080 },
+            Display { name: Some(r"\.\DISPLAY3".into()), ..projector.clone() },
+        ],
+        editor: Some(0),
+        primary: Some(0),
+    };
+    let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 800.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    // Left as it is, or picked again from the list: OK keeps it.
+    for pick in [false, true] {
+        h.state_mut().run("app.dialog", json!({"id": "setupShow"})).unwrap();
+        h.run_steps(2);
+        if pick {
+            h.get_by_label("Slide show monitor").click_accesskit();
+            h.run_steps(2);
+            h.get_by_label("Saved display (not connected)").click_accesskit();
+            h.run_steps(2);
+        }
+        h.get_by_label("OK").click_accesskit();
+        h.run_steps(2);
+        assert!(h.state().dialog.is_none());
+        assert_eq!(h.state().ui.show_display, Some(1));
+        assert_eq!(h.state().ui.show_display_id, Some(projector.clone()));
+    }
+    // Another screen at the same place and index is not the saved one: the show uses the primary.
+    h.state_mut().start_show(0, false);
+    h.run_steps(2);
+    assert_eq!(h.state().show.as_ref().unwrap().display, Some(0));
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    // Choosing a connected display replaces it.
+    h.state_mut().run("app.dialog", json!({"id": "setupShow"})).unwrap();
+    h.run_steps(2);
+    h.get_by_label("Slide show monitor").click_accesskit();
+    h.run_steps(2);
+    h.get_by_label("Display 2 (1280 × 720)").click_accesskit();
+    h.run_steps(2);
+    h.get_by_label("OK").click_accesskit();
+    h.run_steps(2);
+    assert_eq!(h.state().ui.show_display, Some(1));
+    assert_eq!(h.state().ui.show_display_id.as_ref().and_then(|d| d.name.as_deref()), Some(r"\.\DISPLAY3"));
+}
+
+/// The displays are read when Set Up Slide Show opens and when a show starts, not every frame.
+#[test]
+fn displays_are_read_when_needed_only() {
+    use crate::displays::{Display, Displays};
+    use std::{cell::Cell, rc::Rc};
+
+    let reads = Rc::new(Cell::new(0));
+    let counter = reads.clone();
+    let mut services = crate::Services::default();
+    services.displays = Some(Box::new(move || {
+        counter.set(counter.get() + 1);
+        Some(Displays {
+            list: vec![Display { name: None, x: 0, y: 0, w: 1920, h: 1080 }, Display { name: None, x: 1920, y: 0, w: 1280, h: 720 }],
+            editor: Some(0),
+            primary: Some(0),
+        })
+    }));
+    let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), services);
+    app.ui.show_display = Some(1);
+    let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 800.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(5);
+    assert_eq!(reads.get(), 0, "not while editing");
+    h.state_mut().run("app.dialog", json!({"id": "setupShow"})).unwrap();
+    h.run_steps(5);
+    assert_eq!(reads.get(), 1, "once as Set Up Slide Show opens");
+    h.state_mut().dialog = None;
+    h.state_mut().start_show(0, false);
+    h.run_steps(5);
+    assert_eq!(reads.get(), 2, "once as the show starts");
+    assert_eq!(h.state().show.as_ref().unwrap().display, Some(1));
+}
+
+/// Presenter View stays on top of a full-screen show only; beside a show in a window it is an
+/// ordinary window that does not cover it.
+#[test]
+fn presenter_view_is_on_top_of_full_screen_shows_only() {
+    use super::presenter::presenter_level;
+    assert_eq!(presenter_level(false, "speaker"), egui::WindowLevel::AlwaysOnTop);
+    assert_eq!(presenter_level(false, "kiosk"), egui::WindowLevel::AlwaysOnTop);
+    assert_eq!(presenter_level(false, "browsed"), egui::WindowLevel::Normal);
+    assert_eq!(presenter_level(true, "speaker"), egui::WindowLevel::Normal);
+}
+
+/// The editor window is put back after a show on another display, however the show ended.
+#[test]
+fn the_editor_window_is_put_back_after_a_show_on_another_display() {
+    use crate::displays::{EditorPlace, EditorRestore};
+    let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+    let place = EditorPlace { rect: [100, 80, 1000, 700], maximized: false };
+    app.editor_restore = Some(EditorRestore::new(place));
+    let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(8);
+    assert!(h.state().editor_restore.is_none(), "every step sent");
+    // A restore that is still pending when the next show starts keeps the place from before.
+    h.state_mut().editor_restore = Some(EditorRestore::new(place));
+    h.state_mut().displays = crate::displays::Displays {
+        list: vec![
+            crate::displays::Display { name: None, x: 0, y: 0, w: 1920, h: 1080 },
+            crate::displays::Display { name: None, x: 1920, y: 0, w: 1280, h: 720 },
+        ],
+        editor: Some(0),
+        primary: Some(0),
+    };
+    h.state_mut().ui.show_display = Some(1);
+    h.state_mut().start_show(0, false);
+    h.run_steps(3);
+    assert_eq!(h.state().editor_restore.map(|r| r.place), Some(place));
+    h.state_mut().run("show.end", json!({})).unwrap();
+    h.run_steps(8);
+    assert!(h.state().editor_restore.is_none());
 }

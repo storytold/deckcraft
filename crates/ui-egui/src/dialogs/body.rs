@@ -242,6 +242,10 @@ fn dlg_hyperlink(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Set Up Slide Show's `showDisplay` field while the saved display is not connected: OK keeps it.
+const KEEP_SAVED_DISPLAY: &str = "saved";
+const SAVED_DISPLAY_LABEL: &str = "Saved display (not connected)";
+
 fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let sh = app.session.active().map(|s| s.doc.show.clone()).unwrap_or_default();
     let ty = d.get("type", &sh.show_type);
@@ -277,20 +281,39 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let _ = combo.response.labelled_by(field.id);
     ui.add_space(8.0);
     ui.label(egui::RichText::new("Multiple monitors").font(theme::bold(13.0)));
-    // Keep the machine-local choice pending until OK; Cancel, Esc and closing discard it.
-    let initial = app.ui.show_display.map_or_else(String::new, |i| i.to_string());
-    let mut display = d.get("showDisplay", &initial).parse::<usize>().ok();
+    // Keep the machine-local choice pending until OK; Cancel, Esc and closing discard it. The
+    // displays are read as the dialog opens, and the saved one found among them again.
+    if !d.fields.contains_key("showDisplay") {
+        app.refresh_displays();
+    }
+    let saved = app.ui.show_display.is_some() || app.ui.show_display_id.is_some();
+    let found = app.displays.find(app.ui.show_display, app.ui.show_display_id.as_ref());
+    let initial = match found {
+        Some(i) => i.to_string(),
+        None if saved => KEEP_SAVED_DISPLAY.into(),
+        None => String::new(),
+    };
+    let field = d.get("showDisplay", &initial);
+    // `Err`: the saved display, which is not connected now; OK keeps it.
+    let mut display = if field == KEEP_SAVED_DISPLAY { Err(()) } else { Ok(field.parse::<usize>().ok()) };
     let enabled = d.get("type", &sh.show_type) != "browsed";
     ui.add_enabled_ui(enabled, |ui| {
         ui.horizontal(|ui| {
             let label = ui.label("Slide show monitor:");
             let display_label = |i: usize| app.displays.list.get(i).map(|screen| format!("Display {} ({} × {})", i + 1, screen.w, screen.h));
+            let selected = match display {
+                Err(()) => SAVED_DISPLAY_LABEL.into(),
+                Ok(i) => i.and_then(display_label).unwrap_or_else(|| "Automatic".into()),
+            };
             craft_ui::ComboBox::from_id_salt("setup-show-monitor")
-                .selected_text(display.and_then(display_label).unwrap_or_else(|| "Automatic".into()))
+                .selected_text(selected)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut display, None, "Automatic");
+                    if saved && found.is_none() {
+                        ui.selectable_value(&mut display, Err(()), SAVED_DISPLAY_LABEL);
+                    }
+                    ui.selectable_value(&mut display, Ok(None), "Automatic");
                     for (i, screen) in app.displays.list.iter().enumerate() {
-                        ui.selectable_value(&mut display, Some(i), format!("Display {} ({} × {})", i + 1, screen.w, screen.h));
+                        ui.selectable_value(&mut display, Ok(Some(i)), format!("Display {} ({} × {})", i + 1, screen.w, screen.h));
                     }
                 })
                 .response
@@ -298,10 +321,16 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, enabled, "Slide show monitor"));
         });
     });
-    d.fields.insert("showDisplay".into(), display.map_or_else(String::new, |i| i.to_string()));
+    let field = match display {
+        Err(()) => KEEP_SAVED_DISPLAY.into(),
+        Ok(i) => i.map_or_else(String::new, |i| i.to_string()),
+    };
+    d.fields.insert("showDisplay".into(), field);
     let (ok, cancel) = buttons(ui, "OK");
     if ok {
-        app.ui.show_display = display;
+        if let Ok(display) = display {
+            app.ui.set_show_display(display, &app.displays);
+        }
         let ty = d.get("type", "speaker");
         let custom = d.fields.get("custom").cloned().unwrap_or_default();
         run(app, "show.setup", json!({"type": ty, "loop": lp, "noNarration": nn, "noAnimation": na, "useTimings": ut, "custom": custom}));
