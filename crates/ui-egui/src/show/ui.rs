@@ -94,7 +94,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                     show.zoom_arm = false;
                 }
                 crate::presenter::Command::Key { name, command, shift, alt, ctrl } => {
-                    if let Some(key) = egui::Key::ALL.iter().copied().find(|key| key.name() == name) {
+                    if let Some(key) = egui::Key::from_name(&name) {
                         let modifiers = egui::Modifiers { command, shift, alt, ctrl, mac_cmd: command && !ctrl };
                         out.keep &= handle_keys(&mut show, &doc, now, vec![(key, modifiers)], false).0;
                     }
