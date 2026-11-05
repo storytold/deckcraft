@@ -339,7 +339,7 @@ pub(super) fn set_picture(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
-/// The answer of a command that regenerated a graphic's shapes: `{id, ids}` as `insert.smartArt`.
+/// The answer of a command that regenerated a graphic's shapes: the group's id and its new children's ids.
 fn regenerated(s: &Session, gid: ShapeId) -> Value {
     let kids: Vec<u32> = match s.doc().ok().and_then(|st| st.shape(gid).map(|g| g.kind.clone())) {
         Some(ShapeKind::Group { children, .. }) => children.iter().map(|c| c.id.0).collect(),
