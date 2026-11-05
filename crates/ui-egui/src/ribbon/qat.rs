@@ -28,12 +28,15 @@ impl Default for QatItem {
 }
 
 impl QatItem {
+    /// A toolbar entry for `id` with its English label and icon.
     pub fn new(id: &str, label: &str, icon: Icon) -> Self {
         QatItem { id: id.into(), params: Value::Null, label: label.into(), icon: icon.name().into() }
     }
+    /// The stored icon name as an [`Icon`]; an unknown name draws as [`Icon::More`].
     fn icon(&self) -> Icon {
         Icon::from_name(&self.icon).unwrap_or(Icon::More)
     }
+    /// Whether this entry is `id` with `params`; a null and an empty object both mean no parameters.
     fn same(&self, id: &str, params: &Value) -> bool {
         self.id == id && (self.params == *params || (self.params.is_null() && params.as_object().is_some_and(|o| o.is_empty())))
     }
@@ -90,6 +93,8 @@ pub fn command(app: &mut SlideApp, p: &Value) -> Result<Value, String> {
     serde_json::to_value(&app.ui.qat).map_err(|e| e.to_string())
 }
 
+/// Run a toolbar entry, routing the commands the toolbar handles itself and letting the rest go
+/// through the app's command dispatcher.
 fn run(app: &mut SlideApp, q: &QatItem) {
     match q.id.as_str() {
         "file.save" => app.save(),
@@ -121,6 +126,8 @@ pub fn run_index(app: &mut SlideApp, index: usize) -> bool {
     true
 }
 
+/// The tooltip for a toolbar entry: its translated label plus the command's shortcut and the
+/// Windows Alt+1–9 position, when either applies.
 fn tip(lang: Resolved, q: &QatItem, index: usize, mac: bool) -> String {
     let label = i18n::qat_label(lang, &q.label);
     let sc =

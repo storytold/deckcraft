@@ -83,12 +83,14 @@ impl LanguageChoice {
 }
 
 impl Serialize for LanguageChoice {
+    /// Save the choice as the code [`LanguageChoice::code`] returns.
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(self.code())
     }
 }
 
 impl<'de> Deserialize<'de> for LanguageChoice {
+    /// Read a saved code or locale tag; an unknown value selects [`Self::System`].
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let raw = String::deserialize(deserializer)?;
         Ok(Self::from_tag(&raw).unwrap_or(Self::System))
@@ -103,6 +105,8 @@ pub enum Resolved {
 }
 
 impl Resolved {
+    /// The code reported by `app.language` and `language` (not a picker code: `System` never
+    /// reaches here).
     pub fn code(self) -> &'static str {
         match self {
             Self::English => "en",
@@ -123,11 +127,13 @@ pub fn system_tag() -> Option<String> {
     TAG.get_or_init(read_system_tag).clone()
 }
 
+/// Read the desktop's locale once; an empty value counts as no tag.
 #[cfg(all(not(target_arch = "wasm32"), not(test)))]
 fn read_system_tag() -> Option<String> {
     sys_locale::get_locale().filter(|tag| !tag.trim().is_empty())
 }
 
+/// Tests and the web build have no desktop locale, so `System` resolves to English there.
 #[cfg(any(target_arch = "wasm32", test))]
 fn read_system_tag() -> Option<String> {
     // Tests pin `System` to English so an operating system set to Traditional Chinese does not
@@ -135,12 +141,16 @@ fn read_system_tag() -> Option<String> {
     None
 }
 
+/// Trim a locale tag and normalise it for matching: drop encoding and modifier suffixes, turn `_`
+/// into `-`, and lower-case it.
 fn normalize(raw: &str) -> String {
     let trimmed = raw.trim();
     let head = trimmed.split(['.', '@']).next().unwrap_or(trimmed);
     head.replace('_', "-").to_ascii_lowercase()
 }
 
+/// Whether a normalised tag names Traditional Chinese (`zh-Hant`, `zh-TW`, `zh-HK`, `zh-MO`, with
+/// optional region suffixes).
 fn is_traditional(tag: &str) -> bool {
     matches!(tag, "zh-hant" | "zh-tw" | "zh-hk" | "zh-mo")
         || tag.starts_with("zh-hant-")
@@ -149,6 +159,8 @@ fn is_traditional(tag: &str) -> bool {
         || tag.starts_with("zh-mo-")
 }
 
+/// Whether a normalised tag names Simplified Chinese (`zh`, `zh-Hans`, `zh-CN`, `zh-SG`, with
+/// optional region suffixes). There is no Simplified catalog, so those tags resolve to English.
 fn is_simplified(tag: &str) -> bool {
     matches!(tag, "zh" | "zh-hans" | "zh-cn" | "zh-sg") || tag.starts_with("zh-hans-") || tag.starts_with("zh-cn-") || tag.starts_with("zh-sg-")
 }

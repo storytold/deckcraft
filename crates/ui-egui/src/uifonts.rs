@@ -27,6 +27,8 @@ const MAX_AGGREGATE_BYTES: usize = 3 * MAX_FACE_BYTES;
 const TRADITIONAL_FAMILIES: &[&str] =
     &["Microsoft JhengHei", "PingFang TC", "Heiti TC", "Songti TC", "MingLiU", "DFKai-SB", "AR PL UMing TW", "WenQuanYi Zen Hei"];
 
+/// Whether a face may be borrowed for the interface: not a colour face, and within the per-face
+/// byte limit.
 fn accepts_face(byte_len: usize, color: bool) -> bool {
     !color && byte_len <= MAX_FACE_BYTES
 }
