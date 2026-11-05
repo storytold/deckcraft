@@ -537,6 +537,36 @@ fn a_transition_keeps_the_old_slide_in_its_own_texture() {
     assert!(show.tex.is_none(), "the new slide gets a texture of its own instead of overwriting the old one");
 }
 
+/// A microphone restarted after a pause can report another rate; the take is one buffer at the
+/// first rate, so the resumed samples are resampled to it instead of playing at the wrong speed.
+#[test]
+fn a_resumed_narration_is_resampled_to_the_takes_rate() {
+    struct TwoTakes {
+        takes: Vec<(u32, Vec<f32>)>,
+    }
+    impl deckcraft_media::MicIn for TwoTakes {
+        fn start(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+        fn take(&mut self) -> (u32, Vec<f32>) {
+            if self.takes.is_empty() { (0, Vec::new()) } else { self.takes.remove(0) }
+        }
+        fn stop(&mut self) {}
+    }
+    let mut session = deckcraft_engine::Session::with_new();
+    let doc = session.active().unwrap().doc.clone();
+    let mut services = crate::Services::default();
+    services.mic = Some(Box::new(TwoTakes { takes: vec![(8_000, vec![0.5; 8_000]), (16_000, vec![0.5; 16_000])] }));
+    let mut app = SlideApp::new(session, services);
+    let mut show = Show::new(&doc, 0, false, true);
+    show.record = true;
+    show.mic_ok = true;
+    take_narration(&mut app, &mut show);
+    assert_eq!((show.narration[0].1, show.narration[0].2.len()), (8_000, 8_000), "one second at 8 kHz");
+    take_narration(&mut app, &mut show);
+    assert_eq!(show.narration[0].2.len(), 16_000, "the 16 kHz second is halved to the take's 8 kHz, so a second stays a second");
+}
+
 /// Audio filed for a slide is appended only within one visit: a slide change starts over, or a
 /// pause-and-roam would join two visits' narration while the timing keeps the last one.
 #[test]

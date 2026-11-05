@@ -1013,9 +1013,16 @@ fn take_narration(app: &mut SlideApp, show: &mut Show) {
     let slide = show.applied_slide;
     let same_visit = show.narration_slide == Some(slide);
     if let Some(i) = show.narration.iter().position(|(s, _, _)| *s == slide).filter(|_| same_visit) {
-        // A take paused on this slide and resumed: the microphone restarted, so only the samples
-        // are appended. A changed rate keeps the first take's rate (the two would not line up).
-        show.narration[i].2.extend_from_slice(&samples);
+        // A take paused on this slide and resumed: the microphone restarted, so its samples are
+        // appended. A restarted device can report another rate; the take is one buffer at the
+        // first rate, so the new samples are resampled to it instead of playing at the wrong speed.
+        let stored = show.narration[i].1;
+        if stored == rate || stored == 0 || rate == 0 {
+            show.narration[i].2.extend_from_slice(&samples);
+        } else {
+            let mono = deckcraft_media::audio::Pcm { rate, channels: 1, samples };
+            show.narration[i].2.extend_from_slice(&deckcraft_media::audio::resample(&mono, stored).samples);
+        }
     } else {
         // A new visit to the slide replaces what it had: the timing and the laser keep the last
         // visit too, so the audio must not be longer than the slide's recorded advance.
