@@ -307,7 +307,7 @@ pub fn master_text_pieces(pres: &Presentation, m: &deckcraft_model::Master, pape
                 .body
                 .paragraphs
                 .get(run.para)
-                .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>())
+                .map(|p| p.runs.iter().map(|r| r.content()).collect::<String>())
                 .unwrap_or_default()
                 .chars()
                 .skip(run.chars.0)
@@ -451,6 +451,17 @@ fn opaque_px(rgba: &mut [u8]) {
     }
 }
 
+/// Gives every fully transparent content pixel the backdrop's colour. The renderer leaves them
+/// RGB 0,0,0; a viewer that smooths the image blends colour and mask separately, so the black
+/// shows as a grey hairline around white pictures and shapes (#1455).
+fn fill_clear(front: &mut [u8], back: &[u8]) {
+    for (f, b) in front.as_chunks_mut::<4>().0.iter_mut().zip(back.as_chunks::<4>().0) {
+        if f[3] == 0 {
+            f[..3].copy_from_slice(&b[..3]);
+        }
+    }
+}
+
 /// Most bytes of opaque backdrop rasters kept to recognise a backdrop seen before.
 const BACKDROP_CACHE_BYTES: usize = 32 << 20;
 
@@ -511,11 +522,13 @@ impl Exporter<'_> {
         let k = b.width() / sw;
         // Raster at the requested dpi relative to the box size on paper.
         let scale = raster_scale(b.width(), (sw, sh), self.opts.dpi);
-        let ropts = RenderOpts { scale, threads: 4, ..Default::default() };
+        // One clock reading for the raster and the text layer, so a date field cannot differ between them.
+        let ropts = RenderOpts { scale, threads: 4, now: deckcraft_text::datetime::DateTime::now_local(), ..Default::default() };
         // Two rasters per slide: the backdrop (background, master and layout graphics) is the same
         // on every slide that shares its layout, so the writer stores it once, and the slide's own
         // shapes draw over it (#845).
-        let back = deckcraft_render::render_slide_part(pres, i, deckcraft_render::SlidePart::Backdrop, &ropts);
+        let mut back = deckcraft_render::render_slide_part(pres, i, deckcraft_render::SlidePart::Backdrop, &ropts);
+        opaque(&mut back.pixels);
         let front = deckcraft_render::render_slide_part(pres, i, deckcraft_render::SlidePart::Content, &ropts);
         let (w, h) = (back.width, back.height);
         if w > 0
@@ -523,11 +536,15 @@ impl Exporter<'_> {
             && let Some(size) = Size::from_wh(b.width() as f32, b.height() as f32)
         {
             s.push_transform(&Transform::from_translate(b.x0 as f32, b.y0 as f32));
-            s.draw_image(self.backdrops.image(back), size);
             // Taken, not copied: a print-resolution slide is ~16 MB.
             let mut rgba = front.pixels;
-            if rgba.as_chunks::<4>().0.iter().any(|px| px[3] != 0) {
+            let content = rgba.as_chunks::<4>().0.iter().any(|px| px[3] != 0);
+            if content {
+                fill_clear(&mut rgba, &back.pixels);
                 straight(&mut rgba);
+            }
+            s.draw_image(self.backdrops.image(back), size);
+            if content {
                 s.draw_image(Image::from_rgba8(rgba, w, h), size);
             }
             s.pop();
@@ -547,7 +564,7 @@ impl Exporter<'_> {
         }
         if self.opts.text_layer {
             let view = Affine::translate((b.x0, b.y0)) * Affine::scale(k);
-            for pt in deckcraft_render::place_slide(pres, i).texts {
+            for pt in deckcraft_render::place_slide_with(pres, i, &ropts).texts {
                 self.text_layer(s, &pt, view, false)?;
             }
             let _ = sh;
@@ -565,7 +582,7 @@ impl Exporter<'_> {
                 .body
                 .paragraphs
                 .get(run.para)
-                .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>())
+                .map(|p| p.runs.iter().map(|r| r.content()).collect::<String>())
                 .unwrap_or_default()
                 .chars()
                 .skip(run.chars.0)

@@ -7,6 +7,7 @@ use deckcraft_fonts::FontDb;
 use egui::{Color32, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use skrifa::MetadataProvider as _;
 
 use super::Dialog;
 use crate::{SlideApp, theme};
@@ -15,6 +16,8 @@ pub(crate) const RECENT_MAX: usize = 20;
 const COLS: usize = 16;
 const CELL: f32 = 32.0;
 const ROWS: usize = 7;
+// A valid cmap cannot map more characters than there are Unicode code points.
+const MAX_CMAP_MAPPINGS: usize = 0x11_0000;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RecentSymbol {
@@ -75,7 +78,10 @@ impl SymbolForm {
         if self.face_id == Some(face.id()) {
             return;
         }
-        self.chars = face.chars().into_iter().filter(|(c, gid)| !c.is_control() && *gid != 0).map(|(c, _)| c).collect();
+        self.chars = face
+            .skrifa()
+            .map(|font| bounded_chars(font.charmap().mappings().map(|(cp, gid)| (cp, gid.to_u32()))))
+            .unwrap_or_default();
         self.face_id = Some(face.id());
         if self.selected.is_none_or(|c| self.chars.binary_search(&c).is_err()) {
             self.selected = self.chars.iter().copied().find(|c| !c.is_whitespace());
@@ -158,6 +164,25 @@ impl SymbolForm {
         }
         response.on_hover_text(format!("{label} · {font}"))
     }
+}
+
+/// Bound work before filtering untrusted mappings, and reject an oversized cmap
+/// rather than showing a silently truncated character list.
+fn bounded_chars(mappings: impl Iterator<Item = (u32, u32)>) -> Vec<char> {
+    let mut chars = Vec::new();
+    for (index, (cp, gid)) in mappings.take(MAX_CMAP_MAPPINGS + 1).enumerate() {
+        if index == MAX_CMAP_MAPPINGS {
+            return Vec::new();
+        }
+        if gid != 0
+            && let Some(c) = char::from_u32(cp).filter(|c| !c.is_control())
+        {
+            chars.push(c);
+        }
+    }
+    chars.sort_unstable();
+    chars.dedup();
+    chars
 }
 
 /// Render through the document renderer, rather than substituting the interface font.
@@ -285,7 +310,7 @@ fn symbols_ui(app: &SlideApp, ui: &mut Ui, form: &mut SymbolForm) -> bool {
         });
     });
     if form.chars.is_empty() {
-        ui.label("This font has no characters to show.");
+        ui.label("No characters are available to browse in this font. Try another font.");
     }
     if !app.ui.recent_symbols.is_empty() {
         ui.label("Recently used symbols");

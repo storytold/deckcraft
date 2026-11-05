@@ -50,7 +50,8 @@ fn double_click(h: &mut Harness<'_, SlideApp>, p: Pos2) {
     h.run_steps(2);
 }
 
-fn drag(h: &mut Harness<'_, SlideApp>, from: Pos2, to: Pos2) {
+/// Presses at `from`, moves to `to` in a few steps and releases there.
+pub(crate) fn drag(h: &mut Harness<'_, SlideApp>, from: Pos2, to: Pos2) {
     h.hover_at(from);
     h.run_steps(1);
     h.drag_at(from);
@@ -170,6 +171,55 @@ fn dragging_a_section_moves_it_and_keeps_it_collapsed() {
     assert!(beta.top() < alpha.top());
 }
 
+fn slide_order(h: &Harness<'_, SlideApp>) -> Vec<u32> {
+    h.state().session.active().unwrap().doc.slides.iter().map(|s| s.id.0).collect()
+}
+
+fn selected_slides(h: &Harness<'_, SlideApp>) -> Vec<u32> {
+    h.state().session.active().unwrap().selection.slides.iter().map(|s| s.0).collect()
+}
+
+#[test]
+fn dragging_a_selected_slide_moves_the_whole_selection() {
+    let mut h = harness(false);
+    let ids = slide_order(&h);
+    h.state_mut().run("slide.selectSlides", json!({"ids": [ids[0], ids[2]]})).unwrap();
+    h.run_steps(2);
+    let (first, last) = (h.get_by_label("Slide 1").rect(), h.get_by_label("Slide 4").rect());
+    // The right half of the last slide: the gap after it.
+    drag(&mut h, first.center(), Pos2::new(last.right() - 10.0, last.center().y));
+    assert_eq!(slide_order(&h), [ids[1], ids[3], ids[0], ids[2]]);
+    assert_eq!(selected_slides(&h), [ids[0], ids[2]], "the moved slides stay selected");
+    assert!(h.state().thumb_drag.is_none());
+    h.state_mut().run("edit.undo", json!({})).unwrap();
+    assert_eq!(slide_order(&h), ids, "one undo puts both back");
+}
+
+#[test]
+fn dragging_an_unselected_slide_moves_only_it() {
+    let mut h = harness(false);
+    let ids = slide_order(&h);
+    h.state_mut().run("slide.selectSlides", json!({"ids": [ids[0], ids[2]]})).unwrap();
+    h.run_steps(2);
+    let (second, last) = (h.get_by_label("Slide 2").rect(), h.get_by_label("Slide 4").rect());
+    drag(&mut h, second.center(), Pos2::new(last.right() - 10.0, last.center().y));
+    assert_eq!(slide_order(&h), [ids[0], ids[2], ids[3], ids[1]]);
+    assert_eq!(selected_slides(&h), [ids[1]]);
+}
+
+#[test]
+fn dropping_a_selection_where_it_is_changes_nothing() {
+    let mut h = harness(false);
+    let ids = slide_order(&h);
+    h.state_mut().run("slide.selectSlides", json!({"ids": [ids[1], ids[2]]})).unwrap();
+    h.run_steps(2);
+    let steps = h.state().session.active().unwrap().history.undo.len();
+    let (second, third) = (h.get_by_label("Slide 2").rect(), h.get_by_label("Slide 3").rect());
+    drag(&mut h, second.center(), Pos2::new(third.right() - 10.0, third.center().y));
+    assert_eq!(slide_order(&h), ids);
+    assert_eq!(h.state().session.active().unwrap().history.undo.len(), steps, "a drop in place adds no undo step");
+}
+
 #[test]
 fn ctrl_a_selects_every_slide() {
     let mut h = harness(false);
@@ -208,4 +258,25 @@ fn shift_and_ctrl_shift_clicks_select_ranges() {
     click(&mut h, 3, Modifiers::COMMAND);
     click(&mut h, 4, Modifiers::COMMAND | Modifiers::SHIFT);
     assert_eq!(selected(&h), vec![0, 2, 3]);
+}
+
+/// The outline view lists a slide's title and body text, not its footer, date and slide-number
+/// placeholders, as PowerPoint's does: turning them on leaves the slide's outline block as it was.
+#[test]
+fn the_outline_view_leaves_footer_date_and_slide_number_out() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "Agenda", "body": "First point\nSecond point"})).unwrap();
+    let slide = |s: &Session| {
+        let st = s.doc().unwrap();
+        st.doc.slides[st.selection.slide].clone()
+    };
+    let plain = super::outline_estimate(&slide(&s));
+    s.execute(
+        "design.headerFooter",
+        &json!({"footer": true, "footerText": "Company Confidential", "slideNumber": true, "date": true, "dateText": "1 May 2026"}),
+    )
+    .unwrap();
+    let with_footer = slide(&s);
+    assert!(with_footer.shapes.iter().any(|x| x.ph_type().is_some_and(|k| k.is_footer_kind())), "the footers are on the slide");
+    assert_eq!(super::outline_estimate(&with_footer), plain);
 }

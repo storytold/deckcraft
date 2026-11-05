@@ -216,8 +216,10 @@ pub(crate) fn insert_field(s: &mut Session, field: &str, text: &str) -> Result<V
     let text = if text.is_empty() { "#".to_string() } else { text.to_string() };
     edit_text(s, move |body, t| {
         let (a, b) = t.ordered();
+        let resumed = t.resumed_props().cloned();
+        t.typing_props = None;
         let at = ed::delete(body, a, b);
-        let props = ed::props_at(body, at);
+        let props = resumed.unwrap_or_else(|| ed::props_at(body, at));
         let src = TextBody {
             paragraphs: vec![deckcraft_model::text::Paragraph {
                 runs: vec![Run { text: text.clone(), props, kind: RunKind::Field { field: field.clone() } }],

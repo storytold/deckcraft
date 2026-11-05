@@ -1,7 +1,7 @@
 use super::{
     Ctx, Fields, Fill, Image, Opts, PathMorph, Point, RENDERER, Rect, Region, RenderOpts, Renderer, Rgba, ShapeState, SlideFields, TextMorph,
     crop_dest, dpi_for_scale, gif_frame, image_dpi, images, morph_path, morph_text, needs_filters, parse_path, pasteboard_region, place_slide,
-    render_blend, render_shapes, render_slide, render_slide_drawn, slide_extent, text_transform,
+    place_slide_with, render_blend, render_shapes, render_slide, render_slide_drawn, slide_extent, text_transform,
 };
 use deckcraft_model::chart::{ChartType, Trendline, TrendlineType};
 use deckcraft_model::style::ColorRef;
@@ -516,6 +516,56 @@ fn glow_of_a_shape_with_no_fill_and_no_line_is_not_drawn() {
 }
 
 #[test]
+fn shadow_and_glow_keep_an_even_odd_shapes_hole() {
+    // #1596: a donut is one even-odd subpath — its hole exists only under the
+    // even-odd rule. The effects were cast from a merged silhouette filled
+    // NonZero, so the shadow and the glow filled the hole solid. The hole's
+    // centre must stay the slide's white in both, while the effects still draw.
+    let donut = |effects: deckcraft_model::Effects| {
+        let mut sh = Shape {
+            id: ShapeId(612),
+            xfrm: Some(Xfrm::new(50.0, 50.0, 200.0, 200.0)),
+            geom: Geom::preset("donut"),
+            fill: Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 160, 0)))),
+            ..Default::default()
+        };
+        sh.effects = Some(effects);
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let img = donut(deckcraft_model::Effects {
+        outer_shadow: Some(deckcraft_model::style::Shadow {
+            color: ColorRef::rgb(deckcraft_color::Rgba::BLACK),
+            blur: 8.0,
+            dist: 0.0,
+            dir: 45.0,
+            inner: false,
+            sx: 1.0,
+            sy: 1.0,
+            kx: 0.0,
+            ky: 0.0,
+            align: String::new(),
+            rotate_with_shape: false,
+        }),
+        ..Default::default()
+    });
+    let hole = img.pixel(150, 150);
+    assert!(hole[0] > 245 && hole[1] > 245 && hole[2] > 245, "shadow in the hole: {hole:?}");
+    // The shadow still falls around the shape (just below its bottom edge).
+    let below = img.pixel(150, 251);
+    assert!(below[0] < 200 && below[0] == below[2], "no shadow below: {below:?}");
+
+    let img = donut(deckcraft_model::Effects {
+        glow: Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0)), radius: 8.0 }),
+        ..Default::default()
+    });
+    let hole = img.pixel(150, 150);
+    assert!(hole[0] > 245 && hole[1] > 245 && hole[2] > 245, "glow in the hole: {hole:?}");
+    // The ring itself is the shape's orange.
+    let ring = img.pixel(150, 75);
+    assert!(ring[0] > 200 && ring[1] > 100 && ring[2] < 100, "ring: {ring:?}");
+}
+
+#[test]
 fn placeholder_prompts_only_in_edit_view() {
     let p = Presentation::default();
     let edit = render_slide(&p, 0, &RenderOpts { scale: 0.5, edit: true, ..Default::default() });
@@ -978,6 +1028,7 @@ fn a_linear_gradient_ramps_like_powerpoint() {
             stops: vec![stop(0.0, deckcraft_color::Rgba::rgb(0, 0, 0)), stop(1.0, deckcraft_color::Rgba::rgb(255, 255, 255))],
             shape: GradientShape::Linear { angle: 0.0, scaled: false },
             rotate_with_shape: true,
+            flip: None,
         })),
         line: Some(deckcraft_model::style::Line { fill: Some(Fill::None), ..Default::default() }),
         ..Default::default()
@@ -1003,6 +1054,7 @@ fn a_gradient_with_a_stop_off_the_end_stays_linear() {
             stops: vec![stop(0.2, deckcraft_color::Rgba::rgb(0, 0, 0)), stop(1.0, deckcraft_color::Rgba::rgb(255, 255, 255))],
             shape: GradientShape::Linear { angle: 0.0, scaled: false },
             rotate_with_shape: true,
+            flip: None,
         })),
         line: Some(deckcraft_model::style::Line { fill: Some(Fill::None), ..Default::default() }),
         ..Default::default()
@@ -1044,6 +1096,7 @@ fn a_shape_filled_with_the_background_shows_the_slide_background() {
             stops: vec![stop(0.0, 0), stop(0.5, 0), stop(1.0, 200)],
             shape: GradientShape::Linear { angle: 0.0, scaled: false },
             rotate_with_shape: true,
+            flip: None,
         }),
     });
     let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
@@ -1145,6 +1198,7 @@ fn a_text_gradient_starts_over_on_every_line() {
             stops: vec![stop(0.0, 0), stop(1.0, 255)],
             shape: GradientShape::Linear { angle: 90.0, scaled: false },
             rotate_with_shape: true,
+            flip: None,
         }));
     }
     sh.text = Some(t);
@@ -1306,6 +1360,7 @@ fn rect_path_gradients_draw_x_shaped_contours() {
             stops: vec![stop(0.0, 0), stop(0.5, 128), stop(1.0, 255)],
             shape: GradientShape::Path { path: "rect".into(), focus: [0.5, 0.5, 0.5, 0.5] },
             rotate_with_shape: true,
+            flip: None,
         })),
         line: Some(deckcraft_model::style::Line { fill: Some(Fill::None), ..Default::default() }),
         ..Default::default()
@@ -1774,6 +1829,28 @@ fn the_editor_pasteboard_draws_shapes_off_the_slide() {
     assert_eq!(at(200, 300), [255, 255, 255, 255]);
     // The drawing's reach, in slide space.
     assert!(drawn.x0 <= -100.0 && drawn.y1 >= 660.0 && drawn.x1 >= 960.0, "{drawn:?}");
+}
+
+#[test]
+fn animation_state_skips_layout_and_master_shapes_sharing_a_slide_shape_id() {
+    let mut p = Presentation::default();
+    let bar = |x| Shape {
+        id: ShapeId(77),
+        xfrm: Some(Xfrm::new(x, 400.0, 100.0, 60.0)),
+        fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(200, 0, 0)))),
+        ..Default::default()
+    };
+    let lid = p.slides[0].layout;
+    let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+    m.shapes.push(bar(100.0));
+    m.layouts.iter_mut().find(|l| l.id == lid).expect("layout").shapes.push(bar(400.0));
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes.push(bar(700.0));
+    let hide = |_: ShapeId| ShapeState { visible: false, ..Default::default() };
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, state: Some(&hide), ..Default::default() });
+    for x in [150, 450] {
+        assert_eq!(img.pixel(x, 430)[..3], [200, 0, 0], "the backdrop bar at x={x} stays");
+    }
+    assert_ne!(img.pixel(750, 430)[..3], [200, 0, 0], "the slide's own shape with that id is hidden");
 }
 
 #[test]
@@ -2894,6 +2971,27 @@ fn empty_bullet_is_gray_only_while_editing_and_never_in_exports() {
     assert!(changed.iter().all(|(px, _)| px[0] >= 179 && px[0] == px[1] && px[1] == px[2]));
 }
 
+#[test]
+fn placed_text_holds_the_field_value_not_the_saved_placeholder() {
+    let mut p = deck_with(vec![field_shape(Some("slidenum"), "<#>")]);
+    let second = p.slides[0].clone();
+    p.slides.push(second);
+    let placed = place_slide(&p, 1);
+    assert_eq!(placed.texts.len(), 1);
+    assert_eq!(placed.texts[0].body.text(), "2");
+    // The layout was drawn from the same value, so the offsets agree with the body.
+    assert_eq!(placed.texts[0].layout.runs.iter().map(|r| r.chars.1).max(), Some(1));
+}
+
+#[test]
+fn placed_text_takes_its_date_from_the_given_render_options() {
+    use deckcraft_text::datetime::DateTime;
+    let p = deck_with(vec![field_shape(Some("datetime1"), "1/1/2000")]);
+    let at = |now: DateTime| place_slide_with(&p, 0, &RenderOpts { now: Some(now), ..Default::default() });
+    assert_eq!(at(DateTime::new(2026, 10, 9, 20, 5, 7)).texts[0].body.text(), "10/9/2026");
+    assert_eq!(at(DateTime::new(2027, 3, 4, 0, 0, 0)).texts[0].body.text(), "3/4/2027");
+}
+
 /// A chart that has no text colour of its own takes PowerPoint's default, the theme's text colour
 /// at 65 % plus 35 %: light on Nocturne's dark slides (it used to be a fixed grey, near-invisible
 /// there), 595959 grey on Harbor's light ones.
@@ -2950,4 +3048,60 @@ fn pie_data_labels_take_the_chart_text_colour_when_it_has_one() {
     assert_eq!(count(&plain, &red), 0, "no red without a text colour");
     assert!(count(&coloured, &red) > 30, "the labels take the chart's red: {} red pixels", count(&coloured, &red));
     assert!(count(&plain, &white) > count(&coloured, &white), "the labels were white before");
+}
+
+/// #1165: an ellipse sized at the EMU limit, crossing the slide, made vello's flattener allocate a
+/// buffer from its on-screen length and abort. It is skipped; the rest of the slide still draws.
+#[test]
+fn a_shape_far_larger_than_any_screen_is_skipped_not_flattened() {
+    let huge = Shape {
+        id: ShapeId(501),
+        geom: Geom::preset("ellipse"),
+        xfrm: Some(Xfrm::new(-5e17, -5e17, 1e18, 1e18)),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent2)),
+        ..Default::default()
+    };
+    let normal = Shape {
+        id: ShapeId(502),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)),
+        ..Default::default()
+    };
+    let p = deck_with(vec![huge, normal]);
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    let accent = p.masters[0].theme.colors.get(deckcraft_color::SchemeSlot::Accent1);
+    let px = img.pixel(200, 150);
+    assert!((px[0] as i32 - accent.r as i32).abs() <= 2, "{px:?} vs {accent:?}");
+    assert_eq!(img.pixel(50, 50), [255, 255, 255, 255], "the huge ellipse is not drawn");
+}
+
+/// #1165: a path with a NaN point is not drawn, even when the shape's frame is finite and small
+/// (a bounding box, or a union with the frame, would hide the NaN).
+#[test]
+fn a_shape_whose_outline_is_not_finite_is_not_drawable() {
+    let geo = |pts: &[(f64, f64)]| {
+        let mut path = kurbo::BezPath::new();
+        path.move_to(pts[0]);
+        for p in &pts[1..] {
+            path.line_to(*p);
+        }
+        deckcraft_geom::preset::Geometry {
+            paths: vec![deckcraft_geom::preset::SubPath { path, fill: deckcraft_geom::preset::FillMode::Norm, stroke: true, even_odd: false }],
+            text_rect: kurbo::Rect::ZERO,
+            handles: vec![],
+            sites: vec![],
+        }
+    };
+    let m = kurbo::Affine::IDENTITY;
+    assert!(crate::geometry::drawable(&geo(&[(0.0, 0.0), (100.0, 50.0)]), m, 100.0, 50.0));
+    assert!(!crate::geometry::drawable(&geo(&[(0.0, 0.0), (f64::NAN, 50.0)]), m, 100.0, 50.0));
+    assert!(!crate::geometry::drawable(&geo(&[(0.0, 0.0), (f64::INFINITY, 50.0)]), m, 100.0, 50.0));
+    assert!(!crate::geometry::drawable(&geo(&[(0.0, 0.0), (1e18, 50.0)]), m, 100.0, 50.0));
+    // A quadratic whose extremum overflows kurbo's bounding box: its control point still counts.
+    let mut path = kurbo::BezPath::new();
+    path.move_to((0.0, 0.0));
+    path.quad_to((1e308, 0.0), (0.0, 0.0));
+    let mut quad = geo(&[(0.0, 0.0), (1.0, 1.0)]);
+    quad.paths[0].path = path;
+    assert!(!crate::geometry::drawable(&quad, m, 100.0, 50.0));
 }

@@ -39,6 +39,9 @@ fn code(h: &mut Harness<'_, SlideApp>, value: &str) {
 
 #[test]
 fn font_picker_code_insertion_recent_symbols_and_close() {
+    if !FontDb::global().has_family("Liberation Serif") {
+        return;
+    }
     let mut h = harness();
     assert!(form(&h).chars.len() > 189, "font coverage replaces the old fixed list");
     h.get_by_label("Font").click();
@@ -67,6 +70,20 @@ fn font_picker_code_insertion_recent_symbols_and_close() {
     let state = h.state().session.doc().unwrap();
     let body = deckcraft_engine::cmd::text::body_of(state, state.selection.text.as_ref().unwrap()).unwrap();
     assert_ne!(deckcraft_model::edit::props_at(body, (0, 3)).font.as_deref(), Some("Liberation Serif"));
+}
+
+#[test]
+fn cmap_characters_are_sorted_unique_and_exclude_invalid_or_missing_glyphs() {
+    let mappings = [('α' as u32, 1), ('A' as u32, 2), ('α' as u32, 1), (0xD800, 3), (0x11_0000, 4), (10, 5), ('B' as u32, 0)];
+    assert_eq!(bounded_chars(mappings.into_iter()), vec!['A', 'α']);
+}
+
+#[test]
+fn oversized_cmap_is_rejected_and_filtered_mappings_still_count_toward_budget() {
+    let mut examined = 0;
+    let mappings = std::iter::once(('A' as u32, 1)).chain(std::iter::repeat((u32::MAX, 0))).inspect(|_| examined += 1);
+    assert!(bounded_chars(mappings).is_empty());
+    assert_eq!(examined, MAX_CMAP_MAPPINGS + 1);
 }
 
 #[test]

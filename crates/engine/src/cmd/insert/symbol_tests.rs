@@ -172,3 +172,75 @@ fn first_strong_rtl_symbol_promotes_the_paragraph() {
         assert_eq!(body(&s.doc().unwrap().doc, id).text(), "ab");
     }
 }
+
+#[test]
+fn fields_and_dates_after_a_symbol_use_the_surrounding_font() {
+    for (command, params) in [
+        ("insert.slideNumber", json!({})),
+        ("insert.dateTime", json!({"format": "datetime10", "update": true})),
+        ("insert.dateTime", json!({"format": "datetime10", "update": false, "language": "en-GB"})),
+    ] {
+        let (mut s, id) = editing();
+        s.execute("insert.symbol", &json!({"text": "©", "font": "Liberation Serif"})).unwrap();
+        s.execute(command, &params).unwrap();
+        let text = body(&s.doc().unwrap().doc, id);
+        let caret = s.doc().unwrap().selection.text.as_ref().unwrap().caret;
+        assert!(caret.1 > 2, "{command}: no text inserted");
+        assert_eq!(deckcraft_model::edit::props_at(&text, (0, 2)).font.as_deref(), Some("Liberation Serif"));
+        assert_eq!(deckcraft_model::edit::props_at(&text, (0, 3)).font.as_deref(), Some("Inter"), "{command}");
+        assert!(s.doc().unwrap().selection.text.as_ref().unwrap().typing_props.is_none());
+        s.execute("text.insert", &json!({"text": "Z"})).unwrap();
+        let text = body(&s.doc().unwrap().doc, id);
+        assert_eq!(deckcraft_model::edit::props_at(&text, (caret.0, caret.1 + 1)).font.as_deref(), Some("Inter"));
+        s.execute("edit.undo", &json!({})).unwrap();
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(body(&s.doc().unwrap().doc, id).text(), "a©b");
+        assert_eq!(s.execute("format.state", &json!({})).unwrap()["font"], "Inter");
+    }
+}
+
+#[test]
+fn inserted_hyperlink_after_a_symbol_uses_the_surrounding_font() {
+    let (mut s, id) = editing();
+    s.execute("text.edit", &json!({"id": id.0, "at": [0, 2]})).unwrap();
+    s.execute("insert.symbol", &json!({"text": "©", "font": "Liberation Serif"})).unwrap();
+    s.execute("insert.hyperlink", &json!({"url": "https://example.com", "text": "link"})).unwrap();
+    let text = body(&s.doc().unwrap().doc, id);
+    assert_eq!(text.text(), "ab©link");
+    let props = deckcraft_model::edit::props_at(&text, (0, 4));
+    assert_eq!(props.font.as_deref(), Some("Inter"));
+    assert!(props.link.is_some());
+    assert!(s.doc().unwrap().selection.text.as_ref().unwrap().typing_props.is_none());
+}
+
+#[test]
+fn formatting_a_word_after_a_font_overridden_symbol_changes_the_word_and_pending_props() {
+    let (mut s, id) = editing();
+    s.execute("insert.symbol", &json!({"text": "x", "font": "Liberation Serif"})).unwrap();
+    s.execute("format.bold", &json!({})).unwrap();
+    let text = body(&s.doc().unwrap().doc, id);
+    assert_eq!(text.text(), "axb");
+    for index in 1..=3 {
+        assert_eq!(deckcraft_model::edit::props_at(&text, (0, index)).bold, Some(true));
+    }
+    assert_eq!(deckcraft_model::edit::props_at(&text, (0, 2)).font.as_deref(), Some("Liberation Serif"));
+    s.execute("text.insert", &json!({"text": "Z"})).unwrap();
+    let text = body(&s.doc().unwrap().doc, id);
+    assert_eq!(text.text(), "axZb");
+    let props = deckcraft_model::edit::props_at(&text, (0, 3));
+    assert_eq!(props.font.as_deref(), Some("Inter"));
+    assert_eq!(props.bold, Some(true));
+}
+
+#[test]
+fn linking_a_word_after_a_font_overridden_symbol_links_existing_text() {
+    let (mut s, id) = editing();
+    s.execute("insert.symbol", &json!({"text": "x", "font": "Liberation Serif"})).unwrap();
+    s.execute("insert.hyperlink", &json!({"url": "https://example.com"})).unwrap();
+    let text = body(&s.doc().unwrap().doc, id);
+    assert_eq!(text.text(), "axb");
+    for index in 1..=3 {
+        assert!(deckcraft_model::edit::props_at(&text, (0, index)).link.is_some());
+    }
+    assert_eq!(deckcraft_model::edit::props_at(&text, (0, 2)).font.as_deref(), Some("Liberation Serif"));
+}

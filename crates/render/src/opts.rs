@@ -95,6 +95,7 @@ impl Default for RenderOpts<'_> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct SlideFields {
     pub(crate) num: u32,
     /// Text for every date field instead of the date ([`RenderOpts::date_text`]).
