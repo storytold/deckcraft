@@ -130,19 +130,21 @@ fn read_entry_max(z: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str, max: u64) 
     read_entry_counted(z, name, max, &mut 0)
 }
 
-/// [`read_entry_max`] within `left` (and [`MAX_ENTRY`]), charging `left` for every byte inflated,
-/// including those inflated before a decode or CRC error, so a member that fails late still
-/// spends the shared budget it used.
-fn read_entry_charged(z: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str, left: &mut u64) -> Result<Vec<u8>> {
+fn read_entry_charged_index(z: &mut zip::ZipArchive<Cursor<&[u8]>>, index: usize, name: &str, left: &mut u64) -> Result<Vec<u8>> {
     let mut spent = 0;
-    let out = read_entry_counted(z, name, (*left).min(MAX_ENTRY), &mut spent);
+    let out = read_entry_counted_index(z, index, name, (*left).min(MAX_ENTRY), &mut spent);
     *left = left.saturating_sub(spent);
     out
 }
 
 /// [`read_entry_max`], adding the bytes inflated to `spent` whether or not the read succeeds.
 fn read_entry_counted(z: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str, max: u64, spent: &mut u64) -> Result<Vec<u8>> {
-    let f = z.by_name(name).map_err(|e| FormatError::Damaged(format!("{name}: {e}")))?;
+    let index = z.index_for_name(name).ok_or_else(|| FormatError::Damaged(format!("{name}: specified file not found in archive")))?;
+    read_entry_counted_index(z, index, name, max, spent)
+}
+
+fn read_entry_counted_index(z: &mut zip::ZipArchive<Cursor<&[u8]>>, index: usize, name: &str, max: u64, spent: &mut u64) -> Result<Vec<u8>> {
+    let f = z.by_index(index).map_err(|e| FormatError::Damaged(format!("{name}: {e}")))?;
     if f.size() > max {
         return Err(FormatError::Damaged(format!("{name} is too large")));
     }
@@ -193,14 +195,18 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
     let mut left = budget.total;
     for item in &mut p.media {
         let name = format!("media/{}", item.id.0);
-        let linked_only = item.link.is_some() && z.index_for_name(&name).is_none();
-        if z.by_name(&name).is_ok_and(|f| f.size() > left) {
+        let Some(index) = z.index_for_name(&name) else {
+            if item.link.is_none() {
+                damaged.push(format!("{name}: specified file not found in archive"));
+            }
+            continue;
+        };
+        if z.by_index(index).is_ok_and(|f| f.size() > left) {
             return Err(FormatError::Damaged("embedded media is larger than DeckCraft can open".into()));
         }
         // A failed read is charged for what it inflated, so later members can't reuse that budget.
-        match read_entry_charged(&mut z, &name, &mut left) {
+        match read_entry_charged_index(&mut z, index, &name, &mut left) {
             Ok(data) => item.data = Arc::new(data),
-            Err(_) if linked_only => {}
             Err(e) => damaged.push(e.to_string()),
         }
     }
