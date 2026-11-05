@@ -6840,6 +6840,51 @@ fn shrink_on_a_smartart_graphic_steps_from_the_renderer_calculated_scale() {
     assert!(z < 200.0 * 0.6, "200 pt drawn much smaller steps down from the drawn size, not from 200: {z}");
 }
 
+/// A resized graphic measures its text in the box each node has on the slide, as the renderer
+/// draws it: text that fits in the child space but overflows the shrunk graphic shares a shrink,
+/// and the shown size reflects it.
+#[test]
+fn a_resized_smartart_graphic_fits_its_text_in_the_displayed_box() {
+    let mut s = session();
+    let items: Vec<String> = (0..3).map(|i| format!("Step {i} of the plan with some words")).collect();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "verticalList", "items": items})).unwrap()["id"].as_u64().unwrap();
+    let id = ShapeId(gid as u32);
+    let scales = |s: &Session| -> Vec<f64> {
+        match s.doc().unwrap().shape(id).map(|x| &x.kind) {
+            Some(deckcraft_model::ShapeKind::Group { children, .. }) => children
+                .iter()
+                .filter_map(|c| c.text.as_ref())
+                .filter_map(|t| match t.body.autofit {
+                    Some(deckcraft_model::text::AutoFit::Shrink { font_scale, .. }) => Some(font_scale.unwrap_or(1.0)),
+                    _ => None,
+                })
+                .collect(),
+            _ => panic!("not a group"),
+        }
+    };
+    assert!(scales(&s).iter().all(|v| *v == 1.0), "the text fits the graphic at full size: {:?}", scales(&s));
+    let full = crate::cmd::smartart::shown_size(&s, id).unwrap();
+    // Shrink the group's box and keep its child space: the shapes draw at 0.35 of their size.
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), id).unwrap();
+        let x = g.xfrm.as_mut().unwrap();
+        x.w *= 0.35;
+        x.h *= 0.35;
+    }
+    let first = match s.doc().unwrap().shape(id).map(|x| &x.kind) {
+        Some(deckcraft_model::ShapeKind::Group { children, .. }) => children.iter().find(|c| c.text.is_some()).unwrap().id,
+        _ => panic!("not a group"),
+    };
+    crate::cmd::smartart::share_after_edit(&mut s, first).unwrap();
+    let v = scales(&s);
+    assert!(v.len() > 1 && v.iter().all(|x| *x == v[0] && *x < 1.0), "one shared shrink for the displayed box: {v:?}");
+    let shown = crate::cmd::smartart::shown_size(&s, id).unwrap();
+    assert!(shown < full, "the shown size {shown} reflects the shrink (was {full})");
+}
+
 /// Editing one node's text refits the whole graphic at one scale, so the other nodes do not keep
 /// the scale of the old text and Increase Font Size steps from what every node shows.
 #[test]

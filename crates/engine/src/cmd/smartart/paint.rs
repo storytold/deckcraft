@@ -213,19 +213,27 @@ pub(super) fn layout_items(d: &Diagram, area: Xfrm) -> Vec<Item> {
     v
 }
 
-/// The text of `sh` laid out as the renderer draws it (None: no text or no box).
-pub(super) fn laid_out(ctx: &deckcraft_model::resolve::Ctx<'_>, sh: &Shape) -> Option<deckcraft_text::TextLayout> {
+/// How much a resized graphic stretches its children on the slide: the group's box over its child
+/// space, per axis (1 where the child space is empty).
+pub(super) fn child_scale(group: &Xfrm, child: &Xfrm) -> (f64, f64) {
+    let k = |g: f64, c: f64| if c.abs() > 1e-9 && (g / c).is_finite() && (g / c).abs() > 1e-9 { (g / c).abs() } else { 1.0 };
+    (k(group.w, child.w), k(group.h, child.h))
+}
+
+/// The text of `sh` laid out as the renderer draws it (None: no text or no box): in the box the
+/// shape has on the slide, its own size stretched by the group's `scale` ([`child_scale`]).
+pub(super) fn laid_out(ctx: &deckcraft_model::resolve::Ctx<'_>, sh: &Shape, scale: (f64, f64)) -> Option<deckcraft_text::TextLayout> {
     let body = sh.text.as_ref()?;
     let x = sh.xfrm?;
-    let rect = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
+    let rect = deckcraft_render::shape_geometry(sh, x.w * scale.0, x.h * scale.1).text_rect;
     let opts = deckcraft_text::Opts { rect, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false };
     Some(deckcraft_text::layout(ctx, sh, body, &opts))
 }
 
 /// The font scale and line reduction shrink-on-overflow gives the text of `sh` (None: it does not shrink).
-pub(super) fn fitted(ctx: &deckcraft_model::resolve::Ctx<'_>, sh: &Shape) -> Option<(f64, f64)> {
+pub(super) fn fitted(ctx: &deckcraft_model::resolve::Ctx<'_>, sh: &Shape, scale: (f64, f64)) -> Option<(f64, f64)> {
     sh.text.as_ref().filter(|b| matches!(b.body.autofit, Some(AutoFit::Shrink { .. })))?;
-    let l = laid_out(ctx, sh)?;
+    let l = laid_out(ctx, sh, scale)?;
     Some((l.font_scale, l.line_reduction))
 }
 
@@ -233,8 +241,8 @@ pub(super) fn fitted(ctx: &deckcraft_model::resolve::Ctx<'_>, sh: &Shape) -> Opt
 /// sizes SmartArt text alike: the smallest scale any shape's text needs to fit its box, across or
 /// down (a node of many lines as much as a long word), saved on every shape. A saved scale is
 /// drawn as it is, so no shape shrinks on its own. A set size (`AutoFit::None`) is left alone.
-pub(super) fn share_shrink(ctx: &deckcraft_model::resolve::Ctx<'_>, shapes: &mut [Shape]) {
-    let Some((scale, reduction)) = shapes.iter().filter_map(|sh| fitted(ctx, sh)).min_by(|a, b| a.0.total_cmp(&b.0)) else { return };
+pub(super) fn share_shrink(ctx: &deckcraft_model::resolve::Ctx<'_>, shapes: &mut [Shape], stretch: (f64, f64)) {
+    let Some((scale, reduction)) = shapes.iter().filter_map(|sh| fitted(ctx, sh, stretch)).min_by(|a, b| a.0.total_cmp(&b.0)) else { return };
     if scale >= 1.0 {
         return;
     }

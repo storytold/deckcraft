@@ -33,7 +33,9 @@ pub(crate) fn share_after_edit(s: &mut Session, id: ShapeId) -> Result<()> {
     let mut d = (*st.doc).clone();
     let sel = st.selection.clone();
     let Some(list) = crate::shapes_mut(&mut d, &sel) else { return Ok(()) };
-    let Some(ShapeKind::Group { children, .. }) = deckcraft_model::find_shape(list, gid).map(|g| g.kind.clone()) else { return Ok(()) };
+    let Some((ShapeKind::Group { children, child }, Some(group))) = deckcraft_model::find_shape(list, gid).map(|g| (g.kind.clone(), g.xfrm)) else {
+        return Ok(());
+    };
     let mut kids = children;
     for sh in &mut kids {
         if let Some(t) = sh.text.as_mut()
@@ -43,7 +45,7 @@ pub(crate) fn share_after_edit(s: &mut Session, id: ShapeId) -> Result<()> {
         }
     }
     let Some(ctx) = crate::cmd::text::ctx_for(&d, &sel) else { return Ok(()) };
-    super::paint::share_shrink(&ctx, &mut kids);
+    super::paint::share_shrink(&ctx, &mut kids, super::paint::child_scale(&group, &child));
     drop(ctx);
     if let Some(list) = crate::shapes_mut(&mut d, &sel)
         && let Some(g) = deckcraft_model::find_shape_mut(list, gid)
@@ -63,6 +65,10 @@ pub(crate) fn share_after_edit(s: &mut Session, id: ShapeId) -> Result<()> {
 pub(crate) fn shown_size(s: &Session, gid: ShapeId) -> Option<f64> {
     let st = s.doc().ok()?;
     let g = st.shape(gid)?;
+    let stretch = match (&g.kind, g.xfrm) {
+        (ShapeKind::Group { child, .. }, Some(x)) => super::paint::child_scale(&x, child),
+        _ => (1.0, 1.0),
+    };
     let set = g.diagram.as_ref().and_then(|d| d.font_size);
     if !g.diagram.as_ref().is_some_and(|d| d.imported)
         && let Some(z) = set
@@ -73,7 +79,7 @@ pub(crate) fn shown_size(s: &Session, gid: ShapeId) -> Option<f64> {
     // The smallest size of any line the text layout puts down, so what the renderer draws.
     let mut shown: Option<f64> = None;
     deckcraft_model::walk(std::slice::from_ref(g), &mut |x, _| {
-        if let Some(l) = super::paint::laid_out(&ctx, x) {
+        if let Some(l) = super::paint::laid_out(&ctx, x, stretch) {
             for line in l.lines.iter().filter(|ln| ln.size > 0.0) {
                 shown = Some(shown.map_or(line.size, |m| m.min(line.size)));
             }
@@ -102,10 +108,10 @@ fn target_group(s: &Session, p: &Value, cmd: &str) -> Result<ShapeId> {
 
 /// Children with fresh ids for diagram `d` inside a group whose child space is `area`, their text
 /// fitted at one shared size on the slide `sel` edits.
-fn regenerate(cmd: &str, doc: &mut Presentation, sel: &crate::Selection, d: &Diagram, area: Xfrm) -> Result<Vec<Shape>> {
+fn regenerate(cmd: &str, doc: &mut Presentation, sel: &crate::Selection, d: &Diagram, area: Xfrm, stretch: (f64, f64)) -> Result<Vec<Shape>> {
     let mut v = layout(d, area);
     if let Some(ctx) = crate::cmd::text::ctx_for(doc, sel) {
-        super::paint::share_shrink(&ctx, &mut v);
+        super::paint::share_shrink(&ctx, &mut v, stretch);
     }
     for sh in &mut v {
         sh.id = ShapeId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
@@ -123,7 +129,7 @@ fn edit_diagram<T>(s: &mut Session, p: &Value, cmd: &str, f: impl FnOnce(&mut Di
         let out = f(&mut d)?;
         normalize(&mut d.nodes);
         d.imported = false;
-        let kids = regenerate(cmd, doc, sel, &d, child)?;
+        let kids = regenerate(cmd, doc, sel, &d, child, g.xfrm.map_or((1.0, 1.0), |x| super::paint::child_scale(&x, &child)))?;
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(cmd, "no slide"))?;
         let sh = deckcraft_model::find_shape_mut(shapes, gid).ok_or_else(|| bad(cmd, "no such shape"))?;
         sh.kind = ShapeKind::Group { children: kids, child };
@@ -149,7 +155,7 @@ pub fn insert(s: &mut Session, kind: &str, mut nodes: Vec<DiagramNode>) -> Resul
     let size = s.doc()?.doc.slide_size;
     let area = Xfrm::new(size.width * 0.1, size.height * 0.28, size.width * 0.8, size.height * 0.6);
     let id = s.edit(|doc, sel| {
-        let children = regenerate("insert.smartArt", doc, sel, &d, area)?;
+        let children = regenerate("insert.smartArt", doc, sel, &d, area, (1.0, 1.0))?;
         let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("insert.smartArt", NO_ID_SPACE))?);
         let g = Shape {
             id,
@@ -260,7 +266,7 @@ pub(super) fn from_text(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let d = Diagram { kind: kind.clone(), nodes, ..Default::default() };
     let gid = s.edit(|doc, sel| {
-        let children = regenerate(CMD, doc, sel, &d, area)?;
+        let children = regenerate(CMD, doc, sel, &d, area, (1.0, 1.0))?;
         let gid = ShapeId(doc.alloc_id().ok_or_else(|| bad(CMD, NO_ID_SPACE))?);
         let g = Shape {
             id: gid,
