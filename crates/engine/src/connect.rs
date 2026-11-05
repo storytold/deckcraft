@@ -1,7 +1,7 @@
 //! Connectors glued to shapes: connection sites, snapping line ends to them, and rerouting attached
 //! connectors whenever the shapes they connect move, resize or rotate.
 
-use deckcraft_geom::{Affine, Point, Xfrm};
+use deckcraft_geom::{Affine, Point, Rect, Xfrm};
 use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind};
 
 use crate::Selection;
@@ -39,8 +39,19 @@ fn has_sites(s: &Shape) -> bool {
     !s.is_line() && !matches!(s.kind, ShapeKind::Ink { .. })
 }
 
-/// Connection sites of `s` (a shape on the edited slide, or a member of a group there) in slide
-/// coordinates, in the order the index of `shape.sites` / `shape.connect` refers to.
+/// Connection sites of a top-level shape `s` in slide coordinates (index = site index of
+/// `shape.sites` / `shape.connect`). For a shape inside a group use [`sites_of`] or [`sites_in`].
+pub fn sites(doc: &Presentation, sel: &Selection, s: &Shape) -> Vec<Point> {
+    sites_in(doc, sel, s, Affine::IDENTITY)
+}
+
+/// Connection sites of `s` in slide coordinates, `to_abs` mapping the space its box lives in (the
+/// slide, or the child space of the groups around it) onto the slide.
+pub fn sites_in(doc: &Presentation, sel: &Selection, s: &Shape, to_abs: Affine) -> Vec<Point> {
+    site_list_in(doc, sel, s, to_abs).into_iter().map(|q| q.at).collect()
+}
+
+/// [`sites_in`] with what a connector glued to each names and whether it is offered.
 ///
 /// A preset's sites come from its geometry, a custom geometry's from its own list (`a:cxnLst`,
 /// `Shape::sites`), and a shape without any offers its box midpoints. A group has none of its
@@ -48,27 +59,18 @@ fn has_sites(s: &Shape) -> bool {
 /// included, a member without sites of its geometry offers none), each naming the member and its
 /// own index, so a connector glued to one keeps it however the group's members change, and
 /// after ungrouping. A hidden member's sites are listed but not offered.
-pub fn site_list(doc: &Presentation, sel: &Selection, s: &Shape) -> Vec<Site> {
-    let (a, w, h) =
-        crate::cmd::current_shapes(doc, sel).and_then(|list| locate(doc, sel, list, s.id)).map(|(_, a, w, h)| (a, w, h)).unwrap_or_else(|| {
-            let x = xfrm_of(doc, sel, s);
-            (x.affine(), x.w, x.h)
-        });
-    placed_sites(s, a, w, h)
-}
-
-/// [`site_list`] of `s` placed by `a` (its box to the slide) with a `w`×`h` box.
-fn placed_sites(s: &Shape, a: Affine, w: f64, h: f64) -> Vec<Site> {
+pub fn site_list_in(doc: &Presentation, sel: &Selection, s: &Shape, to_abs: Affine) -> Vec<Site> {
     if !has_sites(s) {
         return vec![];
     }
+    let x = xfrm_of(doc, sel, s);
     if let ShapeKind::Group { children, child } = &s.kind {
         let mut out = vec![];
-        let g = Xfrm::new(0.0, 0.0, w, h);
-        member_sites(children, a * deckcraft_geom::group_child_affine(&g, child.rect()), true, &mut out, 0);
+        member_sites(children, to_abs * deckcraft_geom::group_child_affine(&x, child.rect()), true, &mut out, 0);
         return out;
     }
-    let (local, _) = local_sites(s, w, h);
+    let (local, _) = local_sites(s, x.w, x.h);
+    let a = to_abs * x.affine();
     local.into_iter().enumerate().map(|(i, p)| Site { at: a * p, target: (s.id, i as u32), offered: true }).collect()
 }
 
@@ -91,66 +93,61 @@ fn member_sites(children: &[Shape], a: Affine, visible: bool, out: &mut Vec<Site
     }
 }
 
-/// The shape `id` on the edited slide (`list`), groups within included, with what places its
-/// box on the slide and the box's size. A member without a transform of its own is not found.
-fn locate<'a>(doc: &Presentation, sel: &Selection, list: &'a [Shape], id: ShapeId) -> Option<(&'a Shape, Affine, f64, f64)> {
-    fn rec(children: &[Shape], a: Affine, id: ShapeId, depth: usize) -> Option<(&Shape, Affine, f64, f64)> {
+/// The shape `id` anywhere in `shapes` (a group's member included) with the affine that maps the
+/// space its box lives in onto the slide: a connector glues to a grouped shape, as in PowerPoint,
+/// and its sites are where the group draws them.
+pub fn locate<'a>(doc: &Presentation, sel: &Selection, shapes: &'a [Shape], id: ShapeId) -> Option<(&'a Shape, Affine)> {
+    fn rec<'a>(doc: &Presentation, sel: &Selection, shapes: &'a [Shape], id: ShapeId, to_abs: Affine, depth: usize) -> Option<(&'a Shape, Affine)> {
         if depth > 64 {
             return None;
         }
-        for c in children {
-            let Some(cx) = c.xfrm else { continue };
-            if c.id == id {
-                return Some((c, a * cx.affine(), cx.w, cx.h));
+        for s in shapes {
+            if s.id == id {
+                return Some((s, to_abs));
             }
-            if let ShapeKind::Group { children, child } = &c.kind
-                && let Some(r) = rec(children, a * deckcraft_geom::group_child_affine(&cx, child.rect()), id, depth + 1)
-            {
-                return Some(r);
+            if let ShapeKind::Group { children, child } = &s.kind {
+                let x = xfrm_of(doc, sel, s);
+                let ch = Rect::new(child.x, child.y, child.x + child.w, child.y + child.h);
+                let nested = to_abs * deckcraft_geom::group_child_affine(&x, ch);
+                if let Some(f) = rec(doc, sel, children, id, nested, depth + 1) {
+                    return Some(f);
+                }
             }
         }
         None
     }
-    for s in list {
-        let found = s.id == id;
-        if !found && !s.is_group() {
-            continue;
-        }
-        let x = xfrm_of(doc, sel, s);
-        if found {
-            return Some((s, x.affine(), x.w, x.h));
-        }
-        if let ShapeKind::Group { children, child } = &s.kind
-            && let Some(r) = rec(children, deckcraft_geom::group_child_affine(&x, child.rect()), id, 1)
-        {
-            return Some(r);
-        }
-    }
-    None
+    rec(doc, sel, shapes, id, Affine::IDENTITY, 0)
 }
 
-/// Where the site a connector end names (`id`, the shape's own site `idx`) is now, on the
-/// edited slide (`list`): a shape there or a member of a group there. An index past the shape's
-/// sites means its first. `None` when the shape is gone, or names a group (which has no sites of
-/// its own) or a line.
-fn site_at(doc: &Presentation, sel: &Selection, list: &[Shape], id: ShapeId, idx: u32) -> Option<Point> {
-    let (s, a, w, h) = locate(doc, sel, list, id)?;
+/// Connection sites of shape `id` anywhere in `shapes`, in slide coordinates; `None` when there is
+/// no such shape.
+pub fn sites_of(doc: &Presentation, sel: &Selection, shapes: &[Shape], id: ShapeId) -> Option<Vec<Point>> {
+    locate(doc, sel, shapes, id).map(|(s, a)| sites_in(doc, sel, s, a))
+}
+
+/// [`sites_of`] with what a connector glued to each names and whether it is offered.
+pub fn site_list_of(doc: &Presentation, sel: &Selection, shapes: &[Shape], id: ShapeId) -> Option<Vec<Site>> {
+    locate(doc, sel, shapes, id).map(|(s, a)| site_list_in(doc, sel, s, a))
+}
+
+/// Where the site a connector end names (`id`, the shape's own site `idx`) is now, anywhere in
+/// `shapes`: a connector glued to a shape that is then grouped keeps following it. An index past
+/// the shape's sites means its first. `None` when the shape is gone, or names a group (which has
+/// no sites of its own) or a line.
+fn site_at(doc: &Presentation, sel: &Selection, shapes: &[Shape], id: ShapeId, idx: u32) -> Option<Point> {
+    let (s, to_abs) = locate(doc, sel, shapes, id)?;
     if !has_sites(s) || s.is_group() {
         return None;
     }
-    let (local, _) = local_sites(s, w, h);
+    let x = xfrm_of(doc, sel, s);
+    let (local, _) = local_sites(s, x.w, x.h);
+    let a = to_abs * x.affine();
     local.get(idx as usize).or(local.first()).map(|p| a * *p)
 }
 
-/// The positions of [`site_list`].
-pub fn sites(doc: &Presentation, sel: &Selection, s: &Shape) -> Vec<Point> {
-    site_list(doc, sel, s).into_iter().map(|q| q.at).collect()
-}
-
-/// The sites of a shape on the edited slide that are offered for snapping.
+/// The sites of a top-level shape that are offered for snapping.
 pub fn offered_sites(doc: &Presentation, sel: &Selection, s: &Shape) -> Vec<Point> {
-    let x = xfrm_of(doc, sel, s);
-    placed_sites(s, x.affine(), x.w, x.h).into_iter().filter(|q| q.offered).map(|q| q.at).collect()
+    site_list_in(doc, sel, s, Affine::IDENTITY).into_iter().filter(|q| q.offered).map(|q| q.at).collect()
 }
 
 /// The nearest offered connection site within `radius` of `p` on any visible shape on the edited
@@ -166,8 +163,7 @@ pub fn nearest_site(
 ) -> Option<(ShapeId, u32, Point)> {
     let mut best: Option<(f64, Site)> = None;
     for s in shapes.iter().filter(|s| Some(s.id) != exclude && !s.hidden) {
-        let x = xfrm_of(doc, sel, s);
-        for q in placed_sites(s, x.affine(), x.w, x.h).into_iter().filter(|q| q.offered) {
+        for q in site_list_in(doc, sel, s, Affine::IDENTITY).into_iter().filter(|q| q.offered) {
             let d = (q.at - p).hypot();
             if d <= radius && best.is_none_or(|b| d < b.0) {
                 best = Some((d, q));
@@ -202,7 +198,6 @@ pub fn reroute(doc: &mut Presentation, sel: &Selection) {
     }
     let snapshot: Vec<Shape> = list.clone();
     let view = doc.clone();
-    // A connector glued to a group member follows the member wherever the group puts it.
     let site = |id: ShapeId, idx: u32| site_at(&view, sel, &snapshot, id, idx);
     let mut updates: Vec<(usize, Xfrm, bool, bool)> = vec![];
     for (i, s) in snapshot.iter().enumerate() {
