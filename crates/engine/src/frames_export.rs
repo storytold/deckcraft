@@ -244,7 +244,8 @@ pub fn plan(doc: &Presentation, opts: &FramesOptions) -> Result<Plan> {
     let mut prev: Option<usize> = None;
     for &slide in &order {
         let from = frames.len() + 1;
-        if let Some(from_slide) = prev.filter(|_| opts.transitions)
+        // Show without animation cuts between slides.
+        if let Some(from_slide) = prev.filter(|_| opts.transitions && !doc.show.without_animation)
             && let Some(tr) = doc.slides.get(slide).and_then(|s| s.transition.as_ref())
             && tr.kind != "none"
         {
@@ -256,15 +257,18 @@ pub fn plan(doc: &Presentation, opts: &FramesOptions) -> Result<Plan> {
         let tl: Timeline = ShowState::timeline(doc, slide);
         let steps = tl.steps();
         let (hold_step, hold_slide) = after(slide).map_or((hold_step, hold_slide), |a| (a, a.max(1)));
-        if steps == 0 {
+        if doc.show.without_animation {
+            // The show plays no animation and shows each slide fully built: one settled still.
+            frames.extend(std::iter::repeat_n(Frame::Build { slide, step: steps, t: 0.0 }, hold_slide));
+        } else if steps == 0 {
             frames.extend(std::iter::repeat_n(Frame::Build { slide, step: 0, t: 0.0 }, hold_slide));
         }
         // What the slide shows before its first click is held like any settled state; an automatic
         // first step plays at once, so there is nothing to hold.
-        if steps > 0 && !tl.step_is_auto(0) {
+        if steps > 0 && !doc.show.without_animation && !tl.step_is_auto(0) {
             frames.extend(std::iter::repeat_n(Frame::Build { slide, step: 0, t: 0.0 }, hold_step));
         }
-        for step in 0..steps {
+        for step in 0..if doc.show.without_animation { 0 } else { steps } {
             let n = playing(tl.step_duration(step));
             frames.extend((0..n).map(|j| Frame::Build { slide, step, t: j as f64 / fps }));
             let hold = if step + 1 == steps {
@@ -665,6 +669,31 @@ mod tests {
         let held = len(&doc, json!({"fps": 2, "secondsPerSlide": 2, "secondsPerStep": 2, "width": 32, "useTimings": false}));
         assert_eq!(timed, held, "the After time is both holds");
         assert!(timed > 8, "the step plays between them: {timed}");
+    }
+
+    /// Show without animation cuts between slides and shows each one fully built: one settled
+    /// still per slide, no transition frames and no build frames.
+    #[test]
+    fn show_without_animation_plans_one_settled_still_per_slide() {
+        use deckcraft_model::anim::{AnimStart, Animation};
+        let mut doc = deckcraft_model::defaults::new_presentation(None);
+        let copy = doc.slides[0].clone();
+        doc.slides.push(copy);
+        let shape = doc.slides[1].shapes[0].id;
+        let second = std::sync::Arc::make_mut(&mut doc.slides[1]);
+        second.transition = Some(deckcraft_model::anim::Transition { kind: "fade".into(), duration_ms: 1000, ..Default::default() });
+        second.animations.push(Animation { shape, effect: "fade".into(), start: AnimStart::OnClick, ..Default::default() });
+        let opts = FramesOptions::from_params(&json!({"fps": 2, "secondsPerSlide": 3, "secondsPerStep": 1, "width": 32})).unwrap();
+        let animated = plan(&doc, &opts).unwrap();
+        assert!(animated.frames.iter().any(|f| matches!(f, Frame::Transition { .. })));
+        doc.show.without_animation = true;
+        let still = plan(&doc, &opts).unwrap();
+        let steps = ShowState::timeline(&doc, 1).steps();
+        assert!(steps > 0);
+        assert_eq!(still.frames.len(), 12, "two slides of 3 s at 2 fps");
+        assert!(still.frames[..6].iter().all(|f| *f == Frame::Build { slide: 0, step: ShowState::timeline(&doc, 0).steps(), t: 0.0 }));
+        assert!(still.frames[6..].iter().all(|f| *f == Frame::Build { slide: 1, step: steps, t: 0.0 }));
+        assert_eq!(still.slides.iter().map(|s| (s.from, s.to)).collect::<Vec<_>>(), [(1, 6), (7, 12)]);
     }
 
     /// A failed export (here the byte cap) leaves the earlier sequence whole and no staging folder;
