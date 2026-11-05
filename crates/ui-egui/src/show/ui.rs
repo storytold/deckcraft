@@ -663,7 +663,7 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
         painter.text(
             pos2(full.center().x, full.min.y + 40.0),
             Align2::CENTER_CENTER,
-            "End of slide show, click to exit.",
+            crate::i18n::tr("End of slide show, click to exit."),
             theme::font(18.0),
             Color32::from_gray(200),
         );
@@ -757,10 +757,13 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
     if show.reading {
         let bar = Rect::from_min_max(pos2(full.min.x, full.max.y - 34.0), full.max);
         painter.rect_filled(bar, CornerRadius::ZERO, Color32::from_gray(32));
+        let cur_s = (show.state.slide + 1).to_string();
+        let total_s = doc.slides.len().to_string();
+        let counter = crate::i18n::format("Slide {} of {}", &[&cur_s, &total_s]);
         painter.text(
             pos2(bar.min.x + 14.0, bar.center().y),
             Align2::LEFT_CENTER,
-            format!("Slide {} of {}", show.state.slide + 1, doc.slides.len()),
+            counter,
             theme::font(12.0),
             Color32::from_gray(200),
         );
@@ -769,7 +772,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
                 .max_rect(Rect::from_min_max(pos2(bar.max.x - 260.0, bar.min.y), bar.max))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
-        if child.button("Close").clicked() {
+        if child.button(crate::i18n::tr("Close")).clicked() {
             out.keep = false;
         }
         if child.button("▶").clicked() {
@@ -804,19 +807,19 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
         if b(&mut child, if show.laser { "◉ on" } else { "◉" }).clicked() {
             show.set_laser(!show.laser);
         }
-        if b(&mut child, "Black").clicked() {
+        if b(&mut child, &crate::i18n::tr("Black")).clicked() {
             toggle_blank(show, Color32::BLACK);
         }
-        if b(&mut child, "White").clicked() {
+        if b(&mut child, &crate::i18n::tr("White")).clicked() {
             toggle_blank(show, Color32::WHITE);
         }
-        if b(&mut child, "All").clicked() {
+        if b(&mut child, &crate::i18n::tr("All")).clicked() {
             show.grid = !show.grid;
         }
-        if b(&mut child, show.zoom_label()).clicked() {
+        if b(&mut child, &crate::i18n::tr(show.zoom_label())).clicked() {
             show.zoom_key();
         }
-        if b(&mut child, "End").clicked() {
+        if b(&mut child, &crate::i18n::tr("End")).clicked() {
             out.keep = false;
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(300));

@@ -417,7 +417,7 @@ pub fn notes_page(app: &mut SlideApp, ui: &mut Ui) {
     let look = crate::notes::Look { size: 14.0, color: Some(Color32::from_gray(30)) };
     let width = notes_rect.width();
     let r = crate::notes::editor(&mut child, &mut draft, &look, |e| {
-        e.id(edit_id).hint_text("Click to add text").desired_width(width).desired_rows(12).frame(egui::Frame::NONE)
+        e.id(edit_id).hint_text(crate::i18n::tr("Click to add text")).desired_width(width).desired_rows(12).frame(egui::Frame::NONE)
     })
     .response
     .response;
