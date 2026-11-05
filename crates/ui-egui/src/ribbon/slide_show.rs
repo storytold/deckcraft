@@ -36,7 +36,8 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
         }
         let r = big_button(ui, Icon::Record, "Record", !recording)
             .on_hover_text("Records slide timings, the microphone and pen ink. Laser follows the pointer.");
-        if r.on_hover_text(busy).clicked() {
+        // Attached only while it applies: an empty tooltip still draws a box under the description.
+        if (if recording { r.on_hover_text(busy) } else { r }).clicked() {
             let _ = app.run("show.record", json!({}));
         }
     });
