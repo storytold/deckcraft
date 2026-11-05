@@ -77,4 +77,6 @@ pub struct Services {
     /// Live camera source for the Camera Format tab's preview. Without one the preview reports
     /// that capture is unsupported.
     pub camera: Option<Box<dyn deckcraft_media::camera::CameraSource>>,
+    /// How many displays are connected, when the host can tell: Presenter View needs a second.
+    pub displays: Option<Box<dyn FnMut() -> Option<usize>>>,
 }
