@@ -96,7 +96,8 @@ pub struct CpalIn {
     /// The device went away while capturing: the take ends, unlike a single dropped buffer.
     dead: Arc<AtomicBool>,
     /// The worker's start handshake, polled from the UI loop so opening a device (and any
-    /// permission prompt) never blocks a frame.
+    /// permission prompt) never blocks a frame. Failure reaches the UI through `failure()`.
+    #[allow(dead_code)]
     startup: Option<mpsc::Receiver<Result<(), String>>>,
     stop: Option<Arc<(Mutex<bool>, Condvar)>>,
     worker: Option<JoinHandle<()>>,

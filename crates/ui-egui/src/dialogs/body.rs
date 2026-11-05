@@ -316,6 +316,16 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
 }
 
 fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
+    // A notes draft or an Alt Text description still outside the document is unsaved work: write
+    // it first so a prompt opened on a clean document names it.
+    if let Some(mut show) = app.show.take() {
+        if let Some(doc) = app.session.active().map(|d| d.doc.clone()) {
+            let slide = show.state.slide;
+            super::super::show::record::notes::flush(app, &mut show.record_view, &doc, slide);
+        }
+        app.show = Some(show);
+    }
+    crate::panes::flush_alt_text(app);
     let names: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).map(|d| d.title()).collect();
     // A take is unsaved work too: the prompt must offer save, discard and cancel for it even when
     // no document is dirty.
