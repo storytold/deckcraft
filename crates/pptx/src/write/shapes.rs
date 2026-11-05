@@ -461,7 +461,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
 }
 
 fn model_rel(x: &mut Exp, o: &mut Out, media: deckcraft_model::MediaId) -> Option<String> {
-    if x.p.media(media).is_none_or(|m| m.data.is_empty()) {
+    if x.media(media).is_none_or(|m| m.data.is_empty()) {
         return None;
     }
     x.media_rel(o, media, crate::opc::RT_MODEL3D)
@@ -494,7 +494,7 @@ fn write_model(
         return;
     };
     let id = cx.id_for(s);
-    let poster = poster.filter(|p| x.p.media(*p).is_some_and(|m| !m.data.is_empty()));
+    let poster = poster.filter(|p| x.media(*p).is_some_and(|m| !m.data.is_empty()));
     let Some(poster) = poster else {
         write_model_part(w, x, o, id, s, &rid);
         return;
@@ -715,7 +715,7 @@ fn table(w: &mut W, x: &mut Exp, o: &mut Out, t: &Table, math: bool) {
     t.normalize();
     w.open0("a:tbl");
     let (guid, _) = crate::tables::guid_for_style(&t.style);
-    if !x.table_styles.contains(&t.style) {
+    if x.table_style_set.insert(t.style.clone()) {
         x.table_styles.push(t.style.clone());
     }
     w.open(
@@ -726,7 +726,8 @@ fn table(w: &mut W, x: &mut Exp, o: &mut Out, t: &Table, math: bool) {
             .t("lastRow", t.last_row)
             .t("lastCol", t.last_col)
             .t("bandRow", t.band_row)
-            .t("bandCol", t.band_col),
+            .t("bandCol", t.band_col)
+            .b("rtl", t.rtl),
     );
     if let Some(f) = &t.background {
         dml::fill(w, x, o, f);
@@ -761,6 +762,8 @@ fn table(w: &mut W, x: &mut Exp, o: &mut Out, t: &Table, math: bool) {
                     other => other.xml(),
                 }),
             );
+            a = a.b("anchorCtr", c.anchor_ctr);
+            a = a.o("horzOverflow", deckcraft_model::text::TextOverflow::horz_xml(c.horz_overflow));
             w.open("a:tcPr", a);
             for (tag, l) in [
                 ("a:lnL", &c.borders[0]),
@@ -843,7 +846,7 @@ fn media(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, m: &deckcraft_
     }
     w.close("p:nvPr");
     w.close("p:nvPicPr");
-    let poster = deckcraft_model::style::PictureFill { media: m.poster.unwrap_or_default(), ..Default::default() };
+    let poster = deckcraft_model::style::PictureFill { media: m.poster.unwrap_or_default(), crop: m.crop, ..Default::default() };
     dml::blip_fill(w, x, o, "p:blipFill", &poster);
     let mut s3 = s.clone();
     s3.fill = None;
@@ -867,21 +870,27 @@ fn opaque(
     // parts re-added under this slide's relationship ids.
     if let Ok(doc) = crate::xml::parse(xml.as_bytes())
         && matches!(doc.root.local(), "graphicFrame" | "sp" | "grpSp" | "cxnSp")
-        && let Some(ids) = crate::read::rel_refs(&doc.root)
+    {
+        let mut part_map: std::collections::HashMap<&str, (&str, deckcraft_model::MediaId)> = std::collections::HashMap::new();
+        for (id, kind, m) in parts {
+            part_map.entry(id.as_str()).or_insert((kind.as_str(), *m));
+        }
+        if let Some(ids) = crate::read::rel_refs(&doc.root)
             .iter()
             .map(|r| {
-                let (_, kind, m) = parts.iter().find(|(id, ..)| id == r)?;
+                let (kind, m) = part_map.get(r.as_str())?;
                 Some((r.clone(), x.media_rel(o, *m, kind)?))
             })
             .collect::<Option<std::collections::HashMap<_, _>>>()
-    {
-        let mut root = doc.root;
-        set_rel_ids(&mut root, &ids, 0);
-        ole_fallback(&mut root, x, o, preview);
-        let id = cx.id_for(s);
-        set_cnvpr_id(&mut root, id);
-        w.raw(&root.to_xml());
-        return;
+        {
+            let mut root = doc.root;
+            set_rel_ids(&mut root, &ids, 0);
+            ole_fallback(&mut root, x, o, preview);
+            let id = cx.id_for(s);
+            set_cnvpr_id(&mut root, id);
+            w.raw(&root.to_xml());
+            return;
+        }
     }
     log::warn!("pptx: object '{label}' written as its preview picture");
     let id = cx.id_for(s);
@@ -890,7 +899,7 @@ fn opaque(
         p.name = label.to_string();
     }
     match preview {
-        Some(m) if x.p.media(m).is_some() => {
+        Some(m) if x.media(m).is_some() => {
             p.kind = ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media: m, ..Default::default() } };
             p.ph = None;
             shape_with_id(w, x, o, cx, &p, id);
@@ -918,8 +927,12 @@ fn shape_with_id(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, i
         w.empty0("p:nvPr");
         w.close("p:nvPicPr");
         dml::blip_fill(w, x, o, "p:blipFill", fill);
+        // As for any picture, a colour or pattern fill shows behind the image (an object's preview
+        // keeps its fallback picture's fill).
         let mut s2 = s.clone();
-        s2.fill = None;
+        if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background | Fill::Group)) {
+            s2.fill = None;
+        }
         sp_pr(w, x, o, &s2, true);
         w.close("p:pic");
     } else {

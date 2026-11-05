@@ -82,7 +82,7 @@ fn the_box_fits_the_equation_as_it_is_typed() {
     let t = sel(&s);
     let (l, _) = super::super::text::text_frame(st, &t).unwrap();
     let w = st.shape(t.shape).and_then(|sh| sh.xfrm).unwrap().w;
-    assert!(l.lines[0].extent.1 - l.lines[0].extent.0 <= w, "the linear text fits its box");
+    assert!(l.lines[0].extent.1 - l.lines[0].extent.0 <= w, "what it shows fits its box");
 }
 
 #[test]
@@ -157,15 +157,62 @@ fn right_arrow_leaves_the_equation_and_left_arrow_goes_back() {
 }
 
 #[test]
-fn the_equation_being_typed_shows_as_text_and_a_click_on_another_goes_into_it() {
+fn having_left_an_equation_ends_with_the_next_edit() {
+    // Leave the equation, type after it and Backspace back to its end: the caret is in the
+    // equation again, as when it gets there with Left Arrow, not still "just left".
+    let mut s = after_text("x^2");
+    key(&mut s, "Right");
+    assert_eq!(sel(&s).left_math, Some((0, 9)));
+    type_keys(&mut s, "m");
+    assert_eq!(sel(&s).left_math, None, "typing moved the caret on");
+    key(&mut s, "Backspace");
+    assert_eq!((sel(&s).caret, sel(&s).left_math), ((0, 9), None));
+    type_keys(&mut s, "+1");
+    assert_eq!(runs(&s)[1].text, "x^2+1");
+}
+
+#[test]
+fn selected_line_breaks_and_tabs_become_spaces_in_the_equation() {
+    let mut s = Session::with_new();
+    s.execute("insert.textBox", &json!({"rect": [100, 100, 400, 80], "text": "a"})).unwrap();
+    s.execute("text.edit", &json!({})).unwrap();
+    // "a" Shift+Enter "+b" Tab "=c", all selected.
+    s.type_text("\u{b}+b\t=c").unwrap();
+    s.execute("text.select", &json!({"anchor": [0, 0], "caret": [0, 7]})).unwrap();
+    s.execute("insert.equation", &json!({})).unwrap();
+    let r = runs(&s);
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert_eq!((r[0].text.as_str(), &r[0].kind), ("a +b =c", &RunKind::Math { omml: String::new() }));
+    assert!(!r[0].text.chars().any(char::is_control));
+}
+
+#[test]
+fn the_equation_being_typed_is_drawn_and_shows_its_text_with_the_caret_inside() {
     let mut s = after_text("a/b");
+    let drawn = TypedMath { para: 0, ch: 6, linear: false };
     let st = s.doc().unwrap();
     let t = sel(&s);
-    assert_eq!(shown(st, &t), Some((0, 6)));
-    assert_eq!(active(st), Some((None, 0, 6)));
-    // Laid out as text while typed in: each character a caret stop.
+    assert_eq!(shown(st, &t), Some(drawn));
+    assert_eq!(active(st), Some((None, drawn)));
+    // Drawn as it is typed: one caret stop after "Area: ", the caret at its end.
+    let (l, _) = super::super::text::text_frame(st, &t).unwrap();
+    assert_eq!(l.lines[0].boundary.iter().filter(|b| **b).count(), 7);
+    let (_, x1) = l.lines[0].span(6, 9).unwrap();
+    let caret = super::super::text::caret_line(st, &t).unwrap();
+    let (_, m) = super::super::text::text_frame(st, &t).unwrap();
+    assert!((caret.0.x - (m * deckcraft_geom::Point::new(x1, l.lines[0].baseline)).x).abs() < 0.5, "the caret is after the drawing");
+    // Inside it: its linear text, each character a caret stop.
+    key(&mut s, "Left");
+    let st = s.doc().unwrap();
+    let t = sel(&s);
+    assert_eq!(shown(st, &t), Some(TypedMath { linear: true, ..drawn }));
     let (l, _) = super::super::text::text_frame(st, &t).unwrap();
     assert!(l.lines[0].boundary.iter().all(|b| *b));
+    // A selection in it shows the text too; back at its end it is drawn again.
+    s.execute("text.move", &json!({"to": "left", "extend": true})).unwrap();
+    assert_eq!(shown(s.doc().unwrap(), &sel(&s)).map(|m| m.linear), Some(true));
+    s.execute("text.select", &json!({"anchor": [0, 9]})).unwrap();
+    assert_eq!(shown(s.doc().unwrap(), &sel(&s)), Some(drawn));
     // Elsewhere it is one object; a click on it puts the caret at its end.
     s.execute("text.select", &json!({"anchor": [0, 2]})).unwrap();
     let st = s.doc().unwrap();
@@ -175,6 +222,44 @@ fn the_equation_being_typed_shows_as_text_and_a_click_on_another_goes_into_it() 
     let (x0, x1) = l.lines[0].span(6, 9).unwrap();
     let mid = m * deckcraft_geom::Point::new(x0 + (x1 - x0) * 0.2, l.lines[0].baseline);
     assert_eq!(super::super::text::text_pos_at(st, &t, mid), (0, 9));
+    // So does a click on it while it is drawn as typed.
+    s.execute("text.select", &json!({"anchor": [0, 9]})).unwrap();
+    let st = s.doc().unwrap();
+    assert_eq!(super::super::text::text_pos_at(st, &sel(&s), mid), (0, 9));
+}
+
+#[test]
+fn backslash_sum_and_space_become_the_sum_sign() {
+    // As in PowerPoint: Space after `\sum` makes it ∑, which the linear form reads as a big
+    // operator, and is taken by the change; the rest is typed after it.
+    let mut s = after_text("\\sum ");
+    assert_eq!(runs(&s)[1].text, "∑");
+    type_keys(&mut s, "_(i=1)^n i \\int ");
+    assert_eq!(runs(&s)[1].text, "∑_(i=1)^n i ∫");
+    assert_eq!(shown(s.doc().unwrap(), &sel(&s)).map(|m| m.linear), Some(false), "drawn as it is typed");
+}
+
+#[test]
+fn the_box_fits_what_the_equation_shows() {
+    // A new equation's box grows with it. Inside it the equation shows as its linear text, wider
+    // and lower than the fraction; back at its end the box is the fraction's again.
+    let mut s = Session::with_new();
+    s.execute("insert.equation", &json!({})).unwrap();
+    type_keys(&mut s, "(a+b)/(c+d)");
+    let size = |s: &Session| {
+        let st = s.doc().unwrap();
+        st.shape(sel(s).shape).and_then(|sh| sh.xfrm).map(|x| (x.w, x.h)).unwrap()
+    };
+    let drawn = size(&s);
+    key(&mut s, "Left");
+    let linear = size(&s);
+    assert!(linear.0 > drawn.0 && linear.1 < drawn.1, "{linear:?} for the text, {drawn:?} for the fraction");
+    key(&mut s, "Right");
+    let back = size(&s);
+    assert!((back.0 - drawn.0).abs() < 0.01 && (back.1 - drawn.1).abs() < 0.01, "{back:?}, {drawn:?}");
+    // Leaving it changes nothing: it is drawn the same.
+    key(&mut s, "Right");
+    assert_eq!(size(&s), back);
 }
 
 #[test]
@@ -183,7 +268,7 @@ fn an_imported_equation_typed_in_is_rebuilt_from_its_text() {
     s.execute("insert.textBox", &json!({"rect": [100, 100, 400, 80], "text": ""})).unwrap();
     let omml = r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:f><m:num><m:r><m:t>a</m:t></m:r></m:num><m:den><m:r><m:t>b</m:t></m:r></m:den></m:f></m:oMath>"#;
     let src = TextBody {
-        paragraphs: vec![Paragraph { runs: vec![Run::math(omml.into(), RunProps::default())], ..Default::default() }],
+        paragraphs: vec![Paragraph { runs: vec![Run::math(omml.into(), RunProps::default(), "")], ..Default::default() }],
         ..Default::default()
     };
     super::super::text::paste_body(&mut s, &src).unwrap();
@@ -194,6 +279,14 @@ fn an_imported_equation_typed_in_is_rebuilt_from_its_text() {
     // An input method composes in it too.
     s.execute("text.compose", &json!({"text": "d"})).unwrap();
     s.execute("text.compose", &json!({"text": "de"})).unwrap();
+    // Composed at its end, where it is drawn: the composition's underline stays within it.
+    let st = s.doc().unwrap();
+    let (l, m) = super::super::text::text_frame(st, &sel(&s)).unwrap();
+    let edge =
+        (m * deckcraft_geom::Point::new(l.lines[0].extent.0 - 1.0, 0.0)).x..=(m * deckcraft_geom::Point::new(l.lines[0].extent.1 + 1.0, 0.0)).x;
+    for (a, b, _) in super::super::text::composition_underlines(st) {
+        assert!(edge.contains(&a.x) && edge.contains(&b.x), "{a:?}–{b:?} outside {edge:?}");
+    }
     s.execute("text.commit", &json!({"text": "de"})).unwrap();
     assert_eq!(runs(&s)[0].text, "a/b+cde");
 }

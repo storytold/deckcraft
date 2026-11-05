@@ -1,16 +1,19 @@
 //! Equations typed in place: Insert ▸ Equation, and the equation the insertion point is in.
 //!
-//! An equation is typed as its linear text (`a/b`, `x^2`, `\alpha`): it shows that way while the
-//! caret is in it and is laid out in two dimensions otherwise. The caret belongs to the equation
-//! on its left, as typing does, so before an equation it is outside; Right Arrow at an equation's
-//! end leaves it, so what is typed next is text after it, and Left Arrow there goes back in.
+//! An equation is typed as its linear text (`a/b`, `x^2`, `\alpha`), and drawn in two dimensions
+//! as it is typed, on a gray field while the caret is in it. With the caret inside it (not at its
+//! end) or text in it selected, it shows as that text, so that each character shows where it is.
+//! The caret belongs to the equation on its left, as typing does, so before an equation it is
+//! outside; Right Arrow at an equation's end leaves it, so what is typed next is text after it,
+//! and Left Arrow there goes back in.
 
 use deckcraft_geom::Xfrm;
 use deckcraft_model::edit::{self as ed, Pos};
 use deckcraft_model::text::{Align, ParaProps, Paragraph, Run, RunKind, RunProps, TextBody};
+use deckcraft_text::TypedMath;
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, cmd, has_slide};
 use crate::{DocState, Result, Session, TextSel};
 
 /// What a new equation holds, selected, until something is typed in it.
@@ -49,7 +52,10 @@ fn insert(s: &mut Session, _: &Value) -> Result<Value> {
         let (at, text) = match at(body, t) {
             Some((_, _, e)) => ((a.0, e), String::new()),
             None => {
-                let text = ed::text_range(body, a, b).replace('\n', " ").trim().to_string();
+                // On one line, as an imported equation's text is: paragraph and line breaks and
+                // tabs become spaces.
+                let text: String = ed::text_range(body, a, b).chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+                let text = text.trim().to_string();
                 (ed::delete(body, a, b), text)
             }
         };
@@ -77,21 +83,24 @@ pub(crate) fn at(body: &TextBody, t: &TextSel) -> Option<(usize, usize, usize)> 
     ed::math_at(body, a, t.is_range()).filter(|m| b.1 <= m.2)
 }
 
-/// The equation shown as its linear text while text `t` (a shape's, a cell's) is laid out: the one
-/// the selection is in when it edits that text. (Paragraph, first character.)
-pub fn shown(st: &DocState, t: &TextSel) -> Option<(usize, usize)> {
+/// The equation shown as being typed while text `t` (a shape's, a cell's) is laid out: the one the
+/// selection is in when it edits that text. It is drawn as it will look while the caret is at its
+/// end, where typing goes on, and as its linear text otherwise (see [`TypedMath`]).
+pub fn shown(st: &DocState, t: &TextSel) -> Option<TypedMath> {
     let live = st.selection.text.as_ref().filter(|l| !l.notes && (l.shape, l.cell) == (t.shape, t.cell))?;
-    at(super::text::body_of(st, live)?, live).map(|m| (live.caret.0, m.1))
+    let (_, s, e) = at(super::text::body_of(st, live)?, live)?;
+    Some(TypedMath { para: live.caret.0, ch: s, linear: live.is_range() || live.caret.1 != e })
 }
 
-/// The equation being typed, for drawing it as text: its table cell, paragraph and first character.
-pub fn active(st: &DocState) -> Option<(Option<(usize, usize)>, usize, usize)> {
+/// The equation being typed, for drawing it: its table cell, and how it shows.
+pub fn active(st: &DocState) -> Option<(Option<(usize, usize)>, TypedMath)> {
     let t = st.selection.text.as_ref()?;
-    shown(st, t).map(|(p, c)| (t.cell, p, c))
+    shown(st, t).map(|m| (t.cell, m))
 }
 
 /// Type `text` into equation `m` (see [`at`]) in place of the selection. A new equation's prompt
-/// goes as a whole; `\name` followed by a space becomes the name's symbol. Returns the caret.
+/// goes as a whole; `\name` followed by a space becomes the name's symbol (`\alpha` α, `\sum` ∑;
+/// see [`ed::math_symbol`]), the space taken by it. Returns the caret.
 pub(crate) fn type_in(body: &mut TextBody, t: &TextSel, (ri, s, e): (usize, usize, usize), text: &str) -> Pos {
     let (a, b) = t.ordered();
     let run = body.paragraphs.get(a.0).and_then(|p| p.runs.get(ri)).map(|r| r.text.clone()).unwrap_or_default();

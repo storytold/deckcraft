@@ -22,12 +22,14 @@ pub fn install_embedded_fonts(p: &Presentation) {
 }
 
 /// The font families the slides' text is drawn in (theme fonts resolved, bullet fonts included)
-/// that aren't installed or bundled, sorted, without duplicates (case-insensitive).
+/// that aren't installed or bundled, sorted, without duplicates (case-insensitive). Names that
+/// start with a dot are macOS hidden system fonts (`.SF NS`); they never appear in a font list
+/// and can't be installed, so they aren't reported.
 pub fn missing_fonts(p: &Presentation) -> Vec<String> {
     let db = FontDb::global();
     let mut out: Vec<String> = Vec::new();
     for family in used_fonts(p) {
-        if !db.has_family(&family) && !out.iter().any(|f| f.eq_ignore_ascii_case(&family)) {
+        if !family.starts_with('.') && !db.has_family(&family) && !out.iter().any(|f| f.eq_ignore_ascii_case(&family)) {
             out.push(family);
         }
     }
@@ -149,7 +151,7 @@ fn replace_body(body: &mut TextBody, fix: &mut dyn FnMut(&mut Option<String>)) {
         fix(&mut para.props.bullet_font);
         replace_run(&mut para.end_props, fix);
         for run in &mut para.runs {
-            replace_run(&mut run.props, fix);
+            run.restyle(|p| replace_run(p, fix));
         }
     }
 }

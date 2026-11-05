@@ -330,6 +330,7 @@ pub(crate) fn codec_name(c: &CodecConfig) -> String {
         CodecConfig::Hevc(_) => "HEVC".into(),
         CodecConfig::Av1(_) => "AV1".into(),
         CodecConfig::Vp9(_) => "VP9".into(),
+        CodecConfig::Apv(_) => "APV".into(),
         CodecConfig::ProRes { .. } => "Apple ProRes".into(),
         CodecConfig::Jpeg { .. } => "Motion JPEG".into(),
         CodecConfig::Dnx { .. } => "DNxHD".into(),

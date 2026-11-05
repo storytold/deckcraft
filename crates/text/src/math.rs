@@ -150,7 +150,7 @@ impl Lay<'_> {
     /// slanted.
     fn face(&self, c: char, bold: bool, italic: bool) -> (Arc<FontFace>, bool, bool) {
         let db = FontDb::global();
-        let style = crate::style_name(bold, italic);
+        let style = crate::style::style_name(bold, italic);
         let face = db.document_face(self.family, style);
         let face = if face.covers(c) { face } else { db.cascade(&[c], std::slice::from_ref(&face), style) };
         let (fake_bold, fake_italic) = (bold && face.weight < 550.0, italic && !face.italic);

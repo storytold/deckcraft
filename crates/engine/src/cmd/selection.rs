@@ -5,7 +5,7 @@
 use deckcraft_model::{Shape, ShapeId};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, bad, bool_or, cmd, has_slide, id_param, ids_param, ok};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
