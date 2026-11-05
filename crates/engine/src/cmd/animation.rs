@@ -287,6 +287,16 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
         (Some(_), [id]) => build_paragraphs(s, *id)?,
         _ => vec![],
     };
+    // A whole-box effect that isn't by paragraph can't be split per bullet without changing how
+    // it plays, and a bullet's own effect beside it would animate that bullet twice.
+    if let (Some(_), [id]) = (&paras, ids.as_slice())
+        && s.doc()?.current_slide().is_some_and(|sl| sl.animations.iter().any(|x| x.shape == *id && x.paragraph.is_none() && x.text_build != TextBuild::ByParagraph))
+    {
+        return Err(bad(
+            "animation.set",
+            "the whole box has an effect that already plays this text: set its Effect Options to By Paragraph first, or use Add Animation for a second effect",
+        ));
+    }
     s.edit(|doc, sel| {
         let sl = doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.set", "no slide"))?;
         let sl = Arc::make_mut(sl);
@@ -1233,6 +1243,23 @@ mod tests {
         assert!(t.iter().all(|x| x.1 == t[0].1), "one step: {t:?}");
         assert_eq!(t[0].2, t[1].2, "the sub-bullet starts with its bullet");
         assert!(t[1].2 < t[2].2 && t[2].2 < t[3].2, "the bullets play one after another: {t:?}");
+    }
+
+    #[test]
+    fn gallery_on_a_bullet_of_a_whole_box_effect_is_refused() {
+        // The whole-box effect already plays the bullet: a paragraph effect would animate it twice.
+        for build in ["asOne", "byWord", "byLetter"] {
+            let (mut s, tb, _) = bullets();
+            s.execute("animation.set", &json!({"effect": "fade", "class": "entrance", "ids": [tb]})).unwrap();
+            s.execute("animation.options", &json!({"ids": [tb], "textBuild": build})).unwrap();
+            s.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 3]})).unwrap();
+            let before = effects(&mut s);
+            assert!(s.execute("animation.set", &json!({"effect": "fly", "class": "entrance"})).is_err(), "{build}");
+            assert_eq!(effects(&mut s), before, "{build}: a refused gallery choice changes nothing");
+            // Add Animation means a second effect, on a bullet as on a whole shape.
+            s.execute("animation.add", &json!({"effect": "pulse", "class": "emphasis"})).unwrap();
+            assert_eq!(effects(&mut s).len(), 2, "{build}");
+        }
     }
 
     #[test]
