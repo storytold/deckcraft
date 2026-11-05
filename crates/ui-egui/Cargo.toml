@@ -25,11 +25,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 web-time = { workspace = true }
+skrifa = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 craft-update = { workspace = true }
-
-skrifa = { workspace = true }
 
 [dev-dependencies]
 # kittest's own dev-dependencies do not propagate; tests need both font features explicitly.
