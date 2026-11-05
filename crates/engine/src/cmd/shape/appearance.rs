@@ -74,7 +74,8 @@ pub(super) fn change(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// `{stops: [[pos 0–1, color], …], kind?: linear|radial|rectangular|path, angle?: deg (linear),
 /// focus?: [l, t, r, b] fractions (radial/rectangular/path: where the first stop sits),
-/// rotateWithShape?}`.
+/// rotateWithShape?}`. The renderer keeps only linear and radial gradients upright when
+/// `rotateWithShape` is false; rectangular and path gradients turn with the shape.
 pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
     let stops: Vec<GradientStop> = v
         .get("stops")?

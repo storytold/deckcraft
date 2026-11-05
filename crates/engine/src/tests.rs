@@ -4321,6 +4321,9 @@ fn shape_fill_documents_each_gradient_key_and_kind() {
     let params = cmd::parse_params(find_command("shape.fill").unwrap().params).unwrap();
     let about = params.iter().find(|p| p.name == "gradient").unwrap().about;
     assert_eq!(cmd::param_keys(about).unwrap(), ["stops", "kind", "angle", "focus", "rotateWithShape"]);
+    // The renderer keeps only linear and radial gradients upright (`paint::fill_path`).
+    let rotate = cmd::parse_params(about).unwrap().into_iter().find(|p| p.name == "rotateWithShape").unwrap().about;
+    assert!(rotate.contains("rectangular and path gradients turn with the shape"), "{rotate}");
     for kind in ["linear", "radial", "rectangular", "path"] {
         assert!(about.contains(kind), "{kind}: {about}");
         let g = cmd::shape::gradient_param(&json!({
