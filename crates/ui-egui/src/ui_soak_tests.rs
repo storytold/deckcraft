@@ -179,16 +179,16 @@ fn soak(seed: u64, steps: usize) {
     let mut rss_start = None;
     for step in 0..steps {
         log.push_back(act(&mut h, &mut r));
-        // Sample after a quarter of the run, and after at least one action, so texture caches and
-        // allocator arenas are warm.
-        if step + 1 == (steps / 4).max(1) {
-            rss_start = rss_bytes();
-        }
         if log.len() > 20 {
             log.pop_front();
         }
         h.run_steps(2);
         frames += 8;
+        // Sample after a quarter of the run and its frames, so texture caches and allocator arenas
+        // are warm. Short runs sample only after their first completed action.
+        if step + 1 == (steps / 4).max(1) {
+            rss_start = rss_bytes();
+        }
         if step % 10 == 9 {
             check(&h, seed, step, &log);
         }
