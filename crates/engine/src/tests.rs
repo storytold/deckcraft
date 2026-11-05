@@ -6592,3 +6592,24 @@ fn save_to_image_path_is_an_error_not_zip_bytes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A chart opened with a minimum at or above its maximum still takes options that leave the
+/// bounds alone; setting a bound is what checks them.
+#[test]
+fn chart_options_with_crossed_bounds_from_a_file_still_take_other_options() {
+    let mut s = session();
+    let id = s.execute("insert.chart", &json!({"type": "column"})).unwrap()["id"].as_u64().unwrap();
+    let sid = ShapeId(id as u32);
+    {
+        let doc = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+        let i = doc.slides.iter().position(|sl| deckcraft_model::find_shape(&sl.shapes, sid).is_some()).unwrap();
+        let slide = std::sync::Arc::make_mut(&mut doc.slides[i]);
+        let deckcraft_model::ShapeKind::Chart(c) = &mut deckcraft_model::find_shape_mut(&mut slide.shapes, sid).unwrap().kind else {
+            panic!("a chart")
+        };
+        (c.y_min, c.y_max) = (Some(50.0), Some(10.0));
+    }
+    s.execute("chart.options", &json!({"id": id, "textColor": "#FF0000"})).unwrap();
+    let e = s.execute("chart.options", &json!({"id": id, "axisMax": 20})).unwrap_err().to_string();
+    assert!(e.contains("axisMin must be below axisMax"), "{e}");
+    s.execute("chart.options", &json!({"id": id, "axisMin": 0, "axisMax": 20})).unwrap();
+}

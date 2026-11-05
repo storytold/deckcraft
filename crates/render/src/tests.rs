@@ -3230,3 +3230,32 @@ fn a_stacked_value_axis_ends_near_the_tallest_stack() {
         assert!((0.8..=1.0).contains(&ratio), "{kind:?}: the tallest stack reaches {ratio:.3} of the plot");
     }
 }
+
+/// The label-measured budget changes only an automatic, linear, horizontal value axis. A vertical
+/// one, or one with a fixed bound or a logarithmic scale, keeps the length budget it had before:
+/// on a vertical axis the floor of four intervals applies only where the length allows more than
+/// four anyway.
+#[test]
+fn the_value_axis_budget_changes_only_automatic_linear_horizontal_axes() {
+    let base = 10.0;
+    let old = |len: f64, horiz: bool| (len / if horiz { base * 6.0 } else { base * 1.9 }).floor().clamp(2.0, 12.0) as usize;
+    let mut c = Chart::sample(ChartType::Column);
+    c.series.truncate(1);
+    c.series[0].values = vec![Some(20.0), Some(45.5), Some(59.7)];
+    for len in (10..400).map(|l| l as f64) {
+        assert_eq!(crate::chart::value_axis_intervals(&c, len, base, false), old(len, false), "vertical, {len}");
+    }
+    let mut fixed = c.clone();
+    fixed.y_max = Some(80.0);
+    let mut lower = c.clone();
+    lower.y_min = Some(10.0);
+    let mut log = c.clone();
+    log.y_log_base = Some(10.0);
+    for len in (10..600).map(|l| l as f64) {
+        for (name, c) in [("fixed maximum", &fixed), ("fixed minimum", &lower), ("logarithmic", &log)] {
+            assert_eq!(crate::chart::value_axis_intervals(c, len, base, true), old(len, true), "{name}, {len}");
+        }
+    }
+    // An automatic linear axis measures its labels: short ones leave room for more intervals.
+    assert!(crate::chart::value_axis_intervals(&c, 300.0, base, true) > old(300.0, true));
+}

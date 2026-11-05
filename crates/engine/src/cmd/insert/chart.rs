@@ -218,7 +218,10 @@ pub(super) fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(v) = axis_max {
             c.y_max = v;
         }
-        if let (Some(lo), Some(hi)) = (c.y_min, c.y_max)
+        // Only when the request sets a bound: a chart opened with crossed bounds still takes other
+        // options.
+        if (axis_min.is_some() || axis_max.is_some())
+            && let (Some(lo), Some(hi)) = (c.y_min, c.y_max)
             && lo >= hi
         {
             return Err(bad("chart.options", "axisMin must be below axisMax"));
