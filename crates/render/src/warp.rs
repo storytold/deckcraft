@@ -9,13 +9,14 @@ use deckcraft_text::{GlyphRun, TextLayout};
 use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape as _};
 use vello_cpu::{RenderContext, peniko};
 
+use crate::text_draw::LineIndex;
 use crate::{ParaState, color, glyph, scale_of, text_transform};
 
 /// Most points one warped glyph may have (a hostile size or zoom can't explode the work).
 const MAX_POINTS: usize = 40_000;
 
-/// The line of `l` a glyph of paragraph `para` on baseline `y` belongs to.
-fn line_of(l: &TextLayout, para: usize, y: f64) -> Option<usize> {
+/// The line of `l` a glyph of paragraph `para` on baseline `y` belongs to, by scanning.
+pub(crate) fn line_of_scan(l: &TextLayout, para: usize, y: f64) -> Option<usize> {
     if let Some(&(first, count)) = l.para_lines.get(para) {
         if count == 0 {
             return None;
@@ -110,6 +111,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, l: &TextLayout, tr: Rect, m: Affine,
     let para = |i: usize| paras.iter().find(|(p, _)| *p == i).map(|(_, s)| *s).unwrap_or_default();
     let m = text_transform(m, tr, l.rotation);
     let n = l.lines.len();
+    let lines_of = LineIndex::new(l);
     let mut ink: Vec<Option<Rect>> = vec![None; n];
     let mut off: Vec<Option<f64>> = vec![None; n];
     let mut items: Vec<Item> = Vec::new();
@@ -117,7 +119,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, l: &TextLayout, tr: Rect, m: Affine,
         let k = run.size / run.face.upem.max(1.0);
         let skew = if run.fake_italic { Affine::new([1.0, 0.0, -0.2, 1.0, 0.0, 0.0]) } else { Affine::IDENTITY };
         for (gid, x, y) in &run.glyphs {
-            let Some(li) = line_of(l, run.para, *y) else { continue };
+            let Some(li) = lines_of.line_of(run.para, *y) else { continue };
             if let Some(o) = off.get_mut(li) {
                 *o = Some(o.map_or(ref_offset(run), |v| v.max(ref_offset(run))));
             }
@@ -156,7 +158,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, l: &TextLayout, tr: Rect, m: Affine,
             return;
         }
         let y = (d.rect.y0 + d.rect.y1) / 2.0;
-        let Some(li) = line_of(l, d.para, y) else { return };
+        let Some(li) = lines_of.line_of(d.para, y) else { return };
         ctx.set_transform(m * Affine::translate(ps.offset));
         ctx.set_paint(color(d.color, ps.opacity));
         for r in d.pieces() {
