@@ -45,7 +45,7 @@ body:
       label: Document details (optional)
       description: File type and how it was made. No confidential content.
   - type: textarea
-    id: system
+    id: system-info
     attributes:
       label: System information (optional)
       render: text
