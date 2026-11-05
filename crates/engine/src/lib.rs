@@ -454,17 +454,30 @@ pub struct MediaStatus {
 }
 
 /// Clipboard contents copied within the app.
+/// The theme a copy drew with. The colours and the map stay apart, as in
+/// `deckcraft_model::resolve::Ctx::color`: the map renames only `tx1`, `bg1`, `tx2` and `bg2`, and
+/// a direct `dk1` keeps the theme's colour.
+#[derive(Clone, Debug)]
+pub struct SourceTheme {
+    /// The theme's own colours, no colour map applied.
+    pub colors: deckcraft_color::ColorScheme,
+    pub color_map: Vec<(String, String)>,
+    pub fonts: deckcraft_model::theme::FontScheme,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Clipboard {
     pub shapes: Vec<Shape>,
+    /// The copied placeholders as they were, by id. `shapes` holds a slide's placeholders as
+    /// regular shapes; a paste in Slide Master view takes these, which stay placeholders.
+    pub placeholders: Vec<Shape>,
     pub slides: Vec<Slide>,
     /// Media the copied shapes/slides reference.
     pub media: Vec<deckcraft_model::MediaItem>,
     pub text: Option<deckcraft_model::TextBody>,
     pub plain: String,
-    /// The copied shapes' theme colours (colour map applied) and fonts, for Paste Special ›
-    /// Keep Source Formatting.
-    pub source_theme: Option<(deckcraft_color::ColorScheme, deckcraft_model::theme::FontScheme)>,
+    /// The theme the shapes were copied under, for Paste Special › Keep Source Formatting.
+    pub source_theme: Option<SourceTheme>,
     /// How many times the shapes were pasted (each paste offsets further).
     pub pastes: u32,
 }
@@ -682,7 +695,28 @@ impl Session {
                 self.journal.drain(..1000);
             }
         }
-        Ok(r)
+        Ok(if outer { self.with_editing(id, r) } else { r })
+    }
+
+    /// In Slide Master / layout (or handout / notes master) view the insert commands edit the
+    /// master or layout, not a slide; their answer says so with `editing: {kind, name}`, as
+    /// `slide.inspect` does. Nothing is added on slides, so those answers stay as they were.
+    fn with_editing(&self, id: &str, mut r: Value) -> Value {
+        let inserts = id.starts_with("insert.") || matches!(id, "shape.insert" | "shape.freeform" | "shape.connect" | "slide.new");
+        let (true, Some(st), Some(o)) = (inserts, self.active(), r.as_object_mut()) else { return r };
+        let doc = &st.doc;
+        let edited = match st.selection.target {
+            Target::Master { master } => doc.masters.get(master).map(|m| ("master", m.name.clone())),
+            Target::Layout { master, layout } => doc.masters.get(master).and_then(|m| m.layouts.get(layout)).map(|l| ("layout", l.name.clone())),
+            t @ (Target::Handout | Target::NotesMaster) => {
+                page_master(doc, t).map(|m| (if matches!(t, Target::Handout) { "handout" } else { "notesMaster" }, m.name.clone()))
+            }
+            Target::Slides => None,
+        };
+        if let Some((kind, name)) = edited {
+            o.entry("editing").or_insert_with(|| serde_json::json!({"kind": kind, "name": name}));
+        }
+        r
     }
 
     pub fn commands(&self) -> Vec<CommandInfo> {
@@ -695,6 +729,7 @@ impl Session {
         let mut doc = (*st.doc).clone();
         let mut sel = st.selection.clone();
         let r = f(&mut doc, &mut sel)?;
+        cmd::arrange::refit_groups(&st.doc, &mut doc);
         connect::reroute(&mut doc, &sel);
         st.doc = Arc::new(doc);
         st.selection = sel;

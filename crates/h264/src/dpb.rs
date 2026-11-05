@@ -204,6 +204,48 @@ impl Dpb {
         entry_lists
     }
 
+    /// picNumLXNoWrap (8-34, 8-35) of a short-term modification from the predictor `pred`, and the
+    /// picNum it selects.
+    fn short_term_pic_nums(pred: i32, idc: u32, value: u32, curr_pic_num: i32, max_pic_num: i32) -> (i32, i32) {
+        let d = value as i32 + 1;
+        let no_wrap = if idc == 0 {
+            if pred - d < 0 { pred - d + max_pic_num } else { pred - d }
+        } else if pred + d >= max_pic_num {
+            pred + d - max_pic_num
+        } else {
+            pred + d
+        };
+        let pn = if no_wrap > curr_pic_num { no_wrap - max_pic_num } else { no_wrap };
+        (no_wrap, pn)
+    }
+
+    /// Puts `target` at `ref_idx` and shifts the rest of the list up, then drops the later entries
+    /// that repeat it (8.2.4.3.1, 8.2.4.3.2) and keeps the list `n` long.
+    fn insert_ref<'a>(list: &mut Vec<Option<&'a DpbEntry>>, ref_idx: usize, n: usize, target: &'a DpbEntry, is_long: bool) {
+        for c in (ref_idx + 1..=n).rev() {
+            list[c] = list[c - 1];
+        }
+        list[ref_idx] = Some(target);
+        let mut nidx = ref_idx + 1;
+        for c in ref_idx + 1..=n {
+            let keep = match list[c] {
+                None => true,
+                Some(e) => {
+                    if is_long {
+                        !(e.mark == RefMark::Long && e.long_term_frame_idx == target.long_term_frame_idx)
+                    } else {
+                        !(e.mark == RefMark::Short && std::ptr::eq(e, target))
+                    }
+                }
+            };
+            if keep {
+                list[nidx] = list[c];
+                nidx += 1;
+            }
+        }
+        list.truncate(n);
+    }
+
     /// Reference picture list modification (8.2.4.3) of one list; `n` is num_ref_idx_active.
     fn modify_ref_list<'a>(
         list: &mut Vec<Option<&'a DpbEntry>>,
@@ -223,16 +265,8 @@ impl Dpb {
             list.push(None); // temporarily one longer
             let (target, is_long): (Option<&DpbEntry>, bool) = match m.idc {
                 0 | 1 => {
-                    let d = m.value as i32 + 1;
-                    let no_wrap = if m.idc == 0 {
-                        if pred - d < 0 { pred - d + max_pic_num } else { pred - d }
-                    } else if pred + d >= max_pic_num {
-                        pred + d - max_pic_num
-                    } else {
-                        pred + d
-                    };
+                    let (no_wrap, pn) = Self::short_term_pic_nums(pred, m.idc, m.value, curr_pic_num, max_pic_num);
                     pred = no_wrap;
-                    let pn = if no_wrap > curr_pic_num { no_wrap - max_pic_num } else { no_wrap };
                     (short.iter().copied().find(|e| Self::frame_num_wrap(e, cur_fn, max_frame_num) == pn), false)
                 }
                 2 => (long.iter().copied().find(|e| e.long_term_frame_idx == m.value), true),
@@ -244,29 +278,8 @@ impl Dpb {
                 ref_idx += 1;
                 continue;
             };
-            for c in (ref_idx + 1..=n).rev() {
-                list[c] = list[c - 1];
-            }
-            list[ref_idx] = Some(target);
+            Self::insert_ref(list, ref_idx, n, target, is_long);
             ref_idx += 1;
-            let mut nidx = ref_idx;
-            for c in ref_idx..=n {
-                let keep = match list[c] {
-                    None => true,
-                    Some(e) => {
-                        if is_long {
-                            !(e.mark == RefMark::Long && e.long_term_frame_idx == target.long_term_frame_idx)
-                        } else {
-                            !(e.mark == RefMark::Short && std::ptr::eq(e, target))
-                        }
-                    }
-                };
-                if keep {
-                    list[nidx] = list[c];
-                    nidx += 1;
-                }
-            }
-            list.truncate(n);
         }
         Ok(())
     }
@@ -301,6 +314,25 @@ impl Dpb {
         Ok(lists)
     }
 
+    /// Marks as unused every entry in state `mark` that `hit` selects.
+    fn unmark_where(&mut self, mark: RefMark, hit: impl Fn(&DpbEntry) -> bool) {
+        for e in &mut self.entries {
+            if e.mark == mark && hit(e) {
+                e.mark = RefMark::Unused;
+            }
+        }
+    }
+
+    /// Makes every short-term entry that `hit` selects a long-term one with index `idx`.
+    fn mark_long_where(&mut self, hit: impl Fn(&DpbEntry) -> bool, idx: u32) {
+        for e in &mut self.entries {
+            if e.mark == RefMark::Short && hit(e) {
+                e.mark = RefMark::Long;
+                e.long_term_frame_idx = idx;
+            }
+        }
+    }
+
     /// One memory management control operation; returns true for MMCO 5.
     fn apply_mmco(&mut self, m: &Mmco, cur_frame_num: u32, max_frame_num: u32, cur_long: &mut Option<u32>) -> bool {
         let mut had5 = false;
@@ -308,40 +340,17 @@ impl Dpb {
         match m.op {
             1 => {
                 let pn = curr_pic_num - (m.difference_of_pic_nums_minus1 as i32 + 1);
-                for e in &mut self.entries {
-                    if e.mark == RefMark::Short && Self::frame_num_wrap(e, cur_frame_num, max_frame_num) == pn {
-                        e.mark = RefMark::Unused;
-                    }
-                }
+                self.unmark_where(RefMark::Short, |e| Self::frame_num_wrap(e, cur_frame_num, max_frame_num) == pn);
             }
-            2 => {
-                for e in &mut self.entries {
-                    if e.mark == RefMark::Long && e.long_term_frame_idx == m.long_term_pic_num {
-                        e.mark = RefMark::Unused;
-                    }
-                }
-            }
+            2 => self.unmark_where(RefMark::Long, |e| e.long_term_frame_idx == m.long_term_pic_num),
             3 => {
                 let pn = curr_pic_num - (m.difference_of_pic_nums_minus1 as i32 + 1);
-                for e in &mut self.entries {
-                    if e.mark == RefMark::Long && e.long_term_frame_idx == m.long_term_frame_idx {
-                        e.mark = RefMark::Unused;
-                    }
-                }
-                for e in &mut self.entries {
-                    if e.mark == RefMark::Short && Self::frame_num_wrap(e, cur_frame_num, max_frame_num) == pn {
-                        e.mark = RefMark::Long;
-                        e.long_term_frame_idx = m.long_term_frame_idx;
-                    }
-                }
+                self.unmark_where(RefMark::Long, |e| e.long_term_frame_idx == m.long_term_frame_idx);
+                self.mark_long_where(|e| Self::frame_num_wrap(e, cur_frame_num, max_frame_num) == pn, m.long_term_frame_idx);
             }
             4 => {
                 let max = m.max_long_term_frame_idx_plus1;
-                for e in &mut self.entries {
-                    if e.mark == RefMark::Long && (max == 0 || e.long_term_frame_idx > max - 1) {
-                        e.mark = RefMark::Unused;
-                    }
-                }
+                self.unmark_where(RefMark::Long, |e| max == 0 || e.long_term_frame_idx > max - 1);
                 self.max_long_term_frame_idx = if max == 0 { None } else { Some(max - 1) };
             }
             5 => {
@@ -353,16 +362,9 @@ impl Dpb {
             }
             6 => {
                 // Only an index within the allowed range may be assigned (8.2.5.4.6).
-                let allowed = match self.max_long_term_frame_idx {
-                    Some(max) => m.long_term_frame_idx <= max,
-                    None => false,
-                };
+                let allowed = self.max_long_term_frame_idx.is_some_and(|max| m.long_term_frame_idx <= max);
                 if allowed {
-                    for e in &mut self.entries {
-                        if e.mark == RefMark::Long && e.long_term_frame_idx == m.long_term_frame_idx {
-                            e.mark = RefMark::Unused;
-                        }
-                    }
+                    self.unmark_where(RefMark::Long, |e| e.long_term_frame_idx == m.long_term_frame_idx);
                     *cur_long = Some(m.long_term_frame_idx);
                 }
             }
