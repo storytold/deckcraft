@@ -12,7 +12,7 @@ use std::sync::Arc;
 use deckcraft_fonts::{FontDb, FontFace, FontSlot, ScriptTag};
 use deckcraft_geom::Rect;
 use deckcraft_model::resolve::{self, Ctx};
-use deckcraft_model::text::{Bullet, Run, RunProps, TextBody};
+use deckcraft_model::text::{Run, RunProps, TextBody};
 use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind};
 use deckcraft_text::Fields;
 use serde_json::{Value, json};
@@ -525,43 +525,32 @@ impl Uses {
         self.list.get_mut(i)
     }
 
-    /// Adds the runs and bullets of `body`, text of `sh` on slide `index`, the way `font.used`
-    /// counts them (paragraphs and runs holding non-space text; a character bullet's font), with
-    /// the faces `drawn` shows drawing them.
+    /// Adds the runs and bullets of `body`, text of `sh` on slide `index`, as `font.used` counts
+    /// them (`crate::fonts::body_font_uses`), with the faces `drawn` shows drawing them.
     fn tally(&mut self, ctx: &Ctx, sh: &Shape, body: &TextBody, drawn: Option<&DrawnBody>, index: usize) {
-        for (pi, para) in body.paragraphs.iter().enumerate() {
-            if !para.runs.iter().any(|r| !r.text.trim().is_empty()) {
-                continue;
-            }
-            for (ri, run) in para.runs.iter().enumerate() {
-                if run.text.trim().is_empty() {
-                    continue;
+        crate::fonts::body_font_uses(ctx, sh, body, &mut |used| {
+            let Some(u) = self.entry(&used.family) else { return };
+            u.add_slide(index);
+            match used.run {
+                Some((ri, props)) => {
+                    u.runs = u.runs.saturating_add(1);
+                    if let Some(size) = props.size.filter(|v| v.is_finite()) {
+                        u.add_size(size);
+                    }
+                    if let Some(r) = drawn.and_then(|d| d.run(used.para, ri)) {
+                        for (face, n) in &r.faces {
+                            add_face(&mut u.faces, face, *n);
+                        }
+                    }
                 }
-                let props = resolve::run(ctx, sh, para, &run.props);
-                let Some(u) = self.entry(&resolve::font_family(ctx, &props)) else { continue };
-                u.runs = u.runs.saturating_add(1);
-                if let Some(size) = props.size.filter(|v| v.is_finite()) {
-                    u.add_size(size);
-                }
-                u.add_slide(index);
-                if let Some(r) = drawn.and_then(|d| d.run(pi, ri)) {
-                    for (face, n) in &r.faces {
-                        add_face(&mut u.faces, face, *n);
+                None => {
+                    u.bullets = u.bullets.saturating_add(1);
+                    if let Some(face) = drawn.and_then(|d| d.bullets.get(&used.para)) {
+                        add_face(&mut u.faces, face, 1);
                     }
                 }
             }
-            let pp = resolve::para(ctx, sh, para);
-            if matches!(pp.bullet, Some(Bullet::Char { .. }))
-                && let Some(f) = pp.bullet_font.as_deref()
-                && let Some(u) = self.entry(&ctx.master.theme.font(f))
-            {
-                u.bullets = u.bullets.saturating_add(1);
-                u.add_slide(index);
-                if let Some(face) = drawn.and_then(|d| d.bullets.get(&pi)) {
-                    add_face(&mut u.faces, face, 1);
-                }
-            }
-        }
+        });
     }
 }
 
