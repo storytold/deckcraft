@@ -106,6 +106,20 @@ fn a_placeholder_no_layout_placeholder_pairs_with_is_not_placed_without_a_frame(
 }
 
 #[test]
+fn a_placeholder_with_no_frame_adds_nothing_to_the_slide_extent() {
+    let placeholder = |idx: u32, frame: bool| Shape {
+        id: ShapeId(913),
+        xfrm: frame.then(|| Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        ph: Some(Placeholder { kind: PhType::Obj, idx, ..Default::default() }),
+        line: Some(deckcraft_model::Line::solid(ColorRef::rgb(Rgba::rgb(0, 0, 0)), 1000.0)),
+        ..Default::default()
+    };
+    let page = slide_extent(&Presentation::default(), 0);
+    assert_eq!(slide_extent(&deck_with(vec![placeholder(7, false)]), 0), page, "not drawn, so it reaches nowhere");
+    assert_ne!(slide_extent(&deck_with(vec![placeholder(7, true)]), 0), page, "with a frame of its own it does");
+}
+
+#[test]
 fn render_shapes_draws_the_selection_on_a_transparent_canvas() {
     let sh = Shape {
         id: ShapeId(880),

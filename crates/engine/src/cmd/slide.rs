@@ -497,9 +497,28 @@ pub fn apply_layout(doc: &mut Presentation, index: usize, layout: LayoutId) -> R
         let id = deckcraft_model::ShapeId(doc.alloc_id().ok_or_else(|| bad("slide.layout", NO_ID_SPACE))?);
         fresh.push((id, ls.clone()));
     }
+    // A placeholder that inherits its frame keeps it where it is drawn now: one left over below
+    // pairs with nothing in the new layout, and would lose its frame and vanish.
+    let frames: Vec<Option<deckcraft_model::Xfrm>> = {
+        let slide = doc.slides.get(index).ok_or_else(|| bad("slide.layout", "no slide"))?;
+        let ctx = deckcraft_model::resolve::Ctx::for_slide(doc, slide);
+        let inherits = |s: &deckcraft_model::Shape| s.ph.is_some() && s.xfrm.is_none();
+        slide
+            .shapes
+            .iter()
+            .map(|s| {
+                ctx.as_ref().filter(|c| inherits(s) && !deckcraft_model::resolve::lacks_frame(c, s)).map(|c| deckcraft_model::resolve::xfrm(c, s))
+            })
+            .collect()
+    };
     let slide = doc.slides.get_mut(index).ok_or_else(|| bad("slide.layout", "no slide"))?;
     let slide = Arc::make_mut(slide);
     let mut old: Vec<deckcraft_model::Shape> = std::mem::take(&mut slide.shapes);
+    for (o, f) in old.iter_mut().zip(frames) {
+        if f.is_some() {
+            o.xfrm = f;
+        }
+    }
     let mut out = vec![];
     for (id, ls) in fresh {
         let Some(lph) = ls.ph.clone() else { continue };
