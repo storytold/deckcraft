@@ -1173,6 +1173,12 @@ fn remote_presenter_uses_the_audience_state_and_closes_with_the_show() {
         h.run_steps(2);
         assert_eq!(h.state().show.as_ref().unwrap().state.slide, slide);
     }
+    // #1864: the web popup's Previous/Next buttons send the DOM key names.
+    for (name, slide) in [("ArrowRight", 1), ("ArrowLeft", 0)] {
+        bridge.borrow_mut().commands.push(Command::Key { name: name.into(), command: false, shift: false, alt: false, ctrl: false });
+        h.run_steps(2);
+        assert_eq!(h.state().show.as_ref().unwrap().state.slide, slide, "{name}");
+    }
     bridge.borrow_mut().commands.push(Command::End);
     h.run_steps(2);
     assert!(h.state().show.is_none());
