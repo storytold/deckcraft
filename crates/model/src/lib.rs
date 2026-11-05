@@ -377,6 +377,10 @@ pub struct Diagram {
     /// Change Colors: `colorful` (default: each shape its own accent) or `accent1`…`accent6`.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub colors: String,
+    /// Font size set for every node's text (`smartArt.fontSize`); none = sized automatically, all
+    /// alike.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<f64>,
     /// The group's shapes are the file's drawing, not generated from `nodes`: text typed into them
     /// isn't mapped back to nodes (the first outline edit regenerates them).
     #[serde(skip_serializing_if = "std::ops::Not::not")]

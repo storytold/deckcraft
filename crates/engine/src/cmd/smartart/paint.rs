@@ -194,14 +194,62 @@ pub fn layout(d: &Diagram, area: Xfrm) -> Vec<Shape> {
     layout_items(d, area).into_iter().map(|(s, _)| s).collect()
 }
 
-/// Lay out `d`, painted with its style and colours, each shape with the nodes it shows; text is
-/// shrunk per shape so its longest word fits on a line.
+/// Lay out `d`, painted with its style and colours, each shape with the nodes it shows. All the
+/// text of a graphic is sized alike, as PowerPoint does: the one scale that lets every shape's
+/// longest word fit on a line, or the size the user set (`Diagram::font_size`) for every node.
+/// Text that still overflows down a shape is fitted on the slide by [`share_shrink`], again at
+/// one scale for every shape.
 pub(super) fn layout_items(d: &Diagram, area: Xfrm) -> Vec<Item> {
     let mut v = layout_raw(d, area);
+    let scale = v.iter().map(|(sh, _)| word_scale(sh)).fold(1.0_f64, f64::min);
     for (sh, _) in &mut v {
-        fit_words(sh);
+        // A set size replaces the automatic one outright: the long word's scale would otherwise
+        // still narrow the bullets' indents.
+        match d.font_size.filter(|z| z.is_finite() && *z > 0.0) {
+            Some(size) => set_size(sh, size),
+            None => apply_scale(sh, scale),
+        }
     }
     v
+}
+
+/// One shrink-on-overflow scale for every shape of an automatically sized graphic, as PowerPoint
+/// sizes SmartArt text alike: the smallest scale any shape's text needs to fit its box, across or
+/// down (a node of many lines as much as a long word), saved on every shape. A saved scale is
+/// drawn as it is, so no shape shrinks on its own. A set size (`AutoFit::None`) is left alone.
+pub(super) fn share_shrink(ctx: &deckcraft_model::resolve::Ctx<'_>, shapes: &mut [Shape]) {
+    let fit = |sh: &Shape| {
+        let body = sh.text.as_ref().filter(|b| matches!(b.body.autofit, Some(AutoFit::Shrink { .. })))?;
+        let x = sh.xfrm?;
+        let rect = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
+        let opts = deckcraft_text::Opts { rect, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false };
+        let l = deckcraft_text::layout(ctx, sh, body, &opts);
+        Some((l.font_scale, l.line_reduction))
+    };
+    let Some((scale, reduction)) = shapes.iter().filter_map(fit).min_by(|a, b| a.0.total_cmp(&b.0)) else { return };
+    if scale >= 1.0 {
+        return;
+    }
+    for sh in shapes {
+        if let Some(t) = sh.text.as_mut()
+            && let Some(AutoFit::Shrink { font_scale, line_reduction }) = &mut t.body.autofit
+        {
+            (*font_scale, *line_reduction) = (Some(scale), reduction);
+        }
+    }
+}
+
+/// Every run of the shape's text at `size`; a fixed size turns shrink-on-overflow off, so no node
+/// is fitted to a size of its own.
+fn set_size(sh: &mut Shape, size: f64) {
+    let Some(body) = &mut sh.text else { return };
+    for p in &mut body.paragraphs {
+        for r in &mut p.runs {
+            r.props.size = Some(size);
+        }
+        p.end_props.size = Some(size);
+    }
+    body.body.autofit = Some(AutoFit::None);
 }
 
 /// Rough advance of a character as a fraction of the font size (a sans text face).
@@ -210,17 +258,16 @@ const CHAR_W: f64 = 0.6;
 /// Smallest font scale shrinking to fit goes to.
 pub(super) const MIN_SCALE: f64 = 0.25;
 
-/// Shrink the shape's text (all paragraphs together, as PowerPoint's per-shape font size does) so
-/// no word is wider than its line and would break mid-word. Overflow in height is left to the
-/// body's shrink-on-overflow autofit.
-fn fit_words(sh: &mut Shape) {
-    let Some(w) = sh.xfrm.map(|x| x.w) else { return };
+/// The scale (`MIN_SCALE..=1`) at which no word of the shape's text is wider than its line and
+/// would break mid-word. Overflow in height is left to the body's shrink-on-overflow autofit.
+fn word_scale(sh: &Shape) -> f64 {
+    let Some(w) = sh.xfrm.map(|x| x.w) else { return 1.0 };
     // Round shapes keep their text in the inscribed rectangle (about 71% of the width).
     let text_w = match sh.geom.preset_name() {
         Some("ellipse" | "gear6" | "gear9") => w * 0.71,
         _ => w,
     };
-    let Some(body) = &mut sh.text else { return };
+    let Some(body) = &sh.text else { return 1.0 };
     let avail = text_w - body.body.inset_l.unwrap_or(7.2) - body.body.inset_r.unwrap_or(7.2);
     let mut scale: f64 = 1.0;
     for p in &body.paragraphs {
@@ -234,10 +281,15 @@ fn fit_words(sh: &mut Shape) {
             }
         }
     }
-    let scale = scale.max(MIN_SCALE);
+    scale.max(MIN_SCALE)
+}
+
+/// Shrink the shape's text (all paragraphs together, as PowerPoint's per-shape font size does).
+fn apply_scale(sh: &mut Shape, scale: f64) {
     if scale >= 0.999 {
         return;
     }
+    let Some(body) = &mut sh.text else { return };
     let shrink = |v: &mut Option<f64>| {
         if let Some(x) = v {
             *x = (*x * scale * 2.0).floor() / 2.0;

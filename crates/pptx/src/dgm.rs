@@ -274,21 +274,47 @@ fn guid(seed: u32, n: usize) -> String {
     format!("{{{seed:08X}-D1A6-4C0A-9E5B-{n:012X}}}")
 }
 
-fn text(w: &mut W, t: &str) {
+/// A point's text. `d` is the diagram for a node's own text, whose runs carry the size set for
+/// every node (`Diagram::font_size`); None for the other points.
+fn text(w: &mut W, t: &str, d: Option<&Diagram>) {
     w.open0("dgm:t");
     w.empty0("a:bodyPr");
     w.empty0("a:lstStyle");
     w.open0("a:p");
-    if t.is_empty() {
-        w.empty("a:endParaRPr", A::new().a("lang", "en-US"));
-    } else {
+    let tag = if t.is_empty() { "a:endParaRPr" } else { "a:rPr" };
+    if !t.is_empty() {
         w.open0("a:r");
-        w.empty("a:rPr", A::new().a("lang", "en-US"));
+    }
+    let mut a = A::new().a("lang", "en-US");
+    // ST_TextFontSize: hundredths of a point, 1 to 4000 pt.
+    if let Some(sz) = d.and_then(|d| d.font_size).filter(|v| v.is_finite()) {
+        a = a.a("sz", (sz * 100.0).round().clamp(100.0, 400_000.0) as i64);
+    }
+    w.empty(tag, a);
+    if !t.is_empty() {
         w.elt("a:t", t);
         w.close("a:r");
     }
     w.close("a:p");
     w.close("dgm:t");
+}
+
+/// The size (points) every node's text shares in a data part, as [`data_xml`] writes it (and
+/// PowerPoint, when Font Size is set on the whole graphic): from the first run (or the paragraph
+/// end) of every node, and only when all the nodes agree.
+pub fn text_size(data: &El) -> Option<f64> {
+    let pts = data.child("ptLst")?;
+    let mut sizes = vec![];
+    for pt in pts.children_named("pt").take(MAX_NODES * 4) {
+        if !matches!(pt.attr("type").unwrap_or("node"), "node" | "asst") {
+            continue;
+        }
+        let p = pt.child("t").and_then(|t| t.child("p"))?;
+        let rpr = p.child("r").and_then(|r| r.child("rPr")).or_else(|| p.child("endParaRPr"));
+        sizes.push(rpr.and_then(|r| r.f64("sz")).map(|v| v / 100.0).filter(|v| (1.0..=4000.0).contains(v)));
+    }
+    let first = (*sizes.first()?)?;
+    sizes.iter().all(|x| *x == Some(first)).then_some(first)
 }
 
 /// `ppt/diagrams/dataN.xml` for the outline. `drawing_rel` is the slide's relationship id of the
@@ -312,7 +338,7 @@ pub fn data_xml(d: &Diagram, seed: u32, drawing_rel: &str, pics: &[(usize, Strin
             .a("phldr", "1"),
     );
     w.empty0("dgm:spPr");
-    text(&mut w, "");
+    text(&mut w, "", None);
     w.close("dgm:pt");
     // Node k: model id 1 + 3k; its link's parent and sibling transitions 2 + 3k and 3 + 3k.
     let node = |k: usize| guid(seed, 1 + 3 * k);
@@ -324,14 +350,14 @@ pub fn data_xml(d: &Diagram, seed: u32, drawing_rel: &str, pics: &[(usize, Strin
         w.open("dgm:pt", a);
         w.empty("dgm:prSet", A::new().a("phldrT", "[Text]"));
         w.empty0("dgm:spPr");
-        text(&mut w, &n.text);
+        text(&mut w, &n.text, Some(d));
         w.close("dgm:pt");
         let cxn = guid(seed, 0x10_0000 + k);
         for (i, ty) in [(2, "parTrans"), (3, "sibTrans")] {
             w.open("dgm:pt", A::new().a("modelId", guid(seed, i + 3 * k)).a("type", ty).a("cxnId", &cxn));
             w.empty0("dgm:prSet");
             w.empty0("dgm:spPr");
-            text(&mut w, "");
+            text(&mut w, "", None);
             w.close("dgm:pt");
         }
     }
@@ -345,7 +371,7 @@ pub fn data_xml(d: &Diagram, seed: u32, drawing_rel: &str, pics: &[(usize, Strin
         w.open("dgm:pt", A::new().a("modelId", guid(seed, 0x30_0000 + k)).a("type", "pres"));
         w.empty("dgm:prSet", A::new().a("presAssocID", node(k)).a("presName", "titleText1").a("presStyleLbl", "fgAcc1").a("custT", "1"));
         w.empty0("dgm:spPr");
-        text(&mut w, &n.title);
+        text(&mut w, &n.title, None);
         w.close("dgm:pt");
     }
     for (k, rid) in pics {
@@ -805,6 +831,24 @@ mod tests {
         assert!(String::from_utf8(xml.clone()).unwrap().contains("type=\"asst\""));
         let doc = crate::xml::parse(&xml).unwrap();
         assert_eq!(outline(&doc.root), d.nodes);
+    }
+
+    /// The size set for every node is on each node's runs (the paragraph end for an empty node)
+    /// and read back only when all the nodes agree.
+    #[test]
+    fn a_size_for_every_node_survives_the_data_model() {
+        let mut d = Diagram { kind: "process".into(), nodes: nodes(&[("A", 0), ("B", 0), ("", 0)]), ..Default::default() };
+        let doc = crate::xml::parse(&data_xml(&d, 4, "rId1", &[])).unwrap();
+        assert_eq!(text_size(&doc.root), None, "automatic");
+        d.font_size = Some(18.5);
+        let xml = String::from_utf8(data_xml(&d, 4, "rId1", &[])).unwrap();
+        assert_eq!(xml.matches("sz=\"1850\"").count(), 3, "{xml}");
+        let doc = crate::xml::parse(xml.as_bytes()).unwrap();
+        assert_eq!(text_size(&doc.root), d.font_size);
+        assert_eq!(outline(&doc.root), d.nodes);
+        // Nodes that differ have no size for the whole graphic.
+        let mixed = xml.replacen("sz=\"1850\"", "sz=\"2000\"", 1);
+        assert_eq!(text_size(&crate::xml::parse(mixed.as_bytes()).unwrap().root), None);
     }
 
     #[test]
