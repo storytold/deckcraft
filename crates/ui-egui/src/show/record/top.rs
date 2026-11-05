@@ -150,6 +150,11 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
         theme::font(10.0),
         timer::dot_color(rec.status),
     );
+    // The show never draws the editor's status bar, so a microphone that stopped mid-take says why
+    // here: the switch alone only reads unavailable.
+    if let Some(e) = &show.mic_error {
+        painter.text(egui::pos2(inner.min.x + 2.0, inner.max.y - 8.0), egui::Align2::LEFT_BOTTOM, format!("Microphone: {e}"), theme::font(10.0), RED);
+    }
 
     if let Some(verdict) = edit::confirm(ui, rec, now)
         && verdict == edit::Verdict::End
