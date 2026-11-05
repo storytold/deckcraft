@@ -6569,6 +6569,10 @@ fn shape_connect_glues_to_a_shape_inside_a_group() {
     let e = s.execute("shape.connect", &json!({"id": m, "from": c, "to": b})).unwrap_err().to_string();
     assert!(e.contains("inside a group"), "{e}");
     assert_eq!(s.doc().unwrap().doc, before, "nothing changed");
+    // A grouped shape that is not a line is refused as not a line, not as a grouped line.
+    let e = s.execute("shape.connect", &json!({"id": n, "from": c, "to": b})).unwrap_err().to_string();
+    assert!(e.contains("not a line"), "{e}");
+    assert_eq!(s.doc().unwrap().doc, before, "nothing changed");
 }
 
 /// The outline exports (PowerPoint's outline view) holds titles and body text only: footer,

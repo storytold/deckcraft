@@ -43,7 +43,7 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
     let id = match id_param(p, "id", "shape.connect")? {
         // The ends are in slide space and rerouting follows the slide's own connectors, so a line
         // inside a group would be drawn in the group's space and never follow its shapes.
-        Some(id) if !st.shapes().iter().any(|sh| sh.id == id) && st.shape(id).is_some() => {
+        Some(id) if !st.shapes().iter().any(|sh| sh.id == id) && st.shape(id).is_some_and(|sh| sh.is_line()) => {
             return Err(bad("shape.connect", "`id` names a line inside a group; ungroup it first, or leave `id` out for a new connector"));
         }
         Some(id) => id,
