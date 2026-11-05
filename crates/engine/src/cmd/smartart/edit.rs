@@ -23,6 +23,37 @@ fn diagram_group(shapes: &[Shape], id: ShapeId) -> Option<&Shape> {
     None
 }
 
+/// After text in a node changed: fit the graphic's text afresh at one shared scale, so the nodes
+/// that were not edited do not keep a scale from the old text (PowerPoint sizes them alike).
+pub(crate) fn share_after_edit(s: &mut Session, id: ShapeId) -> Result<()> {
+    let st = s.doc_mut()?;
+    let mut d = (*st.doc).clone();
+    let sel = st.selection.clone();
+    let Some(list) = crate::shapes_mut(&mut d, &sel) else { return Ok(()) };
+    let Some(gid) = diagram_group(list, id).map(|g| g.id) else { return Ok(()) };
+    let Some(ShapeKind::Group { children, .. }) = deckcraft_model::find_shape(list, gid).map(|g| g.kind.clone()) else { return Ok(()) };
+    let mut kids = children;
+    for sh in &mut kids {
+        if let Some(t) = sh.text.as_mut()
+            && let Some(AutoFit::Shrink { font_scale, line_reduction }) = &mut t.body.autofit
+        {
+            (*font_scale, *line_reduction) = (Some(1.0), 0.0);
+        }
+    }
+    let Some(ctx) = crate::cmd::text::ctx_for(&d, &sel) else { return Ok(()) };
+    super::paint::share_shrink(&ctx, &mut kids);
+    drop(ctx);
+    if let Some(list) = crate::shapes_mut(&mut d, &sel)
+        && let Some(g) = deckcraft_model::find_shape_mut(list, gid)
+        && let ShapeKind::Group { children, .. } = &mut g.kind
+    {
+        *children = kids;
+        st.doc = std::sync::Arc::new(d);
+        st.revision += 1;
+    }
+    Ok(())
+}
+
 /// The SmartArt graphic the selection is (or is inside), with its outline as the Text Pane shows it.
 pub fn selected(st: &crate::DocState) -> Option<(ShapeId, Diagram)> {
     let shapes = current_shapes(&st.doc, &st.selection)?;

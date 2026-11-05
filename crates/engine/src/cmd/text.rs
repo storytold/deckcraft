@@ -183,6 +183,7 @@ pub(crate) fn edit_text<T>(s: &mut Session, f: impl FnOnce(&mut TextBody, &mut T
     })?;
     if !t0.notes && t0.cell.is_none() {
         fit_text_box(s, t0.shape)?;
+        crate::cmd::smartart::share_after_edit(s, t0.shape)?;
     }
     Ok(r)
 }
