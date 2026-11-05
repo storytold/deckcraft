@@ -27,7 +27,7 @@
 //!   - Export (PDF, pictures, outline, GIF, handouts, a Save As type that isn't a presentation)
 //!     and Print: `false`. They are copies; the presentation's file stays the same.
 //! - `deckcraft:dirty` whenever unsaved changes appear or go away, `deckcraft:failed` when the
-//!   app couldn't start or refused a file over 2 GiB.
+//!   app couldn't start or refused a file of 2 GiB or larger.
 //!
 //! In host mode the app starts with an empty presentation instead of the sample, which gives way to
 //! the first file the host sends; the host guards leaving the page, and `?author=` names the user
@@ -46,7 +46,9 @@ const APP: &str = "deckcraft";
 /// falls back to this): no name is no file, so the presentation opens untitled.
 const NAMELESS: &str = "document";
 
-/// The largest file a host may send, the limit File › Open has on the desktop (2 GiB): a bigger one is refused before it is copied.
+/// The largest file a host may send. File › Open on the desktop refuses anything over 2 GiB.
+/// On wasm32 a `Vec` cannot hold 2 GiB (`isize::MAX` is one byte less), so a file of exactly
+/// 2 GiB is refused too, before its bytes are copied.
 const MAX_OPEN_BYTES: f64 = 2_147_483_648.0;
 
 /// The longest user name taken from `?author=` (the preferences' own limit).
@@ -129,9 +131,9 @@ impl Bridge {
         let host = self.host.clone();
         self.host.listen(move |message| {
             let Message::Open { name, data } = message else { return };
-            if data.size() > MAX_OPEN_BYTES {
-                log::warn!("host file {name} is over 2 GiB; not opened");
-                let _ = host.post_failed(&format!("{name} is larger than 2 GiB, the largest file DeckCraft opens"), None);
+            if data.size() >= MAX_OPEN_BYTES {
+                log::warn!("host file {name} is 2 GiB or larger; not opened");
+                let _ = host.post_failed(&format!("{name} is 2 GiB or larger, which DeckCraft's web build cannot open"), None);
                 return;
             }
             let FileData::Bytes(array) = data else {
