@@ -1020,13 +1020,23 @@ fn inherit_placeholder_geometry(p: &mut Presentation) {
         }
     }
     let mut slide_geoms: Vec<(usize, usize, Geom)> = vec![];
+    // Placeholders with no layout partner and no geometry of their own: PowerPoint draws no fill
+    // or outline for them, so they keep the empty geometry instead of becoming rectangles.
+    let mut bare: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
     for (si, sl) in p.slides.iter().enumerate() {
         let Some(ctx) = deckcraft_model::resolve::Ctx::for_slide(p, sl) else { continue };
         for (i, s) in sl.shapes.iter().enumerate() {
             if unset(&s.geom) {
                 let (lp, mp) = deckcraft_model::resolve::parents(&ctx, s);
+                let unpaired = deckcraft_model::resolve::unpaired_placeholder(&ctx, s);
                 let g = lp.map(|l| l.geom.clone()).filter(|g| !unset(g)).or_else(|| mp.map(|m| m.geom.clone()).filter(|g| !unset(g)));
-                slide_geoms.push((si, i, g.unwrap_or_default()));
+                match g {
+                    Some(g) => slide_geoms.push((si, i, g)),
+                    None if unpaired => {
+                        bare.insert((si, i));
+                    }
+                    None => slide_geoms.push((si, i, Geom::default())),
+                }
             }
         }
     }
@@ -1038,12 +1048,17 @@ fn inherit_placeholder_geometry(p: &mut Presentation) {
         }
     }
     // Placeholders inside groups (rare) and anything still unset: rectangles.
-    for sl in &mut p.slides {
-        walk_shapes_mut(&mut Arc::make_mut(sl).shapes, &mut |s| {
-            if unset(&s.geom) {
-                s.geom = Geom::default();
+    for (si, sl) in p.slides.iter_mut().enumerate() {
+        for (i, s) in Arc::make_mut(sl).shapes.iter_mut().enumerate() {
+            if bare.contains(&(si, i)) {
+                continue;
             }
-        });
+            walk_shapes_mut(std::slice::from_mut(s), &mut |s| {
+                if unset(&s.geom) {
+                    s.geom = Geom::default();
+                }
+            });
+        }
     }
     for m in &mut p.masters {
         for l in &mut Arc::make_mut(m).layouts {

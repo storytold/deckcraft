@@ -248,6 +248,106 @@ fn a_layout_colour_map_override_applies_to_its_slides() {
 }
 
 #[test]
+fn a_placeholder_takes_a_layout_placeholder_by_idx_alone() {
+    // As PowerPoint draws a probe deck whose layout has a title (idx 0, orange), a body (idx 1,
+    // green) and a picture slot (idx 15, white). A slide placeholder takes the layout placeholder of
+    // its idx whatever the types say; one with another idx takes none, and the orphan idx
+    // 4294967295 (a placeholder pasted from another deck) takes none and goes to the master.
+    let mut p = Presentation::default();
+    let layout = p.slides[0].layout;
+    let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+    let l = m.layouts.iter_mut().find(|l| l.id == layout).unwrap();
+    let slot = |id: u32, kind: PhType, idx: u32, color: SchemeSlot| Shape {
+        id: ShapeId(id),
+        ph: Some(Placeholder { kind, idx, ..Default::default() }),
+        xfrm: Some(Xfrm::new(10.0 * f64::from(id), 10.0, 100.0, 100.0)),
+        fill: Some(Fill::Solid { color: ColorRef::scheme(color) }),
+        ..Default::default()
+    };
+    l.shapes = vec![
+        slot(1, PhType::Title, 0, SchemeSlot::Accent1),
+        slot(2, PhType::Body, 1, SchemeSlot::Accent2),
+        slot(3, PhType::Picture, 15, SchemeSlot::Bg1),
+    ];
+    let slide: Slide = (*p.slides[0]).clone();
+    let ctx = Ctx::for_slide(&p, &slide).unwrap();
+    let probe = |kind: PhType, idx: u32| Shape { id: ShapeId(9), ph: Some(Placeholder { kind, idx, ..Default::default() }), ..Default::default() };
+    let paired = |kind: PhType, idx: u32| resolve::parents(&ctx, &probe(kind, idx)).0.map(|s| s.id.0);
+    // The same idx pairs, whatever the types (D1, D2, E1, E2 and the controls of the probe decks).
+    assert_eq!(paired(PhType::Obj, 15), Some(3));
+    assert_eq!(paired(PhType::Body, 15), Some(3));
+    assert_eq!(paired(PhType::Obj, 1), Some(2));
+    assert_eq!(paired(PhType::Title, 1), Some(2));
+    assert_eq!(paired(PhType::Title, 0), Some(1));
+    assert_eq!(paired(PhType::Body, 0), Some(1));
+    assert_eq!(paired(PhType::Obj, 0), Some(1));
+    // Another idx or the orphan one pairs with nothing, with the same type or not (A1-A5, B3, B4, D4, D5).
+    for (kind, idx) in
+        [(PhType::Obj, u32::MAX), (PhType::Body, u32::MAX), (PhType::Title, u32::MAX), (PhType::Obj, 7), (PhType::Body, 7), (PhType::Title, 7)]
+    {
+        let sh = probe(kind, idx);
+        assert_eq!(paired(kind, idx), None, "{kind:?} idx {idx}");
+        assert!(resolve::fill(&ctx, &sh).0.is_none(), "{kind:?} idx {idx} takes a layout fill");
+    }
+    assert!(matches!(resolve::fill(&ctx, &probe(PhType::Obj, 15)).0, Some(Fill::Solid { .. })));
+    // The text style group follows the layout placeholder: a body paired with the title is drawn in
+    // the title style, a title paired with the body in the body style (D1, E1).
+    let m = &p.masters[0];
+    assert!(std::ptr::eq(resolve::master_list_style(&ctx, &probe(PhType::Body, 0)), &m.title_style));
+    assert!(std::ptr::eq(resolve::master_list_style(&ctx, &probe(PhType::Title, 1)), &m.body_style));
+    assert!(std::ptr::eq(resolve::master_list_style(&ctx, &probe(PhType::Title, 7)), &m.title_style));
+    // Without a placeholder of idx 0 in the layout, idx 0 is an idx like any other: nothing pairs by
+    // type, so a body, a title, a subtitle and a bare placeholder are all unpaired (G1-G9), and
+    // their text still draws in the master's style for their type.
+    let mut q = p.clone();
+    std::sync::Arc::make_mut(&mut q.masters[0]).layouts.iter_mut().find(|l| l.id == layout).unwrap().shapes.retain(|s| s.id != ShapeId(1));
+    let slide: Slide = (*q.slides[0]).clone();
+    let ctx = Ctx::for_slide(&q, &slide).unwrap();
+    for kind in [PhType::Body, PhType::Obj, PhType::Title, PhType::CtrTitle, PhType::SubTitle] {
+        let sh = probe(kind, 0);
+        assert!(resolve::parents(&ctx, &sh).0.is_none(), "{kind:?} idx 0 pairs by type");
+        assert!(resolve::lacks_frame(&ctx, &sh), "{kind:?} idx 0 has no frame");
+    }
+    let m = &q.masters[0];
+    assert!(std::ptr::eq(resolve::master_list_style(&ctx, &probe(PhType::Body, 0)), &m.body_style));
+    assert!(std::ptr::eq(resolve::master_list_style(&ctx, &probe(PhType::Title, 0)), &m.title_style));
+}
+
+#[test]
+fn an_unpaired_placeholder_has_no_frame_but_the_orphan_takes_the_masters() {
+    // Probe deck slides C1-C3, D4, D5, G1-G9: with an idx no layout placeholder has (0 included), a placeholder takes no
+    // frame from the master and, with none of its own, is not drawn; the orphan idx takes the
+    // master's frame, as a placeholder of its type does.
+    let p = Presentation::default();
+    let slide: Slide = (*p.slides[0]).clone();
+    let ctx = Ctx::for_slide(&p, &slide).unwrap();
+    let probe = |kind: PhType, idx: u32, frame: bool| Shape {
+        id: ShapeId(9),
+        ph: Some(Placeholder { kind, idx, ..Default::default() }),
+        xfrm: frame.then(|| Xfrm::new(1.0, 2.0, 30.0, 40.0)),
+        ..Default::default()
+    };
+    for kind in [PhType::Obj, PhType::Body, PhType::Title] {
+        assert!(resolve::unpaired_placeholder(&ctx, &probe(kind, 7, false)), "{kind:?} idx 7");
+        assert!(resolve::lacks_frame(&ctx, &probe(kind, 7, false)), "{kind:?} idx 7 has no frame");
+        assert!(!resolve::lacks_frame(&ctx, &probe(kind, 7, true)), "{kind:?} idx 7 with a frame of its own");
+        assert!(!resolve::unpaired_placeholder(&ctx, &probe(kind, u32::MAX, false)));
+        assert!(!resolve::lacks_frame(&ctx, &probe(kind, u32::MAX, false)));
+    }
+    // A shape that is no placeholder, and one on a layout or master, always has a frame.
+    assert!(!resolve::lacks_frame(&ctx, &Shape::default()));
+    let orphan = probe(PhType::Obj, u32::MAX, false);
+    let master_body = p.masters[0].shapes.iter().find(|s| s.ph_type() == Some(PhType::Body)).and_then(|s| s.xfrm).unwrap();
+    assert_eq!(resolve::xfrm(&ctx, &orphan), master_body);
+    assert_ne!(resolve::xfrm(&ctx, &probe(PhType::Obj, 7, false)), master_body);
+    // Nor do the master placeholder's body properties reach an unpaired one: its title text sits at
+    // the top of its frame (probe deck slide G6), while the orphan's takes the master title's anchor.
+    let anchor = |idx: u32| resolve::body(&ctx, &probe(PhType::Title, idx, true)).anchor;
+    assert_eq!(anchor(7), Some(text::Anchor::Top));
+    assert_ne!(anchor(u32::MAX), anchor(7), "the master's title is anchored differently");
+}
+
+#[test]
 fn sibling_lists_and_parents_reach_into_groups() {
     let leaf = |id: u32| Shape { id: ShapeId(id), ..Default::default() };
     let group = |id: u32, children: Vec<Shape>| Shape {

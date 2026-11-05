@@ -66,6 +66,24 @@ fn a_quick_style_fills_an_empty_placeholder() {
     assert_eq!(img.pixel(280, 185), [255, 255, 255, 255], "an unformatted placeholder has no fill");
 }
 
+/// A placeholder whose idx no layout placeholder has takes no frame from the master, so with none
+/// of its own PowerPoint draws nothing of it; the orphan idx takes the master's body frame.
+#[test]
+fn a_placeholder_no_layout_placeholder_pairs_with_has_no_frame() {
+    let placeholder = |idx: u32, frame: bool| Shape {
+        id: ShapeId(911),
+        xfrm: frame.then(|| Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        ph: Some(Placeholder { kind: PhType::Obj, idx, ..Default::default() }),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)),
+        ..Default::default()
+    };
+    let draw = |s: Shape| render_slide(&deck_with(vec![s]), 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    let drawn = |img: &Image| (0..img.height).step_by(4).any(|y| (0..img.width).step_by(4).any(|x| img.pixel(x, y) != [255, 255, 255, 255]));
+    assert!(!drawn(&draw(placeholder(7, false))), "an unpaired placeholder without a frame is not drawn");
+    assert!(drawn(&draw(placeholder(7, true))), "with a frame of its own it is");
+    assert!(drawn(&draw(placeholder(u32::MAX, false))), "the orphan idx takes the master's frame");
+}
+
 #[test]
 fn render_shapes_draws_the_selection_on_a_transparent_canvas() {
     let sh = Shape {
