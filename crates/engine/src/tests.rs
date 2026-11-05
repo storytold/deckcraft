@@ -6930,6 +6930,24 @@ fn a_refused_named_format_color_restores_the_selection() {
     assert_eq!(s.doc().unwrap().selection.shapes, before, "the refusal left the selection replaced");
 }
 
+/// A repeated id formats its shape once, and an `ids` that is not an array is refused rather than
+/// read as the selection.
+#[test]
+fn formatter_ids_are_deduplicated_and_must_be_an_array() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 20, 200, 60], "text": "A"})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 100, 200, 60], "text": "B"})).unwrap()["id"].as_u64().unwrap();
+    s.doc_mut().unwrap().selection.shapes = vec![ShapeId(b as u32)];
+    s.execute("format.indent", &json!({"ids": [a, a]})).unwrap();
+    let level = |s: &Session, id: u64| s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].level;
+    assert_eq!(level(&s, a), 1, "a repeated id indented twice");
+    for ids in [json!("abc"), json!(5), json!({})] {
+        assert!(s.execute("format.indent", &json!({"ids": ids})).is_err(), "{ids}");
+    }
+    assert_eq!(level(&s, b), 0, "a malformed `ids` formatted the selection");
+}
+
 /// ZZ5: the paragraph and text formatters that acted only on the selection take `ids` too: the
 /// named shapes change with nothing selected, an unnamed shape and the selection stay as they were,
 /// and a refused call restores the selection.

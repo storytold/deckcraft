@@ -424,12 +424,19 @@ pub fn specs() -> Vec<CommandSpec> {
 /// either, on the selection. An id the page being edited doesn't have is refused, naming it,
 /// rather than formatting nothing. The selection is put back after, also when the edit is refused (unless the edit went to another slide).
 fn on_named(s: &mut Session, p: &Value, cmd: &str, f: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
+    // `targets` reads only an array, so any other `ids` would silently format the selection.
+    if p.get("ids").is_some_and(|v| !v.is_null() && !v.is_array()) {
+        return Err(super::bad(cmd, "`ids` must be an array of shape ids"));
+    }
     // An empty `ids` names nothing and means the selection, as `targets` reads it.
     let named = |k: &str| p.get(k).is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()));
     if !named("ids") && !named("id") {
         return f(s);
     }
-    let ids = super::targets(s, p)?;
+    let mut ids = super::targets(s, p)?;
+    // A repeated id would run a relative change (indent, grow) twice on the same shape.
+    let mut seen = std::collections::HashSet::new();
+    ids.retain(|id| seen.insert(*id));
     if let Some(id) = ids.iter().find(|id| s.doc().is_ok_and(|st| st.shape(**id).is_none())) {
         return Err(super::bad(cmd, format!("no shape {id} on the slide (or master, layout) being edited")));
     }
