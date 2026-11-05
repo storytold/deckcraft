@@ -9,7 +9,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
 repository = "https://github.com/storytold/deckcraft"
-
+homepage = "https://getartcraft.com/apps/deckcraft"
 [workspace.dependencies]
 # internal
 deckcraft-geom = { path = "crates/geom" }
