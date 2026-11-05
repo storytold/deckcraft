@@ -95,7 +95,7 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-05 | minor | With text highlighted in a box, the ribbon's Start, Duration, Delay and Effect Options show and change only those paragraphs; `paragraphs` parameter on `animation.timing` and `animation.options`; the gallery refuses a paragraph that a whole-box effect already plays (#1113). Scores unchanged |
+| 2026-11-05 | minor | With text highlighted in a box, the ribbon's Start, Duration, Delay and Effect Options show and change only those paragraphs; `paragraphs` parameter on `animation.timing` and `animation.options`; the gallery refuses a paragraph that a whole-box effect already plays; Effect Options opens for any animated text, so By Paragraph is reachable for effects with no options, such as Fade (#1113). Scores unchanged |
 | 2026-10-31 | minor | Highlighting text in a box and choosing an effect animates only the highlighted paragraphs, as in PowerPoint; `paragraphs` parameter on `animation.add` and `animation.set` (#1113). Scores unchanged |
 | 2026-10-30 | trivial | Animation Effect Options show readable, effect-aware labels for all gallery option codes; stored values and command parameters stay unchanged |
 | 2026-10-29 | minor | Going back in the show plays the transition of the slide being left, reversed, instead of the previous slide's entrance transition (#1531); new row in the transition features. Scores unchanged |

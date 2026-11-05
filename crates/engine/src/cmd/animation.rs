@@ -294,10 +294,7 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
             .current_slide()
             .is_some_and(|sl| sl.animations.iter().any(|x| x.shape == *id && x.paragraph.is_none() && x.text_build != TextBuild::ByParagraph))
     {
-        return Err(bad(
-            "animation.set",
-            "the whole box has an effect that already plays this text: set its Effect Options to By Paragraph first, or use Add Animation for a second effect",
-        ));
+        return Err(bad("animation.set", "the whole box is animated: set Effect Options to By Paragraph"));
     }
     s.edit(|doc, sel| {
         let sl = doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.set", "no slide"))?;

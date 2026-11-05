@@ -91,7 +91,9 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         let effect = cur.as_ref().map(|c| c.effect.as_str()).unwrap_or_default();
         let build = cur.as_ref().map(|c| text_build_id(c.text_build));
         let build_rows = marked_options(&["asOne", "byParagraph"], build);
-        let r = big_button(ui, Icon::EffectOptions, "Effect\nOptions", !effect_rows.is_empty());
+        // By Paragraph applies to any text, even an effect with no options of its own.
+        let has_text = app.session.active().zip(cur.as_ref()).and_then(|(d, c)| d.shape(c.shape)).is_some_and(|sh| sh.text.is_some());
+        let r = big_button(ui, Icon::EffectOptions, "Effect\nOptions", !effect_rows.is_empty() || has_text);
         egui::Popup::menu(&r).show(|ui| {
             for &(o, on) in &effect_rows {
                 if ui.selectable_label(on, animation_option_label(effect, o)).clicked() {
@@ -99,7 +101,9 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                     ui.close();
                 }
             }
-            ui.separator();
+            if !effect_rows.is_empty() {
+                ui.separator();
+            }
             for &(id, on) in &build_rows {
                 let label = if id == "byParagraph" { "By Paragraph" } else { "As One Object" };
                 if ui.selectable_label(on, label).clicked() {
