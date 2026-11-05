@@ -144,6 +144,10 @@ impl SlideApp {
         let visible = show::viewport_visible(ctx);
         let Some(doc) = self.session.active().map(|d| d.doc.clone()) else { return };
         let Some(show) = self.show.as_mut() else { return };
+        if show.presenter_grid && self.services.presenter.as_ref().is_some_and(|host| !host.is_open()) {
+            // A web popup closed with its grid open must not hold auto-advance while this tab is hidden (#1866).
+            show.presenter_grid = false;
+        }
         if visible {
             // A visible logic-only pass (`run_logic`) carries the last full frame's input time.
             // Anchoring that stale time to `now` would move the hidden clock backwards if the
