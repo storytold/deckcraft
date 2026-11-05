@@ -124,10 +124,11 @@ pub fn remove_files(_path: &str, _matches: &dyn Fn(&str) -> bool) -> Result<usiz
 }
 
 /// How many regular files directly in folder `path` have names `matches` says are ours. A folder
-/// that isn't there has none.
+/// that isn't there has none. Listing is checked as a write, like the folder's other operations:
+/// the caller is about to replace what it counts, so a write-only root must be enough.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn count_files(path: &str, matches: &dyn Fn(&str) -> bool) -> Result<usize, String> {
-    crate::file_access::check_read(path)?;
+    crate::file_access::check_write(path)?;
     let entries = match std::fs::read_dir(path) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),

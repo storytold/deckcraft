@@ -927,6 +927,31 @@ mod tests {
         assert_eq!((o.fps, o.seconds_per_step, o.seconds_per_slide, o.transitions, o.width), (60, 0.0, 60.0, false, 16));
     }
 
+    /// A destination under a write root that is not also a read root is exported to: the folder
+    /// checks before the write need write access only. A folder outside the root is still refused.
+    #[test]
+    fn export_needs_only_write_access_to_the_destination() {
+        let root = std::env::temp_dir().join(format!("dc-frames-wo-{}", std::process::id()));
+        let outside = std::env::temp_dir().join(format!("dc-frames-out-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let roots = crate::file_access::AutomationRoots::new(&[], std::slice::from_ref(&root)).unwrap().unwrap();
+        let doc = deckcraft_model::defaults::new_presentation(None);
+        let opts = FramesOptions { seconds_per_slide: 0.0, width: 32, ..Default::default() };
+        let inside = root.join("out").to_string_lossy().to_string();
+        let ok = crate::file_access::confine(Some(&roots), || export(&doc, &opts, &inside));
+        assert!(ok.is_ok(), "{ok:?}");
+        assert!(root.join("out").join(frame_name(1)).is_file());
+        let elsewhere = outside.join("out").to_string_lossy().to_string();
+        let refused = crate::file_access::confine(Some(&roots), || export(&doc, &opts, &elsewhere));
+        assert!(refused.is_err());
+        assert!(!outside.join("out").exists(), "nothing is written outside the root");
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
     #[test]
     fn frame_names_are_six_digits_and_recognised() {
         assert_eq!(frame_name(1), "frame-000001.png");
