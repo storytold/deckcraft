@@ -339,16 +339,22 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         });
     }
     if !clip.shapes.is_empty() {
-        s.clipboard.pastes += 1;
-        let off = s.prefs.duplicate_offset * s.clipboard.pastes as f64;
-        // Pasting on another slide keeps the position; on the same slide it offsets.
-        let same_slide = !clip.foreign && s.doc().ok().is_some_and(|d| clip.shapes.iter().any(|c| d.shape(c.id).is_some()));
+        // Pasting on another slide keeps the position; on the same slide it offsets. Shapes from
+        // another window have no source slide here: the first paste keeps the position, and
+        // later ones offset while they land on the slide the last one did.
         let off = if clip.foreign {
-            s.prefs.duplicate_offset * clip.pastes as f64
-        } else if same_slide {
+            let here = pasting_on(s);
+            if here.is_none() || clip.pasted_on != here {
+                s.clipboard.pastes = 0;
+            }
+            let off = s.prefs.duplicate_offset * s.clipboard.pastes as f64;
+            s.clipboard.pastes += 1;
+            s.clipboard.pasted_on = here;
             off
         } else {
-            0.0
+            s.clipboard.pastes += 1;
+            let same_slide = s.doc().ok().is_some_and(|d| clip.shapes.iter().any(|c| d.shape(c.id).is_some()));
+            if same_slide { s.prefs.duplicate_offset * s.clipboard.pastes as f64 } else { 0.0 }
         };
         return s.edit(|doc, sel| {
             let media = bring_media("edit.paste", doc, &clip.media)?;
@@ -402,6 +408,12 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
+/// The shape tree and slide a paste lands on, as `Clipboard::pasted_on` records it.
+fn pasting_on(s: &Session) -> Option<(crate::Target, deckcraft_model::SlideId)> {
+    let st = s.doc().ok()?;
+    st.doc.slides.get(st.selection.slide).map(|sl| (st.selection.target, sl.id))
+}
+
 fn paste_external_body(s: &mut Session, body: &TextBody) -> Result<Value> {
     if s.doc()?.selection.text.is_some() {
         return super::text::paste_body(s, body);
@@ -451,9 +463,10 @@ fn paste_special(s: &mut Session, p: &Value) -> Result<Value> {
                 bake_theme(&mut s.clipboard.placeholders, theme);
             }
             let r = paste(s, &json!({}));
-            let pastes = s.clipboard.pastes;
+            let (pastes, pasted_on) = (s.clipboard.pastes, s.clipboard.pasted_on);
             s.clipboard = saved;
             s.clipboard.pastes = pastes;
+            s.clipboard.pasted_on = pasted_on;
             r
         }
         "picture" => paste_picture(s),
@@ -543,7 +556,9 @@ fn paste_picture(s: &mut Session) -> Result<Value> {
     let img = deckcraft_render::render_shape(&doc, &slide, gid, SCALE).ok_or_else(|| bad("edit.pasteSpecial", "the shapes could not be drawn"))?;
     // render_shape draws the bounds plus an 8 pt margin (room for shadows and outlines).
     let (w, h) = (img.width as f64 / SCALE, img.height as f64 / SCALE);
-    let same_slide = !clip.foreign && clip.shapes.iter().any(|c| st.shape(c.id).is_some());
+    // As with a paste: foreign shapes count as on this slide once pasted here last.
+    let same_slide =
+        if clip.foreign { clip.pasted_on.is_some() && clip.pasted_on == pasting_on(s) } else { clip.shapes.iter().any(|c| st.shape(c.id).is_some()) };
     let off = if same_slide { s.prefs.duplicate_offset } else { 0.0 };
     let png = img.to_png();
     s.execute("insert.picture", &json!({"data": base64_encode(&png), "name": "Picture.png", "rect": [b.x0 - 8.0 + off, b.y0 - 8.0 + off, w, h]}))

@@ -20,6 +20,7 @@ mod input;
 mod keys;
 mod playback;
 
+pub(crate) use clipboard::ClipboardOffer;
 #[cfg(test)]
 pub(crate) use clipboard::{OBJECTS_MARKER, system_clipboard_text};
 #[cfg(test)]

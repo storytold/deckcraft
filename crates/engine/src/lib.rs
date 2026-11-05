@@ -489,6 +489,10 @@ pub struct Clipboard {
     /// How many times the shapes were pasted (each paste offsets further).
     #[serde(skip)]
     pub pastes: u32,
+    /// Where foreign shapes were last pasted: the target and slide. Shapes from another window
+    /// have no source slide here, so a paste on another slide than the last keeps the position.
+    #[serde(skip)]
+    pub pasted_on: Option<(Target, SlideId)>,
     /// Cached system representation used to recognize repeated offers.
     #[serde(skip)]
     pub system_bytes: Option<Vec<u8>>,

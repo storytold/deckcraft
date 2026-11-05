@@ -374,4 +374,39 @@ mod repeated_paste_tests {
         let x = doc.shape(doc.selection.shapes[0]).unwrap().xfrm.unwrap();
         assert_eq!((x.x, x.y), (200.0, 220.0));
     }
+
+    /// As with shapes copied here: on a slide other than the last paste's, the position stays.
+    #[test]
+    fn foreign_offer_keeps_its_position_on_another_slide() {
+        let mut src = Session::with_new();
+        src.execute("shape.insert", &json!({"preset":"rect", "rect":[100,120,200,80]})).unwrap();
+        src.execute("edit.copy", &json!({})).unwrap();
+        let clipboard = base64_encode(&src.clipboard.to_system_bytes().unwrap());
+        let mut dst = Session::with_new();
+        dst.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let offset = dst.prefs.duplicate_offset;
+        let steps = [(0, "paste", 0.0), (0, "paste", 1.0), (1, "paste", 0.0), (1, "keepSource", 1.0), (1, "picture", 1.0), (0, "paste", 0.0)];
+        for (i, (slide, how, count)) in steps.into_iter().enumerate() {
+            dst.execute("slide.go", &json!({"index": slide})).unwrap();
+            // The picture is drawn with an 8 pt margin around the shape.
+            let margin = match how {
+                "paste" => {
+                    dst.execute("edit.paste", &json!({"clipboard": clipboard})).unwrap();
+                    0.0
+                }
+                "picture" => {
+                    dst.execute("edit.pasteSpecial", &json!({"as": how})).unwrap();
+                    8.0
+                }
+                _ => {
+                    dst.execute("edit.pasteSpecial", &json!({"as": how})).unwrap();
+                    0.0
+                }
+            };
+            let doc = dst.doc().unwrap();
+            let x = doc.shape(doc.selection.shapes[0]).unwrap().xfrm.unwrap();
+            let want = (100.0 - margin + offset * count, 120.0 - margin + offset * count);
+            assert!((x.x - want.0).abs() < 0.01 && (x.y - want.1).abs() < 0.01, "step {i}: {x:?}, want {want:?}");
+        }
+    }
 }
