@@ -48,7 +48,8 @@ pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, layout: &Layout) {
     if cp_resp.clicked() {
         rec.camera_preview = !rec.camera_preview;
     }
-    cp_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::CheckBox, rec.camera_preview, "Camera preview"));
+    // The preview toggles: its state is `selected`, not `enabled` (it can always be clicked).
+    cp_resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, rec.camera_preview, "Camera preview"));
     cp_resp.on_hover_text(if rec.camera_preview { "Hide camera preview" } else { "Show camera preview" });
 
     let r = layout.views;

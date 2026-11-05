@@ -1134,10 +1134,17 @@ fn clear_timing(s: &mut Session, p: &Value) -> Result<Value> {
             if had {
                 n += 1;
             }
-            let bare = sl
-                .transition
-                .as_ref()
-                .is_some_and(|t| t.kind == "none" && t.option.is_empty() && t.advance_on_click && t.sound.is_none() && t.raw.is_none());
+            // A transition that still sets something (a sound, Stop Previous Sound, or its raw
+            // XML) stays: only the timing is cleared.
+            let bare = sl.transition.as_ref().is_some_and(|t| {
+                t.kind == "none"
+                    && t.option.is_empty()
+                    && t.advance_on_click
+                    && t.sound.is_none()
+                    && !t.sound_loop
+                    && !t.stop_sound
+                    && t.raw.is_none()
+            });
             if bare {
                 sl.transition = None;
             }
@@ -1700,6 +1707,24 @@ mod tests {
         assert!(s.execute("show.clearTiming", &json!({"index": 99})).is_err());
         assert_eq!(s.execute("show.clearTiming", &json!({"index": 1})).unwrap()["cleared"], 1);
         assert_eq!(s.execute("show.clearTiming", &json!({"index": 1})).unwrap()["cleared"], 0);
+    }
+
+    /// Clearing the timing must not take another transition setting with it: a slide with no
+    /// effect but Stop Previous Sound keeps its transition when its advance time goes.
+    #[test]
+    fn clear_timing_keeps_a_transition_that_stops_the_previous_sound() {
+        let mut s = Session::with_new();
+        s.execute("transition.timing", &json!({"index": 0, "after": 800})).unwrap();
+        {
+            let doc = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+            let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+            let t = slide.transition.as_mut().expect("a transition");
+            t.stop_sound = true;
+        }
+        assert_eq!(s.execute("show.clearTiming", &json!({"index": 0})).unwrap()["cleared"], 1);
+        let t = s.doc().unwrap().doc.slides[0].transition.clone().expect("the transition stays for its stop-sound");
+        assert!(t.stop_sound, "Stop Previous Sound is not timing");
+        assert!(t.advance_after_ms.is_none(), "the advance time is gone");
     }
 
     /// A narration clip can share its media with another reference (bytes are deduplicated): a

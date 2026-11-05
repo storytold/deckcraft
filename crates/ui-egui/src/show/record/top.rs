@@ -58,27 +58,44 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
     right_ui.spacing_mut().item_spacing.x = 6.0;
     right_ui.visuals_mut().override_text_color = Some(FG);
 
-    let export = button(&mut right_ui, "Export ›", true);
-    if export.on_hover_text("Export the finished recording (not wired yet)").clicked() {
-        // No video renderer is wired in this shell: say so rather than claim an export happened.
-        app.set_status("Exporting the recording as a video is not wired yet.");
+    // The clock owns the middle of the bar. The optional controls (Export, More and the device
+    // labels) are dropped when the right-hand side cannot hold them all, so the transport controls
+    // never run over the clock on a narrow window.
+    let measured =
+        |text: &str, size: f32| ui.ctx().fonts_mut(|f| f.layout_no_wrap(text.to_owned(), egui::FontId::proportional(size), FG).size().x) + 14.0;
+    let required = ["Reset", "Undo", "Pause", "● Record"].iter().map(|t| measured(t, 13.0)).sum::<f32>();
+    let extras = measured("Export ›", 13.0) + measured("…", 13.0);
+    let devices = measured("Camera", 12.0) + measured("Mic", 12.0) + measured("Screen", 12.0);
+    let room = right.width() - 6.0 * 4.0;
+    let (show_extras, show_devices) = if room >= required + extras + devices { (true, true) } else { (false, room >= required + devices) };
+
+    if show_extras {
+        let export = button(&mut right_ui, "Export ›", true);
+        if export.on_hover_text("Export the finished recording (not wired yet)").clicked() {
+            // No video renderer is wired in this shell: say so rather than claim an export happened.
+            app.set_status("Exporting the recording as a video is not wired yet.");
+        }
     }
-    let more = button(&mut right_ui, "…", true);
-    more.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "More"));
-    let more_resp = more.on_hover_text("More recording options");
-    egui::Popup::menu(&more_resp).width(220.0).show(|ui| {
-        ui.checkbox(&mut rec.notes_open, "Notes pane");
-        ui.checkbox(&mut rec.camera_bubble, "Camera bubble");
-        ui.checkbox(&mut rec.camera_preview, "Camera preview");
-        ui.separator();
-        ui.add_enabled(false, egui::Button::new("Recording settings…"));
-    });
-    if devices::screen_button(&mut right_ui, rec, now) {
-        // The screen section owns the recorder behind this flag.
+    if show_extras {
+        let more = button(&mut right_ui, "…", true);
+        more.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "More"));
+        let more_resp = more.on_hover_text("More recording options");
+        egui::Popup::menu(&more_resp).width(220.0).show(|ui| {
+            ui.checkbox(&mut rec.notes_open, "Notes pane");
+            ui.checkbox(&mut rec.camera_bubble, "Camera bubble");
+            ui.checkbox(&mut rec.camera_preview, "Camera preview");
+            ui.separator();
+            ui.add_enabled(false, egui::Button::new("Recording settings…"));
+        });
     }
-    let _ = devices::mic_button(&mut right_ui, rec, now);
-    if devices::camera_button(&mut right_ui, rec, now) {
-        rec.camera_bubble = rec.devices.camera.is_on();
+    if show_devices {
+        if devices::screen_button(&mut right_ui, rec, now) {
+            // The screen section owns the recorder behind this flag.
+        }
+        let _ = devices::mic_button(&mut right_ui, rec, now);
+        if devices::camera_button(&mut right_ui, rec, now) {
+            rec.camera_bubble = rec.devices.camera.is_on();
+        }
     }
 
     let pause_label = if rec.status == RecordStatus::Paused { "Resume" } else { "Pause" };

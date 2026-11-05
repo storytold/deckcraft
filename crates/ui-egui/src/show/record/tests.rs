@@ -280,6 +280,39 @@ fn pause_and_resume_are_buttons_on_the_top_bar() {
     assert_eq!(h.state().show.as_ref().unwrap().record_view.status, RecordStatus::Recording);
 }
 
+/// The right-hand control group must not run into the clock: on a narrow bar the controls closest
+/// to the middle (Undo, Reset) are the first to reach it, especially with a device that has no
+/// driver (its label used to spell the whole status out).
+#[test]
+fn the_right_control_group_stays_clear_of_the_clock() {
+    // A narrow window is where the labels used to run over the clock.
+    let mut app = app_with(1);
+    app.ui.presenter_view = false;
+    let mut h = egui_kittest::Harness::builder().with_size(vec2(900.0, 620.0)).with_step_dt(0.05).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    open_record(&mut h, 0);
+    h.run_steps(3);
+    let top = {
+        let app = h.state();
+        let doc = app.session.active().expect("a document").doc.clone();
+        super::layout(h.ctx.content_rect(), &doc, &app.show.as_ref().expect("a show").record_view).top
+    };
+    let limit = top.center().x + 40.0;
+    for label in ["Reset", "Undo", "Record", "Pause", "Export ›", "More", "Camera", "Mic", "Screen"] {
+        let Some(node) = h.query_by_label(label) else {
+            // A control that a state hides (Record becomes Stop recording) is checked there.
+            continue;
+        };
+        let b = node.rect();
+        assert!(b.min.x >= limit - 0.5, "{label} starts at {} but the clock's side ends at {limit}", b.min.x);
+    }
+}
+
 /// The Record view's backdrop is painted before the slide: the bars are drawn over the frame, so a
 /// full-frame fill there would hide the slide it was drawn for.
 #[test]
@@ -440,8 +473,12 @@ fn devices_report_unavailable_instead_of_faking_success() {
     assert_eq!(rec.camera.status, devices::DeviceStatus::Unavailable);
     assert_eq!(rec.mic.status, devices::DeviceStatus::Unavailable, "no microphone host");
     assert_eq!(rec.screen.status, devices::DeviceStatus::Unavailable, "no capture host");
-    // The buttons cannot turn a missing device on.
-    h.get_by_label("Camera").click();
+    // The buttons cannot turn a missing device on, and they say why they can't.
+    let camera = h.get_by_label("Camera — unavailable");
+    let node = egui_kittest::kittest::NodeT::accesskit_node(&camera);
+    assert!(node.is_disabled(), "an unavailable device is a disabled control");
+    assert_ne!(node.toggled(), Some(egui::accesskit::Toggled::True), "and never reports itself on");
+    h.get_by_label("Camera — unavailable").click();
     h.run_steps(2);
     let rec = &h.state().show.as_ref().unwrap().record_view.devices;
     assert_eq!(rec.camera.status, devices::DeviceStatus::Unavailable);

@@ -537,6 +537,22 @@ fn a_transition_keeps_the_old_slide_in_its_own_texture() {
     assert!(show.tex.is_none(), "the new slide gets a texture of its own instead of overwriting the old one");
 }
 
+/// Audio filed for a slide is appended only within one visit: a slide change starts over, or a
+/// pause-and-roam would join two visits' narration while the timing keeps the last one.
+#[test]
+fn a_slide_change_starts_a_new_narration_visit() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, true);
+    // The take paused on slide 1 and filed its audio there.
+    show.narration_slide = Some(0);
+    assert!(show.apply(ShowAction::Slide(1), &doc, 0.0));
+    assert_eq!(show.narration_slide, None, "the visit to slide 1 ended");
+    assert!(show.apply(ShowAction::Slide(0), &doc, 1.0));
+    assert_eq!(show.narration_slide, None, "coming back is a new visit");
+}
+
 #[test]
 fn going_back_plays_the_left_slides_transition_reversed() {
     // #1531: Back from B to A played A's own entrance transition. PowerPoint plays the one B came

@@ -72,23 +72,23 @@ pub(super) fn connect(rec: &mut RecordView, services: &crate::Services, show: &c
 }
 
 pub(super) fn camera_button(ui: &mut Ui, rec: &mut RecordView, _now: f64) -> bool {
-    toggle(ui, &mut rec.devices.camera, "Camera")
+    toggle(ui, &mut rec.devices.camera, "Camera", "Camera")
 }
 
 /// The microphone is driven by the take, not by this label: it reports whether narration is being
 /// captured, and never pretends a click changed it.
 pub(super) fn mic_button(ui: &mut Ui, rec: &mut RecordView, _now: f64) -> bool {
-    status(ui, &rec.devices.mic, "Microphone")
+    status(ui, &rec.devices.mic, "Mic", "Microphone")
 }
 
 /// Screen capture is driven by the Record tab's picker: this label reports whether the host has a
 /// capture device and whether the take is using it.
 pub(super) fn screen_button(ui: &mut Ui, rec: &mut RecordView, _now: f64) -> bool {
-    status(ui, &rec.devices.screen, "Screen recording")
+    status(ui, &rec.devices.screen, "Screen", "Screen recording")
 }
 
 /// One status-only device label. Returns false: it never reports a state change.
-fn status(ui: &mut Ui, state: &DeviceState, name: &str) -> bool {
+fn status(ui: &mut Ui, state: &DeviceState, short: &str, name: &str) -> bool {
     let label = match state.status {
         DeviceStatus::On => format!("{name} on"),
         DeviceStatus::Off => format!("{name} off"),
@@ -99,23 +99,29 @@ fn status(ui: &mut Ui, state: &DeviceState, name: &str) -> bool {
         DeviceStatus::Unavailable => "No device found",
         DeviceStatus::On | DeviceStatus::Off => "Available",
     };
-    let resp = ui.add(egui::Label::new(RichText::new(label).size(12.0).color(color)).sense(egui::Sense::hover()));
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, state.is_on(), name));
+    let resp = ui.add(egui::Label::new(RichText::new(short).size(12.0).color(color)).sense(egui::Sense::hover()));
+    // A label is never disabled, and it must say the state it shows: "Microphone on" / "— unavailable".
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &label));
     resp.on_hover_text(detail);
     false
 }
 
 /// One status-capable toggle. Returns whether the requested state changed; an unavailable,
 /// denied or busy device never flips to a fake "on".
-fn toggle(ui: &mut Ui, state: &mut DeviceState, name: &str) -> bool {
+///
+/// The visible text is the short name: the bar also carries the clock and the transport controls,
+/// and a status sentence here would push them over the clock on a narrow window. The colour, the
+/// tooltip and the accessible label carry the state.
+fn toggle(ui: &mut Ui, state: &mut DeviceState, short: &str, name: &str) -> bool {
     let label = match state.status {
         DeviceStatus::On => format!("{name} on"),
         DeviceStatus::Off => format!("{name} off"),
         DeviceStatus::Unavailable => format!("{name} — unavailable"),
     };
     let color = if state.status == DeviceStatus::On { Color32::from_rgb(120, 200, 140) } else { Color32::from_gray(200) };
-    let resp = ui.add_enabled(state.can_toggle(), egui::Button::new(RichText::new(label).size(12.0).color(color)).frame(false));
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::CheckBox, state.is_on(), name));
+    let resp = ui.add_enabled(state.can_toggle(), egui::Button::new(RichText::new(short).size(12.0).color(color)).frame(false));
+    // `enabled` says whether it can be clicked; the on/off state goes in `selected`.
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, state.can_toggle(), state.is_on(), &label));
     let detail = match state.status {
         DeviceStatus::Unavailable => "No device found",
         DeviceStatus::On | DeviceStatus::Off => "Device is available",

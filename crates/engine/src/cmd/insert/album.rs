@@ -625,8 +625,15 @@ fn items_from_slides(doc: &deckcraft_model::Presentation, slides: &[&deckcraft_m
             } else {
                 media.map(|m| m.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| "picture".into())
             };
+            // The dialog only carries display names back, so the seed says what the bytes are: an
+            // SVG whose tag lies past the sniffer's first bytes needs its source name, and the
+            // stored content type is the only record of it.
+            let type_name = media
+                .map(|m| if m.content_type == "image/svg+xml" { "picture.svg".to_string() } else { m.name.clone() })
+                .unwrap_or_else(|| "picture".to_string());
             items.push(json!({
                 "name": name,
+                "typeName": type_name,
                 "data": media.map(|m| base64_encode(&m.data)).unwrap_or_default(),
                 "rot": sh.xfrm.map(|x| x.rot).unwrap_or(0.0),
                 "brightness": fill.adjust.brightness,

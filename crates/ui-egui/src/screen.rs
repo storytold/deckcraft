@@ -79,6 +79,9 @@ pub struct ScreenUi {
     cursor: bool,
     quality: u8,
     status: String,
+    /// The host picks the capture source itself (Linux: `scap` lists no targets and chooses when
+    /// the recorder is built), so the picker can start without a listed target.
+    implicit: bool,
     error: Option<String>,
 }
 
@@ -94,6 +97,7 @@ impl Default for ScreenUi {
             cursor: true,
             quality: 24,
             status: String::new(),
+            implicit: false,
             error: None,
         }
     }
@@ -110,6 +114,7 @@ fn reload(app: &mut SlideApp) {
     match app.run("show.screenRecord", serde_json::json!({"action": "targets"})) {
         Ok(v) => {
             app.screen.status = v.get("status").and_then(|s| s.as_str()).unwrap_or("").to_string();
+            app.screen.implicit = v.get("implicit").and_then(serde_json::Value::as_bool).unwrap_or(false);
             app.screen.targets = v
                 .get("targets")
                 .and_then(|t| t.as_array())
@@ -174,6 +179,12 @@ fn command(app: &mut SlideApp, action: &str) -> bool {
             false
         }
     }
+}
+
+/// Whether the picker can start a take: the host is ready and either lists a target or chooses the
+/// source itself (`implicit`, as on Linux where `scap` lists none).
+fn can_record(status: &str, targets: usize, implicit: bool) -> bool {
+    status == "ready" && (targets > 0 || implicit)
 }
 
 fn clock(ms: u64) -> String {
@@ -317,7 +328,7 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
                     ui.add(egui::Slider::new(&mut app.screen.quality, 10..=51));
                 });
                 ui.add_space(8.0);
-                let ready = app.screen.status == "ready" && !app.screen.targets.is_empty();
+                let ready = can_record(&app.screen.status, app.screen.targets.len(), app.screen.implicit);
                 if ui.add_enabled(ready, egui::Button::new(RichText::new("Record").color(Color32::WHITE)).fill(accent)).clicked() {
                     begin = true;
                 }
@@ -371,5 +382,21 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
     app.screen.open = open || app.session.screen.is_recording();
     if app.session.screen.is_recording() {
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::can_record;
+
+    /// A host that picks its own source lists no targets and still records: the picker must not
+    /// disable Record for a missing list (Linux, where `scap` chooses when the recorder is built).
+    #[test]
+    fn the_picker_starts_without_a_listed_target_when_the_host_picks() {
+        assert!(can_record("ready", 0, true), "a self-picking host needs no target");
+        assert!(!can_record("ready", 0, false), "a host with neither a target nor a choice cannot record");
+        assert!(can_record("ready", 1, false), "a listed target is enough");
+        assert!(!can_record("unavailable", 1, true), "an unsupported host stays unavailable");
+        assert!(!can_record("permissionDenied", 0, true), "so does one without permission");
     }
 }

@@ -584,6 +584,9 @@ impl Show {
                 self.ended = false;
                 self.zoom = None;
                 self.zoom_arm = false;
+                // A new visit to a slide starts its own narration: audio filed for a slide the show
+                // left must not be appended to (the timing keeps the last visit too).
+                self.narration_slide = None;
                 let left = self.applied_slide;
                 self.applied_slide = i;
                 if self.rehearse {

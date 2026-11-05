@@ -150,7 +150,10 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
                 .iter()
                 .map(|t| json!({"id": t.id, "kind": t.kind.as_str(), "title": t.title, "width": t.width, "height": t.height}))
                 .collect();
-            Ok(json!({"targets": list, "status": status_str(s.screen.status())}))
+            // Some hosts pick the source themselves (Linux, where `scap` returns no targets and
+            // chooses when the recorder is built): the picker may start the take with no target.
+            let implicit = list.is_empty() && s.screen.status() == deckcraft_screen::CaptureStatus::Ready;
+            Ok(json!({"targets": list, "status": status_str(s.screen.status()), "implicit": implicit}))
         }
         "permission" => {
             let granted = s.screen.request_permission();
@@ -206,6 +209,38 @@ mod tests {
         assert!(region(&json!({"region": [10, 20, 640]})).is_err());
         assert!(region(&json!({"region": [-1, 0, 640, 480]})).is_err());
         assert_eq!(region(&json!({})).expect("absent"), None);
+    }
+
+    /// A host that lists no targets but can record (Linux: `scap` chooses the source itself) is
+    /// startable: the picker must not disable Record for a missing list.
+    #[test]
+    fn an_empty_target_list_on_a_ready_host_is_startable() {
+        struct SelfPicking;
+        impl deckcraft_screen::ScreenIn for SelfPicking {
+            fn status(&mut self) -> deckcraft_screen::CaptureStatus {
+                deckcraft_screen::CaptureStatus::Ready
+            }
+            fn targets(&mut self) -> Result<Vec<deckcraft_screen::CaptureTarget>, deckcraft_screen::ScreenError> {
+                Err(deckcraft_screen::ScreenError::NoDevice)
+            }
+            fn start(&mut self, _o: &CaptureOptions) -> Result<(), deckcraft_screen::ScreenError> {
+                Ok(())
+            }
+            fn frame(&mut self) -> Result<Option<deckcraft_screen::ScreenFrame>, deckcraft_screen::ScreenError> {
+                Ok(None)
+            }
+            fn stop(&mut self) {}
+        }
+        let mut s = Session::with_new();
+        s.screen.set_host(Some(Box::new(SelfPicking)));
+        let v = s.execute("show.screenRecord", &json!({"action": "targets"})).unwrap();
+        assert_eq!(v["targets"].as_array().map(Vec::len), Some(0));
+        assert_eq!(v["status"], "ready");
+        assert_eq!(v["implicit"], true, "the host picks the source itself: {v}");
+        // Starting without a target is what the picker sends then, and the host accepts it.
+        let started = s.execute("show.screenRecord", &json!({"action": "start"})).unwrap();
+        assert!(started.get("state").is_some(), "{started}");
+        let _ = s.screen.cancel();
     }
 
     #[test]
