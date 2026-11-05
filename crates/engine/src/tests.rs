@@ -850,9 +850,9 @@ fn shape_sites(s: &mut Session, id: u64) -> Vec<Vec<f64>> {
     serde_json::from_value(s.execute("shape.sites", &json!({"id": id})).unwrap()).unwrap()
 }
 
-/// A grouped symbol: the group offers its members' own sites, mapped through the group's child
-/// space, and a connector glued to one names the member and the member's own site, as the file
-/// does. A group of shapes without any stays without sites.
+/// A grouped symbol: the group offers its members' own sites (a custom geometry's list, a
+/// preset's), mapped through the group's child space, and a connector glued to one names the
+/// member and the member's own site, as the file does.
 #[test]
 fn a_group_offers_its_members_connection_sites() {
     use deckcraft_model::ConnectionSite;
@@ -861,10 +861,14 @@ fn a_group_offers_its_members_connection_sites() {
     let body = s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 100, 100, 50]})).unwrap()["id"].as_u64().unwrap();
     s.execute("edit.select", &json!({"ids": [lead, body]})).unwrap();
     let g = s.execute("arrange.group", &json!({})).unwrap()["id"].as_u64().unwrap();
-    assert!(shape_sites(&mut s, g).is_empty(), "no member has sites of its own");
+    assert_eq!(
+        shape_sites(&mut s, g),
+        vec![vec![250.0, 100.0], vec![200.0, 125.0], vec![250.0, 150.0], vec![300.0, 125.0]],
+        "the rectangle's own sites; the lead has none (no box midpoints for a member)"
+    );
     with_shape(&mut s, lead, |sh| sh.sites = vec![ConnectionSite::new(0.0, 0.5)]);
     let v = shape_sites(&mut s, g);
-    assert_eq!(v.len(), 1);
+    assert_eq!(v.len(), 5);
     assert!((v[0][0] - 100.0).abs() < 1e-6 && (v[0][1] - 125.0).abs() < 1e-6, "the pin at the lead's left end: {v:?}");
     // Scaling the group scales the pin with it.
     s.execute("edit.select", &json!({"ids": [g]})).unwrap();
@@ -884,19 +888,44 @@ fn a_group_offers_its_members_connection_sites() {
     // A hidden member's pin is listed but not offered for snapping or by `shape.connect`; the
     // connector glued to it stays glued and keeps following.
     with_shape(&mut s, lead, |sh| sh.hidden = true);
-    assert_eq!(shape_sites(&mut s, g).len(), 1);
+    assert_eq!(shape_sites(&mut s, g).len(), 5);
     {
         let st = s.doc().unwrap();
         let near = deckcraft_geom::Point::new(130.0, 140.0);
         assert!(connect::nearest_site(&st.doc, &st.selection, st.shapes(), near, 20.0, None).is_none(), "not snapped to");
     }
-    let c2 = s.execute("shape.insert", &json!({"preset": "straightConnector1", "rect": [0, 0, 10, 10]})).unwrap()["id"].as_u64().unwrap();
-    assert!(s.execute("shape.connect", &json!({"id": c2, "from": b, "to": g})).is_err(), "nothing to glue to");
+    let c2 = s.execute("shape.connect", &json!({"from": b, "to": g, "toSite": 0})).unwrap()["id"].as_u64().unwrap();
+    assert_eq!(glue(&s, c2).1.map(|e| e.0), Some(body), "the hidden pin is passed over");
     s.execute("edit.select", &json!({"ids": [g]})).unwrap();
     s.execute("shape.move", &json!({"dx": 5, "dy": 5})).unwrap();
     let (_, q1) = line_ends(&s, c);
     assert!((q1 - deckcraft_geom::Point::new(135.0, 145.0)).hypot() < 1e-6, "{q1:?}");
     assert_eq!(glue(&s, c).1, Some((lead, 0)));
+}
+
+/// A member with a preset geometry offers the preset's sites even when it holds a list of sites
+/// from an earlier custom geometry (`Shape::sites` is only a custom geometry's); members of a
+/// group within a group offer theirs too.
+#[test]
+fn group_members_offer_the_sites_of_their_geometry() {
+    use deckcraft_model::ConnectionSite;
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 100, 100]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 0, 100, 100]})).unwrap()["id"].as_u64().unwrap();
+    let c = s.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 0, 100, 100]})).unwrap()["id"].as_u64().unwrap();
+    with_shape(&mut s, a, |sh| sh.sites = vec![ConnectionSite::new(0.1, 0.1)]);
+    s.execute("edit.select", &json!({"ids": [a, b]})).unwrap();
+    let inner = s.execute("arrange.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [inner, c]})).unwrap();
+    let outer = s.execute("arrange.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+    let v = shape_sites(&mut s, outer);
+    assert_eq!(v.len(), 12, "{v:?}");
+    assert_eq!(v[..4], [vec![50.0, 0.0], vec![0.0, 50.0], vec![50.0, 100.0], vec![100.0, 50.0]], "the rectangle's, not the stale list");
+    assert_eq!(v[8], vec![450.0, 0.0], "the outer group's own member");
+    // A connector from below glues to the nested member's bottom site.
+    let d = s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 300, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let k = s.execute("shape.connect", &json!({"from": d, "to": outer})).unwrap()["id"].as_u64().unwrap();
+    assert_eq!(glue(&s, k), (Some((d, 0)), Some((b, 2))));
 }
 
 /// A connector glued to a member's pin names the member and its own site, so adding, removing,

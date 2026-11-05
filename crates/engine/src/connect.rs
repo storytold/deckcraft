@@ -44,8 +44,8 @@ fn has_sites(s: &Shape) -> bool {
 ///
 /// A preset's sites come from its geometry, a custom geometry's from its own list (`a:cxnLst`,
 /// `Shape::sites`), and a shape without any offers its box midpoints. A group has none of its
-/// own: it offers its members' own custom-geometry sites (a grouped circuit symbol's pins;
-/// groups within included), each naming the member and its
+/// own: it offers its members' own sites (a grouped circuit symbol's pins; groups within
+/// included, a member without sites of its geometry offers none), each naming the member and its
 /// own index, so a connector glued to one keeps it however the group's members change, and
 /// after ungrouping. A hidden member's sites are listed but not offered.
 pub fn site_list(doc: &Presentation, sel: &Selection, s: &Shape) -> Vec<Site> {
@@ -84,7 +84,7 @@ fn member_sites(children: &[Shape], a: Affine, visible: bool, out: &mut Vec<Site
             continue;
         }
         let (local, own) = local_sites(c, cx.w, cx.h);
-        if own && matches!(c.geom, deckcraft_model::Geom::Custom { .. }) {
+        if own {
             let m = a * cx.affine();
             out.extend(local.into_iter().enumerate().map(|(i, p)| Site { at: m * p, target: (c.id, i as u32), offered: visible }));
         }
