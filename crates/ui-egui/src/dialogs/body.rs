@@ -312,14 +312,10 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     done = true;
                 }
-            if ui.add(egui::Button::new("Cancel").min_size(vec2(84.0, 24.0)).stroke(egui::Stroke::new(1.0, t.border))).clicked() {
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-        });
-    });
-
-    done
+        if ui.add(egui::Button::new("Cancel").min_size(vec2(84.0, 24.0)).stroke(egui::Stroke::new(1.0, t.border))).clicked() {
+            done = true;
 }
+});
 
 fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     // File › Close and Ctrl+W on a presentation with unsaved changes.
