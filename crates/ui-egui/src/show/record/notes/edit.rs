@@ -24,6 +24,9 @@ use super::RecordView;
 #[derive(Default)]
 pub(crate) struct State {
     pub(super) slide: Option<deckcraft_model::SlideId>,
+    /// The presentation the draft was written in. New presentations reuse slide ids, so the id
+    /// alone cannot tell the draft's slide from a fresh one.
+    pub(super) doc: Option<u64>,
     draft: Draft,
 }
 
@@ -32,6 +35,12 @@ impl State {
     pub(super) fn reset(&mut self, slide: Option<deckcraft_model::SlideId>) {
         self.slide = slide;
         self.draft = Draft::default();
+    }
+
+    /// The draft for `slide` in `doc`; a different document starts a fresh one.
+    pub(super) fn reset_in(&mut self, doc: u64, slide: Option<deckcraft_model::SlideId>) {
+        self.doc = Some(doc);
+        self.reset(slide);
     }
 }
 
@@ -91,7 +100,7 @@ pub(super) fn save(app: &mut SlideApp, rec: &mut RecordView, slide: usize) {
     // means the edit has nowhere to go: skip it rather than write to whichever slide took the
     // index.
     let index = match (rec.notes_edit.slide, app.session.active()) {
-        (Some(id), Some(d)) => match d.doc.slide_index(id) {
+        (Some(id), Some(d)) if rec.notes_edit.doc.is_none_or(|uid| uid == d.uid) => match d.doc.slide_index(id) {
             Some(i) => i,
             None => {
                 log::warn!("record notes: the slide this edit was written on is gone; the edit is dropped");
@@ -99,6 +108,13 @@ pub(super) fn save(app: &mut SlideApp, rec: &mut RecordView, slide: usize) {
                 return;
             }
         },
+        // The draft belongs to another presentation: writing it here would overwrite a fresh
+        // slide that happens to reuse the id.
+        (Some(_), Some(_)) => {
+            log::warn!("record notes: the draft belongs to another presentation; the edit is dropped");
+            rec.notes_edit.draft.edited = false;
+            return;
+        }
         _ => slide,
     };
     rec.notes_edit.draft.edited = false;
@@ -167,7 +183,10 @@ mod tests {
     #[test]
     fn reset_moves_the_draft_to_the_new_slide_and_clears_it() {
         let (first, second) = (deckcraft_model::SlideId(1), deckcraft_model::SlideId(2));
-        let mut rec = RecordView { notes_edit: State { slide: Some(first), draft: Draft::new(&TextBody::from_text("first")) }, ..Default::default() };
+        let mut rec = RecordView {
+            notes_edit: State { slide: Some(first), doc: None, draft: Draft::new(&TextBody::from_text("first")) },
+            ..Default::default()
+        };
 
         rec.notes_edit.reset(Some(second));
         assert_eq!(rec.notes_edit.slide, Some(second));

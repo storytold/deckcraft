@@ -59,7 +59,7 @@ ready** (estimated), **10–16 h** to parity.
 |---|---|---|
 | Rehearse Timings, keep timings | yes | yes |
 | Record Slide Show (narration, ink, laser, camera; Cameo) | yes | timings, per-slide narration audio, pen ink and a recorded laser trace; no camera or screen capture |
-| Preview the recording | yes | yes: Preview on the Record tab plays the deck with its recorded timings and narration, writes nothing and keeps the editor's slide (#1812) |
+| Preview the recording | yes | yes: Preview on the Record tab plays the deck with its recorded timings, narration, pen ink (each stroke appears when the take drew it) and laser trace, writes nothing and keeps the editor's slide (#1812) |
 | Clear timing / narration | yes | current slide or all slides |
 | Export the recorded show to video | yes | no (see [file-format-parity.md](file-format-parity.md)) |
 
@@ -80,7 +80,7 @@ Reading View in a window with navigation: present (checklist row done).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-03 | minor | Record ▸ Preview (`show.preview`) plays the deck with the timings and narration already recorded, even when Use Timings / Play Narrations are off, writes nothing and keeps the editor's slide (#1812) |
+| 2026-11-03 | minor | Record ▸ Preview (`show.preview`) plays the deck with the timings and narration already recorded, reveals recorded ink stroke by stroke on the slide clock, and shows the recorded laser trace; it plays even when Use Timings / Play Narrations are off, writes nothing and keeps the editor's slide (#1812) |
 | 2026-10-27 | minor | Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows keep a still pointer, so clickable choices stay targetable; Reading View unchanged (#1445) |
 | 2026-10-22 | minor | See All Slides from presenter view opens in presenter view, not on the audience screen (#1130) |
 | 2026-10-14 | trivial | Community PR wave folded: one media playback row, the presenter pen/laser row matches the laser that exists, estimates keep only the open work (~9–16 h); checklist breadth 68% |

@@ -71,8 +71,8 @@ pub struct RenderOpts<'a> {
     /// only what is on the slide is drawn over transparency: PNG export with a transparent
     /// background. Shapes filled with the background (`useBgFill`) still show it.
     pub transparent_background: bool,
-    /// Recorded ink older than this (ms from the slide's entry) stays hidden: a recording preview
-    /// reveals each stroke when the recording drew it. `None` draws the whole ink layer.
+    /// Strokes stamped later than this (ms from the slide's entry) stay hidden: a recording
+    /// preview reveals each stroke when the recording drew it. `None` draws the whole ink layer.
     pub ink_until_ms: Option<u32>,
 }
 

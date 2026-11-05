@@ -26,7 +26,7 @@ because it mostly follows from hardware use.
 | Video decode | Hardware (AVFoundation/VideoToolbox, Media Foundation) | Software only: pure-Rust H.264, HEVC, VP9, AV1 (`crates/h264`, `hevc`, `vp9`, `av1`) |
 | 4K video in the show | smooth on hardware decode | unmeasured; likely CPU-bound |
 | Audio output | Core Audio / WASAPI | `cpal` (Core Audio, WASAPI, ALSA); browser Web Audio |
-| Microphone (record audio, narration) | yes | yes: Record Slide Show narration (cpal default input, one clip per slide) and Record ▸ Audio, which inserts a WAV on the current slide; default input only |
+| Microphone (record audio, narration) | yes | desktop only: Record Slide Show narration (cpal default input, one clip per slide) and Record ▸ Audio, which inserts a WAV on the current slide; default input only. The web build has no microphone, so both controls read unavailable there |
 | Camera (Cameo, record with camera) | yes | no |
 | Screen recording | yes | no |
 

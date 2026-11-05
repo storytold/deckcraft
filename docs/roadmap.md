@@ -62,7 +62,7 @@ reference renders, a Windows tester with the affected GPUs, native speakers to r
 ## After beta: toward full parity (~245–440 h more)
 
 SmartArt depth, the remaining animation effects and motion paths, edit-point segment types and
-3-D depth, bundled proofing dictionaries, Zoom depth, screen capture (Record Slide Show already keeps timings, narration, pen ink and a laser trace), video export, legacy `.ppt` import
+3-D depth, bundled proofing dictionaries, Zoom depth, screen and camera capture (Record Slide Show already keeps timings, narration, pen ink and a laser trace; the live Cameo preview is #1837), video export, legacy `.ppt` import
 and `.odp` (owner decision), GPU rasterization, hardware video decode, pen tilt (pressure already
 scales ink width) and pinch zoom, the other 21 languages with RTL mirroring, a larger template
 gallery (six original starters ship), and local AI features (owner decision on models). Itemized

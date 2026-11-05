@@ -63,7 +63,10 @@ fn reset_and_undo_move_the_clock() {
     rec.reset(105.0);
     assert!(rec.elapsed(105.0) < 1e-9, "Reset zeroes the clock");
     assert!(rec.undo(106.0));
-    assert!((rec.elapsed(107.0) - 6.0).abs() < 1e-9, "Undo restores the elapsed time");
+    // The clock kept running for the second between Reset and Undo, so the restored run is 5 + 1
+    // at 106 and 7 a second later.
+    assert!((rec.elapsed(106.0) - 6.0).abs() < 1e-9, "Undo restores the elapsed time plus the time since Reset");
+    assert!((rec.elapsed(107.0) - 7.0).abs() < 1e-9, "and the clock runs on from there");
     assert!(!rec.undo(108.0), "one Undo per Reset");
 }
 

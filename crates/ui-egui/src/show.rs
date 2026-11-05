@@ -76,6 +76,8 @@ pub(crate) struct InkStroke {
     pub color: Rgba,
     /// Width in slide points; the highlighter's is already scaled.
     pub width: f64,
+    /// Whether the take owns it: a stroke drawn while the take is paused stays out of the recording.
+    pub in_take: bool,
 }
 
 pub struct Show {
@@ -185,6 +187,9 @@ pub struct Show {
     /// Per slide: the take's rate and the raw samples gathered so far. Encoding happens once, on
     /// save, so a pause and resume appends instead of replacing what was already spoken.
     narration: Vec<(usize, u32, Vec<f32>)>,
+    /// A slide's narration hit the ten-minute or WAV limit while capturing, so its tail was dropped
+    /// before encoding: the save must not call that take complete.
+    narration_cut: bool,
     mic_tried: bool,
     mic_ok: bool,
     last_move: f64,
@@ -369,6 +374,7 @@ impl Show {
             laser_live: vec![],
             laser_saved: vec![],
             narration: vec![],
+            narration_cut: false,
             mic_tried: false,
             mic_ok: false,
             last_move: 0.0,
@@ -592,6 +598,7 @@ impl Show {
         self.recorded.clear();
         self.laser_saved.clear();
         self.narration.clear();
+        self.narration_cut = false;
         // Strokes drawn before Record are the presenter's own browsing, not part of the take.
         self.strokes.clear();
         self.laser_live.clear();
@@ -882,6 +889,10 @@ impl Show {
             return;
         }
         for stroke in strokes {
+            // Ink drawn while the take was paused is the presenter's, not the recording's.
+            if !stroke.in_take {
+                continue;
+            }
             let mut pts = Vec::new();
             for q in stroke.points.iter().take(4096) {
                 let x = q.x as f64 * w;
@@ -1058,12 +1069,13 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
         }
         let _ = app.run("show.setup", json!({"useTimings": true}));
         // A cut narration is omitted work too: the save says so instead of reading as complete.
-        let limit = if cut == 0 {
+        let limit = if cut == 0 && !show.narration_cut {
             None
         } else {
+            let slides = cut.max(usize::from(show.narration_cut));
             Some(format!(
-                "the narration on {cut} slide{} was cut at the {:.0} MB limit",
-                if cut == 1 { "" } else { "s" },
+                "the narration on {slides} slide{} was cut at the {:.0} MB limit",
+                if slides == 1 { "" } else { "s" },
                 MAX_NARRATION_BYTES as f64 / 1_000_000.0
             ))
         };
@@ -1201,13 +1213,26 @@ fn take_narration(mic: Option<&mut (dyn deckcraft_media::MicIn + 'static)>, show
         // A resumed take adds to the same slide's clip, keeping its rate.
         Some((_, take_rate, kept)) if *take_rate == rate => {
             // The clip also has to fit the engine's WAV limit: buffering more would only be cut
-            // later.
+            // later, and the save has to say so.
             let room = narration_room(rate, kept.len());
+            if samples.len() > room {
+                show.narration_cut = true;
+            }
             kept.extend(samples.into_iter().take(room));
         }
         // A replacement clip keeps the same limits as an append.
-        Some(entry) => *entry = (slide, rate, samples.into_iter().take(narration_sample_cap()).collect()),
-        None => show.narration.push((slide, rate, samples.into_iter().take(narration_sample_cap()).collect())),
+        Some(entry) => {
+            if samples.len() > narration_sample_cap() {
+                show.narration_cut = true;
+            }
+            *entry = (slide, rate, samples.into_iter().take(narration_sample_cap()).collect());
+        }
+        None => {
+            if samples.len() > narration_sample_cap() {
+                show.narration_cut = true;
+            }
+            show.narration.push((slide, rate, samples.into_iter().take(narration_sample_cap()).collect()));
+        }
     }
 }
 

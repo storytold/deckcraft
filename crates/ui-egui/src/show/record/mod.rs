@@ -105,7 +105,8 @@ pub(crate) struct RecordView {
     /// Leaving the view while a take is running asks for a confirmation first.
     pub(super) close_confirm: bool,
     /// The clock value replaced by the last Reset, so Undo can put it back.
-    undo_elapsed: Option<f64>,
+    /// The elapsed value a Reset replaced, and when it was taken: Undo adds the time since.
+    undo_elapsed: Option<(f64, f64)>,
 }
 
 impl Default for RecordView {
@@ -215,14 +216,17 @@ impl RecordView {
     /// Zero the capture clock. The previous value is kept for one Undo; a paused clock stays
     /// paused at zero.
     pub(super) fn reset(&mut self, now: f64) {
-        self.undo_elapsed = Some(self.elapsed(now));
+        // Keep when the reset happened, so Undo can add the time the run has gone on for since.
+        self.undo_elapsed = Some((self.elapsed(now), now));
         self.timer.reset(now);
     }
 
     /// Put back the clock value the last Reset replaced. Returns whether anything was undone.
     pub(super) fn undo(&mut self, now: f64) -> bool {
-        let Some(secs) = self.undo_elapsed.take() else { return false };
-        self.timer = PresenterTimer::start(now - secs.max(0.0));
+        let Some((secs, at)) = self.undo_elapsed.take() else { return false };
+        // The clock kept running after the reset, so the restored run includes that interval.
+        let since = if self.status == RecordStatus::Recording { (now - at).max(0.0) } else { 0.0 };
+        self.timer = PresenterTimer::start(now - (secs + since).max(0.0));
         if self.status != RecordStatus::Recording {
             self.timer.toggle(now);
         }

@@ -226,6 +226,7 @@ fn the_eraser_is_selectable_with_or_without_ink() {
         mode: InkMode::Pen,
         color: deckcraft_model::Rgba::BLACK,
         width: 2.25,
+        in_take: true,
     });
     h.run();
     assert!(h.state().0.has_ink(), "a stroke is available to the eraser");

@@ -1448,6 +1448,7 @@ fn a_record_preview_keeps_no_recorded_material() {
         mode: InkMode::Pen,
         color: deckcraft_model::Rgba::BLACK,
         width: 2.25,
+        in_take: true,
     });
     show.laser_live.push((0.5, 0.5, 10));
     let keep = show.keeps_recording();
@@ -1475,6 +1476,7 @@ fn the_record_view_keeps_its_command_chords() {
         mode: InkMode::Pen,
         color: deckcraft_model::Rgba::BLACK,
         width: 2.25,
+        in_take: true,
     });
     let command = egui::Modifiers { command: true, ..Default::default() };
     let command_shift = egui::Modifiers { command: true, shift: true, ..Default::default() };
@@ -1496,7 +1498,13 @@ fn an_idle_record_view_keeps_no_recorded_material() {
     let mut show = Show::new(&doc, 0, false, false);
     show.record = true;
     assert!(!show.keeps_recording(), "the Record view opens idle");
-    let stroke = || InkStroke { points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)], mode: InkMode::Pen, color: deckcraft_model::Rgba::BLACK, width: 2.25 };
+    let stroke = || InkStroke {
+        points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)],
+        mode: InkMode::Pen,
+        color: deckcraft_model::Rgba::BLACK,
+        width: 2.25,
+        in_take: true,
+    };
     show.strokes.push(stroke());
     show.laser_live.push((0.5, 0.5, 10));
     show.apply(ShowAction::Slide(1), &doc, 1.0);
@@ -1687,6 +1695,7 @@ fn a_new_take_replaces_the_previous_buffers() {
         mode: InkMode::Pen,
         color: deckcraft_model::Rgba::BLACK,
         width: 2.25,
+        in_take: true,
     });
     show.stash_ink(&doc, 0, true, 1.0);
     show.laser_live.push((0.1, 0.1, 5));
@@ -1788,6 +1797,7 @@ fn the_eraser_removes_touched_strokes() {
         mode: InkMode::Pen,
         color: deckcraft_model::Rgba::BLACK,
         width: 2.25,
+        in_take: true,
     };
     show.strokes.push(stroke(&[(0.1, 0.1), (0.2, 0.1)]));
     show.strokes.push(stroke(&[(0.8, 0.8), (0.9, 0.8)]));
@@ -1810,6 +1820,7 @@ fn the_eraser_catches_a_segment_that_crosses_the_stroke() {
         mode: InkMode::Pen,
         color: deckcraft_model::Rgba::BLACK,
         width: 2.25,
+        in_take: true,
     });
     assert_eq!(show.erase_ink_at(pos2(0.5, 0.4), pos2(0.5, 0.6), 0.02), 1);
     assert!(!show.has_ink());
@@ -1824,7 +1835,7 @@ fn a_recorded_stroke_keeps_its_tool_colour_and_width() {
     show.record = true;
     show.begin_recording(0.0);
     let color = deckcraft_model::Rgba::rgb(0xFF, 0xD4, 0x00);
-    show.strokes.push(InkStroke { points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)], mode: InkMode::Highlighter, color, width: 6.75 });
+    show.strokes.push(InkStroke { points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)], mode: InkMode::Highlighter, color, width: 6.75, in_take: true });
     show.stash_ink(&doc, 2, true, 1.0);
     assert_eq!(show.recorded.len(), 1);
     let (slide, pts, mode, saved, width, at) = &show.recorded[0];

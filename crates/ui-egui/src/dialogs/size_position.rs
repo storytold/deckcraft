@@ -146,7 +146,15 @@ fn shown_number(d: &Dialog, key: &str, label: &str) -> Result<f64, String> {
     exact_of(d, key).ok_or_else(|| format!("{label} must be a number"))
 }
 
-fn size_position_value(d: &Dialog) -> Result<Value, String> {
+/// The command for the dialog's edited fields, or `None` when the user changed nothing: several
+/// objects share one dialog, and sending their shared seed would move them onto the first one.
+fn size_position_value(d: &Dialog) -> Result<Option<Value>, String> {
+    let touched = ["x", "y", "w", "h", "rot", "scaleW", "scaleH"].iter().any(|k| edited(d, k));
+    let lock = field_of(d, "lock") == "1";
+    let lock_changed = lock != (field_of(d, "prevlock") == "1");
+    if !touched && !lock_changed {
+        return Ok(None);
+    }
     let x = shown_points(d, "x", "Horizontal")?;
     let y = shown_points(d, "y", "Vertical")?;
     let rot = shown_number(d, "rot", "Rotation")?;
@@ -175,13 +183,20 @@ fn size_position_value(d: &Dialog) -> Result<Value, String> {
             w = h * ar;
         }
     }
-    let mut p = json!({"x": x, "y": y, "w": w, "h": h, "rot": rot, "lockAspect": field_of(d, "lock") == "1"});
+    let mut p = json!({"lockAspect": lock});
+    // Only what the user changed: a geometry field they left alone would push this dialog's seed
+    // onto every target.
+    for (key, value) in [("x", x), ("y", y), ("w", w), ("h", h), ("rot", rot)] {
+        if edited(d, key) || (key != "rot" && (edited(d, "scaleW") || edited(d, "scaleH")) && (key == "w" || key == "h")) {
+            p[key] = json!(value);
+        }
+    }
     // The launcher's targets, not whatever is selected when OK is pressed: Camera Format ▸ Size
     // opens the dialog for a Cameo inside a mixed selection.
     if let Some(ids) = d.params.get("ids") {
         p["ids"] = ids.clone();
     }
-    Ok(p)
+    Ok(Some(p))
 }
 
 pub(super) fn size_position_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
@@ -202,7 +217,8 @@ pub(super) fn size_position_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dial
     let (ok, cancel) = buttons(ui, "OK");
     if ok {
         match size_position_value(d) {
-            Ok(p) => return app.run("shape.sizePosition", p).is_ok(),
+            Ok(Some(p)) => return app.run("shape.sizePosition", p).is_ok(),
+            Ok(None) => return true,
             Err(msg) => {
                 app.set_status(msg);
                 return false;

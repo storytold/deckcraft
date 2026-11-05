@@ -38,6 +38,8 @@ pub(crate) use teleprompter::State as TeleprompterState;
 pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut RecordView, doc: &Arc<Presentation>, layout: &RecordLayout) {
     let rect = layout.notes;
     let slide = show.state.slide;
+    // The draft is bound to the presentation it was written in, not only to its slide.
+    let uid = app.session.active().map(|d| d.uid).unwrap_or(0);
     if rect.height() < 1.0 || rec.view == ViewKind::Slide {
         // Leaving the pane must not lose an edit, and a script written on this slide is kept
         // for the next time the pane opens.
@@ -49,7 +51,7 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
     let slide_id = doc.slides.get(slide).map(|s| s.id);
     if rec.notes_edit.slide != slide_id {
         edit::flush(app, rec, doc, slide);
-        rec.notes_edit.reset(slide_id);
+        rec.notes_edit.reset_in(uid, slide_id);
         rec.notes_scroll = 0.0;
         rec.teleprompter.rewind();
     }

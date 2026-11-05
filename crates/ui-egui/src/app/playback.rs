@@ -57,6 +57,12 @@ impl SlideApp {
                 host.close();
             }
             self.media.stop_owned(media::Owner::Show);
+            // The editor keeps the slide the show reached, as the shell's own finish does; a
+            // recording preview is a look at the recording and leaves the editor where it was.
+            if !show.recording_preview {
+                let last = show.state.slide;
+                let _ = self.run("slide.go", json!({"index": last}));
+            }
         }
     }
 

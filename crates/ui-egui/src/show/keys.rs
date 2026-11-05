@@ -170,10 +170,8 @@ fn tool_key(show: &mut Show, k: egui::Key, m: egui::Modifiers, now: f64, present
         A if m.command => show.arrow(),
         B | Period => toggle_blank(show, Color32::BLACK),
         W | Comma => toggle_blank(show, Color32::WHITE),
-        E => {
-            show.strokes.clear();
-            show.laser_live.clear();
-        }
+        // E clears the ink only: the laser samples already recorded belong to the take.
+        E => show.strokes.clear(),
         G if plain(m) => show.open_grid(presenter),
         Z if plain(m) => show.zoom_key(),
         T if plain(m) => show.timer.toggle(now),

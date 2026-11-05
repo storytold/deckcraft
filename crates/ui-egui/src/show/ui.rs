@@ -778,7 +778,11 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
     } else {
         let sl = begin_slide(app, show, f, size);
         let tex = frame_texture(show, f, &sl);
-        prefetch_next(app, show, f, &sl);
+        // A recording preview reveals ink on the clock, and the prefetched frame has no cutoff:
+        // rendering it would show the next slide's strokes early.
+        if !show.recording_preview {
+            prefetch_next(app, show, f, &sl);
+        }
         if !draw_transition(show, f, &sl, painter, &tex) {
             show.trans = None;
             let (framed, full_screen) = draw_videos(app, show, f, &sl, painter, &tex);
@@ -821,6 +825,7 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
                 mode: show.ink_mode,
                 color: show.ink_color,
                 width: show.ink_width * show.ink_mode.width_scale(),
+                in_take: show.keeps_recording(),
             });
         }
         let uv = show.zoom_uv();
