@@ -129,7 +129,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         });
     let pane_open = app.ui.pane.as_deref() == Some("animation");
     let res = big_button_ex(ui, Icon::AnimationPane, "Animation\nPane", true, false, pane_open);
-    super::qat::ribbon_menu(app, &res.0, Icon::AnimationPane, "Animation\nPane", "view.pane", json!({"pane": "animation"}));
+    super::qat::ribbon_menu(app, &res.0, Icon::AnimationPane, "Animation\nPane", "view.pane", &json!({"pane": "animation"}));
     if res.0.clicked() {
         if pane_open {
             app.ui.pane = None;
