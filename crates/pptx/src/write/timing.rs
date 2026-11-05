@@ -649,20 +649,15 @@ fn audio_node(w: &mut W, ids: &mut Ids, spid: u32, vol: u32, delay_ms: u32, flag
     // it, and a strict reader would reject or repair the timing part. A video uses the parallel
     // `p:video` element, which keeps an imported autoplay video's slide-start play.
     if video {
-        w.open0("p:video");
+        // `fullScrn` belongs to `p:video` in the schema, and the reader takes it from there.
+        w.open("p:video", A::new().o("fullScrn", full_screen.then_some("1")));
     } else {
         w.open("p:audio", A::new().o("isNarration", narration.then_some("1")));
     }
     // The reader takes these three from the node: `repeatCount="indefinite"` for Loop until
     // Stopped, `showWhenStopped="0"` for Hide While Not Playing, `fullScrn` for Play Full Screen.
-    w.open(
-        "p:cMediaNode",
-        A::new()
-            .a("vol", vol.min(100_000))
-            .o("showWhenStopped", hide_when_stopped.then_some("0"))
-            .o("fullScrn", (video && full_screen).then_some("1")),
-    );
-    w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold").a("display", "0").o("repeatCount", (video && loop_play).then_some("indefinite")));
+    w.open("p:cMediaNode", A::new().a("vol", vol.min(100_000)).o("showWhenStopped", hide_when_stopped.then_some("0")));
+    w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold").a("display", "0").o("repeatCount", loop_play.then_some("indefinite")));
     w.open0("p:stCondLst");
     w.empty("p:cond", A::new().a("delay", delay_ms));
     w.close("p:stCondLst");
