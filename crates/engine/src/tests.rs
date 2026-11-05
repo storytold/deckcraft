@@ -6551,6 +6551,16 @@ fn chart_axis_title_sets_clears_and_draws() {
     let r = s.execute("chart.axisTitle", &json!({"ids": [999_999, id], "axis": "category", "text": "Y"})).unwrap();
     assert_eq!(r["ids"], json!([id]), "{r}");
     assert_eq!(r["axisTitles"]["category"], "Y", "{r}");
+    // A target that is not a chart is refused with the chart, not skipped, whatever its order.
+    let tb = s.execute("insert.textBox", &json!({"text": "x"})).unwrap()["id"].clone();
+    let rev = s.doc().unwrap().revision;
+    for ids in [json!([id, tb]), json!([tb, id])] {
+        let e = s.execute("chart.axisTitle", &json!({"ids": ids, "axis": "category", "text": "Z"})).unwrap_err().to_string();
+        assert!(e.contains("not a chart"), "{e}");
+    }
+    let e = s.execute("chart.axisTitle", &json!({"ids": [tb], "axis": "category", "text": "Y"})).unwrap_err().to_string();
+    assert!(e.contains("not a chart"), "{e}");
+    assert_eq!(s.doc().unwrap().revision, rev);
 }
 
 #[test]

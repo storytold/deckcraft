@@ -107,7 +107,10 @@ pub(super) fn chart_axis_title(s: &mut Session, p: &Value) -> Result<Value> {
     let mut todo = Vec::new();
     let mut found = false;
     for id in &ids {
-        let Some(ShapeKind::Chart(c)) = s.doc()?.shape(ShapeId(*id)).map(|sh| &sh.kind) else { continue };
+        let Some(sh) = s.doc()?.shape(ShapeId(*id)) else { continue };
+        // A shape that is not a chart is refused up front, as `with_chart` does, even when the
+        // other targets would be edited.
+        let ShapeKind::Chart(c) = &sh.kind else { return Err(bad(CMD, "not a chart")) };
         found = true;
         if c.kind.is_chartex() || matches!(c.kind, ChartType::Pie | ChartType::Doughnut | ChartType::Radar | ChartType::FilledRadar) {
             return Err(bad(CMD, "axis titles are for column, bar, line, area, scatter, bubble, stock, surface and combo charts"));
