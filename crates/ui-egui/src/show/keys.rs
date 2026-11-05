@@ -74,6 +74,10 @@ fn record_shell_owns(k: egui::Key, m: egui::Modifiers) -> bool {
     match k {
         egui::Key::P => m.command && m.shift,
         egui::Key::E | egui::Key::R | egui::Key::Z => m.command,
+        // Notes sizing: Ctrl+Minus and Ctrl+0 (and a plain Minus, which has no show meaning)
+        // belong to the Record view. The show's own handlers would end it or open go-to-slide.
+        egui::Key::Minus => true,
+        egui::Key::Num0 => m.command,
         _ => false,
     }
 }

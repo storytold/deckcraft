@@ -13,12 +13,30 @@ use serde_json::json;
 
 use crate::{Services, SlideApp};
 
-/// A folder of its own for one test's files.
-fn temp_dir(name: &str) -> std::path::PathBuf {
-    let d = std::env::temp_dir().join(format!("deckcraft-save-show-{}-{name}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    d
+/// A folder of its own for one test's files, removed when the test ends: a panicking assertion
+/// still cleans up, and no two tests share a name.
+struct TempDir(std::path::PathBuf);
+
+impl TempDir {
+    fn new(name: &str) -> TempDir {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let d = std::env::temp_dir().join(format!("deckcraft-save-show-{}-{n}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        TempDir(d)
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 /// The Record tab, with a Save dialog that answers with the path `answer` chooses for the
@@ -60,8 +78,8 @@ fn main_content_type(path: &std::path::Path) -> String {
 
 #[test]
 fn save_as_show_writes_a_ppsx_with_the_slideshow_content_type() {
-    let dir = temp_dir("ok");
-    let target = dir.clone();
+    let dir = TempDir::new("ok");
+    let target = dir.path().to_path_buf();
     let (mut h, asked) = harness(move |suggested: &str| target.join(suggested));
     let before = h.state().session.active().unwrap().path.clone();
 
@@ -69,7 +87,7 @@ fn save_as_show_writes_a_ppsx_with_the_slideshow_content_type() {
     h.run_steps(3);
 
     assert!(asked.borrow().last().is_some_and(|name| name.ends_with(".ppsx")), "the Save dialog suggests a show: {:?}", asked.borrow());
-    let path = dir.join(asked.borrow().last().unwrap());
+    let path = dir.path().join(asked.borrow().last().unwrap());
     assert!(path.is_file(), "the show was written to {}", path.display());
     assert!(
         main_content_type(&path).contains("application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml"),
@@ -78,13 +96,12 @@ fn save_as_show_writes_a_ppsx_with_the_slideshow_content_type() {
     let status = h.state().status.as_ref().map(|(m, _)| m.clone()).unwrap_or_default();
     assert!(status.contains("Exported") && status.contains(".ppsx"), "the status bar names the copy: {status}");
     assert_eq!(h.state().session.active().unwrap().path, before, "a show is a copy: the presentation keeps its own file");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn save_as_show_reports_a_failed_save_in_the_status_bar() {
-    let dir = temp_dir("failed");
-    let target = dir.join("missing");
+    let dir = TempDir::new("failed");
+    let target = dir.path().join("missing");
     let (mut h, _) = harness(move |suggested: &str| target.join(suggested));
 
     h.get_by_label("Save as Show").click();
@@ -92,5 +109,4 @@ fn save_as_show_reports_a_failed_save_in_the_status_bar() {
 
     let status = h.state().status.as_ref().map(|(m, _)| m.clone()).unwrap_or_default();
     assert!(!status.is_empty() && !status.contains("Exported"), "the failure is shown: {status}");
-    let _ = std::fs::remove_dir_all(&dir);
 }

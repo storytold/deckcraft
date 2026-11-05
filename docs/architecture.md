@@ -96,9 +96,9 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 | 2026-10-13 | trivial | Animation preview draws the current slide's timeline on the editor canvas |
 | 2026-10-14 | minor | Paragraph and Tabs dialogs; command registry 229; 29 dialogs |
 | 2026-10-14 | minor | Font dialog; command registry 227; 28 dialogs |
-| 2026-11-03 | trivial | Command registry is 234: `show.clearTiming`, `show.clearTimingAll`, `show.clearNarration`, `show.clearNarrationAll` |
-| 2026-11-03 | trivial | Command registry is 230: `show.narration` and `show.laser` |
-| 2026-11-03 | trivial | Command registry is 228: `show.record` and `ink.stroke` |
+| 2026-11-03 | trivial | Command registry gains `show.clearTiming`, `show.clearTimingAll`, `show.clearNarration` and `show.clearNarrationAll` |
+| 2026-11-03 | trivial | Command registry gains `show.narration` and `show.laser` |
+| 2026-11-03 | trivial | Command registry gains `show.record` and `ink.stroke` |
 | 2026-10-13 | minor | Transitions: perspective meshes, background/content parts, CPU compositor |
 | 2026-10-10 | major | Created from the code on main (d556ff9) and AGENTS.md §4 |
 
