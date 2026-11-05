@@ -46,6 +46,9 @@ const APP: &str = "deckcraft";
 /// falls back to this): no name is no file, so the presentation opens untitled.
 const NAMELESS: &str = "document";
 
+/// The largest file a host may send, the limit File › Open has on the desktop (2 GiB): a bigger one is refused before it is copied.
+const MAX_OPEN_BYTES: f64 = 2_147_483_648.0;
+
 /// The longest user name taken from `?author=` (the preferences' own limit).
 const MAX_AUTHOR_CHARS: usize = 256;
 
@@ -61,7 +64,12 @@ impl Bridge {
     /// `data-host="page"` on the canvas, an unframed `?host=parent` page (it stays the normal app
     /// with downloads), or a parent on another origin.
     pub fn detect(canvas: &web_sys::HtmlCanvasElement) -> Option<Self> {
-        Some(Self { host: Rc::new(Host::connect(APP, canvas)?), opened: Rc::default() })
+        let host = Host::connect(APP, canvas)?;
+        // An opaque origin (a file:// page in some browsers) can't be a postMessage target.
+        if host.mode() == craft_web_host::Mode::Parent && web_sys::window()?.location().origin().ok()? == "null" {
+            return None;
+        }
+        Some(Self { host: Rc::new(host), opened: Rc::default() })
     }
 
     /// Hand saved and exported files to the host instead of downloading them, and hear the files
@@ -118,8 +126,14 @@ impl Bridge {
     /// Hear `deckcraft:open` and queue the file for the next frame.
     fn listen(&self, ctx: egui::Context) {
         let opened = self.opened.clone();
+        let host = self.host.clone();
         self.host.listen(move |message| {
             let Message::Open { name, data } = message else { return };
+            if data.size() > MAX_OPEN_BYTES {
+                log::warn!("host file {name} is over 2 GiB; not opened");
+                let _ = host.post_failed(&format!("{name} is larger than 2 GiB, the largest file DeckCraft opens"), None);
+                return;
+            }
             let FileData::Bytes(array) = data else {
                 log::warn!("host file {name} came as a File; DeckCraft reads bytes only; not opened");
                 return;
