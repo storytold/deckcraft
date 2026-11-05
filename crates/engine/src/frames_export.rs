@@ -60,6 +60,9 @@ pub struct FramesOptions {
     pub seconds_per_slide: f64,
     /// Play the slides' transitions between them (`false`: cut).
     pub transitions: bool,
+    /// Use the slides' Advance Slide After times, as the show does with timings (`None`: the deck's
+    /// Use Timings setting).
+    pub use_timings: Option<bool>,
     /// Frame width in pixels; the height follows the slide's aspect ratio.
     pub width: u32,
     /// Slide indices in play order (default: all).
@@ -75,6 +78,7 @@ impl Default for FramesOptions {
             seconds_per_step: DEFAULT_SECONDS_PER_STEP,
             seconds_per_slide: DEFAULT_SECONDS_PER_SLIDE,
             transitions: true,
+            use_timings: None,
             width: DEFAULT_WIDTH,
             slides: None,
             include_hidden: false,
@@ -95,8 +99,8 @@ fn seconds(v: &Value, key: &str, max: f64) -> Result<f64> {
 }
 
 impl FramesOptions {
-    /// Read `{fps?, secondsPerStep?, secondsPerSlide?, transitions?, width?, slides?: [index],
-    /// includeHidden?}`. Absent or `null` values take their defaults; anything out of range or of
+    /// Read `{fps?, secondsPerStep?, secondsPerSlide?, transitions?, useTimings?, width?, slides?:
+    /// [index], includeHidden?}`. Absent or `null` values take their defaults; anything out of range or of
     /// the wrong type is an error.
     pub fn from_params(p: &Value) -> Result<Self> {
         let mut o = FramesOptions::default();
@@ -115,6 +119,9 @@ impl FramesOptions {
         }
         if let Some(v) = given(p, "transitions") {
             o.transitions = v.as_bool().ok_or_else(|| bad(CMD, "`transitions` must be true or false"))?;
+        }
+        if let Some(v) = given(p, "useTimings") {
+            o.use_timings = Some(v.as_bool().ok_or_else(|| bad(CMD, "`useTimings` must be true or false"))?);
         }
         if let Some(v) = given(p, "width") {
             o.width = v
@@ -214,6 +221,13 @@ pub fn plan(doc: &Presentation, opts: &FramesOptions) -> Result<Plan> {
     let holding = |s: f64| (play_seconds(s) * fps).round().clamp(0.0, 1e9) as usize;
     let hold_step = holding(opts.seconds_per_step);
     let hold_slide = holding(opts.seconds_per_slide).max(1);
+    // With timings, a slide's Advance Slide After time is how long it waits idle before each click
+    // step and before it advances, as the show plays it; slides without one take the holds above.
+    let use_timings = opts.use_timings.unwrap_or(doc.show.use_timings);
+    let after = |slide: usize| {
+        let ms = doc.slides.get(slide)?.transition.as_ref()?.advance_after_ms?;
+        use_timings.then(|| holding(f64::from(ms) / 1000.0))
+    };
     let (width, height) = frame_size(doc, opts.width);
     let too_many = |n: usize| {
         bad(
@@ -241,6 +255,7 @@ pub fn plan(doc: &Presentation, opts: &FramesOptions) -> Result<Plan> {
         }
         let tl: Timeline = ShowState::timeline(doc, slide);
         let steps = tl.steps();
+        let (hold_step, hold_slide) = after(slide).map_or((hold_step, hold_slide), |a| (a, a.max(1)));
         if steps == 0 {
             frames.extend(std::iter::repeat_n(Frame::Build { slide, step: 0, t: 0.0 }, hold_slide));
         }
@@ -620,6 +635,38 @@ mod tests {
 
     use super::*;
 
+    /// With timings, a slide's Advance Slide After time sets its holds, as the show plays it: the
+    /// wait before each click step and before the slide advances. `useTimings` overrides the deck's
+    /// Use Timings setting either way; a slide without an After time keeps the requested holds.
+    #[test]
+    fn advance_after_times_set_the_holds_with_timings() {
+        use deckcraft_model::anim::{AnimStart, Animation};
+        let mut doc = deckcraft_model::defaults::new_presentation(None);
+        let len = |doc: &Presentation, p: Value| plan(doc, &FramesOptions::from_params(&p).unwrap()).unwrap().frames();
+        let opts = json!({"fps": 2, "secondsPerSlide": 5, "secondsPerStep": 3, "width": 32});
+        assert_eq!(len(&doc, opts.clone()), 10, "no After time: secondsPerSlide");
+        std::sync::Arc::make_mut(&mut doc.slides[0]).transition =
+            Some(deckcraft_model::anim::Transition { kind: "none".into(), advance_after_ms: Some(2000), ..Default::default() });
+        assert_eq!(len(&doc, opts.clone()), 4, "two seconds at 2 fps");
+        assert_eq!(len(&doc, json!({"fps": 2, "secondsPerSlide": 5, "width": 32, "useTimings": false})), 10);
+        doc.show.use_timings = false;
+        assert_eq!(len(&doc, opts.clone()), 10, "the deck does not use timings");
+        assert_eq!(len(&doc, json!({"fps": 2, "secondsPerSlide": 5, "width": 32, "useTimings": true})), 4);
+        doc.show.use_timings = true;
+        // A click step waits the After time before it plays, and the slide waits it again after.
+        let shape = doc.slides[0].shapes[0].id;
+        std::sync::Arc::make_mut(&mut doc.slides[0]).animations.push(Animation {
+            shape,
+            effect: "fade".into(),
+            start: AnimStart::OnClick,
+            ..Default::default()
+        });
+        let timed = len(&doc, opts.clone());
+        let held = len(&doc, json!({"fps": 2, "secondsPerSlide": 2, "secondsPerStep": 2, "width": 32, "useTimings": false}));
+        assert_eq!(timed, held, "the After time is both holds");
+        assert!(timed > 8, "the step plays between them: {timed}");
+    }
+
     /// A failed export (here the byte cap) leaves the earlier sequence whole and no staging folder;
     /// a successful one replaces it, shorter sequences included. A frame name taken by a folder is
     /// refused before anything is written.
@@ -782,6 +829,7 @@ mod tests {
             json!({"secondsPerSlide": 61}),
             json!({"secondsPerSlide": 1e308}),
             json!({"transitions": "yes"}),
+            json!({"useTimings": "yes"}),
             json!({"width": 15}),
             json!({"width": 3841}),
             json!({"width": "large"}),

@@ -143,7 +143,8 @@ pub fn tool_definitions() -> Vec<Value> {
                     "loop": boolean("GIF: loop forever (true, default) or play once (false)"),
                     "fps": {"type": "integer", "minimum": 1, "maximum": 60, "description": "frames: frames per second (default 30)"},
                     "secondsPerStep": {"type": "number", "minimum": 0, "maximum": 30, "description": "frames: hold before the first click step and after each click step settles (default 1); automatic steps run on"},
-                    "transitions": boolean("frames: play each slide's transition from the previous slide (default true; false cuts)")
+                    "transitions": boolean("frames: play each slide's transition from the previous slide (default true; false cuts)"),
+                    "useTimings": boolean("frames: a slide's Advance Slide After time is its wait before each click step and before it advances, as in the show (default: the deck's Use Timings setting)")
                 }),
                 &["path"],
             ),

@@ -60,7 +60,7 @@ ready** (estimated), **10–16 h** to parity.
 | Rehearse Timings, keep timings | yes | yes |
 | Record Slide Show (narration, ink, laser, camera; Cameo) | yes | no |
 | Clear timing / narration | yes | timings only |
-| Export the recorded show to video | yes | frame sequence only: `file.export {format: "frames"}` plays builds and transitions into numbered PNGs for a video encoder; no MP4 writer (see [file-format-parity.md](file-format-parity.md)) |
+| Export the recorded show to video | yes | frame sequence only: `file.export {format: "frames"}` plays builds, transitions and the slides' After timings (Use Recorded Timings) into numbered PNGs for a video encoder; no MP4 writer (see [file-format-parity.md](file-format-parity.md)) |
 
 ## Reading View
 
