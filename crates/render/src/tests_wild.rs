@@ -1108,6 +1108,20 @@ fn a_reveal_includes_the_outline_in_the_boxs_bounds() {
 }
 
 #[test]
+fn a_reveal_includes_a_pictures_whole_border_in_the_boxs_bounds() {
+    use deckcraft_anim::{Reveal, RevealShape};
+    // A picture's 8 pt border lies wholly outside it (92 to 100 pt on the left), so it reaches 8 pt,
+    // not 4, past the geometry. Just before the end of the effect, a point inside the border's outer
+    // edge is whole only when the bounds include all of it.
+    let line = Line { fill: solid(Rgba::rgb(0, 0, 0)), width: Some(8.0), ..Default::default() };
+    let reveal = Reveal::new(RevealShape::Box, false, 0.995);
+    let state = move |_: ShapeId| super::ShapeState { reveal: Some(reveal), ..Default::default() };
+    let img = render_slide(&picture_deck(Some(line)), 0, &RenderOpts { scale: 1.0, state: Some(&state), ..Default::default() });
+    assert!(shown(&img, 94, 150) > 0.99, "the border's outer edge is whole just before the end: {}", shown(&img, 94, 150));
+    assert!(shown(&img, 305, 150) > 0.99, "and on the other side: {}", shown(&img, 305, 150));
+}
+
+#[test]
 fn a_reveal_in_a_scaled_group_looks_the_same_whatever_the_child_space() {
     use deckcraft_anim::{Reveal, RevealShape};
     // PowerPoint reveals a group through its box; the scale of its child coordinates changes nothing.

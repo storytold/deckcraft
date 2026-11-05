@@ -1,5 +1,5 @@
 use super::geometry::{
-    Caster, blur, border_outside, camera_turn, color, drawable, fill_opacity, outside_line, scale_of, shadow_local, shape_geometry,
+    Caster, blur, border_outside, camera_turn, color, drawable, fill_opacity, outline_reach, outside_line, scale_of, shadow_local, shape_geometry,
 };
 use super::opts::{RenderOpts, ShapeState, SlideFields};
 use super::raster::Image;
@@ -458,9 +458,9 @@ impl Renderer {
             // the slide's axes, whatever the shape's turn or its groups' scale.
             let mask = st.reveal.and_then(|r| {
                 let (kx, ky) = self.per_point_xy(m, depth);
-                let half = resolve::line(rctx, s).0;
-                let half = if half.fill.as_ref().is_some_and(|f| !f.is_none()) { half.width.unwrap_or(0.75).max(0.0) / 2.0 } else { 0.0 };
-                let bounds = m.transform_rect_bbox(Rect::new(-half * kx, -half * ky, x.w + half * kx, x.h + half * ky));
+                let is_pic = matches!(s.kind, ShapeKind::Picture { .. });
+                let reach = outline_reach(&resolve::line(rctx, s).0, is_pic, resolve::effects(rctx, s).0.as_ref());
+                let bounds = m.transform_rect_bbox(Rect::new(-reach * kx, -reach * ky, x.w + reach * kx, x.h + reach * ky));
                 let mask = reveal::mask(ctx.width(), ctx.height(), bounds, &r);
                 if mask.is_none() {
                     opacity *= r.alpha(0.5, 0.5);
