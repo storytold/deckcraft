@@ -283,3 +283,24 @@ fn text_nested_deeper_than_the_slide_draws_is_left_out() {
     let e = s.execute("text.fit", &json!({"ids": [deep]})).unwrap_err().to_string();
     assert!(e.contains("33 groups deep"), "{e}");
 }
+
+/// `deckcraft_model::walk` stops 64 groups down, and `ids` found a shape's depth through it, so a
+/// shape nested deeper was refused as "no shape". `ids` names the depth however deep a file nests
+/// the shape.
+#[test]
+fn text_nested_past_64_groups_is_refused_with_its_depth() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let past_walk =
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 80], "text": "Past the walk"})).unwrap()["id"].clone();
+    let far = s.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 100, 200, 80], "text": "Far down"})).unwrap()["id"].clone();
+    nest(&mut s, &past_walk, 65);
+    nest(&mut s, &far, 100);
+    for (id, depth) in [(&past_walk, 65), (&far, 100)] {
+        let e = s.execute("text.fit", &json!({"ids": [id]})).unwrap_err().to_string();
+        assert!(e.contains(&format!("is nested {depth} groups deep")), "{e}");
+    }
+    assert_eq!(fit(&mut s, json!({}))["bodies"], json!([]));
+    let e = s.execute("text.fit", &json!({"ids": [99_999]})).unwrap_err().to_string();
+    assert!(e.contains("no shape 99999 on slide 1"), "{e}");
+}

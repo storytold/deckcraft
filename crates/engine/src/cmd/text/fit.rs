@@ -212,6 +212,31 @@ fn fits_in(
     }
 }
 
+/// How many groups deep shape `id` sits in `shapes` (0 for one of `shapes` itself), taking the
+/// first match in the order `deckcraft_model::walk` visits shapes; `None` when it is not there.
+/// `walk` stops 64 groups down, so a shape nested deeper would read as absent; this follows groups
+/// as deep as a file nests them, keeping the groups it is inside on a list rather than on the call
+/// stack, so no nesting depth can overflow it.
+fn depth_of(shapes: &[Shape], id: ShapeId) -> Option<usize> {
+    // The shapes still to visit at each level, outermost first: a shape taken from the last level
+    // sits one group deeper than the shapes of the level before it.
+    let mut levels = vec![shapes.iter()];
+    while let Some(level) = levels.last_mut() {
+        let Some(sh) = level.next() else {
+            levels.pop();
+            continue;
+        };
+        if sh.id == id {
+            return Some(levels.len().saturating_sub(1));
+        }
+        let members = sh.children();
+        if !members.is_empty() {
+            levels.push(members.iter());
+        }
+    }
+    None
+}
+
 /// `text.fit {index?, ids?}`: the fit of every text body on a slide (the current one by default),
 /// or of the shapes `ids` names. The slide answer leaves out shapes nested deeper than the
 /// renderer draws, so `ids` refuses them, naming their depth.
@@ -240,15 +265,7 @@ pub(super) fn fit(s: &mut Session, p: &Value) -> Result<Value> {
             let mut v = Vec::with_capacity(ids.len());
             for id in ids {
                 let f = fits.iter().find(|f| f.id == id).ok_or_else(|| {
-                    // How many groups deep the shape sits, when it is on the slide at all.
-                    let mut found = None;
-                    if let Some(sl) = st.doc.slides.get(index) {
-                        deckcraft_model::walk(&sl.shapes, &mut |sh, depth| {
-                            if sh.id == id && found.is_none() {
-                                found = Some(depth);
-                            }
-                        });
-                    }
+                    let found = st.doc.slides.get(index).and_then(|sl| depth_of(&sl.shapes, id));
                     let max = deckcraft_render::MAX_DRAW_DEPTH;
                     bad(
                         CMD,
