@@ -301,6 +301,21 @@ impl DocState {
             }
         }
     }
+    /// The paragraphs that animation commands act on instead of a whole shape, with that shape:
+    /// highlighted text; or, in a box with per-paragraph effects, the paragraph holding the caret.
+    /// A caret in any other box, a table cell or the notes means the whole shape.
+    pub fn animated_paragraphs(&self) -> Option<(ShapeId, std::ops::RangeInclusive<usize>)> {
+        let t = self.selection.text.as_ref()?;
+        if let Some(range) = t.highlighted_paragraphs() {
+            return Some((t.shape, range));
+        }
+        if t.notes || t.cell.is_some() {
+            return None;
+        }
+        let per_paragraph = self.current_slide()?.animations.iter().any(|a| a.shape == t.shape && a.paragraph.is_some());
+        per_paragraph.then_some((t.shape, t.caret.0..=t.caret.0))
+    }
+
     pub fn shape(&self, id: ShapeId) -> Option<&Shape> {
         deckcraft_model::find_shape(self.shapes(), id)
     }

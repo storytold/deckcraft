@@ -18,7 +18,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Animation Styles",
             ["Animations", "Animation"],
             None,
-            "{effect: fade|fly|zoom|wipe|appear|spin|pulse|fadeOut|lines|… (animation.list), class?: entrance|emphasis|exit|path, option?, path?: [[x,y],…] or OOXML string, closed?: bool, ids?, paragraphs?: [n, …] or paragraph?: n (0-based; else the highlighted text's paragraphs)} — replaces the shapes' (or those paragraphs') animations. path (motion paths): points in slide points, as offsets from where the shape sits, or the OOXML path string (slide fractions) animation.get answers",
+            "{index? (replace that effect alone, keeping its target and start), effect: fade|fly|zoom|wipe|appear|spin|pulse|fadeOut|lines|… (animation.list), class?: entrance|emphasis|exit|path, option?, path?: [[x,y],…] or OOXML string, closed?: bool, ids?, paragraphs?: [n, …] or paragraph?: n (0-based; else the highlighted text's paragraphs)} — replaces the shapes' (or those paragraphs') animations. path (motion paths): points in slide points, as offsets from where the shape sits, or the OOXML path string (slide fractions) animation.get answers",
             has_selection,
             set
         ),
@@ -279,22 +279,46 @@ pub fn default_path(effect: &str, option: &str) -> String {
 
 /// `animation.set`: replaces the target shapes' effects with this one, each keeping its place in
 /// the sequence, or only the chosen or highlighted paragraphs' effects (`paragraph_targets`).
+/// `animation.set` with `index`: replaces that one effect, which keeps its target, its place and
+/// when it starts (its delay too, unless `delay` is given).
+fn set_at(s: &mut Session, p: &Value, index: usize) -> Result<Value> {
+    let a = build(p, slide_extent(s)?)?;
+    let keep_delay = p.get("delay").is_none();
+    s.edit(|doc, sel| {
+        let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.set", "no slide"))?);
+        let x = sl.animations.get_mut(index).ok_or_else(|| bad("animation.set", "no such animation"))?;
+        if a.effect == "none" {
+            sl.animations.remove(index);
+        } else {
+            let delay_ms = if keep_delay { x.delay_ms } else { a.delay_ms };
+            *x = Animation {
+                shape: x.shape,
+                paragraph: x.paragraph,
+                start: x.start,
+                trigger: x.trigger,
+                text_build: x.text_build,
+                delay_ms,
+                ..a.clone()
+            };
+        }
+        Ok(json!({"count": sl.animations.len()}))
+    })
+}
+
 fn set(s: &mut Session, p: &Value) -> Result<Value> {
+    if let Some(index) = opt_usize_param(p, "index", "animation.set")? {
+        return set_at(s, p, index);
+    }
     let ids = targets(s, p)?;
     let a = build(p, slide_extent(s)?)?;
     let paras = paragraph_targets(s, p, &ids)?;
-    let built = match (&paras, ids.as_slice()) {
-        (Some(_), [id]) => build_paragraphs(s, *id)?,
-        _ => vec![],
-    };
-    // A whole-box effect that isn't by paragraph can't be split per bullet without changing how
-    // it plays, and a bullet's own effect beside it would animate that bullet twice.
-    if let (Some(_), [id]) = (&paras, ids.as_slice())
-        && s.doc()?
-            .current_slide()
-            .is_some_and(|sl| sl.animations.iter().any(|x| x.shape == *id && x.paragraph.is_none() && x.text_build != TextBuild::ByParagraph))
+    let built = splittable(s, &paras, &ids)?;
+    // A by-word or by-letter effect can't be split per bullet without changing how it plays, and
+    // a bullet's own effect beside it would animate that bullet twice.
+    if let (false, [id]) = (built.is_empty(), ids.as_slice())
+        && s.doc()?.current_slide().is_some_and(|sl| sl.animations.iter().any(|x| x.shape == *id && x.paragraph.is_none() && !can_split(x)))
     {
-        return Err(bad("animation.set", "the whole box is animated: set Effect Options to By Paragraph"));
+        return Err(bad("animation.set", "this box plays by word or letter: set Effect Options to By Paragraph"));
     }
     s.edit(|doc, sel| {
         let sl = doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.set", "no slide"))?;
@@ -358,10 +382,8 @@ fn slide_extent(s: &mut Session) -> Result<(f64, f64)> {
 
 /// The paragraphs of one text box an effect should animate on their own, with the level of each,
 /// or `None` to animate whole shapes. Explicit `paragraphs: [n, …]` (or `paragraph: n`) with one
-/// target shape; otherwise text highlighted while editing a text box, as in PowerPoint: every
-/// paragraph the highlight touches (`TextSel::highlighted_paragraphs`), blank paragraphs skipped,
-/// an error when all are blank. A bare caret, a table cell or the notes animate the whole shape
-/// as before.
+/// target shape; otherwise `DocState::animated_paragraphs`, blank paragraphs skipped, an error
+/// when all are blank.
 fn paragraph_targets(s: &Session, p: &Value, ids: &[ShapeId]) -> Result<Option<Vec<(u32, u8)>>> {
     let st = s.doc()?;
     let text_of =
@@ -395,8 +417,8 @@ fn paragraph_targets(s: &Session, p: &Value, ids: &[ShapeId]) -> Result<Option<V
         if p.get("ids").is_some() || p.get("id").is_some() {
             return Ok(None);
         }
-        let Some((t, highlighted)) = st.selection.text.as_ref().and_then(|t| Some((t, t.highlighted_paragraphs()?))) else { return Ok(None) };
-        if ids != [t.shape] {
+        let (Some(t), Some((shape, chosen))) = (st.selection.text.as_ref(), st.animated_paragraphs()) else { return Ok(None) };
+        if ids != [shape] {
             return Ok(None);
         }
         let ((p0, c0), (p1, c1)) = t.ordered();
@@ -413,7 +435,7 @@ fn paragraph_targets(s: &Session, p: &Value, ids: &[ShapeId]) -> Result<Option<V
                 return Err(bad("animation", format!("the highlight reaches character {c} of paragraph {p}, past its text ({len} characters)")));
             }
         }
-        (t.shape, highlighted.collect())
+        (shape, chosen.collect())
     };
     let text = text_of(id)?;
     let mut out = vec![];
@@ -487,27 +509,43 @@ fn build_paragraphs(s: &Session, id: ShapeId) -> Result<Vec<(u32, bool)>> {
         .collect())
 }
 
-/// Splits shape `id`'s by-paragraph builds into one effect per paragraph, in place and timed as
-/// the build plays (`step_timing`), so one bullet's effect can be replaced without moving the
-/// others. Deeper paragraphs start with their bullet.
+/// Can this whole-shape effect become one effect per paragraph and still play the same?
+fn can_split(a: &Animation) -> bool {
+    matches!(a.text_build, TextBuild::AsOne | TextBuild::ByParagraph)
+}
+
+/// The paragraphs to split shape `ids[0]`'s whole-box effects into before acting on `paras`: none
+/// when `paras` all have effects of their own, as those are the target and a whole-box effect
+/// layered under them stays.
+fn splittable(s: &Session, paras: &Option<Vec<(u32, u8)>>, ids: &[ShapeId]) -> Result<Vec<(u32, bool)>> {
+    let (Some(paras), [id]) = (paras, ids) else { return Ok(vec![]) };
+    let anims = s.doc()?.current_slide().map(|sl| sl.animations.as_slice()).unwrap_or(&[]);
+    let own = |i: u32| anims.iter().any(|a| a.shape == *id && a.paragraph == Some(i));
+    if paras.iter().all(|q| own(q.0)) { Ok(vec![]) } else { build_paragraphs(s, *id) }
+}
+
+/// Splits shape `id`'s whole-box As One and by-paragraph effects into one effect per paragraph, in
+/// place and timed as they play, so one bullet's effect can change without moving the others: a
+/// build by `step_timing`, deeper paragraphs with their bullet; As One all together.
 fn split_builds(anims: &mut Vec<Animation>, id: ShapeId, paras: &[(u32, bool)]) {
     if paras.is_empty() {
         return;
     }
     let mut out = Vec::with_capacity(anims.len());
     for a in anims.drain(..) {
-        if a.shape != id || a.paragraph.is_some() || a.text_build != TextBuild::ByParagraph {
+        if a.shape != id || a.paragraph.is_some() || !can_split(&a) {
             out.push(a);
             continue;
         }
+        let as_one = a.text_build == TextBuild::AsOne;
         let mut tops: u32 = 0;
-        for &(i, top) in paras {
+        for (n, &(i, top)) in paras.iter().enumerate() {
             if top {
                 tops += 1;
             }
             let k = tops.saturating_sub(1);
-            let (start, delay_ms) = step_timing(a.start, a.delay_ms, k);
-            let start = if top { start } else { AnimStart::WithPrevious };
+            let (start, delay_ms) = if as_one { (a.start, a.delay_ms) } else { step_timing(a.start, a.delay_ms, k) };
+            let start = if (top && !as_one) || n == 0 { start } else { AnimStart::WithPrevious };
             out.push(Animation { paragraph: Some(i), text_build: TextBuild::AsOne, start, delay_ms, ..a.clone() });
         }
     }
@@ -578,18 +616,14 @@ fn move_anim(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// Applies `f` to the effect at `index`, else to the chosen or highlighted paragraphs' effects
-/// (`paragraph_targets`), else to every effect of the target shapes. For paragraphs, a by-paragraph
-/// build is split first so only they change; when they have no effect of their own the whole-box
-/// effect that plays them changes. `textBuild` says how a whole box plays, so a highlight doesn't
-/// narrow it.
+/// (`paragraph_targets`), else to every effect of the target shapes. For paragraphs, a whole-box
+/// effect is split first so only they change (`splittable`); one that can't be split changes
+/// whole. `textBuild` says how a whole box plays, so paragraphs don't narrow it.
 fn each_target(s: &mut Session, p: &Value, f: impl Fn(&mut Animation)) -> Result<Value> {
     let index = opt_usize_param(p, "index", "animation")?;
     let ids = if index.is_none() { targets(s, p)? } else { vec![] };
     let paras = if index.is_none() && p.get("textBuild").is_none() { paragraph_targets(s, p, &ids)? } else { None };
-    let built = match (&paras, ids.as_slice()) {
-        (Some(_), [id]) => build_paragraphs(s, *id)?,
-        _ => vec![],
-    };
+    let built = splittable(s, &paras, &ids)?;
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation", "no slide"))?);
         if let (Some(_), [id]) = (&paras, ids.as_slice()) {
@@ -1282,13 +1316,12 @@ mod tests {
         s.execute("animation.timing", &json!({"duration": 2000, "delay": 300, "start": "withPrevious"})).unwrap();
         assert_eq!(times(&s), vec![(Some(0), 500, 0), (Some(1), 2000, 300), (Some(2), 500, 0)]);
         assert_eq!(effects(&mut s).iter().map(|e| e.3.as_str()).collect::<Vec<_>>(), vec!["onClick", "withPrevious", "onClick"]);
-        // A bare caret still means the whole box, and `index` still means that one effect.
-        s.execute("text.select", &json!({"anchor": [1, 1], "caret": [1, 1]})).unwrap();
+        // `index` still means that one effect, and the shape on its own means all of them.
+        s.execute("animation.timing", &json!({"index": 2, "duration": 700})).unwrap();
+        assert_eq!(times(&s), vec![(Some(0), 500, 0), (Some(1), 2000, 300), (Some(2), 700, 0)]);
+        s.execute("text.exit", &json!({})).unwrap();
         s.execute("animation.timing", &json!({"duration": 900})).unwrap();
         assert_eq!(times(&s), vec![(Some(0), 900, 0), (Some(1), 900, 300), (Some(2), 900, 0)]);
-        s.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 3]})).unwrap();
-        s.execute("animation.timing", &json!({"index": 2, "duration": 700})).unwrap();
-        assert_eq!(times(&s), vec![(Some(0), 900, 0), (Some(1), 900, 300), (Some(2), 700, 0)]);
     }
 
     #[test]
@@ -1326,12 +1359,73 @@ mod tests {
     }
 
     #[test]
-    fn timing_on_a_bullet_a_whole_box_effect_plays_changes_that_effect() {
+    fn timing_on_a_bullet_of_an_as_one_box_splits_it() {
         let (mut s, tb, _) = bullets();
         s.execute("animation.set", &json!({"effect": "fade", "class": "entrance", "ids": [tb], "duration": 500})).unwrap();
         s.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 3]})).unwrap();
         s.execute("animation.timing", &json!({"duration": 2000})).unwrap();
+        assert_eq!(times(&s), vec![(Some(0), 500, 0), (Some(1), 2000, 0), (Some(2), 500, 0)]);
+        // As One plays everything together: one click, the rest With Previous.
+        assert_eq!(effects(&mut s).iter().map(|e| e.3.as_str()).collect::<Vec<_>>(), vec!["onClick", "withPrevious", "withPrevious"]);
+    }
+
+    #[test]
+    fn timing_on_a_by_word_box_changes_its_one_effect() {
+        let (mut s, tb, _) = bullets();
+        s.execute("animation.set", &json!({"effect": "fade", "class": "entrance", "ids": [tb], "duration": 500})).unwrap();
+        s.execute("animation.options", &json!({"ids": [tb], "textBuild": "byWord"})).unwrap();
+        s.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 3]})).unwrap();
+        s.execute("animation.timing", &json!({"duration": 2000})).unwrap();
         assert_eq!(times(&s), vec![(None, 2000, 0)]);
+    }
+
+    #[test]
+    fn a_bullets_own_effect_changes_without_splitting_a_layered_box() {
+        // A whole-box entrance with an emphasis on one bullet: that bullet's effect is the target.
+        let (mut s, tb, _) = bullets();
+        s.execute("animation.set", &json!({"effect": "fade", "class": "entrance", "ids": [tb], "duration": 500})).unwrap();
+        s.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 3]})).unwrap();
+        s.execute("animation.add", &json!({"effect": "pulse", "class": "emphasis", "duration": 500})).unwrap();
+        s.execute("animation.timing", &json!({"duration": 2000})).unwrap();
+        assert_eq!(times(&s), vec![(None, 500, 0), (Some(1), 2000, 0)]);
+        s.execute("animation.set", &json!({"effect": "spin", "class": "emphasis"})).unwrap();
+        assert_eq!(effects(&mut s).iter().map(|e| (e.1, e.2.as_str())).collect::<Vec<_>>(), vec![(None, "fade"), (Some(1), "spin")]);
+    }
+
+    #[test]
+    fn a_caret_in_a_box_of_bullet_effects_means_that_bullet() {
+        let (mut s, _) = bullets_with_effects();
+        s.execute("text.select", &json!({"anchor": [1, 1], "caret": [1, 1]})).unwrap();
+        s.execute("animation.timing", &json!({"duration": 2000})).unwrap();
+        assert_eq!(times(&s), vec![(Some(0), 500, 0), (Some(1), 2000, 0), (Some(2), 500, 0)]);
+        s.execute("animation.set", &json!({"effect": "zoom", "class": "entrance"})).unwrap();
+        assert_eq!(
+            effects(&mut s).iter().map(|e| (e.1, e.2.as_str())).collect::<Vec<_>>(),
+            vec![(Some(0), "fade"), (Some(1), "zoom"), (Some(2), "fade")]
+        );
+    }
+
+    #[test]
+    fn a_caret_in_a_bullet_without_an_effect_keeps_the_others() {
+        let (mut s, tb, _) = bullets();
+        s.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [tb], "paragraphs": [0]})).unwrap();
+        s.execute("text.select", &json!({"anchor": [2, 1], "caret": [2, 1]})).unwrap();
+        s.execute("animation.set", &json!({"effect": "zoom", "class": "entrance"})).unwrap();
+        assert_eq!(effects(&mut s).iter().map(|e| (e.1, e.2.as_str())).collect::<Vec<_>>(), vec![(Some(0), "fade"), (Some(2), "zoom")]);
+    }
+
+    #[test]
+    fn set_with_an_index_replaces_that_effect_only() {
+        let (mut s, _) = bullets_with_effects();
+        s.execute("animation.timing", &json!({"start": "withPrevious", "delay": 300})).unwrap();
+        s.execute("animation.set", &json!({"index": 1, "effect": "zoom", "class": "entrance"})).unwrap();
+        let e = effects(&mut s);
+        assert_eq!(
+            e.iter().map(|e| (e.1, e.2.as_str(), e.3.as_str())).collect::<Vec<_>>(),
+            vec![(Some(0), "fade", "onClick"), (Some(1), "zoom", "withPrevious"), (Some(2), "fade", "onClick")]
+        );
+        assert_eq!(times(&s)[1].2, 300, "the replaced effect keeps its delay");
+        assert!(s.execute("animation.set", &json!({"index": 9, "effect": "zoom", "class": "entrance"})).is_err());
     }
 
     #[test]
@@ -1360,9 +1454,22 @@ mod tests {
     }
 
     #[test]
-    fn gallery_on_a_bullet_of_a_whole_box_effect_is_refused() {
-        // The whole-box effect already plays the bullet: a paragraph effect would animate it twice.
-        for build in ["asOne", "byWord", "byLetter"] {
+    fn gallery_on_a_bullet_of_an_as_one_box_splits_it() {
+        // Otherwise a box set As One could never get a per-bullet effect.
+        let (mut s, tb, _) = bullets();
+        s.execute("animation.set", &json!({"effect": "fade", "class": "entrance", "ids": [tb]})).unwrap();
+        s.execute("text.select", &json!({"anchor": [1, 0], "caret": [1, 3]})).unwrap();
+        s.execute("animation.set", &json!({"effect": "fly", "class": "entrance"})).unwrap();
+        assert_eq!(
+            effects(&mut s).iter().map(|e| (e.1, e.2.as_str(), e.3.as_str())).collect::<Vec<_>>(),
+            vec![(Some(0), "fade", "onClick"), (Some(1), "fly", "withPrevious"), (Some(2), "fade", "withPrevious")]
+        );
+    }
+
+    #[test]
+    fn gallery_on_a_bullet_of_a_by_word_box_is_refused() {
+        // Splitting these would change how they play; a bullet's effect beside them animates it twice.
+        for build in ["byWord", "byLetter"] {
             let (mut s, tb, _) = bullets();
             s.execute("animation.set", &json!({"effect": "fade", "class": "entrance", "ids": [tb]})).unwrap();
             s.execute("animation.options", &json!({"ids": [tb], "textBuild": build})).unwrap();
@@ -1370,9 +1477,8 @@ mod tests {
             let before = effects(&mut s);
             assert!(s.execute("animation.set", &json!({"effect": "fly", "class": "entrance"})).is_err(), "{build}");
             assert_eq!(effects(&mut s), before, "{build}: a refused gallery choice changes nothing");
-            // Add Animation means a second effect, on a bullet as on a whole shape.
             s.execute("animation.add", &json!({"effect": "pulse", "class": "emphasis"})).unwrap();
-            assert_eq!(effects(&mut s).len(), 2, "{build}");
+            assert_eq!(effects(&mut s).len(), 2, "{build}: Add Animation still layers");
         }
     }
 

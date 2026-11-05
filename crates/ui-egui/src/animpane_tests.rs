@@ -198,3 +198,78 @@ fn screenshot() {
     let img = h.render().unwrap();
     img.save("/tmp/animpane.png").unwrap();
 }
+
+/// A text box with a Fade on each of its three bullets, the ribbon on Animations, nothing selected.
+fn bullets_harness() -> Harness<'static, SlideApp> {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let tb = s.execute("insert.textBox", &json!({"rect": [40, 80, 400, 200], "text": "One\nTwo\nThree"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [tb], "paragraphs": [0, 1, 2], "duration": 500})).unwrap();
+    s.execute("edit.select", &json!({"ids": []})).unwrap();
+    let mut app = SlideApp::new(s, Services::default());
+    app.ui.pane = Some("animation".into());
+    app.ui.tab = "Animations".into();
+    let mut h = Harness::builder().with_size(egui::vec2(1800.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    h
+}
+
+fn effects(h: &Harness<'_, SlideApp>) -> Vec<(Option<u32>, String, u32)> {
+    let d = h.state().session.active().unwrap();
+    d.current_slide().unwrap().animations.iter().map(|a| (a.paragraph, a.effect.clone(), a.duration_ms)).collect()
+}
+
+fn fade(paragraph: u32, ms: u32) -> (Option<u32>, String, u32) {
+    (Some(paragraph), "fade".into(), ms)
+}
+
+fn increase_duration(h: &mut Harness<'_, SlideApp>) {
+    h.get_by_label("Increase Duration").click();
+    h.run_steps(3);
+}
+
+#[test]
+fn the_ribbon_changes_only_the_clicked_row() {
+    let mut h = bullets_harness();
+    click_row(&mut h, 2, egui::PointerButton::Primary);
+    increase_duration(&mut h);
+    assert_eq!(effects(&h), vec![fade(0, 500), fade(1, 750), fade(2, 500)]);
+}
+
+#[test]
+fn the_gallery_replaces_only_the_clicked_row() {
+    let mut h = bullets_harness();
+    click_row(&mut h, 2, egui::PointerButton::Primary);
+    h.get_all_by_label("Zoom").next().unwrap().click();
+    h.run_steps(3);
+    let e = effects(&h);
+    assert_eq!(e.len(), 3);
+    assert_eq!((e[0].clone(), e[2].clone()), (fade(0, 500), fade(2, 500)));
+    assert_eq!((e[1].0, e[1].1.as_str()), (Some(1), "zoom"));
+    // The row stays picked: the next change lands on the same bullet.
+    increase_duration(&mut h);
+    assert_eq!(effects(&h)[0], fade(0, 500));
+}
+
+#[test]
+fn clicking_the_slide_ends_the_row() {
+    let mut h = bullets_harness();
+    click_row(&mut h, 2, egui::PointerButton::Primary);
+    assert_eq!(h.state().anim_row_index(), Some(1));
+    let canvas = h.state().canvas_rect.unwrap();
+    let pos = egui::pos2(canvas.left() + 8.0, canvas.bottom() - 8.0);
+    h.event(egui::Event::PointerMoved(pos));
+    h.run_steps(1);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::default() });
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+    assert_eq!(h.state().anim_row_index(), None);
+}
