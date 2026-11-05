@@ -586,6 +586,13 @@ fn export_capped(doc: &Presentation, opts: &FramesOptions, folder: &str, cap: u6
     // export left behind is cleared first.
     let staging = dir.join(STAGING);
     let staging_s = staging.to_string_lossy().to_string();
+    // A work folder that is a link could point at the export folder, and the clearing below would
+    // delete the earlier frames (or the new ones) through it: refuse both before any cleanup.
+    for work in [STAGING, BACKUP] {
+        if crate::io::is_link(&dir.join(work).to_string_lossy()) {
+            return Err(io(format!("{} is a link: delete it and export again; nothing was written", dir.join(work).to_string_lossy())));
+        }
+    }
     // A backup folder still holding frames is an earlier sequence that an interrupted export could
     // not put back (or a finished one could not remove): it is the user's to sort out, so it is
     // refused rather than overwritten.
@@ -762,6 +769,29 @@ mod tests {
         assert!(!dir.join(frame_name(1)).exists() && !dir.join(STAGING).exists(), "nothing was written");
         assert_eq!(std::fs::read(dir.join("old.png")).unwrap(), b"old");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A staging or backup folder that is a link to the export folder would have the clearing delete
+    /// the earlier frames through it: both are refused before anything is touched.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_work_folder_is_refused() {
+        let doc = deckcraft_model::defaults::new_presentation(None);
+        let opts = FramesOptions::from_params(&json!({"fps": 1, "secondsPerSlide": 1, "width": 32})).unwrap();
+        for work in [STAGING, BACKUP] {
+            let dir = std::env::temp_dir().join(format!("dc-frames-linked-{work}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(frame_name(1)), b"old").unwrap();
+            std::fs::write(dir.join(frame_name(2)), b"old").unwrap();
+            std::os::unix::fs::symlink(&dir, dir.join(work)).unwrap();
+            let e = export(&doc, &opts, &dir.to_string_lossy()).unwrap_err().to_string();
+            assert!(e.contains("is a link") && e.contains(work), "{e}");
+            for n in [1, 2] {
+                assert_eq!(std::fs::read(dir.join(frame_name(n))).unwrap(), b"old", "{work}: frame {n} is kept");
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     /// A move of the new frames that fails part way (here onto a folder with a frame's name) puts

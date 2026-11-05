@@ -222,6 +222,17 @@ pub fn remove_empty_folder(_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Is `path` itself a symbolic link (not what it points at)?
+#[cfg(not(target_arch = "wasm32"))]
+pub fn is_link(path: &str) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn is_link(_path: &str) -> bool {
+    false
+}
+
 /// Write `bytes` straight to `path` inside the automation write root: no temporary sibling and no
 /// sync, for the many generated files of a frame sequence, which are rebuilt rather than precious.
 /// The folder must exist ([`create_folder`]).
