@@ -247,11 +247,13 @@ enum Drag {
     Ink {
         points: Vec<(f64, f64, f32)>,
     },
-    /// Crop mode: `orig` is the box and `img` the whole image in its local points at the press.
+    /// Crop mode: `orig` is the box, `inset` its stretch `fillRect` and `img` the whole image in
+    /// its local points at the press.
     Crop {
         id: ShapeId,
         part: CropPart,
         orig: Xfrm,
+        inset: [f64; 4],
         img: Rect,
         start: Point,
     },
@@ -348,7 +350,7 @@ impl ToolState {
         self.crop.filter(|id| {
             st.selection.shapes.as_slice() == [*id]
                 && st.selection.text.is_none()
-                && st.shape(*id).is_some_and(|s| matches!(s.kind, ShapeKind::Picture { .. }) && !s.locked)
+                && st.shape(*id).is_some_and(|s| cmd::crop::croppable(s) && !s.locked)
         })
     }
 

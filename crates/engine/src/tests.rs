@@ -5919,7 +5919,7 @@ fn crop_mode_handles_crop_move_and_scale_the_picture() {
     s.pointer(ev(PointerKind::Up, 380.0, 300.0)).unwrap();
     let (b, c) = crop_state(&s, id);
     assert!(near(b, [100.0, 100.0, 150.0, 150.0]), "{b:?}");
-    let img = cmd::crop::image_rect(b[2], b[3], c).unwrap();
+    let img = cmd::crop::image_rect(b[2], b[3], [0.0; 4], c).unwrap();
     assert!((img.width() / img.height() - 200.0 / 150.0).abs() < 1e-6, "{img:?}");
     assert!((img.x0 + 20.0).abs() < 1e-6 && img.y0.abs() < 1e-6, "the far corner stays: {img:?}");
     // Each gesture is one undo step.
@@ -6010,7 +6010,7 @@ fn crop_frame_snaps_only_dragged_edges_and_keeps_the_image_in_place() {
         s.pointer(ev(PointerKind::Drag, at)).unwrap();
         let (b, c) = crop_state(&s, id);
         assert!(near(b, [100.0, 100.0, expected - 100.0, 150.0]), "{target}: {b:?}");
-        let image = cmd::crop::image_rect(b[2], b[3], c).unwrap();
+        let image = cmd::crop::image_rect(b[2], b[3], [0.0; 4], c).unwrap();
         assert!(near([image.x0 + b[0], image.y0 + b[1], image.width(), image.height()], [100.0, 100.0, 200.0, 150.0]), "{target}: {image:?}");
         if matches!(target, "guide" | "slide" | "center" | "shape") {
             assert!(s.tool.guides.iter().any(|g| g.vertical && (g.pos - expected).abs() < 1e-6), "{target}");
@@ -6046,7 +6046,7 @@ fn crop_image_handles_and_pan_snap_without_moving_the_frame() {
             s.pointer(ev(PointerKind::Drag, start + 38.0)).unwrap();
             let (b, c) = crop_state(&s, id);
             assert!(near(b, [100.0, 100.0, 150.0, 150.0]));
-            let image = cmd::crop::image_rect(b[2], b[3], c).unwrap();
+            let image = cmd::crop::image_rect(b[2], b[3], [0.0; 4], c).unwrap();
             assert!((image.x1 + b[0] - if ctrl { 338.0 } else { 340.0 }).abs() < 1e-6, "{image:?}");
             assert_eq!(s.tool.guides.is_empty(), ctrl);
         }
@@ -6082,7 +6082,7 @@ fn crop_snapping_handles_flips_and_skips_rotated_pictures() {
         assert!((b[2] - if rotated { 138.0 } else { 136.0 }).abs() < 1e-6, "{b:?}");
         assert_eq!(s.tool.guides.is_empty(), rotated);
         let x = s.doc().unwrap().shape(sid).unwrap().xfrm.unwrap();
-        let image = cmd::crop::image_rect(b[2], b[3], c).unwrap();
+        let image = cmd::crop::image_rect(b[2], b[3], [0.0; 4], c).unwrap();
         let image_origin = x.affine() * image.origin();
         let before = orig.affine() * deckcraft_geom::Point::ORIGIN;
         assert!((image_origin - before).hypot() < 1e-6);
@@ -6348,13 +6348,122 @@ fn crop_aspect_fill_and_fit() {
     // Fit: the whole picture inside the square box; fill: the box covered again.
     s.execute("picture.cropFill", &json!({"ids": [id], "mode": "fit"})).unwrap();
     let (b, c) = crop_state(&s, id);
-    let img = cmd::crop::image_rect(b[2], b[3], c).unwrap();
+    let img = cmd::crop::image_rect(b[2], b[3], [0.0; 4], c).unwrap();
     assert!((img.width() - 150.0).abs() < 1e-6 && (img.height() - 112.5).abs() < 1e-6, "{img:?}");
     s.execute("picture.cropFill", &json!({"ids": [id]})).unwrap();
     let (b, c) = crop_state(&s, id);
-    let img = cmd::crop::image_rect(b[2], b[3], c).unwrap();
+    let img = cmd::crop::image_rect(b[2], b[3], [0.0; 4], c).unwrap();
     assert!((img.height() - 150.0).abs() < 1e-6 && (img.width() - 200.0).abs() < 1e-6, "{img:?}");
     assert!(s.execute("picture.cropAspect", &json!({"ids": [id], "ratio": "wide"})).is_err());
+}
+
+/// Set the picture's fill mode (stretch with a `fillRect`, or tiled).
+fn set_picture_mode(s: &mut Session, id: u64, mode: deckcraft_model::style::PictureMode) {
+    s.edit(|doc, sel| {
+        let list = crate::shapes_mut(doc, sel).unwrap();
+        if let Some(sh) = deckcraft_model::find_shape_mut(list, ShapeId(id as _))
+            && let deckcraft_model::ShapeKind::Picture { fill } = &mut sh.kind
+        {
+            fill.mode = mode;
+        }
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// Where the renderer draws the picture's whole image, in slide points (unrotated picture).
+fn drawn_image(s: &Session, id: u64) -> [f64; 4] {
+    let st = s.doc().unwrap();
+    let sh = st.shapes().iter().find(|sh| sh.id.0 as u64 == id).unwrap();
+    let x = sh.xfrm.unwrap();
+    let deckcraft_model::ShapeKind::Picture { fill } = &sh.kind else { panic!("not a picture") };
+    let deckcraft_model::style::PictureMode::Stretch { fill_rect } = fill.mode else { panic!("tiled") };
+    let r = deckcraft_render::stretch_dest(deckcraft_geom::Rect::new(x.x, x.y, x.x + x.w, x.y + x.h), fill_rect, fill.crop);
+    [r.x0, r.y0, r.x1, r.y1]
+}
+
+#[test]
+fn cropping_a_picture_with_a_fill_rect_keeps_the_image_where_it_is_drawn() {
+    let mut s = session();
+    let id = cropped_picture(&mut s);
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
+    let drag = |s: &mut Session, from: (f64, f64), to: (f64, f64)| {
+        s.pointer(ev(PointerKind::Down, from.0, from.1)).unwrap();
+        s.pointer(ev(PointerKind::Drag, to.0, to.1)).unwrap();
+        s.pointer(ev(PointerKind::Up, to.0, to.1)).unwrap();
+    };
+    // Box 100..300 × 100..250 inset 10% on each side: the image is drawn at 120..280 × 115..235.
+    set_picture_mode(&mut s, id, deckcraft_model::style::PictureMode::Stretch { fill_rect: [0.1; 4] });
+    let at = [120.0, 115.0, 280.0, 235.0];
+    assert!(near(drawn_image(&s, id), at), "{:?}", drawn_image(&s, id));
+    // picture.crop: the box moves so that its inset rectangle shows the rest, the image stays.
+    s.execute("picture.crop", &json!({"ids": [id], "right": 0.25})).unwrap();
+    let (b, c) = crop_state(&s, id);
+    assert!(near(b, [105.0, 100.0, 150.0, 150.0]), "{b:?}");
+    assert!(near(c, [0.0, 0.0, 0.25, 0.0]), "{c:?}");
+    assert!(near(drawn_image(&s, id), at), "{:?}", drawn_image(&s, id));
+    s.execute("edit.undo", &json!({})).unwrap();
+    // Crop mode: the box's right crop handle dragged in by 30; the image doesn't move.
+    s.execute("picture.cropMode", &json!({"id": id})).unwrap();
+    assert_eq!(s.hit_test(deckcraft_geom::Point::new(300.0, 175.0), 3.0), Some(tools::Hit::Crop { id: ShapeId(id as _), handle: 3 }));
+    drag(&mut s, (300.0, 175.0), (270.0, 175.0));
+    assert!(near(crop_state(&s, id).0, [100.0, 100.0, 170.0, 150.0]), "{:?}", crop_state(&s, id));
+    assert!(near(drawn_image(&s, id), at), "{:?}", drawn_image(&s, id));
+    // The image's handles are where it is drawn: its right edge, not the box's inset one.
+    assert_eq!(s.hit_test(deckcraft_geom::Point::new(280.0, 175.0), 3.0), Some(tools::Hit::CropImage { id: ShapeId(id as _), handle: 3 }));
+    // Dragging the picture moves it by as much.
+    drag(&mut s, (200.0, 175.0), (210.0, 175.0));
+    assert!(near(drawn_image(&s, id), [130.0, 115.0, 290.0, 235.0]), "{:?}", drawn_image(&s, id));
+    // Its corner scales it from the opposite one, proportions kept.
+    drag(&mut s, (290.0, 235.0), (330.0, 265.0));
+    assert!(near(drawn_image(&s, id), [130.0, 115.0, 330.0, 265.0]), "{:?}", drawn_image(&s, id));
+    // Aspect Ratio: a square box whose inset rectangle is the largest square inside the image,
+    // centred on it; the image stays.
+    let before = drawn_image(&s, id);
+    s.execute("picture.cropAspect", &json!({"ids": [id], "ratio": "1:1"})).unwrap();
+    let (b, _) = crop_state(&s, id);
+    assert!((b[2] - b[3]).abs() < 1e-6, "{b:?}");
+    assert!(near(drawn_image(&s, id), before), "{:?}", drawn_image(&s, id));
+    let inner = [b[0] + 0.1 * b[2], b[1] + 0.1 * b[3], b[0] + 0.9 * b[2], b[1] + 0.9 * b[3]];
+    assert!(near(inner, [155.0, 115.0, 305.0, 265.0]), "{inner:?}");
+    // Fit: the whole image inside the box, centred.
+    s.execute("picture.cropFill", &json!({"ids": [id], "mode": "fit"})).unwrap();
+    let (b, _) = crop_state(&s, id);
+    let d = drawn_image(&s, id);
+    assert!(d[0] >= b[0] - 1e-6 && d[1] >= b[1] - 1e-6 && d[2] <= b[0] + b[2] + 1e-6 && d[3] <= b[1] + b[3] + 1e-6, "{d:?} in {b:?}");
+    assert!(((d[2] - d[0]) - b[2]).abs() < 1e-6 || ((d[3] - d[1]) - b[3]).abs() < 1e-6, "{d:?} in {b:?}");
+    assert!(((d[0] + d[2]) / 2.0 - (b[0] + b[2] / 2.0)).abs() < 1e-6, "{d:?} in {b:?}");
+}
+
+#[test]
+fn a_tiled_picture_has_no_crop_mode_aspect_ratio_or_fill_fit() {
+    let mut s = session();
+    let id = cropped_picture(&mut s);
+    let tile = deckcraft_model::style::PictureMode::Tile { tx: 0.0, ty: 0.0, sx: 1.0, sy: 1.0, flip: String::new(), align: "tl".into() };
+    s.execute("picture.cropMode", &json!({"id": id})).unwrap();
+    assert!(s.tool.cropping(s.doc().unwrap()).is_some());
+    // Made tiled while in crop mode: crop mode ends, its handles go.
+    set_picture_mode(&mut s, id, tile);
+    assert_eq!(s.tool.cropping(s.doc().unwrap()), None);
+    assert!(!matches!(
+        s.hit_test(deckcraft_geom::Point::new(300.0, 175.0), 3.0),
+        Some(tools::Hit::Crop { .. } | tools::Hit::CropImage { .. } | tools::Hit::CropPan { .. })
+    ));
+    // The next command settles it: crop mode is off, not just hidden.
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    assert_eq!(s.tool.crop, None);
+    let start = crop_state(&s, id);
+    for (cmd, p) in [
+        ("picture.cropMode", json!({"id": id})),
+        ("picture.cropAspect", json!({"ids": [id], "ratio": "1:1"})),
+        ("picture.cropFill", json!({"ids": [id], "mode": "fit"})),
+    ] {
+        let e = s.execute(cmd, &p).unwrap_err().to_string();
+        assert!(e.contains("tiled"), "{cmd}: {e}");
+    }
+    assert_eq!(crop_state(&s, id), start, "nothing changed");
+    assert_eq!(s.tool.cropping(s.doc().unwrap()), None);
+    assert!(cmd::crop::has_picture(&s).is_err() && cmd::crop::has_one_picture(&s).is_err());
 }
 
 /// A box at `rect` and a second box at `other` on a fresh slide; smart guides on, the grid off.

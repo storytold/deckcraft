@@ -7,11 +7,13 @@
 //! handles, the image is moved under the box by dragging it and scaled from its own corners.
 //!
 //! Everything here works in the box's local frame (before rotation and flips), so it holds for
-//! rotated and flipped pictures alike.
+//! rotated and flipped pictures alike. The image is placed as the renderer places it: the crop
+//! applies to the box inset by the picture's stretch `fillRect` ([`stretch_inset`]). A tiled
+//! picture ignores its crop when drawn, so none of this applies to it ([`croppable`]).
 
 use deckcraft_geom::{Point, Rect, Xfrm};
-use deckcraft_model::style::{crop_shows_enough, sane_crop};
-use deckcraft_model::{ShapeId, ShapeKind};
+use deckcraft_model::style::{PictureFill, PictureMode, crop_shows_enough, sane_crop};
+use deckcraft_model::{Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, bad, cmd, has_selection, id_param, str_param, targets, xfrm_of};
@@ -52,42 +54,91 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
+/// The stretch `fillRect` of a picture (left, top, right, bottom insets, as fractions of its box):
+/// the renderer applies the crop to the box inset by it. `None` for a tiled picture, which is
+/// drawn without its crop.
+pub fn stretch_inset(pf: &PictureFill) -> Option<[f64; 4]> {
+    match &pf.mode {
+        PictureMode::Stretch { fill_rect } => Some(*fill_rect),
+        PictureMode::Tile { .. } => None,
+    }
+}
+
+/// Whether crop mode, Aspect Ratio and Fill / Fit work on `sh`: a picture that is stretched into
+/// its box, not tiled.
+pub fn croppable(sh: &Shape) -> bool {
+    matches!(&sh.kind, ShapeKind::Picture { fill } if stretch_inset(fill).is_some())
+}
+
+/// Why nothing in `shapes` can be cropped, or `Ok` when one can.
+fn check_croppable(shapes: &[&Shape]) -> std::result::Result<(), String> {
+    if shapes.iter().any(|sh| croppable(sh)) {
+        Ok(())
+    } else if shapes.iter().any(|sh| matches!(sh.kind, ShapeKind::Picture { .. })) {
+        Err("a tiled picture can't be cropped".into())
+    } else {
+        Err("select a picture".into())
+    }
+}
+
 pub fn has_picture(s: &Session) -> std::result::Result<(), String> {
     has_selection(s)?;
-    let any = s.active().is_some_and(|d| d.selected_shapes().iter().any(|sh| matches!(sh.kind, ShapeKind::Picture { .. })));
-    if any { Ok(()) } else { Err("select a picture".into()) }
+    match s.active() {
+        Some(d) => check_croppable(&d.selected_shapes()),
+        None => Err("select a picture".into()),
+    }
 }
 
 /// Crop mode works on one picture: with anything else selected too it is off.
 pub fn has_one_picture(s: &Session) -> std::result::Result<(), String> {
     has_selection(s)?;
-    let one = s.active().is_some_and(|d| matches!(d.selected_shapes().as_slice(), [sh] if matches!(sh.kind, ShapeKind::Picture { .. })));
-    if one { Ok(()) } else { Err("select one picture".into()) }
+    match s.active().map(|d| d.selected_shapes()).as_deref() {
+        Some([sh]) => check_croppable(&[*sh]),
+        _ => Err("select one picture".into()),
+    }
 }
 
-/// The whole image in the box's local points (`w`×`h` box, `crop` = left, top, right, bottom).
-/// A crop that shows nothing of the image (from an older file) is taken as its [`sane_crop`], so
-/// such a picture can still be cropped back.
-pub fn image_rect(w: f64, h: f64, crop: [f64; 4]) -> Option<Rect> {
-    let [l, t, r, b] = sane_crop(crop);
-    let (fx, fy) = (1.0 - l - r, 1.0 - t - b);
-    if !(fx > 1e-6 && fy > 1e-6 && w.is_finite() && h.is_finite()) {
+/// The rectangle of a `w`×`h` box the image is stretched into: the box inset by `inset`.
+fn inner(w: f64, h: f64, inset: [f64; 4]) -> Rect {
+    let [l, t, r, b] = inset;
+    Rect::new(l * w, t * h, w - r * w, h - b * h)
+}
+
+/// The whole image in the box's local points (`w`×`h` box, stretch `inset` and `crop` = left,
+/// top, right, bottom), where the renderer draws it ([`deckcraft_render::stretch_dest`]). A crop
+/// that shows nothing of the image (from an older file) is taken as its [`sane_crop`], so such a
+/// picture can still be cropped back.
+pub fn image_rect(w: f64, h: f64, inset: [f64; 4], crop: [f64; 4]) -> Option<Rect> {
+    let i = inner(w, h, inset);
+    if !(i.width() > 1e-6 && i.height() > 1e-6) {
         return None;
     }
-    let (iw, ih) = (w / fx, h / fy);
-    let (x0, y0) = (-l * iw, -t * ih);
-    let r = Rect::new(x0, y0, x0 + iw, y0 + ih);
+    let r = deckcraft_render::stretch_dest(Rect::new(0.0, 0.0, w, h), inset, sane_crop(crop));
     (r.x0.is_finite() && r.y0.is_finite() && r.x1.is_finite() && r.y1.is_finite()).then_some(r)
 }
 
-/// The crop fractions that put the image at `img` in a `w`×`h` box (inverse of [`image_rect`]).
-pub fn crop_of(w: f64, h: f64, img: Rect) -> Option<[f64; 4]> {
+/// The crop fractions that put the image at `img` in a `w`×`h` box with stretch `inset` (inverse
+/// of [`image_rect`]).
+pub fn crop_of(w: f64, h: f64, inset: [f64; 4], img: Rect) -> Option<[f64; 4]> {
     let (iw, ih) = (img.width(), img.height());
     if !(iw > 1e-6 && ih > 1e-6) {
         return None;
     }
-    let c = [-img.x0 / iw, -img.y0 / ih, (img.x1 - w) / iw, (img.y1 - h) / ih];
+    let i = inner(w, h, inset);
+    let c = [(i.x0 - img.x0) / iw, (i.y0 - img.y0) / ih, (img.x1 - i.x1) / iw, (img.y1 - i.y1) / ih];
     c.iter().all(|v| v.is_finite()).then_some(c)
+}
+
+/// The box (in the same local points) whose `inset` rectangle is `window`.
+fn frame_around(inset: [f64; 4], window: Rect) -> Option<Rect> {
+    let [l, t, r, b] = inset;
+    let (sx, sy) = (1.0 - l - r, 1.0 - t - b);
+    if !(sx > 1e-6 && sy > 1e-6) {
+        return None;
+    }
+    let (w, h) = (window.width() / sx, window.height() / sy);
+    let (x0, y0) = (window.x0 - l * w, window.y0 - t * h);
+    Some(Rect::new(x0, y0, x0 + w, y0 + h))
 }
 
 /// The box that shows local rectangle `f` of box `orig` in place on the slide (rotation and flips
@@ -195,6 +246,9 @@ fn crop_target(s: &Session, p: &Value, cmd: &str) -> Result<ShapeId> {
     if !matches!(sh.kind, ShapeKind::Picture { .. }) {
         return Err(bad(cmd, "only a picture can be cropped"));
     }
+    if !croppable(sh) {
+        return Err(bad(cmd, "a tiled picture can't be cropped"));
+    }
     if sh.locked {
         return Err(bad(cmd, "the object is locked"));
     }
@@ -222,8 +276,10 @@ fn crop_mode(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"cropping": id.0}))
 }
 
-/// Each target picture's box (slide points) and crop, before the change.
-fn pictures(s: &Session, p: &Value) -> Result<Vec<(ShapeId, Xfrm, [f64; 4])>> {
+/// Each target picture's box (slide points), stretch inset (`None` when tiled) and crop, before
+/// the change.
+type Target = (ShapeId, Xfrm, Option<[f64; 4]>, [f64; 4]);
+fn pictures(s: &Session, p: &Value) -> Result<Vec<Target>> {
     let ids = targets(s, p)?;
     let st = s.doc()?;
     Ok(ids
@@ -231,7 +287,7 @@ fn pictures(s: &Session, p: &Value) -> Result<Vec<(ShapeId, Xfrm, [f64; 4])>> {
         .filter_map(|id| {
             let sh = st.shape(*id)?;
             match &sh.kind {
-                ShapeKind::Picture { fill } if !sh.locked => Some((*id, xfrm_of(&st.doc, &st.selection, sh), fill.crop)),
+                ShapeKind::Picture { fill } if !sh.locked => Some((*id, xfrm_of(&st.doc, &st.selection, sh), stretch_inset(fill), fill.crop)),
                 _ => None,
             }
         })
@@ -262,12 +318,14 @@ pub(crate) fn store(s: &mut Session, cmd: &str, items: &[(ShapeId, Option<Xfrm>,
 }
 
 /// `picture.crop` with the frame following the crop (PowerPoint): the image keeps its size and
-/// place and the box shrinks or grows over it.
+/// place and the box shrinks or grows over it. A tiled picture, drawn without its crop, keeps its
+/// box and only stores the values.
 pub(crate) fn crop_keeping_scale(s: &mut Session, p: &Value, want: [Option<f64>; 4]) -> Result<Value> {
     let mut out = vec![];
-    for (id, x, old) in pictures(s, p)? {
-        let Some(img) = image_rect(x.w, x.h, old) else { continue };
-        let mut c = old;
+    for (id, x, inset, old) in pictures(s, p)? {
+        // A crop that showed nothing (from a file) is first made one that shows some, as the
+        // image rectangle below takes it.
+        let mut c = if inset.is_some() { sane_crop(old) } else { old };
         for (slot, v) in c.iter_mut().zip(want) {
             if let Some(v) = v.filter(|v| v.is_finite()) {
                 *slot = v.clamp(-10.0, 0.95);
@@ -277,8 +335,15 @@ pub(crate) fn crop_keeping_scale(s: &mut Session, p: &Value, want: [Option<f64>;
         if !crop_shows_enough(c) {
             return Err(bad("picture.crop", "the crop leaves nothing of the picture"));
         }
+        let Some(inset) = inset else {
+            out.push((id, None, c));
+            continue;
+        };
+        let Some(img) = image_rect(x.w, x.h, inset, old) else { continue };
         let (iw, ih) = (img.width(), img.height());
-        let f = Rect::new(img.x0 + c[0] * iw, img.y0 + c[1] * ih, img.x1 - c[2] * iw, img.y1 - c[3] * ih);
+        // The part of the image the new crop shows fills the box's inset rectangle.
+        let window = Rect::new(img.x0 + c[0] * iw, img.y0 + c[1] * ih, img.x1 - c[2] * iw, img.y1 - c[3] * ih);
+        let Some(f) = frame_around(inset, window) else { continue };
         out.push((id, Some(frame_xfrm(&x, f)), c));
     }
     store(s, "picture.crop", &out)
@@ -299,14 +364,24 @@ fn parse_ratio(v: &Value) -> Option<f64> {
 fn crop_aspect(s: &mut Session, p: &Value) -> Result<Value> {
     let ratio = p.get("ratio").and_then(parse_ratio).ok_or_else(|| bad("picture.cropAspect", "ratio must be like \"16:9\""))?;
     let mut out = vec![];
-    for (id, x, c) in pictures(s, p)? {
-        let Some(img) = image_rect(x.w, x.h, c) else { continue };
-        // The largest box of that shape inside the picture, centred on it.
+    // Tiled pictures are left alone: they are drawn without their crop.
+    for (id, x, inset, c) in pictures(s, p)? {
+        let Some(inset) = inset else { continue };
+        let Some(img) = image_rect(x.w, x.h, inset, c) else { continue };
+        // The largest box of that shape whose inset rectangle (what shows the image) fits inside
+        // the picture, centred on it.
+        let [l, t, r, b] = inset;
+        let (sx, sy) = (1.0 - l - r, 1.0 - t - b);
+        if !(sx > 1e-6 && sy > 1e-6) {
+            continue;
+        }
         let (iw, ih) = (img.width(), img.height());
-        let (w, h) = if iw / ih > ratio { (ih * ratio, ih) } else { (iw, iw / ratio) };
+        let w = (iw / sx).min(ih / sy * ratio);
+        let (ww, wh) = (w * sx, w / ratio * sy);
         let ctr = img.center();
-        let f = Rect::new(ctr.x - w / 2.0, ctr.y - h / 2.0, ctr.x + w / 2.0, ctr.y + h / 2.0);
-        let Some(nc) = crop_of(w, h, img - f.origin().to_vec2()) else { continue };
+        let window = Rect::new(ctr.x - ww / 2.0, ctr.y - wh / 2.0, ctr.x + ww / 2.0, ctr.y + wh / 2.0);
+        let Some(f) = frame_around(inset, window) else { continue };
+        let Some(nc) = crop_of(f.width(), f.height(), inset, img - f.origin().to_vec2()) else { continue };
         out.push((id, Some(frame_xfrm(&x, f)), nc));
     }
     let r = store(s, "picture.cropAspect", &out)?;
@@ -324,13 +399,14 @@ fn crop_fill(s: &mut Session, p: &Value) -> Result<Value> {
         m => return Err(bad("picture.cropFill", format!("mode {m:?} is not fill or fit"))),
     };
     let mut out = vec![];
-    for (id, x, c) in pictures(s, p)? {
-        let Some(img) = image_rect(x.w, x.h, c) else { continue };
+    for (id, x, inset, c) in pictures(s, p)? {
+        let Some(inset) = inset else { continue };
+        let Some(img) = image_rect(x.w, x.h, inset, c) else { continue };
         let (kx, ky) = (x.w / img.width(), x.h / img.height());
         let k = if fit { kx.min(ky) } else { kx.max(ky) };
         let (w, h) = (img.width() * k, img.height() * k);
         let (x0, y0) = ((x.w - w) / 2.0, (x.h - h) / 2.0);
-        let Some(nc) = crop_of(x.w, x.h, Rect::new(x0, y0, x0 + w, y0 + h)) else { continue };
+        let Some(nc) = crop_of(x.w, x.h, inset, Rect::new(x0, y0, x0 + w, y0 + h)) else { continue };
         out.push((id, None, nc));
     }
     store(s, "picture.cropFill", &out)
@@ -344,16 +420,35 @@ mod tests {
     #[test]
     fn image_rect_and_crop_of_round_trip() {
         let c = [0.1, 0.2, 0.3, 0.05];
-        let img = image_rect(60.0, 75.0, c).unwrap();
+        let img = image_rect(60.0, 75.0, [0.0; 4], c).unwrap();
         assert!((img.width() - 100.0).abs() < 1e-9 && (img.height() - 100.0).abs() < 1e-9);
-        let back = crop_of(60.0, 75.0, img).unwrap();
+        let back = crop_of(60.0, 75.0, [0.0; 4], img).unwrap();
         for (a, b) in back.iter().zip(c) {
             assert!((a - b).abs() < 1e-9);
         }
         // A crop that shows nothing is read as one showing a sliver: 1% of the image fills the box.
-        let img = image_rect(10.0, 10.0, [0.5, 0.0, 0.5, 0.0]).unwrap();
+        let img = image_rect(10.0, 10.0, [0.0; 4], [0.5, 0.0, 0.5, 0.0]).unwrap();
         assert!((img.width() - 1000.0).abs() < 1e-6 && (img.x0 + 495.0).abs() < 1e-6, "{img:?}");
-        assert!(image_rect(f64::NAN, 10.0, [0.0; 4]).is_none());
+        assert!(image_rect(f64::NAN, 10.0, [0.0; 4], [0.0; 4]).is_none());
+    }
+
+    #[test]
+    fn image_rect_follows_the_stretch_fill_rect_as_drawn() {
+        // A 100 × 80 box inset 10% left, 20% top, 30% right, 5% bottom: the crop applies to the
+        // 60 × 60 rectangle at (10, 16), exactly where the renderer puts the image.
+        let (w, h, inset, c) = (100.0, 80.0, [0.1, 0.2, 0.3, 0.05], [0.25, 0.0, 0.25, 0.5]);
+        let img = image_rect(w, h, inset, c).unwrap();
+        let drawn = deckcraft_render::stretch_dest(Rect::new(0.0, 0.0, w, h), inset, c);
+        assert!((img.x0 - drawn.x0).abs() < 1e-9 && (img.y0 - drawn.y0).abs() < 1e-9, "{img:?} vs {drawn:?}");
+        assert!((img.x1 - drawn.x1).abs() < 1e-9 && (img.y1 - drawn.y1).abs() < 1e-9, "{img:?} vs {drawn:?}");
+        assert!((img.x0 + 20.0).abs() < 1e-9 && (img.width() - 120.0).abs() < 1e-9 && (img.height() - 120.0).abs() < 1e-9, "{img:?}");
+        let back = crop_of(w, h, inset, img).unwrap();
+        assert!(back.iter().zip(c).all(|(a, b)| (a - b).abs() < 1e-9), "{back:?}");
+        // The box around a window keeps the window as its inset rectangle.
+        let f = frame_around(inset, Rect::new(10.0, 16.0, 70.0, 76.0)).unwrap();
+        assert!(f.x0.abs() < 1e-9 && f.y0.abs() < 1e-9 && (f.width() - w).abs() < 1e-9 && (f.height() - h).abs() < 1e-9, "{f:?}");
+        // An inset that leaves no room has no image rectangle.
+        assert!(image_rect(w, h, [0.6, 0.0, 0.4, 0.0], [0.0; 4]).is_none());
     }
 
     #[test]

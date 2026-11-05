@@ -55,7 +55,7 @@ impl Session {
                     return Some(Hit::Crop { id, handle: i as u8 });
                 }
             }
-            if let Some(img) = cmd::crop::image_rect(x.w, x.h, fill.crop) {
+            if let Some(img) = cmd::crop::stretch_inset(fill).and_then(|inset| cmd::crop::image_rect(x.w, x.h, inset, fill.crop)) {
                 for (i, q) in cmd::crop::rect_handles(img).iter().enumerate() {
                     if (a * *q - p).hypot() <= tol * 1.6 {
                         return Some(Hit::CropImage { id, handle: i as u8 });
@@ -334,13 +334,14 @@ impl Session {
             let found = st.shape(cid).and_then(|sh| match &sh.kind {
                 ShapeKind::Picture { fill } => {
                     let x = xfrm_of(&st.doc, &st.selection, sh);
-                    cmd::crop::image_rect(x.w, x.h, fill.crop).map(|img| (x, img))
+                    let inset = cmd::crop::stretch_inset(fill)?;
+                    cmd::crop::image_rect(x.w, x.h, inset, fill.crop).map(|img| (x, inset, img))
                 }
                 _ => None,
             });
-            if let (Some(part), Some((orig, img))) = (part, found) {
+            if let (Some(part), Some((orig, inset, img))) = (part, found) {
                 self.begin("Crop");
-                self.tool.drag = Some(Drag::Crop { id: cid, part, orig, img, start: p });
+                self.tool.drag = Some(Drag::Crop { id: cid, part, orig, inset, img, start: p });
                 return Ok(json!({"hit": serde_json::to_value(&hit).unwrap_or_default()}));
             }
             self.exit_crop();

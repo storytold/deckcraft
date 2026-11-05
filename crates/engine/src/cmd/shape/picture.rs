@@ -1,5 +1,8 @@
 use super::{NO_ID_SPACE, Result, Session, Value, bad, bool_or, bool_param, edit_geometry, edit_shapes, f64_param, json};
 
+/// `picture.crop`. By default the box follows the crop and the image keeps its size and place
+/// ([`crate::cmd::crop::crop_keeping_scale`]), as PowerPoint crops; `keepFrame: true` keeps the
+/// box and stretches what is left into it, which was the only behaviour before crop mode.
 pub(super) fn crop(s: &mut Session, p: &Value) -> Result<Value> {
     let c = [f64_param(p, "left"), f64_param(p, "top"), f64_param(p, "right"), f64_param(p, "bottom")];
     if !bool_or(p, "keepFrame", false) {

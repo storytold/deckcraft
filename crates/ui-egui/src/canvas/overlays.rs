@@ -16,7 +16,7 @@ fn crop_overlay(
     let a = x.affine();
     let to = |q: Point| xf.to_screen(a * q);
     let frame = deckcraft_geom::Rect::new(0.0, 0.0, x.w, x.h);
-    if let Some(img) = crop::image_rect(x.w, x.h, fill.crop) {
+    if let Some(img) = crop::stretch_inset(fill).and_then(|inset| crop::image_rect(x.w, x.h, inset, fill.crop)) {
         if let Some(tex) = crop_ghost(ctx, doc, fill.media) {
             // The image outside the box, in bands above, below, left and right of it.
             let (y0, y1) = (img.y0.max(frame.y0), img.y1.min(frame.y1));
@@ -76,13 +76,30 @@ fn crop_overlay(
     }
 }
 
-/// The picture drawn whole, for the faded part outside the box in crop mode. Decoded once per
-/// picture and kept at most 1024 px on a side; `None` when it doesn't decode.
+/// The one cached crop ghost: the image bytes it was decoded from (pointer and length) and its
+/// texture (`None` when they don't decode).
+type Ghost = ((usize, usize), Option<egui::TextureHandle>);
+
+/// Where the crop ghost is kept: a single slot, as only one picture is in crop mode at a time.
+fn ghost_slot() -> egui::Id {
+    egui::Id::unique("crop-ghost")
+}
+
+/// Drop the crop ghost's texture (crop mode has ended).
+fn forget_crop_ghost(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove::<Ghost>(ghost_slot()));
+}
+
+/// The picture drawn whole, for the faded part outside the box in crop mode. Decoded once and
+/// kept at most 1024 px on a side; `None` when it doesn't decode. Only the picture in crop mode
+/// is kept: another one replaces it, and leaving crop mode drops it ([`forget_crop_ghost`]).
 fn crop_ghost(ctx: &egui::Context, doc: &deckcraft_model::Presentation, media: deckcraft_model::MediaId) -> Option<egui::TextureHandle> {
     const SIDE: u32 = 1024;
     let item = doc.media(media)?;
-    let key = egui::Id::unique(("crop-ghost", std::sync::Arc::as_ptr(&item.data) as usize, item.data.len()));
-    if let Some(t) = ctx.data(|d| d.get_temp::<Option<egui::TextureHandle>>(key)) {
+    let key = (std::sync::Arc::as_ptr(&item.data) as usize, item.data.len());
+    if let Some((k, t)) = ctx.data(|d| d.get_temp::<Ghost>(ghost_slot()))
+        && k == key
+    {
         return t;
     }
     let tex = deckcraft_render::decode_image(&item.data).and_then(|im| {
@@ -105,7 +122,7 @@ fn crop_ghost(ctx: &egui::Context, doc: &deckcraft_model::Presentation, media: d
         let image = egui::ColorImage::from_rgba_unmultiplied([nw as usize, nh as usize], &px);
         Some(ctx.load_texture("crop-ghost", image, egui::TextureOptions::LINEAR))
     });
-    ctx.data_mut(|d| d.insert_temp(key, tex.clone()));
+    ctx.data_mut(|d| d.insert_temp::<Ghost>(ghost_slot(), (key, tex.clone())));
     tex
 }
 
@@ -268,6 +285,10 @@ pub(super) fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf:
         for (a, b) in lines {
             crate::squiggles::paint(painter, xf.to_screen(a), xf.to_screen(b), scale);
         }
+    }
+    // The crop ghost's texture is kept only while a picture is in crop mode.
+    if app.session.active().is_none_or(|st| app.session.tool.cropping(st).is_none()) {
+        forget_crop_ghost(ui.ctx());
     }
     let Some(st) = app.session.active() else { return };
     selection_handles(app, st, painter, xf, t);

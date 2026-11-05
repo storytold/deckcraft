@@ -17,6 +17,7 @@ struct CropDrag {
     id: ShapeId,
     part: CropPart,
     orig: Xfrm,
+    inset: [f64; 4],
     img: Rect,
     start: Point,
 }
@@ -36,8 +37,8 @@ impl Session {
             Drag::Move { ids, start, origs, moved, duplicate, enter_text } => {
                 return self.drag_move(MoveDrag { ids, start, origs, moved, duplicate, enter_text }, p, mods, tol);
             }
-            Drag::Crop { id, part, orig, img, start } => {
-                return self.drag_crop(CropDrag { id, part, orig, img, start }, p, mods, tol);
+            Drag::Crop { id, part, orig, inset, img, start } => {
+                return self.drag_crop(CropDrag { id, part, orig, inset, img, start }, p, mods, tol);
             }
             Drag::Resize { id, orig, ids, handle, origs, start } => {
                 let keep_aspect = mods.shift || self.is_picture(id);
@@ -213,7 +214,7 @@ impl Session {
     }
 
     fn drag_crop(&mut self, drag: CropDrag, p: Point, mods: Mods, tol: f64) -> Result<Value> {
-        let CropDrag { id, part, orig, img, start } = drag;
+        let CropDrag { id, part, orig, inset, img, start } = drag;
         let inv = orig.affine().inverse();
         let mut d = inv * p - inv * start;
         if !(d.x.is_finite() && d.y.is_finite()) {
@@ -233,17 +234,17 @@ impl Session {
                 CropPart::Frame(h) => {
                     let f = cmd::crop::drag_frame(orig.w, orig.h, h, d);
                     let f = s.snap_crop_rect(f, &orig, Some(h), id, tol, snap);
-                    let c = cmd::crop::crop_of(f.width(), f.height(), img - f.origin().to_vec2())?;
+                    let c = cmd::crop::crop_of(f.width(), f.height(), inset, img - f.origin().to_vec2())?;
                     Some((cmd::crop::frame_xfrm(&orig, f), c))
                 }
                 CropPart::Image(h) => {
                     let image = cmd::crop::drag_image(img, h, d, free);
                     let image = s.snap_crop_rect(image, &orig, Some(h), id, tol, snap);
-                    Some((orig, cmd::crop::crop_of(orig.w, orig.h, image)?))
+                    Some((orig, cmd::crop::crop_of(orig.w, orig.h, inset, image)?))
                 }
                 CropPart::Pan => {
                     let image = s.snap_crop_rect(img + d, &orig, None, id, tol, snap);
-                    Some((orig, cmd::crop::crop_of(orig.w, orig.h, image)?))
+                    Some((orig, cmd::crop::crop_of(orig.w, orig.h, inset, image)?))
                 }
             }
         };
