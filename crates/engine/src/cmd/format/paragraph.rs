@@ -14,6 +14,7 @@ pub(super) fn align(s: &mut Session, p: &Value) -> Result<Value> {
         "justify" | "just" => Align::Justify,
         "justifyLow" | "justLow" => Align::JustLow,
         "distributed" | "dist" => Align::Distributed,
+        "thaiDist" => Align::ThaiDistributed,
         _ => Align::Left,
     };
     align_to(s, a)
@@ -186,7 +187,8 @@ fn parse_align(cmd: &str, s: &str) -> Result<Align> {
         "justify" | "just" => Align::Justify,
         "justLow" => Align::JustLow,
         "distributed" | "dist" => Align::Distributed,
-        _ => return Err(bad(cmd, "`align` must be left, center, right, justify, justLow or distributed")),
+        "thaiDist" => Align::ThaiDistributed,
+        _ => return Err(bad(cmd, "`align` must be left, center, right, justify, justLow, distributed or thaiDist")),
     })
 }
 
@@ -198,6 +200,7 @@ fn align_name(a: Align) -> &'static str {
         Align::Justify => "justify",
         Align::JustLow => "justLow",
         Align::Distributed => "distributed",
+        Align::ThaiDistributed => "thaiDist",
     }
 }
 

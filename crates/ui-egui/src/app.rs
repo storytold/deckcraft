@@ -108,6 +108,7 @@ impl SlideApp {
             twisting: false,
             next_file_id: 1,
             pending_files: Vec::new(),
+            host_start: None,
             ime_tracker: egui::ime_context::ImeContextTracker::new(),
             ime_pending: None,
             ime_frame_viewport: None,

@@ -2,7 +2,9 @@
 
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-> **Last updated:** 2026-11-02 · Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row re-assessed: remains P, since only how tiles are sized changed. Scores unchanged.
+> **Last updated:** 2026-11-03 · Community PR wave 10: reflection transforms survive resaves (row stays P, rendering partial); Reuse Slides fits the destination size and brings referenced custom table styles (row stays P, picker has no thumbnails); Compress Pictures measures grouped pictures at displayed size (stays D). Scores unchanged.
+>
+> **Previously (2026-11-02):** Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P. Scores unchanged.
 >
 > **Previously (2026-11-01):** Locked-shape and no-outline regressions added for #1621; fill row re-assessed: remains D; No Fill hit-testing now follows resolved appearance. Scores unchanged.
 
@@ -40,7 +42,7 @@ The summary between `<!-- SUMMARY -->
 | Automation (✱) | 100% |
 | Platforms (✱) | 67% |
 
-Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layout, Chart Design), Export to PDF (slides, notes pages, handouts; text layer, links, bookmarks; vector artwork pending), Format Shape pane, Font, size, bold, italic, underline, strikethrough (only Regular/Bold/Italic faces, #69), Edit chart data, Crop (and crop to shape, aspect ratio), Paste image from clipboard (fails on Windows, #1414; Linux not re-checked), Audio/video playback in the show (WMA/WMV not decodable yet), Animation pane (reorder, timing), Presenter view (notes, next slide, timer), macOS, Windows, Linux builds.
+Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layout, Chart Design), Export to PDF (slides, notes pages, handouts; text layer, links, bookmarks; vector artwork pending), Format Shape pane, Font, size, bold, italic, underline, strikethrough (only Regular/Bold/Italic faces, #69), Edit chart data, Crop (and crop to shape, aspect ratio), Paste image from clipboard (fails on Windows, #1414, re-test after the 2026-11-01 OS-clipboard fix), Audio/video playback in the show (WMA/WMV not decodable yet), Animation pane (reorder, timing), Presenter view (notes, next slide, timer), macOS, Windows, Linux builds.
 
 ## Rows
 
@@ -191,7 +193,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Pictures | Picture styles and borders | P1 | D |
 | Pictures | Change / reset picture | P1 | D |
 | Pictures | Compress pictures | P2 | D |
-| Pictures | Paste image from clipboard (fails on Windows, #1414; Linux not re-checked) | P0 | P |
+| Pictures | Paste image from clipboard (fails on Windows, #1414, re-test after the 2026-11-01 OS-clipboard fix) | P0 | P |
 | Pictures | Insert screenshot | P2 | M |
 | Media | Insert audio (any common format) | P0 | D |
 | Media | Insert video | P1 | D |
@@ -242,5 +244,8 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | trivial | Reflection transform/fade serialization retained; its P score stays because rendering remains partial |
+| 2026-11-03 | trivial | Reuse Slides transfers referenced custom table styles; row remains P because other reuse behavior is still partial, summary scores unchanged |
 | 2026-11-02 | trivial | Tiled picture fills keep their size in scaled groups and upright tiles (#1693); Picture and texture fill row remains P and summary scores are unchanged |
+| 2026-11-02 | trivial | Picture compression uses displayed dimensions through nested group transforms; Compress pictures remains D and summary scores are unchanged |
 | 2026-10-31 | trivial | No Fill interior hit-testing follows resolved fill (#1621); fill row remains D and summary scores are unchanged |

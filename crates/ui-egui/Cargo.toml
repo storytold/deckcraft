@@ -19,6 +19,7 @@ deckcraft-anim = { workspace = true }
 deckcraft-engine = { workspace = true }
 deckcraft-media = { workspace = true }
 egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
+egui_extras = { workspace = true }
 craft-ui = { workspace = true }
 # Interface translations: lookup, fallback, plurals and system-locale matching over the craft-i18n
 # catalogs that `build.rs` embeds from `CRAFT_I18N_DIR` (storytold/craft-i18n, pinned in
