@@ -655,10 +655,16 @@ impl Session {
         let vertex_kind = self.tool.vertex_kind.clone();
         let outer = self.depth == 0;
         if outer {
-            // Colour parameters may name the theme's extra colours (`"Sand"`), from any master.
+            // Colour parameters may name the theme's extra colours (`"Sand"`), from any master. The
+            // master of what is being edited comes first, so its colour wins a name two masters share.
             let extra = self
                 .active()
-                .map(|d| d.doc.masters.iter().flat_map(|m| m.theme.colors.extra.iter().map(|e| (e.name.clone(), e.color))).collect())
+                .map(|d| {
+                    let current = cmd::text::ctx_for(&d.doc, &d.selection).map(|c| c.master.id);
+                    let mut masters: Vec<&deckcraft_model::Master> = d.doc.masters.iter().map(|m| m.as_ref()).collect();
+                    masters.sort_by_key(|m| Some(m.id) != current);
+                    masters.into_iter().flat_map(|m| m.theme.colors.extra.iter().map(|e| (e.name.clone(), e.color))).collect()
+                })
                 .unwrap_or_default();
             cmd::set_extra_colors(extra);
         }

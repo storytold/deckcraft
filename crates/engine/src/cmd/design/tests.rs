@@ -572,6 +572,29 @@ fn colors_dialog_params_and_themes_report_tints_and_extras() {
 }
 
 #[test]
+fn an_extra_colour_name_two_masters_share_takes_the_edited_masters_colour() {
+    use deckcraft_color::Rgba;
+    let mut s = kth_like_session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
+    {
+        // A second master, first in the list, with layouts of its own and "Sand" as another colour.
+        let st = s.doc_mut().unwrap();
+        let doc = Arc::make_mut(&mut st.doc);
+        let mut other = (*doc.masters[0]).clone();
+        other.id = deckcraft_model::MasterId(doc.alloc_id().expect("id"));
+        for l in &mut other.layouts {
+            l.id = deckcraft_model::LayoutId(doc.alloc_id().expect("id"));
+        }
+        other.theme.colors.extra.iter_mut().filter(|e| e.name == "Sand").for_each(|e| e.color = Rgba::rgb(1, 2, 3));
+        doc.masters.insert(0, Arc::new(other));
+    }
+    s.execute("shape.fill", &json!({"color": "Sand"})).unwrap();
+    let shape = s.doc().unwrap().selected_shapes()[0].clone();
+    assert_eq!(shape.fill, Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0xEB, 0xE5, 0xE0)))), "the slide's own master wins");
+}
+
+#[test]
 fn extra_colours_are_names_in_colour_parameters() {
     use deckcraft_color::Rgba;
     let mut s = kth_like_session();
