@@ -18,11 +18,13 @@ use crate::{DocState, EngineError, MathEdit, Result, Session};
 const MAX_EQUATION_TYPE_CHARS: usize = 4_096;
 const MAX_EQUATION_DELETE_UNITS: usize = 4_096;
 
+/// Returns Ok if an equation is currently being edited.
 pub fn is_editing_equation(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
     if s.active().is_some_and(|d| d.selection.math.is_some()) { Ok(()) } else { Err("not editing an equation".into()) }
 }
 
+/// Returns Ok if the caret is within or adjacent to an equation.
 pub fn is_near_equation(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
     if s.active().is_some_and(|d| d.selection.math.is_some() || equation_at_caret_in(d).is_some()) {
@@ -32,6 +34,7 @@ pub fn is_near_equation(s: &Session) -> std::result::Result<(), String> {
     }
 }
 
+/// Returns command specifications for all equation editing and formatting commands.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
@@ -491,6 +494,7 @@ fn type_text(s: &mut Session, v: &Value) -> Result<Value> {
     result(s)
 }
 
+/// Inserts math nodes into the currently active equation selection, or creates a new equation if none is active.
 pub(crate) fn insert_nodes_into_active(s: &mut Session, nodes: Vec<MNode>) -> Result<Value> {
     let Some(m) = s.doc()?.selection.math.clone() else {
         return insert_nodes_as_equation(s, nodes, &json!({}));
@@ -512,6 +516,7 @@ pub(crate) fn insert_nodes_into_active(s: &mut Session, nodes: Vec<MNode>) -> Re
     result(s)
 }
 
+/// Inserts a template or structure into the active equation from template id, linear string, or LaTeX.
 fn insert_structure(s: &mut Session, v: &Value) -> Result<Value> {
     let nodes = nodes_from(v).ok_or_else(|| bad("equation.insertStructure", "give an id, linear or latex"))?;
     insert_nodes_into_active(s, nodes)
@@ -1163,6 +1168,6 @@ mod tests {
         s.execute("insert.equation", &json!({"edit": true})).unwrap();
         s.execute("equation.insertStructure", &json!({"latex": r"\phase{30}"})).unwrap();
         let val2 = s.execute("equation.get", &json!({})).unwrap();
-        assert_eq!(val2["linear"], "∠30");
+        assert_eq!(val2["linear"], "∠(30)");
     }
 }

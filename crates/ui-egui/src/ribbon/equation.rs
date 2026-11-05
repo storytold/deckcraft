@@ -62,6 +62,7 @@ fn math_placeholder(ui: &Ui, linear: &str) -> String {
     math_placeholder_with(linear, |c| ui.fonts_mut(|fonts| fonts.has_glyph(&font, c)))
 }
 
+/// Formats a linear math string as a placeholder preview, replacing glyphs not covered by the font with names or codes.
 pub(crate) fn math_placeholder_with(linear: &str, covered: impl Fn(char) -> bool) -> String {
     let mut result = String::new();
     for c in linear.chars() {

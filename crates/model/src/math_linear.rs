@@ -82,7 +82,7 @@ fn is_closer(c: char) -> bool {
 
 /// Prefix characters that make a structure from the operand after them.
 fn is_prefix(c: char) -> bool {
-    matches!(c, '√' | '∛' | '∜' | '█' | '■' | '▭' | '□' | '¯' | '▁' | '⟡' | '⏞' | '⏟' | '⏜' | '⏝' | '⎴' | '⎵' | '∠') || is_nary_char(c)
+    matches!(c, '√' | '∛' | '∜' | '█' | '■' | '▭' | '□' | '¯' | '▁' | '⟡' | '⏞' | '⏟' | '⏜' | '⏝' | '⎴' | '⎵') || is_nary_char(c)
 }
 
 /// Combining marks used as accents.
@@ -235,7 +235,12 @@ impl P {
             self.i += 1;
             return vec![self.group(Some(c), &[c])];
         }
-        if is_prefix(c) {
+        if c == '∠' {
+            if self.peek_at(1) == Some('(') {
+                self.i += 1;
+                return vec![self.prefix(c, stops)];
+            }
+        } else if is_prefix(c) {
             self.i += 1;
             return vec![self.prefix(c, stops)];
         }
@@ -624,6 +629,7 @@ impl P {
                     other => vec![other],
                 }
             }
+            Some('∠') if self.peek_at(1) == Some('(') => self.atom(stops),
             Some(c) if is_prefix(c) || closer(c).is_some() => self.atom(stops),
             Some(c) if c.is_ascii_digit() => {
                 let start = self.i;

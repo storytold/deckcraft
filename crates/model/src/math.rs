@@ -707,8 +707,9 @@ fn lin_node(n: &MNode, s: &mut String, depth: usize) {
             lin_operand(e, s, depth);
         }
         MNode::Phasor { e } => {
-            s.push('∠');
-            lin_operand(e, s, depth);
+            s.push_str("∠(");
+            lin_arg(e, s, depth);
+            s.push(')');
         }
         // A numbered equation (`E=mc^2#(1)`) is written as its one row.
         MNode::EqArr { rows } if rows.len() == 1 && rows.first().is_some_and(|r| has_number_mark(r)) => {
@@ -960,6 +961,18 @@ mod tests {
             let back = parse_linear(&to_linear(&n));
             assert_eq!(n, back, "{s} → {}", to_linear(&n));
         }
+    }
+
+    #[test]
+    fn phasor_vs_plain_angle_linear_parsing() {
+        let p = parse_linear("∠(30°)");
+        assert_eq!(p.len(), 1);
+        assert!(matches!(&p[0], MNode::Phasor { .. }));
+        assert_eq!(to_linear(&p), "∠(30°)");
+
+        let a = parse_linear("∠ABC");
+        assert!(a.iter().all(|n| matches!(n, MNode::Run(_))));
+        assert_eq!(to_linear(&a), "∠ABC");
     }
 
     //T1
