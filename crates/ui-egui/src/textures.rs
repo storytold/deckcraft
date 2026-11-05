@@ -361,8 +361,9 @@ impl Textures {
         self.thumbs.clear();
     }
 
-    /// A thumbnail texture; renders at most `budget` new thumbnails per frame (returns None when
-    /// it is over budget, so the caller draws a placeholder and asks for another frame).
+    /// A thumbnail texture; renders at most `budget` new thumbnails per frame. Over budget it
+    /// returns the slide's previous thumbnail if there is one (and asks for another frame), else
+    /// None, so the caller draws a placeholder.
     /// When `grayscale` is true, the thumbnail renders in black-and-white (matching Grayscale view).
     pub fn thumb(
         &mut self,
