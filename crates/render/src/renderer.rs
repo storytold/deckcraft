@@ -5,7 +5,7 @@ use super::opts::{RenderOpts, ShapeState, SlideFields};
 use super::raster::Image;
 use super::slide::{SlidePart, needs_filters, output_size};
 use super::stroke::{arrowheads, head_trims, stroke, trim_ends};
-use super::text_draw::{draw_layout_with, draw_text, line_bounds, preview_empty_bullets, prompt_body, text_transform, text_warp};
+use super::text_draw::{draw_layout_with, draw_text, fill_selection, line_bounds, preview_empty_bullets, prompt_body, text_transform, text_warp};
 use super::*;
 
 pub struct Renderer {
@@ -504,7 +504,9 @@ impl Renderer {
             }
             ShapeKind::Table(t) => {
                 // Rows grow with their text: what the cells cover, borders included.
-                let cells = table::draw(ctx, f.pres, rctx, t, m, x.w, x.h, &f.fields, f.opts.edit && f.opts.editing_text == Some(s.id));
+                let editing = f.opts.edit && f.opts.editing_text == Some(s.id);
+                let highlight = f.opts.text_highlight.filter(|h| editing && h.shape == s.id);
+                let cells = table::draw(ctx, f.pres, rctx, t, m, x.w, x.h, &f.fields, editing, highlight.as_ref());
                 self.track(m, cells.unwrap_or(Rect::new(0.0, 0.0, x.w, x.h)).inflate(2.0, 2.0));
             }
             ShapeKind::Chart(c) => {
@@ -1101,7 +1103,12 @@ impl Renderer {
                     let pad = b.height() * 0.3;
                     self.track(tm, b.inflate(pad, pad));
                 }
-                match text_warp(rctx, s, tr).filter(|_| l.rotation == 0.0) {
+                let warped = text_warp(rctx, s, tr).filter(|_| l.rotation == 0.0);
+                // WordArt bends its lines; their straight selection boxes would miss the glyphs.
+                if let Some(h) = f.opts.text_highlight.filter(|h| editing && h.shape == s.id && h.cell.is_none() && warped.is_none()) {
+                    fill_selection(ctx, &l, tr, m, h.from, h.to, h.color);
+                }
+                match warped {
                     Some(w) => warp::draw(ctx, &l, tr, m, &st.paras, &w),
                     None => draw_layout_with(ctx, &l, tr, m, &st.paras),
                 }

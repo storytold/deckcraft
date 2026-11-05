@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use deckcraft_geom::Rect;
 use deckcraft_model::{Master, Presentation, ShapeId, Slide};
-use deckcraft_render::{Image, Region, RenderOpts};
+use deckcraft_render::{Image, Region, RenderOpts, TextHighlight};
 use egui::{ColorImage, TextureFilter, TextureHandle, TextureOptions, TextureWrapMode};
 
 #[derive(Clone, PartialEq)]
@@ -22,6 +22,7 @@ struct Key {
     /// The pasteboard region the slide's drawing calls for (canvas only).
     want: Region,
     editing_text: Option<ShapeId>,
+    highlight: Option<TextHighlight>,
 }
 
 struct Entry {
@@ -250,7 +251,8 @@ impl Textures {
     /// The canvas texture for slide `index`, the slide being `size` pixels, and the region it
     /// covers: the slide, grown over the pasteboard to show what reaches off the slide within
     /// `visible` (the canvas, in pixels from the slide's top-left corner). `extra` changes with the
-    /// GIF frames. `editing_text` replaces its placeholder prompt with gray empty list markers.
+    /// GIF frames. `editing_text` replaces its placeholder prompt with gray empty list markers, and
+    /// `highlight` shades the selected text behind its glyphs.
     #[allow(clippy::too_many_arguments)]
     pub fn slide(
         &mut self,
@@ -264,6 +266,7 @@ impl Textures {
         grayscale: bool,
         gif_times: &[(ShapeId, f64)],
         editing_text: Option<ShapeId>,
+        highlight: Option<TextHighlight>,
         anim: Option<(&deckcraft_anim::Timeline, f64)>,
     ) -> Option<(TextureHandle, Region)> {
         let slide = p.slides.get(index)?.clone();
@@ -292,6 +295,7 @@ impl Textures {
             extra: extra ^ grayscale as u64 ^ anim_key(anim),
             want,
             editing_text,
+            highlight,
         };
         if let Some(e) = &self.canvas
             && e.key == key
@@ -311,6 +315,7 @@ impl Textures {
                 size: Some(region.size()),
                 state,
                 editing_text,
+                text_highlight: highlight,
                 ..Default::default()
             };
             deckcraft_render::render_slide_drawn(p, index, &opts)
@@ -385,6 +390,7 @@ impl Textures {
             extra: grayscale as u64,
             want: Region::slide(width_px, h),
             editing_text: None,
+            highlight: None,
         };
         self.clock += 1;
         let clock = self.clock;

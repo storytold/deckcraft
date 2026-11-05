@@ -104,6 +104,41 @@ pub fn text_warp(rctx: &Ctx, s: &Shape, tr: Rect) -> Option<deckcraft_geom::warp
     deckcraft_geom::warp::warp(name, &bp.warp_adj, tr)
 }
 
+/// The shading for the text between `from` and `to` of `l`, from `base`: `base` itself, or that
+/// colour lightened when that sets the selected glyphs' colours off better (black text reads best
+/// on a pale shade; white and mixed text on the mid tone, which also stays visible against the
+/// dark shapes white text sits on, where a deeper shade would vanish).
+pub fn selection_shade(l: &deckcraft_text::TextLayout, from: (usize, usize), to: (usize, usize), base: Rgba) -> Rgba {
+    let colors: Vec<Rgba> =
+        l.runs.iter().filter(|r| r.alpha > 0.0 && r.color.a > 0 && (r.para, r.chars.1) > from && (r.para, r.chars.0) < to).map(|r| r.color).collect();
+    let worst = |shade: Rgba| colors.iter().map(|c| c.with_alpha(255).contrast(shade)).fold(f64::INFINITY, f64::min);
+    let pale = base.lerp(Rgba::WHITE.with_alpha(base.a), 0.6);
+    if worst(pale) > worst(base) { pale } else { base }
+}
+
+/// Shade the text between `from` and `to` (paragraph, char) of a laid-out block, to be drawn
+/// before its glyphs so they sit on the shading ([`selection_shade`] of `c`).
+pub fn fill_selection(
+    ctx: &mut RenderContext,
+    l: &deckcraft_text::TextLayout,
+    tr: Rect,
+    m: Affine,
+    from: (usize, usize),
+    to: (usize, usize),
+    c: Rgba,
+) {
+    let pos = |p: (usize, usize)| deckcraft_text::Pos { para: p.0, ch: p.1 };
+    let rects = l.selection_rects(pos(from), pos(to));
+    if rects.is_empty() {
+        return;
+    }
+    ctx.set_transform(text_transform(m, tr, l.rotation));
+    ctx.set_paint(color(selection_shade(l, from, to, c), 1.0));
+    for r in rects {
+        ctx.fill_rect(&r);
+    }
+}
+
 /// Draw an already laid-out text block.
 pub fn draw_layout(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine) {
     draw_layout_with(ctx, l, tr, m, &[]);

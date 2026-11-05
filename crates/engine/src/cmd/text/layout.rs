@@ -133,6 +133,28 @@ pub fn text_frame(st: &DocState, t: &TextSel) -> Option<(deckcraft_text::TextLay
     Some((l, m))
 }
 
+/// The selected range of the text being edited, for the renderer to shade in `color` behind the
+/// glyphs (so text of any colour, white on white included, stands out from the shading). `None`
+/// with nothing selected, in the notes, and in WordArt, whose bent lines the renderer's straight
+/// boxes would miss: the UI veils that text instead.
+pub fn selection_highlight(st: &DocState, t: &TextSel, color: deckcraft_color::Rgba) -> Option<deckcraft_render::TextHighlight> {
+    if t.notes || !t.is_range() {
+        return None;
+    }
+    if t.cell.is_none() {
+        let sh = st.shape(t.shape)?;
+        let ctx = ctx_for(&st.doc, &st.selection)?;
+        let x = xfrm_of(&st.doc, &st.selection, sh);
+        let tr = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
+        let (l, _) = text_frame(st, t)?;
+        if l.rotation == 0.0 && deckcraft_render::text_warp(&ctx, sh, tr).is_some() {
+            return None;
+        }
+    }
+    let (from, to) = t.ordered();
+    Some(deckcraft_render::TextHighlight { shape: t.shape, cell: t.cell, from, to, color })
+}
+
 /// The text position under slide point `p` in the text being edited (its shape or cell).
 pub fn text_pos_at(st: &DocState, t: &TextSel, p: Point) -> Pos {
     match text_frame(st, t) {

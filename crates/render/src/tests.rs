@@ -3105,3 +3105,89 @@ fn a_shape_whose_outline_is_not_finite_is_not_drawable() {
     quad.paths[0].path = path;
     assert!(!crate::geometry::drawable(&quad, m, 100.0, 50.0));
 }
+
+/// The selection is shaded under the glyphs, so white text on a white slide shows up white on the
+/// shading; a veil over the finished slide could not tell the text from the page.
+#[test]
+fn selected_text_is_shaded_behind_its_glyphs() {
+    use super::TextHighlight;
+    let mut sh = text_shape(910, "Selected words", 40.0, 40.0);
+    for r in sh.text.iter_mut().flat_map(|t| t.paragraphs.iter_mut()).flat_map(|p| p.runs.iter_mut()) {
+        r.props.fill = Some(Fill::solid(ColorRef::rgb(Rgba::WHITE)));
+    }
+    let p = deck_with(vec![sh]);
+    let blue = [0x33, 0x75, 0xDB, 255];
+    let render = |edit, editing_text, shape| {
+        let h = TextHighlight { shape: ShapeId(shape), cell: None, from: (0, 0), to: (0, 14), color: Rgba::rgb(0x33, 0x75, 0xDB) };
+        render_slide(&p, 0, &RenderOpts { edit, editing_text, text_highlight: Some(h), ..Default::default() })
+    };
+    let bare = render_slide(&p, 0, &RenderOpts { edit: true, editing_text: Some(ShapeId(910)), ..Default::default() });
+    assert!(bare.pixels.as_chunks::<4>().0.iter().all(|px| *px == [255, 255, 255, 255]), "white on white shows nothing without shading");
+
+    let shaded = render(true, Some(ShapeId(910)), 910);
+    let (w, h) = (shaded.width as usize, shaded.height as usize);
+    let is = |x: usize, y: usize, c: [u8; 4]| shaded.pixels.get((y * w + x) * 4..(y * w + x) * 4 + 4) == Some(&c[..]);
+    let blues = (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).filter(|&(x, y)| is(x, y, blue)).count();
+    // The white left inside the shaded rows and columns is the text.
+    let band: Vec<(usize, usize)> = (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).filter(|&(x, y)| is(x, y, blue)).collect();
+    let (x0, x1) = band.iter().fold((w, 0), |(l, r), &(x, _)| (l.min(x), r.max(x)));
+    let (y0, y1) = band.iter().fold((h, 0), |(t, b), &(_, y)| (t.min(y), b.max(y)));
+    let whites = (y0..=y1).flat_map(|y| (x0..=x1).map(move |x| (x, y))).filter(|&(x, y)| is(x, y, [255, 255, 255, 255])).count();
+    assert!(blues > 2000, "the selected words are shaded: {blues}");
+    assert!(whites > 200, "and the white glyphs stand on the shading: {whites}");
+
+    // Only the text being edited, only in the editor.
+    assert_eq!(render(true, Some(ShapeId(910)), 911).pixels, bare.pixels, "another shape's selection draws nothing here");
+    assert_eq!(render(true, None, 910).pixels, bare.pixels, "no edit in progress, no shading");
+    assert_eq!(render(false, Some(ShapeId(910)), 910).pixels, bare.pixels, "exports never show the selection");
+}
+
+/// The shade follows the text it sits under: pale for black text (12:1 where the mid tone gives
+/// 4.7:1), the mid tone itself for white text or both, so those stay 4.4:1 or better against it.
+#[test]
+fn the_selection_shade_sets_off_the_selected_text_colours() {
+    use super::TextHighlight;
+    let base = Rgba::rgb(0x33, 0x75, 0xDB);
+    let colour = |hex: Rgba| Some(Fill::solid(ColorRef::rgb(hex)));
+    let shade_under = |colours: &[Rgba]| {
+        let mut sh = text_shape(920, "Selected words", 40.0, 40.0);
+        if let Some(t) = sh.text.as_mut() {
+            let first = t.paragraphs[0].runs[0].clone();
+            t.paragraphs[0].runs = colours
+                .iter()
+                .map(|c| {
+                    let mut r = first.clone();
+                    r.props.fill = colour(*c);
+                    r
+                })
+                .collect();
+        }
+        let p = deck_with(vec![sh]);
+        let rctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        let s = &p.slides[0].shapes[0];
+        let body = s.text.as_ref().unwrap();
+        let tr = crate::shape_geometry(s, 600.0, 120.0).text_rect;
+        let l = deckcraft_text::layout(
+            &rctx,
+            s,
+            body,
+            &deckcraft_text::Opts { rect: tr, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false },
+        );
+        let shade = super::selection_shade(&l, (0, 0), (0, 28), base);
+        // What it is drawn as: the highlight in a render shows exactly this colour.
+        let h = TextHighlight { shape: ShapeId(920), cell: None, from: (0, 0), to: (0, 28), color: base };
+        let img = render_slide(&p, 0, &RenderOpts { edit: true, editing_text: Some(ShapeId(920)), text_highlight: Some(h), ..Default::default() });
+        let drawn = img.pixels.as_chunks::<4>().0.contains(&[shade.r, shade.g, shade.b, 255]);
+        (shade, drawn)
+    };
+    let (black, white) = (Rgba::rgb(0, 0, 0), Rgba::WHITE);
+    let (shade, drawn) = shade_under(&[black]);
+    assert!(drawn && shade != base && shade.luminance() > base.luminance(), "black text: a pale shade, {shade:?}");
+    assert!(black.contrast(shade) >= 7.0);
+    let (shade, drawn) = shade_under(&[white]);
+    assert!(drawn && shade == base, "white text: the mid tone, which stays visible on dark shapes, {shade:?}");
+    assert!(white.contrast(shade) >= 4.4);
+    let (shade, drawn) = shade_under(&[black, white]);
+    assert!(drawn, "the shade is drawn");
+    assert!(black.contrast(shade) >= 4.4 && white.contrast(shade) >= 4.4, "both colours read on {shade:?}");
+}

@@ -258,17 +258,31 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let pixel = vec2(slide_rect.width() / px.0 as f32, slide_rect.height() / px.1 as f32);
     let visible = visible_region(avail, slide_rect, pixel);
     let typing_into = st.and_then(|d| d.selection.text.as_ref()).filter(|t| !t.notes).map(|t| t.shape);
+    let highlight = st.and_then(|d| overlays::text_highlight(d, &t));
     let tex = match st.map(|d| (d.selection.target, d)) {
         Some((Target::Slides, d)) => {
             let idx = d.selection.slide;
             let doc = d.doc.clone();
             let frame = anim.as_ref().map(|(tl, t)| (tl, *t));
-            app.textures.slide(ui.ctx(), &doc, idx, px, visible, true, crate::media::gif_key(&gifs), app.ui.grayscale, &times, typing_into, frame)
+            app.textures.slide(
+                ui.ctx(),
+                &doc,
+                idx,
+                px,
+                visible,
+                true,
+                crate::media::gif_key(&gifs),
+                app.ui.grayscale,
+                &times,
+                typing_into,
+                highlight,
+                frame,
+            )
         }
-        Some((Target::Master { master }, d)) => master_tex(ui.ctx(), &d.doc, master, None, px, visible, typing_into),
-        Some((Target::Layout { master, layout }, d)) => master_tex(ui.ctx(), &d.doc, master, Some(layout), px, visible, typing_into),
+        Some((Target::Master { master }, d)) => master_tex(ui.ctx(), &d.doc, master, None, px, visible, (typing_into, highlight)),
+        Some((Target::Layout { master, layout }, d)) => master_tex(ui.ctx(), &d.doc, master, Some(layout), px, visible, (typing_into, highlight)),
         Some((t @ (Target::Handout | Target::NotesMaster), d)) => {
-            deckcraft_engine::master_page(&d.doc, t).and_then(|p| master_tex(ui.ctx(), &p, 0, None, px, visible, typing_into))
+            deckcraft_engine::master_page(&d.doc, t).and_then(|p| master_tex(ui.ctx(), &p, 0, None, px, visible, (typing_into, highlight)))
         }
         None => None,
     };
@@ -369,7 +383,7 @@ fn master_tex(
     layout: Option<usize>,
     px: (u32, u32),
     visible: deckcraft_render::Region,
-    editing_text: Option<deckcraft_model::ShapeId>,
+    (editing_text, highlight): (Option<deckcraft_model::ShapeId>, Option<deckcraft_render::TextHighlight>),
 ) -> Option<(egui::TextureHandle, deckcraft_render::Region)> {
     let scale = px.0 as f64 / doc.slide_size.width.max(1.0);
     let region = crate::textures::fit_texture(
@@ -381,7 +395,15 @@ fn master_tex(
         doc,
         master,
         layout,
-        &deckcraft_render::RenderOpts { scale, edit: true, editing_text, offset: region.offset(), size: Some(region.size()), ..Default::default() },
+        &deckcraft_render::RenderOpts {
+            scale,
+            edit: true,
+            editing_text,
+            text_highlight: highlight,
+            offset: region.offset(),
+            size: Some(region.size()),
+            ..Default::default()
+        },
     );
     Some((crate::textures::upload_editor(ctx, "master-canvas", crate::textures::to_color_image(&img, false)), region))
 }
