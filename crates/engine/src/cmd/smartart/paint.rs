@@ -249,7 +249,7 @@ pub(super) fn share_shrink(ctx: &deckcraft_model::resolve::Ctx<'_>, shapes: &mut
 
 /// Every run of the shape's text at `size`; a fixed size turns shrink-on-overflow off, so no node
 /// is fitted to a size of its own.
-fn set_size(sh: &mut Shape, size: f64) {
+pub(super) fn set_size(sh: &mut Shape, size: f64) {
     let Some(body) = &mut sh.text else { return };
     for p in &mut body.paragraphs {
         for r in &mut p.runs {

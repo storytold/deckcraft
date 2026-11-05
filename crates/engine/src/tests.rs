@@ -7076,3 +7076,41 @@ fn grow_on_an_imported_smartart_graphic_ignores_breaks_on_nonempty_lines() {
     assert_eq!(grow_from(false, 1, false), Some(14.0), "a line of only a break shows the break's size");
     assert_eq!(grow_from(true, 2, false), Some(14.0), "the empty line between two breaks shows the break's size");
 }
+
+/// Font Size on a graphic opened from a file keeps the file's drawing (PowerPoint only resizes its text): the
+/// children keep their ids and geometry, their runs and end marks take the size, and the size is recorded.
+#[test]
+fn format_size_on_an_imported_smartart_graphic_keeps_its_drawing() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    let gid = ShapeId(gid as u32);
+    let snapshot = |s: &Session| {
+        let g = s.doc().unwrap().shape(gid).unwrap().clone();
+        let deckcraft_model::ShapeKind::Group { children, .. } = g.kind else { panic!("group") };
+        children
+    };
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), gid).unwrap();
+        g.diagram.as_mut().unwrap().imported = true;
+    }
+    let before: Vec<_> = snapshot(&s).iter().map(|c| (c.id, c.xfrm)).collect();
+    s.execute("edit.select", &json!({"ids": [gid.0]})).unwrap();
+    s.execute("format.size", &json!({"size": 31})).unwrap();
+    let after = snapshot(&s);
+    assert_eq!(before, after.iter().map(|c| (c.id, c.xfrm)).collect::<Vec<_>>(), "the drawing's ids and geometry stay");
+    let d = s.doc().unwrap().shape(gid).unwrap().diagram.clone().unwrap();
+    assert!(d.imported, "still an imported graphic");
+    assert_eq!(d.font_size, Some(31.0));
+    let texts: Vec<_> = after.iter().filter_map(|c| c.text.as_ref()).collect();
+    assert!(!texts.is_empty());
+    for t in texts {
+        assert_eq!(t.body.autofit, Some(deckcraft_model::text::AutoFit::None));
+        for p in &t.paragraphs {
+            assert_eq!(p.end_props.size, Some(31.0));
+            assert!(p.runs.iter().all(|r| r.props.size == Some(31.0)));
+        }
+    }
+}

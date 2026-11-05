@@ -1,5 +1,5 @@
 use super::nodes::{add, demote_node, nodes_from_lines, normalize, promote_node, remove, sync_text};
-use super::paint::layout;
+use super::paint::{layout, set_size};
 use super::{
     AutoFit, COLORS, Diagram, DiagramNode, EngineError, Geom, MAX_LEVEL, NO_ID_SPACE, Paragraph, Presentation, Result, STYLES, Session, Shape,
     ShapeId, ShapeKind, TextBody, Value, Xfrm, bad, bool_or, current_shapes, is_kind, json, shape_of, str_param, targets, xfrm_of,
@@ -408,8 +408,42 @@ pub(crate) fn selected_graphics(s: &Session) -> Vec<ShapeId> {
     st.selection.shapes.iter().copied().filter(|id| st.shape(*id).is_some_and(|sh| sh.diagram.is_some())).collect()
 }
 
+/// For an imported graphic, apply `f` to the text of every shape of its retained drawing and record the change on
+/// the diagram with `note`, without regenerating (PowerPoint keeps the file's own drawing and only restyles its
+/// text). Returns false, touching nothing, for a generated graphic.
+fn restyle_imported(s: &mut Session, gid: ShapeId, cmd: &str, note: impl FnOnce(&mut Diagram), f: impl Fn(&mut Shape)) -> Result<bool> {
+    if !s.doc()?.shape(gid).and_then(|g| g.diagram.as_ref()).is_some_and(|d| d.imported) {
+        return Ok(false);
+    }
+    fn walk(v: &mut [Shape], f: &impl Fn(&mut Shape)) {
+        for sh in v {
+            f(sh);
+            if let ShapeKind::Group { children, .. } = &mut sh.kind {
+                walk(children, f);
+            }
+        }
+    }
+    s.edit(|doc, sel| {
+        let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(cmd, "no slide"))?;
+        let sh = deckcraft_model::find_shape_mut(shapes, gid).ok_or_else(|| bad(cmd, "no such shape"))?;
+        if let ShapeKind::Group { children, .. } = &mut sh.kind {
+            walk(children, &f);
+        }
+        if let Some(d) = &mut sh.diagram {
+            note(d);
+        }
+        Ok(())
+    })?;
+    Ok(true)
+}
+
 /// Set the size of every node's text of graphic `gid` (`None`: automatic).
 pub(crate) fn set_font_size(s: &mut Session, gid: ShapeId, size: Option<f64>, cmd: &str) -> Result<()> {
+    if let Some(z) = size
+        && restyle_imported(s, gid, cmd, |d| d.font_size = Some(z), |sh| set_size(sh, z))?
+    {
+        return Ok(());
+    }
     edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
         d.font_size = size;
         Ok(())
