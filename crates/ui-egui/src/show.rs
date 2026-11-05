@@ -1022,11 +1022,16 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
             );
         }
         let mut cut = 0usize;
+        // The clips the deck actually gained: near-silence and too-short takes never become one.
+        let mut narrated = 0usize;
         for (i, rate, samples) in &show.narration {
             // Encoded once, here: the clip is final.
             let Some(wav) = narration_wav(*rate, samples) else { continue };
             cut += usize::from(wav.cut);
-            let _ = app.run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(&wav.wav)}));
+            if app.run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(&wav.wav)})).is_ok()
+            {
+                narrated += 1;
+            }
         }
         let lc = doc.show.laser_color;
         for (i, pts) in &show.laser_saved {
@@ -1039,7 +1044,7 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
             None
         } else {
             Some(format!(
-                "the narration on {cut} slide{} was cut at the {:+.0} MB limit",
+                "the narration on {cut} slide{} was cut at the {:.0} MB limit",
                 if cut == 1 { "" } else { "s" },
                 MAX_NARRATION_BYTES as f64 / 1_000_000.0
             ))
@@ -1049,7 +1054,7 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
             (Some(e), Some(l)) => format!("Recording saved, but the microphone stopped: {e}, and {l}"),
             (Some(e), None) => format!("Recording saved, but the microphone stopped: {e}"),
             (None, Some(l)) => format!("Recording saved, but {l}"),
-            (None, None) => saved_status(!show.narration.is_empty(), !show.recorded.is_empty(), !show.laser_saved.is_empty()).to_string(),
+            (None, None) => saved_status(narrated > 0, !show.recorded.is_empty(), !show.laser_saved.is_empty()).to_string(),
         };
         app.set_status(status);
     } else {
