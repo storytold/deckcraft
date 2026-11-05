@@ -1,7 +1,7 @@
 # 繁體中文介面（台灣）／Traditional Chinese shell (Taiwan)
 
-> **狀態：** 僅應用程式外殼，共 71 個字串。尚未經母語審閱。
-> **Status:** application shell only, 71 strings. Native review is pending.
+> **狀態：** 僅應用程式外殼，共 87 個字串。尚未經母語審閱。
+> **Status:** application shell only, 87 strings. Native review is pending.
 
 ## 範圍／Scope
 
@@ -11,6 +11,7 @@
 - 檔案（Backstage）側邊選單：首頁、新增、開啟、資訊、另存新檔、列印、匯出、關於、儲存、
   關閉、選項、返回
 - 標題列：已編輯、放映、搜尋命令、註解、淺色/深色外觀
+- 快速存取工具列：按鈕提示、自訂選單、加入／移除與重設
 - 狀態列：第 n 張，共 m 張、投影片母片、備忘稿、註解、縮放與檢視標籤
 - 偏好設定對話方塊：一般、介面語言、介面大小、量測單位、編輯選項、按鈕與標題
 
@@ -18,8 +19,9 @@
 （DeckCraft、SmartArt）、簡報內容與檔案名稱。
 
 This catalog covers the application shell only: the ribbon tabs (including contextual tabs), the
-File/Backstage side menu, the title bar, the status bar, and the Preferences dialog. Ribbon groups,
-the other dialogs, command ids, product names, presentation text and file names stay in English.
+File/Backstage side menu, the title bar, the quick access toolbar, the status bar, and the
+Preferences dialog. Ribbon groups, the other dialogs, command ids, product names, presentation
+text and file names stay in English.
 
 ## 選擇語言／Choosing the language
 

@@ -210,6 +210,22 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("pref.snap", "Snap objects to grid", "將物件對齊格線"),
     ("pref.system", "System", "跟隨系統"),
     ("pref.title", "Preferences", "偏好設定"),
+    ("qat.add", "Add to Quick Access Toolbar", "加入快速存取工具列"),
+    ("qat.customize", "Customize Quick Access Toolbar", "自訂快速存取工具列"),
+    ("qat.export", "Export", "匯出"),
+    ("qat.find", "Find", "尋找"),
+    ("qat.hint", "Right-click any ribbon button to add it.", "在功能區按鈕上按右鍵即可加入。"),
+    ("qat.home", "Home", "首頁"),
+    ("qat.new", "New", "新增"),
+    ("qat.open", "Open", "開啟"),
+    ("qat.print", "Print", "列印"),
+    ("qat.redo", "Redo", "重做"),
+    ("qat.remove", "Remove from Quick Access Toolbar", "從快速存取工具列移除"),
+    ("qat.reset", "Reset to Defaults", "重設為預設值"),
+    ("qat.save", "Save", "儲存"),
+    ("qat.spelling", "Spelling", "拼字檢查"),
+    ("qat.start", "Start from Beginning", "從頭開始"),
+    ("qat.undo", "Undo", "復原"),
     ("status.comments", "Comments", "註解"),
     ("status.fit", "Fit slide to current window", "投影片符合視窗大小"),
     ("status.language", "Language", "語言"),
@@ -263,6 +279,30 @@ pub fn text(lang: Resolved, key: &'static str) -> &'static str {
         }),
         Err(_) => key,
     }
+}
+
+/// A Quick Access Toolbar label (the toolbar stores English labels, including user-added command
+/// labels). Known shell commands use the catalog; any other label is returned unchanged.
+pub fn qat_label(lang: Resolved, label: &str) -> String {
+    let key = match label {
+        "Add to Quick Access Toolbar" => "qat.add",
+        "Customize Quick Access Toolbar" => "qat.customize",
+        "Export" => "qat.export",
+        "Find" => "qat.find",
+        "Home" => "qat.home",
+        "New" => "qat.new",
+        "Open" => "qat.open",
+        "Print" => "qat.print",
+        "Redo" => "qat.redo",
+        "Remove from Quick Access Toolbar" => "qat.remove",
+        "Reset to Defaults" => "qat.reset",
+        "Save" => "qat.save",
+        "Spelling" => "qat.spelling",
+        "Start from Beginning" => "qat.start",
+        "Undo" => "qat.undo",
+        _ => return label.to_string(),
+    };
+    text(lang, key).to_string()
 }
 
 /// `"{label} ({shortcut})"`: the shortcut chord stays in Latin.
@@ -382,6 +422,14 @@ mod tests {
     fn an_unavailable_traditional_choice_falls_back_to_english() {
         assert_eq!(LanguageChoice::TraditionalChinese.resolve_with(None, false), Resolved::English);
         assert_eq!(LanguageChoice::TraditionalChinese.resolve_with(None, true), Resolved::TraditionalChinese);
+    }
+
+    #[test]
+    fn qat_labels_use_the_catalog_and_keep_unknown_labels() {
+        assert_eq!(qat_label(Resolved::TraditionalChinese, "Save"), "儲存");
+        assert_eq!(qat_label(Resolved::TraditionalChinese, "Customize Quick Access Toolbar"), "自訂快速存取工具列");
+        assert_eq!(qat_label(Resolved::TraditionalChinese, "A custom command"), "A custom command");
+        assert_eq!(qat_label(Resolved::English, "Save"), "Save");
     }
 
     #[test]

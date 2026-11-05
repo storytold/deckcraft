@@ -1,9 +1,9 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (Traditional Chinese shell catalog: 71 keys for the ribbon tabs, File menu, title bar, status bar and Preferences; `app.language` accepts `system`, `en` and `zh-Hant`; desktop follows a Traditional Chinese system locale; installed Traditional Chinese faces are preferred and no CJK font is bundled; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (Traditional Chinese shell catalog: 87 keys for the ribbon tabs, File menu, title bar, status bar and Preferences; `app.language` accepts `system`, `en` and `zh-Hant`; desktop follows a Traditional Chinese system locale; installed Traditional Chinese faces are preferred and no CJK font is bundled; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft's interface is English, with one catalog so far: the application shell (ribbon tabs, File
-menu, title bar, status bar and Preferences) has **71 keys** and can follow the system locale or an
+menu, title bar, status bar and Preferences) has **87 keys** and can follow the system locale or an
 explicit choice (`system`, `en`, `zh-Hant`). Traditional Chinese, in Taiwan vocabulary, covers that
 shell. Simplified Chinese stays English because there is no Simplified catalog. Ribbon groups, the
 other dialogs, command ids and presentation text stay English. See
@@ -42,7 +42,7 @@ partly there), **55–90 h** to parity plus native-speaker review.
 | Korean | ko | 0 (0%) | no | system Hangul fonts, in the interface too; IME composition (#101) | no | none | yes | 4–7 |
 | Vietnamese | vi | 0 (0%) | no | stacked diacritics through HarfRust | no | none | **no** (Windows only) | 3–5 |
 
-Other languages shipped: **Traditional Chinese (Taiwan) for the shell, 71 strings** (Ukrainian is in
+Other languages shipped: **Traditional Chinese (Taiwan) for the shell, 87 strings** (Ukrainian is in
 review as PR #34). A `zh-Hant`, `zh-TW`, `zh-HK` or `zh-MO` system locale selects
 Traditional Chinese. `zh`, `zh-Hans`, `zh-CN` and `zh-SG` stay English. The web build has no system
 tag, so System stays English there until the user chooses a language; its Traditional Chinese entry
@@ -69,7 +69,7 @@ of every text in the file and the default for new text (`format.languageAll`).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-04 | minor | Application shell catalog (71 keys): ribbon tabs, File menu, title bar, status bar and Preferences in Taiwan Traditional Chinese; `app.language` takes `system`, `en` and `zh-Hant`; desktop follows a Traditional Chinese system locale; installed Traditional Chinese faces are preferred and none are bundled; the web build keeps System English and disables the Traditional Chinese picker |
+| 2026-11-04 | minor | Application shell catalog (87 keys): ribbon tabs, File menu, title bar, status bar and Preferences in Taiwan Traditional Chinese; `app.language` takes `system`, `en` and `zh-Hant`; desktop follows a Traditional Chinese system locale; installed Traditional Chinese faces are preferred and none are bundled; the web build keeps System English and disables the Traditional Chinese picker |
 | 2026-10-24 | minor | Local 0.37 candidate adds an opt-in native LXGW WenKai Lite glyph fallback and CJK interface-test coverage. This records local implementation only: managed tests, formatting, clippy, wasm-size and native GUI qualification remain pending. Browser font budget and uniform Chinese typography are unchanged. |
 | 2026-10-21 | minor | Review › Language can set the proofing language of the whole presentation |
 | 2026-10-14 | minor | IME composition in a table cell is underlined in place; the candidate window sits on that cell's caret |
