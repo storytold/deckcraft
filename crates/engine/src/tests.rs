@@ -6571,6 +6571,19 @@ fn table_insert_column_beside_a_merge_copies_the_anchor_format() {
     assert!(t.cell(0, 2).unwrap().fill.is_some());
 }
 
+#[test]
+fn table_insert_column_beside_a_two_row_merge_copies_the_anchor_format() {
+    let mut s = session();
+    let id = table_at(&mut s, &[280.0, 280.0, 280.0], json!([["a", "b", "c"], ["d", "e", "f"]]));
+    s.execute("table.cellFill", &json!({"id": id.0, "color": "#FF0000", "cells": [[0, 0]]})).unwrap();
+    s.execute("table.merge", &json!({"id": id.0, "from": [0, 0], "to": [1, 1]})).unwrap();
+    s.execute("table.insertColumnRight", &json!({"id": id.0, "col": 1})).unwrap();
+    let t = table_of(&s, id);
+    assert!(t.cell(1, 1).unwrap().h_merge && t.cell(1, 1).unwrap().v_merge, "the merge stays put");
+    assert!(t.cell(0, 2).unwrap().fill.is_some());
+    assert_eq!(t.cell(1, 2).unwrap().fill, t.cell(0, 0).unwrap().fill);
+}
+
 /// A table near the slide's right edge, with no room for another column: by default an inserted
 /// column widens it past the edge, as PowerPoint's Insert Right does (the frame keeps its left and
 /// grows), and `keepWidth: true` keeps it on the slide.
