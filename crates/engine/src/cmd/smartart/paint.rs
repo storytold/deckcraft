@@ -201,7 +201,7 @@ pub fn layout(d: &Diagram, area: Xfrm) -> Vec<Shape> {
 /// one scale for every shape.
 pub(super) fn layout_items(d: &Diagram, area: Xfrm) -> Vec<Item> {
     let mut v = layout_raw(d, area);
-    let scale = v.iter().map(|(sh, _)| word_scale(sh)).fold(1.0_f64, f64::min);
+    let scale = v.iter().map(|(sh, _)| word_scale(sh, 1.0)).fold(1.0_f64, f64::min);
     for (sh, _) in &mut v {
         // A set size replaces the automatic one outright: the long word's scale would otherwise
         // still narrow the bullets' indents.
@@ -242,7 +242,15 @@ pub(super) fn fitted(ctx: &deckcraft_model::resolve::Ctx<'_>, sh: &Shape, scale:
 /// down (a node of many lines as much as a long word), saved on every shape. A saved scale is
 /// drawn as it is, so no shape shrinks on its own. A set size (`AutoFit::None`) is left alone.
 pub(super) fn share_shrink(ctx: &deckcraft_model::resolve::Ctx<'_>, shapes: &mut [Shape], stretch: (f64, f64)) {
-    let Some((scale, reduction)) = shapes.iter().filter_map(|sh| fitted(ctx, sh, stretch)).min_by(|a, b| a.0.total_cmp(&b.0)) else { return };
+    let Some((fit, reduction)) = shapes.iter().filter_map(|sh| fitted(ctx, sh, stretch)).min_by(|a, b| a.0.total_cmp(&b.0)) else { return };
+    // The rule layout_items applies at generation, against the displayed widths: a word an edit
+    // made too long for its line breaks mid-word without overflowing down, so it shrinks every node.
+    let words = shapes
+        .iter()
+        .filter(|sh| sh.text.as_ref().is_some_and(|b| matches!(b.body.autofit, Some(AutoFit::Shrink { .. }))))
+        .map(|sh| word_scale(sh, stretch.0))
+        .fold(1.0_f64, f64::min);
+    let scale = fit.min(words);
     if scale >= 1.0 {
         return;
     }
@@ -276,8 +284,8 @@ pub(super) const MIN_SCALE: f64 = 0.25;
 
 /// The scale (`MIN_SCALE..=1`) at which no word of the shape's text is wider than its line and
 /// would break mid-word. Overflow in height is left to the body's shrink-on-overflow autofit.
-fn word_scale(sh: &Shape) -> f64 {
-    let Some(w) = sh.xfrm.map(|x| x.w) else { return 1.0 };
+fn word_scale(sh: &Shape, stretch: f64) -> f64 {
+    let Some(w) = sh.xfrm.map(|x| x.w * stretch) else { return 1.0 };
     // Round shapes keep their text in the inscribed rectangle (about 71% of the width).
     let text_w = match sh.geom.preset_name() {
         Some("ellipse" | "gear6" | "gear9") => w * 0.71,

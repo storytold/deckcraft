@@ -6916,6 +6916,37 @@ fn editing_a_smartart_node_shares_the_new_scale_with_the_other_nodes() {
     assert!(v[0].unwrap() < 1.0, "the long text shrinks the graphic: {v:?}");
 }
 
+/// A word an edit makes too long for its line wraps mid-word without overflowing down, so the
+/// text layout asks for no shrink; the graphic still shrinks every node alike, as a freshly
+/// generated one would.
+#[test]
+fn editing_a_smartart_node_to_a_long_word_shrinks_every_node() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "verticalList", "items": ["A", "B", "C"]})).unwrap()["id"].as_u64().unwrap();
+    let scales = |s: &Session| -> Vec<Option<f64>> {
+        match s.doc().unwrap().shape(ShapeId(gid as u32)).map(|x| &x.kind) {
+            Some(deckcraft_model::ShapeKind::Group { children, .. }) => children
+                .iter()
+                .filter_map(|c| c.text.as_ref())
+                .filter_map(|t| match t.body.autofit {
+                    Some(deckcraft_model::text::AutoFit::Shrink { font_scale, .. }) => Some(font_scale),
+                    _ => None,
+                })
+                .collect(),
+            _ => panic!("not a group"),
+        }
+    };
+    let first = match s.doc().unwrap().shape(ShapeId(gid as u32)).map(|x| &x.kind) {
+        Some(deckcraft_model::ShapeKind::Group { children, .. }) => children.iter().find(|c| c.text.is_some()).unwrap().id,
+        _ => panic!("not a group"),
+    };
+    s.execute("text.edit", &json!({"id": first.0})).unwrap();
+    s.execute("text.insert", &json!({"text": "Supercalifragilisticexpialidocious_and_more_letters_still"})).unwrap();
+    let v = scales(&s);
+    assert!(v.len() > 1 && v.iter().all(|x| *x == v[0]), "every node has the one shared scale: {v:?}");
+    assert!(v[0].unwrap() < 1.0, "the long word shrinks the graphic: {v:?}");
+}
+
 /// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
 /// end is set to the grouped shape and follows it when the group moves. The glue was dropped at
 /// once (the end stayed `None`) because rerouting only looked at the slide's top-level shapes,
