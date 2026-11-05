@@ -308,7 +308,7 @@ pub fn master_text_pieces(pres: &Presentation, m: &deckcraft_model::Master, pape
                 .body
                 .paragraphs
                 .get(run.para)
-                .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>())
+                .map(|p| p.runs.iter().map(|r| r.content()).collect::<String>())
                 .unwrap_or_default()
                 .chars()
                 .skip(run.chars.0)
@@ -537,7 +537,8 @@ impl Exporter<'_> {
         let k = b.width() / sw;
         // Raster at the requested dpi relative to the box size on paper.
         let scale = raster_scale(b.width(), (sw, sh), self.opts.dpi);
-        let ropts = RenderOpts { scale, threads: 4, ..Default::default() };
+        // One clock reading for the raster and the text layer, so a date field cannot differ between them.
+        let ropts = RenderOpts { scale, threads: 4, now: deckcraft_text::datetime::DateTime::now_local(), ..Default::default() };
         // Two rasters per slide: the backdrop (background, master and layout graphics) is the same
         // on every slide that shares its layout, so the writer stores it once, and the slide's own
         // shapes draw over it (#845).
@@ -578,7 +579,7 @@ impl Exporter<'_> {
         }
         if self.opts.text_layer {
             let view = Affine::translate((b.x0, b.y0)) * Affine::scale(k);
-            for pt in deckcraft_render::place_slide(pres, i).texts {
+            for pt in deckcraft_render::place_slide_with(pres, i, &ropts).texts {
                 self.text_layer(s, &pt, view, false)?;
             }
             let _ = sh;
@@ -596,7 +597,7 @@ impl Exporter<'_> {
                 .body
                 .paragraphs
                 .get(run.para)
-                .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>())
+                .map(|p| p.runs.iter().map(|r| r.content()).collect::<String>())
                 .unwrap_or_default()
                 .chars()
                 .skip(run.chars.0)
