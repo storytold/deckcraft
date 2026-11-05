@@ -240,6 +240,7 @@ fn a_kept_reference_into_another_kept_sequence_follows_it_and_a_dangling_one_is_
     let mut p = deck();
     let ns = r#"xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main""#;
     let button = p.slides[0].shapes[0].id.0;
+    let content = p.slides[0].shapes[2].id.0;
     let seq = |root: u32, node: u32, marker: u32, cond: &str| deckcraft_model::KeptSequence {
         xml: format!(
             r#"<p:seq {ns} concurrent="1"><p:cTn id="{root}" nodeType="interactiveSeq"><p:stCondLst><p:cond evt="onMediaBookmark" delay="0"><p:tgtEl><p:spTgt spid="{button}"/></p:tgtEl></p:cond></p:stCondLst><p:childTnLst><p:par><p:cTn id="{node}" presetID="{marker}" fill="hold">{cond}</p:cTn></p:par></p:childTnLst></p:cTn></p:seq>"#
@@ -249,7 +250,9 @@ fn a_kept_reference_into_another_kept_sequence_follows_it_and_a_dangling_one_is_
     let slide = Arc::make_mut(&mut p.slides[0]);
     slide.kept_sequences.push(seq(7, 8, 11, ""));
     slide.kept_sequences.push(seq(20, 21, 22, r#"<p:stCondLst><p:cond evt="onEnd" delay="0"><p:tn val="8"/></p:cond></p:stCondLst>"#));
-    slide.kept_sequences.push(seq(30, 31, 33, r#"<p:stCondLst><p:cond evt="onEnd" delay="0"><p:tn val="2"/></p:cond></p:stCondLst>"#));
+    let mut dangling = seq(30, 31, 33, r#"<p:stCondLst><p:cond evt="onEnd" delay="0"><p:tn val="2"/></p:cond></p:stCondLst>"#);
+    dangling.builds.push(format!(r#"<p:bldP spid="{content}" grpId="7" animBg="1" {ns}/>"#));
+    slide.kept_sequences.push(dangling);
     let xml = slide_xml(&p);
     let id_of = |marker: &str| {
         let at = xml.find(&format!(r#"presetID="{marker}""#)).expect("node");
@@ -262,6 +265,7 @@ fn a_kept_reference_into_another_kept_sequence_follows_it_and_a_dangling_one_is_
     assert!(xml.contains(&format!(r#"<p:tn val="{target}"/>"#)), "the reference follows the node: {xml}");
     assert!(xml.contains(r#"presetID="22""#), "{xml}");
     assert!(!xml.contains(r#"presetID="33""#), "the dangling sequence is left out: {xml}");
+    assert!(!xml.contains(r#"grpId="7""#), "and its build entry with it: {xml}");
     assert_eq!(round(&p).slides[0].kept_sequences.len(), 2);
 }
 
