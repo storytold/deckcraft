@@ -293,22 +293,18 @@ pub(crate) fn value_axis_intervals(c: &Chart, axis_len: f64, base: f64, horiz: b
         (axis_len / if horiz { base * 6.0 } else { base * 1.9 }).floor().clamp(2.0, 12.0) as usize
     } else if horiz {
         // The widest label of the scale `intervals` picks; fewer, rounder steps can reach a longer
-        // maximum (1,000,000,000,000 against 500,000,000,000), so the budget is measured again on
-        // the scale it selects until it stops shrinking.
+        // maximum (1,000,000,000,000 against 500,000,000,000), so each budget is measured on the
+        // scale it selects and the largest one whose labels fit is taken (a coarser scale can
+        // have shorter labels, which then leave room for a finer one).
         let widest_at = |intervals: usize| {
             let (lo, hi, st) = c.axis_scale(false, intervals).unwrap_or((0.0, 1.0, 0.2));
             axis_ticks((lo, hi, st)).map(|v| c.axis_label(false, v).chars().count()).max().unwrap_or(1) as f64
         };
-        let mut intervals = 12;
-        for _ in 0..12 {
+        let fits = |intervals: usize| {
             let widest = widest_at(intervals);
-            let next = fit(widest * base * 0.55 + base * 0.8, widest * base * 0.55 + base * 0.3);
-            if next >= intervals {
-                break;
-            }
-            intervals = next;
-        }
-        intervals
+            fit(widest * base * 0.55 + base * 0.8, widest * base * 0.55 + base * 0.3) >= intervals
+        };
+        (2..=12).rev().find(|&n| fits(n)).unwrap_or(2)
     } else {
         fit(base * 1.9, base * 2.0)
     }

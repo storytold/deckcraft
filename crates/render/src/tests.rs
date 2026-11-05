@@ -3261,3 +3261,16 @@ fn the_value_axis_budget_changes_only_automatic_linear_horizontal_axes() {
     // An automatic linear axis measures its labels: short ones leave room for more intervals.
     assert!(crate::chart::value_axis_intervals(&c, 300.0, base, true) > old(300.0, true));
 }
+
+/// A coarser scale can have shorter labels, which leave room for a finer one: over 70 pt with 10 pt
+/// text, 0 to 2.1 in twelfths of a unit has three-character labels and fits two intervals, two
+/// intervals end the axis at 4 with one-character labels, but four fit and end it at 3.
+#[test]
+fn the_value_axis_budget_takes_the_largest_one_whose_labels_fit() {
+    let mut c = Chart::sample(ChartType::Column);
+    c.series.truncate(1);
+    c.series[0].values = vec![Some(0.0), Some(1.0), Some(2.1)];
+    let n = crate::chart::value_axis_intervals(&c, 70.0, 10.0, true);
+    assert_eq!(n, 4);
+    assert_eq!(c.axis_scale(false, n).map(|(_, hi, _)| hi), Some(3.0));
+}
