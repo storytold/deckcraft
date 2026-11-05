@@ -155,3 +155,34 @@ fn an_autoplay_video_keeps_its_slide_start_node() {
     assert!(!xml.contains("<p:audio"), "and no audio node is invented for it: {xml}");
     assert!(xml.contains(&format!("<p:spTgt spid=\"{}\"/>", id.0)), "the node targets the video: {xml}");
 }
+
+/// Loop, Hide While Not Playing and Play Full Screen live on the slide-start timing node: an
+/// autoplay video keeps them through a save, and narration is never crowded out of the list.
+#[test]
+fn an_autoplay_video_keeps_its_playback_flags() {
+    let mut p = defaults::new_presentation(None);
+    let video = p.add_media("clip.mp4", "video/mp4", b"video".to_vec()).expect("media");
+    let id = ShapeId(p.alloc_id().expect("id"));
+    Arc::make_mut(&mut p.slides[0]).shapes.push(deckcraft_model::Shape {
+        id,
+        name: "Clip".into(),
+        xfrm: Some(Xfrm::new(40.0, 40.0, 200.0, 100.0)),
+        kind: ShapeKind::Media(MediaClip {
+            media: video,
+            video: true,
+            autoplay: true,
+            loop_play: true,
+            hide_while_not_playing: true,
+            full_screen: true,
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let mut z = zip::ZipArchive::new(Cursor::new(&bytes)).expect("zip");
+    let mut xml = String::new();
+    z.by_name("ppt/slides/slide1.xml").expect("slide").read_to_string(&mut xml).expect("read");
+    assert!(xml.contains(r#"repeatCount="indefinite""#), "Loop until Stopped: {xml}");
+    assert!(xml.contains(r#"showWhenStopped="0""#), "Hide While Not Playing: {xml}");
+    assert!(xml.contains(r#"fullScrn="1""#), "Play Full Screen: {xml}");
+}
