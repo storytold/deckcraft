@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-04 · **Change:** trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-05 · **Change:** trivial (beta item 9 narrowed: the slide show monitor is chosen in Set Up Slide Show and Presenter View is placed on another display (#1225); scores unchanged; previous: trivial, workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -25,7 +25,7 @@ revision history.
 | 6 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
 | 7 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
 | 8 | Image paste fails on Windows (#1414); Linux not re-checked | Feature | B | 2–4 | [ui-parity.md](ui-parity.md) |
-| 9 | Presenter view isn't placed on the second display | Hardware | B | 3–5 | [slideshow-parity.md](slideshow-parity.md) |
+| 9 | Automatic doesn't detect the projector; display placement not checked on real projectors | Hardware | B | 3–5 | [slideshow-parity.md](slideshow-parity.md) |
 | 10 | Animation Pane: 64 of ~190 effects, effect options (timeline and Play From done) | Feature | B (pane) | 7–13 | [animation-parity.md](animation-parity.md) |
 | 11 | Charts: data grid editing, elements, `chartex` types | Feature | B (data, elements) | 12–20 | [parity-checklist.md](parity-checklist.md) |
 | 12 | Format Shape pane thinner than PowerPoint's | UI/UX | B | 6–10 | [ui-parity.md](ui-parity.md) |
@@ -316,7 +316,9 @@ Detail in [ui-parity.md](ui-parity.md).
 
 Detail in [hardware-parity.md](hardware-parity.md).
 
-- **Presenter view isn't placed on the second display**; the show doesn't pick the projector. 3–5 h.
+- **The show doesn't detect the projector**: Automatic uses the editor's display. Set Up Slide Show
+  chooses the slide show monitor, Swap Displays moves the show and Presenter View, and Presenter
+  View is placed on another display (#1225); not yet checked on real projectors. 3–5 h.
   **Beta blocker.**
 - **CPU slide rasterization** (`vello_cpu`); PowerPoint renders on the GPU. 12–20 h (vello hybrid
   or wgpu path).
@@ -368,6 +370,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-05 | trivial | Beta item 9 narrowed: slide show monitor choice, Swap Displays and Presenter View placement landed (#1225); projector detection and checks on real projectors remain; scores unchanged |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |

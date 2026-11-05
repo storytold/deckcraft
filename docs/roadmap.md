@@ -1,6 +1,6 @@
 # DeckCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (beta item 9 drops Play From, now in; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: PPTX corpus, presenter and show controls, review navigation, starter decks, Grid Options and New Window, WordArt gallery and handles, pen pressure; beta items 9 and 10 narrowed; duplicated rows and headers folded; previous: minor, core-workflow alpha gate added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-05 · **Change:** trivial (beta item 10 narrowed: slide show monitor choice, Swap Displays and Presenter View placement (#1225); previous: trivial, beta item 9 drops Play From, now in; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: PPTX corpus, presenter and show controls, review navigation, starter decks, Grid Options and New Window, WordArt gallery and handles, pen pressure; beta items 9 and 10 narrowed; duplicated rows and headers folded; previous: minor, core-workflow alpha gate added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Forward-looking: where DeckCraft is going and in what order. The one-page summary is
 [ROADMAP.md](../ROADMAP.md); every shortfall is in [gaps.md](gaps.md); numbers are in
@@ -16,7 +16,7 @@ points and lead the beta plan.
 |---|---|---|---|
 | Build a deck from scratch (theme, layouts, titles and bullets, shapes, pictures from file), save, close and reopen it | yes | Commands for all of it; `.deckcraft` and `.pptx` round-trip tests (`crates/pptx/tests/it/roundtrip.rs`, `crates/format`); AutoRecover. Close discards edits without asking (#60; PR #75 was closed unmerged); image *paste* fails on Windows (#1414), though insert-from-file works | 1–3 |
 | Open a colleague's `.pptx`, edit it, save it back as `.pptx` that PowerPoint opens | partial (not blocking) | The reader is lenient and keeps unknown objects. Files open in PowerPoint without repair (checked 2026-10-06). But only generated decks have been tested; text inside EMF/WMF pictures is missing; comment threads and media options are lost (#70, #74) | 31–55 |
-| Present: full-screen show with transitions, animations, media, presenter view with notes, next slide and timer | yes | 48/48 transitions, 64 effects, triggers, builds, media playback, presenter window, See All Slides and zoom. The presenter timer pauses and resets, and notes have a size control. A custom show plays only its slides. Typing a slide number during the show shows it, and Enter goes there. Presenter view isn't placed on the second display automatically (drag it there; #433) | 2–4 |
+| Present: full-screen show with transitions, animations, media, presenter view with notes, next slide and timer | yes | 48/48 transitions, 64 effects, triggers, builds, media playback, presenter window, See All Slides and zoom. The presenter timer pauses and resets, and notes have a size control. A custom show plays only its slides. Typing a slide number during the show shows it, and Enter goes there. Set Up Slide Show chooses the slide show monitor; Presenter View goes to another display and Swap Displays exchanges them (#1225). Automatic uses the editor's display: no projector detection | 2–4 |
 | Add business content: tables, charts with their data, simple diagrams | partial (not blocking) | Tables with styles, merge/split, all D or P. Charts insert with the common types and edit data in the Chart Data dialog (P0 partial); SmartArt is basic (pre-drawn shapes) | 12–20 |
 | Share the deck: PDF of slides, notes or handouts; images | yes | `file.export` PDF with text layer, links, bookmarks, handouts 1–9; PNG/JPEG. Artwork is raster in the PDF; no direct print (print the PDF) | 10–16 |
 | Review: comments with replies, resolve, spelling | partial (not blocking) | Comments, replies and resolve work and survive `.deckcraft` and `.pptx` (#70); Previous and Next walk every slide and the pane lists them; spelling uses installed Hunspell dictionaries (only a short built-in list where none is installed) | 4–8 |
@@ -49,7 +49,7 @@ Beta means ~75% ready for real work and opening and saving PowerPoint's `.pptx` 
 | 6 | Localization infrastructure + zh-Hans, es, fr, de, ja (with IME) | 27–46 | Localization 8 → ~40% |
 | 7 | Font weights (#69), image paste on Windows (#1414), Tab in text (#78) | 6–11 | Features |
 | 8 | Charts: data grid, elements | 6–10 | Features |
-| 10 | Presenter view on the right display, swap displays | 2–4 | Hardware, Slide show |
+| 10 | Projector detection for Automatic; display placement checked on real projectors | 2–4 | Hardware, Slide show |
 | 9 | Animation Pane: effect options (the timeline and Play From are in) | 3–6 | Features |
 | 11 | Native macOS menu bar, Format Shape pane depth, start screen and window chrome fixes | 13–22 | UI/UX 60 → 75% |
 | 12 | Performance baseline and the obvious fixes | 4–8 | Performance |
@@ -81,7 +81,7 @@ From the local execution plan (`plan/execution-plan.md`, gitignored). Status as 
 | M4 | Design | mostly | Notes/Handout masters, variants, Designer |
 | M5 | Pictures and media | mostly | SVG/EMF, remove background, compress, icons, WMA/WMV |
 | M6 | Transitions and animations | mostly | Animation Pane timeline, remaining effects, transition sounds |
-| M7 | Slide show | mostly | second-display placement, laser, record |
+| M7 | Slide show | mostly | projector detection, laser, record |
 | M8 | Tables and charts | partly | chart data grid, elements, chartex types, draw table |
 | M9 | SmartArt, equations, WordArt | partly | SmartArt layouts and PowerPoint-diagram fidelity, equations (PR #55); the text pane, warp gallery and warp handles are in |
 | M10 | Views | done | Arrange All (grid options and New Window are in) |
@@ -113,6 +113,7 @@ plan above.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-05 | trivial | Beta item 10 narrowed: slide show monitor choice, Swap Displays and Presenter View placement landed (#1225); projector detection remains |
 | 2026-10-22 | trivial | Beta item 9: Animation Pane ▸ Play From landed, the item keeps effect options (3–6 h) |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native save/reopen retains imported chart workbooks and related parts; headless command tests cover a PPTX → native → PPTX cycle and stale-workbook rejection. Milestone scope and scores unchanged |
