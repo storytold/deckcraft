@@ -12,7 +12,7 @@ use std::sync::Arc;
 use deckcraft_fonts::{FontDb, FontFace, FontSlot, ScriptTag};
 use deckcraft_geom::Rect;
 use deckcraft_model::resolve::{self, Ctx};
-use deckcraft_model::text::{Bullet, Run, RunKind, RunProps, TextBody};
+use deckcraft_model::text::{Bullet, Run, RunProps, TextBody};
 use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind};
 use deckcraft_text::Fields;
 use serde_json::{Value, json};
@@ -176,26 +176,14 @@ impl Fields for DrawnFields {
     }
 }
 
-/// A run's text as the layout builds the paragraph from it: a line break is one U+000B, a field
-/// is its value in `fields` or else its saved text.
-fn laid_out_text(run: &Run, props: &RunProps, fields: &DrawnFields) -> String {
-    match &run.kind {
-        RunKind::Text | RunKind::Math { .. } => run.text.clone(),
-        RunKind::Break => "\u{b}".to_string(),
-        RunKind::Field { field } => fields.field_in(field, props.lang.as_deref()).unwrap_or_else(|| run.text.clone()),
-    }
-}
-
 /// The families a run's visible characters ask for, as the layout reads them, without
 /// duplicates: the Latin typeface (theme references resolved); the East Asian or complex-script
 /// typeface (the run's, else the theme's) when a character is in that slot; the theme's typeface
 /// for each script among the characters (`a:font[@script]`); and the symbol typeface when a
-/// character is a symbol-font code (U+F000–U+F0FF).
+/// character is a symbol-font code (U+F000–U+F0FF). The typefaces come from the layout's own
+/// rules (`deckcraft_text::run_fonts`, `script_family` and `is_symbol_code`).
 fn requested(ctx: &Ctx, props: &RunProps, visible: &[Visible]) -> Vec<String> {
-    let theme = &ctx.master.theme;
-    let major = props.font.as_deref().is_some_and(|f| f.starts_with("+mj"));
-    let set = if major { &theme.fonts.major } else { &theme.fonts.minor };
-    let named = |f: String| (!f.trim().is_empty()).then_some(f);
+    let fonts = deckcraft_text::run_fonts(ctx, props);
     let mut out = vec![resolve::font_family(ctx, props)];
     let mut push = |f: Option<String>| {
         if let Some(f) = f
@@ -205,10 +193,10 @@ fn requested(ctx: &Ctx, props: &RunProps, visible: &[Visible]) -> Vec<String> {
         }
     };
     if visible.iter().any(|v| v.slot == FontSlot::EastAsian) {
-        push(named(theme.font(props.font_ea.as_deref().unwrap_or(if major { "+mj-ea" } else { "+mn-ea" }))));
+        push(fonts.ea);
     }
     if visible.iter().any(|v| v.slot == FontSlot::ComplexScript) {
-        push(named(theme.font(props.font_cs.as_deref().unwrap_or(if major { "+mj-cs" } else { "+mn-cs" }))));
+        push(fonts.cs);
     }
     let mut scripts: Vec<ScriptTag> = vec![];
     for v in visible {
@@ -216,11 +204,11 @@ fn requested(ctx: &Ctx, props: &RunProps, visible: &[Visible]) -> Vec<String> {
             && !scripts.contains(&tag)
         {
             scripts.push(tag);
-            push(std::str::from_utf8(&tag).ok().and_then(|s| set.script(s)).map(str::to_string));
+            push(deckcraft_text::script_family(ctx, fonts.major, tag).map(str::to_string));
         }
     }
-    if visible.iter().any(|v| ('\u{F000}'..='\u{F0FF}').contains(&v.c)) {
-        push(props.font_sym.as_deref().map(|f| theme.font(f)).and_then(named));
+    if visible.iter().any(|v| deckcraft_text::is_symbol_code(v.c)) {
+        push(fonts.sym);
     }
     out
 }
@@ -308,7 +296,7 @@ fn drawn_body(ctx: &Ctx, shape: &Shape, body: &TextBody, rect: Rect, fields: &Dr
             .iter()
             .map(|run| {
                 let props = resolve::run(ctx, shape, para, &run.props);
-                let text = laid_out_text(run, &props, fields);
+                let text = deckcraft_text::run_text(run, props.lang.as_deref(), fields);
                 (props, text)
             })
             .collect();
