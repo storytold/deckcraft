@@ -421,27 +421,40 @@ fn paragraph_targets(s: &Session, p: &Value, ids: &[ShapeId]) -> Result<Option<V
     Ok(Some(out))
 }
 
-/// How the `n`th (0-based) step of a by-paragraph sequence starts when the first starts `first`,
-/// as PowerPoint plays a by-paragraph build: the first as set, later ones On Click when the
-/// first is, else After Previous.
-fn step_start(first: AnimStart, n: usize) -> AnimStart {
+/// Delay between the paragraphs of a by-paragraph build that isn't On Click, as the show's
+/// timeline plays it (`deckcraft_anim`'s `PARAGRAPH_STAGGER`; `splitting_a_build_keeps_its_timing`
+/// checks they agree).
+const PARAGRAPH_STAGGER_MS: u32 = 500;
+
+/// How step `n` (0-based) of a by-paragraph sequence plays when its first step starts `first`
+/// after `delay_ms`, as the show plays a by-paragraph build: On Click gives a click per step;
+/// otherwise later steps start With Previous, `PARAGRAPH_STAGGER_MS` apart, rather than waiting
+/// for the step before to finish.
+fn step_timing(first: AnimStart, delay_ms: u32, n: u32) -> (AnimStart, u32) {
     match (n, first) {
-        (0, f) => f,
-        (_, AnimStart::OnClick) => AnimStart::OnClick,
-        _ => AnimStart::AfterPrevious,
+        (0, f) => (f, delay_ms),
+        (_, AnimStart::OnClick) => (AnimStart::OnClick, delay_ms),
+        _ => (AnimStart::WithPrevious, delay_ms.saturating_add(n.saturating_mul(PARAGRAPH_STAGGER_MS))),
     }
 }
 
-/// One effect per paragraph: the shallowest paragraphs each start as `step_start` says, deeper
-/// ones With Previous, so sub-bullets come in with their bullet.
+/// One effect per paragraph: the first and each later shallowest paragraph take a step of
+/// `step_timing`, deeper ones start With Previous at their bullet's time, so sub-bullets come in
+/// with their bullet.
 fn per_paragraph(a: &Animation, id: ShapeId, paras: &[(u32, u8)]) -> Vec<Animation> {
     let top = paras.iter().map(|x| x.1).min().unwrap_or(0);
+    let mut step: u32 = 0;
     paras
         .iter()
         .enumerate()
         .map(|(k, &(i, lvl))| {
-            let start = if k > 0 && lvl > top { AnimStart::WithPrevious } else { step_start(a.start, k) };
-            Animation { shape: id, paragraph: Some(i), text_build: TextBuild::AsOne, start, ..a.clone() }
+            let deeper = k > 0 && lvl > top;
+            if k > 0 && !deeper {
+                step += 1;
+            }
+            let (start, delay_ms) = step_timing(a.start, a.delay_ms, step);
+            let start = if deeper { AnimStart::WithPrevious } else { start };
+            Animation { shape: id, paragraph: Some(i), text_build: TextBuild::AsOne, start, delay_ms, ..a.clone() }
         })
         .collect()
 }
@@ -466,16 +479,9 @@ fn build_paragraphs(s: &Session, id: ShapeId) -> Result<Vec<(u32, bool)>> {
         .collect())
 }
 
-/// Delay between the paragraphs of a by-paragraph build that isn't On Click, as the show's
-/// timeline plays it (`deckcraft_anim`'s `PARAGRAPH_STAGGER`; `splitting_a_build_keeps_its_timing`
-/// checks they agree).
-const PARAGRAPH_STAGGER_MS: u32 = 500;
-
 /// Splits shape `id`'s by-paragraph builds into one effect per paragraph, in place and timed as
-/// the build plays, so one bullet's effect can be replaced without moving the others: On Click
-/// gives a click per bullet; otherwise later bullets start With Previous, `PARAGRAPH_STAGGER_MS`
-/// apart, rather than waiting for the bullet before to finish. Deeper paragraphs start with their
-/// bullet.
+/// the build plays (`step_timing`), so one bullet's effect can be replaced without moving the
+/// others. Deeper paragraphs start with their bullet.
 fn split_builds(anims: &mut Vec<Animation>, id: ShapeId, paras: &[(u32, bool)]) {
     if paras.is_empty() {
         return;
@@ -492,11 +498,8 @@ fn split_builds(anims: &mut Vec<Animation>, id: ShapeId, paras: &[(u32, bool)]) 
                 tops += 1;
             }
             let k = tops.saturating_sub(1);
-            let (start, delay_ms) = match (k, a.start) {
-                (0, first) => (if top { first } else { AnimStart::WithPrevious }, a.delay_ms),
-                (_, AnimStart::OnClick) => (if top { AnimStart::OnClick } else { AnimStart::WithPrevious }, a.delay_ms),
-                _ => (AnimStart::WithPrevious, a.delay_ms.saturating_add(k.saturating_mul(PARAGRAPH_STAGGER_MS))),
-            };
+            let (start, delay_ms) = step_timing(a.start, a.delay_ms, k);
+            let start = if top { start } else { AnimStart::WithPrevious };
             out.push(Animation { paragraph: Some(i), text_build: TextBuild::AsOne, start, delay_ms, ..a.clone() });
         }
     }
@@ -1219,7 +1222,7 @@ mod tests {
         let t = timings(&mut s);
         assert_eq!(t.iter().map(|x| (x.0, x.1)).collect::<Vec<_>>(), vec![(Some(0), 0), (Some(1), 0), (Some(2), 1), (Some(3), 2)]);
         assert_eq!(t[0].2, t[1].2, "the sub-bullet starts with its bullet");
-        // After Previous: one click for all, each bullet after the one before.
+        // After Previous: one click for all, each bullet staggered after the one before.
         s.execute("edit.undo", &json!({})).unwrap();
         s.execute(
             "animation.add",
@@ -1230,6 +1233,44 @@ mod tests {
         assert!(t.iter().all(|x| x.1 == t[0].1), "one step: {t:?}");
         assert_eq!(t[0].2, t[1].2, "the sub-bullet starts with its bullet");
         assert!(t[1].2 < t[2].2 && t[2].2 < t[3].2, "the bullets play one after another: {t:?}");
+    }
+
+    #[test]
+    fn highlighted_bullets_play_as_a_build_of_them_does() {
+        // Choosing every bullet must play as the box's own By Paragraph build plays, whatever the
+        // start: a build that isn't On Click staggers its bullets, it doesn't wait for each to end.
+        for start in ["afterPrevious", "withPrevious", "onClick"] {
+            let box_with_sub_bullet = || {
+                let mut s = Session::with_new();
+                let r = s.execute("insert.textBox", &json!({"rect": [50, 50, 400, 300], "text": "One\nOne a\nTwo\nThree"})).unwrap();
+                let tb = r.get("id").unwrap().as_u64().unwrap();
+                s.execute("text.edit", &json!({"id": tb, "at": [1, 0]})).unwrap();
+                s.execute("format.indent", &json!({})).unwrap();
+                s.execute("text.exit", &json!({})).unwrap();
+                s.execute("edit.select", &json!({"ids": [tb]})).unwrap();
+                (s, tb)
+            };
+            let timings = |s: &mut Session| {
+                let st = s.doc().unwrap();
+                let size = st.doc.slide_size;
+                let tl = deckcraft_anim::Timeline::new(st.current_slide().unwrap(), size.width, size.height);
+                let mut t = tl.effects().into_iter().map(|e| (e.paragraph, e.step, e.start)).collect::<Vec<_>>();
+                t.sort_by_key(|x| x.0);
+                t
+            };
+            let (mut build, _) = box_with_sub_bullet();
+            build.execute("animation.set", &json!({"effect": "fade", "class": "entrance"})).unwrap();
+            build.execute("animation.options", &json!({"textBuild": "byParagraph"})).unwrap();
+            build.execute("animation.timing", &json!({"start": start, "duration": 2000, "delay": 300})).unwrap();
+            let want = timings(&mut build);
+
+            let (mut chosen, tb) = box_with_sub_bullet();
+            let p = json!({"effect": "fade", "class": "entrance", "ids": [tb], "paragraphs": [0, 1, 2, 3], "start": start, "duration": 2000, "delay": 300});
+            chosen.execute("animation.add", &p).unwrap();
+            let got = timings(&mut chosen);
+            assert_eq!(got.iter().filter(|x| x.0 != Some(1)).copied().collect::<Vec<_>>(), want, "{start}");
+            assert_eq!((got[1].1, got[1].2), (got[0].1, got[0].2), "{start}: the sub-bullet starts with its bullet");
+        }
     }
 
     #[test]
