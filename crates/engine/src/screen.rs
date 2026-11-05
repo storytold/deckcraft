@@ -672,7 +672,9 @@ impl ScreenState {
                     self.ended_reason = Some(reason);
                     None
                 }
-                Ok(_) => {
+                // No file was written for an empty take, and the recorder says so: that is not a
+                // write failure, so it gets the plain "nothing in it" message.
+                Ok(_) | Err(RecorderError::Empty) => {
                     let _ = std::fs::remove_file(&path);
                     Some("the screen recording had nothing in it".into())
                 }

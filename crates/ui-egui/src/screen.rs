@@ -276,7 +276,10 @@ pub fn window(app: &mut SlideApp, ctx: &egui::Context) {
                 ui.horizontal(|ui| {
                     ui.label("Record");
                     if app.screen.targets.is_empty() {
-                        ui.label(RichText::new("no screen found").color(Color32::from_gray(170)));
+                        // A host that picks its own source has nothing to list but can record: ask
+                        // for the choice rather than reporting that there is no screen.
+                        let note = if app.screen.implicit { "select a screen when recording" } else { "no screen found" };
+                        ui.label(RichText::new(note).color(Color32::from_gray(170)));
                     } else {
                         let current = app.screen.targets.get(app.screen.selected).map(TargetRow::label).unwrap_or_default();
                         craft_ui::ComboBox::from_id_salt("screen-target").selected_text(current).show_ui(ui, |ui| {

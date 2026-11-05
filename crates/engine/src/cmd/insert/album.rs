@@ -766,6 +766,23 @@ mod tests {
         let texts: Vec<String> =
             s.doc().unwrap().doc.slides.iter().flat_map(|sl| sl.shapes.iter()).filter_map(|sh| sh.text.as_ref().map(|t| t.text())).collect();
         assert!(texts.iter().any(|t| t == "Drawing"), "the caption keeps the display name: {texts:?}");
+
+        // Reopening the album hands the dialog's items back: `items_from_slides` must seed the
+        // source type, or the SVG is refused the second time round.
+        let _ = s.execute("insert.photoAlbumEdit", &json!({})).expect("the edit asks its dialog for the items");
+        let params = s
+            .ui_requests
+            .iter()
+            .find_map(|r| match r {
+                crate::UiRequest::Dialog { id, params } if id == "photoAlbum" => Some(params.clone()),
+                _ => None,
+            })
+            .expect("the edit dialog carries the album's items");
+        let items = params.get("items").cloned().unwrap_or(Value::Null);
+        let first = items.get(0).cloned().unwrap_or(Value::Null);
+        assert!(first.get("typeName").and_then(Value::as_str).is_some_and(|t| t.ends_with(".svg")), "the seed says what the bytes are: {params}");
+        let edited = s.execute("insert.photoAlbumEdit", &json!({"pictures": items, "layout": "1"})).expect("the reopened album re-inserts its svg");
+        assert_eq!(edited["slides"], 1, "{edited}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
