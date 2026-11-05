@@ -281,6 +281,14 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("title.search", "Search commands", "搜尋命令"),
 ];
 
+/// Every Traditional Chinese shell string, joined for the pre-layout font-coverage scan. Shell
+/// labels are static and never pass through the document text scan, so this lets an installed CJK
+/// face be borrowed before those labels are first laid out. Built once.
+pub fn catalog_text() -> &'static str {
+    static TEXT: OnceLock<String> = OnceLock::new();
+    TEXT.get_or_init(|| CATALOG.iter().map(|row| row.2).collect::<Vec<_>>().join(" "))
+}
+
 /// The shell string `key` in `lang`. An unknown key is returned unchanged, so a missed call site
 /// shows its key rather than a blank label.
 pub fn text(lang: Resolved, key: &'static str) -> &'static str {
@@ -434,6 +442,14 @@ mod tests {
     fn an_unavailable_traditional_choice_falls_back_to_english() {
         assert_eq!(LanguageChoice::TraditionalChinese.resolve_with(None, false), Resolved::English);
         assert_eq!(LanguageChoice::TraditionalChinese.resolve_with(None, true), Resolved::TraditionalChinese);
+    }
+
+    #[test]
+    fn the_pre_layout_scan_text_covers_every_translated_shell_string() {
+        let text = catalog_text();
+        for (key, _, traditional) in CATALOG {
+            assert!(text.contains(traditional), "{key} is missing from the scan text");
+        }
     }
 
     #[test]
