@@ -598,6 +598,7 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
     let mut main: Vec<Eff> = vec![];
     let mut triggered: Vec<(u32, Vec<Eff>)> = vec![];
     let mut bld: Vec<(u32, u32, bool)> = vec![];
+    // The last paragraph effect written: (shape, class, trigger, grpId).
     let mut prev_para: Option<(ShapeId, AnimClass, Option<ShapeId>, u32)> = None;
     let mut by_id = std::collections::HashMap::new();
     shape_index(shapes, 0, &mut by_id);
@@ -625,6 +626,9 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             None => &no_roles,
         };
         let by_para = roles.contains(&BuildRole::Top);
+        // PowerPoint keeps a shape's consecutive paragraph effects in one build (`grpId`) marked
+        // `build="p"`; the reader turns them back into a by-paragraph build only if that plays them
+        // the same way.
         let para_effect = !by_para && text_sp && a.paragraph.is_some();
         let joins = para_effect && prev_para.is_some_and(|(s, c, t, _)| s == a.shape && c == a.class && t == a.trigger);
         let grp = match prev_para {
@@ -639,6 +643,8 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         prev_para = para_effect.then_some((a.shape, a.class, a.trigger, grp));
         let mut effs = vec![];
         if by_para {
+            // One effect per paragraph the build animates on its own, deeper ones with their
+            // parent; indices in the file count empty paragraphs too.
             let mut tops = 0;
             for (i, role) in roles.iter().enumerate() {
                 let start = match role {

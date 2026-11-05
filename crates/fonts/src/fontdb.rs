@@ -380,7 +380,9 @@ pub struct FontDb {
     /// scan, so what they find doesn't depend on what ran before them.
     #[cfg(not(target_arch = "wasm32"))]
     cataloged: std::sync::OnceLock<()>,
-    /// Families (lower case) whose cataloged files have all been loaded.
+    /// Families (lower case) whose cataloged files have all been loaded: a family's files load
+    /// together, so a lookup never settles for the one face another name loaded ("Segoe UI
+    /// Semibold" loads a face of the family "Segoe UI").
     #[cfg(not(target_arch = "wasm32"))]
     loaded_families: Mutex<std::collections::HashSet<String>>,
     /// System fallback state: enabled, and characters no system font covers.

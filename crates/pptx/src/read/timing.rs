@@ -216,12 +216,17 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
             && e.attr("nodeType") != Some("tmRoot")
             && let Some(st) = e.child("stCondLst")
         {
-            let is_auto_begin =
-                |c: &El| c.attr("evt") == Some("onBegin") && c.attr("delay").map(str::trim) == Some("0") && c.child("tgtEl").is_none();
+            let is_auto_begin = |c: &El| {
+                c.attr("evt") == Some("onBegin")
+                    && c.attr("delay").map(str::trim) == Some("0")
+                    && c.child("tgtEl").is_none()
+                    && c.child("tn").is_none()
+                    && c.child("rtn").is_none()
+            };
             let has_on_begin = st.children_named("cond").any(is_auto_begin);
             if st
                 .children_named("cond")
-                .any(|c| (c.attr("evt").is_some() && !is_auto_begin(c)) || (!has_on_begin && c.attr("delay").map(str::trim) == Some("indefinite")))
+                .any(|c| (c.attr("evt").is_some() && !is_auto_begin(c)) || (!has_on_begin && c.attr("delay").map(str::trim) != Some("0")))
             {
                 deferred = true;
             }
@@ -252,7 +257,8 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         if cm.child("cTn").and_then(|c| c.attr("repeatCount")) == Some("indefinite") {
             clip.loop_play = true;
         }
-        if !deferred && cm.path(&["cTn", "stCondLst", "cond"]).is_some_and(|c| c.attr("evt").is_none() && c.attr("delay") == Some("0")) {
+        if !deferred && cm.path(&["cTn", "stCondLst", "cond"]).is_some_and(|c| c.attr("evt").is_none() && c.attr("delay").map(str::trim) == Some("0"))
+        {
             clip.autoplay = true;
         }
         if node.bool("fullScrn") == Some(true) {
@@ -267,22 +273,12 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
     let Some(tn) = timing.child("tnLst") else { return vec![] };
     let mut found = vec![];
     collect(tn, At { trigger: None, group: 0, offset: 0 }, &mut 0, &mut found, 0);
-    // Paragraph builds are inferred unless a matching bldP explicitly opts out.
-    let by_para: std::collections::HashSet<(u32, String)> = timing
+    // Paragraph builds (`bldP`) by (spid, grpId) -> whether `build="p"`.
+    let bld_p: std::collections::HashMap<(u32, String), bool> = timing
         .child("bldLst")
         .map(|b| {
             b.children_named("bldP")
-                .filter(|p| p.attr("build") == Some("p"))
-                .filter_map(|p| Some((p.u32("spid")?, p.attr("grpId").unwrap_or("0").to_string())))
-                .collect()
-        })
-        .unwrap_or_default();
-    let not_by_para: std::collections::HashSet<(u32, String)> = timing
-        .child("bldLst")
-        .map(|b| {
-            b.children_named("bldP")
-                .filter(|p| p.attr("build") != Some("p"))
-                .filter_map(|p| Some((p.u32("spid")?, p.attr("grpId").unwrap_or("0").to_string())))
+                .filter_map(|p| Some(((p.u32("spid")?, p.attr("grpId").unwrap_or("0").to_string()), p.attr("build") == Some("p"))))
                 .collect()
         })
         .unwrap_or_default();
@@ -351,7 +347,7 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
             a.color = dml::color(clr);
         }
         let grp = c.attr("grpId").unwrap_or("0").to_string();
-        let build = paragraph.is_some() && !not_by_para.contains(&(file_id, grp.clone()));
+        let build = paragraph.is_some() && bld_p.get(&(file_id, grp.clone())) != Some(&false);
         out.push((a, file_id, grp, build));
         at.push((f.trigger, f.group, f.offset));
     }
@@ -365,7 +361,7 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
     for run in out.chunk_by(same_build) {
         let effects: Vec<&Animation> = run.iter().map(|(a, ..)| a).collect();
         let build = run.first().is_some_and(|r| r.3);
-        let explicit_bld = run.first().is_some_and(|r| by_para.contains(&(r.1, r.2.clone())));
+        let explicit_bld = run.first().is_some_and(|r| bld_p.get(&(r.1, r.2.clone())) == Some(&true));
         let text = effects.first().and_then(|a| find_shape(shapes, a.shape)).and_then(|s| s.text.as_ref());
         match (effects.first(), text) {
             (Some(first), Some(text)) if build && plays_as_build(&effects, text, explicit_bld) => {
