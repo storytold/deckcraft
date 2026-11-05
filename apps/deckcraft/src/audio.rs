@@ -203,9 +203,14 @@ impl MicIn for CpalIn {
                     this.report();
                 }
                 Err(e) => {
-                    // Keep it where `failure()` reads: a second call must not come back empty.
-                    keep_stream_error(&this.error, &e);
+                    // The worker's own `Drop` reports and drains the error slot, so keep the
+                    // reason where `failure()` reads it *after* that runs: a caller must not be
+                    // left with "the microphone is no longer available" instead of the device or
+                    // permission error.
+                    let error = this.error.clone();
                     this.dead.store(true, Ordering::Relaxed);
+                    drop(this);
+                    keep_stream_error(&error, &e);
                     let _ = tx.send(Err(e));
                 }
             })
