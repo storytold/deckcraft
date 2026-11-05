@@ -6430,6 +6430,7 @@ fn a_slide_index_past_the_end_is_refused_by_every_slide_command() {
         ("file.export", json!({"path": dir.join("deck.gif").to_string_lossy(), "format": "gif", "slides": [0, 2]})),
         ("file.export", json!({"path": dir.join("deck.pdf").to_string_lossy(), "format": "pdf", "slides": [0, 2]})),
         ("design.background", json!({"index": 2, "color": "#FF0000"})),
+        ("design.background", json!({"index": 2, "copy": true})),
         ("comment.list", json!({"slide": 2})),
         ("comment.next", json!({"slide": 2})),
         ("comment.prev", json!({"slide": 2})),
