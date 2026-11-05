@@ -118,7 +118,44 @@ impl SlideApp {
             ime_settles_seen: 0,
             ime_interrupt_pending: false,
             ime_reset: HashMap::new(),
+            displays: crate::displays::Displays::default(),
+            editor_restore: None,
         }
+    }
+
+    /// Read the displays again through [`Services::displays`], when Set Up Slide Show opens and
+    /// when a show starts. Where the host cannot tell (tests, the web), they stay as they are.
+    pub fn refresh_displays(&mut self) {
+        if let Some(read) = self.services.displays.as_mut()
+            && let Some(displays) = read()
+        {
+            self.displays = displays;
+        }
+    }
+
+    /// Once a show on another display has ended, put the editor window back where it was, one
+    /// step per frame ([`crate::displays::EditorRestore`]).
+    fn restore_editor(&mut self, ctx: &egui::Context) {
+        use crate::displays::RestoreStep;
+        let Some(restore) = self.editor_restore.as_mut() else { return };
+        let ppp = ctx.pixels_per_point();
+        let points = |px: i32| px as f32 / ppp;
+        let fullscreen = ctx.input(|i| i.viewport().fullscreen == Some(true));
+        let command = match restore.next(fullscreen) {
+            None => {
+                self.editor_restore = None;
+                return;
+            }
+            Some(RestoreStep::Wait) => None,
+            Some(RestoreStep::LeaveFullScreen) => Some(egui::ViewportCommand::Fullscreen(false)),
+            Some(RestoreStep::Move([x, y])) => Some(egui::ViewportCommand::OuterPosition(egui::pos2(points(x), points(y)))),
+            Some(RestoreStep::Size([w, h])) => Some(egui::ViewportCommand::InnerSize(egui::vec2(points(w), points(h)))),
+            Some(RestoreStep::Maximize) => Some(egui::ViewportCommand::Maximized(true)),
+        };
+        if let Some(command) = command {
+            ctx.send_viewport_cmd(command);
+        }
+        ctx.request_repaint();
     }
 
     pub fn with_control(mut self, rx: Receiver<ControlRequest>) -> Self {
@@ -297,6 +334,10 @@ impl SlideApp {
         canvas::trackpad_twist(self, &ctx);
         eyedropper::tick(self, &ctx);
         self.opening_ui(&ctx);
+        if self.show.is_none() {
+            // However the show ended (Esc, End Show, `show.end`, closing the window).
+            self.restore_editor(&ctx);
+        }
         if self.show.is_some() {
             self.anim_preview = None;
             show::ui(self, ui);

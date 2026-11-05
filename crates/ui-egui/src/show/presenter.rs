@@ -1,7 +1,9 @@
 use super::keys::keyboard;
 use super::render::{fit, next_rect};
 use super::zoom::{Zoom, grid_indices, paint_grid, see_all_hit, slide_aspect, toggle_blank, zoom_frame};
-use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, Stroke, Ui, pos2, theme, vec2};
+use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, Stroke, Ui, pos2, show_fills_screen, theme, vec2};
+
+pub(super) const PRESENTER_SIZE: [f32; 2] = [1100.0, 700.0];
 
 pub(super) const NOTES_DEFAULT: f32 = 18.0;
 
@@ -75,6 +77,45 @@ pub(super) fn wall_clock() -> String {
     }
 }
 
+/// Moves Presenter View's window to `show.presenter_place` (one frame to move it, the next to size
+/// it at the new display's scale), else notes where it is (`show.presenter_at`). Runs in its viewport.
+fn place_presenter(ctx: &egui::Context, show: &mut Show) {
+    let ppp = ctx.pixels_per_point();
+    let points = |px: i32| px as f32 / ppp;
+    match show.presenter_place {
+        Some((r, false)) => {
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos2(points(r[0]), points(r[1]))));
+            show.presenter_place = Some((r, true));
+            ctx.request_repaint();
+        }
+        Some((r, true)) => {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(points(r[2]), points(r[3]))));
+            show.presenter_place = None;
+            show.presenter_at = Some(r);
+        }
+        None => {
+            let at = ctx.input(|i| {
+                let v = i.viewport();
+                // A minimized window sits far off screen.
+                if v.minimized == Some(true) || v.fullscreen == Some(true) {
+                    return None;
+                }
+                let (outer, inner) = (v.outer_rect?, v.inner_rect?);
+                let px = |v: f32| (v * ppp).round() as i32;
+                Some([px(outer.min.x), px(outer.min.y), px(inner.width()), px(inner.height())])
+            });
+            if at.is_some() {
+                show.presenter_at = at;
+            }
+        }
+    }
+}
+
+/// Presenter View's window level: on top of a show that fills the screen, else an ordinary window.
+pub(super) fn presenter_level(reading: bool, show_type: &str) -> egui::WindowLevel {
+    if show_fills_screen(reading, show_type) { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal }
+}
+
 /// The Presenter View's preview of slide `n`, `size` pixels.
 fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) -> egui::ColorImage {
     let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, ..Default::default() };
@@ -82,7 +123,14 @@ fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) 
 }
 
 /// Render the presenter window and set `keep` false when the user ends or closes the show.
-pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, now: f64, keep: &mut bool) {
+pub(super) fn presenter_window(
+    ctx: &egui::Context,
+    show: &mut Show,
+    doc: &std::sync::Arc<Presentation>,
+    displays: &crate::displays::Displays,
+    now: f64,
+    keep: &mut bool,
+) {
     let cur = show.state.slide;
     let next = show.state.peek_next(doc);
     let cur_tex = show.tex.as_ref().map(|(_, t)| t.clone());
@@ -148,11 +196,19 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
     };
     ctx.show_viewport_immediate(
         egui::ViewportId::from_hash_of("deckcraft_presenter"),
-        egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
+        // On top of a full-screen show, which would otherwise hide it when they share a display. A
+        // show browsed in a window is an ordinary window beside it.
+        // On Wayland, set_outer_position and set_window_level are unsupported: the
+        // compositor chooses Presenter View's display and stacking order instead.
+        egui::ViewportBuilder::default()
+            .with_title("Presenter View — DeckCraft")
+            .with_inner_size(PRESENTER_SIZE)
+            .with_window_level(presenter_level(show.reading, &doc.show.show_type)),
         |ui, _| {
             if !keyboard(ui.ctx(), show, doc, now, true) {
                 *keep = false;
             }
+            place_presenter(ui.ctx(), show);
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
             let elapsed = show.timer.elapsed(now);
             let paused = show.timer.paused();
@@ -198,8 +254,20 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                     if button(ui, show.zoom_label()).clicked() {
                         show.zoom_key();
                     }
+                    // Swap Displays (PowerPoint's Display Settings), with more than one display.
+                    if show_fills_screen(show.reading, &doc.show.show_type)
+                        && let Some(d) = show.display
+                        && button(ui, "Swap Displays").clicked()
+                        && let Some((to, r)) = show.presenter_at.and_then(|at| displays.swap(d, at))
+                    {
+                        ui.ctx().send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::SetMonitor(to));
+                        ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
+                        show.display = Some(to);
+                        show.presenter_place = Some((r, false));
+                    }
                 });
                 ui.add_space(8.0);
+                // The current and next slides side by side on top, the notes across the bottom.
                 let avail = ui.available_rect_before_wrap();
                 if show.presenter_grid {
                     // The grid fills this window; the audience keeps seeing the current slide.
@@ -218,9 +286,10 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                     }
                     return;
                 }
-                let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, avail.max.y));
-                let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), avail.max);
-                let cr = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.8)), doc);
+                let top = avail.min.y + avail.height() * 0.62;
+                let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, top));
+                let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), pos2(avail.max.x, top));
+                let cr = fit(left, doc);
                 let cr = Rect::from_min_size(left.min, cr.size());
                 if let Some(t) = &cur_tex {
                     ui.painter().image(t.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
@@ -258,21 +327,24 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                         }
                     }
                 }
-                let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
+                let notes_head = Rect::from_min_size(pos2(avail.min.x, cr.max.y.max(nr.max.y) + 12.0), vec2(avail.width(), 32.0));
                 let mut head = ui.new_child(egui::UiBuilder::new().max_rect(notes_head));
                 head.horizontal(|ui| {
                     ui.label(egui::RichText::new("Notes").size(13.0).color(Color32::from_gray(170)));
-                    if ui.button("A-").clicked() {
+                    if button(ui, "A-").clicked() {
                         show.nudge_notes(-NOTES_STEP);
                     }
                     ui.label(egui::RichText::new(format!("{}", show.notes_px as i32)).size(13.0).color(Color32::from_gray(200)));
-                    if ui.button("A+").clicked() {
+                    if button(ui, "A+").clicked() {
                         show.nudge_notes(NOTES_STEP);
                     }
                 });
-                let notes_rect = Rect::from_min_max(pos2(right.min.x, notes_head.max.y + 4.0), right.max);
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
+                // Black on white, like a printed page, for reading at a glance.
+                let notes_rect = Rect::from_min_max(pos2(avail.min.x, notes_head.max.y + 4.0), avail.max);
+                ui.painter().rect_filled(notes_rect, CornerRadius::same(4), Color32::WHITE);
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect.shrink(12.0)));
                 egui::ScrollArea::vertical().show(&mut child, |ui| {
+                    ui.set_width(ui.available_width());
                     presenter_notes(ui, notes, show.notes_px);
                 });
             });
@@ -292,7 +364,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
 
 /// The current slide's notes in the presenter's notes pane, `px` for 12 pt text.
 pub(super) fn presenter_notes(ui: &mut Ui, notes: &deckcraft_model::text::TextBody, px: f32) -> egui::Response {
-    let color = Color32::from_gray(230);
+    let color = Color32::BLACK;
     if notes.text().is_empty() {
         ui.label(egui::RichText::new("No notes.").size(px).color(color))
     } else {

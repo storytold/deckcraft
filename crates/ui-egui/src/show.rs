@@ -117,6 +117,13 @@ pub struct Show {
     /// visible frame. `run_logic` does not refresh `InputState::time`, so this lets a hidden show
     /// keep playing from wall time without a draw.
     hidden_anchor: Option<(f64, web_time::Instant)>,
+    /// The display the show fills, when there are several ([`crate::displays`]).
+    display: Option<usize>,
+    /// Where to put Presenter View's window, and whether it has been moved there (it is sized on
+    /// the next frame, once it has the new display's scale).
+    presenter_place: Option<([i32; 4], bool)>,
+    /// Where Presenter View's window is, in physical pixels ([`crate::displays`]).
+    presenter_at: Option<[i32; 4]>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -270,6 +277,9 @@ impl Show {
             media_clock: None,
             media_cues: vec![],
             hidden_anchor: None,
+            display: None,
+            presenter_place: None,
+            presenter_at: None,
         }
     }
 

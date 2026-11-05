@@ -2,7 +2,7 @@ use super::keys::{handle_keys, keyboard};
 use super::media::{
     Pick, Under, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, shapes_under_pointer, show_media,
 };
-use super::presenter::{PresenterTimer, format_elapsed, presenter_window};
+use super::presenter::{PRESENTER_SIZE, PresenterTimer, format_elapsed, presenter_window};
 use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
 use super::zoom::{
     Zoom, grid_indices, norm_on_slide, paint_grid, see_all_hit, slide_aspect, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
@@ -12,6 +12,7 @@ use super::{
     Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
     ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
 };
+use crate::displays::{EditorPlace, EditorRestore};
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
 
@@ -74,7 +75,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         return;
     }
     show.observe_visible_frame(now, web_time::Instant::now());
-    begin_show(&ctx, &mut show, &doc, now, app.services.presenter.is_some());
+    begin_show(app, &ctx, &mut show, &doc, now);
     let mut out = Out { keep: keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
     if show.presenter
         && !show.reading
@@ -136,7 +137,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     draw_slide(app, ui, &mut show, &f, &painter);
     draw_pen_and_hints(ui, &mut show, &f, &painter, pointing);
     draw_bars(ui, &mut show, &f, &painter, &mut out);
-    draw_extras(&mut show, &f, &painter, &mut out);
+    draw_extras(app, &mut show, &f, &painter, &mut out);
     if out.keep
         && show.presenter
         && !show.reading
@@ -209,8 +210,22 @@ fn paint_hidden(ui: &Ui, doc: &Presentation, show: &Show) {
     }
 }
 
-fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, remote: bool) {
+fn begin_show(app: &mut SlideApp, ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) {
     if !show.started {
+        // A remote Presenter View (the web's second window) leaves the audience window as it is.
+        let full_screen = show_fills_screen(show.reading, &doc.show.show_type) && !(show.presenter && app.services.presenter.is_some());
+        // Use the display selected in Set Up Slide Show, falling back when it was disconnected.
+        if full_screen {
+            app.refresh_displays();
+        }
+        if full_screen && app.displays.list.len() > 1 {
+            show.display = Some(app.displays.first_choice(app.ui.show_display, app.ui.show_display_id.as_ref()));
+            // The show may move the editor window to another display: put it back afterwards. A
+            // restore still pending from the last show keeps the place from before that one.
+            let ppp = ctx.pixels_per_point();
+            let place = app.editor_restore.map(|r| r.place).or_else(|| ctx.input(|i| EditorPlace::of(i.viewport(), ppp)));
+            app.editor_restore = place.map(EditorRestore::new);
+        }
         show.started = true;
         show.slide_start = now;
         show.step_start = now;
@@ -220,8 +235,16 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
         show.show_start = now;
         show.timer = PresenterTimer::start(now);
         show.last_move = now;
-        if show_fills_screen(show.reading, &doc.show.show_type) && !(show.presenter && remote) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+        if full_screen {
+            ctx.send_viewport_cmd(match show.display {
+                Some(i) => egui::ViewportCommand::SetMonitor(i),
+                None => egui::ViewportCommand::Fullscreen(true),
+            });
+            if show.presenter {
+                let px = |v: f32| (v * ctx.pixels_per_point()).round() as i32;
+                let size = [px(PRESENTER_SIZE[0]), px(PRESENTER_SIZE[1])];
+                show.presenter_place = app.displays.presenter(app.ui.presenter_window, show.display, size).map(|r| (r, false));
+            }
         }
         show.after_enter(doc, now);
     }
@@ -823,7 +846,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
     }
 }
 
-fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
+fn draw_extras(app: &mut SlideApp, show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
     let Fr { ctx, doc, now, full, .. } = *f;
     if show.grid && !show.ended {
         paint_grid(painter, ctx, show, doc, full);
@@ -844,7 +867,17 @@ fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) 
     }
     // Presenter view in a second window.
     if out.keep && show.presenter && !show.reading && !show.remote_opened {
-        presenter_window(ctx, show, doc, now, &mut out.keep);
+        let previous_display = show.display;
+        presenter_window(ctx, show, doc, &app.displays, now, &mut out.keep);
+        // Remembered for the next show, as PowerPoint does.
+        if show.presenter_at.is_some() {
+            app.ui.presenter_window = show.presenter_at;
+        }
+        // Only an explicit Swap Displays changes the preference; automatic/fallback placement
+        // must not replace the user's saved choice.
+        if show.display != previous_display {
+            app.ui.set_show_display(show.display, &app.displays);
+        }
     }
 }
 
@@ -857,7 +890,8 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
             host.close();
         }
         app.media.stop_owned(crate::media::Owner::Show);
-        if !show.reading {
+        // A show on another display also puts the editor window back ([`SlideApp::restore_editor`]).
+        if !show.reading && app.editor_restore.is_none() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         }
         if show.rehearse {

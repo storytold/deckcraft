@@ -20,6 +20,7 @@ pub mod canvas;
 pub mod capture;
 pub mod control;
 pub mod dialogs;
+pub mod displays;
 pub mod doc_window;
 pub mod eyedropper;
 pub mod icons;
@@ -335,6 +336,11 @@ pub struct SlideApp {
     next_file_id: u64,
     /// Picks and drops whose bytes have not arrived yet.
     pending_files: Vec<PendingFile>,
+    /// The displays, as the desktop app last reported them ([`SlideApp::refresh_displays`]); empty
+    /// where it cannot tell ([`displays`]).
+    pub displays: displays::Displays,
+    /// The editor window to put back once a show on another display ends.
+    editor_restore: Option<displays::EditorRestore>,
     /// The empty presentation host mode starts with ([`SlideApp::start_for_host`]), until the
     /// first file the page sends takes its place.
     host_start: Option<u64>,
