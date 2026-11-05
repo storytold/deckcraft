@@ -6557,6 +6557,20 @@ fn table_insert_column_with_keep_width_keeps_the_table_width_and_copies_the_neig
     assert!((x.w - 840.0).abs() < 1e-6, "frame {}", x.w);
 }
 
+#[test]
+fn table_insert_column_beside_a_merge_copies_the_anchor_format() {
+    let mut s = session();
+    let id = table_at(&mut s, &[280.0, 280.0, 280.0], json!([["a", "b", "c"], ["d", "e", "f"]]));
+    s.execute("table.cellFill", &json!({"id": id.0, "color": "#FF0000", "cells": [[0, 0]]})).unwrap();
+    s.execute("table.merge", &json!({"id": id.0, "from": [0, 0], "to": [0, 1]})).unwrap();
+    // Right of the merge: the neighbour column holds the covered cell, but the anchor shows.
+    s.execute("table.insertColumnRight", &json!({"id": id.0, "col": 1})).unwrap();
+    let t = table_of(&s, id);
+    assert!(t.cell(0, 1).unwrap().h_merge, "the merge stays put");
+    assert_eq!(t.cell(0, 2).unwrap().fill, t.cell(0, 0).unwrap().fill);
+    assert!(t.cell(0, 2).unwrap().fill.is_some());
+}
+
 /// A table near the slide's right edge, with no room for another column: by default an inserted
 /// column widens it past the edge, as PowerPoint's Insert Right does (the frame keeps its left and
 /// grows), and `keepWidth: true` keeps it on the slide.

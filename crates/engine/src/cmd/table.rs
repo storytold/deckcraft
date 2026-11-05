@@ -360,7 +360,18 @@ fn insert_col_like(t: &mut Table, at: usize, neighbour: usize, keep_width: bool)
     let total = t.width();
     let neighbour = neighbour.min(t.cols.len().saturating_sub(1));
     let w = t.cols.get(neighbour).copied();
-    let templates: Vec<Option<Cell>> = t.rows.iter().map(|r| r.cells.get(neighbour).cloned()).collect();
+    // A neighbour covered by a horizontal merge is formatted as its anchor, which is what shows.
+    let templates: Vec<Option<Cell>> = t
+        .rows
+        .iter()
+        .map(|r| {
+            let mut n = neighbour;
+            while n > 0 && r.cells.get(n).is_some_and(|c| c.h_merge) {
+                n -= 1;
+            }
+            r.cells.get(n).cloned()
+        })
+        .collect();
     t.insert_col(at);
     let at = at.min(t.cols.len().saturating_sub(1));
     if let (Some(w), Some(slot)) = (w, t.cols.get_mut(at)) {
