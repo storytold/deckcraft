@@ -1653,15 +1653,17 @@ fn displays_are_read_when_needed_only() {
 
     let reads = Rc::new(Cell::new(0));
     let counter = reads.clone();
-    let mut services = crate::Services::default();
-    services.displays = Some(Box::new(move || {
-        counter.set(counter.get() + 1);
-        Some(Displays {
-            list: vec![Display { name: None, x: 0, y: 0, w: 1920, h: 1080 }, Display { name: None, x: 1920, y: 0, w: 1280, h: 720 }],
-            editor: Some(0),
-            primary: Some(0),
-        })
-    }));
+    let services = crate::Services {
+        displays: Some(Box::new(move || {
+            counter.set(counter.get() + 1);
+            Some(Displays {
+                list: vec![Display { name: None, x: 0, y: 0, w: 1920, h: 1080 }, Display { name: None, x: 1920, y: 0, w: 1280, h: 720 }],
+                editor: Some(0),
+                primary: Some(0),
+            })
+        })),
+        ..Default::default()
+    };
     let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), services);
     app.ui.show_display = Some(1);
     let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 800.0)).build_ui_state(
