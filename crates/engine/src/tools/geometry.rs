@@ -101,6 +101,7 @@ impl Session {
             let list = cmd::current_shapes(doc, sel).cloned().unwrap_or_default();
             let mut copies: Vec<Shape> = list.iter().filter(|x| ids.contains(&x.id)).cloned().collect();
             let boxes: Vec<Xfrm> = copies.iter().map(|c| xfrm_of(doc, sel, c)).collect();
+            cmd::edit::detach_on_slide(doc, sel, &mut copies);
             cmd::edit::reid("edit.duplicate", doc, &mut copies)?;
             for (c, b) in copies.iter_mut().zip(boxes) {
                 c.xfrm = Some(b);
