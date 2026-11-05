@@ -6509,3 +6509,23 @@ fn save_to_image_path_is_an_error_not_zip_bytes() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A horizontal merge that spans the column a new one is inserted beside grows over it, also at
+/// the merge's edge: a title row merged across the table keeps spanning it.
+#[test]
+fn table_insert_column_extends_a_merge_that_spans_the_neighbour() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0, 100.0], json!([["title", "", ""], ["a", "b", "c"]]));
+    s.execute("table.merge", &json!({"id": id.0, "from": [0, 0], "to": [0, 2]})).unwrap();
+    s.execute("table.insertColumnRight", &json!({"id": id.0, "col": 2})).unwrap();
+    let t = table_of(&s, id);
+    assert_eq!(t.cell(0, 0).unwrap().grid_span, 4, "the title now spans the new column");
+    assert!(t.cell(0, 3).unwrap().h_merge);
+    assert_eq!(t.cell(1, 0).unwrap().grid_span, 1);
+    s.execute("table.insertColumnLeft", &json!({"id": id.0, "col": 0})).unwrap();
+    let t = table_of(&s, id);
+    assert_eq!(t.cell(0, 0).unwrap().grid_span, 5, "left of the first column too");
+    assert_eq!(t.cell(0, 0).unwrap().text.text(), "title");
+    // A column beside an unmerged row leaves it unmerged.
+    assert_eq!(t.cell(1, 0).unwrap().grid_span, 1);
+}

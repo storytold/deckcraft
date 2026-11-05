@@ -24,18 +24,24 @@ pub fn specs() -> Vec<CommandSpec> {
             "rowBelow",
             "table.insertRowBelow"
         )),
-        cmd!("table.insertColumnLeft", "Insert Left", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
-            s,
-            p,
-            "colLeft",
-            "table.insertColumnLeft"
-        )),
-        cmd!("table.insertColumnRight", "Insert Right", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
-            s,
-            p,
-            "colRight",
-            "table.insertColumnRight"
-        )),
+        cmd!(
+            "table.insertColumnLeft",
+            "Insert Left",
+            ["Table Layout", "Rows & Columns"],
+            None,
+            "{col?, id?} a merged row that spans the column grows to span the new one",
+            has_selection,
+            |s, p| rows_cols(s, p, "colLeft", "table.insertColumnLeft")
+        ),
+        cmd!(
+            "table.insertColumnRight",
+            "Insert Right",
+            ["Table Layout", "Rows & Columns"],
+            None,
+            "{col?, id?} a merged row that spans the column grows to span the new one",
+            has_selection,
+            |s, p| rows_cols(s, p, "colRight", "table.insertColumnRight")
+        ),
         cmd!("table.deleteRow", "Delete Rows", ["Table Layout", "Rows & Columns"], None, "{row?, id?}", has_selection, |s, p| rows_cols(
             s,
             p,
@@ -320,8 +326,8 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result
         match op.as_str() {
             "rowAbove" => t.insert_row(r),
             "rowBelow" => t.insert_row(r.saturating_add(1)),
-            "colLeft" => t.insert_col(c),
-            "colRight" => t.insert_col(c.saturating_add(1)),
+            "colLeft" => t.insert_col_beside(c, Some(c)),
+            "colRight" => t.insert_col_beside(c.saturating_add(1), Some(c)),
             "delRow" => {
                 if !t.delete_row(r) {
                     return Err(bad(name, "can't delete the last row"));
