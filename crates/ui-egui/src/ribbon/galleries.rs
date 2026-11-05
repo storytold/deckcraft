@@ -222,20 +222,22 @@ pub(super) fn kurbo_flatten(path: &deckcraft_geom::BezPath, mut f: impl FnMut(Fl
     });
 }
 
-pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::ColorScheme) {
+/// Outline, weight, dash and arrow menus. `ids` names the shapes to change: the Camera Format tab
+/// passes its Cameos so a mixed selection leaves the ordinary shapes alone (`&[]` = the selection).
+pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::ColorScheme, ids: &[u32]) {
     if let Some(c) = widgets::color_grid(ui, sc, Some("No Outline")) {
         match c {
             Some(c) => {
                 app.last_outline = cref_param(&c);
-                run(app, "shape.line", json!({"color": cref_param(&c)}));
+                run(app, "shape.line", json!({"color": cref_param(&c), "ids": ids}));
             }
-            None => run(app, "shape.line", json!({"none": true})),
+            None => run(app, "shape.line", json!({"none": true, "ids": ids})),
         }
     }
     ui.menu_button("Weight", |ui| {
         for w in [0.25, 0.5, 0.75, 1.0, 1.5, 2.25, 3.0, 4.5, 6.0] {
             if ui.button(format!("{w} pt")).clicked() {
-                run(app, "shape.line", json!({"width": w}));
+                run(app, "shape.line", json!({"width": w, "ids": ids}));
                 ui.close();
             }
         }
@@ -251,7 +253,7 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
             ("Long Dash Dot", "lgDashDot"),
         ] {
             if ui.button(l).clicked() {
-                run(app, "shape.line", json!({"dash": d}));
+                run(app, "shape.line", json!({"dash": d, "ids": ids}));
                 ui.close();
             }
         }
@@ -266,14 +268,15 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
             ("Oval ends", "oval", "oval"),
         ] {
             if ui.button(l).clicked() {
-                run(app, "shape.line", json!({"head": h, "tail": tl}));
+                run(app, "shape.line", json!({"head": h, "tail": tl, "ids": ids}));
                 ui.close();
             }
         }
     });
 }
 
-pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
+/// Shadow, reflection, glow, soft-edge and bevel menus; `ids` as in [`outline_menu`].
+pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui, ids: &[u32]) {
     ui.menu_button("Shadow", |ui| {
         for (l, v) in [
             ("No Shadow", "none"),
@@ -284,31 +287,31 @@ pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
             ("Perspective", "perspective"),
         ] {
             if ui.button(l).clicked() {
-                run(app, "shape.effects", json!({"shadow": v}));
+                run(app, "shape.effects", json!({"shadow": v, "ids": ids}));
             }
         }
     });
     ui.menu_button("Reflection", |ui| {
         for (l, v) in [("No Reflection", "none"), ("Tight", "tight"), ("Half", "half"), ("Full", "full")] {
             if ui.button(l).clicked() {
-                run(app, "shape.effects", json!({"reflection": v}));
+                run(app, "shape.effects", json!({"reflection": v, "ids": ids}));
             }
         }
     });
     ui.menu_button("Glow", |ui| {
         if ui.button("No Glow").clicked() {
-            run(app, "shape.effects", json!({"glow": null}));
+            run(app, "shape.effects", json!({"glow": null, "ids": ids}));
         }
         for r in [5.0, 8.0, 11.0, 18.0] {
             if ui.button(format!("{r} pt glow")).clicked() {
-                run(app, "shape.effects", json!({"glow": r}));
+                run(app, "shape.effects", json!({"glow": r, "ids": ids}));
             }
         }
     });
     ui.menu_button("Soft Edges", |ui| {
         for r in [0.0, 1.0, 2.5, 5.0, 10.0, 25.0] {
             if ui.button(if r == 0.0 { "No Soft Edges".to_string() } else { format!("{r} pt") }).clicked() {
-                run(app, "shape.effects", json!({"softEdges": r}));
+                run(app, "shape.effects", json!({"softEdges": r, "ids": ids}));
             }
         }
     });
@@ -329,7 +332,7 @@ pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
             "artDeco",
         ] {
             if ui.button(b).clicked() {
-                run(app, "shape.effects", json!({"bevel": b}));
+                run(app, "shape.effects", json!({"bevel": b, "ids": ids}));
             }
         }
     });

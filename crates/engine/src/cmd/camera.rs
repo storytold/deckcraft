@@ -340,7 +340,9 @@ pub fn has_cameo(s: &Session) -> std::result::Result<(), String> {
         // nothing is selected.
         return Err(super::NOTHING_SELECTED.to_string());
     }
-    if shapes.iter().all(|sh| sh.is_cameo()) { Ok(()) } else { Err("no Cameo selected".into()) }
+    // The Camera Format tab stays up for a mixed selection; each command names the Cameos it
+    // changes, so one Cameo in the selection is enough here.
+    if shapes.iter().any(|sh| sh.is_cameo()) { Ok(()) } else { Err("no Cameo selected".into()) }
 }
 
 /// Enabled state of `cameo.preview`: a Cameo is selected, or a preview is running — a preview can
@@ -461,6 +463,23 @@ mod tests {
             }
             assert_eq!(super::style_of(sh), Some(st.id), "{}", st.id);
         }
+    }
+
+    /// The Camera Format tab stays usable when a Cameo shares the selection with an ordinary
+    /// shape; the commands address the Cameo ids, so the other shape is untouched.
+    #[test]
+    fn a_mixed_selection_styles_only_the_cameo() {
+        let mut s = Session::with_new();
+        let cam = s.execute("insert.cameo", &json!({})).expect("cameo")["id"].as_u64().expect("id") as u32;
+        let rect = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 40, 40]})).expect("rect")["id"].as_u64().expect("id") as u32;
+        s.execute("selection.select", &json!({"ids": [rect, cam]})).expect("select");
+        assert!(super::has_cameo(&s).is_ok(), "the tab's tools stay available");
+        s.execute("camera.style", &json!({"style": "centerShadowCircle", "ids": [cam]})).expect("style");
+        let doc = s.doc().expect("doc");
+        let cameo = doc.shapes().iter().find(|sh| sh.id.0 == cam).expect("cameo");
+        assert_eq!(super::style_of(cameo), Some("centerShadowCircle"));
+        let plain = doc.shapes().iter().find(|sh| sh.id.0 == rect).expect("rect");
+        assert_ne!(super::style_of(plain), Some("centerShadowCircle"), "the ordinary shape keeps its own outline and effects");
     }
 
     #[test]

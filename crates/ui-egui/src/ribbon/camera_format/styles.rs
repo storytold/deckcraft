@@ -16,26 +16,27 @@ pub(super) fn styles_section(app: &mut SlideApp, ui: &mut Ui) {
     // border or effect: highlighting No Style for those would be wrong.
     let current = app.session.active().and_then(|d| d.selected_shapes().first().and_then(|sh| style_of(sh))).unwrap_or("");
     let en = enabled(app, "camera.style");
+    // A mixed selection keeps the tab: every command below addresses the Cameos only.
+    let ids = super::cameo_ids(app);
     group(ui, |ui| {
         if let Some(id) = style_gallery(ui, current, en) {
-            run(app, "camera.style", json!({"style": id}));
+            run(app, "camera.style", json!({"style": id, "ids": ids}));
         }
         rows(ui, |ui| {
-            small(app, ui, Icon::ApplyToAll, "Apply to All Slides", "camera.applyToAll", json!({}));
+            small(app, ui, Icon::ApplyToAll, "Apply to All Slides", "camera.applyToAll", json!({"ids": ids}));
             let r = widgets::small_button(ui, Icon::Shapes, "Camera Shape", en, false);
             egui::Popup::menu(&r).show(|ui| {
                 if let Some(p) = shapes_gallery(ui) {
                     // The drawing tools' gallery also lists freeform shapes; a Cameo can only take
                     // a preset `shape.change` knows.
-                    let ids = super::cameo_ids(app);
                     submit_camera_shape(app, p, &ids);
                 }
             });
-            camera_border(app, ui, en);
+            camera_border(app, ui, en, &ids);
         });
         rows(ui, |ui| {
             let r = widgets::small_button(ui, Icon::ShapeEffects, "Camera Effects", en, false);
-            egui::Popup::menu(&r).show(|ui| effects_menu(app, ui));
+            egui::Popup::menu(&r).show(|ui| effects_menu(app, ui, &ids));
             small(app, ui, Icon::FormatBackground, "Format Object…", "view.pane", json!({"pane": "format"}));
         });
     });
@@ -66,15 +67,15 @@ fn style_gallery(ui: &mut Ui, current: &str, enabled: bool) -> Option<&'static s
 
 /// Camera Border is a split button, as in PowerPoint: the button re-applies the colour last
 /// picked, the arrow opens Outline ▸ colour, weight and dashes.
-fn camera_border(app: &mut SlideApp, ui: &mut Ui, enabled: bool) {
+fn camera_border(app: &mut SlideApp, ui: &mut Ui, enabled: bool, ids: &[u32]) {
     let (main, arrow) = small_button_ex(ui, Icon::ShapeOutline, "Camera Border", enabled, false, true);
     if main.clicked() {
         let c = app.last_outline.clone();
-        run(app, "shape.line", json!({"color": c}));
+        run(app, "shape.line", json!({"color": c, "ids": ids}));
     }
     let Some(arrow) = arrow else { return };
     let sc = scheme(app);
-    widgets::arrow_color_popup(&main, &arrow).show(|ui| outline_menu(app, ui, &sc));
+    widgets::arrow_color_popup(&main, &arrow).show(|ui| outline_menu(app, ui, &sc, ids));
 }
 
 /// A gallery tile: the style's shape, frame and shadow over a camera-blue body.

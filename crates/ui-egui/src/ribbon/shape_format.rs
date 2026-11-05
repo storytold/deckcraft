@@ -175,11 +175,11 @@ pub(super) fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
                 run(app, "shape.line", json!({"color": c}));
             }
             if let Some(a) = a {
-                widgets::color_popup(&a).show(|ui| outline_menu(app, ui, &sc));
+                widgets::color_popup(&a).show(|ui| outline_menu(app, ui, &sc, &[]));
             }
             let (main, arrow) = small_button_ex(ui, Icon::ShapeEffects, "Shape Effects", sel, false, true);
             if let Some(arrow) = arrow {
-                widgets::split_menu(&main, &arrow, |ui| effects_menu(app, ui));
+                widgets::split_menu(&main, &arrow, |ui| effects_menu(app, ui, &[]));
             }
         });
     });
