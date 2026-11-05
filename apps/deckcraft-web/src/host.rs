@@ -27,7 +27,7 @@
 //!   - Export (PDF, pictures, outline, GIF, handouts, a Save As type that isn't a presentation)
 //!     and Print: `false`. They are copies; the presentation's file stays the same.
 //! - `deckcraft:dirty` whenever unsaved changes appear or go away, `deckcraft:failed` when the
-//!   app couldn't start.
+//!   app couldn't start or refused a file over 2 GiB.
 //!
 //! In host mode the app starts with an empty presentation instead of the sample, which gives way to
 //! the first file the host sends; the host guards leaving the page, and `?author=` names the user
