@@ -553,10 +553,12 @@ fn a_resumed_narration_is_resampled_to_the_takes_rate() {
         }
         fn stop(&mut self) {}
     }
-    let mut session = deckcraft_engine::Session::with_new();
+    let session = deckcraft_engine::Session::with_new();
     let doc = session.active().unwrap().doc.clone();
-    let mut services = crate::Services::default();
-    services.mic = Some(Box::new(TwoTakes { takes: vec![(8_000, vec![0.5; 8_000]), (16_000, vec![0.5; 16_000])] }));
+    let services = crate::Services {
+        mic: Some(Box::new(TwoTakes { takes: vec![(8_000, vec![0.5; 8_000]), (16_000, vec![0.5; 16_000])] })),
+        ..Default::default()
+    };
     let mut app = SlideApp::new(session, services);
     let mut show = Show::new(&doc, 0, false, true);
     show.record = true;
