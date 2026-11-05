@@ -175,6 +175,10 @@ impl View {
                 .collect::<Vec<_>>()
         });
         for (key, modifiers) in keys {
+            if snapshot.grid && matches!(key, egui::Key::Space | egui::Key::Enter) {
+                // A focused thumbnail takes these to choose its slide; the show ignores them while the grid is open.
+                continue;
+            }
             // Consume once before widgets see Space/Enter, avoiding a second button activation.
             ui.input_mut(|i| i.consume_key(modifiers, key));
             commands.push(Command::Key {
@@ -525,6 +529,9 @@ mod tests {
         h.get_by_label("3").click();
         h.run_steps(2);
         assert_eq!(h.state().2, vec![Command::Goto { slide: 2 }]);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(2);
+        assert!(!h.state().2.iter().any(|c| matches!(c, Command::Key { .. })), "Enter is left to the focused thumbnail");
     }
 
     #[test]
