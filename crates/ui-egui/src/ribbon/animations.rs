@@ -127,26 +127,16 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
         });
-        let pane_open = app.ui.pane.as_deref() == Some("animation");
-    if big_button_ex(ui, Icon::AnimationPane, "Animation\nPane", true, false, pane_open).0.clicked() {
+    let pane_open = app.ui.pane.as_deref() == Some("animation");
+    let res = big_button_ex(ui, Icon::AnimationPane, "Animation\nPane", true, false, pane_open);
+    qat::ribbon_menu(&res.0, app, "view.pane", json!({"pane": "animation"}));
+    if res.0.clicked() {
         if pane_open {
             app.ui.pane = None;
         } else {
             run(app, "view.pane", json!({"pane": "animation"}));
         }
     }
-        let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
-        egui::Popup::menu(&r).show(|ui| {
-            if ui.button("On Click of… (none)").clicked() {
-                run(app, "animation.timing", json!({"trigger": null}));
-            }
-            let shapes: Vec<(u32, String)> =
-                app.session.active().map(|d| d.shapes().iter().map(|s| (s.id.0, s.name.clone())).collect()).unwrap_or_default();
-            for (id, name) in shapes {
-                if ui.button(format!("On Click of {name}")).clicked() {
-                    run(app, "animation.timing", json!({"trigger": id}));
-                }
-            }
         });
         let on = app.session.anim_painter.is_some();
         let en = enabled(app, "animation.painter");
