@@ -6529,6 +6529,11 @@ fn chart_axis_title_sets_clears_and_draws() {
     };
     s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Revenue"})).unwrap();
     assert!(has_raw(&s), "an unchanged title keeps the imported chart XML");
+    // ...and is no edit: nothing changed, no dirty document, the redo history stays.
+    let rev = s.doc().unwrap().revision;
+    let r = s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Revenue"})).unwrap();
+    assert_eq!(r["changed"], 0, "{r}");
+    assert_eq!(s.doc().unwrap().revision, rev);
     s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Sales"})).unwrap();
     assert!(!has_raw(&s), "a changed title rebuilds the chart");
     s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Revenue"})).unwrap();
