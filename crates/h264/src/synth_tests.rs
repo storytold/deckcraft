@@ -82,6 +82,56 @@ fn pps(cabac: bool, weighted: bool) -> Vec<u8> {
     nal(3, 8, &w.finish())
 }
 
+#[test]
+fn avcc_accepts_generated_sps_and_pps() {
+    let sps = sps(66, 4, false, PocType::T2);
+    let pps = pps(false, false);
+    let (sps, pps) = (&sps[4..], &pps[4..]);
+    let mut avcc = vec![1, 66, 0, 30, 0xff, 0xe1];
+    avcc.extend_from_slice(&(sps.len() as u16).to_be_bytes());
+    avcc.extend_from_slice(sps);
+    avcc.push(1);
+    avcc.extend_from_slice(&(pps.len() as u16).to_be_bytes());
+    avcc.extend_from_slice(pps);
+    assert!(Decoder::from_avcc(&avcc).is_ok());
+}
+
+#[test]
+fn avcc_rejects_a_valid_picture_slice_without_starting_a_picture() {
+    let sequence = sps(66, 4, false, PocType::T0);
+    let picture = pps(false, false);
+    let slice = slice_nal(
+        &Pic {
+            idr: true,
+            frame_num: 0,
+            ref_idc: 3,
+            long_term_ref: false,
+            mods: vec![],
+            mmcos: vec![],
+            mbs: vec![Some(vec![128; 384]); NMB],
+            b: false,
+            poc_lsb: Some(0),
+            poc_delta: None,
+            wt: None,
+        },
+        false,
+    );
+    let mut avcc = vec![1, 66, 0, 30, 0xff, 0xe1];
+    let nal = &sequence[4..];
+    avcc.extend_from_slice(&(nal.len() as u16).to_be_bytes());
+    avcc.extend_from_slice(nal);
+    avcc.push(2);
+    avcc.extend_from_slice(&((picture.len() - 4) as u16).to_be_bytes());
+    avcc.extend_from_slice(&picture[4..]);
+    avcc.extend_from_slice(&((slice.len() - 4) as u16).to_be_bytes());
+    avcc.extend_from_slice(&slice[4..]);
+
+    let mut decoder = Decoder::with_threads(1);
+    assert!(decoder.configure_avcc(&avcc).is_err());
+    assert!(decoder.flush().is_empty());
+    assert_eq!(decoder.stats().pictures, 0);
+}
+
 #[derive(Default, Clone)]
 struct Pic {
     idr: bool,

@@ -1,0 +1,837 @@
+use super::*;
+
+fn any_face() -> std::sync::Arc<FontFace> {
+    FontDb::global().face(DEFAULT_FAMILY, "Regular")
+}
+
+#[test]
+fn emoji_clusters_are_recognised() {
+    let c = |s: &str| s.chars().collect::<Vec<char>>();
+    // As PowerPoint draws them: emoji-presentation characters (⭐ ✅ ☔ ⌚ ⏩) in colour even
+    // without a selector, text-presentation ones (♥ ✔ ☎ ⬆ ▶) as text unless U+FE0F asks, and
+    // keycaps always as text.
+    for yes in ["😀", "👍🏽", "❤\u{FE0F}", "👨\u{200D}👩\u{200D}👧", "🇯🇵", "🏳\u{FE0F}\u{200D}🌈", "⭐", "✅", "☔", "⌚", "⏩", "🀄"]
+    {
+        assert!(is_emoji_cluster(&c(yes)), "{yes:?}");
+    }
+    for no in ["a", "1", "❤", "☺\u{FE0E}", "😀\u{FE0E}", "字", "→", "♥", "✔", "☎", "⬆", "▶", "1\u{FE0F}\u{20E3}", "#\u{20E3}"] {
+        assert!(!is_emoji_cluster(&c(no)), "{no:?}");
+    }
+}
+
+#[test]
+fn colour_fonts_are_recognised() {
+    let db = FontDb::with_font_dirs(Vec::new());
+    assert!(db.add_font(include_bytes!("../../render/tests/fixtures/colr-squares.ttf").to_vec()) > 0);
+    assert!(db.face("DeckCraft Colr Squares", "Regular").is_color());
+    assert!(!fontdb::last_resort_face().is_color());
+}
+
+#[test]
+fn document_registration_reuses_content_and_preserves_global_fallback_isolation() {
+    let probe = '\u{10FFFD}';
+    let regular = font_with_cmap(include_bytes!("../tests/fixtures/legacy-regular.ttf"), &[(probe, 1)]);
+    let semibold = include_bytes!("../tests/fixtures/legacy-semibold.ttf").as_slice();
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    let before = db.read_faces().len();
+    let families = db.families();
+    let fallback = db.fallback_for(probe, u32::MAX).map(|f| f.id());
+    let plain = db.plain_face_for(probe, &[probe]).map(|f| f.id());
+    let aliases = db.register_document_fonts([(regular.as_slice(), "Declared"), (semibold, "Declared")]);
+    let alias = &aliases[0].1;
+    let face = db.face(alias, "Regular");
+    assert!(face.covers(probe));
+    assert_eq!(db.styles(alias), ["Regular", "Semibold"]);
+    for _ in 0..8 {
+        let repeated = db.register_document_fonts([(semibold, " declared "), (regular.as_slice(), "DECLARED"), (regular.as_slice(), "Declared")]);
+        assert_eq!(repeated.len(), 1);
+        assert_eq!(&repeated[0].1, alias, "file order, duplicate parts and name casing are immaterial");
+        assert!(std::sync::Arc::ptr_eq(&db.face(alias, "Regular"), &face));
+        assert_eq!(db.read_faces().len(), before + 2);
+    }
+    assert_eq!(db.families(), families);
+    assert!(!db.has_family("Declared"));
+    assert!(!db.has_family("DeckCraft Legacy"));
+    assert_eq!(db.fallback_for(probe, u32::MAX).map(|f| f.id()), fallback);
+    assert_eq!(db.plain_face_for(probe, &[probe]).map(|f| f.id()), plain);
+    assert!(db.fallback_for_filtered(probe, u32::MAX, |f| f.id() == face.id()).is_none());
+    assert_eq!(db.cascade(&[probe], std::slice::from_ref(&face), "Regular").id(), face.id());
+}
+
+#[test]
+fn document_registration_keys_the_complete_style_set_and_changed_bytes() {
+    let regular = include_bytes!("../tests/fixtures/legacy-regular.ttf").as_slice();
+    let semibold = include_bytes!("../tests/fixtures/legacy-semibold.ttf").as_slice();
+    let changed = font_with_cmap(regular, &[('B', 1)]);
+    let db = FontDb::with_font_dirs(Vec::new());
+    let single = db.register_document_fonts([(regular, "Declared")])[0].1.clone();
+    let whole = db.register_document_fonts([(regular, "Declared"), (semibold, "Declared")])[0].1.clone();
+    let changed_single = db.register_document_fonts([(changed.as_slice(), "Declared")])[0].1.clone();
+    let changed_whole = db.register_document_fonts([(changed.as_slice(), "Declared"), (semibold, "Declared")])[0].1.clone();
+    assert_ne!(single, whole);
+    assert_ne!(single, changed_single);
+    assert_ne!(whole, changed_whole);
+    assert_eq!(db.styles(&single), ["Regular"]);
+    assert_eq!(db.styles(&whole), ["Regular", "Semibold"]);
+    assert_eq!(db.styles(&changed_whole), ["Regular", "Semibold"]);
+    assert!(db.face(&single, "Regular").covers('A'));
+    assert!(!db.face(&changed_single, "Regular").covers('A'));
+    assert!(db.face(&changed_single, "Regular").covers('B'));
+    assert_ne!(db.face(&single, "Regular").id(), db.face(&whole, "Regular").id());
+    assert_ne!(db.face(&whole, "Semibold").id(), db.face(&changed_whole, "Semibold").id(), "one family's styles cannot leak into another set");
+    assert_eq!(db.face(&single, "Regular").data(), regular);
+    assert_eq!(db.face(&changed_whole, "Regular").data(), changed);
+}
+
+#[test]
+fn document_registration_preserves_collection_family_and_style_selection() {
+    let collection =
+        font_collection([include_bytes!("../tests/fixtures/legacy-regular.ttf"), include_bytes!("../tests/fixtures/legacy-semibold.ttf")]);
+    let db = FontDb::with_font_dirs(Vec::new());
+    let whole = db.register_document_fonts([(collection.as_slice(), "DeckCraft Legacy")])[0].1.clone();
+    let semibold = db.register_document_fonts([(collection.as_slice(), "DeckCraft Legacy Semibold")])[0].1.clone();
+    assert_ne!(whole, semibold, "the same collection bytes can select different faces");
+    assert_eq!(db.styles(&whole), ["Regular", "Semibold"]);
+    assert_eq!(db.styles(&semibold), ["Semibold"]);
+    assert_eq!(db.face(&whole, "Regular").index(), 0);
+    assert_eq!(db.face(&semibold, "Regular").index(), 1);
+    let repeated = db.register_document_fonts([(collection.as_slice(), " deckcraft legacy semibold ")]);
+    assert_eq!(repeated[0].1, semibold);
+    assert_eq!(db.face(&repeated[0].1, "Regular").id(), db.face(&semibold, "Regular").id());
+    let mixed =
+        font_collection([include_bytes!("../tests/fixtures/legacy-regular.ttf"), include_bytes!("../../render/tests/fixtures/colr-squares.ttf")]);
+    assert!(db.register_document_fonts([(mixed.as_slice(), "Unknown")]).is_empty(), "unmatched multi-family collections stay unregistered");
+    let selected = db.register_document_fonts([(mixed.as_slice(), "DeckCraft Legacy"), (mixed.as_slice(), "DeckCraft Colr Squares")]);
+    assert_eq!(selected.len(), 2);
+    assert_eq!(db.face(&selected[0].1, "Regular").index(), 0);
+    assert_eq!(db.face(&selected[1].1, "Regular").index(), 1);
+    assert_ne!(selected[0].1, selected[1].1);
+}
+
+#[test]
+fn concurrent_document_registrations_reuse_the_same_faces() {
+    let regular = include_bytes!("../tests/fixtures/legacy-regular.ttf").as_slice();
+    let semibold = include_bytes!("../tests/fixtures/legacy-semibold.ttf").as_slice();
+    let db = FontDb::with_font_dirs(Vec::new());
+    let before = db.read_faces().len();
+    let start = std::sync::Barrier::new(8);
+    let registrations: Vec<_> = std::thread::scope(|scope| {
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                scope.spawn(|| {
+                    start.wait();
+                    let alias = db.register_document_fonts([(regular, "Declared"), (semibold, "Declared")])[0].1.clone();
+                    let regular_id = db.face(&alias, "Regular").id();
+                    let semibold_id = db.face(&alias, "Semibold").id();
+                    (alias, regular_id, semibold_id)
+                })
+            })
+            .collect();
+        threads.into_iter().map(|thread| thread.join().unwrap()).collect()
+    });
+    assert!(registrations.iter().all(|registered| registered == &registrations[0]));
+    assert_eq!(db.read_faces().len(), before + 2);
+}
+
+#[test]
+fn document_aliases_isolate_different_contents_without_publishing_source_names() {
+    let bytes = include_bytes!("../tests/fixtures/legacy-semibold.ttf").to_vec();
+    let mut wider = bytes.clone();
+    // Give "A" a different advance without changing either family name or the style.
+    let tables = u16::from_be_bytes([wider[4], wider[5]]) as usize;
+    let hmtx = (0..tables).map(|i| 12 + 16 * i).find(|&r| &wider[r..r + 4] == b"hmtx").unwrap();
+    let offset = u32::from_be_bytes(wider[hmtx + 8..hmtx + 12].try_into().unwrap()) as usize;
+    wider[offset + 4..offset + 6].copy_from_slice(&900_u16.to_be_bytes());
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    let files = vec![
+        (bytes.clone(), "DeckCraft Legacy".into(), "document-a".into()),
+        (wider.clone(), "DeckCraft Legacy".into(), "document-b".into()),
+        (bytes.clone(), " deckcraft legacy ".into(), " DOCUMENT-A ".into()),
+    ];
+    assert_eq!(db.add_document_fonts(files.clone()), 2);
+    let a = db.face("document-a", "Semibold");
+    let b = db.face("document-b", "Semibold");
+    assert_ne!(a.id(), b.id());
+    assert_eq!(a.data(), bytes);
+    assert_eq!(b.data(), wider);
+    assert_eq!(shape(&a, "A", &[], |c| c)[0].x_advance, 700);
+    assert_eq!(shape(&b, "A", &[], |c| c)[0].x_advance, 900);
+    assert_eq!((a.style.as_str(), a.weight), ("Semibold", 600.0));
+    assert!(a.legacy.is_none() && b.legacy.is_none());
+    assert_eq!(a.source_family(), "DeckCraft Legacy");
+    assert_eq!(b.source_family(), "DeckCraft Legacy");
+    assert_eq!(db.add_document_fonts(files), 0);
+    assert_eq!(db.face("document-a", "Semibold").id(), a.id());
+    assert_eq!(db.styles("document-a"), ["Semibold"]);
+    for source in ["DeckCraft Legacy", "DeckCraft Legacy Semibold"] {
+        assert!(!db.is_loaded(source));
+        assert!(!db.has_family(source));
+        assert!(!db.families().iter().any(|name| name == source));
+        let unembedded = db.face(source, "Regular");
+        assert_ne!(unembedded.id(), a.id());
+        assert_ne!(unembedded.id(), b.id());
+    }
+    // Ordinary user registration still publishes both names and keeps its original dedup rule.
+    assert_eq!(db.add_font(bytes.clone()), 1);
+    assert_eq!(db.add_font(bytes), 0);
+    assert_eq!(db.face("DeckCraft Legacy Semibold", "Regular").family, "DeckCraft Legacy");
+    assert_eq!(db.face("DeckCraft Legacy", "Semibold").source_family(), "DeckCraft Legacy");
+    assert_eq!(db.face("document-b", "Semibold").id(), b.id());
+}
+
+fn font_with_table(source: &[u8], tag: &[u8; 4], table: &[u8]) -> Vec<u8> {
+    // Rewrite only the table directory of an existing CC0 fixture; no font assets are added.
+    let count = u16::from_be_bytes([source[4], source[5]]) as usize;
+    let mut records = source[12..12 + count * 16].as_chunks::<16>().0.to_vec();
+    let extra = !records.iter().any(|r| &r[..4] == tag);
+    let shift = if extra { 16 } else { 0 };
+    let mut font = source.to_vec();
+    if extra {
+        drop(font.splice(12..12, [0; 16]));
+        for record in &mut records {
+            let offset = u32::from_be_bytes(record[8..12].try_into().unwrap()) + shift;
+            record[8..12].copy_from_slice(&offset.to_be_bytes());
+        }
+    }
+    while !font.len().is_multiple_of(4) {
+        font.push(0);
+    }
+    let mut record = [0; 16];
+    record[..4].copy_from_slice(tag);
+    record[8..12].copy_from_slice(&(font.len() as u32).to_be_bytes());
+    record[12..16].copy_from_slice(&(table.len() as u32).to_be_bytes());
+    records.retain(|r| &r[..4] != tag);
+    records.push(record);
+    records.sort_by_key(|r| [r[0], r[1], r[2], r[3]]);
+    let count = records.len() as u16;
+    let selector = count.ilog2() as u16;
+    let search_range = (1_u16 << selector) * 16;
+    for (offset, value) in [(4, count), (6, search_range), (8, selector), (10, count * 16 - search_range)] {
+        font[offset..offset + 2].copy_from_slice(&value.to_be_bytes());
+    }
+    for (index, record) in records.iter().enumerate() {
+        font[12 + index * 16..28 + index * 16].copy_from_slice(record);
+    }
+    font.extend_from_slice(table);
+    font
+}
+
+fn font_with_cmap(source: &[u8], mappings: &[(char, u32)]) -> Vec<u8> {
+    let mut mappings = mappings.to_vec();
+    mappings.sort_by_key(|(c, _)| *c);
+    // Windows Unicode full-repertoire cmap, with one format-12 group per mapped character.
+    let mut cmap = b"\0\0\0\x01\0\x03\0\x0a\0\0\0\x0c\0\x0c\0\0".to_vec();
+    for value in [16 + mappings.len() as u32 * 12, 0, mappings.len() as u32] {
+        cmap.extend_from_slice(&value.to_be_bytes());
+    }
+    for (c, glyph) in mappings {
+        for value in [c as u32, c as u32, glyph] {
+            cmap.extend_from_slice(&value.to_be_bytes());
+        }
+    }
+    font_with_table(source, b"cmap", &cmap)
+}
+
+#[test]
+fn document_aliases_are_explicit_only_for_discovery_and_plain_fallback() {
+    let probe = '\u{10FFFD}';
+    let bytes = font_with_cmap(include_bytes!("../tests/fixtures/legacy-regular.ttf"), &[('A', 1), ('ا', 1), (probe, 1)]);
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    let ordinary = db.face(LAST_RESORT_FAMILY, "Regular");
+    assert!(ordinary.covers('A'));
+    let chain = std::slice::from_ref(&ordinary);
+    // Exercise single-character fallback, whole-cluster scanning, the platform-script
+    // cascade, and text-presentation fallback without borrowing the document's face.
+    let clusters = [vec![probe], vec!['A', probe], vec!['ا', probe], vec![probe, '\u{FE0E}']];
+    let cascades: Vec<u32> = clusters.iter().map(|c| db.cascade(c, chain, "Regular").id()).collect();
+    let families = db.families();
+    let fallback = db.fallback_for(probe, u32::MAX).map(|f| f.id());
+    let plain = db.plain_face_for(probe, &[probe]).map(|f| f.id());
+    assert_eq!(db.add_document_fonts(vec![(bytes.clone(), " DeckCraft Legacy ".into(), "private-plain".into())]), 1);
+    let private = db.document_face("private-plain", "Regular");
+    assert_eq!(private.family, "private-plain");
+    assert_eq!(private.source_family(), "DeckCraft Legacy");
+    assert_eq!(db.styles("private-plain"), ["Regular"]);
+    assert!(db.has_family("private-plain"));
+    assert_eq!(db.families(), families);
+    assert!(!db.has_family("DeckCraft Legacy"));
+    assert_eq!(db.fallback_for(probe, u32::MAX).map(|f| f.id()), fallback);
+    assert_eq!(db.plain_face_for(probe, &[probe]).map(|f| f.id()), plain);
+    assert!(db.fallback_for_filtered(probe, u32::MAX, |f| f.id() == private.id()).is_none());
+    for (cluster, before) in clusters.iter().zip(cascades) {
+        assert_eq!(db.cascade(cluster, chain, "Regular").id(), before);
+        assert_eq!(db.cascade(cluster, std::slice::from_ref(&private), "Regular").id(), private.id());
+    }
+    let shaped = shape(&private, &probe.to_string(), &[], |c| c);
+    assert_eq!((shaped[0].gid, shaped[0].x_advance), (1, 700));
+    // The same synthesized font remains globally discoverable when explicitly added as a user font.
+    assert_eq!(db.add_font(bytes), 1);
+    let public = db.face("DeckCraft Legacy", "Regular");
+    assert!(db.families().iter().any(|family| family == "DeckCraft Legacy"));
+    assert_eq!(db.fallback_for_filtered(probe, u32::MAX, |f| f.id() == public.id()).unwrap().id(), public.id());
+}
+
+#[test]
+fn document_colour_aliases_do_not_enter_global_emoji_fallback() {
+    let probe = '\u{10FFFD}';
+    let emoji = '😀';
+    let bytes = font_with_cmap(include_bytes!("../../render/tests/fixtures/colr-squares.ttf"), &[(emoji, 2), (probe, 2)]);
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    let ordinary = db.face(LAST_RESORT_FAMILY, "Regular");
+    let before = db.cascade(&[emoji], std::slice::from_ref(&ordinary), "Regular").id();
+    let colour = db.color_face_for(probe, &[probe]).map(|f| f.id());
+    let families = db.families();
+    assert_eq!(db.add_document_fonts(vec![(bytes.clone(), "DeckCraft Colr Squares".into(), "private-colour".into())]), 1);
+    let private = db.face("private-colour", "Regular");
+    assert!(private.is_color() && private.covers(emoji));
+    assert_eq!(db.families(), families);
+    assert_eq!(db.color_face_for(probe, &[probe]).map(|f| f.id()), colour);
+    assert_eq!(db.cascade(&[emoji], std::slice::from_ref(&ordinary), "Regular").id(), before);
+    assert_eq!(db.cascade(&[emoji], std::slice::from_ref(&private), "Regular").id(), private.id());
+    assert!(db.fallback_for_filtered(probe, u32::MAX, |f| f.id() == private.id()).is_none());
+    let shaped = shape(&private, &probe.to_string(), &[], |c| c);
+    assert_eq!((shaped[0].gid, shaped[0].x_advance), (2, 1000));
+    assert_eq!(db.add_font(bytes), 1);
+    let public = db.face("DeckCraft Colr Squares", "Regular");
+    assert!(public.is_color());
+    assert_eq!(db.fallback_for_filtered(probe, u32::MAX, |f| f.id() == public.id()).unwrap().id(), public.id());
+}
+
+#[test]
+fn document_variable_instances_preserve_private_source_identity() {
+    let probe = '\u{10FFFD}';
+    let bytes = font_with_cmap(include_bytes!("../tests/fixtures/legacy-regular.ttf"), &[(probe, 1)]);
+    // One real fvar weight axis; outlines stay those of the existing CC0 square fixture.
+    let mut fvar = b"\0\x01\0\0\0\x10\0\x02\0\x01\0\x14\0\0\0\x08wght".to_vec();
+    for value in [100_i32, 400, 900] {
+        fvar.extend_from_slice(&(value << 16).to_be_bytes());
+    }
+    fvar.extend_from_slice(&[0, 0, 1, 0]);
+    let bytes = font_with_table(&bytes, b"fvar", &fvar);
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    assert_eq!(db.add_document_fonts(vec![(bytes.clone(), "Declared variable".into(), "private-variable".into())]), 1);
+    assert_eq!(db.axes("private-variable", "Regular").len(), 1);
+    let base = db.face("private-variable", "Regular");
+    let instance = db.face("private-variable", "Regular {wght:650}");
+    assert_ne!(instance.id(), base.id());
+    assert_eq!(instance.weight, 650.0);
+    assert_eq!(instance.source_family(), "Declared variable");
+    assert!(instance.legacy.is_none());
+    assert_eq!(db.face("private-variable", "Regular {wght:650}").id(), instance.id());
+    assert_eq!(db.styles("private-variable"), ["Regular"]);
+    assert!(!db.families().iter().any(|family| family == "private-variable"));
+    assert!(db.fallback_for_filtered(probe, u32::MAX, |f| f.id() == instance.id()).is_none());
+    assert_eq!(db.cascade(&[probe], std::slice::from_ref(&instance), "Regular").id(), instance.id());
+    assert_eq!(shape(&instance, &probe.to_string(), &[], |c| c)[0].gid, 1);
+    assert_eq!(db.add_font(bytes), 1);
+    let public = db.face("DeckCraft Legacy", "Regular {wght:650}");
+    assert_eq!(public.source_family(), "DeckCraft Legacy");
+    assert_eq!(db.fallback_for_filtered(probe, u32::MAX, |f| f.id() == public.id()).unwrap().id(), public.id());
+}
+
+#[test]
+fn private_aliases_matching_global_fallback_names_are_not_implicitly_selected() {
+    let bytes = include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec();
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    assert_eq!(
+        db.add_document_fonts(
+            vec![(bytes.clone(), "DeckCraft Legacy".into(), "Calibri".into()), (bytes, "DeckCraft Legacy".into(), "Arial".into()),]
+        ),
+        2
+    );
+    let aliases = [db.face("Calibri", "Regular").id(), db.face("Arial", "Regular").id()];
+    for requested in ["Unknown document family", "Arial CE"] {
+        assert!(!aliases.contains(&db.document_face(requested, "Regular").id()), "{requested}");
+    }
+    for requested in ["Unknown family", "Helvetica", "Calibri Light"] {
+        assert!(!aliases.contains(&db.face(requested, "Regular").id()), "{requested}");
+    }
+    assert!(!db.families().iter().any(|family| matches!(family.as_str(), "Calibri" | "Arial")));
+}
+
+fn font_collection(sources: [&[u8]; 2]) -> Vec<u8> {
+    // Build a TTC in memory from the existing contributor-original CC0 test fonts.
+    let mut collection = b"ttcf\0\x01\0\0\0\0\0\x02\0\0\0\0\0\0\0\0".to_vec();
+    for (index, source) in sources.iter().enumerate() {
+        while !collection.len().is_multiple_of(4) {
+            collection.push(0);
+        }
+        let base = collection.len() as u32;
+        collection[12 + index * 4..16 + index * 4].copy_from_slice(&base.to_be_bytes());
+        let mut font = source.to_vec();
+        let tables = u16::from_be_bytes([font[4], font[5]]) as usize;
+        for table in 0..tables {
+            let pos = 12 + table * 16 + 8;
+            let offset = u32::from_be_bytes(font[pos..pos + 4].try_into().unwrap()) + base;
+            font[pos..pos + 4].copy_from_slice(&offset.to_be_bytes());
+        }
+        collection.extend_from_slice(&font);
+    }
+    collection
+}
+
+#[test]
+fn document_collection_selects_declared_family_without_style_collisions() {
+    let collection =
+        font_collection([include_bytes!("../tests/fixtures/legacy-regular.ttf"), include_bytes!("../../render/tests/fixtures/colr-squares.ttf")]);
+    let db = FontDb::with_font_dirs(Vec::new());
+    assert_eq!(db.add_document_fonts(vec![(collection.clone(), "Unknown".into(), "not-added".into())]), 0);
+    assert!(!db.is_loaded("not-added"));
+    assert_eq!(
+        db.add_document_fonts(vec![
+            (collection.clone(), "DeckCraft Legacy".into(), "document-legacy".into()),
+            (collection, "DeckCraft Colr Squares".into(), "document-colour".into()),
+        ]),
+        2
+    );
+    let legacy = db.face("document-legacy", "Regular");
+    let colour = db.face("document-colour", "Regular");
+    assert_eq!((legacy.index(), colour.index()), (0, 1));
+    assert_eq!((legacy.style.as_str(), colour.style.as_str()), ("Regular", "Regular"));
+    assert!(!legacy.is_color());
+    assert!(colour.is_color());
+    assert!(legacy.legacy.is_none() && colour.legacy.is_none());
+    assert!(!db.is_loaded("DeckCraft Legacy"));
+    assert!(!db.is_loaded("DeckCraft Colr Squares"));
+}
+
+#[test]
+fn document_collection_matches_windows_name_before_single_family_fallback() {
+    let collection =
+        font_collection([include_bytes!("../tests/fixtures/legacy-regular.ttf"), include_bytes!("../tests/fixtures/legacy-semibold.ttf")]);
+    let db = FontDb::with_font_dirs(Vec::new());
+    assert_eq!(db.add_document_fonts(vec![(collection.clone(), " deckcraft legacy semibold ".into(), "document-semibold".into())]), 1);
+    let face = db.face("document-semibold", "Regular");
+    assert_eq!((face.index(), face.style.as_str(), face.weight), (1, "Semibold", 600.0));
+    assert!(face.legacy.is_none());
+    assert_eq!(db.styles("document-semibold"), ["Semibold"]);
+    assert!(!db.is_loaded("DeckCraft Legacy"));
+    assert!(!db.is_loaded("DeckCraft Legacy Semibold"));
+    // A typographic-family match selects all styles. A renamed single-family subset does too.
+    assert_eq!(
+        db.add_document_fonts(vec![
+            (collection.clone(), "DeckCraft Legacy".into(), "document-all".into()),
+            (collection, "Renamed subset".into(), "document-renamed".into()),
+        ]),
+        4
+    );
+    for alias in ["document-all", "document-renamed"] {
+        assert_eq!(db.styles(alias), ["Regular", "Semibold"]);
+        assert_eq!(db.face(alias, "Regular").weight, 400.0);
+        assert_eq!(db.face(alias, "Semibold").weight, 600.0);
+    }
+    assert_eq!(
+        db.add_document_fonts(vec![
+            (include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec(), "Renamed".into(), "single-file".into()),
+            (include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec(), "DeckCraft Legacy".into(), " ".into()),
+            (vec![0; 12], "Invalid".into(), "invalid".into()),
+        ]),
+        1
+    );
+    assert_eq!(db.face("single-file", "Regular").family, "single-file");
+    assert!(!db.is_loaded("invalid"));
+}
+/// An Embedded OpenType header of `version` around `font`, with the font at the end.
+fn wrap_eot(font: &[u8], version: u32) -> Vec<u8> {
+    let mut h = vec![0u8; 82];
+    let total = 82 + font.len();
+    h[0..4].copy_from_slice(&(total as u32).to_le_bytes());
+    h[4..8].copy_from_slice(&(font.len() as u32).to_le_bytes());
+    h[8..12].copy_from_slice(&version.to_le_bytes());
+    h[34..36].copy_from_slice(&0x504Cu16.to_le_bytes());
+    h.extend_from_slice(font);
+    h
+}
+
+#[test]
+fn embedded_open_type_yields_the_font() {
+    let font = epaint_default_fonts::UBUNTU_LIGHT;
+    assert_eq!(embedded_sfnt(font), Some(font));
+    assert_eq!(embedded_sfnt(&wrap_eot(font, 0x0002_0001)), Some(font));
+    assert_eq!(embedded_sfnt(&wrap_eot(font, 0x0001_0000)), Some(font));
+    assert!(embedded_sfnt(b"not a font file").is_none());
+    assert!(embedded_sfnt(&wrap_eot(b"hello world!!", 0x0002_0002)).is_none());
+    let mut truncated = wrap_eot(font, 0x0002_0001);
+    truncated.truncate(40);
+    assert!(embedded_sfnt(&truncated).is_none());
+}
+
+#[test]
+fn last_resort_face_parses() {
+    let f = fontdb::last_resort_face();
+    assert_eq!(f.family, fontdb::LAST_RESORT_FAMILY);
+    assert!(f.upem > 0.0);
+}
+
+#[test]
+fn line_split_follows_the_windows_ascent_and_descent() {
+    use skrifa::raw::TableProvider;
+    let f = fontdb::last_resort_face();
+    let font = skrifa::FontRef::new(f.data()).unwrap();
+    let os2 = font.os2().unwrap();
+    let (a, d) = (os2.us_win_ascent() as f64, os2.us_win_descent() as f64);
+    assert!((f.line_split - a / (a + d)).abs() < 1e-9, "{} vs {}", f.line_split, a / (a + d));
+    assert!(f.line_split > 0.5 && f.line_split < 1.0);
+}
+
+#[test]
+fn some_face_always_resolves() {
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    let f = db.face("No Such Font Anywhere", "Regular");
+    assert!(!f.family.is_empty());
+    assert!(!shape(&f, "Hello", &[], |c| c).is_empty());
+}
+
+#[test]
+fn filtered_fallback_continues_after_a_rejected_loaded_face() {
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec()), 1);
+    let first = db.fallback_for('A', u32::MAX).unwrap();
+    let accepted_family = if first.family == LAST_RESORT_FAMILY { "DeckCraft Legacy" } else { LAST_RESORT_FAMILY };
+    let fallback = db.fallback_for_filtered('A', u32::MAX, |f| f.family == accepted_family).unwrap();
+    assert_eq!(fallback.family, accepted_family);
+    assert!(fallback.covers('A'));
+    assert_ne!(fallback.id(), first.id());
+    assert_eq!(db.fallback_for('A', u32::MAX).unwrap().id(), first.id(), "document fallback order is unchanged");
+    assert!(db.fallback_for_filtered('A', fallback.id(), |f| f.family == accepted_family).is_none(), "the excluded face stays excluded");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn filtered_fallback_loads_an_eligible_system_face_and_does_not_cache_policy_misses() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let db = FontDb::with_font_dirs(vec![dir]);
+    let first = db.fallback_for('A', u32::MAX).unwrap();
+    assert_ne!(first.family, "DeckCraft Legacy");
+    assert!(db.fallback_for_filtered('A', u32::MAX, |_| false).is_none());
+    assert!(db.fallback_for('A', u32::MAX).is_some(), "an interface policy miss does not hide document glyphs");
+    let accepted = db.fallback_for_filtered('A', u32::MAX, |f| f.family == "DeckCraft Legacy").unwrap();
+    assert_eq!(accepted.family, "DeckCraft Legacy");
+    assert!(accepted.covers('A'));
+}
+
+#[test]
+fn concurrent_lookups_all_find_an_installed_family() {
+    // Threads resolving an installed family nobody had loaded yet used to fall back to
+    // another face when a different thread finished loading it first, so the same text was
+    // laid out in different fonts depending on timing.
+    let dir = std::env::temp_dir().join(format!("deckcraft-fonts-concurrent-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("Hack-Regular.ttf"), epaint_default_fonts::HACK_REGULAR).unwrap();
+    for _ in 0..20 {
+        let db = FontDb::with_font_dirs(vec![dir.clone()]);
+        db.set_system_fallback(false);
+        let start = std::sync::Barrier::new(8);
+        let got: Vec<String> = std::thread::scope(|s| {
+            let threads: Vec<_> = (0..8)
+                .map(|_| {
+                    s.spawn(|| {
+                        start.wait();
+                        db.face("Hack", "Regular").family.clone()
+                    })
+                })
+                .collect();
+            threads.into_iter().map(|t| t.join().unwrap()).collect()
+        });
+        assert!(got.iter().all(|f| f == "Hack"), "{got:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn windows_family_names_find_their_faces() {
+    // Documents name fonts by their Windows family ("Segoe UI Semibold"); the font's
+    // typographic family is "Segoe UI" with a "Semibold" style. The fixture is named the same way.
+    let check = |db: &FontDb| {
+        assert!(db.has_family("DeckCraft Legacy Semibold"));
+        for style in ["Regular", "Bold"] {
+            let f = db.face("DeckCraft Legacy Semibold", style);
+            assert_eq!((f.family.as_str(), f.style.as_str()), ("DeckCraft Legacy", "Semibold"), "{style}");
+        }
+        assert_eq!(db.document_face("DeckCraft Legacy Semibold", "Regular").family, "DeckCraft Legacy", "installed, so not Calibri");
+        // The typographic name still works.
+        assert_eq!(db.face("DeckCraft Legacy", "Semibold").style, "Semibold");
+    };
+    // Loaded directly…
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-semibold.ttf").to_vec()), 1);
+    check(&db);
+    // …and found by the system font scan under its Windows name, then loaded.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let db = FontDb::with_font_dirs(vec![dir.clone()]);
+        db.set_system_fallback(false);
+        check(&db);
+        // Looking up the Windows name loads the Semibold file only; a later lookup of the
+        // family's Regular must still load and pick the Regular file, not settle for Semibold.
+        let db = FontDb::with_font_dirs(vec![dir]);
+        db.set_system_fallback(false);
+        assert_eq!(db.face("DeckCraft Legacy Semibold", "Regular").style, "Semibold");
+        let regular = db.face("DeckCraft Legacy", "Regular");
+        assert_eq!((regular.style.as_str(), regular.weight), ("Regular", 400.0));
+    }
+}
+
+#[test]
+fn variable_font_instances_answer_to_their_windows_names() {
+    // Windows lists a variable font's named instances other than Regular, Italic, Bold and
+    // Bold Italic as families of their own, and documents name them that way ("Montserrat
+    // ExtraBold"). The bundled Montserrat is variable, so these names found no face and drew
+    // in Inter Regular, even with the family's static files installed (their faces are
+    // skipped as already present).
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    if !db.is_loaded("Montserrat") {
+        return; // built without craft-fonts
+    }
+    for (name, style, weight, italic) in [
+        ("Montserrat ExtraBold", "Regular", 800.0, false),
+        ("Montserrat SemiBold", "Regular", 600.0, false),
+        ("Montserrat Medium", "Regular", 500.0, false),
+        ("Montserrat Medium", "Italic", 500.0, true),
+        ("Montserrat Thin", "Bold", 100.0, false),
+    ] {
+        assert!(db.has_family(name), "{name}");
+        let f = db.face(name, style);
+        assert_eq!((f.family.as_str(), f.weight, f.italic), ("Montserrat", weight, italic), "{name} {style}");
+        assert_eq!(db.document_face(name, style).family, "Montserrat", "{name}: installed, so not Calibri");
+    }
+    // Regular and Bold are the family itself, not families of their own.
+    assert!(!db.has_family("Montserrat Regular"));
+    assert!(!db.has_family("Montserrat Bold"));
+    assert_eq!(db.face("Montserrat", "Bold").weight, 700.0);
+}
+
+#[test]
+fn faces_without_outlines_are_not_cataloged() {
+    // Rename the Semibold's `glyf` table, as in fonts whose glyphs are bitmaps or are stored in
+    // Apple's `hvgl` table. The face still maps "A", but its outline is empty. The new tag
+    // keeps the table directory sorted.
+    let mut semibold = include_bytes!("../tests/fixtures/legacy-semibold.ttf").to_vec();
+    let tables = u16::from_be_bytes([semibold[4], semibold[5]]) as usize;
+    let glyf = (0..tables).map(|i| 12 + 16 * i).find(|&r| &semibold[r..r + 4] == b"glyf").unwrap();
+    semibold[glyf..glyf + 4].copy_from_slice(b"gxyz");
+    let loaded = FontDb::with_font_dirs(Vec::new());
+    assert_eq!(loaded.add_font(semibold.clone()), 1);
+    let face = loaded.face("DeckCraft Legacy", "Semibold");
+    assert!(face.covers('A'));
+    assert!(loaded.outline(&face, face.glyph_for('A')).elements().is_empty());
+    // The system font scan lists the Regular, which has outlines, and leaves out the Semibold
+    // under both of its names.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let dir = std::env::temp_dir().join(format!("deckcraft-fonts-outlines-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("legacy-semibold.ttf"), &semibold).unwrap();
+        std::fs::write(dir.join("legacy-regular.ttf"), include_bytes!("../tests/fixtures/legacy-regular.ttf")).unwrap();
+        let db = FontDb::with_font_dirs(vec![dir.clone()]);
+        db.set_system_fallback(false);
+        assert_eq!(db.styles("DeckCraft Legacy"), ["Regular"]);
+        assert!(!db.has_family("DeckCraft Legacy Semibold"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
+fn missing_document_fonts_are_drawn_in_calibri() {
+    // PowerPoint draws a missing family in Calibri, whatever its panose or the theme says.
+    let db = FontDb::global();
+    for missing in ["Qqq Nonexistent", "Avenir Next Qqq", "", "Arimo Qqq"] {
+        let f = db.document_face(missing, "Bold");
+        assert_eq!(f.family, db.face(MISSING_FONT_FAMILY, "Bold").family, "{missing:?}");
+    }
+    // PowerPoint's own twins and Windows' substitutes, when the font itself is missing.
+    for (missing, twin) in [
+        ("Liberation Sans", "Arial"),
+        ("Liberation Serif", "Times New Roman"),
+        ("Arial CE", "Arial"),
+        ("Times New Roman CYR", "Times New Roman"),
+        ("Courier New CE", "Courier New"),
+    ] {
+        if !db.has_family(missing) {
+            assert_eq!(db.document_face(missing, "Regular").family, db.face(twin, "Regular").family, "{missing}");
+        }
+    }
+    // Metric-compatible stand-ins and DeckCraft's default keep their own fallbacks.
+    // So do Office's cloud fonts, which PowerPoint downloads and draws as themselves.
+    for kept in ["Arial", "Times New Roman", "Cambria", "Courier New", FALLBACK_FAMILY, "Aptos", "Aptos Display", "Grandview"] {
+        assert_eq!(db.document_face(kept, "Regular").family, db.face(kept, "Regular").family, "{kept}");
+    }
+}
+
+#[test]
+fn office_fonts_have_substitutes() {
+    assert!(substitutes("Calibri").contains(&"Carlito"));
+    assert!(substitutes("Cambria").contains(&"Caladea"));
+    assert!(substitutes("Times New Roman").contains(&"Liberation Serif"));
+    assert!(substitutes("Aptos").contains(&"Inter"));
+    assert!(substitutes("zzz").is_empty());
+
+    for mono in [
+        "Courier New",
+        "Cousine",
+        "Consolas",
+        "Menlo",
+        "Monaco",
+        "Source Code Pro",
+        "JetBrains Mono",
+        "Cascadia Code",
+        "Cascadia Code PL",
+        "Cascadia Mono",
+        "Fira Code",
+        "Inconsolata",
+        "DejaVu Sans Mono",
+        "Roboto Mono",
+        "Hack",
+        "Ubuntu Mono",
+        "Custom Monospace",
+        "Fantasque Sans Mono",
+    ] {
+        assert!(substitutes(mono).contains(&"Liberation Mono"), "{mono} should have Liberation Mono substitute");
+        assert!(is_monospace_family(mono), "{mono} should be recognized as monospace");
+    }
+
+    for prop in ["Calibri", "Arial", "Times New Roman", "Inter", "Monotype Corsiva", "Monoton", "Monotype Baskerville", "Code Pro", "zzz"] {
+        assert!(!is_monospace_family(prop), "{prop} should not be recognized as monospace");
+    }
+
+    // Explicit checks requested in review: Consolas, Courier New, Fira Code, Monotype Corsiva, Monoton,
+    // and ensuring proportional families maintain their unchanged substitutes.
+    assert!(is_monospace_family("Consolas"));
+    assert!(is_monospace_family("Courier New"));
+    assert!(is_monospace_family("Fira Code"));
+    assert!(!is_monospace_family("Monotype Corsiva"));
+    assert!(!is_monospace_family("Monoton"));
+
+    assert_eq!(substitutes("Calibri"), &["Carlito", "Liberation Sans", "Arial", "Inter"]);
+    assert_eq!(substitutes("Arial"), &["Liberation Sans", "Arial", "Helvetica Neue", "Helvetica", "Inter"]);
+    assert_eq!(substitutes("Times New Roman"), &["Liberation Serif", "Times New Roman", "Times", "Merriweather"]);
+    assert_eq!(substitutes("Georgia"), &["Merriweather", "Liberation Serif", "Georgia"]);
+    assert!(substitutes("Monotype Corsiva").is_empty());
+    assert!(substitutes("Monoton").is_empty());
+}
+
+#[test]
+fn missing_monospace_fonts_keep_monospace_fallback() {
+    let db = FontDb::global();
+    let mono_sub = db.face("Unavailable JetBrains Mono", "Regular").family.clone();
+    let calibri_target = db.face(MISSING_FONT_FAMILY, "Regular").family.clone();
+
+    assert!(is_monospace_family(&mono_sub), "substitute {mono_sub} must be monospace");
+
+    // Cousine is metric-compatible with Courier New / Liberation Mono and must not fall back to Calibri.
+    if !db.has_family("Cousine") {
+        assert_eq!(db.document_face("Cousine", "Regular").family, mono_sub);
+    }
+
+    // Monospace fonts missing from the system must resolve to a monospace substitute.
+    for mono in ["Unavailable JetBrains Mono", "Custom App Code", "Unknown Space Mono", "Mock Terminal Font"] {
+        let f = db.document_face(mono, "Regular");
+        assert_eq!(f.family, mono_sub, "{mono}");
+        assert!(is_monospace_family(&f.family), "{mono} must resolve to a monospace family");
+        if mono_sub != calibri_target {
+            assert_ne!(f.family, calibri_target, "{mono} must not fall back to Calibri");
+        }
+    }
+}
+
+#[test]
+fn shaping_produces_clusters_and_advances() {
+    let face = any_face();
+    let g = shape(&face, "Hello", &[], |c| c);
+    assert_eq!(g.len(), 5);
+    assert_eq!(g.iter().map(|g| g.cluster).collect::<Vec<_>>(), vec![0, 1, 2, 3, 4]);
+    assert!(g.iter().all(|g| g.x_advance > 0 && g.gid != 0));
+}
+
+#[test]
+fn mapping_keeps_clusters() {
+    let face = any_face();
+    let g = shape(&face, "ab", &[], |c| c.to_ascii_uppercase());
+    assert_eq!(g[0].gid, face.glyph_for('A'));
+    assert_eq!(g[1].cluster, 1);
+}
+
+#[test]
+fn outlines_and_metrics() {
+    let db = FontDb::global();
+    let face = any_face();
+    let o = db.outline(&face, face.glyph_for('O'));
+    assert!(!o.elements().is_empty());
+    assert!(face.ascent > 0.0 && face.descent > 0.0);
+    assert!(feature("abc").is_none());
+    assert!(feature("liga").is_some());
+}
+
+/// When the Latin build input exists, the runtime catalogue carries the expected Latin faces;
+/// required builds also assert their presence.
+#[test]
+fn craft_fonts_latin_when_present() {
+    let required = option_env!("CRAFT_FONTS_REQUIRED").is_some();
+    if !CRAFT_FONTS.iter().any(|f| f.family == "Inter") {
+        assert!(!required, "CRAFT_FONTS_REQUIRED must embed Inter rather than skip the optional Latin manifest");
+        eprintln!("skipped: built without craft-fonts' Latin manifest (set CRAFT_FONTS_DIR)");
+        return;
+    }
+    let inter = |style: &str| CRAFT_FONTS.iter().find(|f| f.family == "Inter" && f.style == style);
+    let (regular, bold, variable) = (inter("Regular"), inter("Bold"), inter("Variable"));
+    if required {
+        assert!(
+            variable.is_some() || (regular.is_some() && bold.is_some()),
+            "CRAFT_FONTS_REQUIRED must embed Inter Regular and Bold (or a Variable face)"
+        );
+    }
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    assert_eq!(db.face("Inter", "Regular").family, "Inter");
+    assert_eq!(db.face("Aptos", "Regular").family, "Inter");
+    if let (Some(regular), Some(bold)) = (regular, bold) {
+        // The build input carries one entry per face; real static Bold must not be the Regular
+        // file relabelled in the manifest.
+        assert_ne!(regular.bytes, bold.bytes, "Inter Bold must be a distinct face file from Regular");
+        let (r, b) = (db.face("Inter", "Regular"), db.face("Inter", "Bold"));
+        assert_eq!((r.family.as_str(), r.style.as_str()), ("Inter", "Regular"));
+        assert_eq!((b.family.as_str(), b.style.as_str()), ("Inter", "Bold"));
+        assert_ne!(r.id(), b.id(), "Inter Bold must load as its own face");
+        assert!(b.weight > r.weight, "Inter Bold weight {} is not above Regular {}", b.weight, r.weight);
+    }
+    if CRAFT_FONTS.iter().any(|f| f.family == "Carlito") {
+        assert_eq!(db.face("Calibri", "Bold").family, "Carlito");
+    }
+}
+
+/// A FIFO, a folder and a link loop dressed up as font files: the system scan skips them
+/// instead of blocking forever on the FIFO (start-up hung when one sat in `~/.fonts`), and
+/// still finds the real font beside them.
+#[cfg(unix)]
+#[test]
+fn the_font_scan_skips_fifos_folders_and_link_loops() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-fontscan-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::copy(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/legacy-semibold.ttf"), dir.join("sub/real.ttf")).unwrap();
+    let fifo = std::process::Command::new("mkfifo").arg(dir.join("trap.ttf")).status().is_ok_and(|s| s.success());
+    std::fs::create_dir(dir.join("folder.ttf")).unwrap();
+    std::fs::write(dir.join("empty.otf"), b"").unwrap();
+    std::os::unix::fs::symlink(&dir, dir.join("sub/loop")).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let scan_dir = dir.clone();
+    std::thread::spawn(move || {
+        let db = FontDb::with_font_dirs(vec![scan_dir]);
+        let _ = tx.send(db.load_system_fonts());
+    });
+    let n = rx.recv_timeout(std::time::Duration::from_secs(30)).expect("the font scan hung");
+    assert!(n >= 1, "the real font was found");
+    assert!(fifo || n >= 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}

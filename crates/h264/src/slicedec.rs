@@ -232,7 +232,7 @@ fn predict_block(f: &Frame, mv: [i16; 2], px: usize, py: usize, bw: usize, bh: u
     let (fx, fy) = ((mv[0] & 7) as u32, (mv[1] & 7) as u32);
     for (comp, out) in c.into_iter().enumerate() {
         let mut w = [0u8; 16 * 9];
-        f.chroma_window(comp, cx, cy, cw + 1, ch + 1, &mut w, 16);
+        f.chroma_window(comp, (cx, cy), (cw + 1, ch + 1), &mut w, 16);
         inter::mc_chroma_win(&w, 16, fx, fy, cw, ch, out, cs);
     }
 }
@@ -566,6 +566,19 @@ impl<'a> SliceDecoder<'a> {
         (refs, mvs, false)
     }
 
+    /// Temporal direct mvs (8.4.1.2.3) from the co-located mv and `DistScaleFactor` (clamped
+    /// to ±1024 in `SliceDecoder`): mvL0 = clip_mv((mvCol · dsf + 128) >> 8), mvL1 =
+    /// clip_mv(mvL0 − mvCol), both clipped to the spec's motion-vector range −2^15..2^15−1.
+    /// The i32 maths cannot overflow; a truncating `as i16` used to wrap mvL0 past the range,
+    /// after which the mvL1 subtraction overflowed a debug build. mvL1 is scaled from the
+    /// unclamped mvL0 with only the results clipped, as the sibling SoundCraft decoder's
+    /// review established (soundcraft#994): dsf 512, mvCol 32767 keeps mvL1 at 32767.
+    fn temporal_direct_mvs(dsf: i32, mv_col: [i16; 2]) -> ([i16; 2], [i16; 2]) {
+        let clamp = |v: i32| v.clamp(-(1 << 15), (1 << 15) - 1) as i16;
+        let m0 = mv_col.map(|c| (dsf * i32::from(c) + 128) >> 8);
+        (m0.map(clamp), [clamp(m0[0] - i32::from(mv_col[0])), clamp(m0[1] - i32::from(mv_col[1]))])
+    }
+
     /// Derive direct-mode motion for the 8x8 blocks in `b8_mask` of the current MB.
     fn derive_direct(&mut self, b8_mask: u8) -> Result<()> {
         let spatial = self.sh.direct_spatial_mv_pred;
@@ -600,13 +613,7 @@ impl<'a> SliceDecoder<'a> {
                         }
                     };
                     let (dsf, ltr) = self.tdirect.get(ref0 as usize).copied().unwrap_or((256, true));
-                    let (mv0, mv1) = if ltr {
-                        (mv_col, [0, 0])
-                    } else {
-                        let s = |c: i16| ((dsf * c as i32 + 128) >> 8) as i16;
-                        let m0 = [s(mv_col[0]), s(mv_col[1])];
-                        (m0, [m0[0] - mv_col[0], m0[1] - mv_col[1]])
-                    };
+                    let (mv0, mv1) = if ltr { (mv_col, [0, 0]) } else { Self::temporal_direct_mvs(dsf, mv_col) };
                     ([ref0, 0], [mv0, mv1])
                 };
                 self.set_motion(x, y, unit, unit, refs, mvs);
@@ -665,33 +672,38 @@ impl<'a> SliceDecoder<'a> {
             return Ok(());
         }
         for p in 0..4 {
-            let sub = self.cur.sub[p];
-            let (x8, y8) = ((p & 1) * 2, (p >> 1) * 2);
-            if sub.direct {
-                self.derive_direct(1 << p)?;
-                continue;
+            self.derive_sub_mb_motion(p, n)?;
+        }
+        Ok(())
+    }
+
+    /// Motion of one 8x8 sub-macroblock `p` of a P8x8/B8x8 MB.
+    fn derive_sub_mb_motion(&mut self, p: usize, n: [usize; 2]) -> Result<()> {
+        let sub = self.cur.sub[p];
+        let (x8, y8) = ((p & 1) * 2, (p >> 1) * 2);
+        if sub.direct {
+            return self.derive_direct(1 << p);
+        }
+        let mut refs = [-1i8; 2];
+        for (l, r) in refs.iter_mut().enumerate() {
+            if sub.pred & (1 << l) != 0 {
+                let v = self.cur.ref_idx[l][p];
+                ensure!((v as usize) < n[l], "ref_idx {v} out of range (list {l}, size {})", n[l]);
+                *r = v;
             }
-            let mut refs = [-1i8; 2];
-            for (l, r) in refs.iter_mut().enumerate() {
-                if sub.pred & (1 << l) != 0 {
-                    let v = self.cur.ref_idx[l][p];
-                    ensure!((v as usize) < n[l], "ref_idx {v} out of range (list {l}, size {})", n[l]);
-                    *r = v;
+        }
+        for j in 0..sub.shape.num_parts() {
+            let (sx, sy, w, h) = sub.shape.rect(j);
+            let (x, y) = (x8 + sx, y8 + sy);
+            let mut mvs = [[0i16; 2]; 2];
+            for l in 0..2 {
+                if refs[l] >= 0 {
+                    let mvp = self.mvp(l, x, y, w, refs[l], 0, 0);
+                    let d = self.cur.mvd[l][p * 4 + j];
+                    mvs[l] = [mvp[0].wrapping_add(d[0]), mvp[1].wrapping_add(d[1])];
                 }
             }
-            for j in 0..sub.shape.num_parts() {
-                let (sx, sy, w, h) = sub.shape.rect(j);
-                let (x, y) = (x8 + sx, y8 + sy);
-                let mut mvs = [[0i16; 2]; 2];
-                for l in 0..2 {
-                    if refs[l] >= 0 {
-                        let mvp = self.mvp(l, x, y, w, refs[l], 0, 0);
-                        let d = self.cur.mvd[l][p * 4 + j];
-                        mvs[l] = [mvp[0].wrapping_add(d[0]), mvp[1].wrapping_add(d[1])];
-                    }
-                }
-                self.set_motion(x, y, w, h, refs, mvs);
-            }
+            self.set_motion(x, y, w, h, refs, mvs);
         }
         Ok(())
     }
@@ -1380,6 +1392,11 @@ impl<'a> SliceDecoder<'a> {
             cavlc::residual_block(r, &mut lv, 0, 15, 16, nc)?;
             self.put_luma_dc(&lv);
         }
+        self.residual_cavlc_luma(r, cbp, kind, t8)?;
+        self.residual_cavlc_chroma(r, cbp)
+    }
+
+    fn residual_cavlc_luma(&mut self, r: &mut BitReader, cbp: u8, kind: MbKind, t8: bool) -> Result<()> {
         for b8 in 0..4 {
             let (bx8, by8) = ((b8 & 1) * 2, (b8 >> 1) * 2);
             if cbp & (1 << b8) == 0 {
@@ -1413,6 +1430,10 @@ impl<'a> SliceDecoder<'a> {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn residual_cavlc_chroma(&mut self, r: &mut BitReader, cbp: u8) -> Result<()> {
         let cbp_c = cbp >> 4;
         if cbp_c & 3 != 0 {
             for c in 0..2 {
@@ -1465,5 +1486,35 @@ impl<'a> SliceDecoder<'a> {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SliceDecoder;
+
+    /// Temporal direct mvs stay inside the spec's motion-vector range −2^15..2^15−1 with a
+    /// large `DistScaleFactor` and a co-located mv at an i16 extreme: the scale used to
+    /// truncate past the range with `as i16`, and mvL0 − mvCol then overflowed a debug build
+    /// ("attempt to subtract with overflow"). `dsf` 256 is the identity scale.
+    #[test]
+    fn temporal_direct_mvs_at_i16_extremes_stay_in_the_spec_range() {
+        for dsf in [-1024i32, -1, 256, 1023] {
+            for col in [[i16::MIN, i16::MIN], [i16::MAX, i16::MAX], [i16::MIN, i16::MAX]] {
+                let (mv0, mv1) = SliceDecoder::temporal_direct_mvs(dsf, col);
+                for mv in [mv0, mv1] {
+                    for c in mv {
+                        assert!((-(1 << 15)..(1 << 15)).contains(&i32::from(c)), "dsf {dsf}, col {col:?}: {mv:?}");
+                    }
+                }
+                if dsf == 256 {
+                    assert_eq!((mv0, mv1), (col, [0, 0]), "dsf 256 is the identity scale");
+                }
+            }
+        }
+        // soundcraft#994: mvL1 is scaled from the unclamped mvL0 with only the results clipped;
+        // deriving it from the clipped mvL0 gave [0, 0] here.
+        let (mv0, mv1) = SliceDecoder::temporal_direct_mvs(512, [i16::MAX, 0]);
+        assert_eq!((mv0, mv1), ([i16::MAX, 0], [i16::MAX, 0]), "mvL1 keeps mvL0's off-range part");
     }
 }

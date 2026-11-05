@@ -6,45 +6,34 @@ use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::text::{Bullet, TextBody};
 use deckcraft_model::{Presentation, Shape, ShapeKind};
 
-/// Install supported embedded faces under private document-local families. Original names and
+/// Install supported embedded faces under private content-interned families. Original names and
 /// unsupported MicroType Express subsets remain unchanged for editing and round trip.
 pub fn install_embedded_fonts(p: &mut Presentation) {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT_SCOPE: AtomicU64 = AtomicU64::new(1);
-    let scope = NEXT_SCOPE.fetch_add(1, Ordering::Relaxed);
     let db = FontDb::global();
-    let mut aliases: Vec<(String, String)> = Vec::new();
     let mut faces = Vec::new();
     for font in &p.embedded_fonts {
         let family = font.typeface.trim();
         if family.is_empty() {
             continue;
         }
-        let alias = if let Some((_, alias)) = aliases.iter().find(|(source, _)| source.eq_ignore_ascii_case(family)) {
-            alias.clone()
-        } else {
-            let alias = format!("deckcraft-document-{scope}-font-{}", aliases.len());
-            aliases.push((family.to_owned(), alias.clone()));
-            alias
-        };
         for id in font.faces().into_iter().flatten() {
             let Some(item) = p.media(id) else { continue };
             let Some(sfnt) = deckcraft_fonts::embedded_sfnt(&item.data) else { continue };
-            faces.push((sfnt.to_vec(), family.to_owned(), alias.clone()));
+            faces.push((sfnt, family));
         }
     }
-    db.add_document_fonts(faces);
-    aliases.retain(|(_, alias)| db.has_family(alias));
-    p.font_aliases = std::sync::Arc::new(aliases);
+    p.font_aliases = std::sync::Arc::new(db.register_document_fonts(faces));
 }
 
 /// The font families the slides' text is drawn in (theme fonts resolved, bullet fonts included)
-/// that aren't installed or bundled, sorted, without duplicates (case-insensitive).
+/// that aren't installed or bundled, sorted, without duplicates (case-insensitive). Names that
+/// start with a dot are macOS hidden system fonts (`.SF NS`); they never appear in a font list
+/// and can't be installed, so they aren't reported.
 pub fn missing_fonts(p: &Presentation) -> Vec<String> {
     let db = FontDb::global();
     let mut out: Vec<String> = Vec::new();
     for family in used_fonts(p) {
-        if !db.has_family(p.render_font_family(&family)) && !out.iter().any(|f| f.eq_ignore_ascii_case(&family)) {
+        if !family.starts_with('.') && !db.has_family(p.render_font_family(&family)) && !out.iter().any(|f| f.eq_ignore_ascii_case(&family)) {
             out.push(family);
         }
     }

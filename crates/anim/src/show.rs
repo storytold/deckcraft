@@ -29,18 +29,8 @@ pub enum ShowAction {
     Exit,
 }
 
-/// Can a link from a (possibly untrusted) deck be opened outside the show? Only web pages and
-/// mail: `file:`, `javascript:`, relative paths and other schemes (OS protocol handlers) are not
-/// opened on a click.
-pub fn safe_url(url: &str) -> bool {
-    let u = url.trim();
-    let Some((scheme, rest)) = u.split_once(':') else { return false };
-    match scheme.to_ascii_lowercase().as_str() {
-        "http" | "https" => rest.starts_with("//") && rest.len() > 2,
-        "mailto" => !rest.is_empty(),
-        _ => false,
-    }
-}
+// Which links the show opens on a click; PDF export writes the same ones.
+pub use deckcraft_model::text::safe_url;
 
 /// What a clicked link does in the show (`ShowState::follow`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,6 +58,9 @@ pub struct ShowState {
     pub playing: bool,
     /// On the end screen.
     pub ended: bool,
+    /// The current slide was reached by going back (← / Backspace), so the show plays the
+    /// transition of the slide it left, in reverse, as PowerPoint does (#1531).
+    pub backward: bool,
     /// The show has entered a slide (so `slide` and `step` are meaningful and can be saved).
     active: bool,
     /// The time of the last [`ShowState::tick`] (seconds), for the triggered animations' clocks.
@@ -218,6 +211,7 @@ impl ShowState {
         self.active = true;
         self.slide = i;
         self.ended = false;
+        self.backward = false;
         // Time spent elsewhere never counts for this slide's triggered animations.
         self.last_now = None;
         let steps = ShowState::steps(pres, i);
@@ -319,6 +313,7 @@ impl ShowState {
             }
             self.step = ShowState::steps(pres, self.slide);
             self.playing = false;
+            self.backward = false;
             return ShowAction::Slide(self.slide);
         }
         // #844: undoing the automatic first step left the slide as before it appeared, and the show
@@ -347,6 +342,7 @@ impl ShowState {
                     self.step = ShowState::steps(pres, i);
                     self.playing = false;
                 }
+                self.backward = true;
                 ShowAction::Slide(i)
             }
             None => ShowAction::None,

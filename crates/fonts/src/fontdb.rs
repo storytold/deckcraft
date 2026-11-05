@@ -2,6 +2,7 @@
 //! time a lookup needs them, native only), outline cache.
 
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -30,12 +31,15 @@ pub fn bundled() -> Vec<&'static [u8]> {
 /// Open substitutes for families documents often ask for but we can't ship (metric-compatible
 /// where one exists), tried in order after the family itself.
 pub fn substitutes(family: &str) -> &'static [&'static str] {
-    match family.to_ascii_lowercase().as_str() {
+    let f = family.to_ascii_lowercase();
+    if is_monospace_family(&f) {
+        return &["Liberation Mono", "Courier New", "Menlo", "Courier", "DejaVu Sans Mono"];
+    }
+    match f.as_str() {
         "calibri" | "calibri light" => &["Carlito", "Liberation Sans", "Arial", "Inter"],
         "cambria" | "cambria math" => &["Caladea", "Liberation Serif", "Times New Roman", "Merriweather"],
         "arial" | "helvetica" | "helvetica neue" | "arial nova" => &["Liberation Sans", "Arial", "Helvetica Neue", "Helvetica", "Inter"],
         "times new roman" | "times" => &["Liberation Serif", "Times New Roman", "Times", "Merriweather"],
-        "courier new" | "courier" | "consolas" | "menlo" => &["Liberation Mono", "Courier New", "Menlo", "Courier"],
         "aptos" | "aptos display" | "aptos narrow" | "segoe ui" | "segoe ui light" | "segoe ui semibold" | "tahoma" | "verdana" => {
             &["Inter", "Helvetica Neue", "Arial", "Liberation Sans"]
         }
@@ -52,12 +56,77 @@ pub fn substitutes(family: &str) -> &'static [&'static str] {
     }
 }
 
+/// Families that are monospaced: when not installed, documents keep a monospaced substitute
+/// ([`substitutes`]) so code blocks and columns stay aligned instead of falling back to
+/// proportional Calibri.
+pub fn is_monospace_family(family: &str) -> bool {
+    let f = family.to_ascii_lowercase();
+    let s = f.trim();
+    if matches!(
+        s,
+        "courier new"
+            | "courier"
+            | "cousine"
+            | "consolas"
+            | "menlo"
+            | "monaco"
+            | "source code pro"
+            | "jetbrains mono"
+            | "cascadia code"
+            | "cascadia code pl"
+            | "cascadia mono"
+            | "cascadia mono pl"
+            | "fira code"
+            | "fira mono"
+            | "inconsolata"
+            | "dejavu sans mono"
+            | "sf mono"
+            | "roboto mono"
+            | "hack"
+            | "ubuntu mono"
+            | "pt mono"
+            | "liberation mono"
+            | "andale mono"
+            | "lucida console"
+            | "lucida sans typewriter"
+            | "fixedsys"
+            | "terminal"
+            | "monospace"
+            | "iosevka"
+            | "monolisa"
+            | "envy code r"
+            | "hasklig"
+    ) {
+        return true;
+    }
+    s.starts_with("courier")
+        || s.starts_with("consolas")
+        || s.starts_with("inconsolata")
+        || s.starts_with("iosevka")
+        || s.ends_with(" mono")
+        || s.ends_with(" code")
+        || s.ends_with(" console")
+        || s.ends_with(" typewriter")
+        || s.ends_with(" monospace")
+        || s.split_whitespace().any(|w| w == "mono" || w == "terminal" || w == "monospace")
+}
+
 /// Families whose open substitutes ([`substitutes`]) keep their metrics, so text drawn with
 /// them breaks into the same lines.
 fn has_metric_twin(family: &str) -> bool {
     matches!(
         family.to_ascii_lowercase().as_str(),
-        "calibri" | "calibri light" | "cambria" | "cambria math" | "arial" | "helvetica" | "times new roman" | "times" | "courier new" | "courier"
+        "calibri"
+            | "calibri light"
+            | "cambria"
+            | "cambria math"
+            | "arial"
+            | "helvetica"
+            | "times new roman"
+            | "times"
+            | "courier new"
+            | "courier"
+            | "cousine"
     )
 }
 
@@ -307,10 +376,21 @@ struct CatalogEntry {
     path: std::path::PathBuf,
 }
 
+/// A complete embedded family registration. The byte buffers are shared with its loaded faces;
+/// keeping them here lets a hash collision be checked without copying or reparsing a font.
+struct DocumentFontFamily {
+    source: String,
+    files: Vec<Arc<Vec<u8>>>,
+    alias: String,
+}
+
 /// Process-wide font database.
 pub struct FontDb {
     faces: RwLock<Vec<Arc<FontFace>>>,
-    outlines: Mutex<HashMap<(u32, u32), Arc<BezPath>>>,
+    outlines: Mutex<OutlineCache>,
+    /// Content-interned document families. Held through registration so concurrent opens reuse
+    /// the same faces, not just the same lookup name after building duplicate shapers.
+    document_fonts: Mutex<HashMap<u64, Vec<DocumentFontFamily>>>,
     #[cfg(not(target_arch = "wasm32"))]
     catalog: RwLock<Vec<CatalogEntry>>,
     /// The folders the system font scan reads (the platform's font folders for [`FontDb::global`]).
@@ -381,6 +461,38 @@ const SYSTEM_FALLBACKS: &[&str] = &[
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
 const OUTLINE_CACHE_MAX: usize = 50_000;
+/// Most path elements one glyph outline may expand to. Composite and `VARC` glyphs can draw a
+/// shared outline many times over; a glyph past this draws nothing rather than holding megabytes.
+const MAX_OUTLINE_ELEMENTS: usize = 1 << 15;
+/// Most path elements the outline cache holds across all glyphs (about 230 MB at most) before it
+/// starts over: distinct glyph ids can each expand one dense outline.
+const OUTLINE_CACHE_MAX_ELEMENTS: usize = 1 << 22;
+
+/// Glyph outlines by (face, glyph), with the path elements they hold.
+#[derive(Default)]
+struct OutlineCache {
+    paths: HashMap<(u32, u32), Arc<BezPath>>,
+    elements: usize,
+}
+
+impl OutlineCache {
+    fn get(&self, key: &(u32, u32)) -> Option<Arc<BezPath>> {
+        self.paths.get(key).cloned()
+    }
+
+    fn insert(&mut self, key: (u32, u32), path: Arc<BezPath>) {
+        let n = path.elements().len();
+        if let Some(old) = self.paths.remove(&key) {
+            self.elements = self.elements.saturating_sub(old.elements().len());
+        }
+        if self.paths.len() >= OUTLINE_CACHE_MAX || self.elements.saturating_add(n) > OUTLINE_CACHE_MAX_ELEMENTS {
+            self.paths.clear();
+            self.elements = 0;
+        }
+        self.paths.insert(key, path);
+        self.elements = self.elements.saturating_add(n);
+    }
+}
 
 fn name(font: &skrifa::FontRef<'_>, ids: &[StringId]) -> Option<String> {
     ids.iter().find_map(|id| font.localized_strings(*id).english_or_first().map(|s| s.to_string()).filter(|s| !s.is_empty()))
@@ -401,6 +513,22 @@ fn legacy_names(f: &skrifa::FontRef<'_>, family: &str) -> Option<(String, String
         return None;
     }
     Some((legacy, name(f, &[StringId::SUBFAMILY_NAME]).unwrap_or_else(|| "Regular".into())))
+}
+
+/// The Windows family and style a variable font's named instance answers to. Windows lists each
+/// instance other than Regular, Italic, Bold and Bold Italic as a family of its own, as the
+/// family's static files name themselves: "Montserrat ExtraBold" / "Regular" for the ExtraBold
+/// instance, "Montserrat ExtraBold" / "Italic" for ExtraBold Italic.
+fn instance_legacy_names(family: &str, style: &str) -> Option<(String, String)> {
+    if style.contains('{') {
+        return None;
+    }
+    let weight: Vec<&str> = style.split_whitespace().filter(|w| !matches!(norm(w).as_str(), "italic" | "oblique")).collect();
+    let weight = weight.join(" ");
+    if matches!(norm(&weight).as_str(), "" | "regular" | "bold") {
+        return None;
+    }
+    Some((format!("{family} {weight}"), if style_italic(style) { "Italic" } else { "Regular" }.into()))
 }
 
 /// The tables skrifa reads glyph outlines from: `glyf` (TrueType), `CFF `, `CFF2` and `VARC`. For a
@@ -614,29 +742,76 @@ fn fontconfig_dirs(text: &str, data_home: Option<&str>, home: Option<&std::path:
 /// axis settings.
 type Found = (u32, String, String, Vec<([u8; 4], f32)>);
 
+/// Maximum number of faces we enumerate from a single font collection.
+const MAX_COLLECTION_FACES: u32 = 256;
+/// Maximum collection entries inspected while looking for distinct table directories.
+const MAX_COLLECTION_ENTRIES_SCANNED: u32 = 16_384;
+/// Maximum named instances read from a single face.
+const MAX_NAMED_INSTANCES_PER_FACE: usize = 1024;
+/// Maximum faces (named instances counted separately) enumerated from one font file, across all
+/// of a collection's faces: the per-collection and per-face limits multiply, and each face found
+/// is then built with its own shaper.
+const MAX_ENUMERATED_FACES: usize = 4096;
+
+fn distinct_face_indices(entries: impl IntoIterator<Item = (u32, u32)>) -> Vec<u32> {
+    let mut offsets = std::collections::HashSet::new();
+    let mut indices = Vec::with_capacity(MAX_COLLECTION_FACES as usize);
+    for (index, offset) in entries.into_iter().take(MAX_COLLECTION_ENTRIES_SCANNED as usize) {
+        if offsets.insert(offset) {
+            indices.push(index);
+            if indices.len() == MAX_COLLECTION_FACES as usize {
+                break;
+            }
+        }
+    }
+    indices
+}
+
+fn capped_named_instance_count(count: usize) -> usize {
+    count.min(MAX_NAMED_INSTANCES_PER_FACE)
+}
+
 /// Parse every face in `data` (a font file or collection); a variable font yields one face per
 /// named instance (InDesign lists them as styles).
 fn enumerate_faces(data: &[u8]) -> Vec<Found> {
-    let count = match FileRef::new(data) {
-        Ok(FileRef::Font(_)) => 1,
-        Ok(FileRef::Collection(c)) => c.len(),
-        Err(_) => 0,
+    let indices = match FileRef::new(data) {
+        Ok(FileRef::Font(_)) => vec![0],
+        Ok(FileRef::Collection(c)) => {
+            let entries = (0..c.len().min(MAX_COLLECTION_ENTRIES_SCANNED)).filter_map(|i| {
+                let start = 12usize.checked_add((i as usize).checked_mul(4)?)?;
+                let end = start.checked_add(4)?;
+                let offset = u32::from_be_bytes(data.get(start..end)?.try_into().ok()?);
+                Some((i, offset))
+            });
+            distinct_face_indices(entries)
+        }
+        Err(_) => Vec::new(),
     };
     let mut out = Vec::new();
-    for i in 0..count {
+    // Named instances read and plain faces kept, across the whole file.
+    let mut budget = MAX_ENUMERATED_FACES;
+    for i in indices {
+        if budget == 0 {
+            break;
+        }
         let Ok(f) = skrifa::FontRef::from_index(data, i) else { continue };
         let Some((family, style)) = face_names(&f) else { continue };
         let axes = f.axes();
         let mut named = Vec::new();
-        for ni in f.named_instances().iter() {
+        let mut seen = std::collections::HashSet::new();
+        let instances = f.named_instances();
+        for ni in instances.iter().take(capped_named_instance_count(instances.len())) {
+            let Some(left) = budget.checked_sub(1) else { break };
+            budget = left;
             let Some(style) = name(&f, &[ni.subfamily_name_id()]) else { continue };
-            if named.iter().any(|(_, s, _): &(u32, String, _)| s.eq_ignore_ascii_case(&style)) {
+            if !seen.insert(style.to_ascii_lowercase()) {
                 continue;
             }
             let coords: Vec<([u8; 4], f32)> = axes.iter().zip(ni.user_coords()).map(|(a, v)| (a.tag().to_be_bytes(), v)).collect();
             named.push((i, style, coords));
         }
         if named.is_empty() {
+            budget = budget.saturating_sub(1);
             out.push((i, family, style, Vec::new()));
         } else {
             out.extend(named.into_iter().map(|(i, s, c)| (i, family.clone(), s, c)));
@@ -696,7 +871,7 @@ fn make_face(bytes: FontBytes, index: u32, family: String, style: String, coords
         .map(|v| v >= 0.5)
         .or(axis(b"slnt").map(|v| v.abs() > 0.1))
         .unwrap_or(!matches!(a.style, skrifa::attribute::Style::Normal) || style_italic(&style));
-    let legacy = if coords.is_empty() { legacy_names(&f, &family) } else { None };
+    let legacy = if coords.is_empty() { legacy_names(&f, &family) } else { instance_legacy_names(&family, &style) };
     Some(FontFace {
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         family,
@@ -798,7 +973,8 @@ impl FontDb {
         }
         Self {
             faces: RwLock::new(faces),
-            outlines: Mutex::new(HashMap::new()),
+            outlines: Mutex::new(OutlineCache::default()),
+            document_fonts: Mutex::new(HashMap::new()),
             #[cfg(not(target_arch = "wasm32"))]
             catalog: RwLock::new(Vec::new()),
             font_dirs,
@@ -875,7 +1051,72 @@ impl FontDb {
     /// Add a user font (TTF/OTF/TTC bytes). Returns the number of faces added (0 if unparseable or
     /// every face was already present).
     pub fn add_font(&self, bytes: Vec<u8>) -> usize {
-        self.add_fonts(std::iter::once((bytes, None)))
+        self.add_fonts(std::iter::once((Arc::new(bytes), None)))
+    }
+
+    /// Register complete embedded families and return `(source_family, private_alias)` mappings.
+    ///
+    /// File order and duplicate files do not affect identity. The declared family selects faces
+    /// from a collection, so it is part of the key alongside the entire family's file set (and
+    /// therefore all its styles). Equal registrations reuse the existing faces for the process
+    /// lifetime; changed content or style sets remain isolated. Hashes only select a bucket:
+    /// reuse also requires byte-for-byte equality. Cache hits borrow the input without copying,
+    /// enumerating faces or constructing shapers. Private families never enter global fallback.
+    pub fn register_document_fonts<'a>(&self, files: impl IntoIterator<Item = (&'a [u8], &'a str)>) -> Vec<(String, String)> {
+        let mut families: Vec<(&str, Vec<&[u8]>)> = Vec::new();
+        for (bytes, source) in files {
+            let source = source.trim();
+            if source.is_empty() {
+                continue;
+            }
+            if let Some((_, files)) = families.iter_mut().find(|(family, _)| family.eq_ignore_ascii_case(source)) {
+                files.push(bytes);
+            } else {
+                families.push((source, vec![bytes]));
+            }
+        }
+        let mut aliases = Vec::with_capacity(families.len());
+        for (source, mut files) in families {
+            files.sort_unstable();
+            files.dedup();
+            let mut fingerprint = std::collections::hash_map::DefaultHasher::new();
+            source.len().hash(&mut fingerprint);
+            for b in source.bytes() {
+                fingerprint.write_u8(b.to_ascii_lowercase());
+            }
+            files.hash(&mut fingerprint);
+            if let Some(alias) = self.register_document_family(source, files, fingerprint.finish()) {
+                aliases.push((source.to_owned(), alias));
+            }
+        }
+        aliases
+    }
+
+    fn register_document_family(&self, source: &str, files: Vec<&[u8]>, fingerprint: u64) -> Option<String> {
+        let mut registry = self.document_fonts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let bucket = registry.entry(fingerprint).or_default();
+        if let Some(known) = bucket.iter().find(|known| {
+            known.source.eq_ignore_ascii_case(source)
+                && known.files.len() == files.len()
+                && known.files.iter().zip(&files).all(|(known, bytes)| known.as_slice() == *bytes)
+        }) {
+            return Some(known.alias.clone());
+        }
+        let mut ordinal = bucket.len();
+        let alias = loop {
+            let alias = format!("deckcraft-document-{fingerprint:016x}-{ordinal}");
+            if !self.is_loaded(&alias) {
+                break alias;
+            }
+            ordinal += 1;
+        };
+        let owned: Vec<_> = files.into_iter().map(|bytes| Arc::new(bytes.to_vec())).collect();
+        let added = self.add_fonts(owned.iter().map(|bytes| (bytes.clone(), Some((source.to_owned(), alias.clone())))));
+        if added == 0 {
+            return None;
+        }
+        bucket.push(DocumentFontFamily { source: source.to_owned(), files: owned, alias: alias.clone() });
+        Some(alias)
     }
 
     /// Register `(bytes, source_family, private_alias)` font files without exposing their original
@@ -889,21 +1130,20 @@ impl FontDb {
     /// document's subset/content, and resolve its text through that alias. They are excluded from
     /// global family discovery and fallback; explicit alias lookup and styles remain available.
     pub fn add_document_fonts(&self, files: Vec<(Vec<u8>, String, String)>) -> usize {
-        self.add_fonts(files.into_iter().map(|(bytes, family, alias)| (bytes, Some((family, alias)))))
+        self.add_fonts(files.into_iter().map(|(bytes, family, alias)| (Arc::new(bytes), Some((family, alias)))))
     }
 
     /// Add font files together: lookups see all of their faces or none, never part of a family.
     /// Returns the number of faces added.
-    fn add_fonts(&self, files: impl IntoIterator<Item = (Vec<u8>, Option<(String, String)>)>) -> usize {
+    fn add_fonts(&self, files: impl IntoIterator<Item = (Arc<Vec<u8>>, Option<(String, String)>)>) -> usize {
         let present = |faces: &[Arc<FontFace>], family: &str, style: &str| {
             faces.iter().any(|f| f.family.eq_ignore_ascii_case(family) && f.style.eq_ignore_ascii_case(style))
         };
         let mut new = Vec::new();
-        for (bytes, registration) in files {
+        for (data, registration) in files {
             if registration.as_ref().is_some_and(|(_, alias)| alias.trim().is_empty()) {
                 continue;
             }
-            let data = Arc::new(bytes);
             let found = enumerate_faces(&data);
             let matches = |index, family: &str, source: &str| {
                 family.eq_ignore_ascii_case(source.trim())
@@ -923,7 +1163,7 @@ impl FontDb {
                     }
                     family = alias.trim().to_owned();
                 }
-                if present(&self.read_faces(), &family, &style) {
+                if present(&new, &family, &style) || present(&self.read_faces(), &family, &style) {
                     continue;
                 }
                 if let Some(mut f) = make_face(FontBytes::Owned(data.clone()), i, family, style, coords) {
@@ -1054,7 +1294,7 @@ impl FontDb {
                 .iter()
                 .filter(|p| std::fs::metadata(p).is_ok_and(|m| font_file_ok(&m)))
                 .filter_map(|p| std::fs::read(p).ok())
-                .map(|bytes| (bytes, None)),
+                .map(|bytes| (Arc::new(bytes), None)),
         );
         self.is_loaded(family)
     }
@@ -1095,6 +1335,7 @@ impl FontDb {
     /// when it is installed or bundled, or a metric-compatible stand-in (Carlito for Calibri,
     /// Liberation Sans for Arial…), or the family PowerPoint maps it to (Liberation Sans as Arial,
     /// see `office_twin`); any other missing family is drawn in Calibri (or Carlito).
+    /// Monospaced families keep a monospaced substitute instead of falling back to Calibri.
     /// DeckCraft's own default family keeps [`FontDb::face`]'s fallbacks.
     pub fn document_face(&self, family: &str, style: &str) -> Arc<FontFace> {
         if family.eq_ignore_ascii_case(FALLBACK_FAMILY) || has_metric_twin(family) || is_office_cloud_font(family) || self.has_family(family) {
@@ -1102,6 +1343,9 @@ impl FontDb {
         }
         if let Some(twin) = office_twin(family) {
             return self.public_face(twin, style);
+        }
+        if is_monospace_family(family) {
+            return self.public_face(family, style);
         }
         self.public_face(MISSING_FONT_FAMILY, style)
     }
@@ -1158,9 +1402,8 @@ impl FontDb {
     fn instance(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
         let open = style.find('{')?;
         let base = self.find(family, style[..open].trim())?;
-        if base.skrifa().is_none_or(|f| f.axes().is_empty()) {
-            return Some(base);
-        }
+        let Some(font) = base.skrifa().filter(|f| !f.axes().is_empty()) else { return Some(base) };
+        let axis_tags: Vec<[u8; 4]> = font.axes().iter().map(|a| a.tag().to_be_bytes()).collect();
         let mut coords = base.coords.clone();
         for kv in style[open + 1..].trim_end_matches('}').split(',') {
             let (k, v) = kv.split_once(':')?;
@@ -1170,6 +1413,11 @@ impl FontDb {
                 return None;
             }
             let tag = [k[0], k[1], k[2], k[3]];
+            // A tag the font has no axis for changes nothing; keeping it would grow the list with
+            // every distinct tag in the style text.
+            if !axis_tags.contains(&tag) {
+                continue;
+            }
             match coords.iter_mut().find(|(t, _)| *t == tag) {
                 Some(c) => c.1 = v,
                 None => coords.push((tag, v)),
@@ -1462,41 +1710,72 @@ impl FontDb {
     pub fn outline(&self, face: &FontFace, gid: u32) -> Arc<BezPath> {
         let key = (face.id, gid);
         if let Some(p) = self.outlines.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
-            return p.clone();
+            return p;
         }
-        let mut pen = FlipPen(BezPath::new());
+        let mut pen = FlipPen::new(MAX_OUTLINE_ELEMENTS);
         if let Some(f) = face.skrifa()
             && let Some(g) = f.outline_glyphs().get(GlyphId::new(gid))
         {
             let _ = g.draw(DrawSettings::unhinted(Size::unscaled(), face.location()), &mut pen);
         }
-        let p = Arc::new(pen.0);
-        let mut cache = self.outlines.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if cache.len() >= OUTLINE_CACHE_MAX {
-            cache.clear();
-        }
-        cache.insert(key, p.clone());
+        let p = Arc::new(pen.finish());
+        self.outlines.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(key, p.clone());
         p
     }
 }
 
-struct FlipPen(BezPath);
+/// Collects a glyph outline, y flipped, up to `limit` path elements. Past the limit it ignores
+/// what follows and [`FlipPen::finish`] gives an empty path: a cut-off outline would fill wrongly.
+struct FlipPen {
+    path: BezPath,
+    limit: usize,
+    over: bool,
+}
+
+impl FlipPen {
+    fn new(limit: usize) -> Self {
+        FlipPen { path: BezPath::new(), limit, over: false }
+    }
+
+    /// Room for one more element?
+    fn room(&mut self) -> bool {
+        if !self.over && self.path.elements().len() >= self.limit {
+            self.over = true;
+            self.path = BezPath::new();
+        }
+        !self.over
+    }
+
+    fn finish(self) -> BezPath {
+        if self.over { BezPath::new() } else { self.path }
+    }
+}
 
 impl OutlinePen for FlipPen {
     fn move_to(&mut self, x: f32, y: f32) {
-        self.0.move_to((x as f64, -y as f64));
+        if self.room() {
+            self.path.move_to((x as f64, -y as f64));
+        }
     }
     fn line_to(&mut self, x: f32, y: f32) {
-        self.0.line_to((x as f64, -y as f64));
+        if self.room() {
+            self.path.line_to((x as f64, -y as f64));
+        }
     }
     fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
-        self.0.quad_to((cx0 as f64, -cy0 as f64), (x as f64, -y as f64));
+        if self.room() {
+            self.path.quad_to((cx0 as f64, -cy0 as f64), (x as f64, -y as f64));
+        }
     }
     fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
-        self.0.curve_to((cx0 as f64, -cy0 as f64), (cx1 as f64, -cy1 as f64), (x as f64, -y as f64));
+        if self.room() {
+            self.path.curve_to((cx0 as f64, -cy0 as f64), (cx1 as f64, -cy1 as f64), (x as f64, -y as f64));
+        }
     }
     fn close(&mut self) {
-        self.0.close_path();
+        if self.room() {
+            self.path.close_path();
+        }
     }
 }
 
@@ -1505,6 +1784,99 @@ mod font_dir_tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
+
+    #[test]
+    fn document_content_hash_collisions_compare_full_family_identity() {
+        let regular = include_bytes!("../tests/fixtures/legacy-regular.ttf").as_slice();
+        let semibold = include_bytes!("../tests/fixtures/legacy-semibold.ttf").as_slice();
+        let db = FontDb::with_font_dirs(Vec::new());
+        let before = db.read_faces().len();
+        // Force a collision rather than relying on finding one in the production hash.
+        let a = db.register_document_family("Declared", vec![regular], 7).unwrap();
+        let b = db.register_document_family("Declared", vec![semibold], 7).unwrap();
+        let c = db.register_document_family("Other declared family", vec![regular], 7).unwrap();
+        let whole = db.register_document_family("Declared", vec![regular, semibold], 7).unwrap();
+        assert_ne!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(a, whole);
+        assert_eq!(db.register_document_family("declared", vec![regular], 7), Some(a.clone()));
+        assert_eq!(db.face(&a, "Regular").data(), regular);
+        assert_eq!(db.face(&b, "Semibold").data(), semibold);
+        assert_ne!(db.face(&a, "Regular").id(), db.face(&b, "Semibold").id());
+        assert_eq!(db.styles(&whole), ["Regular", "Semibold"]);
+        assert_eq!(db.read_faces().len(), before + 5);
+        let registry = db.document_fonts.lock().unwrap();
+        let known = &registry[&7][0];
+        let face = db.face(&a, "Regular");
+        assert_eq!(known.files[0].as_ptr(), face.data().as_ptr(), "registry shares the loaded face's bytes");
+    }
+
+    #[test]
+    fn duplicate_collection_offsets_do_not_consume_face_cap() {
+        let mut entries = vec![(0, 7); MAX_COLLECTION_FACES as usize];
+        entries.extend((0..MAX_COLLECTION_FACES).map(|i| (i + MAX_COLLECTION_FACES, i + 8)));
+        let faces = distinct_face_indices(entries);
+        assert_eq!(faces.len(), MAX_COLLECTION_FACES as usize);
+        assert_eq!(faces.first(), Some(&0));
+        assert_eq!(faces.get(1), Some(&MAX_COLLECTION_FACES));
+        assert_eq!(faces.last(), Some(&(MAX_COLLECTION_FACES * 2 - 2)));
+    }
+
+    #[test]
+    fn named_instance_limit_is_bounded_per_face() {
+        assert_eq!(capped_named_instance_count(0), 0);
+        assert_eq!(capped_named_instance_count(MAX_NAMED_INSTANCES_PER_FACE), MAX_NAMED_INSTANCES_PER_FACE);
+        assert_eq!(capped_named_instance_count(MAX_NAMED_INSTANCES_PER_FACE + 1), MAX_NAMED_INSTANCES_PER_FACE);
+    }
+
+    #[test]
+    fn faces_of_one_file_are_bounded_across_the_collection() {
+        // The per-collection and per-face limits together would allow far more.
+        assert!((MAX_COLLECTION_FACES as usize) * MAX_NAMED_INSTANCES_PER_FACE > 16 * MAX_ENUMERATED_FACES);
+        for data in bundled() {
+            assert!(enumerate_faces(data).len() <= MAX_ENUMERATED_FACES);
+        }
+    }
+
+    #[test]
+    fn an_outline_past_the_element_limit_draws_nothing() {
+        let mut pen = FlipPen::new(8);
+        pen.move_to(0.0, 0.0);
+        pen.line_to(1.0, 1.0);
+        pen.close();
+        assert_eq!(pen.finish().elements().len(), 3);
+        // A shared outline drawn over and over (composite and VARC glyphs).
+        let mut pen = FlipPen::new(8);
+        for i in 0..1_000_000 {
+            pen.move_to(0.0, 0.0);
+            pen.line_to(i as f32, 1.0);
+            pen.close();
+        }
+        assert_eq!(pen.path.elements().len(), 0);
+        assert!(pen.finish().elements().is_empty());
+    }
+
+    #[test]
+    fn outline_cache_is_bounded_by_elements() {
+        let mut path = BezPath::new();
+        path.move_to((0.0, 0.0));
+        for i in 1..MAX_OUTLINE_ELEMENTS {
+            path.line_to((i as f64, 0.0));
+        }
+        let path = Arc::new(path);
+        let mut cache = OutlineCache::default();
+        let glyphs = 4 * OUTLINE_CACHE_MAX_ELEMENTS / MAX_OUTLINE_ELEMENTS;
+        for gid in 0..glyphs as u32 {
+            cache.insert((1, gid), path.clone());
+            assert!(cache.elements <= OUTLINE_CACHE_MAX_ELEMENTS);
+            assert_eq!(cache.elements, cache.paths.values().map(|p| p.elements().len()).sum::<usize>());
+        }
+        assert!(cache.get(&(1, glyphs as u32 - 1)).is_some());
+        // Replacing an entry does not count it twice.
+        let before = cache.elements;
+        cache.insert((1, glyphs as u32 - 1), path.clone());
+        assert_eq!(cache.elements, before);
+    }
 
     #[test]
     fn xdg_data_dirs_contribute_their_fonts_folders() {

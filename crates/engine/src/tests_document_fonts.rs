@@ -161,6 +161,39 @@ fn assert_rendered_advances(st: &DocState, advance: u16) -> Vec<u8> {
 }
 
 #[test]
+fn repeated_embedded_font_install_reuses_faces() {
+    let mut s = Session::new();
+    let bytes = deck(Some(710));
+    open(&mut s, "first.pptx", &bytes);
+    let first = s.doc().unwrap().doc.clone();
+    let face_ids = |doc: &Presentation| {
+        deckcraft_render::place_slide(doc, 0).texts.iter().flat_map(|text| text.layout.runs.iter().map(|run| run.face.id())).collect::<Vec<_>>()
+    };
+    let expected = face_ids(&first);
+    assert!(!expected.is_empty());
+    for name in ["second.pptx", "third.pptx"] {
+        open(&mut s, name, &bytes);
+        let reloaded = &s.doc().unwrap().doc;
+        assert_eq!(reloaded.font_aliases, first.font_aliases, "identical embedded content must reuse its private aliases");
+        assert_eq!(face_ids(reloaded), expected, "reopening must not allocate another loaded face");
+    }
+    let adopted = DocState::new((*first).clone(), None, "Adopted".into());
+    assert_eq!(adopted.doc.font_aliases, first.font_aliases);
+    assert_eq!(face_ids(&adopted.doc), expected, "constructing a document from the same content must reuse loaded faces too");
+}
+
+/// Content, media bytes and runtime aliases must travel together in a single undo step.
+fn assert_one_paste_undo_redo(s: &mut Session, before: &Arc<Presentation>, after: &Arc<Presentation>) {
+    assert_ne!(before.as_ref(), after.as_ref());
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc.as_ref(), before.as_ref(), "one undo must restore the entire pre-paste presentation");
+    assert_eq!(s.doc().unwrap().doc.font_aliases, before.font_aliases);
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc.as_ref(), after.as_ref(), "one redo must restore pasted content and every imported font resource");
+    assert_eq!(s.doc().unwrap().doc.font_aliases, after.font_aliases);
+}
+
+#[test]
 fn opening_two_decks_isolates_embedded_font_metrics_and_preserves_saved_names() {
     let mut s = Session::new();
     let first = open(&mut s, "narrow.pptx", &deck(Some(700)));
@@ -366,13 +399,18 @@ fn pasted_shapes_keep_source_only_embedded_families() {
         s.execute("edit.select", &json!({"ids": [id]})).unwrap();
         s.execute("edit.copy", &json!({})).unwrap();
         s.set_active(destination);
+        let before = s.doc().unwrap().doc.clone();
         s.execute("edit.pasteSpecial", &json!({"as": mode})).unwrap();
         let placed = deckcraft_render::place_slide(&s.doc().unwrap().doc, 0);
         let line = &placed.texts.last().unwrap().layout.lines[0];
         assert!((line.extent.1 - line.extent.0 - 84.0).abs() < 0.01, "{mode}: pasted explicit font must keep its advances");
-        s.execute("edit.undo", &json!({})).unwrap();
-        assert!(s.doc().unwrap().doc.embedded_fonts.is_empty(), "one undo removes both pasted shapes and their imported fonts");
-        s.execute("edit.redo", &json!({})).unwrap();
+        let after = s.doc().unwrap().doc.clone();
+        assert_eq!(after.slides[0].shapes.len(), before.slides[0].shapes.len() + 1);
+        assert_eq!(after.embedded_fonts.len(), before.embedded_fonts.len() + 1);
+        assert!(!after.font_aliases.is_empty());
+        let face = after.embedded_fonts.last().unwrap().regular.unwrap();
+        assert_eq!(after.media(face).unwrap().data, s.clipboard.source_font_media[0].data);
+        assert_one_paste_undo_redo(&mut s, &before, &after);
         for format in ["deckcraft", "pptx"] {
             let bytes = cmd::file::save_bytes(&s.doc().unwrap().doc, format).unwrap();
             open(&mut s, &format!("pasted.{format}"), &cmd::base64_encode(&bytes));
@@ -392,11 +430,17 @@ fn pasted_shapes_keep_the_destinations_existing_embedded_family() {
     s.execute("edit.select", &json!({"ids": [100]})).unwrap();
     s.execute("edit.copy", &json!({})).unwrap();
     s.set_active(destination);
+    let before = s.doc().unwrap().doc.clone();
     s.execute("edit.paste", &json!({})).unwrap();
     let placed = deckcraft_render::place_slide(&s.doc().unwrap().doc, 0);
     let line = &placed.texts.last().unwrap().layout.lines[0];
     assert!((line.extent.1 - line.extent.0 - 108.0).abs() < 0.01, "an existing destination family must not be overwritten");
     assert_eq!(s.doc().unwrap().doc.embedded_fonts.len(), 1);
+    let after = s.doc().unwrap().doc.clone();
+    assert_eq!(after.font_aliases, before.font_aliases);
+    assert_eq!(after.embedded_fonts, before.embedded_fonts);
+    assert_eq!(after.media.len(), before.media.len());
+    assert_one_paste_undo_redo(&mut s, &before, &after);
 }
 
 #[test]
@@ -424,7 +468,15 @@ fn rich_text_paste_fits_using_the_retained_embedded_font() {
     s.execute("edit.copy", &json!({})).unwrap();
     s.set_active(destination);
     s.execute("text.edit", &json!({"id": 200})).unwrap();
+    let before = s.doc().unwrap().doc.clone();
     s.execute("edit.paste", &json!({})).unwrap();
+    let after = s.doc().unwrap().doc.clone();
+    assert_eq!(after.slides[0].shapes[0].text.as_ref().unwrap().text(), "AAA");
+    assert_eq!(after.embedded_fonts.len(), 1);
+    assert!(!after.font_aliases.is_empty());
+    let font = &after.embedded_fonts[0];
+    assert_eq!(after.media(font.regular.unwrap()).unwrap().data, s.clipboard.source_font_media[0].data);
+    assert_one_paste_undo_redo(&mut s, &before, &after);
     let fitted = s.doc().unwrap().shape(ShapeId(200)).unwrap().xfrm.unwrap();
     cmd::text::fit_text_box(&mut s, ShapeId(200)).unwrap();
     let refitted = s.doc().unwrap().shape(ShapeId(200)).unwrap().xfrm.unwrap();
@@ -442,9 +494,14 @@ fn pasting_shape_as_plain_text_does_not_import_its_font() {
     s.execute("edit.copy", &json!({})).unwrap();
     s.set_active(destination);
     s.execute("text.edit", &json!({"id": 100})).unwrap();
+    let before = s.doc().unwrap().doc.clone();
     s.execute("edit.paste", &json!({})).unwrap();
     assert!(s.doc().unwrap().doc.embedded_fonts.is_empty(), "plain text must not change the destination's existing family resolution");
     assert!(s.doc().unwrap().doc.font_aliases.is_empty());
+    assert_eq!(s.doc().unwrap().doc.media.len(), before.media.len());
+    let after = s.doc().unwrap().doc.clone();
+    assert_eq!(after.slides[0].shapes[0].text.as_ref().unwrap().text(), "AAAAAA");
+    assert_one_paste_undo_redo(&mut s, &before, &after);
 }
 
 #[test]
@@ -482,17 +539,102 @@ fn pasted_slide_fonts_follow_the_resulting_layout_not_the_current_slide() {
     .unwrap();
     s.execute("edit.copy", &json!({"scope": "slides"})).unwrap();
     s.set_active(destination);
+    let before = s.doc().unwrap().doc.clone();
     s.execute("edit.paste", &json!({})).unwrap();
     let placed = deckcraft_render::place_slide(&s.doc().unwrap().doc, 1);
     let line = &placed.texts[0].layout.lines[0];
     assert!((line.extent.1 - line.extent.0 - 84.0).abs() < 0.01, "the copied slide's retained layout resolves its theme font");
+    let after = s.doc().unwrap().doc.clone();
+    assert_eq!(after.slides.len(), before.slides.len() + 1);
+    assert_eq!(after.embedded_fonts.len(), 1);
+    assert!(!after.font_aliases.is_empty());
+    assert_eq!(after.media(after.embedded_fonts[0].regular.unwrap()).unwrap().data, s.clipboard.source_font_media[0].data);
+    assert_one_paste_undo_redo(&mut s, &before, &after);
 }
 
 #[test]
-fn pasted_placeholder_fonts_follow_the_resulting_nonplaceholder_style() {
+fn pasted_fonts_follow_the_active_non_slide_target_theme() {
+    for rich_text in [false, true] {
+        for (view, params) in [
+            ("view.slideMaster", json!({"master": 1})),
+            ("view.slideMaster", json!({"master": 1, "layout": 0})),
+            ("view.notesMaster", json!({})),
+            ("view.handoutMaster", json!({})),
+        ] {
+            let mut s = Session::new();
+            let source = open(&mut s, "source.pptx", &deck(Some(700)));
+            s.edit(|doc, _| {
+                let props = &mut Arc::make_mut(&mut doc.slides[0]).shapes[1].text.as_mut().unwrap().paragraphs[0].runs[0].props;
+                assert_eq!(props.font.as_deref(), Some("+mn-lt"));
+                props.font_ea = None;
+                props.font_cs = None;
+                props.font_sym = None;
+                Ok(())
+            })
+            .unwrap();
+            let mut p = Presentation::default();
+            let mut other = (*p.masters[0]).clone();
+            other.id = deckcraft_model::MasterId(9001);
+            other.theme.fonts.minor.latin = FAMILY.into();
+            other.shapes.clear();
+            for (i, layout) in other.layouts.iter_mut().enumerate() {
+                layout.id = deckcraft_model::LayoutId(9100 + i as u32);
+                layout.shapes.clear();
+            }
+            p.notes_master = Some(Arc::new(other.clone()));
+            p.handout_master = Some(Arc::new(other.clone()));
+            p.masters.push(Arc::new(other));
+            Arc::make_mut(&mut p.slides[0]).shapes.clear();
+            s.add_document(DocState::new(p, None, "Non-slide destination".into()));
+            let destination = s.active_index().unwrap();
+            s.execute(view, &params).unwrap();
+            if rich_text {
+                let made = s.execute("insert.textBox", &json!({"rect": [20.0, 20.0, 400.0, 70.0], "text": ""})).unwrap();
+                s.execute("text.edit", &json!({"id": made["id"]})).unwrap();
+            }
+            let slide_layout = s.doc().unwrap().doc.slides[0].layout;
+            assert!(s.doc().unwrap().doc.masters[0].layouts.iter().any(|layout| layout.id == slide_layout));
+            assert_ne!(s.doc().unwrap().doc.masters[0].theme.fonts.minor.latin, FAMILY);
+            s.set_active(source);
+            if rich_text {
+                s.execute("text.edit", &json!({"id": 101})).unwrap();
+                s.execute("text.selectAll", &json!({})).unwrap();
+            } else {
+                s.execute("edit.select", &json!({"ids": [101]})).unwrap();
+            }
+            s.execute("edit.copy", &json!({})).unwrap();
+            s.set_active(destination);
+            let before = s.doc().unwrap().doc.clone();
+            s.execute("edit.paste", &json!({})).unwrap();
+            let after = s.doc().unwrap().doc.clone();
+            assert_eq!(after.slides[0].layout, slide_layout);
+            assert!(after.slides[0].shapes.is_empty(), "the selected slide is not the paste target");
+            assert_eq!(after.embedded_fonts.len(), 1, "{view} {params}, rich text: {rich_text}");
+            assert_eq!(after.embedded_fonts[0].typeface, FAMILY);
+            assert!(!after.font_aliases.is_empty());
+            assert_eq!(after.media(after.embedded_fonts[0].regular.unwrap()).unwrap().data, s.clipboard.source_font_media[0].data);
+            assert_one_paste_undo_redo(&mut s, &before, &after);
+            if !rich_text {
+                let id = s.doc().unwrap().selection.shapes[0];
+                s.execute("text.edit", &json!({"id": id.0})).unwrap();
+            }
+            let st = s.doc().unwrap();
+            let layout = cmd::text::layout_for(st, st.selection.text.as_ref().unwrap()).unwrap();
+            let line = &layout.lines[0];
+            assert!((line.extent.1 - line.extent.0 - 84.0).abs() < 0.01, "the target's theme must render the imported face: {view} {params}");
+        }
+    }
+}
+
+#[test]
+fn pasted_placeholder_retains_its_inherited_embedded_font_after_detaching() {
     let mut s = Session::new();
     let source = open(&mut s, "source.pptx", &deck(Some(700)));
     s.edit(|doc, _| {
+        let master = Arc::make_mut(&mut doc.masters[0]);
+        let mut title = deckcraft_model::text::LevelStyle::default();
+        title.run.font = Some(FAMILY.into());
+        master.title_style.set(0, title);
         let shape = &mut Arc::make_mut(&mut doc.slides[0]).shapes[0];
         shape.ph = Some(deckcraft_model::Placeholder { kind: deckcraft_model::PhType::Title, ..Default::default() });
         let props = &mut shape.text.as_mut().unwrap().paragraphs[0].runs[0].props;
@@ -505,7 +647,7 @@ fn pasted_placeholder_fonts_follow_the_resulting_nonplaceholder_style() {
     .unwrap();
     let mut destination = Presentation::default();
     let mut level = deckcraft_model::text::LevelStyle::default();
-    level.run.font = Some(FAMILY.into());
+    level.run.font = Some("Unembedded default family".into());
     destination.default_text_style.set(0, level);
     let master = Arc::make_mut(&mut destination.masters[0]);
     let mut title = deckcraft_model::text::LevelStyle::default();
@@ -522,10 +664,15 @@ fn pasted_placeholder_fonts_follow_the_resulting_nonplaceholder_style() {
     s.set_active(destination);
     s.execute("edit.paste", &json!({})).unwrap();
     let p = &s.doc().unwrap().doc;
+    assert_eq!(p.embedded_fonts[0].typeface, FAMILY);
+    assert_eq!(p.media(p.embedded_fonts[0].regular.unwrap()).unwrap().data, s.clipboard.source_font_media[0].data);
     assert!(p.slides[0].shapes[0].ph.is_none());
     let placed = deckcraft_render::place_slide(p, 0);
     let line = &placed.texts[0].layout.lines[0];
-    assert!((line.extent.1 - line.extent.0 - 84.0).abs() < 0.01, "pasted nonplaceholder uses its resulting default font");
+    assert!(
+        (line.extent.1 - line.extent.0 - 84.0).abs() < 0.01,
+        "detaching must retain the source placeholder's inherited font, not the destination's default or title font"
+    );
 }
 
 #[test]
@@ -605,4 +752,50 @@ fn rich_text_paste_does_not_import_replaced_paragraph_defaults() {
     s.execute("edit.paste", &json!({})).unwrap();
     assert!(s.doc().unwrap().doc.font_aliases.is_empty(), "discarded source paragraph defaults must not import a font");
     assert!(s.doc().unwrap().doc.embedded_fonts.is_empty());
+}
+
+#[test]
+fn failed_rich_text_font_import_rolls_back_content_and_preserves_history() {
+    let mut s = Session::new();
+    open(&mut s, "source.pptx", &deck(Some(700)));
+    s.execute("text.edit", &json!({"id": 100})).unwrap();
+    s.execute("text.selectAll", &json!({})).unwrap();
+    s.execute("edit.copy", &json!({})).unwrap();
+    // The text edit can succeed, but importing the font then needs to remap a colliding
+    // media id. Exhausted ids make that second edit fail through the real command path.
+    let mut collision = s.clipboard.source_font_media[0].clone();
+    collision.data = Arc::new(vec![0]);
+    let mut p = Presentation::default();
+    p.media.push(collision);
+    p.next_id = u32::MAX;
+    let slide = Arc::make_mut(&mut p.slides[0]);
+    slide.shapes.clear();
+    slide.shapes.push(Shape {
+        id: ShapeId(200),
+        text: Some(TextBody::from_text("B")),
+        xfrm: Some(Xfrm::new(20.0, 20.0, 200.0, 70.0)),
+        text_box: true,
+        ..Default::default()
+    });
+    s.add_document(DocState::new(p, None, "Exhausted destination".into()));
+    s.execute("text.edit", &json!({"id": 200})).unwrap();
+    s.execute("text.insert", &json!({"text": "!"})).unwrap();
+    s.execute("text.selectAll", &json!({})).unwrap();
+    let before = s.doc().unwrap().doc.clone();
+    let selection = s.doc().unwrap().selection.clone();
+    assert!(s.execute("edit.paste", &json!({})).is_err());
+    assert_eq!(s.doc().unwrap().doc.as_ref(), before.as_ref(), "failed font import must roll back the already inserted rich text");
+    assert_eq!(s.doc().unwrap().selection, selection);
+    assert!(s.doc().unwrap().doc.embedded_fonts.is_empty());
+    assert!(s.doc().unwrap().doc.font_aliases.is_empty());
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(
+        s.doc().unwrap().shape(ShapeId(200)).unwrap().text.as_ref().unwrap().text(),
+        "B",
+        "failed paste must not obscure the preceding undo step"
+    );
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().shape(ShapeId(200)).unwrap().text.as_ref().unwrap().text(), "B!");
+    assert!(s.doc().unwrap().doc.embedded_fonts.is_empty());
+    assert!(s.doc().unwrap().doc.font_aliases.is_empty());
 }

@@ -1,6 +1,6 @@
 # DeckCraft architecture
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** minor (document-local font alias registration API; previous: minor, native chart payloads stored in bounded ZIP members) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-05 · **Change:** minor (engine-integrated embedded font scopes, content reuse and paste undo; previous: native chart payloads stored in bounded ZIP members) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
@@ -29,17 +29,30 @@ FilmCraft.
 
 ## Document font registration
 
-`FontDb::add_document_fonts` accepts `(bytes, source_family, private_alias)` entries for document
-embedders. It selects faces by typographic or Windows family name before accepting a renamed
-single-family file; an unmatched multi-family collection contributes nothing. Selected styles,
-weights and variable instances stay intact, but only the private alias is registered: neither the
-original typographic name nor the Windows name can resolve to those faces.
+The engine installs supported embedded fonts when a `DocState` is created, including PPTX/native
+opens and recovery. `FontDb::register_document_fonts` interns a declared family and its complete
+set of embedded font bytes under a private alias. Identical content reuses loaded faces across
+documents and repeated opens; changed content or a different declared family gets a separate
+alias. Registration is serialized and verifies bytes, rather than relying on hash equality.
+The database retains loaded faces for the process lifetime; distinct embedded content is not
+unloaded when a presentation closes.
 
-Callers must choose distinct aliases for different documents/subsets and resolve their text using
-those aliases. Aliases are ordinary database names, not access controls or separate databases.
-All styles in a call are published together; repeat alias/style registrations add nothing.
-`add_font` and installed-font loading retain their existing public names and deduplication.
-This is an additive library API; the application's PPTX registration path is unchanged.
+The lower-level `FontDb::add_document_fonts` accepts `(bytes, source_family, private_alias)`
+entries for embedders that manage aliases themselves. Face selection honors typographic and
+Windows family names before single-family fallback; an unmatched multi-family collection
+contributes nothing. Styles, weights and variable instances stay intact. Private faces are
+excluded from global discovery and implicit fallback.
+
+`Presentation::font_aliases` is runtime-only. Rendering resolves explicit, theme, script,
+symbol, bullet and metafile families through it without rewriting editing or exported font
+names. Metafile caches include font scope; ordinary raster caches remain shared. Font pickers
+include the active document's original embedded family names.
+
+Formatting-preserving paste imports only needed source-only embedded families and media.
+Existing destination families stay authoritative; plain-text paste imports no fonts. All
+content and font-import edits run inside the same outer command snapshot, so one undo/redo
+restores both. Paste as Picture renders with the source aliases. Installed-font loading and
+`add_font` retain their public naming and deduplication behavior.
 
 
 ## Data model
@@ -96,7 +109,7 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-22 | minor | Document embedders can register font bytes under caller-owned aliases without exposing source family names; collection selection honors typographic/Windows names before single-family fallback. Application callers, parity scores and milestone scope unchanged |
+| 2026-11-05 | minor | Document-local font registration is integrated into engine opens and recovery, with content reuse across repeated opens and private rendering aliases. Clipboard font imports share the paste undo boundary; original editing/native/PPTX names and parity scores remain unchanged |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-14 | minor | Community PR wave folded: one L2/L5/L6 row each; command registry 320 (`cmd!` registrations in `cmd/*`), 41 dialogs (titled in `dialogs.rs`), 202k lines, 24 crates (`metafile` added at L0), 1,641 tests. The per-PR rows below give the counts each PR saw on its own branch |
 | 2026-10-14 | minor | Size and Position dialog (`shape.sizePosition`): position, size, rotation, scale and lock aspect in one undo step. 227 commands, 28 dialogs |

@@ -34,7 +34,8 @@ impl Rgba {
     }
     /// `RRGGBB` or `#RRGGBB` (also `RRGGBBAA`).
     pub fn from_hex(s: &str) -> Option<Self> {
-        let s = s.trim().trim_start_matches('#');
+        let s = s.trim();
+        let s = s.strip_prefix('#').unwrap_or(s);
         if !s.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
@@ -756,6 +757,15 @@ pub fn is_system_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_hex_rejects_multiple_hashes() {
+        assert_eq!(Rgba::from_hex("##FF0000"), None);
+        assert_eq!(Rgba::from_hex("####FF0000"), None);
+        assert_eq!(Rgba::from_hex("#FF0000"), Some(Rgba::rgb(255, 0, 0)));
+        assert_eq!(Rgba::from_hex("FF0000"), Some(Rgba::rgb(255, 0, 0)));
+        assert_eq!(Rgba::from_hex("#FF000080"), Some(Rgba::rgba(255, 0, 0, 128)));
+    }
 
     #[test]
     fn from_hex_rejects_signs() {

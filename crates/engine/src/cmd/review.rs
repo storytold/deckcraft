@@ -5,7 +5,9 @@ use std::sync::Arc;
 use deckcraft_model::Comment;
 use serde_json::{Value, json};
 
-use super::*;
+use super::{
+    CommandSpec, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text, id_param, ok, str_param, usize_param,
+};
 use crate::{Result, Session, Target, UiRequest};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -56,9 +58,17 @@ pub fn specs() -> Vec<CommandSpec> {
             has_text,
             insert_synonym
         ),
-        cmd!(noundo "review.compare", "Compare", ["Review", "Compare"], None, "{path} | {name, data: base64} — compare with a revised copy → {name, changes}", has_doc, compare),
-        cmd!(query "review.revisions", "Revisions", [], None, "{} → {name, changes: [{kind: inserted|deleted|changed, slide, revised, details}]}", has_doc, revisions),
-        cmd!("review.accept", "Accept Revision", ["Review", "Compare"], None, "{index} | {all: true}", comparing, accept),
+        cmd!(noundo "review.compare", "Compare", ["Review", "Compare"], None, "{path} | {name, data: base64} — compare the open deck with another file → {name, changes: [{kind, slide, number, onlyIn?, revised, details}]}; each change is described from the open deck: `onlyIn: \"deck\"` is in the deck and not in the file, `onlyIn: \"file\"` is in the file and not in the deck, `changed` is in both and differs; `slide` is 0-based, `number` the editor's slide number; review.accept takes the FILE's side, so it deletes what is only in the deck (Accept All keeps the deck's last remaining slide rather than deleting it)", has_doc, compare),
+        cmd!(query "review.revisions", "Revisions", [], None, "{} → {name, changes: [{kind: inserted|deleted|changed, slide (0-based), number (editor's), onlyIn?: deck|file, revised, details}]}; `onlyIn: deck` = only in the open deck, `file` = only in the compared file; accepting takes the file's side", has_doc, revisions),
+        cmd!(
+            "review.accept",
+            "Accept Revision",
+            ["Review", "Compare"],
+            None,
+            "{index} | {all: true} — accept the compared file's side of a change (or all): what is only in the file is added, what is only in the open deck is deleted (all: true leaves the deck's last remaining slide in place), a changed slide becomes the file's",
+            comparing,
+            accept
+        ),
         cmd!(
             noundo "review.reject",
             "Reject Revision",
@@ -209,7 +219,7 @@ fn neighbour(s: &mut Session, p: &Value, forward: bool) -> Result<Value> {
     let cmd = if forward { "comment.next" } else { "comment.prev" };
     let (threads, slide, index) = {
         let st = s.doc()?;
-        (comment_threads(&st.doc), usize_param(p, "slide").unwrap_or(st.selection.slide), usize_param(p, "index"))
+        (comment_threads(&st.doc), usize_param(p, "slide").unwrap_or(st.selection.slide), super::opt_usize_param(p, "index", cmd)?)
     };
     if threads.is_empty() {
         return Err(bad(cmd, "no comments"));
@@ -262,19 +272,31 @@ fn accessibility(s: &mut Session, _p: &Value) -> Result<Value> {
                 _ => None,
             };
             if let Some(bg) = bg {
-                for sh in &sl.shapes {
-                    let Some(t) = &sh.text else { continue };
-                    let Some(para) = t.paragraphs.iter().find(|p| !p.is_empty()) else { continue };
-                    let rp = deckcraft_model::resolve::run(&ctx, sh, para, &para.runs.first().map(|r| r.props.clone()).unwrap_or_default());
+                deckcraft_model::walk(&sl.shapes, &mut |sh, _| {
+                    let Some(t) = &sh.text else { return };
                     let (fill, _) = deckcraft_model::resolve::fill(&ctx, sh);
                     if fill.as_ref().is_some_and(|f| !f.is_none()) {
-                        continue;
+                        return;
                     }
-                    let fg = deckcraft_model::resolve::text_color(&ctx, &rp);
-                    if fg.contrast(bg) < 3.0 {
-                        out.push(json!({"slide": i, "shape": sh.id, "name": sh.name, "issue": format!("Hard-to-read text contrast ({:.1}:1)", fg.contrast(bg))}));
+                    let low = t
+                        .paragraphs
+                        .iter()
+                        .flat_map(|para| {
+                            // A line break or blank run shows no glyphs, so its colour can't be hard to read.
+                            para.runs.iter().filter(|run| run.kind != deckcraft_model::text::RunKind::Break && !run.text.trim().is_empty()).map(
+                                |run| {
+                                    let rp = deckcraft_model::resolve::run(&ctx, sh, para, &run.props);
+                                    deckcraft_model::resolve::text_color(&ctx, &rp).contrast(bg)
+                                },
+                            )
+                        })
+                        .find(|contrast| *contrast < 3.0);
+                    if let Some(contrast) = low {
+                        out.push(
+                            json!({"slide": i, "shape": sh.id, "name": sh.name, "issue": format!("Hard-to-read text contrast ({contrast:.1}:1)")}),
+                        );
                     }
-                }
+                });
             }
         }
     }
@@ -345,7 +367,7 @@ fn spelling(s: &mut Session, p: &Value) -> Result<Value> {
             }
             out.push(v);
         }
-        let rep: Vec<usize> = crate::spell::repeated(para, &default).iter().map(|w| w.start).collect();
+        let rep: std::collections::HashSet<usize> = crate::spell::repeated(para, &default).iter().map(|w| w.start).collect();
         for w in crate::spell::paragraph_words(para, &default) {
             if ignore.contains(&w.text.to_lowercase()) || rep.contains(&w.start) {
                 continue;
@@ -399,22 +421,29 @@ fn add_to_dictionary(_s: &mut Session, p: &Value) -> Result<Value> {
 /// Replace whole-word `from` with `to` in `text`; how many were replaced.
 fn replace_word(text: &mut String, from: &str, to: &str, all: bool) -> usize {
     let is_word = |c: char| c.is_alphanumeric() || c == '\'' || c == '’';
-    let mut n = 0;
-    let mut at = 0;
+    // The result is built in one pass; the text is not edited in place for every match.
+    let mut out = String::new();
+    let (mut n, mut at, mut copied) = (0, 0, 0);
     while let Some(i) = text.get(at..).and_then(|t| t.find(from)).map(|i| i + at) {
         let end = i + from.len();
-        let before = text.get(..i).and_then(|t| t.chars().next_back()).is_some_and(is_word);
+        // The character before the match as the edited text would have it.
+        let before = text.get(copied..i).and_then(|t| t.chars().next_back()).or_else(|| out.chars().next_back()).is_some_and(is_word);
         let after = text.get(end..).and_then(|t| t.chars().next()).is_some_and(is_word);
         if before || after {
             at = end;
             continue;
         }
-        text.replace_range(i..end, to);
+        out.push_str(text.get(copied..i).unwrap_or_default());
+        out.push_str(to);
         n += 1;
-        at = i + to.len();
+        (at, copied) = (end, end);
         if !all {
             break;
         }
+    }
+    if n > 0 {
+        out.push_str(text.get(copied..).unwrap_or_default());
+        *text = out;
     }
     n
 }
@@ -430,7 +459,7 @@ fn spelling_change(s: &mut Session, p: &Value) -> Result<Value> {
     // One exact occurrence (a squiggled word): paragraph `para`, from character `start`.
     if let (Some(id), Some(para), Some(start)) = (shape, usize_param(p, "para"), usize_param(p, "start")) {
         let id = deckcraft_model::ShapeId(u32::try_from(id).map_err(|_| bad("review.spellingChange", "bad `shape`"))?);
-        let end = start + word.chars().count();
+        let end = start.checked_add(word.chars().count()).ok_or_else(|| bad("review.spellingChange", "bad `start`"))?;
         let cell = usize_param(p, "row").zip(usize_param(p, "col"));
         let slide = {
             let st = s.doc()?;
@@ -742,6 +771,49 @@ fn end_compare(s: &mut Session, _: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    /// The replacement as it ran before: edited in place for every match.
+    fn replace_word_in_place(text: &mut String, from: &str, to: &str, all: bool) -> usize {
+        let is_word = |c: char| c.is_alphanumeric() || c == '\'' || c == '’';
+        let mut n = 0;
+        let mut at = 0;
+        while let Some(i) = text.get(at..).and_then(|t| t.find(from)).map(|i| i + at) {
+            let end = i + from.len();
+            let before = text.get(..i).and_then(|t| t.chars().next_back()).is_some_and(is_word);
+            let after = text.get(end..).and_then(|t| t.chars().next()).is_some_and(is_word);
+            if before || after {
+                at = end;
+                continue;
+            }
+            text.replace_range(i..end, to);
+            n += 1;
+            at = i + to.len();
+            if !all {
+                break;
+            }
+        }
+        n
+    }
+
+    #[test]
+    fn replace_word_matches_the_in_place_version() {
+        let cases = [
+            ("a a b a", "a", "x", true),
+            ("aa a. a", "a", "bb", true),
+            ("a-a -a-", "-", "ab", true),
+            ("foo. foo.", "foo.", "", true),
+            ("it's it", "it", "so", true),
+            ("x.x. x.", "x.", "y", true),
+            ("a a a", "a", "b", false),
+            ("none", "z", "q", true),
+            ("é é", "é", "e", true),
+        ];
+        for (text, from, to, all) in cases {
+            let (mut a, mut b) = (text.to_string(), text.to_string());
+            let (na, nb) = (replace_word(&mut a, from, to, all), replace_word_in_place(&mut b, from, to, all));
+            assert_eq!((na, a), (nb, b), "{text:?} {from:?} -> {to:?}");
+        }
+    }
+
     use super::*;
     use serde_json::json;
 
@@ -788,6 +860,40 @@ mod tests {
         s.execute("slide.go", &json!({"index": 0})).unwrap();
         let here = s.execute("comment.next", &json!({})).unwrap();
         assert_eq!(here["text"], "on first");
+    }
+
+    #[test]
+    fn malformed_comment_navigation_index_does_not_change_selection() {
+        let mut s = Session::with_new();
+        s.execute("comment.add", &json!({"text": "first"})).unwrap();
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 40.0, 40.0]})).unwrap();
+        s.execute("slide.new", &json!({})).unwrap();
+        s.execute("comment.add", &json!({"text": "second"})).unwrap();
+        s.execute("slide.go", &json!({"index": 0})).unwrap();
+        let shape = s.doc().unwrap().doc.slides.first().and_then(|slide| slide.shapes.first()).map(|shape| shape.id).unwrap();
+        s.doc_mut().unwrap().selection.shapes = vec![shape];
+
+        for (command, value) in [
+            ("comment.next", json!(-1)),
+            ("comment.next", json!(1.5)),
+            ("comment.next", json!("bad")),
+            ("comment.prev", json!(-1)),
+            ("comment.prev", json!(1.5)),
+            ("comment.prev", json!("bad")),
+        ] {
+            let before = s.doc().unwrap().selection.clone();
+            let error = s.execute(command, &json!({"index": value})).unwrap_err();
+            assert!(error.to_string().contains("valid index"), "{command} {value}: {error}");
+            assert_eq!(s.doc().unwrap().selection, before, "{command} {value}");
+        }
+
+        let zero = s.execute("comment.next", &json!({"slide": 0, "index": 0})).unwrap();
+        assert_eq!(zero["slide"], 1);
+        assert_eq!(zero["index"], 0);
+        s.execute("slide.go", &json!({"index": 0})).unwrap();
+        let omitted = s.execute("comment.next", &json!({})).unwrap();
+        assert_eq!(omitted["slide"], 0);
+        assert_eq!(omitted["index"], 0);
     }
 
     #[test]
@@ -841,5 +947,98 @@ mod tests {
         }
         s.execute("comment.delete", &json!({})).unwrap();
         assert!(s.active().unwrap().doc.slides[0].comments.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod spelling_change_range_tests {
+    use crate::{EngineError, Session};
+    use serde_json::json;
+
+    #[test]
+    fn spelling_change_huge_start_is_bad_params() {
+        let mut s = Session::with_new();
+        let r = s.execute("insert.textBox", &json!({"text": "Hello"})).unwrap();
+        let id = r["id"].clone();
+        let err = s.execute("review.spellingChange", &json!({"shape": id, "para": 0, "start": u64::MAX, "word": "Hello", "to": "x"})).unwrap_err();
+        assert!(matches!(err, EngineError::BadParams { .. }), "{err:?}");
+    }
+}
+
+#[cfg(test)]
+mod accessibility_contrast_tests {
+    use super::*;
+    use deckcraft_model::text::{Paragraph, Run, RunKind, RunProps};
+    use deckcraft_model::{ColorRef, Fill, Rgba, Shape, ShapeId, ShapeKind, TextBody};
+    use serde_json::json;
+
+    fn run(text: &str, color: Rgba) -> Run {
+        Run::with(text, RunProps { fill: Some(Fill::solid(ColorRef::rgb(color))), ..Default::default() })
+    }
+
+    fn text_shape(id: u32, name: &str, paragraphs: Vec<Paragraph>) -> Shape {
+        Shape { id: ShapeId(id), name: name.into(), text: Some(TextBody { paragraphs, ..Default::default() }), ..Default::default() }
+    }
+
+    #[test]
+    fn contrast_checks_mixed_runs_later_paragraphs_and_group_descendants_once() {
+        let mut s = Session::with_new();
+        s.edit(|doc, _| {
+            let black = Rgba::BLACK;
+            let white = Rgba::WHITE;
+            let mixed = Paragraph { runs: vec![run("visible", black), run("hidden", white)], ..Default::default() };
+            let later = vec![
+                Paragraph { runs: vec![run("visible", black)], ..Default::default() },
+                Paragraph { runs: vec![run("hidden", white)], ..Default::default() },
+            ];
+            let child = text_shape(5, "nested text", vec![Paragraph { runs: vec![run("hidden", white)], ..Default::default() }]);
+            let group = Shape {
+                id: ShapeId(4),
+                name: "group".into(),
+                descr: "group of text".into(),
+                kind: ShapeKind::Group {
+                    children: vec![Shape {
+                        id: ShapeId(7),
+                        name: "nested group".into(),
+                        descr: "nested group of text".into(),
+                        kind: ShapeKind::Group { children: vec![child], child: Default::default() },
+                        ..Default::default()
+                    }],
+                    child: Default::default(),
+                },
+                ..Default::default()
+            };
+            let sl = Arc::make_mut(doc.slides.get_mut(0).ok_or_else(|| bad("test", "no slide"))?);
+            sl.shapes = vec![
+                text_shape(2, "mixed", vec![mixed]),
+                text_shape(3, "later paragraph", later),
+                group,
+                text_shape(6, "black control", vec![Paragraph { runs: vec![run("visible", black)], ..Default::default() }]),
+                text_shape(
+                    8,
+                    "invisible white runs",
+                    vec![Paragraph {
+                        runs: vec![run("visible", black), Run { kind: RunKind::Break, ..run("\n", white) }, run("  ", white), run("visible", black)],
+                        ..Default::default()
+                    }],
+                ),
+            ];
+            Ok(())
+        })
+        .unwrap();
+
+        let issues = s.execute("review.accessibility", &json!({})).unwrap();
+        let contrasts: Vec<_> = issues
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|issue| issue["issue"].as_str().unwrap_or("").starts_with("Hard-to-read text contrast"))
+            .collect();
+        assert_eq!(contrasts.len(), 3, "{issues}");
+        for id in [2, 3, 5] {
+            assert!(contrasts.iter().any(|issue| issue["shape"] == id), "missing shape {id}: {issues}");
+        }
+        assert!(!contrasts.iter().any(|issue| issue["shape"] == 6), "black control warned: {issues}");
+        assert!(!contrasts.iter().any(|issue| issue["shape"] == 8), "white break or spaces warned: {issues}");
     }
 }

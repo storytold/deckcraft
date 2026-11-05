@@ -29,3 +29,5 @@ jobs:
     with:
       app-name: deckcraft
       app-dir: DeckCraft
+      install-relative-path: Programs/ArtCraft/DeckCraft
+      install-scope: perUser
