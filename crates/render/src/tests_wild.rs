@@ -468,6 +468,22 @@ fn narrow_rectangular_gradient_tiles_keep_their_horizontal_ramp() {
 }
 
 #[test]
+fn a_scaled_group_keeps_detail_across_a_narrow_gradient_tile() {
+    let img = in_a_scaled_group(8.0, 0.125, Presentation::default(), |w, h| {
+        let mut sh = radial([0.5, 0.025, 0.5, 0.975]);
+        sh.xfrm = Some(Xfrm::new(0.0, 0.0, w, h));
+        if let Some(Fill::Gradient(g)) = &mut sh.fill {
+            g.shape = deckcraft_model::style::GradientShape::Path { path: "rect".into(), focus: [0.5, 0.025, 0.5, 0.975] };
+            g.tile = [0.491_666_666_666_666_64, 0.0, 0.491_666_666_666_666_64, 0.0];
+        }
+        sh
+    });
+    let edge = img.pixel(110, 130)[0];
+    let center = img.pixel(112, 130)[0];
+    assert!(i32::from(center) > i32::from(edge) + 60, "edge {edge}, center {center}");
+}
+
+#[test]
 fn a_3d_pictures_border_stays_centred_on_its_edge() {
     let mut p = picture_deck(Some(Line::solid(ColorRef::rgb(RED), 8.0)));
     let s = std::sync::Arc::make_mut(&mut p.slides[0]);
