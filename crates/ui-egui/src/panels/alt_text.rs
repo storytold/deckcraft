@@ -19,26 +19,38 @@ fn selected(app: &SlideApp) -> Option<(u64, u32)> {
     Some((st.uid, id))
 }
 
-/// Commit a description the pane holds but the document does not, when the pane is closing or
-/// another object takes over. The field cannot report `lost_focus` once it is no longer drawn, so
-/// without this a typed description would be dropped with the pane.
+/// Commit a description the pane holds but the document does not, when the pane is closing, a
+/// command is about to move its object, or another object takes over. The field cannot report
+/// `lost_focus` once it is no longer drawn, so without this a typed description would be dropped.
 pub(crate) fn flush(app: &mut SlideApp) {
-    let Some(draft) = app.ui.alt_text_draft.take() else { return };
+    let Some(draft) = app.ui.alt_text_draft.clone() else { return };
     let Some(st) = app.session.active() else { return };
+    let id = deckcraft_model::ShapeId(draft.shape);
     if st.uid != draft.uid {
+        // The document the description belongs to is gone; there is nothing left to write it to.
+        app.ui.alt_text_draft = None;
         return;
     }
-    let id = deckcraft_model::ShapeId(draft.shape);
-    let Some(sh) = st.shape(id) else { return };
+    let Some(sh) = st.shape(id) else {
+        // The object is on a slide the user has since opened elsewhere in the document: keep the
+        // draft for the pass that is back on it, and drop it only once the object is gone.
+        if !st.doc.slides.iter().any(|sl| sl.shape(id).is_some()) {
+            app.ui.alt_text_draft = None;
+        }
+        return;
+    };
     // Only a draft typed over the description the document still holds is written: an undo or
     // another edit wins, and a draft equal to the document's text is nothing to write.
     if sh.descr != draft.base || draft.text == draft.base {
+        app.ui.alt_text_draft = None;
         return;
     }
+    app.ui.alt_text_draft = None;
     run(app, "shape.altText", json!({ "text": draft.text, "ids": [draft.shape] }));
 }
 
 pub(super) fn alt_text(app: &mut SlideApp, ui: &mut Ui) {
+    app.ui.alt_text_shown = true;
     let t = Tokens::get(ui.ctx());
     // The draft belongs to the object it was typed for: another selection commits it first.
     let keeps = match (&app.ui.alt_text_draft, selected(app)) {

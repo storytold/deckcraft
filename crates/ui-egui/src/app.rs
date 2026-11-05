@@ -248,6 +248,9 @@ impl SlideApp {
         // Closing the window with unsaved changes asks first, and so does closing during a take:
         // the recording only lives in the show, so it must survive the question either way.
         if ctx.input(|i| i.viewport().close_requested()) {
+            // A description still in the Alt Text pane's draft is unsaved work: write it before the
+            // question below decides whether the document is dirty.
+            panes::flush_alt_text(self);
             // A paused or stopped take still holds the whole recording in the show, so closing
             // must ask for that too, not only while it is capturing.
             let recording = self.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured)) || self.record.is_recording();
@@ -314,6 +317,9 @@ impl SlideApp {
             return;
         }
         let t0 = now_ms();
+        // The Alt Text pane reports whether it drew in this pass; a pane that did not commits its
+        // draft at the end of the pass.
+        self.ui.alt_text_shown = false;
         let t = theme::Tokens::get(&ctx);
         self.note_ui_text(&ctx);
         self.media.sync_video_textures(&ctx);
@@ -386,9 +392,9 @@ impl SlideApp {
         if let Some(t) = self.pending_copy.take() {
             ctx.copy_text(t);
         }
-        // A description typed into the Alt Text pane is committed once that pane is no longer
-        // drawn: its field cannot report `lost_focus` after the pane closes.
-        if self.ui.pane.as_deref() != Some("altText") {
+        // A description typed into the Alt Text pane is committed once that pane stops drawing —
+        // closed, another view, another document: its field cannot report `lost_focus` then.
+        if !self.ui.alt_text_shown {
             panes::flush_alt_text(self);
         }
         self.drain_requests();

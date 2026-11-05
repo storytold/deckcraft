@@ -98,6 +98,10 @@ pub struct UiState {
     /// closing the pane or selecting another object can commit it. Not persisted.
     #[serde(skip)]
     pub alt_text_draft: Option<AltTextDraft>,
+    /// Whether the Alt Text pane drew in this UI pass. A pane the user cannot see (closed, or a
+    /// view that hides the task pane) commits its draft instead of holding it. Not persisted.
+    #[serde(skip)]
+    pub alt_text_shown: bool,
 }
 
 /// A description typed into the Alt Text pane, with the text the document held when typing
@@ -142,6 +146,7 @@ impl Default for UiState {
             comment_focus: None,
             qat: qat::defaults(),
             alt_text_draft: None,
+            alt_text_shown: false,
         }
     }
 }

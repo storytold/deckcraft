@@ -164,3 +164,51 @@ fn ticking_decorative_with_a_typed_description_is_one_undo_step() {
     assert!(!sh.decorative, "one undo step, not two");
     assert_eq!(sh.descr, original);
 }
+
+#[test]
+fn a_view_that_hides_the_pane_commits_the_typed_description() {
+    let (mut h, id) = cameo_app();
+    h.state_mut().ui.pane = Some("altText".into());
+    h.run_steps(3);
+    type_description(&mut h, "Typed before the sorter");
+    // Slide Sorter hides the task pane but leaves its key set: the pane stops drawing, so its
+    // draft is committed even though nothing about the pane's state changes.
+    h.state_mut().ui.view = crate::state::ViewMode::Sorter;
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("altText"));
+    assert_eq!(descr(&h, id), "Typed before the sorter");
+}
+
+#[test]
+fn changing_slides_commits_the_description_to_the_object_it_was_typed_for() {
+    let (mut h, id) = cameo_app();
+    // A second slide, then back to the first with the Cameo selected.
+    h.state_mut().run("slide.new", json!({})).unwrap();
+    let first = h.state().session.active().unwrap().doc.slides[0].id;
+    h.state_mut().run("slide.selectSlides", json!({"ids": [first.0]})).unwrap();
+    h.state_mut().run("edit.select", json!({"ids": [id.0]})).unwrap();
+    h.state_mut().ui.pane = Some("altText".into());
+    h.run_steps(3);
+    type_description(&mut h, "Typed before the slide changed");
+    // Opening another slide commits first: the description lands on the slide it belongs to.
+    h.state_mut().run("slide.new", json!({})).unwrap();
+    h.run_steps(2);
+    let st = h.state().session.active().unwrap();
+    assert_ne!(st.selection.slide, 0, "the new slide is open");
+    let kept = st.doc.slides[0].shape(id).map(|s| s.descr.clone());
+    assert_eq!(kept.as_deref(), Some("Typed before the slide changed"));
+}
+
+#[test]
+fn closing_with_a_typed_description_treats_it_as_unsaved_work() {
+    let (mut h, id) = cameo_app();
+    let original = descr(&h, id);
+    h.state_mut().ui.pane = Some("altText".into());
+    h.run_steps(3);
+    type_description(&mut h, "Typed and never left");
+    assert_eq!(descr(&h, id), original, "typing alone edits nothing");
+    h.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default().events.push(egui::ViewportEvent::Close);
+    h.run_steps(2);
+    assert_eq!(descr(&h, id), "Typed and never left", "the close request writes the description first");
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("quit"), "and the close question appears");
+}

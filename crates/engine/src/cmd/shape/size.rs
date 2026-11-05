@@ -128,9 +128,12 @@ fn apply_size(x: &mut deckcraft_geom::Xfrm, spec: SizeSpec) {
 pub(super) fn size_position(s: &mut Session, p: &Value) -> Result<Value> {
     let spec = size_spec(p)?;
     if !spec.any() {
+        // The dialog edits the same objects this call would: a launcher that names its own ids
+        // (Camera Format ▸ Size on a mixed selection) must not fall back to every selected shape.
+        let ids = targets(s, p)?;
         let (x, y, w, h, rot) = {
             let st = s.doc()?;
-            let id = targets(s, p)?.first().copied().ok_or_else(|| bad(SIZE_POS, "nothing selected"))?;
+            let id = ids.first().copied().ok_or_else(|| bad(SIZE_POS, "nothing selected"))?;
             let sh = st.shape(id).ok_or_else(|| bad(SIZE_POS, "no such shape"))?;
             let x = xfrm_of(&st.doc, &st.selection, sh);
             (x.x, x.y, x.w, x.h, x.rot)
@@ -139,7 +142,7 @@ pub(super) fn size_position(s: &mut Session, p: &Value) -> Result<Value> {
             id: "sizePosition".into(),
             // A caller such as the Camera Format launcher may open the dialog with the aspect
             // already locked (a Cameo is written with `noChangeAspect`), so pass its choice on.
-            params: json!({"x": x, "y": y, "w": w, "h": h, "rot": rot, "scaleW": 100.0, "scaleH": 100.0, "lockAspect": spec.lock}),
+            params: json!({"x": x, "y": y, "w": w, "h": h, "rot": rot, "scaleW": 100.0, "scaleH": 100.0, "lockAspect": spec.lock, "ids": ids}),
         });
         return Ok(Value::Null);
     }
@@ -239,6 +242,32 @@ mod size_position_tests {
         assert_eq!(s.doc().unwrap().history.undo.last().unwrap().label, "Size and Position…");
         s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(geom(&mut s, id), (40.0, 50.0, 200.0, 100.0, 0.0));
+    }
+
+    /// A launcher that names its own targets (Camera Format ▸ Size on a mixed selection) opens the
+    /// dialog for those, not for whatever else happens to be selected.
+    #[test]
+    fn the_dialog_opens_for_the_targets_the_caller_named() {
+        let (mut s, id) = deck();
+        let other =
+            s.execute("shape.insert", &json!({"preset": "rect", "rect": [400.0, 50.0, 100.0, 100.0]})).unwrap()["id"].as_u64().unwrap() as u32;
+        s.execute("edit.select", &json!({"ids": [other, id]})).unwrap();
+        s.execute("shape.sizePosition", &json!({"ids": [id], "lockAspect": true})).unwrap();
+        match s.ui_requests.last() {
+            Some(crate::UiRequest::Dialog { id: name, params }) => {
+                assert_eq!(name, "sizePosition");
+                assert_eq!(params["ids"], json!([id]), "the launcher's targets travel with the dialog");
+                assert_eq!(params["x"].as_f64(), Some(40.0), "and the dialog shows the same shape");
+                assert_eq!(params["lockAspect"], json!(true));
+            }
+            other => panic!("expected a dialog, got {other:?}"),
+        }
+        // Without `ids` the dialog still follows the selection.
+        s.execute("shape.sizePosition", &json!({})).unwrap();
+        match s.ui_requests.last() {
+            Some(crate::UiRequest::Dialog { params, .. }) => assert_eq!(params["ids"], json!([other, id])),
+            other => panic!("expected a dialog, got {other:?}"),
+        }
     }
 
     #[test]

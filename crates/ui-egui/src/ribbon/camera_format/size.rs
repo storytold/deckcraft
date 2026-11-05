@@ -169,6 +169,20 @@ mod tests {
     }
 
     #[test]
+    fn size_and_position_edits_only_the_cameo_of_a_mixed_selection() {
+        let (mut h, text, _) = mixed_app(1600.0);
+        let text_before = xfrm(h.state(), text);
+        h.get_by_label("Size and Position…").click();
+        h.run_steps(2);
+        let d = h.state().dialog.as_ref().expect("the dialog opened");
+        assert_eq!(d.params.get("ids").and_then(|v| v.as_array()).map(|a| a.len()), Some(1), "the launcher names the Cameo");
+        h.get_by_label("OK").click_accesskit();
+        h.run_steps(3);
+        assert!(h.state().dialog.is_none(), "OK closes the dialog");
+        assert_eq!(xfrm(h.state(), text), text_before, "the text box is not one of the dialog's targets");
+    }
+
+    #[test]
     fn size_and_position_opens_with_the_aspect_locked() {
         let (mut h, _) = cameo_app(1600.0);
         h.get_by_label("Size and Position…").click();

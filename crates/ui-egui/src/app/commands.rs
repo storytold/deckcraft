@@ -18,6 +18,11 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        // A description typed into the Alt Text pane is written before any command can move the
+        // object or the slide it belongs to; `shape.altText` itself carries the commit.
+        if id != "shape.altText" {
+            crate::panes::flush_alt_text(self);
+        }
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else {

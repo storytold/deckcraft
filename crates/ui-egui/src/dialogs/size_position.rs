@@ -175,7 +175,13 @@ fn size_position_value(d: &Dialog) -> Result<Value, String> {
             w = h * ar;
         }
     }
-    Ok(json!({"x": x, "y": y, "w": w, "h": h, "rot": rot, "lockAspect": field_of(d, "lock") == "1"}))
+    let mut p = json!({"x": x, "y": y, "w": w, "h": h, "rot": rot, "lockAspect": field_of(d, "lock") == "1"});
+    // The launcher's targets, not whatever is selected when OK is pressed: Camera Format ▸ Size
+    // opens the dialog for a Cameo inside a mixed selection.
+    if let Some(ids) = d.params.get("ids") {
+        p["ids"] = ids.clone();
+    }
+    Ok(p)
 }
 
 pub(super) fn size_position_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
