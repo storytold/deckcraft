@@ -60,11 +60,9 @@ pub use table::cell_rects as table_cell_rects;
 pub use table::row_heights as table_row_heights;
 pub use transition::{SlideParts, composite_transition, render_transition};
 
-/// How many groups deep shapes are drawn: a slide's, layout's or master's own shapes are at depth
-/// 0 and a group's members one deeper. The renderer draws nothing deeper, the text and links placed
-/// for exports and text extraction stop at the same depth, and the engine's `text.fit` measures the
-/// same shapes.
-pub const MAX_DRAW_DEPTH: usize = 32;
+// How many groups deep shapes are drawn. The constant lives in deckcraft-model, so the .pptx
+// writer, which does not depend on this crate, shares it.
+pub use deckcraft_model::MAX_DRAW_DEPTH;
 
 mod geometry;
 mod opts;

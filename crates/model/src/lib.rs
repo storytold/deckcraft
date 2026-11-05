@@ -490,6 +490,13 @@ impl Shape {
     }
 }
 
+/// How many groups deep shapes are drawn: a slide's, layout's or master's own shapes are at depth
+/// 0 and a group's members one deeper. The renderer draws nothing deeper (`deckcraft_render`
+/// re-exports this constant), the text and links placed for exports and text extraction stop at
+/// the same depth, the engine's `text.fit` measures the same shapes, the .pptx writer writes the
+/// same shapes, and the editor (`deckcraft-ui-egui`) animates the GIF pictures among them.
+pub const MAX_DRAW_DEPTH: usize = 32;
+
 /// Walk shapes depth-first (groups included).
 pub fn walk<'a>(shapes: &'a [Shape], f: &mut dyn FnMut(&'a Shape, usize)) {
     fn rec<'a>(shapes: &'a [Shape], depth: usize, f: &mut dyn FnMut(&'a Shape, usize)) {
