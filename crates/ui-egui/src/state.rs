@@ -92,10 +92,10 @@ pub struct UiState {
     /// Comment the Review Previous/Next buttons last landed on: `(slide, index)`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment_focus: Option<(usize, usize)>,
-    /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    pub hide_titlebar: bool,
+    pub hide_filetab: bool,
 }
-
 impl Default for UiState {
     fn default() -> Self {
         UiState {
@@ -127,6 +127,8 @@ impl Default for UiState {
             grayscale: false,
             comment_focus: None,
             qat: qat::defaults(),
+            hide_titlebar: false,
+            hide_filetab: false,
         }
     }
 }
