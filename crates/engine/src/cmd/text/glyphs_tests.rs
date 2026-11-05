@@ -102,6 +102,26 @@ fn format_font_answers_what_the_family_is_drawn_in() {
     assert_eq!(s.execute("font.used", &json!({})).unwrap(), json!([theme]), "the run is set to the theme's font");
 }
 
+/// `format.fontDialog` answers as `format.font` does when it sets the family, with other fields
+/// beside it or with a theme reference; without a family it answers nothing, as before.
+#[test]
+fn font_dialog_setting_a_family_answers_as_format_font_does() {
+    let (mut s, _) = deck();
+    text_box(&mut s, 40.0, "Words");
+
+    let dialog = s.execute("format.fontDialog", &json!({"family": NOWHERE, "size": 24})).unwrap();
+    let font = s.execute("format.font", &json!({"family": NOWHERE})).unwrap();
+    assert_eq!(dialog, font);
+    assert_eq!(dialog["family"], NOWHERE, "{dialog}");
+    assert_eq!(dialog["installed"], false, "{dialog}");
+
+    let by_ref = s.execute("format.fontDialog", &json!({"family": "+mn-lt", "size": 20})).unwrap();
+    assert_eq!(by_ref, s.execute("format.font", &json!({"family": "+mn-lt"})).unwrap());
+    assert_eq!(by_ref["family"], body_font(&s), "{by_ref}");
+
+    assert_eq!(s.execute("format.fontDialog", &json!({"size": 28})).unwrap(), Value::Null, "no family set, no answer");
+}
+
 /// `format.font` answers the faces the slide draws the text in, as `text.glyphs` reports them:
 /// kana, which the stand-in has no glyph for, is drawn in another face; with a range selected only
 /// the runs in it count; a shape without text answers the face the family is drawn in.

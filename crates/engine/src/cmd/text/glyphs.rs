@@ -638,12 +638,13 @@ fn selection_faces(st: &DocState, ctx: &Ctx, family: &str) -> Vec<(String, usize
     faces
 }
 
-/// `format.font`'s answer, once the family is set: the family a run set to `family` asks for,
-/// theme references (`+mn-lt`) resolved on the page being edited; whether this machine has it;
-/// and the faces that draw the selection's text set in it, as the page draws it, most characters
-/// first (a stand-in when this machine lacks the family, another face for a character it has no
-/// glyph for). With none of that text drawn (a caret between words, speaker notes, a shape
-/// without text), the face a run in the family is drawn in (`FontDb::document_face`).
+/// `format.font`'s answer (and `format.fontDialog`'s when it sets the family), once the family is
+/// set: the family a run set to `family` asks for, theme references (`+mn-lt`) resolved on the page
+/// being edited; whether this machine has it; and the faces that draw the selection's text set in
+/// it, as the page draws it, most characters first (a stand-in when this machine lacks the family,
+/// another face for a character it has no glyph for). With none of that text drawn (a caret between
+/// words, speaker notes, a shape without text), the face a run in the family is drawn in
+/// (`FontDb::document_face`).
 pub(crate) fn font_answer(st: &DocState, family: &str) -> Value {
     let props = RunProps { font: Some(family.to_string()), ..Default::default() };
     let ctx = ctx_for(&st.doc, &st.selection);

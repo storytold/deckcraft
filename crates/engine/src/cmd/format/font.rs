@@ -458,13 +458,19 @@ fn font_dialog_params(s: &Session) -> Value {
     v
 }
 
+/// `format.fontDialog`: with no fields, asks the UI to open the Font dialog; otherwise applies the
+/// fields in one undo step and, when they set the family, answers as `format.font` does.
 pub(super) fn font_dialog(s: &mut Session, p: &Value) -> Result<Value> {
     let edits = font_edits(p)?;
     if edits.is_empty() {
         s.ui_requests.push(crate::UiRequest::Dialog { id: "font".into(), params: font_dialog_params(s) });
         return ok();
     }
-    format_run(s, &|r| edits.write(r))
+    let answer = format_run(s, &|r| edits.write(r))?;
+    match &edits.family {
+        Some(family) => Ok(crate::cmd::text::font_answer(s.doc()?, family)),
+        None => Ok(answer),
+    }
 }
 
 pub(super) fn clear(s: &mut Session, _p: &Value) -> Result<Value> {
