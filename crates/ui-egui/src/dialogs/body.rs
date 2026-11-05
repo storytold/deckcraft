@@ -307,13 +307,11 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(84.0, 24.0)));
-            if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                if app.save_all() {
+                if save.clicked() {
                     app.quit_confirmed = true;
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     done = true;
                 }
-            }
             if ui.add(egui::Button::new("Cancel").min_size(vec2(84.0, 24.0)).stroke(egui::Stroke::new(1.0, t.border))).clicked() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
