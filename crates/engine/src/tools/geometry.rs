@@ -273,7 +273,7 @@ impl Session {
 
     pub(super) fn add_ink(&mut self, points: Vec<(f64, f64, f32)>) -> Result<Value> {
         let ToolKind::Ink { mode, color, width } = self.tool.kind.clone() else { return Ok(Value::Null) };
-        let stroke = deckcraft_model::InkStroke { points, color, width, highlighter: mode == "highlighter" };
+        let stroke = deckcraft_model::InkStroke { points, color, width, highlighter: mode == "highlighter", at_ms: None };
         // Strokes join the slide's own ink layer (one user ink shape per slide); Record Slide
         // Show keeps its strokes on a separate tagged layer that Clear Recording removes.
         let existing = self.doc()?.shapes().iter().rev().find(|s| matches!(s.kind, ShapeKind::Ink { .. }) && !cmd::is_recorded_ink(s)).map(|s| s.id);

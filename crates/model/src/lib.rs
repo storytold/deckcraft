@@ -296,6 +296,10 @@ pub struct InkStroke {
     pub color: Rgba,
     pub width: f64,
     pub highlighter: bool,
+    /// When the stroke was drawn, in ms from the slide's entry, for a stroke a recording kept.
+    /// `None` for ink drawn in the editor: it has no timeline of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_ms: Option<u32>,
 }
 
 /// True when every sample is the placeholder `0.5` written before a device reported pressure.

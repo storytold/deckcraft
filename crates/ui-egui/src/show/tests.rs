@@ -448,7 +448,7 @@ fn the_prefetched_frame_is_the_frame_shown_on_entry() {
     let p = start_prefetch(&doc, 1, size).expect("prefetch starts");
     assert_eq!(p.key, Key { slide: 1, step: 0, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: vec![], gif: 0, plays: vec![] });
     let got = p.rx.recv().expect("the frame arrives");
-    let want = render_frame(&doc, 1, ShowState::timeline(&doc, 1), 0, 0.0, size, vec![], &[], 0, &[], &[], None);
+    let want = render_frame(&doc, 1, ShowState::timeline(&doc, 1), 0, 0.0, size, vec![], &[], 0, &[], &[], None, None);
     assert_eq!(got.size, want.size);
     assert_eq!(got.pixels, want.pixels);
 }
@@ -483,8 +483,8 @@ fn an_animation_frame_over_the_kept_backdrop_matches_a_full_render() {
     let tl = ShowState::timeline(&doc, 0);
     assert!(!tl.is_empty());
     // Half-way through the fade, the star half see-through over the glow.
-    let fast = render_frame(&doc, 0, tl.clone(), 0, 0.25, size, vec![], &[], 0, &[], &[], Some(&back));
-    let full = render_frame(&doc, 0, tl, 0, 0.25, size, vec![], &[], 0, &[], &[], None);
+    let fast = render_frame(&doc, 0, tl.clone(), 0, 0.25, size, vec![], &[], 0, &[], &[], Some(&back), None);
+    let full = render_frame(&doc, 0, tl, 0, 0.25, size, vec![], &[], 0, &[], &[], None, None);
     assert_eq!(fast.size, full.size);
     let worst =
         fast.pixels.iter().zip(&full.pixels).map(|(a, b)| a.to_array().iter().zip(b.to_array()).map(|(x, y)| x.abs_diff(y)).max().unwrap_or(0)).max();
@@ -1452,7 +1452,7 @@ fn a_record_preview_keeps_no_recorded_material() {
     show.laser_live.push((0.5, 0.5, 10));
     let keep = show.keeps_recording();
     assert!(!keep);
-    show.stash_ink(&doc, 0, keep);
+    show.stash_ink(&doc, 0, keep, 1.0);
     show.stash_laser(0, keep);
     show.apply(ShowAction::Slide(1), &doc, 1.0);
     assert!(show.recorded.is_empty(), "no ink");
@@ -1688,7 +1688,7 @@ fn a_new_take_replaces_the_previous_buffers() {
         color: deckcraft_model::Rgba::BLACK,
         width: 2.25,
     });
-    show.stash_ink(&doc, 0, true);
+    show.stash_ink(&doc, 0, true, 1.0);
     show.laser_live.push((0.1, 0.1, 5));
     show.stash_laser(0, true);
     show.timings.push((0, 1.5));
@@ -1825,12 +1825,13 @@ fn a_recorded_stroke_keeps_its_tool_colour_and_width() {
     show.begin_recording(0.0);
     let color = deckcraft_model::Rgba::rgb(0xFF, 0xD4, 0x00);
     show.strokes.push(InkStroke { points: vec![pos2(0.1, 0.1), pos2(0.2, 0.2)], mode: InkMode::Highlighter, color, width: 6.75 });
-    show.stash_ink(&doc, 2, true);
+    show.stash_ink(&doc, 2, true, 1.0);
     assert_eq!(show.recorded.len(), 1);
-    let (slide, pts, mode, saved, width) = &show.recorded[0];
+    let (slide, pts, mode, saved, width, at) = &show.recorded[0];
     assert_eq!(*slide, 2);
     assert_eq!(pts.len(), 2);
     assert_eq!(*mode, InkMode::Highlighter);
     assert_eq!(*saved, color);
     assert!((*width - 6.75).abs() < 1e-9);
+    assert_eq!(*at, 1000, "the stroke keeps the clock it was drawn on");
 }

@@ -128,7 +128,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Record Ink",
             ["Slide Show", "Record"],
             None,
-            "{points: [[x, y, pressure?]], index?: slide, width?, color?: [r, g, b], highlighter?}",
+            "{points: [[x, y, pressure?]], index?: slide, width?, color?: [r, g, b], highlighter?, at?: ms from the slide's entry}",
             has_slide,
             ink_stroke
         ),
@@ -905,8 +905,10 @@ fn ink_stroke(s: &mut Session, p: &Value) -> Result<Value> {
     let width = p.get("width").and_then(Value::as_f64).filter(|w| w.is_finite()).unwrap_or(2.25).clamp(0.25, 40.0);
     let color = ink_color(p).unwrap_or(st.doc.show.pen_color);
     let highlighter = bool_or(p, "highlighter", false);
+    // A recording keeps when each stroke was drawn, so a preview can reveal it on time.
+    let at_ms = p.get("at").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok());
     let n = points.len();
-    let stroke = InkStroke { points, color, width, highlighter };
+    let stroke = InkStroke { points, color, width, highlighter, at_ms };
     s.edit(|doc, _| {
         let Some(sl) = doc.slides.get_mut(index) else {
             return Err(bad("ink.stroke", format!("no slide {index}")));
@@ -2013,6 +2015,7 @@ mod tests {
                         color: Rgba::rgb(10, 20, 30),
                         width: 2.0,
                         highlighter: false,
+                        at_ms: None,
                     }],
                 },
                 ..Default::default()
@@ -2055,6 +2058,20 @@ mod tests {
 
     /// A recorded narration and an opaque part can share one media item when their bytes match.
     /// Clearing the recording must not take the part's bytes with it.
+    /// A recorded stroke carries the slide clock it was drawn on, so a preview can reveal it then.
+    #[test]
+    fn a_recorded_stroke_keeps_its_time() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        s.execute("ink.stroke", &json!({"index": 0, "points": [[10, 10], [40, 40]], "at": 1500})).unwrap();
+        let doc = s.doc().unwrap();
+        let at = doc.doc.slides[0].shapes.iter().find_map(|sh| match &sh.kind {
+            ShapeKind::Ink { strokes } => strokes.last().and_then(|k| k.at_ms),
+            _ => None,
+        });
+        assert_eq!(at, Some(1500));
+    }
+
     #[test]
     fn clearing_recorded_narration_keeps_an_opaque_part_that_shares_its_media() {
         let mut s = Session::new();

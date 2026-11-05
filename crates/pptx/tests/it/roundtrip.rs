@@ -271,6 +271,7 @@ pub fn rich_deck() -> Presentation {
             color: Rgba::rgb(0, 0, 255),
             width: 3.0,
             highlighter: false,
+            at_ms: None,
         }],
     };
     s.shapes.extend([pic, tiled, vid, ink]);
@@ -796,6 +797,7 @@ fn pressured_ink_exports_at_its_mean_width() {
                 color: Rgba::rgb(0, 0, 0),
                 width: 10.0,
                 highlighter: false,
+                at_ms: None,
             }],
         },
         ..Default::default()

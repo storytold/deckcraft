@@ -491,7 +491,23 @@ fn frame_texture(show: &mut Show, f: &Fr, sl: &Sl) -> Option<TextureHandle> {
                 let tl = show.timeline(doc).clone();
                 // Animating: the backdrop doesn't change, only the shapes over it are drawn.
                 let back = animating.then(|| show.backdrop(doc, sl.back_key));
-                render_frame(doc, idx, tl, step, sl.t, size, sl.hidden.clone(), &sl.times, render_threads(), &sl.plays, &sl.stamps, back.as_deref())
+                // A recording preview shows each recorded stroke when the take drew it.
+                let ink_until = show.recording_preview.then(|| ((f.now - show.slide_start).max(0.0) * 1000.0) as u32);
+                render_frame(
+                    doc,
+                    idx,
+                    tl,
+                    step,
+                    sl.t,
+                    size,
+                    sl.hidden.clone(),
+                    &sl.times,
+                    render_threads(),
+                    &sl.plays,
+                    &sl.stamps,
+                    back.as_deref(),
+                    ink_until,
+                )
             }
         };
         if show.remote_opened && show.presenter {
@@ -590,7 +606,7 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
                     if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
                 let timeline = ShowState::timeline(doc, prev);
                 let step = timeline.steps();
-                let ci = render_frame(doc, prev, timeline, step, 0.0, size, vec![], &[], threads, &[], &[], None);
+                let ci = render_frame(doc, prev, timeline, step, 0.0, size, vec![], &[], threads, &[], &[], None, None);
                 tr.old = Some(crate::textures::upload(ctx, "trans-old", ci));
             }
             let aspect = doc.slide_size.width / doc.slide_size.height.max(1.0);

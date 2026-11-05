@@ -106,11 +106,55 @@ fn ink_line(left: f32, right: f32) -> Presentation {
         id: ShapeId(7),
         xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)),
         kind: ShapeKind::Ink {
-            strokes: vec![deckcraft_model::InkStroke { points, color: deckcraft_color::Rgba::rgb(0, 0, 0), width: 24.0, highlighter: false }],
+            strokes: vec![deckcraft_model::InkStroke {
+                points,
+                color: deckcraft_color::Rgba::rgb(0, 0, 0),
+                width: 24.0,
+                highlighter: false,
+                at_ms: None,
+            }],
         },
         ..Default::default()
     };
     deck_with(vec![sh])
+}
+
+/// A recording preview reveals recorded ink on the clock: a stroke stamped later than the cutoff
+/// is not drawn, and one already reached is.
+#[test]
+fn a_recording_preview_hides_ink_that_is_not_due_yet() {
+    let doc = deck_with(vec![Shape {
+        id: ShapeId(9),
+        xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)),
+        kind: ShapeKind::Ink {
+            strokes: vec![
+                deckcraft_model::InkStroke {
+                    points: vec![(100.0, 100.0, 1.0), (400.0, 100.0, 1.0)],
+                    color: Rgba::rgb(0, 0, 0),
+                    width: 24.0,
+                    highlighter: false,
+                    at_ms: Some(0),
+                },
+                deckcraft_model::InkStroke {
+                    points: vec![(100.0, 300.0, 1.0), (400.0, 300.0, 1.0)],
+                    color: Rgba::rgb(0, 0, 0),
+                    width: 24.0,
+                    highlighter: false,
+                    at_ms: Some(5000),
+                },
+            ],
+        },
+        ..Default::default()
+    }]);
+    let scale = 1.0;
+    let all = render_slide(&doc, 0, &RenderOpts { scale, ..Default::default() });
+    let early = render_slide(&doc, 0, &RenderOpts { scale, ink_until_ms: Some(1000), ..Default::default() });
+    let late = render_slide(&doc, 0, &RenderOpts { scale, ink_until_ms: Some(6000), ..Default::default() });
+    let ink_at = |img: &Image, y: u32| dark_in(img, 90, 410, y - 8, y + 8);
+    assert!(ink_at(&all, 300) > 0, "the late stroke is in the full render");
+    assert_eq!(ink_at(&early, 300), 0, "a stroke stamped 5 s in is hidden at 1 s");
+    assert!(ink_at(&early, 100) > 0, "the stroke drawn at entry is there");
+    assert!(ink_at(&late, 300) > 0, "and it appears once the clock reaches it");
 }
 
 fn dark_in(img: &Image, x0: u32, x1: u32, y0: u32, y1: u32) -> usize {
@@ -2093,7 +2137,7 @@ fn outlined_group(child: Xfrm, to_child: impl Fn(f64, f64) -> (f64, f64)) -> Ima
         id: ShapeId(13),
         xfrm: Some(place(100.0, 100.0, 500.0, 300.0)),
         kind: ShapeKind::Ink {
-            strokes: vec![deckcraft_model::InkStroke { points: pts, color: Rgba::rgb(200, 0, 0), width: 5.0, highlighter: false }],
+            strokes: vec![deckcraft_model::InkStroke { points: pts, color: Rgba::rgb(200, 0, 0), width: 5.0, highlighter: false, at_ms: None }],
         },
         ..Default::default()
     };

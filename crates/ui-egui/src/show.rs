@@ -175,7 +175,9 @@ pub struct Show {
     timings: Vec<(usize, f64)>,
     /// Pen strokes kept while recording, in slide points, with the slide, tool, colour and width
     /// they were drawn with.
-    recorded: Vec<(usize, Vec<(f64, f64)>, InkMode, Rgba, f64)>,
+    /// The take's ink: slide, points in slide points, mode, colour, width, and when it was drawn
+    /// (ms from that slide's entry) so a preview can reveal it on the clock.
+    recorded: Vec<(usize, Vec<(f64, f64)>, InkMode, Rgba, f64, u32)>,
     /// Laser samples kept while recording: slide points and milliseconds from the slide start.
     laser_live: Vec<(f64, f64, u32)>,
     laser_saved: Vec<(usize, Vec<(f64, f64, u32)>)>,
@@ -783,7 +785,7 @@ impl Show {
                 if recording {
                     self.timings.push((left, now - self.slide_start));
                 }
-                self.stash_ink(doc, left, recording);
+                self.stash_ink(doc, left, recording, now);
                 self.stash_laser(left, recording);
                 // Take the old slide's texture rather than cloning its handle: the new slide is
                 // otherwise rendered into the same texture, and the transition blends the new
@@ -871,7 +873,8 @@ impl Show {
     /// Move the pen's strokes into the recording, in slide points. Always clears the live strokes.
     /// `keep` is the caller's recording decision, so the final save can stash a take that has
     /// already stopped.
-    fn stash_ink(&mut self, doc: &Presentation, slide: usize, keep: bool) {
+    fn stash_ink(&mut self, doc: &Presentation, slide: usize, keep: bool, now: f64) {
+        let at_ms = ((now - self.slide_start).max(0.0) * 1000.0) as u32;
         let strokes = std::mem::take(&mut self.strokes);
         let w = doc.slide_size.width;
         let h = doc.slide_size.height;
@@ -888,7 +891,7 @@ impl Show {
                 }
             }
             if pts.len() >= 2 {
-                self.recorded.push((slide, pts, stroke.mode, stroke.color, stroke.width));
+                self.recorded.push((slide, pts, stroke.mode, stroke.color, stroke.width, at_ms));
             }
         }
     }
@@ -998,7 +1001,7 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
     if show.mic_tried {
         app.stop_mic();
     }
-    show.stash_ink(doc, show.state.slide, live);
+    show.stash_ink(doc, show.state.slide, live, now);
     show.stash_laser(show.state.slide, live);
     if live {
         show.timings.push((show.state.slide, now - show.slide_start));
@@ -1022,7 +1025,7 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
         let _ = app.run("transition.timing", json!({"index": i, "after": ms}));
     }
     if show.record {
-        for (i, pts, mode, color, width) in &show.recorded {
+        for (i, pts, mode, color, width, at_ms) in &show.recorded {
             let points: Vec<_> = pts.iter().map(|(x, y)| json!([x, y, 0.5])).collect();
             let _ = app.run(
                 "ink.stroke",
@@ -1032,6 +1035,7 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
                     "width": width,
                     "color": [color.r, color.g, color.b],
                     "highlighter": *mode == InkMode::Highlighter,
+                    "at": at_ms,
                 }),
             );
         }

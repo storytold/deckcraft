@@ -352,7 +352,7 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Pre
         }
         take_narration(app.services.mic.as_deref_mut(), show, show.state.slide);
         app.stop_mic();
-        show.stash_ink(doc, show.state.slide, true);
+        show.stash_ink(doc, show.state.slide, true, now);
         show.stash_laser(show.state.slide, true);
         show.end_take_timing(now);
     }
