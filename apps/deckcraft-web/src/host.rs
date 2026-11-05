@@ -40,6 +40,18 @@ use wasm_bindgen::closure::Closure;
 /// The longest user name taken from `?author=` (the preferences' own limit).
 const MAX_AUTHOR_CHARS: usize = 256;
 
+/// Largest `id`/`requestId` accepted from the host.
+const MAX_ID_BYTES: usize = 1024;
+
+/// Largest `params` string accepted from the host.
+const MAX_PARAMS_BYTES: usize = 1 << 20;
+
+/// Most commands waiting for the next frame.
+const MAX_PENDING_COMMANDS: usize = 256;
+
+/// Most `params` text waiting for the next frame, all commands together.
+const MAX_PENDING_PARAMS_BYTES: usize = 8 << 20;
+
 #[derive(Clone)]
 pub struct Bridge {
     window: web_sys::Window,
@@ -49,6 +61,17 @@ pub struct Bridge {
     opened: Rc<RefCell<Vec<(Option<String>, Vec<u8>)>>>,
     /// The unsaved-changes state last reported to the parent.
     reported: Rc<Cell<Option<bool>>>,
+    /// Commands the parent sent since the last frame: (id, params JSON, request id).
+    commands: Rc<RefCell<Vec<(String, String, Option<String>)>>>,
+    /// Total length of the `params` text of the commands that haven't run yet.
+    queued_bytes: Rc<Cell<usize>>,
+    /// Total length of the command identifiers that haven't run yet.
+    queued_id_bytes: Rc<Cell<usize>>,
+    /// The uid of the presentation the host opened (the session keeps a blank deck around,
+    /// so "closed" means the uid vanishing, not an empty document list).
+    host_uid: Rc<Cell<Option<u64>>>,
+    /// Whether a "no presentations" state was reported (so docClosed fires once).
+    closed_reported: Rc<Cell<bool>>,
 }
 
 impl Bridge {
@@ -70,7 +93,18 @@ impl Bridge {
         if parent.location().origin().ok()? != origin {
             return None;
         }
-        Some(Self { window, parent, origin, opened: Rc::default(), reported: Rc::default() })
+        Some(Self {
+            window,
+            parent,
+            origin,
+            opened: Rc::default(),
+            reported: Rc::default(),
+            commands: Rc::default(),
+            queued_bytes: Rc::default(),
+            queued_id_bytes: Rc::default(),
+            host_uid: Rc::default(),
+            closed_reported: Rc::default(),
+        })
     }
 
     /// Hand saved and exported files to the parent instead of downloading them, and hear the
@@ -110,6 +144,14 @@ impl Bridge {
         let opened = std::mem::take(&mut *self.opened.borrow_mut());
         for (name, bytes) in opened {
             app.open_from_host(name.as_deref(), &bytes);
+            if name
+                .as_deref()
+                .and_then(|n| n.rsplit('.').next())
+                .is_some_and(|ext| ["pptx", "potx", "ppsx", "deckcraft"].iter().any(|e| ext.eq_ignore_ascii_case(e)))
+                && let Some(d) = app.session.active()
+            {
+                self.set_host_uid(d.uid);
+            }
         }
     }
 
@@ -118,6 +160,52 @@ impl Bridge {
         let dirty = app.session.documents().iter().any(|d| d.is_dirty());
         if self.reported.get() != Some(dirty) && self.send(&[("type", "deckcraft:dirty".into()), ("dirty", dirty.into())]) {
             self.reported.set(Some(dirty));
+        }
+    }
+
+    /// Remember the presentation the host opened (docClosed tracking) and keep
+    /// saving in the format the deck came in as.
+    pub fn set_host_uid(&self, uid: u64) {
+        self.host_uid.set(Some(uid));
+        self.closed_reported.set(false);
+    }
+
+    /// Commands the parent sent since the last frame, oldest first: (id, params JSON, request id).
+    pub fn take_commands(&self) -> Vec<(String, String, Option<String>)> {
+        self.queued_bytes.set(0);
+        self.queued_id_bytes.set(0);
+        std::mem::take(&mut *self.commands.borrow_mut())
+    }
+
+    /// Tell the parent how a command (`deckcraft:cmd`) ended.
+    pub fn post_response(&self, id: &str, request_id: Option<&str>, result: Result<serde_json::Value, String>) {
+        let value = crate::host_cmd::response(id, request_id, result);
+        let sent = js_sys::JSON::parse(&value.to_string()).ok().is_some_and(|m| self.parent.post_message(&m, &self.origin).is_ok());
+        if !sent {
+            log::error!("couldn't answer command {id} to the page");
+        }
+    }
+
+    /// Tell the parent the presentation it opened has closed.
+    pub fn post_doc_closed(&self) {
+        self.send(&[("type", "deckcraft:docClosed".into())]);
+    }
+
+    /// After each frame: tell the parent when unsaved changes appear or go away, and post
+    /// `docClosed` once the host's presentation has vanished (File › Close).
+    pub fn sync(&self, app: &mut SlideApp) {
+        let dirty = app.session.documents().iter().any(|d| d.is_dirty());
+        if self.reported.get() != Some(dirty) && self.send(&[("type", "deckcraft:dirty".into()), ("dirty", dirty.into())]) {
+            self.reported.set(Some(dirty));
+        }
+        if let Some(uid) = self.host_uid.get()
+            && !app.session.documents().iter().any(|d| d.uid == uid)
+        {
+            self.host_uid.set(None);
+            if !self.closed_reported.get() {
+                self.closed_reported.set(true);
+                self.send(&[("type", "deckcraft:docClosed".into())]);
+            }
         }
     }
 
@@ -140,20 +228,98 @@ impl Bridge {
     fn listen(&self, ctx: egui::Context) {
         let parent = self.parent.clone();
         let origin = self.origin.clone();
+        let bridge = self.clone();
         let opened = self.opened.clone();
+        let commands = self.commands.clone();
+        let queued_bytes = self.queued_bytes.clone();
+        let queued_id_bytes = self.queued_id_bytes.clone();
         let on_message = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
             if event.origin() != origin || !event.source().is_some_and(|s| js_sys::Object::is(&s, &parent)) {
                 return;
             }
             let data = event.data();
-            if string(&data, "type").as_deref() != Some("deckcraft:open") {
-                return;
+            match string(&data, "type").as_deref() {
+                Some("deckcraft:open") => {
+                    // No name is no file: the presentation opens untitled, never under an invented name.
+                    let name = string(&data, "name").filter(|n| !n.trim().is_empty());
+                    let Some(bytes) = bytes(&data) else { return };
+                    opened.borrow_mut().push((name, bytes));
+                    ctx.request_repaint();
+                }
+                Some("deckcraft:cmd") => {
+                    let id_raw = string(&data, "id");
+                    let request_id = string(&data, "requestId").filter(|r| !r.is_empty());
+                    if id_raw.as_ref().map(|s| s.len()).unwrap_or(0) > crate::host_cmd::MAX_ID_BYTES {
+                        bridge.post_response("", request_id.as_deref(), Err(format!("id is larger than {} bytes", crate::host_cmd::MAX_ID_BYTES)));
+                        ctx.request_repaint();
+                        return;
+                    }
+                    let id = match id_raw.filter(|i| !i.trim().is_empty()) {
+                        Some(id) => id,
+                        None => {
+                            bridge.post_response("", request_id.as_deref(), Err("a command needs an id".to_string()));
+                            ctx.request_repaint();
+                            return;
+                        }
+                    };
+                    if request_id.as_ref().map(|s| s.len()).unwrap_or(0) > crate::host_cmd::MAX_ID_BYTES {
+                        bridge.post_response(
+                            &id,
+                            request_id.as_deref(),
+                            Err(format!("requestId is larger than {} bytes", crate::host_cmd::MAX_ID_BYTES)),
+                        );
+                        ctx.request_repaint();
+                        return;
+                    }
+                    let params_value = js_sys::Reflect::get(&data, &JsValue::from_str("params")).ok().filter(|v| !v.is_undefined() && !v.is_null());
+                    let params = match params_value {
+                        None => "{}".to_string(),
+                        Some(v) => {
+                            let js_len = v.dyn_ref::<js_sys::JsString>().map(|s| s.length() as usize);
+                            if js_len.unwrap_or(usize::MAX) > crate::host_cmd::MAX_PARAMS_BYTES {
+                                bridge.post_response(
+                                    &id,
+                                    request_id.as_deref(),
+                                    Err(format!("params are larger than {} bytes", crate::host_cmd::MAX_PARAMS_BYTES)),
+                                );
+                                ctx.request_repaint();
+                                return;
+                            }
+                            match v.as_string() {
+                                Some(text) if text.len() <= crate::host_cmd::MAX_PARAMS_BYTES => text,
+                                Some(_) => {
+                                    bridge.post_response(
+                                        &id,
+                                        request_id.as_deref(),
+                                        Err(format!("params are larger than {} bytes", crate::host_cmd::MAX_PARAMS_BYTES)),
+                                    );
+                                    ctx.request_repaint();
+                                    return;
+                                }
+                                None => {
+                                    bridge.post_response(&id, request_id.as_deref(), Err("params must be a string of valid JSON".to_string()));
+                                    ctx.request_repaint();
+                                    return;
+                                }
+                            }
+                        }
+                    };
+                    let incoming_id_bytes = id.len() + request_id.as_deref().map(str::len).unwrap_or(0);
+                    if commands.borrow().len() >= crate::host_cmd::MAX_PENDING_COMMANDS
+                        || queued_bytes.get().saturating_add(params.len()) > crate::host_cmd::MAX_PENDING_PARAMS_BYTES
+                        || queued_id_bytes.get().saturating_add(incoming_id_bytes) > crate::host_cmd::MAX_PENDING_PARAMS_BYTES
+                    {
+                        bridge.post_response(&id, request_id.as_deref(), Err("too many commands are waiting; try again".to_string()));
+                        ctx.request_repaint();
+                        return;
+                    }
+                    queued_bytes.set(queued_bytes.get().saturating_add(params.len()));
+                    queued_id_bytes.set(queued_id_bytes.get().saturating_add(incoming_id_bytes));
+                    commands.borrow_mut().push((id, params, request_id));
+                    ctx.request_repaint();
+                }
+                _ => {}
             }
-            // No name is no file: the presentation opens untitled, never under an invented name.
-            let name = string(&data, "name").filter(|n| !n.trim().is_empty());
-            let Some(bytes) = bytes(&data) else { return };
-            opened.borrow_mut().push((name, bytes));
-            ctx.request_repaint();
         });
         if self.window.add_event_listener_with_callback("message", on_message.as_ref().unchecked_ref()).is_ok() {
             // The listener lives as long as the page.
