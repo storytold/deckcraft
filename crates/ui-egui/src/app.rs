@@ -145,7 +145,7 @@ impl SlideApp {
     /// A message that must be seen wherever the user is: a toast, which also shows over the start
     /// screen and the File tab, where there is no status bar.
     pub fn notify(&mut self, msg: impl Into<String>) {
-        self.toast = Some(toast::Toast { text: msg.into(), at: now_ms() });
+        self.toast = Some(toast::Toast { text: msg.into(), at: now_ms(), sticky: false });
     }
 
     /// The transient status message while it is fresh; clears it once stale. Both the status bar

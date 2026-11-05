@@ -13,6 +13,8 @@ const SHOW_MS: f64 = 8000.0;
 pub struct Toast {
     pub text: String,
     pub at: f64,
+    /// Stays until the user closes it: a failure that must not scroll away unseen.
+    pub sticky: bool,
 }
 
 /// The notice for fonts a presentation uses that aren't installed, or `None` when all are.
@@ -35,14 +37,14 @@ pub fn note_missing_fonts(app: &mut SlideApp) {
         return;
     }
     if let Some(text) = missing_fonts_message(&d.missing_fonts) {
-        app.toast = Some(Toast { text, at: crate::now_ms() });
+        app.toast = Some(Toast { text, at: crate::now_ms(), sticky: false });
     }
 }
 
 /// Render and dismiss the active transient toast without disturbing the document.
 pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let Some(toast) = &app.toast else { return };
-    if crate::now_ms() - toast.at > SHOW_MS {
+    if !toast.sticky && crate::now_ms() - toast.at > SHOW_MS {
         app.toast = None;
         return;
     }

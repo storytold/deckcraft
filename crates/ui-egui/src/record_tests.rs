@@ -191,4 +191,7 @@ fn a_microphone_lost_mid_take_cancels_the_recording_and_says_why() {
     assert!(!app.record.is_recording(), "the take is cancelled, not left counting");
     let status = app.status.as_ref().map(|(m, _)| m.clone()).unwrap_or_default();
     assert!(status.contains("The microphone stopped") && status.contains("unplugged"), "{status}");
+    let toast = app.toast.as_ref().expect("a notice the user must see");
+    assert!(toast.sticky, "the notice stays until it is closed");
+    assert!(toast.text.contains("unplugged"), "{}", toast.text);
 }

@@ -215,7 +215,10 @@ impl SlideApp {
         // here, and the take must not keep a running clock over a stream that recorded nothing.
         if let Some(e) = self.services.mic.as_ref().and_then(|m| m.failure()) {
             self.cancel_audio_recording();
-            self.set_status(format!("The microphone stopped: {e}. The take was cancelled"));
+            let text = format!("The microphone stopped: {e}. The take was cancelled.");
+            // The status bar expires and the File tab hides it: keep a notice up until dismissed.
+            self.toast = Some(crate::toast::Toast { text: text.clone(), at: crate::now_ms(), sticky: true });
+            self.set_status(text);
             return;
         }
         let mic = self.services.mic.as_deref_mut();
