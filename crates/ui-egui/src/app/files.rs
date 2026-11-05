@@ -596,7 +596,10 @@ impl SlideApp {
                 UiRequest::StartShow { from, record, preview } => {
                     // One microphone: a Record ▸ Audio take in progress owns it, so a recording
                     // show would split the captured audio and later cancel the clip.
-                    if record && self.audio_recording() {
+                    // Both a recording show and a preview reach the microphone: a Record ▸ Audio
+                    // take in progress owns it — and finishing that take would edit the deck,
+                    // which a preview must never do.
+                    if self.audio_recording() && (record || preview) {
                         self.set_status("Stop or cancel the audio recording first: it owns the microphone");
                         continue;
                     }

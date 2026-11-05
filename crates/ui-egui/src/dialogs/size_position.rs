@@ -151,8 +151,9 @@ fn shown_number(d: &Dialog, key: &str, label: &str) -> Result<f64, String> {
 fn size_position_value(d: &Dialog) -> Result<Option<Value>, String> {
     let touched = ["x", "y", "w", "h", "rot", "scaleW", "scaleH"].iter().any(|k| edited(d, k));
     let lock = field_of(d, "lock") == "1";
-    let lock_changed = lock != (field_of(d, "prevlock") == "1");
-    if !touched && !lock_changed {
+    // The aspect toggle belongs to this dialog's arithmetic, not to the document: sending it alone
+    // would ask the command for a dialog with no geometry and reopen it.
+    if !touched {
         return Ok(None);
     }
     let x = shown_points(d, "x", "Horizontal")?;
