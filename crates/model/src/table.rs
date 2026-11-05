@@ -146,6 +146,10 @@ impl Table {
             if let (Some(old), Some(x)) = (old, self.cell_mut(m.r, at + 1)) {
                 *x = old;
                 crate::edit::delete(&mut x.text, (0, 0), (usize::MAX, usize::MAX));
+                // `delete` leaves zero-length runs, fields among them, which layout can still resolve.
+                for p in &mut x.text.paragraphs {
+                    p.runs.clear();
+                }
             }
         }
         self.set_merges(merges.into_iter().map(|m| if grows(&m) { Merge { gs: m.gs + 1, ..m } } else { m.insert_col(at) }));
@@ -515,6 +519,11 @@ mod tests {
         let mut t = Table::new(1, 3, 300.0, 30.0);
         t.cell_mut(0, 0).unwrap().text = TextBody::from_text("title");
         t.cell_mut(0, 0).unwrap().text.body.anchor = Some(crate::text::Anchor::Middle);
+        t.cell_mut(0, 0).unwrap().text.paragraphs[0].runs.push(crate::text::Run {
+            text: String::new(),
+            props: Default::default(),
+            kind: crate::text::RunKind::Field { field: "slidenum".into() },
+        });
         assert!(t.merge(0, 0, 0, 2));
         t.insert_col_beside(0, Some(0));
         assert_eq!(t.cell(0, 0).unwrap().grid_span, 4);
@@ -522,6 +531,7 @@ mod tests {
         let old = t.cell(0, 1).unwrap();
         assert!(old.h_merge);
         assert_eq!(old.text.text(), "");
+        assert!(old.text.paragraphs.iter().all(|p| p.runs.is_empty()), "no field or empty run stays");
         assert_eq!(old.text.body.anchor, Some(crate::text::Anchor::Middle), "the body properties stay");
     }
 
