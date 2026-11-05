@@ -646,7 +646,14 @@ impl Session {
             self.settle_composition();
         }
         if let Err(e) = (spec.enabled)(self) {
-            let named = (e == cmd::NOTHING_SELECTED || e == cmd::SELECT_TWO) && (params.get("ids").is_some() || params.get("id").is_some());
+            // A command given `ids`/`id` runs on the shapes it names, not the selection; an empty or
+            // null target names nothing, so the command stays disabled. A formatter that otherwise
+            // wants text or shapes selected runs on a named target too, when its parameters say it
+            // takes one.
+            let names = |k: &str| params.get(k).is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()));
+            let takes_ids = spec.params.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| w == "ids" || w == "id");
+            let named = (names("ids") || names("id"))
+                && (e == cmd::NOTHING_SELECTED || e == cmd::SELECT_TWO || (e == cmd::SELECT_TEXT_OR_SHAPE && takes_ids));
             if !named {
                 return Err(EngineError::Disabled(id.into(), e));
             }
