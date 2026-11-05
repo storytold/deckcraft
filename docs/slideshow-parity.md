@@ -51,7 +51,7 @@ ready** (estimated), **10–16 h** to parity.
 | Swap displays | yes | no | Still open on #433 |
 | Pen, laser, black screen, zoom from presenter view | yes | Black, White and Zoom buttons; the audience zoom is framed on the presenter slide | Pen and laser are driven from the audience window only; the presenter window does not move the laser dot |
 | See all slides from presenter view | yes | yes: All slides (or G) opens the grid in presenter view only, the audience keeps the slide; click a thumbnail to go there, Esc closes it | |
-| Slide strip in presenter view: previous, current and coming slides | yes | yes: along the bottom, the current slide outlined; a click goes to that slide and a scrollbar moves through the deck (#975) | On by default; the Slide strip button and `show.presenterStrip` turn it off, and the choice is remembered. Turning it on or off leaves the current and Next previews alone when there is room. All slides covers it while open |
+| Slide strip in presenter view: previous, current and coming slides | yes | yes: along the bottom, the current slide outlined; a click goes to that slide and a scrollbar moves through the deck (#975) | On by default; the Slide strip button and `show.presenterStrip` turn it off, and the choice is remembered. Turning it on or off leaves the current and Next previews alone when there is room. All slides covers it while open. Thumbnails render on other threads, as the Next preview does |
 | Rehearse with Coach (Speaker Coach) | yes (cloud) | no | AI dimension |
 
 ## Rehearse and record

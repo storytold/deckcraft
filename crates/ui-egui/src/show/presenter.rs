@@ -1,7 +1,7 @@
 use super::keys::keyboard;
 use super::render::{current_rect, next_rect};
 use super::zoom::{Zoom, grid_indices, paint_grid, see_all_hit, slide_aspect, toggle_blank, unit_uv, zoom_frame};
-use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, ShowAction, Stroke, TextureHandle, Ui, pos2, theme, vec2};
+use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, ShowAction, Stroke, Ui, pos2, theme, vec2};
 
 pub(super) const NOTES_DEFAULT: f32 = 18.0;
 
@@ -20,7 +20,10 @@ const STRIP_BAR_H: f32 = 12.0;
 const STRIP_THUMB_W: u32 = 240;
 /// Strip thumbnails kept as textures; the ones farthest from where the strip is go first.
 const STRIP_CACHE: usize = 64;
-/// Strip thumbnails rendered per frame, so a jump across a long deck does not stall the window.
+/// Strip thumbnails rendered on other threads at once.
+pub(super) const STRIP_JOBS: usize = 2;
+/// Strip thumbnails rendered on the UI thread per frame where there are no threads (the web), so a
+/// jump across a long deck does not stall the window.
 const STRIP_RENDERS: usize = 3;
 
 /// Presenter-view elapsed time. Pausing freezes the number; the show keeps playing.
@@ -392,7 +395,7 @@ pub(super) fn strip_drag_first(track: Rect, n: usize, visible: usize, first: usi
 /// Presenter view's slide strip in `band`: the previous slide and the ones coming up, the current
 /// one outlined in the accent colour. A click goes to that slide; the scrollbar below moves the
 /// strip through the whole deck, and the strip lines up again when the show moves on.
-fn presenter_strip(ui: &mut Ui, show: &mut Show, doc: &Presentation, band: Rect, actions: &mut Vec<ShowAction>) {
+fn presenter_strip(ui: &mut Ui, show: &mut Show, doc: &std::sync::Arc<Presentation>, band: Rect, actions: &mut Vec<ShowAction>) {
     let n = doc.slides.len();
     show.strip_cells.clear();
     show.strip_track = None;
@@ -412,14 +415,16 @@ fn presenter_strip(ui: &mut Ui, show: &mut Show, doc: &Presentation, band: Rect,
         None => show.strip_grab = None,
     }
     show.strip_first = show.strip_first.min(n.saturating_sub(visible));
+    let first = show.strip_first;
+    strip_fetch(ui.ctx(), show, doc, first..first.saturating_add(visible).min(n), cur);
     let painter = ui.painter().clone();
     let accent = theme::Tokens::dark().accent;
-    let mut made = 0;
-    for (k, i) in (show.strip_first..n).take(visible).enumerate() {
+    for (k, i) in (first..n).take(visible).enumerate() {
         let rect = Rect::from_min_size(pos2(band.min.x + k as f32 * (cell.x + STRIP_GAP), band.min.y), cell);
         show.strip_cells.push((i, rect));
         painter.rect_filled(rect, CornerRadius::same(3), Color32::from_gray(40));
-        if let Some(t) = strip_thumb(ui.ctx(), show, doc, i, &mut made) {
+        // Until its thumbnail arrives, a slide shows as the empty cell.
+        if let Some((_, _, t)) = show.strip_thumbs.iter().find(|(d, s, _)| *s == i && std::sync::Arc::ptr_eq(d, doc)) {
             painter.image(t.id(), rect, unit_uv(), Color32::WHITE);
         }
         let hidden = doc.slides.get(i).is_some_and(|s| s.hidden);
@@ -456,34 +461,95 @@ fn presenter_strip(ui: &mut Ui, show: &mut Show, doc: &Presentation, band: Rect,
     painter.rect_filled(thumb, CornerRadius::same(6), fill);
 }
 
-/// Slide `i`'s strip thumbnail, rendering at most [`STRIP_RENDERS`] a frame (`made` counts them).
-fn strip_thumb(ctx: &egui::Context, show: &mut Show, doc: &Presentation, i: usize, made: &mut usize) -> Option<TextureHandle> {
-    if let Some((_, t)) = show.strip_thumbs.iter().find(|(k, _)| *k == i) {
-        return Some(t.clone());
-    }
-    if *made >= STRIP_RENDERS {
-        ctx.request_repaint();
-        return None;
-    }
-    *made += 1;
-    // The cache holds more than the strip shows, so the farthest one is never on screen.
-    if show.strip_thumbs.len() >= STRIP_CACHE
-        && let Some(far) = show.strip_thumbs.iter().enumerate().max_by_key(|(_, (k, _))| k.abs_diff(i)).map(|(j, _)| j)
-    {
-        drop(show.strip_thumbs.swap_remove(far));
-    }
+/// Bring the strip's thumbnails for the slides on screen (`want`) up to date. Thumbnails of an
+/// earlier version of the presentation are dropped (an edit during the show replaces it), finished
+/// renders are uploaded, and missing ones are rendered on other threads as the Next preview is
+/// (#964), nearest the current slide `cur` first and at most [`STRIP_JOBS`] at a time, so turning
+/// the page never waits for them. On the web (no threads), or when a thread can't start, at most
+/// [`STRIP_RENDERS`] are rendered here per frame.
+fn strip_fetch(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, want: std::ops::Range<usize>, cur: usize) {
+    let current = |d: &std::sync::Arc<Presentation>| std::sync::Arc::ptr_eq(d, doc);
+    show.strip_thumbs.retain(|(d, _, _)| current(d));
     let size = crate::textures::fit_size(
         (STRIP_THUMB_W, (STRIP_THUMB_W as f64 * doc.slide_size.height / doc.slide_size.width.max(1.0)).clamp(1.0, 1e9) as u32),
         crate::textures::max_side(ctx),
     );
-    let img = deckcraft_render::render_slide(
-        doc,
-        i,
-        &RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), ..Default::default() },
-    );
-    let tex = crate::textures::upload(ctx, format!("presenter-strip-{i}"), crate::textures::to_color_image(&img, false));
-    show.strip_thumbs.push((i, tex.clone()));
-    Some(tex)
+    // Finished renders, and renders whose thread died (rendered here instead, as the Next preview
+    // does). A render of an earlier version is dropped; its thread ends on its own.
+    let mut arrived = vec![];
+    show.strip_jobs.retain(|(d, s, rx)| match rx.try_recv() {
+        Ok(img) => {
+            if current(d) {
+                arrived.push((*s, Some(img)));
+            }
+            false
+        }
+        Err(std::sync::mpsc::TryRecvError::Empty) => current(d),
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+            if current(d) {
+                arrived.push((*s, None));
+            }
+            false
+        }
+    });
+    for (s, img) in arrived {
+        let img = img.unwrap_or_else(|| {
+            #[cfg(test)]
+            {
+                show.strip_inline += 1;
+            }
+            render_preview(doc, s, size, 0)
+        });
+        strip_keep(ctx, show, doc, s, img, cur);
+    }
+    let mut missing: Vec<usize> =
+        want.filter(|i| !show.strip_thumbs.iter().any(|(_, s, _)| s == i) && !show.strip_jobs.iter().any(|(_, s, _)| s == i)).collect();
+    missing.sort_by_key(|i| i.abs_diff(cur));
+    let mut made = 0;
+    for i in missing {
+        if show.strip_jobs.len() >= STRIP_JOBS || made >= STRIP_RENDERS {
+            break;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker_doc = doc.clone();
+        let spawned = !cfg!(target_arch = "wasm32")
+            && std::thread::Builder::new()
+                .name("show-strip-thumb".into())
+                .spawn(move || {
+                    let _ = tx.send(render_preview(&worker_doc, i, size, 1));
+                })
+                .is_ok();
+        if spawned {
+            #[cfg(test)]
+            {
+                show.strip_spawns += 1;
+            }
+            show.strip_jobs.push((doc.clone(), i, rx));
+        } else {
+            made += 1;
+            #[cfg(test)]
+            {
+                show.strip_inline += 1;
+            }
+            let img = render_preview(doc, i, size, 0);
+            strip_keep(ctx, show, doc, i, img, cur);
+        }
+    }
+    if !show.strip_jobs.is_empty() || made >= STRIP_RENDERS {
+        ctx.request_repaint_after(std::time::Duration::from_millis(16));
+    }
+}
+
+/// Keep slide `s`'s thumbnail. The cache holds more than the strip shows, so the one dropped to
+/// make room (the farthest from the current slide `cur`) is never on screen.
+fn strip_keep(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, s: usize, img: egui::ColorImage, cur: usize) {
+    if show.strip_thumbs.len() >= STRIP_CACHE
+        && let Some(far) = show.strip_thumbs.iter().enumerate().max_by_key(|(_, (_, k, _))| k.abs_diff(cur)).map(|(j, _)| j)
+    {
+        drop(show.strip_thumbs.swap_remove(far));
+    }
+    let tex = crate::textures::upload(ctx, format!("presenter-strip-{s}"), img);
+    show.strip_thumbs.push((doc.clone(), s, tex));
 }
 
 /// The current slide's notes in the presenter's notes pane, `px` for 12 pt text.

@@ -1596,3 +1596,51 @@ fn the_strip_setting_is_a_command_and_outlasts_the_show() {
     app.run("show.presenterStrip", json!({})).unwrap();
     assert!(app.ui.presenter_strip && app.show.as_ref().unwrap().strip, "no `on` toggles it, in the running show too");
 }
+
+/// Frames until every slide the strip shows has its thumbnail (they render on other threads).
+fn wait_for_strip_thumbnails(h: &mut egui_kittest::Harness<'static, (std::sync::Arc<Presentation>, Show, bool)>) {
+    for _ in 0..400 {
+        h.run_steps(1);
+        let (doc, show, _) = h.state();
+        let ready = show.strip_cells.iter().all(|(i, _)| show.strip_thumbs.iter().any(|(d, s, _)| s == i && std::sync::Arc::ptr_eq(d, doc)));
+        if ready && !show.strip_cells.is_empty() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("the strip thumbnails never arrived");
+}
+
+/// PR review: strip thumbnails rendered on the UI thread, so a page turn on a heavy deck waited
+/// for them. Like the Next preview (#964), they now render on other threads: the presenter window
+/// never renders one itself, renders start a few at a time, and each slide is rendered once.
+#[test]
+fn strip_thumbnails_render_off_the_ui_thread() {
+    let mut h = presenter_harness(8);
+    h.run_steps(1);
+    let show = &h.state().1;
+    assert!(!show.strip_cells.is_empty());
+    assert!(show.strip_spawns >= 1 && show.strip_jobs.len() <= STRIP_JOBS, "renders start on other threads, a few at a time");
+    wait_for_strip_thumbnails(&mut h);
+    let show = &h.state().1;
+    assert_eq!(show.strip_inline, 0, "the presenter window rendered no thumbnail itself");
+    assert_eq!(show.strip_spawns, show.strip_cells.len(), "each slide on screen is rendered once");
+    assert!(show.strip_jobs.is_empty());
+}
+/// PR review: thumbnails were cached by slide number only, so an edit during the show kept showing
+/// the old slides. They now belong to the presentation they were rendered from, as the Next
+/// preview does, and an edited presentation gets fresh ones.
+#[test]
+fn an_edit_during_the_show_refreshes_the_strip_thumbnails() {
+    let mut h = presenter_harness(4);
+    wait_for_strip_thumbnails(&mut h);
+    let before = h.state().1.strip_spawns;
+    let mut edited = (*h.state().0).clone();
+    std::sync::Arc::make_mut(&mut edited.slides[1]).hidden = true;
+    let edited = std::sync::Arc::new(edited);
+    h.state_mut().0 = edited.clone();
+    wait_for_strip_thumbnails(&mut h);
+    let show = &h.state().1;
+    assert!(show.strip_thumbs.iter().all(|(d, _, _)| std::sync::Arc::ptr_eq(d, &edited)), "no thumbnail of the old version is kept");
+    assert_eq!(show.strip_spawns - before, show.strip_cells.len(), "every slide on screen is rendered again");
+}

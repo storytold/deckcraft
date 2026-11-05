@@ -27,8 +27,8 @@ use presenter::{NOTES_DEFAULT, PresenterTimer};
 use presenter::{NOTES_MAX, NOTES_MIN, NOTES_STEP, format_elapsed, presenter_notes, presenter_window, wall_clock};
 #[cfg(test)]
 use presenter::{
-    STRIP_AHEAD, STRIP_GAP, STRIP_LABEL_H, STRIP_MAX_CELLS, strip_band_height, strip_drag_first, strip_first_at, strip_first_for, strip_layout,
-    strip_thumb_rect,
+    STRIP_AHEAD, STRIP_GAP, STRIP_JOBS, STRIP_LABEL_H, STRIP_MAX_CELLS, strip_band_height, strip_drag_first, strip_first_at, strip_first_for,
+    strip_layout, strip_thumb_rect,
 };
 #[cfg(test)]
 use render::{below_playing_video, current_rect, next_rect, render_frame, start_prefetch};
@@ -108,7 +108,17 @@ pub struct Show {
     /// (previous slide first) until its scrollbar moves it.
     strip_first: usize,
     strip_for: Option<usize>,
-    strip_thumbs: Vec<(usize, TextureHandle)>,
+    /// Strip thumbnails: the presentation each was rendered from (an edit replaces it, and its
+    /// thumbnails are dropped), the slide and the texture.
+    strip_thumbs: Vec<(std::sync::Arc<Presentation>, usize, TextureHandle)>,
+    /// Strip thumbnails being rendered on other threads, as the Next preview is (#964).
+    strip_jobs: Vec<(std::sync::Arc<Presentation>, usize, std::sync::mpsc::Receiver<egui::ColorImage>)>,
+    /// Strip thumbnail renders started on another thread.
+    #[cfg(test)]
+    strip_spawns: usize,
+    /// Strip thumbnails rendered on the UI thread (the web, or a thread that could not start or died).
+    #[cfg(test)]
+    strip_inline: usize,
     /// Where the strip drew each slide last frame, in presenter-window points.
     strip_cells: Vec<(usize, Rect)>,
     strip_track: Option<Rect>,
@@ -281,6 +291,11 @@ impl Show {
             strip_first: 0,
             strip_for: None,
             strip_thumbs: vec![],
+            strip_jobs: vec![],
+            #[cfg(test)]
+            strip_spawns: 0,
+            #[cfg(test)]
+            strip_inline: 0,
             strip_cells: vec![],
             strip_track: None,
             strip_grab: None,
