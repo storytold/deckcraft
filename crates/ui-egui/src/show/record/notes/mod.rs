@@ -83,6 +83,9 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
 /// so it cannot be hidden by the pane's background.
 pub(super) fn overlay(ui: &mut Ui, rec: &mut RecordView, doc: &Presentation, show: &Show, layout: &RecordLayout) {
     if rec.view != ViewKind::Teleprompter || !rec.teleprompter.overlay || rec.status != super::RecordStatus::Recording {
+        // Nothing is drawn, so no part of the slide is chrome: a stale rectangle would keep
+        // swallowing clicks there.
+        rec.overlay = None;
         return;
     }
     let rect = teleprompter::overlay_rect(layout);

@@ -1633,6 +1633,24 @@ fn a_narration_cut_at_the_byte_limit_reports_the_cut() {
     assert!(full.wav.len() > cut.wav.len());
 }
 
+/// Two advances queued before either is applied time each slide the take leaves, not the one the
+/// timeline cache happens to name.
+#[test]
+fn queued_slide_changes_time_the_slide_each_one_leaves() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.record = true;
+    show.begin_recording(0.0);
+    show.apply(ShowAction::Slide(1), &doc, 2.0);
+    show.apply(ShowAction::Slide(2), &doc, 3.0);
+    let timed: Vec<usize> = show.timings.iter().map(|(i, _)| *i).collect();
+    assert!(timed.contains(&0) && timed.contains(&1), "slide 0 and slide 1 are both timed: {timed:?}");
+    assert_ne!(timed, vec![1, 2], "the destination of each advance is not the one that was left");
+}
+
 /// A slide opened while the take is held starts its clock at resume: shifting its slide-entry
 /// time by the pause would undercount it, or make the timing negative after a long hold.
 #[test]

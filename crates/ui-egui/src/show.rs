@@ -115,6 +115,10 @@ pub struct Show {
     /// Set Up Slide Show ▸ Keep mouse cursor visible: a still pointer is not hidden (#1445).
     pub keep_cursor: bool,
     timeline: Option<(usize, Timeline)>,
+    /// The slide whose clock is running. Kept apart from [`Self::timeline`] because queued
+    /// actions are applied in one pass: the cache may already name the destination slide when the
+    /// timing and narration of the slide being left are still to be recorded.
+    clock_slide: Option<usize>,
     step_start: f64,
     slide_start: f64,
     step_end: f64,
@@ -322,6 +326,7 @@ impl Show {
             mic_error: None,
             keep_cursor: false,
             timeline: None,
+            clock_slide: Some(from),
             step_start: 0.0,
             slide_start: 0.0,
             step_end: 0.0,
@@ -772,7 +777,8 @@ impl Show {
                 self.ended = false;
                 self.zoom = None;
                 self.zoom_arm = false;
-                let left = self.timeline.as_ref().map(|t| t.0).unwrap_or(i);
+                let left = self.clock_slide.unwrap_or(i);
+                self.clock_slide = Some(i);
                 let recording = self.keeps_recording();
                 if recording {
                     self.timings.push((left, now - self.slide_start));
@@ -1167,7 +1173,7 @@ fn before_slide_change_with(mic: &mut MicSlot, show: &mut Show, action: &ShowAct
     if show.keeps_recording() && matches!(action, ShowAction::Slide(_)) {
         // Navigation has already entered the destination: the take belongs to the slide left,
         // the same index `Show::apply` records its timing under.
-        let left = show.timeline.as_ref().map(|t| t.0).unwrap_or(show.state.slide);
+        let left = show.clock_slide.unwrap_or(show.state.slide);
         take_narration(mic.as_deref_mut(), show, left);
     }
 }
