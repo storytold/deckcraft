@@ -236,7 +236,12 @@ impl Session {
                 }
             }
             // A connector dragged away from shapes that stay put comes unglued at those ends.
-            let moved: Vec<ShapeId> = origs2.iter().map(|o| o.0).collect();
+            let mut moved: Vec<ShapeId> = vec![];
+            for (id, _) in &origs2 {
+                if let Some(sh) = deckcraft_model::find_shape(list, *id) {
+                    deckcraft_model::walk(std::slice::from_ref(sh), &mut |s, _| moved.push(s.id));
+                }
+            }
             for sh in list.iter_mut().filter(|s| moved.contains(&s.id)) {
                 if let ShapeKind::Connector { start, end } = &mut sh.kind {
                     for c in [start, end] {
