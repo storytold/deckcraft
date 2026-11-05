@@ -394,7 +394,8 @@ impl Textures {
             return Some(e.tex.clone());
         }
         if *budget == 0 {
-            // Keep showing the stale thumbnail while the new one waits.
+            // Keep showing the stale thumbnail while the new one waits; request a repaint to finish rendering.
+            ctx.request_repaint();
             return self.thumbs.get(&key.slide).map(|e| e.tex.clone());
         }
         *budget -= 1;
