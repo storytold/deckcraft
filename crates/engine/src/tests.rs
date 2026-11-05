@@ -6494,9 +6494,11 @@ fn chart_axis_title_sets_clears_and_draws() {
     let before = draw(&s);
     let r = s.execute("chart.axisTitle", &json!({"id": id, "axis": "category", "text": "Quarter"})).unwrap();
     assert_eq!(r["axisTitles"], json!({"category": "Quarter", "value": null}), "{r}");
+    let with_category = draw(&s);
+    assert_ne!(before, with_category, "the category title is drawn");
     s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Revenue"})).unwrap();
     let with = draw(&s);
-    assert_ne!(before, with, "the titles are drawn");
+    assert_ne!(with_category, with, "the value title is drawn");
     let st = s.doc().unwrap();
     let sh = st.doc.slides[0].shapes.iter().find(|x| x.id.0 as u64 == id.as_u64().unwrap()).unwrap();
     let deckcraft_model::ShapeKind::Chart(c) = &sh.kind else { panic!("chart") };
@@ -6510,6 +6512,26 @@ fn chart_axis_title_sets_clears_and_draws() {
     let r = s.execute("chart.axisTitle", &json!({"ids": [id], "axis": "category", "text": "Year"})).unwrap();
     assert_eq!(r["ids"], json!([id]), "{r}");
     assert_eq!(r["axisTitles"], json!({"category": "Year", "value": "Revenue"}), "{r}");
+    // Setting a title a chart already has keeps its imported XML.
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+        let sh = slide.shapes.iter_mut().find(|x| x.id.0 as u64 == id.as_u64().unwrap()).unwrap();
+        let deckcraft_model::ShapeKind::Chart(c) = &mut sh.kind else { panic!("chart") };
+        c.raw = Some(Default::default());
+    }
+    let has_raw = |s: &Session| {
+        let st = s.doc().unwrap();
+        let sh = st.doc.slides[0].shapes.iter().find(|x| x.id.0 as u64 == id.as_u64().unwrap()).unwrap();
+        let deckcraft_model::ShapeKind::Chart(c) = &sh.kind else { panic!("chart") };
+        c.raw.is_some()
+    };
+    s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Revenue"})).unwrap();
+    assert!(has_raw(&s), "an unchanged title keeps the imported chart XML");
+    s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Sales"})).unwrap();
+    assert!(!has_raw(&s), "a changed title rebuilds the chart");
+    s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Revenue"})).unwrap();
     // A chart without axes has no axis titles, as in PowerPoint; nothing changes.
     let pie = s.execute("insert.chart", &json!({"type": "pie"})).unwrap()["id"].clone();
     let rev = s.doc().unwrap().revision;

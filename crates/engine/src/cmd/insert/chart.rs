@@ -108,6 +108,10 @@ pub(super) fn chart_axis_title(s: &mut Session, p: &Value) -> Result<Value> {
         if c.kind.is_chartex() || matches!(c.kind, ChartType::Pie | ChartType::Doughnut | ChartType::Radar | ChartType::FilledRadar) {
             return Err(bad(CMD, "axis titles are for column, bar, line, area, scatter, bubble, stock, surface and combo charts"));
         }
+        // The same title again leaves the chart, and the imported XML it is saved from, as it is.
+        if *(if category { &c.axis_titles.0 } else { &c.axis_titles.1 }) == text {
+            return Ok(());
+        }
         if category {
             c.axis_titles.0.clone_from(&text);
         } else {
