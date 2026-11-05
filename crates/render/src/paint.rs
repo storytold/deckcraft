@@ -3,7 +3,7 @@
 use deckcraft_color::Rgba;
 use deckcraft_geom::preset::FillMode;
 use deckcraft_model::resolve::Ctx;
-use deckcraft_model::style::{ColorRef, Fill, GradientShape, PictureFill, PictureMode};
+use deckcraft_model::style::{ColorRef, Fill, GradientFlip, GradientShape, PictureFill, PictureMode};
 use deckcraft_model::{PhType, Presentation};
 use kurbo::{Affine, BezPath, Point, Rect, Shape as _};
 use vello_cpu::{RenderContext, peniko};
@@ -61,7 +61,7 @@ pub fn fill_path(
                 if g.tile.iter().all(|v| *v == 0.0) {
                     crate::pathgrad::fill(ctx, kind, *focus, &ramp, bounds, path, m, alpha);
                 } else {
-                    crate::pathgrad::fill_tiled(ctx, kind, *focus, &ramp, bounds, tile, path, m, alpha);
+                    crate::pathgrad::fill_tiled_flipped(ctx, kind, *focus, &ramp, bounds, tile, g.flip.unwrap_or(GradientFlip::None), path, m, alpha);
                 }
                 return;
             }

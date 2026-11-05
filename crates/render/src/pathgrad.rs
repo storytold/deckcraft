@@ -12,6 +12,7 @@
 use std::sync::Arc;
 
 use deckcraft_color::Rgba;
+use deckcraft_model::style::GradientFlip;
 use kurbo::{Affine, BezPath, PathEl, Point, Rect};
 use vello_cpu::{Pixmap, RenderContext, peniko};
 
@@ -243,16 +244,34 @@ pub fn fill_tiled(
     m: Affine,
     alpha: f64,
 ) {
+    fill_tiled_flipped(ctx, kind, focus, stops, bounds, tile, GradientFlip::None, path, m, alpha);
+}
+
+/// Fill `path` with repeated path-gradient tiles, reflecting alternate tiles along `flip` axes.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fill_tiled_flipped(
+    ctx: &mut RenderContext,
+    kind: &str,
+    focus: [f64; 4],
+    stops: &[(f64, Rgba)],
+    bounds: Rect,
+    tile: Rect,
+    flip: GradientFlip,
+    path: &BezPath,
+    m: Affine,
+    alpha: f64,
+) {
     if bounds.width() <= 0.0 || bounds.height() <= 0.0 || !bounds.is_finite() || stops.is_empty() {
         return;
     }
     let tile = if tile.is_finite() && tile.width() > 0.0 && tile.height() > 0.0 { tile } else { bounds };
     let untiled = tile == bounds;
+    let sample = if untiled { bounds } else { tile };
     let k = crate::scale_of(m);
     let k = if k.is_finite() && k > 0.0 { k } else { 1.0 };
-    let longest = bounds.width().max(bounds.height()) * k;
+    let longest = sample.width().max(sample.height()) * k;
     let s = (MAX_SIDE / longest).min(1.0) * k;
-    let (pw, ph) = (((bounds.width() * s).ceil() as u32).clamp(1, 4096), ((bounds.height() * s).ceil() as u32).clamp(1, 4096));
+    let (pw, ph) = (((sample.width() * s).ceil() as u32).clamp(1, 4096), ((sample.height() * s).ceil() as u32).clamp(1, 4096));
     let mut outline = if kind == "shape" {
         let pixels = u64::from(pw).saturating_mul(u64::from(ph)).max(1);
         let max_edges = usize::try_from(MAX_EDGE_WORK / pixels).unwrap_or(usize::MAX).max(MIN_POLY_EDGES);
@@ -274,7 +293,7 @@ pub fn fill_tiled(
     let mut data = Vec::with_capacity((pw * ph) as usize);
     for j in 0..ph {
         for i in 0..pw {
-            let p = Point::new(bounds.x0 + (i as f64 + 0.5) / pw as f64 * bounds.width(), bounds.y0 + (j as f64 + 0.5) / ph as f64 * bounds.height());
+            let p = Point::new(sample.x0 + (i as f64 + 0.5) / pw as f64 * sample.width(), sample.y0 + (j as f64 + 0.5) / ph as f64 * sample.height());
             let t = if untiled { position(kind, bounds, focus, &outline, p) } else { position_in_tile(kind, bounds, tile, focus, &outline, p) };
             let c = lut.get((t * 255.0).round().clamp(0.0, 255.0) as usize).copied().unwrap_or(Rgba::BLACK);
             let ca = (c.a as f64 * a).round().clamp(0.0, 255.0);
@@ -284,12 +303,20 @@ pub fn fill_tiled(
     }
     let pm = Arc::new(Pixmap::from_parts(data, pw as u16, ph as u16));
     ctx.set_transform(m);
-    ctx.set_paint(vello_cpu::Image {
-        image: vello_cpu::ImageSource::Pixmap(pm),
-        sampler: peniko::ImageSampler { quality: peniko::ImageQuality::Medium, ..Default::default() },
-    });
+    let extend = |reflected: bool| if reflected { peniko::Extend::Reflect } else { peniko::Extend::Repeat };
+    let sampler = if untiled {
+        peniko::ImageSampler { quality: peniko::ImageQuality::Medium, ..Default::default() }
+    } else {
+        peniko::ImageSampler {
+            x_extend: extend(matches!(flip, GradientFlip::X | GradientFlip::Xy)),
+            y_extend: extend(matches!(flip, GradientFlip::Y | GradientFlip::Xy)),
+            quality: peniko::ImageQuality::Medium,
+            ..Default::default()
+        }
+    };
+    ctx.set_paint(vello_cpu::Image { image: vello_cpu::ImageSource::Pixmap(pm), sampler });
     ctx.set_paint_transform(
-        Affine::translate(bounds.origin().to_vec2()) * Affine::scale_non_uniform(bounds.width() / pw as f64, bounds.height() / ph as f64),
+        Affine::translate(sample.origin().to_vec2()) * Affine::scale_non_uniform(sample.width() / pw as f64, sample.height() / ph as f64),
     );
     ctx.fill_path(path);
     ctx.reset_paint_transform();

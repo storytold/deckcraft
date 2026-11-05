@@ -6,7 +6,7 @@ use super::{
     render_slide, trim_ends,
 };
 use deckcraft_color::Rgba;
-use deckcraft_model::style::ColorRef;
+use deckcraft_model::style::{ColorRef, GradientFlip};
 use deckcraft_model::{CustomPath, Geom, Presentation, Shape, ShapeId, Xfrm};
 use kurbo::Shape as _;
 
@@ -407,6 +407,7 @@ fn a_rectangular_gradient_spans_its_tile_rect() {
     let img = render(vec![sh]);
     assert!(img.pixel(300, 200)[0] > 240, "center {:?}", img.pixel(300, 200));
     assert!(img.pixel(395, 200)[0] < 80, "tile edge {:?}", img.pixel(395, 200));
+    assert!(img.pixel(450, 200)[0] > 80, "next tile {:?}", img.pixel(450, 200));
 }
 
 #[test]
@@ -420,6 +421,36 @@ fn a_shape_gradient_spans_its_tile_rect() {
     let img = render(vec![sh]);
     assert!(img.pixel(300, 200)[0] > 240, "center {:?}", img.pixel(300, 200));
     assert!(img.pixel(395, 200)[0] < 80, "tile edge {:?}", img.pixel(395, 200));
+    assert!(img.pixel(450, 200)[0] > 80, "next tile {:?}", img.pixel(450, 200));
+}
+
+#[test]
+fn a_rectangular_gradient_reflects_alternate_tiles() {
+    let mut sh = radial([0.5; 4]);
+    if let Some(Fill::Gradient(g)) = &mut sh.fill {
+        g.shape = deckcraft_model::style::GradientShape::Path { path: "rect".into(), focus: [0.25, 0.5, 0.75, 0.5] };
+        g.tile = [0.25, 0.0, 0.25, 0.0];
+    }
+    let repeated = render(vec![sh.clone()]).pixel(450, 200)[0];
+    if let Some(Fill::Gradient(g)) = &mut sh.fill {
+        g.flip = Some(GradientFlip::X);
+    }
+    let reflected = render(vec![sh]).pixel(450, 200)[0];
+    assert!(repeated > reflected + 60, "repeat {repeated}, reflected {reflected}");
+}
+
+#[test]
+fn small_rectangular_gradient_tiles_remain_distinct_in_a_large_shape() {
+    let mut sh = radial([0.5; 4]);
+    sh.xfrm = Some(Xfrm::new(100.0, 100.0, 4000.0, 200.0));
+    if let Some(Fill::Gradient(g)) = &mut sh.fill {
+        g.shape = deckcraft_model::style::GradientShape::Path { path: "rect".into(), focus: [0.5; 4] };
+        g.tile = [0.4995, 0.0, 0.4995, 0.0];
+    }
+    let img = render(vec![sh]);
+    let edge = img.pixel(150, 200)[0];
+    let center = img.pixel(152, 200)[0];
+    assert!(i32::from(center) > i32::from(edge) + 100, "edge {edge}, center {center}");
 }
 
 #[test]
