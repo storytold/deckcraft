@@ -78,8 +78,8 @@ fn font_used_detail_tells_installed_from_missing_families() {
 }
 
 /// `format.font` answers the family the runs now ask for, whether this machine has it and the
-/// face it is drawn in, on every call: for a family no machine has, for the theme's own font, and
-/// for a theme reference, which answers with the family it names.
+/// faces that draw the text it was set on, on every call: for a family no machine has, for the
+/// theme's own font, and for a theme reference, which answers with the family it names.
 #[test]
 fn format_font_answers_what_the_family_is_drawn_in() {
     let (mut s, _) = deck();
@@ -89,17 +89,60 @@ fn format_font_answers_what_the_family_is_drawn_in() {
     let missing = s.execute("format.font", &json!({"family": NOWHERE})).unwrap();
     assert_eq!(missing["family"], NOWHERE, "{missing}");
     assert_eq!(missing["installed"], false, "{missing}");
-    assert_eq!(missing["drawnWith"], db.document_face(NOWHERE, "Regular").family.as_str(), "{missing}");
-    assert_ne!(missing["drawnWith"], NOWHERE, "{missing}");
+    assert_eq!(missing["drawnWith"], json!([db.document_face(NOWHERE, "Regular").family]), "{missing}");
+    assert!(!strings(&missing, "drawnWith").contains(&NOWHERE.to_string()), "{missing}");
 
     let theme = body_font(&s);
     let installed = s.execute("format.font", &json!({"family": theme})).unwrap();
     assert!(db.has_family(&theme) || option_env!("CRAFT_FONTS_REQUIRED").is_none(), "a required build bundles {theme}");
-    assert_eq!(installed, json!({"family": theme, "installed": db.has_family(&theme), "drawnWith": db.document_face(&theme, "Regular").family}));
+    assert_eq!(installed, json!({"family": theme, "installed": db.has_family(&theme), "drawnWith": [db.document_face(&theme, "Regular").family]}));
 
     let by_ref = s.execute("format.font", &json!({"family": "+mn-lt"})).unwrap();
     assert_eq!(by_ref, installed);
     assert_eq!(s.execute("font.used", &json!({})).unwrap(), json!([theme]), "the run is set to the theme's font");
+}
+
+/// `format.font` answers the faces the slide draws the text in, as `text.glyphs` reports them:
+/// kana, which the stand-in has no glyph for, is drawn in another face; with a range selected only
+/// the runs in it count; a shape without text answers the face the family is drawn in.
+#[test]
+fn format_font_answers_the_faces_drawing_the_text() {
+    let (mut s, slide) = deck();
+    let db = FontDb::global();
+    let stand_in = db.document_face(NOWHERE, "Regular");
+    let kana_face = db.fallback_for('\u{3042}', u32::MAX).map(|f| f.family.clone());
+    assert!(kana_face.is_some() || option_env!("CRAFT_FONTS_REQUIRED").is_none(), "a required build bundles a kana face");
+    // The face kana is drawn in, when the stand-in has no glyph for it.
+    let kana = kana_face.filter(|f| !stand_in.covers('\u{3042}') && !f.eq_ignore_ascii_case(&stand_in.family));
+    let drawn = |s: &mut Session, id: &Value, run: u64| {
+        let out = s.execute("text.glyphs", &json!({"slide": slide, "ids": [id]})).unwrap();
+        out.as_array().unwrap().iter().find(|r| r["run"] == run).unwrap()["drawnWith"].clone()
+    };
+
+    // The whole shape: four Latin characters, drawn in the stand-in, and one kana.
+    let id = text_box(&mut s, 40.0, "Kana \u{3042}");
+    let whole = s.execute("format.font", &json!({"family": NOWHERE})).unwrap();
+    assert_eq!(whole["drawnWith"], drawn(&mut s, &id, 0), "{whole}");
+    assert_eq!(strings(&whole, "drawnWith").first(), Some(&stand_in.family), "{whole}");
+    if let Some(k) = &kana {
+        assert_eq!(strings(&whole, "drawnWith"), [stand_in.family.clone(), k.clone()], "{whole}");
+    }
+
+    // A range: only the selected kana is set in the family, so only its faces count.
+    let part = text_box(&mut s, 140.0, "Latin \u{3042}\u{3044}");
+    s.execute("text.edit", &json!({"id": part})).unwrap();
+    s.execute("text.select", &json!({"anchor": [0, 6], "caret": [0, 8]})).unwrap();
+    let ranged = s.execute("format.font", &json!({"family": NOWHERE})).unwrap();
+    s.execute("text.exit", &json!({})).unwrap();
+    assert_eq!(ranged["drawnWith"], drawn(&mut s, &part, 1), "{ranged}");
+    if let Some(k) = &kana {
+        assert_eq!(strings(&ranged, "drawnWith"), std::slice::from_ref(k), "{ranged}");
+    }
+
+    // No text drawn: the face a run in the family is drawn in.
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [40.0, 240.0, 100.0, 60.0]})).unwrap();
+    let empty = s.execute("format.font", &json!({"family": NOWHERE})).unwrap();
+    assert_eq!(empty["drawnWith"], json!([stand_in.family]), "{empty}");
 }
 
 /// `text.glyphs` lists each run with the families it asks for and the faces drawing it, the

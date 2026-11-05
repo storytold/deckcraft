@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 
 use super::{Result, Selection, Session, ctx_for};
 use crate::cmd::{bad, opt_usize_param};
+use crate::{DocState, Target};
 
 const CMD: &str = "text.glyphs";
 
@@ -156,6 +157,12 @@ struct DrawnFields {
 impl DrawnFields {
     fn for_slide(doc: &Presentation, index: usize) -> Self {
         DrawnFields { num: doc.slide_number(index), footer: doc.header_footer.footer_text.clone() }
+    }
+
+    /// Field values as the page being edited draws them: a slide's, or on a master, layout or
+    /// notes page number 1 and no footer text, as the renderer draws those pages.
+    fn for_page(doc: &Presentation, sel: &Selection) -> Self {
+        if matches!(sel.target, Target::Slides) { Self::for_slide(doc, sel.slide) } else { DrawnFields { num: 1, footer: String::new() } }
     }
 }
 
@@ -599,16 +606,75 @@ pub(super) fn used_detail(doc: &Presentation) -> Vec<Value> {
     list.iter().map(FamilyUse::to_json).collect()
 }
 
-/// `format.font`'s answer: the family a run set to `family` asks for, theme references (`+mn-lt`)
-/// resolved on the page being edited, whether this machine has it, and the face it is drawn in
-/// (`FontDb::document_face`).
-pub(crate) fn font_answer(doc: &Presentation, sel: &Selection, family: &str) -> Value {
+/// Whether run `run` of paragraph `para` of `body` holds a character of the range from `a` to `b`
+/// (positions as (paragraph, character), `a` first).
+fn run_in_range(body: &TextBody, para: usize, run: usize, a: (usize, usize), b: (usize, usize)) -> bool {
+    let Some(runs) = body.paragraphs.get(para).map(|p| &p.runs) else { return false };
+    let start = runs.iter().take(run).fold(0usize, |n, r| n.saturating_add(r.char_len()));
+    let end = start.saturating_add(runs.get(run).map_or(0, Run::char_len));
+    start < end && (para, start) < b && (para, end) > a
+}
+
+/// Adds the faces drawing those of `runs` that ask for `family` (their Latin typeface) to `faces`.
+fn add_runs<'a>(faces: &mut Vec<(String, usize)>, family: &str, runs: impl Iterator<Item = &'a DrawnRun>) {
+    for r in runs.filter(|r| r.requested.first().is_some_and(|f| f.eq_ignore_ascii_case(family))) {
+        for (face, n) in &r.faces {
+            add_face(faces, face, *n);
+        }
+    }
+}
+
+/// The faces drawing the selection's runs that ask for `family`, as the page being edited draws
+/// them, with how many characters each draws: the runs of the selected text (the word at the
+/// caret, as `format_range` takes it), else the text of the selected shapes (of a table, only the
+/// selected cells when a range of them is selected). Speaker notes are not drawn on the page.
+fn selection_faces(st: &DocState, ctx: &Ctx, family: &str) -> Vec<(String, usize)> {
+    let sel = &st.selection;
+    let fields = DrawnFields::for_page(&st.doc, sel);
+    let mut cache = FaceCache::default();
+    let mut faces = vec![];
+    if let Some(t) = &sel.text {
+        if !t.notes
+            && let Some(sh) = st.shape(t.shape)
+            && let Some(text) = super::body_of(st, t)
+        {
+            let (a, b) = super::format_range(st, t);
+            for body in shape_bodies(ctx, sh, &fields, &mut cache).iter().filter(|b| b.cell == t.cell) {
+                add_runs(&mut faces, family, body.drawn.runs.iter().filter(|r| run_in_range(text, r.para, r.run, a, b)));
+            }
+        }
+        return faces;
+    }
+    for sh in sel.shapes.iter().filter_map(|id| st.shape(*id)) {
+        let range = match &sh.kind {
+            ShapeKind::Table(t) => crate::cmd::table::selected_range(sel.cells, sh.id, t),
+            _ => None,
+        };
+        for body in shape_bodies(ctx, sh, &fields, &mut cache) {
+            if body.cell.is_none_or(|(r, c)| crate::cmd::table::in_range(range, r, c)) {
+                add_runs(&mut faces, family, body.drawn.runs.iter());
+            }
+        }
+    }
+    faces
+}
+
+/// `format.font`'s answer, once the family is set: the family a run set to `family` asks for,
+/// theme references (`+mn-lt`) resolved on the page being edited; whether this machine has it;
+/// and the faces that draw the selection's text set in it, as the page draws it, most characters
+/// first (a stand-in when this machine lacks the family, another face for a character it has no
+/// glyph for). With none of that text drawn (a caret between words, speaker notes, a shape
+/// without text), the face a run in the family is drawn in (`FontDb::document_face`).
+pub(crate) fn font_answer(st: &DocState, family: &str) -> Value {
     let props = RunProps { font: Some(family.to_string()), ..Default::default() };
-    let resolved = ctx_for(doc, sel).map_or_else(|| family.to_string(), |ctx| resolve::font_family(&ctx, &props));
+    let ctx = ctx_for(&st.doc, &st.selection);
+    let resolved = ctx.as_ref().map_or_else(|| family.to_string(), |ctx| resolve::font_family(ctx, &props));
+    let faces = ctx.as_ref().map(|ctx| selection_faces(st, ctx, &resolved)).unwrap_or_default();
     let db = FontDb::global();
+    let drawn_with = if faces.is_empty() { vec![db.document_face(&resolved, "Regular").family.clone()] } else { by_count(&faces) };
     json!({
         "family": resolved,
         "installed": db.has_family(&resolved),
-        "drawnWith": db.document_face(&resolved, "Regular").family,
+        "drawnWith": drawn_with,
     })
 }

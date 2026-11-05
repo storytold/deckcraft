@@ -107,7 +107,8 @@ command's parameters.
 
 To check fonts after setting them, `format.font {family}` answers `{family, installed, drawnWith}`:
 the family the text now asks for (theme fonts such as `+mn-lt` resolved), whether this machine has
-it, and the face the slide draws it in, a stand-in when it is not installed.
+it, and the faces the slide draws that text in: a stand-in when it is not installed, and another
+face for a character it has no glyph for.
 `font.used {detail: true}` answers the same for every family in the deck, with how many runs and
 character bullets are set in it, their font sizes and the slides they are on.
 `text.glyphs {slide?, ids?}` goes down to each text run: the families its characters ask for, the

@@ -67,7 +67,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Font",
             ["Home", "Font"],
             None,
-            "{family} → {family, installed, drawnWith} (the family the runs now ask for, theme fonts such as +mn-lt resolved; whether this machine has it; the face it is drawn in, a stand-in when it is not installed)",
+            "{family} → {family, installed, drawnWith: [face family]} (the family the runs now ask for, theme fonts such as +mn-lt resolved; whether this machine has it; the faces that draw the text it was set on, most characters first: a stand-in when it is not installed, another face for a character it has no glyph for, or the face it is drawn in when none of that text is drawn)",
             has_text_or_shapes,
             font
         ),
