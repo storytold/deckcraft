@@ -632,18 +632,19 @@ fn autoplay_media(shapes: &[Shape], idmap: &IdMap) -> Vec<MediaNode> {
     out
 }
 
-fn audio_node(
-    w: &mut W,
-    ids: &mut Ids,
-    spid: u32,
-    vol: u32,
-    delay_ms: u32,
+/// One slide-start media node. `flags` are the video-only settings: loop, hide while not playing,
+/// full screen.
+#[derive(Clone, Copy)]
+struct NodeFlags {
     narration: bool,
     video: bool,
     loop_play: bool,
     hide_when_stopped: bool,
     full_screen: bool,
-) {
+}
+
+fn audio_node(w: &mut W, ids: &mut Ids, spid: u32, vol: u32, delay_ms: u32, flags: NodeFlags) {
+    let NodeFlags { narration, video, loop_play, hide_when_stopped, full_screen } = flags;
     // `isNarration` belongs to `p:audio` (`CT_TLMediaNodeAudio`); `p:cMediaNode` does not declare
     // it, and a strict reader would reject or repair the timing part. A video uses the parallel
     // `p:video` element, which keeps an imported autoplay video's slide-start play.
@@ -843,8 +844,8 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.close("p:nextCondLst");
         w.close("p:seq");
     }
-    for (spid, vol, delay_ms, narration, video, loop_play, hide, full_screen) in audio {
-        audio_node(w, &mut ids, spid, vol, delay_ms, narration, video, loop_play, hide, full_screen);
+    for (spid, vol, delay_ms, narration, video, loop_play, hide_when_stopped, full_screen) in audio {
+        audio_node(w, &mut ids, spid, vol, delay_ms, NodeFlags { narration, video, loop_play, hide_when_stopped, full_screen });
     }
     w.close("p:childTnLst");
     w.close("p:cTn");
