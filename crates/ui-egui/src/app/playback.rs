@@ -232,6 +232,8 @@ impl SlideApp {
         // A delayed automatic clip is due on the same clock the visible pass uses: start the
         // queue here too, or a hidden window leaves it silent until the next visible frame.
         let Some(mut show) = self.show.take() else { return };
+        // A hidden advance has no visible pass to queue the new slide's own clips.
+        show::queue_entry_media(self, &mut show, doc_uid, &doc, show_time);
         show::start_due_media(self, &mut show, doc_uid, &doc, show_time);
         let time_driven = show.hidden_time_driven(&doc);
         if !keep {

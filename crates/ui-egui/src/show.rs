@@ -227,6 +227,8 @@ struct Key {
     plays: Vec<(ShapeId, usize)>,
     /// The frames animated GIFs show.
     gif: u64,
+    /// Recording preview: recorded ink strokes the clock has reached (a new count is a new frame).
+    ink: usize,
 }
 
 /// A slide frame being rendered on another thread: what it will be (`key`) and where it arrives.
@@ -986,6 +988,12 @@ pub(crate) type MicSlot = Option<Box<dyn deckcraft_media::MicIn>>;
 /// logic tick both call this, on the same step clock.
 pub(crate) fn start_due_media(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentation, now: f64) {
     media::run_pending_media(app, show, doc_uid, doc, now);
+}
+
+/// Queue the clip a slide starts with, as the visible pass does on entry. A hidden window that
+/// advances has no visible pass, so without this a slide's automatic narration stays silent.
+pub(crate) fn queue_entry_media(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentation, now: f64) {
+    media::show_media(app, show, doc_uid, doc, now);
 }
 
 /// Write the take's buffered timings, narration, ink and laser into the deck. The shell's finish

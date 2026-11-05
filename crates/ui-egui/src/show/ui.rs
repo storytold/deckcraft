@@ -54,6 +54,10 @@ struct Sl {
     key: Key,
     back_key: BackKey,
     size: (u32, u32),
+    /// Recording preview: how many recorded strokes the clock has reached, and when the next one
+    /// is due. The count is part of the frame key, so the frame is rendered once per revealed
+    /// stroke rather than on every tick.
+    ink_next: Option<u32>,
 }
 
 /// Draw and advance the active show, handling hidden frames, timing, input, transitions, and
@@ -469,9 +473,30 @@ fn begin_slide(app: &mut SlideApp, show: &Show, f: &Fr, size: (u32, u32)) -> Sl 
     crate::media::gif_repaint(ctx, &gifs);
     let gif = crate::media::gif_key(&gifs);
     let done: Vec<(ShapeId, usize)> = plays.iter().map(|p| (p.trigger, p.step)).collect();
-    let key = Key { slide: idx, step, size, doc: std::sync::Arc::as_ptr(doc) as usize, hidden: hidden.clone(), plays: done, gif };
+    let (ink_due, ink_next) = if show.recording_preview {
+        let elapsed = ((now - show.slide_start).max(0.0) * 1000.0) as u32;
+        let mut due = 0usize;
+        let mut next: Option<u32> = None;
+        if let Some(sl) = doc.slides.get(idx) {
+            for sh in &sl.shapes {
+                if let deckcraft_model::ShapeKind::Ink { strokes } = &sh.kind {
+                    for st in strokes {
+                        match st.at_ms {
+                            Some(at) if at <= elapsed => due += 1,
+                            Some(at) => next = Some(next.map_or(at, |n| n.min(at))),
+                            None => due += 1,
+                        }
+                    }
+                }
+            }
+        }
+        (due, next)
+    } else {
+        (0, None)
+    };
+    let key = Key { slide: idx, step, size, doc: std::sync::Arc::as_ptr(doc) as usize, hidden: hidden.clone(), plays: done, gif, ink: ink_due };
     let back_key = BackKey { slide: idx, size, doc: key.doc };
-    Sl { idx, step, animating, t, plays, stamps, media, hidden, times, gifs, key, back_key, size }
+    Sl { idx, step, animating, t, plays, stamps, media, hidden, times, gifs, key, back_key, size, ink_next }
 }
 
 fn frame_texture(show: &mut Show, f: &Fr, sl: &Sl) -> Option<TextureHandle> {
@@ -493,6 +518,11 @@ fn frame_texture(show: &mut Show, f: &Fr, sl: &Sl) -> Option<TextureHandle> {
                 let back = animating.then(|| show.backdrop(doc, sl.back_key));
                 // A recording preview shows each recorded stroke when the take drew it.
                 let ink_until = show.recording_preview.then(|| ((f.now - show.slide_start).max(0.0) * 1000.0) as u32);
+                if let Some(at) = sl.ink_next {
+                    // Wake when the next stroke is due, so the frame is rendered once then.
+                    let wait = (at as f64 / 1000.0 - (f.now - show.slide_start).max(0.0)).max(0.0);
+                    ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
+                }
                 render_frame(
                     doc,
                     idx,
@@ -909,9 +939,10 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
     }
     if show.keeps_recording() && laser_on {
         if let Some(p) = ctx.input(|i| i.pointer.hover_pos()) {
-            let nx = (p.x - srect.min.x) / srect.width().max(1.0);
-            let ny = (p.y - srect.min.y) / srect.height().max(1.0);
-            if (0.0..=1.0).contains(&nx) && (0.0..=1.0).contains(&ny) {
+            // The same mapping the pen uses: a zoomed show must record the point the presenter
+            // indicated, not where the pointer is relative to the whole screen rect.
+            let uv = show.zoom_uv();
+            if let Some((nx, ny)) = norm_on_slide(srect, uv, p) {
                 let ms = (now - show.slide_start).max(0.0) * 1000.0;
                 if ms.is_finite() {
                     show.note_laser(nx as f64 * doc.slide_size.width, ny as f64 * doc.slide_size.height, ms.min(3_600_000.0) as u32);

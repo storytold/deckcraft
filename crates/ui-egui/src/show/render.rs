@@ -137,7 +137,7 @@ pub(super) fn start_prefetch(doc: &std::sync::Arc<Presentation>, next: usize, si
         return None;
     }
     let hidden = hidden_on_entry(doc, next);
-    let key = Key { slide: next, step: 0, size, doc: std::sync::Arc::as_ptr(doc) as usize, hidden: hidden.clone(), gif: 0, plays: vec![] };
+    let key = Key { slide: next, step: 0, size, doc: std::sync::Arc::as_ptr(doc) as usize, hidden: hidden.clone(), gif: 0, plays: vec![], ink: 0 };
     let (tx, rx) = std::sync::mpsc::channel();
     let doc = doc.clone();
     // Leave a core for the UI thread.

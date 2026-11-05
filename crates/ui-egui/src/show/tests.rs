@@ -446,7 +446,7 @@ fn the_prefetched_frame_is_the_frame_shown_on_entry() {
     let doc = s.active().unwrap().doc.clone();
     let size = (96, 54);
     let p = start_prefetch(&doc, 1, size).expect("prefetch starts");
-    assert_eq!(p.key, Key { slide: 1, step: 0, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: vec![], gif: 0, plays: vec![] });
+    assert_eq!(p.key, Key { slide: 1, step: 0, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: vec![], gif: 0, plays: vec![], ink: 0 });
     let got = p.rx.recv().expect("the frame arrives");
     let want = render_frame(&doc, 1, ShowState::timeline(&doc, 1), 0, 0.0, size, vec![], &[], 0, &[], &[], None, None);
     assert_eq!(got.size, want.size);
@@ -508,7 +508,7 @@ fn a_transition_keeps_the_old_slide_in_its_own_texture() {
     let ctx = egui::Context::default();
     let red = crate::textures::upload(&ctx, "show", egui::ColorImage::filled([1, 1], Color32::RED));
     let mut show = Show::new(&doc, 0, false, false);
-    show.tex = Some((Key { slide: 0, step: 0, size: (1, 1), doc: 0, hidden: vec![], gif: 0, plays: vec![] }, red.clone()));
+    show.tex = Some((Key { slide: 0, step: 0, size: (1, 1), doc: 0, hidden: vec![], gif: 0, plays: vec![], ink: 0 }, red.clone()));
     assert!(show.apply(ShowAction::Slide(1), &doc, 0.0));
     let tr = show.trans.as_ref().expect("the fade plays");
     assert_eq!(tr.old.as_ref().map(TextureHandle::id), Some(red.id()));
@@ -528,7 +528,7 @@ fn going_back_plays_the_left_slides_transition_reversed() {
     let ctx = egui::Context::default();
     let tex = |slide| {
         let t = crate::textures::upload(&ctx, "show", egui::ColorImage::filled([1, 1], Color32::RED));
-        Some((Key { slide, step: 0, size: (1, 1), doc: 0, hidden: vec![], gif: 0, plays: vec![] }, t))
+        Some((Key { slide, step: 0, size: (1, 1), doc: 0, hidden: vec![], gif: 0, plays: vec![], ink: 0 }, t))
     };
     let mut show = Show::new(&doc, 0, false, false);
     show.tex = tex(0);
