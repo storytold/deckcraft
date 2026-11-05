@@ -1,5 +1,5 @@
 use super::{
-    Align2, AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big, big_button, big_button_ex, dropdown, enabled, group, icons, json,
+    Align2, AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big_button, big_button_ex, dropdown, enabled, group, icons, json,
     pos2, rows, run, theme, vec2, widgets,
 };
 
@@ -127,7 +127,14 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
         });
-        big(app, ui, Icon::AnimationPane, "Animation\nPane", "view.pane", json!({"pane": "animation"}));
+        let pane_open = app.ui.pane.as_deref() == Some("animation");
+    if big_button_ex(ui, Icon::AnimationPane, "Animation\nPane", true, false, pane_open).0.clicked() {
+        if pane_open {
+            app.ui.pane = None;
+        } else {
+            run(app, "view.pane", json!({"pane": "animation"}));
+        }
+    }
         let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
         egui::Popup::menu(&r).show(|ui| {
             if ui.button("On Click of… (none)").clicked() {
