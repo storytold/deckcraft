@@ -90,6 +90,8 @@ pub(super) fn render_overlay(
     threads: u16,
     plays: &[TriggerPlay],
     stamps: &[StepStamp],
+    // The recording-preview ink cutoff, so ink above a playing video follows the same clock.
+    ink_until: Option<u32>,
 ) -> egui::ColorImage {
     let f = move |id: ShapeId| {
         let mut st = state_for(&tl, id, step, t, plays, stamps);
@@ -105,6 +107,7 @@ pub(super) fn render_overlay(
         skip,
         gif_times: times,
         threads,
+        ink_until_ms: ink_until,
         ..Default::default()
     };
     let img = deckcraft_render::render_slide_part(doc, idx, deckcraft_render::SlidePart::Content, &opts);

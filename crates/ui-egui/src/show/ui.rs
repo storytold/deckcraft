@@ -705,10 +705,27 @@ fn draw_overlay(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, frame
     if skip.is_empty() {
         show.overlay = None;
     } else {
-        let fresh = !animating && show.overlay.as_ref().is_some_and(|(k, s, _)| *k == sl.key && *s == skip);
+        // A recording preview reveals ink on the clock: the overlay's texture is only fresh while
+        // its cutoff is unchanged.
+        let ink_until = show.recording_preview.then(|| ((f.now - show.slide_start).max(0.0) * 1000.0) as u32);
+        let fresh = !animating && ink_until.is_none() && show.overlay.as_ref().is_some_and(|(k, s, _)| *k == sl.key && *s == skip);
         if !fresh {
             let tl = show.timeline(doc).clone();
-            let ci = render_overlay(doc, idx, tl, step, sl.t, size, sl.hidden.clone(), &skip, &sl.times, render_threads(), &sl.plays, &sl.stamps);
+            let ci = render_overlay(
+                doc,
+                idx,
+                tl,
+                step,
+                sl.t,
+                size,
+                sl.hidden.clone(),
+                &skip,
+                &sl.times,
+                render_threads(),
+                &sl.plays,
+                &sl.stamps,
+                ink_until,
+            );
             let handle = match show.overlay.take() {
                 Some((_, _, mut h)) => {
                     crate::textures::replace(ctx, &mut h, ci);
