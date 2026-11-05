@@ -196,10 +196,7 @@ pub(super) fn flip(s: &mut Session, p: &Value) -> Result<Value> {
         let mut graphic = false;
         deckcraft_model::walk(std::slice::from_ref(&*sh), &mut |x, _| graphic |= x.diagram.is_some());
         if graphic {
-            return Err(bad(
-                "shape.flip",
-                "Flip is not available for a SmartArt graphic (it would turn it into a plain group); use `smartArt.layout` to change how it is laid out",
-            ));
+            return Err(bad("shape.flip", "Flip is not available for a SmartArt graphic; use `smartArt.layout` to change how it is laid out"));
         }
         if let Some(x) = sh.xfrm.as_mut() {
             if v {
