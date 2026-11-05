@@ -2280,6 +2280,9 @@ fn hidden_media_controls_survive_save_and_reopen() {
         ),
         "{xml}"
     );
+    // The laser colour extension shares the same `p:extLst`, which `p:showPr` allows only once.
+    assert_eq!(show.matches("<p:extLst").count(), 1, "{xml}");
+    assert!(show.contains("<p14:laserClr"), "the laser colour stays beside the media controls: {xml}");
     assert!(!round(&p).show.show_media_controls);
     let default = Presentation::default();
     assert!(!props(&default).contains("showMediaCtrls"));
