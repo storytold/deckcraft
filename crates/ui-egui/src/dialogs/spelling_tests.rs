@@ -83,6 +83,13 @@ fn spelling_dialog_checks_again_only_when_something_changed() {
     h.get_all_by_label("Ignore All").next().unwrap().click();
     h.run_steps(3);
     assert!(!std::sync::Arc::ptr_eq(&first, &found(&h)), "an ignored word is checked again");
+    // A dictionary installed while the dialog is open: "plan" is no longer in it.
+    let first = found(&h);
+    assert!(!first.iter().any(|i| i["word"] == "plan"));
+    deckcraft_engine::spell::install("en-US", deckcraft_engine::spell::Dictionary::parse(aff.as_bytes(), "3\nthe\nour\nfor\n".as_bytes()));
+    h.run_steps(3);
+    assert!(!std::sync::Arc::ptr_eq(&first, &found(&h)), "an installed dictionary is checked against again");
+    assert!(found(&h).iter().any(|i| i["word"] == "plan"), "the new dictionary's verdict shows");
 }
 
 /// The cache is keyed by the document, not only its revision: another document at the same

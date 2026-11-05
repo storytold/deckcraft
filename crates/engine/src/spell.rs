@@ -688,7 +688,8 @@ pub fn set_user_dictionary_path(path: PathBuf) {
     }
 }
 
-/// Bumped whenever the user dictionary changes, so cached results can be dropped.
+/// Bumped whenever the user dictionary changes or a language's dictionary is installed, so cached
+/// results can be dropped.
 pub fn user_generation() -> u64 {
     user_state().lock().map(|u| u.generation).unwrap_or(0)
 }
@@ -869,6 +870,10 @@ pub fn install(lang: &str, d: Dictionary) {
     if let Ok(mut c) = cache().lock() {
         c.insert(lang.to_string(), Some(Arc::new(d)));
     }
+    // After the insert: whoever sees the new generation also sees the new dictionary.
+    if let Ok(mut u) = user_state().lock() {
+        u.generation += 1;
+    }
 }
 
 #[cfg(test)]
@@ -886,6 +891,13 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
 
     fn d() -> Dictionary {
         Dictionary::parse(AFF.as_bytes(), DIC.as_bytes())
+    }
+
+    #[test]
+    fn installing_a_dictionary_bumps_the_generation_that_keys_cached_results() {
+        let before = user_generation();
+        install("xx-GEN", d());
+        assert!(user_generation() > before, "a cache keyed on the generation must see the new dictionary");
     }
 
     #[test]
