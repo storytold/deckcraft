@@ -14,7 +14,7 @@ name = "deckcraft-web"
 path = "src/main.rs"
 
 [dependencies]
-deckcraft-engine = { workspace = true }
+deckcraft-engine = { workspace = true, default-features = true }
 deckcraft-ui-egui = { workspace = true }
 egui = { workspace = true }
 log = { workspace = true }
