@@ -1188,6 +1188,10 @@ mod tests {
 
     /// An MTX font whose directory lists one `len`-byte range `copies` times.
     fn shared_ranges(copies: usize, len: usize) -> Vec<u8> {
+        shared_ranges_with_backing(copies, len, len)
+    }
+
+    fn shared_ranges_with_backing(copies: usize, len: usize, backing_len: usize) -> Vec<u8> {
         let mut entries: Vec<([u8; 4], usize)> = vec![(*b"glyf", 0), (*b"head", 54), (*b"loca", 0), (*b"maxp", 32)];
         entries.extend((0..copies).map(|_| (*b"zz\0\0", len)));
         let mut ctf = vec![0, 1, 0, 0];
@@ -1200,7 +1204,7 @@ mod tests {
             ctf.extend(((if *tag == *b"zz\0\0" { body + 100 } else { body }) as u32).to_be_bytes());
             ctf.extend((*l as u32).to_be_bytes());
         }
-        ctf.resize(body + 100 + len, 0);
+        ctf.resize(body + 100 + backing_len, 0);
         let (a, b) = (pack(&ctf, Some(7)), pack(&[], None));
         let mut out = vec![3, 0, 0, 0];
         out.extend(&((10 + a.len()) as u32).to_be_bytes()[1..]);
@@ -1238,6 +1242,8 @@ mod tests {
     /// Directory entries that share one range cannot add up to more than the size limit.
     #[test]
     fn the_rebuilt_font_is_bounded_as_a_whole() {
+        // A directory length that extends beyond the bytes present is rejected.
+        assert!(decompress(&shared_ranges_with_backing(1, 2, 1)).is_none());
         assert!(decompress(&shared_ranges(3, 1 << 20)).is_some());
         assert!(decompress(&shared_ranges(70, 1 << 20)).is_none());
         // A table that grows when decoded is charged at its decoded size.
