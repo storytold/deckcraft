@@ -6726,6 +6726,39 @@ fn grow_on_an_imported_smartart_graphic_steps_from_its_drawing_not_the_data_size
     assert_eq!(z, Some(10.5), "shown 10 pt grows to 10.5, not 24 from the data size");
 }
 
+/// A run with no size of its own shows the paragraph default's: a 12 pt default under a 20 pt run
+/// at a 0.5 scale shows 6 pt, so Increase Font Size steps from 6 (to 8), not from the explicit 10.
+#[test]
+fn grow_on_an_imported_smartart_graphic_counts_inherited_run_sizes() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), ShapeId(gid as u32)).unwrap();
+        let d = g.diagram.as_mut().unwrap();
+        d.imported = true;
+        d.font_size = Some(20.0);
+        if let deckcraft_model::ShapeKind::Group { children, .. } = &mut g.kind {
+            for t in children.iter_mut().filter_map(|c| c.text.as_mut()) {
+                t.body.autofit = Some(deckcraft_model::text::AutoFit::Shrink { font_scale: Some(0.5), line_reduction: 0.0 });
+                for r in t.paragraphs.iter_mut().flat_map(|p| p.runs.iter_mut()) {
+                    r.props.size = Some(20.0);
+                }
+            }
+            if let Some(t) = children.iter_mut().find_map(|c| c.text.as_mut()) {
+                t.paragraphs[0].def_props.size = Some(12.0);
+                t.paragraphs[0].runs[0].props.size = None;
+            }
+        }
+    }
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.grow", &json!({})).unwrap();
+    let z = s.doc().unwrap().shape(ShapeId(gid as u32)).unwrap().diagram.as_ref().unwrap().font_size;
+    assert_eq!(z, Some(8.0), "the inherited 12 pt shows 6 pt and grows to the next list size, 8, not 10.5 from the explicit run");
+}
+
 /// A scale below the renderer's 0.1 floor is drawn at 0.1, so a step starts from that shown size.
 #[test]
 fn grow_on_a_smartart_graphic_clamps_an_imported_scale_like_the_renderer() {
