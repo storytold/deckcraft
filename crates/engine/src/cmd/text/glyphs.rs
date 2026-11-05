@@ -626,19 +626,21 @@ fn add_runs<'a>(faces: &mut Vec<(String, usize)>, family: &str, runs: impl Itera
 
 /// The faces drawing the selection's runs that ask for `family`, as the page being edited draws
 /// them, with how many characters each draws: the runs of the selected text (the word at the
-/// caret, as `format_range` takes it), else the text of the selected shapes (of a table, only the
-/// selected cells when a range of them is selected). Speaker notes are not drawn on the page.
+/// caret, as `format_range` takes it; none for a caret between words, where no character is set),
+/// else the text of the selected shapes (of a table, only the selected cells when a range of them
+/// is selected). Speaker notes are not drawn on the page.
 fn selection_faces(st: &DocState, ctx: &Ctx, family: &str) -> Vec<(String, usize)> {
     let sel = &st.selection;
     let fields = DrawnFields::for_page(&st.doc, sel);
     let mut cache = FaceCache::default();
     let mut faces = vec![];
     if let Some(t) = &sel.text {
-        if !t.notes
+        let (a, b) = super::format_range(st, t);
+        if a != b
+            && !t.notes
             && let Some(sh) = st.shape(t.shape)
             && let Some(text) = super::body_of(st, t)
         {
-            let (a, b) = super::format_range(st, t);
             for body in shape_bodies(ctx, sh, &fields, &mut cache).iter().filter(|b| b.cell == t.cell) {
                 add_runs(&mut faces, family, body.drawn.runs.iter().filter(|r| run_in_range(text, r.para, r.run, a, b)));
             }

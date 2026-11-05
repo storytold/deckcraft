@@ -143,6 +143,16 @@ fn format_font_answers_the_faces_drawing_the_text() {
     s.execute("shape.insert", &json!({"preset": "rect", "rect": [40.0, 240.0, 100.0, 60.0]})).unwrap();
     let empty = s.execute("format.font", &json!({"family": NOWHERE})).unwrap();
     assert_eq!(empty["drawnWith"], json!([stand_in.family]), "{empty}");
+
+    // A caret between words sets no character, so the same holds there, though the run around the
+    // caret is already in the family and draws its kana in another face.
+    let theme = body_font(&s);
+    let around = text_box(&mut s, 340.0, "Kana \u{3042}");
+    s.execute("text.edit", &json!({"id": around})).unwrap();
+    s.execute("text.select", &json!({"anchor": [0, 4], "caret": [0, 4]})).unwrap();
+    let caret = s.execute("format.font", &json!({"family": theme})).unwrap();
+    s.execute("text.exit", &json!({})).unwrap();
+    assert_eq!(caret["drawnWith"], json!([db.document_face(&theme, "Regular").family]), "{caret}");
 }
 
 /// `text.glyphs` lists each run with the families it asks for and the faces drawing it, the
