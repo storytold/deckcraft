@@ -18,7 +18,7 @@ mod views;
 use std::sync::Arc;
 
 use deckcraft_model::Presentation;
-use egui::{Color32, CornerRadius, Pos2, Rect, Ui, pos2, vec2};
+use egui::{Color32, Pos2, Rect, Ui, pos2, vec2};
 
 use super::presenter::PresenterTimer;
 use super::render::fit;
@@ -270,7 +270,6 @@ pub(super) fn command(rec: &mut RecordView, show: &mut Show, id: &str, now: f64)
 /// Where every section lives on screen this frame.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Layout {
-    pub full: Rect,
     pub top: Rect,
     pub notes: Rect,
     pub slide: Rect,
@@ -299,7 +298,7 @@ pub(super) fn layout(full: Rect, doc: &Presentation, rec: &RecordView) -> Layout
     let camera = Rect::from_center_size(pos2(slide.max.x - radius - 16.0, slide.max.y - radius - 16.0), vec2(radius * 2.0, radius * 2.0));
     let views = views_rect(bottom);
     let camera_preview = Rect::from_min_size(pos2(views.min.x - 44.0, views.min.y), vec2(30.0, 30.0));
-    Layout { full, top, notes, slide, bottom, views, camera, camera_preview }
+    Layout { top, notes, slide, bottom, views, camera, camera_preview }
 }
 
 fn top_rect(full: Rect) -> Rect {
@@ -332,6 +331,9 @@ fn views_rect(bottom: Rect) -> Rect {
 
 /// Draw the shell. Returns false when Edit asked to leave the Record view (the show's normal
 /// finish path then saves the recording and returns to the editor).
+/// The Record view's background, painted by the show under the slide (bars and panes sit on it).
+pub(super) const BACKDROP: Color32 = Color32::from_rgb(16, 16, 18);
+
 pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Presentation>, now: f64, layout: &Layout) -> bool {
     // Take the state out of the show so its sections can borrow both `show` and the shell state.
     let mut rec = std::mem::take(&mut show.record_view);
@@ -341,8 +343,8 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, doc: &Arc<Pre
     devices::connect(&mut rec, &app.services, show, (capture, recording));
     rec.read_total(doc);
     let mut keep = true;
-    ui.painter().rect_filled(layout.full, CornerRadius::ZERO, Color32::from_rgb(16, 16, 18));
-    // The slide is drawn by the show before this call; the pane backgrounds sit around it.
+    // The backdrop (`BACKDROP`) is painted by the show before it draws the slide: filling the
+    // whole frame here would cover the slide that is already on screen.
     notes::ui(app, ui, show, &mut rec, doc, layout);
     let top = top::ui(app, ui, show, &mut rec, now, layout);
     keep &= !top.close;

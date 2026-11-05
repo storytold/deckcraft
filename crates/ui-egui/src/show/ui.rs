@@ -5,8 +5,8 @@ use super::media::{
 use super::presenter::{PresenterTimer, format_elapsed, presenter_window};
 use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
 use super::zoom::{
-    Zoom, grid_indices, norm_on_slide, paint_grid, see_all_hit, slide_aspect, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
-    wheel_zoom_lines,
+    Zoom, grid_indices, laser_playback_pos, norm_on_slide, paint_grid, see_all_hit, slide_aspect, slide_box, slide_to_screen, toggle_blank,
+    tool_bar_rect, unit_uv, wheel_zoom_lines,
 };
 use super::{
     Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
@@ -135,7 +135,10 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     handle_wheel_and_swipe(&mut show, &f, &mut out);
     advance(app, &mut show, &f, &mut out);
     let painter = ui.painter_at(full);
-    painter.rect_filled(full, CornerRadius::ZERO, Color32::BLACK);
+    // The Record view sits on its own backdrop; both are painted before the slide, so drawing
+    // the bars later never covers it.
+    let backdrop = if record_layout.is_some() { record::BACKDROP } else { Color32::BLACK };
+    painter.rect_filled(full, CornerRadius::ZERO, backdrop);
     draw_slide(app, ui, &mut show, &f, &painter);
     draw_pen_and_hints(ui, &mut show, &f, &painter, pointing);
     draw_bars(app, ui, &mut show, &f, &painter, &mut out);
@@ -763,13 +766,16 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         && let Some(trace) = &sl.laser
     {
         let elapsed = (now - show.slide_start).max(0.0) * 1000.0;
+        // The saved point is in slide coordinates: map it through the zoom the slide is drawn
+        // with, so a zoomed show puts the dot where it was recorded (see `draw_videos`).
         if elapsed.is_finite()
             && let Some((x, y)) = laser_pos(&trace.points, elapsed.min(3_600_000.0) as u32)
         {
-            let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
-            let p = pos2(srect.min.x + x as f32 * k, srect.min.y + y as f32 * k);
-            painter.circle_filled(p, 7.0, theme::to_color32(trace.color));
-            painter.circle_stroke(p, 11.0, Stroke::new(2.0, Color32::from_white_alpha(200)));
+            let size = (doc.slide_size.width as f32, doc.slide_size.height as f32);
+            if let Some(p) = laser_playback_pos(srect, show.zoom_uv(), size, (x, y)) {
+                painter.circle_filled(p, 7.0, theme::to_color32(trace.color));
+                painter.circle_stroke(p, 11.0, Stroke::new(2.0, Color32::from_white_alpha(200)));
+            }
             ctx.request_repaint();
         }
     }

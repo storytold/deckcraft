@@ -255,6 +255,69 @@ fn an_on_click_media_play_does_not_stop_an_autoplay_clip_from_starting() {
     assert_eq!(plays[0].start, deckcraft_model::anim::AnimStart::OnClick);
 }
 
+/// An autoplay clip on a slide whose first effect starts with the slide (With Previous or After
+/// Previous): the automatic start must sit inside that first group, or PowerPoint's group begin
+/// (the mainSeq's own begin) fires before it and the group waits for a click.
+#[test]
+fn an_automatic_start_of_the_first_group_goes_inside_that_group() {
+    for start in [deckcraft_model::anim::AnimStart::WithPrevious, deckcraft_model::anim::AnimStart::AfterPrevious] {
+        let mut p = defaults::new_presentation(None);
+        let video = p.add_media("clip.mp4", "video/mp4", b"video".to_vec()).expect("media");
+        let clip = ShapeId(p.alloc_id().expect("id"));
+        let rect = ShapeId(p.alloc_id().expect("id"));
+        {
+            let slide = Arc::make_mut(&mut p.slides[0]);
+            slide.shapes.push(deckcraft_model::Shape {
+                id: clip,
+                name: "Automatic".into(),
+                xfrm: Some(Xfrm::new(40.0, 40.0, 200.0, 100.0)),
+                kind: ShapeKind::Media(MediaClip { media: video, video: true, autoplay: true, ..Default::default() }),
+                ..Default::default()
+            });
+            slide.shapes.push(deckcraft_model::Shape {
+                id: rect,
+                name: "Box".into(),
+                xfrm: Some(Xfrm::new(300.0, 40.0, 200.0, 100.0)),
+                ..Default::default()
+            });
+            // The slide's first effect starts with the slide, not on a click.
+            slide.animations.push(deckcraft_model::Animation {
+                shape: rect,
+                class: deckcraft_model::anim::AnimClass::Entrance,
+                effect: "fade".into(),
+                start,
+                ..Default::default()
+            });
+        }
+        let bytes = deckcraft_pptx::export(&p).expect("export");
+        let xml = {
+            let mut z = zip::ZipArchive::new(Cursor::new(&bytes)).expect("zip");
+            let mut f = z.by_name("ppt/slides/slide1.xml").expect("slide");
+            let mut s = String::new();
+            f.read_to_string(&mut s).expect("read");
+            s
+        };
+        // The trigger is inside the first group: the `playFrom` comes after that group's own
+        // `indefinite` start condition, before any effect paragraph of the group.
+        let group = xml.find(r#"<p:cond delay="indefinite"/>"#).expect("the first group waits for the slide's begin");
+        let trigger = xml.find(r#"cmd="playFrom(0.0)""#).expect("the automatic start is written");
+        assert!(trigger > group, "{start:?}: the trigger sits inside the first group");
+        let q = deckcraft_pptx::import(&bytes).expect("import");
+        let clip = q.slides[0]
+            .shapes
+            .iter()
+            .find_map(|s| match &s.kind {
+                ShapeKind::Media(m) if m.video => Some(m.clone()),
+                _ => None,
+            })
+            .expect("the video");
+        assert!(clip.autoplay, "{start:?}: the automatic start survives the round trip");
+        let plays: Vec<_> =
+            q.slides[0].animations.iter().filter(|a| a.effect == "play" && a.class == deckcraft_model::anim::AnimClass::Media).collect();
+        assert!(plays.is_empty(), "{start:?}: the trigger is not an Animation Pane effect: {:?}", q.slides[0].animations);
+    }
+}
+
 #[test]
 fn a_numeric_start_delay_alone_is_still_an_automatic_start() {
     // DeckCraft's own writer marks autoplay with the media node's delay and no behaviour node.

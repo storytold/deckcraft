@@ -65,24 +65,32 @@ struct At {
     trigger: Option<u32>,
     group: usize,
     offset: u32,
+    /// A click effect appears earlier in the tree: everything after it waits for a click.
+    clicked: bool,
 }
 
-fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, depth: usize) {
+fn collect<'a>(e: &'a El, at: At, groups: &mut usize, seen_click: &mut bool, out: &mut Vec<Found<'a>>, depth: usize) {
     if depth > 64 || out.len() > 10_000 {
         return;
     }
     for c in e.elements() {
+        // A click effect makes everything after it wait for that click, whatever branch it sits
+        // in: remember it for the siblings and for everything below them.
+        if click_effect(c) {
+            *seen_click = true;
+        }
+        let at = At { clicked: at.clicked || *seen_click, ..at };
         if c.is("cTn") && c.has_attr("presetClass") {
-            // A media `afterEffect` with no `grpId`, outside every interactive sequence, whose own
-            // start delay is numeric: that is the writer's automatic-start trigger for an autoplay
-            // clip, not an effect the Animation Pane lists. Anything else (a click effect, or an
-            // effect inside an interactive sequence) is authored and stays an animation, even when
-            // it carries no `grpId`.
+            // A media `afterEffect` with no `grpId`, outside every interactive sequence, before
+            // any click effect, whose own start delay is numeric: that is the writer's
+            // automatic-start trigger for an autoplay clip, not an effect the Animation Pane
+            // lists. It sits before the first group or, when that group starts with the slide
+            // (With Previous / After Previous), as its first child. Anything else (a click effect,
+            // an effect inside an interactive sequence, or one after a click) is authored and
+            // stays an animation, even when it carries no `grpId`.
             let own_trigger = c.attr("presetClass") == Some("mediacall")
                 && !c.has_attr("grpId")
-                // Only the writer's own trigger sits in the main sequence's first group: an
-                // afterEffect inside a group after another effect is authored and stays.
-                && at.group == 0
+                && !at.clicked
                 && at.trigger.is_none()
                 && c.attr("nodeType") == Some("afterEffect")
                 && c.path(&["stCondLst", "cond"]).and_then(|x| x.attr("delay")).map(str::trim).is_some_and(|d| d != "indefinite");
@@ -109,8 +117,14 @@ fn collect<'a>(e: &'a El, at: At, groups: &mut usize, out: &mut Vec<Found<'a>>, 
                 at.offset = at.offset.saturating_add(ms_attr(cond, "delay").unwrap_or(0));
             }
         }
-        collect(c, at, groups, out, depth + 1);
+        collect(c, at, groups, seen_click, out, depth + 1);
     }
+}
+
+/// Whether `e` is, or directly wraps, a click effect's time node.
+fn click_effect(e: &El) -> bool {
+    let is_click = |x: &El| x.is("cTn") && x.attr("nodeType") == Some("clickEffect");
+    is_click(e) || e.child("cTn").is_some_and(is_click)
 }
 
 /// How long an effect holds back an After Previous one, as the show timeline counts it.
@@ -355,7 +369,8 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
     let _ = (imp, part);
     let Some(tn) = timing.child("tnLst") else { return vec![] };
     let mut found = vec![];
-    collect(tn, At { trigger: None, group: 0, offset: 0 }, &mut 0, &mut found, 0);
+    let mut seen_click = false;
+    collect(tn, At { trigger: None, group: 0, offset: 0, clicked: false }, &mut 0, &mut seen_click, &mut found, 0);
     // Paragraph builds (`bldP build="p"`) by (spid, grpId).
     let by_para: Vec<(u32, String)> = timing
         .child("bldLst")

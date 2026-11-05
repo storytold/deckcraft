@@ -264,6 +264,44 @@ fn pause_and_resume_are_buttons_on_the_top_bar() {
     assert_eq!(h.state().show.as_ref().unwrap().record_view.status, RecordStatus::Recording);
 }
 
+/// The Record view's backdrop is painted before the slide: the bars are drawn over the frame, so a
+/// full-frame fill there would hide the slide it was drawn for.
+#[test]
+fn the_record_backdrop_is_behind_the_slide() {
+    let mut session = deckcraft_engine::Session::with_new();
+    let size = session.active().unwrap().doc.slide_size;
+    session.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, size.width, size.height]})).unwrap();
+    let mut app = SlideApp::new(session, crate::Services::default());
+    app.ui.presenter_view = false;
+    let mut h = harness(app);
+    open_record(&mut h, 0);
+    h.run_steps(3);
+    let layout = {
+        let app = h.state();
+        let doc = app.session.active().expect("a document").doc.clone();
+        super::layout(h.ctx.content_rect(), &doc, &app.show.as_ref().expect("a show").record_view)
+    };
+    // Walk the frame's paint list: the backdrop must come before everything else, so nothing
+    // fills the slide rect after the slide is drawn.
+    let mut backdrop = None;
+    let mut covering = None;
+    for (i, clipped) in h.output().shapes.iter().enumerate() {
+        let egui::Shape::Rect(r) = &clipped.shape else { continue };
+        if !layout.slide.intersects(r.rect) || r.fill.a() < 250 {
+            continue;
+        }
+        if r.rect.contains_rect(layout.slide) {
+            if backdrop.is_none() {
+                backdrop = Some(i);
+            } else {
+                covering = Some(i);
+            }
+        }
+    }
+    assert!(backdrop.is_some(), "the frame has a backdrop");
+    assert_eq!(covering, None, "no later fill covers the slide (backdrop at {backdrop:?})");
+}
+
 /// A focused button must not take the keyboard away from the show: nothing in the Record view
 /// edits text, so the navigation keys keep working while a take records.
 #[test]

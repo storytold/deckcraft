@@ -607,7 +607,10 @@ fn automatic_media_pars(w: &mut W, ids: &mut Ids, spids: &[u32]) {
     }
 }
 
-fn click_pars(w: &mut W, x: &mut Exp, ids: &mut Ids, clicks: &Groups, interactive: bool) {
+/// Write the click groups. `triggers` are the automatic-start behaviours for a first group that
+/// starts with the slide (With Previous / After Previous on its first effect): they are written
+/// before its effects, so they have run when its begin event fires.
+fn click_pars(w: &mut W, x: &mut Exp, ids: &mut Ids, clicks: &Groups, interactive: bool, triggers: &[u32]) {
     for (ci, (auto, afters)) in clicks.iter().enumerate() {
         w.open0("p:par");
         w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold"));
@@ -624,6 +627,9 @@ fn click_pars(w: &mut W, x: &mut Exp, ids: &mut Ids, clicks: &Groups, interactiv
         }
         w.close("p:stCondLst");
         w.open0("p:childTnLst");
+        if ci == 0 {
+            automatic_media_pars(w, ids, triggers);
+        }
         let mut t = 0u32;
         for g in afters {
             w.open0("p:par");
@@ -838,11 +844,17 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
     let auto_media = automatic_media(shapes, idmap, &main, 0);
     if !main.is_empty() || !auto_media.is_empty() {
         let clicks = group(main);
+        // A first group that starts with the slide (With Previous or After Previous on its first
+        // effect) begins from the mainSeq's begin event, which fires before a paragraph written
+        // ahead of it has run: PowerPoint would then wait for a click. The triggers go inside that
+        // group instead. An On Click first group waits for its click anyway, so they stay first.
+        let first_is_automatic = clicks.first().is_some_and(|(auto, _)| *auto);
+        let (early, inside): (&[u32], &[u32]) = if first_is_automatic { (&[], &auto_media) } else { (&auto_media, &[]) };
         w.open("p:seq", A::new().a("concurrent", 1).a("nextAc", "seek"));
         w.open("p:cTn", A::new().a("id", ids.next()).a("dur", "indefinite").a("nodeType", "mainSeq"));
         w.open0("p:childTnLst");
-        automatic_media_pars(w, &mut ids, &auto_media);
-        click_pars(w, x, &mut ids, &clicks, false);
+        automatic_media_pars(w, &mut ids, early);
+        click_pars(w, x, &mut ids, &clicks, false, inside);
         w.close("p:childTnLst");
         w.close("p:cTn");
         w.open0("p:prevCondLst");
@@ -894,7 +906,7 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.empty("p:rtn", A::new().a("val", "all"));
         w.close("p:endSync");
         w.open0("p:childTnLst");
-        click_pars(w, x, &mut ids, &clicks, true);
+        click_pars(w, x, &mut ids, &clicks, true, &[]);
         w.close("p:childTnLst");
         w.close("p:cTn");
         w.open0("p:nextCondLst");

@@ -1,4 +1,4 @@
-use super::picture::{content_type, media_bytes};
+use super::picture::{content_type, detect_name, media_bytes};
 use super::{NO_ID_SPACE, Result, Session, ShapeKind, Value, bad, base64_encode, json};
 
 const ALBUM_MAX_ITEMS: usize = 48;
@@ -285,6 +285,10 @@ fn album_items(p: &Value) -> Result<Vec<AlbumItem>> {
             return Err(bad("insert.photoAlbum", "the album is larger than 64 MB"));
         }
         total = next;
+        // The type comes from the name the bytes came from, and the item keeps that name: the
+        // `insert.picture` that places it gets inline `data` (no path), so the name is all that
+        // tells it an SVG is an SVG.
+        let name = detect_name(item, &name);
         let ct = content_type(&name, &bytes);
         if !ct.starts_with("image/") {
             return Err(bad("insert.photoAlbum", format!("{name} is not a picture")));
@@ -721,4 +725,28 @@ fn insert_album(s: &mut Session, items: Vec<AlbumItem>, opts: &AlbumOpts, at: Op
     }
     s.execute("slide.go", &json!({"index": first}))?;
     Ok(json!({"slides": slides, "first": first, "pictures": pictures, "album": album_id}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A photo picked from a path keeps its file name for the type: the album's own check, and the
+    /// `insert.picture` that places it (which gets inline data, so the name is all it has).
+    #[test]
+    fn a_photo_album_picture_from_a_path_is_typed_by_its_file_name() {
+        let mut s = Session::with_new();
+        let dir = std::env::temp_dir().join(format!("deckcraft-album-svg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("drawing.svg");
+        // The tag sits past the 512 bytes the sniffer scans, so only the file name can say `svg`.
+        let svg =
+            format!("<?xml version=\"1.0\"?><!--{}--><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"/></svg>", "x".repeat(600));
+        std::fs::write(&path, svg.as_bytes()).unwrap();
+        let r = s
+            .execute("insert.photoAlbum", &json!({"pictures": [{"path": path.to_string_lossy(), "name": "Drawing"}], "layout": "1"}))
+            .expect("an svg named only by its path is a photo");
+        assert_eq!(r["slides"], 1, "{r}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
