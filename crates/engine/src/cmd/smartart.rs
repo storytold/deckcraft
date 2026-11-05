@@ -390,6 +390,15 @@ mod tests {
     }
 
     #[test]
+    fn a_font_size_out_of_range_is_clamped_at_layout() {
+        let size_of = |z: f64| {
+            let d = Diagram { kind: "pyramid".into(), nodes: nodes_from_lines(["A", "B"]), font_size: Some(z), ..Default::default() };
+            layout_items(&d, Xfrm::new(0.0, 0.0, 600.0, 300.0))[0].0.text.as_ref().and_then(|b| b.paragraphs[0].runs[0].props.size)
+        };
+        assert_eq!((size_of(1e9), size_of(0.01), size_of(18.0)), (Some(4000.0), Some(1.0), Some(18.0)));
+    }
+
+    #[test]
     fn colour_variants_pick_accents() {
         let d = |c: &str| Diagram { colors: c.into(), ..Default::default() };
         assert_eq!(

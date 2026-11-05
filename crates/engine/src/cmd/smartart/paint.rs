@@ -206,7 +206,7 @@ pub(super) fn layout_items(d: &Diagram, area: Xfrm) -> Vec<Item> {
         // A set size replaces the automatic one outright: the long word's scale would otherwise
         // still narrow the bullets' indents.
         match d.font_size.filter(|z| z.is_finite() && *z > 0.0) {
-            Some(size) => set_size(sh, size),
+            Some(size) => set_size(sh, size.clamp(1.0, 4000.0)),
             None => apply_scale(sh, scale),
         }
     }

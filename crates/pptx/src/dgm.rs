@@ -300,8 +300,8 @@ fn text(w: &mut W, t: &str, d: Option<&Diagram>) {
 }
 
 /// The size (points) every node's text shares in a data part, as [`data_xml`] writes it (and
-/// PowerPoint, when Font Size is set on the whole graphic): from the first run (or the paragraph
-/// end) of every node, and only when all the nodes agree.
+/// PowerPoint, when Font Size is set on the whole graphic): from every run (or the end of a paragraph
+/// with none) of every node, and only when all of them agree.
 pub fn text_size(data: &El) -> Option<f64> {
     let pts = data.child("ptLst")?;
     let mut sizes = vec![];
@@ -309,9 +309,24 @@ pub fn text_size(data: &El) -> Option<f64> {
         if !matches!(pt.attr("type").unwrap_or("node"), "node" | "asst") {
             continue;
         }
-        let p = pt.child("t").and_then(|t| t.child("p"))?;
-        let rpr = p.child("r").and_then(|r| r.child("rPr")).or_else(|| p.child("endParaRPr"));
-        sizes.push(rpr.and_then(|r| r.f64("sz")).map(|v| v / 100.0).filter(|v| (1.0..=4000.0).contains(v)));
+        let t = pt.child("t")?;
+        let mut paras = 0;
+        for p in t.children_named("p") {
+            paras += 1;
+            let mut rprs: Vec<&El> = p.children_named("r").filter_map(|r| r.child("rPr")).collect();
+            if p.child("r").is_none() {
+                rprs.extend(p.child("endParaRPr"));
+            }
+            if rprs.is_empty() {
+                sizes.push(None);
+            }
+            for r in rprs {
+                sizes.push(r.f64("sz").map(|v| v / 100.0).filter(|v| (1.0..=4000.0).contains(v)));
+            }
+        }
+        if paras == 0 {
+            return None;
+        }
     }
     let first = (*sizes.first()?)?;
     sizes.iter().all(|x| *x == Some(first)).then_some(first)
@@ -849,6 +864,9 @@ mod tests {
         // Nodes that differ have no size for the whole graphic.
         let mixed = xml.replacen("sz=\"1850\"", "sz=\"2000\"", 1);
         assert_eq!(text_size(&crate::xml::parse(mixed.as_bytes()).unwrap().root), None);
+        // So do runs of one node: a later run at another size is not skipped.
+        let two_runs = xml.replacen("</a:r>", "</a:r><a:r><a:rPr lang=\"en-US\" sz=\"2000\"/><a:t>x</a:t></a:r>", 1);
+        assert_eq!(text_size(&crate::xml::parse(two_runs.as_bytes()).unwrap().root), None);
     }
 
     #[test]
