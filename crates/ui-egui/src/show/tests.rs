@@ -1576,6 +1576,16 @@ fn a_microphone_that_fails_mid_take_keeps_what_it_captured_and_says_so() {
     assert_eq!(show.narration.len(), 1);
 }
 
+/// The buffer stops at the WAV sample cap, and the ten-minute allowance only narrows it further.
+#[test]
+fn the_narration_buffer_never_grows_past_the_wav_cap() {
+    let cap = super::narration_sample_cap();
+    assert_eq!(super::narration_room(8_000, 0), 8_000 * 600, "a short clip is limited by ten minutes");
+    assert_eq!(super::narration_room(192_000, 0), cap, "a long clip is limited by the WAV cap");
+    assert_eq!(super::narration_room(192_000, cap - 10), 10, "what the clip already holds is subtracted");
+    assert_eq!(super::narration_room(192_000, cap + 5), 0, "and never wraps");
+}
+
 /// A take that runs past the WAV limit keeps its head and reports the cut, so `save_take` cannot
 /// call it complete.
 #[test]

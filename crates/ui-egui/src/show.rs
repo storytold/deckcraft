@@ -1071,6 +1071,12 @@ fn narration_sample_cap() -> usize {
     (MAX_NARRATION_BYTES - 44) / 2
 }
 
+/// How many samples a slide's clip can still take: its ten-minute allowance and the WAV cap, both
+/// measured from what it already holds.
+fn narration_room(rate: u32, kept: usize) -> usize {
+    (rate as usize).saturating_mul(600).saturating_sub(kept).min(narration_sample_cap().saturating_sub(kept))
+}
+
 /// A slide's encoded narration, and whether the byte limit cut its tail.
 struct NarrationWav {
     wav: Vec<u8>,
@@ -1176,15 +1182,14 @@ fn take_narration(mic: Option<&mut (dyn deckcraft_media::MicIn + 'static)>, show
     match show.narration.iter_mut().find(|(i, _, _)| *i == slide) {
         // A resumed take adds to the same slide's clip, keeping its rate.
         Some((_, take_rate, kept)) if *take_rate == rate => {
-            // The clip also has to fit the engine's WAV limit at this rate: buffering more would
-            // only be cut later.
-            let room = (rate as usize).saturating_mul(600).saturating_sub(kept.len()).min(narration_sample_cap());
+            // The clip also has to fit the engine's WAV limit: buffering more would only be cut
+            // later.
+            let room = narration_room(rate, kept.len());
             kept.extend(samples.into_iter().take(room));
         }
-        Some(entry) => {
-            *entry = (slide, rate, samples);
-        }
-        None => show.narration.push((slide, rate, samples)),
+        // A replacement clip keeps the same limits as an append.
+        Some(entry) => *entry = (slide, rate, samples.into_iter().take(narration_sample_cap()).collect()),
+        None => show.narration.push((slide, rate, samples.into_iter().take(narration_sample_cap()).collect())),
     }
 }
 

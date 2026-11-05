@@ -216,6 +216,10 @@ impl SlideApp {
         show::start_due_media(self, &mut show, doc_uid, &doc, show_time);
         let time_driven = show.hidden_time_driven(&doc);
         if !keep {
+            // The show was taken out of `self` above: handing it back and ending it runs the
+            // usual cleanup (presenter, show-owned media) instead of dropping it.
+            self.show = Some(show);
+            self.end_show_now();
             return;
         }
         self.show = Some(show);
