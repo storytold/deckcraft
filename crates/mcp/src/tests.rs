@@ -330,12 +330,22 @@ fn control_auth_handshake_and_compare() {
     assert_eq!(hex(&[0x00, 0xab, 0xff]), "00abff");
 }
 
+/// A port the test itself owns: bind first, take the listener's assigned port, and keep the
+/// listener through the test's token-file cleanup. A process-id-derived port can collide with
+/// a running app's port, and `write_token_file` would then replace the app's token file.
+fn a_bound_port() -> (std::net::TcpListener, u16) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    (listener, port)
+}
+
 #[cfg(unix)]
 #[test]
 fn control_token_file_is_private() {
     use std::os::unix::fs::PermissionsExt;
-    // Unique port per run so parallel tests don't share a file; the folder is the real one.
-    let port = 40_000 + (std::process::id() % 20_000) as u16;
+    // A port the test owns, so parallel tests and running apps never share the file; the
+    // folder is the real one.
+    let (_listener, port) = a_bound_port();
     let path = crate::control_auth::write_token_file(port, "tok-0123456789abcdef").unwrap();
     assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
     assert_eq!(std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
@@ -355,9 +365,9 @@ fn a_group_readable_token_file_is_refused() {
         eprintln!("skipped: DECKCRAFT_CONTROL_TOKEN is set (it wins over the token file)");
         return;
     }
-    // A range of its own, below the ephemeral ports: a parallel test's listener on :0 must not
-    // own this token file, and no two tests of the token file may share one.
-    let port = 10_000 + (std::process::id() % 2_000) as u16;
+    // The listener stays bound through the cleanup, so the port is the test's own and no
+    // running app's token file is touched.
+    let (_listener, port) = a_bound_port();
     let path = crate::control_auth::write_token_file(port, "tok-0123456789abcdef").unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
     let error = crate::control_auth::client_token(&format!("127.0.0.1:{port}")).expect_err("refused");
@@ -372,7 +382,7 @@ fn a_token_file_behind_a_link_is_refused() {
         eprintln!("skipped: DECKCRAFT_CONTROL_TOKEN is set (it wins over the token file)");
         return;
     }
-    let port = 12_000 + (std::process::id() % 2_000) as u16;
+    let (_listener, port) = a_bound_port();
     let path = crate::control_auth::write_token_file(port, "tok-0123456789abcdef").unwrap();
     // A planted link stands where the app wrote its file: the token path itself points
     // somewhere else, and the read must not follow it.

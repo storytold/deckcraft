@@ -151,7 +151,10 @@ Usage: deckcraft [--control PORT [--control-token TOKEN]] [--sample] [--show] [F
   --control PORT         JSON control server on 127.0.0.1:PORT
   --control-token TOKEN  the control token for --control (DECKCRAFT_CONTROL_TOKEN
                          wins when both are set; else 256 random bits, written to a
-                         file only the user can read; clients: DECKCRAFT_CONTROL_TOKEN)
+                         file only the user can read; clients: DECKCRAFT_CONTROL_TOKEN;
+                         the token sits in the process argument list, where another
+                         user's process listing may read it — the environment
+                         variable avoids that)
   --sample        open the sample presentation
   --show          start the slide show
   --help, -h      print this help and exit
@@ -176,11 +179,13 @@ fn startup(control_port: Option<u16>, args: impl IntoIterator<Item = String>) ->
 /// mutation). `DECKCRAFT_CONTROL_TOKEN` wins: `control_auth::client_token` (the client side)
 /// checks the environment first, so the CLI token only fills an unset environment — and the
 /// `--control-token` flag always consumes its value either way, so it never lands in `files`.
+/// A blank environment value is unset, as `client_token` treats it: `make_token` would
+/// generate a random token and the chosen CLI token would be dropped silently.
 fn parse_startup(env_token: Option<String>, mut control_port: Option<u16>, args: impl IntoIterator<Item = String>) -> Startup {
     let mut files = Vec::new();
     let mut sample = false;
     let mut show = false;
-    let mut control_token = env_token;
+    let mut control_token = env_token.filter(|t| !t.trim().is_empty());
     let mut args = args.into_iter();
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -428,6 +433,17 @@ mod tests {
         }
         // Without the environment token, the CLI token is used.
         let launch = parse_startup(None, None, ["--control-token".to_string(), "cli-token-0123456789".to_string(), "talk.pptx".to_string()]);
+        assert!(matches!(launch, Startup::Run { .. }));
+        if let Startup::Run { control_token, files, .. } = launch {
+            assert_eq!(control_token.as_deref(), Some("cli-token-0123456789"));
+            assert_eq!(files, ["talk.pptx".to_string()]);
+        }
+        // A blank environment value is unset: the CLI token is used, not dropped silently.
+        let launch = parse_startup(
+            Some("   ".to_string()),
+            None,
+            ["--control-token".to_string(), "cli-token-0123456789".to_string(), "talk.pptx".to_string()],
+        );
         assert!(matches!(launch, Startup::Run { .. }));
         if let Startup::Run { control_token, files, .. } = launch {
             assert_eq!(control_token.as_deref(), Some("cli-token-0123456789"));
