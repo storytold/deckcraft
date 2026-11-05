@@ -105,16 +105,19 @@ pub struct MathTable {
 }
 
 impl MathTable {
+    /// Returns the value for a `MathConstants` field in font units, or 0.0 if not present.
     pub fn get(&self, c: C) -> f32 {
         self.values.get(c as usize).copied().unwrap_or(0.0)
     }
 }
 
+/// Reads a big-endian `u16` at `off`.
 fn u16_at(b: &[u8], off: usize) -> Option<u16> {
     let s = b.get(off..off.checked_add(2)?)?;
     Some(u16::from_be_bytes([*s.first()?, *s.get(1)?]))
 }
 
+/// Reads a big-endian `i16` at `off`.
 fn i16_at(b: &[u8], off: usize) -> Option<i16> {
     u16_at(b, off).map(|v| v as i16)
 }
@@ -190,6 +193,7 @@ fn value_map(b: &[u8], at: usize) -> HashMap<u32, f32> {
     m
 }
 
+/// Reads glyph size variants and assemblies for vertical or horizontal glyph constructions.
 fn constructions(b: &[u8], variants: usize, cov_at: usize, count: usize, offsets_at: usize) -> HashMap<u32, Construction> {
     let mut m = HashMap::new();
     let Some(cov) = sub(b, variants, cov_at) else { return m };

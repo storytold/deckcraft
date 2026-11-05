@@ -836,6 +836,7 @@ pub fn paragraph(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: bool,
     w.close("a:p");
 }
 
+/// Returns true if the text body contains any math equation runs.
 pub fn has_math(tb: &TextBody) -> bool {
     tb.paragraphs
         .iter()

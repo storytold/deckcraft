@@ -62,6 +62,7 @@ pub enum MItem {
 }
 
 impl MItem {
+    /// Translates the item by `(dx, dy)`.
     fn shift(&mut self, dx: f32, dy: f32) {
         match self {
             MItem::Glyphs { glyphs, .. } => {
@@ -133,6 +134,7 @@ impl MathLayout {
     }
 }
 
+/// Computes the distance from a point `(x, y)` to a caret slot `s`.
 fn slot_dist(s: &Slot, x: f32, y: f32) -> f32 {
     let (top, bottom) = (s.y + s.a, s.y - s.d);
     let dy = if y > top {

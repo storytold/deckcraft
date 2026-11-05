@@ -14,6 +14,7 @@ pub(super) struct TextAtom<'a> {
 }
 
 impl Ctx {
+    /// Font size scale factor for the given script level (0 = 1.0, 1 = script, 2 = script-script).
     pub(super) fn scale(&self, level: u8) -> f32 {
         let (s1, s2) = match &self.t {
             Some(t) => (t.script_percent, t.script_script_percent),
@@ -28,6 +29,7 @@ impl Ctx {
         }
     }
 
+    /// Font size in points for style `st`.
     pub(super) fn size(&self, st: St) -> f32 {
         self.base * self.scale(st.level)
     }
@@ -41,10 +43,12 @@ impl Ctx {
         }
     }
 
+    /// Height of the math axis in points above the baseline.
     pub(super) fn axis(&self, st: St) -> f32 {
         self.k(C::AxisHeight, st)
     }
 
+    /// Em quad size in points for style `st`.
     pub(super) fn em(&self, st: St) -> f32 {
         self.size(st)
     }
@@ -155,12 +159,15 @@ impl Ctx {
         self.stretch(con, t, target, size, true)
     }
 
+    /// A horizontal size variant or assembly of `gid` at least `target` wide (`None` without a
+    /// `MATH` table or construction for the glyph).
     pub(super) fn stretch_h(&self, gid: u32, target: f32, size: f32) -> Option<Bx> {
         let t = self.t.as_ref()?;
         let con = t.horiz.get(&gid)?;
         self.stretch(con, t, target, size, false)
     }
 
+    /// Builds a stretched glyph or assembly for a construction in either the vertical or horizontal direction.
     fn stretch(&self, con: &Construction, t: &MathTable, target: f32, size: f32, vertical: bool) -> Option<Bx> {
         let k = size / self.upem;
         let target_fu = target / k;

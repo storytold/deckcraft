@@ -176,6 +176,7 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
     }
 }
 
+/// Renders equation layout items (glyphs, fraction bars, rad lines) onto the canvas.
 fn draw_math_items(ctx: &mut RenderContext, items: &[deckcraft_text::math::MItem], x: f64, base: f64, m: Affine, opacity: f64, screen: bool) {
     use deckcraft_text::math::MItem;
     if opacity <= 0.0 {

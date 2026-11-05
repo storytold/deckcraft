@@ -19,6 +19,7 @@ pub fn read_math_container(e: &El) -> (Math, bool) {
     }
 }
 
+/// Parses an `m:oMathPara` paragraph element into a Math model.
 pub fn read_math_para(para: &El) -> Math {
     let jc = para_jc(para);
     let mut nodes = Vec::new();
@@ -65,6 +66,7 @@ fn chr(pr: Option<&El>, name: &str) -> Option<Option<char>> {
     }
 }
 
+/// Reads the `val` attribute from child `name` of properties element `pr`.
 fn val<'a>(pr: Option<&'a El>, name: &str) -> Option<&'a str> {
     pr.and_then(|p| p.child(name)).and_then(|c| c.attr("val"))
 }
@@ -86,6 +88,7 @@ fn arg(e: &El, depth: usize) -> Arg {
     out
 }
 
+/// Reads a single math node element and appends it to `out`.
 fn node(k: &El, depth: usize, out: &mut Arg) {
     let d = depth + 1;
     match k.local() {
@@ -226,6 +229,7 @@ fn node(k: &El, depth: usize, out: &mut Arg) {
     }
 }
 
+/// Extracts concatenated text from all `m:t` children of a run.
 fn run_text(r: &El) -> String {
     let mut s = String::new();
     for c in r.elements() {
@@ -236,6 +240,7 @@ fn run_text(r: &El) -> String {
     s
 }
 
+/// Reads an `m:r` run element into an `MRun`.
 fn run(r: &El) -> Option<MRun> {
     let text = run_text(r);
     if text.is_empty() {
@@ -272,6 +277,7 @@ fn run(r: &El) -> Option<MRun> {
     Some(out)
 }
 
+/// Reads run formatting properties from `w:rPr` or `a:rPr`.
 fn wrpr(pr: &El, out: &mut MRun) {
     if let Some(sz) = pr.child("sz").and_then(|s| s.attr("val")).and_then(|v| v.trim().parse::<f32>().ok()) {
         let pt = sz / 2.0;

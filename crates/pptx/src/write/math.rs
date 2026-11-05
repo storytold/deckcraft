@@ -39,10 +39,12 @@ pub fn write_equation(w: &mut W, linear: &str, display: bool, math: &Math) {
     }
 }
 
+/// Writes a self-closing element with an `m:val` attribute.
 fn val(w: &mut W, name: &str, v: &str) {
     w.empty(name, A::new().a("m:val", v));
 }
 
+/// Writes a math argument element `name` wrapping the inner nodes.
 fn arg(w: &mut W, name: &str, a: &[MNode], depth: usize) {
     if a.is_empty() {
         w.empty0(name);
@@ -53,6 +55,7 @@ fn arg(w: &mut W, name: &str, a: &[MNode], depth: usize) {
     w.close(name);
 }
 
+/// Recursively writes a slice of math nodes within recursion depth limit.
 fn arg_inner(w: &mut W, a: &[MNode], depth: usize) {
     if depth > MAX_DEPTH {
         return;
@@ -62,11 +65,13 @@ fn arg_inner(w: &mut W, a: &[MNode], depth: usize) {
     }
 }
 
+/// Writes an OMML character property element.
 fn char_prop(w: &mut W, name: &str, c: Option<char>) {
     let s = c.map(|c| c.to_string()).unwrap_or_default();
     val(w, name, &s);
 }
 
+/// Serializes an `MNode::Matrix` into an `m:m` OMML element.
 fn write_matrix(w: &mut W, n: &MNode, depth: usize) {
     let MNode::Matrix { rows, col_jc } = n else { return };
     let cols = rows.iter().map(|r| r.len()).max().unwrap_or(0).max(1);
@@ -98,6 +103,7 @@ fn write_matrix(w: &mut W, n: &MNode, depth: usize) {
     w.close("m:m");
 }
 
+/// Serializes an `MNode::Nary` into an `m:nary` OMML element.
 fn write_nary(w: &mut W, n: &MNode, depth: usize) {
     let MNode::Nary { chr, lim_loc, grow, sub_hide, sup_hide, sub, sup, e } = n else { return };
     w.open0("m:nary");
@@ -126,6 +132,7 @@ fn write_nary(w: &mut W, n: &MNode, depth: usize) {
     w.close("m:nary");
 }
 
+/// Serializes a single `MNode` into its OMML XML element.
 #[allow(clippy::cognitive_complexity)]
 fn node(w: &mut W, n: &MNode, depth: usize) {
     match n {
@@ -310,6 +317,7 @@ fn node(w: &mut W, n: &MNode, depth: usize) {
     }
 }
 
+/// Serializes an `MRun` into an `m:r` run element.
 fn run(w: &mut W, r: &MRun) {
     w.open0("m:r");
     let sty = r.sty.map(|s| match s {

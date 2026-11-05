@@ -26,6 +26,7 @@ enum Tok {
 /// Commands whose `{…}` argument is text, where spaces are part of the content.
 const TEXT_COMMANDS: &[&str] = &["text", "textrm", "mbox", "textnormal", "textbf", "textit"];
 
+/// Splits a LaTeX input string into tokens up to the parsing character limit.
 fn tokenize(s: &str) -> Vec<Tok> {
     let cs: Vec<char> = s.chars().take(20_000).collect();
     let mut out = Vec::new();
@@ -117,6 +118,7 @@ pub fn parse_latex(s: &str) -> Arg {
     out
 }
 
+/// Helper to create a single `MNode::Run` from text `t`.
 fn run(t: &str) -> MNode {
     MNode::Run(MRun::new(t))
 }
@@ -128,6 +130,7 @@ struct Lp {
 }
 
 impl Lp {
+    /// Peeks at the current token without consuming it.
     fn peek(&self) -> Option<&Tok> {
         self.t.get(self.i)
     }
@@ -671,10 +674,12 @@ fn join_cells(cells: Vec<Arg>) -> Arg {
     merge_runs(out)
 }
 
+/// Wraps an argument in an invisible group delimiter (`\left. \right.`).
 fn group(a: Arg) -> MNode {
     MNode::Delim { beg: None, end: None, sep: None, grow: true, shp_match: false, elems: vec![a] }
 }
 
+/// Attaches a subscript or superscript to `base`, updating Nary or Script nodes accordingly.
 fn script(base: Option<MNode>, sup: bool, s: Arg) -> MNode {
     match base {
         Some(MNode::Nary { chr, lim_loc, grow, sub_hide, sup_hide, sub, sup: sp, e }) if e.is_empty() => {
@@ -765,6 +770,7 @@ pub fn to_latex(nodes: &[MNode]) -> String {
     s.trim().to_string()
 }
 
+/// Serializes a slice of nodes `a` to LaTeX into `s`.
 fn arg(a: &[MNode], s: &mut String, depth: usize) {
     if depth > MAX_DEPTH {
         return;
@@ -774,12 +780,14 @@ fn arg(a: &[MNode], s: &mut String, depth: usize) {
     }
 }
 
+/// Serializes nodes enclosed in curly braces `{...}` to LaTeX.
 fn braced(a: &[MNode], s: &mut String, depth: usize) {
     s.push('{');
     arg(a, s, depth);
     s.push('}');
 }
 
+/// Serializes math characters, escaping LaTeX special characters.
 fn chars(text: &str, s: &mut String) {
     for c in text.chars() {
         match c {
@@ -842,6 +850,7 @@ fn is_zero_length(a: &[MNode]) -> bool {
         && number.parse::<f64>().is_ok_and(|v| v == 0.0)
 }
 
+/// Converts an optional delimiter character into its LaTeX delimiter string.
 fn delim_tex(c: Option<char>) -> String {
     match c {
         None => ".".into(),
@@ -853,6 +862,7 @@ fn delim_tex(c: Option<char>) -> String {
     }
 }
 
+/// Returns the LaTeX command for an over/under group character.
 fn group_chr_tex(chr: char, top: bool) -> &'static str {
     match chr {
         '⏜' => "\\overparen",
@@ -864,6 +874,7 @@ fn group_chr_tex(chr: char, top: bool) -> &'static str {
     }
 }
 
+/// Serializes a single `MNode` into LaTeX format.
 fn node(node: &MNode, output: &mut String, depth: usize) {
     match node {
         MNode::Run(run) => run_node(run, output),
@@ -904,6 +915,7 @@ fn node(node: &MNode, output: &mut String, depth: usize) {
     }
 }
 
+/// Serializes a text run node with its style wrappers to LaTeX.
 fn run_node(run: &MRun, output: &mut String) {
     let (open, close) = if run.nor {
         ("\\text{", "}")
@@ -937,6 +949,7 @@ fn run_node(run: &MRun, output: &mut String) {
     output.push_str(close);
 }
 
+/// Serializes a fraction or stack structure to LaTeX.
 fn fraction_node(kind: FracKind, numerator: &[MNode], denominator: &[MNode], output: &mut String, depth: usize) {
     match kind {
         FracKind::NoBar => {
@@ -957,6 +970,7 @@ fn fraction_node(kind: FracKind, numerator: &[MNode], denominator: &[MNode], out
     }
 }
 
+/// Serializes a subscript, superscript, or pre-script to LaTeX.
 fn script_node(kind: ScriptKind, base: &[MNode], sub: &[MNode], sup: &[MNode], output: &mut String, depth: usize) {
     if kind == ScriptKind::Pre {
         output.push_str("{}_");
@@ -977,6 +991,7 @@ fn script_node(kind: ScriptKind, base: &[MNode], sub: &[MNode], sup: &[MNode], o
     }
 }
 
+/// Serializes a radical (square root or nth root) to LaTeX.
 fn radical_node(degree: &[MNode], degree_hidden: bool, expression: &[MNode], output: &mut String, depth: usize) {
     output.push_str("\\sqrt");
     if !degree_hidden && !degree.is_empty() {
@@ -987,6 +1002,7 @@ fn radical_node(degree: &[MNode], degree_hidden: bool, expression: &[MNode], out
     braced(expression, output, depth);
 }
 
+/// Serializes an n-ary operator node with limits and operand to LaTeX.
 fn nary_node(node: &MNode, output: &mut String, depth: usize) {
     let MNode::Nary { chr, lim_loc, sub_hide, sup_hide, sub, sup, e, .. } = node else { return };
     match name_of(*chr) {
@@ -1013,6 +1029,7 @@ fn nary_node(node: &MNode, output: &mut String, depth: usize) {
     braced(e, output, depth);
 }
 
+/// Serializes delimited elements with `\left`, optional `\middle`, and `\right` to LaTeX.
 fn delimiter_node(begin: Option<char>, end: Option<char>, separator: Option<char>, elements: &[Arg], output: &mut String, depth: usize) {
     output.push_str("\\left");
     output.push_str(&delim_tex(begin));
@@ -1027,6 +1044,7 @@ fn delimiter_node(begin: Option<char>, end: Option<char>, separator: Option<char
     output.push_str(&delim_tex(end));
 }
 
+/// Serializes a limit or overset/underset structure to LaTeX.
 fn limit_node(upper: bool, expression: &[MNode], limit: &[MNode], output: &mut String, depth: usize) {
     let simple = matches!(expression, [MNode::Run(run)] if run.sty == Some(MSty::Plain) && FUNCTION_NAMES.contains(&run.text.as_str()));
     if simple && !upper {
@@ -1045,6 +1063,7 @@ fn limit_node(upper: bool, expression: &[MNode], limit: &[MNode], output: &mut S
     }
 }
 
+/// Serializes an accent character over an expression to LaTeX.
 fn accent_node(character: char, expression: &[MNode], output: &mut String, depth: usize) {
     let command = match character {
         '\u{302}' => "hat",
@@ -1066,6 +1085,7 @@ fn accent_node(character: char, expression: &[MNode], output: &mut String, depth
     braced(expression, output, depth);
 }
 
+/// Serializes a multi-line equation array to an aligned LaTeX environment.
 fn equation_array_node(rows: &[Arg], output: &mut String, depth: usize) {
     if rows.len() == 1
         && let Some(row) = rows.first()
@@ -1098,6 +1118,7 @@ fn equation_array_node(rows: &[Arg], output: &mut String, depth: usize) {
     output.push_str("\\end{aligned}");
 }
 
+/// Serializes a matrix structure to a LaTeX matrix environment.
 fn matrix_node(rows: &[Vec<Arg>], output: &mut String, depth: usize) {
     output.push_str("\\begin{matrix}");
     for (row_index, row) in rows.iter().enumerate() {

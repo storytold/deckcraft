@@ -641,6 +641,7 @@ impl Exporter<'_> {
         Ok(())
     }
 
+    /// Draws the glyphs and vector rules of an equation onto the PDF surface.
     fn equation_layer(&mut self, s: &mut Surface, eq: &deckcraft_text::PlacedEquation, m: Affine, visible: bool) -> Result<()> {
         use deckcraft_text::math::MItem;
         for it in &eq.math.items {

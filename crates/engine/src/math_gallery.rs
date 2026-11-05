@@ -16,12 +16,17 @@ pub struct Template {
     pub limits: Option<LimLoc>,
 }
 
+/// Helper to create a structure template with default limit placement.
 const fn t(id: &'static str, label: &'static str, linear: &'static str) -> Template {
     Template { id, label, linear, limits: None }
 }
+
+/// Helper to create a template with stacked limits (above and below).
 const fn stacked(id: &'static str, label: &'static str, linear: &'static str) -> Template {
     Template { id, label, linear, limits: Some(LimLoc::UndOvr) }
 }
+
+/// Helper to create a template with beside limits (subscript and superscript beside operator).
 const fn beside(id: &'static str, label: &'static str, linear: &'static str) -> Template {
     Template { id, label, linear, limits: Some(LimLoc::SubSup) }
 }
@@ -500,6 +505,7 @@ pub fn templates() -> impl Iterator<Item = &'static Template> {
     STRUCTURES.iter().flat_map(|g| g.sections.iter().flat_map(|(_, ts)| ts.iter()))
 }
 
+/// Finds a structure template by its unique identifier.
 pub fn template(id: &str) -> Option<&'static Template> {
     templates().find(|t| t.id == id)
 }

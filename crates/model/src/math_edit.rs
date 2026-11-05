@@ -40,6 +40,7 @@ pub fn units(a: &[MNode]) -> usize {
     a.iter().map(node_units).sum()
 }
 
+/// Computes the unit count of a single node (characters for runs, 1 for structures).
 fn node_units(n: &MNode) -> usize {
     match n {
         MNode::Run(r) => r.text.chars().count(),
@@ -221,6 +222,7 @@ enum Loc {
     Inside(usize, usize),
 }
 
+/// Locates where offset `off` falls inside the node slice `a`.
 fn locate(a: &[MNode], off: usize) -> Loc {
     let mut u = 0;
     for (i, n) in a.iter().enumerate() {
@@ -257,6 +259,7 @@ fn split_at(a: &mut Arg, off: usize) -> usize {
     }
 }
 
+/// Returns whether an existing run `r` is compatible with typed text in `style`.
 fn compatible(r: &MRun, style: TypeStyle) -> bool {
     r.nor == style.nor && !r.lit
 }
@@ -300,6 +303,7 @@ pub fn insert_text(root: &mut Arg, pos: &MathPos, text: &str, style: TypeStyle) 
     MathPos { path: pos.path, off: pos.off + n }
 }
 
+/// Constructs a new `MRun` for inserted text matching the specified typing style.
 fn new_run(text: &str, style: TypeStyle) -> MRun {
     if style.nor { MRun { text: text.to_string(), nor: true, sty: Some(MSty::Plain), ..Default::default() } } else { MRun::new(text) }
 }
@@ -411,6 +415,7 @@ pub fn each_run_mut(root: &mut Arg, f: &mut dyn FnMut(&mut MRun)) {
     go(root, f, 0);
 }
 
+/// Merges consecutive identical runs in an argument list without descending into child structures.
 fn merge_shallow(a: Arg) -> Arg {
     let mut out: Arg = Vec::with_capacity(a.len());
     for n in a {
@@ -1116,6 +1121,7 @@ pub fn apply_structure(root: &mut Arg, pos: &MathPos, level: usize, action: &str
     Some(clamp(root, &out))
 }
 
+/// Applies a context menu action (insert/delete row or column) to a matrix structure.
 fn apply_matrix_action(rows: &mut Vec<Vec<Arg>>, caret: usize, action: &str, here: &impl Fn(usize) -> MathPos) -> MathPos {
     let columns = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
     let (mut row_index, mut column) = (0, 0);
@@ -1160,6 +1166,7 @@ fn apply_matrix_action(rows: &mut Vec<Vec<Arg>>, caret: usize, action: &str, her
     here(flat)
 }
 
+/// Applies a context menu action (insert/delete equation row) to an equation array structure.
 fn apply_equation_array_action(rows: &mut Vec<Arg>, caret: usize, action: &str, here: &impl Fn(usize) -> MathPos, inner: MathPos) -> MathPos {
     match action {
         "eqarr.rowAbove" | "eqarr.rowBelow" if rows.len() < 1000 => {

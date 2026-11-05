@@ -42,6 +42,7 @@ struct MathPreview<'a> {
     points: f32,
 }
 
+/// Draws a cached rasterized math preview, or falls back to placeholder text.
 fn paint_math(app: &mut SlideApp, ui: &Ui, preview: MathPreview<'_>) {
     let MathPreview { rect: r, key, linear, nodes, display, points: pt } = preview;
     let nodes = nodes.unwrap_or_else(|| parse_linear(linear));
@@ -57,6 +58,7 @@ fn paint_math(app: &mut SlideApp, ui: &Ui, preview: MathPreview<'_>) {
     }
 }
 
+/// Generates a font-safe placeholder string for an equation.
 fn math_placeholder(ui: &Ui, linear: &str) -> String {
     let font = theme::font(11.0);
     math_placeholder_with(linear, |c| ui.fonts_mut(|fonts| fonts.has_glyph(&font, c)))
@@ -135,6 +137,7 @@ fn tile(ui: &mut Ui, app: &mut SlideApp, tpl: &Template, size: egui::Vec2) -> bo
     resp.on_hover_text(tpl.label).clicked()
 }
 
+/// Renders a section header label within a gallery popup.
 fn section_heading(ui: &mut Ui, name: &str) {
     let t = Tokens::get(ui.ctx());
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width().max(240.0), 20.0), Sense::hover());
@@ -284,6 +287,7 @@ fn symbols(ui: &mut Ui, app: &mut SlideApp) {
     });
 }
 
+/// Renders a single clickable math symbol tile in the symbols strip.
 fn symbol_button(ui: &mut Ui, app: &mut SlideApp, c: char, t: &Tokens) -> bool {
     let (r, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::click());
     let s = c.to_string();
@@ -299,6 +303,7 @@ fn symbol_button(ui: &mut Ui, app: &mut SlideApp, c: char, t: &Tokens) -> bool {
     resp.on_hover_text(tooltip).clicked()
 }
 
+/// Formats tooltip text for a math symbol showing glyph and LaTeX command name.
 fn symbol_tooltip(c: char, display: &str) -> String {
     if display != c.to_string() {
         return display.to_owned();

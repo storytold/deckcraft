@@ -56,6 +56,7 @@ pub fn parse(s: &str) -> Arg {
     out
 }
 
+/// Constructs a text run node containing a single character.
 fn text(c: char) -> MNode {
     MNode::Run(MRun::new(c.to_string()))
 }
@@ -76,6 +77,7 @@ pub fn closer(c: char) -> Option<char> {
     })
 }
 
+/// Returns whether `c` is any recognized closing delimiter character.
 fn is_closer(c: char) -> bool {
     matches!(c, ')' | ']' | '}' | '⟩' | '〉' | '⌉' | '⌋' | '⟧' | '〗' | '┤')
 }
@@ -110,12 +112,17 @@ struct P {
 const MAX_STEPS: usize = 400_000;
 
 impl P {
+    /// Peeks at the current character without advancing the cursor.
     fn peek(&self) -> Option<char> {
         self.c.get(self.i).copied()
     }
+
+    /// Peeks `k` characters ahead of the current position.
     fn peek_at(&self, k: usize) -> Option<char> {
         self.c.get(self.i + k).copied()
     }
+
+    /// Checks and increments step count to avoid unbounded execution.
     fn tired(&mut self) -> bool {
         self.steps += 1;
         self.steps > MAX_STEPS || self.depth > MAX_DEPTH
@@ -690,6 +697,7 @@ pub fn strip_parens(mut a: Arg) -> Arg {
     a
 }
 
+/// Attaches a subscript or superscript `s` to `base`, merging into sub-sup if applicable.
 fn attach_script(base: Option<MNode>, sup: bool, s: Arg) -> MNode {
     match base {
         Some(MNode::Script { kind: ScriptKind::Sub, base, sub, .. }) if sup => MNode::Script { kind: ScriptKind::SubSup, base, sub, sup: s },

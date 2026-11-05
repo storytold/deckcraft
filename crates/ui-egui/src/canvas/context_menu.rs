@@ -42,6 +42,7 @@ pub(super) fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
     });
 }
 
+/// Adds equation context menu items for structure actions, display mode, justification, and conversions.
 pub(super) fn equation_items(app: &mut SlideApp, ui: &mut egui::Ui) {
     let actions: Vec<(usize, String, String)> = app
         .session

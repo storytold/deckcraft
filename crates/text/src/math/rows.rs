@@ -31,6 +31,7 @@ impl Ctx {
         (out, bases)
     }
 
+    /// Lays out an equation array of multiple rows aligned at `&`.
     pub(super) fn eq_arr(&mut self, rows: &[Arg], st: St, d: usize) -> Bx {
         self.eq_rows(rows, st, d).0
     }

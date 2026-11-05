@@ -4,6 +4,7 @@ use super::state::{MAX_NODES, class_of};
 use super::{C, Ctx, FaceRef, FontDb, LimLoc, MAX_DEPTH, MItem, MNode, MRun, MScr, MSty, Rgb, ScriptKind, is_integral, math_alnum};
 
 impl Ctx {
+    /// Lays out a list of nodes `a` as a single horizontal argument box.
     pub(super) fn arg(&mut self, a: &[MNode], st: St, depth: usize) -> Bx {
         let atoms = self.row(a, st, depth, 0);
         let em = self.em(st);
@@ -115,6 +116,7 @@ impl Ctx {
         out
     }
 
+    /// Breaks a math text run `r` into atom boxes and alignment marks with proper font styling and spacing.
     pub(super) fn run_atoms(&self, r: &MRun, st: St, u0: usize, path: &[(usize, usize)]) -> Vec<RunPart> {
         let mut out = Vec::new();
         let size = r.size.filter(|s| s.is_finite()).unwrap_or(self.base).clamp(1.0, 1638.0) * self.scale(st.level);
@@ -316,6 +318,7 @@ impl Ctx {
         }
     }
 
+    /// Lays out a single math node `n` into a box `Bx`.
     fn node(&mut self, n: &MNode, st: St, depth: usize) -> Bx {
         if depth > MAX_DEPTH {
             return Bx::default();

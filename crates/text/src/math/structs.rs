@@ -101,6 +101,7 @@ impl Ctx {
         out
     }
 
+    /// Lays out a fraction or stack of `num` over `den` according to `kind`.
     pub(super) fn frac(&mut self, kind: FracKind, num: &[MNode], den: &[MNode], st: St, d: usize) -> Bx {
         let em = self.em(st);
         match kind {
@@ -179,6 +180,7 @@ impl Ctx {
         }
     }
 
+    /// Lays out a radical with radicand `e` and optional degree `deg`.
     pub(super) fn radical(&mut self, deg: &[MNode], deg_hide: bool, e: &[MNode], st: St, d: usize) -> Bx {
         let b = self.sub(1, e, st.cramp(), d);
         let size = self.size(st);
@@ -223,6 +225,7 @@ impl Ctx {
         out
     }
 
+    /// Lays out an accent `chr` over operand `e`.
     pub(super) fn accent(&mut self, chr: char, e: &[MNode], st: St, d: usize) -> Bx {
         let b = self.sub(0, e, st.cramp(), d);
         let size = self.size(st);
@@ -287,6 +290,7 @@ impl Ctx {
         out
     }
 
+    /// Lays out a grid/matrix of cells with per-column justification `col_jc`.
     pub(super) fn matrix(&mut self, rows: &[Vec<Arg>], col_jc: &[ColJc], st: St, d: usize) -> Bx {
         let em = self.em(st);
         let mut cells: Vec<Vec<Bx>> = Vec::new();

@@ -12,9 +12,11 @@ pub(super) struct St {
 }
 
 impl St {
+    /// Style for a subscript or superscript.
     pub(super) fn script(self) -> St {
         St { level: (self.level + 1).min(2), display: false, ..self }
     }
+    /// Cramped style (superscripts lowered).
     pub(super) fn cramp(self) -> St {
         St { cramped: true, ..self }
     }
@@ -39,6 +41,7 @@ pub(super) enum Cls {
 }
 
 impl Cls {
+    /// Table index of the atom class.
     fn idx(self) -> usize {
         self as usize
     }
@@ -57,6 +60,7 @@ const SPACING: [[i8; 8]; 8] = [
     [-3, 3, -4, -5, -3, 0, -3, -3],  // Inner
 ];
 
+/// Inter-atom spacing between classes `l` and `r` in mathematical units (mu).
 fn spacing_mu(l: Cls, r: Cls, st: St) -> f32 {
     let v = SPACING.get(l.idx()).and_then(|row| row.get(r.idx())).copied().unwrap_or(0);
     if v < 0 && st.level > 0 { 0.0 } else { v.unsigned_abs() as f32 }
@@ -86,6 +90,7 @@ pub(super) struct Bx {
 }
 
 impl Bx {
+    /// Sets both the first and last atom classes of this box to `c`.
     pub(super) fn cls(mut self, c: Cls) -> Bx {
         self.first = c;
         self.last = c;
@@ -105,9 +110,11 @@ impl Bx {
             self.slots.push(sl);
         }
     }
+    /// Adds a caret slot at `(x, 0.0)` for argument `path` and offset `off`.
     pub(super) fn slot(&mut self, path: &[(usize, usize)], off: usize, x: f32) {
         self.slots.push(Slot { path: path.to_vec(), off, x, y: 0.0, a: 0.0, d: 0.0 });
     }
+    /// Draws a solid rectangle of size `(w, h)` at `(x, y)`.
     pub(super) fn rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Rgb) {
         if w > 0.0 && h > 0.0 {
             self.items.push(MItem::Rect { x, y, w, h, color });
