@@ -2,8 +2,8 @@
 //! placeholder sees `autofit: null` in `shape.inspect` while the layout's shrink-on-overflow draws
 //! the text at a fraction of its size; these tests pin what the query reports for that case, for
 //! text that fits, for text that overflows a shape that does not shrink, for a slide number field,
-//! for members of resized groups, for a body of empty paragraphs, for text nested deeper than the
-//! slide draws and for bad params.
+//! for members of resized groups, for a body of empty paragraphs, for vertical text, for text set
+//! in columns, for text nested deeper than the slide draws and for bad params.
 
 use serde_json::{Value, json};
 
@@ -303,4 +303,86 @@ fn text_nested_past_64_groups_is_refused_with_its_depth() {
     assert_eq!(fit(&mut s, json!({}))["bodies"], json!([]));
     let e = s.execute("text.fit", &json!({"ids": [99_999]})).unwrap_err().to_string();
     assert!(e.contains("no shape 99999 on slide 1"), "{e}");
+}
+
+/// Paragraphs "Line 1" to "Line {n}". Each is one 18 pt line in a shape, and a line is 1.2 times
+/// its size tall, so `n` of them are `21.6 * n` pt of text.
+fn numbered_lines(n: usize) -> String {
+    (1..=n).map(|i| format!("Line {i}")).collect::<Vec<_>>().join("\n")
+}
+
+/// Vertical text is set in its frame turned a quarter turn, so its lines stack from side to side:
+/// `frameHeight` is the frame's width less its insets, and `overflowPt` how far the lines reach
+/// past its left and right edges. A turned 60 x 300 pt box reports what a 300 x 60 pt horizontal
+/// box with the same text reports.
+#[test]
+fn vertical_text_overflows_past_the_frames_left_and_right_edges() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let text = numbered_lines(4);
+    let mut insert = |rect: [i64; 4], dir: Option<&str>| {
+        let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": rect, "text": text})).unwrap()["id"].clone();
+        if let Some(dir) = dir {
+            s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+            s.execute("format.direction", &json!({"dir": dir})).unwrap();
+        }
+        id
+    };
+    let across = insert([100, 100, 300, 60], None);
+    let turned = [insert([450, 20, 60, 300], Some("rotate90")), insert([550, 20, 60, 300], Some("rotate270"))];
+    let stacked = insert([650, 20, 60, 300], Some("stacked"));
+    let r = fit(&mut s, json!({"ids": [across, turned[0], turned[1], stacked]}));
+    let b = &r["bodies"][0];
+    // Four 21.6 pt lines (86.4 pt) in a frame of 60 pt less 3.6 pt insets at each side (52.8 pt).
+    assert_eq!(b["lines"], 4, "{b}");
+    assert_eq!(num(b, "contentHeight"), 86.4, "{b}");
+    assert_eq!(num(b, "frameHeight"), 52.8, "{b}");
+    assert_eq!(b["overflows"], true, "{b}");
+    assert_eq!(num(b, "overflowPt"), 33.6, "{b}");
+    for v in [&r["bodies"][1], &r["bodies"][2]] {
+        for k in ["lines", "contentHeight", "frameHeight", "overflows", "overflowPt"] {
+            assert_eq!(v[k], b[k], "{k}: turned {v}, horizontal {b}");
+        }
+    }
+    // Stacked text stands each character upright, its lines placed from left to right: its frame
+    // is the shape's width less the insets too, and the lines reach past it by as much as they
+    // are taller than it.
+    let st = &r["bodies"][3];
+    assert_eq!(num(st, "frameHeight"), 52.8, "{st}");
+    assert_eq!(st["overflows"], true, "{st}");
+    let over = num(st, "contentHeight") - num(st, "frameHeight");
+    assert!((num(st, "overflowPt") - over).abs() < 0.11, "{st}");
+}
+
+/// A body set in columns fills each column from the top, and the last column takes the lines the
+/// others leave. `overflowPt` measures the lines where the columns draw them, so only the last
+/// column overflows, while `contentHeight` is the text's height set in one column.
+#[test]
+fn text_in_columns_overflows_only_where_the_last_column_passes_the_frame() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    // Frames of 100 pt less 3.6 pt insets at top and bottom, 92.8 pt: room for four 21.6 pt lines.
+    let fits = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 400, 100], "text": numbered_lines(6)})).unwrap()["id"].clone();
+    let spills =
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 250, 400, 100], "text": numbered_lines(14)})).unwrap()["id"].clone();
+    let one = fit(&mut s, json!({"ids": [fits, spills]}));
+    // In one column, six lines (129.6 pt) and fourteen (302.4 pt) both overflow.
+    assert_eq!(num(&one["bodies"][0], "overflowPt"), 36.8, "{one}");
+    assert_eq!(num(&one["bodies"][1], "overflowPt"), 209.6, "{one}");
+    s.execute("edit.select", &json!({"ids": [fits, spills]})).unwrap();
+    s.execute("format.columns", &json!({"count": 2, "spacing": 18})).unwrap();
+    let two = fit(&mut s, json!({"ids": [fits, spills]}));
+    let (a, b) = (&two["bodies"][0], &two["bodies"][1]);
+    // Six lines: four in the first column and two in the second, so every column fits.
+    assert_eq!(a["lines"], 6, "{a}");
+    assert_eq!(a["overflows"], false, "{a}");
+    assert_eq!(a["overflowPt"], 0.0, "{a}");
+    assert_eq!(a["contentHeight"], one["bodies"][0]["contentHeight"], "{a}");
+    assert!(num(a, "contentHeight") > num(a, "frameHeight"), "{a}");
+    // Fourteen lines: four in the first column and ten (216 pt) in the last, 123.2 pt more than
+    // the frame holds.
+    assert_eq!(b["lines"], 14, "{b}");
+    assert_eq!(b["overflows"], true, "{b}");
+    assert_eq!(num(b, "overflowPt"), 123.2, "{b}");
+    assert_eq!(b["contentHeight"], one["bodies"][1]["contentHeight"], "{b}");
 }

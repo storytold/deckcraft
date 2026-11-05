@@ -2,7 +2,8 @@
 //! its text on overflow usually inherits the setting from its layout, so `shape.inspect` shows
 //! `autofit: null` while the slide draws the text at half size; this query reports the setting in
 //! effect, the scale and line spacing reduction the layout applied, the drawn font sizes and how
-//! far the drawn lines reach past the frame's top and bottom edges.
+//! far the drawn lines reach past the frame's top and bottom edges (its left and right edges for
+//! vertical text, whose lines stack from side to side).
 
 use std::borrow::Cow;
 
@@ -38,12 +39,18 @@ pub(crate) struct Fit {
     pub sizes: Option<(f64, f64)>,
     pub lines: usize,
     /// Height of the laid-out text and of the frame it sits in (insets applied), in points on the
-    /// slide: a group member's at the size its groups draw it.
+    /// slide: a group member's at the size its groups draw it. Vertical text is laid out in its
+    /// frame turned a quarter turn and measured across its lines, so `frame_height` is the frame's
+    /// width. For text set in columns, `content_height` is its height set in one column, which can
+    /// exceed `frame_height` while every column fits.
     pub content_height: f64,
     pub frame_height: f64,
     /// The layout's overflow test: the text is taller than its frame by more than half a point.
     pub overflows: bool,
-    /// How far the drawn lines reach past the frame's top and bottom edges together, in points.
+    /// How far the drawn lines reach past the frame's top and bottom edges together, in points:
+    /// past its left and right edges for vertical text. Text set in columns is measured where its
+    /// columns draw its lines: each column starts at the top, and the last takes the lines the
+    /// others leave.
     pub overflow: f64,
 }
 
