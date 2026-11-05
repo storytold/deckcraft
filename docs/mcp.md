@@ -59,7 +59,7 @@ folders:
   inside `/work`. On Windows case is ignored, UNC paths (`\\server\share\...`) are resolved like
   drive-letter ones, and device names (`CON`, `NUL`, `COM1`...) are refused.
 - A refused path is an ordinary tool error the agent can read and correct, for example
-  `automation path rejected: outside the write roots /work/project/out: /etc/x.pptx` or
+  `automation path rejected: outside the write root /work/project/out: /etc/x.pptx` or
   `automation filesystem access is not granted: write authority is absent: /work/project/out/x.pptx`.
 - The roots must be existing folders; a missing one stops the server with an error. Repeat either flag
   to allow access to another folder; both `--flag <dir>` and `--flag=<dir>` forms work.

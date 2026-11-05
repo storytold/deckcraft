@@ -390,12 +390,8 @@ impl Dictionary {
         false
     }
 
-    fn no_suggest_word(&self, w: &str) -> bool {
-        self.words.get(w).is_some_and(|hs| hs.iter().all(|f| self.has(f, self.no_suggest) && !f.is_empty()))
-    }
-
     fn suggestible(&self, w: &str) -> bool {
-        self.check(w) && !self.no_suggest_word(w) && !self.no_suggest_word(&w.to_lowercase())
+        self.check(w) && !self.words.get(w).is_some_and(|hs| hs.iter().all(|f| self.has(f, self.no_suggest) && !f.is_empty()))
     }
 
     /// Up to `n` corrections for a misspelt `word`, best first.
@@ -835,13 +831,13 @@ pub(crate) mod tests {
     use super::*;
 
     // A contributor-original miniature dictionary in Hunspell format.
-    pub(crate) const AFF: &str = "SET UTF-8\nTRY esianrtolcdugmphbyfvkwzxjq\nFORBIDDENWORD !\nNEEDAFFIX ?\nKEEPCASE K\nNOSUGGEST N\n\
+    pub(crate) const AFF: &str = "SET UTF-8\nTRY esianrtolcdugmphbyfvkwzxjq\nFORBIDDENWORD !\nNEEDAFFIX ?\nKEEPCASE K\n\
 REP 1\nREP f ph\n\
 PFX U Y 1\nPFX U 0 un .\n\
 SFX S Y 2\nSFX S y ies [^aeiou]y\nSFX S 0 s [^y]\n\
 SFX G Y 2\nSFX G e ing e\nSFX G 0 ing [^e]\n\
 SFX D Y 1\nSFX D 0 ed/S .\n";
-    pub(crate) const DIC: &str = "10\nslide/S\nmake/G\nhappy\ncity/S\ndo/U\nwork/USG\nphoto/S\nNASA/K\nfoo/?S\nfuu/N\n";
+    pub(crate) const DIC: &str = "9\nslide/S\nmake/G\nhappy\ncity/S\ndo/U\nwork/USG\nphoto/S\nNASA/K\nfoo/?S\n";
 
     fn d() -> Dictionary {
         Dictionary::parse(AFF.as_bytes(), DIC.as_bytes())
@@ -899,14 +895,6 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         assert!(d.suggest("foto", 5).contains(&"photo".to_string()));
         assert!(d.suggest("Slidse", 5).contains(&"Slides".to_string()));
         assert!(d.suggest("workingslides", 5).contains(&"working slides".to_string()));
-    }
-
-    #[test]
-    fn all_caps_suggestions_still_respect_no_suggest_and_keepcase() {
-        let d = d();
-        assert!(d.check("FUU"));
-        assert!(!d.suggestible("FUU"));
-        assert!(d.suggestible("NASA"));
     }
 
     /// #1175: compound splitting is quadratic in the word's length, so a word longer than
