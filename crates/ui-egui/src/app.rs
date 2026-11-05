@@ -63,6 +63,7 @@ impl SlideApp {
             status: None,
             opening: None,
             toast: None,
+            toast_queue: Vec::new(),
             fonts_noted: Default::default(),
             perf: Perf { frame_ms: 0.0, render_ms: 0.0, fps: 0.0 },
             synthetic: vec![],

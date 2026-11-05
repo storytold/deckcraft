@@ -206,4 +206,9 @@ fn a_sticky_microphone_notice_is_not_replaced_by_a_transient_one() {
     let before = app.toast.as_ref().map(|t| t.text.clone()).expect("the failure notice");
     app.notify("Saved");
     assert_eq!(app.toast.as_ref().map(|t| t.text.clone()), Some(before), "the failure stays until closed");
+    assert_eq!(app.toast_queue, vec!["Saved".to_string()], "the later notice waits instead of being lost");
+    // Closing the failure shows the notice that waited.
+    app.toast = None;
+    crate::toast::show_queued(&mut app);
+    assert_eq!(app.toast.as_ref().map(|t| t.text.clone()), Some("Saved".to_string()));
 }

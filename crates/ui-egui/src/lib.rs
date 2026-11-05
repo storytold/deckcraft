@@ -256,6 +256,8 @@ pub struct SlideApp {
     pub opening: Option<opening::Opening>,
     /// A brief notice over the bottom of the window (missing fonts on opening a file).
     pub toast: Option<toast::Toast>,
+    /// Notices that arrived while a sticky one was up; each shows once it is closed.
+    pub(crate) toast_queue: Vec<String>,
     /// Documents (by uid) whose missing fonts have been mentioned.
     fonts_noted: std::collections::HashSet<u64>,
     pub perf: Perf,

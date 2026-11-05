@@ -33,10 +33,15 @@ pub fn missing_fonts_message(fonts: &[String]) -> Option<String> {
 /// Show `text` for a few seconds — unless a sticky notice is up. That one is a failure the user
 /// must read, so a transient note waits instead of replacing it unseen.
 pub fn note(app: &mut SlideApp, text: impl Into<String>) {
+    let text = text.into();
     if app.toast.as_ref().is_some_and(|t| t.sticky) {
+        // Wait behind the failure the user must read, so an open error or a font note is not lost.
+        if app.toast_queue.len() < 8 && !app.toast_queue.contains(&text) {
+            app.toast_queue.push(text);
+        }
         return;
     }
-    app.toast = Some(Toast { text: text.into(), at: crate::now_ms(), sticky: false });
+    app.toast = Some(Toast { text, at: crate::now_ms(), sticky: false });
 }
 
 /// Toast the active presentation's missing fonts, once per opened document.
@@ -50,11 +55,24 @@ pub fn note_missing_fonts(app: &mut SlideApp) {
     }
 }
 
+/// Show the notice that waited behind a sticky one, oldest first.
+pub(crate) fn show_queued(app: &mut SlideApp) {
+    if app.toast.is_some() || app.toast_queue.is_empty() {
+        return;
+    }
+    let text = app.toast_queue.remove(0);
+    app.toast = Some(Toast { text, at: crate::now_ms(), sticky: false });
+}
+
 /// Render and dismiss the active transient toast without disturbing the document.
 pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
-    let Some(toast) = &app.toast else { return };
+    let Some(toast) = &app.toast else {
+        show_queued(app);
+        return;
+    };
     if !toast.sticky && crate::now_ms() - toast.at > SHOW_MS {
         app.toast = None;
+        show_queued(app);
         return;
     }
     let t = Tokens::get(ctx);
@@ -85,6 +103,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     });
     if close {
         app.toast = None;
+        show_queued(app);
     } else {
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
