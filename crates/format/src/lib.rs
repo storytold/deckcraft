@@ -181,17 +181,17 @@ impl ArchiveIndex {
         let mut raw = HashMap::with_capacity(wanted.len());
         let mut decoded = HashMap::with_capacity(wanted.len());
         for (i, name) in z.file_names_raw().enumerate() {
-            if let Ok(name) = std::str::from_utf8(name) {
-                if wanted.contains(name) {
-                    raw.entry(name.to_owned()).or_insert(i);
-                }
+            if let Ok(name) = std::str::from_utf8(name)
+                && wanted.contains(name)
+            {
+                raw.entry(name.to_owned()).or_insert(i);
             }
         }
         for (i, name) in z.file_names().enumerate() {
-            if let Ok(name) = name {
-                if wanted.contains(name.as_ref()) {
-                    decoded.entry(name.into_owned()).or_insert(i);
-                }
+            if let Ok(name) = name
+                && wanted.contains(name.as_ref())
+            {
+                decoded.entry(name.into_owned()).or_insert(i);
             }
         }
         ArchiveIndex { raw, decoded }
