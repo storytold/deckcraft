@@ -234,11 +234,11 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
     ui.horizontal_wrapped(|ui| {
         ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Direction"));
         match &g.shape {
-            GradientShape::Linear { angle, .. } => {
+            GradientShape::Linear { angle, scaled } => {
                 for (l, a) in DIRECTIONS_LINEAR {
                     let on = (angle - a).abs() < 0.5;
                     if ui.selectable_label(on, l).on_hover_text(format!("{a}°")).clicked() {
-                        out = Some(Gradient { shape: GradientShape::Linear { angle: a, scaled: false }, ..g.clone() });
+                        out = Some(Gradient { shape: GradientShape::Linear { angle: a, scaled: *scaled }, ..g.clone() });
                     }
                 }
             }
@@ -252,11 +252,11 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
             }
         }
     });
-    if let GradientShape::Linear { angle, .. } = &g.shape {
+    if let GradientShape::Linear { angle, scaled } = &g.shape {
         ui.horizontal(|ui| {
             ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Angle"));
             if let Some(a) = widgets::spinner(ui, &format!("{id}-angle"), "Angle", *angle, 15.0, "°", 70.0) {
-                out = Some(Gradient { shape: GradientShape::Linear { angle: a.rem_euclid(360.0), scaled: false }, ..g.clone() });
+                out = Some(Gradient { shape: GradientShape::Linear { angle: a.rem_euclid(360.0), scaled: *scaled }, ..g.clone() });
             }
         });
     }
