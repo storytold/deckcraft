@@ -9,7 +9,7 @@ use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, NO_ID_SPACE, bad, cmd, has_two, str_param, targets, xfrm_of};
 use crate::{Result, Session};
 
 /// Closed polygons (slide points) describing a filled area (non-zero winding).
@@ -246,8 +246,17 @@ fn merge(s: &mut Session, p: &Value) -> Result<Value> {
             list.insert(at + k, sh);
         }
         list.retain(|x| !ids.contains(&x.id));
-        sel.shapes = new_ids.clone();
         let _ = list;
+        if sel.target == crate::Target::Slides
+            && let Some(sl) = doc.slides.get_mut(sel.slide)
+        {
+            let sl = std::sync::Arc::make_mut(sl);
+            sl.animations.retain(|a| !ids.contains(&a.shape));
+            for a in sl.animations.iter_mut().filter(|a| a.trigger.is_some_and(|t| ids.contains(&t))) {
+                a.trigger = None;
+            }
+        }
+        sel.shapes = new_ids.clone();
         Ok(())
     })?;
     Ok(json!({"ids": new_ids.iter().map(|i| i.0).collect::<Vec<_>>()}))
@@ -255,7 +264,12 @@ fn merge(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use deckcraft_model::{ShapeId, ShapeKind};
+    use serde_json::json;
+
+    use super::{Area, area_of, area_size, letters_of, merge_areas};
+    use crate::Session;
+    use crate::cmd::base64_encode;
 
     fn square(x: f64, y: f64, s: f64) -> Area {
         vec![vec![[x, y], [x + s, y], [x + s, y + s], [x, y + s]]]
@@ -332,5 +346,37 @@ mod tests {
         let out = st.shape(ShapeId(r["ids"][0].as_u64().expect("id") as u32)).expect("result");
         assert!(matches!(out.kind, ShapeKind::Shape) && out.text.is_none());
         assert!(matches!(out.fill, Some(deckcraft_model::style::Fill::Solid { .. })), "{:?}", out.fill);
+    }
+
+    #[test]
+    fn merge_cleans_animation_targets_and_triggers_for_every_operation_and_undo_restores_them() {
+        for op in ["union", "combine", "fragment", "intersect", "subtract"] {
+            let mut s = Session::with_new();
+            let first = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 100, 100]})).expect("first shape")["id"]
+                .as_u64()
+                .expect("id") as u32;
+            let second = s.execute("shape.insert", &json!({"preset": "rect", "rect": [50, 0, 100, 100]})).expect("second shape")["id"]
+                .as_u64()
+                .expect("id") as u32;
+            let unrelated = s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 0, 100, 100]})).expect("unrelated shape")["id"]
+                .as_u64()
+                .expect("id") as u32;
+            s.execute("animation.add", &json!({"effect": "fade", "ids": [second]})).expect("operand animation");
+            s.execute("animation.add", &json!({"effect": "spin", "ids": [unrelated]})).expect("unrelated animation");
+            s.execute("animation.timing", &json!({"index": 1, "trigger": first})).expect("trigger animation");
+
+            s.execute("shape.merge", &json!({"op": op, "ids": [first, second]})).expect("merge");
+            let animations = &s.doc().expect("doc").doc.slides[0].animations;
+            assert_eq!(animations.len(), 1, "{op} removed animations for merged operands");
+            assert_eq!(animations[0].shape.0, unrelated, "{op} preserved the unrelated effect");
+            assert_eq!(animations[0].trigger, None, "{op} cleared the removed shape trigger");
+
+            s.execute("edit.undo", &json!({})).expect("undo merge");
+            let animations = &s.doc().expect("doc").doc.slides[0].animations;
+            assert_eq!(animations.len(), 2, "{op} undo restored removed effects");
+            assert_eq!(animations[0].shape.0, second);
+            assert_eq!(animations[1].shape.0, unrelated);
+            assert_eq!(animations[1].trigger.map(|id| id.0), Some(first));
+        }
     }
 }
