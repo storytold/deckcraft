@@ -607,20 +607,30 @@ fn kept_with_file_ids(kept: &[KeptSequence], idmap: &IdMap) -> (Vec<El>, Vec<El>
         mapped.push((seq, k));
     }
     // A condition (`p:tn`) naming a node outside the kept sequences would point at another node
-    // once ours are written: such a sequence is left out, its build entries with it.
-    let mut nodes = std::collections::HashSet::new();
-    for (seq, _) in &mut mapped {
-        seq.map_attr(Some("cTn"), "id", &mut |id| {
-            nodes.insert(id);
-            Some(id)
+    // once ours are written: such a sequence is left out, its build entries with it. Leaving one
+    // out removes its nodes, so a sequence naming those goes too: repeat until none changes.
+    loop {
+        let mut nodes = std::collections::HashSet::new();
+        for (seq, _) in &mut mapped {
+            seq.map_attr(Some("cTn"), "id", &mut |id| {
+                nodes.insert(id);
+                Some(id)
+            });
+        }
+        let before = mapped.len();
+        mapped.retain(|(seq, _)| {
+            let ok = seq.clone().map_attr(Some("tn"), "val", &mut |v| nodes.contains(&v).then_some(v));
+            if !ok {
+                log::warn!("pptx: a kept animation sequence names a time node that is not kept and was left out");
+            }
+            ok
         });
+        if mapped.len() == before {
+            break;
+        }
     }
     let (mut seqs, mut builds) = (vec![], vec![]);
     for (seq, k) in mapped {
-        if !seq.clone().map_attr(Some("tn"), "val", &mut |v| nodes.contains(&v).then_some(v)) {
-            log::warn!("pptx: a kept animation sequence names a time node that is not kept and was left out");
-            continue;
-        }
         // Two sequences on the same shape both carry its build entry; it is written once, or each
         // reload would hand both copies to both sequences and the copies would multiply.
         for mut b in k.builds.iter().filter_map(|b| parse(b)) {

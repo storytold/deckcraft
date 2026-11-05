@@ -253,6 +253,10 @@ fn a_kept_reference_into_another_kept_sequence_follows_it_and_a_dangling_one_is_
     let mut dangling = seq(30, 31, 33, r#"<p:stCondLst><p:cond evt="onEnd" delay="0"><p:tn val="2"/></p:cond></p:stCondLst>"#);
     dangling.builds.push(format!(r#"<p:bldP spid="{content}" grpId="7" animBg="1" {ns}/>"#));
     slide.kept_sequences.push(dangling);
+    // One naming a node of the left-out sequence depends on it and goes too.
+    let mut dependent = seq(40, 41, 44, r#"<p:stCondLst><p:cond evt="onEnd" delay="0"><p:tn val="31"/></p:cond></p:stCondLst>"#);
+    dependent.builds.push(format!(r#"<p:bldP spid="{content}" grpId="8" animBg="1" {ns}/>"#));
+    slide.kept_sequences.push(dependent);
     let xml = slide_xml(&p);
     let id_of = |marker: &str| {
         let at = xml.find(&format!(r#"presetID="{marker}""#)).expect("node");
@@ -266,6 +270,8 @@ fn a_kept_reference_into_another_kept_sequence_follows_it_and_a_dangling_one_is_
     assert!(xml.contains(r#"presetID="22""#), "{xml}");
     assert!(!xml.contains(r#"presetID="33""#), "the dangling sequence is left out: {xml}");
     assert!(!xml.contains(r#"grpId="7""#), "and its build entry with it: {xml}");
+    assert!(!xml.contains(r#"presetID="44""#), "a sequence depending on it goes too: {xml}");
+    assert!(!xml.contains(r#"grpId="8""#), "with its build entry: {xml}");
     assert_eq!(round(&p).slides[0].kept_sequences.len(), 2);
 }
 
