@@ -98,7 +98,8 @@ fn selection_handles(app: &SlideApp, st: &DocState, painter: &egui::Painter, xf:
     }
 }
 
-fn text_overlays(st: &DocState, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &Tokens) {
+fn text_overlays(app: &mut SlideApp, ui: &mut Ui, painter: &egui::Painter, xf: Xf, t: &Tokens) {
+    let Some(st) = app.session.active() else { return };
     let editing = st.selection.text.clone();
     // Caret / text selection, in a shape or a table cell.
     if let Some(ts) = &editing {
@@ -109,11 +110,25 @@ fn text_overlays(st: &DocState, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
         for (a, b, thick) in deckcraft_engine::cmd::text::composition_underlines(st) {
             painter.line_segment([xf.to_screen(a), xf.to_screen(b)], Stroke::new(if thick { 2.0 } else { 1.0 }, t.caret));
         }
+        if st.selection.math.is_some()
+            && let Some((r, to_slide)) = deckcraft_engine::cmd::equation::active_arg_rect(st)
+        {
+            let pts = [Point::new(r.x0, r.y0), Point::new(r.x1, r.y0), Point::new(r.x1, r.y1), Point::new(r.x0, r.y1)];
+            painter.add(egui::Shape::convex_polygon(
+                pts.iter().map(|q| xf.to_screen(to_slide * *q)).collect(),
+                Color32::from_rgba_unmultiplied(80, 120, 180, 38),
+                Stroke::NONE,
+            ));
+        }
         if !ts.is_range() {
             let blink = (ui.input(|i| i.time) * 1.6).fract() < 0.6;
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(300));
-            // An empty placeholder shows the caret where typing begins too.
-            if blink && let Some((top, bot)) = deckcraft_engine::cmd::text::caret_line(st, ts) {
+            let line = if st.selection.math.is_some() {
+                deckcraft_engine::cmd::equation::math_caret_line(st)
+            } else {
+                deckcraft_engine::cmd::text::caret_line(st, ts)
+            };
+            if blink && let Some((top, bot)) = line {
                 // In the colour of the text being typed: a black caret is lost on a dark slide.
                 let color = deckcraft_engine::cmd::text::caret_color(st, ts).map_or(t.caret, theme::to_color32);
                 painter.line_segment([xf.to_screen(top), xf.to_screen(bot)], Stroke::new(1.5, color));
@@ -144,9 +159,40 @@ fn text_overlays(st: &DocState, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
             painter.add(egui::Shape::convex_polygon(pts.iter().map(|q| xf.to_screen(f.affine * *q)).collect(), t.text_selection, Stroke::NONE));
         }
     }
+    let eq_box = app.session.active().and_then(deckcraft_engine::cmd::equation::placed_equation);
+    if let Some((eq, to_slide)) = eq_box {
+        let p0 = xf.to_screen(to_slide * Point::new(eq.x, eq.top));
+        let p1 = xf.to_screen(to_slide * Point::new(eq.x + f64::from(eq.math.width), eq.bottom));
+        let er = Rect::from_two_pos(p0, p1).expand2(egui::vec2(6.0, 2.0));
+        let grip_w = 8.0;
+        let opt_w = 14.0;
+        let outer = Rect::from_min_max(pos2(er.min.x - grip_w, er.min.y), pos2(er.max.x + opt_w, er.max.y));
+        let frame = Color32::from_rgb(160, 175, 200);
+        let fill = Color32::from_rgba_unmultiplied(180, 195, 220, 45);
+        painter.rect_stroke(outer, 2.0, Stroke::new(1.0, frame), egui::StrokeKind::Outside);
+        let grip = Rect::from_min_max(outer.min, pos2(er.min.x, outer.max.y));
+        painter.rect_filled(grip, 2.0, fill);
+        let c = grip.center();
+        for dy in [-3.0, 0.0, 3.0] {
+            painter.circle_filled(pos2(c.x, c.y + dy), 1.0, frame);
+        }
+        let opt = Rect::from_min_max(pos2(er.max.x, outer.min.y), outer.max);
+        painter.rect_filled(opt, 2.0, fill);
+        let oc = opt.center();
+        painter.add(egui::Shape::convex_polygon(
+            vec![pos2(oc.x - 3.0, oc.y - 1.5), pos2(oc.x + 3.0, oc.y - 1.5), pos2(oc.x, oc.y + 2.0)],
+            Color32::from_rgb(90, 105, 130),
+            Stroke::NONE,
+        ));
+        let opt_resp =
+            ui.interact(opt, ui.make_persistent_id("deckcraft_equation_options_btn"), egui::Sense::click()).on_hover_text("Equation Options");
+        egui::Popup::menu(&opt_resp).show(|ui| {
+            super::context_menu::equation_items(app, ui);
+        });
+    }
 }
 
-pub(super) fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &Tokens) {
+pub(super) fn overlays(app: &mut SlideApp, ui: &mut Ui, painter: &egui::Painter, xf: Xf, t: &Tokens) {
     // Spelling squiggles under misspelt words (checked in the background).
     if let Some(st) = app.session.active() {
         let lines = app.squiggles.update(st, Some(ui.ctx()));
@@ -157,7 +203,7 @@ pub(super) fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf:
     }
     let Some(st) = app.session.active() else { return };
     selection_handles(app, st, painter, xf, t);
-    text_overlays(st, ui, painter, xf, t);
+    text_overlays(app, ui, painter, xf, t);
     // Smart guides, marquee, previews.
     for g in &app.session.tool.guides {
         let (a, b) =

@@ -200,6 +200,48 @@ pub(super) fn move_caret(s: &mut Session, p: &Value) -> Result<Value> {
     }
     .to_string();
     let collapse_to = |left: bool| if left { t.ordered().0 } else { t.ordered().1 };
+    if !extend && !t.is_range() {
+        if to == "right"
+            && let Some(para) = body.paragraphs.get(caret.0)
+        {
+            let mut off = 0usize;
+            for r in &para.runs {
+                let len = r.char_len();
+                if caret.1 == off && matches!(&r.kind, deckcraft_model::text::RunKind::Math { .. }) {
+                    s.select(|_, sel| {
+                        sel.math = Some(crate::MathEdit { pos: caret, caret: deckcraft_model::math_edit::MathPos::default() });
+                    })?;
+                    return Ok(json!({"caret": [caret.0, caret.1], "lineEnd": false, "math": true}));
+                }
+                off += len;
+            }
+        } else if to == "left" {
+            let prev = ed::char_move(&body, caret, false);
+            if prev != caret
+                && let Some(para) = body.paragraphs.get(prev.0)
+            {
+                let mut off = 0usize;
+                for r in &para.runs {
+                    let len = r.char_len();
+                    if prev.1 == off
+                        && let deckcraft_model::text::RunKind::Math { math, .. } = &r.kind
+                    {
+                        let end_caret = deckcraft_model::math_edit::MathPos::new(Vec::new(), deckcraft_model::math_edit::units(&math.nodes));
+                        s.select(|_, sel| {
+                            if let Some(tt) = sel.text.as_mut() {
+                                tt.caret = prev;
+                                tt.anchor = prev;
+                                tt.line_end = None;
+                            }
+                            sel.math = Some(crate::MathEdit { pos: prev, caret: end_caret });
+                        })?;
+                        return Ok(json!({"caret": [prev.0, prev.1], "lineEnd": false, "math": true}));
+                    }
+                    off += len;
+                }
+            }
+        }
+    }
     let mut upstream = false;
     let new = match to.as_str() {
         "left" if t.is_range() && !extend => collapse_to(true),
@@ -246,6 +288,7 @@ pub(super) fn move_caret(s: &mut Session, p: &Value) -> Result<Value> {
                 tt.anchor = new;
             }
         }
+        sel.math = None;
     })?;
     Ok(json!({"caret": [new.0, new.1], "lineEnd": upstream}))
 }
@@ -258,6 +301,7 @@ pub(super) fn select(s: &mut Session, p: &Value) -> Result<Value> {
             t.anchor = a;
             t.caret = c;
         }
+        sel.math = None;
     })?;
     ok()
 }
@@ -271,6 +315,7 @@ pub(super) fn select_all(s: &mut Session, _p: &Value) -> Result<Value> {
             t.anchor = (0, 0);
             t.caret = end;
         }
+        sel.math = None;
     })?;
     ok()
 }
@@ -286,6 +331,7 @@ pub(super) fn select_word(s: &mut Session, p: &Value) -> Result<Value> {
             t.anchor = a;
             t.caret = b;
         }
+        sel.math = None;
     })?;
     ok()
 }
@@ -305,6 +351,7 @@ pub(super) fn select_para(s: &mut Session, p: &Value) -> Result<Value> {
             t.anchor = (at.0, 0);
             t.caret = end;
         }
+        sel.math = None;
     })?;
     ok()
 }

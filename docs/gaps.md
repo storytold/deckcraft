@@ -278,8 +278,8 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
 - **Estimate:** 2–4 h.
 
 ### Equations
-- **Evidence:** checklist row missing; PR #55 (OMML editor, +10.5k lines) is open.
-- **Estimate:** 3–6 h to review, land and round-trip.
+- **Evidence:** Full equation support landed: Alt+= shortcut and Insert ▸ Equation command (`equation.insert`), equation contextual ribbon with structure galleries (fractions, scripts, integrals, large operators, brackets, functions, accents, limits, matrices), UnicodeMath and LaTeX input modes, OpenType MATH engine layout, display/inline modes, PPTX OMML read/write roundtrip, PDF export text layer, and equation copy/cut/paste.
+- **Estimate:** done.
 
 ### Smaller missing rows
 Zoom: live thumbnails, the zoom-in animation and the native `p166:sldZm` element (3–5 h;

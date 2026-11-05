@@ -345,6 +345,10 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
 fn line_extent(p: &ParaShaped, rl: &RawLine) -> (f64, f64, f64) {
     let (mut asc, mut desc, mut size) = (0.0f64, 0.0f64, 0.0f64);
     for c in p.cells.get(rl.start..rl.end.max(rl.start)).unwrap_or(&[]) {
+        if let Some((ml, _, _)) = &c.math {
+            asc = asc.max(f64::from(ml.ascent) + 2.0);
+            desc = desc.max(f64::from(ml.descent) + 2.0);
+        }
         if let (Some(st), Some(face)) = (p.styles.get(c.style), p.faces.get(c.face)) {
             let sz = st.size;
             // The run's own fonts set the line; a fallback face (emoji, a symbol or a
@@ -704,6 +708,24 @@ fn emit_line_runs(out: &mut TextLayout, p: &ParaShaped, line: &LineInfo, place: 
         let Some(st) = p.styles.get(cell.style) else { continue };
         let Some(&(cx, cx1)) = line.edges.get(k) else { continue };
         let base_y = line.baseline - st.baseline * st.size;
+        if let Some((ml, end_ch, display)) = &cell.math {
+            if let Some(r) = cur.take() {
+                out.runs.push(r);
+            }
+            cur_key = (usize::MAX, usize::MAX, false, false);
+            out.equations.push(crate::PlacedEquation {
+                para: line.para,
+                ch: ci,
+                end_ch: *end_ch,
+                x: cx,
+                base: base_y,
+                top: line.top,
+                bottom: line.bottom,
+                display: *display,
+                math: ml.clone(),
+            });
+            continue;
+        }
         let size = if st.baseline != 0.0 { st.size * SUB_SUPER } else { st.size };
         let small = st.caps == Caps::Small && cell.ch.is_lowercase();
         let size = if small { size * 0.8 } else { size };

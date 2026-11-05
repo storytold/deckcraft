@@ -150,6 +150,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-04 | Full equation system: Alt+= shortcut and equation insertion, contextual ribbon with structure galleries, OpenType math layout (UnicodeMath and LaTeX), display and inline modes, PPTX OMML read/write roundtrip, PDF export text layer, and equation copy/cut/paste |
 | 2026-11-02 | Native and PPTX saves retain optional table right-to-left direction, including explicit false and omission; two-save round-trip tests keep labeled columns in order |
 | 2026-11-02 | Text runs preserve alternate-language metadata independently from the main language through native and PPTX saves |
 | 2026-11-02 | Picture compression measures displayed dimensions through nested group transforms; checklist score unchanged |

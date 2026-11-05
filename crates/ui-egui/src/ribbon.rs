@@ -17,6 +17,7 @@ mod arrange;
 mod chart;
 mod design;
 mod draw;
+mod equation;
 mod galleries;
 mod home;
 mod insert;
@@ -114,6 +115,9 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
     if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Media(_))) {
         v.push("Playback");
     }
+    if deckcraft_engine::cmd::equation::is_near_equation(&app.session).is_ok() {
+        v.push("Equation");
+    }
     v
 }
 
@@ -123,6 +127,16 @@ const TABS: [&str; 10] = ["Home", "Insert", "Draw", "Design", "Transitions", "An
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let ctx_tabs = contextual(app);
+    let in_math = app.session.active().is_some_and(|d| d.selection.math.is_some());
+    let entered_math = ui.ctx().data_mut(|d| {
+        let id = egui::Id::unique("ribbon_in_math");
+        let was = d.get_temp::<bool>(id).unwrap_or(false);
+        d.insert_temp(id, in_math);
+        in_math && !was
+    });
+    if entered_math && ctx_tabs.contains(&"Equation") {
+        app.ui.tab = "Equation".into();
+    }
     if !TABS.contains(&app.ui.tab.as_str()) && !ctx_tabs.contains(&app.ui.tab.as_str()) {
         app.ui.tab = "Home".into();
     }
@@ -229,6 +243,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                         "Chart Design" => chart_design(app, ui),
                         "SmartArt Design" => smartart_design(app, ui),
                         "Playback" => playback(app, ui),
+                        "Equation" => equation::show(app, ui),
                         "Slide Master" => slide_master(app, ui),
                         "Handout Master" => handout_master(app, ui),
                         "Notes Master" => notes_master(app, ui),

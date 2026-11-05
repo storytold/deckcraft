@@ -42,7 +42,11 @@ fn moved_to(host: &str) -> String {
         xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)),
         text: Some(TextBody {
             paragraphs: vec![Paragraph {
-                runs: vec![Run { text: "x=1".into(), props: RunProps::default(), kind: RunKind::Math { omml } }],
+                runs: vec![Run {
+                    text: "x=1".into(),
+                    props: RunProps::default(),
+                    kind: RunKind::Math { omml, math: Default::default(), display: true },
+                }],
                 ..Default::default()
             }],
             ..Default::default()
@@ -64,7 +68,7 @@ fn moved_to(host: &str) -> String {
     let shape = q.slides[0].shapes.iter().find(|s| s.name == "Equation").expect("shape");
     let run = shape.text.as_ref().and_then(|t| t.paragraphs.first()).and_then(|p| p.runs.first()).expect("run");
     match &run.kind {
-        RunKind::Math { omml } => omml.clone(),
+        RunKind::Math { omml, .. } => omml.clone(),
         other => panic!("{other:?}"),
     }
 }

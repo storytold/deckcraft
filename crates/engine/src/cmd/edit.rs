@@ -77,6 +77,18 @@ fn slides_scope(s: &Session, p: &Value) -> bool {
 
 fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
     let st = s.doc()?;
+    // Equation selection.
+    if let Some(m) = &st.selection.math
+        && let Some(t) = &st.selection.text
+        && let Some(body) = super::text::body_of(st, t)
+        && let Some((_ri, _ch, _len, r)) = super::equation::find_math_run_at(body, m.pos)
+    {
+        let plain = r.text.clone();
+        let sliced =
+            TextBody { paragraphs: vec![deckcraft_model::text::Paragraph { runs: vec![r.clone()], ..Default::default() }], ..Default::default() };
+        s.clipboard = crate::Clipboard { text: Some(sliced), plain: plain.clone(), ..Default::default() };
+        return Ok(plain);
+    }
     // Text selection.
     if let Some(t) = &st.selection.text {
         if t.is_range() {
@@ -129,7 +141,7 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
 }
 
 fn copying_caret(s: &Session) -> bool {
-    s.active().is_some_and(|d| d.selection.text.as_ref().is_some_and(|t| !t.is_range()))
+    s.active().is_some_and(|d| d.selection.math.is_none() && d.selection.text.as_ref().is_some_and(|t| !t.is_range()))
 }
 
 fn copy(s: &mut Session, p: &Value) -> Result<Value> {
@@ -165,6 +177,10 @@ fn cut(s: &mut Session, p: &Value) -> Result<Value> {
         return Ok(json!({"text": t, "html": ""}));
     }
     let html = copied_html(s);
+    if s.doc()?.selection.math.is_some() {
+        super::equation::delete_entire_equation(s)?;
+        return Ok(json!({"text": t, "html": html}));
+    }
     delete(s, p)?;
     Ok(json!({"text": t, "html": html}))
 }
@@ -264,6 +280,17 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
 }
 
 fn paste(s: &mut Session, p: &Value) -> Result<Value> {
+    let in_math = s.doc()?.selection.math.is_some();
+    if in_math {
+        let text = str_param(p, "text")
+            .map(str::to_string)
+            .or_else(|| s.clipboard.text.as_ref().and_then(|b| b.paragraphs.first()).and_then(|p| p.runs.first()).map(|r| r.text.clone()))
+            .unwrap_or_else(|| s.clipboard.plain.clone());
+        if !text.is_empty() {
+            return s.execute("equation.type", &json!({"text": text}));
+        }
+        return ok();
+    }
     // External plain text (from the system clipboard) wins when given and differs from ours.
     // HTML from Pages or Keynote keeps bold, italic and underline when it says the same words.
     if let Some(t) = str_param(p, "text")
@@ -352,6 +379,9 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
             sel.text = None;
             Ok(json!({"ids": ids}))
         });
+    }
+    if let Some(body) = clip.text.as_ref() {
+        return paste_external_body(s, body);
     }
     if !clip.plain.is_empty() {
         let t = clip.plain.clone();

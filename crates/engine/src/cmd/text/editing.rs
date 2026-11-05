@@ -12,6 +12,7 @@ pub(super) fn edit(s: &mut Session, p: &Value) -> Result<Value> {
             sel.text = Some(TextSel { notes: true, anchor: end, caret: end, ..Default::default() });
             sel.shapes.clear();
             sel.cells = None;
+            sel.math = None;
         })?;
         return ok();
     }
@@ -43,6 +44,7 @@ pub(super) fn edit(s: &mut Session, p: &Value) -> Result<Value> {
         sel.shapes = vec![id];
         sel.text = Some(TextSel { shape: id, anchor: at, caret: at, cell, notes: false, line_end: None });
         sel.cells = None;
+        sel.math = None;
     })?;
     Ok(json!({"id": id, "at": [at.0, at.1]}))
 }
@@ -54,6 +56,7 @@ pub(super) fn exit(s: &mut Session, _p: &Value) -> Result<Value> {
         {
             sel.shapes = vec![t.shape];
         }
+        sel.math = None;
     })?;
     ok()
 }

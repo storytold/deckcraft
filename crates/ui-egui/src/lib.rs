@@ -326,6 +326,8 @@ pub struct SlideApp {
     pub(crate) slides_focused: bool,
     /// A V key press or a Paste event arrived since the last V release (see `keyboard`).
     v_seen: bool,
+    /// An Alt shortcut (like Alt+=) was handled on key-down, so swallow the Event::Text it also produces.
+    swallow_text: bool,
     /// Which recent paths exist on disk, probed once per path per session (a dead network share
     /// must not stall every frame). Not persisted.
     recent_checked: HashMap<String, bool>,

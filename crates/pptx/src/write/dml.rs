@@ -810,13 +810,22 @@ pub fn paragraph(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: bool,
                 w.elt("a:t", &r.text);
                 w.close("a:fld");
             }
-            RunKind::Math { omml } => {
-                if math && !omml.is_empty() {
+            RunKind::Math { omml, math: m, display } => {
+                if math && (!omml.is_empty() || !m.is_empty() || !r.text.is_empty()) {
                     w.open("a14:m", A::new().a("xmlns:a14", crate::opc::NS_A14));
-                    w.raw(omml);
+                    if !omml.is_empty() {
+                        w.raw(omml);
+                    } else {
+                        crate::write::math::write_equation(w, &r.text, *display, m);
+                    }
                     w.close("a14:m");
                 } else {
-                    run_text(w, x, o, &r.text, &r.props);
+                    let fb = if !r.text.is_empty() {
+                        std::borrow::Cow::Borrowed(r.text.as_str())
+                    } else {
+                        std::borrow::Cow::Owned(deckcraft_model::math::to_linear(&m.nodes))
+                    };
+                    run_text(w, x, o, &fb, &r.props);
                 }
             }
         }
@@ -828,7 +837,10 @@ pub fn paragraph(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: bool,
 }
 
 pub fn has_math(tb: &TextBody) -> bool {
-    tb.paragraphs.iter().flat_map(|p| &p.runs).any(|r| matches!(&r.kind, RunKind::Math { omml } if !omml.is_empty()))
+    tb.paragraphs
+        .iter()
+        .flat_map(|p| &p.runs)
+        .any(|r| matches!(&r.kind, RunKind::Math { omml, math, .. } if !omml.is_empty() || !math.is_empty() || !r.text.is_empty()))
 }
 
 #[cfg(test)]

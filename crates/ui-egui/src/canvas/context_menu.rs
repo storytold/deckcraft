@@ -25,6 +25,11 @@ pub(super) fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
             }
         }
         ui.separator();
+        let in_math = app.session.active().is_some_and(|d| d.selection.math.is_some());
+        if in_math {
+            equation_items(app, ui);
+            ui.separator();
+        }
         // Right-clicking the text being edited keeps it (`PointerKind::ContextClick`): text items.
         let editing = app.session.active().is_some_and(|d| d.selection.text.as_ref().is_some_and(|t| !t.notes));
         if editing {
@@ -35,6 +40,50 @@ pub(super) fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
             slide_items(app, ui);
         }
     });
+}
+
+pub(super) fn equation_items(app: &mut SlideApp, ui: &mut egui::Ui) {
+    let actions: Vec<(String, String)> = app
+        .session
+        .execute("equation.structureActions", &json!({}))
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|a| Some((a.get("id")?.as_str()?.to_string(), a.get("label")?.as_str()?.to_string())))
+        .collect();
+    if !actions.is_empty() {
+        for (id, label) in actions {
+            if ui.button(label).clicked() {
+                let _ = app.run("equation.structure", json!({"action": id}));
+                ui.close();
+            }
+        }
+        ui.separator();
+    }
+    let display = app.session.execute("equation.get", &json!({})).ok().and_then(|v| v.get("display").and_then(|v| v.as_bool())).unwrap_or(false);
+    let label = if display { "Change to Inline" } else { "Change to Display" };
+    if ui.button(label).clicked() {
+        let _ = app.run("equation.display", json!({"value": !display}));
+        ui.close();
+    }
+    if ui.button("Professional").clicked() {
+        let _ = app.run("equation.convert", json!({"to": "professional"}));
+        ui.close();
+    }
+    if ui.button("Linear").clicked() {
+        let _ = app.run("equation.convert", json!({"to": "linear"}));
+        ui.close();
+    }
+    if ui.button("Equation Number").clicked() {
+        let _ = app.run("equation.number", json!({}));
+        ui.close();
+    }
+    ui.separator();
+    if ui.button("Close Equation").clicked() {
+        let _ = app.run("equation.exit", json!({}));
+        ui.close();
+    }
 }
 
 fn edit_points_menu(app: &mut SlideApp, ui: &mut egui::Ui, sh: &deckcraft_model::Shape) {

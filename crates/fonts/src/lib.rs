@@ -10,6 +10,7 @@
 
 mod fallback;
 mod fontdb;
+pub mod math;
 pub mod script;
 mod shape;
 
@@ -108,6 +109,11 @@ pub fn feature(tag: &str) -> Option<Feature> {
         return None;
     }
     Some(Feature::new(Tag::new(&[b[0], b[1], b[2], b[3]]), on as u32, ..))
+}
+
+/// An OpenType feature with a value (`ssty` = 2 for second-level script glyphs).
+pub fn feature_value(tag: &[u8; 4], value: u32) -> Feature {
+    Feature::new(Tag::new(tag), value, ..)
 }
 
 /// A strong right-to-left character (Hebrew, Arabic, …)?

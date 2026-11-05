@@ -366,6 +366,8 @@ pub fn rich_deck() -> Presentation {
                 props: RunProps::default(),
                 kind: RunKind::Math {
                     omml: r#"<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:oMath><m:r><m:t>x=1</m:t></m:r></m:oMath></m:oMathPara>"#.into(),
+                    math: deckcraft_model::math::Math { nodes: deckcraft_model::math::parse_linear("x=1"), ..Default::default() },
+                    display: true,
                 },
             }],
             ..Default::default()
@@ -464,7 +466,7 @@ fn text_and_formatting_round_trip() {
     assert!(la.click.is_some());
     let eq = by_name(&q.slides[5], "Equation");
     let run = &eq.text.as_ref().expect("text").paragraphs[0].runs[0];
-    assert!(matches!(&run.kind, RunKind::Math { omml } if omml.contains("oMath")), "{run:?}");
+    assert!(matches!(&run.kind, RunKind::Math { omml, .. } if omml.contains("oMath")), "{run:?}");
     assert_eq!(run.text, "x=1");
 }
 
