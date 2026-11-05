@@ -5,14 +5,22 @@ use super::{
 
 // ---------- Animations ----------
 
+/// The effect the ribbon shows, and its timing controls change: the highlighted bullet's own, else
+/// the whole-box effect that plays it; with no highlight, the first selected shape's first effect.
+fn current_effect(d: &deckcraft_engine::DocState) -> Option<deckcraft_model::Animation> {
+    let s = d.current_slide()?;
+    let id = d.selection.shapes.first()?;
+    let mut mine = s.animations.iter().filter(|a| a.shape == *id);
+    let highlighted = d.selection.text.as_ref().filter(|t| t.shape == *id).and_then(|t| t.highlighted_paragraphs());
+    let Some(range) = highlighted else { return mine.next().cloned() };
+    let own = mine.clone().find(|a| a.paragraph.is_some_and(|i| range.contains(&(i as usize))));
+    own.or_else(|| mine.find(|a| a.paragraph.is_none())).cloned()
+}
+
 /// Render animation preview, gallery, add/effect options, trigger, timing, and playback controls.
 pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
     let has_sel = app.session.active().is_some_and(|d| !d.selection.shapes.is_empty());
-    let cur: Option<deckcraft_model::Animation> = app.session.active().and_then(|d| {
-        let s = d.current_slide()?;
-        let id = d.selection.shapes.first()?;
-        s.animations.iter().find(|a| a.shape == *id).cloned()
-    });
+    let cur = app.session.active().and_then(current_effect);
     group(ui, |ui| {
         let playing = app.anim_preview_active();
         let (resp, _) = big_button_ex(ui, Icon::Preview, "Preview", true, false, playing);
@@ -291,7 +299,7 @@ pub(super) fn text_build_id(build: deckcraft_model::anim::TextBuild) -> &'static
 
 #[cfg(test)]
 mod animation_option_label_tests {
-    use super::animation_option_label;
+    use super::{animation_option_label, current_effect};
     use deckcraft_model::anim::ANIMATIONS;
 
     #[test]
@@ -328,5 +336,24 @@ mod animation_option_label_tests {
         assert_eq!(animation_option_label("plus", "out"), "Out");
         assert_eq!(animation_option_label("changeFontSize", "increase"), "Increase");
         assert_eq!(animation_option_label("changeFontSize", "decrease"), "Decrease");
+    }
+
+    /// The ribbon's Duration and Delay send absolute values, so they must show the effect they
+    /// will change: the highlighted bullet's, not the box's first.
+    #[test]
+    fn the_ribbon_shows_the_highlighted_bullets_effect() {
+        let mut s = deckcraft_engine::Session::with_new();
+        let tb =
+            s.execute("insert.textBox", &serde_json::json!({"rect": [50, 50, 400, 200], "text": "One\nTwo\nThree"})).unwrap()["id"].as_u64().unwrap();
+        s.execute("text.edit", &serde_json::json!({"id": tb})).unwrap();
+        s.execute("animation.add", &serde_json::json!({"effect": "fade", "class": "entrance", "ids": [tb], "paragraphs": [0, 1], "duration": 500}))
+            .unwrap();
+        s.execute("animation.timing", &serde_json::json!({"index": 1, "duration": 2000})).unwrap();
+        let shown = |s: &deckcraft_engine::Session| current_effect(s.active().unwrap()).map(|a| (a.paragraph, a.duration_ms));
+        assert_eq!(shown(&s), Some((Some(0), 500)), "a bare caret shows the box's first effect");
+        s.execute("text.select", &serde_json::json!({"anchor": [1, 0], "caret": [1, 3]})).unwrap();
+        assert_eq!(shown(&s), Some((Some(1), 2000)));
+        s.execute("text.select", &serde_json::json!({"anchor": [2, 0], "caret": [2, 5]})).unwrap();
+        assert_eq!(shown(&s), None, "this bullet has no effect to show");
     }
 }

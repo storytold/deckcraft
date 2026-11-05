@@ -94,6 +94,15 @@ impl TextSel {
     pub fn ordered(&self) -> ((usize, usize), (usize, usize)) {
         if self.anchor <= self.caret { (self.anchor, self.caret) } else { (self.caret, self.anchor) }
     }
+    /// The paragraphs highlighted in a shape's body, or `None` for a bare caret, a table cell or
+    /// the notes: every paragraph the highlight touches, except one it ends at the very start of.
+    pub fn highlighted_paragraphs(&self) -> Option<std::ops::RangeInclusive<usize>> {
+        if self.notes || self.cell.is_some() || !self.is_range() {
+            return None;
+        }
+        let ((p0, _), (p1, c1)) = self.ordered();
+        Some(p0..=if p1 > p0 && c1 == 0 { p1 - 1 } else { p1 })
+    }
     /// Is the caret drawn at the end of the line before (upstream), not the start of the next?
     pub fn at_line_end(&self) -> bool {
         self.line_end == Some(self.caret)
