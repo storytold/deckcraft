@@ -295,6 +295,33 @@ fn the_bottom_chevrons_navigate_the_show() {
     assert_eq!(h.state().show.as_ref().unwrap().state.slide, 0);
 }
 
+/// A wheel over the notes pane scrolls the notes, it does not turn the page: a page turn during a
+/// take closes the departing slide's timing segment.
+#[test]
+fn a_wheel_over_the_notes_does_not_turn_the_page() {
+    let mut h = harness(app_with(3));
+    open_record(&mut h, 0);
+    h.get_by_label("Record").click();
+    h.run_steps(3);
+    let notes = {
+        let app = h.state();
+        let full = h.ctx.content_rect();
+        let doc = app.session.active().expect("a document").doc.clone();
+        super::layout(full, &doc, &app.show.as_ref().expect("a show").record_view).notes
+    };
+    h.hover_at(notes.center());
+    h.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -40.0),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+    });
+    h.run_steps(3);
+    assert_eq!(h.state().show.as_ref().unwrap().state.slide, 0, "a wheel over the notes is not a page turn");
+    assert_eq!(h.state().show.as_ref().unwrap().record_view.status, RecordStatus::Recording, "the take goes on");
+}
+
 #[test]
 fn the_notes_pane_shows_the_current_slides_script_and_its_size_controls() {
     let mut session = deckcraft_engine::Session::with_new();

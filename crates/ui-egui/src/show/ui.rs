@@ -306,8 +306,11 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
         show.wheel_zoom(srect, p, lines);
     }
     // A trackpad swipe (and the mouse wheel) turns the page. The pen is drawing, so a flick
-    // there stays on the slide. Pinch zoom is not a show gesture.
+    // there stays on the slide; a scroll over the Record view's bars (its notes pane) is not a
+    // page turn either, or a wheel over the notes would change the slide mid-take and close the
+    // departing slide's timing segment. Pinch zoom is not a show gesture.
     if !show.pen
+        && !show.record_bar_hit(ctx)
         && let Some(next) = crate::canvas::page_flick(ctx.input(|i| i.smooth_scroll_delta))
         && now - show.last_swipe > 0.35
     {

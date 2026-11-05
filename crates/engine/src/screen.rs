@@ -825,7 +825,9 @@ fn schedule_owed(active: &mut Active, now: f64, interval: f64) -> Option<String>
 
 /// Intervals the schedule owes at `now` (0 when the next picture is not due yet).
 fn owed_pictures(active: &Active, now: f64) -> u32 {
-    if active.due || now + 1.0e-9 < active.next_at {
+    // A paused take owes nothing: `resume` puts `due` back and restarts the schedule, so the held
+    // period must not become repeats at its end (the file would be longer than `elapsed_ms`).
+    if active.due || active.paused || now + 1.0e-9 < active.next_at {
         return 0;
     }
     let interval = 1.0 / f64::from(active.fps.max(1));
@@ -989,6 +991,27 @@ mod tests {
         let stopped = pump(&mut s);
         assert_eq!(stopped.frames, 2, "the picture Stop interrupted is written too");
         assert!(stopped.duration_ms >= 66, "two 30 fps pictures are at least two intervals: {}", stopped.duration_ms);
+        let _ = std::fs::remove_file(&stopped.path);
+    }
+
+    /// A pause is not recorded: a Stop during the hold writes the one picture it kept, never the
+    /// intervals that passed while the take was paused.
+    #[test]
+    fn a_stop_during_a_pause_adds_the_held_picture_and_no_paused_time() {
+        let (host, queue) = FakeScreen::ready((160, 120));
+        let mut s = state_with(host);
+        s.start(CaptureOptions::default(), RecorderConfig::new(30)).expect("start");
+        queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [1, 1, 1, 255]));
+        assert_eq!(s.tick(0.0), None);
+        assert_eq!(s.frames(), 1);
+        s.pause().expect("pause");
+        // Ten seconds of held take: the host keeps handing out the newest picture.
+        queue.lock().expect("queue").push_back(deckcraft_screen::ScreenFrame::solid(160, 120, [2, 2, 2, 255]));
+        assert_eq!(s.tick(10.0), None);
+        s.stop().expect("stop");
+        let stopped = pump(&mut s);
+        assert_eq!(stopped.frames, 2, "one recorded picture plus the held one: {stopped:?}");
+        assert!(stopped.duration_ms < 200, "the ten paused seconds are not recorded: {} ms", stopped.duration_ms);
         let _ = std::fs::remove_file(&stopped.path);
     }
 
