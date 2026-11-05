@@ -313,15 +313,13 @@ pub fn text_size(data: &El) -> Option<f64> {
         let mut paras = 0;
         for p in t.children_named("p") {
             paras += 1;
-            let mut rprs: Vec<&El> = p.children_named("r").filter_map(|r| r.child("rPr")).collect();
+            // A run without `a:rPr` inherits its size, so it counts as unsized like one without `sz`.
+            let mut rprs: Vec<Option<&El>> = p.children_named("r").map(|r| r.child("rPr")).collect();
             if p.child("r").is_none() {
-                rprs.extend(p.child("endParaRPr"));
-            }
-            if rprs.is_empty() {
-                sizes.push(None);
+                rprs.push(p.child("endParaRPr"));
             }
             for r in rprs {
-                sizes.push(r.f64("sz").map(|v| v / 100.0).filter(|v| (1.0..=4000.0).contains(v)));
+                sizes.push(r.and_then(|r| r.f64("sz")).map(|v| v / 100.0).filter(|v| (1.0..=4000.0).contains(v)));
             }
         }
         if paras == 0 {
@@ -867,6 +865,9 @@ mod tests {
         // So do runs of one node: a later run at another size is not skipped.
         let two_runs = xml.replacen("</a:r>", "</a:r><a:r><a:rPr lang=\"en-US\" sz=\"2000\"/><a:t>x</a:t></a:r>", 1);
         assert_eq!(text_size(&crate::xml::parse(two_runs.as_bytes()).unwrap().root), None);
+        // A run with no `a:rPr` inherits its size, so it is unsized too.
+        let bare_run = xml.replacen("</a:r>", "</a:r><a:r><a:t>x</a:t></a:r>", 1);
+        assert_eq!(text_size(&crate::xml::parse(bare_run.as_bytes()).unwrap().root), None);
     }
 
     #[test]
