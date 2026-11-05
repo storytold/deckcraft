@@ -135,7 +135,14 @@ pub fn apply(sh: &mut Shape, id: &str) -> bool {
     let e = Effects {
         outer_shadow: lk.shadow.map(shadow),
         soft_edge: lk.soft_edge,
-        reflection: lk.reflection.then_some(Reflection { blur: 0.5, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.35, dist: 0.0 }),
+        reflection: lk.reflection.then_some(Reflection {
+            blur: 0.5,
+            start_alpha: 0.5,
+            end_alpha: 0.0,
+            end_pos: 0.35,
+            dist: 0.0,
+            ..Default::default()
+        }),
         bevel: lk.bevel.map(str::to_string),
         ..Default::default()
     };

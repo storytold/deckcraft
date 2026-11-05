@@ -126,6 +126,21 @@ fn split_curve(c: &[Point], n: usize, out: &mut Vec<Point>) {
     out.extend([p1, p2, p3]);
 }
 
+/// A piece length ordered totally, so it can sit in a heap.
+#[derive(PartialEq)]
+struct Share(f64);
+impl Eq for Share {}
+impl PartialOrd for Share {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+impl Ord for Share {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&o.0)
+    }
+}
+
 /// Brings a contour to `n` curves. Unlike manim (which splits every curve equally often), the extra
 /// splits go to the longest pieces, so a long side gets more points than a short one.
 fn refine(c: &Contour, n: usize) -> Contour {
@@ -136,11 +151,15 @@ fn refine(c: &Contour, n: usize) -> Contour {
     let curves: Vec<&[Point]> = (0..have).filter_map(|k| c.pts.get(3 * k..3 * k + 4)).collect();
     let len: Vec<f64> = curves.iter().map(|q| curve_length(q) + 1e-9).collect();
     let mut parts = vec![1usize; curves.len()];
+    // The curve with the longest piece gets the next split (the lowest index on a tie); a heap keeps
+    // this O(n log n) instead of rescanning every curve for each split.
+    let mut heap: std::collections::BinaryHeap<(Share, std::cmp::Reverse<usize>)> =
+        len.iter().enumerate().map(|(k, l)| (Share(*l), std::cmp::Reverse(k))).collect();
     for _ in 0..n - have {
-        let share = |k: usize| len.get(k).copied().unwrap_or(0.0) / parts.get(k).copied().unwrap_or(1) as f64;
-        let best = (1..curves.len()).fold(0, |b, k| if share(k) > share(b) { k } else { b });
+        let Some((_, std::cmp::Reverse(best))) = heap.pop() else { break };
         if let Some(p) = parts.get_mut(best) {
             *p += 1;
+            heap.push((Share(len.get(best).copied().unwrap_or(0.0) / *p as f64), std::cmp::Reverse(best)));
         }
     }
     let mut out = Vec::with_capacity(1 + 3 * n);
@@ -418,6 +437,16 @@ mod tests {
         assert_eq!(cs[1].pts, vec![Point::ZERO, Point::ZERO.lerp(end, 1.0 / 3.0), Point::ZERO.lerp(end, 2.0 / 3.0), end]);
         // The lone move_to at the end makes no contour, and the path comes back the same.
         assert_eq!(contours(&to_path(&cs)), cs);
+    }
+
+    #[test]
+    fn refine_many_curves_finishes_at_the_asked_count() {
+        let mut c = Contour { closed: false, pts: vec![Point::ZERO] };
+        for i in 1..=20_000 {
+            line_to(&mut c.pts, Point::new(f64::from(i), f64::from(i % 7)));
+        }
+        let r = refine(&c, 40_000);
+        assert_eq!(r.curves(), 40_000);
     }
 
     #[test]

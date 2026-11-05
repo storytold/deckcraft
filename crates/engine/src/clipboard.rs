@@ -30,11 +30,21 @@ const MARK_CLOSE: &str = "-->";
 #[serde(default, rename_all = "camelCase")]
 struct Payload {
     shapes: Vec<Shape>,
+    placeholders: Vec<Shape>,
     slides: Vec<Slide>,
     media: Vec<Media>,
     text: Option<TextBody>,
     plain: String,
-    source_theme: Option<(deckcraft_color::ColorScheme, deckcraft_model::theme::FontScheme)>,
+    source_theme: Option<Theme>,
+}
+
+/// [`crate::SourceTheme`] as it travels: the theme's own colours, its colour map and its fonts.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Theme {
+    colors: deckcraft_color::ColorScheme,
+    color_map: Vec<(String, String)>,
+    fonts: deckcraft_model::theme::FontScheme,
 }
 
 /// A [`MediaItem`] with its bytes (the model keeps them out of its JSON).
@@ -93,11 +103,12 @@ pub fn encode(clip: &Clipboard) -> Option<String> {
         .collect();
     let p = Payload {
         shapes: clip.shapes.clone(),
+        placeholders: clip.placeholders.clone(),
         slides: clip.slides.clone(),
         media,
         text: clip.text.clone(),
         plain: clip.plain.clone(),
-        source_theme: clip.source_theme.clone(),
+        source_theme: clip.source_theme.as_ref().map(|t| Theme { colors: t.colors.clone(), color_map: t.color_map.clone(), fonts: t.fonts.clone() }),
     };
     let json = serde_json::to_vec(&p).ok()?;
     let payload = format!("{VERSION}:{:x}:{}", clip.token, base64_encode(&json));
@@ -135,7 +146,18 @@ pub fn decode(payload: &str) -> Result<Clipboard, String> {
         let data = base64_decode(&m.data).ok_or_else(|| format!("media {} in the clipboard payload is not base64", m.name))?;
         media.push(MediaItem { id: m.id, name: m.name, content_type: m.content_type, data: Arc::new(data), link: m.link });
     }
-    Ok(Clipboard { shapes: p.shapes, slides: p.slides, media, text: p.text, plain: p.plain, source_theme: p.source_theme, pastes: 0, token })
+    let source_theme = p.source_theme.map(|t| crate::SourceTheme { colors: t.colors, color_map: t.color_map, fonts: t.fonts });
+    Ok(Clipboard {
+        shapes: p.shapes,
+        placeholders: p.placeholders,
+        slides: p.slides,
+        media,
+        text: p.text,
+        plain: p.plain,
+        source_theme,
+        pastes: 0,
+        token,
+    })
 }
 
 /// `html` (what the copy puts on the system clipboard; may be empty) with the payload for `clip`
@@ -218,10 +240,11 @@ mod tests {
         let back = decode(&payload).unwrap();
         assert_eq!(back.token, a.clipboard.token);
         assert_eq!(back.shapes, a.clipboard.shapes);
+        assert_eq!(back.placeholders, a.clipboard.placeholders);
         assert_eq!(back.media, a.clipboard.media);
         assert_eq!(back.media[0].data.as_ref(), b"picture bytes");
         assert_eq!(back.plain, "box");
-        assert_eq!(back.source_theme, a.clipboard.source_theme);
+        assert_eq!(format!("{:?}", back.source_theme), format!("{:?}", a.clipboard.source_theme));
         assert_eq!(back.pastes, 0);
     }
 
