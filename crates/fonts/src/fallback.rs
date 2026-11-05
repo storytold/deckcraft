@@ -224,11 +224,16 @@ impl FontDb {
         let score = |s: &FontFace| (s.weight - weight).abs() + if s.italic != italic { 1000.0 } else { 0.0 };
         let named = self.face(&family, base);
         let best = if ok(&named) && score(&named) < score(&f) { named } else { f };
-        let has_wght = best.skrifa().is_some_and(|font| skrifa::MetadataProvider::axes(&font).iter().any(|a| a.tag() == skrifa::Tag::new(b"wght")));
-        if (best.weight - weight).abs() >= 1.0 && has_wght {
-            let inst = self.face(&best.family, &format!("{} {{wght:{weight}}}", crate::fontdb::base_style(&best.style)));
-            if ok(&inst) {
-                return inst;
+        let wght = best.skrifa().and_then(|font| {
+            skrifa::MetadataProvider::axes(&font).iter().find(|a| a.tag() == skrifa::Tag::new(b"wght")).map(|a| (a.min_value(), a.max_value()))
+        });
+        if let Some((lo, hi)) = wght {
+            let weight = weight.max(lo).min(hi);
+            if (best.weight - weight).abs() >= 1.0 {
+                let inst = self.face(&best.family, &format!("{} {{wght:{weight}}}", crate::fontdb::base_style(&best.style)));
+                if ok(&inst) {
+                    return inst;
+                }
             }
         }
         best
