@@ -269,9 +269,9 @@ pub(crate) fn fill_tiled_flipped(
     let sample = if untiled { bounds } else { tile };
     let k = crate::scale_of(m);
     let k = if k.is_finite() && k > 0.0 { k } else { 1.0 };
-    let longest = sample.width().max(sample.height()) * k;
-    let s = (MAX_SIDE / longest).min(1.0) * k;
-    let (pw, ph) = (((sample.width() * s).ceil() as u32).clamp(1, 4096), ((sample.height() * s).ceil() as u32).clamp(1, 4096));
+    let s = if untiled { (MAX_SIDE / (sample.width().max(sample.height()) * k)).min(1.0) * k } else { k };
+    let limit = if untiled { 4096.0 } else { MAX_SIDE };
+    let (pw, ph) = ((sample.width() * s).ceil().clamp(1.0, limit) as u32, (sample.height() * s).ceil().clamp(1.0, limit) as u32);
     let mut outline = if kind == "shape" {
         let pixels = u64::from(pw).saturating_mul(u64::from(ph)).max(1);
         let max_edges = usize::try_from(MAX_EDGE_WORK / pixels).unwrap_or(usize::MAX).max(MIN_POLY_EDGES);

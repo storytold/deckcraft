@@ -454,6 +454,20 @@ fn small_rectangular_gradient_tiles_remain_distinct_in_a_large_shape() {
 }
 
 #[test]
+fn narrow_rectangular_gradient_tiles_keep_their_horizontal_ramp() {
+    let mut sh = radial([0.5; 4]);
+    sh.xfrm = Some(Xfrm::new(100.0, 100.0, 400.0, 4000.0));
+    if let Some(Fill::Gradient(g)) = &mut sh.fill {
+        g.shape = deckcraft_model::style::GradientShape::Path { path: "rect".into(), focus: [0.5, 0.025, 0.5, 0.975] };
+        g.tile = [0.495, 0.0, 0.495, 0.0];
+    }
+    let img = render(vec![sh]);
+    let edge = img.pixel(150, 200)[0];
+    let center = img.pixel(152, 200)[0];
+    assert!(i32::from(center) > i32::from(edge) + 100, "edge {edge}, center {center}");
+}
+
+#[test]
 fn a_3d_pictures_border_stays_centred_on_its_edge() {
     let mut p = picture_deck(Some(Line::solid(ColorRef::rgb(RED), 8.0)));
     let s = std::sync::Arc::make_mut(&mut p.slides[0]);
