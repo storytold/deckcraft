@@ -64,6 +64,10 @@ fn make_token(port: u16, chosen: Option<String>) -> std::io::Result<String> {
             return Err(std::io::Error::other(format!("the control token must have at least {} characters", control_auth::MIN_TOKEN_LEN)));
         }
         eprintln!("deckcraft: control channel on 127.0.0.1:{port} requires the token you set (clients: DECKCRAFT_CONTROL_TOKEN)");
+        // No file is written for a chosen token, and this run would refuse the one in it; one an
+        // earlier run left behind would still answer a client without DECKCRAFT_CONTROL_TOKEN
+        // with the stale secret. Take it out of the way.
+        control_auth::remove_token_file(port);
         return Ok(t);
     }
     let mut bytes = [0u8; 32];
@@ -314,12 +318,18 @@ fn serve(stream: TcpStream, token: &str, tx: &SyncSender<ControlRequest>, ctx: &
     let mut reader = BufReader::new(read);
     if !authenticate(&mut reader, &mut out, token) {
         // The refusal was written; drain what the peer pipelined before it read it, or a reset
-        // would discard the refusal the way `close_politely` describes.
-        close_politely(&out, &mut reader, limits.write_timeout);
+        // would discard the refusal the way `close_politely` describes. Drained for a short
+        // grace, as a busy refusal is: this peer holds a client slot until the drain ends, and
+        // a peer that keeps talking must not hold it for the write timeout.
+        close_politely(&out, &mut reader, limits.write_timeout.min(REFUSED_GRACE));
         return;
     }
-    // `authenticate` cleared the read timeout to bound its own line; put the idle timeout back.
+    // `authenticate` bounded its own line: the deadline on `out` is cleared, and the reader kept
+    // the last leftover of the auth line. Put the idle timeout back on both handles: on Windows
+    // a timeout set on one handle of a `try_clone` pair can fail to apply to reads through the
+    // other, so the reader would go on reading against the leftover auth deadline.
     let _ = out.set_read_timeout(Some(limits.idle_timeout));
+    let _ = reader.get_ref().set_read_timeout(Some(limits.idle_timeout));
     loop {
         let line = match read_line(&mut reader, limits.max_line) {
             Line::Text(t) => t,

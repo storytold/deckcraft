@@ -37,16 +37,15 @@ impl Remote {
     /// Connect to `addr` (`127.0.0.1:7979`), failing fast when nothing is listening. The app
     /// requires a token (#777): `DECKCRAFT_CONTROL_TOKEN`, else the file the app wrote for this port.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let token = crate::control_auth::client_token(addr).map_err(|e| std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))?;
-        let mut r = Self { addr: addr.to_string(), token, file_backed: true, conn: None, next_id: 1 };
-        r.reconnect()?;
+        let mut r = Self { addr: addr.to_string(), token: String::new(), file_backed: true, conn: None, next_id: 1 };
+        r.reconnect(true)?;
         Ok(r)
     }
 
     /// Like [`Remote::connect`] with a token the caller already has (kept as given).
     pub fn connect_with_token(addr: &str, token: String) -> std::io::Result<Self> {
         let mut r = Self { addr: addr.to_string(), token, file_backed: false, conn: None, next_id: 1 };
-        r.reconnect()?;
+        r.reconnect(false)?;
         Ok(r)
     }
 
@@ -54,16 +53,14 @@ impl Remote {
         &self.addr
     }
 
-    fn reconnect(&mut self) -> std::io::Result<()> {
+    fn reconnect(&mut self, first: bool) -> std::io::Result<()> {
         self.conn = None;
-        // A file-backed token is re-read before authenticating: the app may have restarted
-        // since the first connection and written a fresh token file. A lookup failure keeps
-        // the stored token and lets the handshake decide. A caller-supplied token stays.
-        if self.file_backed
-            && let Ok(token) = crate::control_auth::client_token(&self.addr)
-        {
-            self.token = token;
-        }
+        // A file-backed token is re-read once a connection is up: the app may have restarted
+        // since and written a fresh token file. On a later connection a lookup failure keeps
+        // the stored token and lets the handshake decide (the app may run with a token of its
+        // own and no file). The first connection reports it instead — without a token there is
+        // nothing to authenticate with — and only after the socket connects, so "nothing is
+        // listening" and "no token" stay apart.
         let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, format!("cannot resolve {}", self.addr));
         for sa in self.addr.to_socket_addrs()? {
             match TcpStream::connect_timeout(&sa, Duration::from_millis(800)) {
@@ -71,6 +68,13 @@ impl Remote {
                     s.set_nodelay(true).ok();
                     // The app answers within 60 s (its own timeout); leave headroom.
                     s.set_read_timeout(Some(Duration::from_secs(90))).ok();
+                    if self.file_backed {
+                        match crate::control_auth::client_token(&self.addr) {
+                            Ok(token) => self.token = token,
+                            Err(_) if !first => {}
+                            Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, e)),
+                        }
+                    }
                     let read = s.try_clone()?;
                     let mut conn = (BufReader::new(read), s);
                     Self::authenticate(&mut conn, &self.token)?;
@@ -113,7 +117,7 @@ impl Remote {
     /// A connection the app has already closed (it restarted since the last call) is replaced before writing.
     fn send(&mut self, line: &str) -> std::io::Result<()> {
         if self.conn.as_ref().is_none_or(|(reader, writer)| !reader.buffer().is_empty() || is_closed(writer)) {
-            self.reconnect()?;
+            self.reconnect(false)?;
         }
         let Some((_, writer)) = self.conn.as_mut() else {
             return Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "not connected"));
@@ -320,6 +324,46 @@ mod tests {
         peer.join().expect("peer");
         std::fs::remove_file(&path).ok();
         assert!(result.is_ok(), "{result:?}");
+    }
+
+    /// Without a token file and with nothing listening, the error is the connect one:
+    /// "nothing is listening" and "no token" must stay apart, or the user checks the wrong thing.
+    #[test]
+    fn connect_with_nothing_listening_reports_the_connect_error() {
+        if std::env::var(crate::control_auth::TOKEN_ENV).is_ok_and(|t| !t.trim().is_empty()) {
+            eprintln!("skipped: DECKCRAFT_CONTROL_TOKEN is set (it wins over the token file)");
+            return;
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let addr = listener.local_addr().expect("addr").to_string();
+        drop(listener);
+        crate::control_auth::remove_token_file(port);
+        let error = Remote::connect(&addr).err().expect("nothing is listening");
+        assert_ne!(error.kind(), std::io::ErrorKind::PermissionDenied, "{error}");
+        assert!(!error.to_string().contains("control token"), "{error}");
+    }
+
+    /// With the app up but no token file for this machine and user, the first connection says
+    /// so, instead of authenticating with an empty token and failing with the generic refusal.
+    #[test]
+    fn connect_without_a_token_file_names_the_token() {
+        if std::env::var(crate::control_auth::TOKEN_ENV).is_ok_and(|t| !t.trim().is_empty()) {
+            eprintln!("skipped: DECKCRAFT_CONTROL_TOKEN is set (it wins over the token file)");
+            return;
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        crate::control_auth::remove_token_file(port);
+        let addr = format!("127.0.0.1:{port}");
+        let peer = std::thread::spawn(move || {
+            let (_stream, _) = listener.accept().expect("accept");
+            // The client sends nothing: it has no token, and the app is left holding the line.
+        });
+        let error = Remote::connect(&addr).err().expect("no token file");
+        peer.join().expect("peer");
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("no control token"), "{error}");
     }
 
     #[test]

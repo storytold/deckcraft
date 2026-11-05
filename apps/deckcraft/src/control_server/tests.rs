@@ -404,3 +404,45 @@ fn a_first_line_that_arrives_whole_comes_through() {
     peer.join().expect("peer");
     assert_eq!(line.as_deref(), Some("{\"id\":1}\n"));
 }
+
+/// After the handshake, reads go against the idle deadline again, not against what was left of
+/// the auth one: a client that authenticated at once and then says nothing is closed at the idle
+/// deadline, well inside the 10 s [`AUTH_TIMEOUT`] allows.
+#[test]
+fn an_authenticated_connection_closes_at_the_idle_timeout() {
+    let (addr, rx) = server(small());
+    ui(rx);
+    let (mut r, _w) = client(addr);
+    let started = Instant::now();
+    let _ = replies_until_closed(&mut r);
+    assert!(started.elapsed() < Duration::from_secs(5), "closed at the idle deadline, not the auth one ({:?})", started.elapsed());
+}
+
+/// A peer refused without auth is drained for the short grace, as a busy refusal is: it holds a
+/// client slot only briefly even when it keeps talking, not for the whole write timeout.
+#[test]
+fn an_unauthenticated_peer_is_drained_for_a_short_grace() {
+    let (addr, _rx) = server(small());
+    let (mut r, mut w) = raw_client(addr);
+    // Pipelined bytes without a token: the refusal still arrives, then the server closes.
+    let _ = w.write_all(b"x\n".repeat(500).as_slice());
+    let started = Instant::now();
+    let refusal = reply(&mut r);
+    assert!(refusal.is_some(), "the refusal arrives");
+    assert_eq!(refusal.expect("the refusal")["ok"], false);
+    let _ = reply(&mut r);
+    assert!(started.elapsed() < Duration::from_secs(5), "closed after the grace, not the write timeout ({:?})", started.elapsed());
+}
+
+/// A chosen token writes no file, and takes a file an earlier run left behind out of the way: a
+/// client without DECKCRAFT_CONTROL_TOKEN would otherwise read the stale secret.
+#[test]
+fn a_chosen_token_removes_a_stale_token_file() {
+    // A range of its own, below the ephemeral ports: a parallel test's listener on :0 must not
+    // own this token file, and no two tests of the token file may share one.
+    let port = 10_000 + (std::process::id() % 2_000) as u16;
+    let path = control_auth::write_token_file(port, "tok-0123456789abcdef").expect("write token file");
+    let token = make_token(port, Some("chosen-token-0123456789".into())).expect("chosen token");
+    assert_eq!(token, "chosen-token-0123456789");
+    assert!(!path.exists(), "the stale file is gone");
+}

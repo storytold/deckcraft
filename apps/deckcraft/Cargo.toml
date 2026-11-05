@@ -22,7 +22,7 @@ egui = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 chrono = { workspace = true }
-getrandom = "0.4"
+getrandom = { workspace = true }
 
 [build-dependencies]
 # Icon + VERSIONINFO for deckcraft.exe; build.rs only uses it when the target is Windows.
