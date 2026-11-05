@@ -100,6 +100,230 @@ fn directory_names(b: &[u8]) -> Option<Vec<String>> {
     Some(names)
 }
 
+/// Directory entry type of a stream object ([MS-CFB] 2.6.1).
+const STREAM_OBJECT: u8 = 2;
+/// "No entry" in the directory tree (NOSTREAM).
+const NO_STREAM: u32 = 0xFFFF_FFFF;
+/// Streams larger than this are refused (the format allows more, a presentation never needs it).
+const MAX_STREAM: u64 = 1 << 30;
+
+/// One directory entry ([MS-CFB] 2.6).
+struct DirEntry {
+    name: String,
+    kind: u8,
+    left: u32,
+    right: u32,
+    child: u32,
+    start: u32,
+    size: u64,
+}
+
+/// A parsed compound file: the FAT, the mini FAT and the directory, all bounds-checked.
+/// Implemented from Microsoft's public [MS-CFB] specification; the streams it holds are the
+/// encryption descriptors MS-OFFCRYPTO reads.
+pub(crate) struct Compound<'a> {
+    bytes: &'a [u8],
+    sector_size: usize,
+    mini_sector_size: usize,
+    mini_cutoff: u64,
+    fat: Vec<u32>,
+    mini_fat: Vec<u32>,
+    entries: Vec<DirEntry>,
+}
+
+impl<'a> Compound<'a> {
+    /// Parses the header, FAT, mini FAT and directory. Errors on anything that can't be followed.
+    pub(crate) fn open(b: &'a [u8]) -> Result<Compound<'a>, String> {
+        let bad = |m: &str| format!("damaged compound file: {m}");
+        if !b.starts_with(&SIGNATURE) {
+            return Err(bad("missing signature"));
+        }
+        let major = u16_at(b, 26).ok_or_else(|| bad("truncated header"))?;
+        let shift = u16_at(b, 30).ok_or_else(|| bad("truncated header"))?;
+        if shift != 9 && shift != 12 {
+            return Err(bad("unsupported sector size"));
+        }
+        let mini_shift = u16_at(b, 32).ok_or_else(|| bad("truncated header"))?;
+        if mini_shift != 6 {
+            return Err(bad("unsupported mini sector size"));
+        }
+        let sector_size = 1usize << shift;
+        let per = sector_size / 4;
+        // Sectors that physically exist after the header sector: every chain is bounded by it.
+        let sectors = (b.len() / sector_size).saturating_sub(1);
+        let sector = |id: u32| -> Option<&[u8]> {
+            let start = (id as usize).checked_add(1)?.checked_mul(sector_size)?;
+            b.get(start..start.checked_add(sector_size)?)
+        };
+        // DIFAT: 109 FAT sector ids in the header, then chained DIFAT sectors.
+        let mut fat_sectors: Vec<u32> = (0..109).filter_map(|i| u32_at(b, 76 + i * 4)).filter(|&s| s < MAX_REG_SECT).collect();
+        let mut next = u32_at(b, 68).ok_or_else(|| bad("truncated header"))?;
+        let mut hops = 0usize;
+        while next < MAX_REG_SECT {
+            hops += 1;
+            if hops > sectors.min(MAX_DIFAT_SECTORS * 64) {
+                return Err(bad("DIFAT chain loops"));
+            }
+            let s = sector(next).ok_or_else(|| bad("DIFAT sector out of range"))?;
+            fat_sectors.extend((0..per - 1).filter_map(|i| u32_at(s, i * 4)).filter(|&x| x < MAX_REG_SECT));
+            next = u32_at(s, (per - 1) * 4).ok_or_else(|| bad("truncated DIFAT sector"))?;
+        }
+        if fat_sectors.len() > sectors {
+            return Err(bad("more FAT sectors than the file holds"));
+        }
+        let mut fat = Vec::with_capacity(fat_sectors.len().saturating_mul(per));
+        for id in fat_sectors {
+            let s = sector(id).ok_or_else(|| bad("FAT sector out of range"))?;
+            fat.extend((0..per).filter_map(|i| u32_at(s, i * 4)));
+        }
+        let mut cf = Compound { bytes: b, sector_size, mini_sector_size: 64, mini_cutoff: 4096, fat, mini_fat: vec![], entries: vec![] };
+        if let Some(c) = u32_at(b, 56) {
+            cf.mini_cutoff = u64::from(c);
+        }
+        // Directory.
+        let dir_start = u32_at(b, 48).ok_or_else(|| bad("truncated header"))?;
+        let dir = cf.read_chain(dir_start, u64::MAX)?;
+        for e in dir.as_chunks::<128>().0 {
+            let len = usize::from(u16_at(e, 64).unwrap_or(0)).min(64);
+            let units: Vec<u16> = (0..len.saturating_sub(2) / 2).filter_map(|i| u16_at(e, i * 2)).collect();
+            let mut size = u32_at(e, 120).map(u64::from).unwrap_or(0);
+            if major >= 4 {
+                size |= u64::from(u32_at(e, 124).unwrap_or(0)) << 32;
+            }
+            cf.entries.push(DirEntry {
+                name: String::from_utf16_lossy(&units),
+                kind: e.get(66).copied().unwrap_or(0),
+                left: u32_at(e, 68).unwrap_or(NO_STREAM),
+                right: u32_at(e, 72).unwrap_or(NO_STREAM),
+                child: u32_at(e, 76).unwrap_or(NO_STREAM),
+                start: u32_at(e, 116).unwrap_or(END_OF_CHAIN),
+                size,
+            });
+        }
+        if cf.entries.first().is_none_or(|r| r.kind != 5) {
+            return Err(bad("missing root entry"));
+        }
+        // Mini FAT.
+        let mini_start = u32_at(b, 60).ok_or_else(|| bad("truncated header"))?;
+        if mini_start < MAX_REG_SECT {
+            let raw = cf.read_chain(mini_start, u64::MAX)?;
+            cf.mini_fat = (0..raw.len() / 4).filter_map(|i| u32_at(&raw, i * 4)).collect();
+        }
+        Ok(cf)
+    }
+
+    /// Follows a FAT chain from `start`, reading at most `limit` bytes. A chain longer than the
+    /// FAT (so a cycle) or pointing outside the file is an error. The file may end inside the
+    /// chain's last sector (some writers don't pad it, and PowerPoint opens those files): that
+    /// sector reads short, and the caller checks the stream's declared size against what was read.
+    fn read_chain(&self, start: u32, limit: u64) -> Result<Vec<u8>, String> {
+        let limit = usize::try_from(limit.min(MAX_STREAM)).unwrap_or(usize::MAX);
+        let mut out = Vec::new();
+        let mut id = start;
+        let mut seen = vec![false; self.fat.len()];
+        let mut cut = false;
+        while id != END_OF_CHAIN && out.len() < limit {
+            if cut {
+                return Err("damaged compound file: sector out of range (the file may be truncated)".into());
+            }
+            if id >= MAX_REG_SECT {
+                return Err("damaged compound file: broken sector chain".into());
+            }
+            match seen.get_mut(id as usize) {
+                Some(v) if !*v => *v = true,
+                Some(_) => return Err("damaged compound file: sector chain loops".into()),
+                None => return Err("damaged compound file: sector missing from the FAT".into()),
+            }
+            let start = (id as usize).checked_add(1).and_then(|i| i.checked_mul(self.sector_size));
+            let s = start
+                .and_then(|s| self.bytes.get(s..s.checked_add(self.sector_size)?.min(self.bytes.len())))
+                .ok_or("damaged compound file: sector out of range (the file may be truncated)")?;
+            cut = s.len() < self.sector_size;
+            out.extend_from_slice(s);
+            id = *self.fat.get(id as usize).ok_or("damaged compound file: sector missing from the FAT")?;
+        }
+        Ok(out)
+    }
+
+    /// Follows a mini FAT chain inside the mini stream container. Like `read_chain`, the
+    /// container may end inside the chain's last mini sector.
+    fn read_mini_chain(&self, container: &[u8], start: u32, limit: usize) -> Result<Vec<u8>, String> {
+        let mut out = Vec::new();
+        let mut id = start;
+        let mut seen = vec![false; self.mini_fat.len()];
+        let mut cut = false;
+        while id != END_OF_CHAIN && out.len() < limit {
+            if cut {
+                return Err("damaged compound file: mini sector out of range".into());
+            }
+            if id >= MAX_REG_SECT {
+                return Err("damaged compound file: broken mini sector chain".into());
+            }
+            match seen.get_mut(id as usize) {
+                Some(v) if !*v => *v = true,
+                Some(_) => return Err("damaged compound file: mini sector chain loops".into()),
+                None => return Err("damaged compound file: mini sector missing from the mini FAT".into()),
+            }
+            let at = (id as usize).checked_mul(self.mini_sector_size);
+            let s = at
+                .and_then(|a| container.get(a..a.checked_add(self.mini_sector_size)?.min(container.len())))
+                .ok_or("damaged compound file: mini sector out of range")?;
+            cut = s.len() < self.mini_sector_size;
+            out.extend_from_slice(s);
+            id = *self.mini_fat.get(id as usize).ok_or("damaged compound file: mini sector missing from the mini FAT")?;
+        }
+        Ok(out)
+    }
+
+    /// The directory entry of the stream called `name` (case-insensitive) directly under the
+    /// root storage.
+    fn root_entry(&self, name: &str) -> Result<Option<&DirEntry>, String> {
+        let Some(root) = self.entries.first() else { return Ok(None) };
+        // Walk the root's children (a red-black tree through left/right siblings), bounded.
+        let mut stack = vec![root.child];
+        let mut seen = 0usize;
+        while let Some(i) = stack.pop() {
+            if i == NO_STREAM {
+                continue;
+            }
+            seen += 1;
+            if seen > self.entries.len() {
+                return Err("damaged compound file: directory tree loops".into());
+            }
+            let Some(e) = self.entries.get(i as usize) else { continue };
+            if e.kind == STREAM_OBJECT && e.name.eq_ignore_ascii_case(name) {
+                return Ok(Some(e));
+            }
+            stack.push(e.left);
+            stack.push(e.right);
+        }
+        Ok(None)
+    }
+
+    /// The contents of the stream called `name` (case-insensitive), refused when larger than `cap`.
+    /// A stream is untrusted input: its declared size is a number from the file.
+    pub(crate) fn root_stream_capped(&self, name: &str, cap: u64) -> Result<Option<Vec<u8>>, String> {
+        let Some(root) = self.entries.first() else { return Ok(None) };
+        let Some(e) = self.root_entry(name)? else { return Ok(None) };
+        let cap = cap.min(MAX_STREAM);
+        if e.size > cap {
+            return Err(format!("the {name} stream is larger than the {cap}-byte limit"));
+        }
+        let size = usize::try_from(e.size).map_err(|_| "stream too large".to_string())?;
+        let mut data = if e.size < self.mini_cutoff {
+            let container = self.read_chain(root.start, root.size)?;
+            self.read_mini_chain(&container, e.start, size)?
+        } else {
+            self.read_chain(e.start, e.size)?
+        };
+        if data.len() < size {
+            return Err("damaged compound file: a stream is shorter than its declared size (the file may be truncated)".into());
+        }
+        data.truncate(size);
+        Ok(Some(data))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -170,6 +394,29 @@ mod tests {
         // A directory chain that loops back on itself stops at the bound.
         b[516..520].copy_from_slice(&1u32.to_le_bytes());
         assert!(!is_encrypted(&b));
+    }
+
+    /// The agile reader: an encrypted fixture's two streams read back through the local reader.
+    #[test]
+    fn an_encrypted_fixture_reads_through_the_compound_reader() {
+        let bytes = include_bytes!("../tests/fixtures/agile-aes256-sha512.pptx");
+        let cf = Compound::open(bytes).expect("the fixture is a compound file");
+        let info = cf.root_stream_capped("EncryptionInfo", MAX_STREAM).expect("stream reads").expect("EncryptionInfo is present");
+        assert!(!info.is_empty());
+        let package = cf.root_stream_capped("EncryptedPackage", bytes.len() as u64).expect("stream reads").expect("EncryptedPackage is present");
+        assert!(!package.is_empty());
+        assert!(cf.root_stream_capped("Nope", MAX_STREAM).expect("an absent stream is not an error").is_none());
+        // Detection and the reader agree about the same file.
+        assert!(is_encrypted(bytes));
+    }
+
+    /// A truncated container is refused, never panicked on: the file came from outside.
+    #[test]
+    fn a_truncated_container_is_an_error() {
+        let bytes = include_bytes!("../tests/fixtures/agile-aes256-sha512.pptx");
+        assert!(Compound::open(&bytes[..1000]).is_err());
+        assert!(Compound::open(b"PK\x03\x04").is_err());
+        assert!(Compound::open(&[]).is_err());
     }
 
     /// #346: opening a password-protected presentation says so instead of failing as an unknown

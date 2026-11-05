@@ -103,7 +103,7 @@ the round trip even though DeckCraft doesn't model it.
 | Tags (`p:custDataLst`) on the presentation, slides and shapes | yes | yes | Add-ins such as think-cell keep their identity; `tags_survive_round_trip` |
 | Custom XML data, sensitivity label (`docMetadata/LabelInfo.xml`), custom document properties | kept verbatim | yes | SharePoint metadata and the label survive a save; `custom_xml_label_and_custom_properties_survive_save` |
 | VBA | no | no | |
-| Encryption (password to open) | yes | no | Standard (AES-128/192/256, SHA-1) and agile (AES-128/192/256, SHA-1/256/384/512); the password is asked for in a dialog and a wrong one is reported. Tested against msoffcrypto-tool fixtures: `crates/pptx/tests/crypt.rs` |
+| Encryption (password to open) | yes | no | Standard (AES-128/192/256, SHA-1) and agile (AES-128/192/256, SHA-1/256/384/512); the password is asked for in a dialog and a wrong one is reported. Tested against msoffcrypto-tool fixtures: `crates/pptx/tests/crypt.rs`; `agile-aes256-sha1.pptx` covers a SHA-1 hash with a longer AES key |
 
 ### What would move the PPTX number
 
@@ -119,6 +119,7 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | Encrypted PPTX (password to open) is readable: MS-OFFCRYPTO standard and agile decryption in `crates/pptx/src/crypt.rs`, a password dialog in the UI, and `crates/pptx/tests/crypt.rs` with fixtures cross-validated by msoffcrypto-tool |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native `.deckcraft` files serialize a nonempty chart `kept` sidecar (relationships, part names, content types and bytes). Older files without it still load; empty sidecars are omitted. Headless PPTX → edit → native save/reopen → PPTX checks keep the workbook and drawing bytes; editing chart data still drops the stale workbook |
 | 2026-10-15 | trivial | PPTX interactive timing sequences keep later On Click steps and paragraph click builds (`trigger_steps.rs`); mixed starts and independent buttons survive import/edit/save/reopen |
@@ -148,5 +149,4 @@ the round trip even though DeckCraft doesn't model it.
 | 2026-10-11 | minor | Speaker notes: formatting shown in the notes pane and Notes Page and kept when they are edited |
 | 2026-10-11 | minor | Animated GIF of the deck: export yes (#171) |
 | 2026-10-10 | major | Created from PowerPoint 16.113.4's `CFBundleDocumentTypes`, `crates/pptx` reader/writer and tests, and the open round-trip issues |
-| 2026-11-01 | minor | Encrypted PPTX (password to open) is readable: MS-OFFCRYPTO standard and agile decryption in `crates/pptx/src/crypt.rs`, a password dialog in the UI, and `crates/pptx/tests/crypt.rs` with fixtures cross-validated by msoffcrypto-tool |
 | 2026-10-13 | minor | Comments: the writer emits the modern threaded part (`p188`) next to the flattened legacy one; the reader prefers the modern part and scales its EMU positions (#70) |

@@ -28,7 +28,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Open",
             [],
             None,
-            "{path, token?} (a presentation the host read in the background and staged with Session::stage_loaded; without one, reads path like file.open)",
+            "{path, token?, data?: base64} (a presentation the host read in the background and staged with Session::stage_loaded; without one, reads data when given, else path like file.open)",
             always,
             adopt
         ),
@@ -297,12 +297,22 @@ pub fn read_presentation_file(path: &str) -> Result<LoadedFile> {
     read_presentation_file_with_password(path, None)
 }
 
+/// Read presentation bytes already in memory, decrypting with `password`. `native` is false: the
+/// copy has no file to save back to (as `file.openBytes` opens it).
+pub fn read_presentation_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>) -> Result<LoadedFile> {
+    let encrypted = deckcraft_pptx::is_encrypted(bytes);
+    let (doc, damaged) = open_checked_with_password(name, bytes, password)?;
+    Ok(LoadedFile { path: name.to_string(), doc, native: false, damaged, encrypted })
+}
+
 /// Add a loaded presentation as the active document: the shared end of `file.open` and
 /// `file.adopt`. A damaged file opens as an untitled repaired copy, so Save can't overwrite the
 /// original with the empty media.
 fn adopt_loaded(s: &mut Session, f: LoadedFile) -> Result<Value> {
     let LoadedFile { path, doc, native, damaged, encrypted } = f;
-    let keep_path = native && damaged.is_empty();
+    // A file read with a password has no path to save back to: Save must ask for a new name rather
+    // than write an unencrypted package over the protected original.
+    let keep_path = native && damaged.is_empty() && !encrypted;
     let i = add_opened(s, &path, keep_path.then(|| path.clone()), doc);
     report_damage(s, &damaged)?;
     let st = s.doc()?;
@@ -322,18 +332,22 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     }
 }
 
-/// `file.adopt {path, token?}`: add the presentation a host read in the background and staged
-/// with [`Session::stage_loaded`]. Without that staged file (a replayed journal, a stale token)
-/// it reads `path` like `file.open`, so the journal entry stays replayable.
+/// `file.adopt {path, token?, data?}`: add the presentation a host read in the background and staged
+/// with [`Session::stage_loaded`]. Without that staged file (a replayed journal, a stale token) it
+/// reads `data` when the host opened bytes, else `path` like `file.open`, so the journal entry stays
+/// replayable.
 fn adopt(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("file.adopt", "missing `path`"))?;
     let staged = p.get("token").and_then(Value::as_u64).and_then(|t| s.take_loaded(t)).filter(|f| f.path == path);
     match staged {
         Some(f) => adopt_loaded(s, f),
-        #[cfg(not(target_arch = "wasm32"))]
-        None => adopt_loaded(s, read_presentation_file(path)?),
-        #[cfg(target_arch = "wasm32")]
-        None => Err(bad("file.adopt", format!("{path} was not loaded"))),
+        None => match str_param(p, "data").and_then(base64_decode) {
+            Some(data) => adopt_loaded(s, read_presentation_bytes_with_password(path, &data, None)?),
+            #[cfg(not(target_arch = "wasm32"))]
+            None => adopt_loaded(s, read_presentation_file(path)?),
+            #[cfg(target_arch = "wasm32")]
+            None => Err(bad("file.adopt", format!("{path} was not loaded"))),
+        },
     }
 }
 #[cfg(target_arch = "wasm32")]

@@ -6516,6 +6516,37 @@ fn the_right_password_opens_the_presentation() {
     assert!(!s.ui_requests.iter().any(|r| matches!(r, UiRequest::Dialog { .. })), "no further prompt is needed");
 }
 
+/// DeckCraft cannot encrypt on save, so a deck opened with a password gets no file path: Save asks
+/// for a new name instead of writing an unencrypted package over the protected original.
+#[test]
+fn a_deck_opened_with_a_password_has_no_path_to_save_over() {
+    let mut s = session();
+    let before = std::fs::metadata(ENCRYPTED_FIXTURE).unwrap().len();
+    let v = s.execute("file.open", &json!({"path": ENCRYPTED_FIXTURE, "password": PASSWORD})).unwrap();
+    assert_eq!(v["encrypted"], json!(true));
+    assert!(s.doc().unwrap().path.is_none(), "an encrypted source is not the save target");
+    assert_eq!(s.execute("file.save", &json!({})).unwrap(), json!({"needsPath": true}));
+    assert_eq!(std::fs::metadata(ENCRYPTED_FIXTURE).unwrap().len(), before, "the protected original is untouched");
+}
+
+/// A password is a secret: the journal is kept, replayed and may outlive the session, so it is
+/// recorded without one.
+#[test]
+fn a_password_is_not_journaled() {
+    let mut s = session();
+    s.execute("file.open", &json!({"path": ENCRYPTED_FIXTURE, "password": PASSWORD})).unwrap();
+    let (id, params) = s.journal.last().cloned().unwrap();
+    assert_eq!(id, "file.open");
+    assert!(params.get("password").is_none(), "file.open journaled the password: {params}");
+
+    let mut s = session();
+    let data = cmd::base64_encode(&encrypted_bytes());
+    s.execute("file.openBytes", &json!({"name": "secret.pptx", "data": data, "password": PASSWORD})).unwrap();
+    let (id, params) = s.journal.last().cloned().unwrap();
+    assert_eq!(id, "file.openBytes");
+    assert!(params.get("password").is_none(), "file.openBytes journaled the password: {params}");
+}
+
 #[test]
 fn a_legacy_compound_file_is_unsupported_and_not_a_password_prompt() {
     // A legacy binary `.ppt` is an OLE compound file too, but carries no encryption streams.

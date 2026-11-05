@@ -4,7 +4,15 @@
 
 use crate::SlideApp;
 use deckcraft_engine::{EngineError, cmd::file::LoadedFile};
+use serde_json::{Value, json};
 use std::sync::mpsc::{Receiver, TryRecvError};
+
+/// Where a read gets its bytes: a file to open, or data the host already holds (a browser open, or
+/// the retry after the password prompt).
+enum Source {
+    Path(String),
+    Bytes { name: String, data: Vec<u8> },
+}
 
 /// A presentation being read on a background thread.
 pub struct Opening {
@@ -13,6 +21,11 @@ pub struct Opening {
     /// Monotonic identity of this attempt. Cancelling and reopening the same path must not match
     /// a click queued for the previous progress window's Cancel button.
     pub(crate) generation: u64,
+    source: Source,
+    /// The password that was tried, so a rejected one goes back into the field.
+    password: Option<String>,
+    /// What a password prompt is reopened with when the read asks for one.
+    prompt: Value,
     rx: Receiver<Result<LoadedFile, EngineError>>,
 }
 
@@ -22,11 +35,24 @@ impl Opening {
         std::path::Path::new(&self.path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| self.path.clone())
     }
 
+    /// Opened from bytes the host held: there is no file to save back to.
+    fn opened_from_bytes(&self) -> bool {
+        matches!(self.source, Source::Bytes { .. })
+    }
+
     /// A progress window for identity tests; the receiver never yields a file.
     #[cfg(test)]
     pub(crate) fn for_test(path: &str) -> Self {
         let (_tx, rx) = std::sync::mpsc::channel();
-        Opening { path: path.to_string(), started_ms: 0.0, generation: 0, rx }
+        Opening {
+            path: path.to_string(),
+            started_ms: 0.0,
+            generation: 0,
+            source: Source::Path(path.to_string()),
+            password: None,
+            prompt: Value::Null,
+            rx,
+        }
     }
 }
 
@@ -34,6 +60,27 @@ impl SlideApp {
     /// Open `path` without blocking the UI: the file is read on a thread and the progress window
     /// shows until it arrives. Without threads (the web build) it opens at once.
     pub fn open_path_in_background(&mut self, path: &str) {
+        self.start(Source::Path(path.to_string()), None, json!({"name": path, "path": path}));
+    }
+
+    /// Retry `path` with the password just typed. On a thread like any other read: the key
+    /// derivation runs up to 10,000,000 hashes, which must not freeze the window.
+    pub fn open_path_with_password_in_background(&mut self, path: &str, password: &str) {
+        self.start(Source::Path(path.to_string()), Some(password.to_string()), json!({"name": path, "path": path}));
+    }
+
+    /// Retry a bytes-open (`file.openBytes`) with the password just typed, on the same thread.
+    pub fn open_bytes_with_password_in_background(&mut self, name: &str, data: &[u8], password: &str) {
+        self.start(
+            Source::Bytes { name: name.to_string(), data: data.to_vec() },
+            Some(password.to_string()),
+            json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(data)}),
+        );
+    }
+
+    /// The one place a read is started: on a thread here, at once in the web build (no threads) and
+    /// when the thread cannot be spawned.
+    fn start(&mut self, source: Source, password: Option<String>, prompt: Value) {
         if let Some(o) = &self.opening {
             let name = o.name();
             self.set_status(format!("Still opening {name}"));
@@ -41,29 +88,52 @@ impl SlideApp {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            if let Err(e) = self.open_path(path) {
-                self.notify(e);
-            }
+            let _ = prompt;
+            self.open_at_once(&source, password.as_deref());
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
+            let path = match &source {
+                Source::Path(p) => p.clone(),
+                Source::Bytes { name, .. } => name.clone(),
+            };
             let (tx, rx) = std::sync::mpsc::channel();
-            let p = path.to_string();
+            let src = match &source {
+                Source::Path(p) => Source::Path(p.clone()),
+                Source::Bytes { name, data } => Source::Bytes { name: name.clone(), data: data.clone() },
+            };
+            let pw = password.clone();
             let spawned = std::thread::Builder::new().name("deckcraft-open".into()).spawn(move || {
-                let r = deckcraft_engine::cmd::file::read_presentation_file(&p);
+                let pw = pw.as_deref();
+                let r = match (&src, pw) {
+                    (Source::Path(p), pw) => deckcraft_engine::cmd::file::read_presentation_file_with_password(p, pw),
+                    (Source::Bytes { name, data }, pw) => deckcraft_engine::cmd::file::read_presentation_bytes_with_password(name, data, pw),
+                };
                 let _ = tx.send(r);
             });
             match spawned {
                 Ok(_) => {
                     self.opening_generation = self.opening_generation.wrapping_add(1).max(1);
-                    self.opening = Some(Opening { path: path.to_string(), started_ms: crate::now_ms(), generation: self.opening_generation, rx });
+                    self.opening =
+                        Some(Opening { path, started_ms: crate::now_ms(), generation: self.opening_generation, source, password, prompt, rx });
                 }
-                Err(_) => {
-                    if let Err(e) = self.open_path(path) {
-                        self.notify(e);
-                    }
-                }
+                Err(_) => self.open_at_once(&source, password.as_deref()),
             }
+        }
+    }
+
+    /// Read at once, on this thread: the web build, and a spawn that failed. A failure is reported
+    /// as it always was (a locked file still comes back as the prompt).
+    fn open_at_once(&mut self, source: &Source, password: Option<&str>) {
+        let r = match (source, password) {
+            (Source::Path(p), None) => self.open_path(p),
+            (Source::Path(p), pw) => self.run("file.open", json!({"path": p, "password": pw})).map(|_| ()),
+            (Source::Bytes { name, data }, pw) => {
+                self.run("file.openBytes", json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(data), "password": pw})).map(|_| ())
+            }
+        };
+        if let Err(e) = r {
+            self.notify(e);
         }
     }
 
@@ -85,22 +155,48 @@ impl SlideApp {
         let Some(o) = self.opening.take() else { return };
         match r {
             Ok(f) => {
+                // A retry that succeeded answers the prompt: close it (a click-path open already
+                // dismissed it, so this only matters for a programmatic retry).
+                if self.dialog.as_ref().is_some_and(|d| d.id == "password") {
+                    self.dialog = None;
+                }
                 // Into the session through the command path, like file.open: journaled and guarded.
+                let path = f.path.clone();
                 let token = self.session.stage_loaded(f);
+                let mut params = json!({"path": path, "token": token});
+                if o.opened_from_bytes() {
+                    // A bytes-open has nothing to save back to, but a replayed journal entry would
+                    // otherwise have to read the file it was never opened from.
+                    if let Some(data) = o.prompt.get("data") {
+                        params["data"] = data.clone();
+                    }
+                }
                 // `run` reports a failure itself (and `report_error` keeps it out of the bar when
                 // the prompt asked): nothing to do with an Err here.
-                if self.run("file.adopt", serde_json::json!({"path": o.path, "token": token})).is_ok() {
+                if self.run("file.adopt", params).is_ok() && !o.opened_from_bytes() {
                     self.note_recent(&o.path);
                 }
             }
-            // A locked file hands the prompt back instead of a status-bar error.
-            Err(EngineError::PasswordRequired(name)) => {
+            // A locked file hands the prompt back instead of a status-bar error, and a rejected
+            // password hands it back with the text typed, explained under the field.
+            Err(e) => {
+                let (name, rejected) = match &e {
+                    EngineError::PasswordRequired(n) => (n.clone(), false),
+                    EngineError::WrongPassword(n) => (n.clone(), true),
+                    _ => {
+                        // Over the start screen too, like a failed file.open (#346).
+                        self.notify(e.to_string());
+                        return;
+                    }
+                };
                 let mut d = crate::dialogs::Dialog::new("password");
-                d.params = serde_json::json!({"name": name, "path": o.path});
+                d.params = o.prompt.clone();
+                if rejected {
+                    d.fields.insert("password".into(), o.password.clone().unwrap_or_default());
+                    d.fields.insert("error".into(), crate::dialogs::rejected_password(&name, &e.to_string()));
+                }
                 self.dialog = Some(d);
             }
-            // Over the start screen too, like a failed file.open (#346).
-            Err(e) => self.notify(e.to_string()),
         }
     }
 
@@ -206,7 +302,15 @@ mod tests {
         let mut app = SlideApp::new(Session::with_new(), crate::Services::default());
         // A read that never answers: the window stays until Cancel.
         let (_tx, rx) = std::sync::mpsc::channel();
-        app.opening = Some(Opening { path: "/decks/Big deck.pptx".into(), started_ms: crate::now_ms(), generation: 1, rx });
+        app.opening = Some(Opening {
+            path: "/decks/Big deck.pptx".into(),
+            started_ms: crate::now_ms(),
+            generation: 1,
+            source: Source::Path("/decks/Big deck.pptx".into()),
+            password: None,
+            prompt: Value::Null,
+            rx,
+        });
         let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_ui_state(
             |ui, app: &mut SlideApp| {
                 app.logic(ui.ctx());

@@ -13,11 +13,19 @@ Each fixture is verified twice before it is written:
      valid ECMA-376 encrypted container).
   2. only then is it written out for the Rust test to consume.
 
-Run:  python3 make_fixtures.py OUTDIR PLAINTEXT.pptx
+Several of msoffcrypto-tool 6.1.0's helpers are corrected here, for generation and for
+verification alike (see the overrides below): MS-OFFCRYPTO §2.3.4.11's 0x36 key padding (its
+helper only truncates, so a SHA-1 hash with a 256-bit key yields a short key and AES raises),
+and the `dataIntegrity` fields encrypted in whole blocks and compared at the hash size (CBC
+needs whole blocks, and a SHA-1 hash is 20 bytes).  Without a SHA-1 fixture the agile key
+derivation's MUST-pad is untested.
+
+Run:  python3 make.py OUTDIR
 """
 
 import base64
 import hashlib
+import hmac
 import io
 import os
 import struct
@@ -26,10 +34,85 @@ import zipfile
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from msoffcrypto.format.ooxml import OOXMLFile
 from msoffcrypto.method.container.ecma376_encrypted import ECMA376Encrypted
-from msoffcrypto.method.ecma376_agile import ECMA376Agile, ECMA376AgileCipherParams
+from msoffcrypto.method.ecma376_agile import (
+    ALGORITHM_HASH,
+    ECMA376Agile,
+    ECMA376AgileCipherParams,
+    _decrypt_aes_cbc,
+    _encrypt_aes_cbc_padded,
+    _generate_iv,
+    blkKey_VerifierHashInput,
+    blkKey_dataIntegrity1,
+    blkKey_dataIntegrity2,
+    blkKey_encryptedVerifierHashValue,
+)
 from msoffcrypto.method.ecma376_standard import ECMA376Standard
 
 PASSWORD = "DeckCraft-Test-Passw0rd!"
+
+
+# ---------------------------------------------------------------------------------------------
+# MS-OFFCRYPTO corrections to msoffcrypto-tool 6.1.0, installed once and used by both its
+# generation and its verification paths, so a fixture we write is one it accepts.
+
+
+def _derive_encryption_key(h, blockKey, hashAlgorithm, keyBits):
+    """2.3.4.11: H(Hn + blockKey), padded with 0x36 to the key length when the hash is shorter.
+
+    The stock helper truncates only, so SHA-1 (20 bytes) with a 256-bit key hands 20 bytes to
+    AES, which raises instead of producing a short key.
+    """
+    digest = ALGORITHM_HASH[hashAlgorithm](h + blockKey).digest()
+    n = keyBits // 8
+    return digest + b"\x36" * (n - len(digest)) if len(digest) < n else digest[:n]
+
+
+def generate_integrity_parameter(encrypted_data, params, secret_key, salt_value):
+    """2.3.4.13-2.3.4.15: the HMAC key and value, each encrypted in whole AES blocks.
+
+    The stock helper feeds the raw (possibly 20-byte) values to CBC, which needs whole blocks.
+    """
+    salt = os.urandom(params.hashSize)
+    iv1 = _generate_iv(params, blkKey_dataIntegrity1, salt_value)
+    iv2 = _generate_iv(params, blkKey_dataIntegrity2, salt_value)
+    encrypted_hmac_key = _encrypt_aes_cbc_padded(salt, secret_key, iv1, params.blockSize)
+    hmac_value = hmac.new(salt, encrypted_data, ALGORITHM_HASH[params.hashName]).digest()
+    encrypted_hmac_value = _encrypt_aes_cbc_padded(hmac_value, secret_key, iv2, params.blockSize)
+    return encrypted_hmac_key, encrypted_hmac_value
+
+
+def _verify_password(password, saltValue, hashAlgorithm, encryptedVerifierHashInput, encryptedVerifierHashValue, spinValue, keyBits):
+    """The same derivation as `_derive_encryption_key`, comparing `hashSize` bytes (2.3.4.10)."""
+    h = ECMA376Agile._derive_iterated_hash_from_password(password, saltValue, hashAlgorithm, spinValue)
+    hash_calc = ALGORITHM_HASH[hashAlgorithm]
+    key1 = _derive_encryption_key(h.digest(), blkKey_VerifierHashInput, hashAlgorithm, keyBits)
+    key2 = _derive_encryption_key(h.digest(), blkKey_encryptedVerifierHashValue, hashAlgorithm, keyBits)
+    actual = hash_calc(_decrypt_aes_cbc(encryptedVerifierHashInput, key1, saltValue)).digest()
+    expected = _decrypt_aes_cbc(encryptedVerifierHashValue, key2, saltValue)[: hash_calc().digest_size]
+    return actual == expected
+
+
+def _verify_integrity(secretKey, keyDataSalt, keyDataHashAlgorithm, keyDataBlockSize, encryptedHmacKey, encryptedHmacValue, stream):
+    """Compare `hashSize` bytes of the HMAC, as 2.3.4.15 defines them.
+
+    The stock verifier decrypted the whole padded block (20 bytes of SHA-1 value plus 12 bytes
+    of padding) and compared all 32 to the 20 the HMAC produces.
+    """
+    hash_calc = ALGORITHM_HASH[keyDataHashAlgorithm]
+    digest_size = hash_calc().digest_size
+    iv1 = hash_calc(keyDataSalt + blkKey_dataIntegrity1).digest()[:keyDataBlockSize]
+    iv2 = hash_calc(keyDataSalt + blkKey_dataIntegrity2).digest()[:keyDataBlockSize]
+    hmac_key = _decrypt_aes_cbc(encryptedHmacKey, secretKey, iv1)[:digest_size]
+    hmac_value = _decrypt_aes_cbc(encryptedHmacValue, secretKey, iv2)[:digest_size]
+    actual = hmac.new(hmac_key, stream.read(), hash_calc).digest()
+    stream.seek(0)
+    return hmac_value == actual
+
+
+ECMA376Agile._derive_encryption_key = staticmethod(_derive_encryption_key)
+ECMA376Agile.generate_integrity_parameter = staticmethod(generate_integrity_parameter)
+ECMA376Agile.verify_password = staticmethod(_verify_password)
+ECMA376Agile.verify_integrity = staticmethod(_verify_integrity)
 
 
 def build_plaintext(path):
@@ -180,8 +263,15 @@ def main():
     outdir = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)))
     plain_path = os.path.join(outdir, "plain.pptx")
     os.makedirs(outdir, exist_ok=True)
-    plain = build_plaintext(plain_path)
-    print(f"plaintext: {len(plain)} bytes -> {plain_path}")
+    if os.path.exists(plain_path):
+        # Reuse the committed plaintext: every committed fixture is an encryption of those bytes,
+        # so regenerating it would leave the fixtures we did not rewrite undecryptable.
+        plain = open(plain_path, "rb").read()
+        print(f"reusing {plain_path}")
+        print(f"plaintext: {len(plain)} bytes -> {plain_path}")
+    else:
+        plain = build_plaintext(plain_path)
+        print(f"plaintext: {len(plain)} bytes -> {plain_path}")
 
     fixtures = {
         # The case that matters for real-world decks: Office 2007 "Password to open".
@@ -191,8 +281,9 @@ def main():
         "standard-aes256-sha1": standard_encrypt(plain, PASSWORD, ALG_ID_AES256, 256),
         # Office 2010+ defaults.
         "agile-aes256-sha512": agile_encrypt(plain, PASSWORD, "SHA512", 256, 100000),
-        # Other hash/key-size combinations on the same code path (SHA-1 agile containers cannot
-        # be produced by msoffcrypto-tool: its HMAC-key helper assumes a 64-byte hash).
+        # Other hash/key-size combinations on the same code path, including SHA-1 with a key
+        # longer than its 20-byte hash (2.3.4.11 pads the key with 0x36).
+        "agile-aes256-sha1": agile_encrypt(plain, PASSWORD, "SHA1", 256, 100_000),
         "agile-aes256-sha256": agile_encrypt(plain, PASSWORD, "SHA256", 256, 100000),
         "agile-aes128-sha384": agile_encrypt(plain, PASSWORD, "SHA384", 128, 4000),
     }

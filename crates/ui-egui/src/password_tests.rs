@@ -58,8 +58,8 @@ fn the_wrong_password_is_explained_in_the_dialog() {
     assert!(h.state().session.documents().is_empty(), "a wrong password opens nothing");
 }
 
-/// The right password opens the deck, remembers where it came from, and warns that saving would drop
-/// the password.
+/// The right password opens the deck with no file to save over, and warns that saving needs a new
+/// name.
 #[test]
 fn the_right_password_opens_the_deck_and_warns_about_saving() {
     let mut h = harness();
@@ -76,7 +76,11 @@ fn the_right_password_opens_the_deck_and_warns_about_saving() {
     let doc = h.state().session.active().expect("the deck opened");
     assert_eq!(doc.doc.slides.len(), 3);
     assert_eq!(doc.doc.slides[0].title(), "Encrypted fixture");
-    assert_eq!(doc.path.as_deref(), Some(ENCRYPTED), "an opened deck remembers where it came from");
+    // No path: Save must ask for a name rather than write an unencrypted package over the
+    // protected original.
+    assert_eq!(doc.path, None, "an encrypted source is not a save target");
+    assert_eq!(doc.title, "standard-aes128-sha1");
+    assert_eq!(h.state_mut().run("file.save", json!({})).unwrap(), json!({"needsPath": true}));
 }
 
 /// A legacy binary `.ppt` is an OLE compound file too, but carries no encryption streams: it reports
@@ -94,31 +98,109 @@ fn a_legacy_ppt_is_not_mistaken_for_an_encrypted_deck() {
     assert!(msg.contains("legacy binary PowerPoint"), "{msg}");
 }
 
+/// The dialog itself starts the read in the background: clicking Open closes the prompt and leaves a
+/// worker thread behind, and a rejection brings the prompt back with the text the user typed.
+#[test]
+fn the_dialog_opens_in_the_background_and_restores_the_typed_password() {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::Queryable;
+
+    let mut h = harness();
+    assert!(h.state_mut().open_path(ENCRYPTED).is_err());
+    h.run_steps(2);
+    // A masked field is a `PasswordInput` to accessibility, not a `TextInput`.
+    let field = h.get_by_role(Role::PasswordInput);
+    field.focus();
+    h.run_steps(1);
+    h.get_by_role(Role::PasswordInput).type_text("nope");
+    h.run_steps(2);
+    // What the click hands to the read is the dialog's own copy of the field.
+    let typed = h.state().dialog.as_ref().and_then(|d| d.fields.get("password").cloned());
+    assert_eq!(typed.as_deref(), Some("nope"), "the dialog's field took the typed password");
+    // The start screen has an "Open" too: click the dialog's, the button beside its Cancel.
+    let cancel = h.get_by_label("Cancel").rect();
+    let open = h.get_all_by_label("Open").find(|n| (n.rect().center().y - cancel.center().y).abs() < 8.0).expect("the dialog's Open button");
+    open.click();
+    h.run_steps(1);
+    // The click handed the read to a thread and closed the prompt: the frame was not blocked by a
+    // 100,000-round key derivation.
+    assert!(h.state().dialog.is_none(), "the prompt closes while the read runs");
+    assert!(h.state().opening.is_some(), "the read runs on a worker thread");
+
+    for _ in 0..500 {
+        h.run_steps(1);
+        if h.state().opening.is_none() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(h.state().opening.is_none(), "the read finished");
+    let d = h.state().dialog.as_ref().expect("a rejected password brings the prompt back");
+    assert_eq!(d.id, "password");
+    assert_eq!(d.fields.get("password").map(String::as_str), Some("nope"), "the typed text is still there");
+    assert_eq!(d.fields.get("error").map(String::as_str), Some("Incorrect password. Please try again."));
+    assert!(h.state().session.documents().is_empty(), "a wrong password opens nothing");
+}
+
 /// A locked deck opened in the background (#350's path, used by the File tab and the recent list) is
 /// read on its thread and comes back as the prompt — never as a bare status-bar error.
 #[test]
 fn a_locked_deck_opened_in_the_background_asks_for_the_password() {
     let mut app = SlideApp::new(Session::new(), Services::default());
     app.open_path_in_background(ENCRYPTED);
-    for _ in 0..500 {
-        app.poll_opening();
-        if app.opening.is_none() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    assert!(app.opening.is_none(), "the background read finished");
+    assert!(app.opening.is_some(), "the read runs on a thread");
+    finish_opening(&mut app);
     let d = app.dialog.as_ref().expect("the prompt is up");
     assert_eq!(d.id, "password");
     assert_eq!(d.params.get("name").and_then(Value::as_str), Some(ENCRYPTED));
     assert!(app.status.is_none(), "a locked file is a question, not an error to report");
     assert!(app.session.documents().is_empty(), "nothing is opened yet");
 
-    // The prompt answers it: the deck opens, keeps its path and warns about saving.
+    // The prompt answers it: the deck opens, with no path to save over, and warns about saving.
     app.run("file.open", json!({"path": ENCRYPTED, "password": PASSWORD})).unwrap();
     assert!(app.dialog.is_none(), "the prompt is dismissed");
     let doc = app.session.active().expect("the deck opened");
     assert_eq!(doc.doc.slides.len(), 3);
-    assert_eq!(doc.path.as_deref(), Some(ENCRYPTED));
+    assert_eq!(doc.path, None);
     assert!(app.toast.as_ref().is_some_and(|t| t.text.contains("can't encrypt on save")), "{:?}", app.toast.map(|t| t.text));
+}
+
+/// Poll the background read until it finishes: the derivation can take a while on a slow machine.
+fn finish_opening(app: &mut SlideApp) {
+    for _ in 0..500 {
+        app.poll_opening();
+        if app.opening.is_none() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(app.opening.is_none(), "the background read finished");
+}
+
+/// The retry after a rejection runs on a worker thread too: a spin count of 100,000 must not freeze
+/// the window, and the prompt comes back with the text typed and the reason under it.
+#[test]
+fn a_password_retry_runs_on_a_worker_thread() {
+    let mut app = SlideApp::new(Session::new(), Services::default());
+    let started = std::time::Instant::now();
+    app.open_path_with_password_in_background(ENCRYPTED, "nope");
+    assert!(app.opening.is_some(), "the retry is a background read, not a synchronous one");
+    assert!(started.elapsed() < std::time::Duration::from_secs(1), "the call returned at once");
+    finish_opening(&mut app);
+
+    let d = app.dialog.as_ref().expect("the prompt is back");
+    assert_eq!(d.id, "password");
+    assert_eq!(d.params.get("path").and_then(Value::as_str), Some(ENCRYPTED));
+    assert_eq!(d.fields.get("password").map(String::as_str), Some("nope"), "the typed text is kept");
+    assert_eq!(d.fields.get("error").map(String::as_str), Some("Incorrect password. Please try again."));
+    assert!(app.status.is_none(), "the reason belongs under the field");
+    assert!(app.session.documents().is_empty(), "a wrong password opens nothing");
+
+    // The same route with the right password opens the deck, with no file to save over.
+    app.open_path_with_password_in_background(ENCRYPTED, PASSWORD);
+    finish_opening(&mut app);
+    assert!(app.dialog.is_none(), "the prompt is dismissed");
+    let doc = app.session.active().expect("the deck opened");
+    assert_eq!(doc.doc.slides.len(), 3);
+    assert_eq!(doc.path, None);
 }

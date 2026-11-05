@@ -3,11 +3,11 @@
 //! Supports both:
 //! - Standard Encryption (Office 2007, version 2..=4, minor 2; AES-128-ECB, SHA-1)
 //! - Agile Encryption (Office 2010+, version 4.4; AES-128/256-CBC, SHA-1/256/384/512, spin count)
-
-use std::io::{Cursor, Read};
+//!
+//! Key material derived from the password (the UTF-16 password, every intermediate hash and the
+//! AES keys) is held in `Zeroizing` buffers and wiped when it drops.
 
 use aes::cipher::{BlockCipherDecrypt, KeyInit};
-use hmac::Mac;
 use sha1::Digest;
 use zeroize::Zeroizing;
 
@@ -34,9 +34,15 @@ pub fn decrypt(bytes: &[u8], password: Option<&str>) -> Result<Vec<u8>, PptxErro
     let Some(password) = password else {
         return Err(PptxError::PasswordRequired);
     };
-    let mut comp = ::cfb::CompoundFile::open(Cursor::new(bytes)).map_err(|e| PptxError::Encrypted(format!("unreadable compound file ({e})")))?;
-    let info = stream(&mut comp, "/EncryptionInfo", MAX_INFO)?;
-    let package = stream(&mut comp, "/EncryptedPackage", bytes.len() as u64)?;
+    let comp = crate::cfb::Compound::open(bytes).map_err(|e| PptxError::Encrypted(format!("unreadable compound file ({e})")))?;
+    let info = comp
+        .root_stream_capped("EncryptionInfo", MAX_INFO)
+        .map_err(PptxError::Encrypted)?
+        .ok_or_else(|| PptxError::Encrypted("missing EncryptionInfo stream".into()))?;
+    let package = comp
+        .root_stream_capped("EncryptedPackage", bytes.len() as u64)
+        .map_err(PptxError::Encrypted)?
+        .ok_or_else(|| PptxError::Encrypted("missing EncryptedPackage stream".into()))?;
 
     let (major, minor) = match info.get(..4) {
         Some([a, b, c, d]) => (u16::from_le_bytes([*a, *b]), u16::from_le_bytes([*c, *d])),
@@ -48,18 +54,6 @@ pub fn decrypt(bytes: &[u8], password: Option<&str>) -> Result<Vec<u8>, PptxErro
         (4, 4) => decrypt_agile(&info, &package, password),
         _ => Err(PptxError::Encrypted(format!("unsupported encryption version {major}.{minor}"))),
     }
-}
-
-fn stream<F: Read + std::io::Seek>(comp: &mut ::cfb::CompoundFile<F>, path: &str, cap: u64) -> Result<Vec<u8>, PptxError> {
-    let s = comp.open_stream(path).map_err(|e| PptxError::Encrypted(format!("cannot read stream {} ({e})", path.trim_start_matches('/'))))?;
-    let mut v = Vec::new();
-    s.take(cap.saturating_add(1))
-        .read_to_end(&mut v)
-        .map_err(|e| PptxError::Encrypted(format!("cannot read stream {} ({e})", path.trim_start_matches('/'))))?;
-    if v.len() as u64 > cap {
-        return Err(PptxError::Encrypted(format!("stream {} exceeds size limit", path.trim_start_matches('/'))));
-    }
-    Ok(v)
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -123,45 +117,46 @@ fn decrypt_standard(info: &[u8], package: &[u8], password: &str) -> Result<Vec<u
         .get(enc_vh_offset..enc_vh_offset.saturating_add(enc_hash_len))
         .ok_or_else(|| PptxError::Encrypted("EncryptionVerifier truncated encrypted verifier hash".into()))?;
 
-    // Derive intermediate key: 50,000 SHA-1 iterations
-    let pw_utf16: Vec<u8> = password.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
-    let mut h = {
+    // Derive intermediate key: 50,000 SHA-1 iterations. Every password-derived buffer is wiped on
+    // drop, here and below: the password and the key are secrets.
+    let pw_utf16 = Zeroizing::new(password.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<u8>>());
+    let mut h = Zeroizing::new({
         let mut hasher = sha1::Sha1::new();
         hasher.update(salt);
-        hasher.update(&pw_utf16);
-        hasher.finalize()
-    };
+        hasher.update(&pw_utf16[..]);
+        hasher.finalize().to_vec()
+    });
 
     for i in 0..50000u32 {
         let mut hasher = sha1::Sha1::new();
         hasher.update(i.to_le_bytes());
-        hasher.update(h);
-        h = hasher.finalize();
+        hasher.update(&h[..]);
+        *h = hasher.finalize().to_vec();
     }
 
     let mut hasher = sha1::Sha1::new();
-    hasher.update(h);
+    hasher.update(&h[..]);
     hasher.update(0u32.to_le_bytes()); // block 0
-    let h_final = hasher.finalize();
+    let h_final = Zeroizing::new(hasher.finalize().to_vec());
 
-    let mut b1 = [0x36u8; 64];
-    for (b, x) in b1.iter_mut().zip(&h_final) {
+    let mut b1 = Zeroizing::new([0x36u8; 64]);
+    for (b, x) in b1.iter_mut().zip(h_final.iter()) {
         *b ^= *x;
     }
-    let x1 = sha1::Sha1::digest(b1);
+    let x1 = Zeroizing::new(sha1::Sha1::digest(&b1[..]).to_vec());
 
-    let mut b2 = [0x5cu8; 64];
-    for (b, x) in b2.iter_mut().zip(&h_final) {
+    let mut b2 = Zeroizing::new([0x5cu8; 64]);
+    for (b, x) in b2.iter_mut().zip(h_final.iter()) {
         *b ^= *x;
     }
-    let x2 = sha1::Sha1::digest(b2);
+    let x2 = Zeroizing::new(sha1::Sha1::digest(&b2[..]).to_vec());
 
     // §2.3.4.7: the key is the first `keySize` bytes of x1 || x2 (40 bytes are available).
-    let combined = [x1.as_slice(), x2.as_slice()].concat();
-    let key = combined.get(..key_bytes).ok_or_else(|| PptxError::Encrypted("derived key too short".into()))?;
+    let combined = Zeroizing::new([x1.as_slice(), x2.as_slice()].concat());
+    let key = Zeroizing::new(combined.get(..key_bytes).ok_or_else(|| PptxError::Encrypted("derived key too short".into()))?.to_vec());
 
     // The verifier and the package are both encrypted with AES in ECB mode.
-    let aes = Aes::new(key)?;
+    let aes = Aes::new(&key)?;
 
     let mut verifier_dec = enc_verifier.to_vec();
     decrypt_ecb(&aes, &mut verifier_dec);
@@ -259,30 +254,21 @@ impl Hash {
             }
         }
     }
-    fn hmac(self, key: &[u8], data: &[u8]) -> Result<Vec<u8>, PptxError> {
-        let err = |_| PptxError::Encrypted("bad HMAC key".into());
-        Ok(match self {
-            Hash::Sha1 => {
-                let mut m = hmac::Hmac::<sha1::Sha1>::new_from_slice(key).map_err(err)?;
-                m.update(data);
-                m.finalize().into_bytes().to_vec()
-            }
-            Hash::Sha256 => {
-                let mut m = hmac::Hmac::<sha2::Sha256>::new_from_slice(key).map_err(err)?;
-                m.update(data);
-                m.finalize().into_bytes().to_vec()
-            }
-            Hash::Sha384 => {
-                let mut m = hmac::Hmac::<sha2::Sha384>::new_from_slice(key).map_err(err)?;
-                m.update(data);
-                m.finalize().into_bytes().to_vec()
-            }
-            Hash::Sha512 => {
-                let mut m = hmac::Hmac::<sha2::Sha512>::new_from_slice(key).map_err(err)?;
-                m.update(data);
-                m.finalize().into_bytes().to_vec()
-            }
-        })
+    fn block_size(self) -> usize {
+        match self {
+            Hash::Sha1 | Hash::Sha256 => 64,
+            Hash::Sha384 | Hash::Sha512 => 128,
+        }
+    }
+    /// HMAC (RFC 2104) over `data`: a key longer than the hash's block is hashed first, then the
+    /// key is padded to the block and used for the inner and outer digests.
+    fn hmac(self, key: &[u8], data: &[u8]) -> Vec<u8> {
+        let bs = self.block_size();
+        let mut k = Zeroizing::new(if key.len() > bs { self.hash(&[key]) } else { key.to_vec() });
+        k.resize(bs, 0);
+        let pad = |x: u8| Zeroizing::new(k.iter().map(|b| b ^ x).collect::<Vec<u8>>());
+        let inner = self.hash(&[&pad(0x36)[..], data]);
+        self.hash(&[&pad(0x5C)[..], &inner])
     }
 }
 
@@ -332,19 +318,11 @@ fn cbc_decrypt(key: &[u8], iv: &[u8], data: &[u8]) -> Result<Vec<u8>, PptxError>
     Ok(out)
 }
 
-fn derive_key(hash: Hash, hn: &[u8], block_key: &[u8], len: usize) -> Vec<u8> {
-    let mut key = hash.hash(&[hn, block_key]);
-    if key.len() < len {
-        let mut buf = Vec::with_capacity(len.saturating_add(hash.size()));
-        let mut i = 0u32;
-        while buf.len() < len {
-            buf.extend_from_slice(&hash.hash(&[hn, block_key, &i.to_le_bytes()]));
-            i = i.saturating_add(1);
-        }
-        buf.truncate(len);
-        return buf;
-    }
-    key.truncate(len);
+/// A key from the iterated password hash and a block key (§2.3.4.11): H(Hn + blockKey), padded
+/// with 0x36 to `len` when the hash is shorter, truncated when it is longer.
+fn derive_key(hash: Hash, hn: &[u8], block_key: &[u8], len: usize) -> Zeroizing<Vec<u8>> {
+    let mut key = Zeroizing::new(hash.hash(&[hn, block_key]));
+    key.resize(len, 0x36);
     key
 }
 
@@ -361,16 +339,37 @@ fn make_iv(hash: Hash, salt: &[u8], block_key: Option<&[u8]>, block_size: usize)
 }
 
 fn iterate(hash: Hash, salt: &[u8], password: &str, spin_count: u32) -> Zeroizing<Vec<u8>> {
-    let pw_utf16: Vec<u8> = password.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
-    let mut h = hash.hash(&[salt, &pw_utf16]);
+    let pw_utf16 = Zeroizing::new(password.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<u8>>());
+    let mut h = Zeroizing::new(hash.hash(&[salt, &pw_utf16[..]]));
     for i in 0..spin_count {
-        h = hash.hash(&[&i.to_le_bytes(), &h]);
+        *h = hash.hash(&[&i.to_le_bytes(), &h[..]]);
     }
-    Zeroizing::new(h)
+    h
 }
 
+/// Decode standard base64 (padding optional, whitespace ignored). Strict: an unknown character is
+/// an error rather than a silently shorter value.
 fn b64(s: &str) -> Result<Vec<u8>, PptxError> {
-    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, s.trim()).map_err(|e| PptxError::Encrypted(format!("invalid base64: {e}")))
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let (mut buf, mut bits) = (0u32, 0u32);
+    for c in s.bytes().filter(|c| !c.is_ascii_whitespace() && *c != b'=') {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return Err(PptxError::Encrypted("invalid base64".into())),
+        };
+        buf = (buf << 6) | u32::from(v);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+    Ok(out)
 }
 
 fn b64_attr(e: &xml::El, attr: &str) -> Result<Vec<u8>, PptxError> {
@@ -432,6 +431,16 @@ fn parse_agile_info(info: &[u8]) -> Result<AgileInfo, PptxError> {
         .find(|e| e.local() == "encryptedKey" && e.attr("spinCount").is_some())
         .ok_or_else(|| PptxError::Encrypted("no password-based keyEncryptor found".into()))?;
 
+    // The work factor is refused before anything else is read: lowering it would derive a
+    // different key from the one the file was written with, and report a wrong password.
+    let spin_count: u32 = match ek.attr("spinCount").and_then(|s| s.parse().ok()) {
+        Some(n) if n <= MAX_SPIN_COUNT => n,
+        Some(n) => {
+            return Err(PptxError::Encrypted(format!("spin count {n} exceeds the supported maximum of {MAX_SPIN_COUNT}")));
+        }
+        None => 100_000,
+    };
+
     let pe_hash =
         Hash::parse(ek.attr("hashAlgorithm").unwrap_or("")).ok_or_else(|| PptxError::Encrypted("unsupported hash in encryptedKey".into()))?;
     let pe_block_size: usize = ek.attr("blockSize").and_then(|s| s.parse().ok()).unwrap_or(BLOCK);
@@ -439,7 +448,6 @@ fn parse_agile_info(info: &[u8]) -> Result<AgileInfo, PptxError> {
     let pe_key_bytes = pe_key_bits / 8;
     let pe_salt_size: usize = ek.attr("saltSize").and_then(|s| s.parse().ok()).unwrap_or(16);
     let pe_salt = b64_attr(ek, "saltValue")?;
-    let spin_count: u32 = ek.attr("spinCount").and_then(|s| s.parse().ok()).unwrap_or(100_000).min(MAX_SPIN_COUNT);
 
     let verifier_input = b64_attr(ek, "encryptedVerifierHashInput")?;
     let verifier_hash = b64_attr(ek, "encryptedVerifierHashValue")?;
@@ -497,7 +505,7 @@ fn decrypt_agile(info: &[u8], package: &[u8], password: &str) -> Result<Vec<u8>,
         let expected = cbc_decrypt(&key, &val_iv, enc_val)?;
         let expected = expected.get(..info.hash.size()).ok_or_else(|| PptxError::Encrypted("integrity value too short".into()))?;
 
-        if !same(&info.hash.hmac(hmac_key, package)?, expected) {
+        if !same(&info.hash.hmac(hmac_key, package), expected) {
             return Err(PptxError::Encrypted("integrity verification failed".into()));
         }
     }
@@ -567,5 +575,38 @@ mod tests {
         let combined = [x1.as_slice(), x2.as_slice()].concat();
         let expected = [0x40, 0xb1, 0x3a, 0x71, 0xf9, 0x0b, 0x96, 0x6e, 0x37, 0x54, 0x08, 0xf2, 0xd1, 0x81, 0xa1, 0xaa];
         assert_eq!(&combined[..16], &expected);
+    }
+
+    #[test]
+    fn a_derived_key_longer_than_the_hash_is_padded_with_0x36() {
+        // §2.3.4.11: a 20-byte SHA-1 hash gives a 256-bit key by padding with 0x36, and a
+        // 128-bit key by truncating the hash. msoffcrypto's stock helper only truncated, which is
+        // why an agile SHA-1 container with AES-256 was never covered.
+        let hn = [0x11u8; 20];
+        let long = derive_key(Hash::Sha1, &hn, &BK_KEY_VALUE, 32);
+        assert_eq!(long.len(), 32);
+        assert_eq!(&long[20..], &[0x36u8; 12]);
+        let short = derive_key(Hash::Sha1, &hn, &BK_KEY_VALUE, 16);
+        assert_eq!(short.as_slice(), &Hash::Sha1.hash(&[&hn, &BK_KEY_VALUE])[..16]);
+    }
+
+    #[test]
+    fn a_spin_count_above_the_cap_is_refused() {
+        // Lowering the count silently would derive a different key from the one the file was
+        // written with, and report a wrong password for a correct one.
+        let mut info = vec![4u8, 4, 0, 0, 0, 0, 0, 0];
+        info.extend_from_slice(
+            format!(
+                "<encryption xmlns=\"http://schemas.microsoft.com/office/2006/encryption\" \
+                 xmlns:p=\"http://schemas.microsoft.com/office/2006/keyEncryptor/password\">\
+                 <keyData saltValue=\"AAAA\" hashAlgorithm=\"SHA512\" blockSize=\"16\" keyBits=\"256\"/>\
+                 <keyEncryptors><keyEncryptor><p:encryptedKey spinCount=\"{}\" hashAlgorithm=\"SHA512\"/>\
+                 </keyEncryptor></keyEncryptors></encryption>",
+                MAX_SPIN_COUNT + 1
+            )
+            .as_bytes(),
+        );
+        let e = parse_agile_info(&info).err().expect("a spin count above the cap must be refused");
+        assert!(e.to_string().contains("spin count"), "{e}");
     }
 }

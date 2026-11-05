@@ -11,9 +11,15 @@ use deckcraft_pptx::{PptxError, crypt};
 const PASSWORD: &str = "DeckCraft-Test-Passw0rd!";
 const WRONG: &str = "not-the-password";
 
-/// Encrypted packages: both schemes, three of the four agile hash sizes, two key sizes.
-const ENCRYPTED: &[&str] =
-    &["standard-aes128-sha1.pptx", "standard-aes256-sha1.pptx", "agile-aes256-sha512.pptx", "agile-aes256-sha256.pptx", "agile-aes128-sha384.pptx"];
+/// Encrypted packages: both schemes, all four agile hash sizes, two key sizes.
+const ENCRYPTED: &[&str] = &[
+    "standard-aes128-sha1.pptx",
+    "standard-aes256-sha1.pptx",
+    "agile-aes256-sha512.pptx",
+    "agile-aes256-sha1.pptx",
+    "agile-aes256-sha256.pptx",
+    "agile-aes128-sha384.pptx",
+];
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name);

@@ -681,7 +681,16 @@ impl Session {
             push_undo(st, HistoryEntry { label: spec.label.to_string(), doc: old, selection: sel, vertex_kind });
         }
         if spec.journal && outer {
-            self.journal.push((id.to_string(), params.clone()));
+            // Passwords are secrets: never keep one in the journal (it is replayed and may outlive us).
+            let recorded = match params.as_object() {
+                Some(o) if o.contains_key("password") => {
+                    let mut o = o.clone();
+                    o.remove("password");
+                    Value::Object(o)
+                }
+                _ => params.clone(),
+            };
+            self.journal.push((id.to_string(), recorded));
             if self.journal.len() > 10_000 {
                 self.journal.drain(..1000);
             }
