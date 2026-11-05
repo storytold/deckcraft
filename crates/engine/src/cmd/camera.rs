@@ -320,14 +320,9 @@ fn apply_to_all(s: &mut Session, p: &Value) -> Result<Value> {
     let source = {
         let doc = s.doc()?;
         let id = *ids.first().ok_or_else(|| bad("camera.applyToAll", "nothing selected"))?;
-        let mut found = None;
-        for slide in &doc.doc.slides {
-            if let Some(sh) = slide.shape(id).filter(|sh| sh.is_cameo()) {
-                found = Some(sh.clone());
-                break;
-            }
-        }
-        found.ok_or_else(|| bad("camera.applyToAll", "select a Cameo"))?
+        // Resolve the id in the current slide (`targets` came from it): ids repeat across slides,
+        // as the PPTX import numbers each slide afresh.
+        doc.shape(id).filter(|sh| sh.is_cameo()).cloned().ok_or_else(|| bad("camera.applyToAll", "select a Cameo"))?
     };
     let styled = s.edit(|doc, _| {
         let mut styled = 0usize;
