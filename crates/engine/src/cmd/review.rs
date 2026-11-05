@@ -1304,7 +1304,9 @@ fn shape_uses_media(sh: &Shape, id: deckcraft_model::MediaId) -> bool {
     match &sh.kind {
         ShapeKind::Media(c) => c.media == id || c.poster == Some(id),
         ShapeKind::Picture { fill } => fill.media == id,
-        ShapeKind::Opaque { preview, .. } => *preview == Some(id),
+        // A part and a narration clip can share one media item when their bytes are identical:
+        // both must count as users, or cleanup drops the part's bytes with the clip.
+        ShapeKind::Opaque { preview, parts, .. } => *preview == Some(id) || parts.iter().any(|(_, _, media)| *media == id),
         ShapeKind::Model3d { media, poster } => *media == id || *poster == Some(id),
         _ => false,
     }
@@ -1345,7 +1347,10 @@ fn shape_media_ids(sh: &Shape) -> Vec<deckcraft_model::MediaId> {
             out.extend(c.poster);
         }
         ShapeKind::Picture { fill } => out.push(fill.media),
-        ShapeKind::Opaque { preview, .. } => out.extend(preview),
+        ShapeKind::Opaque { preview, parts, .. } => {
+            out.extend(*preview);
+            out.extend(parts.iter().map(|(_, _, media)| *media));
+        }
         ShapeKind::Model3d { media, poster } => {
             out.push(*media);
             out.extend(poster);
@@ -2012,6 +2017,46 @@ mod tests {
 
     fn cameo(s: &Session, id: ShapeId) -> deckcraft_model::Cameo {
         doc_shape(s, id).and_then(|sh| sh.cameo.clone()).unwrap()
+    }
+
+    /// A recorded narration and an opaque part can share one media item when their bytes match.
+    /// Clearing the recording must not take the part's bytes with it.
+    #[test]
+    fn clearing_recorded_narration_keeps_an_opaque_part_that_shares_its_media() {
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let wav = tone(4000);
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        let media = {
+            let st = s.doc().unwrap();
+            st.doc.slides[0]
+                .shapes
+                .iter()
+                .find_map(|sh| match &sh.kind {
+                    ShapeKind::Media(c) if c.narration => Some(c.media),
+                    _ => None,
+                })
+                .expect("narration clip")
+        };
+        s.edit(|doc, _| {
+            let id = ShapeId(doc.alloc_id().ok_or_else(|| crate::cmd::bad("test", "no id"))?);
+            let sl = std::sync::Arc::make_mut(&mut doc.slides[0]);
+            sl.shapes.push(deckcraft_model::Shape {
+                id,
+                name: "Embedded object".into(),
+                kind: ShapeKind::Opaque {
+                    xml: "<p:oleObj/>".into(),
+                    preview: Some(media),
+                    label: "Object".into(),
+                    parts: vec![("rId1".into(), "oleObject".into(), media)],
+                },
+                ..Default::default()
+            });
+            Ok(())
+        })
+        .unwrap();
+        s.execute("show.clearRecording", &json!({"scope": "current", "index": 0})).unwrap();
+        assert!(s.doc().unwrap().doc.media.iter().any(|m| m.id == media), "the part still resolves to its media");
     }
 
     #[test]

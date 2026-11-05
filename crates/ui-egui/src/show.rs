@@ -1021,10 +1021,12 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
                 }),
             );
         }
+        let mut cut = 0usize;
         for (i, rate, samples) in &show.narration {
             // Encoded once, here: the clip is final.
             let Some(wav) = narration_wav(*rate, samples) else { continue };
-            let _ = app.run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(&wav)}));
+            cut += usize::from(wav.cut);
+            let _ = app.run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(&wav.wav)}));
         }
         let lc = doc.show.laser_color;
         for (i, pts) in &show.laser_saved {
@@ -1032,11 +1034,24 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
             let _ = app.run("show.laser", json!({"index": i, "points": points, "color": [lc.r, lc.g, lc.b]}));
         }
         let _ = app.run("show.setup", json!({"useTimings": true}));
-        match &show.mic_error {
+        // A cut narration is omitted work too: the save says so instead of reading as complete.
+        let limit = if cut == 0 {
+            None
+        } else {
+            Some(format!(
+                "the narration on {cut} slide{} was cut at the {:+.0} MB limit",
+                if cut == 1 { "" } else { "s" },
+                MAX_NARRATION_BYTES as f64 / 1_000_000.0
+            ))
+        };
+        let status = match (&show.mic_error, &limit) {
             // A microphone that stopped mid-take makes "saved" a half truth: say what happened.
-            Some(e) => app.set_status(format!("Recording saved, but the microphone stopped: {e}")),
-            None => app.set_status(saved_status(!show.narration.is_empty(), !show.recorded.is_empty(), !show.laser_saved.is_empty())),
-        }
+            (Some(e), Some(l)) => format!("Recording saved, but the microphone stopped: {e}, and {l}"),
+            (Some(e), None) => format!("Recording saved, but the microphone stopped: {e}"),
+            (None, Some(l)) => format!("Recording saved, but {l}"),
+            (None, None) => saved_status(!show.narration.is_empty(), !show.recorded.is_empty(), !show.laser_saved.is_empty()).to_string(),
+        };
+        app.set_status(status);
     } else {
         app.set_status("Slide timings recorded.");
     }
@@ -1046,15 +1061,32 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
 /// larger, so a take is capped to this before it is encoded.
 const MAX_NARRATION_BYTES: usize = 48_000_000;
 
+/// The samples a WAV can hold at [`MAX_NARRATION_BYTES`]: a mono 16-bit header is 44 bytes.
+fn narration_sample_cap() -> usize {
+    (MAX_NARRATION_BYTES - 44) / 2
+}
+
+/// A slide's encoded narration, and whether the byte limit cut its tail.
+struct NarrationWav {
+    wav: Vec<u8>,
+    cut: bool,
+}
+
 /// Skip near-silence and clips shorter than 0.2 s so an idle microphone adds no shape.
-fn narration_wav(rate: u32, samples: &[f32]) -> Option<Vec<u8>> {
+fn narration_wav(rate: u32, samples: &[f32]) -> Option<NarrationWav> {
+    narration_wav_within(rate, samples, MAX_NARRATION_BYTES)
+}
+
+/// [`narration_wav`] with an explicit byte limit, so the cut can be tested without a 48 MB take.
+fn narration_wav_within(rate: u32, samples: &[f32], max_bytes: usize) -> Option<NarrationWav> {
     if !(8_000..=192_000).contains(&rate) {
         return None;
     }
     let min_n = (rate as u64).saturating_mul(200) / 1000;
-    // `show.narration` rejects a WAV over 48,000,000 bytes; a mono 16-bit header is 44 bytes.
-    // Cap the samples here so the take that passes never fails on the way in.
-    let max = (MAX_NARRATION_BYTES - 44) / 2;
+    // `show.narration` rejects a WAV over `max_bytes`: cap the samples here so the take that
+    // passes never fails on the way in, and report the cut so the save is not called complete.
+    let max = max_bytes.saturating_sub(44) / 2;
+    let cut = samples.len() > max;
     let samples = &samples[..samples.len().min(max)];
     let mut sum = 0.0f64;
     let mut n = 0u64;
@@ -1072,7 +1104,7 @@ fn narration_wav(rate: u32, samples: &[f32]) -> Option<Vec<u8>> {
     if !rms.is_finite() || rms < 0.008 {
         return None;
     }
-    deckcraft_media::wav_mono(rate, samples).ok()
+    Some(NarrationWav { wav: deckcraft_media::wav_mono(rate, samples).ok()?, cut })
 }
 
 fn saved_status(narr: bool, ink: bool, laser: bool) -> &'static str {
@@ -1139,7 +1171,9 @@ fn take_narration(mic: Option<&mut (dyn deckcraft_media::MicIn + 'static)>, show
     match show.narration.iter_mut().find(|(i, _, _)| *i == slide) {
         // A resumed take adds to the same slide's clip, keeping its rate.
         Some((_, take_rate, kept)) if *take_rate == rate => {
-            let room = (rate as usize).saturating_mul(600).saturating_sub(kept.len());
+            // The clip also has to fit the engine's WAV limit at this rate: buffering more would
+            // only be cut later.
+            let room = (rate as usize).saturating_mul(600).saturating_sub(kept.len()).min(narration_sample_cap());
             kept.extend(samples.into_iter().take(room));
         }
         Some(entry) => {

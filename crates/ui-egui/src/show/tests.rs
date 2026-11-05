@@ -1570,6 +1570,22 @@ fn a_microphone_that_fails_mid_take_keeps_what_it_captured_and_says_so() {
     assert_eq!(show.narration.len(), 1);
 }
 
+/// A take that runs past the WAV limit keeps its head and reports the cut, so `save_take` cannot
+/// call it complete.
+#[test]
+fn a_narration_cut_at_the_byte_limit_reports_the_cut() {
+    let rate = 8_000;
+    let tone: Vec<f32> = (0..rate).map(|i| (i as f32 * 0.5).sin() * 0.4).collect();
+    // A 44-byte header plus a quarter second of mono 16-bit samples.
+    let limit = 44 + 2 * rate as usize / 4;
+    let cut = super::narration_wav_within(rate, &tone, limit).expect("a wav");
+    assert!(cut.cut, "the tail past the limit is reported");
+    assert!(cut.wav.len() < rate as usize * 2, "only the head is encoded: {} bytes", cut.wav.len());
+    let full = super::narration_wav_within(rate, &tone, usize::MAX / 4).expect("a wav");
+    assert!(!full.cut, "a take under the limit is complete");
+    assert!(full.wav.len() > cut.wav.len());
+}
+
 /// A slide opened while the take is held starts its clock at resume: shifting its slide-entry
 /// time by the pause would undercount it, or make the timing negative after a long hold.
 #[test]
