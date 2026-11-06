@@ -185,6 +185,9 @@ mod tests {
         assert_eq!(tr("Zoom…"), "Zoom…");
         assert_eq!(tr("Zoom on"), "Zoom ativado");
         assert_eq!(tr("Interface Language"), "Idioma da Interface");
+        assert_eq!(tr("Interface Language: System"), "Idioma da interface: Sistema");
+        assert_eq!(tr("Interface Language: Português (Brasil)"), "Idioma da interface: Português (Brasil)");
+        assert_eq!(tr("Interface Language: English"), "Idioma da interface: Inglês");
         assert_eq!(tr("Save to the page"), "Salvar na página");
         assert_eq!(tr("Click the preview to zoom."), "Clique na visualização para aplicar zoom.");
         assert_eq!(tr("Choose a slide to show it, or press G to return."), "Escolha um slide para exibi-lo ou pressione G para voltar.");

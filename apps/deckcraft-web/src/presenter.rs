@@ -131,6 +131,7 @@ fn open_popup(state: &Rc<RefCell<State>>) -> Result<(), String> {
     let token = format!("{}-{}", js_sys::Date::now(), js_sys::Math::random());
     let url = web_sys::Url::new(&window.location().href().map_err(error)?).map_err(error)?;
     url.set_hash(&format!("{PREFIX}{token}"));
+    url.search_params().set("lang", deckcraft_ui_egui::i18n::current().code());
     let popup = window
         .open_with_url_and_target_and_features(&url.href(), "_blank", "popup,width=1100,height=700")
         .map_err(error)?

@@ -50,7 +50,11 @@ pub fn start() {
                     }
                     deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
                     if let Some(token) = crate::presenter::token() {
-                        deckcraft_ui_egui::i18n::set_language(deckcraft_ui_egui::i18n::Language::System.resolve(browser_locale().as_deref()));
+                        let lang = query_param("lang")
+                            .and_then(|code| deckcraft_ui_egui::i18n::Language::from_code(&code))
+                            .unwrap_or(deckcraft_ui_egui::i18n::Language::System)
+                            .resolve(browser_locale().as_deref());
+                        deckcraft_ui_egui::i18n::set_language(lang);
                         let presenter = crate::presenter::Popup::new(token, cc.egui_ctx.clone()).map_err(std::io::Error::other)?;
                         return Ok(Box::new(presenter) as Box<dyn eframe::App>);
                     }
