@@ -71,7 +71,12 @@ fn close_grid(show: &mut Show, presenter: bool) {
 fn grid_key(show: &mut Show, doc: &Presentation, k: egui::Key, m: egui::Modifiers, presenter: bool, actions: &mut Vec<ShowAction>) -> bool {
     use egui::Key::*;
     match k {
-        Escape | Minus => close_grid(show, presenter),
+        Escape => {
+            if !show.clear_goto() {
+                close_grid(show, presenter);
+            }
+        }
+        Minus => close_grid(show, presenter),
         G if plain(m) => close_grid(show, presenter),
         PageDown => show.grid_scroll = (show.grid_scroll + 400.0).max(0.0),
         PageUp => show.grid_scroll = (show.grid_scroll - 400.0).max(0.0),

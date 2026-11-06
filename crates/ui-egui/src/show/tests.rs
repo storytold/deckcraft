@@ -1544,3 +1544,63 @@ fn transition_preview_for_first_slide_transitions_from_black() {
     assert_eq!(tr.from, None, "slide 0 transitions from black (None)");
     assert_eq!(tr.dur, 0.5);
 }
+
+/// Grid keyboard regression coverage.
+mod grid_regressions {
+    use super::*;
+    use crate::show::keys;
+
+    fn empty_deck(count: usize) -> Presentation {
+        let mut session = deckcraft_engine::Session::with_new();
+        for _ in 1..count {
+            session.execute("slide.new", &json!({})).unwrap();
+        }
+        let mut doc = Presentation::clone(&session.active().unwrap().doc);
+        for slide in &mut doc.slides {
+            std::sync::Arc::make_mut(slide).shapes.clear();
+        }
+        doc
+    }
+
+    fn number_then_escape(presenter: bool) {
+        let doc = empty_deck(3);
+        let mut show = Show::new(&doc, 0, false, presenter);
+        keys::handle_keys(&mut show, &doc, 0.0, vec![(egui::Key::Num1, egui::Modifiers::NONE)], presenter);
+        keys::handle_keys(&mut show, &doc, 0.1, vec![(egui::Key::G, egui::Modifiers::NONE)], presenter);
+        assert_eq!(show.goto, "1");
+        assert!(if presenter { show.presenter_grid } else { show.grid });
+        let (keep, _) = keys::handle_keys(&mut show, &doc, 0.2, vec![(egui::Key::Escape, egui::Modifiers::NONE)], presenter);
+        let open = if presenter { show.presenter_grid } else { show.grid };
+        assert!(keep);
+        assert_eq!((open, show.goto.as_str()), (true, ""), "first Escape must clear the typed number and leave the grid open");
+        let (keep, _) = keys::handle_keys(&mut show, &doc, 0.3, vec![(egui::Key::Escape, egui::Modifiers::NONE)], presenter);
+        assert!(keep, "the second Escape closes the grid, not the show");
+        assert!(!if presenter { show.presenter_grid } else { show.grid });
+    }
+
+    #[test]
+    fn escape_first_clears_the_number_in_audience_grid() {
+        number_then_escape(false);
+    }
+
+    #[test]
+    fn escape_first_clears_the_number_in_presenter_grid() {
+        number_then_escape(true);
+    }
+
+    #[test]
+    fn escape_g_and_minus_close_an_empty_number_grid_without_ending_show() {
+        let doc = empty_deck(3);
+        for presenter in [false, true] {
+            for key in [egui::Key::Escape, egui::Key::G, egui::Key::Minus] {
+                let mut show = Show::new(&doc, 0, false, presenter);
+                show.open_grid(presenter, &doc);
+                let (keep, consumed) = keys::handle_keys(&mut show, &doc, 0.0, vec![(key, egui::Modifiers::NONE)], presenter);
+                assert!(keep);
+                assert_eq!(consumed.len(), 1);
+                assert!(!if presenter { show.presenter_grid } else { show.grid });
+                assert_eq!(show.state.slide, 0);
+            }
+        }
+    }
+}
