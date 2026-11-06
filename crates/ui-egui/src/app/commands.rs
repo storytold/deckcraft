@@ -137,6 +137,9 @@ impl SlideApp {
             }
             "view.pane" => {
                 let pane = p.get("pane").and_then(Value::as_str).map(String::from);
+                if pane.as_deref() == Some("background") {
+                    let _ = self.run("edit.select", json!({"ids": []}));
+                }
                 self.ui.pane =
                     if pane.is_some() && pane == self.ui.pane && p.get("toggle").and_then(Value::as_bool).unwrap_or(false) { None } else { pane };
                 if let Some(tab) = p.get("tab").and_then(Value::as_str) {

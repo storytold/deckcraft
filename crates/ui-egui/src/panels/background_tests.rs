@@ -74,3 +74,84 @@ fn apply_to_all_copies_the_picture() {
     assert_eq!(doc.slides[1].background, doc.slides[0].background);
     assert_eq!(doc.masters[0].background, doc.slides[0].background);
 }
+
+#[test]
+fn format_background_switches_to_format_shape_on_selection_and_back_on_deselect() {
+    let mut s = Session::with_new();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 200.0, 120.0]})).unwrap();
+    let id = r.get("id").and_then(|v| v.as_u64()).unwrap();
+    // Start with deselect so no shape is selected.
+    s.execute("edit.select", &json!({"ids": []})).unwrap();
+
+    let mut h = harness(SlideApp::new(s, Services::default()));
+    assert_eq!(h.state().ui.pane.as_deref(), Some("background"));
+    assert!(h.query_all_by_label("Format Background").next().is_some());
+    assert!(h.query_by_label("Follow the layout").is_some());
+
+    // Selecting the shape switches the format pane to "format" (Format Shape).
+    h.state_mut().session.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("format"));
+    assert!(h.query_all_by_label("Format Shape").next().is_some());
+    assert!(h.query_by_label("Follow the layout").is_none());
+
+    // Deselecting switches back to "background" (Format Background).
+    h.state_mut().session.execute("edit.select", &json!({"ids": []})).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("background"));
+    assert!(h.query_all_by_label("Format Shape").next().is_none());
+    assert!(h.query_by_label("Follow the layout").is_some());
+}
+
+#[test]
+fn format_background_command_clears_shape_selection() {
+    let mut s = Session::with_new();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 200.0, 120.0]})).unwrap();
+    let id = r.get("id").and_then(|v| v.as_u64()).unwrap();
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+
+    let mut app = SlideApp::new(s, Services::default());
+    app.ui.pane = Some("format".into());
+    let mut h = Harness::builder().with_size(egui::vec2(1800.0, 1100.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("format"));
+    assert_eq!(h.state().session.active().unwrap().selection.shapes.len(), 1);
+
+    // Opening background pane clears shape selection and opens Format Background.
+    h.state_mut().run("view.pane", json!({"pane": "background"})).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("background"));
+    assert!(h.state().session.active().unwrap().selection.shapes.is_empty());
+    assert!(h.query_all_by_label("Format Background").next().is_some());
+}
+
+#[test]
+fn unrelated_pane_is_not_affected_by_selection_changes() {
+    let mut s = Session::with_new();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [80.0, 80.0, 200.0, 120.0]})).unwrap();
+    let id = r.get("id").and_then(|v| v.as_u64()).unwrap();
+    s.execute("edit.select", &json!({"ids": []})).unwrap();
+
+    let mut app = SlideApp::new(s, Services::default());
+    app.ui.pane = Some("animation".into());
+    let mut h = Harness::builder().with_size(egui::vec2(1800.0, 1100.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("animation"));
+
+    // Selecting a shape does not change the animation pane.
+    h.state_mut().session.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("animation"));
+}
