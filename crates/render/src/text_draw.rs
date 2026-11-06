@@ -143,15 +143,13 @@ pub fn fill_selection(
     (from, to, c): Shaded,
 ) {
     let pos = |p: (usize, usize)| deckcraft_text::Pos { para: p.0, ch: p.1 };
-    let rects = l.selection_rects(pos(from), pos(to));
-    if rects.is_empty() {
+    let boxes = l.selection_boxes(pos(from), pos(to));
+    if boxes.is_empty() {
         return;
     }
     let m = text_transform(m, tr, l.rotation);
     let shade = selection_shade(l, from, to, c);
-    for r in rects {
-        // A box is one line's: its paragraph is that of the line it spans.
-        let para = l.lines.iter().find(|ln| ln.top == r.y0 && ln.bottom == r.y1).map_or(from.0, |ln| ln.para);
+    for (para, r) in boxes {
         let ps = paras.iter().find(|(p, _)| *p == para).map(|(_, s)| *s).unwrap_or_default();
         if !ps.visible || ps.opacity <= 0.001 {
             continue;

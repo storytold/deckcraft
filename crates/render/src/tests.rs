@@ -3377,3 +3377,39 @@ fn a_selection_follows_the_animation_state_of_its_paragraph() {
     assert!(hide_second.iter().all(|&y| y <= middle), "likewise for the second: {:?}", hide_second.last());
     assert!(!hide_second.is_empty());
 }
+
+/// In columns, lines of different paragraphs share their top and bottom: each shade must still
+/// follow the paragraph it belongs to, not the first line with the same height.
+#[test]
+fn a_selection_in_columns_keeps_its_own_paragraphs_state() {
+    use super::TextHighlight;
+    let mut sh = text_shape(960, "Left\nRight", 40.0, 40.0);
+    sh.xfrm = Some(Xfrm::new(40.0, 40.0, 600.0, 70.0));
+    if let Some(t) = sh.text.as_mut() {
+        t.body.columns = Some(2);
+        t.body.col_spacing = Some(20.0);
+    }
+    let p = deck_with(vec![sh]);
+    let pale = [173, 200, 241, 255];
+    let h = TextHighlight { shape: ShapeId(960), cell: None, from: (0, 0), to: (1, 5), color: Rgba::rgb(0x33, 0x75, 0xDB) };
+    let render = |hide: Option<usize>| {
+        let state = move |_: ShapeId| ShapeState {
+            paras: hide.map(|i| (i, super::ParaState { visible: false, ..Default::default() })).into_iter().collect(),
+            ..Default::default()
+        };
+        render_slide(
+            &p,
+            0,
+            &RenderOpts { edit: true, editing_text: Some(ShapeId(960)), text_highlight: Some(h), state: Some(&state), ..Default::default() },
+        )
+    };
+    // The shaded columns: pale pixels left of the slide's middle of the box (x < 340) and right of it.
+    let shaded = |img: &Image, columns: std::ops::Range<u32>| {
+        (0..img.height).flat_map(|y| columns.clone().map(move |x| (x, y))).filter(|&(x, y)| img.pixel(x, y) == pale).count()
+    };
+    let both = render(None);
+    assert!(shaded(&both, 0..340) > 100 && shaded(&both, 340..960) > 100, "each column is shaded");
+    let hide_first = render(Some(0));
+    assert_eq!(shaded(&hide_first, 0..340), 0, "the first paragraph's shade hides with it");
+    assert!(shaded(&hide_first, 340..960) > 100, "the second column keeps its own");
+}

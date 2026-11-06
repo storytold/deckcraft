@@ -400,6 +400,11 @@ impl TextLayout {
     /// Selection highlight rectangles between two positions: per line, the union of the visual
     /// boxes of the selected characters (one logical range can be several boxes in bidi text).
     pub fn selection_rects(&self, a: Pos, b: Pos) -> Vec<Rect> {
+        self.selection_boxes(a, b).into_iter().map(|(_, r)| r).collect()
+    }
+    /// [`selection_rects`](Self::selection_rects), each with the paragraph of the line it is on
+    /// (lines of different paragraphs can share their top and bottom, in columns).
+    pub fn selection_boxes(&self, a: Pos, b: Pos) -> Vec<(usize, Rect)> {
         let (s, e) = if a <= b { (a, b) } else { (b, a) };
         let mut out = vec![];
         for l in &self.lines {
@@ -420,7 +425,7 @@ impl TextLayout {
             }
             for (x0, x1) in spans {
                 if x1 > x0 {
-                    out.push(Rect::new(x0, l.top, x1, l.bottom));
+                    out.push((l.para, Rect::new(x0, l.top, x1, l.bottom)));
                 }
             }
         }
