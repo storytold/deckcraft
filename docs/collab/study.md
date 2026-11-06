@@ -17,7 +17,7 @@ git-зависимости (`craft-libs`, форк egui) отсутствуют 
 
 ## 1. Карта репозитория
 
-202k строк Rust, 24 крейта, 3 приложения, 2432 `#[test]` в 593 файлах.
+202k строк Rust, 24 крейта, 3 приложения, 2432 `#[test]`-функции (593 `.rs`-файла).
 
 | Crate / модуль | Слой | Назначение | LOC | Тесты |
 |---|---|---|---|---|
@@ -28,10 +28,10 @@ git-зависимости (`craft-libs`, форк egui) отсутствуют 
 | `crates/model` | L1 | `Presentation`, слайды, мастера/layouts, фигуры, текст, таблицы, диаграммы, темы, анимации | 9 715 | 107 |
 | `crates/anim` | L2 | состояние анимаций по времени, машина показа, переходы, Morph-матчинг | 6 182 | 98 |
 | `crates/text` | L2 | шейпинг (HarfRust), bidi, переносы, autofit, hit-testing каретки | 5 964 | 97 |
-| `crates/format` | L2 | нативный `.deckcraft` (zip + JSON + media), outline/markdown | 2 362 | — |
-| `crates/pdf` | L4 | экспорт PDF через `craft-pdf` | 1 499 | — |
-| `crates/media`, `fonts`, `geom`, `color`, `metafile`, `mcp` | L0–L2, L6 | медиа, шрифты, EMU/фигуры, цвет, EMF/WMF, MCP-сервер | 20 274 | — |
-| `apps/deckcraft` | — | desktop (eframe/wgpu), control-сервер, логирование | 2 170 | — |
+| `crates/format` | L2 | нативный `.deckcraft` (zip + JSON + media), outline/markdown | 2 362 | 48 |
+| `crates/pdf` | L4 | экспорт PDF через `craft-pdf` | 1 499 | 8 |
+| `crates/media`, `fonts`, `geom`, `color`, `metafile`, `mcp` | L0–L2, L6 | медиа, шрифты, EMU/фигуры, цвет, EMF/WMF, MCP-сервер | 22 504 | 311 |
+| `apps/deckcraft` | — | desktop (eframe/wgpu), control-сервер, логирование | 2 170 | — (тесты в `crates/*`) |
 | `apps/deckcraft-cli` | — | `run`, `render`, `convert`, `mcp`, `app`, `bench` | 1 839 | — |
 | `apps/deckcraft-web` | — | WASM-сборка (trunk), iframe-хост | 755 | — |
 
