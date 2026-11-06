@@ -1,7 +1,7 @@
 use super::autonum::autonum;
 use super::run::{RunEffects, TextShadow};
 use super::style::{Cell, Opts, ParaShaped, Style, face_chain, make_style};
-use super::symbol::{covers_symbol, is_symbol_font, map_symbol_bullet, symbol_font_char, symbol_map_char};
+use super::symbol::{covers_symbol, is_symbol_font, map_symbol_bullet, symbol_fallback_char, symbol_font_char, symbol_map_char};
 use super::{
     Arc, Bullet, Caps, Ctx, Fill, FontDb, FontFace, FontSlot, HashMap, ParaProps, RunKind, RunProps, ScriptTag, Shape, ShapeParams, TextBody,
     UnicodeSegmentation, bidi, resolve, script,
@@ -201,6 +201,15 @@ fn shape_cells(
             .filter(|f| db.has_family(f))
             .map(|f| db.face(f, st.style_name))
             .filter(|f| covers_symbol(f, cluster.first().copied().unwrap_or(' ')));
+        // Without that font, the code draws as the Unicode look-alike (not a missing-glyph box).
+        let mapped: Vec<char>;
+        let cluster = match cluster.first().and_then(|c| symbol_fallback_char(*c, st.sym.as_deref())).filter(|_| sym_face.is_none()) {
+            Some(m) => {
+                mapped = std::iter::once(m).chain(cluster.iter().skip(1).copied()).collect();
+                mapped.as_slice()
+            }
+            None => cluster,
+        };
         let face = match (sym_face, prev.as_ref()) {
             (Some(f), _) => f,
             (None, Some(p))
@@ -391,7 +400,8 @@ fn shape_item(
     let sym = styles.get(first.style).and_then(|st| st.sym.as_deref());
     let glyphs = deckcraft_fonts::shape_range(face, text, b0..b1, &params, |ch| {
         let ch = if upper { caps_char(ch) } else { ch };
-        symbol_map_char(face, ch, sym).unwrap_or(ch)
+        let own_font = sym.is_some_and(|s| face.family.eq_ignore_ascii_case(s));
+        symbol_map_char(face, ch, sym).or_else(|| symbol_fallback_char(ch, sym).filter(|_| !own_font)).unwrap_or(ch)
     });
     let upem = face.upem.max(1.0);
     let scale_of = |cell: &Cell| {
