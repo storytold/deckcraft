@@ -10,12 +10,14 @@
 #![forbid(unsafe_code)]
 
 pub mod apply;
+pub mod client;
 pub mod delta;
 pub mod history;
 pub mod keys;
 pub mod session;
 
 pub use apply::{Adapter, Rejection, class_of};
+pub use client::{ClientSession, Effect, Link, SubmitError};
 pub use delta::delta;
 pub use history::{ActorHistory, Histories, Image, Snapshot, Step};
 pub use keys::{KeyIssuer, KeyMap};
