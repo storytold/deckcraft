@@ -193,6 +193,9 @@ mod tests {
         assert_eq!(tr("The audience window is not responding."), "A janela do público não está respondendo.");
         assert_eq!(tr("Return to the audience window to resume the connection."), "Retorne à janela do público para retomar a conexão.");
         assert_eq!(tr("Waiting for the audience window…"), "Aguardando a janela do público…");
+        assert_eq!(tr("(missing)"), "(ausente)");
+        assert_eq!(format("{0} — this file can't be found", &["talk.pptx"]), "talk.pptx — este arquivo não foi encontrado");
+        assert_eq!(format("No themes or templates match “{0}”.", &["xyz"]), "Nenhum tema ou modelo corresponde a “xyz”.");
         set_current(Language::En);
     }
 
