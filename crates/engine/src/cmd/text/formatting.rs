@@ -72,11 +72,6 @@ pub(crate) fn format_run_levels(
             }
             _ => {
                 let body = sh.text.get_or_insert_with(TextBody::default);
-                // Text that is still empty keeps the formatting on an end mark, so a size set
-                // before the text lands survives it; a body with no paragraph has none.
-                if body.paragraphs.is_empty() {
-                    body.paragraphs.push(Default::default());
-                }
                 let eff = effective.iter().find(|(i, _)| *i == id).map(|(_, e)| e);
                 match eff {
                     Some(eff) => {
