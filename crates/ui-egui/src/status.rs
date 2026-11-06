@@ -19,10 +19,7 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         let cur_slide = (st.selection.slide + 1).min(n.max(1)).to_string();
         let total_slides = n.to_string();
         let left = match st.selection.target {
-            deckcraft_engine::Target::Slides => crate::i18n::format(
-                "Slide {} of {}",
-                &[&cur_slide, &total_slides],
-            ),
+            deckcraft_engine::Target::Slides => crate::i18n::format("Slide {} of {}", &[&cur_slide, &total_slides]),
             _ => crate::i18n::tr("Slide Master").to_string(),
         };
         let p = ui.painter();
@@ -221,7 +218,11 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     crate::notes::editor(ui, &mut draft, &look, |e| {
-                        e.id(id).hint_text(crate::i18n::tr("Click to add notes")).frame(egui::Frame::NONE).desired_width(f32::INFINITY).desired_rows(2)
+                        e.id(id)
+                            .hint_text(crate::i18n::tr("Click to add notes"))
+                            .frame(egui::Frame::NONE)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(2)
                     })
                 })
                 .inner;

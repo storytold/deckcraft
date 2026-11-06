@@ -35,11 +35,7 @@ impl Language {
     /// Match a BCP 47 locale tag (e.g. `pt-BR`, `pt_PT`, `en-US`) to a supported language.
     pub fn from_locale(locale: &str) -> Self {
         let language = locale.split(['-', '_', '.', '@']).next().unwrap_or("");
-        if language.eq_ignore_ascii_case("pt") {
-            Self::PtBr
-        } else {
-            Self::En
-        }
+        if language.eq_ignore_ascii_case("pt") { Self::PtBr } else { Self::En }
     }
 
     /// Machine-readable language code for serialization or command options.
@@ -63,11 +59,7 @@ impl Language {
 
     /// Resolve [`Language::System`] to a concrete language using the provided system locale.
     pub fn resolve(self, locale: Option<&str>) -> Self {
-        if self == Self::System {
-            Self::from_locale(locale.unwrap_or(""))
-        } else {
-            self
-        }
+        if self == Self::System { Self::from_locale(locale.unwrap_or("")) } else { self }
     }
 }
 
@@ -93,6 +85,7 @@ pub fn set_language(language: Language) {
 const CATALOG_PT_BR: &str = include_str!("i18n/pt-br.tsv");
 static PT_BR: OnceLock<HashMap<String, String>> = OnceLock::new();
 
+/// Lazily parsed Brazilian Portuguese translation map from `pt-br.tsv`.
 fn catalog() -> &'static HashMap<String, String> {
     PT_BR.get_or_init(|| {
         CATALOG_PT_BR
@@ -106,11 +99,7 @@ fn catalog() -> &'static HashMap<String, String> {
 
 /// Exact lookup at an explicit interface boundary; unknown text falls back to English.
 pub fn tr(text: &str) -> &str {
-    if CURRENT.get() == Language::PtBr {
-        catalog().get(text).map(String::as_str).unwrap_or(text)
-    } else {
-        text
-    }
+    if CURRENT.get() == Language::PtBr { catalog().get(text).map(String::as_str).unwrap_or(text) } else { text }
 }
 
 /// Substitute already-formatted values without interpreting their contents as interface text.
@@ -147,22 +136,14 @@ pub fn format(source: &str, values: &[&str]) -> String {
 
 /// Substitute an integer count into singular/plural forms depending on the active language.
 pub fn count(n: usize, english: &str, singular: &str, plural: &str) -> String {
-    let word = if CURRENT.get() == Language::PtBr {
-        if n == 1 { singular } else { plural }
-    } else {
-        english
-    };
+    let word = if CURRENT.get() == Language::PtBr { if n == 1 { singular } else { plural } } else { english };
     std::format!("{n} {word}")
 }
 
 /// Formats the AutoRecover startup notification with the number of recovered presentations.
 pub fn recovered(n: usize) -> String {
-    let amount = count(
-        n,
-        if n == 1 { "unsaved presentation" } else { "unsaved presentations" },
-        "apresentação não salva",
-        "apresentações não salvas",
-    );
+    let amount =
+        count(n, if n == 1 { "unsaved presentation" } else { "unsaved presentations" }, "apresentação não salva", "apresentações não salvas");
     format("Recovered {} from the last session", &[&amount])
 }
 
@@ -193,13 +174,26 @@ mod tests {
         assert_eq!(format("Stopped opening {0}", &["deck.pptx"]), "Cancelada a abertura de deck.pptx");
         assert_eq!(tr("Inserted 1 slide"), "Inserido 1 slide");
         assert_eq!(format("Inserted {} slides", &["3"]), "Inseridos 3 slides");
-        assert_eq!(tr("Couldn't save AutoRecover information: {e}").replace("{e}", "disk full"), "Não foi possível salvar informações de AutoRecuperação: disk full");
+        assert_eq!(
+            tr("Couldn't save AutoRecover information: {e}").replace("{e}", "disk full"),
+            "Não foi possível salvar informações de AutoRecuperação: disk full"
+        );
         assert_eq!(tr("Distribute Vertically"), "Distribuir Verticalmente");
         assert_eq!(tr("File (Alt+F)"), "Arquivo (Alt+F)");
         assert_eq!(tr("SmartArt Design"), "Design do SmartArt");
         assert_eq!(tr("Zoom"), "Zoom");
         assert_eq!(tr("Zoom…"), "Zoom…");
         assert_eq!(tr("Zoom on"), "Zoom ativado");
+        assert_eq!(tr("Interface Language"), "Idioma da Interface");
+        assert_eq!(tr("Save to the page"), "Salvar na página");
+        assert_eq!(tr("Click the preview to zoom."), "Clique na visualização para aplicar zoom.");
+        assert_eq!(tr("Choose a slide to show it, or press G to return."), "Escolha um slide para exibi-lo ou pressione G para voltar.");
+        assert_eq!(format("First {} slides", &["48"]), "Primeiros 48 slides");
+        assert_eq!(tr("The audience window has closed."), "A janela do público foi fechada.");
+        assert_eq!(tr("The audience window is not responding."), "A janela do público não está respondendo.");
+        assert_eq!(tr("Return to the audience window to resume the connection."), "Retorne à janela do público para retomar a conexão.");
+        assert_eq!(tr("Waiting for the audience window…"), "Aguardando a janela do público…");
+        set_current(Language::En);
     }
 
     #[test]
@@ -229,6 +223,7 @@ mod tests {
         set_current(Language::PtBr);
         assert_eq!(recovered(1), "Recuperadas 1 apresentação não salva da última sessão");
         assert_eq!(recovered(3), "Recuperadas 3 apresentações não salvas da última sessão");
+        set_current(Language::En);
     }
 
     #[test]
