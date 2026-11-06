@@ -18,6 +18,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 pub mod backstage;
 pub mod canvas;
 pub mod capture;
+pub mod collab;
 pub mod control;
 pub mod dialogs;
 pub mod doc_window;
@@ -223,6 +224,9 @@ pub struct SlideApp {
     pub table_pen: serde_json::Value,
     pub session: Session,
     pub services: Services,
+    /// Collaboration session state and the feature flag. Disabled unless the host turns it on
+    /// (`DECKCRAFT_COLLAB=1` on the desktop, `?collab=1` in the web host).
+    pub collab: collab::CollabUi,
     pub ui: UiState,
     pub textures: textures::Textures,
     pub control_rx: Option<Receiver<ControlRequest>>,

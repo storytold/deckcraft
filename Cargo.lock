@@ -1330,6 +1330,8 @@ dependencies = [
  "craft-ui",
  "craft-update",
  "deckcraft-anim",
+ "deckcraft-collab",
+ "deckcraft-collab-proto",
  "deckcraft-color",
  "deckcraft-engine",
  "deckcraft-fonts",

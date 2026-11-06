@@ -59,6 +59,10 @@ pub fn start() {
                         bridge.connect(&mut services, cc.egui_ctx.clone());
                     }
                     let mut app = SlideApp::new(Session::new(), services);
+                    // Real-time collaboration is opt-in through the host page (`?collab=1`).
+                    if query_has("collab") {
+                        app.enable_collab();
+                    }
                     // In host mode the parent sends the presentation to edit; no sample meanwhile.
                     if app_bridge.is_some() {
                         if let Err(e) = app.start_for_host() {

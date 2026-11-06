@@ -14,7 +14,8 @@
 //! - preferences are not persisted.
 //!
 //! URL query flags: `?webgl` forces the WebGL2 backend instead of WebGPU; `?blank` starts with an
-//! empty presentation instead of the sample deck; `?show` starts the slide show.
+//! empty presentation instead of the sample deck; `?show` starts the slide show; `?collab=1`
+//! turns real-time collaboration on (off by default).
 //! `?host=parent` (inside an `<iframe>`) talks to a same-origin parent page instead: it sends the
 //! presentation to open and stores what DeckCraft saves (`host`), and `&author=` names the user
 //! for comments.

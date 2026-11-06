@@ -385,6 +385,16 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
   bytes документа приходят из iframe-хоста, как сейчас
   (`apps/deckcraft-web/src/main.rs:1-14`).
 
+Реализация UI-слоя — `crates/ui-egui/src/collab.rs` (`CollabUi`, индикатор в
+статус-баре, панель «Participants», разметка presence на canvas, баннер
+`warnings[]`). Флаг читается в `apps/deckcraft/src/main.rs` (`DECKCRAFT_COLLAB`)
+и `apps/deckcraft-web/src/web.rs` (`?collab=1`); по умолчанию выключен. Запрет
+для viewer — `Session::set_read_only` + `CommandSpec::changes_document`:
+отклоняются команды, меняющие документ, а навигация, выделение, копирование,
+сохранение и `apply_remote` работают. Роли других участников presence не
+несёт, поэтому до отдельного сообщения списка участников они показываются как
+«Participant».
+
 ## 11. Тесты
 
 Матрица `TASK.md` §8, headless через `Session` без GUI (как

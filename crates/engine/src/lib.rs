@@ -512,6 +512,10 @@ pub struct Session {
     pub mac_keys: bool,
     /// Command panics caught by the guard (the document was rolled back); soak tests require 0.
     pub panics_caught: u64,
+    /// A collaboration viewer: commands that change the document are refused in
+    /// [`Self::execute`], while queries, navigation and [`Self::apply_remote`] still work. Off by
+    /// default, so the single-user application is untouched.
+    read_only: bool,
     /// Presentations a host read off the UI thread, waiting for `file.adopt` (by token).
     loaded: Vec<(u64, cmd::file::LoadedFile)>,
     next_loaded: u64,
@@ -548,6 +552,7 @@ impl Session {
             gif_paused: Default::default(),
             mac_keys: cfg!(target_os = "macos"),
             panics_caught: 0,
+            read_only: false,
             loaded: vec![],
             next_loaded: 0,
             composition_settles: 0,
@@ -578,6 +583,14 @@ impl Session {
     }
     pub fn documents(&self) -> &[DocState] {
         &self.docs
+    }
+    /// Make every command that changes the document unavailable (a collaboration viewer).
+    /// Queries, selection, navigation and [`Self::apply_remote`] are unaffected.
+    pub fn set_read_only(&mut self, read_only: bool) {
+        self.read_only = read_only;
+    }
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
     pub fn active_index(&self) -> Option<usize> {
         self.active
@@ -655,6 +668,11 @@ impl Session {
     /// failed outer command, and committing the resulting undo entry or journal record.
     fn execute_unguarded(&mut self, id: &str, params: &Value, record: bool) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
+        // A viewer may not change the document. `apply_remote` passes `record: false`, so other
+        // participants' operations still land.
+        if self.read_only && record && spec.changes_document() {
+            return Err(EngineError::Disabled(id.into(), cmd::READ_ONLY.into()));
+        }
         // Any other edit (or a click, a key, undo) settles an input method's composition first.
         if self.depth == 0 && (spec.journal || spec.undoable) && !matches!(id, "text.compose" | "text.commit") {
             self.settle_composition();

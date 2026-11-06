@@ -6,7 +6,7 @@ use super::state::{FilePlace, FilePurpose, ImeDescriptorKey, ImeDestination, Ime
 use super::updates_ui;
 use super::{
     AnimPreview, ControlRequest, FileTarget, HashMap, ImeCancelled, ImeComposition, ImeResetPhase, ImeTerminalPending, InputTarget, Mods,
-    PendingFile, Perf, Receiver, Session, SlideApp, Target, UI_COMMANDS, UiRequest, Value, backstage, canvas, capture, dialogs, doc_window,
+    PendingFile, Perf, Receiver, Session, SlideApp, Target, UI_COMMANDS, UiRequest, Value, backstage, canvas, capture, collab, dialogs, doc_window,
     eyedropper, json, media, menus, notes, panes, preview, qat, ribbon, selpane, show, sorter, status, textures, theme, thumbs, toast, uifonts,
 };
 
@@ -45,6 +45,7 @@ impl SlideApp {
             table_pen: serde_json::json!({"width": 1.0}),
             session,
             services,
+            collab: super::collab::CollabUi::default(),
             ui: UiState::default(),
             textures: textures::Textures::default(),
             control_rx: None,
@@ -314,10 +315,12 @@ impl SlideApp {
             return;
         }
         self.sync_backstage();
+        self.sync_collab_gate();
         self.keyboard(&ctx);
         self.sync_backstage();
         ribbon::title_bar(self, ui);
         if self.backstage.is_none() && self.session.active().is_some() {
+            collab::warnings_banner(self, ui);
             ribbon::show(self, ui);
             status::status_bar(self, ui);
         }

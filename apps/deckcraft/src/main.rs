@@ -297,6 +297,10 @@ fn main() -> eframe::Result {
                 app.services.displays = Some(Box::new(move || display_count(&window)));
             }
             load_prefs(&mut app);
+            // Real-time collaboration is opt-in: the single-user editor is the default.
+            if deckcraft_ui_egui::collab::enabled_from_env() {
+                app.enable_collab();
+            }
             app.enable_update_checks();
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.
             if std::env::var_os("DECKCRAFT_NO_RECOVERY").is_none() {
