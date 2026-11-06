@@ -2,7 +2,7 @@
 //! About window. The start screen is File › Home (`backstage.rs`).
 
 use deckcraft_color::SchemeSlot;
-use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
 use crate::SlideApp;

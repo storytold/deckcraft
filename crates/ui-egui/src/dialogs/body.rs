@@ -285,6 +285,11 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+fn dlg_close(_app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
+    let (ok, cancel) = buttons(ui, "Close");
+    ok || cancel
+}
+
 fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     let names: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).map(|d| d.title()).collect();
     if names.is_empty() {
@@ -306,44 +311,18 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
             done = true;
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let save = ui.add(egui::Button::new("Save").color(t.accent_text()).fill(t.accent).min_size(vec2(84.0, 24.0)));
-        if save.clicked() && app.save_all() {
-            app.quit_confirmed = true;
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-            done = true;
-        }
-        if ui.add(egui::Button::new("Cancel").min_size(vec2(84.0, 24.0)).stroke(egui::Stroke::new(1.0, t.border))).clicked() {
-            done = true;
-        }
-    });
-});
-done
-
-fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
-    // File › Close and Ctrl+W on a presentation with unsaved changes.
-    let Some(name) = app.session.active().map(|d| d.title()) else { return true };
-    ui.label(egui::RichText::new(format!("Do you want to save the changes you made to “{name}”?")).strong());
-    ui.label("Your changes will be lost if you don't save them.");
-    ui.add_space(8.0);
-    let mut done = false;
-    ui.horizontal(|ui| {
-        let t = Tokens::get(ui.ctx());
-        if ui.add(egui::Button::new("Don't Save").min_size(vec2(84.0, 24.0))).clicked() {
-            run(app, "file.close", json!({}));
-            done = true;
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
-            if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                app.save();
-                // In the browser a save is a download: the presentation stays "unsaved".
-                let web = app.services.pick_save.is_none() && app.services.download.is_some();
-                if web || app.session.active().is_some_and(|d| !d.is_dirty()) {
-                    run(app, "file.close", json!({}));
-                }
+            let save = ui.add(
+                egui::Button::new(egui::RichText::new("Save").color(t.accent_text))
+                    .fill(t.accent)
+                    .stroke(egui::Stroke::new(1.0, t.border))
+                    .min_size(vec2(84.0, 24.0))
+            );
+            if save.clicked() && app.save_all() {
+                app.quit_confirmed = true;
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 done = true;
             }
-            if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+            if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0)).stroke(egui::Stroke::new(1.0, t.border))).clicked() {
                 done = true;
             }
         });
