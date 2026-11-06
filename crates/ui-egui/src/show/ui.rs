@@ -502,6 +502,11 @@ fn begin_slide(app: &mut SlideApp, show: &Show, f: &Fr, size: (u32, u32)) -> Sl 
 fn frame_texture(show: &mut Show, f: &Fr, sl: &Sl) -> Option<TextureHandle> {
     let Fr { ctx, doc, .. } = *f;
     let Sl { idx, step, animating, size, .. } = *sl;
+    // Woken on every pass, rendered or cached: the deadline must not depend on which branch runs.
+    if let Some(at) = sl.ink_next {
+        let wait = (at as f64 / 1000.0 - (f.now - show.slide_start).max(0.0)).max(0.0);
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
+    }
     if !animating && show.tex.as_ref().is_some_and(|(k, _)| *k == sl.key) {
         show.tex.as_ref().map(|(_, t)| t.clone())
     } else {
@@ -518,11 +523,6 @@ fn frame_texture(show: &mut Show, f: &Fr, sl: &Sl) -> Option<TextureHandle> {
                 let back = animating.then(|| show.backdrop(doc, sl.back_key));
                 // A recording preview shows each recorded stroke when the take drew it.
                 let ink_until = show.recording_preview.then(|| ((f.now - show.slide_start).max(0.0) * 1000.0) as u32);
-                if let Some(at) = sl.ink_next {
-                    // Wake when the next stroke is due, so the frame is rendered once then.
-                    let wait = (at as f64 / 1000.0 - (f.now - show.slide_start).max(0.0)).max(0.0);
-                    ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
-                }
                 render_frame(
                     doc,
                     idx,
