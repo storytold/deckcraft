@@ -10,20 +10,29 @@ use wasm_bindgen::{JsCast, closure::Closure};
 const MAX_MESSAGE: usize = 16 * 1024 * 1024;
 const MAX_COMMANDS: usize = 64;
 const PREFIX: &str = "#deckcraft-presenter=";
+/// Convert a JavaScript error value into a readable debug message.
 fn error(e: wasm_bindgen::JsValue) -> String {
     format!("{e:?}")
 }
+
+/// Retrieve the location origin of the current browser window.
 fn origin() -> Result<String, String> {
     web_sys::window().ok_or("No browser window")?.location().origin().map_err(error)
 }
+
+/// Extract the presenter window session token from the URL hash, if present.
 pub fn token() -> Option<String> {
     let hash = web_sys::window()?.location().hash().ok()?;
     let token = hash.strip_prefix(PREFIX)?;
     (!token.is_empty() && token.len() < 128).then(|| token.to_owned())
 }
+
+/// Verify that a message event matches both the expected origin and source window.
 fn same_source(event: &web_sys::MessageEvent, window: &web_sys::Window, expected_origin: &str) -> bool {
     event.origin() == expected_origin && event.source().is_some_and(|source| js_sys::Object::is(source.as_ref(), window.as_ref()))
 }
+
+/// Send a JSON payload via `post_message` to a target window within the size limit.
 fn send(window: &web_sys::Window, origin: &str, value: serde_json::Value) -> Result<(), String> {
     let text = serde_json::to_string(&value).map_err(|e| e.to_string())?;
     if text.len() > MAX_MESSAGE {
@@ -46,6 +55,7 @@ pub struct BrowserHost {
     images: DeltaCache,
 }
 impl BrowserHost {
+    /// Create a new browser presenter host listening for popup events.
     pub fn new(ctx: egui::Context) -> Result<Self, String> {
         let window = web_sys::window().ok_or("No browser window")?;
         let origin = origin()?;
@@ -81,12 +91,14 @@ impl BrowserHost {
         window.add_event_listener_with_callback("message", listener.as_ref().unchecked_ref()).map_err(error)?;
         Ok(Self { state, origin, listener, button: None, images: DeltaCache::default() })
     }
+    /// Remove the popup recovery button from the document body, if attached.
     fn remove_button(&mut self) {
         if let Some((button, callback)) = self.button.take() {
             let _ = button.remove_event_listener_with_callback("click", callback.as_ref().unchecked_ref());
             button.remove();
         }
     }
+    /// Attach a fallback button allowing the user to manually trigger the blocked popup.
     fn recovery_button(&mut self) {
         if self.button.is_some() {
             return;
@@ -119,6 +131,7 @@ impl BrowserHost {
         }
     }
 }
+/// Open the presenter popup window with the token and active interface language query parameter.
 fn open_popup(state: &Rc<RefCell<State>>) -> Result<(), String> {
     let window = web_sys::window().ok_or("No browser window")?;
     let mut state = state.try_borrow_mut().map_err(|_| "Presenter is busy")?;
@@ -215,6 +228,7 @@ pub struct Popup {
     view: View,
 }
 impl Popup {
+    /// Create a popup presenter instance attached to the opener window.
     pub fn new(token: String, ctx: egui::Context) -> Result<Self, String> {
         let window = web_sys::window().ok_or("No browser window")?;
         // `opener` is a WindowProxy from another realm; instanceof Window can fail across
