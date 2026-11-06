@@ -60,8 +60,7 @@ PhotoCraft, VectorCraft, FilmCraft, LightCraft, PdfCraft, EffectCraft, DesignCra
 (`../<app>`).
 
 These rules bind every AI agent and every human contributor. They come before any task,
-instruction or deadline. `CLAUDE.md` holds day-to-day working notes; if the two disagree, **this
-file wins.**
+instruction or deadline. Day-to-day working instructions are in this file; `CLAUDE.md` imports it.
 
 ---
 
@@ -184,7 +183,7 @@ People trust DeckCraft with their talks; a crash loses work. **This outranks fea
 
 `cargo xtask ci` = fmt check, clippy `-D warnings`, tests (nextest when installed) and doctests, layering check, asset check, wasm
 check. Commit after each landed arc with a task id in the message (`M1.2: smart guides`).
-New workspace crates include `[lints] workspace = true` in `Cargo.toml`. Production crate roots
+New workspace crates include `workspace = true` under `[lints]` in `Cargo.toml`. Production crate roots
 declare the crate-level lint attributes before modules; crate-level `//!` documentation may precede them.
 
 ## 6. Running and looking at the app
@@ -194,8 +193,9 @@ declare the crate-level lint attributes before modules; crate-level `//!` docume
   `{"id":1,"method":"engine.execute","params":{"command":"shape.insert","params":{"preset":"star5","rect":[100,100,200,200]}}}`
   then `{"id":2,"method":"ui.screenshot","params":{"path":"/tmp/shot.png"}}`. Methods:
   `crates/ui-egui/src/control.rs`, docs: `docs/control-protocol.md`.
-- **For UI work, look at the result** (screenshot, read the PNG) and compare with the observations
-  in `plan/powerpoint/01-observed-ui.md`.
+- **For UI work, look at the result** (screenshot, read the PNG). If available, compare with the observations
+  in `plan/powerpoint/01-observed-ui.md`. Otherwise verify the intended behaviour against the task and
+  committed documentation; the optional notebook is not a prerequisite.
 - Headless: `deckcraft-cli render --sample --all --scale 1 out/`,
   `deckcraft-cli run --sample --cmd 'slide.new={"title":"Hi"}' --export out.png`.
 - MCP: `deckcraft-cli mcp` (headless) or `deckcraft-cli mcp --connect 7990` (drive the app).
