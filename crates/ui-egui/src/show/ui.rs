@@ -760,13 +760,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
         let cur_s = (show.state.slide + 1).to_string();
         let total_s = doc.slides.len().to_string();
         let counter = crate::i18n::format("Slide {} of {}", &[&cur_s, &total_s]);
-        painter.text(
-            pos2(bar.min.x + 14.0, bar.center().y),
-            Align2::LEFT_CENTER,
-            counter,
-            theme::font(12.0),
-            Color32::from_gray(200),
-        );
+        painter.text(pos2(bar.min.x + 14.0, bar.center().y), Align2::LEFT_CENTER, counter, theme::font(12.0), Color32::from_gray(200));
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(Rect::from_min_max(pos2(bar.max.x - 260.0, bar.min.y), bar.max))

@@ -257,7 +257,13 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                         ui.painter().rect_filled(nr, CornerRadius::ZERO, Color32::from_gray(40));
                         // A next slide whose preview is still on its way is not the end.
                         if next.is_none() {
-                            ui.painter().text(nr.center(), Align2::CENTER_CENTER, crate::i18n::tr("End of slide show"), theme::font(13.0), Color32::from_gray(170));
+                            ui.painter().text(
+                                nr.center(),
+                                Align2::CENTER_CENTER,
+                                crate::i18n::tr("End of slide show"),
+                                theme::font(13.0),
+                                Color32::from_gray(170),
+                            );
                         }
                     }
                 }

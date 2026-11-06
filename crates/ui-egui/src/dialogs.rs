@@ -132,7 +132,9 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
     ui.add_space(8.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let t = Tokens::get(ui.ctx());
-        if ui.add(egui::Button::new(egui::RichText::new(crate::i18n::tr(ok_label)).color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0))).clicked()
+        if ui
+            .add(egui::Button::new(egui::RichText::new(crate::i18n::tr(ok_label)).color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)))
+            .clicked()
             || ui.input(|i| i.key_pressed(egui::Key::Enter))
         {
             ok = true;

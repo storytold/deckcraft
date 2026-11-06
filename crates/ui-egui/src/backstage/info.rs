@@ -42,13 +42,13 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     if let Some(p) = &path {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            if ui.button("Copy path").clicked() {
+            if ui.button(crate::i18n::tr("Copy path")).clicked() {
                 ui.ctx().copy_text(p.clone());
                 app.set_status("Copied the path");
             }
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(dir) = std::path::Path::new(p).parent().and_then(std::path::Path::to_str)
-                && ui.button("Open file location").clicked()
+                && ui.button(crate::i18n::tr("Open file location")).clicked()
             {
                 app.open_url(&format!("file:///{}", dir.replace('\\', "/").trim_start_matches('/')));
             }
@@ -84,7 +84,7 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             let size = v.get("bytes").and_then(Value::as_u64).map(format_bytes);
             egui::Grid::new("backstage_props").num_columns(2).spacing(vec2(18.0, 7.0)).show(ui, |ui| {
                 let row = |ui: &mut Ui, k: &str, val: String| {
-                    ui.label(RichText::new(k).color(t.text_dim));
+                    ui.label(RichText::new(crate::i18n::tr(k)).color(t.text_dim));
                     ui.label(val);
                     ui.end_row();
                 };
@@ -96,9 +96,10 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                 for (i, (key, label, hint)) in PROPERTIES.iter().enumerate() {
                     let saved = props.get(*key).and_then(Value::as_str).unwrap_or("").to_string();
                     let Some(draft) = bs.props.get_mut(i) else { continue };
-                    let l = ui.label(RichText::new(*label).color(t.text_dim));
+                    let l = ui.label(RichText::new(crate::i18n::tr(*label)).color(t.text_dim));
                     let id = ui.make_persistent_id(("backstage_prop", *key));
-                    let resp = ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(*hint).desired_width(300.0)).labelled_by(l.id);
+                    let resp =
+                        ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(crate::i18n::tr(*hint)).desired_width(300.0)).labelled_by(l.id);
                     if resp.lost_focus() && *draft != saved {
                         // Commit first: a click on another field takes the focus before this one is drawn.
                         let mut p = serde_json::Map::new();
@@ -111,7 +112,7 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                     }
                     ui.end_row();
                 }
-                row(ui, "Location", path.clone().unwrap_or_else(|| "Not saved yet".into()));
+                row(ui, "Location", path.clone().unwrap_or_else(|| crate::i18n::tr("Not saved yet").into()));
             });
         });
     });
@@ -156,28 +157,28 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
     ui.horizontal(|ui| {
         craft_ui::ComboBox::from_id_salt("backstage_save_type")
             .width(340.0)
-            .selected_text(current)
+            .selected_text(crate::i18n::tr(current))
             .show_ui(ui, |ui| {
                 for (id, label, _) in SAVE_TYPES {
-                    if ui.selectable_label(bs.file_type == id, label).clicked() {
+                    if ui.selectable_label(bs.file_type == id, crate::i18n::tr(label)).clicked() {
                         bs.file_type = id;
                     }
                 }
             })
             .response
-            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Save as type"));
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, crate::i18n::tr("Save as type")));
         // A page that keeps the files (`host_save`) saves; plain web downloads.
         let web = app.services.pick_save.is_none() && app.services.host_save.is_none();
-        let label = if web { "Download" } else { "Save" };
+        let label = crate::i18n::tr(if web { "Download" } else { "Save" });
         let save = ui.add(egui::Button::new(RichText::new(label).color(t.accent_text)).fill(t.accent).min_size(vec2(84.0, 26.0)));
         if save
-            .on_hover_text(if web {
+            .on_hover_text(crate::i18n::tr(if web {
                 "Download the file"
             } else if app.services.host_save.is_some() {
                 "Save to the page"
             } else {
                 "Choose where to save"
-            })
+            }))
             .clicked()
         {
             let fmt = bs.file_type;
@@ -222,8 +223,8 @@ pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
             if task(ui, Icon::Help, "Credits", "Credits", "The people and models who built DeckCraft.", true) {
                 let _ = app.run("app.about", json!({}));
             }
-            ui.hyperlink_to("Join our community on Discord", deckcraft_engine::links::DISCORD);
-            ui.hyperlink_to("Source on GitHub", deckcraft_engine::links::GITHUB);
+            ui.hyperlink_to(crate::i18n::tr("Join our community on Discord"), deckcraft_engine::links::DISCORD);
+            ui.hyperlink_to(crate::i18n::tr("Source on GitHub"), deckcraft_engine::links::GITHUB);
         });
         ui.add_space(40.0);
         ui.vertical(|ui| {
@@ -232,16 +233,16 @@ pub(super) fn about(app: &mut SlideApp, ui: &mut Ui) {
             let dark = app.ui.brightness == theme::Brightness::Dark;
             craft_ui::ComboBox::from_id_salt("backstage_appearance")
                 .width(260.0)
-                .selected_text(if dark { "Dark" } else { "Light" })
+                .selected_text(crate::i18n::tr(if dark { "Dark" } else { "Light" }))
                 .show_ui(ui, |ui| {
                     for (on, label) in [(false, "Light"), (true, "Dark")] {
-                        if ui.selectable_label(dark == on, label).clicked() {
+                        if ui.selectable_label(dark == on, crate::i18n::tr(label)).clicked() {
                             let _ = app.run("view.dark", json!({"on": on}));
                         }
                     }
                 })
                 .response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Appearance"));
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, crate::i18n::tr("Appearance")));
         });
     });
 }
