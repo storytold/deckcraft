@@ -439,9 +439,9 @@ impl PocState {
                 let (prev_msb, prev_lsb) = if sh.idr { (0, 0) } else { (self.prev_ref_msb, self.prev_ref_lsb) };
                 let max_lsb = 1i32 << sps.log2_max_poc_lsb;
                 let lsb = sh.pic_order_cnt_lsb as i32;
-                let msb = if lsb < prev_lsb && prev_lsb - lsb >= max_lsb / 2 {
+                let msb = if lsb < prev_lsb && prev_lsb.wrapping_sub(lsb) >= max_lsb / 2 {
                     prev_msb.wrapping_add(max_lsb)
-                } else if lsb > prev_lsb && lsb - prev_lsb > max_lsb / 2 {
+                } else if lsb > prev_lsb && lsb.wrapping_sub(prev_lsb) > max_lsb / 2 {
                     prev_msb.wrapping_sub(max_lsb)
                 } else {
                     prev_msb
