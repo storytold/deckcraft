@@ -142,9 +142,6 @@ fn presenter_all_slides_does_not_cover_the_audience_screen() {
         (doc, show, true),
     );
     harness.run_steps(2);
-    harness.get_by_label("Keep All slides open").click();
-    harness.run_steps(2);
-    assert!(harness.state().1.presenter_grid_stay, "the checkbox keeps the grid open");
     harness.get_by_label("All slides").click();
     harness.run_steps(2);
     assert!(harness.state().1.presenter_grid, "the grid opens in the Presenter View");
@@ -782,13 +779,12 @@ fn section_tabs_survive_the_grid_layout_and_name_the_section() {
 }
 
 #[test]
-fn presenter_enter_keeps_the_grid_open_when_asked() {
+fn presenter_enter_closes_the_grid_after_selection() {
     let mut session = deckcraft_engine::Session::with_new();
     session.execute("slide.new", &json!({})).unwrap();
     let doc = session.active().unwrap().doc.clone();
     let mut show = Show::new(&doc, 0, false, true);
     show.presenter_grid = true;
-    show.presenter_grid_stay = true;
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
         |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
@@ -799,22 +795,22 @@ fn presenter_enter_keeps_the_grid_open_when_asked() {
     harness.run_steps(2);
     harness.key_press(egui::Key::Enter);
     harness.run_steps(2);
-    assert!(harness.state().1.presenter_grid, "Enter keeps the grid when Keep All slides open is on");
+    assert!(!harness.state().1.presenter_grid, "Enter returns to the classic presenter layout");
 }
 
 #[test]
-fn the_presenter_grid_can_stay_open_after_picking_a_slide() {
+fn picking_a_presenter_slide_closes_the_grid_and_resets_overlays() {
     let session = deckcraft_engine::Session::with_new();
     let doc = &session.active().unwrap().doc;
     let mut show = Show::new(doc, 0, false, true);
     show.presenter_grid = true;
-    show.presenter_grid_stay = false;
+    show.blank = Some(Color32::BLACK);
+    show.zoom_arm = true;
     super::presenter::pick_presenter_slide(&mut show);
-    assert!(!show.presenter_grid, "off returns to the classic presenter view");
-    show.presenter_grid = true;
-    show.presenter_grid_stay = true;
-    super::presenter::pick_presenter_slide(&mut show);
-    assert!(show.presenter_grid, "on keeps the grid open for the next jump");
+    assert!(!show.presenter_grid);
+    assert!(show.blank.is_none());
+    assert!(show.zoom.is_none());
+    assert!(!show.zoom_arm);
 }
 
 /// Opening the grid from a section keeps that section selected; clicking another tab filters,
@@ -1271,9 +1267,6 @@ fn input_state_tracks_the_modes_that_move_show_click_targets() {
     assert_ne!(show.input_state(), base, "a section tab moves every thumbnail");
     show.grid_scroll = 120.0;
     assert_ne!(show.input_state(), base, "scrolling moves every thumbnail");
-    show.presenter_grid_stay = true;
-    assert_ne!(show.input_state(), base, "keeping the grid open changes what a pick does");
-    show.presenter_grid_stay = false;
     show.grid_filter = crate::sections::GridFilter::All;
     show.grid_scroll = 0.0;
     show.grid = false;

@@ -80,9 +80,6 @@ pub struct Show {
     pub grid: bool,
     /// The Presenter View's own See All Slides: the grid replaces the slide and notes in that window only; the audience keeps the slide.
     pub presenter_grid: bool,
-    /// Keep the Presenter View grid open after choosing a slide, so the presenter can jump again
-    /// without reopening it. Off restores the classic presenter view on the next pick.
-    pub presenter_grid_stay: bool,
     /// Which part of the deck the grid shows (`All`, a section, or the slides outside every section).
     pub grid_filter: GridFilter,
     /// The grid's vertical scroll offset, in points, clamped to its content on every frame.
@@ -208,8 +205,6 @@ pub(crate) struct ShowInputState {
     pub reading: bool,
     pub presenter: bool,
     pub grid: bool,
-    /// Whether picking a thumbnail leaves the Presenter View grid open.
-    pub presenter_grid_stay: bool,
     /// Which section the grid shows and how far it is scrolled: both move every thumbnail.
     pub grid_filter: GridFilter,
     pub grid_scroll: u32,
@@ -260,7 +255,6 @@ impl Show {
             blank: None,
             grid: false,
             presenter_grid: false,
-            presenter_grid_stay: false,
             grid_filter: GridFilter::All,
             grid_scroll: 0.0,
             zoom_arm: false,
@@ -320,7 +314,6 @@ impl Show {
             reading: self.reading,
             presenter: self.presenter,
             grid: self.grid,
-            presenter_grid_stay: self.presenter_grid_stay,
             grid_filter: self.grid_filter,
             grid_scroll: if self.grid_scroll.is_finite() { self.grid_scroll.to_bits() } else { 0 },
             pen: self.pen,

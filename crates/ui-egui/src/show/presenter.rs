@@ -199,17 +199,6 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                             show.open_grid(true, doc);
                         }
                     }
-                    let mut stay = show.presenter_grid_stay;
-                    let stay_resp =
-                        ui.add(egui::Checkbox::new(&mut stay, egui::RichText::new("Keep All slides open").size(13.0).color(Color32::WHITE)));
-                    if stay_resp.changed() {
-                        show.presenter_grid_stay = stay;
-                        // Turning the option off is also the way back to the classic presenter view.
-                        if !stay {
-                            show.presenter_grid = false;
-                        }
-                    }
-                    let _ = stay_resp.on_hover_text("Keep the grid open after choosing a slide; turn it off to return to Presenter View");
                     if button(ui, show.zoom_label()).clicked() {
                         show.zoom_key();
                     }
@@ -312,12 +301,9 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
     }
 }
 
-/// A thumbnail picked in the Presenter View grid: the slide changes; the grid stays when the
-/// presenter asked it to, otherwise it returns to the classic current/next/notes layout.
+/// A thumbnail picked in the Presenter View grid returns to the current/next/notes layout.
 pub(super) fn pick_presenter_slide(show: &mut Show) {
-    if !show.presenter_grid_stay {
-        show.presenter_grid = false;
-    }
+    show.presenter_grid = false;
     show.blank = None;
     show.zoom = None;
     show.zoom_arm = false;
