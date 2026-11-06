@@ -166,6 +166,7 @@ fn base(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, nv: Option<&El>) -> Shape {
                             has_custom_prompt: ph.bool("hasCustomPrompt").unwrap_or(false),
                         });
                     }
+                    s.tags = super::tags(imp, part, e);
                 }
                 _ => {}
             }
@@ -337,6 +338,8 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
     if let Some(pr) = e.child("spPr") {
         sp_pr(imp, part, &mut s, pr);
     }
+    // A picture in a picture placeholder is cut into the layout's shape (a circle, say).
+    mark_inherited_geometry(&mut s, e.child("spPr"));
     s.style = e.child("style").map(style);
     let pf = e.child("blipFill").and_then(|b| dml::blip_fill(imp, part, b));
     let nvpr = e.path(&["nvPicPr", "nvPr"]);
@@ -346,8 +349,14 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
     if vf.is_some() || af.is_some() || p14.is_some() {
         let media = p14.and_then(|m| dml::media_ref(imp, part, m)).or_else(|| vf.or(af).and_then(|f| dml::media_ref(imp, part, f)));
         if let Some(media) = media {
-            let mut clip =
-                MediaClip { media, video: vf.is_some() || af.is_none(), poster: pf.as_ref().map(|p| p.media), volume: 1.0, ..Default::default() };
+            let mut clip = MediaClip {
+                media,
+                video: vf.is_some() || af.is_none(),
+                poster: pf.as_ref().map(|p| p.media),
+                crop: pf.as_ref().map(|p| p.crop).unwrap_or_default(),
+                volume: 1.0,
+                ..Default::default()
+            };
             if let Some(m) = p14 {
                 if let Some(t) = m.child("trim") {
                     clip.trim_start_ms = ms(t.attr("st"));
@@ -421,8 +430,9 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
         if let Some(c) = gd.child("chart")
             && let Some(rel) = part.rels.get(c.attr("r:id").unwrap_or(""))
             && let Some(bytes) = imp.pkg.xml_bytes(&rel.target)
-            && let Some(chart) = super::read_chart_xml(bytes)
+            && let Some(mut chart) = if uri.ends_with("/chartex") { super::read_chartex_xml(bytes) } else { super::read_chart_xml(bytes) }
         {
+            chart.kept = super::chart::capture_kept(imp, &rel.target);
             s.kind = ShapeKind::Chart(Box::new(chart));
             return s;
         }
@@ -439,6 +449,17 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
         pics.into_iter().find_map(|b| dml::media_ref(imp, part, b))
     }
     .or_else(|| gd.and_then(|g| g.find("oleObj")).and_then(|o| vml_preview(imp, part, o.attr("spid")?)));
+    // An embedded object's fallback picture (`p:oleObj/p:pic`) can carry a fill and an outline,
+    // which PowerPoint draws behind and around the preview (old equation objects on coloured
+    // boxes). The frame's own position stays.
+    if let Some(pr) = gd.and_then(|g| g.find("oleObj")).and_then(|o| o.find("pic")).and_then(|p| p.child("spPr")) {
+        if s.fill.is_none() {
+            s.fill = dml::fill_of(imp, part, pr);
+        }
+        if s.line.is_none() {
+            s.line = pr.child("ln").map(|ln| dml::line(imp, part, ln));
+        }
+    }
     let label = if let Some(o) = gd.and_then(|g| g.find("oleObj")) {
         o.attr("progId").or(o.attr("name")).unwrap_or("Object").to_string()
     } else if uri.ends_with("/diagram") {
@@ -448,7 +469,23 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
     } else {
         uri.rsplit('/').next().unwrap_or("Object").to_string()
     };
-    s.kind = ShapeKind::Opaque { xml: part.keep(e), preview, label };
+    // Keep the parts it points to so a save writes it back whole (#203). A part with relationships
+    // of its own, or an external link, can't be carried: the save then falls back to the preview.
+    let parts = super::rel_refs(e)
+        .into_iter()
+        .map(|id| {
+            let rel = part.rels.get(&id).filter(|r| !r.external)?;
+            let pkg = imp.pkg;
+            if *imp.has_rels.entry(crate::opc::norm(&rel.target)).or_insert_with(|| !pkg.rels(&rel.target).items.is_empty()) {
+                return None;
+            }
+            let (kind, target) = (rel.ty.clone(), rel.target.clone());
+            let media = if rel.kind == "diagramData" { diagram_data(imp, &target) } else { imp.media_for(&target) };
+            Some((id, kind, media?))
+        })
+        .collect::<Option<Vec<_>>>()
+        .unwrap_or_default();
+    s.kind = ShapeKind::Opaque { xml: part.keep(e), preview, label, parts };
     s
 }
 
@@ -489,8 +526,44 @@ fn vml_index(pkg: &crate::opc::Package, vml: &str) -> std::collections::HashMap<
     out
 }
 
+/// A diagram's data part, without the link to its cached drawing: that link is a slide
+/// relationship id, which a save renumbers. Only diagrams whose drawing is missing or empty get
+/// here, and those are drawn from their data.
+fn diagram_data(imp: &mut Imp, target: &str) -> Option<deckcraft_model::MediaId> {
+    let norm_target = crate::opc::norm(target);
+    if let Some(&id) = imp.media_by_part.get(&norm_target) {
+        return Some(id);
+    }
+    fn strip(e: &mut El, depth: usize) {
+        if depth > crate::xml::MAX_DEPTH {
+            return;
+        }
+        e.children.retain(|n| !matches!(n, crate::xml::Node::El(c) if c.is("ext") && c.find("dataModelExt").is_some()));
+        for c in e.elements_mut() {
+            strip(c, depth + 1);
+        }
+    }
+    let mut doc = imp.pkg.xml(target)?;
+    strip(&mut doc.root, 0);
+    let xml = format!("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n{}", doc.root.to_xml());
+    let id = deckcraft_model::MediaId(imp.alloc());
+    let content_type = imp.pkg.content_type(target)?;
+    imp.media.push(deckcraft_model::MediaItem {
+        id,
+        name: crate::opc::file_of(target).to_string(),
+        content_type,
+        data: std::sync::Arc::new(xml.into_bytes()),
+        link: None,
+    });
+    imp.media_by_part.insert(norm_target, id);
+    Some(id)
+}
+
 /// SmartArt: read the pre-drawn shapes of its drawing part as a group.
 fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) -> Option<Shape> {
+    if depth > 8 {
+        return None;
+    }
     let rel_ids = gd.child("relIds")?;
     let dm = part.rels.get(rel_ids.attr("r:dm").unwrap_or(""))?;
     let data = imp.pkg.xml(&dm.target)?;
@@ -508,6 +581,18 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     let mut g = frame.clone();
     let x = frame.xfrm.unwrap_or_default();
     g.kind = ShapeKind::Group { children, child: Xfrm::new(0.0, 0.0, x.w, x.h) };
+    g.diagram = diagram_outline(imp, part, rel_ids, &data.root);
+    // Node pictures, from the blips of the data model's presentation points.
+    if let Some(d) = &mut g.diagram {
+        let rels = imp.pkg.rels(&dm.target);
+        for (k, rid) in crate::dgm::node_pictures(&data.root) {
+            let Some(target) = rels.get(&rid).filter(|r| !r.external).map(|r| r.target.clone()) else { continue };
+            let media = imp.media_for(&target);
+            if let Some(n) = d.nodes.get_mut(k) {
+                n.picture = media;
+            }
+        }
+    }
     Some(g)
 }
 
@@ -617,6 +702,50 @@ fn text_area(geom: &Geom, w: f64, h: f64) -> deckcraft_geom::Rect {
     }
 }
 
+/// The outline of a SmartArt graphic (for the Text Pane), with its layout, quick style and colour
+/// parts kept to be written back.
+fn diagram_outline(imp: &Imp, part: &Part, rel_ids: &El, data: &El) -> Option<deckcraft_model::Diagram> {
+    let nodes = crate::dgm::outline(data);
+    if nodes.is_empty() {
+        return None;
+    }
+    let raw = |attr: &str| -> Option<String> {
+        let rel = part.rels.get(rel_ids.attr(attr)?)?;
+        let bytes = imp.pkg.get(&rel.target)?;
+        (bytes.len() <= 4 << 20).then(|| String::from_utf8(bytes.to_vec()).ok()).flatten()
+    };
+    let layout_xml = raw("r:lo");
+    let (layout_id, cat) = layout_xml
+        .as_deref()
+        .and_then(|x| crate::xml::parse(x.as_bytes()).ok())
+        .map(|d| {
+            let cat = d.root.child("catLst").and_then(|c| c.child("cat")).and_then(|c| c.attr("type")).unwrap_or("").to_string();
+            (d.root.attr("uniqueId").unwrap_or("").to_string(), cat)
+        })
+        .unwrap_or_default();
+    let lo_type = data
+        .path(&["ptLst"])
+        .and_then(|l| l.children_named("pt").find(|p| p.attr("type") == Some("doc")))
+        .and_then(|p| p.child("prSet"))
+        .and_then(|p| p.attr("loTypeId"))
+        .unwrap_or("");
+    let id = if layout_id.is_empty() { lo_type.to_string() } else { layout_id };
+    let pr = data.path(&["ptLst"]).and_then(|l| l.children_named("pt").find(|p| p.attr("type") == Some("doc"))).and_then(|p| p.child("prSet"));
+    let style = crate::dgm::style_for(pr.and_then(|p| p.attr("qsTypeId")).unwrap_or("")).to_string();
+    let colors = crate::dgm::colors_for(pr.and_then(|p| p.attr("csTypeId")).unwrap_or(""));
+    Some(deckcraft_model::Diagram {
+        kind: crate::dgm::kind_for(&id, &cat).to_string(),
+        nodes,
+        style,
+        colors,
+        imported: true,
+        layout_id: id,
+        layout_xml,
+        style_xml: raw("r:qs"),
+        colors_xml: raw("r:cs"),
+    })
+}
+
 fn table(imp: &mut Imp, part: &Part, tbl: &El) -> Table {
     // A table naming no style is drawn by PowerPoint with thin dark grid lines ("No Style, Table
     // Grid"), not without lines.
@@ -629,6 +758,7 @@ fn table(imp: &mut Imp, part: &Part, tbl: &El) -> Table {
         t.last_col = pr.bool("lastCol").unwrap_or(false);
         t.band_row = pr.bool("bandRow").unwrap_or(false);
         t.band_col = pr.bool("bandCol").unwrap_or(false);
+        t.rtl = pr.bool("rtl");
         if let Some(id) = pr.child("tableStyleId").map(|e| e.text()) {
             // A style the file defines is drawn from its definition (by its GUID).
             // DeckCraft's own styles (written with GUIDs derived from their ids) map back to them.
@@ -677,6 +807,8 @@ fn cell(imp: &mut Imp, part: &Part, tc: &El) -> Cell {
             ]);
         }
         c.anchor = pr.attr("anchor").and_then(Anchor::from_xml);
+        c.anchor_ctr = pr.bool("anchorCtr");
+        c.horz_overflow = pr.attr("horzOverflow").and_then(deckcraft_model::text::TextOverflow::from_horz_xml);
         c.vertical = pr.attr("vert").and_then(TextDir::from_xml);
         for (i, n) in ["lnL", "lnR", "lnT", "lnB"].iter().enumerate() {
             if let Some(ln) = pr.child(n)

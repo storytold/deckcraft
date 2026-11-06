@@ -38,7 +38,7 @@ use serde::{Deserialize, Serialize};
 pub use easing::ease;
 pub use interact::{Click, HitShape, Target};
 pub use mesh::{MeshVertex, layer_mesh};
-pub use morph::{MorphFrame, MorphPath, MorphText, morph_frame, morph_pairs, morph_xfrm};
+pub use morph::{MorphFrame, MorphPath, MorphText, morph_crop, morph_frame, morph_pairs, morph_xfrm};
 pub use path::{MotionPath, default_path};
 pub use show::{LinkJump, ShowAction, ShowState, safe_url, show_order};
 pub use timeline::{EffectTiming, Sequence, StepStamp, Timeline, TriggerPlay};

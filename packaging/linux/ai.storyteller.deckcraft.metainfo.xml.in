@@ -37,6 +37,12 @@
     <keyword>slide show</keyword>
     <keyword>pptx</keyword>
   </keywords>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Slide editor with thumbnails, a process diagram and notes</caption>
+      <image type="source" width="1600" height="1000">https://raw.githubusercontent.com/storytold/deckcraft/main/docs/images/editor.png</image>
+    </screenshot>
+  </screenshots>
   <branding>
     <color type="primary" scheme_preference="light">#ffc9a8</color>
     <color type="primary" scheme_preference="dark">#b8471f</color>

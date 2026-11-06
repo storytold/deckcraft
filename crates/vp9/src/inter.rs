@@ -148,7 +148,7 @@ fn filter_h_n<const W: usize>(s: &[u16], f: &[i16], max: i32, o: &mut [u16]) {
         let mut acc = [64u16; W];
         for t in 0..8 {
             let c = f[t] as u16;
-            let Some(p) = s.get(t..).and_then(|s| s.first_chunk::<W>()) else {
+            let Some(p) = s.get(t..).and_then(<[_]>::first_chunk::<W>) else {
                 return;
             };
             for j in 0..W {
@@ -161,7 +161,7 @@ fn filter_h_n<const W: usize>(s: &[u16], f: &[i16], max: i32, o: &mut [u16]) {
     let mut acc = [64i32; W];
     for t in 0..8 {
         let c = f[t] as i32;
-        let Some(p) = s.get(t..).and_then(|s| s.first_chunk::<W>()) else {
+        let Some(p) = s.get(t..).and_then(<[_]>::first_chunk::<W>) else {
             return;
         };
         for j in 0..W {
@@ -212,7 +212,7 @@ fn filter_v_n<const W: usize>(s: &[u16], ss: usize, f: &[i16], max: i32, o: &mut
         let mut acc = [64u16; W];
         for t in 0..8 {
             let c = f[t] as u16;
-            let Some(p) = s.get(t * ss..).and_then(|s| s.first_chunk::<W>()) else {
+            let Some(p) = s.get(t * ss..).and_then(<[_]>::first_chunk::<W>) else {
                 return;
             };
             for j in 0..W {
@@ -225,7 +225,7 @@ fn filter_v_n<const W: usize>(s: &[u16], ss: usize, f: &[i16], max: i32, o: &mut
     let mut acc = [64i32; W];
     for t in 0..8 {
         let c = f[t] as i32;
-        let Some(p) = s.get(t * ss..).and_then(|s| s.first_chunk::<W>()) else {
+        let Some(p) = s.get(t * ss..).and_then(<[_]>::first_chunk::<W>) else {
             return;
         };
         for j in 0..W {

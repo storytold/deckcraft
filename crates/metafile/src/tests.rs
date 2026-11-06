@@ -1217,7 +1217,7 @@ fn savedc_restores_text_colour_and_font() {
 fn efont(height: i32, esc: i32, weight: i32, italic: u8, charset: u8, face: &str) -> Vec<u8> {
     let mut v = cat(vec![h32(1), e32(height), e32(0), e32(esc), e32(esc), e32(weight)]);
     v.extend([italic, 0, 0, charset, 0, 0, 0, 0]);
-    let mut name: Vec<u8> = face.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+    let mut name: Vec<u8> = face.encode_utf16().flat_map(u16::to_le_bytes).collect();
     name.resize(64, 0);
     v.extend(name);
     erec(82, &v)
@@ -1707,4 +1707,370 @@ fn emfplus_garbage_records_never_panic() {
         }
         let _ = parse(&emf(&[plus_comment(&recs)], [0; 4], [0; 4]));
     }
+}
+
+fn plus_pic(recs: Vec<Vec<u8>>) -> Picture {
+    let mut all = vec![plus_header(false)];
+    all.extend(recs);
+    parse(&emf(&[plus_comment(&all)], [0; 4], [0; 4])).unwrap()
+}
+
+fn u16s(s: &str) -> Vec<u8> {
+    s.encode_utf16().flat_map(u16::to_le_bytes).collect()
+}
+
+/// A 2 x 2 32bpp ARGB bitmap image object: red, green / blue, white.
+fn bitmap_2x2() -> Vec<u8> {
+    let px = [0xFFFF_0000u32, 0xFF00_FF00, 0xFF00_00FF, 0xFFFF_FFFF];
+    cat(vec![h32(0xDBC0_1002), h32(1), h32(2), h32(2), h32(8), h32(0x0026_200A), h32(0), px.iter().flat_map(|v| v.to_le_bytes()).collect()])
+}
+
+fn draw_image(id: u16, dst: [f32; 4]) -> Vec<u8> {
+    prec(0x401A, id, &cat(vec![h32(0), h32(2), f32s(&[0.0, 0.0, 2.0, 2.0]), f32s(&dst)]))
+}
+
+#[test]
+fn emfplus_draw_image_places_the_bitmap() {
+    let p = plus_pic(vec![prec(0x4008, 0x0500 | 4, &bitmap_2x2()), draw_image(4, [10.0, 10.0, 20.0, 40.0])]);
+    match &p.items[0] {
+        Item::Bitmap { rect, width, height, rgba, .. } => {
+            assert_eq!((*width, *height), (2, 2));
+            assert_eq!(rect, &[0.0, 0.0, 20.0, 40.0]);
+            assert_eq!(&rgba[..8], &[255, 0, 0, 255, 0, 255, 0, 255]);
+            assert_eq!(&rgba[8..12], &[0, 0, 255, 255]);
+        }
+        other => panic!("expected a bitmap: {other:?}"),
+    }
+}
+
+#[test]
+fn emfplus_object_split_across_records_is_joined() {
+    let obj = bitmap_2x2();
+    let (a, b) = obj.split_at(20);
+    let total = h32(obj.len() as u32);
+    let first = prec(0x4008, 0x8000 | 0x0500 | 1, &cat(vec![total.clone(), a.to_vec()]));
+    let second = prec(0x4008, 0x0500 | 1, b);
+    let p = plus_pic(vec![first, second, draw_image(1, [0.0, 0.0, 4.0, 4.0])]);
+    assert!(matches!(&p.items[0], Item::Bitmap { width: 2, height: 2, .. }));
+}
+
+#[test]
+fn emfplus_compressed_png_image_decodes() {
+    let mut png = Vec::new();
+    let img = image::RgbaImage::from_pixel(3, 1, image::Rgba([1, 2, 3, 255]));
+    image::DynamicImage::ImageRgba8(img).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+    let obj = cat(vec![h32(0xDBC0_1002), h32(1), h32(0), h32(0), h32(0), h32(0), h32(1), png]);
+    let draw = prec(0x401A, 2, &cat(vec![h32(0), h32(2), f32s(&[0.0, 0.0, 3.0, 1.0]), f32s(&[0.0, 0.0, 3.0, 1.0])]));
+    let p = plus_pic(vec![prec(0x4008, 0x0500 | 2, &obj), draw]);
+    assert!(matches!(&p.items[0], Item::Bitmap { width: 3, height: 1, rgba, .. } if rgba[..4] == [1, 2, 3, 255]));
+}
+
+fn font_obj(family: &str, em: f32, unit: u32, style: u32) -> Vec<u8> {
+    cat(vec![h32(0xDBC0_1002), f32s(&[em]), h32(unit), h32(style), h32(0), h32(family.encode_utf16().count() as u32), u16s(family)])
+}
+
+#[test]
+fn emfplus_draw_string_with_font_and_centred_format() {
+    let font = prec(0x4008, 0x0600 | 3, &font_obj("Calibri", 12.0, 2, 1));
+    // String format: centre alignment, no clip.
+    let fmt = prec(0x4008, 0x0700 | 4, &cat(vec![h32(0xDBC0_1002), h32(0x4000), h32(0), h32(1), h32(0)]));
+    let s = prec(0x401C, 0x8000 | 3, &cat(vec![h32(0xFF11_2233), h32(4), h32(2), f32s(&[0.0, 0.0, 100.0, 20.0]), u16s("Hi")]));
+    let p = plus_pic(vec![font, fmt, prec(0x400A, 0x8000, &cat(vec![h32(0xFFFF_FFFF), h32(1), f32s(&[0.0, 0.0, 100.0, 20.0])])), s]);
+    let t = p.items.iter().find_map(|i| if let Item::Text(t) = i { Some(t) } else { None }).expect("a text item");
+    assert_eq!(t.text, "Hi");
+    assert_eq!(t.font.family, "Calibri");
+    assert_eq!(t.font.weight, 700);
+    assert!(close(t.font.height, -12.0));
+    assert_eq!(t.color, [0x11, 0x22, 0x33, 0xFF]);
+    assert_eq!(t.h_align, HAlign::Center);
+    assert!(close(t.transform[4] as f32, 50.0));
+    assert_eq!(t.background, None);
+    assert_eq!(t.clip, None);
+}
+
+#[test]
+fn emfplus_driver_string_uses_character_codes_and_positions() {
+    let font = prec(0x4008, 0x0600, &font_obj("Arial", 10.0, 0, 0));
+    let pos = f32s(&[5.0, 30.0, 11.0, 30.0]);
+    let s = prec(0x4036, 0x8000, &cat(vec![h32(0xFF00_0000), h32(1), h32(0), h32(2), u16s("Ab"), pos]));
+    let p = plus_pic(vec![prec(0x400A, 0x8000, &cat(vec![h32(0xFFFF_FFFF), h32(1), f32s(&[0.0, 0.0, 50.0, 50.0])])), font, s]);
+    let Some(Item::Text(t)) = p.items.get(1) else { panic!("expected text: {:?}", p.items) };
+    assert_eq!(t.text, "Ab");
+    assert_eq!(t.dx, vec![6.0, 6.0]);
+    assert_eq!(t.v_align, VAlign::Baseline);
+    assert!(close(t.transform[4] as f32, 5.0) && close(t.transform[5] as f32, 30.0));
+}
+
+#[test]
+fn emfplus_glyph_index_driver_strings_map_back_in_core_fonts_only() {
+    // Glyph indices (no CmapLookup): 36, 69 are "Ab" in Arial's standard glyph order.
+    let gi = || prec(0x4036, 0x8000, &cat(vec![h32(0xFF00_0000), h32(0), h32(0), h32(2), h16(36), h16(69), f32s(&[0.0, 0.0, 6.0, 0.0])]));
+    let p = plus_pic(vec![prec(0x4008, 0x0600, &font_obj("Arial", 10.0, 0, 0)), gi()]);
+    assert!(matches!(&p.items[0], Item::Text(t) if t.text == "Ab"), "{:?}", p.items);
+    // An unknown font's glyph indices cannot be mapped: nothing is drawn.
+    assert!(plus_pic(vec![prec(0x4008, 0x0600, &font_obj("Calibri", 10.0, 0, 0)), gi()]).items.is_empty());
+}
+
+#[test]
+fn emfplus_linear_gradient_fills_with_a_shaded_tile() {
+    // Red to blue across x = 0..100.
+    let brush =
+        cat(vec![h32(0xDBC0_1002), h32(4), h32(0), h32(0), f32s(&[0.0, 0.0, 100.0, 10.0]), h32(0xFFFF_0000), h32(0xFF00_00FF), h32(0), h32(0)]);
+    let fill = prec(0x400A, 0, &cat(vec![h32(5), h32(1), f32s(&[0.0, 0.0, 100.0, 10.0])]));
+    let p = plus_pic(vec![prec(0x4008, 0x0100 | 5, &brush), fill]);
+    let Item::Pattern { tile, .. } = &p.items[0] else { panic!("expected a pattern: {:?}", p.items) };
+    let px = |x: usize| &tile.rgba[x * 4..x * 4 + 4];
+    assert!(px(0)[0] > 240 && px(0)[2] < 15, "left is red: {:?}", px(0));
+    let right = (tile.width as usize - 2).min(127);
+    assert!(px(right)[2] > 230 && px(right)[0] < 25, "right is blue: {:?}", px(right));
+}
+
+#[test]
+fn emfplus_hatch_brush_fills_with_an_8x8_tile() {
+    let brush = cat(vec![h32(0xDBC0_1002), h32(1), h32(4), h32(0xFF00_0000), h32(0xFFFF_FFFF)]);
+    let fill = prec(0x400A, 0, &cat(vec![h32(0), h32(1), f32s(&[0.0, 0.0, 16.0, 16.0])]));
+    let p = plus_pic(vec![prec(0x4008, 0x0100, &brush), fill]);
+    assert!(matches!(&p.items[0], Item::Pattern { tile, .. } if tile.width == 8 && tile.height == 8));
+}
+
+#[test]
+fn emfplus_clip_rect_cuts_fills_strokes_and_images() {
+    let clip = prec(0x4032, 0, &f32s(&[0.0, 0.0, 50.0, 50.0]));
+    let fill = prec(0x400A, 0x8000, &cat(vec![h32(0xFF00_0000), h32(1), f32s(&[25.0, 25.0, 50.0, 50.0])]));
+    let outside = prec(0x400A, 0x8000, &cat(vec![h32(0xFF00_0000), h32(1), f32s(&[60.0, 60.0, 5.0, 5.0])]));
+    let pen = prec(0x4008, 0x0200 | 1, &solid_pen(0xFF00_FF00, 1.0));
+    let line = prec(0x400D, 1, &cat(vec![h32(2), f32s(&[0.0, 10.0, 100.0, 10.0])]));
+    let img = prec(0x4008, 0x0500 | 2, &bitmap_2x2());
+    let p = plus_pic(vec![clip, fill, outside, pen, line, img, draw_image(2, [40.0, 0.0, 20.0, 20.0])]);
+    assert_eq!(p.items.len(), 3, "{:?}", p.items);
+    let (segs, ..) = path_segs(&p.items[0]);
+    let xs: Vec<f32> = segs.iter().filter_map(|s| if let Seg::Move(x, _) | Seg::Line(x, _) = s { Some(*x) } else { None }).collect();
+    // Picture coordinates start at the drawing's left edge (0): the square is cut at x = 50.
+    assert!(xs.iter().all(|x| *x <= 50.0 + 1e-3), "{segs:?}");
+    let (segs, ..) = path_segs(&p.items[1]);
+    assert!(matches!(segs[1], Seg::Line(x, _) if close(x, 50.0)), "{segs:?}");
+    let Item::Bitmap { rect, width, .. } = &p.items[2] else { panic!() };
+    assert_eq!(*width, 1);
+    assert!(close(rect[2], 10.0));
+}
+
+#[test]
+fn emfplus_reset_clip_and_restore_bring_drawing_back() {
+    let clip = prec(0x4032, 0, &f32s(&[0.0, 0.0, 1.0, 1.0]));
+    let fill = || prec(0x400A, 0x8000, &cat(vec![h32(0xFF00_0000), h32(1), f32s(&[10.0, 10.0, 5.0, 5.0])]));
+    let p = plus_pic(vec![prec(0x4025, 0, &h32(1)), clip, fill(), prec(0x4026, 0, &h32(1)), fill()]);
+    assert_eq!(p.items.len(), 1);
+    let clip = prec(0x4032, 0, &f32s(&[0.0, 0.0, 1.0, 1.0]));
+    let p = plus_pic(vec![clip, fill(), prec(0x4031, 0, &[]), fill()]);
+    assert_eq!(p.items.len(), 1);
+}
+
+#[test]
+fn emfplus_region_clip_intersects_rectangles() {
+    // Region: intersect(rect 0,0,30,30 ; rect 10,10,100,100) = 10..30.
+    let rect = |r: [f32; 4]| cat(vec![h32(0x1000_0000), f32s(&r)]);
+    let region = cat(vec![h32(0xDBC0_1002), h32(2), h32(1), rect([0.0, 0.0, 30.0, 30.0]), rect([10.0, 10.0, 90.0, 90.0])]);
+    let fill = prec(0x400A, 0x8000, &cat(vec![h32(0xFF00_0000), h32(1), f32s(&[0.0, 0.0, 100.0, 100.0])]));
+    let p = plus_pic(vec![prec(0x4008, 0x0400 | 6, &region), prec(0x4034, 6, &[]), fill]);
+    assert_eq!((p.width, p.height), (20.0, 20.0));
+}
+
+#[test]
+fn emfplus_region_path_cannot_read_into_its_sibling() {
+    let rect = |r: [f32; 4]| cat(vec![h32(0x1000_0000), f32s(&r)]);
+    // The path declares only its 12-byte header, but claims three points. The following
+    // rectangle must not supply those points or be parsed twice as the next node.
+    let path = cat(vec![h32(0x1000_0001), h32(12), h32(0), h32(3), h32(0)]);
+    let region = cat(vec![h32(0xDBC0_1002), h32(2), h32(1), path, rect([10.0, 10.0, 20.0, 20.0])]);
+    let fill = prec(0x400A, 0x8000, &cat(vec![h32(0xFF00_0000), h32(1), f32s(&[0.0, 0.0, 100.0, 100.0])]));
+    let p = plus_pic(vec![prec(0x4008, 0x0400 | 6, &region), prec(0x4034, 6, &[]), fill]);
+    assert_eq!(p.items.len(), 1);
+    assert_eq!((p.width, p.height), (100.0, 100.0));
+}
+
+#[test]
+fn emfplus_region_path_keeps_its_shape() {
+    let mut path_data = cat(vec![h32(0), h32(4), h32(0x4000)]);
+    for (x, y) in [(10i16, 10i16), (30, 10), (30, 30), (10, 30)] {
+        path_data.extend(x.to_le_bytes());
+        path_data.extend(y.to_le_bytes());
+    }
+    path_data.extend([0, 1, 1, 0x81]);
+    let path_node = cat(vec![h32(0x1000_0001), h32(path_data.len() as u32), path_data]);
+    let region = cat(vec![h32(0xDBC0_1002), h32(1), path_node]);
+    let fill = prec(0x400A, 0x8000, &cat(vec![h32(0xFF00_0000), h32(1), f32s(&[0.0, 0.0, 100.0, 100.0])]));
+    let p = plus_pic(vec![prec(0x4008, 0x0400 | 6, &region), prec(0x4034, 6, &[]), fill]);
+    assert_eq!((p.width, p.height), (20.0, 20.0));
+}
+
+#[test]
+fn emfplus_pie_and_arc() {
+    // A quarter pie from 0 to 90 degrees in a 0..100 circle: centre, then (100, 50) round to (50, 100).
+    let pie = prec(0x4010, 0x8000, &cat(vec![h32(0xFF00_0000), f32s(&[0.0, 90.0]), f32s(&[0.0, 0.0, 100.0, 100.0])]));
+    let p = plus_pic(vec![pie]);
+    let (segs, fill, ..) = path_segs(&p.items[0]);
+    assert_eq!(fill, Some([0, 0, 0, 255]));
+    assert_eq!(segs[0], Seg::Move(0.0, 0.0));
+    assert_eq!(segs[1], Seg::Line(50.0, 0.0));
+    assert!(matches!(segs[2], Seg::Cubic(.., x, y) if close(x, 0.0) && close(y, 50.0)), "{segs:?}");
+    assert_eq!(segs[3], Seg::Close);
+    // A half-circle arc stroke is two cubics.
+    let pen = prec(0x4008, 0x0200, &solid_pen(0xFF00_0000, 1.0));
+    let arc = prec(0x4012, 0, &cat(vec![f32s(&[180.0, -180.0]), f32s(&[0.0, 0.0, 100.0, 100.0])]));
+    let p = plus_pic(vec![pen, arc]);
+    let (segs, ..) = path_segs(&p.items[0]);
+    assert_eq!(segs.len(), 3, "{segs:?}");
+}
+
+#[test]
+fn emfplus_convex_clip_path_cuts_to_the_shape_not_its_box() {
+    // A diamond clip path (0,50) (50,0) (100,50) (50,100): the corner of a full square fill is cut away.
+    let diamond = cat(vec![h32(0xDBC0_1002), h32(4), h32(0), f32s(&[0.0, 50.0, 50.0, 0.0, 100.0, 50.0, 50.0, 100.0]), vec![0, 1, 1, 0x81]]);
+    let fill = prec(0x400A, 0x8000, &cat(vec![h32(0xFF00_0000), h32(1), f32s(&[0.0, 0.0, 100.0, 100.0])]));
+    let p = plus_pic(vec![prec(0x4008, 0x0300 | 9, &diamond), prec(0x4033, 9, &[]), fill]);
+    let (segs, ..) = path_segs(&p.items[0]);
+    let pts: Vec<(f32, f32)> = segs.iter().filter_map(|s| if let Seg::Move(x, y) | Seg::Line(x, y) = s { Some((*x, *y)) } else { None }).collect();
+    assert!(!pts.iter().any(|(x, y)| close(*x, 0.0) && close(*y, 0.0)), "corner kept: {pts:?}");
+    assert!(pts.iter().all(|(x, y)| (x - 50.0).abs() + (y - 50.0).abs() <= 50.0 + 1e-3), "{pts:?}");
+}
+
+#[test]
+fn emfplus_draw_string_wraps_to_the_layout_width() {
+    let font = prec(0x4008, 0x0600, &font_obj("Arial", 10.0, 0, 0));
+    let text = "alpha beta gamma delta";
+    let s = prec(
+        0x401C,
+        0x8000,
+        &cat(vec![h32(0xFF00_0000), h32(9), h32(text.encode_utf16().count() as u32), f32s(&[0.0, 0.0, 60.0, 100.0]), u16s(text)]),
+    );
+    let fill = prec(0x400A, 0x8000, &cat(vec![h32(0xFFFF_FFFF), h32(1), f32s(&[0.0, 0.0, 60.0, 100.0])]));
+    let p = plus_pic(vec![fill, font, s]);
+    let lines: Vec<&str> = p.items.iter().filter_map(|i| if let Item::Text(t) = i { Some(t.text.as_str()) } else { None }).collect();
+    assert_eq!(lines, vec!["alpha beta", "gamma delta"]);
+}
+
+#[test]
+fn emfplus_nested_metafile_image_draws_its_items_into_the_destination() {
+    // The nested picture: a plain EMF with a 10 x 10 rectangle (white brush, black pen).
+    let inner = emf(&[erec(43, &cat(vec![e32(0), e32(0), e32(10), e32(10)]))], [0; 4], [0; 4]);
+    let obj = cat(vec![h32(0xDBC0_1002), h32(2), h32(3), h32(inner.len() as u32), inner]);
+    let p = plus_pic(vec![prec(0x4008, 0x0500 | 3, &obj), draw_image(3, [0.0, 0.0, 40.0, 20.0])]);
+    assert_eq!(p.items.len(), 1);
+    assert_eq!((p.width, p.height), (40.0, 20.0));
+    let (segs, fill, ..) = path_segs(&p.items[0]);
+    assert_eq!(fill, Some([255, 255, 255, 255]));
+    assert!(segs.contains(&Seg::Line(40.0, 20.0)), "{segs:?}");
+}
+
+/// Curves and a region fill, as an EMF+ only file (also written to `$DECKCRAFT_EMF_OUT` to look at).
+fn curves_file() -> Vec<u8> {
+    let pen = prec(0x4008, 0x0200 | 1, &solid_pen(0xFF20_60C0, 3.0));
+    // A closed curve through a diamond's corners, filled orange.
+    let diamond = f32s(&[100.0, 10.0, 190.0, 100.0, 100.0, 190.0, 10.0, 100.0]);
+    let fill = prec(0x4016, 0x8000, &cat(vec![h32(0xFFE0_8020), f32s(&[0.5]), h32(4), diamond.clone()]));
+    let outline = prec(0x4017, 1, &cat(vec![f32s(&[0.5]), h32(4), diamond]));
+    // An open curve (a smoothed line chart): all four segments of five points.
+    let line =
+        prec(0x4018, 1, &cat(vec![f32s(&[0.5]), h32(0), h32(4), h32(5), f32s(&[210.0, 150.0, 260.0, 60.0, 310.0, 120.0, 360.0, 30.0, 410.0, 90.0])]));
+    // A green rectangle region, filled.
+    let region = cat(vec![h32(0xDBC0_1002), h32(0), h32(0x1000_0000), f32s(&[220.0, 160.0, 180.0, 30.0])]);
+    let fill_region = prec(0x4013, 0x8000 | 2, &h32(0xFF30_A040));
+    // A cream background first.
+    let clear = prec(0x4009, 0, &h32(0xFFF4_EED8));
+    let mut all = vec![plus_header(false), clear, pen, fill, outline, line, prec(0x4008, 0x0400 | 2, &region), fill_region];
+    all.push(prec(0x4002, 0, &[]));
+    emf(&[plus_comment(&all)], [0, 0, 420, 200], [0; 4])
+}
+
+#[test]
+fn emfplus_cardinal_curves_and_region_fill() {
+    let bytes = curves_file();
+    if let Ok(path) = std::env::var("DECKCRAFT_EMF_OUT") {
+        let _ = std::fs::write(path, &bytes);
+    }
+    let p = parse(&bytes).unwrap();
+    assert_eq!(p.items.len(), 5, "{:?}", p.items.len());
+    assert_eq!(path_segs(&p.items[0]).1, Some([0xF4, 0xEE, 0xD8, 0xFF]), "the clear comes first");
+    // The closed curve: four cubics through the diamond's corners, closed.
+    let (segs, fill, ..) = path_segs(&p.items[1]);
+    assert_eq!(fill, Some([0xE0, 0x80, 0x20, 0xFF]));
+    let cubics: Vec<(f32, f32)> = segs.iter().filter_map(|s| if let Seg::Cubic(.., x, y) = s { Some((*x, *y)) } else { None }).collect();
+    assert_eq!(cubics.len(), 4, "{segs:?}");
+    assert_eq!(segs.last(), Some(&Seg::Close));
+    // The open curve: four cubics and no close; its controls bulge past the straight chords.
+    let (segs, fill, stroke, _) = path_segs(&p.items[3]);
+    assert_eq!((fill, stroke.map(|s| s.0)), (None, Some([0x20, 0x60, 0xC0, 0xFF])));
+    assert_eq!(segs.iter().filter(|s| matches!(s, Seg::Cubic(..))).count(), 4);
+    assert!(!segs.contains(&Seg::Close));
+    // The region fill is its rectangle.
+    let (segs, fill, ..) = path_segs(&p.items[4]);
+    assert_eq!(fill, Some([0x30, 0xA0, 0x40, 0xFF]));
+    assert_eq!(segs.iter().filter(|s| matches!(s, Seg::Line(..))).count(), 3, "{segs:?}");
+}
+
+#[test]
+fn emfplus_curve_offsets_and_degenerate_input_are_safe() {
+    let pen = prec(0x4008, 0x0200 | 1, &solid_pen(0xFF00_0000, 1.0));
+    // Segments from point 2 of 5, asking for more than there are: two segments.
+    let line = prec(0x4018, 1, &cat(vec![f32s(&[0.5]), h32(2), h32(99), h32(5), f32s(&[0.0, 0.0, 10.0, 5.0, 20.0, 0.0, 30.0, 5.0, 40.0, 0.0])]));
+    let p = plus_pic(vec![pen.clone(), line]);
+    let (segs, ..) = path_segs(&p.items[0]);
+    assert_eq!(segs.iter().filter(|s| matches!(s, Seg::Cubic(..))).count(), 2, "{segs:?}");
+    // One point, an offset past the end, a NaN tension, a missing region: nothing, no panic.
+    let one = prec(0x4018, 1, &cat(vec![f32s(&[0.5]), h32(0), h32(1), h32(1), f32s(&[1.0, 1.0])]));
+    let past = prec(0x4018, 1, &cat(vec![f32s(&[0.5]), h32(9), h32(9), h32(2), f32s(&[0.0, 0.0, 9.0, 9.0])]));
+    let nan = prec(0x4017, 1, &cat(vec![f32s(&[f32::NAN]), h32(3), f32s(&[0.0, 0.0, 9.0, 9.0, 0.0, 9.0])]));
+    let no_region = prec(0x4013, 0x8000 | 7, &h32(0xFF00_0000));
+    let p = plus_pic(vec![pen, one, past, nan, no_region]);
+    assert!(p.items.iter().all(|i| path_segs(i).0.iter().filter(|s| matches!(s, Seg::Cubic(..))).count() == 0));
+}
+
+#[test]
+fn emfplus_clear_paints_the_whole_frame_and_transparent_clears_nothing() {
+    let dot = prec(0x400A, 0x8000, &cat(vec![h32(0xFF00_0000), h32(1), f32s(&[40.0, 40.0, 10.0, 10.0])]));
+    let clear = |argb: u32| prec(0x4009, 0, &h32(argb));
+    // 100 × 50 device units (0..2500 × 0..1250 hundredths of a millimetre at 0.04 units each).
+    let file = |recs: Vec<Vec<u8>>| {
+        let mut all = vec![plus_header(false)];
+        all.extend(recs);
+        parse(&emf(&[plus_comment(&all)], [0, 0, 99, 49], [0, 0, 2500, 1250])).unwrap()
+    };
+    // A translated, clipped world doesn't move or cut the clear.
+    let shift = prec(0x402D, 0, &f32s(&[30.0, 30.0]));
+    let clip = prec(0x4032, 0, &f32s(&[0.0, 0.0, 5.0, 5.0]));
+    let p = file(vec![shift, clip, clear(0xFFFF_FFFF), prec(0x4031, 0, &[]), dot.clone()]);
+    assert_eq!(p.items.len(), 2);
+    let (segs, fill, ..) = path_segs(&p.items[0]);
+    assert_eq!(fill, Some([255, 255, 255, 255]));
+    let xs: Vec<f32> = segs.iter().filter_map(|s| if let Seg::Move(x, _) | Seg::Line(x, _) = s { Some(*x) } else { None }).collect();
+    let span = xs.iter().cloned().fold(f32::MIN, f32::max) - xs.iter().cloned().fold(f32::MAX, f32::min);
+    assert!((span - p.width).abs() < 0.5, "clear spans {span} of {}", p.width);
+    // Transparent: only the dot.
+    assert_eq!(file(vec![clear(0x00FF_FFFF), dot.clone()]).items.len(), 1);
+    // No frame: nothing to clear.
+    assert_eq!(plus_pic(vec![clear(0xFFFF_FFFF), dot]).items.len(), 1);
+}
+
+#[test]
+fn emfplus_wrap_line_linear_performance() {
+    let font = prec(0x4008, 0x0600, &font_obj("Arial", 10.0, 0, 0));
+    // Repeated words that wrap across lines
+    let text = "word ".repeat(500);
+    let s = prec(
+        0x401C,
+        0x8000,
+        &cat(vec![h32(0xFF00_0000), h32(9), h32(text.encode_utf16().count() as u32), f32s(&[0.0, 0.0, 100.0, 1000.0]), u16s(&text)]),
+    );
+    let fill = prec(0x400A, 0x8000, &cat(vec![h32(0xFFFF_FFFF), h32(1), f32s(&[0.0, 0.0, 100.0, 1000.0])]));
+    let p = plus_pic(vec![fill, font, s]);
+    let text_items = p.items.iter().filter(|i| matches!(i, Item::Text(_))).count();
+    assert!(text_items > 10, "wrapped into multiple lines: {text_items}");
+}
+
+#[test]
+fn clip_polygon_work_bound() {
+    let poly: Vec<(f64, f64)> = (0..2000).map(|i| (i as f64, i as f64)).collect();
+    let clip: Vec<(f64, f64)> = (0..2000).map(|i| (i as f64, i as f64)).collect();
+    let clipped = crate::cliprect::clip_polygon(&poly, &clip);
+    assert!(clipped.is_empty(), "excessive polygon clip product rejected");
 }

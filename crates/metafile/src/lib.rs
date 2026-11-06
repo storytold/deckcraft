@@ -18,6 +18,7 @@
 mod bytes;
 mod canvas;
 mod clip;
+mod cliprect;
 mod dib;
 mod emf;
 mod emfplus;

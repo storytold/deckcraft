@@ -44,6 +44,11 @@ pub fn instance_id() -> u64 {
     *ID.get_or_init(|| {
         use std::hash::{BuildHasher, Hasher};
         let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        // No PIDs and no std::time on wasm (`std::process::id()` and
+        // `SystemTime::now()` panic there): the browser clock stands in.
+        #[cfg(target_arch = "wasm32")]
+        h.write_u64(js_sys::Date::now() as u64);
+        #[cfg(not(target_arch = "wasm32"))]
         h.write_u32(std::process::id());
         #[cfg(not(target_arch = "wasm32"))]
         if let Ok(d) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
@@ -80,8 +85,34 @@ fn owner_alive(dir: &Path, owner: u64) -> bool {
 
 /// Write `bytes` to `path` through a temporary file and a rename, so a crash never leaves it torn.
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
     let tmp = path.with_extension(format!("{}.tmp", path.extension().and_then(|e| e.to_str()).unwrap_or("")));
-    std::fs::write(&tmp, bytes).and_then(|_| std::fs::rename(&tmp, path)).map_err(|e| EngineError::Other(format!("{}: {e}", path.display())))
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(&tmp).map_err(|e| EngineError::Other(format!("{}: {e}", tmp.display())))?;
+    file.write_all(bytes).and_then(|()| file.sync_all()).and_then(|()| std::fs::rename(&tmp, path)).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        EngineError::Other(format!("{}: {e}", path.display()))
+    })
+}
+
+/// Presentations reopened per start; the rest stay on disk for the next one, so a folder
+/// full of entries can't stall start-up.
+pub const MAX_REOPEN: usize = 32;
+/// Largest entry read back.
+const MAX_ENTRY_BYTES: u64 = 2 << 30;
+const MAX_META_BYTES: u64 = 64 << 10;
+
+/// `p` as bytes when it's a regular file no bigger than `max`: reading a FIFO left where an
+/// entry belongs would block start-up forever.
+fn read_regular(p: &Path, max: u64) -> Option<Vec<u8>> {
+    let m = std::fs::metadata(p).ok()?;
+    (m.is_file() && m.len() <= max).then(|| std::fs::read(p).ok()).flatten()
 }
 
 fn files(dir: &Path, uid: u64) -> (PathBuf, PathBuf) {
@@ -133,14 +164,16 @@ pub fn list(dir: &Path) -> Vec<(u64, Value)> {
     let Ok(rd) = std::fs::read_dir(dir) else { return out };
     for e in rd.flatten() {
         let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) != Some("deckcraft") {
+        if p.extension().and_then(std::ffi::OsStr::to_str) != Some("deckcraft") {
             continue;
         }
-        let Some(uid) = p.file_stem().and_then(|s| s.to_str()).and_then(|s| s.parse::<u64>().ok()) else { continue };
+        if !std::fs::metadata(&p).is_ok_and(|m| m.is_file()) {
+            continue;
+        }
+        let Some(uid) = p.file_stem().and_then(std::ffi::OsStr::to_str).and_then(|s| s.parse::<u64>().ok()) else { continue };
         // Metadata is a file on disk: anything but an object (corrupt, hand-edited) counts as none.
-        let meta = std::fs::read_to_string(p.with_extension("json"))
-            .ok()
-            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        let meta = read_regular(&p.with_extension("json"), MAX_META_BYTES)
+            .and_then(|t| serde_json::from_slice::<Value>(&t).ok())
             .filter(Value::is_object)
             .unwrap_or(json!({}));
         out.push((uid, meta));
@@ -153,11 +186,17 @@ pub fn list(dir: &Path) -> Vec<(u64, Value)> {
 /// Entries stay on disk, now owned by this instance: the presentation keeps the entry's uid, so
 /// the next recovery save replaces the snapshot and saving or closing it removes it. Entries of a
 /// running instance, unreadable entries and entries already open here are left alone. Returns the
-/// opened documents' indices.
+/// opened documents' indices. At most [`MAX_REOPEN`] are opened per start, the newest first; the rest
+/// wait for the next one.
 pub fn open(s: &mut Session, dir: &Path) -> Result<Vec<usize>> {
     let me = instance_id();
     let mut opened = Vec::new();
-    for (uid, mut meta) in list(dir) {
+    let mut entries = list(dir);
+    entries.sort_by_key(|(uid, meta)| std::cmp::Reverse((meta.get("saved").and_then(Value::as_u64).unwrap_or(0), *uid)));
+    for (uid, mut meta) in entries {
+        if opened.len() >= MAX_REOPEN {
+            break;
+        }
         if s.documents().iter().any(|d| d.uid == uid) {
             continue;
         }
@@ -168,7 +207,7 @@ pub fn open(s: &mut Session, dir: &Path) -> Result<Vec<usize>> {
             continue;
         }
         let (doc, meta_path) = files(dir, uid);
-        let Ok(bytes) = std::fs::read(&doc) else { continue };
+        let Some(bytes) = read_regular(&doc, MAX_ENTRY_BYTES) else { continue };
         let Ok(mut d) = deckcraft_format::load(&bytes) else { continue };
         deckcraft_format::repair(&mut d);
         let path = meta.get("path").and_then(Value::as_str).map(str::to_string);
@@ -218,6 +257,16 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("deckcraft-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn instance_identity_is_stable_nonzero_and_json_safe() {
+        let id = instance_id();
+        assert_eq!(instance_id(), id);
+        assert!(id != 0 && id <= UID_MASK);
+        assert_eq!(id & 0xFF_FFFF, 0);
+        let encoded = serde_json::to_value(id).unwrap();
+        assert_eq!(encoded.as_f64().unwrap() as u64, id);
     }
 
     #[test]
@@ -289,7 +338,10 @@ mod tests {
         let opened = open(&mut s2, &dir).unwrap();
         assert!(s2.documents().iter().all(|d| d.uid != uid), "{opened:?}");
         assert!(lock_path(&dir, other).exists(), "a live owner's lock stays");
-        // Once the owner is gone, its entry is recovered and its lock file cleaned up.
+        // Once the owner is gone, its entry is recovered and its lock file cleaned up. Unlock
+        // rather than only drop: a child spawned meanwhile by a parallel test (mkfifo) shares the
+        // open file and would keep the lock held until it execs.
+        lock.unlock().unwrap();
         drop(lock);
         let mut s3 = Session::new();
         open(&mut s3, &dir).unwrap();
@@ -309,6 +361,38 @@ mod tests {
         s.recovery_dir = Some(dir.clone());
         let v = s.execute("file.recovery.list", &json!({})).unwrap();
         assert_eq!(v.as_array().map(Vec::len), Some(1));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A FIFO where an entry or its metadata belongs is skipped rather than read (that blocked
+    /// start-up forever), and a folder full of entries reopens only [`MAX_REOPEN`] per start.
+    #[cfg(unix)]
+    #[test]
+    fn hostile_recovery_folders_dont_stall_start_up() {
+        let dir = temp("recovery-hostile");
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        save(&s, &dir).unwrap();
+        let (good, _) = files(&dir, s.doc().unwrap().uid);
+        for i in 1..=(MAX_REOPEN as u64 + 3) {
+            std::fs::copy(&good, dir.join(format!("{}.deckcraft", 100_000 + i))).unwrap();
+        }
+        for name in ["5.deckcraft", "6.json"] {
+            let _ = std::process::Command::new("mkfifo").arg(dir.join(name)).status();
+        }
+        std::fs::write(dir.join("6.deckcraft"), std::fs::read(&good).unwrap()).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let d = dir.clone();
+        std::thread::spawn(move || {
+            let mut s2 = Session::new();
+            let _ = tx.send(open(&mut s2, &d).map(|v| v.len()).unwrap_or(0));
+        });
+        let n = rx.recv_timeout(std::time::Duration::from_secs(60)).expect("recovery hung");
+        assert_eq!(n, MAX_REOPEN);
+        // Every entry stays on disk (main keeps snapshots until a newer save); the 32 opened plus
+        // the rest that wait for the next start.
+        assert_eq!(list(&dir).len(), MAX_REOPEN + 5, "the rest wait for the next start");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

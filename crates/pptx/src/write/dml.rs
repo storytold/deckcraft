@@ -1,7 +1,9 @@
 //! DrawingML writing: colours, fills, lines, effects, transforms and text.
 
 use deckcraft_geom::{Xfrm, pt_to_emu};
-use deckcraft_model::style::{ColorBase, ColorRef, Compound, Dash, Effects, Fill, GradientShape, Line, LineCap, LineJoin, PictureFill, PictureMode};
+use deckcraft_model::style::{
+    ColorBase, ColorRef, Compound, Dash, Effects, Fill, GradientFlip, GradientShape, Line, LineAlign, LineCap, LineJoin, PictureFill, PictureMode,
+};
 use deckcraft_model::text::{
     Action, AutoFit, BodyProps, Bullet, Caps, Hyperlink, ListStyle, ParaProps, Paragraph, RunKind, RunProps, Spacing, Strike, TextBody,
 };
@@ -36,9 +38,10 @@ pub fn color(w: &mut W, c: &ColorRef) {
     let (tag, a) = match &c.base {
         ColorBase::Rgb { rgb } => ("a:srgbClr", A::new().a("val", rgb.hex())),
         ColorBase::Scheme { slot } => ("a:schemeClr", A::new().a("val", slot.xml_name())),
-        ColorBase::Preset { name } => ("a:prstClr", A::new().a("val", if name.is_empty() { "black" } else { name })),
+        // The reader keeps any name a file has; only names the schema allows are written.
+        ColorBase::Preset { name } => ("a:prstClr", A::new().a("val", if deckcraft_color::is_preset_name(name) { name } else { "black" })),
         ColorBase::System { name, last } => {
-            ("a:sysClr", A::new().a("val", if name.is_empty() { "windowText" } else { name }).a("lastClr", last.hex()))
+            ("a:sysClr", A::new().a("val", if deckcraft_color::is_system_name(name) { name } else { "windowText" }).a("lastClr", last.hex()))
         }
     };
     let rgb_alpha = match &c.base {
@@ -97,7 +100,7 @@ pub fn fill(w: &mut W, x: &mut Exp, o: &mut Out, f: &Fill) {
 pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFill) {
     // An image that lives outside the package is a linked picture: `a:blip` names it through
     // `r:link`; `r:embed` may only reference a part inside the package.
-    let linked = x.p.media(pf.media).is_some_and(|m| m.data.is_empty() && m.link.is_some());
+    let linked = x.media(pf.media).is_some_and(|m| m.data.is_empty() && m.link.is_some());
     let rid = x.media_rel(o, pf.media, "image").unwrap_or_else(|| x.placeholder_rel(o));
     w.open(tag, A::new().a("rotWithShape", if pf.upright { "0" } else { "1" }));
     let adj = &pf.adjust;
@@ -108,7 +111,8 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
         || adj.duotone.is_some()
         || adj.clear_color.is_some()
         || adj.bilevel.is_some()
-        || adj.alpha_inv;
+        || adj.alpha_inv
+        || pf.artistic.is_some();
     let a = if linked { A::new().a("r:link", &rid) } else { A::new().a("r:embed", &rid) };
     if has_kids {
         w.open("a:blip", a);
@@ -142,6 +146,25 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
         }
         if adj.brightness != 0.0 || adj.contrast != 0.0 {
             w.empty("a:lum", A::new().a("bright", pct(adj.brightness.clamp(-1.0, 1.0))).a("contrast", pct(adj.contrast.clamp(-1.0, 1.0))));
+        }
+        // Artistic effect: the blip is the processed picture; the original rides in an
+        // `a14:imgLayer` with the effect's name, as PowerPoint writes it.
+        if let Some(art) = &pf.artistic
+            && art.effect.starts_with("artistic")
+            && art.effect.chars().all(|c| c.is_ascii_alphanumeric())
+            && let Some(orig) = x.media_rel(o, art.original, "image")
+        {
+            w.open0("a:extLst");
+            w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
+            w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
+            w.open("a14:imgLayer", A::new().a("r:embed", &orig));
+            w.open0("a14:imgEffect");
+            w.empty0(&format!("a14:{}", art.effect));
+            w.close("a14:imgEffect");
+            w.close("a14:imgLayer");
+            w.close("a14:imgProps");
+            w.close("a:ext");
+            w.close("a:extLst");
         }
         w.close("a:blip");
     } else {
@@ -187,6 +210,7 @@ pub fn line(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, l: &Line) {
                 LineCap::Flat => "flat",
             }),
         )
+        .o("algn", l.align.map(LineAlign::xml))
         .o("cmpd", l.compound.map(Compound::xml));
     w.open(tag, a);
     if let Some(f) = &l.fill {
@@ -212,7 +236,10 @@ pub fn line(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, l: &Line) {
     match l.join {
         Some(LineJoin::Round) => w.empty0("a:round"),
         Some(LineJoin::Bevel) => w.empty0("a:bevel"),
-        Some(LineJoin::Miter) => w.empty0("a:miter"),
+        Some(LineJoin::Miter) => {
+            let limit = l.miter_limit.filter(|limit| *limit <= i32::MAX as u32);
+            w.empty("a:miter", A::new().o("lim", limit));
+        }
         None => {}
     }
     for (t, e) in [("a:headEnd", &l.head), ("a:tailEnd", &l.tail)] {
@@ -258,7 +285,7 @@ fn shadow(w: &mut W, tag: &str, s: &deckcraft_model::style::Shadow) {
 }
 
 fn gradient(w: &mut W, g: &deckcraft_model::style::Gradient) {
-    w.open("a:gradFill", A::new().a("rotWithShape", if g.rotate_with_shape { "1" } else { "0" }));
+    w.open("a:gradFill", A::new().o("flip", g.flip.map(GradientFlip::xml)).a("rotWithShape", if g.rotate_with_shape { "1" } else { "0" }));
     // No stops: no `a:gsLst`, so the gradient keeps taking them from its style's fill.
     let mut stops = g.stops.clone();
     if stops.len() == 1 {
@@ -330,10 +357,18 @@ pub fn effects(w: &mut W, fx: &Effects) {
                 .a("endA", pct(r.end_alpha.clamp(0.0, 1.0)))
                 .a("endPos", pct(r.end_pos.clamp(0.0, 1.0)))
                 .a("dist", emu(r.dist).max(0))
-                .a("dir", 5_400_000)
-                .a("sy", -100_000)
-                .a("algn", "bl")
-                .a("rotWithShape", "0"),
+                // Kept from a file as read: held to the schema's ranges so a stray value can't
+                // make PowerPoint repair the file (ST_PositiveFixedAngle, ST_FixedAngle,
+                // ST_PositiveFixedPercentage).
+                .o("stPos", r.st_pos.map(|v| v.clamp(0, 100_000)))
+                .o("dir", r.dir.map(|v| v.rem_euclid(21_600_000)))
+                .o("fadeDir", r.fade_dir.map(|v| v.rem_euclid(21_600_000)))
+                .o("sx", r.sx)
+                .o("sy", r.sy)
+                .o("kx", r.kx.map(|v| v.clamp(-5_399_999, 5_399_999)))
+                .o("ky", r.ky.map(|v| v.clamp(-5_399_999, 5_399_999)))
+                .o("algn", r.align.as_deref())
+                .b("rotWithShape", r.rotate_with_shape),
         );
     }
     if let Some(r) = fx.soft_edge {
@@ -414,7 +449,7 @@ pub fn hyperlink(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, h: &Hyperlink) 
         return;
     };
     w.open(tag, attrs);
-    let name = x.p.media(sound_id).map(|m| sound_label(&m.name)).unwrap_or_else(|| "sound.wav".into());
+    let name = x.media(sound_id).map(|m| sound_label(&m.name)).unwrap_or_else(|| "sound.wav".into());
     w.empty("a:snd", A::new().a("r:embed", sound_rid).a("name", name));
     w.close(tag);
 }
@@ -440,7 +475,11 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
         .b("rtlCol", b.rtl_col)
         .o("anchor", b.anchor.map(|a| a.xml()))
         .b("anchorCtr", b.anchor_ctr)
-        .b("upright", b.upright);
+        .b("upright", b.upright)
+        .b("spcFirstLastPara", b.space_first_last)
+        .b("compatLnSpc", b.compat_ln_spc)
+        .o("vertOverflow", b.vert_overflow.map(|v| v.xml()))
+        .o("horzOverflow", deckcraft_model::text::TextOverflow::horz_xml(b.horz_overflow));
     let warp = b.warp.as_deref().filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()));
     if warp.is_none() && b.autofit.is_none() {
         w.empty("a:bodyPr", a);
@@ -468,9 +507,11 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
         Some(AutoFit::None) => w.empty0("a:noAutofit"),
         Some(AutoFit::Shape) => w.empty0("a:spAutoFit"),
         Some(AutoFit::Shrink { font_scale, line_reduction }) => {
-            let fs = pct(font_scale.clamp(0.01, 1.0));
+            // A scale the model holds is written, 100 % included: reopening then keeps the same
+            // "draw the saved scale" state instead of becoming a bare `<a:normAutofit/>` (#724).
+            let fs = font_scale.map(|s| pct(s.clamp(0.01, 1.0)));
             let lr = pct(line_reduction.clamp(0.0, 1.0));
-            w.empty("a:normAutofit", A::new().o("fontScale", (fs != 100_000).then_some(fs)).o("lnSpcReduction", (lr != 0).then_some(lr)));
+            w.empty("a:normAutofit", A::new().o("fontScale", fs).o("lnSpcReduction", (lr != 0).then_some(lr)));
         }
         None => {}
     }
@@ -509,8 +550,12 @@ pub fn ppr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, level: Option<u8>, p:
         || p.space_after.is_some()
         || p.bullet.is_some()
         || p.bullet_font.is_some()
+        || p.bullet_font_follow_text.is_some()
         || p.bullet_color.is_some()
+        || p.bullet_color_follow_text.is_some()
         || p.bullet_size.is_some()
+        || p.bullet_size_points.is_some()
+        || p.bullet_size_follow_text.is_some()
         || p.tabs.is_some()
         || def.is_some();
     if !has_kids {
@@ -527,15 +572,23 @@ pub fn ppr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, level: Option<u8>, p:
     if let Some(s) = &p.space_after {
         spacing(w, "a:spcAft", s);
     }
-    if let Some(c) = &p.bullet_color {
+    if p.bullet_color.is_none() && p.bullet_color_follow_text == Some(true) {
+        w.empty0("a:buClrTx");
+    } else if let Some(c) = &p.bullet_color {
         w.open0("a:buClr");
         color(w, c);
         w.close("a:buClr");
     }
-    if let Some(s) = p.bullet_size {
+    if p.bullet_size.is_none() && p.bullet_size_points.is_none() && p.bullet_size_follow_text == Some(true) {
+        w.empty0("a:buSzTx");
+    } else if let Some(s) = p.bullet_size_points.filter(|s| s.is_finite() && (1.0..=4000.0).contains(s)) {
+        w.val("a:buSzPts", ((s * 100.0).round() as u32).to_string());
+    } else if let Some(s) = p.bullet_size {
         w.val("a:buSzPct", pct(s.clamp(0.25, 4.0)));
     }
-    if let Some(f) = &p.bullet_font {
+    if p.bullet_font.is_none() && p.bullet_font_follow_text == Some(true) {
+        w.empty0("a:buFontTx");
+    } else if let Some(f) = &p.bullet_font {
         w.empty("a:buFont", A::new().a("typeface", f));
     }
     match &p.bullet {
@@ -548,7 +601,7 @@ pub fn ppr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, level: Option<u8>, p:
         Some(Bullet::Picture { media }) => match x.media_rel(o, *media, "image") {
             Some(rid) => {
                 w.open0("a:buBlip");
-                let a = if x.p.media(*media).is_some_and(|m| m.data.is_empty() && m.link.is_some()) {
+                let a = if x.media(*media).is_some_and(|m| m.data.is_empty() && m.link.is_some()) {
                     A::new().a("r:link", &rid)
                 } else {
                     A::new().a("r:embed", &rid)
@@ -587,6 +640,7 @@ fn typeface(w: &mut W, tag: &str, f: &Option<String>) {
 pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
     let a = A::new()
         .o("lang", r.lang.as_deref().filter(|l| !l.is_empty()))
+        .o("altLang", r.alt_lang.as_deref().filter(|l| !l.is_empty()))
         .o("sz", r.size.map(|s| (s.clamp(1.0, 4000.0) * 100.0).round() as i64))
         .b("b", r.bold)
         .b("i", r.italic)
@@ -610,7 +664,8 @@ pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
         )
         .o("spc", r.spacing.map(|s| (s.clamp(-4000.0, 4000.0) * 100.0).round() as i64))
         .o("baseline", r.baseline.map(|b| pct(b.clamp(-10.0, 10.0))))
-        .b("noProof", r.no_proof);
+        .b("noProof", r.no_proof)
+        .b("normalizeH", r.normalize_height);
     let has_fx = r.shadow.is_some() || r.inner_shadow.is_some() || r.glow.is_some() || r.reflection.is_some() || r.soft_edge.is_some();
     let has_kids = r.outline.is_some()
         || r.fill.is_some()
@@ -707,17 +762,27 @@ pub fn text_body(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, tb: &TextBody, 
 }
 
 fn run_text(w: &mut W, x: &mut Exp, o: &mut Out, text: &str, props: &RunProps) {
+    // The run's properties are the same for every piece and line break: serialize them once.
+    let mut rpr_xml: Option<String> = None;
+    let mut put_rpr = |w: &mut W| match &rpr_xml {
+        Some(xml) => w.s.push_str(xml),
+        None => {
+            let start = w.s.len();
+            rpr(w, x, o, "a:rPr", props);
+            rpr_xml = Some(w.s[start..].to_string());
+        }
+    };
     for (i, piece) in text.split(['\n', '\u{b}']).enumerate() {
         if i > 0 {
             w.open0("a:br");
-            rpr(w, x, o, "a:rPr", props);
+            put_rpr(w);
             w.close("a:br");
         }
         if piece.is_empty() && i > 0 {
             continue;
         }
         w.open0("a:r");
-        rpr(w, x, o, "a:rPr", props);
+        put_rpr(w);
         w.elt("a:t", piece);
         w.close("a:r");
     }
@@ -764,4 +829,24 @@ pub fn paragraph(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: bool,
 
 pub fn has_math(tb: &TextBody) -> bool {
     tb.paragraphs.iter().flat_map(|p| &p.runs).any(|r| matches!(&r.kind, RunKind::Math { omml } if !omml.is_empty()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deckcraft_color::Rgba;
+
+    #[test]
+    fn unknown_preset_and_system_names_save_as_black_and_window_text() {
+        let write = |base: ColorBase| {
+            let mut w = W::frag();
+            color(&mut w, &ColorRef { base, mods: vec![] });
+            w.s
+        };
+        assert_eq!(write(ColorBase::Preset { name: "notAColor".into() }), r#"<a:prstClr val="black"/>"#);
+        assert_eq!(write(ColorBase::Preset { name: "darkBlue".into() }), r#"<a:prstClr val="darkBlue"/>"#);
+        let last = Rgba::rgb(0x12, 0x34, 0x56);
+        assert_eq!(write(ColorBase::System { name: "notAColor".into(), last }), r#"<a:sysClr val="windowText" lastClr="123456"/>"#);
+        assert_eq!(write(ColorBase::System { name: "3dLight".into(), last }), r#"<a:sysClr val="3dLight" lastClr="123456"/>"#);
+    }
 }

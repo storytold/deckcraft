@@ -1,10 +1,10 @@
 //! Slide show navigation: click steps, slide order (hidden slides, custom shows, ranges), loop
 //! and automatic advance.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
-use deckcraft_model::Presentation;
-use deckcraft_model::text::Action;
+use deckcraft_model::text::{Action, Hyperlink};
+use deckcraft_model::{Presentation, SlideId};
 
 use crate::Timeline;
 use crate::interact::SlideRun;
@@ -29,18 +29,8 @@ pub enum ShowAction {
     Exit,
 }
 
-/// Can a link from a (possibly untrusted) deck be opened outside the show? Only web pages and
-/// mail: `file:`, `javascript:`, relative paths and other schemes (OS protocol handlers) are not
-/// opened on a click.
-pub fn safe_url(url: &str) -> bool {
-    let u = url.trim();
-    let Some((scheme, rest)) = u.split_once(':') else { return false };
-    match scheme.to_ascii_lowercase().as_str() {
-        "http" | "https" => rest.starts_with("//") && rest.len() > 2,
-        "mailto" => !rest.is_empty(),
-        _ => false,
-    }
-}
+// Which links the show opens on a click; PDF export writes the same ones.
+pub use deckcraft_model::text::safe_url;
 
 /// What a clicked link does in the show (`ShowState::follow`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,12 +58,32 @@ pub struct ShowState {
     pub playing: bool,
     /// On the end screen.
     pub ended: bool,
+    /// The current slide was reached by going back (← / Backspace), so the show plays the
+    /// transition of the slide it left, in reverse, as PowerPoint does (#1531).
+    pub backward: bool,
     /// The show has entered a slide (so `slide` and `step` are meaningful and can be saved).
     active: bool,
     /// The time of the last [`ShowState::tick`] (seconds), for the triggered animations' clocks.
     pub(crate) last_now: Option<f64>,
     /// What was played on each visited slide (index into `presentation.slides`).
     pub(crate) runs: BTreeMap<usize, SlideRun>,
+    /// One-shot visit order (Custom Show from the dialog or a click). `None` uses [`show_order`].
+    order: Option<Vec<usize>>,
+    /// Name of the custom show being played, when there is one.
+    custom: Option<String>,
+    /// Return to Zoom: (zoom slide, last zoomed slide). Advancing past the last zoomed slide goes
+    /// back to the zoom slide, fully built.
+    pub zoom: Option<(usize, usize)>,
+}
+
+/// Index of each slide by id (the first slide wins a duplicate id), so resolving a custom show
+/// costs the sum of its two lists, not their product.
+fn slide_indices(pres: &Presentation) -> HashMap<SlideId, usize> {
+    let mut map = HashMap::with_capacity(pres.slides.len());
+    for (i, s) in pres.slides.iter().enumerate() {
+        map.entry(s.id).or_insert(i);
+    }
+    map
 }
 
 /// Slide indices the show visits in order: the custom show or range from Set Up Slide Show, minus
@@ -81,7 +91,10 @@ pub struct ShowState {
 pub fn show_order(pres: &Presentation) -> Vec<usize> {
     let n = pres.slides.len();
     let base: Vec<usize> = match pres.show.custom_show.as_ref().and_then(|name| pres.custom_shows.iter().find(|c| &c.name == name)) {
-        Some(cs) => cs.slides.iter().filter_map(|id| pres.slides.iter().position(|s| s.id == *id)).collect(),
+        Some(cs) => {
+            let index = slide_indices(pres);
+            cs.slides.iter().filter_map(|id| index.get(id).copied()).collect()
+        }
         None => match pres.show.range {
             Some((a, b)) => {
                 let a = (a.max(1) as usize).saturating_sub(1);
@@ -92,6 +105,15 @@ pub fn show_order(pres: &Presentation) -> Vec<usize> {
         },
     };
     base.into_iter().filter(|i| pres.slides.get(*i).is_some_and(|s| !s.hidden)).collect()
+}
+
+/// Visible slides of custom show `name`, in that show's order.
+fn custom_indices(pres: &Presentation, name: &str) -> Option<Vec<usize>> {
+    let cs = pres.custom_shows.iter().find(|c| c.name == name)?;
+    let index = slide_indices(pres);
+    let order: Vec<usize> =
+        cs.slides.iter().filter_map(|id| index.get(id).copied()).filter(|&i| pres.slides.get(i).is_some_and(|s| !s.hidden)).collect();
+    if order.is_empty() { None } else { Some(order) }
 }
 
 fn looping(pres: &Presentation) -> bool {
@@ -115,7 +137,46 @@ impl ShowState {
         } else {
             s.ended = true;
         }
+        if let Some(name) = pres.show.custom_show.clone() {
+            s.custom = Some(name);
+        }
         s
+    }
+
+    /// Play custom show `name` from its first slide, without changing Set Up Slide Show.
+    /// `None` when that show is missing or has no visible slides.
+    pub fn play_custom(pres: &Presentation, name: &str) -> Option<ShowState> {
+        let order = custom_indices(pres, name)?;
+        let &first = order.first()?;
+        let mut s = ShowState::start_at(pres, first);
+        s.order = Some(order);
+        s.custom = Some(name.to_string());
+        Some(s)
+    }
+
+    /// Name of the custom show this playback is limited to.
+    pub fn custom_name(&self) -> Option<&str> {
+        self.custom.as_deref().filter(|s| !s.is_empty())
+    }
+
+    /// The slide that follows the current one in this show.
+    pub fn peek_next(&self, pres: &Presentation) -> Option<usize> {
+        self.next_index(pres)
+    }
+
+    pub fn first_index(&self, pres: &Presentation) -> Option<usize> {
+        self.visit(pres).first().copied()
+    }
+
+    pub fn last_index(&self, pres: &Presentation) -> Option<usize> {
+        self.visit(pres).last().copied()
+    }
+
+    fn visit(&self, pres: &Presentation) -> Vec<usize> {
+        match &self.order {
+            Some(order) => order.iter().copied().filter(|&i| pres.slides.get(i).is_some_and(|s| !s.hidden)).collect(),
+            None => show_order(pres),
+        }
     }
 
     /// The timeline of slide `i`.
@@ -150,6 +211,7 @@ impl ShowState {
         self.active = true;
         self.slide = i;
         self.ended = false;
+        self.backward = false;
         // Time spent elsewhere never counts for this slide's triggered animations.
         self.last_now = None;
         let steps = ShowState::steps(pres, i);
@@ -165,7 +227,7 @@ impl ShowState {
     }
 
     fn next_index(&self, pres: &Presentation) -> Option<usize> {
-        let order = show_order(pres);
+        let order = self.visit(pres);
         match order.iter().position(|&i| i == self.slide) {
             Some(p) => order.get(p + 1).copied(),
             None => order.iter().copied().find(|&i| i > self.slide),
@@ -173,7 +235,7 @@ impl ShowState {
     }
 
     fn prev_index(&self, pres: &Presentation) -> Option<usize> {
-        let order = show_order(pres);
+        let order = self.visit(pres);
         match order.iter().position(|&i| i == self.slide) {
             Some(p) => p.checked_sub(1).and_then(|q| order.get(q).copied()),
             None => order.iter().copied().rev().find(|&i| i < self.slide),
@@ -197,12 +259,22 @@ impl ShowState {
             self.playing = true;
             return ShowAction::PlayStep(self.step);
         }
+        if let Some((back, until)) = self.zoom
+            && until == self.slide
+            && back < pres.slides.len()
+        {
+            self.zoom = None;
+            self.enter(pres, back);
+            self.step = ShowState::steps(pres, back);
+            self.playing = false;
+            return ShowAction::Slide(back);
+        }
         match self.next_index(pres) {
             Some(i) => {
                 self.enter(pres, i);
                 ShowAction::Slide(i)
             }
-            None if looping(pres) => match show_order(pres).first() {
+            None if looping(pres) => match self.visit(pres).first() {
                 Some(&i) => {
                     self.enter(pres, i);
                     ShowAction::Slide(i)
@@ -231,7 +303,8 @@ impl ShowState {
         ShowAction::FinishStep(n)
     }
 
-    /// ← / Backspace: undo the last step, else go to the previous slide fully built.
+    /// ← / Backspace: undo the last step, else go to the previous slide fully built. An automatic
+    /// first step (With/After Previous) is part of the slide appearing, so it is never undone.
     pub fn prev(&mut self, pres: &Presentation) -> ShowAction {
         if self.ended {
             self.ended = false;
@@ -240,19 +313,23 @@ impl ShowState {
             }
             self.step = ShowState::steps(pres, self.slide);
             self.playing = false;
+            self.backward = false;
             return ShowAction::Slide(self.slide);
         }
-        if self.playing {
+        // #844: undoing the automatic first step left the slide as before it appeared, and the show
+        // played the step again at once, so Back never got past the slide.
+        let undo = if self.playing { Some(self.step) } else { self.step.checked_sub(1) };
+        let auto_first = undo == Some(0) && !pres.show.without_animation && ShowState::timeline(pres, self.slide).step_is_auto(0);
+        if let Some(k) = undo
+            && !auto_first
+        {
             self.playing = false;
-            return ShowAction::StepBack(self.step);
-        }
-        if self.step > 0 {
-            self.step -= 1;
-            return ShowAction::StepBack(self.step);
+            self.step = k;
+            return ShowAction::StepBack(k);
         }
         let target = match self.prev_index(pres) {
             Some(i) => Some(i),
-            None if looping(pres) => show_order(pres).last().copied().filter(|&i| i != self.slide),
+            None if looping(pres) => self.visit(pres).last().copied().filter(|&i| i != self.slide),
             None => None,
         };
         match target {
@@ -265,6 +342,7 @@ impl ShowState {
                     self.step = ShowState::steps(pres, i);
                     self.playing = false;
                 }
+                self.backward = true;
                 ShowAction::Slide(i)
             }
             None => ShowAction::None,
@@ -276,6 +354,7 @@ impl ShowState {
         if i >= pres.slides.len() {
             return ShowAction::None;
         }
+        self.zoom = None;
         self.enter(pres, i);
         ShowAction::Slide(i)
     }
@@ -289,16 +368,35 @@ impl ShowState {
             Action::Slide { slide } => pres.slides.iter().position(|s| s.id == *slide),
             Action::NextSlide => self.next_index(pres),
             Action::PreviousSlide => self.prev_index(pres),
-            Action::FirstSlide => show_order(pres).first().copied(),
-            Action::LastSlide => show_order(pres).last().copied(),
+            Action::FirstSlide => self.visit(pres).first().copied(),
+            Action::LastSlide => self.visit(pres).last().copied(),
             Action::LastViewed => last_viewed,
-            // Custom shows, programs and media actions aren't followed (yet).
-            Action::CustomShow { .. } | Action::Program { .. } | Action::PlayMedia => None,
+            Action::CustomShow { name, .. } => {
+                let Some(order) = custom_indices(pres, name) else { return LinkJump::None };
+                let Some(&i) = order.first() else { return LinkJump::None };
+                self.order = Some(order);
+                self.custom = Some(name.clone());
+                return LinkJump::Show(self.goto(pres, i));
+            }
+            // Programs and media actions aren't followed.
+            Action::Program { .. } | Action::PlayMedia => None,
         };
         match target {
             Some(i) => LinkJump::Show(self.goto(pres, i)),
             None => LinkJump::None,
         }
+    }
+
+    /// Follow a clicked link, honouring a zoom's Return to Zoom (see [`Hyperlink::zoom_return`]).
+    pub fn follow_link(&mut self, pres: &Presentation, link: &Hyperlink, last_viewed: Option<usize>) -> LinkJump {
+        let from = self.slide;
+        let jump = self.follow(pres, &link.action, last_viewed);
+        if let Some(until) = link.zoom_return.and_then(|id| pres.slides.iter().position(|s| s.id == id))
+            && matches!(jump, LinkJump::Show(ShowAction::Slide(_)))
+        {
+            self.zoom = Some((from, until));
+        }
+        jump
     }
 
     /// Seconds after which the current slide advances by itself (Advance Slide ▸ After), when the

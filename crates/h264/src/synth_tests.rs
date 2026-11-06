@@ -82,6 +82,56 @@ fn pps(cabac: bool, weighted: bool) -> Vec<u8> {
     nal(3, 8, &w.finish())
 }
 
+#[test]
+fn avcc_accepts_generated_sps_and_pps() {
+    let sps = sps(66, 4, false, PocType::T2);
+    let pps = pps(false, false);
+    let (sps, pps) = (&sps[4..], &pps[4..]);
+    let mut avcc = vec![1, 66, 0, 30, 0xff, 0xe1];
+    avcc.extend_from_slice(&(sps.len() as u16).to_be_bytes());
+    avcc.extend_from_slice(sps);
+    avcc.push(1);
+    avcc.extend_from_slice(&(pps.len() as u16).to_be_bytes());
+    avcc.extend_from_slice(pps);
+    assert!(Decoder::from_avcc(&avcc).is_ok());
+}
+
+#[test]
+fn avcc_rejects_a_valid_picture_slice_without_starting_a_picture() {
+    let sequence = sps(66, 4, false, PocType::T0);
+    let picture = pps(false, false);
+    let slice = slice_nal(
+        &Pic {
+            idr: true,
+            frame_num: 0,
+            ref_idc: 3,
+            long_term_ref: false,
+            mods: vec![],
+            mmcos: vec![],
+            mbs: vec![Some(vec![128; 384]); NMB],
+            b: false,
+            poc_lsb: Some(0),
+            poc_delta: None,
+            wt: None,
+        },
+        false,
+    );
+    let mut avcc = vec![1, 66, 0, 30, 0xff, 0xe1];
+    let nal = &sequence[4..];
+    avcc.extend_from_slice(&(nal.len() as u16).to_be_bytes());
+    avcc.extend_from_slice(nal);
+    avcc.push(2);
+    avcc.extend_from_slice(&((picture.len() - 4) as u16).to_be_bytes());
+    avcc.extend_from_slice(&picture[4..]);
+    avcc.extend_from_slice(&((slice.len() - 4) as u16).to_be_bytes());
+    avcc.extend_from_slice(&slice[4..]);
+
+    let mut decoder = Decoder::with_threads(1);
+    assert!(decoder.configure_avcc(&avcc).is_err());
+    assert!(decoder.flush().is_empty());
+    assert_eq!(decoder.stats().pictures, 0);
+}
+
 #[derive(Default, Clone)]
 struct Pic {
     idr: bool,
@@ -107,7 +157,7 @@ struct Pic {
 
 impl Pic {
     fn is_p(&self) -> bool {
-        !self.idr && !self.b && self.mbs.iter().any(|m| m.is_none())
+        !self.idr && !self.b && self.mbs.iter().any(Option::is_none)
     }
     fn inter(&self) -> bool {
         self.b || self.is_p()
@@ -538,4 +588,75 @@ fn poc_type1_reordering() {
             }
         }
     }
+}
+
+/// One IDR picture of PCM macroblocks.
+fn idr_stream(max_refs: u32) -> Vec<u8> {
+    let mut seed = 5u32;
+    let mbs: Vec<Option<Vec<u8>>> = (0..NMB).map(|_| Some(random_mb(&mut seed))).collect();
+    let mut stream = sps(66, max_refs, false, PocType::T2);
+    stream.extend(pps(false, false));
+    stream.extend(slice_nal(&Pic { idr: true, frame_num: 0, ref_idc: 3, mbs, ..Default::default() }, false));
+    stream
+}
+
+fn decodes_within(stream: &[u8], budget: u64) -> bool {
+    let mut dec = Decoder::with_threads(1);
+    dec.set_memory_budget(budget);
+    let Ok(mut out) = dec.decode(stream, 0) else { return false };
+    out.extend(dec.flush());
+    dec.take_error().is_none() && out.len() == 1
+}
+
+#[test]
+fn picture_store_is_checked_against_the_memory_budget() {
+    let stream = idr_stream(4);
+    let sps_nal = sps(66, 4, false, PocType::T2);
+    let parsed = crate::params::Sps::parse(&deckcraft_bitstream::unescape_rbsp(&sps_nal[5..])).unwrap();
+    // 4:2:0, 8-bit: luma plus two quarter-size chroma planes per picture; the DPB, the current
+    // picture and threads + 2 in flight.
+    let one = (NMB * 256 + 2 * NMB * 64) as u64;
+    let pictures = (parsed.max_dpb_frames() + 1 + 3) as u64;
+    assert!(decodes_within(&stream, pictures * one));
+    assert!(!decodes_within(&stream, pictures * one - 1));
+    assert!(decodes_within(&stream, deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET));
+}
+
+#[test]
+fn largest_accepted_h264_size_is_over_the_default_budget() {
+    // 1024 x 1024 macroblocks (16384 x 16384) with 16 references and 3 in flight.
+    let shape =
+        deckcraft_bitstream::budget::PictureShape { width: 16384, height: 16384, shift_x: 1, shift_y: 1, chroma_planes: 2, bytes_per_sample: 1 };
+    assert!(!shape.fits(16 + 1 + 3, deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET));
+}
+
+fn gap_stream(gaps: bool) -> Vec<u8> {
+    let mut seed = 7u32;
+    let a: Vec<Option<Vec<u8>>> = (0..NMB).map(|_| Some(random_mb(&mut seed))).collect();
+    let mut stream = sps(66, 2, gaps, PocType::T2);
+    stream.extend(pps(false, false));
+    stream.extend(slice_nal(&Pic { idr: true, frame_num: 0, ref_idc: 3, mbs: a, ..Default::default() }, false));
+    // frame_num 1..=9 are missing.
+    stream.extend(slice_nal(&Pic { frame_num: 10, ref_idc: 2, mbs: vec![None; NMB], ..Default::default() }, false));
+    stream
+}
+
+#[test]
+fn frame_num_gap_is_concealed_even_when_the_sps_forbids_gaps() {
+    // A cut or lossy stream: the gap is filled (bounded) instead of dropping the picture.
+    let mut dec = Decoder::with_threads(1);
+    let mut out = dec.decode(&gap_stream(false), 0).unwrap();
+    out.extend(dec.flush());
+    assert_eq!(out.len(), 2);
+    assert_eq!(dec.stats().frame_num_gaps, 1);
+}
+
+#[test]
+fn frame_num_gap_is_filled_when_the_sps_allows_gaps() {
+    let mut dec = Decoder::with_threads(1);
+    let mut out = dec.decode(&gap_stream(true), 0).unwrap();
+    out.extend(dec.flush());
+    assert!(dec.take_error().is_none());
+    assert_eq!(out.len(), 2);
+    assert_eq!(dec.stats().frame_num_gaps, 1);
 }

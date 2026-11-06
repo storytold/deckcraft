@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use deckcraft_model::{ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, NO_ID_SPACE, bad, cmd, f64_or, has_selection, targets};
 use crate::{Result, Session};
 
 /// Larger pictures are refused rather than matted slowly (16 megapixels).
@@ -165,8 +165,10 @@ fn remove_background(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let n = done.len();
     s.edit(|doc, sel| {
-        let added: Vec<(ShapeId, deckcraft_model::MediaId)> =
-            done.into_iter().map(|(id, name, png)| (id, doc.add_media(&name, "image/png", png))).collect();
+        let added: Vec<(ShapeId, deckcraft_model::MediaId)> = done
+            .into_iter()
+            .map(|(id, name, png)| Ok((id, doc.add_media(&name, "image/png", png).ok_or_else(|| bad("picture.removeBackground", NO_ID_SPACE))?)))
+            .collect::<Result<_>>()?;
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad("picture.removeBackground", "no slide"))?;
         for (id, media) in added {
             if let Some(sh) = deckcraft_model::find_shape_mut(shapes, id)
@@ -182,7 +184,12 @@ fn remove_background(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    use deckcraft_model::{ShapeId, ShapeKind};
+    use serde_json::json;
+
     use super::*;
+    use crate::Session;
+    use crate::cmd::base64_encode;
 
     /// A red disc on a white-to-grey gradient.
     fn disc() -> image::RgbaImage {

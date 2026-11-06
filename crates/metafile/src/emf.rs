@@ -46,6 +46,7 @@ pub(crate) fn parse(input: Bytes) -> Result<(Canvas, Option<Frame>), Error> {
         cv.set_device_mm(px_mm);
     }
     let mut plus = crate::emfplus::Plus::new();
+    plus.frame = frame.as_ref().map(|f| f.rect);
     let mut parsed = 0usize;
     let mut pos = hsize.max(88);
     while !cv.full() {

@@ -37,7 +37,8 @@ struct Cache {
     bad_order: VecDeque<usize>,
     bad_bytes: usize,
     /// GIFs by bytes address and adjustments (`None`: not animated); the bytes stay alive with them.
-    anims: HashMap<(usize, u64), (Arc<Vec<u8>>, Option<Arc<Anim>>)>,
+    /// Decoded animations by (bytes, adjustments), each with the clock of its last use.
+    anims: HashMap<(usize, u64), (Arc<Vec<u8>>, Option<Arc<Anim>>, u64)>,
 }
 
 /// Longest side, total decoded size and frame count kept for one animated GIF; the largest canvas
@@ -47,6 +48,7 @@ const GIF_SIDE: u32 = 1024;
 const GIF_BUDGET: usize = 64 << 20;
 const GIF_MAX_FRAMES: usize = 1000;
 const GIF_MAX_CANVAS: u64 = 4096 * 4096;
+const GIF_MAX_TOTAL_CANVAS_PIXELS: u64 = 256 * 1024 * 1024;
 const GIF_CACHE_BUDGET: usize = 192 << 20;
 
 /// The frames of an animated GIF and when each one ends, in seconds from the start of a loop.
@@ -76,7 +78,7 @@ impl Anim {
 static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
 
 fn with<R>(f: impl FnOnce(&mut Cache) -> R) -> R {
-    let mut g = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut g = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     f(g.get_or_insert_with(Cache::default))
 }
 
@@ -226,6 +228,97 @@ pub fn dpi(bytes: &[u8]) -> Option<(f64, f64)> {
     None
 }
 
+/// A copy of a PNG with a `pHYs` chunk saying `dpi` dots per inch.
+///
+/// Anything that is not a PNG, or a resolution the reader would reject, is returned unchanged.
+/// A file that already has `pHYs` is left alone.
+pub(crate) fn stamp_png_dpi(png: &[u8], dpi: f64) -> Vec<u8> {
+    let Some(ppm) = pixels_per_metre(dpi) else { return png.to_vec() };
+    let Some(end) = ihdr_end(png) else { return png.to_vec() };
+    if has_phys(png) {
+        return png.to_vec();
+    }
+    let mut body = Vec::with_capacity(13);
+    body.extend_from_slice(b"pHYs");
+    body.extend_from_slice(&ppm.to_be_bytes());
+    body.extend_from_slice(&ppm.to_be_bytes());
+    body.push(1);
+    let crc = png_crc(&body);
+    let mut out = Vec::with_capacity(png.len() + 21);
+    out.extend_from_slice(png.get(..end).unwrap_or(png));
+    out.extend_from_slice(&9u32.to_be_bytes());
+    out.extend_from_slice(&body);
+    out.extend_from_slice(&crc.to_be_bytes());
+    if let Some(rest) = png.get(end..) {
+        out.extend_from_slice(rest);
+    }
+    out
+}
+
+/// Dots per inch as pixels per metre, the unit a PNG `pHYs` chunk stores.
+fn pixels_per_metre(dpi: f64) -> Option<u32> {
+    if !dpi.is_finite() || !(1.0..=10_000.0).contains(&dpi) {
+        return None;
+    }
+    let ppm = (dpi / 0.0254).round();
+    if !ppm.is_finite() || !(1.0..=u32::MAX as f64).contains(&ppm) {
+        return None;
+    }
+    Some(ppm as u32)
+}
+
+fn ihdr_end(png: &[u8]) -> Option<usize> {
+    if !png.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return None;
+    }
+    let len = be_u32(png, 8)? as usize;
+    if png.get(12..16) != Some(b"IHDR".as_slice()) {
+        return None;
+    }
+    let end = 8usize.checked_add(12)?.checked_add(len)?;
+    (end <= png.len()).then_some(end)
+}
+
+fn has_phys(png: &[u8]) -> bool {
+    let mut i = 8usize;
+    for _ in 0..64 {
+        let len = match be_u32(png, i) {
+            Some(n) => n as usize,
+            None => return false,
+        };
+        let Some(kind) = png.get(i + 4..i + 8) else { return false };
+        if kind == b"pHYs" {
+            return true;
+        }
+        if kind == b"IDAT" || kind == b"IEND" {
+            return false;
+        }
+        i = match i.checked_add(12).and_then(|n| n.checked_add(len)) {
+            Some(n) if n <= png.len() => n,
+            _ => return false,
+        };
+    }
+    false
+}
+
+fn be_u32(bytes: &[u8], i: usize) -> Option<u32> {
+    let s = bytes.get(i..i + 4)?;
+    let s: [u8; 4] = s.try_into().ok()?;
+    Some(u32::from_be_bytes(s))
+}
+
+fn png_crc(data: &[u8]) -> u32 {
+    let mut c = 0xFFFF_FFFFu32;
+    for &b in data {
+        c ^= u32::from(b);
+        for _ in 0..8 {
+            let mask = 0u32.wrapping_sub(c & 1);
+            c = (c >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !c
+}
+
 /// A premultiplied pixmap of the picture, downsampled so its longer side is near `want` px.
 pub fn decode_for(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust) -> Option<Arc<Pixmap>> {
     let addr = Arc::as_ptr(bytes) as usize;
@@ -303,13 +396,22 @@ fn decode_anim(bytes: &[u8], adj: &PictureAdjust) -> Option<Anim> {
     let k = (GIF_SIDE as f64 / w.max(h) as f64).min(1.0);
     let (nw, nh) = (((w as f64 * k).round() as u32).max(1), ((h as f64 * k).round() as u32).max(1));
     let size = nw as usize * nh as usize * 4;
+    let canvas_pixels = (w as u64) * (h as u64);
+    let mut total_canvas_pixels: u64 = 0;
     let (mut frames, mut ends, mut t) = (Vec::new(), Vec::new(), 0.0);
-    for f in dec.into_frames() {
-        let Ok(f) = f else { break };
+    let mut iter = dec.into_frames();
+    loop {
         if frames.len() >= GIF_MAX_FRAMES || (frames.len() + 1) * size > GIF_BUDGET {
             log::info!("animated GIF: keeping its first {} frames", frames.len());
             break;
         }
+        if total_canvas_pixels.saturating_add(canvas_pixels) > GIF_MAX_TOTAL_CANVAS_PIXELS {
+            log::info!("animated GIF: canvas pixel limit reached");
+            break;
+        }
+        let Some(f) = iter.next() else { break };
+        let Ok(f) = f else { break };
+        total_canvas_pixels = total_canvas_pixels.saturating_add(canvas_pixels);
         let (n, d) = f.delay().numer_denom_ms();
         let ms = if d == 0 { 0.0 } else { n as f64 / d as f64 };
         // Like browsers: frames of 10 ms or less show for 100 ms.
@@ -331,16 +433,33 @@ fn anim(bytes: &Arc<Vec<u8>>, adj: &PictureAdjust) -> Option<Arc<Anim>> {
         return None;
     }
     let key = (Arc::as_ptr(bytes) as usize, adjust_key(adj));
-    if let Some(a) = with(|c| c.anims.get(&key).map(|e| e.1.clone())) {
+    let hit = with(|c| {
+        c.clock += 1;
+        let clock = c.clock;
+        c.anims.get_mut(&key).map(|e| {
+            e.2 = clock;
+            e.1.clone()
+        })
+    });
+    if let Some(a) = hit {
         return a;
     }
     let a = decode_anim(bytes, adj).map(Arc::new);
     with(|c| {
-        let held: usize = c.anims.values().filter_map(|e| e.1.as_ref()).map(|a| a.bytes()).sum();
-        if held + a.as_ref().map_or(0, |a| a.bytes()) > GIF_CACHE_BUDGET || c.anims.len() >= 64 {
-            c.anims.clear();
+        // Make room by dropping the least recently used animations, not every one of them, so a
+        // slide whose animations overflow the cache does not decode all of them again each frame.
+        let new = a.as_ref().map_or(0, |a| a.bytes());
+        loop {
+            let held: usize = c.anims.values().filter_map(|e| e.1.as_ref()).map(|a| a.bytes()).sum();
+            if held + new <= GIF_CACHE_BUDGET && c.anims.len() < 64 {
+                break;
+            }
+            let Some(oldest) = c.anims.iter().min_by_key(|(_, e)| e.2).map(|(k, _)| *k) else { break };
+            c.anims.remove(&oldest);
         }
-        c.anims.insert(key, (bytes.clone(), a.clone()));
+        c.clock += 1;
+        let clock = c.clock;
+        c.anims.insert(key, (bytes.clone(), a.clone(), clock));
     });
     a
 }
@@ -432,6 +551,26 @@ mod tests {
         let mut out = std::io::Cursor::new(Vec::new());
         img.write_to(&mut out, image::ImageFormat::Png).expect("encode");
         out.into_inner()
+    }
+
+    /// A two-frame GIF whose first pixel is `n`, so each one has its own bytes.
+    fn gif(n: u8) -> Arc<Vec<u8>> {
+        use image::codecs::gif::GifEncoder;
+        let frame = |c: u8| image::Frame::new(image::RgbaImage::from_pixel(2, 2, image::Rgba([n, c, 0, 255])));
+        let mut out = Vec::new();
+        GifEncoder::new(&mut out).encode_frames([frame(0), frame(255)]).expect("encode");
+        Arc::new(out)
+    }
+
+    #[test]
+    fn a_full_animation_cache_drops_the_oldest_entry_not_all_of_them() {
+        let adj = PictureAdjust::default();
+        let gifs: Vec<_> = (0..70).map(gif).collect();
+        for g in &gifs {
+            assert!(anim(g, &adj).is_some());
+        }
+        let (len, newest) = with(|c| (c.anims.len(), c.anims.contains_key(&(Arc::as_ptr(&gifs[69]) as usize, adjust_key(&adj)))));
+        assert!(newest && len >= 32, "{len} cached");
     }
 
     #[test]

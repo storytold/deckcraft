@@ -55,10 +55,12 @@ impl ColorRef {
         };
         deckcraft_color::apply(base, &self.mods)
     }
-    /// Alpha (0–1) from an `alpha` transform, if any.
+    /// Alpha (0–1) from the `alpha`, `alphaMod` and `alphaOff` transforms, applied in order.
     pub fn alpha(&self) -> f64 {
         self.mods.iter().fold(1.0, |a, m| match m {
             ColorTransform::Alpha(v) => (*v as f64 / 100_000.0).clamp(0.0, 1.0),
+            ColorTransform::AlphaMod(v) => (a * *v as f64 / 100_000.0).clamp(0.0, 1.0),
+            ColorTransform::AlphaOff(v) => (a + *v as f64 / 100_000.0).clamp(0.0, 1.0),
             _ => a,
         })
     }
@@ -70,6 +72,36 @@ pub struct GradientStop {
     /// 0–1.
     pub pos: f64,
     pub color: ColorRef,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GradientFlip {
+    None,
+    X,
+    Y,
+    Xy,
+}
+
+impl GradientFlip {
+    pub fn xml(self) -> &'static str {
+        match self {
+            GradientFlip::None => "none",
+            GradientFlip::X => "x",
+            GradientFlip::Y => "y",
+            GradientFlip::Xy => "xy",
+        }
+    }
+
+    pub fn from_xml(value: &str) -> Option<Self> {
+        match value {
+            "none" => Some(GradientFlip::None),
+            "x" => Some(GradientFlip::X),
+            "y" => Some(GradientFlip::Y),
+            "xy" => Some(GradientFlip::Xy),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -90,6 +122,8 @@ pub enum GradientShape {
 pub struct Gradient {
     pub stops: Vec<GradientStop>,
     pub shape: GradientShape,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flip: Option<GradientFlip>,
     #[serde(default = "crate::yes")]
     pub rotate_with_shape: bool,
     /// `a:tileRect`: the box the gradient is laid out in, as insets from the shape's box
@@ -143,6 +177,18 @@ pub struct PictureFill {
     /// flipped.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub upright: bool,
+    /// An artistic effect (Picture Format ▸ Artistic Effects). `media` is then the processed
+    /// picture; the original is kept to change or remove the effect.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artistic: Option<Artistic>,
+}
+
+/// An applied artistic effect: its `a14` name (e.g. `artisticBlur`) and the original picture.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Artistic {
+    pub effect: String,
+    pub original: MediaId,
 }
 
 /// Picture corrections and colour (Picture Format ▸ Corrections / Color / Transparency).
@@ -222,6 +268,31 @@ pub enum LineJoin {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum LineAlign {
+    #[default]
+    Center,
+    Inside,
+}
+
+impl LineAlign {
+    pub fn xml(self) -> &'static str {
+        match self {
+            LineAlign::Center => "ctr",
+            LineAlign::Inside => "in",
+        }
+    }
+
+    pub fn from_xml(value: &str) -> Option<Self> {
+        match value {
+            "ctr" => Some(LineAlign::Center),
+            "in" => Some(LineAlign::Inside),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Compound {
     #[default]
     Single,
@@ -263,7 +334,7 @@ pub enum Dash {
 }
 
 impl Dash {
-    pub const PRESETS: [&'static str; 11] =
+    pub const PRESETS: [&str; 11] =
         ["solid", "sysDot", "sysDash", "dash", "dashDot", "lgDash", "lgDashDot", "lgDashDotDot", "dot", "sysDashDot", "sysDashDotDot"];
     /// Dash/space lengths in multiples of the line width.
     pub fn pattern(&self) -> Vec<f64> {
@@ -312,6 +383,8 @@ pub struct Line {
     pub dash: Option<Dash>,
     pub cap: Option<LineCap>,
     pub join: Option<LineJoin>,
+    pub miter_limit: Option<u32>,
+    pub align: Option<LineAlign>,
     pub compound: Option<Compound>,
     pub head: Option<LineEnd>,
     pub tail: Option<LineEnd>,
@@ -335,6 +408,8 @@ impl Line {
         }
         self.cap = self.cap.or(parent.cap);
         self.join = self.join.or(parent.join);
+        self.miter_limit = self.miter_limit.or(parent.miter_limit);
+        self.align = self.align.or(parent.align);
         self.compound = self.compound.or(parent.compound);
         if self.head.is_none() {
             self.head.clone_from(&parent.head);
@@ -384,13 +459,44 @@ pub struct Glow {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct Reflection {
     pub blur: f64,
     pub start_alpha: f64,
     pub end_alpha: f64,
     pub end_pos: f64,
     pub dist: f64,
+    /// DrawingML reflection transform values retain their native integer units.
+    pub st_pos: Option<i32>,
+    pub dir: Option<i32>,
+    pub fade_dir: Option<i32>,
+    pub sx: Option<i32>,
+    pub sy: Option<i32>,
+    pub kx: Option<i32>,
+    pub ky: Option<i32>,
+    pub align: Option<String>,
+    pub rotate_with_shape: Option<bool>,
+}
+
+impl Default for Reflection {
+    fn default() -> Self {
+        Self {
+            blur: 0.0,
+            start_alpha: 0.0,
+            end_alpha: 0.0,
+            end_pos: 0.0,
+            dist: 0.0,
+            st_pos: None,
+            dir: Some(5_400_000),
+            fade_dir: None,
+            sx: None,
+            sy: Some(-100_000),
+            kx: None,
+            ky: None,
+            align: Some("bl".into()),
+            rotate_with_shape: Some(false),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
