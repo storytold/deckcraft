@@ -87,6 +87,9 @@ pub(super) fn tick(ctx: &egui::Context, rec: &mut RecordView) {
     state.last = now;
     if state.playing {
         state.offset = advance(state.offset, state.speed, dt, true);
+        // The scroll moves once per rendered frame: without this it advances in the record bar's
+        // 10 Hz steps and looks choppy.
+        ctx.request_repaint();
     }
 }
 

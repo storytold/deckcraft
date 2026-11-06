@@ -774,10 +774,22 @@ fn batch(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad("edit.batch", "each command needs an `id`"));
         };
         let params = c.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| Value::Object(Default::default()));
+        // The engine rolls a failed command back only at depth 0; an inner one is put back here,
+        // so a half-applied command never joins the batch's single undo step.
+        let before = s.active().map(|d| (d.uid, d.doc.clone(), d.selection.clone()));
         match s.execute(id, &params) {
             Ok(_) => ran += 1,
             // One bad clip must not discard the rest of the take: report it and carry on.
-            Err(e) => failed.push(format!("{id}: {e}")),
+            Err(e) => {
+                if let (Some((uid, doc, sel)), Some(st)) = (before, s.active_mut())
+                    && st.uid == uid
+                {
+                    st.doc = doc;
+                    st.selection = sel;
+                    st.revision += 1;
+                }
+                failed.push(format!("{id}: {e}"));
+            }
         }
     }
     Ok(json!({"ran": ran, "failed": failed}))

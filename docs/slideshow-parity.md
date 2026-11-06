@@ -30,7 +30,7 @@ ready** (estimated), **10–16 h** to parity.
 | Animated GIFs play; pause from their corner button | yes | yes (#39) | The corner button hides with Show Media Controls |
 | See All Slides grid during the show | yes | yes: G, or All on the show bar; click a thumbnail, Esc closes the grid | Hidden slides are labelled; the first 48 slides are shown |
 | Zoom into part of a slide during the show | yes | yes: Z, then click the slide (or the presenter slide); 2×, Esc or another click leaves it. Ctrl+wheel (Cmd+wheel on a Mac) over the slide zooms in and out around the pointer, four notches per doubling, up to 4× (#1286) | The presenter keeps the whole slide and draws a frame on the zoomed part. The wheel zooms in the audience window only; no panning while zoomed |
-| Pen and highlighter ink | yes | pen only (Cmd+P pen, Cmd+A arrow, E erases all ink) | No highlighter, per-stroke eraser, ink colours, or keep/discard annotations prompt |
+| Pen and highlighter ink | yes | pen in the show (Cmd+P pen, Cmd+A arrow, E erases all ink); the Record view adds a highlighter, a per-stroke eraser and ink colours in its bottom bar | The ordinary show still has no highlighter, per-stroke eraser, ink colours or keep/discard annotations prompt |
 | Laser pointer | yes | yes in the show | Cmd/Ctrl+L, holding Ctrl, or the on-screen button draw the show's laser colour (red, green or blue in Set Up Slide Show) and leave no ink. A recorded trace still replays. The presenter window does not move that dot |
 | Subtitles and live captions | yes (cloud speech) | no | AI dimension |
 | Custom shows | yes | yes: Show plays that list in order and does not change Set Up; Set Up Slide Show can keep one for Play from Start | Hidden slides in the list are skipped; deleting a slide removes its ID from every custom show |
@@ -71,7 +71,7 @@ Reading View in a window with navigation: present (checklist row done).
 
 | Work | Hours |
 |---|---|
-| Highlighter, eraser, keep-annotations prompt, laser from presenter view | 2–4 |
+| Highlighter, eraser and ink colours in the ordinary show (the Record view has them); keep-annotations prompt; laser from presenter view | 2–4 |
 | Presenter view on the right display and a swap-displays command | 2–4 |
 | Record slide show screen capture (narration, timings, ink and laser are kept) | 4–8 |
 | **Total** | **~8–16** (the slide-show row of the feature table carries 10–16 h; recording overlaps the Media row) |

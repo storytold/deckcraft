@@ -17,7 +17,12 @@ pub(super) fn ui(ui: &mut Ui, rec: &mut RecordView, now: f64) -> bool {
 
     let shown = egui::Popup::menu(&more).width(220.0).show(|ui| {
         let mut changed = false;
-        changed |= ui.checkbox(&mut rec.notes_open, RichText::new("Notes pane").size(13.0)).changed();
+        // Slide view has no notes area, so the switch would toggle nothing.
+        let notes = ui.add_enabled(
+            rec.view != super::super::views::ViewKind::Slide,
+            egui::Checkbox::new(&mut rec.notes_open, RichText::new("Notes pane").size(13.0)),
+        );
+        changed |= notes.changed();
         changed |= ui.checkbox(&mut rec.camera_bubble, RichText::new("Camera bubble").size(13.0)).changed();
         // No camera surface in the Record view yet: the switch reads as unavailable.
         let camera = ui.add_enabled(false, egui::Checkbox::new(&mut rec.camera_preview, RichText::new("Camera preview").size(13.0)));

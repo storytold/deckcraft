@@ -20,7 +20,7 @@ mod timer;
 use egui::{Align, Color32, CornerRadius, Layout as EguiLayout, Rect, RichText, Ui, UiBuilder, vec2};
 
 use super::devices;
-use super::{Layout, RecordCommand, RecordStatus, RecordView};
+use super::{Layout, RecordStatus, RecordView};
 use crate::show::Show;
 use crate::{SlideApp, theme};
 
@@ -126,9 +126,9 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
     }
     more::ui(&mut right_ui, rec, now);
     if devices::screen_button(&mut right_ui, rec, now) {
-        // Screen capture is still a device hook: queue the export work rather than pretend a
-        // screen recording was written.
-        rec.pending = Some(RecordCommand::Export);
+        // Screen capture is a device hook with no backend yet: say so instead of queueing the
+        // video-export request, which belongs to the export section.
+        app.set_status("Screen recording is not available yet.");
     }
     // A refused microphone that the user asks for again gets a new start attempt. Read the
     // failure first: the click clears it.
