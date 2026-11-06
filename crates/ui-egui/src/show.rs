@@ -1077,8 +1077,18 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
         }
         commands.push(json!({"id": "show.setup", "params": {"useTimings": true}}));
     }
+    let mut failed: Vec<String> = Vec::new();
     if !commands.is_empty() {
-        let _ = app.run("edit.batch", json!({"commands": commands}));
+        match app.run("edit.batch", json!({"commands": commands})) {
+            Ok(v) => {
+                failed = v
+                    .get("failed")
+                    .and_then(|f| f.as_array())
+                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                    .unwrap_or_default()
+            }
+            Err(e) => failed.push(e),
+        }
     }
     if show.record {
         let narrated = recorded_narration;
@@ -1092,12 +1102,19 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
                 MAX_NARRATION_BYTES as f64 / 1_000_000.0
             ))
         };
-        let status = match (&show.mic_error, &limit) {
+        // A part that would not save is omitted work too, and it is named first.
+        let parts = if failed.is_empty() {
+            None
+        } else {
+            Some(format!("{} part{} of the take could not be saved ({})", failed.len(), if failed.len() == 1 { "" } else { "s" }, failed[0]))
+        };
+        let status = match (&parts, &show.mic_error, &limit) {
+            (Some(p), _, _) => format!("Recording saved, but {p}"),
             // A microphone that stopped mid-take makes "saved" a half truth: say what happened.
-            (Some(e), Some(l)) => format!("Recording saved, but the microphone stopped: {e}, and {l}"),
-            (Some(e), None) => format!("Recording saved, but the microphone stopped: {e}"),
-            (None, Some(l)) => format!("Recording saved, but {l}"),
-            (None, None) => saved_status(narrated > 0, !show.recorded.is_empty(), !show.laser_saved.is_empty()).to_string(),
+            (None, Some(e), Some(l)) => format!("Recording saved, but the microphone stopped: {e}, and {l}"),
+            (None, Some(e), None) => format!("Recording saved, but the microphone stopped: {e}"),
+            (None, None, Some(l)) => format!("Recording saved, but {l}"),
+            (None, None, None) => saved_status(narrated > 0, !show.recorded.is_empty(), !show.laser_saved.is_empty()).to_string(),
         };
         app.set_status(status);
     } else {
@@ -1136,7 +1153,9 @@ fn narration_wav_within(rate: u32, samples: &[f32], max_bytes: usize) -> Option<
     if !(8_000..=192_000).contains(&rate) {
         return None;
     }
-    let min_n = (rate as u64).saturating_mul(200) / 1000;
+    // The engine refuses a clip under 200 ms; a sample of margin keeps the boundary from rounding
+    // the wrong way once the WAV is probed.
+    let min_n = (rate as u64).saturating_mul(200) / 1000 + (rate as u64) / 100;
     // `show.narration` rejects a WAV over `max_bytes`: cap the samples here so the take that
     // passes never fails on the way in, and report the cut so the save is not called complete.
     let max = max_bytes.saturating_sub(44) / 2;

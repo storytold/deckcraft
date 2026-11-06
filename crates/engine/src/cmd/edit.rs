@@ -764,14 +764,21 @@ fn batch(s: &mut Session, p: &Value) -> Result<Value> {
     let Some(commands) = p.get("commands").and_then(Value::as_array) else {
         return Err(bad("edit.batch", "missing `commands`"));
     };
+    if commands.len() > 10_000 {
+        return Err(bad("edit.batch", "more than 10,000 commands"));
+    }
     let mut ran = 0usize;
-    for c in commands.iter().take(10_000) {
+    let mut failed: Vec<String> = Vec::new();
+    for c in commands {
         let Some(id) = c.get("id").and_then(Value::as_str).or_else(|| c.get("command").and_then(Value::as_str)) else {
             return Err(bad("edit.batch", "each command needs an `id`"));
         };
         let params = c.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| Value::Object(Default::default()));
-        s.execute(id, &params).map_err(|e| bad("edit.batch", format!("{id}: {e}")))?;
-        ran += 1;
+        match s.execute(id, &params) {
+            Ok(_) => ran += 1,
+            // One bad clip must not discard the rest of the take: report it and carry on.
+            Err(e) => failed.push(format!("{id}: {e}")),
+        }
     }
-    Ok(json!({"ran": ran}))
+    Ok(json!({"ran": ran, "failed": failed}))
 }
