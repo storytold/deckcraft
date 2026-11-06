@@ -354,6 +354,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
+    /// A root and a path reached through links are compared after the links are followed.
     #[test]
     fn links_are_followed_before_comparing() {
         let (base, roots) = folders("links");
@@ -407,6 +408,7 @@ mod tests {
 
     /// In a case-sensitive folder, `IN` beside the root `in` is another folder, there or not yet.
     #[cfg(windows)]
+    /// In a case-sensitive Windows folder, a sibling named in another case stays outside the root.
     #[test]
     fn a_case_sensitive_folder_keeps_a_differently_cased_name_out() {
         let base = std::env::temp_dir().join(format!("dc-file-access-case-sensitive-{}", std::process::id()));
@@ -432,6 +434,7 @@ mod tests {
     }
 
     #[cfg(windows)]
+    /// On Windows a path finds its real case on disk, and device names are refused.
     #[test]
     fn windows_finds_the_real_case_and_refuses_devices() {
         let (base, roots) = folders("case");
@@ -449,6 +452,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
+    /// Scopes nest, and a scope applies only on the thread that set it.
     #[test]
     fn scopes_nest_and_stay_on_their_thread() {
         let (base, roots) = folders("scopes");
@@ -470,6 +474,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
+    /// What is a device name, with superscript digits and a name before a colon, and what isn't.
     #[test]
     fn device_names() {
         for d in ["CON", "nul", "Com1", "LPT9.txt", "aux.deckcraft", "NUL ", "COM¹", "Lpt²", "lpt³.txt", "COM1:", "nul:x", "COM¹:"] {
