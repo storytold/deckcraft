@@ -11,7 +11,7 @@ number.
 
 | Number | Value | Kind |
 |---|---|---|
-| **Feature breadth** (weighted checklist) | **84%** over 191 features (P0 92%, P1 82%, P2 55%) | **measured**: `cargo xtask parity` formula over [parity-checklist.md](parity-checklist.md); rows re-scored by the 2026-10-14 community PR wave |
+| **Feature breadth** (weighted checklist) | **84%** over 191 features (P0 92%, P1 82%, P2 57%) | **measured**: `cargo xtask parity` formula over [parity-checklist.md](parity-checklist.md); rows re-scored by the 2026-10-14 community PR wave |
 | Menu-bar coverage | **59%** (128 of 217 app-specific PowerPoint menu items have a DeckCraft command or UI label of the same name) | **measured** (heuristic lower bound): script matching the 2026-10-07 PowerPoint menu dump against the 226 engine command labels of the d556ff9 snapshot (not re-measured since; the registry is 328 now) and the UI's strings; excludes the app, Window and Help menus and the subtitle language lists |
 | **Ready for real work** | **~55%** | **estimated**: weighted dimension table below (was ~56% until the features row was recomputed from written area weights) |
 | **Mainstream practitioner** | **~53%** | **estimated**: [method below](#mainstream-practitioner-and-essentials-user) |
@@ -191,7 +191,7 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Charts | 7 | 65% | ~45% | 12–20 | Data grid editing, chart elements, the `chartex` types (waterfall, funnel, treemap, sunburst, histogram, box) | [parity-checklist.md](parity-checklist.md) |
 | SmartArt | 4 | 50% | ~35% | 8–14 | PowerPoint diagrams editable (read their data model), the data model on save, more layouts | [parity-checklist.md](parity-checklist.md) |
 | Pictures | 7 | 60% | ~45% | 12–20 | SVG, EMF+ records, clipboard paste on Windows (#1414), remove background, artistic-effect and correction depth | [file-format-parity.md](file-format-parity.md) |
-| Media | 4 | 67% | ~60% | 8–14 | WMA/WMV decode, record audio/screen, 3-D models and stock content, playback options lost on PPTX round trip (#74) | [file-format-parity.md](file-format-parity.md) |
+| Media | 4 | 71% | ~60% | 8–14 | WMA/WMV decode, record audio/screen, 3-D models and stock content, playback options lost on PPTX round trip (#74) | [file-format-parity.md](file-format-parity.md) |
 | Transitions | 4 | 100% | ~80% | 4–8 | 3-D transitions approximated in 2-D | [animation-parity.md](animation-parity.md) |
 | Animations | 6 | 85% | ~65% | 10–16 | 64 of PowerPoint's ~190 effects, motion-path depth, and rewind lost on save (#77); the pane timeline and the preview from the selected effect are in | [animation-parity.md](animation-parity.md) |
 | Slide show and presenter view | 8 | 71% | ~60% | 10–16 | Second-display placement, laser from presenter view, screen capture while recording, subtitles, ink depth | [slideshow-parity.md](slideshow-parity.md) |

@@ -199,7 +199,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Media | Insert video | P1 | D |
 | Media | Audio/video playback in the show (WMA/WMV not decodable yet) | P0 | P |
 | Media | Trim, fade in/out, volume, loop, play across slides | P2 | D |
-| Media | Record audio (default microphone take onto the current slide; desktop only) and screen recording (still missing) | P2 | P |
+| Media | Record audio (default microphone take onto the slide it started on; desktop only) and screen recording (still missing) | P2 | P |
 | Media | Icons, 3-D models, stock content | P2 | M |
 | Media | Embedded objects (OLE): insert; foreign objects kept on round trip | P2 | P |
 | Transitions | Transition gallery (fade, push, wipe, split, cover, uncover, zoom, morph…) | P0 | D |

@@ -15,6 +15,7 @@ use crate::{HistoryEntry, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        cmd!("edit.batch", "Batch Edit", [], None, "{commands: [{id, params?}], label?} — runs the commands as one undo step", has_doc, batch),
         cmd!(noundo "edit.undo", "Undo", ["Edit"], Some("Cmd+Z"), "{}", can_undo, undo),
         cmd!(noundo "edit.redo", "Redo", ["Edit"], Some("Cmd+Y"), "{}", can_redo, redo),
         cmd!("edit.cut", "Cut", ["Home", "Clipboard"], Some("Cmd+X"), "{scope?: slides} → {text, html?}", has_doc, cut),
@@ -756,4 +757,21 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
         }
     })?;
     Ok(json!({"selected": s.doc()?.selection.shapes}))
+}
+/// Run several commands as one edit: the outer command pushes a single undo step for all of them
+/// (an inner command sees a depth above zero and keeps its own step only for a nested call).
+fn batch(s: &mut Session, p: &Value) -> Result<Value> {
+    let Some(commands) = p.get("commands").and_then(Value::as_array) else {
+        return Err(bad("edit.batch", "missing `commands`"));
+    };
+    let mut ran = 0usize;
+    for c in commands.iter().take(10_000) {
+        let Some(id) = c.get("id").and_then(Value::as_str).or_else(|| c.get("command").and_then(Value::as_str)) else {
+            return Err(bad("edit.batch", "each command needs an `id`"));
+        };
+        let params = c.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| Value::Object(Default::default()));
+        s.execute(id, &params).map_err(|e| bad("edit.batch", format!("{id}: {e}")))?;
+        ran += 1;
+    }
+    Ok(json!({"ran": ran}))
 }

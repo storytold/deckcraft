@@ -1025,6 +1025,9 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
     if live {
         show.timings.push((show.state.slide, now - show.slide_start));
     }
+    // The whole save is one undo step: hundreds of separate commands would evict the user's own
+    // history (`edit.batch` runs them inside one outer command, which pushes one entry).
+    let mut commands: Vec<serde_json::Value> = Vec::new();
     // A Record take replaces what its slides had recorded, ink included (`ink.stroke` appends to
     // the slide's recorded layer). A rehearsal keeps timings only, and must not delete the deck's
     // existing recording.
@@ -1036,47 +1039,49 @@ pub(crate) fn save_take(app: &mut SlideApp, show: &mut Show, doc: &Presentation,
         touched.sort_unstable();
         touched.dedup();
         for i in touched {
-            let _ = app.run("show.clearRecording", json!({"scope": "current", "index": i}));
+            commands.push(json!({"id": "show.clearRecording", "params": {"scope": "current", "index": i}}));
         }
     }
     for (i, secs) in show.timings.clone() {
         let ms = if secs.is_finite() { (secs.max(0.0) * 1000.0).round() as u64 } else { 0 };
-        let _ = app.run("transition.timing", json!({"index": i, "after": ms}));
+        commands.push(json!({"id": "transition.timing", "params": {"index": i, "after": ms}}));
     }
+    let mut cut = 0usize;
+    // The clips the deck actually gained: near-silence and too-short takes never become one.
+    let mut recorded_narration = 0usize;
     if show.record {
         for (i, pts, mode, color, width, at_ms) in &show.recorded {
             let points: Vec<_> = pts.iter().map(|(x, y)| json!([x, y, 0.5])).collect();
-            let _ = app.run(
-                "ink.stroke",
-                json!({
-                    "index": i,
-                    "points": points,
-                    "width": width,
-                    "color": [color.r, color.g, color.b],
-                    "highlighter": *mode == InkMode::Highlighter,
-                    "at": at_ms,
-                }),
-            );
+            commands.push(json!({"id": "ink.stroke", "params": {
+                "index": i,
+                "points": points,
+                "width": width,
+                "color": [color.r, color.g, color.b],
+                "highlighter": *mode == InkMode::Highlighter,
+                "at": at_ms,
+            }}));
         }
-        let mut cut = 0usize;
-        // The clips the deck actually gained: near-silence and too-short takes never become one.
-        let mut narrated = 0usize;
         for (i, rate, samples) in &show.narration {
             // Encoded once, here: the clip is final.
             let Some(wav) = narration_wav(*rate, samples) else { continue };
             cut += usize::from(wav.cut);
-            if app.run("show.narration", json!({"index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(&wav.wav)})).is_ok()
-            {
-                narrated += 1;
-            }
+            recorded_narration = recorded_narration.saturating_add(1);
+            commands.push(json!({"id": "show.narration", "params": {
+                "index": i, "name": "narration.wav", "data": deckcraft_engine::cmd::base64_encode(&wav.wav)
+            }}));
         }
         let lc = doc.show.laser_color;
         for (i, pts) in &show.laser_saved {
             let points: Vec<_> = pts.iter().map(|(x, y, t)| json!([x, y, t])).collect();
-            let _ = app.run("show.laser", json!({"index": i, "points": points, "color": [lc.r, lc.g, lc.b]}));
+            commands.push(json!({"id": "show.laser", "params": {"index": i, "points": points, "color": [lc.r, lc.g, lc.b]}}));
         }
-        let _ = app.run("show.setup", json!({"useTimings": true}));
-        // A cut narration is omitted work too: the save says so instead of reading as complete.
+        commands.push(json!({"id": "show.setup", "params": {"useTimings": true}}));
+    }
+    if !commands.is_empty() {
+        let _ = app.run("edit.batch", json!({"commands": commands}));
+    }
+    if show.record {
+        let narrated = recorded_narration;
         let limit = if cut == 0 && !show.narration_cut {
             None
         } else {

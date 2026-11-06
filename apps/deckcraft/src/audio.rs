@@ -144,17 +144,17 @@ impl CpalIn {
                 None,
             ),
             cpal::SampleFormat::I16 => {
-                let mut tmp = Vec::new();
+                let mut spill: Vec<f32> = Vec::new();
                 dev.build_input_stream(
                     &config,
                     move |data: &[i16], _| {
+                        spill.extend(data.iter().map(|s| *s as f32 / i16::MAX as f32));
                         if let Ok(mut g) = buf.try_lock() {
-                            tmp.clear();
-                            tmp.extend(data.iter().map(|s| *s as f32 / i16::MAX as f32));
-                            if g.samples.len() >= cap {
+                            let all = std::mem::take(&mut spill);
+                            if g.samples.len() + all.len() / channels.max(1) > cap {
                                 full.store(true, Ordering::Relaxed);
                             }
-                            push_mono(&mut g.samples, &tmp, channels, cap);
+                            push_mono(&mut g.samples, &all, channels, cap);
                         }
                     },
                     err,

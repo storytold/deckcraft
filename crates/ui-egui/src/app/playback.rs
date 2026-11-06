@@ -98,6 +98,11 @@ impl SlideApp {
             show.keep_cursor = self.ui.show_keep_cursor;
             self.show = Some(show);
         }
+        // The show that replaces a captured recording goes fullscreen itself: only a reading or
+        // browsed show, which never asks for it, leaves fullscreen here.
+        if !reading {
+            self.leave_fullscreen = false;
+        }
     }
 
     /// Whether a second display can take Presenter View. Like PowerPoint, one display shows only

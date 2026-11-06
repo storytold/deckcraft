@@ -1137,10 +1137,16 @@ fn with_all(p: &Value) -> Value {
 
 fn slide_scope(s: &Session, p: &Value, id: &str) -> Result<Vec<usize>> {
     let st = s.doc()?;
+    // An `index` that is present but not a slide number is refused, not read as "the current
+    // slide": these commands delete data, so a wrong type must not pick a slide.
+    let explicit = match p.get("index") {
+        Some(_) => Some(usize_param(p, "index").ok_or_else(|| bad(id, "index must be a slide number"))?),
+        None => None,
+    };
     if bool_or(p, "all", false) {
         return Ok((0..st.doc.slides.len()).collect());
     }
-    let index = usize_param(p, "index").unwrap_or(st.selection.slide);
+    let index = explicit.unwrap_or(st.selection.slide);
     if index >= st.doc.slides.len() {
         return Err(bad(id, format!("no slide {index}")));
     }

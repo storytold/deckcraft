@@ -96,7 +96,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 | Charts | 65% | ~45% | 12–20 | [gaps](docs/gaps.md#charts-data-grid-elements-and-the-newer-chart-types) |
 | SmartArt | 50% | ~35% | 8–14 | [gaps](docs/gaps.md#smartart-editing-is-shallow) |
 | Pictures | 60% | ~45% | 12–20 | [file formats](docs/file-format-parity.md) |
-| Media | 67% | ~60% | 8–14 | [file formats](docs/file-format-parity.md) |
+| Media | 71% | ~60% | 8–14 | [file formats](docs/file-format-parity.md) |
 | Transitions | 100% | ~80% | 4–8 | [animation-parity](docs/animation-parity.md) |
 | Animations | 85% | ~65% | 10–16 | [animation-parity](docs/animation-parity.md) |
 | Slide show and presenter view | 71% | ~60% | 10–16 | [slideshow-parity](docs/slideshow-parity.md) |
@@ -156,7 +156,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 |---|---|
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
 | 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
-| 2026-11-03 | Record ▸ Audio: the Record tab records from the default microphone into the record bar's Stop/Cancel, then inserts the take as a WAV on the current slide in one undo step; a take that loses its device cancels with a notice. Desktop only |
+| 2026-11-03 | Record ▸ Audio: the Record tab records from the default microphone into the record bar's Stop/Cancel, then inserts the take as a WAV on the slide where the take started (not wherever the user has since moved) in one undo step; a take that loses its device cancels with a notice. Desktop only |
 | 2026-11-03 | Record ▸ Preview (`show.preview`): plays the deck with the timings and narration already recorded, even when Use Timings / Play Narrations are off; it writes no timing, ink, narration or laser and leaves the editor's slide selection where it was (#1812) |
 | 2026-11-03 | Record ▸ Edit: Clear Recording on current/all slides drops recorded narration, camera/screen media, ink, laser and advance timings in one undo step and keeps ordinary media and user ink; Reset to Cameo returns the top-level Cameo to its default placement and marks it live again (a Cameo inside a group stays as it is) (#1817, #1818); live camera capture itself waits on #1837 |
 | 2026-11-02 | Slide show on Linux and the BSDs: Presenter View stays off when winit lists exactly one display, as in PowerPoint; if it lists none, the setting is kept. On one display the presenter window covered the show, and the hidden window stalled every frame: slide changes took up to ~1.7 s under Hyprland (#1156) |
