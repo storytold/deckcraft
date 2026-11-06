@@ -14,12 +14,13 @@
 
 use std::collections::HashSet;
 
-use deckcraft_collab_proto::{ChangeKind, Delta, OpEnvelope, OpKind, Payload, RejectCode, ShapeKey, SlideKey, Target};
+use deckcraft_collab_proto::{ChangeKind, Delta, HistoryAction, OpEnvelope, OpKind, Payload, RejectCode, ShapeKey, SlideKey, Target};
 use deckcraft_engine::Session;
-use deckcraft_model::{Presentation, Shape, ShapeId, SlideId, parent_of};
+use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, SlideId, parent_of};
 use serde_json::{Value, json};
 
 use crate::delta::delta;
+use crate::history::{Histories, Image, Snapshot, Step};
 use crate::keys::{KeyIssuer, KeyMap};
 
 /// Why the adapter refused an operation. The server turns this into `Rejected`.
@@ -53,6 +54,11 @@ impl Rejection {
     pub fn unsupported(message: impl Into<String>, version: Option<u64>) -> Self {
         Rejection { code: RejectCode::Unsupported, message: message.into(), retryable: false, hint_version: version }
     }
+
+    /// Undo would overwrite someone else's later change (ADR 0010 §3).
+    pub fn undo_conflict(message: impl Into<String>, version: Option<u64>) -> Self {
+        Rejection { code: RejectCode::UndoConflict, message: message.into(), retryable: false, hint_version: version }
+    }
 }
 
 /// The adapter for one document session.
@@ -62,12 +68,14 @@ pub struct Adapter {
     issuer: KeyIssuer,
     /// Slides that were deleted in this session. Their keys never come back (ADR 0002 §3).
     dead_slides: HashSet<SlideKey>,
+    /// Per-actor undo/redo (ADR 0010). One participant's undo never takes back another's edit.
+    history: Histories,
 }
 
 impl Adapter {
     /// `prefix` separates the keys of one session from another; the server passes a random one.
     pub fn new(prefix: impl Into<String>) -> Self {
-        Adapter { keys: KeyMap::new(), issuer: KeyIssuer::new(prefix), dead_slides: HashSet::new() }
+        Adapter { keys: KeyMap::new(), issuer: KeyIssuer::new(prefix), dead_slides: HashSet::new(), history: Histories::default() }
     }
 
     /// Issue keys for everything in `doc`. Called at join and after every applied operation.
@@ -83,7 +91,7 @@ impl Adapter {
     ///
     /// `head` is the document version the operation was ordered against: a `structural`
     /// operation is only accepted when it was sent against the current head (ADR 0004 §2).
-    pub fn apply(&mut self, session: &mut Session, head: u64, op: &OpEnvelope) -> Result<Delta, Rejection> {
+    pub fn apply(&mut self, session: &mut Session, head: u64, actor: &str, op: &OpEnvelope) -> Result<Delta, Rejection> {
         let class = class_of(&op.payload);
         if class != op.kind {
             return Err(Rejection::invalid(format!("`{}` is a {:?} operation, sent as {:?}", op.payload.command(), class, op.kind), Some(head)));
@@ -92,7 +100,30 @@ impl Adapter {
             return Err(Rejection::stale(format!("structural `{}` needs baseVersion == head ({head})", op.payload.command()), Some(head)));
         }
 
+        // The named step must be the actor's current history head, or the history would move
+        // for an operation it never recorded.
+        let expected = match &op.history {
+            Some(HistoryAction::Undo { op_id }) => Some((true, op_id)),
+            Some(HistoryAction::Redo { op_id }) => Some((false, op_id)),
+            None => None,
+        };
+        if let Some((undo, op_id)) = expected {
+            let actor_history = self.history.get(actor);
+            let head_of = |undo: bool| match (undo, actor_history) {
+                (true, Some(h)) => h.peek_undo().map(|s| s.op_id.as_str()),
+                (false, Some(h)) => h.peek_redo().map(|s| s.op_id.as_str()),
+                _ => None,
+            };
+            if head_of(undo) != Some(op_id.as_str()) {
+                return Err(Rejection::undo_conflict("that operation is not the latest step of this history", Some(head)));
+            }
+        }
+
         let before = session.doc().map_err(|_| Rejection::invalid("no document open", Some(head)))?.doc.clone();
+        // What this step replaces, for the actor's own undo (ADR 0010). Captured only for
+        // operations that are a merge of one object's values; a structural step is not undone in
+        // v1 (RFC §13, open question 4).
+        let old_image = self.capture(&before, op);
 
         self.run(session, &before, head, op)?;
 
@@ -100,7 +131,104 @@ impl Adapter {
         self.keys.sync(&after, &mut self.issuer);
         let out = delta(&self.keys, &before, &after);
         self.bury(&before, &out);
+
+        match &op.history {
+            Some(HistoryAction::Undo { .. }) => self.history.of(actor).commit_undo(),
+            Some(HistoryAction::Redo { .. }) => self.history.of(actor).commit_redo(),
+            None => {
+                if let Some(old) = old_image
+                    && let Some(new) = self.capture(&after, op)
+                {
+                    let slot = self.history.of(actor);
+                    slot.record(Step { op_id: op.op_id.clone(), version: head.saturating_add(1), before: old, after: new });
+                }
+            }
+        }
         Ok(out)
+    }
+
+    /// Build the operation that takes back `actor`'s last step (ADR 0010).
+    ///
+    /// Refused with `undo_conflict` when the object no longer holds what that step left: someone
+    /// else changed it after, and their edit must not be overwritten. The history is only moved
+    /// when the returned operation is applied and accepted, so a refusal changes nothing.
+    pub fn undo(&mut self, session: &Session, head: u64, actor: &str, op_id: &str) -> Result<OpEnvelope, Rejection> {
+        let step = self.history.of(actor).peek_undo().cloned().ok_or_else(|| Rejection::invalid("nothing to undo", Some(head)))?;
+        let doc = session.doc().map_err(|_| Rejection::invalid("no document open", Some(head)))?.doc.clone();
+        let current =
+            self.capture_snapshot(&doc, &step.before).ok_or_else(|| Rejection::undo_conflict("the object of this step is gone", Some(head)))?;
+        if current != step.after {
+            return Err(Rejection::undo_conflict("someone else changed this object after the step", Some(head)));
+        }
+        let (slide, shape, payload) = step.restoring_payload();
+        Ok(OpEnvelope {
+            op_id: op_id.to_string(),
+            doc: String::new(),
+            base_version: head,
+            kind: OpKind::Command,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload,
+            history: Some(HistoryAction::Undo { op_id: step.op_id.clone() }),
+        })
+    }
+
+    /// Build the operation that re-applies `actor`'s last undone step.
+    pub fn redo(&mut self, session: &Session, head: u64, actor: &str, op_id: &str) -> Result<OpEnvelope, Rejection> {
+        let step = self.history.of(actor).peek_redo().cloned().ok_or_else(|| Rejection::invalid("nothing to redo", Some(head)))?;
+        let doc = session.doc().map_err(|_| Rejection::invalid("no document open", Some(head)))?.doc.clone();
+        let current =
+            self.capture_snapshot(&doc, &step.after).ok_or_else(|| Rejection::undo_conflict("the object of this step is gone", Some(head)))?;
+        if current != step.before {
+            return Err(Rejection::undo_conflict("someone else changed this object after the undo", Some(head)));
+        }
+        let payload = match &step.after.image {
+            Image::Xfrm { x, y, w, h } => Payload::ShapeSetBounds { x: *x, y: *y, w: *w, h: *h },
+            Image::Text(text) => Payload::TextSet { text: text.clone(), cell: step.after.cell },
+        };
+        Ok(OpEnvelope {
+            op_id: op_id.to_string(),
+            doc: String::new(),
+            base_version: head,
+            kind: OpKind::Command,
+            target: Target { slide: Some(step.after.slide.clone()), shape: Some(step.after.shape.clone()), ..Target::default() },
+            payload,
+            history: Some(HistoryAction::Redo { op_id: step.op_id.clone() }),
+        })
+    }
+
+    /// The image an operation replaces, when it is a merge of one object's values.
+    fn capture(&self, doc: &Presentation, op: &OpEnvelope) -> Option<Snapshot> {
+        // Only a merge of one object's values is undoable in v1; a structural step is not.
+        let (cell, image) = match &op.payload {
+            Payload::ShapeMove { .. } | Payload::ShapeSetBounds { .. } => (None, Image::Xfrm { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }),
+            Payload::TextSet { cell, .. } => (*cell, Image::Text(String::new())),
+            _ => return None,
+        };
+        let snapshot = Snapshot { slide: op.target.slide.clone()?, shape: op.target.shape.clone()?, cell, image };
+        self.capture_snapshot(doc, &snapshot)
+    }
+
+    /// Read the current value of one object, if this adapter knows its keys.
+    fn capture_snapshot(&self, doc: &Presentation, at: &Snapshot) -> Option<Snapshot> {
+        let slide_id = self.keys.slide_id(&at.slide)?;
+        let shape_id = self.keys.shape_id(slide_id, &at.shape)?;
+        let slide = doc.slide(slide_id)?;
+        let shape = deckcraft_model::find_shape(&slide.shapes, shape_id)?;
+        let image = match &at.image {
+            Image::Xfrm { .. } => {
+                let x = shape.xfrm?;
+                Image::Xfrm { x: x.x, y: x.y, w: x.w, h: x.h }
+            }
+            Image::Text(_) => {
+                let body = match (&shape.kind, at.cell) {
+                    (ShapeKind::Table(t), Some((r, c))) => t.cell(r as usize, c as usize)?.text.clone(),
+                    (ShapeKind::Table(_), None) => return None,
+                    _ => shape.text.clone().unwrap_or_default(),
+                };
+                Image::Text(body.text())
+            }
+        };
+        Some(Snapshot { slide: at.slide.clone(), shape: at.shape.clone(), cell: at.cell, image })
     }
 
     /// Resolve the operation and run the engine command it normalises to.
@@ -335,6 +463,7 @@ fn reorder_index(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history::ActorHistory;
     use deckcraft_collab_proto::TextCursor;
 
     /// A deck with one blank slide and two shapes, built through the same commands on every
@@ -361,7 +490,7 @@ mod tests {
     }
 
     fn op(kind: OpKind, base: u64, target: Target, payload: Payload) -> OpEnvelope {
-        OpEnvelope { op_id: "op-1".into(), doc: "d".into(), base_version: base, kind, target, payload }
+        OpEnvelope { op_id: "op-1".into(), doc: "d".into(), base_version: base, kind, target, payload, history: None }
     }
 
     #[test]
@@ -377,8 +506,8 @@ mod tests {
         let envelope =
             op(OpKind::Command, 0, Target { slide: Some(slide), shape: Some(shape), ..Target::default() }, Payload::ShapeMove { x: 300.0, y: 200.0 });
 
-        let da = aa.apply(&mut a, 0, &envelope).expect("apply a");
-        let db = bb.apply(&mut b, 0, &envelope).expect("apply b");
+        let da = aa.apply(&mut a, 0, "a", &envelope).expect("apply a");
+        let db = bb.apply(&mut b, 0, "b", &envelope).expect("apply b");
         assert_eq!(da, db, "the same operation has the same delta on both replicas");
         assert_eq!(doc_of(&a), doc_of(&b), "the replicas converge");
         assert!(!da.is_empty());
@@ -401,8 +530,8 @@ mod tests {
                 Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
                 Payload::ShapeMove { x: *x, y: 100.0 },
             );
-            aa.apply(&mut a, i as u64, &envelope).expect("a");
-            bb.apply(&mut b, i as u64, &envelope).expect("b");
+            aa.apply(&mut a, i as u64, "a", &envelope).expect("a");
+            bb.apply(&mut b, i as u64, "b", &envelope).expect("b");
         }
         assert_eq!(doc_of(&a), doc_of(&b));
         let x = doc_of(&a).slides[0].shapes[0].xfrm.expect("xfrm").x;
@@ -421,8 +550,8 @@ mod tests {
         let ids: Vec<ShapeKey> = doc.slides[0].shapes.iter().map(|s| aa.keys().shape_key(doc.slides[0].id, s.id).expect("key").clone()).collect();
 
         let group = op(OpKind::Structural, 0, Target { slide: Some(slide.clone()), shapes: ids.clone(), ..Target::default() }, Payload::Group {});
-        aa.apply(&mut a, 0, &group).expect("group a");
-        bb.apply(&mut b, 0, &group).expect("group b");
+        aa.apply(&mut a, 0, "a", &group).expect("group a");
+        bb.apply(&mut b, 0, "b", &group).expect("group b");
         assert_eq!(doc_of(&a), doc_of(&b));
 
         // The child key comes from the same map the join issued.
@@ -435,8 +564,8 @@ mod tests {
 
         let inside =
             op(OpKind::Command, 1, Target { slide: Some(slide), shape: Some(child), ..Target::default() }, Payload::ShapeMove { x: 60.0, y: 60.0 });
-        aa.apply(&mut a, 1, &inside).expect("move a");
-        bb.apply(&mut b, 1, &inside).expect("move b");
+        aa.apply(&mut a, 1, "a", &inside).expect("move a");
+        bb.apply(&mut b, 1, "b", &inside).expect("move b");
         assert_eq!(doc_of(&a), doc_of(&b), "group frame and children agree");
     }
 
@@ -449,7 +578,7 @@ mod tests {
         let slide = aa.keys().slide_key(doc.slides[0].id).expect("slide").clone();
         let shape = aa.keys().shape_key(doc.slides[0].id, doc.slides[0].shapes[0].id).expect("shape").clone();
         let stale = op(OpKind::Structural, 3, Target { slide: Some(slide), shape: Some(shape), ..Target::default() }, Payload::ShapeDelete {});
-        let err = aa.apply(&mut a, 7, &stale).expect_err("stale");
+        let err = aa.apply(&mut a, 7, "a", &stale).expect_err("stale");
         assert_eq!(err.code, RejectCode::Stale);
         assert!(err.retryable);
         assert_eq!(err.hint_version, Some(7));
@@ -466,11 +595,11 @@ mod tests {
         let slides_before = doc_of(&a).slides.len();
 
         let delete = op(OpKind::Structural, 0, Target { slide: Some(slide.clone()), ..Target::default() }, Payload::SlideDelete {});
-        aa.apply(&mut a, 0, &delete).expect("delete");
+        aa.apply(&mut a, 0, "a", &delete).expect("delete");
 
         let late =
             op(OpKind::Command, 1, Target { slide: Some(slide), shape: Some(shape), ..Target::default() }, Payload::ShapeMove { x: 1.0, y: 1.0 });
-        let err = aa.apply(&mut a, 1, &late).expect_err("late operation");
+        let err = aa.apply(&mut a, 1, "a", &late).expect_err("late operation");
         assert_eq!(err.code, RejectCode::Stale);
         assert!(!err.retryable, "a tombstone is final");
         assert_eq!(doc_of(&a).slides.len(), slides_before.saturating_sub(1));
@@ -490,7 +619,7 @@ mod tests {
             Target { slide: Some(slide), shape: Some(shape), text: Some(TextCursor::default()), ..Target::default() },
             Payload::TextSet { text: "Hello".into(), cell: None },
         );
-        aa.apply(&mut a, 0, &envelope).expect("text");
+        aa.apply(&mut a, 0, "a", &envelope).expect("text");
         assert_eq!(doc_of(&a).slides[0].shapes[1].text.as_ref().expect("text").text(), "Hello");
     }
 
@@ -505,7 +634,7 @@ mod tests {
         let shape = aa.keys().shape_key(doc.slides[0].id, doc.slides[0].shapes[0].id).expect("shape").clone();
         let envelope =
             op(OpKind::Command, 0, Target { slide: Some(slide), shape: Some(shape), ..Target::default() }, Payload::ShapeMove { x: 10.0, y: 10.0 });
-        aa.apply(&mut a, 0, &envelope).expect("move");
+        aa.apply(&mut a, 0, "a", &envelope).expect("move");
         assert!(a.doc().expect("doc").history.undo.is_empty(), "a collaborator's edit is not my undo step");
     }
 
@@ -517,7 +646,7 @@ mod tests {
         let doc = doc_of(&a);
         let slide = aa.keys().slide_key(doc.slides[0].id).expect("slide").clone();
         let envelope = op(OpKind::Command, 0, Target { slide: Some(slide), ..Target::default() }, Payload::SlideDelete {});
-        let err = aa.apply(&mut a, 0, &envelope).expect_err("wrong kind");
+        let err = aa.apply(&mut a, 0, "a", &envelope).expect_err("wrong kind");
         assert_eq!(err.code, RejectCode::Invalid);
     }
 
@@ -542,10 +671,135 @@ mod tests {
             Target { slide: Some(second.clone()), ..Target::default() },
             Payload::SlideMove { before: Some(first.clone()) },
         );
-        aa.apply(&mut a, 0, &envelope).expect("move a");
-        bb.apply(&mut b, 0, &envelope).expect("move b");
+        aa.apply(&mut a, 0, "a", &envelope).expect("move a");
+        bb.apply(&mut b, 0, "b", &envelope).expect("move b");
         assert_eq!(doc_of(&a), doc_of(&b));
         let order: Vec<SlideId> = doc_of(&a).slides.iter().map(|s| s.id).collect();
         assert_eq!(order[0], doc.slides[1].id, "the moved slide is now first");
+    }
+
+    fn shape_x(doc: &Presentation, index: usize) -> f64 {
+        doc.slides[0].shapes[index].xfrm.expect("xfrm").x
+    }
+
+    fn move_envelope(slide: &SlideKey, shape: &ShapeKey, x: f64, base: u64) -> OpEnvelope {
+        op(
+            OpKind::Command,
+            base,
+            Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
+            Payload::ShapeMove { x, y: 100.0 },
+        )
+    }
+
+    #[test]
+    fn undo_restores_my_change_and_leaves_another_shape_alone() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let doc = doc_of(&s);
+        let (slide, first) = key_of(&ad, &doc, 0);
+        let (_, second) = key_of(&ad, &doc, 1);
+
+        ad.apply(&mut s, 0, "a", &move_envelope(&slide, &first, 300.0, 0)).expect("a moves");
+        ad.apply(&mut s, 1, "b", &move_envelope(&slide, &second, 500.0, 1)).expect("b moves");
+        let with_both = doc_of(&s);
+
+        let undo = ad.undo(&s, 2, "a", "u-1").expect("a can undo");
+        ad.apply(&mut s, 2, "a", &undo).expect("the undo is applied");
+
+        let after = doc_of(&s);
+        assert_eq!(shape_x(&after, 0), 100.0, "a's own move is taken back");
+        assert_eq!(shape_x(&after, 1), 500.0, "b's move stays");
+        assert_eq!(after.slides[0].shapes[1], with_both.slides[0].shapes[1]);
+        assert_eq!(ad.history.get("a").map(ActorHistory::undo_len), Some(0));
+        assert_eq!(ad.history.get("a").map(ActorHistory::redo_len), Some(1));
+        assert_eq!(ad.history.get("b").map(ActorHistory::undo_len), Some(1), "b's history is untouched");
+    }
+
+    #[test]
+    fn undo_after_another_edit_of_the_same_shape_is_refused() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let doc = doc_of(&s);
+        let (slide, shape) = key_of(&ad, &doc, 0);
+
+        ad.apply(&mut s, 0, "a", &move_envelope(&slide, &shape, 300.0, 0)).expect("a moves");
+        ad.apply(&mut s, 1, "b", &move_envelope(&slide, &shape, 700.0, 1)).expect("b moves");
+
+        let err = ad.undo(&s, 2, "a", "u-1").expect_err("a cannot undo over b");
+        assert_eq!(err.code, RejectCode::UndoConflict);
+        assert!(!err.retryable, "a silent overwrite is exactly what the rule forbids");
+        assert_eq!(shape_x(&doc_of(&s), 0), 700.0, "b's edit is not reverted");
+        assert_eq!(ad.history.get("a").map(ActorHistory::undo_len), Some(1), "the history stays");
+    }
+
+    #[test]
+    fn redo_puts_the_step_back() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let doc = doc_of(&s);
+        let (slide, shape) = key_of(&ad, &doc, 0);
+
+        ad.apply(&mut s, 0, "a", &move_envelope(&slide, &shape, 300.0, 0)).expect("move");
+        let undo = ad.undo(&s, 1, "a", "u-1").expect("undo");
+        ad.apply(&mut s, 1, "a", &undo).expect("apply undo");
+        assert_eq!(shape_x(&doc_of(&s), 0), 100.0);
+
+        let redo = ad.redo(&s, 2, "a", "r-1").expect("redo");
+        ad.apply(&mut s, 2, "a", &redo).expect("apply redo");
+        assert_eq!(shape_x(&doc_of(&s), 0), 300.0, "the step is back");
+        assert_eq!(ad.history.get("a").map(ActorHistory::undo_len), Some(1));
+        assert_eq!(ad.history.get("a").map(ActorHistory::redo_len), Some(0));
+    }
+
+    #[test]
+    fn undo_of_a_text_step_restores_the_whole_body() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let doc = doc_of(&s);
+        let (slide, shape) = key_of(&ad, &doc, 1);
+        let set = op(
+            OpKind::Command,
+            0,
+            Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            Payload::TextSet { text: "Hello".into(), cell: None },
+        );
+        ad.apply(&mut s, 0, "a", &set).expect("text");
+        assert_eq!(doc_of(&s).slides[0].shapes[1].text.as_ref().expect("text").text(), "Hello");
+
+        let undo = ad.undo(&s, 1, "a", "u-1").expect("undo");
+        ad.apply(&mut s, 1, "a", &undo).expect("apply undo");
+        let body = doc_of(&s).slides[0].shapes[1].text.clone().unwrap_or_default();
+        assert_eq!(body.text(), "", "the body the step replaced is back");
+    }
+
+    #[test]
+    fn nothing_to_undo_is_an_invalid_operation_not_a_conflict() {
+        let s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let err = ad.undo(&s, 0, "a", "u-1").expect_err("empty history");
+        assert_eq!(err.code, RejectCode::Invalid);
+    }
+
+    #[test]
+    fn a_named_step_must_be_the_history_head() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let doc = doc_of(&s);
+        let (slide, shape) = key_of(&ad, &doc, 0);
+        ad.apply(&mut s, 0, "a", &move_envelope(&slide, &shape, 300.0, 0)).expect("move");
+
+        let mut undo = ad.undo(&s, 1, "a", "u-1").expect("undo");
+        if let Some(HistoryAction::Undo { op_id }) = &mut undo.history {
+            *op_id = "some-other-op".into();
+        }
+        let err = ad.apply(&mut s, 1, "a", &undo).expect_err("wrong step");
+        assert_eq!(err.code, RejectCode::UndoConflict);
+        assert_eq!(ad.history.get("a").map(ActorHistory::undo_len), Some(1));
     }
 }

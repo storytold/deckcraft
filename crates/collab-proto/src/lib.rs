@@ -192,6 +192,27 @@ pub struct OpEnvelope {
     #[serde(default)]
     pub target: Target,
     pub payload: Payload,
+    /// Set when this operation moves the sender's history rather than making a new step. The
+    /// adapter verifies the objects still hold what the targeted step left before applying, and
+    /// answers `undo_conflict` otherwise (ADR 0010 §3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<HistoryAction>,
+}
+
+/// Which way one actor's history moves. Undo is a new operation in every case: it is sent with
+/// `baseVersion = head`, checked like any other, and gets its own version.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum HistoryAction {
+    Undo {
+        /// The operation being taken back; the adapter expects the objects to still hold what it
+        /// left behind.
+        op_id: String,
+    },
+    Redo {
+        /// The operation being re-applied after an undo.
+        op_id: String,
+    },
 }
 
 /// Identity a client sends in the handshake. Informational only: the server does not
@@ -538,6 +559,7 @@ mod tests {
             kind: OpKind::Command,
             target: Target { slide: Some("s1".into()), shape: Some("7".into()), ..Target::default() },
             payload: Payload::ShapeMove { x: 120.0, y: 64.0 },
+            history: None,
         }
     }
 
@@ -554,6 +576,22 @@ mod tests {
         assert!(text.contains("\"type\":\"op\""), "{text}");
         assert!(text.contains("\"cmd\":\"shape_move\""), "{text}");
         assert_eq!(decode_client(&text).expect("decode"), msg);
+    }
+
+    #[test]
+    fn undo_is_an_operation_with_its_own_version() {
+        let mut envelope = op();
+        envelope.history = Some(HistoryAction::Undo { op_id: "op-0".into() });
+        let text = encode_client(&ClientMsg::Op(envelope.clone())).expect("encode");
+        assert!(text.contains("\"action\":\"undo\""), "{text}");
+        assert!(text.contains("\"baseVersion\":41"), "{text}");
+        assert_eq!(decode_client(&text).expect("decode"), ClientMsg::Op(envelope));
+    }
+
+    #[test]
+    fn a_new_step_has_no_history_action() {
+        let text = encode_client(&ClientMsg::Op(op())).expect("encode");
+        assert!(!text.contains("history"), "{text}");
     }
 
     #[test]
