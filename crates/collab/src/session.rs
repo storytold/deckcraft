@@ -156,6 +156,12 @@ impl DocSession {
         self.engine.doc().ok().map(|d| d.doc.as_ref())
     }
 
+    /// The session-scoped keys issued so far; the transport sends them with the welcome and the
+    /// snapshot so a client can address objects (ADR 0002).
+    pub fn keys(&self) -> &crate::keys::KeyMap {
+        self.adapter.keys()
+    }
+
     /// Apply one operation in the session's order and return the authoritative result.
     ///
     /// A repeat of an `opId` returns the stored answer and changes nothing (ADR 0003): relative
@@ -224,6 +230,23 @@ impl DocSession {
         // A snapshot that cannot be written leaves the journal intact; the session keeps serving
         // and tries again at the next boundary.
         let _ = self.take_snapshot();
+    }
+
+    /// Build the operation that takes back `actor`'s last step at the current head.
+    ///
+    /// The answer is an ordinary operation: the caller applies it through [`Self::apply`], so it
+    /// is ordered, versioned and checked exactly like any other (ADR 0010 §2).
+    pub fn undo(&mut self, actor: &str, op_id: &str) -> Result<OpEnvelope, Rejection> {
+        let mut op = self.adapter.undo(&self.engine, self.version, actor, op_id)?;
+        op.doc = self.file_id.clone();
+        Ok(op)
+    }
+
+    /// Build the operation that re-applies `actor`'s last undone step.
+    pub fn redo(&mut self, actor: &str, op_id: &str) -> Result<OpEnvelope, Rejection> {
+        let mut op = self.adapter.redo(&self.engine, self.version, actor, op_id)?;
+        op.doc = self.file_id.clone();
+        Ok(op)
     }
 
     /// The `.pptx` the cabinet receives (ADR-0009) and the list of what will not survive it.

@@ -155,7 +155,10 @@ impl ClientSession {
         if self.in_flight.len() >= self.max_in_flight {
             return None;
         }
-        let op = self.queued.pop_front()?;
+        let mut op = self.queued.pop_front()?;
+        // The head this client knows is the base the server orders the operation against; a
+        // structural operation is only accepted at the head (ADR 0004).
+        op.base_version = self.version;
         self.in_flight.push_back(op.clone());
         Some(ClientMsg::Op(op))
     }
@@ -343,6 +346,25 @@ mod tests {
         assert_eq!(c.on_msg(applied("o1", 4)), Effect::Rollback);
         assert!(matches!(c.next_outgoing(), Some(ClientMsg::Resync { last_version: 1 })));
         assert_eq!(c.version(), 1, "the guessed version is not adopted");
+    }
+
+    #[test]
+    fn a_queued_operation_is_sent_against_the_head_the_client_knows() {
+        let mut c = ClientSession::new("d");
+        c.on_msg(welcome(0, Role::Editor));
+        c.submit(op("o1", 9)).expect("queue");
+        let sent = c.next_outgoing().expect("sent");
+        assert!(matches!(sent, ClientMsg::Op(ref op) if op.base_version == 0), "the stale base is replaced at send");
+
+        let snapshot = ServerMsg::Snapshot(SnapshotMsg {
+            version: 5,
+            snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: "tail@5".into() },
+            tail: vec![],
+        });
+        c.on_msg(snapshot);
+        c.submit(op("o2", 0)).expect("queue");
+        let sent = c.next_outgoing().expect("sent");
+        assert!(matches!(sent, ClientMsg::Op(ref op) if op.op_id == "o2" && op.base_version == 5));
     }
 
     #[test]
