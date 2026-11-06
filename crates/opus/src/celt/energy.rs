@@ -2,7 +2,7 @@
 //! (RFC 6716 §4.3.2).
 
 use super::rate::MAX_FINE_BITS;
-use super::tables::*;
+use super::tables::{BETA_COEF, BETA_INTRA, E_PROB_MODEL, NB_EBANDS, PRED_COEF, SMALL_ENERGY_ICDF};
 use crate::range::RangeDecoder;
 
 const LAPLACE_MINP: u32 = 1;

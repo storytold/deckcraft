@@ -6,7 +6,27 @@ use crate::cdf::Cdfs;
 use crate::frame::{MiInfo, Mv};
 use crate::header::{FrameHeader, NONE, SequenceHeader};
 use crate::intra::{IntraParams, is_directional_mode, predict_intra, round2_signed};
-use crate::spec_tables::*;
+use crate::spec_tables::{
+    AC_QLOOKUP, ADJUSTED_TX_SIZE, ADST_FLIPADST, BLOCK_4X4, BLOCK_8X8, BLOCK_64X64, BLOCK_128X128, BR_CDF_SIZE, CFL_SIGN_NEG, CFL_SIGN_ZERO,
+    COEFF_BASE_CTX_OFFSET, COEFF_BASE_POS_CTX_OFFSET, COEFF_BASE_RANGE, COMPOUND_AVERAGE, DC_PRED, DC_QLOOKUP, DCT_DCT, DCT_FLIPADST,
+    DEFAULT_SCAN_4X4, DEFAULT_SCAN_4X8, DEFAULT_SCAN_4X16, DEFAULT_SCAN_8X4, DEFAULT_SCAN_8X8, DEFAULT_SCAN_8X16, DEFAULT_SCAN_8X32,
+    DEFAULT_SCAN_16X4, DEFAULT_SCAN_16X8, DEFAULT_SCAN_16X16, DEFAULT_SCAN_16X32, DEFAULT_SCAN_32X8, DEFAULT_SCAN_32X16, DEFAULT_SCAN_32X32,
+    DELTA_LF_SMALL, DELTA_Q_SMALL, FILTER_INTRA_MODE_TO_INTRA_DIR, FLIPADST_ADST, FLIPADST_DCT, FLIPADST_FLIPADST, FRAME_LF_COUNT, H_ADST, H_DCT,
+    H_FLIPADST, H_PRED, IDTX, II_DC_PRED, II_H_PRED, II_V_PRED, INTRA_FRAME, INTRA_MODE_CONTEXT, MAG_REF_OFFSET_WITH_TX_CLASS, MAX_ANGLE_DELTA,
+    MAX_LOOP_FILTER, MAX_TX_DEPTH_TABLE, MAX_TX_SIZE_RECT, MAX_VARTX_DEPTH, MCOL_SCAN_4X4, MCOL_SCAN_4X8, MCOL_SCAN_4X16, MCOL_SCAN_8X4,
+    MCOL_SCAN_8X8, MCOL_SCAN_8X16, MCOL_SCAN_16X4, MCOL_SCAN_16X8, MCOL_SCAN_16X16, MI_HEIGHT_LOG2, MI_WIDTH_LOG2, MODE_TO_TXFM, MROW_SCAN_4X4,
+    MROW_SCAN_4X8, MROW_SCAN_4X16, MROW_SCAN_8X4, MROW_SCAN_8X8, MROW_SCAN_8X16, MROW_SCAN_16X4, MROW_SCAN_16X8, MROW_SCAN_16X16,
+    NUM_4X4_BLOCKS_HIGH, NUM_4X4_BLOCKS_WIDE, NUM_BASE_LEVELS, PALETTE_COLOR_CONTEXT, PALETTE_COLOR_HASH_MULTIPLIERS, PALETTE_COLORS,
+    PALETTE_NUM_NEIGHBORS, PARTITION_HORZ, PARTITION_HORZ_4, PARTITION_HORZ_A, PARTITION_HORZ_B, PARTITION_NONE, PARTITION_SPLIT, PARTITION_SUBSIZE,
+    PARTITION_VERT, PARTITION_VERT_4, PARTITION_VERT_A, PARTITION_VERT_B, QM_OFFSET, QUANTIZER_MATRIX, RESTORE_NONE, RESTORE_SGRPROJ, RESTORE_WIENER,
+    SEG_LVL_SKIP, SGR_PARAMS, SGRPROJ_PARAMS_BITS, SGRPROJ_PRJ_BITS, SGRPROJ_PRJ_SUBEXP_K, SIG_REF_DIFF_OFFSET, SIG_REF_DIFF_OFFSET_NUM, SIMPLE,
+    SMOOTH_H_PRED, SMOOTH_PRED, SMOOTH_V_PRED, SPLIT_TX_SIZE, SUPERRES_NUM, TX_4X4, TX_4X8, TX_4X16, TX_8X4, TX_8X8, TX_8X16, TX_8X32, TX_16X4,
+    TX_16X8, TX_16X16, TX_16X32, TX_16X64, TX_32X8, TX_32X16, TX_32X32, TX_32X64, TX_64X16, TX_64X32, TX_64X64, TX_CLASS_2D, TX_CLASS_HORIZ,
+    TX_CLASS_VERT, TX_HEIGHT, TX_HEIGHT_LOG2, TX_MODE_SELECT, TX_SET_DCTONLY, TX_SET_INTER_1, TX_SET_INTER_2, TX_SET_INTER_3, TX_SET_INTRA_1,
+    TX_SET_INTRA_2, TX_SIZE_SQR, TX_SIZE_SQR_UP, TX_SIZES, TX_SIZES_ALL, TX_TYPE_IN_SET_INTER, TX_TYPE_IN_SET_INTRA, TX_TYPE_INTER_INV_SET1,
+    TX_TYPE_INTER_INV_SET2, TX_TYPE_INTER_INV_SET3, TX_TYPE_INTRA_INV_SET1, TX_TYPE_INTRA_INV_SET2, TX_WIDTH, TX_WIDTH_LOG2, UV_CFL_PRED, V_ADST,
+    V_DCT, V_FLIPADST, V_PRED,
+};
 use crate::state::{FrameShared, TileState};
 use crate::symbol::SymbolDecoder;
 use crate::transform::inverse_transform_2d;
@@ -1662,6 +1682,87 @@ impl<'a, 'f> TileDecoder<'a, 'f> {
         }
     }
 
+    /// eob_pt, eob_extra and the remaining eob bits.
+    fn read_eob(&mut self, tx_sz: usize, tx_sz_ctx: usize, ptype: usize, tx_class: usize) -> usize {
+        let eob_multisize = (TX_WIDTH_LOG2[tx_sz] as usize).min(5) + (TX_HEIGHT_LOG2[tx_sz] as usize).min(5) - 4;
+        let ectx = (tx_class != TX_CLASS_2D) as usize;
+        let eob_pt = 1 + match eob_multisize {
+            0 => self.sd.read_symbol(&mut self.cdf.eob_pt_16[ptype][ectx]),
+            1 => self.sd.read_symbol(&mut self.cdf.eob_pt_32[ptype][ectx]),
+            2 => self.sd.read_symbol(&mut self.cdf.eob_pt_64[ptype][ectx]),
+            3 => self.sd.read_symbol(&mut self.cdf.eob_pt_128[ptype][ectx]),
+            4 => self.sd.read_symbol(&mut self.cdf.eob_pt_256[ptype][ectx]),
+            5 => self.sd.read_symbol(&mut self.cdf.eob_pt_512[ptype]),
+            _ => self.sd.read_symbol(&mut self.cdf.eob_pt_1024[ptype]),
+        };
+        let mut eob = if eob_pt < 2 { eob_pt } else { (1 << (eob_pt - 2)) + 1 };
+        let eob_shift = eob_pt as i32 - 3;
+        if eob_shift >= 0 {
+            let extra = self.sd.read_symbol(&mut self.cdf.eob_extra[tx_sz_ctx][ptype][eob_pt - 3]);
+            if extra == 1 {
+                eob += 1 << eob_shift;
+            }
+            for i in 1..(eob_pt as i32 - 2).max(0) {
+                let sh = (eob_pt as i32 - 2).max(0) - 1 - i;
+                if self.sd.read_literal(1) == 1 {
+                    eob += 1 << sh;
+                }
+            }
+        }
+        eob
+    }
+
+    /// Exp-Golomb coded remainder of a coefficient above the base range (read_golomb).
+    fn read_golomb(&mut self) -> u32 {
+        let mut length = 0;
+        loop {
+            length += 1;
+            if self.sd.read_literal(1) == 1 || length > 32 {
+                break;
+            }
+        }
+        let mut x: u32 = 1;
+        for _ in (0..length - 1).rev() {
+            x = (x << 1) | self.sd.read_literal(1);
+        }
+        x
+    }
+
+    /// Reads the signs and Golomb remainders of the first `scan.len()` (= eob) coefficients, applies
+    /// them to `self.quant`, and returns the culLevel and dcCategory contexts. `blk4` is (x4, y4, w4, h4).
+    fn read_signs_and_golomb(&mut self, plane: usize, blk4: (usize, usize, usize, usize), scan: &[u16]) -> (u32, u8) {
+        let (x4, y4, w4, h4) = blk4;
+        let ptype = (plane > 0) as usize;
+        let mut cul_level = 0u32;
+        let mut dc_category = 0u8;
+        for (c, &p) in scan.iter().enumerate() {
+            let pos = p as usize;
+            let sign = if self.quant[pos] != 0 {
+                if c == 0 {
+                    let ctx = self.dc_sign_ctx(plane, x4, y4, w4, h4);
+                    self.sd.read_symbol(&mut self.cdf.dc_sign[ptype][ctx]) == 1
+                } else {
+                    self.sd.read_literal(1) == 1
+                }
+            } else {
+                false
+            };
+            if self.quant[pos] > (NUM_BASE_LEVELS + COEFF_BASE_RANGE) as i32 {
+                let x = self.read_golomb();
+                self.quant[pos] = (x as i64 + COEFF_BASE_RANGE as i64 + NUM_BASE_LEVELS as i64).min(i32::MAX as i64) as i32;
+            }
+            if pos == 0 && self.quant[pos] > 0 {
+                dc_category = if sign { 1 } else { 2 };
+            }
+            self.quant[pos] &= 0xFFFFF;
+            cul_level += self.quant[pos] as u32;
+            if sign {
+                self.quant[pos] = -self.quant[pos];
+            }
+        }
+        (cul_level.min(63), dc_category)
+    }
+
     /// coeffs( ): returns eob.
     fn coeffs(&mut self, plane: usize, start_x: usize, start_y: usize, tx_sz: usize) -> usize {
         let x4 = start_x >> 2;
@@ -1687,32 +1788,8 @@ impl<'a, 'f> TileDecoder<'a, 'f> {
             }
             self.plane_tx_type = self.compute_tx_type(plane, tx_sz, x4, y4);
             let scan = self.get_scan(tx_sz);
-            let eob_multisize = (TX_WIDTH_LOG2[tx_sz] as usize).min(5) + (TX_HEIGHT_LOG2[tx_sz] as usize).min(5) - 4;
             let tx_class = get_tx_class(self.plane_tx_type);
-            let ectx = (tx_class != TX_CLASS_2D) as usize;
-            let eob_pt = 1 + match eob_multisize {
-                0 => self.sd.read_symbol(&mut self.cdf.eob_pt_16[ptype][ectx]),
-                1 => self.sd.read_symbol(&mut self.cdf.eob_pt_32[ptype][ectx]),
-                2 => self.sd.read_symbol(&mut self.cdf.eob_pt_64[ptype][ectx]),
-                3 => self.sd.read_symbol(&mut self.cdf.eob_pt_128[ptype][ectx]),
-                4 => self.sd.read_symbol(&mut self.cdf.eob_pt_256[ptype][ectx]),
-                5 => self.sd.read_symbol(&mut self.cdf.eob_pt_512[ptype]),
-                _ => self.sd.read_symbol(&mut self.cdf.eob_pt_1024[ptype]),
-            };
-            eob = if eob_pt < 2 { eob_pt } else { (1 << (eob_pt - 2)) + 1 };
-            let eob_shift = eob_pt as i32 - 3;
-            if eob_shift >= 0 {
-                let extra = self.sd.read_symbol(&mut self.cdf.eob_extra[tx_sz_ctx][ptype][eob_pt - 3]);
-                if extra == 1 {
-                    eob += 1 << eob_shift;
-                }
-                for i in 1..(eob_pt as i32 - 2).max(0) {
-                    let sh = (eob_pt as i32 - 2).max(0) - 1 - i;
-                    if self.sd.read_literal(1) == 1 {
-                        eob += 1 << sh;
-                    }
-                }
-            }
+            eob = self.read_eob(tx_sz, tx_sz_ctx, ptype, tx_class);
             let adj = ADJUSTED_TX_SIZE[tx_sz] as usize;
             let bwl = TX_WIDTH_LOG2[adj] as usize;
             let height = TX_HEIGHT[adj] as usize;
@@ -1760,45 +1837,7 @@ impl<'a, 'f> TileDecoder<'a, 'f> {
                 lev[li] = level as u8;
             }
             self.levels = lev;
-            for c in 0..eob {
-                let pos = scan[c] as usize;
-                let sign = if self.quant[pos] != 0 {
-                    if c == 0 {
-                        let ctx = self.dc_sign_ctx(plane, x4, y4, w4, h4);
-                        self.sd.read_symbol(&mut self.cdf.dc_sign[ptype][ctx]) == 1
-                    } else {
-                        self.sd.read_literal(1) == 1
-                    }
-                } else {
-                    false
-                };
-                if self.quant[pos] > (NUM_BASE_LEVELS + COEFF_BASE_RANGE) as i32 {
-                    let mut length = 0;
-                    loop {
-                        length += 1;
-                        if self.sd.read_literal(1) == 1 {
-                            break;
-                        }
-                        if length > 32 {
-                            break;
-                        }
-                    }
-                    let mut x: u32 = 1;
-                    for _ in (0..length - 1).rev() {
-                        x = (x << 1) | self.sd.read_literal(1);
-                    }
-                    self.quant[pos] = (x as i64 + COEFF_BASE_RANGE as i64 + NUM_BASE_LEVELS as i64).min(i32::MAX as i64) as i32;
-                }
-                if pos == 0 && self.quant[pos] > 0 {
-                    dc_category = if sign { 1 } else { 2 };
-                }
-                self.quant[pos] &= 0xFFFFF;
-                cul_level += self.quant[pos] as u32;
-                if sign {
-                    self.quant[pos] = -self.quant[pos];
-                }
-            }
-            cul_level = cul_level.min(63);
+            (cul_level, dc_category) = self.read_signs_and_golomb(plane, (x4, y4, w4, h4), &scan[..eob]);
         }
         for i in 0..w4 {
             if x4 + i < self.t.above_level[plane].len() {
@@ -2222,18 +2261,16 @@ fn neg_deinterleave(diff: i32, r: i32, max: i32) -> i32 {
         if diff <= 2 * r {
             if diff & 1 == 1 {
                 return r + ((diff + 1) >> 1);
-            } else {
-                return r - (diff >> 1);
             }
+            return r - (diff >> 1);
         }
         diff
     } else {
         if diff <= 2 * (max - r - 1) {
             if diff & 1 == 1 {
                 return r + ((diff + 1) >> 1);
-            } else {
-                return r - (diff >> 1);
             }
+            return r - (diff >> 1);
         }
         max - (diff + 1)
     }

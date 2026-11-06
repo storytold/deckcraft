@@ -1217,7 +1217,7 @@ fn savedc_restores_text_colour_and_font() {
 fn efont(height: i32, esc: i32, weight: i32, italic: u8, charset: u8, face: &str) -> Vec<u8> {
     let mut v = cat(vec![h32(1), e32(height), e32(0), e32(esc), e32(esc), e32(weight)]);
     v.extend([italic, 0, 0, charset, 0, 0, 0, 0]);
-    let mut name: Vec<u8> = face.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+    let mut name: Vec<u8> = face.encode_utf16().flat_map(u16::to_le_bytes).collect();
     name.resize(64, 0);
     v.extend(name);
     erec(82, &v)
@@ -1716,7 +1716,7 @@ fn plus_pic(recs: Vec<Vec<u8>>) -> Picture {
 }
 
 fn u16s(s: &str) -> Vec<u8> {
-    s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect()
+    s.encode_utf16().flat_map(u16::to_le_bytes).collect()
 }
 
 /// A 2 x 2 32bpp ARGB bitmap image object: red, green / blue, white.
@@ -1876,6 +1876,34 @@ fn emfplus_region_clip_intersects_rectangles() {
 }
 
 #[test]
+fn emfplus_region_path_cannot_read_into_its_sibling() {
+    let rect = |r: [f32; 4]| cat(vec![h32(0x1000_0000), f32s(&r)]);
+    // The path declares only its 12-byte header, but claims three points. The following
+    // rectangle must not supply those points or be parsed twice as the next node.
+    let path = cat(vec![h32(0x1000_0001), h32(12), h32(0), h32(3), h32(0)]);
+    let region = cat(vec![h32(0xDBC0_1002), h32(2), h32(1), path, rect([10.0, 10.0, 20.0, 20.0])]);
+    let fill = prec(0x400A, 0x8000, &cat(vec![h32(0xFF00_0000), h32(1), f32s(&[0.0, 0.0, 100.0, 100.0])]));
+    let p = plus_pic(vec![prec(0x4008, 0x0400 | 6, &region), prec(0x4034, 6, &[]), fill]);
+    assert_eq!(p.items.len(), 1);
+    assert_eq!((p.width, p.height), (100.0, 100.0));
+}
+
+#[test]
+fn emfplus_region_path_keeps_its_shape() {
+    let mut path_data = cat(vec![h32(0), h32(4), h32(0x4000)]);
+    for (x, y) in [(10i16, 10i16), (30, 10), (30, 30), (10, 30)] {
+        path_data.extend(x.to_le_bytes());
+        path_data.extend(y.to_le_bytes());
+    }
+    path_data.extend([0, 1, 1, 0x81]);
+    let path_node = cat(vec![h32(0x1000_0001), h32(path_data.len() as u32), path_data]);
+    let region = cat(vec![h32(0xDBC0_1002), h32(1), path_node]);
+    let fill = prec(0x400A, 0x8000, &cat(vec![h32(0xFF00_0000), h32(1), f32s(&[0.0, 0.0, 100.0, 100.0])]));
+    let p = plus_pic(vec![prec(0x4008, 0x0400 | 6, &region), prec(0x4034, 6, &[]), fill]);
+    assert_eq!((p.width, p.height), (20.0, 20.0));
+}
+
+#[test]
 fn emfplus_pie_and_arc() {
     // A quarter pie from 0 to 90 degrees in a 0..100 circle: centre, then (100, 50) round to (50, 100).
     let pie = prec(0x4010, 0x8000, &cat(vec![h32(0xFF00_0000), f32s(&[0.0, 90.0]), f32s(&[0.0, 0.0, 100.0, 100.0])]));
@@ -2021,4 +2049,28 @@ fn emfplus_clear_paints_the_whole_frame_and_transparent_clears_nothing() {
     assert_eq!(file(vec![clear(0x00FF_FFFF), dot.clone()]).items.len(), 1);
     // No frame: nothing to clear.
     assert_eq!(plus_pic(vec![clear(0xFFFF_FFFF), dot]).items.len(), 1);
+}
+
+#[test]
+fn emfplus_wrap_line_linear_performance() {
+    let font = prec(0x4008, 0x0600, &font_obj("Arial", 10.0, 0, 0));
+    // Repeated words that wrap across lines
+    let text = "word ".repeat(500);
+    let s = prec(
+        0x401C,
+        0x8000,
+        &cat(vec![h32(0xFF00_0000), h32(9), h32(text.encode_utf16().count() as u32), f32s(&[0.0, 0.0, 100.0, 1000.0]), u16s(&text)]),
+    );
+    let fill = prec(0x400A, 0x8000, &cat(vec![h32(0xFFFF_FFFF), h32(1), f32s(&[0.0, 0.0, 100.0, 1000.0])]));
+    let p = plus_pic(vec![fill, font, s]);
+    let text_items = p.items.iter().filter(|i| matches!(i, Item::Text(_))).count();
+    assert!(text_items > 10, "wrapped into multiple lines: {text_items}");
+}
+
+#[test]
+fn clip_polygon_work_bound() {
+    let poly: Vec<(f64, f64)> = (0..2000).map(|i| (i as f64, i as f64)).collect();
+    let clip: Vec<(f64, f64)> = (0..2000).map(|i| (i as f64, i as f64)).collect();
+    let clipped = crate::cliprect::clip_polygon(&poly, &clip);
+    assert!(clipped.is_empty(), "excessive polygon clip product rejected");
 }
