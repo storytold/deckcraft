@@ -64,8 +64,8 @@ and `packaging/common.sh` (one line each, path references).
 ## Carrying a branch forward
 
 1. `git merge origin/main` (never rebase) and let git list the conflicting old files.
-2. For each conflicting hunk, find the new module above, apply the hunk there by hand, and keep
-   the old file's side only for module declarations. `ui-egui/src/panes.rs` is deleted: do not
-   restore it, move its hunks into `panels.rs` or the listed `panels/` modules (the crate exposes
-   `panels` and aliases it as `panes`).
+2. For each conflicting hunk whose code moved to a listed module, apply the hunk there by hand.
+   Resolve hunks for code that remains in the old file there, and preserve that code.
+   `ui-egui/src/panes.rs` is deleted: do not restore it, move its hunks into `panels.rs` or the
+   listed `panels/` modules (the crate exposes `panels` and aliases it as `panes`).
 3. Run `cargo xtask ci`.
