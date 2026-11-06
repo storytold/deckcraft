@@ -530,7 +530,7 @@ impl SlideApp {
         });
         match saved {
             Ok(()) => {
-                self.set_status(format!("Saved {name}"));
+                self.set_status(crate::i18n::tr("Saved {path}").replace("{path}", &name));
                 Ok(name)
             }
             Err(e) => {

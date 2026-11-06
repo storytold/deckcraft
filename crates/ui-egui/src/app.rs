@@ -126,6 +126,7 @@ impl SlideApp {
         self
     }
 
+    /// Set a transient status-bar message, translating exact catalog strings to the active UI language.
     pub fn set_status(&mut self, msg: impl Into<String>) {
         let text = msg.into();
         let translated = crate::i18n::tr(&text).to_owned();

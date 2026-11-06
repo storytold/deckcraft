@@ -50,6 +50,7 @@ pub fn start() {
                     }
                     deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
                     if let Some(token) = crate::presenter::token() {
+                        deckcraft_ui_egui::i18n::set_language(deckcraft_ui_egui::i18n::Language::System.resolve(browser_locale().as_deref()));
                         let presenter = crate::presenter::Popup::new(token, cc.egui_ctx.clone()).map_err(std::io::Error::other)?;
                         return Ok(Box::new(presenter) as Box<dyn eframe::App>);
                     }
@@ -218,6 +219,7 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
     }
 }
 
+/// Return the browser's preferred UI locale (`navigator.language`), if available.
 fn browser_locale() -> Option<String> {
     web_sys::window().and_then(|w| w.navigator().language())
 }
