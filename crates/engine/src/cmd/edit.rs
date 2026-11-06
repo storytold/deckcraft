@@ -688,7 +688,9 @@ fn select_all(s: &mut Session, p: &Value) -> Result<Value> {
     s.select(|_, sel| {
         sel.text = None;
     })?;
-    let ids: Vec<ShapeId> = s.doc()?.shapes().iter().filter(|x| !x.hidden && !x.locked).map(|x| x.id).collect();
+    let st = s.doc()?;
+    let ids: Vec<ShapeId> =
+        st.shapes().iter().filter(|x| !x.hidden && !x.locked && !super::lacks_frame(&st.doc, &st.selection, x)).map(|x| x.id).collect();
     s.select(|_, sel| sel.shapes = ids.clone())?;
     Ok(json!({"ids": ids}))
 }

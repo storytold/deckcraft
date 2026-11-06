@@ -1118,6 +1118,11 @@ fn a_placeholder_with_no_frame_cannot_be_hit() {
     })
     .unwrap();
     assert!(s.hit_test(at, 1.0).is_none());
+    // Nor does Select All.
+    s.execute("edit.selectAll", &json!({})).unwrap();
+    let st = s.doc().unwrap();
+    let title = st.current_slide().unwrap().shapes.iter().find(|x| x.ph.as_ref().is_some_and(|p| p.idx == 7)).unwrap().id;
+    assert!(!st.selection.shapes.is_empty() && !st.selection.shapes.contains(&title), "{:?}", st.selection.shapes);
     // Nor does a marquee around the whole slide take it.
     let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
     s.pointer(ev(PointerKind::Down, 2.0, 2.0)).unwrap();
