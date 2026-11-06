@@ -1,5 +1,6 @@
 # Slide show and presenter view: parity with PowerPoint
 
+> **Last reviewed:** 2026-11-06 - **Last updated:** 2026-11-06 - **Change:** minor (native Presenter View section rail and optional grid persistence; DeckCraft additions, parity scores unchanged)
 > **Last reviewed:** 2026-11-06 - **Last updated:** 2026-11-06 - **Change:** minor (native See All Slides scrolls through every slide and filters by section; presenter selection closes the grid; parity scores unchanged) - **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (deleting slides removes them from custom shows; previous: minor, Presenter View only with a second display on Linux and the BSDs, #1156; previous: minor, Set Up Slide Show ▸ Keep mouse cursor visible, #1445; previous: minor, Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
@@ -13,6 +14,7 @@ ready** (estimated), **10–16 h** to parity.
 
 | Feature | PowerPoint | DeckCraft | Notes |
 |---|---|---|---|
+| 2026-11-06 | minor | Native presenter section rail and optional Keep All slides open; no change to PowerPoint checklist scores |
 | Play from Start / from Current Slide (F5, Shift+F5, Cmd+Enter) | yes | yes | |
 | Next/previous by click, arrows, Space, Page Up/Down, Enter, Backspace | yes | yes | #17 reported arrows not working in v0.3.0 AppImage; recheck |
 | Go to slide (number + Enter), first/last | yes | yes: the digits show as "Go to slide …" until Enter, Backspace, Esc, or 3 seconds | Slide numbers are 1-based; 0 and a number past the end do not move |
@@ -51,7 +53,8 @@ ready** (estimated), **10–16 h** to parity.
 | Placed on the presenter's display automatically, show on the projector | yes | **no**: opens wherever the OS puts it | Beta blocker, 3–5 h. Open PR #433 places the show on a second display when one is attached. This change does not |
 | Swap displays | yes | no | Still open on #433 |
 | Pen, laser, black screen, zoom from presenter view | yes | Black, White and Zoom buttons; the audience zoom is framed on the presenter slide | Pen and laser are driven from the audience window only; the presenter window does not move the laser dot |
-| See all slides from presenter view | yes | yes, native scrollable grid with section tabs | Audience keeps the current slide while browsing; click or Enter selects and closes the grid, returning to current/next/notes. The remote web presenter retains its 48-slide cap and close-only grid keyboard controls |
+| See all slides from presenter view | yes | yes, native scrollable grid with section tabs | Audience keeps the current slide while browsing. Selection closes the grid by default; Keep All slides open preserves it until disabled or explicitly closed. The remote web presenter retains its 48-slide cap and has no persistence option or native section-key handling |
+| Native section rail (DeckCraft addition) | not scored | Resizable, collapsible rail; unfold sections, one or two previews per row | Browsing leaves the audience unchanged. Preview selection follows Keep All slides open. Only visible previews are retained with bounded texture dimensions |
 | Rehearse with Coach (Speaker Coach) | yes (cloud) | no | AI dimension |
 
 ## Rehearse and record

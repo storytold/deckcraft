@@ -231,3 +231,23 @@ pub(super) fn render_thumb(
     show.thumbs.push((i, tex.clone()));
     Some(tex)
 }
+
+/// One small preview for the Presenter View section rail, cached apart from the grid's thumbnails.
+pub(super) fn render_rail_thumb(ctx: &egui::Context, show: &mut Show, doc: &Presentation, i: usize, capacity: usize) -> Option<TextureHandle> {
+    doc.slides.get(i)?;
+    if let Some((_, tex)) = show.rail_thumbs.iter().find(|(k, _)| *k == i) {
+        return Some(tex.clone());
+    }
+    if show.rail_thumbs.len() >= capacity {
+        return None;
+    }
+    let size = grid_thumb_size(ctx, doc, capacity);
+    let img = deckcraft_render::render_slide(
+        doc,
+        i,
+        &RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), ..Default::default() },
+    );
+    let tex = crate::textures::upload(ctx, format!("show-rail-{i}"), crate::textures::to_color_image(&img, false));
+    show.rail_thumbs.push((i, tex.clone()));
+    Some(tex)
+}

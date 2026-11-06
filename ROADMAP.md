@@ -1,5 +1,6 @@
 # DeckCraft roadmap
 
+> **Last reviewed:** 2026-11-06 · **Last updated:** 2026-11-06 · **Change:** minor (native Presenter View section rail and optional grid persistence; DeckCraft additions, parity scores unchanged)
 > **Last reviewed:** 2026-11-06 · **Last updated:** 2026-11-06 · **Change:** minor (native grid section tabs scroll within a bounded area, deleted filters recover, remote popup keyboard behavior is preserved; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
