@@ -31,7 +31,7 @@ support partly there), **45–75 h** to parity plus native-speaker review.
 | Hindi | hi | 0 (0%) | no | Devanagari shaping through HarfRust, untested; no bundled Devanagari font | no | none | **no** (Windows only) | 4–7 |
 | Arabic | ar | 0 (0%) | no | bidi, contextual shaping, kashida justification, RTL bullets and caret (#4); **UI not mirrored**; browser export shows boxes (#81) | no | none | yes | 10–16 (incl. UI mirroring) |
 | French | fr | 0 (0%) | no | full (Latin) | no | none | yes (fr, fr-CA) | 3–5 |
-| Portuguese | pt | ~1,050 / ~1,050 (100%, pt-BR catalog: 1,416 keys) | yes / yes / no help | full (Latin) | yes | **full (pt-BR)** | yes (pt-BR, pt-PT) | 0 (pt-BR) |
+| Portuguese | pt | ~1,050 / ~1,050 (100%, pt-BR catalog: 1,419 keys) | yes / yes / no help | full (Latin) | yes | **full (pt-BR)** | yes (pt-BR, pt-PT) | 0 (pt-BR) |
 | Indonesian | id | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
 | Japanese | ja | 0 (0%) | no | renders with system or craft-fonts Japanese faces; IME composition (#101); vertical text is rotated, not laid out vertically | no | none | yes | 4–7 |
 | German | de | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
