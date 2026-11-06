@@ -290,6 +290,17 @@ pub(super) fn set_color(sh: &mut Shape, c: &ColorRef) {
     }
 }
 
+/// Every run of the shape's text without a colour of its own.
+pub(super) fn unset_color(sh: &mut Shape) {
+    let Some(body) = &mut sh.text else { return };
+    for p in &mut body.paragraphs {
+        for r in &mut p.runs {
+            r.props.fill = None;
+        }
+        p.end_props.fill = None;
+    }
+}
+
 /// Rough advance of a character as a fraction of the font size (a sans text face).
 const CHAR_W: f64 = 0.6;
 

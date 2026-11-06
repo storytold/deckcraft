@@ -7696,3 +7696,92 @@ fn format_color_on_an_imported_smartart_graphic_keeps_its_drawing() {
         }
     }
 }
+
+fn smartart_diagram(s: &Session, id: ShapeId) -> deckcraft_model::Diagram {
+    s.doc().unwrap().shape(id).unwrap().diagram.clone().unwrap()
+}
+
+fn mark_imported(s: &mut Session, id: ShapeId) {
+    let st = s.doc_mut().unwrap();
+    let doc = std::sync::Arc::make_mut(&mut st.doc);
+    let sel = st.selection.clone();
+    deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), id).unwrap().diagram.as_mut().unwrap().imported = true;
+}
+
+/// The Font dialog's colour (and size) on a selected graphic is the diagram's, like Font Color and Font Size: it lasts
+/// across a regenerate, and the other selected shapes still get the run formatting.
+#[test]
+fn font_dialog_colour_on_a_selected_smartart_graphic_lasts() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    let id = ShapeId(gid as u32);
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.fontDialog", &json!({"color": "#00AA00", "size": 23})).unwrap();
+    let green = deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(0, 0xAA, 0));
+    let d = smartart_diagram(&s, id);
+    assert_eq!((d.text_color, d.font_size), (Some(green), Some(23.0)));
+    // Another edit regenerates the graphic; the colour is still there.
+    s.execute("smartArt.style", &json!({"id": gid, "style": "flat"})).unwrap();
+    assert!(smartart_diagram(&s, id).text_color.is_some());
+}
+
+/// Clear All Formatting on a selected graphic puts its text colour and size back to automatic, for a generated graphic
+/// and, in place, for an imported one.
+#[test]
+fn clear_formatting_on_a_selected_smartart_graphic_resets_colour_and_size() {
+    for imported in [false, true] {
+        let mut s = session();
+        let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+        let id = ShapeId(gid as u32);
+        s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+        s.execute("format.color", &json!({"color": "#00AA00"})).unwrap();
+        s.execute("format.size", &json!({"size": 31})).unwrap();
+        if imported {
+            mark_imported(&mut s, id);
+        }
+        s.execute("format.clear", &json!({})).unwrap();
+        let d = smartart_diagram(&s, id);
+        assert_eq!((d.text_color, d.font_size, d.imported), (None, None, imported));
+        let kids = match s.doc().unwrap().shape(id).unwrap().kind.clone() {
+            deckcraft_model::ShapeKind::Group { children, .. } => children,
+            _ => panic!("group"),
+        };
+        let green = Some(deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(0, 0xAA, 0))));
+        for t in kids.iter().filter_map(|c| c.text.as_ref()) {
+            assert!(t.paragraphs.iter().all(|p| p.runs.iter().all(|r| r.props.fill != green)), "imported={imported}: the green is gone");
+        }
+    }
+}
+
+/// `format.color` with `color: null` is Automatic on a selected graphic (generated or imported); without a graphic it
+/// is refused like a missing colour.
+#[test]
+fn format_color_null_on_a_selected_smartart_graphic_is_automatic() {
+    for imported in [false, true] {
+        let mut s = session();
+        let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+        let id = ShapeId(gid as u32);
+        s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+        s.execute("format.color", &json!({"color": "#00AA00"})).unwrap();
+        assert!(smartart_diagram(&s, id).text_color.is_some());
+        if imported {
+            mark_imported(&mut s, id);
+        }
+        s.execute("format.color", &json!({"color": null})).unwrap();
+        let d = smartart_diagram(&s, id);
+        assert_eq!((d.text_color, d.imported), (None, imported));
+        let kids = match s.doc().unwrap().shape(id).unwrap().kind.clone() {
+            deckcraft_model::ShapeKind::Group { children, .. } => children,
+            _ => panic!("group"),
+        };
+        let green = Some(deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(0, 0xAA, 0))));
+        for t in kids.iter().filter_map(|c| c.text.as_ref()) {
+            assert!(t.paragraphs.iter().all(|p| p.runs.iter().all(|r| r.props.fill != green)));
+        }
+    }
+    let mut s = session();
+    let b = s.execute("insert.textBox", &json!({"text": "x"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [b]})).unwrap();
+    assert!(s.execute("format.color", &json!({"color": null})).is_err());
+    assert!(s.execute("format.color", &json!({})).is_err());
+}

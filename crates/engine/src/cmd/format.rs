@@ -71,7 +71,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Font Color",
             ["Home", "Font"],
             None,
-            "{color: #RRGGBB|accent1..6|tx1…|{scheme, lumMod…}} (with a SmartArt graphic selected it colours all its nodes' text)",
+            "{color: #RRGGBB|accent1..6|tx1…|{scheme, lumMod…}} (with a SmartArt graphic selected it colours all its nodes' text; color: null there is Automatic, the style's own colour)",
             has_text_or_shapes,
             color
         ),
