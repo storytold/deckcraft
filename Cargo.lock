@@ -1089,7 +1089,9 @@ version = "0.15.0"
 dependencies = [
  "deckcraft-collab-proto",
  "deckcraft-engine",
+ "deckcraft-format",
  "deckcraft-model",
+ "deckcraft-pptx",
  "serde_json",
 ]
 

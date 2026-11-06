@@ -12,4 +12,6 @@ workspace = true
 deckcraft-collab-proto = { path = "../collab-proto" }
 deckcraft-model = { workspace = true }
 deckcraft-engine = { workspace = true }
+deckcraft-format = { workspace = true }
+deckcraft-pptx = { workspace = true }
 serde_json = { workspace = true }

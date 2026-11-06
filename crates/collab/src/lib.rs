@@ -13,8 +13,10 @@ pub mod apply;
 pub mod delta;
 pub mod history;
 pub mod keys;
+pub mod session;
 
 pub use apply::{Adapter, Rejection, class_of};
 pub use delta::delta;
 pub use history::{ActorHistory, Histories, Image, Snapshot, Step};
 pub use keys::{KeyIssuer, KeyMap};
+pub use session::{DocSession, SessionConfig, SnapshotState, warnings};
