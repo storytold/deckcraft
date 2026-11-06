@@ -59,6 +59,12 @@ fn shortcut(key: egui::Key, m: egui::Modifiers, status: RecordStatus) -> Option<
     }
 }
 
+/// Whether the Record shortcuts are read this frame. The notes editor owns the keyboard while it
+/// is focused; a focused button must not swallow Ctrl+R, Ctrl+Shift+P or Ctrl+Z.
+fn reads_shortcuts(rec: &RecordView, ctx: &egui::Context) -> bool {
+    !rec.close_confirm && !super::notes::has_focus(ctx)
+}
+
 /// Draw the top bar. Returns `close` when Edit (or Escape, confirmed) asked to leave.
 pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut RecordView, now: f64, layout: &Layout) -> Out {
     let rect = layout.top;
@@ -70,7 +76,9 @@ pub(super) fn ui(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, rec: &mut Rec
     // Shortcuts are read before the widgets so a focused button does not also act on the key.
     // While the close confirmation is up the modal owns Escape.
     let mut close_requested = false;
-    if !rec.close_confirm && ui.memory(|m| m.focused().is_none()) {
+    // A focused button must not swallow Ctrl+R / Ctrl+Shift+P / Ctrl+Z; only the notes editor
+    // owns the keyboard.
+    if reads_shortcuts(rec, ui.ctx()) {
         let presses: Vec<(egui::Key, egui::Modifiers)> = ui.input(|i| {
             i.events
                 .iter()
@@ -221,6 +229,23 @@ mod tests {
         let session = deckcraft_engine::Session::with_new();
         let doc = session.active().unwrap().doc.clone();
         Show::new(&doc, 0, false, false)
+    }
+
+    /// A focused button does not stop the Record shortcuts; the notes editor does.
+    #[test]
+    fn a_focused_button_keeps_the_record_shortcuts() {
+        let ctx = egui::Context::default();
+        let rec = RecordView::default();
+        let button = egui::Id::unique("a-record-button");
+        ctx.memory_mut(|m| m.request_focus(button));
+        assert!(reads_shortcuts(&rec, &ctx), "a focused button is not the script");
+        // The script editor's id, reached through the module that owns it.
+        let editor = super::super::notes::editor_id_for_tests();
+        ctx.memory_mut(|m| m.request_focus(editor));
+        assert!(!reads_shortcuts(&rec, &ctx), "the script editor owns the keyboard");
+        ctx.memory_mut(|m| m.surrender_focus(editor));
+        let confirming = RecordView { close_confirm: true, ..Default::default() };
+        assert!(!reads_shortcuts(&confirming, &ctx), "the confirmation owns the keyboard");
     }
 
     /// Ctrl/⌘R is the only Record shortcut; plain R stays with the show's timer reset.

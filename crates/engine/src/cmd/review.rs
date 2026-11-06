@@ -1139,7 +1139,8 @@ fn slide_scope(s: &Session, p: &Value, id: &str) -> Result<Vec<usize>> {
     let st = s.doc()?;
     // An `index` that is present but not a slide number is refused, not read as "the current
     // slide": these commands delete data, so a wrong type must not pick a slide.
-    let explicit = match p.get("index") {
+    // `null` is how a control-channel client spells an optional key; only a real value is checked.
+    let explicit = match p.get("index").filter(|v| !v.is_null()) {
         Some(_) => Some(usize_param(p, "index").ok_or_else(|| bad(id, "index must be a slide number"))?),
         None => None,
     };
@@ -1328,7 +1329,7 @@ fn bg_uses(bg: Option<&deckcraft_model::Background>, id: deckcraft_model::MediaI
 /// and `index` forms.
 fn recording_scope(s: &Session, p: &Value, id: &str) -> Result<Vec<usize>> {
     // An explicit slide is validated even for `scope: "all"`, so a bad index is never ignored.
-    if p.get("index").is_some() {
+    if p.get("index").filter(|v| !v.is_null()).is_some() {
         let index = usize_param(p, "index").ok_or_else(|| bad(id, "index must be a slide number"))?;
         if index >= s.doc()?.doc.slides.len() {
             return Err(bad(id, format!("no slide {}", index.saturating_add(1))));

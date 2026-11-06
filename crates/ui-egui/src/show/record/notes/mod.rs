@@ -110,6 +110,12 @@ pub(super) fn tick(ctx: &egui::Context, rec: &mut RecordView) {
 
 /// Whether a notes editor owns the keyboard this frame. The shell skips show navigation while it
 /// does, so Space and the arrows type into the script instead of advancing the show.
+/// The editor's focus id, for the tests that check who owns the keyboard.
+#[cfg(test)]
+pub(super) fn editor_id_for_tests() -> egui::Id {
+    edit::editor_id()
+}
+
 pub(super) fn has_focus(ctx: &egui::Context) -> bool {
     edit::has_focus(ctx)
 }

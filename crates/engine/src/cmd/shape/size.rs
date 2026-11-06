@@ -107,7 +107,15 @@ fn apply_size(x: &mut deckcraft_geom::Xfrm, spec: SizeSpec) {
     }
     if spec.lock && (spec.width_set() || spec.height_set()) {
         if spec.width_set() {
-            nh = if ar > 0.0 { nw / ar } else { nh };
+            // A zero-width frame has no ratio to divide by: the dialog showed the new width as the
+            // height, so that is what the command must apply unless a height came with it.
+            nh = if ar > 0.0 {
+                nw / ar
+            } else if spec.height_set() {
+                nh
+            } else {
+                nw
+            };
         } else {
             nw = nh * ar;
         }
