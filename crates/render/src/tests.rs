@@ -3343,3 +3343,37 @@ fn a_selection_is_shaded_over_a_highlight_marker() {
     assert_eq!(marked_shade, plain_shade, "and the highlight marker doesn't eat into it");
     assert!(yellow_left < 100, "the marker is under the selection, not beside it: {yellow_left}");
 }
+
+/// An animation can hide or move one paragraph of text while the editor shows a selection: each
+/// shade follows its own paragraph, as the glyphs do.
+#[test]
+fn a_selection_follows_the_animation_state_of_its_paragraph() {
+    use super::TextHighlight;
+    let mut sh = text_shape(950, "First line\nSecond line", 40.0, 40.0);
+    sh.xfrm = Some(Xfrm::new(40.0, 40.0, 600.0, 200.0));
+    let p = deck_with(vec![sh]);
+    let pale = [173, 200, 241, 255];
+    let h = TextHighlight { shape: ShapeId(950), cell: None, from: (0, 0), to: (1, 11), color: Rgba::rgb(0x33, 0x75, 0xDB) };
+    let render = |hide: Option<usize>| {
+        let state = move |_: ShapeId| ShapeState {
+            paras: hide.map(|i| (i, super::ParaState { visible: false, ..Default::default() })).into_iter().collect(),
+            ..Default::default()
+        };
+        render_slide(
+            &p,
+            0,
+            &RenderOpts { edit: true, editing_text: Some(ShapeId(950)), text_highlight: Some(h), state: Some(&state), ..Default::default() },
+        )
+    };
+    // Rows of the first and second line: the first line is the upper half of the shaded rows.
+    let rows_with_shade = |img: &Image| -> Vec<u32> { (0..img.height).filter(|&y| (0..img.width).any(|x| img.pixel(x, y) == pale)).collect() };
+    let all = rows_with_shade(&render(None));
+    let (top, bottom) = (all[0], all[all.len() - 1]);
+    let middle = (top + bottom) / 2;
+    let hide_first = rows_with_shade(&render(Some(0)));
+    assert!(hide_first.iter().all(|&y| y >= middle), "the hidden paragraph's shade is gone: {:?}", hide_first.first());
+    assert!(hide_first.iter().any(|&y| y >= middle), "the other paragraph keeps its shade");
+    let hide_second = rows_with_shade(&render(Some(1)));
+    assert!(hide_second.iter().all(|&y| y <= middle), "likewise for the second: {:?}", hide_second.last());
+    assert!(!hide_second.is_empty());
+}

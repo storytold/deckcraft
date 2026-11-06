@@ -132,24 +132,32 @@ pub fn selection_shade(l: &deckcraft_text::TextLayout, from: (usize, usize), to:
 }
 
 /// Shade the text between `from` and `to` (paragraph, char) of a laid-out block, to be drawn
-/// before its glyphs so they sit on the shading ([`selection_shade`] of `c`).
+/// before its glyphs so they sit on the shading ([`selection_shade`] of `c`). Each box follows its
+/// paragraph's animation state in `paras`, as the glyphs do: hidden with it, moved and faded with it.
 pub fn fill_selection(
     ctx: &mut RenderContext,
     l: &deckcraft_text::TextLayout,
     tr: Rect,
     m: Affine,
-    from: (usize, usize),
-    to: (usize, usize),
-    c: Rgba,
+    paras: &[(usize, ParaState)],
+    (from, to, c): Shaded,
 ) {
     let pos = |p: (usize, usize)| deckcraft_text::Pos { para: p.0, ch: p.1 };
     let rects = l.selection_rects(pos(from), pos(to));
     if rects.is_empty() {
         return;
     }
-    ctx.set_transform(text_transform(m, tr, l.rotation));
-    ctx.set_paint(color(selection_shade(l, from, to, c), 1.0));
+    let m = text_transform(m, tr, l.rotation);
+    let shade = selection_shade(l, from, to, c);
     for r in rects {
+        // A box is one line's: its paragraph is that of the line it spans.
+        let para = l.lines.iter().find(|ln| ln.top == r.y0 && ln.bottom == r.y1).map_or(from.0, |ln| ln.para);
+        let ps = paras.iter().find(|(p, _)| *p == para).map(|(_, s)| *s).unwrap_or_default();
+        if !ps.visible || ps.opacity <= 0.001 {
+            continue;
+        }
+        ctx.set_transform(m * Affine::translate(ps.offset));
+        ctx.set_paint(color(shade, ps.opacity));
         ctx.fill_rect(&r);
     }
 }
@@ -194,7 +202,7 @@ pub fn draw_layout_selected(
         deco(ctx, d);
     }
     if let Some((from, to, c)) = selection {
-        fill_selection(ctx, l, tr, outer, from, to, c);
+        fill_selection(ctx, l, tr, outer, paras, (from, to, c));
     }
     // Text shadows, then glows, under all the text.
     for pass in [TextEffect::Shadow, TextEffect::Glow] {
