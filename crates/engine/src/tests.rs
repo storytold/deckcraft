@@ -7551,6 +7551,11 @@ fn export_refuses_per_page_outside_the_handouts_layout() {
     assert!(!std::path::Path::new(&path).exists(), "nothing written");
     let e = s.execute("file.export", &json!({"path": path, "format": "pdf", "perPage": 3})).unwrap_err().to_string();
     assert!(e.contains("`perPage` applies to the handouts layout"), "{e}");
+    // A JSON null means "not given", as it does for `all`/`slide`.
+    let o = cmd::file::pdf_options(&json!({"layout": "notes", "perPage": null}), 1).unwrap();
+    assert_eq!(o.layout, deckcraft_pdf::PageLayout::Notes);
+    let o = cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": null}), 1).unwrap();
+    assert_eq!(o.layout, deckcraft_pdf::PageLayout::Handouts { per_page: 6 });
     let o = cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": 3}), 1).unwrap();
     assert_eq!(o.layout, deckcraft_pdf::PageLayout::Handouts { per_page: 3 });
     let o = cmd::file::pdf_options(&json!({"layout": "notes"}), 1).unwrap();

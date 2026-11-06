@@ -367,7 +367,7 @@ pub fn pdf_options(p: &Value, count: usize) -> Result<deckcraft_pdf::PdfOptions>
     let mut o = deckcraft_pdf::PdfOptions { layout: deckcraft_pdf::PageLayout::Slides, ..Default::default() };
     let layout = str_param(p, "layout").unwrap_or("slides");
     // `perPage` means nothing outside handouts; ignoring it hid a wrong layout from the caller.
-    if layout != "handouts" && p.get("perPage").is_some() {
+    if layout != "handouts" && p.get("perPage").is_some_and(|v| !v.is_null()) {
         let page = if layout == "notes" { "notes pages are" } else { "the slides layout is" };
         return Err(bad("file.export", format!("`perPage` applies to the handouts layout; {page} one slide per page")));
     }
