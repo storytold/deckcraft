@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-05 · **Change:** trivial (grouped-editing PR synced with current upstream; overlapping documentation entries preserved; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-06 · **Change:** minor (collapsed groups preserve shape adjustments during handle drags; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (grouped spelling-underline coverage, slide-space line-end snapping and Shift angle constraints; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -23,6 +23,10 @@ uncovered text keeps its caret and a member drawn over the text takes the click 
 Synthetic engine tests compare editing coordinates with the renderer and cover caret placement,
 context clicks, frame movement, resizing, undo and overlapping group members. Feature and
 readiness scores are unchanged. Renderer-based regressions also cover spelling squiggles under grouped text and table cells. Grouped line-end gestures constrain Shift angles to visible 45-degree increments and query connection sites in slide space before mapping the final endpoint back into the member's group space. Regressions cover snapping markers, both endpoints, free dragging and undo through nested groups, rotation, reflection and uneven scaling.
+
+When a group has zero width or height, dragging a shape adjustment handle leaves its geometry
+unchanged, including after saving and reopening. Ordinary transformed groups and very small
+invertible groups retain adjustment and undo behavior.
 
 ## Empty list paragraphs
 
@@ -186,6 +190,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-06 | minor | Adjustment-handle drags in collapsed groups leave geometry unchanged and preserve native save/load values; normal and tiny invertible groups retain adjustment and undo behavior (#1095) |
 | 2026-11-05 | trivial | Sync grouped-editing fixes and regression coverage with current upstream; preserve both documentation updates and unchanged parity scores (#1095) |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
 | 2026-11-02 | minor | Renderer-based spelling-underline regressions for grouped/nested text and table cells; grouped line ends snap in slide space, with endpoint and undo coverage (#1095) |

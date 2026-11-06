@@ -282,7 +282,13 @@ impl Session {
 
     /// Map a slide-space drag into the adjusted member's group before changing its geometry.
     fn drag_adjust(&mut self, id: ShapeId, index: usize, orig: Xfrm, p: Point) -> Result<Value> {
-        let p = cmd::parent_transform(self.doc()?, id).inverse() * p;
+        let parent = cmd::parent_transform(self.doc()?, id);
+        let determinant = parent.determinant();
+        // A collapsed group has no unique slide-to-child mapping.
+        if determinant == 0.0 || !determinant.is_finite() {
+            return Ok(Value::Null);
+        }
+        let p = parent.inverse() * p;
         let st = self.doc()?;
         let Some(sh) = st.shape(id).cloned() else { return Ok(Value::Null) };
         let local = orig.affine().inverse() * p;

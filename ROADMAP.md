@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-05 · **Change:** trivial (grouped-editing PR synced with current upstream; overlapping documentation entries preserved; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-06 · **Change:** minor (collapsed groups preserve shape adjustments during handle drags; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Ogg Opus recovery includes trailing packets without granules in its reported duration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
@@ -156,6 +156,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-06 | Grouped shape adjustments: skip drags when the parent transform cannot be inverted, preserving callout geometry in native saves; regression coverage includes collapsed and tiny invertible groups (#1095) |
 | 2026-11-05 | Grouped editing: sync #1095 with upstream, retaining text, sibling-click and line-end regression coverage; parity scores unchanged |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
 | 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
@@ -345,6 +346,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-06 | minor | Adjustment-handle drags in collapsed groups leave geometry unchanged and preserve native save/load values; normal and tiny invertible groups retain adjustment and undo behavior (#1095) |
 | 2026-11-05 | trivial | Sync grouped-editing fixes and regression coverage with current upstream; preserve both documentation updates and unchanged parity scores (#1095) |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |

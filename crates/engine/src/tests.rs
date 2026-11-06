@@ -1299,6 +1299,92 @@ fn wrap_test_member_in_group(s: &mut Session, id: ShapeId, xfrm: deckcraft_geom:
     .unwrap();
 }
 
+/// A selected callout inside the same transformed/nested fixture used for grouped text.
+fn grouped_callout_adjust_fixture(w: f64, h: f64, nested: bool) -> (Session, ShapeId) {
+    use deckcraft_geom::Xfrm;
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout":"blank"})).unwrap();
+    let id = ShapeId(s.execute("shape.insert", &json!({"preset":"wedgeRectCallout", "rect":[10,20,120,80]})).unwrap()["id"].as_u64().unwrap() as u32);
+    wrap_test_member_in_group(&mut s, id, Xfrm { flip_h: true, ..Xfrm::new(300.0, 100.0, 240.0, 160.0) }, nested);
+    let group = s.doc().unwrap().shapes().last().unwrap().id;
+    s.execute("shape.setBounds", &json!({"ids":[group.0], "w":w, "h":h})).unwrap();
+    s.execute("selection.select", &json!({"id":id.0})).unwrap();
+    (s, id)
+}
+
+/// A collapsed group must not introduce non-finite callout adjustments or change its saved geometry.
+#[test]
+fn grouped_adjust_drag_ignores_collapsed_parent() {
+    use deckcraft_geom::{Point, Vec2};
+    for nested in [false, true] {
+        for (w, h) in [(0.0, 160.0), (240.0, 0.0), (0.0, 0.0)] {
+            let (mut s, id) = grouped_callout_adjust_fixture(w, h, nested);
+            let st = s.doc().unwrap();
+            let sh = st.shape(id).unwrap();
+            let original = sh.geom.clone();
+            let x = sh.xfrm.unwrap();
+            let parent = cmd::parent_transform(st, id);
+            assert_eq!(parent.determinant(), 0.0);
+            assert_ne!(x.affine().determinant(), 0.0, "the member itself is invertible");
+            let geo = deckcraft_render::shape_geometry(sh, x.w, x.h);
+            let handle = geo.handles.first().unwrap();
+            let at = parent * x.affine() * handle.pos;
+            assert!(matches!(s.hit_test(at, 1.0), Some(tools::Hit::Adjust { id: hit, index }) if hit == id && index == handle.index));
+            let target = at + Vec2::new(25.0, 35.0);
+            let ev = |kind, p: Point| PointerEvent { kind, x: p.x, y: p.y, tol: 1.0, ..Default::default() };
+            s.pointer(ev(PointerKind::Down, at)).unwrap();
+            s.pointer(ev(PointerKind::Drag, target)).unwrap();
+            let geom = &s.doc().unwrap().shape(id).unwrap().geom;
+            let model::Geom::Preset { adj, .. } = geom else { panic!("callout must stay a preset") };
+            assert!(adj.iter().all(|a| a.is_finite()), "collapsed ({w},{h}), nested={nested}: {adj:?}");
+            assert_eq!(geom, &original, "a collapsed parent's handle drag must be a no-op");
+            s.pointer(ev(PointerKind::Up, target)).unwrap();
+            assert_eq!(s.doc().unwrap().shape(id).unwrap().geom, original);
+            let st = s.doc().unwrap();
+            let bytes = cmd::file::save_bytes(&st.doc, "deckcraft").unwrap();
+            let back = deckcraft_format::load(&bytes).unwrap();
+            assert_eq!(
+                model::find_shape(&back.slides[st.selection.slide].shapes, id).unwrap().geom,
+                original,
+                "native save/load must preserve the callout"
+            );
+        }
+    }
+}
+
+/// Invertible transformed groups still update the callout's two adjustments and undo in one step.
+/// Tiny but invertible groups also work; a blanket determinant epsilon would reject them.
+#[test]
+fn grouped_adjust_drag_preserves_invertible_behavior() {
+    use deckcraft_geom::Point;
+    for nested in [false, true] {
+        for (w, h) in [(240.0, 160.0), (1e-6, 8e-7)] {
+            let (mut s, id) = grouped_callout_adjust_fixture(w, h, nested);
+            let st = s.doc().unwrap();
+            let sh = st.shape(id).unwrap();
+            let original = sh.geom.clone();
+            let x = sh.xfrm.unwrap();
+            let parent = cmd::parent_transform(st, id);
+            assert_ne!(parent.determinant(), 0.0);
+            let geo = deckcraft_render::shape_geometry(sh, x.w, x.h);
+            let handle = geo.handles.first().unwrap();
+            let map = parent * x.affine();
+            let at = map * handle.pos;
+            let target = map * Point::new(x.w * 0.75, x.h * 0.25);
+            assert!(matches!(s.hit_test(at, 1e-10), Some(tools::Hit::Adjust { id: hit, index }) if hit == id && index == handle.index));
+            let ev = |kind, p: Point| PointerEvent { kind, x: p.x, y: p.y, tol: 1e-10, ..Default::default() };
+            s.pointer(ev(PointerKind::Down, at)).unwrap();
+            s.pointer(ev(PointerKind::Drag, target)).unwrap();
+            s.pointer(ev(PointerKind::Up, target)).unwrap();
+            let model::Geom::Preset { adj, .. } = &s.doc().unwrap().shape(id).unwrap().geom else { panic!("callout must stay a preset") };
+            assert_eq!(adj.len(), 2);
+            assert!((adj[0] - 25000.0).abs() <= 2.0 && (adj[1] + 25000.0).abs() <= 2.0, "({w},{h}), nested={nested}: {adj:?}");
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert_eq!(s.doc().unwrap().shape(id).unwrap().geom, original);
+        }
+    }
+}
+
 /// Compare marked spelling ranges with the renderer's own placed word, independently of the
 /// editor's shape-to-slide helper. Nonempty segment and endpoint checks catch offset-only regressions.
 fn assert_spelling_underlines_on_rendered_word(st: &DocState, actual: &[(deckcraft_geom::Point, deckcraft_geom::Point)]) {
