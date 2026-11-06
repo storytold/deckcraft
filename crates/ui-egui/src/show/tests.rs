@@ -1545,10 +1545,10 @@ fn transition_preview_for_first_slide_transitions_from_black() {
     assert_eq!(tr.dur, 0.5);
 }
 
-/// Grid keyboard regression coverage.
+/// Grid keyboard and pointer regression coverage.
 mod grid_regressions {
     use super::*;
-    use crate::show::keys;
+    use crate::show::{keys, zoom};
 
     fn empty_deck(count: usize) -> Presentation {
         let mut session = deckcraft_engine::Session::with_new();
@@ -1589,6 +1589,21 @@ mod grid_regressions {
     }
 
     #[test]
+    fn slide_number_label_selects_its_slide() {
+        let doc = empty_deck(12);
+        let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+        let frame = grid_frame(full, &doc);
+        let slides: Vec<usize> = (0..doc.slides.len()).collect();
+        let layout = grid_layout(frame.inner, &slides, zoom::slide_aspect(&doc), 0.0);
+        let cell = layout.cells.get(1).unwrap();
+        assert_eq!(grid_slide_hit(full, &doc, GridFilter::All, 0.0, cell.rect.center()), Some(cell.slide));
+        let label = pos2(cell.rect.center().x, cell.rect.max.y + 12.0);
+        assert!(frame.inner.contains(label), "the label really is visible");
+        let hit = grid_slide_hit(full, &doc, GridFilter::All, 0.0, label);
+        assert_eq!(hit, Some(cell.slide), "clicking the visible slide number must select that slide");
+    }
+
+    #[test]
     fn escape_g_and_minus_close_an_empty_number_grid_without_ending_show() {
         let doc = empty_deck(3);
         for presenter in [false, true] {
@@ -1601,6 +1616,29 @@ mod grid_regressions {
                 assert!(!if presenter { show.presenter_grid } else { show.grid });
                 assert_eq!(show.state.slide, 0);
             }
+        }
+    }
+
+    #[test]
+    fn number_hit_targets_keep_clipping_and_do_not_select_neighbors() {
+        let doc = empty_deck(200);
+        let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+        let frame = grid_frame(full, &doc);
+        let slides: Vec<usize> = (0..doc.slides.len()).collect();
+        for scroll in [0.0, 100.0, f32::MAX] {
+            let layout = grid_layout(frame.inner, &slides, zoom::slide_aspect(&doc), scroll);
+            for cell in &layout.cells {
+                let label = pos2(cell.rect.center().x, cell.rect.max.y + 12.0);
+                if frame.inner.contains(label) {
+                    assert_eq!(grid_slide_hit(full, &doc, GridFilter::All, scroll, label), Some(cell.slide));
+                }
+                let gap = pos2(cell.rect.center().x, cell.rect.max.y + 30.0);
+                assert_eq!(grid_slide_hit(full, &doc, GridFilter::All, scroll, gap), None, "the space between rows is not a slide");
+            }
+            let above = pos2(frame.inner.center().x, frame.inner.min.y - 1.0);
+            let below = pos2(frame.inner.center().x, frame.inner.max.y + 1.0);
+            assert_eq!(grid_slide_hit(full, &doc, GridFilter::All, scroll, above), None);
+            assert_eq!(grid_slide_hit(full, &doc, GridFilter::All, scroll, below), None);
         }
     }
 }

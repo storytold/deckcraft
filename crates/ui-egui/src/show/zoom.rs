@@ -390,7 +390,11 @@ pub(super) fn grid_slide_hit(full: Rect, doc: &Presentation, filter: GridFilter,
         return None;
     }
     let slides = sections::grid_slides(doc, filter);
-    grid_layout(frame.inner, &slides, slide_aspect(doc), scroll).cells.into_iter().find(|c| c.rect.expand(4.0).contains(p)).map(|c| c.slide)
+    grid_layout(frame.inner, &slides, slide_aspect(doc), scroll)
+        .cells
+        .into_iter()
+        .find(|c| Rect::from_min_max(c.rect.min - vec2(4.0, 4.0), c.rect.max + vec2(4.0, GRID_LABEL_H)).contains(p))
+        .map(|c| c.slide)
 }
 
 fn grid_scrollbar(frame: &GridFrame) -> Rect {
