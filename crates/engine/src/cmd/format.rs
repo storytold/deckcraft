@@ -277,7 +277,7 @@ fn current_run(s: &Session) -> RunProps {
         None => {
             let Some(sh) = st.selected_shapes().first().map(|x| (*x).clone()) else { return RunProps::default() };
             let para = sh.text.as_ref().and_then(|t| t.paragraphs.first().cloned()).unwrap_or_default();
-            let rp = para.runs.first().map(|r| r.props.clone()).unwrap_or_default();
+            let rp = para.runs.first().map(|r| r.props.clone()).unwrap_or_else(|| para.end_props.clone());
             (sh, para, rp)
         }
     };

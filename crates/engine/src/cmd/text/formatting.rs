@@ -69,6 +69,9 @@ pub(crate) fn format_run_levels(
                 for (r, row) in t.rows.iter_mut().enumerate() {
                     for (c, cell) in row.cells.iter_mut().enumerate() {
                         if crate::cmd::table::in_range(range, r, c) {
+                            if cell.text.paragraphs.is_empty() {
+                                cell.text.paragraphs.push(Default::default());
+                            }
                             ed::format_all(&mut cell.text, f);
                         }
                     }
