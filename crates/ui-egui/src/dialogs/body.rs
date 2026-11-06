@@ -285,11 +285,6 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
-fn dlg_close(_app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
-    let (ok, cancel) = buttons(ui, "Close");
-    ok || cancel
-}
-
 fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     let names: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).map(|d| d.title()).collect();
     if names.is_empty() {
