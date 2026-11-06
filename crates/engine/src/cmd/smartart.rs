@@ -27,7 +27,9 @@ use edit::{
     add_node, change_colors, change_layout, change_style, demote, font_size, from_text, nodes, promote, remove_node, set_nodes, set_picture,
     to_shapes, to_text,
 };
-pub(crate) use edit::{clear_text_look, selected_graphics, set_font_size, set_text_color, set_text_props, share_after_edit, shown_size};
+pub(crate) use edit::{
+    clear_text_color, clear_text_look, selected_graphics, set_font_size, set_text_color, set_text_props, share_after_edit, shown_size,
+};
 pub use edit::{insert, selected};
 pub use nodes::{add, demote_node, nodes_from_lines, normalize, promote_node, remove};
 pub use paint::{BRICK_CAMERA, is_3d, layout};

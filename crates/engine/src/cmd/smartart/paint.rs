@@ -294,6 +294,17 @@ pub(super) fn set_color(sh: &mut Shape, c: &ColorRef) {
     }
 }
 
+/// Every run of the shape's text without a colour of its own.
+pub(super) fn unset_color(sh: &mut Shape) {
+    let Some(body) = &mut sh.text else { return };
+    for p in &mut body.paragraphs {
+        for r in &mut p.runs {
+            r.props.fill = None;
+        }
+        p.end_props.fill = None;
+    }
+}
+
 /// The Font dialog's settings (`Diagram::text_style`) on every run of the shape's text: only the properties `o` sets.
 pub(super) fn set_props(sh: &mut Shape, o: &RunProps) {
     let Some(body) = &mut sh.text else { return };

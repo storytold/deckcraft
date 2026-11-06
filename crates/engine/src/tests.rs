@@ -7845,3 +7845,36 @@ fn clear_formatting_on_an_imported_smartart_graphic_is_one_edit_that_keeps_autof
         }
     }
 }
+
+/// `format.color` with `color: null` is Automatic on a selected graphic (generated or imported); without a graphic it
+/// is refused like a missing colour.
+#[test]
+fn format_color_null_on_a_selected_smartart_graphic_is_automatic() {
+    for imported in [false, true] {
+        let mut s = session();
+        let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+        let id = ShapeId(gid as u32);
+        s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+        s.execute("format.color", &json!({"color": "#00AA00"})).unwrap();
+        assert!(smartart_diagram(&s, id).text_color.is_some());
+        if imported {
+            mark_imported(&mut s, id);
+        }
+        s.execute("format.color", &json!({"color": null})).unwrap();
+        let d = smartart_diagram(&s, id);
+        assert_eq!((d.text_color, d.imported), (None, imported));
+        let kids = match s.doc().unwrap().shape(id).unwrap().kind.clone() {
+            deckcraft_model::ShapeKind::Group { children, .. } => children,
+            _ => panic!("group"),
+        };
+        let green = Some(deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(0, 0xAA, 0))));
+        for t in kids.iter().filter_map(|c| c.text.as_ref()) {
+            assert!(t.paragraphs.iter().all(|p| p.runs.iter().all(|r| r.props.fill != green)));
+        }
+    }
+    let mut s = session();
+    let b = s.execute("insert.textBox", &json!({"text": "x"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [b]})).unwrap();
+    assert!(s.execute("format.color", &json!({"color": null})).is_err());
+    assert!(s.execute("format.color", &json!({})).is_err());
+}

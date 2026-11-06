@@ -1,5 +1,5 @@
 use super::nodes::{add, demote_node, nodes_from_lines, normalize, promote_node, remove, sync_text};
-use super::paint::{clear_props, layout, set_color, set_props, set_size};
+use super::paint::{clear_props, layout, set_color, set_props, set_size, unset_color};
 use super::{
     AutoFit, COLORS, ColorRef, Diagram, DiagramNode, EngineError, Geom, MAX_LEVEL, NO_ID_SPACE, Paragraph, Presentation, Result, STYLES, Session,
     Shape, ShapeId, ShapeKind, TextBody, Value, Xfrm, bad, bool_or, current_shapes, is_kind, json, shape_of, str_param, targets, xfrm_of,
@@ -510,6 +510,18 @@ pub(crate) fn set_text_color(s: &mut Session, gid: ShapeId, color: ColorRef, cmd
     }
     edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
         d.text_color = Some(color);
+        Ok(())
+    })
+}
+
+/// Back to the style's automatic text colour for every node of graphic `gid`. An imported graphic keeps its
+/// drawing and loses the fills on its runs (the colours the file set are not recoverable).
+pub(crate) fn clear_text_color(s: &mut Session, gid: ShapeId, cmd: &str) -> Result<()> {
+    if restyle_imported(s, gid, cmd, false, |d| d.text_color = None, unset_color)? {
+        return Ok(());
+    }
+    edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
+        d.text_color = None;
         Ok(())
     })
 }

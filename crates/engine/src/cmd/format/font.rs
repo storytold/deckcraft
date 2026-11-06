@@ -159,6 +159,12 @@ pub(super) fn shrink(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
+    // `color: null` is Automatic: a selected SmartArt graphic goes back to its style's text colour.
+    if p.get("color").is_some_and(Value::is_null) {
+        let automatic = |s: &mut Session, gid| crate::cmd::smartart::clear_text_color(s, gid, "format.color");
+        return on_graphics(s, automatic, |_| Ok(Value::Null))
+            .unwrap_or_else(|| Err(bad("format.color", "missing or invalid `color` (null is Automatic, for a SmartArt graphic)")));
+    }
     let c = color_param(p, "color").ok_or_else(|| bad("format.color", "missing or invalid `color`"))?;
     // A selected chart has no runs: Font Color colours its text (title, axes, legend, labels),
     // which used to answer and change nothing.
