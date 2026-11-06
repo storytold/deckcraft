@@ -159,12 +159,6 @@ pub(super) fn shrink(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
-    // `color: null` is Automatic: a selected SmartArt graphic goes back to its style's text colour.
-    if p.get("color").is_some_and(Value::is_null) {
-        let automatic = |s: &mut Session, gid| crate::cmd::smartart::clear_text_color(s, gid, "format.color");
-        return on_graphics(s, automatic, |_| Ok(Value::Null))
-            .unwrap_or_else(|| Err(bad("format.color", "missing or invalid `color` (null is Automatic, for a SmartArt graphic)")));
-    }
     let c = color_param(p, "color").ok_or_else(|| bad("format.color", "missing or invalid `color`"))?;
     // A selected chart has no runs: Font Color colours its text (title, axes, legend, labels),
     // which used to answer and change nothing.
@@ -360,6 +354,21 @@ impl FontEdits {
             && self.spacing.is_none()
     }
 
+    /// The settings that are neither the size nor the colour: what a SmartArt graphic keeps as its text look.
+    fn look(&self) -> RunProps {
+        RunProps {
+            font: self.family.clone(),
+            bold: self.bold,
+            italic: self.italic,
+            underline: self.underline.clone(),
+            strike: self.strike,
+            baseline: self.baseline,
+            caps: self.caps,
+            spacing: self.spacing,
+            ..Default::default()
+        }
+    }
+
     fn write(&self, r: &mut RunProps) {
         if let Some(f) = &self.family {
             r.font = Some(f.clone());
@@ -537,24 +546,29 @@ pub(super) fn font_dialog(s: &mut Session, p: &Value) -> Result<Value> {
         s.ui_requests.push(crate::UiRequest::Dialog { id: "font".into(), params: font_dialog_params(s) });
         return ok();
     }
-    // A selected SmartArt graphic: its size and colour are the diagram's (like format.size and format.color).
-    if edits.size.is_some() || edits.color.is_some() {
-        let (size, color) = (edits.size, edits.color.clone());
-        let graphic = move |s: &mut Session, gid| {
-            if let Some(z) = size {
-                crate::cmd::smartart::set_font_size(s, gid, Some(z), "format.fontDialog")?;
-            }
-            color.clone().map_or(Ok(()), |c| crate::cmd::smartart::set_text_color(s, gid, c, "format.fontDialog"))
-        };
-        if let Some(r) = on_graphics(s, graphic, |s| format_run(s, &|r| edits.write(r))) {
-            return r;
+    // A selected SmartArt graphic: every setting of the dialog is the diagram's, like format.size and format.color
+    // (size, colour) and the text look the layout applies (the rest), so it lasts across a regenerate.
+    let (size, color, look) = (edits.size, edits.color.clone(), edits.look());
+    let graphic = move |s: &mut Session, gid| {
+        if let Some(z) = size {
+            crate::cmd::smartart::set_font_size(s, gid, Some(z), "format.fontDialog")?;
         }
+        if let Some(c) = color.clone() {
+            crate::cmd::smartart::set_text_color(s, gid, c, "format.fontDialog")?;
+        }
+        if look != RunProps::default() {
+            crate::cmd::smartart::set_text_props(s, gid, look.clone(), "format.fontDialog")?;
+        }
+        Ok(())
+    };
+    if let Some(r) = on_graphics(s, graphic, |s| format_run(s, &|r| edits.write(r))) {
+        return r;
     }
     format_run(s, &|r| edits.write(r))
 }
 
 pub(super) fn clear(s: &mut Session, _p: &Value) -> Result<Value> {
-    // A selected SmartArt graphic: its text colour and size go back to automatic.
+    // A selected SmartArt graphic: all its text formatting goes (colour, size and the rest), as on text.
     let graphic = |s: &mut Session, gid| crate::cmd::smartart::clear_text_look(s, gid, "format.clear");
     if let Some(r) =
         on_graphics(s, graphic, |s| format_run(s, &|r| *r = RunProps { lang: r.lang.clone(), link: r.link.clone(), ..Default::default() }))

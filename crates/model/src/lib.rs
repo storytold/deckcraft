@@ -384,6 +384,11 @@ pub struct Diagram {
     /// Font colour set for every node's text (Home › Font Color on the graphic).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_color: Option<ColorRef>,
+    /// The other run properties set for every node's text from the Font dialog (family, bold, italic, underline,
+    /// strikethrough, baseline, caps, spacing); size and colour are the two fields above. Kept in the model only:
+    /// the data part does not carry them (the drawing of the graphic does).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_style: Option<RunProps>,
     /// The group's shapes are the file's drawing, not generated from `nodes`: text typed into them
     /// isn't mapped back to nodes (the first outline edit regenerates them).
     #[serde(skip_serializing_if = "std::ops::Not::not")]

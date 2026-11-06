@@ -746,6 +746,7 @@ fn diagram_outline(imp: &Imp, part: &Part, rel_ids: &El, data: &El) -> Option<de
         colors_xml: raw("r:cs"),
         font_size,
         text_color,
+        text_style: None,
     })
 }
 

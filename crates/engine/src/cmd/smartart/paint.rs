@@ -4,6 +4,7 @@ use super::{
     Align, AutoFit, ColorRef, ColorTransform, Diagram, DiagramNode, Effects, Fill, Geom, Gradient, GradientShape, GradientStop, Line, MAX_LEVEL,
     Paragraph, SchemeSlot, Shadow, Shape, ShapeStyle, TextBody, Xfrm,
 };
+use deckcraft_model::RunProps;
 use deckcraft_model::text::RunKind;
 
 fn slot(i: usize) -> SchemeSlot {
@@ -213,6 +214,9 @@ pub(super) fn layout_items(d: &Diagram, area: Xfrm) -> Vec<Item> {
         if let Some(c) = &d.text_color {
             set_color(sh, c);
         }
+        if let Some(o) = &d.text_style {
+            set_props(sh, o);
+        }
     }
     v
 }
@@ -290,14 +294,41 @@ pub(super) fn set_color(sh: &mut Shape, c: &ColorRef) {
     }
 }
 
-/// Every run of the shape's text without a colour of its own.
-pub(super) fn unset_color(sh: &mut Shape) {
+/// The Font dialog's settings (`Diagram::text_style`) on every run of the shape's text: only the properties `o` sets.
+pub(super) fn set_props(sh: &mut Shape, o: &RunProps) {
     let Some(body) = &mut sh.text else { return };
+    let put = |r: &mut RunProps| {
+        if o.font.is_some() {
+            r.font = o.font.clone();
+        }
+        r.bold = o.bold.or(r.bold);
+        r.italic = o.italic.or(r.italic);
+        if o.underline.is_some() {
+            r.underline = o.underline.clone();
+        }
+        r.strike = o.strike.or(r.strike);
+        r.baseline = o.baseline.or(r.baseline);
+        r.caps = o.caps.or(r.caps);
+        r.spacing = o.spacing.or(r.spacing);
+    };
     for p in &mut body.paragraphs {
         for r in &mut p.runs {
-            r.props.fill = None;
+            put(&mut r.props);
         }
-        p.end_props.fill = None;
+        put(&mut p.end_props);
+    }
+}
+
+/// Clear All Formatting on the shape's text: every run property but the language and the link, as `format.clear` does
+/// on text.
+pub(super) fn clear_props(sh: &mut Shape) {
+    let Some(body) = &mut sh.text else { return };
+    let clear = |r: &mut RunProps| *r = RunProps { lang: r.lang.take(), link: r.link.take(), ..Default::default() };
+    for p in &mut body.paragraphs {
+        for r in &mut p.runs {
+            clear(&mut r.props);
+        }
+        clear(&mut p.end_props);
     }
 }
 

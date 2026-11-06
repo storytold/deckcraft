@@ -7725,6 +7725,56 @@ fn font_dialog_colour_on_a_selected_smartart_graphic_lasts() {
     assert!(smartart_diagram(&s, id).text_color.is_some());
 }
 
+fn graphic_runs(s: &Session, id: ShapeId) -> Vec<deckcraft_model::RunProps> {
+    match s.doc().unwrap().shape(id).unwrap().kind.clone() {
+        deckcraft_model::ShapeKind::Group { children, .. } => children
+            .iter()
+            .filter_map(|c| c.text.as_ref())
+            .flat_map(|t| t.paragraphs.iter().flat_map(|p| p.runs.iter().map(|r| r.props.clone())))
+            .collect(),
+        _ => panic!("group"),
+    }
+}
+
+/// Every setting of the Font dialog on a selected graphic (family, bold, italic, underline, strikethrough, caps,
+/// spacing) is on its text and lasts across a regenerate; on an imported graphic it is applied in place.
+#[test]
+fn font_dialog_run_settings_on_a_selected_smartart_graphic_last() {
+    for imported in [false, true] {
+        let mut s = session();
+        let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+        let id = ShapeId(gid as u32);
+        s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+        if imported {
+            mark_imported(&mut s, id);
+        }
+        s.execute(
+            "format.fontDialog",
+            &json!({"family": "Georgia", "bold": true, "italic": true, "underline": "sng", "strike": "single", "caps": "all", "spacing": 2.0}),
+        )
+        .unwrap();
+        let check = |s: &Session| {
+            let runs = graphic_runs(s, id);
+            assert!(!runs.is_empty());
+            for r in runs {
+                assert_eq!(
+                    (r.font.as_deref(), r.bold, r.italic, r.underline.as_deref(), r.caps, r.spacing),
+                    (Some("Georgia"), Some(true), Some(true), Some("sng"), Some(deckcraft_model::text::Caps::All), Some(2.0)),
+                    "imported={imported}"
+                );
+                assert!(r.strike.is_some());
+            }
+        };
+        check(&s);
+        assert!(smartart_diagram(&s, id).text_style.is_some());
+        if !imported {
+            // A regenerate (any outline edit) keeps them.
+            s.execute("smartArt.style", &json!({"id": gid, "style": "subtle"})).unwrap();
+            check(&s);
+        }
+    }
+}
+
 /// Clear All Formatting on a selected graphic puts its text colour and size back to automatic, for a generated graphic
 /// and, in place, for an imported one.
 #[test]
@@ -7736,6 +7786,7 @@ fn clear_formatting_on_a_selected_smartart_graphic_resets_colour_and_size() {
         s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
         s.execute("format.color", &json!({"color": "#00AA00"})).unwrap();
         s.execute("format.size", &json!({"size": 31})).unwrap();
+        s.execute("format.fontDialog", &json!({"bold": true, "italic": true, "underline": "sng", "family": "Georgia"})).unwrap();
         if imported {
             mark_imported(&mut s, id);
         }
@@ -7750,38 +7801,47 @@ fn clear_formatting_on_a_selected_smartart_graphic_resets_colour_and_size() {
         for t in kids.iter().filter_map(|c| c.text.as_ref()) {
             assert!(t.paragraphs.iter().all(|p| p.runs.iter().all(|r| r.props.fill != green)), "imported={imported}: the green is gone");
         }
+        // Bold, italic and the rest go too, with the stored text look.
+        assert!(d.text_style.is_none());
+        assert!(graphic_runs(&s, id).iter().all(|r| r.bold.is_none() && r.italic.is_none() && r.underline.is_none() && r.font.is_none()));
     }
 }
 
-/// `format.color` with `color: null` is Automatic on a selected graphic (generated or imported); without a graphic it
-/// is refused like a missing colour.
+/// Clear All Formatting on an imported graphic is one edit, and brings shrink-on-overflow back only on the text a set
+/// size had fixed: a child the file had at "do not autofit" stays so when no size was set.
 #[test]
-fn format_color_null_on_a_selected_smartart_graphic_is_automatic() {
-    for imported in [false, true] {
+fn clear_formatting_on_an_imported_smartart_graphic_is_one_edit_that_keeps_autofit() {
+    for set_size in [false, true] {
         let mut s = session();
         let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
         let id = ShapeId(gid as u32);
         s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
-        s.execute("format.color", &json!({"color": "#00AA00"})).unwrap();
-        assert!(smartart_diagram(&s, id).text_color.is_some());
-        if imported {
-            mark_imported(&mut s, id);
+        if set_size {
+            s.execute("format.size", &json!({"size": 31})).unwrap();
         }
-        s.execute("format.color", &json!({"color": null})).unwrap();
-        let d = smartart_diagram(&s, id);
-        assert_eq!((d.text_color, d.imported), (None, imported));
+        mark_imported(&mut s, id);
+        if !set_size {
+            let st = s.doc_mut().unwrap();
+            let doc = std::sync::Arc::make_mut(&mut st.doc);
+            let sel = st.selection.clone();
+            if let deckcraft_model::ShapeKind::Group { children, .. } =
+                &mut deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), id).unwrap().kind
+            {
+                for t in children.iter_mut().filter_map(|c| c.text.as_mut()) {
+                    t.body.autofit = Some(deckcraft_model::text::AutoFit::None);
+                }
+            }
+        }
+        let before = s.doc().unwrap().revision;
+        crate::cmd::smartart::clear_text_look(&mut s, id, "format.clear").unwrap();
+        assert_eq!(s.doc().unwrap().revision, before + 1, "one edit");
         let kids = match s.doc().unwrap().shape(id).unwrap().kind.clone() {
             deckcraft_model::ShapeKind::Group { children, .. } => children,
             _ => panic!("group"),
         };
-        let green = Some(deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(0, 0xAA, 0))));
         for t in kids.iter().filter_map(|c| c.text.as_ref()) {
-            assert!(t.paragraphs.iter().all(|p| p.runs.iter().all(|r| r.props.fill != green)));
+            let shrinks = matches!(t.body.autofit, Some(deckcraft_model::text::AutoFit::Shrink { .. }));
+            assert_eq!(shrinks, set_size, "set_size={set_size}");
         }
     }
-    let mut s = session();
-    let b = s.execute("insert.textBox", &json!({"text": "x"})).unwrap()["id"].as_u64().unwrap();
-    s.execute("edit.select", &json!({"ids": [b]})).unwrap();
-    assert!(s.execute("format.color", &json!({"color": null})).is_err());
-    assert!(s.execute("format.color", &json!({})).is_err());
 }
