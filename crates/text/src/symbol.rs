@@ -32,8 +32,8 @@ pub(crate) fn symbol_map_char(face: &FontFace, ch: char, sym: Option<&str>) -> O
 
 /// The Unicode look-alike that draws `ch`, a U+F0xx private-use code of the `a:sym` symbol font
 /// `sym`, when that font is not installed (or does not draw the code): the characters bullets use
-/// for these fonts. `None` when `ch` is not such a code, `sym` is not a symbol font, or the code
-/// has no standard Unicode character (the Symbol font's fragment glyphs).
+/// for these fonts. `None` when `ch` is not such a code, `sym` is not a symbol font, or a Symbol-font code
+/// has no standard Unicode character (its fragment glyphs); Wingdings and Webdings codes without a look-alike draw as a bullet.
 pub(crate) fn symbol_fallback_char(ch: char, sym: Option<&str>) -> Option<char> {
     let code = ch as u32;
     if !(0xF000..=0xF0FF).contains(&code) {

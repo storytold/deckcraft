@@ -255,12 +255,13 @@ fn shape_cells(
             }
         }
     }
-    // Items: maximal ranges of one level, face, script and shaping style (case mapping, language).
+    // Items: maximal ranges of one level, face, script and shaping style (case mapping, language, a:sym symbol font).
     let upper = |i: usize| styles.get(char_style.get(i).copied().unwrap_or(0)).is_some_and(|st| st.caps != Caps::None);
     let lang = |i: usize| styles.get(char_style.get(i).copied().unwrap_or(0)).and_then(|st| st.lang.as_deref());
     let kern = |i: usize| styles.get(char_style.get(i).copied().unwrap_or(0)).is_some_and(|st| st.kern);
     let up = |i: usize| cells.get(i).is_some_and(|c| c.upright);
-    let key = |i: usize| (levels.get(i).copied(), char_face.get(i).copied(), scripts.get(i).map(|s| s.0), upper(i), lang(i), kern(i), up(i));
+    let sym = |i: usize| styles.get(char_style.get(i).copied().unwrap_or(0)).and_then(|st| st.sym.as_deref());
+    let key = |i: usize| (levels.get(i).copied(), char_face.get(i).copied(), scripts.get(i).map(|s| s.0), upper(i), lang(i), kern(i), up(i), sym(i));
     let mut items: Vec<(usize, usize)> = Vec::new();
     let mut a = 0;
     while a < n {
