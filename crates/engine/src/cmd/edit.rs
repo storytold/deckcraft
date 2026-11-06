@@ -312,14 +312,14 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
                 families.push(family.to_string());
             }
         };
-        let mut visit = |ctx: &deckcraft_model::resolve::Ctx<'_>, shapes: &[Shape]| {
+        let visit = |ctx: &deckcraft_model::resolve::Ctx<'_>, shapes: &[Shape], add: &mut dyn FnMut(&str)| {
             deckcraft_model::walk(shapes, &mut |shape, _| {
                 if let Some(body) = &shape.text {
-                    crate::fonts::body_fonts(ctx, shape, body, true, None, &mut add);
+                    crate::fonts::body_fonts(ctx, shape, body, true, None, add);
                 }
                 if let deckcraft_model::ShapeKind::Table(table) = &shape.kind {
                     for cell in table.rows.iter().flat_map(|r| &r.cells) {
-                        crate::fonts::body_fonts(ctx, shape, &cell.text, true, None, &mut add);
+                        crate::fonts::body_fonts(ctx, shape, &cell.text, true, None, add);
                     }
                 }
             });
@@ -327,7 +327,8 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         if !s.clipboard.slides.is_empty() {
             for slide in st.doc.slides.iter().filter(|slide| st.selection.slides.contains(&slide.id)) {
                 if let Some(ctx) = deckcraft_model::resolve::Ctx::for_slide(&st.doc, slide) {
-                    visit(&ctx, &slide.shapes);
+                    visit(&ctx, &slide.shapes, &mut add);
+                    crate::fonts::body_fonts(&ctx, &Shape::default(), &slide.notes, true, None, &mut add);
                 }
             }
         } else if !s.clipboard.shapes.is_empty()
@@ -335,7 +336,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         {
             for id in &st.selection.shapes {
                 if let Some(shape) = st.shape(*id) {
-                    visit(&ctx, std::slice::from_ref(shape));
+                    visit(&ctx, std::slice::from_ref(shape), &mut add);
                 }
             }
         }

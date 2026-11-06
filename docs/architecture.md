@@ -48,7 +48,8 @@ symbol, bullet and metafile families through it without rewriting editing or exp
 names. Metafile caches include font scope; ordinary raster caches remain shared. Font pickers
 include the active document's original embedded family names.
 
-Formatting-preserving paste imports only needed source-only embedded families and media.
+Formatting-preserving paste imports only needed source-only embedded families and media,
+including families used only in a pasted slide's speaker notes.
 Existing destination families stay authoritative; plain-text paste imports no fonts. All
 content and font-import edits run inside the same outer command snapshot, so one undo/redo
 restores both. Paste as Picture renders with the source aliases. Installed-font loading and

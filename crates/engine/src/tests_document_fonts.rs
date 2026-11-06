@@ -553,6 +553,45 @@ fn pasted_slide_fonts_follow_the_resulting_layout_not_the_current_slide() {
 }
 
 #[test]
+fn pasted_slides_retain_fonts_used_only_in_speaker_notes() {
+    let mut source = Presentation::default();
+    let slide = Arc::make_mut(&mut source.slides[0]);
+    slide.shapes.clear();
+    slide.notes = TextBody::from_text("AAA");
+    slide.notes.paragraphs[0].runs[0].props.font = Some(FAMILY.into());
+    let bytes = font_bytes(700);
+    let media = source.add_media("notes.ttf", "font/ttf", bytes.clone()).unwrap();
+    source.embedded_fonts.push(EmbeddedFont { typeface: FAMILY.into(), regular: Some(media), ..Default::default() });
+
+    let mut s = Session::new();
+    s.add_document(DocState::new(source, None, "Notes-only font".into()));
+    let source = s.active_index().unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    let destination = s.active_index().unwrap();
+    s.set_active(source);
+    s.execute("edit.copy", &json!({"scope": "slides"})).unwrap();
+    s.set_active(destination);
+    let before = s.doc().unwrap().doc.clone();
+    s.execute("edit.paste", &json!({})).unwrap();
+    let after = s.doc().unwrap().doc.clone();
+    assert_eq!(after.slides.len(), before.slides.len() + 1);
+    let assert_notes_font = |p: &Presentation| {
+        let notes = &p.slides.last().unwrap().notes;
+        assert_eq!(notes.text(), "AAA");
+        assert_eq!(notes.paragraphs[0].runs[0].props.font.as_deref(), Some(FAMILY));
+        let font = p.embedded_fonts.iter().find(|font| font.typeface == FAMILY).expect("notes-only font must be retained");
+        assert_eq!(p.media(font.regular.unwrap()).unwrap().data.as_slice(), bytes.as_slice());
+    };
+    assert_notes_font(&after);
+    assert_one_paste_undo_redo(&mut s, &before, &after);
+    for format in ["deckcraft", "pptx"] {
+        let saved = cmd::file::save_bytes(&s.doc().unwrap().doc, format).unwrap();
+        open(&mut s, &format!("notes.{format}"), &cmd::base64_encode(&saved));
+        assert_notes_font(&s.doc().unwrap().doc);
+    }
+}
+
+#[test]
 fn pasted_fonts_follow_the_active_non_slide_target_theme() {
     for rich_text in [false, true] {
         for (view, params) in [
