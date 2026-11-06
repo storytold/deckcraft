@@ -83,6 +83,7 @@ fn config_dir() -> Option<std::path::PathBuf> {
     }
 }
 
+/// Load user interface and session preferences from the configuration directory.
 fn load_prefs(app: &mut SlideApp) {
     if std::env::var_os("DECKCRAFT_NO_PREFS").is_some() {
         return;
@@ -97,6 +98,7 @@ fn load_prefs(app: &mut SlideApp) {
     }
 }
 
+/// Persist user interface and session preferences to the configuration directory.
 fn save_prefs(app: &SlideApp) {
     if std::env::var_os("DECKCRAFT_NO_PREFS").is_some() {
         return;
@@ -196,6 +198,7 @@ fn startup(mut control_port: Option<u16>, args: impl IntoIterator<Item = String>
     Startup::Run { control_port, files, sample, show }
 }
 
+/// Load the default application window icon from the embedded 256x256 PNG asset.
 fn app_icon() -> Option<egui::IconData> {
     let png: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/256x256/apps/ai.storyteller.deckcraft.png");
     eframe::icon_data::from_png_bytes(png).map_err(|e| log::warn!("app icon: {e}")).ok()

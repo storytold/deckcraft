@@ -105,10 +105,12 @@ pub fn start() {
     });
 }
 
+/// Returns the current window search query string.
 fn query() -> String {
     web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
 }
 
+/// Retrieve a named query parameter from the current URL.
 fn query_param(key: &str) -> Option<String> {
     web_sys::UrlSearchParams::new_with_str(&query()).ok()?.get(key)
 }
@@ -228,6 +230,7 @@ fn browser_locale() -> Option<String> {
     web_sys::window().and_then(|w| w.navigator().language())
 }
 
+/// Append an event to the shared asynchronous file inbox.
 fn push_inbox(inbox: &Inbox, event: InboxEvent) {
     inbox.lock().unwrap_or_else(|e| e.into_inner()).push(event);
 }
@@ -259,6 +262,7 @@ fn download(path: &str, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// Deduce the download MIME type from the file extension.
 fn mime_for(name: &str) -> &'static str {
     match name.rsplit('.').next().map(str::to_ascii_lowercase).as_deref() {
         Some("png") => "image/png",
