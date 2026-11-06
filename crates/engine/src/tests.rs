@@ -7210,3 +7210,12 @@ fn shape_adjust_and_quick_style_reject_invalid_index() {
     assert_eq!(s.doc().unwrap().shape(id).unwrap().style, before.style);
     s.execute("shape.adjust", &json!({"value": 0.4})).unwrap();
 }
+
+/// The frames export promises its earlier files only for a failure while writing the new ones:
+/// a failed removal of the earlier ones afterwards leaves the new frames in place.
+#[test]
+fn export_doc_limits_the_kept_frames_promise_to_writing_failures() {
+    let doc = command_specs().iter().find(|c| c.id == "file.export").unwrap().params;
+    assert!(doc.contains("kept when writing the new ones fails"), "{doc}");
+    assert!(!doc.contains("kept when the export fails"), "{doc}");
+}

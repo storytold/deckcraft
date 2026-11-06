@@ -522,8 +522,9 @@ fn run_jobs(folder: &std::path::Path, jobs: impl Iterator<Item = Job>, cap: u64)
 }
 
 /// Render the frames of `doc` under `opts` into `folder` (created if missing). The new sequence
-/// replaces the earlier `frame-NNNNNN.png` files only once every frame is written; a failed export
-/// leaves them as they were. Nothing is written when the request is refused, when a frame's name
+/// replaces the earlier `frame-NNNNNN.png` files only once every frame is written; an export that
+/// fails before then (a write error, the byte cap) leaves them as they were. If removing them
+/// afterwards fails, the error says so and the new frames stay. Nothing is written when the request is refused, when a frame's name
 /// in `folder` is taken by something other than a regular file (a folder, a link), or when an
 /// interrupted export left earlier frames in its backup folder.
 pub fn export(doc: &Presentation, opts: &FramesOptions, folder: &str) -> Result<FramesOutput> {
