@@ -1,0 +1,15 @@
+[package]
+name = "deckcraft-collab"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft collaboration adapter: normalised operations, session-scoped keys, tombstones and deltas over the engine (ADR 0001-0010)"
+
+[lints]
+workspace = true
+
+[dependencies]
+deckcraft-collab-proto = { path = "../collab-proto" }
+deckcraft-model = { workspace = true }
+deckcraft-engine = { workspace = true }
+serde_json = { workspace = true }

@@ -453,13 +453,13 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
 
 Все PR — в `main` через PR, без изменений CI, фича за флагом.
 
-1. **PR 1: протокол и адаптер (без сервера и UI).**
-   `crates/collab-proto` (serde-типы конверта), `deckcraft-collab-adapter`
-   (нормализация команд по allowlist, `delta`, карта ключей, надгробия),
-   headless-тесты 2 клиентов на модель. Сеть не нужна: операции применяются
-   через `apply_remote`.
-2. **PR 2: применение и undo.** `Session::apply_remote` мимо `push_undo`,
-   per-user инверсии на снимках `Arc`, `regroup` отключён в collab, тесты 14–15.
+1. **PR 1: протокол, адаптер и путь применения без undo.**
+   `crates/collab-proto` (serde-типы конверта), `deckcraft-collab`
+   (нормализация операций по allowlist, `delta`, карта ключей, надгробия,
+   перестановки через якорь), `Session::apply_remote` мимо `push_undo`,
+   headless-тесты 2 клиентов на модель. Сеть не нужна.
+2. **PR 2: per-user undo.** Инверсии на снимках `Arc`, `undo-conflict`,
+   отключение `regroup` в collab, лимит шагов; тесты 14–15.
 3. **PR 3: транспорт и сервер.** `crates/collab` (WS-клиент, reconnect,
    `resync`), общий `craft-collab-server` + адаптер, снапшоты, дедуп,
    healthcheck/metrics; тесты 11–13, 19.

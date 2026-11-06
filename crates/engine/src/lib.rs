@@ -634,12 +634,26 @@ impl Session {
     /// Run command `id`. A panic inside it becomes [`EngineError::Internal`] and leaves the
     /// presentation as it was.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
-        self.guarded(id, |s| s.execute_unguarded(id, params))
+        self.execute_inner(id, params, true)
+    }
+
+    /// Run a command that came from another participant of a shared session.
+    ///
+    /// The same eligibility check, rollback on failure and panic guard as [`Self::execute`], but
+    /// the step is **not** pushed to this document's undo history and **not** appended to the
+    /// local journal: those belong to the person using this session (ADR 0010). The caller
+    /// applies the authoritative result itself.
+    pub fn apply_remote(&mut self, id: &str, params: &Value) -> Result<Value> {
+        self.execute_inner(id, params, false)
+    }
+
+    fn execute_inner(&mut self, id: &str, params: &Value, record: bool) -> Result<Value> {
+        self.guarded(id, |s| s.execute_unguarded(id, params, record))
     }
 
     /// Resolve and run a command, settling composition first, checking eligibility, rolling back a
     /// failed outer command, and committing the resulting undo entry or journal record.
-    fn execute_unguarded(&mut self, id: &str, params: &Value) -> Result<Value> {
+    fn execute_unguarded(&mut self, id: &str, params: &Value, record: bool) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
         // Any other edit (or a click, a key, undo) settles an input method's composition first.
         if self.depth == 0 && (spec.journal || spec.undoable) && !matches!(id, "text.compose" | "text.commit") {
@@ -686,10 +700,11 @@ impl Session {
             && st.interaction.is_none()
             && spec.undoable
             && outer
+            && record
         {
             push_undo(st, HistoryEntry { label: spec.label.to_string(), doc: old, selection: sel, vertex_kind });
         }
-        if spec.journal && outer {
+        if spec.journal && outer && record {
             self.journal.push((id.to_string(), params.clone()));
             if self.journal.len() > 10_000 {
                 self.journal.drain(..1000);

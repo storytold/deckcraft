@@ -58,6 +58,10 @@ pub const TABLE: &[(&str, Class)] = &[
     ("pptx", Class::Layer(3)),
     ("pdf", Class::Layer(4)),
     ("engine", Class::Layer(5)),
+    // Collaboration adapter: sits above the engine because it drives commands (L5 chain below).
+    ("collab", Class::Layer(5)),
+    // Wire types only: no workspace crate, no engine.
+    ("collab-proto", Class::Standalone),
     ("ui-egui", Class::Layer(6)),
     ("mcp", Class::Layer(6)),
     ("testkit", Class::Testkit),
@@ -73,7 +77,7 @@ pub const TABLE: &[(&str, Class)] = &[
 pub const DEV_EXCEPTIONS: &[(&str, &str)] = &[("pptx", "engine")];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).
-pub const INTRA_LAYER_ORDER: &[&[&str]] = &[];
+pub const INTRA_LAYER_ORDER: &[&[&str]] = &[&["engine", "collab"]];
 
 fn intra_layer_allowed(from: &str, to: &str) -> bool {
     let (from, to) = (short_name(from), short_name(to));
