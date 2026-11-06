@@ -1,5 +1,5 @@
 use super::presenter::{NOTES_MAX, NOTES_MIN};
-use super::render::render_thumb;
+use super::render::{grid_thumb_size, render_thumb};
 use super::{Align2, Color32, CornerRadius, Pos2, Presentation, Rect, Show, Stroke, json, pos2, theme, vec2};
 use crate::sections::{self, GridFilter};
 
@@ -195,10 +195,6 @@ const WHEEL_NOTCHES_PER_DOUBLING: f32 = 4.0;
 
 /// PowerPoint's slide show magnifier goes up to 400%.
 const WHEEL_ZOOM_MAX: f32 = 4.0;
-
-/// The most thumbnails kept in memory at once. The grid only renders the cells in view, so this
-/// bounds a long deck without limiting how many slides it can show.
-pub(super) const MAX_THUMBS: usize = 128;
 
 const TOOL_BAR_W: f32 = 520.0;
 
@@ -489,7 +485,8 @@ pub(super) fn paint_grid(painter: &egui::Painter, ctx: &egui::Context, show: &mu
 
     // Keep only the thumbnails the grid is showing: a 300-slide deck must not keep 300 textures.
     let visible: Vec<usize> = layout.cells.iter().map(|c| c.slide).collect();
-    show.thumbs.retain(|(i, _)| visible.contains(i));
+    let thumb_size = grid_thumb_size(ctx, doc, visible.len());
+    show.thumbs.retain(|(i, texture)| visible.contains(i) && texture.size() == [thumb_size.0 as usize, thumb_size.1 as usize]);
     // A scrolled row can start above the grid; clip it so it never paints over the title or tabs.
     let cells = painter.with_clip_rect(frame.inner);
     let budget = if layout.cells.len() <= 12 { 12 } else { GRID_BUDGET };
@@ -502,7 +499,7 @@ pub(super) fn paint_grid(painter: &egui::Painter, ctx: &egui::Context, show: &mu
             Some(t) => Some(t),
             None if made < budget => {
                 made += 1;
-                render_thumb(ctx, show, doc, i)
+                render_thumb(ctx, show, doc, i, visible.len(), thumb_size)
             }
             None => {
                 ctx.request_repaint();

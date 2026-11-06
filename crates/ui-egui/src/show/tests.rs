@@ -1545,7 +1545,7 @@ fn transition_preview_for_first_slide_transitions_from_black() {
     assert_eq!(tr.dur, 0.5);
 }
 
-/// Grid keyboard and pointer regression coverage.
+/// Regression coverage for grid keyboard navigation, pointer targets and preview caching.
 mod grid_regressions {
     use super::*;
     use crate::show::{keys, zoom};
@@ -1604,6 +1604,29 @@ mod grid_regressions {
     }
 
     #[test]
+    fn every_visible_thumbnail_eventually_renders_above_128_cells() {
+        let doc = empty_deck(200);
+        let full = Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 2560.0));
+        let frame = grid_frame(full, &doc);
+        let slides: Vec<usize> = (0..doc.slides.len()).collect();
+        let layout = grid_layout(frame.inner, &slides, zoom::slide_aspect(&doc), 0.0);
+        assert!(layout.cells.len() > 128, "the setup must exceed the former cache cap");
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        let mut show = Show::new(&doc, 0, false, false);
+        show.open_grid(false, &doc);
+        for _ in 0..80 {
+            let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
+                zoom::paint_grid(ui.painter(), ui.ctx(), &mut show, &doc, full);
+            });
+            output.textures_delta.clear();
+        }
+        let missing: Vec<usize> =
+            layout.cells.iter().filter(|cell| !show.thumbs.iter().any(|(i, _)| *i == cell.slide)).map(|cell| cell.slide).collect();
+        assert!(missing.is_empty(), "all visible cells must finish rendering after 80 frames, missing {}", missing.len());
+    }
+
+    #[test]
     fn escape_g_and_minus_close_an_empty_number_grid_without_ending_show() {
         let doc = empty_deck(3);
         for presenter in [false, true] {
@@ -1639,6 +1662,45 @@ mod grid_regressions {
             let below = pos2(frame.inner.center().x, frame.inner.max.y + 1.0);
             assert_eq!(grid_slide_hit(full, &doc, GridFilter::All, scroll, above), None);
             assert_eq!(grid_slide_hit(full, &doc, GridFilter::All, scroll, below), None);
+        }
+    }
+    #[test]
+    fn grid_cache_releases_offscreen_previews_and_finishes_repainting() {
+        let doc = empty_deck(200);
+        let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        let mut show = Show::new(&doc, 0, false, false);
+        show.open_grid(false, &doc);
+        for scroll in [0.0, f32::MAX] {
+            show.grid_scroll = scroll;
+            for _ in 0..24 {
+                let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
+                    zoom::paint_grid(ui.painter(), ui.ctx(), &mut show, &doc, full);
+                });
+                output.textures_delta.clear();
+            }
+            let slides: Vec<usize> = (0..doc.slides.len()).collect();
+            let layout = grid_layout(grid_frame(full, &doc).inner, &slides, zoom::slide_aspect(&doc), show.grid_scroll);
+            assert_eq!(show.thumbs.len(), layout.cells.len());
+            assert!(show.thumbs.iter().all(|(i, _)| layout.cells.iter().any(|c| c.slide == *i)), "only visible previews remain");
+            assert!(!ctx.has_requested_repaint(), "a fully loaded grid must stop requesting immediate repaints");
+        }
+        assert!(show.thumbs.iter().any(|(i, _)| *i == 199), "the last slide loads after scrolling");
+    }
+
+    #[test]
+    fn grid_preview_dimensions_bound_extreme_shapes_and_large_viewports() {
+        let mut doc = empty_deck(1);
+        let ctx = egui::Context::default();
+        for (w, h) in [(960.0, 540.0), (1.0, 1e12), (1e12, 1.0), (f64::NAN, 0.0)] {
+            doc.slide_size.width = w;
+            doc.slide_size.height = h;
+            for visible in [1, 160, 10_000] {
+                let (w, h) = crate::show::render::grid_thumb_size(&ctx, &doc, visible);
+                assert!((1..=320).contains(&w) && (1..=320).contains(&h));
+                assert!((w as usize) * (h as usize) * visible <= 16 * 1024 * 1024);
+            }
         }
     }
 }
