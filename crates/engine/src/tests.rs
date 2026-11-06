@@ -6783,6 +6783,15 @@ fn connector_default_sites_follow_the_dominant_direction() {
     let big = s.execute("shape.insert", &json!({"preset": "rect", "rect": [600, 300, 200, 100]})).unwrap()["id"].as_u64().unwrap();
     let small = s.execute("shape.insert", &json!({"preset": "rect", "rect": [650, 325, 100, 50]})).unwrap()["id"].as_u64().unwrap();
     assert_eq!(sites(&mut s, big, small), (Some(0), Some(0)));
+    // One site given: the other end is the other shape's site closest to it, as before the facing
+    // rule (which is for when neither is given). From a's right side (100, 25) the diagonal box's
+    // top (200, 200) is nearest; to its left side (150, 225), a's bottom (50, 50).
+    let r = s.execute("shape.connect", &json!({"from": a, "to": diag, "fromSite": 3})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(3), Some(0)), "fromSite only: {r}");
+    let r = s.execute("shape.connect", &json!({"from": a, "to": diag, "toSite": 1})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(2), Some(1)), "toSite only: {r}");
+    let r = s.execute("shape.connect", &json!({"from": a, "to": diag, "fromSite": 2, "toSite": 3})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(2), Some(3)), "both given: {r}");
 }
 
 /// A size (or colour, bold…) set on a shape before it has any text survives the text that is

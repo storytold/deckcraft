@@ -51,8 +51,24 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         let best = cos.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         cos.iter().position(|x| *x >= best - 1e-9).unwrap_or(0)
     };
-    let ia = pick(&a, "fromSite").unwrap_or_else(|| facing(&a, ca, cb.x - ca.x, cb.y - ca.y));
-    let ib = pick(&b, "toSite").unwrap_or_else(|| facing(&b, cb, ca.x - cb.x, ca.y - cb.y));
+    // With one site given, the other end is the site of the other shape closest to it, as before;
+    // the facing rule is for the case where neither is given.
+    let closest = |v: &[deckcraft_geom::Point], to: deckcraft_geom::Point| {
+        let mut best = (f64::MAX, 0);
+        for (i, q) in v.iter().enumerate() {
+            let d = (*q - to).hypot();
+            if d < best.0 {
+                best = (d, i);
+            }
+        }
+        best.1
+    };
+    let (ia, ib) = match (pick(&a, "fromSite"), pick(&b, "toSite")) {
+        (Some(i), Some(j)) => (i, j),
+        (Some(i), None) => (i, closest(&b, a[i])),
+        (None, Some(j)) => (closest(&a, b[j]), j),
+        (None, None) => (facing(&a, ca, cb.x - ca.x, cb.y - ca.y), facing(&b, cb, ca.x - cb.x, ca.y - cb.y)),
+    };
     let (p0, p1) = (a[ia], b[ib]);
     let id = match id_param(p, "id", "shape.connect")? {
         // The ends are in slide space and rerouting follows the slide's own connectors, so a line
