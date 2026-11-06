@@ -50,6 +50,9 @@ include the active document's original embedded family names.
 
 Formatting-preserving paste imports only needed source-only embedded families and media,
 including families used only in a pasted slide's speaker notes.
+Notes font discovery resolves a notes-slide body placeholder against the destination notes
+master's inherited list/body styles and theme, rather than the slide's theme. Notes-local
+list styles and explicit paragraph/run formatting take precedence over the master.
 Existing destination families stay authoritative; plain-text paste imports no fonts. All
 content and font-import edits run inside the same outer command snapshot, so one undo/redo
 restores both. Paste as Picture renders with the source aliases. Installed-font loading and

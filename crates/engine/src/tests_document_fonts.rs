@@ -592,6 +592,141 @@ fn pasted_slides_retain_fonts_used_only_in_speaker_notes() {
 }
 
 #[test]
+fn pasted_notes_fonts_follow_the_destination_notes_master_and_explicit_overrides() {
+    use deckcraft_model::resolve::{Ctx, Owner};
+    use deckcraft_model::text::{LevelStyle, RunProps};
+    use deckcraft_model::{PhType, Placeholder};
+
+    for case in [
+        "master style",
+        "placeholder style",
+        "master font reference is not inherited",
+        "unused master font reference",
+        "paragraph override",
+        "run override",
+        "local style override",
+        "local source font",
+        "different destination",
+        "explicit source font",
+    ] {
+        let mut source = Presentation::default();
+        Arc::make_mut(&mut source.masters[0]).theme.fonts.minor.latin = "Source slide font".into();
+        let mut notes_master = (*source.masters[0]).clone();
+        notes_master.theme.fonts.minor.latin = FAMILY.into();
+        notes_master.theme.fonts.minor.ea = "Arial".into();
+        notes_master.theme.fonts.minor.cs = "Arial".into();
+        let inherited = RunProps {
+            font: Some("+mn-lt".into()),
+            font_ea: Some("Arial".into()),
+            font_cs: Some("Arial".into()),
+            font_sym: Some("Arial".into()),
+            ..Default::default()
+        };
+        notes_master.body_style.set(0, LevelStyle { run: inherited.clone(), ..Default::default() });
+        let mut placeholder = Shape {
+            id: ShapeId(900),
+            ph: Some(Placeholder { kind: PhType::Body, idx: 1, ..Default::default() }),
+            text: Some(TextBody::default()),
+            ..Default::default()
+        };
+        if case == "placeholder style" {
+            notes_master.body_style.levels.clear();
+            placeholder.text.as_mut().unwrap().list_style.set(0, LevelStyle { run: inherited, ..Default::default() });
+        }
+        if matches!(case, "master font reference is not inherited" | "unused master font reference") {
+            notes_master.theme.fonts.major.latin = if case == "unused master font reference" { FAMILY } else { "Arial" }.into();
+            placeholder.style = Some(deckcraft_model::style::ShapeStyle {
+                line_ref: (0, ColorRef::rgb(Rgba::BLACK)),
+                fill_ref: (0, ColorRef::rgb(Rgba::BLACK)),
+                effect_ref: (0, ColorRef::rgb(Rgba::BLACK)),
+                font_ref: ("major".into(), None),
+            });
+            if case == "unused master font reference" {
+                notes_master.theme.fonts.minor.latin = "Arial".into();
+            }
+        }
+        notes_master.shapes = vec![placeholder];
+        source.notes_master = Some(Arc::new(notes_master.clone()));
+        let slide = Arc::make_mut(&mut source.slides[0]);
+        slide.shapes.clear();
+        slide.notes = TextBody::from_text("AAA");
+        let explicit = RunProps {
+            font: Some(if case == "explicit source font" { FAMILY } else { "Arial" }.into()),
+            font_ea: Some("Arial".into()),
+            font_cs: Some("Arial".into()),
+            font_sym: Some("Arial".into()),
+            ..Default::default()
+        };
+        match case {
+            "paragraph override" => slide.notes.paragraphs[0].def_props = explicit,
+            "run override" | "explicit source font" => slide.notes.paragraphs[0].runs[0].props = explicit,
+            "local style override" | "local source font" => {
+                let mut local = explicit;
+                local.font = Some(if case == "local source font" { FAMILY } else { "Arial" }.into());
+                slide.notes.list_style.set(0, LevelStyle { run: local, ..Default::default() });
+            }
+            _ => {}
+        }
+        let bytes = font_bytes(700);
+        let media = source.add_media("notes.ttf", "font/ttf", bytes.clone()).unwrap();
+        source.embedded_fonts.push(EmbeddedFont { typeface: FAMILY.into(), regular: Some(media), ..Default::default() });
+        let mut destination = Presentation::default();
+        Arc::make_mut(&mut destination.masters[0]).theme.fonts.minor.latin = "Destination slide font".into();
+        if matches!(case, "different destination" | "explicit source font" | "local source font") {
+            notes_master.theme.fonts.minor.latin = "Arial".into();
+        }
+        destination.notes_master = Some(Arc::new(notes_master));
+        Arc::make_mut(&mut destination.slides[0]).shapes.clear();
+        let retain = matches!(
+            case,
+            "master style" | "placeholder style" | "master font reference is not inherited" | "explicit source font" | "local source font"
+        );
+        let mut s = Session::new();
+        s.add_document(DocState::new(source, None, "Source notes".into()));
+        let source = s.active_index().unwrap();
+        s.add_document(DocState::new(destination, None, "Destination notes".into()));
+        let destination = s.active_index().unwrap();
+        s.set_active(source);
+        s.execute("edit.copy", &json!({"scope": "slides"})).unwrap();
+        s.set_active(destination);
+        let before = s.doc().unwrap().doc.clone();
+        s.execute("edit.paste", &json!({})).unwrap();
+        let after = s.doc().unwrap().doc.clone();
+        let assert_notes = |p: &Presentation| {
+            let notes = &p.slides.last().unwrap().notes;
+            assert_eq!(notes.text(), "AAA", "{case}");
+            let master = p.notes_master.as_ref().unwrap();
+            let ctx = Ctx { owner: Owner::Slide, ..Ctx::for_master(p, master) };
+            let shape =
+                Shape { ph: Some(Placeholder { kind: PhType::Body, idx: 1, ..Default::default() }), text: Some(notes.clone()), ..Default::default() };
+            let para = &notes.paragraphs[0];
+            let props = deckcraft_model::resolve::run(&ctx, &shape, para, &para.runs[0].props);
+            assert_eq!(deckcraft_model::resolve::font_family(&ctx, &props), if retain { FAMILY } else { "Arial" }, "{case}");
+            if retain {
+                let font = p
+                    .embedded_fonts
+                    .iter()
+                    .find(|font| font.typeface == FAMILY)
+                    .unwrap_or_else(|| panic!("{case}: inherited notes font must be retained"));
+                assert_eq!(p.media(font.regular.unwrap()).unwrap().data.as_slice(), bytes.as_slice(), "{case}");
+            } else {
+                assert!(p.embedded_fonts.is_empty(), "{case}: overridden notes-master fonts must not be imported");
+            }
+        };
+        assert_notes(&after);
+        assert_one_paste_undo_redo(&mut s, &before, &after);
+        // Native notes retain local list styles; PPTX import intentionally discards them.
+        let formats: &[&str] = if matches!(case, "local style override" | "local source font") { &["deckcraft"] } else { &["deckcraft", "pptx"] };
+        for &format in formats {
+            s.set_active(destination);
+            let saved = cmd::file::save_bytes(&s.doc().unwrap().doc, format).unwrap();
+            open(&mut s, &format!("notes-inheritance.{format}"), &cmd::base64_encode(&saved));
+            assert_notes(&s.doc().unwrap().doc);
+        }
+    }
+}
+
+#[test]
 fn pasted_fonts_follow_the_active_non_slide_target_theme() {
     for rich_text in [false, true] {
         for (view, params) in [

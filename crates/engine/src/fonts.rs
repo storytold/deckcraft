@@ -78,6 +78,10 @@ pub(crate) fn body_fonts(
         if range.is_some_and(|(a, b)| pi < a.0 || pi > b.0) {
             continue;
         }
+        // Notes and table cells can supply a body separate from the resolving shape.
+        // Borrow its local defaults above the placeholder/master defaults.
+        let local = body.list_style.level(para.level);
+        let inherited = resolve::level_style(ctx, s, para.level);
         let mut offset = 0usize;
         let mut has_text = false;
         for run in &para.runs {
@@ -98,7 +102,12 @@ pub(crate) fn body_fonts(
                 continue;
             }
             has_text = true;
-            let r = resolve::run(ctx, s, para, &run.props);
+            let mut r = run.props.clone();
+            r.inherit(&para.def_props);
+            if let Some(local) = local {
+                r.inherit(&local.run);
+            }
+            r.inherit(&inherited.run);
             add(&resolve::font_family(ctx, &r));
             if include_slots {
                 let major = r.font.as_deref().is_some_and(|f| f.starts_with("+mj"));
@@ -122,7 +131,11 @@ pub(crate) fn body_fonts(
                 }
             }
         }
-        let pp = resolve::para(ctx, s, para);
+        let mut pp = para.props.clone();
+        if let Some(local) = local {
+            pp.inherit(&local.para);
+        }
+        pp.inherit(&inherited.para);
         if has_text
             && matches!(pp.bullet, Some(Bullet::Char { .. }))
             && let Some(f) = pp.bullet_font.as_deref()

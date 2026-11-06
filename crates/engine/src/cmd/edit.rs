@@ -328,7 +328,19 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
             for slide in st.doc.slides.iter().filter(|slide| st.selection.slides.contains(&slide.id)) {
                 if let Some(ctx) = deckcraft_model::resolve::Ctx::for_slide(&st.doc, slide) {
                     visit(&ctx, &slide.shapes, &mut add);
-                    crate::fonts::body_fonts(&ctx, &Shape::default(), &slide.notes, true, None, &mut add);
+                    if let Some(master) = st.doc.notes_master.as_deref().filter(|master| !master.shapes.is_empty()) {
+                        let notes_ctx = deckcraft_model::resolve::Ctx {
+                            owner: deckcraft_model::resolve::Owner::Slide,
+                            ..deckcraft_model::resolve::Ctx::for_master(&st.doc, master)
+                        };
+                        let notes_shape = Shape {
+                            ph: Some(deckcraft_model::Placeholder { kind: deckcraft_model::PhType::Body, idx: 1, ..Default::default() }),
+                            ..Default::default()
+                        };
+                        crate::fonts::body_fonts(&notes_ctx, &notes_shape, &slide.notes, true, None, &mut add);
+                    } else {
+                        crate::fonts::body_fonts(&ctx, &Shape::default(), &slide.notes, true, None, &mut add);
+                    }
                 }
             }
         } else if !s.clipboard.shapes.is_empty()
