@@ -234,8 +234,9 @@ impl SlideApp {
             }
             "app.palette" => self.palette = Some((String::new(), 0)),
             "app.preferences" => self.dialog = Some(dialogs::Dialog::new("preferences")),
-            "app.language" => {
-                if let Some(code) = p.get("code").and_then(Value::as_str) {
+            id if id.starts_with("app.language") => {
+                let code_from_id = id.strip_prefix("app.language.");
+                if let Some(code) = code_from_id.or_else(|| p.get("code").and_then(Value::as_str)) {
                     if let Some(lang) = crate::i18n::Language::from_code(code) {
                         self.ui.interface_language = lang;
                         let active = lang.resolve(self.services.system_locale.as_deref());
