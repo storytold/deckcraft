@@ -1,17 +1,17 @@
 use super::{
     Arc, Fill, NO_ID_SPACE, PhType, Result, Run, RunKind, Session, Shape, ShapeId, Size, Target, TextBody, Value, bad, bool_param, json,
-    master_index, ok, opt_usize_param, rect_param, str_param, usize_param,
+    master_index, ok, opt_usize_param, rect_param, str_param,
 };
 
 pub(super) fn master_view(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let mi = usize_param(p, "master").unwrap_or_else(|| master_index(&st.doc, &st.selection));
+    let mi = opt_usize_param(p, "master", "view.slideMaster")?.unwrap_or_else(|| master_index(&st.doc, &st.selection));
     // A master thumbnail sends `{master}` and means the master itself. `{master, layout}` selects
     // that layout. With neither key, follow the current slide's layout.
     let layout = if p.get("master").is_some() && p.get("layout").is_none() {
         None
     } else {
-        usize_param(p, "layout")
+        opt_usize_param(p, "layout", "view.slideMaster")?
             .or_else(|| st.current_slide().and_then(|sl| st.doc.masters.get(mi).and_then(|m| m.layouts.iter().position(|l| l.id == sl.layout))))
     };
     let target = match layout {

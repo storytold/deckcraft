@@ -85,11 +85,13 @@ fn page_ids_round_trip_and_unknown_ids_are_refused() {
         assert_eq!(Page::parse(p.id()), Some(p));
     }
     assert_eq!(Page::parse(" SAVEAS "), Some(Page::SaveAs));
+    assert_eq!(Page::parse("account"), Some(Page::About));
+    assert_eq!(Page::parse("about"), Some(Page::About));
     assert_eq!(Page::parse("share"), None);
     assert_eq!(Page::parse(""), None);
     let (top, bottom) = entries(false);
     assert_eq!(top, vec![Nav::Page(Page::Home), Nav::Page(Page::New), Nav::Page(Page::Open)], "the start screen has no presentation pages");
-    assert_eq!(bottom, vec![Nav::Page(Page::Account), Nav::Options]);
+    assert_eq!(bottom, vec![Nav::Page(Page::About), Nav::Options]);
     assert_eq!(entries(true).0.len(), 9);
     assert_eq!(split_path("/home/me/Talk.pptx"), ("Talk.pptx".into(), "/home/me".into()));
     assert_eq!(format_bytes(512), "512 bytes");
@@ -166,7 +168,7 @@ fn every_page_renders() {
         (Page::SaveAs, "Not saved yet"),
         (Page::Print, "Print Hidden Slides"),
         (Page::Export, "Create PDF Document"),
-        (Page::Account, "About DeckCraft"),
+        (Page::About, "Credits"),
     ];
     for (p, marker) in checks {
         h.state_mut().run("app.backstage", json!({"page": p.id()})).unwrap();
@@ -389,6 +391,64 @@ fn ctrl_w_asks_before_closing_unsaved_changes() {
     h.run_steps(3);
     assert_eq!(h.state().session.documents().len(), 1);
     assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("close"));
+}
+
+/// Framed by a page that keeps the files (`?host=parent`), the Close prompt's Save is a real save:
+/// when the page doesn't get the file the presentation stays open with its changes, and when it
+/// does the presentation closes. (A plain browser download closes either way.)
+#[test]
+fn host_close_prompt_keeps_the_presentation_when_the_save_fails() {
+    for fail in [true, false] {
+        let services = Services {
+            host_save: Some(Box::new(move |_: &str, _: &[u8], _: bool| if fail { Err("the page is gone".into()) } else { Ok(()) })),
+            download: Some(Box::new(|_: &str, _: &[u8]| {})),
+            ..Default::default()
+        };
+        let mut h = harness(SlideApp::new(Session::with_new(), services));
+        h.state_mut().run("slide.new", json!({})).unwrap();
+        h.run_steps(2);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::W);
+        h.run_steps(3);
+        assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("close"));
+        // Enter is the prompt's Save.
+        h.key_press(Key::Enter);
+        h.run_steps(3);
+        assert!(h.state().dialog.is_none(), "fail={fail}");
+        let open = h.state().session.documents().len();
+        assert_eq!(open, usize::from(fail), "fail={fail}: open presentations");
+        if fail {
+            assert!(h.state().session.active().unwrap().is_dirty());
+        }
+    }
+}
+
+/// Framed by a page that keeps the files, Save As › Save under the presentation's own name goes
+/// back to the slide once the page has the file. The bug this prevents: that save leaves the
+/// file and the dirty flag as they were, so the Save As page stayed open and a second click sent
+/// the file again.
+#[test]
+fn host_save_as_under_the_same_name_returns_to_the_slide() {
+    let got: Rc<RefCell<Vec<(String, bool)>>> = Default::default();
+    let saves = got.clone();
+    let services = Services {
+        host_save: Some(Box::new(move |name: &str, _: &[u8], save_as: bool| {
+            saves.borrow_mut().push((name.to_string(), save_as));
+            Ok(())
+        })),
+        download: Some(Box::new(|_: &str, _: &[u8]| {})),
+        ..Default::default()
+    };
+    let mut app = SlideApp::new(Session::new(), services);
+    app.start_for_host().unwrap();
+    let deck = deckcraft_engine::cmd::file::save_bytes(&Session::with_new().doc().unwrap().doc, "pptx").unwrap();
+    app.open_from_host(Some("deck.pptx"), &deck);
+    let mut h = harness(app);
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Save");
+    h.run_steps(3);
+    assert_eq!(*got.borrow(), [("deck.pptx".to_string(), true)]);
+    assert!(h.state().backstage.is_none(), "the save returns to the slide");
 }
 
 /// Info shows the presentation's counts and properties, and edits them through file.properties.
@@ -703,4 +763,41 @@ fn options_in_backstage_opens_preferences_and_cancel_closes_it() {
     h.run_steps(3);
     assert!(h.state().dialog.is_none(), "Cancel closes Preferences dialog");
     assert!(h.state().backstage_open(), "Backstage remains open");
+}
+
+/// About replaces the account entry and still opens the credits dialog.
+#[test]
+fn about_has_product_links_and_credits_without_account_controls() {
+    let mut h = harness(new_app());
+    h.get_by_label("File").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Account").is_none());
+    click_nav(&h, "About");
+    h.run_steps(3);
+    assert_eq!(page(&h), Some(Page::About));
+    assert!(h.query_by_label("User Information").is_none());
+    assert!(h.query_by_label("Source on GitHub").is_some());
+    assert!(h.query_by_label("Join our community on Discord").is_some());
+    assert!(h.query_all_by_label("Appearance").next().is_some());
+    click_on_page(&h, "Credits");
+    h.run_steps(3);
+    assert!(h.state().dialog.is_some());
+    assert!(h.query_by_label("Contributors").is_some());
+    assert!(h.query_by_label("Models").is_some());
+}
+
+/// At the 900-point minimum window width the About columns stack and Appearance stays on the page.
+#[test]
+fn about_appearance_stays_on_the_page_at_minimum_width() {
+    let mut h = Harness::builder().with_size(egui::vec2(900.0, 900.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        new_app(),
+    );
+    h.state_mut().run("app.backstage", json!({"page": "about"})).unwrap();
+    h.run_steps(3);
+    let r = h.query_all_by_role_and_label(Role::ComboBox, "Appearance").next().expect("Appearance selector").rect();
+    assert!(r.right() <= 900.0, "Appearance selector ends at {}, inside the window", r.right());
 }
