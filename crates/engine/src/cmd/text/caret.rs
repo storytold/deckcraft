@@ -359,6 +359,8 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
             // The end mark keeps it too, so an empty `text` (no runs) carries the formatting to
             // the text set next.
             para.end_props = keep.clone();
+            // A run emptied by stripping leading tabs would shadow the end mark for the text typed next.
+            para.normalize();
         }
         body.paragraphs = nb.paragraphs;
         Ok(())
