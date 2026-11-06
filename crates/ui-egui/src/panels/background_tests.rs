@@ -2,7 +2,7 @@
 
 use deckcraft_engine::Session;
 use deckcraft_model::style::PictureMode;
-use deckcraft_model::{Background, Fill};
+use deckcraft_model::{Background, Fill, ShapeId};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use serde_json::json;
@@ -159,4 +159,29 @@ fn unrelated_pane_is_not_affected_by_selection_changes() {
     h.state_mut().session.execute("edit.select", &json!({"ids": [id]})).unwrap();
     h.run_steps(3);
     assert_eq!(h.state().ui.pane.as_deref(), Some("animation"));
+}
+
+/// Editing text outside of slide shapes (e.g. speaker notes where selection.text has notes: true)
+/// does not trigger Format Shape and keeps Format Background.
+#[test]
+fn speaker_notes_text_does_not_switch_to_format_shape() {
+    let s = Session::with_new();
+    let mut app = SlideApp::new(s, Services::default());
+    app.ui.pane = Some("background".into());
+    if let Some(d) = app.session.active_mut() {
+        d.selection.shapes.clear();
+        d.selection.text =
+            Some(deckcraft_engine::TextSel { shape: ShapeId(0), anchor: (0, 0), caret: (0, 0), cell: None, notes: true, line_end: None });
+    }
+    let mut h = Harness::builder().with_size(egui::vec2(1800.0, 1100.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    assert_eq!(h.state().ui.pane.as_deref(), Some("background"));
+    assert!(h.query_all_by_label("Format Background").next().is_some());
+    assert!(h.query_by_label("Format Shape").is_none());
 }

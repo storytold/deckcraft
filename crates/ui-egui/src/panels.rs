@@ -32,12 +32,12 @@ use thesaurus::thesaurus;
 
 /// Render the active right-hand task pane (Format Shape, Format Background, Animation,
 /// Selection, Comments, Designer, etc.), automatically switching between Format Shape
-/// and Format Background based on whether a shape or text is selected.
+/// and Format Background based on whether a shape is selected.
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(mut pane) = app.ui.pane.clone() else { return };
     if pane == "format" || pane == "background" {
-        let has_shape = app.session.active().is_some_and(|d| !d.selected_shapes().is_empty() || d.selection.text.is_some());
+        let has_shape = app.session.active().is_some_and(|d| !d.selected_shapes().is_empty());
         let sync_pane = if has_shape { "format" } else { "background" };
         if pane != sync_pane {
             pane = sync_pane.to_string();
