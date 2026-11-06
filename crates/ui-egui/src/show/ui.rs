@@ -860,7 +860,15 @@ fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) 
     }
     // Presenter view in a second window.
     if out.keep && show.presenter && !show.reading && !show.remote_opened {
-        presenter_window(ctx, show, doc, now, &mut out.keep);
+        // An immediate viewport paints before its parent. At startup (--show / .ppsx),
+        // the parent's first font-atlas allocation has not reached the GPU yet, so a
+        // child using a different scale can issue a partial update for a missing texture.
+        // Let the root finish its first frame before opening the presenter window.
+        if ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) == 0 {
+            ctx.request_repaint();
+        } else {
+            presenter_window(ctx, show, doc, now, &mut out.keep);
+        }
     }
 }
 

@@ -2,6 +2,38 @@
 
 use super::*;
 
+/// A show opened before the first UI frame must let the root upload its font atlas
+/// before an immediate presenter viewport can paint a partial atlas update.
+#[test]
+fn startup_show_defers_presenter_until_the_root_has_finished_a_frame() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    let mut app = SlideApp::new(session, crate::Services::default());
+    app.ui.presenter_view = true;
+    app.start_show(0, false);
+    let ctx = egui::Context::default();
+    let input = || egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1100.0, 700.0))), ..Default::default() };
+    let mut first = ctx.run_ui(input(), |ui| {
+        app.logic(ui.ctx());
+        app.ui(ui);
+    });
+    assert!(!first.viewport_output.contains_key(&egui::ViewportId::from_hash_of("deckcraft_presenter")));
+    assert_eq!(app.show.as_ref().unwrap().preview_spawns, 0);
+    first.textures_delta.clear();
+    for _ in 0..5 {
+        ctx.run_ui(input(), |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .textures_delta
+        .clear();
+        if app.show.as_ref().unwrap().preview_spawns > 0 {
+            break;
+        }
+    }
+    assert!(app.show.as_ref().unwrap().preview_spawns > 0, "presenter opens after the first root frame");
+}
+
 /// #1005: shapes stacked above a playing video must be drawn over its frame; the video, what
 /// is below it and other videos stay out of that overlay.
 #[test]

@@ -80,6 +80,7 @@ Reading View in a window with navigation: present (checklist row done).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-06 | minor | Direct --show / .ppsx startup defers native Presenter View until the root completes its first frame, avoiding a GPU font-atlas update before allocation. Scores unchanged |
 | 2026-11-06 | minor | native See All Slides scrolls through every slide and filters by section; presenter selection closes the grid; parity scores unchanged. The remote web presenter retains its 48-slide cap; section tabs are a DeckCraft navigation addition |
 | 2026-11-02 | minor | On Linux and the BSDs, Presenter View stays off when winit lists exactly one display; if it lists none, the setting is kept (#1156) |
 | 2026-10-27 | minor | Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows keep a still pointer, so clickable choices stay targetable; Reading View unchanged (#1445) |
