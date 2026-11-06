@@ -6790,6 +6790,27 @@ fn text_insert_keeps_the_formatting_set_in_an_empty_editor() {
     assert_eq!(run.bold, Some(true), "{run:?}");
 }
 
+/// Font toggles on a selected table read the first selected cell, so the second Bold turns it off
+/// again, also for a cell whose empty text got its paragraph from the first toggle.
+#[test]
+fn bold_toggles_on_a_selected_table_cell() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["", "b"], ["c", "d"]]));
+    let bold = |s: &Session, r: usize, c: usize| {
+        let st = s.doc().unwrap();
+        let deckcraft_model::ShapeKind::Table(t) = &st.shape(id).unwrap().kind else { panic!("table") };
+        let p = &t.cell(r, c).unwrap().text.paragraphs[0];
+        p.runs.first().map_or(p.end_props.bold, |r| r.props.bold)
+    };
+    s.execute("table.selectCells", &json!({"id": id, "from": [0, 0], "to": [0, 1]})).unwrap();
+    s.execute("format.bold", &json!({})).unwrap();
+    assert_eq!((bold(&s, 0, 0), bold(&s, 0, 1)), (Some(true), Some(true)));
+    assert_eq!(s.execute("format.state", &json!({})).unwrap()["bold"], json!(true));
+    s.execute("format.bold", &json!({})).unwrap();
+    assert_eq!((bold(&s, 0, 0), bold(&s, 0, 1)), (Some(false), Some(false)));
+    assert_eq!(bold(&s, 1, 0), None, "cells outside the range keep their formatting");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
