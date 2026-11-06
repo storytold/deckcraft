@@ -29,9 +29,9 @@ pub fn default_gradient(base: ColorRef, angle: f64) -> Gradient {
 pub fn gradient_json(g: &Gradient) -> Value {
     let stops: Vec<Value> = g.stops.iter().map(|s| json!([s.pos, cref_param(&s.color)])).collect();
     let flip = g.flip.map(GradientFlip::xml);
-    match &g.shape {
-        GradientShape::Linear { angle, .. } => {
-            json!({"stops": stops, "kind": "linear", "angle": angle, "rotateWithShape": g.rotate_with_shape, "flip": flip})
+    let mut v = match &g.shape {
+        GradientShape::Linear { angle, scaled } => {
+            json!({"stops": stops, "kind": "linear", "angle": angle, "scaled": scaled, "rotateWithShape": g.rotate_with_shape, "flip": flip})
         }
         GradientShape::Path { path, focus } => {
             let kind = match path.as_str() {
@@ -41,7 +41,11 @@ pub fn gradient_json(g: &Gradient) -> Value {
             };
             json!({"stops": stops, "kind": kind, "focus": focus, "rotateWithShape": g.rotate_with_shape, "flip": flip})
         }
+    };
+    if g.tile != [0.0; 4] {
+        v["tile"] = json!(g.tile);
     }
+    v
 }
 
 fn alpha_of(c: &ColorRef) -> f64 {
@@ -187,7 +191,7 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
                         "Path" => GradientShape::Path { path: "shape".into(), focus },
                         _ => GradientShape::Path { path: "circle".into(), focus },
                     };
-                    out = Some(Gradient { shape, ..g.clone() });
+                    out = Some(Gradient { shape, tile: [0.0; 4], ..g.clone() });
                 }
             }
         });
@@ -196,29 +200,31 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
     ui.horizontal_wrapped(|ui| {
         ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Direction"));
         match &g.shape {
-            GradientShape::Linear { angle, .. } => {
+            GradientShape::Linear { angle, scaled } => {
                 for (l, a) in DIRECTIONS_LINEAR {
                     let on = (angle - a).abs() < 0.5;
                     if ui.selectable_label(on, l).on_hover_text(format!("{a}°")).clicked() {
-                        out = Some(Gradient { shape: GradientShape::Linear { angle: a, scaled: false }, ..g.clone() });
+                        out = Some(Gradient { shape: GradientShape::Linear { angle: a, scaled: *scaled }, ..g.clone() });
                     }
                 }
             }
+            // A path gradient's tile rectangle places its center along with `focus`, so a new
+            // direction starts from the shape's own box.
             GradientShape::Path { path, focus } => {
                 for (l, f) in DIRECTIONS_PATH {
                     let on = focus.iter().zip(f).all(|(a, b)| (a - b).abs() < 1e-3);
                     if ui.selectable_label(on, l.trim_start_matches("From ")).on_hover_text(l).clicked() {
-                        out = Some(Gradient { shape: GradientShape::Path { path: path.clone(), focus: f }, ..g.clone() });
+                        out = Some(Gradient { shape: GradientShape::Path { path: path.clone(), focus: f }, tile: [0.0; 4], ..g.clone() });
                     }
                 }
             }
         }
     });
-    if let GradientShape::Linear { angle, .. } = &g.shape {
+    if let GradientShape::Linear { angle, scaled } = &g.shape {
         ui.horizontal(|ui| {
             ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Angle"));
             if let Some(a) = widgets::spinner(ui, &format!("{id}-angle"), "Angle", *angle, 15.0, "°", 70.0) {
-                out = Some(Gradient { shape: GradientShape::Linear { angle: a.rem_euclid(360.0), scaled: false }, ..g.clone() });
+                out = Some(Gradient { shape: GradientShape::Linear { angle: a.rem_euclid(360.0), scaled: *scaled }, ..g.clone() });
             }
         });
     }

@@ -15,22 +15,11 @@ pub(crate) fn stroke(
     lw: f64,
     alpha: f64,
 ) {
-    use deckcraft_model::style::{LineCap, LineJoin};
-    let cap = match line.cap.unwrap_or_default() {
-        LineCap::Flat => kurbo::Cap::Butt,
-        LineCap::Round => kurbo::Cap::Round,
-        LineCap::Square => kurbo::Cap::Square,
-    };
-    let join = match line.join.unwrap_or_default() {
-        LineJoin::Round => kurbo::Join::Round,
-        LineJoin::Bevel => kurbo::Join::Bevel,
-        LineJoin::Miter => kurbo::Join::Miter,
-    };
     // Hairlines stay visible at any zoom.
     let min_w = 0.5 / scale_of(m).max(1e-6);
     let sw = lw.max(min_w);
-    // PowerPoint's default miter limit is 8 widths (`a:miter lim="800000"`).
-    let mut sk = kurbo::Stroke::new(sw).with_caps(cap).with_join(join).with_miter_limit(8.0);
+    let mut sk = line_style(line, sw);
+    let cap = sk.start_cap;
     // Square caps on a dashed line square off only the line's own two ends (where a dash is
     // drawn): each dash itself ends flat, as PowerPoint draws them.
     let mut square_ends = None;
@@ -51,7 +40,7 @@ pub(crate) fn stroke(
         Some(Fill::Solid { color: c }) => {
             ctx.set_paint(color(rctx.color(c, ph), alpha));
         }
-        Some(Fill::Gradient(g)) if !g.stops.is_empty() => ctx.set_paint(line_gradient(rctx, g, ph, extent.unwrap_or(path), lw, alpha)),
+        Some(Fill::Gradient(g)) if !g.stops.is_empty() => set_line_gradient(ctx, rctx, line, g, ph, extent.unwrap_or(path), lw, m, alpha),
         _ => ctx.set_paint(color(Rgba::BLACK, alpha)),
     }
     // Compound lines: each band stroked along the path moved to its place across the width.
@@ -65,6 +54,7 @@ pub(crate) fn stroke(
             ctx.set_stroke(band);
             ctx.stroke_path(&compound::offset(path, d, tolerance));
         }
+        ctx.reset_paint_transform();
         return;
     }
     ctx.set_stroke(sk);
@@ -72,6 +62,7 @@ pub(crate) fn stroke(
     if let Some(ends) = square_ends {
         ctx.fill_path(&ends);
     }
+    ctx.reset_paint_transform();
 }
 
 /// The square caps of a dashed line drawn `width` wide with dash `pattern`: a half-width square
@@ -160,6 +151,68 @@ fn line_gradient(rctx: &Ctx, g: &deckcraft_model::style::Gradient, ph: Option<Rg
     let bounds = paint::tile_box(bounds, g.tile);
     let stops: Vec<(f64, Rgba)> = g.stops.iter().map(|s| (s.pos, rctx.color(&s.color, ph))).collect();
     paint::gradient(&g.shape, stops, bounds, alpha)
+}
+
+/// Set a gradient line's paint, with the transform `m`. Rectangle and outline path gradients are
+/// drawn as fills draw them (see `pathgrad`), over the box the stroke covers; an outline gradient
+/// follows the outline of the whole stroke, with the line's caps and joins and without its dashes,
+/// so the dashes take the gradient where they are. The others are `line_gradient`. The caller
+/// resets the paint transform after drawing.
+#[allow(clippy::too_many_arguments)]
+fn set_line_gradient(
+    ctx: &mut RenderContext,
+    rctx: &Ctx,
+    line: &Line,
+    g: &deckcraft_model::style::Gradient,
+    ph: Option<Rgba>,
+    path: &BezPath,
+    lw: f64,
+    m: Affine,
+    alpha: f64,
+) {
+    if let deckcraft_model::style::GradientShape::Path { path: kind, focus } = &g.shape
+        && matches!(kind.as_str(), "rect" | "shape")
+    {
+        // The width the line is drawn at: hairlines stay visible at any zoom (see `stroke`).
+        let w = lw.max(0.5 / scale_of(m).max(1e-6));
+        let mut bounds = path.bounding_box().inflate(w / 2.0, w / 2.0);
+        let mut stops: Vec<(f64, Rgba)> = g.stops.iter().map(|s| (s.pos.clamp(0.0, 1.0), rctx.color(&s.color, ph))).collect();
+        stops.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let outline = if kind == "shape" {
+            let tolerance = 0.1 / scale_of(m).max(1e-6);
+            let outline = kurbo::stroke(path.iter(), &line_style(line, w), &kurbo::StrokeOpts::default(), tolerance);
+            // Miter tips can reach past the box: the gradient covers the whole outline.
+            let reach = outline.bounding_box();
+            if reach.is_finite() && reach.area() > 0.0 {
+                bounds = bounds.union(reach);
+            }
+            outline
+        } else {
+            BezPath::new()
+        };
+        if crate::pathgrad::set_paint(ctx, kind, *focus, &crate::ramp::expand(&stops), bounds, &outline, m, alpha) {
+            return;
+        }
+    }
+    ctx.set_transform(m);
+    ctx.set_paint(line_gradient(rctx, g, ph, path, lw, alpha));
+}
+
+/// The stroke `width` wide with `line`'s caps and joins, without dashes.
+fn line_style(line: &Line, width: f64) -> kurbo::Stroke {
+    use deckcraft_model::style::{LineCap, LineJoin};
+    let cap = match line.cap.unwrap_or_default() {
+        LineCap::Flat => kurbo::Cap::Butt,
+        LineCap::Round => kurbo::Cap::Round,
+        LineCap::Square => kurbo::Cap::Square,
+    };
+    let join = match line.join.unwrap_or_default() {
+        LineJoin::Round => kurbo::Join::Round,
+        LineJoin::Bevel => kurbo::Join::Bevel,
+        LineJoin::Miter => kurbo::Join::Miter,
+    };
+    // PowerPoint's default miter limit is 8 widths (`a:miter lim="800000"`).
+    kurbo::Stroke::new(width).with_caps(cap).with_join(join).with_miter_limit(8.0)
 }
 
 /// A dash pattern (on, off, on, off… lengths) for a line drawn `width` wide with `cap`. As
@@ -373,12 +426,12 @@ pub(crate) fn arrowheads(ctx: &mut RenderContext, rctx: &Ctx, line: &Line, ph: O
         Some(Fill::Gradient(g)) if !g.stops.is_empty() => {
             let mut moved = sp.path.clone();
             moved.apply_affine(rel);
-            Some(line_gradient(rctx, g, ph, &moved, lw, 1.0))
+            Some((g, moved))
         }
         _ => None,
     };
     let set_paint = |ctx: &mut RenderContext| match &grad {
-        Some(g) => ctx.set_paint(g.clone()),
+        Some((g, moved)) => set_line_gradient(ctx, rctx, line, g, ph, moved, lw, m, 1.0),
         None => ctx.set_paint(color(col, 1.0)),
     };
     for (end, tip, from) in [(&line.head, a, a2), (&line.tail, b, b2)] {
@@ -426,6 +479,7 @@ pub(crate) fn arrowheads(ctx: &mut RenderContext, rctx: &Ctx, line: &Line, ph: O
                 set_paint(ctx);
                 ctx.set_stroke(kurbo::Stroke::new(leg).with_join(kurbo::Join::Miter).with_miter_limit(100.0).with_caps(kurbo::Cap::Round));
                 ctx.stroke_path(&o);
+                ctx.reset_paint_transform();
                 continue;
             }
             _ => {
@@ -438,5 +492,6 @@ pub(crate) fn arrowheads(ctx: &mut RenderContext, rctx: &Ctx, line: &Line, ph: O
         ctx.set_transform(m);
         set_paint(ctx);
         ctx.fill_path(&p);
+        ctx.reset_paint_transform();
     }
 }

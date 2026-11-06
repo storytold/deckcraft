@@ -731,6 +731,43 @@ fn gradient_lines_and_their_heads_take_the_gradient() {
 }
 
 #[test]
+fn rectangular_and_path_gradient_lines_draw_as_their_fills_do() {
+    use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
+    let blue = Rgba::rgb(0, 0, 255);
+    // A line `len` long centered on x = 200, at y = 100.
+    let line_with = |kind: &str, len: f64| {
+        let mut sh = arrow_line("none", 20.0, RED);
+        sh.xfrm = Some(Xfrm::new(200.0 - len / 2.0, 100.0, len, 0.0));
+        if let Some(l) = &mut sh.line {
+            l.fill = Some(Fill::Gradient(Gradient {
+                stops: vec![GradientStop { pos: 0.0, color: ColorRef::rgb(RED) }, GradientStop { pos: 1.0, color: ColorRef::rgb(blue) }],
+                shape: GradientShape::Path { path: kind.into(), focus: [0.5; 4] },
+                rotate_with_shape: true,
+                tile: [0.0; 4],
+                flip: None,
+            }));
+        }
+        render(vec![sh])
+    };
+    // A 20 pt line from x = 100 to 300 at y = 100 covers the box 90..310 by 90..110. From its
+    // center, 8 pt down is 8 of the 10 pt to the box's edge (rect, and the stroke's own outline),
+    // but only 8 of about 110 pt to the circle around the box.
+    for kind in ["rect", "shape"] {
+        let img = line_with(kind, 200.0);
+        let (center, edge) = (img.pixel(200, 100), img.pixel(200, 108));
+        assert!(center[0] > 200 && center[2] < 60, "{kind}: center {center:?}");
+        assert!(edge[2] > 150 && edge[0] < 120, "{kind}: near the edge {edge:?}");
+        // A line 4,000 pt long still changes color across its 20 pt width.
+        let img = line_with(kind, 4000.0);
+        let edge = img.pixel(200, 108);
+        assert!(edge[2] > 150 && edge[0] < 120, "{kind}: near the edge of a long line {edge:?}");
+    }
+    let img = line_with("circle", 200.0);
+    let edge = img.pixel(200, 108);
+    assert!(edge[0] > 200 && edge[2] < 60, "circle: near the edge {edge:?}");
+}
+
+#[test]
 fn a_groups_shadow_is_cast_by_its_children() {
     let child = |id: u32, x: f64| Shape {
         id: ShapeId(id),
