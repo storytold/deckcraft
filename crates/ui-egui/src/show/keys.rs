@@ -28,6 +28,9 @@ pub(super) fn handle_keys(
     keys: Vec<(egui::Key, egui::Modifiers)>,
     presenter: bool,
 ) -> (bool, Vec<(egui::Key, egui::Modifiers)>) {
+    if grid_open(show, presenter) {
+        show.normalize_grid_filter(doc);
+    }
     let mut consumed = vec![];
     let mut keep = true;
     let mut actions = vec![];
@@ -50,6 +53,28 @@ pub(super) fn handle_keys(
         }
     }
     (keep, consumed)
+}
+
+/// The remote popup has no section tabs: preserve its existing close-only grid keyboard policy.
+pub(super) fn remote_key(show: &mut Show, doc: &Presentation, now: f64, key: egui::Key, modifiers: egui::Modifiers) -> bool {
+    if show.presenter_grid {
+        match key {
+            egui::Key::Escape => {
+                if !show.clear_goto() {
+                    show.presenter_grid = false;
+                }
+            }
+            egui::Key::Minus => show.presenter_grid = false,
+            egui::Key::G if plain(modifiers) => show.presenter_grid = false,
+            _ => {}
+        }
+        true
+    } else if key == egui::Key::G && plain(modifiers) {
+        show.presenter_grid = true;
+        true
+    } else {
+        handle_keys(show, doc, now, vec![(key, modifiers)], true).0
+    }
 }
 
 /// Whether the grid that the presenter key G opens is showing in this viewport.
@@ -113,6 +138,7 @@ fn cycle_tab(show: &mut Show, doc: &Presentation, delta: isize) {
     let next = (current as isize + delta).rem_euclid(tabs.len() as isize) as usize;
     show.grid_filter = tabs.get(next).map(|(filter, _, _)| *filter).unwrap_or(GridFilter::All);
     show.grid_scroll = 0.0;
+    show.grid_tab_reveal = true;
 }
 
 /// Keys that move through the show or end it. False when `k` isn't one of them.

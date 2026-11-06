@@ -1,6 +1,7 @@
 # DeckCraft roadmap
 
-> **Last reviewed:** 2026-11-06 - **Last updated:** 2026-11-06 - **Change:** minor (native See All Slides scrolls through every slide and filters by section; presenter selection closes the grid; parity scores unchanged) - **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-06 · **Last updated:** 2026-11-06 · **Change:** minor (native grid section tabs scroll within a bounded area, deleted filters recover, remote popup keyboard behavior is preserved; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Ogg Opus recovery includes trailing packets without granules in its reported duration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)

@@ -4,6 +4,15 @@ use super::{Align2, Color32, CornerRadius, Pos2, Presentation, Rect, Show, Strok
 use crate::sections::{self, GridFilter};
 
 impl Show {
+    /// Recover when document edits remove the section currently selected in an open grid.
+    pub(super) fn normalize_grid_filter(&mut self, doc: &Presentation) {
+        if self.grid_filter != GridFilter::All && !sections::tabs(doc).iter().any(|(filter, _, _)| *filter == self.grid_filter) {
+            self.grid_filter = GridFilter::All;
+            self.grid_scroll = 0.0;
+            self.grid_tab_scroll = 0.0;
+            self.grid_tab_reveal = true;
+        }
+    }
     pub(super) fn zoom_uv(&self) -> Rect {
         self.zoom.map(Zoom::uv).unwrap_or_else(unit_uv)
     }
@@ -22,6 +31,8 @@ impl Show {
     /// The grid starts on the slide's section, at the top.
     pub(super) fn open_grid(&mut self, presenter: bool, doc: &Presentation) {
         self.grid_filter = sections::current_filter(doc, self.state.slide);
+        self.grid_tab_scroll = 0.0;
+        self.grid_tab_reveal = true;
         self.grid_scroll = 0.0;
         if presenter {
             self.presenter_grid = true;
@@ -307,6 +318,8 @@ pub(super) struct GridCell {
 
 pub(super) struct GridFrame {
     pub tabs: Vec<GridTab>,
+    pub tab_area: Rect,
+    pub max_tab_scroll: f32,
     pub inner: Rect,
 }
 
@@ -327,7 +340,7 @@ pub(super) fn grid_frame(full: Rect, doc: &Presentation) -> GridFrame {
     let mut tabs = Vec::new();
     for (filter, label, count) in sections::tabs(doc) {
         let text = format!("{label} ({count})");
-        let w = (text.chars().count() as f32 * 7.2 + 24.0).clamp(64.0, 240.0);
+        let w = (text.chars().count() as f32 * 7.2 + 24.0).clamp(64.0, 240.0).min((right - left).max(0.0));
         if x + w > right && x > left {
             x = left;
             y += TAB_H + TAB_ROW_GAP;
@@ -336,10 +349,15 @@ pub(super) fn grid_frame(full: Rect, doc: &Presentation) -> GridFrame {
         tabs.push(GridTab { filter, label, count, rect });
         x += w + TAB_GAP;
     }
-    let top = if tabs.is_empty() { full.min.y + 56.0 } else { tabs.last().map(|t| t.rect.max.y).unwrap_or(full.min.y + 42.0) + 10.0 };
+    let tab_top = full.min.y + 42.0;
+    let content_h = tabs.last().map_or(0.0, |t| t.rect.max.y - tab_top);
+    // Reserve most of the window for previews, regardless of the number of sections.
+    let tab_h = content_h.min((full.height() * 0.25).clamp(0.0, 150.0));
+    let tab_area = Rect::from_min_size(pos2(left, tab_top), vec2((right - left).max(0.0), tab_h));
+    let top = if tabs.is_empty() { full.min.y + 56.0 } else { tab_area.max.y + 10.0 };
     let bottom = (full.max.y - 44.0).max(top);
     let right = (right - 14.0).max(left);
-    GridFrame { tabs, inner: Rect::from_min_max(pos2(left, top), pos2(right, bottom)) }
+    GridFrame { tabs, tab_area, max_tab_scroll: (content_h - tab_h).max(0.0), inner: Rect::from_min_max(pos2(left, top), pos2(right, bottom)) }
 }
 
 /// The grid's cells, with the scroll offset applied. Only cells that touch `inner` are returned:
@@ -374,9 +392,45 @@ pub(super) fn grid_layout(inner: Rect, slides: &[usize], aspect: f32, scroll: f3
     GridLayout { cells, content_h, scroll, max_scroll }
 }
 
-/// The category tabs at the top of the grid, if the deck has useful sections.
-pub(super) fn grid_tab_hit(full: Rect, doc: &Presentation, p: Pos2) -> Option<GridFilter> {
-    grid_frame(full, doc).tabs.into_iter().find(|t| t.rect.contains(p)).map(|t| t.filter)
+/// Clamp the independent tab scroll and optionally reveal the newly selected section.
+fn scrolled_grid_frame(full: Rect, doc: &Presentation, scroll: f32, reveal: Option<GridFilter>) -> (GridFrame, f32) {
+    let mut frame = grid_frame(full, doc);
+    let mut scroll = if scroll.is_finite() { scroll.clamp(0.0, frame.max_tab_scroll) } else { 0.0 };
+    if let Some(tab) = frame.tabs.iter().find(|t| Some(t.filter) == reveal) {
+        if tab.rect.min.y < frame.tab_area.min.y + scroll {
+            scroll = tab.rect.min.y - frame.tab_area.min.y;
+        } else if tab.rect.max.y > frame.tab_area.max.y + scroll {
+            scroll = tab.rect.max.y - frame.tab_area.max.y;
+        }
+        scroll = scroll.clamp(0.0, frame.max_tab_scroll);
+    }
+    for tab in &mut frame.tabs {
+        tab.rect = tab.rect.translate(vec2(0.0, -scroll));
+    }
+    (frame, scroll)
+}
+
+/// Only the visible part of a section tab can receive clicks.
+pub(super) fn grid_tab_hit(full: Rect, doc: &Presentation, scroll: f32, p: Pos2) -> Option<GridFilter> {
+    let (frame, _) = scrolled_grid_frame(full, doc, scroll, None);
+    if !frame.tab_area.contains(p) {
+        return None;
+    }
+    frame.tabs.into_iter().find(|t| t.rect.contains(p)).map(|t| t.filter)
+}
+
+/// Wheel gestures over the tab strip scroll sections; gestures over previews scroll slides.
+pub(super) fn scroll_grid_at(show: &mut Show, delta: f32, full: Rect, doc: &Presentation, pointer: Option<Pos2>) {
+    show.normalize_grid_filter(doc);
+    let frame = grid_frame(full, doc);
+    if pointer.is_some_and(|p| frame.tab_area.contains(p)) {
+        if delta.is_finite() {
+            show.grid_tab_scroll = (show.grid_tab_scroll + delta).clamp(0.0, frame.max_tab_scroll);
+            show.grid_tab_reveal = false;
+        }
+    } else {
+        scroll_grid(show, delta, full, doc);
+    }
 }
 
 /// The global slide index a click on a thumbnail goes to.
@@ -393,6 +447,7 @@ pub(super) fn grid_slide_hit(full: Rect, doc: &Presentation, filter: GridFilter,
         .map(|c| c.slide)
 }
 
+/// Track beside the thumbnail viewport, independent of the section strip.
 fn grid_scrollbar(frame: &GridFrame) -> Rect {
     Rect::from_min_max(pos2(frame.inner.max.x + 6.0, frame.inner.min.y), pos2(frame.inner.max.x + 14.0, frame.inner.max.y))
 }
@@ -409,6 +464,7 @@ pub(super) fn scroll_grid(show: &mut Show, delta: f32, full: Rect, doc: &Present
     show.grid_scroll = (layout.scroll + delta).clamp(0.0, layout.max_scroll);
 }
 
+/// Stable control-protocol representation of a native grid filter.
 fn grid_filter_value(filter: GridFilter) -> serde_json::Value {
     match filter {
         GridFilter::All => json!("all"),
@@ -440,10 +496,15 @@ pub(super) fn slide_box(srect: Rect, uv: Rect, (slide_w, slide_h): (f32, f32), (
     Rect::from_min_max(a, b)
 }
 
+/// Paint bounded section tabs and the visible slide previews with shared hit-test geometry.
 pub(super) fn paint_grid(painter: &egui::Painter, ctx: &egui::Context, show: &mut Show, doc: &Presentation, full: Rect) {
+    show.normalize_grid_filter(doc);
     let t = theme::Tokens::get(ctx);
     painter.rect_filled(full, CornerRadius::ZERO, Color32::from_gray(16));
-    let frame = grid_frame(full, doc);
+    let reveal = show.grid_tab_reveal.then_some(show.grid_filter);
+    let (frame, tab_scroll) = scrolled_grid_frame(full, doc, show.grid_tab_scroll, reveal);
+    show.grid_tab_scroll = tab_scroll;
+    show.grid_tab_reveal = false;
     let filter = show.grid_filter;
     let slides = sections::grid_slides(doc, filter);
     let layout = grid_layout(frame.inner, &slides, slide_aspect(doc), show.grid_scroll);
@@ -464,19 +525,28 @@ pub(super) fn paint_grid(painter: &egui::Painter, ctx: &egui::Context, show: &mu
         Color32::from_gray(170),
     );
 
-    for tab in &frame.tabs {
+    let tab_painter = painter.with_clip_rect(frame.tab_area);
+    for tab in frame.tabs.iter().filter(|t| t.rect.intersects(frame.tab_area)) {
         let selected = tab.filter == filter;
         let bg = if selected { t.accent } else { Color32::from_gray(34) };
         let text = if selected { t.accent_text } else { Color32::from_gray(205) };
-        painter.rect_filled(tab.rect, CornerRadius::same(7), bg);
-        painter.rect_stroke(
+        tab_painter.rect_filled(tab.rect, CornerRadius::same(7), bg);
+        tab_painter.rect_stroke(
             tab.rect,
             CornerRadius::same(7),
             Stroke::new(1.0, if selected { t.accent } else { Color32::from_gray(58) }),
             egui::StrokeKind::Inside,
         );
         let name = if tab.label.chars().count() > 24 { format!("{}…", tab.label.chars().take(23).collect::<String>()) } else { tab.label.clone() };
-        painter.text(tab.rect.center(), Align2::CENTER_CENTER, format!("{name} ({})", tab.count), theme::font(13.0), text);
+        tab_painter.text(tab.rect.center(), Align2::CENTER_CENTER, format!("{name} ({})", tab.count), theme::font(13.0), text);
+    }
+
+    if frame.max_tab_scroll > 0.0 {
+        // A proportional thumb makes the separately scrollable tab area discoverable.
+        let track = frame.tab_area;
+        let h = (track.height() * track.height() / (track.height() + frame.max_tab_scroll)).max(8.0).min(track.height());
+        let y = track.min.y + (track.height() - h) * tab_scroll / frame.max_tab_scroll;
+        painter.rect_filled(Rect::from_min_size(pos2(full.max.x - 18.0, y), vec2(4.0, h)), CornerRadius::same(2), Color32::from_gray(110));
     }
 
     if slides.is_empty() {
@@ -531,7 +601,7 @@ pub(super) fn paint_grid(painter: &egui::Painter, ctx: &egui::Context, show: &mu
         let bar = grid_scrollbar(&frame);
         painter.rect_filled(bar, CornerRadius::same(4), Color32::from_gray(30));
         let track = frame.inner.height();
-        let thumb_h = (track * (track / layout.content_h.max(1.0))).clamp(18.0, track);
+        let thumb_h = (track * (track / layout.content_h.max(1.0))).max(18.0).min(track);
         let travel = (track - thumb_h).max(1.0);
         let top = frame.inner.min.y + (layout.scroll / layout.max_scroll).clamp(0.0, 1.0) * travel;
         let thumb = Rect::from_min_size(pos2(bar.min.x, top), vec2(bar.width(), thumb_h));

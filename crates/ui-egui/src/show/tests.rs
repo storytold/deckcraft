@@ -1729,3 +1729,156 @@ mod grid_regressions {
         }
     }
 }
+
+mod review_round_two {
+    use super::*;
+
+    fn sectioned_deck() -> Presentation {
+        let mut session = deckcraft_engine::Session::with_new();
+        for _ in 0..3 {
+            session.execute("slide.new", &json!({})).unwrap();
+        }
+        session.execute("section.add", &json!({"name":"Intro","at":0})).unwrap();
+        session.execute("section.add", &json!({"name":"Demo","at":2})).unwrap();
+        (*session.active().unwrap().doc).clone()
+    }
+
+    #[test]
+    fn removing_sections_while_the_grid_is_open_restores_all_slides() {
+        let mut doc = sectioned_deck();
+        let mut show = Show::new(&doc, 0, false, false);
+        show.open_grid(false, &doc);
+        show.grid_scroll = 120.0;
+        doc.sections.clear();
+        let ctx = egui::Context::default();
+        let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+        ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
+            super::super::zoom::paint_grid(ui.painter(), ui.ctx(), &mut show, &doc, full);
+        })
+        .textures_delta
+        .clear();
+        assert_eq!(show.grid_filter, crate::sections::GridFilter::All);
+        assert_eq!(show.grid_scroll, 0.0);
+        assert_eq!(show.thumbs.len(), doc.slides.len());
+        let snapshot = show.showing_value(&doc, full, 0.0);
+        assert_eq!(snapshot["gridFilter"], "all");
+        assert_eq!(snapshot["cells"].as_array().unwrap().len(), doc.slides.len());
+    }
+
+    #[test]
+    fn removing_sections_before_enter_recovers_in_both_native_grids() {
+        for presenter in [false, true] {
+            let mut doc = sectioned_deck();
+            let mut show = Show::new(&doc, 2, false, presenter);
+            show.open_grid(presenter, &doc);
+            doc.sections.clear();
+            let (keep, consumed) = super::super::keys::handle_keys(&mut show, &doc, 0.0, vec![(egui::Key::Enter, egui::Modifiers::NONE)], presenter);
+            assert!(keep && consumed.len() == 1);
+            assert_eq!(show.grid_filter, crate::sections::GridFilter::All);
+            assert_eq!(show.state.slide, 0);
+            assert!(!show.grid && !show.presenter_grid);
+        }
+    }
+}
+
+#[test]
+fn many_long_section_tabs_preserve_a_thumbnail_viewport() {
+    let mut session = deckcraft_engine::Session::with_new();
+    for i in 0..61 {
+        if i > 0 {
+            session.execute("slide.new", &json!({})).unwrap();
+        }
+        session.execute("section.add", &json!({"name":format!("A long section title number {i}"), "at":i})).unwrap();
+    }
+    let doc = &session.active().unwrap().doc;
+    let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+    let frame = grid_frame(full, doc);
+    assert!(frame.inner.height() >= 400.0, "section tabs must leave space for slide previews");
+    assert!(!grid_layout(frame.inner, &[0], 16.0 / 9.0, 0.0).cells.is_empty());
+}
+
+/// Scrolling sections leaves slides stationary, reveals the last tab, and clips hidden targets.
+#[test]
+fn section_tabs_scroll_independently_and_keyboard_reveals_selection() {
+    let mut session = deckcraft_engine::Session::with_new();
+    for i in 0..61 {
+        if i > 0 {
+            session.execute("slide.new", &json!({})).unwrap();
+        }
+        session.execute("section.add", &json!({"name":format!("A long section title number {i}"), "at":i})).unwrap();
+    }
+    let doc = &session.active().unwrap().doc;
+    let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+    let mut show = Show::new(doc, 0, false, false);
+    show.open_grid(false, doc);
+    let frame = grid_frame(full, doc);
+    let first = frame.tabs.first().unwrap().rect.center();
+    let last = frame.tabs.last().unwrap();
+    assert_eq!(zoom::grid_tab_hit(full, doc, 0.0, last.rect.center()), None);
+    zoom::scroll_grid_at(&mut show, f32::MAX, full, doc, Some(first));
+    assert_eq!(show.grid_tab_scroll, frame.max_tab_scroll);
+    assert_eq!(show.grid_scroll, 0.0);
+    let target = last.rect.center() - vec2(0.0, show.grid_tab_scroll);
+    assert_eq!(zoom::grid_tab_hit(full, doc, show.grid_tab_scroll, target), Some(last.filter));
+    assert_ne!(zoom::grid_tab_hit(full, doc, show.grid_tab_scroll, first), Some(crate::sections::GridFilter::All));
+    let ctx = egui::Context::default();
+    keys::handle_keys(&mut show, doc, 0.0, vec![(egui::Key::ArrowLeft, egui::Modifiers::NONE)], false);
+    // From the first section, left selects All, which must become visible again.
+    ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
+        zoom::paint_grid(ui.painter(), ui.ctx(), &mut show, doc, full);
+    })
+    .textures_delta
+    .clear();
+    assert_eq!(show.grid_tab_scroll, 0.0);
+    assert_eq!(zoom::grid_tab_hit(full, doc, show.grid_tab_scroll, first), Some(crate::sections::GridFilter::All));
+    let snapshot = show.input_state();
+    show.grid_tab_scroll = 1.0;
+    assert_ne!(snapshot, show.input_state(), "scrolling tabs changes input targets");
+}
+
+/// The popup has no native section controls, so arrows and Enter cannot select hidden tabs.
+#[test]
+fn remote_popup_grid_does_not_use_native_section_keyboard() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    session.execute("section.add", &json!({"name":"Intro", "at":0})).unwrap();
+    session.execute("section.add", &json!({"name":"Demo", "at":1})).unwrap();
+    let doc = &session.active().unwrap().doc;
+    let mut show = Show::new(doc, 1, false, true);
+    show.grid_filter = crate::sections::GridFilter::Section(1);
+    let original = show.grid_filter;
+    assert!(keys::remote_key(&mut show, doc, 0.0, egui::Key::G, egui::Modifiers::NONE));
+    for key in [egui::Key::ArrowLeft, egui::Key::ArrowRight, egui::Key::Enter, egui::Key::PageDown] {
+        assert!(keys::remote_key(&mut show, doc, 0.0, key, egui::Modifiers::NONE));
+        assert!(show.presenter_grid);
+        assert_eq!(show.grid_filter, original);
+        assert_eq!(show.state.slide, 1);
+        assert_eq!(show.grid_scroll, 0.0);
+    }
+    keys::remote_key(&mut show, doc, 0.0, egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!show.presenter_grid);
+    keys::remote_key(&mut show, doc, 0.0, egui::Key::ArrowLeft, egui::Modifiers::NONE);
+    assert_eq!(show.state.slide, 0, "normal popup navigation remains available");
+}
+
+/// A preview track shorter than the minimum scrollbar thumb must still paint without a panic.
+#[test]
+fn very_short_grid_viewport_keeps_scrollbar_bounds_valid() {
+    let mut session = deckcraft_engine::Session::with_new();
+    for _ in 0..30 {
+        session.execute("slide.new", &json!({})).unwrap();
+    }
+    let doc = &session.active().unwrap().doc;
+    let mut show = Show::new(doc, 0, false, false);
+    show.open_grid(false, doc);
+    let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 110.0));
+    let frame = grid_frame(full, doc);
+    assert!((8.0..18.0).contains(&frame.inner.height()));
+    let ctx = egui::Context::default();
+    ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
+        zoom::paint_grid(ui.painter(), ui.ctx(), &mut show, doc, full);
+    })
+    .textures_delta
+    .clear();
+    assert!(!show.thumbs.is_empty());
+}

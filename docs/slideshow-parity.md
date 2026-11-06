@@ -29,7 +29,7 @@ ready** (estimated), **10–16 h** to parity.
 | Hyperlinks and action settings followed (slides, web, mail, End Show, Last Viewed, Custom Show) | yes | yes | Only `http(s)` and `mailto` open outside the show, by design (`safe_url`). A Custom Show action plays that show |
 | Media playback with controls, play across slides, full-screen video, Play/Pause/Stop in the click sequence | yes | yes | WMA/WMV not decodable. Click sequence since #116. Slide Show ▸ Show Media Controls (on by default) hides the playback bar. Seeks and loops preserve new-generation video frames and end-of-stream; queue regression and repeated seeks across H.264/HEVC/VP9/AV1 in `crates/media` |
 | Animated GIFs play; pause from their corner button | yes | yes (#39) | The corner button hides with Show Media Controls |
-| See All Slides grid during the show | yes | yes: G or All; native grid lists every slide, scrolls with wheel or Page Up/Down, and filters by section | Hidden slides are labelled; section tabs are a DeckCraft navigation addition. Click a thumbnail or its number, or press Enter to select. Escape clears a typed number before closing the grid. Only visible thumbnails are cached within a pixel budget |
+| See All Slides grid during the show | yes | yes: G or All; native grid lists every slide, scrolls with wheel or Page Up/Down, and filters by section | Hidden slides are labelled; section tabs are a DeckCraft navigation addition. Many tabs scroll independently in a bounded area; removing their sections restores All slides. Click a thumbnail or its number, or press Enter to select. Escape clears a typed number before closing the grid. Only visible thumbnails are cached within a pixel budget |
 | Zoom into part of a slide during the show | yes | yes: Z, then click the slide (or the presenter slide); 2×, Esc or another click leaves it. Ctrl+wheel (Cmd+wheel on a Mac) over the slide zooms in and out around the pointer, four notches per doubling, up to 4× (#1286) | The presenter keeps the whole slide and draws a frame on the zoomed part. The wheel zooms in the audience window only; no panning while zoomed |
 | Pen and highlighter ink | yes | pen only (Cmd+P pen, Cmd+A arrow, E erases all ink) | No highlighter, per-stroke eraser, ink colours, or keep/discard annotations prompt |
 | Laser pointer | yes | yes in the show | Cmd/Ctrl+L and the on-screen button draw the show's laser colour and leave no ink. The presenter window does not move that dot |
@@ -51,7 +51,7 @@ ready** (estimated), **10–16 h** to parity.
 | Placed on the presenter's display automatically, show on the projector | yes | **no**: opens wherever the OS puts it | Beta blocker, 3–5 h. Open PR #433 places the show on a second display when one is attached. This change does not |
 | Swap displays | yes | no | Still open on #433 |
 | Pen, laser, black screen, zoom from presenter view | yes | Black, White and Zoom buttons; the audience zoom is framed on the presenter slide | Pen and laser are driven from the audience window only; the presenter window does not move the laser dot |
-| See all slides from presenter view | yes | yes, native scrollable grid with section tabs | Audience keeps the current slide while browsing; click or Enter selects and closes the grid, returning to current/next/notes. The remote web presenter retains its 48-slide cap |
+| See all slides from presenter view | yes | yes, native scrollable grid with section tabs | Audience keeps the current slide while browsing; click or Enter selects and closes the grid, returning to current/next/notes. The remote web presenter retains its 48-slide cap and close-only grid keyboard controls |
 | Rehearse with Coach (Speaker Coach) | yes (cloud) | no | AI dimension |
 
 ## Rehearse and record
@@ -81,6 +81,7 @@ Reading View in a window with navigation: present (checklist row done).
 | Date | Change | Summary |
 |---|---|---|
 | 2026-11-06 | minor | Direct --show / .ppsx startup defers native Presenter View until the root completes its first frame, avoiding a GPU font-atlas update before allocation. Scores unchanged |
+| 2026-11-06 | minor | Bound section-tab height and scroll tabs independently, reveal keyboard selections, recover removed filters, and preserve the remote popup's existing grid keyboard policy; parity scores unchanged |
 | 2026-11-06 | minor | native See All Slides scrolls through every slide and filters by section; presenter selection closes the grid; parity scores unchanged. The remote web presenter retains its 48-slide cap; section tabs are a DeckCraft navigation addition |
 | 2026-11-02 | minor | On Linux and the BSDs, Presenter View stays off when winit lists exactly one display; if it lists none, the setting is kept (#1156) |
 | 2026-10-27 | minor | Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows keep a still pointer, so clickable choices stay targetable; Reading View unchanged (#1445) |

@@ -84,6 +84,10 @@ pub struct Show {
     pub grid_filter: GridFilter,
     /// The grid's vertical scroll offset, in points, clamped to its content on every frame.
     pub grid_scroll: f32,
+    /// Independent scroll offset for the bounded section tab strip.
+    pub grid_tab_scroll: f32,
+    /// Reveal a newly selected tab after opening the grid or using the keyboard.
+    grid_tab_reveal: bool,
     /// The next click on the slide zooms in there.
     pub zoom_arm: bool,
     zoom: Option<Zoom>,
@@ -208,6 +212,7 @@ pub(crate) struct ShowInputState {
     /// Which section the grid shows and how far it is scrolled: both move every thumbnail.
     pub grid_filter: GridFilter,
     pub grid_scroll: u32,
+    pub grid_tab_scroll: u32,
     pub pen: bool,
     pub laser: bool,
     pub blank: Option<[u8; 4]>,
@@ -257,6 +262,8 @@ impl Show {
             presenter_grid: false,
             grid_filter: GridFilter::All,
             grid_scroll: 0.0,
+            grid_tab_scroll: 0.0,
+            grid_tab_reveal: true,
             zoom_arm: false,
             zoom: None,
             thumbs: vec![],
@@ -316,6 +323,7 @@ impl Show {
             grid: self.grid,
             grid_filter: self.grid_filter,
             grid_scroll: if self.grid_scroll.is_finite() { self.grid_scroll.to_bits() } else { 0 },
+            grid_tab_scroll: if self.grid_tab_scroll.is_finite() { self.grid_tab_scroll.to_bits() } else { 0 },
             pen: self.pen,
             laser: self.laser,
             blank: self.blank.map(|c| [c.r(), c.g(), c.b(), c.a()]),

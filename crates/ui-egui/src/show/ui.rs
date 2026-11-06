@@ -1,11 +1,11 @@
-use super::keys::{handle_keys, keyboard};
+use super::keys::{keyboard, remote_key};
 use super::media::{
     Pick, Under, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, shapes_under_pointer, show_media,
 };
 use super::presenter::{PresenterTimer, format_elapsed, presenter_window};
 use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
 use super::zoom::{
-    Zoom, grid_slide_hit, grid_tab_hit, norm_on_slide, paint_grid, scroll_grid, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
+    Zoom, grid_slide_hit, grid_tab_hit, norm_on_slide, paint_grid, scroll_grid_at, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
     wheel_zoom_lines,
 };
 use super::{
@@ -101,7 +101,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                     if let Some(key) = egui::Key::from_name(&name) {
                         let modifiers = egui::Modifiers { command, shift, alt, ctrl, mac_cmd: command && !ctrl };
                         // The popup is the Presenter View: G opens All slides there, not on the audience screen (#1866).
-                        out.keep &= handle_keys(&mut show, &doc, now, vec![(key, modifiers)], true).0;
+                        out.keep &= remote_key(&mut show, &doc, now, key, modifiers);
                     }
                 }
                 crate::presenter::Command::Goto { slide } if show.presenter_grid && slide < doc.slides.len() => {
@@ -258,7 +258,7 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
         }
     } else if show.grid && clicked {
         if let Some(p) = pointer {
-            if let Some(filter) = grid_tab_hit(full, doc, p) {
+            if let Some(filter) = grid_tab_hit(full, doc, show.grid_tab_scroll, p) {
                 if filter != show.grid_filter {
                     show.grid_filter = filter;
                     show.grid_scroll = 0.0;
@@ -309,7 +309,7 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
     if show.grid {
         let delta = ctx.input(|i| i.smooth_scroll_delta.y);
         if delta != 0.0 {
-            scroll_grid(show, -delta, full, doc);
+            scroll_grid_at(show, -delta, full, doc, pointer);
         }
         return;
     }
