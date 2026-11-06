@@ -30,6 +30,9 @@ use format_shape::{fill_transparency_to_apply, solid_fill_transparency_percent};
 use smartart::smartart;
 use thesaurus::thesaurus;
 
+/// Render the active right-hand task pane (Format Shape, Format Background, Animation,
+/// Selection, Comments, Designer, etc.), automatically switching between Format Shape
+/// and Format Background based on whether a shape or text is selected.
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(mut pane) = app.ui.pane.clone() else { return };

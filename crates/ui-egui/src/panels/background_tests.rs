@@ -75,6 +75,8 @@ fn apply_to_all_copies_the_picture() {
     assert_eq!(doc.masters[0].background, doc.slides[0].background);
 }
 
+/// Selecting a shape while Format Background is open switches the pane to Format Shape,
+/// and deselecting switches back to Format Background.
 #[test]
 fn format_background_switches_to_format_shape_on_selection_and_back_on_deselect() {
     let mut s = Session::with_new();
@@ -103,6 +105,7 @@ fn format_background_switches_to_format_shape_on_selection_and_back_on_deselect(
     assert!(h.query_by_label("Follow the layout").is_some());
 }
 
+/// Explicitly opening the background pane via view.pane clears the active shape selection.
 #[test]
 fn format_background_command_clears_shape_selection() {
     let mut s = Session::with_new();
@@ -131,6 +134,8 @@ fn format_background_command_clears_shape_selection() {
     assert!(h.query_all_by_label("Format Background").next().is_some());
 }
 
+/// Panes unrelated to shape formatting (such as the Animation Pane) keep their state
+/// when selection changes.
 #[test]
 fn unrelated_pane_is_not_affected_by_selection_changes() {
     let mut s = Session::with_new();

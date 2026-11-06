@@ -42,6 +42,8 @@ impl SlideApp {
         params.get("on").and_then(Value::as_bool).unwrap_or(!cur)
     }
 
+    /// Dispatch a UI command implemented entirely in the GUI layer (views, task panes,
+    /// dialogs, backstage, presentation settings, etc.).
     fn run_ui(&mut self, id: &str, p: &Value) -> Result<Value, String> {
         match id {
             "view.normal" => self.ui.view = ViewMode::Normal,
