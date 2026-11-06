@@ -9,6 +9,7 @@ mod corpus_kinds;
 mod corpus_media;
 mod corpus_style;
 mod corpus_themes;
+mod export_scale;
 mod fills;
 mod kept_parts;
 mod locks;

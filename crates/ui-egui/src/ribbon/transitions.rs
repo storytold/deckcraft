@@ -14,7 +14,7 @@ pub(super) fn transitions(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let playing = app.show.as_ref().is_some_and(|s| s.preview_only);
         let (resp, _) = widgets::big_button_ex(ui, Icon::Preview, "Preview", true, false, playing);
-        if resp.on_hover_text("Play this slide's transition").clicked() {
+        if resp.on_hover_text(tl!("Play this slide's transition")).clicked() {
             let to = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
             app.start_show(to, true);
             let now = ui.input(|i| i.time);
