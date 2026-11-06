@@ -45,6 +45,38 @@ pub struct SnapshotState {
     pub cursor: String,
 }
 
+/// What a commit produced. The bytes are the `.pptx` the cabinet stores.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Committed {
+    pub version: u64,
+    pub bytes: Vec<u8>,
+    pub warnings: Vec<String>,
+    /// The file version this commit was built against, when the session knows it.
+    pub file_version: Option<String>,
+}
+
+/// Why a commit did not produce a file.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CommitError {
+    /// The file changed since the session opened it, or since this session last wrote it:
+    /// the cabinet answers `409` and offers "save a copy" instead of overwriting (ADR-0009 §4).
+    Conflict { expected: String, current: Option<String> },
+    /// The writer refused the model; the session is untouched.
+    Build(String),
+}
+
+impl std::fmt::Display for CommitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommitError::Conflict { expected, current } => match current {
+                Some(current) => write!(f, "the file changed: expected {expected}, it is {current}"),
+                None => write!(f, "the file changed: expected {expected}, the session has no version"),
+            },
+            CommitError::Build(message) => f.write_str(message),
+        }
+    }
+}
+
 /// One document served to several participants.
 pub struct DocSession {
     file_id: String,
@@ -58,6 +90,8 @@ pub struct DocSession {
     config: SessionConfig,
     /// The version of the file this session was opened from, for `409` on commit (ADR-0009).
     base_file_etag: Option<String>,
+    /// The last file this session produced, so a repeated commit is idempotent (ADR-0009 §6).
+    last_commit: Option<Committed>,
 }
 
 impl DocSession {
@@ -98,6 +132,7 @@ impl DocSession {
             snapshot: None,
             config,
             base_file_etag: None,
+            last_commit: None,
         }
     }
 
@@ -192,15 +227,55 @@ impl DocSession {
     }
 
     /// The `.pptx` the cabinet receives (ADR-0009) and the list of what will not survive it.
+    ///
+    /// No version check: the caller decided that it may write. Use [`Self::commit_checked`] for
+    /// the cabinet path, where an external change must become a `409`.
     pub fn commit(&self) -> Result<(Vec<u8>, Vec<String>), String> {
+        Ok((self.commit_bytes()?, self.commit_warnings()?))
+    }
+
+    fn commit_bytes(&self) -> Result<Vec<u8>, String> {
         let doc = self.engine.doc().map_err(|e| e.to_string())?;
-        let bytes = deckcraft_pptx::export_as(&doc.doc, "pptx").map_err(|e| e.to_string())?;
-        Ok((bytes, warnings(&doc.doc)))
+        deckcraft_pptx::export_as(&doc.doc, "pptx").map_err(|e| e.to_string())
+    }
+
+    fn commit_warnings(&self) -> Result<Vec<String>, String> {
+        let doc = self.engine.doc().map_err(|e| e.to_string())?;
+        Ok(warnings(&doc.doc))
+    }
+
+    /// Commit with the cabinet's version check (ADR-0009).
+    ///
+    /// - `expected` is the file version the cabinet believes is current; when it does not match
+    ///   what the session knows, the answer is `Conflict` (`409`) and nothing is written.
+    /// - A repeated commit of the same document version returns the same bytes and does not
+    ///   rebuild them (ADR-0009 §6).
+    pub fn commit_checked(&mut self, expected: Option<&str>) -> Result<Committed, CommitError> {
+        if let Some(expected) = expected
+            && self.base_file_etag.as_deref() != Some(expected)
+        {
+            return Err(CommitError::Conflict { expected: expected.to_string(), current: self.base_file_etag.clone() });
+        }
+        if let Some(done) = &self.last_commit
+            && done.version == self.version
+        {
+            return Ok(done.clone());
+        }
+        let bytes = self.commit_bytes().map_err(CommitError::Build)?;
+        let warnings = self.commit_warnings().map_err(CommitError::Build)?;
+        let done = Committed { version: self.version, bytes, warnings, file_version: self.base_file_etag.clone() };
+        self.last_commit = Some(done.clone());
+        Ok(done)
+    }
+
+    /// The cabinet assigned a new file version after a commit; the next commit checks against it.
+    pub fn accept_file_version(&mut self, version: impl Into<String>) {
+        self.base_file_etag = Some(version.into());
     }
 
     /// A commit answer with the file's hash placeholder filled by the transport, if it has one.
     pub fn commit_result(&self, sha256: impl Into<String>) -> Result<CommitResult, String> {
-        let (_, warnings) = self.commit()?;
+        let warnings = self.commit_warnings()?;
         Ok(CommitResult {
             sha256: sha256.into(),
             version: self.version,
@@ -440,5 +515,34 @@ mod tests {
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("slide 1"), "{warnings:?}");
         assert!(warnings[0].contains("original XML"), "{warnings:?}");
+    }
+
+    #[test]
+    fn commit_is_refused_when_the_file_changed_under_the_session() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+        s.accept_file_version("etag-1");
+        let err = s.commit_checked(Some("etag-0")).expect_err("stale file version");
+        assert_eq!(err, CommitError::Conflict { expected: "etag-0".into(), current: Some("etag-1".into()) });
+        assert!(s.commit_checked(Some("etag-1")).is_ok(), "the current version may be written");
+    }
+
+    #[test]
+    fn a_repeated_commit_of_one_version_is_idempotent() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+        let first = s.commit_checked(None).expect("commit");
+        let again = s.commit_checked(None).expect("commit again");
+        assert_eq!(first, again, "same bytes, no second build");
+        assert_eq!(s.version(), 0, "a commit does not advance the document version");
+    }
+
+    #[test]
+    fn a_new_operation_makes_the_next_commit_fresh() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = keys(&s);
+        let first = s.commit_checked(None).expect("commit");
+        s.apply("a", &move_op(&slide, &shape, 300.0, 0, "op-1")).expect("apply");
+        let second = s.commit_checked(None).expect("commit");
+        assert_eq!(second.version, 1);
+        assert_ne!(first.bytes, second.bytes, "a moved shape changes the file");
     }
 }
