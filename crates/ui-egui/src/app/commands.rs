@@ -24,7 +24,7 @@ impl SlideApp {
             // A page that keeps the files (`?host=parent`): Save by id (the command palette) goes
             // to the page like Ctrl+S. The engine would write to the presentation's path, which a
             // browser can't.
-            self.save_to_host(None).map(|name| json!({"path": name}))
+            self.save_to_host(None, None).map(|name| json!({"path": name}))
         } else {
             self.session.execute(id, &params).map_err(|e| e.to_string())
         };

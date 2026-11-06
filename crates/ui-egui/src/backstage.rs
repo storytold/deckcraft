@@ -192,6 +192,9 @@ pub struct Backstage {
     pub pdf_hidden: bool,
     /// Export › Change File Type › PNG: leave the slide background out (#784).
     pub png_transparent: bool,
+    /// Save As › File name: what the person typed, `None` until they type, so the field follows
+    /// the presentation's title. Empty or unusable text also falls back to the title (#1077).
+    pub file_name: Option<String>,
 }
 
 impl Backstage {
@@ -217,6 +220,7 @@ impl Backstage {
             handouts_per_page: 3,
             pdf_hidden: false,
             png_transparent: false,
+            file_name: None,
         }
     }
 
