@@ -14,6 +14,7 @@ pub mod client;
 pub mod delta;
 pub mod history;
 pub mod keys;
+pub mod presence;
 pub mod session;
 
 pub use apply::{Adapter, Rejection, class_of};
@@ -21,4 +22,5 @@ pub use client::{ClientSession, Effect, Link, SubmitError};
 pub use delta::delta;
 pub use history::{ActorHistory, Histories, Image, Snapshot, Step};
 pub use keys::{KeyIssuer, KeyMap};
+pub use presence::{DEFAULT_TTL_MS, Participant, PresenceSet, color_for};
 pub use session::{DocSession, SessionConfig, SnapshotState, warnings};
