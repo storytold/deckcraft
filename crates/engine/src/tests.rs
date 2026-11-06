@@ -6770,7 +6770,9 @@ fn frames_deck() -> (Session, u64) {
 }
 
 fn png_files(dir: &std::path::Path) -> Vec<String> {
-    let mut v: Vec<String> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    // The dot files (the export's lock file) are not frames.
+    let mut v: Vec<String> =
+        std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).filter(|n| !n.starts_with('.')).collect();
     v.sort();
     v
 }

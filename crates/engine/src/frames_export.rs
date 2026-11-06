@@ -525,8 +525,9 @@ fn run_jobs(folder: &std::path::Path, jobs: impl Iterator<Item = Job>, cap: u64)
 /// replaces the earlier `frame-NNNNNN.png` files only once every frame is written; an export that
 /// fails before then (a write error, the byte cap) leaves them as they were. If removing them
 /// afterwards fails, the error says so and the new frames stay. Nothing is written when the request is refused, when a frame's name
-/// in `folder` is taken by something other than a regular file (a folder, a link), or when an
-/// interrupted export left earlier frames in its backup folder.
+/// in `folder` is taken by something other than a regular file (a folder, a link), when an
+/// interrupted export left earlier frames in its backup folder, or when another export to the same
+/// folder (in this process or another) is still running: one runs at a time per folder.
 pub fn export(doc: &Presentation, opts: &FramesOptions, folder: &str) -> Result<FramesOutput> {
     export_capped(doc, opts, folder, MAX_TOTAL_BYTES)
 }
@@ -538,6 +539,10 @@ const STAGING: &str = ".deckcraft-frames-new";
 /// The folder inside the export folder that the earlier sequence moves to while the new one moves
 /// in, so a move that fails part way can put it back.
 const BACKUP: &str = ".deckcraft-frames-old";
+
+/// The lock file inside the export folder that one export holds from its first check to its last
+/// cleanup, so exports to the same folder cannot share the staging and backup folders.
+const LOCK: &str = ".deckcraft-frames-lock";
 
 /// Replace the frames in `folder` with those in `staging`. The earlier ones move to `backup` first
 /// and are removed only once every new one is in place; a move that fails part way removes the new
@@ -581,6 +586,7 @@ fn export_capped(doc: &Presentation, opts: &FramesOptions, folder: &str, cap: u6
     let io = |e: String| EngineError::Other(format!("frames export: {e}"));
     crate::file_access::check_write(&dir.join(frame_name(1)).to_string_lossy()).map_err(io)?;
     crate::io::create_folder(folder).map_err(io)?;
+    let _lock = crate::io::lock_folder(folder, LOCK).map_err(io)?;
     // The clearing below removes regular files only. A frame name taken by anything else would
     // survive it: a folder makes the move fail after the earlier frames are gone, and a link past
     // the new sequence's end would carry it on with an old frame. Any such name in the folder is
@@ -721,7 +727,8 @@ mod tests {
         let doc = deckcraft_model::defaults::new_presentation(None);
         let opts = FramesOptions::from_params(&json!({"fps": 2, "secondsPerSlide": 2, "width": 32})).unwrap();
         let names = || {
-            let mut v: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+            let mut v: Vec<String> =
+                std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).filter(|n| n != LOCK).collect();
             v.sort();
             v
         };
@@ -842,6 +849,26 @@ mod tests {
         }
         assert!(dir.join(frame_name(2)).is_dir());
         assert!(!dir.join(BACKUP).exists(), "the backup folder is gone");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An export to a folder that another export holds the lock of is refused with nothing written
+    /// (the lock stands in for a running export, in this process or another), and goes ahead once
+    /// the lock is released.
+    #[test]
+    fn an_export_to_a_folder_in_use_is_refused() {
+        let dir = std::env::temp_dir().join(format!("dc-frames-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let folder = dir.to_string_lossy().to_string();
+        let held = crate::io::lock_folder(&folder, LOCK).unwrap();
+        let doc = deckcraft_model::defaults::new_presentation(None);
+        let opts = FramesOptions::from_params(&json!({"fps": 1, "secondsPerSlide": 1, "width": 32})).unwrap();
+        let e = export(&doc, &opts, &folder).unwrap_err().to_string();
+        assert!(e.contains("another export"), "{e}");
+        assert!(!dir.join(frame_name(1)).exists() && !dir.join(STAGING).exists() && !dir.join(BACKUP).exists(), "nothing was written");
+        drop(held);
+        assert_eq!(export(&doc, &opts, &folder).unwrap().frames, 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

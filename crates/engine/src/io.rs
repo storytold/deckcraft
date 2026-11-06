@@ -223,6 +223,37 @@ pub fn remove_empty_folder(_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// An advisory lock on a folder, held until dropped (or the process ends, however it ends).
+pub struct FolderLock(
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(dead_code)]
+    std::fs::File,
+);
+
+/// Take the lock `name` in `folder`, or fail at once if another export (this process or another)
+/// holds it. The lock file stays behind: removing it while others wait could hand the lock to two.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn lock_folder(folder: &str, name: &str) -> Result<FolderLock, String> {
+    let path = std::path::Path::new(folder).join(name).to_string_lossy().to_string();
+    crate::file_access::check_write(&path)?;
+    if is_link(&path) {
+        return Err(format!("{path} is a link: delete it and export again"));
+    }
+    let file = std::fs::OpenOptions::new().write(true).create(true).truncate(false).open(&path).map_err(|e| format!("{path}: {e}"))?;
+    match file.try_lock() {
+        Ok(()) => Ok(FolderLock(file)),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            Err(format!("another export to this folder is running ({path} is locked): wait for it and export again; nothing was written"))
+        }
+        Err(std::fs::TryLockError::Error(e)) => Err(format!("{path}: {e}")),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn lock_folder(_folder: &str, _name: &str) -> Result<FolderLock, String> {
+    Ok(FolderLock())
+}
+
 /// Is `path` itself a symbolic link (not what it points at)?
 #[cfg(not(target_arch = "wasm32"))]
 pub fn is_link(path: &str) -> bool {
