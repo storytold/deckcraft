@@ -137,7 +137,7 @@ pub fn tool_definitions() -> Vec<Value> {
                             {"type": "integer", "minimum": 16, "maximum": 3840},
                             {"type": "string", "enum": ["small", "medium", "large", "extraLarge"]}
                         ],
-                        "description": "GIF: frame width in pixels, or a size: small 640, medium 960 (default), large 1280, extraLarge 1920; frames: a width in pixels (default 1920); the height follows the slide's shape"
+                        "description": "GIF: frame width in pixels, or a size: small 640, medium 960 (default), large 1280, extraLarge 1920; frames: a width in pixels (default 1920); the height follows the slide's shape, and both sides are rounded to even numbers"
                     },
                     "secondsPerSlide": {"type": "number", "minimum": 0, "maximum": 600, "description": "GIF: seconds each slide shows, 0.1-600 (default 5); frames: hold after a slide's last build step and the whole time of a slide without animations, 0-60 (default 3)"},
                     "loop": boolean("GIF: loop forever (true, default) or play once (false)"),

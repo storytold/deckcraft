@@ -210,6 +210,11 @@ fn play_seconds(s: f64) -> f64 {
     if s.is_finite() && s > 0.0 { s.min(MAX_PLAY_SECONDS) } else { 0.0 }
 }
 
+/// `v` rounded to the nearest even number (at least 2; `MAX_SIDE` is even, so it stays in range).
+fn even(v: u32) -> u32 {
+    (v.saturating_add(1) / 2 * 2).max(2)
+}
+
 /// Decide the frames of `doc` under `opts`, refusing when there would be more than
 /// [`MAX_FRAMES`] or more than [`MAX_TOTAL_PIXELS`] pixels.
 pub fn plan(doc: &Presentation, opts: &FramesOptions) -> Result<Plan> {
@@ -228,7 +233,9 @@ pub fn plan(doc: &Presentation, opts: &FramesOptions) -> Result<Plan> {
         let ms = doc.slides.get(slide)?.transition.as_ref()?.advance_after_ms?;
         use_timings.then(|| holding(f64::from(ms) / 1000.0))
     };
+    // Video encoders working in 4:2:0 refuse odd sizes, so both sides are even.
     let (width, height) = frame_size(doc, opts.width);
+    let (width, height) = (even(width), even(height));
     let too_many = |n: usize| {
         bad(
             CMD,
@@ -273,10 +280,9 @@ pub fn plan(doc: &Presentation, opts: &FramesOptions) -> Result<Plan> {
             frames.extend((0..n).map(|j| Frame::Build { slide, step, t: j as f64 / fps }));
             let hold = if step + 1 == steps {
                 hold_slide
-            } else if tl.step_is_auto(step + 1) {
-                // The pause before a step depends on that step: an automatic one runs on.
-                0
             } else {
+                // Only the first main step can start by itself (`Timeline`), so every later one
+                // follows a click and the pause before it is a step hold.
                 hold_step
             };
             frames.extend(std::iter::repeat_n(Frame::Build { slide, step: step + 1, t: 0.0 }, hold));
@@ -978,5 +984,23 @@ mod tests {
         assert_eq!(p.frames(), 2);
         assert_eq!(p.slides, vec![SlideRange { index: 0, from: 1, to: 1 }, SlideRange { index: 1, from: 2, to: 2 }]);
         assert_eq!((p.width, p.height), (64, 36));
+    }
+
+    /// Frames are for a video encoder: both sides come out even, whatever the width and aspect.
+    #[test]
+    fn frame_sizes_are_even() {
+        let s = crate::Session::with_new();
+        for (size, w, expect) in [
+            (deckcraft_geom::Size::new(960.0, 540.0), 333, (334, 188)),
+            (deckcraft_geom::Size::new(720.0, 540.0), 333, (334, 250)),
+            (deckcraft_geom::Size::new(720.0, 540.0), 17, (18, 14)),
+            (deckcraft_geom::Size::new(960.0, 540.0), 3839, (3840, 2160)),
+        ] {
+            let mut doc = Presentation::clone(&s.doc().unwrap().doc);
+            doc.slide_size = size;
+            let o = FramesOptions { width: w, ..Default::default() };
+            let p = plan(&doc, &o).unwrap();
+            assert_eq!((p.width, p.height), expect, "{w} on {size:?}");
+        }
     }
 }

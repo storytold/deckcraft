@@ -104,5 +104,5 @@ rect, text}`, `shape.connect {from, to, preset}`, `shape.freeform {points, close
 `chart.*` (`chart.options {textColor}` colours a chart's title, axes, legend and labels), `table.*`, `file.export {path, layout}` (PDF), `{path, width, secondsPerSlide, loop}`
 (GIF) or `{format: "frames", path: folder, fps, secondsPerStep, secondsPerSlide, transitions, useTimings, width}` (the
 slide show as a PNG frame sequence, builds and transitions played, for a video encoder; the answer's
-`slides` maps frame numbers back to slides). `deckcraft-cli describe COMMAND` prints any
+`slides` maps frame numbers back to slides; the frame height follows the slide's aspect ratio, and width and height are both rounded to even numbers because many video encoders refuse odd sizes). `deckcraft-cli describe COMMAND` prints any
 command's parameters.
