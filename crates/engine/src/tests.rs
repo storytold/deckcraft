@@ -428,8 +428,9 @@ fn a_slide_placeholder_pasted_in_slide_master_view_stays_a_placeholder() {
     s.execute("edit.copy", &json!({})).unwrap();
 
     s.execute("view.slideMaster", &json!({})).unwrap();
-    for paste in ["edit.paste", "edit.pasteSpecial"] {
-        s.execute(paste, &json!({"as": "keepSource"})).unwrap();
+    // Paste takes no `as` (commands refuse keys they don't take); Paste Special keeps the source.
+    for (paste, p) in [("edit.paste", json!({})), ("edit.pasteSpecial", json!({"as": "keepSource"}))] {
+        s.execute(paste, &p).unwrap();
         let st = s.doc().unwrap();
         let copy = st.shape(st.selection.shapes[0]).unwrap();
         assert_eq!(copy.ph.as_ref().map(|p| p.kind), source.ph.as_ref().map(|p| p.kind), "{paste} keeps the placeholder");
