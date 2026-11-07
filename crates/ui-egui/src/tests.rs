@@ -88,6 +88,36 @@ fn web_png_export_can_leave_the_background_transparent() {
     assert_eq!(corner_alpha(&got[2].1), 255, "JPEG has no transparency");
 }
 
+/// Without a save picker (the web), Save Selected Slides As and Split Presentation download
+/// their files instead of stopping.
+#[test]
+fn web_saves_selected_slides_and_split_parts_as_downloads() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let got: Rc<RefCell<Vec<(String, Vec<u8>)>>> = Rc::default();
+    let log = got.clone();
+    let services = Services {
+        download: Some(Box::new(move |name: &str, b: &[u8]| log.borrow_mut().push((name.to_string(), b.to_vec())))),
+        ..Default::default()
+    };
+    let mut app = SlideApp::new(Session::with_new(), services);
+    for _ in 0..3 {
+        app.session.execute("slide.new", &json!({})).unwrap();
+    }
+    app.session.execute("slide.selectSlides", &json!({"indices": [1, 2]})).unwrap();
+    app.save_slides_as_dialog(json!({}));
+    app.split_presentation(json!({"every": 2}));
+    let got = got.borrow();
+    let names: Vec<&str> = got.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names.len(), 3, "{names:?}");
+    assert!(names[0].ends_with(" (selected slides).pptx"), "{names:?}");
+    assert!(names[1].ends_with("-1.pptx") && names[2].ends_with("-2.pptx"), "{names:?}");
+    let slides = |b: &[u8]| deckcraft_engine::cmd::file::open_presentation("x.pptx", b).unwrap().slides.len();
+    assert_eq!(slides(&got[0].1), 2);
+    assert_eq!(slides(&got[1].1), 2);
+    assert_eq!(slides(&got[2].1), 2);
+}
+
 fn title_text(app: &SlideApp) -> String {
     let d = app.session.active().unwrap();
     let sh = &d.doc.slides[0].shapes[0];

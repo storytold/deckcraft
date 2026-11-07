@@ -187,6 +187,8 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("Close", "app.closePresentation"),
                 ("Save", "file.save"),
                 ("Save As…", "app.saveAsDialog"),
+                ("Save Selected Slides As…", "app.saveSlidesAsDialog"),
+                ("Split Presentation…", "app.splitDialog"),
                 ("Export…", "app.exportDialog"),
                 ("Print…", "app.print"),
                 ("-", ""),
