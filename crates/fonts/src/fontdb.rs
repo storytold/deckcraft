@@ -430,11 +430,11 @@ fn coverage_ranges(path: &std::path::Path) -> (Box<[(u32, u32)]>, bool) {
     const MAX_CMAP_TABLE: u32 = 4 << 20;
     const MAX_MAPPINGS: usize = 4 * 0x11_0000;
     const MAX_RANGES: usize = 1 << 17;
-    let Ok(mut file) = std::fs::File::open(path) else { return (Box::new([]), true) };
-    let Ok(meta) = file.metadata() else { return (Box::new([]), true) };
-    if !font_file_ok(&meta) {
+    // Checked before opening: opening a FIFO named like a font blocks.
+    if !std::fs::metadata(path).is_ok_and(|m| font_file_ok(&m)) {
         return (Box::new([]), true);
     }
+    let Ok(mut file) = std::fs::File::open(path) else { return (Box::new([]), true) };
     let mut read_at = |offset: u64, len: usize| -> Option<Vec<u8>> {
         let mut buf = vec![0; len];
         file.seek(SeekFrom::Start(offset)).ok()?;
@@ -1287,6 +1287,7 @@ impl FontDb {
         self.is_loaded(family)
     }
 
+    /// Could an installed file of `family` map `c`? Reads only `cmap` tables, cached per file until the next rescan; a file whose coverage could not be read in full counts as covering.
     #[cfg(not(target_arch = "wasm32"))]
     fn family_covers(&self, family: &str, c: char) -> bool {
         let mut paths: Vec<std::path::PathBuf> =
