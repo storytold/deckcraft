@@ -1,6 +1,7 @@
 //! `review.contrast`: the contrast of each text run with what the slide draws behind it, on decks
 //! built here with commands and pictures made from pixels.
 
+use deckcraft_geom::Point;
 use deckcraft_model::text::{Run, RunKind, RunProps};
 use deckcraft_model::{Shape, ShapeId, ShapeKind, Xfrm};
 use serde_json::{Value, json};
@@ -452,6 +453,44 @@ fn runs_after_two_fields_are_measured_with_their_own_glyphs() {
     }
     assert_eq!((v[4]["text"].as_str(), v[4]["color"].as_str()), (Some(" in grey"), Some("#767676")), "{v:?}");
     assert_eq!(v[4]["ratio"]["min"].as_f64(), Some(4.54), "{v:?}");
+}
+
+#[test]
+fn a_conjunct_is_measured_and_the_space_after_it_is_not() {
+    // Shaping draws the Devanagari conjunct क्ष (three characters) as one glyph, so "क्ष क" is
+    // three glyphs for five characters. Each glyph is paired with the character it draws, the
+    // conjunct with its first, so the space is not measured: a black band behind the middle of the
+    // space leaves black text at 21:1.
+    let fonts = deckcraft_fonts::FontDb::global();
+    let deva = fonts.document_face("Noto Sans Devanagari", "Regular");
+    // Required native builds embed the pinned Noto Sans Devanagari (craft-fonts'
+    // fonts/manifest.txt); an optional local build without it skips this test.
+    let pinned = deva.family == "Noto Sans Devanagari";
+    assert!(pinned || option_env!("CRAFT_FONTS_REQUIRED").is_none(), "required native build draws {}", deva.family);
+    if !pinned {
+        return;
+    }
+    let build = |behind: Option<[f64; 4]>| {
+        let mut s = white_slide();
+        if let Some(r) = behind {
+            band(&mut s, r, "#000000", 0.0);
+        }
+        let id = text_box(&mut s, [100.0, 100.0, 300.0, 80.0], "क्ष क", "#000000", 40.0);
+        (s, id)
+    };
+    let (s, id) = build(None);
+    let st = s.doc().unwrap();
+    let placed = deckcraft_render::place_slide(&st.doc, st.selection.slide);
+    let text = placed.texts.iter().find(|t| t.shape == shape_id(&id)).unwrap();
+    let chars: Vec<char> = text.layout.runs.iter().flat_map(|g| g.cells.iter().map(|&(_, ch)| ch)).collect();
+    assert_eq!(chars, ['क', ' ', 'क'], "one glyph for the conjunct, paired with its first character");
+    let (g, i) = text.layout.runs.iter().find_map(|g| Some((g, g.cells.iter().position(|&(_, ch)| ch == ' ')?))).unwrap();
+    let (gid, x, _) = g.glyphs[i];
+    let w = g.face.advance(gid) * g.size / g.face.upem.max(1.0);
+    let mid = text.transform * Point::new(x + w / 2.0, 0.0);
+    let (mut s, id) = build(Some([mid.x - w / 5.0, 100.0, w * 0.4, 80.0]));
+    let e = only(&mut s, &id, json!({}));
+    assert!(ratio(&e, "min") > 20.0, "the space over the band is not measured: {e}");
 }
 
 #[test]
