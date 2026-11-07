@@ -870,7 +870,9 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
             }
             app.set_status("Slide timings recorded.");
         }
-        let last = show.state.slide;
-        let _ = app.run("slide.go", json!({"index": last}));
+        if !show.preview_only {
+            let last = show.state.slide;
+            let _ = app.run("slide.go", json!({"index": last}));
+        }
     }
 }

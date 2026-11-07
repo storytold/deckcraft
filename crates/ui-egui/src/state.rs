@@ -79,6 +79,8 @@ pub struct UiState {
     /// Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows never hide a still pointer,
     /// for decks with clickable choices (#1445).
     pub show_keep_cursor: bool,
+    /// Play transitions automatically when selecting them or their effect options (#1655).
+    pub auto_preview_transitions: bool,
     pub ui_scale: f32,
     /// Format Shape pane: tab (`fill`, `effects`, `size`, `picture`, `text`).
     pub format_tab: String,
@@ -120,6 +122,7 @@ impl Default for UiState {
             presenter_view: true,
             show_keep_cursor: false,
             ui_scale: 1.0,
+            auto_preview_transitions: true,
             format_tab: "fill".into(),
             smartart_row: 0,
             smartart_focus: None,
