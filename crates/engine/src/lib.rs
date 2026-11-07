@@ -517,6 +517,7 @@ pub struct Session {
     next_loaded: u64,
     /// Compositions the application settled itself (see [`Session::composition_settles`]).
     composition_settles: u64,
+    pub read_only: bool,
 }
 
 impl Default for Session {
@@ -551,6 +552,7 @@ impl Session {
             loaded: vec![],
             next_loaded: 0,
             composition_settles: 0,
+            read_only: false,
         }
     }
     /// Hand over a presentation read on another thread ([`cmd::file::read_presentation_file`]);
@@ -641,7 +643,20 @@ impl Session {
     /// failed outer command, and committing the resulting undo entry or journal record.
     fn execute_unguarded(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
-        // Any other edit (or a click, a key, undo) settles an input method's composition first.
+        if self.read_only && spec.undoable {
+            let allowed = id.starts_with("edit.copy")
+                || id.starts_with("edit.select")
+                || id.starts_with("text.select")
+                || id.starts_with("slide.")
+                || id.starts_with("show.")
+                || id.starts_with("app.find")
+                || id.starts_with("review.")
+                || id.starts_with("view.")
+                || id.starts_with("file.export");
+            if !allowed {
+                return Err(crate::cmd::bad(id, "this session is read-only"));
+            }
+        }
         if self.depth == 0 && (spec.journal || spec.undoable) && !matches!(id, "text.compose" | "text.commit") {
             self.settle_composition();
         }
