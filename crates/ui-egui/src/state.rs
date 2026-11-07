@@ -89,6 +89,8 @@ pub struct UiState {
     /// The Text Pane's line drafts, for the SmartArt group they were read from.
     pub smartart_drafts: (u32, Vec<String>),
     pub grayscale: bool,
+    /// Interface language for the application shell. Missing older preferences stay on System.
+    pub language: super::i18n::LanguageChoice,
     /// Comment the Review Previous/Next buttons last landed on: `(slide, index)`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment_focus: Option<(usize, usize)>,
@@ -125,6 +127,7 @@ impl Default for UiState {
             smartart_focus: None,
             smartart_drafts: (0, vec![]),
             grayscale: false,
+            language: super::i18n::LanguageChoice::System,
             comment_focus: None,
             qat: qat::defaults(),
         }

@@ -19,7 +19,7 @@ use super::theme_colors::theme_colors_dialog;
 use super::theme_fonts::theme_fonts_dialog;
 use super::trim::{seconds_text_to_ms, trim_seed};
 use super::zoom::zoom_dialog;
-use super::{Dialog, SlideApp, Tokens, Ui, Value, buttons, check, field, field_of, json, num, theme, vec2};
+use super::{Dialog, SlideApp, Tokens, Ui, Value, buttons, buttons_labeled, check, field, field_of, json, num, theme, vec2};
 
 /// Returns true when the dialog should close.
 pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
@@ -1341,9 +1341,33 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     if d.params.get("before").is_none() {
         d.params = json!({ "before": preferences_snapshot(app) });
     }
-    ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
+    let lang = app.language();
+    ui.label(egui::RichText::new(crate::i18n::text(lang, "pref.general")).font(theme::bold(13.0)));
+    ui.horizontal(|ui| {
+        ui.label(crate::i18n::text(lang, "pref.language"));
+        let current = app.ui.language;
+        let selected = crate::i18n::choice_label(lang, current);
+        let mut chosen = None;
+        let combo = craft_ui::ComboBox::from_id_salt("interface_language").selected_text(selected).width(180.0).show_ui(ui, |ui| {
+            for choice in crate::i18n::LanguageChoice::ALL {
+                let available = crate::i18n::choice_available(choice);
+                let label = crate::i18n::choice_label(lang, choice);
+                let option = ui.add_enabled_ui(available, |ui| ui.selectable_label(current == choice, label)).inner;
+                if option.clicked() {
+                    chosen = Some(choice);
+                }
+                if !available {
+                    option.on_disabled_hover_text("Traditional Chinese needs an installed system CJK font; the web build bundles none.");
+                }
+            }
+        });
+        combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, crate::i18n::text(lang, "pref.language")));
+        if let Some(choice) = chosen {
+            let _ = app.run("app.language", json!({ "language": choice.code() }));
+        }
+    });
     let mut dark = app.ui.brightness == theme::Brightness::Dark;
-    if ui.checkbox(&mut dark, "Dark appearance").changed() {
+    if ui.checkbox(&mut dark, crate::i18n::text(lang, "pref.dark")).changed() {
         let _ = app.run("view.dark", json!({"on": dark}));
     }
     // While the pointer holds the slider its value only waits in the dialog: applying it
@@ -1354,7 +1378,7 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75));
     // No visible label here (the row is laid out to fit); the accessible name only.
     let enabled = r.enabled();
-    r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), "Interface size"));
+    r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), crate::i18n::text(lang, "pref.size")));
     if r.is_pointer_button_down_on() {
         if r.changed() || pending.is_some() {
             d.fields.insert("uiScale".into(), scale.to_string());
@@ -1367,18 +1391,18 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     }
     // PowerPoint takes the unit from the system's measurement setting; DeckCraft asks here.
     ui.horizontal(|ui| {
-        ui.label("Measurement units:");
+        ui.label(crate::i18n::text(lang, "pref.measurement_units"));
         let units = &mut app.session.prefs.units;
-        ui.radio_value(units, deckcraft_geom::Unit::Inches, "Inches");
-        ui.radio_value(units, deckcraft_geom::Unit::Centimeters, "Centimeters");
+        ui.radio_value(units, deckcraft_geom::Unit::Inches, crate::i18n::text(lang, "pref.inches"));
+        ui.radio_value(units, deckcraft_geom::Unit::Centimeters, crate::i18n::text(lang, "pref.centimeters"));
     });
-    ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
-    ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
-    ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");
-    ui.checkbox(&mut app.session.prefs.smart_quotes, "Replace straight quotes with smart quotes");
+    ui.label(egui::RichText::new(crate::i18n::text(lang, "pref.editing")).font(theme::bold(13.0)));
+    ui.checkbox(&mut app.session.prefs.smart_guides, crate::i18n::text(lang, "pref.smart_guides"));
+    ui.checkbox(&mut app.session.prefs.snap_to_grid, crate::i18n::text(lang, "pref.snap"));
+    ui.checkbox(&mut app.session.prefs.smart_quotes, crate::i18n::text(lang, "pref.quotes"));
     ui.horizontal(|ui| {
-        ui.checkbox(&mut app.session.prefs.autocorrect, "AutoCorrect as you type");
-        if ui.button("AutoCorrect Options…").clicked() {
+        ui.checkbox(&mut app.session.prefs.autocorrect, crate::i18n::text(lang, "pref.autocorrect"));
+        if ui.button(crate::i18n::text(lang, "pref.autocorrect_options")).clicked() {
             *d = Dialog::new("autocorrect");
         }
     });
@@ -1386,12 +1410,12 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         return false;
     }
     ui.horizontal(|ui| {
-        let label = ui.label("Your name (comments):");
+        let label = ui.label(crate::i18n::text(lang, "pref.author"));
         // Name the field for assistive technology; a bare text edit next to a label is an
         // unnamed input in egui 0.37's accessibility tree.
         let _ = ui.add(egui::TextEdit::singleline(&mut app.session.prefs.author)).labelled_by(label.id);
     });
-    let (ok, cancel) = buttons(ui, "Done");
+    let (ok, cancel) = buttons_labeled(ui, crate::i18n::text(lang, "pref.done"), crate::i18n::text(lang, "pref.cancel"));
     if cancel {
         restore_preferences(app, d);
     }

@@ -1,11 +1,16 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** minor (opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (Traditional Chinese shell catalog: 87 keys for the ribbon tabs, File menu, title bar, status bar and Preferences; `app.language` accepts `system`, `en` and `zh-Hant`; desktop follows a Traditional Chinese system locale; installed Traditional Chinese faces are preferred and no CJK font is bundled; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-DeckCraft's interface is English only today: strings are literals in the UI and engine code, with
-no catalog and no language switch. Requests: #15 (follow the system language), #30 and PR #34
-(Ukrainian, open). Dimension score: **~8% ready** (estimated: English complete, slide-text script
-support partly there), **55–90 h** to parity plus native-speaker review.
+DeckCraft's interface is English, with one catalog so far: the application shell (ribbon tabs, File
+menu, title bar, status bar and Preferences) has **87 keys** and can follow the system locale or an
+explicit choice (`system`, `en`, `zh-Hant`). Traditional Chinese, in Taiwan vocabulary, covers that
+shell. Simplified Chinese stays English because there is no Simplified catalog. Ribbon groups, the
+other dialogs, command ids and presentation text stay English. See
+[localization-zh-hant.md](localization-zh-hant.md). Requests: #15 (follow the system language; the
+shell does, the rest of the UI does not yet), #30 and PR #34 (Ukrainian, open). Dimension score:
+**~8% ready** (estimated: English complete, a Traditional Chinese shell, slide-text script support
+partly there), **55–90 h** to parity plus native-speaker review.
 
 ## How the numbers are measured
 
@@ -37,7 +42,11 @@ support partly there), **55–90 h** to parity plus native-speaker review.
 | Korean | ko | 0 (0%) | no | system Hangul fonts, in the interface too; IME composition (#101) | no | none | yes | 4–7 |
 | Vietnamese | vi | 0 (0%) | no | stacked diacritics through HarfRust | no | none | **no** (Windows only) | 3–5 |
 
-Other languages shipped: **0** (Ukrainian is in review as PR #34). PowerPoint for Mac ships 16 more
+Other languages shipped: **Traditional Chinese (Taiwan) for the shell, 87 strings** (Ukrainian is in
+review as PR #34). A `zh-Hant`, `zh-TW`, `zh-HK` or `zh-MO` system locale selects
+Traditional Chinese. `zh`, `zh-Hans`, `zh-CN` and `zh-SG` stay English. The web build has no system
+tag, so System stays English there until the user chooses a language; its Traditional Chinese entry
+is disabled because no CJK face is bundled. PowerPoint for Mac ships 16 more
 than the twelve above: Czech, Danish, Greek, Finnish, Hebrew, Hungarian, Italian, Dutch, Norwegian,
 Polish, Russian, Slovak, Swedish, Thai, Turkish and Traditional Chinese.
 
@@ -60,6 +69,7 @@ of every text in the file and the default for new text (`format.languageAll`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | minor | Application shell catalog (87 keys): ribbon tabs, File menu, title bar, status bar and Preferences in Taiwan Traditional Chinese; `app.language` takes `system`, `en` and `zh-Hant`; desktop follows a Traditional Chinese system locale; installed Traditional Chinese faces are preferred and none are bundled; the web build keeps System English and disables the Traditional Chinese picker |
 | 2026-10-24 | minor | Local 0.37 candidate adds an opt-in native LXGW WenKai Lite glyph fallback and CJK interface-test coverage. This records local implementation only: managed tests, formatting, clippy, wasm-size and native GUI qualification remain pending. Browser font budget and uniform Chinese typography are unchanged. |
 | 2026-10-21 | minor | Review › Language can set the proofing language of the whole presentation |
 | 2026-10-14 | minor | IME composition in a table cell is underlined in place; the candidate window sits on that cell's caret |
