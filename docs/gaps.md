@@ -1,5 +1,10 @@
 # Where DeckCraft falls short of PowerPoint
 
+Missing slide relationships now produce a lost-slide report and an untitled
+repaired copy, covered by a synthetic 13-slide regression. This narrows silent
+partial-load risk; unexplained slide loss in #1910 remains unconfirmed, and lost
+contents are not reconstructed.
+
 > **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-04 · **Change:** trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with

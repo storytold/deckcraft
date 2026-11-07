@@ -288,6 +288,42 @@ fn unreadable_slide_is_reported() {
     assert_eq!(deckcraft_pptx::import(&broken).expect("import").slides.len(), 1);
 }
 
+/// Missing slide relationships must not turn a damaged deck into a clean partial load (#1910).
+#[test]
+fn missing_slide_relationships_are_reported() {
+    let mut p = defaults::new_presentation(None);
+    let layout = p.slides[0].layout;
+    for _ in 1..13 {
+        let slide = defaults::new_slide(&mut p, layout).expect("slide");
+        p.slides.push(std::sync::Arc::new(slide));
+    }
+    let mut es = entries(&deckcraft_pptx::export(&p).expect("export"));
+    let pres = es.iter_mut().find(|(n, _)| n == "ppt/presentation.xml").expect("presentation");
+    let xml = String::from_utf8(pres.1.clone()).expect("utf8");
+    let doc = deckcraft_pptx::parse_xml(xml.as_bytes()).expect("xml");
+    let slides = doc.root.child("sldIdLst").expect("slide list");
+    let mut broken = xml.clone();
+    for slide in slides.children_named("sldId").skip(6) {
+        let rid = slide.attr("r:id").expect("relationship id");
+        broken = broken.replace(&format!("r:id=\"{rid}\""), &format!("r:id=\"missing-{rid}\""));
+    }
+    pres.1 = broken.into_bytes();
+    let damaged = rezip(&es);
+    let (q, lost) = deckcraft_pptx::import_checked(&damaged).expect("import");
+    assert_eq!(q.slides.len(), 6);
+    assert_eq!(lost.len(), 7, "every omitted slide must be reported: {lost:?}");
+    let loaded = deckcraft_engine::cmd::file::loaded_file("Original.pptx", &damaged).expect("load");
+    let mut session = deckcraft_engine::Session::new();
+    let token = session.stage_loaded(loaded);
+    let result = session.execute("file.adopt", &serde_json::json!({"path": "Original.pptx", "token": token})).expect("adopt");
+    assert_eq!(result["lostSlides"].as_array().expect("lost slides").len(), 7);
+    assert!(session.doc().expect("doc").path.is_none(), "Save must not overwrite the damaged source");
+    assert!(session.doc().expect("doc").title.ends_with("(Repaired)"));
+    let (q, lost) = deckcraft_pptx::import_checked(&deckcraft_pptx::export(&p).expect("export")).expect("import");
+    assert_eq!(q.slides.len(), 13);
+    assert!(lost.is_empty());
+}
+
 /// Many slides naming one notes part: it is read for the first slide only, not copied onto every
 /// slide that names it.
 #[test]
