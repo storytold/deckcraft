@@ -139,8 +139,9 @@ impl Dpb {
         let mut unused = (prev_ref_frame_num + 1) % max_frame_num;
         // Only the last `max_num_ref_frames` "non-existing" frames can survive the sliding window, and
         // inserting more than that evicts every earlier short-term reference. Skip straight to that tail
-        // (keeping the POC state walk for every missing frame_num) so a hostile gap of up to 65535
-        // frames costs at most `max_num_ref_frames` frame allocations instead of one per missing frame.
+        // (advancing the POC state across the skipped run in constant time) so a hostile gap of up to
+        // 65535 frames costs at most `max_num_ref_frames` frame allocations and POC updates instead of
+        // one per missing frame.
         let gap = frame_num.wrapping_add(max_frame_num).wrapping_sub(unused) % max_frame_num;
         let keep = u32::try_from(max_num_ref_frames.max(1)).unwrap_or(u32::MAX);
         let skip = gap.saturating_sub(keep);
@@ -149,10 +150,17 @@ impl Dpb {
                 e.mark = RefMark::Unused;
             }
             self.prune();
-            for _ in 0..skip {
-                poc_state(unused);
-                unused = (unused + 1) % max_frame_num;
+            // The POC state only advances FrameNumOffset where frame_num decreases, so walking the
+            // skipped run is the same as visiting its first value, the wrap (if the run crosses
+            // it) and its last value: constant work however long the gap.
+            let last = (unused + (skip - 1) % max_frame_num) % max_frame_num;
+            poc_state(unused);
+            if last < unused {
+                poc_state(max_frame_num - 1);
+                poc_state(0);
             }
+            poc_state(last);
+            unused = (last + 1) % max_frame_num;
         }
         let mut guard = 0;
         while unused != frame_num && guard < max_frame_num {
@@ -438,14 +446,15 @@ impl Dpb {
                 }
             }
         } else {
-            while self.entries.len() >= self.capacity {
+            // Evict until there is room (frame_num gap concealment can leave the DPB over-full), so
+            // the store never holds more pictures than the memory budget was checked for.
+            while self.entries.len() >= self.capacity.max(1) {
                 if !self.bump(out) {
                     if let Some(pos) = self.entries.iter().position(|e| !e.needed_for_output) {
                         self.entries.remove(pos);
                     } else {
                         self.entries.remove(0);
                     }
-                    break;
                 }
             }
         }
@@ -546,6 +555,37 @@ mod tests {
         (made, walk, left)
     }
 
+    /// (FrameNumOffset, prev frame_num) after `walk`, by the rule of `PocState::update_gap_frame`.
+    fn poc_after(walk: &[u32], prev: u32, max: u32) -> (u64, u32) {
+        walk.iter().fold((0, prev), |(off, prev), &f| (if prev > f { off + u64::from(max) } else { off }, f))
+    }
+
+    #[test]
+    fn gap_walk_matches_every_frame_num_for_any_skip() {
+        for (prev, cur) in [(1, 9), (10, 3), (14, 0), (15, 14), (0, 15), (7, 6)] {
+            for refs in 1..4 {
+                let mut dpb = Dpb::new();
+                let (_, walk, _) = fill(&mut dpb, prev, cur, 16, refs);
+                let every: Vec<u32> = (1..16).map(|i| (prev + i) % 16).take_while(|&f| f != cur).collect();
+                assert_eq!(poc_after(&walk, prev, 16), poc_after(&every, prev, 16), "{prev} -> {cur}, {refs} refs");
+                assert_eq!(walk.last(), every.last(), "{prev} -> {cur}, {refs} refs");
+            }
+        }
+    }
+
+    #[test]
+    fn reference_store_evicts_down_to_capacity() {
+        let mut dpb = Dpb::new();
+        dpb.capacity = 2;
+        // Gap concealment can leave more non-output references than the capacity.
+        for i in 0..5 {
+            short(&mut dpb, i, i);
+        }
+        let mut out = Vec::new();
+        assert!(!dpb.bump_for_space(RefMark::Short, 0, &mut out));
+        assert!(dpb.entries.len() < 2, "{} pictures left before storing into a 2-picture DPB", dpb.entries.len());
+    }
+
     #[test]
     fn huge_gap_makes_only_the_frames_that_stay_referenced() {
         let mut dpb = Dpb::new();
@@ -553,8 +593,9 @@ mod tests {
         short(&mut dpb, 2, 1);
         let (made, walk, left) = fill(&mut dpb, 1, 65535, 65536, 4);
         assert_eq!(made, 4);
-        // The POC state still walks every missing frame_num, in order.
-        assert_eq!(walk.len(), 65533);
+        // The POC state ends where walking every missing frame_num would leave it, in a few steps.
+        assert_eq!(poc_after(&walk, 1, 65536), poc_after(&(2..65535).collect::<Vec<_>>(), 1, 65536));
+        assert!(walk.len() <= 8, "{} POC updates", walk.len());
         assert_eq!(walk.first(), Some(&2));
         assert_eq!(walk.last(), Some(&65534));
         assert_eq!(left, vec![(65531, true), (65532, true), (65533, true), (65534, true)]);
@@ -566,7 +607,9 @@ mod tests {
         short(&mut dpb, 1, 65000);
         let (made, walk, left) = fill(&mut dpb, 65000, 3, 65536, 2);
         assert_eq!(made, 2);
-        assert_eq!(walk.len(), 538);
+        let every: Vec<u32> = (65001..65536).chain(0..3).collect();
+        assert_eq!(poc_after(&walk, 65000, 65536), poc_after(&every, 65000, 65536));
+        assert!(walk.len() <= 6, "{} POC updates", walk.len());
         assert_eq!(walk.first(), Some(&65001));
         assert_eq!(walk.last(), Some(&2));
         assert_eq!(left, vec![(1, true), (2, true)]);

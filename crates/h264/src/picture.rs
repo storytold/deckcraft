@@ -160,6 +160,14 @@ impl Frame {
         self.rows.len()
     }
 
+    /// Sample bytes this picture holds (luma and both chroma planes), as the decoder's memory
+    /// budget counts a picture.
+    pub fn bytes(&self) -> u64 {
+        (self.width as u64)
+            .saturating_mul(self.height as u64)
+            .saturating_add((self.cwidth as u64).saturating_mul(self.cheight as u64).saturating_mul(2))
+    }
+
     /// Publish MB row `r` (ignored if already published).
     pub fn publish(&self, r: usize, row: FrameRow) {
         let _ = self.rows[r].set(row);

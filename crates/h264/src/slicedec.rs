@@ -346,8 +346,11 @@ impl<'a> SliceDecoder<'a> {
     // Neighbour helpers
     // ------------------------------------------------------------------------------------------
 
-    /// Set up the current macroblock address and neighbour availability.
-    pub fn start_mb(&mut self, addr: usize) {
+    /// Set up the current macroblock address and neighbour availability. A macroblock an earlier
+    /// slice of this picture already decoded is refused: overlapping slices would otherwise redo
+    /// the picture's reconstruction once per slice.
+    pub fn start_mb(&mut self, addr: usize) -> Result<()> {
+        ensure!(self.pic.mbs[addr].slice_num == u32::MAX, "macroblock {addr} overlaps an earlier slice");
         self.mb_addr = addr;
         self.mb_x = addr % self.mb_w;
         self.mb_y = addr / self.mb_w;
@@ -364,6 +367,7 @@ impl<'a> SliceDecoder<'a> {
         ];
         self.mv_done = 0;
         self.pic.mbs[addr] = MbState { slice_num: sn, ..MbState::default() };
+        Ok(())
     }
 
     #[inline]
@@ -1467,7 +1471,7 @@ impl<'a> SliceDecoder<'a> {
                 let run = r.read_ue()? as usize;
                 ensure!(addr + run <= total, "mb_skip_run out of range");
                 for _ in 0..run {
-                    self.start_mb(addr);
+                    self.start_mb(addr)?;
                     self.decode_skip()?;
                     self.pic.mb_done(addr);
                     addr += 1;
@@ -1477,7 +1481,7 @@ impl<'a> SliceDecoder<'a> {
                 }
                 ensure!(addr < total, "macroblock address {addr} out of range");
             }
-            self.start_mb(addr);
+            self.start_mb(addr)?;
             self.decode_mb_cavlc(r)?;
             self.pic.mb_done(addr);
             addr += 1;
