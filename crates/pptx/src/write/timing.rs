@@ -1,7 +1,7 @@
 //! Transitions and the animation timing tree.
 
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, TextBuild, Transition, build_filled, paragraph_build_roles};
-use deckcraft_model::{Shape, ShapeId, ShapeKind};
+use deckcraft_model::{MediaClip, Shape, ShapeId, ShapeKind};
 
 use super::shapes::IdMap;
 use super::{Exp, Out};
@@ -592,7 +592,46 @@ fn shape_index<'a>(shapes: &'a [Shape], depth: usize, out: &mut std::collections
     }
 }
 
-/// Write `p:timing` for a slide's animations.
+/// Media clips whose volume, loop, hide or full screen differ from the defaults: (file shape id, clip), in tree order.
+fn media_nodes<'a>(shapes: &'a [Shape], idmap: &IdMap, depth: usize, out: &mut Vec<(u32, &'a MediaClip)>) {
+    if depth > 64 {
+        return;
+    }
+    for s in shapes {
+        if let ShapeKind::Media(m) = &s.kind
+            && (m.volume != 1.0 || m.loop_play || m.hide_while_not_playing || m.full_screen)
+            && let Some(spid) = idmap.get(s.id)
+        {
+            out.push((spid, m));
+        }
+        media_nodes(s.children(), idmap, depth + 1, out);
+    }
+}
+
+/// PowerPoint keeps a clip's volume, Loop until Stopped, Hide While Not Playing and Play Full Screen on a media node
+/// (`p:video`/`p:audio` > `p:cMediaNode`) in the timing tree, so other applications see them.
+fn media_node(w: &mut W, ids: &mut Ids, spid: u32, m: &MediaClip) {
+    let vol = (m.volume.clamp(0.0, 1.0) * 100_000.0).round() as u32;
+    if m.video {
+        w.open("p:video", A::new().t("fullScrn", m.full_screen));
+    } else {
+        w.open0("p:audio");
+    }
+    w.open("p:cMediaNode", A::new().a("vol", vol).o("showWhenStopped", m.hide_while_not_playing.then_some("0")));
+    // Like PowerPoint's own media nodes, it waits to be started (`delay="indefinite"`) instead of starting with the slide.
+    w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold").a("display", "0").o("repeatCount", m.loop_play.then_some("indefinite")));
+    w.open0("p:stCondLst");
+    w.empty("p:cond", A::new().a("delay", "indefinite"));
+    w.close("p:stCondLst");
+    w.close("p:cTn");
+    w.open0("p:tgtEl");
+    w.empty("p:spTgt", A::new().a("spid", spid));
+    w.close("p:tgtEl");
+    w.close("p:cMediaNode");
+    w.close(if m.video { "p:video" } else { "p:audio" });
+}
+
+/// Write `p:timing` for a slide's animations and the playback options of its media clips.
 pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idmap: &IdMap) {
     let mut grp_count: std::collections::HashMap<u32, u32> = Default::default();
     let mut main: Vec<Eff> = vec![];
@@ -686,7 +725,9 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             None => main.extend(effs),
         }
     }
-    if main.is_empty() && triggered.is_empty() {
+    let mut media = vec![];
+    media_nodes(shapes, idmap, 0, &mut media);
+    if main.is_empty() && triggered.is_empty() && media.is_empty() {
         return;
     }
     let mut ids = Ids(0);
@@ -756,6 +797,9 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         trig_cond(w);
         w.close("p:nextCondLst");
         w.close("p:seq");
+    }
+    for (spid, m) in media {
+        media_node(w, &mut ids, spid, m);
     }
     w.close("p:childTnLst");
     w.close("p:cTn");
