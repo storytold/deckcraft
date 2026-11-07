@@ -13,7 +13,7 @@ struct MoveDrag {
 }
 
 impl Session {
-    /// Update the active drag interaction using the pointer position and modifiers.
+    /// Apply a slide-space pointer movement to the active gesture, mapping group members locally.
     pub(super) fn drag(&mut self, p: Point, mods: Mods, tol: f64) -> Result<Value> {
         let Some(drag) = self.tool.drag.clone() else { return Ok(Value::Null) };
         match drag {
@@ -28,9 +28,11 @@ impl Session {
                 return self.drag_move(MoveDrag { ids, start, origs, moved, duplicate, enter_text }, p, mods, tol);
             }
             Drag::Resize { id, orig, ids, handle, origs, start } => {
+                let parent = cmd::parent_transform(self.doc()?, id);
+                let local = parent.inverse() * p;
                 let keep_aspect = mods.shift || self.is_picture(id);
-                let nx = resize_box(&orig, handle, p - start, keep_aspect, mods.alt);
-                let nx = self.snap_resize(nx, handle, &ids, tol);
+                let nx = resize_box(&orig, handle, local - start, keep_aspect, mods.alt);
+                let nx = if parent == Affine::IDENTITY { self.snap_resize(nx, handle, &ids, tol) } else { nx };
                 let sx = if orig.w > 1e-9 { (nx.w / orig.w) * if nx.flip_h != orig.flip_h { -1.0 } else { 1.0 } - 1.0 } else { 0.0 };
                 let sy = if orig.h > 1e-9 { (nx.h / orig.h) * if nx.flip_v != orig.flip_v { -1.0 } else { 1.0 } - 1.0 } else { 0.0 };
                 let div = if mods.alt { 2.0 } else { 1.0 };
@@ -71,10 +73,11 @@ impl Session {
                 }
             }
             Drag::LineEnd { id, end, orig } => {
+                let parent = cmd::parent_transform(self.doc()?, id);
                 let a = orig.affine();
                 let (p0, p1) = (a * Point::new(0.0, 0.0), a * Point::new(orig.w, orig.h));
                 let mut q = p;
-                let other = if end == 0 { p1 } else { p0 };
+                let other = parent * if end == 0 { p1 } else { p0 };
                 if mods.shift {
                     q = constrain_45(other, q);
                 }
@@ -82,6 +85,7 @@ impl Session {
                 if let Some((_, _, at)) = glue {
                     q = at;
                 }
+                let q = parent.inverse() * q;
                 let (s0, s1) = if end == 0 { (q, p1) } else { (p0, q) };
                 self.set_xfrm(id, line_xfrm(s0, s1, orig.rot))?;
                 self.edit(|doc, sel| {
@@ -92,6 +96,9 @@ impl Session {
                 })?;
             }
             Drag::Rotate { ids, center, start, origs } => {
+                let st = self.doc()?;
+                let parent = ids.first().map(|id| cmd::parent_transform(st, *id));
+                let p = parent.unwrap_or(Affine::IDENTITY).inverse() * p;
                 let ang = (p.y - center.y).atan2(p.x - center.x);
                 let mut delta = (ang - start).to_degrees();
                 for (id, o) in &origs {
@@ -138,6 +145,7 @@ impl Session {
                 return Ok(Value::Null);
             }
             Drag::Warp { id, index, name, base, orig } => {
+                let p = cmd::parent_transform(self.doc()?, id).inverse() * p;
                 let v = {
                     let st = self.doc()?;
                     let Some(sh) = st.shape(id) else { return Ok(Value::Null) };
@@ -200,6 +208,7 @@ impl Session {
         Ok(Value::Null)
     }
 
+    /// Move each selected shape by the slide displacement expressed in its containing group.
     fn drag_move(&mut self, drag: MoveDrag, p: Point, mods: Mods, tol: f64) -> Result<Value> {
         let MoveDrag { ids, start, origs, moved, duplicate, enter_text } = drag;
         let mut d = p - start;
@@ -222,17 +231,30 @@ impl Session {
             }
         }
         // Smart guides on the moved group's bounds.
-        let bounds = origs.iter().map(|(_, x)| x.bounds()).reduce(|a, b| a.union(b)).unwrap_or_default();
+        let st = self.doc()?;
+        let bounds = origs
+            .iter()
+            .map(|(id, x)| (cmd::parent_transform(st, *id) * x.affine()).transform_rect_bbox(Rect::new(0.0, 0.0, x.w, x.h)))
+            .reduce(|a, b| a.union(b))
+            .unwrap_or_default();
         let moved_b = bounds + d;
         let (snap, guides) = self.snap_rect(moved_b, &ids_now, tol * 1.5, !mods.cmd);
         d += snap;
         self.tool.guides = guides;
         let origs2: Vec<(ShapeId, Xfrm)> = if duplicate { ids_now.iter().copied().zip(origs.iter().map(|o| o.1)).collect() } else { origs.clone() };
+        let st = self.doc()?;
+        let deltas: Vec<_> = origs2
+            .iter()
+            .map(|(id, _)| {
+                let inv = cmd::parent_transform(st, *id).inverse();
+                inv * (Point::ZERO + d) - inv * Point::ZERO
+            })
+            .collect();
         self.edit(|doc, sel| {
             let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("move", "no slide"))?;
-            for (id, o) in &origs2 {
+            for ((id, o), delta) in origs2.iter().zip(&deltas) {
                 if let Some(sh) = deckcraft_model::find_shape_mut(list, *id) {
-                    sh.xfrm = Some(Xfrm { x: o.x + d.x, y: o.y + d.y, ..*o });
+                    sh.xfrm = Some(Xfrm { x: o.x + delta.x, y: o.y + delta.y, ..*o });
                 }
             }
             // A connector dragged away from shapes that stay put comes unglued at those ends.
@@ -258,7 +280,15 @@ impl Session {
         Ok(Value::Null)
     }
 
+    /// Map a slide-space drag into the adjusted member's group before changing its geometry.
     fn drag_adjust(&mut self, id: ShapeId, index: usize, orig: Xfrm, p: Point) -> Result<Value> {
+        let parent = cmd::parent_transform(self.doc()?, id);
+        let determinant = parent.determinant();
+        // A collapsed group has no unique slide-to-child mapping.
+        if determinant == 0.0 || !determinant.is_finite() {
+            return Ok(Value::Null);
+        }
+        let p = parent.inverse() * p;
         let st = self.doc()?;
         let Some(sh) = st.shape(id).cloned() else { return Ok(Value::Null) };
         let local = orig.affine().inverse() * p;

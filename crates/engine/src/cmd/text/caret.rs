@@ -4,7 +4,7 @@ use super::ime::{composition_range, model_pos, walk_backward, walk_forward};
 use super::layout::{ctx_for, fit_text_box, layout_for, pos_param};
 use super::{
     DocState, HistoryEntry, Pos, Result, Session, ShapeId, ShapeKind, TextBody, Value, bad, body_of, bool_or, ed, edit_shapes, edit_text, id_param,
-    json, ok, push_undo, str_param, xfrm_of,
+    json, ok, push_undo, str_param,
 };
 
 /// A table cell's text laid out the way it is drawn, mapped into slide coordinates.
@@ -26,8 +26,7 @@ pub(super) fn cell_on_slide(st: &DocState, id: ShapeId, row: usize, col: usize) 
         &body,
         &deckcraft_text::Opts { rect, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false },
     );
-    let x = xfrm_of(&st.doc, &st.selection, sh);
-    let to_slide = deckcraft_render::text_transform(x.affine(), rect, layout.rotation);
+    let to_slide = deckcraft_render::text_transform(crate::cmd::shape_to_slide(st, sh), rect, layout.rotation);
     Some(CellText { layout, to_slide })
 }
 

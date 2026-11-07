@@ -1,6 +1,8 @@
 # UI parity with PowerPoint
 
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-06 · **Change:** minor (collapsed groups preserve shape adjustments during handle drags; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** trivial (File › About replaces Account; product links, credits and appearance retained; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (grouped spelling-underline coverage, slide-space line-end snapping and Shift angle constraints; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-01 · **Change:** trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** trivial (dragging several selected slides moves them all; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (group fill and outline edits reach members, #1079; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -10,6 +12,21 @@ How DeckCraft looks and feels next to PowerPoint: the shell, the ribbon, menus, 
 direct manipulation, keyboard and precision. Observations of PowerPoint are kept locally in
 `plan/powerpoint/01-observed-ui.md` and `menu-tree.txt` (gitignored, clean-room rules in
 AGENTS.md §2). Dimension score: **~60% ready** (estimated), **30–50 h** to parity.
+
+## Editing text inside groups
+
+Double-clicking text inside a moved, scaled, rotated, flipped or nested group keeps the editing
+outline, caret, selection highlight and mouse hit testing at the text's drawn position. Moving
+its frame and resizing its handles map pointer movement back into the member's group space.
+Sibling hit tests map the click and its tolerance into each containing group's child space, so
+uncovered text keeps its caret and a member drawn over the text takes the click (#931).
+Synthetic engine tests compare editing coordinates with the renderer and cover caret placement,
+context clicks, frame movement, resizing, undo and overlapping group members. Feature and
+readiness scores are unchanged. Renderer-based regressions also cover spelling squiggles under grouped text and table cells. Grouped line-end gestures constrain Shift angles to visible 45-degree increments and query connection sites in slide space before mapping the final endpoint back into the member's group space. Regressions cover snapping markers, both endpoints, free dragging and undo through nested groups, rotation, reflection and uneven scaling.
+
+When a group has zero width or height, dragging a shape adjustment handle leaves its geometry
+unchanged, including after saving and reopening. Ordinary transformed groups and very small
+invertible groups retain adjustment and undo behavior.
 
 ## Empty list paragraphs
 
@@ -173,7 +190,11 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-06 | minor | Adjustment-handle drags in collapsed groups leave geometry unchanged and preserve native save/load values; normal and tiny invertible groups retain adjustment and undo behavior (#1095) |
+| 2026-11-05 | trivial | Sync grouped-editing fixes and regression coverage with current upstream; preserve both documentation updates and unchanged parity scores (#1095) |
 | 2026-11-02 | trivial | File › About replaces Account; product links, credits and appearance retained |
+| 2026-11-02 | minor | Renderer-based spelling-underline regressions for grouped/nested text and table cells; grouped line ends snap in slide space, with endpoint and undo coverage (#1095) |
+| 2026-11-01 | minor | Grouped-text editing coordinates, pointer gestures and sibling hit tests follow enclosing group transforms; synthetic regression coverage (#1095) |
 | 2026-10-31 | trivial | No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged |
 | 2026-10-29 | trivial | Picture Format: the Picture Styles row shows as many styles as fit beside the groups after it (at least two) and a More arrow with all 24, as the Transitions and Animations galleries do; Crop and Size are in view in the default window (#1232) |
 | 2026-10-26 | trivial | Thumbnail pane and Slide Sorter: dragging one of several selected slides moves the whole selection |

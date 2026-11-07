@@ -41,6 +41,7 @@ fn member_at(children: &[Shape], to_abs: Affine, p: Point, tol: f64) -> Option<S
 pub(super) struct EditedBox {
     pub(super) id: ShapeId,
     pub(super) xfrm: Xfrm,
+    parent: Affine,
     /// Its frame can be grabbed to move it: not a line (no frame to grab) and not locked.
     pub(super) movable: bool,
 }
@@ -56,8 +57,14 @@ pub(super) fn shape_in_front(st: &crate::DocState, shapes: &[Shape], target: Sha
             return false;
         }
         if deckcraft_model::find_shape(std::slice::from_ref(s), target).is_some() {
-            // The group holding the text: look among its members.
-            return shape_in_front(st, s.children(), target, p, tol, depth + 1);
+            // Test members in their containing group's child space, including the hit tolerance.
+            let ShapeKind::Group { child, .. } = &s.kind else { return false };
+            let x = xfrm_of(&st.doc, &st.selection, s);
+            let ch = Rect::new(child.x, child.y, child.x + child.w, child.y + child.h);
+            let inv = deckcraft_geom::group_child_affine(&x, ch).inverse();
+            let [a, b, c, d, _, _] = inv.as_coeffs();
+            let scale = a.hypot(b).max(c.hypot(d));
+            return shape_in_front(st, s.children(), target, inv * p, tol * scale, depth + 1);
         }
         if !s.hidden && hit_shape(st, s, p, tol).is_some() {
             return true;
@@ -66,13 +73,29 @@ pub(super) fn shape_in_front(st: &crate::DocState, shapes: &[Shape], target: Sha
     false
 }
 
+/// The edited shape's frame and containing-group transform, excluding notes and table cells.
 pub(super) fn edited_box(st: &crate::DocState) -> Option<EditedBox> {
     let t = st.selection.text.as_ref()?;
     if t.notes || t.cell.is_some() {
         return None;
     }
     let sh = st.shape(t.shape)?;
-    Some(EditedBox { id: t.shape, xfrm: xfrm_of(&st.doc, &st.selection, sh), movable: !sh.is_line() && !sh.locked })
+    Some(EditedBox {
+        id: t.shape,
+        xfrm: xfrm_of(&st.doc, &st.selection, sh),
+        parent: cmd::parent_transform(st, t.shape),
+        movable: !sh.is_line() && !sh.locked,
+    })
+}
+
+impl EditedBox {
+    /// Classify a slide-space click using the frame's group-local coordinates and tolerance.
+    pub(super) fn zone(&self, p: Point, tol: f64) -> EditZone {
+        let inv = self.parent.inverse();
+        let [a, b, c, d, _, _] = inv.as_coeffs();
+        let scale = a.hypot(b).max(c.hypot(d));
+        edit_zone(&self.xfrm, inv * p, tol * scale)
+    }
 }
 
 /// Where a point falls against the box of the text being edited.

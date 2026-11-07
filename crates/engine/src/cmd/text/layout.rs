@@ -129,7 +129,7 @@ pub fn text_frame(st: &DocState, t: &TextSel) -> Option<(deckcraft_text::TextLay
     let x = xfrm_of(&st.doc, &st.selection, sh);
     let tr = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
     let l = lay(sh, body, tr);
-    let m = deckcraft_render::text_transform(x.affine(), tr, l.rotation);
+    let m = deckcraft_render::text_transform(crate::cmd::shape_to_slide(st, sh), tr, l.rotation);
     Some((l, m))
 }
 
@@ -175,7 +175,7 @@ pub fn caret_line(st: &DocState, t: &TextSel) -> Option<(deckcraft_geom::Point, 
     // After End on a wrapped line the caret is drawn at that line's end.
     let aff = if t.at_line_end() { deckcraft_text::Affinity::Upstream } else { deckcraft_text::Affinity::Downstream };
     let (cx, top, bot) = l.caret_drawn(deckcraft_text::Pos { para: t.caret.0, ch: t.caret.1 }, aff)?;
-    let m = deckcraft_render::text_transform(x.affine(), geo.text_rect, l.rotation);
+    let m = deckcraft_render::text_transform(crate::cmd::shape_to_slide(st, sh), geo.text_rect, l.rotation);
     Some((m * deckcraft_geom::Point::new(cx, top), m * deckcraft_geom::Point::new(cx, bot)))
 }
 
