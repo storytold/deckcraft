@@ -474,7 +474,7 @@ impl Session {
                     let ids: Vec<ShapeId> = st
                         .shapes()
                         .iter()
-                        .filter(|s| !s.hidden && !s.locked)
+                        .filter(|s| !s.hidden && !s.locked && !cmd::lacks_frame(&st.doc, &st.selection, s))
                         .filter(|s| contains_rect(r, xfrm_of(&st.doc, &st.selection, s).bounds()))
                         .map(|s| s.id)
                         .collect();
