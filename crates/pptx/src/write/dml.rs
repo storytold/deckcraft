@@ -151,7 +151,11 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
         // Artistic effect and SVG fallback extensions live under the blip extension list.
         let svg_linked = pf.svg_media.and_then(|id| x.media(id)).is_some_and(|m| m.data.is_empty() && m.link.is_some());
         let svg_rid = pf.svg_media.and_then(|id| x.media_rel(o, id, "image"));
-        let artistic = pf.artistic.as_ref().filter(|art| art.effect.starts_with("artistic") && art.effect.chars().all(|c| c.is_ascii_alphanumeric()));
+        let artistic = pf
+            .artistic
+            .as_ref()
+            .filter(|art| art.effect.starts_with("artistic") && art.effect.chars().all(|c| c.is_ascii_alphanumeric()))
+            .and_then(|art| x.media_rel(o, art.original, "image").map(|orig| (art, orig)));
         if svg_rid.is_some() || artistic.is_some() {
             w.open0("a:extLst");
             if let Some(svg_rid) = svg_rid {
@@ -160,9 +164,7 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
                 w.empty("asvg:svgBlip", A::new().a("xmlns:asvg", "http://schemas.microsoft.com/office/drawing/2016/SVG/main").a(rel_attr, svg_rid));
                 w.close("a:ext");
             }
-            if let Some(art) = artistic
-                && let Some(orig) = x.media_rel(o, art.original, "image")
-            {
+            if let Some((art, orig)) = artistic {
                 w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
                 w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
                 w.open("a14:imgLayer", A::new().a("r:embed", &orig));
