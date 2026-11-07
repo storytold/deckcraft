@@ -170,9 +170,10 @@ fn open_other(name: &str, bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
     let rtf = deckcraft_format::rtf::sniff_rtf(bytes);
     if rtf || lower.ends_with(".txt") || lower.ends_with(".md") {
         let text = String::from_utf8_lossy(bytes);
-        let text = if rtf { std::borrow::Cow::Owned(deckcraft_format::rtf::rtf_to_outline(&text)) } else { text };
         let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
-        if lower.ends_with(".md") {
+        if rtf {
+            deckcraft_format::rtf::rtf_to_slides(&mut p, &text);
+        } else if lower.ends_with(".md") {
             deckcraft_format::markdown_to_slides(&mut p, &text);
         } else {
             deckcraft_format::outline_to_slides(&mut p, &text);
