@@ -12,9 +12,16 @@ struct MoveDrag {
     enter_text: Option<(ShapeId, Point)>,
 }
 
+/// Samples one ink or freeform gesture keeps; later pointer moves extend it no further.
+pub(crate) const MAX_GESTURE_POINTS: usize = 20_000;
+
 impl Session {
     /// Update the active drag interaction using the pointer position and modifiers.
     pub(super) fn drag(&mut self, p: Point, mods: Mods, tol: f64) -> Result<Value> {
+        if matches!(self.tool.drag, Some(Drag::Ink { .. })) {
+            self.extend_ink(p);
+            return Ok(Value::Null);
+        }
         let Some(drag) = self.tool.drag.clone() else { return Ok(Value::Null) };
         match drag {
             Drag::Guide { index } => {
@@ -181,7 +188,7 @@ impl Session {
             }
             Drag::Freeform { mode, mut points, pressed } => {
                 // Dragging scribbles (except for curves, which only take clicked points).
-                if pressed && mode != "curve" && points.last().is_none_or(|l| (*l - p).hypot() >= 1.5) {
+                if pressed && mode != "curve" && points.len() < MAX_GESTURE_POINTS && points.last().is_none_or(|l| (*l - p).hypot() >= 1.5) {
                     points.push(p);
                 }
                 let mut v = points.clone();
@@ -191,13 +198,22 @@ impl Session {
                 self.tool.path_preview = v;
                 self.tool.drag = Some(Drag::Freeform { mode, points, pressed });
             }
-            Drag::Ink { mut points } => {
-                points.push(self.ink_sample(p));
-                self.tool.ink_preview = points.clone();
-                self.tool.drag = Some(Drag::Ink { points });
-            }
+            // Handled above.
+            Drag::Ink { .. } => {}
         }
         Ok(Value::Null)
+    }
+
+    /// Ink grows by one sample per move: extend it (and its preview) in place rather than
+    /// copying the whole stroke twice per event, up to [`MAX_GESTURE_POINTS`].
+    fn extend_ink(&mut self, p: Point) {
+        let sample = self.ink_sample(p);
+        if let Some(Drag::Ink { points }) = self.tool.drag.as_mut()
+            && points.len() < MAX_GESTURE_POINTS
+        {
+            points.push(sample);
+            self.tool.ink_preview.push(sample);
+        }
     }
 
     fn drag_move(&mut self, drag: MoveDrag, p: Point, mods: Mods, tol: f64) -> Result<Value> {
