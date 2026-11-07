@@ -1,5 +1,5 @@
 use super::{
-    Align2, AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big, big_button, big_button_ex, dropdown, enabled, group, icons, json,
+    Align2, AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big_button, big_button_ex, dropdown, enabled, group, icons, json,
     pos2, rows, run, theme, vec2, widgets,
 };
 
@@ -127,52 +127,62 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
         });
-        big(app, ui, Icon::AnimationPane, "Animation\nPane", "view.pane", json!({"pane": "animation"}));
-        let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
-        egui::Popup::menu(&r).show(|ui| {
-            if ui.button("On Click of… (none)").clicked() {
-                run(app, "animation.timing", json!({"trigger": null}));
-            }
-            let shapes: Vec<(u32, String)> =
-                app.session.active().map(|d| d.shapes().iter().map(|s| (s.id.0, s.name.clone())).collect()).unwrap_or_default();
-            for (id, name) in shapes {
-                if ui.button(format!("On Click of {name}")).clicked() {
-                    run(app, "animation.timing", json!({"trigger": id}));
-                }
-            }
-        });
-        let on = app.session.anim_painter.is_some();
-        let en = enabled(app, "animation.painter");
-        let (r, _) = big_button_ex(ui, Icon::AnimationPainter, "Animation\nPainter", en, false, on);
-        let r = r.on_hover_text("Animation Painter (double-click to keep it on)");
-        if r.double_clicked() {
-            run(app, "animation.painter", json!({"sticky": true}));
-        } else if r.clicked() {
-            if on {
-                app.session.anim_painter = None;
-            } else {
-                run(app, "animation.painter", json!({}));
+    let pane_open = app.ui.pane.as_deref() == Some("animation");
+    let res = big_button_ex(ui, Icon::AnimationPane, "Animation\nPane", true, false, pane_open);
+    super::qat::ribbon_menu(app, &res.0, Icon::AnimationPane, "Animation\nPane", "view.pane", &json!({"pane": "animation", "toggle": true}));
+    if res.0.clicked() {
+        run(app, "view.pane", json!({"pane": "animation", "toggle": true}));
+    }
+
+    let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
+    egui::Popup::menu(&r).show(|ui| {
+        if ui.button("On Click of… (none)").clicked() {
+            run(app, "animation.timing", json!({"trigger": null}));
+        }
+        let shapes: Vec<(u32, String)> =
+            app.session.active().map(|d| d.shapes().iter().map(|s| (s.id.0, s.name.clone())).collect()).unwrap_or_default();
+        for (id, name) in shapes {
+            if ui.button(format!("On Click of {name}")).clicked() {
+                run(app, "animation.timing", json!({"trigger": id}));
             }
         }
     });
+
+    let on = app.session.anim_painter.is_some();
+    let en = enabled(app, "animation.painter");
+    let (r, _) = big_button_ex(ui, Icon::AnimationPainter, "Animation\nPainter", en, false, on);
+    let r = r.on_hover_text("Animation Painter (double-click to keep it on)");
+    if r.double_clicked() {
+        run(app, "animation.painter", json!({"sticky": true}));
+    } else if r.clicked() {
+        if on {
+            app.session.anim_painter = None;
+        } else {
+            run(app, "animation.painter", json!({}));
+        }
+    }
+
     group(ui, |ui| {
-        rows(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Start:");
-                let s = cur.as_ref().map(|c| match c.start {
-                    deckcraft_model::AnimStart::OnClick => "On Click",
-                    deckcraft_model::AnimStart::WithPrevious => "With Previous",
-                    deckcraft_model::AnimStart::AfterPrevious => "After Previous",
-                });
-                dropdown(ui, "astart", s.unwrap_or(""), 112.0, cur.is_some(), |ui| {
-                    for (l, v) in [("On Click", "onClick"), ("With Previous", "withPrevious"), ("After Previous", "afterPrevious")] {
-                        if ui.button(l).clicked() {
-                            run(app, "animation.timing", json!({"start": v}));
-                            ui.close();
+            rows(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Start:");
+                    let s = cur.as_ref().map(|c| match c.start {
+                        deckcraft_model::AnimStart::OnClick => "On Click",
+                        deckcraft_model::AnimStart::WithPrevious => "With Previous",
+                        deckcraft_model::AnimStart::AfterPrevious => "After Previous",
+                    });
+                    dropdown(ui, "astart", s.unwrap_or(""), 112.0, cur.is_some(), |ui| {
+                        for (l, v) in [("On Click", "onClick"), ("With Previous", "withPrevious"), ("After Previous", "afterPrevious")] {
+                            if ui.button(l).clicked() {
+                                run(app, "animation.timing", json!({"start": v}));
+                                ui.close();
+                            }
                         }
-                    }
+                    });
                 });
             });
+        });
+    }
             ui.horizontal(|ui| {
                 ui.label("Duration:");
                 if let Some(v) =
