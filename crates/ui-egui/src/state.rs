@@ -75,6 +75,7 @@ pub struct UiState {
     pub zoom: Option<f32>,
     pub sorter_zoom: f32,
     pub recent: Vec<String>,
+    pub recent_symbols: Vec<crate::RecentSymbol>,
     pub presenter_view: bool,
     /// Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows never hide a still pointer,
     /// for decks with clickable choices (#1445).
@@ -117,6 +118,7 @@ impl Default for UiState {
             zoom: None,
             sorter_zoom: 1.0,
             recent: vec![],
+            recent_symbols: vec![],
             presenter_view: true,
             show_keep_cursor: false,
             ui_scale: 1.0,
@@ -159,6 +161,18 @@ impl UiState {
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
         self.recent.dedup();
         self.recent.truncate(RECENT_MAX);
+        self.recent_symbols
+            .retain(|r| r.text.chars().count() == 1 && !r.text.chars().any(char::is_control) && r.font.len() <= 256 && !r.font.contains('\0'));
+        let mut symbols = Vec::new();
+        for symbol in self.recent_symbols.drain(..) {
+            if !symbols.contains(&symbol) {
+                symbols.push(symbol);
+            }
+            if symbols.len() == crate::dialogs::symbol::RECENT_MAX {
+                break;
+            }
+        }
+        self.recent_symbols = symbols;
         self
     }
 }
