@@ -253,9 +253,19 @@ impl SlideApp {
         }
         self.synthetic_generation = self.synthetic_generation.wrapping_add(1).max(1);
         log::debug!("injecting synthetic input batch {}", self.synthetic_generation);
-        let n = match self.synthetic.first() {
-            Some(egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. }) => 1,
-            _ => self.synthetic.iter().position(|e| matches!(e, egui::Event::Key { pressed: false, .. })).map_or(self.synthetic.len(), |i| i + 1),
+        // Modifier state is a prefix of the gesture, not a pointer event: look past it so a
+        // modified move or drag still gets one pointer event per pass.
+        let first = self.synthetic.iter().position(|e| !matches!(e, egui::Event::ModifiersChanged(_))).unwrap_or(0);
+        let n = match self.synthetic.get(first) {
+            Some(egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. }) => first + 1,
+            _ => {
+                let start = first;
+                self.synthetic
+                    .iter()
+                    .skip(start)
+                    .position(|e| matches!(e, egui::Event::Key { pressed: false, .. }))
+                    .map_or(self.synthetic.len(), |i| start + i + 1)
+            }
         };
         let n = n.min(self.synthetic.len());
         let batch: Vec<egui::Event> = self.synthetic.drain(..n).collect();

@@ -1,6 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 use super::updates_ui;
-use super::{SlideApp, UI_COMMANDS, Value, ViewMode, backstage, dialogs, doc_window, json, media, qat, theme};
+use super::{SlideApp, UI_COMMANDS, Value, ViewMode, backstage, dialogs, doc_window, json, qat, theme};
 
 fn grid_options_touched(p: &Value) -> bool {
     ["spacing", "snap", "smartGuides", "gridlines", "guides"].iter().any(|k| p.get(*k).is_some())
@@ -18,6 +18,11 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        // A description typed into the Alt Text pane is written before any command can move the
+        // object or the slide it belongs to; `shape.altText` itself carries the commit.
+        if id != "shape.altText" {
+            crate::panes::flush_alt_text(self);
+        }
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else if id == "file.save" && self.services.host_save.is_some() && params.get("path").is_none() {
@@ -181,8 +186,9 @@ impl SlideApp {
                 }
             }
             "show.end" => {
-                self.show = None;
-                self.media.stop_owned(media::Owner::Show);
+                // A command ends the show without the Record view's confirmation, but never
+                // without saving: `end_show_now` runs the same finish path first.
+                self.end_show_now();
             }
             "animation.preview" => {
                 if p.get("on").and_then(Value::as_bool) == Some(false) {

@@ -223,10 +223,40 @@ pub fn split_popup<'a>(main: &'a Response, arrow: &'a Response) -> egui::Popup<'
     egui::Popup::menu(main).id(id).anchor(main.rect.union(arrow.rect)).anchor_widget(anchor).open_memory(toggle)
 }
 
+/// A split whose main half does the work: only the arrow opens the menu, as PowerPoint's
+/// Preview and Camera Border halves do. The shared [`split_popup`] also opens on the main half,
+/// which is right for a button whose main click only means "show me the list".
+pub fn arrow_popup<'a>(main: &'a Response, arrow: &'a Response) -> egui::Popup<'a> {
+    // A pointer click reads Context input, so resolve it before taking the data lock below.
+    let arrow_clicked = arrow.clicked();
+    let toggle = arrow_clicked.then_some(egui::SetOpenCommand::Toggle);
+    let id = split_popup_id(main);
+    let anchor = main.ctx.data_mut(|data| {
+        let key = id.with("anchor");
+        if arrow_clicked {
+            data.insert_temp(key, arrow.id);
+        }
+        data.get_temp::<egui::Id>(key).unwrap_or(main.id)
+    });
+    egui::Popup::menu(main).id(id).anchor(main.rect.union(arrow.rect)).anchor_widget(anchor).open_memory(toggle)
+}
+
 /// A dropdown-only split whose menu contains a colour grid, retaining the Eyedropper hand-back.
 pub fn split_color_popup<'a>(main: &'a Response, arrow: &'a Response) -> egui::Popup<'a> {
+    color_hand_back(main, split_popup(main, arrow))
+}
+
+/// The arrow-only variant of [`split_color_popup`], for a split whose main half does the work
+/// (Camera Border): the Eyedropper's picked colour reopens this menu, not the shared one.
+pub fn arrow_color_popup<'a>(main: &'a Response, arrow: &'a Response) -> egui::Popup<'a> {
+    color_hand_back(main, arrow_popup(main, arrow))
+}
+
+/// Keep the Eyedropper talking to the right menu: reopen it when its result arrives, and note it
+/// as the open colour menu while it is up.
+fn color_hand_back<'a>(main: &'a Response, popup: egui::Popup<'a>) -> egui::Popup<'a> {
     let id = split_popup_id(main);
-    let mut popup = split_popup(main, arrow).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    let mut popup = popup.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
     if crate::eyedropper::result_waits_for(&main.ctx, id) {
         popup = popup.open_memory(egui::SetOpenCommand::Bool(true));
     }

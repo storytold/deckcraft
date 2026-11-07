@@ -1,7 +1,7 @@
 //! Slide transitions (`p:transition`) and animations (`p:timing`).
 
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, TextBuild, Transition, build_filled, paragraph_build_roles};
-use deckcraft_model::{Shape, ShapeKind, TextBody, find_shape, find_shape_mut};
+use deckcraft_model::{Shape, ShapeId, ShapeKind, TextBody, find_shape, find_shape_mut};
 
 use super::shapes::IdCtx;
 use super::{Imp, Part, dml};
@@ -197,6 +197,95 @@ fn max_dur(e: &El, depth: usize) -> Option<u32> {
     best
 }
 
+/// A media node in the timing tree. Its volume, mute and playback options come from
+/// [`media_settings`]; `click` says whether it starts on a click rather than with the slide.
+pub struct MediaCue {
+    pub shape: ShapeId,
+    pub video: bool,
+    /// The node lives in a trigger's `interactiveSeq`, which a click on another shape starts.
+    pub interactive: bool,
+    /// The node waits for a click, so it is not slide-start media.
+    pub click: bool,
+    /// Milliseconds the enclosing click group's start condition delays the clip (`0` = with the
+    /// slide). Kept so a delayed autoplay clip is written back with its delay.
+    pub delay_ms: u32,
+    /// `isNarration` from the node (PowerPoint writes it on `p:audio`; older DeckCraft files put
+    /// it on `p:cMediaNode`).
+    pub narration: bool,
+}
+
+fn walk_media(e: &El, interactive: bool, click: bool, delay: u32, ctx: &IdCtx, out: &mut Vec<MediaCue>, depth: usize) {
+    if depth > 64 || out.len() >= 64 {
+        return;
+    }
+    let interactive = interactive || (e.is("cTn") && e.attr("nodeType") == Some("interactiveSeq"));
+    // A time node that starts `indefinite` waits for a click: everything below it, the media
+    // included, plays on that click. This is the click-group rule `collect` applies. A finite
+    // delay is how long after its click group (or the slide) the clip starts.
+    let starts_on_click = e.is("cTn") && waits_for_click(e);
+    let click = click || starts_on_click;
+    let delay = if starts_on_click {
+        0
+    } else {
+        let own = e.path(&["stCondLst", "cond"]).and_then(|c| c.attr("delay")).and_then(|d| d.trim().parse::<u32>().ok());
+        own.map_or(delay, |d| delay.saturating_add(d))
+    };
+    if e.is("audio") || e.is("video") {
+        if let Some(node) = e.child("cMediaNode")
+            && let Some(spid) = node.path(&["tgtEl", "spTgt"]).and_then(|s| s.u32("spid"))
+            && let Some(shape) = ctx.lookup(spid)
+        {
+            // The node's own time node carries the start condition our writer emits: read it too,
+            // or an export/import resets a delayed clip to zero. `delay="indefinite"` there makes
+            // the clip click-start, exactly as it does on an ancestor.
+            let own_ctn = node.child("cTn");
+            let own_click = own_ctn.is_some_and(waits_for_click);
+            let own_delay = own_ctn
+                .and_then(|c| c.path(&["stCondLst", "cond"]))
+                .and_then(|c| c.attr("delay"))
+                .and_then(|d| d.trim().parse::<u32>().ok())
+                .unwrap_or(0);
+            let narration = e.bool("isNarration") == Some(true) || node.bool("isNarration") == Some(true);
+            out.push(MediaCue {
+                shape,
+                video: e.is("video"),
+                interactive,
+                click: click || own_click,
+                delay_ms: if own_click { delay } else { delay.saturating_add(own_delay) },
+                narration,
+            });
+        }
+        return;
+    }
+    for c in e.elements() {
+        walk_media(c, interactive, click, delay, ctx, out, depth + 1);
+    }
+}
+
+/// Whether a time node's start conditions wait for a click. `delay="indefinite"` alone does:
+/// PowerPoint then waits for the presenter. A sibling `evt="onBegin"` condition starts the node
+/// itself — the form our writer emits for an automatically started first effect — so it is not a
+/// click, whatever the indefinite delay beside it says.
+fn waits_for_click(ctn: &El) -> bool {
+    let Some(list) = ctn.child("stCondLst") else { return false };
+    let mut indefinite = false;
+    for c in list.children_named("cond") {
+        if c.attr("evt").is_some_and(|v| v.trim() == "onBegin") {
+            return false;
+        }
+        indefinite |= c.attr("delay").map(str::trim) == Some("indefinite");
+    }
+    indefinite
+}
+
+/// Media nodes in the timing tree. Nodes without `presetClass` are not animations.
+pub fn media_cues(ctx: &IdCtx, timing: &El) -> Vec<MediaCue> {
+    let Some(tn) = timing.child("tnLst") else { return vec![] };
+    let mut out = Vec::new();
+    walk_media(tn, false, false, 0, ctx, &mut out, 0);
+    out
+}
+
 /// Does every behaviour time node (`p:cBhvr/p:cTn`) under the effect node `c` carry `autoRev`?
 fn behaviour_auto_reverses(c: &El) -> bool {
     let mut behaviours = vec![];
@@ -232,7 +321,6 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         }
     }
 }
-
 /// Flatten the timing tree into the Animation Pane list.
 pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: &[Shape]) -> Vec<Animation> {
     let _ = (imp, part);

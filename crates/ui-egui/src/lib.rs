@@ -16,6 +16,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 };
 
 pub mod backstage;
+pub mod camera;
 pub mod canvas;
 pub mod capture;
 pub mod control;
@@ -52,6 +53,7 @@ mod app;
 mod clock;
 mod ime_hooks;
 pub mod panels;
+mod record;
 mod services;
 mod state;
 
@@ -78,7 +80,7 @@ pub use state::{RECENT_MAX, UiState, ViewMode, ZOOM_RANGE};
 
 /// The presentation (and place in it) captured when the request started.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FileTarget {
+pub(crate) enum FileTarget {
     /// Nothing was open. An insert makes its own document rather than using one opened
     /// while the file was being read.
     Absent,
@@ -111,7 +113,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.zoom", "Set Zoom", None, "{percent}"),
     ("view.zoomDialog", "Zoom…", None, "{}"),
     ("view.fit", "Fit to Window", None, "{}"),
-    ("view.pane", "Task Pane", None, "{pane: format|animation|selection|comments|designer|background|smartart|null}"),
+    (
+        "view.pane",
+        "Task Pane",
+        None,
+        "{pane: format|animation|selection|comments|designer|background|smartart|thesaurus|altText|null, toggle?: bool}",
+    ),
     ("review.thesaurusPane", "Thesaurus", Some("Shift+F7"), "{word?}: open the Thesaurus pane on the selected word"),
     ("view.tab", "Ribbon Tab", None, "{tab}"),
     ("view.collapseRibbon", "Collapse the Ribbon", Some("Cmd+F1"), "{}"),
@@ -232,17 +239,25 @@ pub struct SlideApp {
     /// The word looked up in the Thesaurus pane.
     pub thesaurus_query: String,
     pub show: Option<show::Show>,
+    /// A commanded end dropped a full-screen show: the next frame leaves full screen.
+    pub(crate) leave_fullscreen: bool,
     /// Current slide's animations playing on the editor canvas (not the full-screen show).
     anim_preview: Option<AnimPreview>,
     /// Where the Reuse Slides picker inserts: the presentation and slide current when it opened.
     reuse_target: Option<FileTarget>,
     /// Audio/video playback (editor control bar, slide show, `media.*` commands).
     pub media: media::MediaHost,
+    /// Live camera preview behind the Camera Format tab's Preview control.
+    pub camera_preview: camera::Preview,
+    /// Record ▸ Audio: the take in progress and its elapsed time.
+    pub(crate) record: record::Recorder,
     pub status: Option<(String, f64)>,
     /// A presentation being read in the background, with its progress window ([`opening`]).
     pub opening: Option<opening::Opening>,
     /// A brief notice over the bottom of the window (missing fonts on opening a file).
     pub toast: Option<toast::Toast>,
+    /// Notices that arrived while a sticky one was up; each shows once it is closed.
+    pub(crate) toast_queue: Vec<String>,
     /// Documents (by uid) whose missing fonts have been mentioned.
     fonts_noted: std::collections::HashSet<u64>,
     pub perf: Perf,
@@ -449,6 +464,8 @@ mod animpane_tests;
 #[cfg(test)]
 mod browsetheme_tests;
 #[cfg(test)]
+mod camera_format_tests;
+#[cfg(test)]
 mod compare_tests;
 #[cfg(test)]
 mod eyedropper_tests;
@@ -466,6 +483,8 @@ mod ime_tests;
 mod last_color_tests;
 #[cfg(test)]
 mod presenter_tests;
+#[cfg(test)]
+mod record_tests;
 #[cfg(test)]
 mod reflection_pane_tests;
 #[cfg(test)]

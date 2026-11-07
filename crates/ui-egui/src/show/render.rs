@@ -49,6 +49,8 @@ pub(super) fn render_frame(
     plays: &[TriggerPlay],
     stamps: &[StepStamp],
     backdrop: Option<&deckcraft_render::Image>,
+    // Recorded ink younger than this stays hidden: a recording preview reveals it on the clock.
+    ink_until: Option<u32>,
 ) -> egui::ColorImage {
     let f = move |id: ShapeId| {
         let mut st = state_for(&tl, id, step, t, plays, stamps);
@@ -63,6 +65,7 @@ pub(super) fn render_frame(
         state: Some(&f),
         gif_times: times,
         threads,
+        ink_until_ms: ink_until,
         ..Default::default()
     };
     match backdrop {
@@ -87,6 +90,8 @@ pub(super) fn render_overlay(
     threads: u16,
     plays: &[TriggerPlay],
     stamps: &[StepStamp],
+    // The recording-preview ink cutoff, so ink above a playing video follows the same clock.
+    ink_until: Option<u32>,
 ) -> egui::ColorImage {
     let f = move |id: ShapeId| {
         let mut st = state_for(&tl, id, step, t, plays, stamps);
@@ -102,6 +107,7 @@ pub(super) fn render_overlay(
         skip,
         gif_times: times,
         threads,
+        ink_until_ms: ink_until,
         ..Default::default()
     };
     let img = deckcraft_render::render_slide_part(doc, idx, deckcraft_render::SlidePart::Content, &opts);
@@ -131,14 +137,14 @@ pub(super) fn start_prefetch(doc: &std::sync::Arc<Presentation>, next: usize, si
         return None;
     }
     let hidden = hidden_on_entry(doc, next);
-    let key = Key { slide: next, step: 0, size, doc: std::sync::Arc::as_ptr(doc) as usize, hidden: hidden.clone(), gif: 0, plays: vec![] };
+    let key = Key { slide: next, step: 0, size, doc: std::sync::Arc::as_ptr(doc) as usize, hidden: hidden.clone(), gif: 0, plays: vec![], ink: 0 };
     let (tx, rx) = std::sync::mpsc::channel();
     let doc = doc.clone();
     // Leave a core for the UI thread.
     let threads = render_threads().saturating_sub(1).max(1);
     let spawned = std::thread::Builder::new().name("show-prefetch".into()).spawn(move || {
         let tl = ShowState::timeline(&doc, next);
-        let _ = tx.send(render_frame(&doc, next, tl, 0, 0.0, size, hidden, &[], threads, &[], &[], None));
+        let _ = tx.send(render_frame(&doc, next, tl, 0, 0.0, size, hidden, &[], threads, &[], &[], None, None));
     });
     spawned.ok().map(|_| Prefetch { key, rx })
 }

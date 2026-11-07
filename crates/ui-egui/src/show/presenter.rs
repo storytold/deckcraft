@@ -1,7 +1,7 @@
 use super::keys::keyboard;
 use super::render::{fit, next_rect};
 use super::zoom::{Zoom, grid_indices, paint_grid, see_all_hit, slide_aspect, toggle_blank, zoom_frame};
-use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, Stroke, Ui, pos2, theme, vec2};
+use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, SlideApp, Stroke, Ui, pos2, theme, vec2};
 
 pub(super) const NOTES_DEFAULT: f32 = 18.0;
 
@@ -22,6 +22,11 @@ pub(super) struct PresenterTimer {
 impl PresenterTimer {
     pub(super) fn start(now: f64) -> Self {
         PresenterTimer { origin: finite_time(now), frozen: 0.0, paused: false }
+    }
+
+    /// A clock that is not counting: zero until something starts it.
+    pub(super) fn paused_at_zero() -> Self {
+        PresenterTimer { origin: 0.0, frozen: 0.0, paused: true }
     }
 
     pub(super) fn elapsed(self, now: f64) -> f64 {
@@ -82,7 +87,14 @@ fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) 
 }
 
 /// Render the presenter window and set `keep` false when the user ends or closes the show.
-pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, now: f64, keep: &mut bool) {
+pub(super) fn presenter_window(
+    app: &mut SlideApp,
+    ctx: &egui::Context,
+    show: &mut Show,
+    doc: &std::sync::Arc<Presentation>,
+    now: f64,
+    keep: &mut bool,
+) {
     let cur = show.state.slide;
     let next = show.state.peek_next(doc);
     let cur_tex = show.tex.as_ref().map(|(_, t)| t.clone());
@@ -150,7 +162,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
         egui::ViewportId::from_hash_of("deckcraft_presenter"),
         egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
         |ui, _| {
-            if !keyboard(ui.ctx(), show, doc, now, true) {
+            if !keyboard(&mut app.services.mic, ui.ctx(), show, doc, now, true) {
                 *keep = false;
             }
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
@@ -284,6 +296,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
         },
     );
     for a in actions {
+        super::before_slide_change(app, show, &a);
         if !show.apply(a, doc, now) {
             *keep = false;
         }

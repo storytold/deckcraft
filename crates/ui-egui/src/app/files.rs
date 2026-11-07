@@ -182,7 +182,7 @@ impl SlideApp {
         format!("{name}.{ext}")
     }
 
-    /// Exports the active presentation as `fmt` (`pdf`, `png`, `pngAll`, `jpeg`, `pptx`,
+    /// Exports the active presentation as `fmt` (`pdf`, `png`, `pngAll`, `jpeg`, `pptx`, `ppsx`,
     /// `deckcraft`, `outline`) through `file.export`: the save picker on the desktop, a download
     /// on the web. `extra` adds `file.export` params (the PDF's layout, slides…). The
     /// presentation keeps its own file. Returns whether a file was written or handed over.
@@ -194,6 +194,7 @@ impl SlideApp {
             "pngAll" => ("png", "png", true),
             "jpeg" | "jpg" => ("jpg", "jpeg", false),
             "pptx" => ("pptx", "pptx", false),
+            "ppsx" => ("ppsx", "ppsx", false),
             "outline" | "txt" => ("txt", "outline", false),
             "rtf" => ("rtf", "rtf", false),
             "deckcraft" => ("deckcraft", "deckcraft", false),
@@ -592,7 +593,22 @@ impl SlideApp {
                     self.dialog = Some(d);
                 }
                 UiRequest::Pane { id } => self.ui.pane = Some(id),
-                UiRequest::StartShow { from } => self.start_show(from, false),
+                UiRequest::StartShow { from, record, preview } => {
+                    // One microphone: a Record ▸ Audio take in progress owns it, so a recording
+                    // show would split the captured audio and later cancel the clip.
+                    // Both a recording show and a preview reach the microphone: a Record ▸ Audio
+                    // take in progress owns it — and finishing that take would edit the deck,
+                    // which a preview must never do.
+                    if self.audio_recording() && (record || preview) {
+                        self.set_status("Stop or cancel the audio recording first: it owns the microphone");
+                        continue;
+                    }
+                    self.start_show(from, false);
+                    if let Some(show) = self.show.as_mut() {
+                        show.recording_preview = preview;
+                        show.record = record && !preview;
+                    }
+                }
                 UiRequest::Message { text } => self.set_status(text),
                 UiRequest::PickFile { purpose } => {
                     if purpose == "saveAs" {
@@ -606,6 +622,7 @@ impl SlideApp {
                         self.media.request(uid, &doc, slide, &action, (shape, ms), owner);
                     }
                 }
+                UiRequest::CameraPreview { on, device } => self.apply_camera_request(on, device),
             }
         }
     }
@@ -642,7 +659,7 @@ impl SlideApp {
         self.apply_external_file(id, name, bytes);
     }
 
-    fn capture_file_target(&self) -> FileTarget {
+    pub(crate) fn capture_file_target(&self) -> FileTarget {
         let Some(d) = self.session.active() else { return FileTarget::Absent };
         let place = match d.selection.target {
             Target::Slides => match d.current_slide() {
@@ -716,7 +733,7 @@ impl SlideApp {
 
     /// Run `cmd` on the document and slide captured for the request, then put the view back
     /// if the user has since moved. A missing document or slide cancels the file.
-    fn execute_on_target(&mut self, target: &FileTarget, name: &str, cmd: &str, params: &Value) -> Result<(), String> {
+    pub(crate) fn execute_on_target(&mut self, target: &FileTarget, name: &str, cmd: &str, params: &Value) -> Result<(), String> {
         let FileTarget::Document { doc, place } = target else {
             self.session.execute("file.new", &json!({})).map_err(|e| e.to_string())?;
             return self.session.execute(cmd, params).map(|_| ()).map_err(|e| e.to_string());
@@ -726,6 +743,8 @@ impl SlideApp {
         };
         let view = self.session.active_index();
         let saved = self.session.documents().get(idx).map(|d| d.selection.clone());
+        // Whether the user has moved away from the place the file was chosen for.
+        let moved = self.capture_file_target() != *target;
         self.session.set_active(idx);
         let located = match self.locate_place(place) {
             Ok(located) => located,
@@ -745,12 +764,15 @@ impl SlideApp {
             st.selection.cells = None;
         }
         let result = self.session.execute(cmd, params).map(|_| ()).map_err(|e| e.to_string());
-        if view == Some(idx) {
+        if view != Some(idx) {
+            self.restore_file_view(view);
+        } else if moved {
+            // The user is looking at another slide of the same document: put them back there.
+            // When they have not moved, the command's own selection stands, so the new shape is
+            // selected for the next step.
             if let (Some(sel), Some(st)) = (saved, self.session.active_mut()) {
                 st.selection = sel;
             }
-        } else {
-            self.restore_file_view(view);
         }
         result
     }

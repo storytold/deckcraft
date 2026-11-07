@@ -298,10 +298,17 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             cnvpr(w, x, o, id, s);
             w.open0("p:cNvPicPr");
             locks(w, "a:picLocks", s, A::new().a("noChangeAspect", "1"));
+            if let Some(c) = &s.cameo {
+                crate::cameo::write_live_feed(w, c.raw.as_deref());
+            }
             w.close("p:cNvPicPr");
             nv_pr(w, x, o, s);
             w.close("p:nvPicPr");
-            dml::blip_fill(w, x, o, "p:blipFill", fill);
+            if s.cameo.is_some() {
+                dml::cameo_blip_fill(w, x, o, "p:blipFill", fill);
+            } else {
+                dml::blip_fill(w, x, o, "p:blipFill", fill);
+            }
             let mut s2 = s.clone();
             if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background | Fill::Group)) {
                 s2.fill = None;
@@ -429,7 +436,9 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             w.open0("p:nvGrpSpPr");
             cnvpr(w, x, o, id, s);
             w.empty0("p:cNvGrpSpPr");
-            w.empty0("p:nvPr");
+            // The group's tags (the recorded-ink marker among them) ride on `p:nvPr`, as they do
+            // for shapes; an empty element dropped the marker and reopen lost it.
+            nv_pr(w, x, o, s);
             w.close("p:nvGrpSpPr");
             w.open0("p:grpSpPr");
             dml::xfrm(w, "a:xfrm", &xf, Some(&xf));

@@ -1,6 +1,6 @@
 # Hardware parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** minor (Presenter View only with a second display on Linux and the BSDs, #1156; previous: minor, community PR wave 2026-10-14: picture export DPI, Retina pixel grid (#184), twist to rotate, swipe to turn the page, pen pressure; duplicated rows and headers folded; previous: minor, IME input, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365); PowerPoint for Windows where noted
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-03 · **Change:** minor (Record ▸ Audio records from the default microphone and inserts the take on the current slide, beside Record Slide Show narration, and the microphone is desktop-only; previous: minor, Presenter View only with a second display on Linux and the BSDs, #1156; previous: minor, community PR wave 2026-10-14: picture export DPI, Retina pixel grid (#184), twist to rotate, swipe to turn the page, pen pressure; previous: minor, IME input, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365); PowerPoint for Windows where noted
 
 What hardware PowerPoint uses and what DeckCraft uses, per platform. Dimension score: **~40%
 ready** (estimated), **25–45 h** to parity. Performance (unmeasured, ~55%) is tracked here too
@@ -26,7 +26,7 @@ because it mostly follows from hardware use.
 | Video decode | Hardware (AVFoundation/VideoToolbox, Media Foundation) | Software only: pure-Rust H.264, HEVC, VP9, AV1 (`crates/h264`, `hevc`, `vp9`, `av1`) |
 | 4K video in the show | smooth on hardware decode | unmeasured; likely CPU-bound |
 | Audio output | Core Audio / WASAPI | `cpal` (Core Audio, WASAPI, ALSA); browser Web Audio |
-| Microphone (record audio, narration) | yes | no |
+| Microphone (record audio, narration) | yes | desktop only: Record Slide Show narration (cpal default input, one clip per slide) and Record ▸ Audio, which inserts a WAV on the slide the take started on; default input only. The web build has no microphone, so both controls read unavailable there |
 | Camera (Cameo, record with camera) | yes | no |
 | Screen recording | yes | no |
 
@@ -80,5 +80,7 @@ alignment runs once per transition (#67), and the decoders run in software.
 | 2026-10-14 | minor | A two-finger twist on the trackpad rotates the selected shapes, as one undo step. Pinch-zoom is unchanged |
 | 2026-10-14 | minor | A sideways trackpad swipe turns the page in Normal view (when the slide fits) and in the show. Pinch-zoom is unchanged |
 | 2026-10-14 | minor | Pen pressure scales ink width; tilt, pinch zoom and trackpad gestures remain (estimate 3–6 h → 2–5 h) |
+| 2026-11-03 | minor | Record ▸ Audio records from the default microphone and inserts the take as a WAV on the current slide, beside Record Slide Show's per-slide narration. The macOS bundle declares microphone use and the hardened runtime grants audio input |
+| 2026-10-14 | minor | Record Slide Show captures the default microphone |
 | 2026-10-12 | minor | IME input methods (#101) |
 | 2026-10-10 | major | Created: rendering, media, displays, input and performance against PowerPoint 16.113 |

@@ -10,6 +10,7 @@ use crate::ribbon::{cref_param, paint_anim_tile};
 use crate::theme::{self, Tokens};
 use crate::{SlideApp, widgets};
 
+mod alt_text;
 mod animation;
 mod background;
 mod comments;
@@ -19,6 +20,7 @@ mod format_shape;
 mod smartart;
 mod thesaurus;
 
+use alt_text::alt_text;
 use animation::animation;
 use background::background;
 use comments::{comments, revisions};
@@ -29,6 +31,12 @@ pub(crate) use format_shape::text_transparency_slider;
 use format_shape::{fill_transparency_to_apply, solid_fill_transparency_percent};
 use smartart::smartart;
 use thesaurus::thesaurus;
+
+/// Commit a description the Alt Text pane holds when that pane is no longer open. Called at the
+/// end of every UI pass: a field the pane stops drawing can never report `lost_focus`.
+pub fn flush_alt_text(app: &mut SlideApp) {
+    alt_text::flush(app);
+}
 
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
@@ -49,6 +57,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 "designer" => "Design Ideas",
                 "smartart" => "Text Pane",
                 "thesaurus" => "Thesaurus",
+                "altText" => "Alt Text",
                 "revisions" => "Revisions",
                 _ => "Pane",
             };
@@ -75,6 +84,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 "designer" => designer(app, ui),
                 "smartart" => smartart(app, ui),
                 "thesaurus" => thesaurus(app, ui),
+                "altText" => alt_text(app, ui),
                 "revisions" => revisions(app, ui),
                 _ => {}
             });
@@ -419,5 +429,7 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod alt_text_tests;
 #[cfg(test)]
 mod thesaurus_tests;

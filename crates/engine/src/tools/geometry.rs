@@ -273,9 +273,10 @@ impl Session {
 
     pub(super) fn add_ink(&mut self, points: Vec<(f64, f64, f32)>) -> Result<Value> {
         let ToolKind::Ink { mode, color, width } = self.tool.kind.clone() else { return Ok(Value::Null) };
-        let stroke = deckcraft_model::InkStroke { points, color, width, highlighter: mode == "highlighter" };
-        // Strokes join the slide's ink layer (one ink shape per slide).
-        let existing = self.doc()?.shapes().iter().rev().find(|s| matches!(s.kind, ShapeKind::Ink { .. })).map(|s| s.id);
+        let stroke = deckcraft_model::InkStroke { points, color, width, highlighter: mode == "highlighter", at_ms: None };
+        // Strokes join the slide's own ink layer (one user ink shape per slide); Record Slide
+        // Show keeps its strokes on a separate tagged layer that Clear Recording removes.
+        let existing = self.doc()?.shapes().iter().rev().find(|s| matches!(s.kind, ShapeKind::Ink { .. }) && !cmd::is_recorded_ink(s)).map(|s| s.id);
         self.edit(|doc, sel| {
             let id = match existing {
                 Some(id) => id,
@@ -305,7 +306,9 @@ impl Session {
 
     pub(super) fn erase_at(&mut self, p: Point, tol: f64) -> Result<Value> {
         let st = self.doc()?;
-        let Some(ink) = st.shapes().iter().rev().find(|s| matches!(s.kind, ShapeKind::Ink { .. })).map(|s| s.id) else { return Ok(Value::Null) };
+        let Some(ink) = st.shapes().iter().rev().find(|s| matches!(s.kind, ShapeKind::Ink { .. }) && !cmd::is_recorded_ink(s)).map(|s| s.id) else {
+            return Ok(Value::Null);
+        };
         let before = st.doc.clone();
         let sel_before = st.selection.clone();
         self.edit(|doc, sel| {

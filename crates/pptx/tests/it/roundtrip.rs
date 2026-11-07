@@ -271,6 +271,7 @@ pub fn rich_deck() -> Presentation {
             color: Rgba::rgb(0, 0, 255),
             width: 3.0,
             highlighter: false,
+            at_ms: None,
         }],
     };
     s.shapes.extend([pic, tiled, vid, ink]);
@@ -796,6 +797,7 @@ fn pressured_ink_exports_at_its_mean_width() {
                 color: Rgba::rgb(0, 0, 0),
                 width: 10.0,
                 highlighter: false,
+                at_ms: None,
             }],
         },
         ..Default::default()
@@ -2280,6 +2282,9 @@ fn hidden_media_controls_survive_save_and_reopen() {
         ),
         "{xml}"
     );
+    // The laser colour extension shares the same `p:extLst`, which `p:showPr` allows only once.
+    assert_eq!(show.matches("<p:extLst").count(), 1, "{xml}");
+    assert!(show.contains("<p14:laserClr"), "the laser colour stays beside the media controls: {xml}");
     assert!(!round(&p).show.show_media_controls);
     let default = Presentation::default();
     assert!(!props(&default).contains("showMediaCtrls"));
@@ -2307,4 +2312,24 @@ fn reflection_angles_and_skews_out_of_range_are_written_inside_the_schema() {
 
     let r = round(&p).slides.last().and_then(|sl| by_name(sl, "Reflected").effects.clone()).and_then(|fx| fx.reflection).expect("reflection");
     assert_eq!((r.st_pos, r.dir, r.fade_dir, r.kx, r.ky), (Some(100_000), Some(21_599_995), Some(0), Some(5_399_999), Some(-5_399_999)));
+}
+
+/// The recorded-ink marker rides on the shape's tags, which a PPTX ink group writes through its
+/// `p:nvPr`: reopening keeps the tag, so `show.clearRecording` still recognises the layer.
+#[test]
+fn a_recorded_ink_layer_keeps_its_tag_through_pptx() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &serde_json::json!({"layout": "blank"})).expect("slide");
+    s.execute("ink.stroke", &serde_json::json!({"index": 0, "points": [[10, 10], [40, 40]], "at": 250})).expect("ink");
+    let doc = s.active().expect("doc").doc.clone();
+    let bytes = deckcraft_pptx::export(&doc).expect("export");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    // The layer may come back as a group of freeforms rather than an `Ink` shape; the tag is what
+    // `show.clearRecording` looks for.
+    let tagged = q.slides[0].shapes.iter().any(|sh| sh.tags.iter().any(|(_, v)| v == "ink"));
+    assert!(
+        tagged,
+        "the ink layer's marker survives the round trip: {:?}",
+        q.slides[0].shapes.iter().map(|s| (&s.name, &s.tags)).collect::<Vec<_>>()
+    );
 }

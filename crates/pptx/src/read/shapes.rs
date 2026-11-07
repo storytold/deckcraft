@@ -334,7 +334,15 @@ fn read_model_alternate(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> 
 }
 
 fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
-    let mut s = base(imp, part, ctx, e.child("nvPicPr"));
+    let nvp = e.child("nvPicPr");
+    let mut s = base(imp, part, ctx, nvp);
+    if let Some(props) = crate::cameo::live_feed_props(nvp.and_then(|n| n.child("cNvPicPr"))) {
+        // Kept verbatim, the feed would carry `r:id`/`r:embed` attributes whose relationships the
+        // export never recreates: keep it only when it names none. `keep_inner` also declares the
+        // prefixes an enclosing wrapper bound, so the exported feed's prefix is never unbound.
+        let raw = (!super::has_rel_refs(props)).then(|| part.keep_inner(props));
+        s.cameo = Some(deckcraft_model::Cameo { live: true, raw, ..Default::default() });
+    }
     if let Some(pr) = e.child("spPr") {
         sp_pr(imp, part, &mut s, pr);
     }

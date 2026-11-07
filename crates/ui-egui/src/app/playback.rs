@@ -27,9 +27,67 @@ impl SlideApp {
         Ok(Some(from))
     }
 
+    /// Stop the microphone, if the host gave us one. Recording ends through here so a
+    /// half-captured clip is dropped rather than left running: the standalone take is cancelled
+    /// too, so the bar stops claiming to record and the next take can start.
+    pub(crate) fn stop_mic(&mut self) {
+        let mic = self.services.mic.as_deref_mut();
+        self.record.cancel(mic);
+    }
+
+    /// End the show without asking: a take is saved through the shell's own path first, so a
+    /// commanded end never drops a recording.
+    pub(crate) fn end_show_now(&mut self) {
+        if let Some(mut show) = self.show.take() {
+            // The shell's finish leaves full screen; a commanded end asks the next pass to.
+            if !show.reading {
+                self.leave_fullscreen = true;
+            }
+            if let Some(doc) = self.session.active().map(|d| d.doc.clone()) {
+                // An unsaved script edit lives in the Record view's draft: write it back before
+                // the show goes, or quitting from the field loses the text.
+                let slide = show.state.slide;
+                show::record::notes::flush(self, &mut show.record_view, &doc, slide);
+            }
+            if let Some(doc) = self.session.active().map(|d| d.doc.clone()) {
+                let now = show.last_now;
+                show::save_take(self, &mut show, &doc, now);
+            }
+            if let Some(host) = self.services.presenter.as_mut() {
+                host.close();
+            }
+            self.media.stop_owned(media::Owner::Show);
+            // The editor keeps the slide the show reached, as the shell's own finish does; a
+            // recording preview is a look at the recording and leaves the editor where it was.
+            if !show.recording_preview {
+                let last = show.state.slide;
+                let _ = self.run("slide.go", json!({"index": last}));
+            }
+        }
+    }
+
     /// Leave animation preview, stop editor-owned media, and create a show at the requested slide
     /// with the current reading/presenter configuration; an out-of-range slide starts an ended show.
     pub fn start_show(&mut self, from: usize, reading: bool) {
+        // A show replaces the current one: an unsaved script edit goes back to its slide first,
+        // and a take it holds is saved.
+        if let Some(mut show) = self.show.take() {
+            if let Some(doc) = self.session.active().map(|d| d.doc.clone()) {
+                let slide = show.state.slide;
+                show::record::notes::flush(self, &mut show.record_view, &doc, slide);
+            }
+            self.show = Some(show);
+        }
+        if self.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured)) {
+            self.end_show_now();
+        }
+        // The show and Record ▸ Audio share one microphone. A finished take is inserted on the
+        // slide before the show opens, so starting Play never throws the samples away.
+        if self.record.is_recording() && self.stop_audio_recording().is_err() {
+            // The take is kept when it cannot be encoded; a show start discards it explicitly
+            // rather than leaving a dead recorder behind.
+            self.record.cancel(self.services.mic.as_deref_mut());
+        }
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);
         let presenter = self.ui.presenter_view && !reading && self.second_display();
@@ -39,6 +97,11 @@ impl SlideApp {
             show.instance = self.show_instance;
             show.keep_cursor = self.ui.show_keep_cursor;
             self.show = Some(show);
+        }
+        // The show that replaces a captured recording goes fullscreen itself: only a reading or
+        // browsed show, which never asks for it, leaves fullscreen here.
+        if !reading {
+            self.leave_fullscreen = false;
         }
     }
 
@@ -170,11 +233,22 @@ impl SlideApp {
         let input_time = ctx.input(|i| i.time);
         let show_time = show.hidden_logic_time(input_time, now);
         let keep = show.advance_hidden(&doc, show_time);
+        let doc_uid = self.session.active().map_or(0, |d| d.uid);
+        // A delayed automatic clip is due on the same clock the visible pass uses: start the
+        // queue here too, or a hidden window leaves it silent until the next visible frame.
+        let Some(mut show) = self.show.take() else { return };
+        // A hidden advance has no visible pass to queue the new slide's own clips.
+        show::queue_entry_media(self, &mut show, doc_uid, &doc, show_time);
+        show::start_due_media(self, &mut show, doc_uid, &doc, show_time);
         let time_driven = show.hidden_time_driven(&doc);
         if !keep {
-            self.show = None;
+            // The show was taken out of `self` above: handing it back and ending it runs the
+            // usual cleanup (presenter, show-owned media) instead of dropping it.
+            self.show = Some(show);
+            self.end_show_now();
             return;
         }
+        self.show = Some(show);
         if time_driven {
             // A hidden event loop has no draw to piggyback on. A delayed repaint keeps the
             // logic clock ticking; with no paint request pending eframe services it as a

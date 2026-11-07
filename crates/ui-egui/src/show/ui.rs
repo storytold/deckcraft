@@ -1,6 +1,7 @@
 use super::keys::{handle_keys, keyboard};
 use super::media::{
-    Pick, Under, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, shapes_under_pointer, show_media,
+    Pick, Under, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, run_pending_media, shapes_under_pointer,
+    show_media,
 };
 use super::presenter::{PresenterTimer, format_elapsed, presenter_window};
 use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
@@ -9,8 +10,9 @@ use super::zoom::{
     wheel_zoom_lines,
 };
 use super::{
-    Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
-    ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
+    Align2, BackKey, Click, Color32, CornerRadius, InkMode, InkStroke, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState,
+    Show, ShowAction, ShowState, SlideApp, Source, Stroke, TextureHandle, Ui, before_slide_change, json, laser_pos, pen_width_slide,
+    pointer_is_laser, pos2, record, save_take, show_fills_screen, state_for, theme, vec2, viewport_visible,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -27,6 +29,8 @@ struct Fr<'a> {
     clicked: bool,
     secondary: bool,
     pointer: Option<Pos2>,
+    /// The Record view's section rects; None in an ordinary show.
+    layout: Option<record::Layout>,
 }
 
 /// Whether the show goes on, and the steps input asked for.
@@ -50,6 +54,10 @@ struct Sl {
     key: Key,
     back_key: BackKey,
     size: (u32, u32),
+    /// Recording preview: how many recorded strokes the clock has reached, and when the next one
+    /// is due. The count is part of the frame key, so the frame is rendered once per revealed
+    /// stroke rather than on every tick.
+    ink_next: Option<u32>,
 }
 
 /// Draw and advance the active show, handling hidden frames, timing, input, transitions, and
@@ -65,6 +73,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     };
     let now = ctx.input(|i| i.time);
     let Some(mut show) = app.show.take() else { return };
+    show.last_now = now;
     if !viewport_visible(&ctx) {
         // A forced hidden paint (for example a pending screenshot) draws the current frame;
         // the show clocks are advanced by logic, not by this draw, so it must not advance them a
@@ -75,7 +84,41 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     }
     show.observe_visible_frame(now, web_time::Instant::now());
     begin_show(&ctx, &mut show, &doc, now, app.services.presenter.is_some());
-    let mut out = Out { keep: keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
+    let mic_on = show.record_view.devices.mic.is_on();
+    if show.record && !show.recording_preview && mic_on && show.record_view.status == record::RecordStatus::Recording && !show.mic_tried {
+        show.mic_tried = true;
+        match app.services.mic.as_mut() {
+            Some(mic) => match mic.start() {
+                Ok(()) => show.mic_ok = true,
+                Err(e) => {
+                    log::info!("record narration: {e}");
+                    show.mic_ok = false;
+                    // Say so, and keep the toolbar from claiming a capture that is not happening.
+                    let device = &mut show.record_view.devices.mic;
+                    device.failed = true;
+                    device.status = super::record::devices::DeviceStatus::Unavailable;
+                    app.set_status(format!("Microphone: {e}"));
+                }
+            },
+            None => show.mic_ok = false,
+        }
+    }
+    // `MicIn::start` can return before the device opens, and a device can be lost mid-take: both
+    // reach the caller only through `failure()`. Hand over what was captured, then stop and say so.
+    mic_failure(app, &mut show);
+    // The toolbar's Microphone switch owns capture: turning it off stops the take's microphone.
+    if !mic_on && show.mic_ok {
+        if show.keeps_recording() {
+            let slide = show.state.slide;
+            super::take_narration(app.services.mic.as_deref_mut(), &mut show, slide);
+        }
+        app.stop_mic();
+        show.mic_ok = false;
+        show.mic_tried = false;
+    }
+    let editing = show.record && record::notes_has_focus(&ctx);
+    // The show reads its keys only when the notes editor does not own them.
+    let mut out = Out { keep: editing || keyboard(&mut app.services.mic, &ctx, &mut show, &doc, now, false), actions: vec![] };
     if show.presenter
         && !show.reading
         && let Some(host) = app.services.presenter.as_mut()
@@ -101,7 +144,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                     if let Some(key) = egui::Key::from_name(&name) {
                         let modifiers = egui::Modifiers { command, shift, alt, ctrl, mac_cmd: command && !ctrl };
                         // The popup is the Presenter View: G opens All slides there, not on the audience screen (#1866).
-                        out.keep &= handle_keys(&mut show, &doc, now, vec![(key, modifiers)], true).0;
+                        out.keep &= handle_keys(&mut app.services.mic, &mut show, &doc, now, vec![(key, modifiers)], true).0;
                     }
                 }
                 crate::presenter::Command::Goto { slide } if show.presenter_grid && slide < doc.slides.len() => {
@@ -121,13 +164,20 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         show.last_move = now;
     }
     let full = ui.max_rect();
-    let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
-    let srect = fit(avail, &doc);
+    let record_layout = if show.record { Some(record::layout(full, &doc, &show.record_view)) } else { None };
+    let avail = if let Some(layout) = &record_layout {
+        layout.slide
+    } else if show.reading {
+        Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0))
+    } else {
+        full
+    };
+    let srect = if let Some(layout) = &record_layout { layout.slide } else { fit(avail, &doc) };
     let pointer = ctx.input(|i| i.pointer.interact_pos());
     show.expire_goto(now);
     // The clock of the triggered animations runs before anything reacts to the pointer.
     show.tick_triggers(&doc, now);
-    let f = Fr { ctx: &ctx, doc: &doc, doc_uid, now, full, srect, clicked, secondary, pointer };
+    let f = Fr { ctx: &ctx, doc: &doc, doc_uid, now, full, srect, clicked, secondary, pointer, layout: record_layout };
     let pointing = handle_clicks(app, ui, &mut show, &f, &mut out);
     handle_wheel_and_swipe(&mut show, &f, &mut out);
     advance(app, &mut show, &f, &mut out);
@@ -135,8 +185,8 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     painter.rect_filled(full, CornerRadius::ZERO, Color32::BLACK);
     draw_slide(app, ui, &mut show, &f, &painter);
     draw_pen_and_hints(ui, &mut show, &f, &painter, pointing);
-    draw_bars(ui, &mut show, &f, &painter, &mut out);
-    draw_extras(&mut show, &f, &painter, &mut out);
+    draw_bars(app, ui, &mut show, &f, &painter, &mut out);
+    draw_extras(app, ui, &mut show, &f, &painter, &mut out);
     if out.keep
         && show.presenter
         && !show.reading
@@ -196,6 +246,26 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
 /// Longest side of an All slides thumbnail sent to the web presenter window (#1866).
 const REMOTE_THUMB: f64 = 96.0;
 
+/// A microphone that fails after `start` returned — a refused permission, no input device, or one
+/// unplugged mid-take — reports only through [`deckcraft_media::MicIn::failure`]. Hand over what it
+/// captured, stop it, and tell the user instead of recording a silent take.
+pub(super) fn mic_failure(app: &mut SlideApp, show: &mut Show) -> bool {
+    if !show.mic_ok || !show.keeps_recording() {
+        return false;
+    }
+    let Some(e) = app.services.mic.as_ref().and_then(|m| m.failure()) else { return false };
+    let slide = show.state.slide;
+    super::take_narration(app.services.mic.as_deref_mut(), show, slide);
+    app.stop_mic();
+    show.mic_ok = false;
+    show.mic_error = Some(e.clone());
+    let device = &mut show.record_view.devices.mic;
+    device.failed = true;
+    device.status = super::record::devices::DeviceStatus::Unavailable;
+    app.set_status(format!("Microphone: {e}"));
+    true
+}
+
 fn paint_hidden(ui: &Ui, doc: &Presentation, show: &Show) {
     if show.started {
         let full = ui.max_rect();
@@ -228,15 +298,21 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
 }
 
 fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: &mut Out) -> bool {
-    let Fr { ctx, doc, doc_uid, now, full, srect, clicked, secondary, pointer } = *f;
+    let Fr { ctx, doc, doc_uid, now, full, srect, clicked, secondary, pointer, .. } = *f;
+    let ctrl = ctx.input(|i| i.modifiers.ctrl);
+    let laser_on = pointer_is_laser(show.laser, ctrl, show.blank.is_some());
+    // With the eraser out a tap aims at ink, not at the slide: it must not advance the show.
+    let eraser = show.ink_mode == InkMode::Eraser;
     let on_slide = !show.grid
         && !show.pen
-        && !show.laser
+        && !eraser
+        && !laser_on
         && !show.ended
         && show.blank.is_none()
         && show.zoom.is_none()
         && !show.zoom_arm
         && !show.reading_bar_hit(ctx)
+        && !show.record_bar_hit(ctx)
         && !pointer_on_media_bar(ctx, ui, doc, show, now);
     // The button is drawn only while the pointer is awake; a hidden button takes no click.
     let gif_click =
@@ -277,7 +353,14 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
         }
     } else if clicked && show.zoom.is_some() && !show.pen && !show.reading_bar_hit(ctx) {
         show.dismiss_zoom();
-    } else if clicked && !show.pen && !show.reading_bar_hit(ctx) && !pointer_on_media_bar(ctx, ui, doc, show, now) {
+    } else if clicked
+        && !show.pen
+        && !eraser
+        && !laser_on
+        && !show.reading_bar_hit(ctx)
+        && !show.record_bar_hit(ctx)
+        && !pointer_on_media_bar(ctx, ui, doc, show, now)
+    {
         if show.ended {
             out.keep = false;
         } else if show.blank.is_some() {
@@ -293,7 +376,7 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
             }
         }
     }
-    if secondary && !show.ended && !show.grid && show.zoom.is_none() && !show.zoom_arm {
+    if secondary && !show.ended && !laser_on && !eraser && !show.record_bar_hit(ctx) && !show.grid && show.zoom.is_none() && !show.zoom_arm {
         out.actions.push(show.state.prev(doc));
     }
     pointing
@@ -301,6 +384,10 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
 
 fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
     let Fr { ctx, doc, now, srect, pointer, .. } = *f;
+    // The teleprompter overlay scrolls itself: a flick over it does not turn the page.
+    if pointer.is_some_and(|p| show.record_bar_hit_at(ctx, p)) {
+        return;
+    }
     // Ctrl+wheel (Cmd+wheel on a Mac) zooms around the pointer, as in PowerPoint (#1286). egui
     // keeps it out of `smooth_scroll_delta`, so it does not also turn the page below.
     let line_points = ctx.options(|o| o.input_options.line_scroll_speed);
@@ -333,9 +420,10 @@ fn handle_wheel_and_swipe(show: &mut Show, f: &Fr, out: &mut Out) {
 }
 
 fn advance(app: &mut SlideApp, show: &mut Show, f: &Fr, out: &mut Out) {
-    let Fr { doc, doc_uid, now, .. } = *f;
+    let Fr { ctx, doc, doc_uid, now, .. } = *f;
     // Apply input first: a step started by this click must restart the clock before it is read.
     for a in out.actions.drain(..) {
+        before_slide_change(app, show, &a);
         if !show.apply(a, doc, now) {
             out.keep = false;
         }
@@ -345,15 +433,23 @@ fn advance(app: &mut SlideApp, show: &mut Show, f: &Fr, out: &mut Out) {
         out.keep = false;
     }
     for a in std::mem::take(&mut out.actions) {
+        before_slide_change(app, show, &a);
         if !show.apply(a, doc, now) {
             out.keep = false;
         }
     }
+    // The Record view draws the slide smaller than the window: measure the rect it uses.
+    show.ink_width = pen_width_slide(doc, f.srect);
     if show.state.playing {
         let step = show.state.step;
         show.cue_media(doc, step, now - show.step_start);
     }
-    show_media(app, show, doc_uid, doc);
+    show_media(app, show, doc_uid, doc, now);
+    run_pending_media(app, show, doc_uid, doc, now);
+    if let Some(due) = show.pending_media.iter().map(|(_, due)| *due).reduce(f64::min) {
+        // Nothing else may ask for a frame in a static Reading View: wake at the deadline.
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64((due - now).max(0.0)));
+    }
     run_media_cues(app, show, doc_uid, doc);
 }
 
@@ -377,14 +473,40 @@ fn begin_slide(app: &mut SlideApp, show: &Show, f: &Fr, size: (u32, u32)) -> Sl 
     crate::media::gif_repaint(ctx, &gifs);
     let gif = crate::media::gif_key(&gifs);
     let done: Vec<(ShapeId, usize)> = plays.iter().map(|p| (p.trigger, p.step)).collect();
-    let key = Key { slide: idx, step, size, doc: std::sync::Arc::as_ptr(doc) as usize, hidden: hidden.clone(), plays: done, gif };
+    let (ink_due, ink_next) = if show.recording_preview {
+        let elapsed = ((now - show.slide_start).max(0.0) * 1000.0) as u32;
+        let mut due = 0usize;
+        let mut next: Option<u32> = None;
+        if let Some(sl) = doc.slides.get(idx) {
+            for sh in &sl.shapes {
+                if let deckcraft_model::ShapeKind::Ink { strokes } = &sh.kind {
+                    for st in strokes {
+                        match st.at_ms {
+                            Some(at) if at <= elapsed => due += 1,
+                            Some(at) => next = Some(next.map_or(at, |n| n.min(at))),
+                            None => due += 1,
+                        }
+                    }
+                }
+            }
+        }
+        (due, next)
+    } else {
+        (0, None)
+    };
+    let key = Key { slide: idx, step, size, doc: std::sync::Arc::as_ptr(doc) as usize, hidden: hidden.clone(), plays: done, gif, ink: ink_due };
     let back_key = BackKey { slide: idx, size, doc: key.doc };
-    Sl { idx, step, animating, t, plays, stamps, media, hidden, times, gifs, key, back_key, size }
+    Sl { idx, step, animating, t, plays, stamps, media, hidden, times, gifs, key, back_key, size, ink_next }
 }
 
 fn frame_texture(show: &mut Show, f: &Fr, sl: &Sl) -> Option<TextureHandle> {
     let Fr { ctx, doc, .. } = *f;
     let Sl { idx, step, animating, size, .. } = *sl;
+    // Woken on every pass, rendered or cached: the deadline must not depend on which branch runs.
+    if let Some(at) = sl.ink_next {
+        let wait = (at as f64 / 1000.0 - (f.now - show.slide_start).max(0.0)).max(0.0);
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
+    }
     if !animating && show.tex.as_ref().is_some_and(|(k, _)| *k == sl.key) {
         show.tex.as_ref().map(|(_, t)| t.clone())
     } else {
@@ -399,7 +521,23 @@ fn frame_texture(show: &mut Show, f: &Fr, sl: &Sl) -> Option<TextureHandle> {
                 let tl = show.timeline(doc).clone();
                 // Animating: the backdrop doesn't change, only the shapes over it are drawn.
                 let back = animating.then(|| show.backdrop(doc, sl.back_key));
-                render_frame(doc, idx, tl, step, sl.t, size, sl.hidden.clone(), &sl.times, render_threads(), &sl.plays, &sl.stamps, back.as_deref())
+                // A recording preview shows each recorded stroke when the take drew it.
+                let ink_until = show.recording_preview.then(|| ((f.now - show.slide_start).max(0.0) * 1000.0) as u32);
+                render_frame(
+                    doc,
+                    idx,
+                    tl,
+                    step,
+                    sl.t,
+                    size,
+                    sl.hidden.clone(),
+                    &sl.times,
+                    render_threads(),
+                    &sl.plays,
+                    &sl.stamps,
+                    back.as_deref(),
+                    ink_until,
+                )
             }
         };
         if show.remote_opened && show.presenter {
@@ -498,7 +636,7 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
                     if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
                 let timeline = ShowState::timeline(doc, prev);
                 let step = timeline.steps();
-                let ci = render_frame(doc, prev, timeline, step, 0.0, size, vec![], &[], threads, &[], &[], None);
+                let ci = render_frame(doc, prev, timeline, step, 0.0, size, vec![], &[], threads, &[], &[], None, None);
                 tr.old = Some(crate::textures::upload(ctx, "trans-old", ci));
             }
             let aspect = doc.slide_size.width / doc.slide_size.height.max(1.0);
@@ -597,10 +735,27 @@ fn draw_overlay(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, frame
     if skip.is_empty() {
         show.overlay = None;
     } else {
-        let fresh = !animating && show.overlay.as_ref().is_some_and(|(k, s, _)| *k == sl.key && *s == skip);
+        // A recording preview reveals ink on the clock: the overlay's texture is only fresh while
+        // its cutoff is unchanged.
+        let ink_until = show.recording_preview.then(|| ((f.now - show.slide_start).max(0.0) * 1000.0) as u32);
+        let fresh = !animating && ink_until.is_none() && show.overlay.as_ref().is_some_and(|(k, s, _)| *k == sl.key && *s == skip);
         if !fresh {
             let tl = show.timeline(doc).clone();
-            let ci = render_overlay(doc, idx, tl, step, sl.t, size, sl.hidden.clone(), &skip, &sl.times, render_threads(), &sl.plays, &sl.stamps);
+            let ci = render_overlay(
+                doc,
+                idx,
+                tl,
+                step,
+                sl.t,
+                size,
+                sl.hidden.clone(),
+                &skip,
+                &sl.times,
+                render_threads(),
+                &sl.plays,
+                &sl.stamps,
+                ink_until,
+            );
             let handle = match show.overlay.take() {
                 Some((_, _, mut h)) => {
                     crate::textures::replace(ctx, &mut h, ci);
@@ -670,7 +825,11 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
     } else {
         let sl = begin_slide(app, show, f, size);
         let tex = frame_texture(show, f, &sl);
-        prefetch_next(app, show, f, &sl);
+        // A recording preview reveals ink on the clock, and the prefetched frame has no cutoff:
+        // rendering it would show the next slide's strokes early.
+        if !show.recording_preview {
+            prefetch_next(app, show, f, &sl);
+        }
         if !draw_transition(show, f, &sl, painter, &tex) {
             show.trans = None;
             let (framed, full_screen) = draw_videos(app, show, f, &sl, painter, &tex);
@@ -696,14 +855,25 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         painter.text(r.center(), Align2::CENTER_CENTER, label, theme::font(18.0), Color32::WHITE);
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
     }
-    // Pen.
-    let resp = ui.interact(full, ui.scope_id().with("show_pen"), if show.pen { Sense::drag() } else { Sense::hover() });
-    if show.pen {
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Pen"));
+    // Ink: the pen and highlighter capture pointer drags; the eraser removes whole strokes.
+    let ctrl = ctx.input(|i| i.modifiers.ctrl);
+    let laser_on = pointer_is_laser(show.laser, ctrl, show.blank.is_some());
+    let erasing = show.ink_mode == InkMode::Eraser;
+    let pen_rect = f.layout.map_or(full, |l| l.slide);
+    let pointer = if (show.pen || erasing) && !laser_on { Sense::drag() } else { Sense::hover() };
+    let resp = ui.interact(pen_rect, ui.scope_id().with("show_pen"), pointer);
+    if (show.pen || erasing) && !laser_on {
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, show.ink_mode.label()));
     }
-    if show.pen {
+    if show.pen && !laser_on {
         if resp.drag_started() {
-            show.strokes.push(vec![]);
+            show.strokes.push(InkStroke {
+                points: vec![],
+                mode: show.ink_mode,
+                color: show.ink_color,
+                width: show.ink_width * show.ink_mode.width_scale(),
+                in_take: show.keeps_recording(),
+            });
         }
         let uv = show.zoom_uv();
         if resp.dragged()
@@ -711,10 +881,27 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
             && let Some((nx, ny)) = norm_on_slide(srect, uv, p)
             && let Some(s) = show.strokes.last_mut()
         {
-            s.push(pos2(nx, ny));
+            s.points.push(pos2(nx, ny));
         }
         ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
-    } else if show.laser {
+    } else if erasing && !laser_on {
+        let uv = show.zoom_uv();
+        if (resp.drag_started() || resp.dragged())
+            && let Some(p) = resp.interact_pointer_pos()
+            && let Some((nx, ny)) = norm_on_slide(srect, uv, p)
+        {
+            // Erase along the path the pointer swept since the last frame, not only at today's
+            // point: a fast drag can cross a whole stroke between two samples.
+            let here = pos2(nx, ny);
+            let from = if resp.drag_started() { here } else { show.eraser_from.unwrap_or(here) };
+            // The eraser is wide enough to feel like PowerPoint's; whole strokes go.
+            show.erase_ink_at(from, here, 0.015);
+            show.eraser_from = Some(here);
+        } else {
+            show.eraser_from = None;
+        }
+        ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+    } else if laser_on {
         ctx.set_cursor_icon(egui::CursorIcon::None);
     } else if show.zoom_arm || show.grid {
         ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
@@ -726,19 +913,56 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
-    let pen_col = theme::to_color32(doc.show.pen_color);
     let uv = show.zoom_uv();
     for s in &show.strokes {
-        let pts: Vec<Pos2> = s.iter().map(|q| slide_to_screen(srect, uv, q.x, q.y)).collect();
-        painter.add(egui::Shape::line(pts, Stroke::new(3.0, pen_col)));
+        let pts: Vec<Pos2> = s.points.iter().map(|q| slide_to_screen(srect, uv, q.x, q.y)).collect();
+        if pts.len() < 2 {
+            continue;
+        }
+        // Highlighter ink is translucent and three times wider; the pen is opaque and thin.
+        let k = srect.width() / doc.slide_size.width.max(1.0) as f32 / uv.width().max(1e-4);
+        let (width, alpha) = match s.mode {
+            InkMode::Highlighter => ((s.width as f32 * k).max(2.0), 0.4),
+            _ => (3.0, 1.0),
+        };
+        let c = theme::to_color32(s.color);
+        let c = Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (c.a() as f32 * alpha) as u8);
+        painter.add(egui::Shape::line(pts, Stroke::new(width, c)));
     }
-    if show.laser
+    if laser_on
         && !show.ended
         && let Some(p) = ctx.input(|i| i.pointer.hover_pos())
     {
         let c = theme::to_color32(doc.show.laser_color);
         painter.circle_filled(p, 16.0, Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), 70));
         painter.circle_filled(p, 5.5, c);
+    }
+    if show.keeps_recording() && laser_on {
+        if let Some(p) = ctx.input(|i| i.pointer.hover_pos()) {
+            // The same mapping the pen uses: a zoomed show must record the point the presenter
+            // indicated, not where the pointer is relative to the whole screen rect.
+            let uv = show.zoom_uv();
+            if let Some((nx, ny)) = norm_on_slide(srect, uv, p) {
+                let ms = (now - show.slide_start).max(0.0) * 1000.0;
+                if ms.is_finite() {
+                    show.note_laser(nx as f64 * doc.slide_size.width, ny as f64 * doc.slide_size.height, ms.min(3_600_000.0) as u32);
+                }
+            }
+        }
+    } else if !show.keeps_recording()
+        && let Some(sl) = doc.slides.get(show.state.slide)
+        && let Some(trace) = &sl.laser
+    {
+        let elapsed = (now - show.slide_start).max(0.0) * 1000.0;
+        if elapsed.is_finite()
+            && let Some((x, y)) = laser_pos(&trace.points, elapsed.min(3_600_000.0) as u32)
+        {
+            let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
+            let p = pos2(srect.min.x + x as f32 * k, srect.min.y + y as f32 * k);
+            painter.circle_filled(p, 7.0, theme::to_color32(trace.color));
+            painter.circle_stroke(p, 11.0, Stroke::new(2.0, Color32::from_white_alpha(200)));
+            ctx.request_repaint();
+        }
     }
     if show.zoom_arm && !show.grid {
         painter.text(
@@ -751,8 +975,12 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
     }
 }
 
-fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
+fn draw_bars(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
     let Fr { ctx, doc, now, full, .. } = *f;
+    // The Record view has its own top and bottom bars.
+    if show.record {
+        return;
+    }
     // Reading view bar / on-screen controls.
     if show.reading {
         let bar = Rect::from_min_max(pos2(full.min.x, full.max.y - 34.0), full.max);
@@ -774,12 +1002,14 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
         }
         if child.button("▶").clicked() {
             let a = show.state.next(doc);
+            before_slide_change(app, show, &a);
             if !show.apply(a, doc, now) {
                 out.keep = false;
             }
         }
         if child.button("◀").clicked() {
             let a = show.state.prev(doc);
+            before_slide_change(app, show, &a);
             show.apply(a, doc, now);
         }
     } else if !show.grid && (show.pointer_awake(now) || show.zoom_arm) {
@@ -790,10 +1020,12 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
         let b = |ui: &mut Ui, s: &str| ui.add(egui::Button::new(egui::RichText::new(s).color(Color32::WHITE).size(15.0)).frame(false));
         if b(&mut child, "◀").clicked() {
             let a = show.state.prev(doc);
+            before_slide_change(app, show, &a);
             show.apply(a, doc, now);
         }
         if b(&mut child, "▶").clicked() {
             let a = show.state.next(doc);
+            before_slide_change(app, show, &a);
             if !show.apply(a, doc, now) {
                 out.keep = false;
             }
@@ -823,12 +1055,14 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
     }
 }
 
-fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
+fn draw_extras(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
     let Fr { ctx, doc, now, full, .. } = *f;
     if show.grid && !show.ended {
         paint_grid(painter, ctx, show, doc, full);
     }
-    if show.rehearse {
+    if let Some(layout) = f.layout {
+        out.keep = record::ui(app, ui, show, doc, now, &layout) && out.keep;
+    } else if show.rehearse {
         let t = now - show.slide_start;
         let total = now - show.show_start;
         let r = Rect::from_min_size(pos2(full.min.x + 12.0, full.min.y + 12.0), vec2(220.0, 30.0));
@@ -844,12 +1078,12 @@ fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) 
     }
     // Presenter view in a second window.
     if out.keep && show.presenter && !show.reading && !show.remote_opened {
-        presenter_window(ctx, show, doc, now, &mut out.keep);
+        presenter_window(app, ctx, show, doc, now, &mut out.keep);
     }
 }
 
 fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
-    let Fr { ctx, now, .. } = *f;
+    let Fr { ctx, doc, now, .. } = *f;
     if keep {
         app.show = Some(show);
     } else {
@@ -860,17 +1094,12 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
         if !show.reading {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         }
-        if show.rehearse {
-            if let Some((_, tl)) = &show.timeline {
-                let _ = tl;
-            }
-            show.timings.push((show.state.slide, now - show.slide_start));
-            for (i, secs) in show.timings.clone() {
-                let _ = app.run("transition.timing", json!({"index": i, "after": (secs * 1000.0).round() as u64}));
-            }
-            app.set_status("Slide timings recorded.");
+        // A Record preview plays the recording; it never writes timings, ink, narration or laser.
+        save_take(app, &mut show, doc, now);
+        // A preview is a look at the recording: the editor keeps the slide it had.
+        if !show.recording_preview {
+            let last = show.state.slide;
+            let _ = app.run("slide.go", json!({"index": last}));
         }
-        let last = show.state.slide;
-        let _ = app.run("slide.go", json!({"index": last}));
     }
 }

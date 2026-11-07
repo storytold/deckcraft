@@ -6,8 +6,9 @@ use super::state::{FilePlace, FilePurpose, ImeDescriptorKey, ImeDestination, Ime
 use super::updates_ui;
 use super::{
     AnimPreview, ControlRequest, FileTarget, HashMap, ImeCancelled, ImeComposition, ImeResetPhase, ImeTerminalPending, InputTarget, Mods,
-    PendingFile, Perf, Receiver, Session, SlideApp, Target, UI_COMMANDS, UiRequest, Value, backstage, canvas, capture, dialogs, doc_window,
-    eyedropper, json, media, menus, notes, panes, preview, qat, ribbon, selpane, show, sorter, status, textures, theme, thumbs, toast, uifonts,
+    PendingFile, Perf, Receiver, Session, SlideApp, Target, UI_COMMANDS, UiRequest, Value, backstage, camera, canvas, capture, dialogs, doc_window,
+    eyedropper, json, media, menus, notes, panes, preview, qat, record, ribbon, selpane, show, sorter, status, textures, theme, thumbs, toast,
+    uifonts,
 };
 
 mod clipboard;
@@ -39,6 +40,7 @@ impl SlideApp {
     /// synthetic input, and timing fields.
     pub fn new(session: Session, mut services: Services) -> Self {
         let audio_out = services.audio_out.take();
+        let camera = services.camera.take().unwrap_or_else(|| Box::new(deckcraft_media::camera::NoCamera));
         SlideApp {
             last_fill: serde_json::json!("accent1"),
             last_outline: serde_json::json!("tx1"),
@@ -52,12 +54,16 @@ impl SlideApp {
             dialog: None,
             thesaurus_query: String::new(),
             show: None,
+            leave_fullscreen: false,
             anim_preview: None,
             reuse_target: None,
             media: media::MediaHost::new(audio_out),
+            camera_preview: camera::Preview::new(camera),
+            record: record::Recorder::default(),
             status: None,
             opening: None,
             toast: None,
+            toast_queue: Vec::new(),
             fonts_noted: Default::default(),
             perf: Perf { frame_ms: 0.0, render_ms: 0.0, fps: 0.0 },
             synthetic: vec![],
@@ -140,7 +146,7 @@ impl SlideApp {
     /// A message that must be seen wherever the user is: a toast, which also shows over the start
     /// screen and the File tab, where there is no status bar.
     pub fn notify(&mut self, msg: impl Into<String>) {
-        self.toast = Some(toast::Toast { text: msg.into(), at: now_ms() });
+        toast::note(self, msg);
     }
 
     /// The transient status message while it is fresh; clears it once stale. Both the status bar
@@ -234,20 +240,42 @@ impl SlideApp {
         self.retract_synthetic_after_logic(ctx);
         // Queued/settling screenshots force the bounded hidden paints they need; issued ones
         // rely on the screenshot command and the completion callback, with only a deadline wake.
+        if std::mem::take(&mut self.leave_fullscreen) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+        }
         self.capture.request_paint_if_needed(ctx, web_time::Instant::now());
         if !self.synthetic.is_empty() || !self.synthetic_next.is_empty() || self.synthetic_pending {
             ctx.request_repaint();
         }
-        // Closing the window with unsaved changes asks first.
-        if ctx.input(|i| i.viewport().close_requested()) && !self.quit_confirmed && self.session.documents().iter().any(|d| d.is_dirty()) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.show = None;
-            if self.dialog.as_ref().is_none_or(|d| d.id != "quit") {
-                self.dialog = Some(dialogs::Dialog::new("quit"));
+        // Closing the window with unsaved changes asks first, and so does closing during a take:
+        // the recording only lives in the show, so it must survive the question either way.
+        if ctx.input(|i| i.viewport().close_requested()) {
+            // A description still in the Alt Text pane's draft is unsaved work: write it before the
+            // question below decides whether the document is dirty.
+            panes::flush_alt_text(self);
+            // A paused or stopped take still holds the whole recording in the show, so closing
+            // must ask for that too, not only while it is capturing.
+            let recording = self.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured)) || self.record.is_recording();
+            let dirty = self.session.documents().iter().any(|d| d.is_dirty());
+            if self.quit_confirmed {
+                // The user said yes: the take is still saved, then the show goes. A Record ▸ Audio
+                // take is only finished when the quit path asked for it to be saved.
+                self.end_show_now();
+                self.stop_mic();
+            } else if dirty || recording {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                if self.dialog.as_ref().is_none_or(|d| d.id != "quit") {
+                    self.dialog = Some(dialogs::Dialog::new("quit"));
+                }
             }
         }
         self.autosave_if_due(ctx);
         self.tick_media_clock(ctx);
+        self.poll_camera(ctx);
+        self.tick_audio_recording();
+        if self.record.is_recording() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
         self.note_settled_composition(ctx);
         // In a full run_ui pass the UI callback after this logic half still owns the pass's final
         // IME descriptor. Only a standalone run_logic callback proves that no custom editor was
@@ -291,6 +319,9 @@ impl SlideApp {
             return;
         }
         let t0 = now_ms();
+        // The Alt Text pane reports whether it drew in this pass; a pane that did not commits its
+        // draft at the end of the pass.
+        self.ui.alt_text_shown = false;
         let t = theme::Tokens::get(&ctx);
         self.note_ui_text(&ctx);
         self.media.sync_video_textures(&ctx);
@@ -301,6 +332,9 @@ impl SlideApp {
             self.anim_preview = None;
             show::ui(self, ui);
             doc_window::show(self, &ctx);
+            // A close request during a take raises the quit prompt; it must be visible over the
+            // show, or the user cannot answer it.
+            dialogs::show(self, &ctx);
             self.perf.frame_ms = now_ms() - t0;
             self.ui_end(&ctx);
             return;
@@ -349,6 +383,7 @@ impl SlideApp {
         });
         toast::note_missing_fonts(self);
         toast::show(self, &ctx);
+        record::bar(self, &ctx);
         dialogs::show(self, &ctx);
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, &ctx);
@@ -358,6 +393,11 @@ impl SlideApp {
         }
         if let Some(t) = self.pending_copy.take() {
             ctx.copy_text(t);
+        }
+        // A description typed into the Alt Text pane is committed once that pane stops drawing —
+        // closed, another view, another document: its field cannot report `lost_focus` then.
+        if !self.ui.alt_text_shown {
+            panes::flush_alt_text(self);
         }
         self.drain_requests();
         doc_window::show(self, &ctx);

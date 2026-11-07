@@ -592,6 +592,87 @@ fn shape_index<'a>(shapes: &'a [Shape], depth: usize, out: &mut std::collections
     }
 }
 
+/// A slide-start media node: `spid`, volume in thousandths of a percent, delay, narration, video,
+/// and the video-only settings the timing node carries (loop, hide while not playing, full screen).
+type MediaNode = (u32, u32, u32, bool, bool, bool, bool, bool);
+
+/// Slide-start media: narration, autoplay audio and autoplay video.
+fn autoplay_media(shapes: &[Shape], idmap: &IdMap) -> Vec<MediaNode> {
+    fn walk(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<MediaNode>, depth: usize) {
+        if depth > 8 {
+            return;
+        }
+        for s in shapes.iter().take(20_000) {
+            match &s.kind {
+                // An imported video set to play on entry keeps that start; narration is audio only,
+                // and is never crowded out: a recording appends it after the slide's shapes.
+                ShapeKind::Media(m) if m.narration || (m.autoplay && out.len() < 256) => {
+                    if let Some(spid) = idmap.get(s.id) {
+                        let vol =
+                            if m.volume.is_finite() { (m.volume.clamp(0.0, 1.0) * 100_000.0).round().clamp(0.0, 100_000.0) as u32 } else { 100_000 };
+                        out.push((
+                            spid,
+                            vol,
+                            m.start_delay_ms.unwrap_or(0),
+                            m.narration,
+                            m.video,
+                            m.loop_play,
+                            m.hide_while_not_playing,
+                            m.full_screen,
+                        ));
+                    }
+                }
+                ShapeKind::Group { children, .. } => walk(children, idmap, out, depth + 1),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(shapes, idmap, &mut out, 0);
+    out
+}
+
+/// One slide-start media node. `flags` are the video-only settings: loop, hide while not playing,
+/// full screen.
+#[derive(Clone, Copy)]
+struct NodeFlags {
+    narration: bool,
+    video: bool,
+    loop_play: bool,
+    hide_when_stopped: bool,
+    full_screen: bool,
+}
+
+fn audio_node(w: &mut W, ids: &mut Ids, spid: u32, vol: u32, delay_ms: u32, flags: NodeFlags) {
+    let NodeFlags { narration, video, loop_play, hide_when_stopped, full_screen } = flags;
+    // `isNarration` belongs to `p:audio` (`CT_TLMediaNodeAudio`); `p:cMediaNode` does not declare
+    // it, and a strict reader would reject or repair the timing part. A video uses the parallel
+    // `p:video` element, which keeps an imported autoplay video's slide-start play.
+    if video {
+        // `fullScrn` belongs to `p:video` in the schema, and the reader takes it from there.
+        w.open("p:video", A::new().o("fullScrn", full_screen.then_some("1")));
+    } else {
+        w.open("p:audio", A::new().o("isNarration", narration.then_some("1")));
+    }
+    // The reader takes these three from the node: `repeatCount="indefinite"` for Loop until
+    // Stopped, `showWhenStopped="0"` for Hide While Not Playing, `fullScrn` for Play Full Screen.
+    w.open("p:cMediaNode", A::new().a("vol", vol.min(100_000)).o("showWhenStopped", hide_when_stopped.then_some("0")));
+    w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold").a("display", "0").o("repeatCount", loop_play.then_some("indefinite")));
+    w.open0("p:stCondLst");
+    w.empty("p:cond", A::new().a("delay", delay_ms));
+    w.close("p:stCondLst");
+    w.close("p:cTn");
+    w.open0("p:tgtEl");
+    w.empty("p:spTgt", A::new().a("spid", spid));
+    w.close("p:tgtEl");
+    w.close("p:cMediaNode");
+    if video {
+        w.close("p:video");
+    } else {
+        w.close("p:audio");
+    }
+}
+
 /// Write `p:timing` for a slide's animations.
 pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idmap: &IdMap) {
     let mut grp_count: std::collections::HashMap<u32, u32> = Default::default();
@@ -686,7 +767,8 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             None => main.extend(effs),
         }
     }
-    if main.is_empty() && triggered.is_empty() {
+    let audio = autoplay_media(shapes, idmap);
+    if main.is_empty() && triggered.is_empty() && audio.is_empty() {
         return;
     }
     let mut ids = Ids(0);
@@ -756,6 +838,9 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         trig_cond(w);
         w.close("p:nextCondLst");
         w.close("p:seq");
+    }
+    for (spid, vol, delay_ms, narration, video, loop_play, hide_when_stopped, full_screen) in audio {
+        audio_node(w, &mut ids, spid, vol, delay_ms, NodeFlags { narration, video, loop_play, hide_when_stopped, full_screen });
     }
     w.close("p:childTnLst");
     w.close("p:cTn");

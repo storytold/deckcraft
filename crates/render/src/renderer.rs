@@ -512,7 +512,15 @@ impl Renderer {
                 chart::draw(ctx, rctx, c, m, x.w, x.h)
             }
             ShapeKind::Ink { strokes } => {
+                let ink_until = f.opts.ink_until_ms;
                 for sk in strokes {
+                    // A recording preview reveals the strokes its take drew: one stamped after the
+                    // clock has reached is not on the slide yet.
+                    if let Some(until) = ink_until
+                        && sk.at_ms.is_some_and(|at| at > until)
+                    {
+                        continue;
+                    }
                     let legacy = deckcraft_model::ink_pressure_is_legacy(&sk.points);
                     let pen = if sk.width.is_finite() { sk.width.abs() } else { 0.0 };
                     for (px, py, pr) in &sk.points {

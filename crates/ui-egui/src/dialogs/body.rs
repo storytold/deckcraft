@@ -275,32 +275,84 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     });
     let _ = combo.response.labelled_by(field.id);
+    ui.add_space(6.0);
+    ui.label("Laser pointer color");
+    let laser = d.get(
+        "laser",
+        match (sh.laser_color.r, sh.laser_color.g, sh.laser_color.b) {
+            (0, 255, 0) => "green",
+            (0, 0, 255) => "blue",
+            (255, 0, 0) => "red",
+            _ => "custom",
+        },
+    );
+    ui.horizontal(|ui| {
+        for (label, key) in [("Red", "red"), ("Green", "green"), ("Blue", "blue")] {
+            if ui.selectable_label(laser == key, label).clicked() {
+                d.fields.insert("laser".into(), key.into());
+            }
+        }
+    });
+    ui.label("Hold Ctrl during the show.");
     let (ok, cancel) = buttons(ui, "OK");
     if ok {
-        let ty = d.get("type", "speaker");
+        let ty = d.get("type", &sh.show_type);
         let custom = d.fields.get("custom").cloned().unwrap_or_default();
-        run(app, "show.setup", json!({"type": ty, "loop": lp, "noNarration": nn, "noAnimation": na, "useTimings": ut, "custom": custom}));
+        let key = d.get("laser", &laser);
+        let rgb = match key.as_str() {
+            "green" => [0, 255, 0],
+            "blue" => [0, 0, 255],
+            "custom" => [sh.laser_color.r, sh.laser_color.g, sh.laser_color.b],
+            _ => [255, 0, 0],
+        };
+        run(
+            app,
+            "show.setup",
+            json!({"type": ty, "loop": lp, "noNarration": nn, "noAnimation": na, "useTimings": ut, "custom": custom, "laserColor": rgb}),
+        );
         run(app, "show.keepCursor", json!({"on": kc}));
     }
     ok || cancel
 }
 
 fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
+    // A notes draft or an Alt Text description still outside the document is unsaved work: write
+    // it first so a prompt opened on a clean document names it.
+    if let Some(mut show) = app.show.take() {
+        if let Some(doc) = app.session.active().map(|d| d.doc.clone()) {
+            let slide = show.state.slide;
+            super::super::show::record::notes::flush(app, &mut show.record_view, &doc, slide);
+        }
+        app.show = Some(show);
+    }
+    crate::panes::flush_alt_text(app);
     let names: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).map(|d| d.title()).collect();
-    if names.is_empty() {
+    // A take is unsaved work too: the prompt must offer save, discard and cancel for it even when
+    // no document is dirty.
+    let recording = app.show.as_ref().is_some_and(|s| s.record && (s.capturing || s.record_view.captured)) || app.record.is_recording();
+    if names.is_empty() && !recording {
         app.quit_confirmed = true;
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         return true;
     }
-    let what = if names.len() == 1 { format!("“{}”", names[0]) } else { format!("{} presentations", names.len()) };
-    ui.label(egui::RichText::new(format!("Do you want to save the changes you made to {what}?")).strong());
-    ui.label("Your changes will be lost if you don't save them.");
+    if !names.is_empty() {
+        let what = if names.len() == 1 { format!("“{}”", names[0]) } else { format!("{} presentations", names.len()) };
+        ui.label(egui::RichText::new(format!("Do you want to save the changes you made to {what}?")).strong());
+        ui.label("Your changes will be lost if you don't save them.");
+    } else {
+        ui.label(egui::RichText::new("A recording is still in progress.").strong());
+        ui.label("Save it with the presentation, or discard it?");
+    }
     ui.add_space(8.0);
     let mut done = false;
     ui.horizontal(|ui| {
         let t = Tokens::get(ui.ctx());
         if ui.add(egui::Button::new("Don't Save").min_size(vec2(84.0, 24.0))).clicked() {
             let _ = app.session.execute("file.recovery.discard", &json!({}));
+            // Discarding means the take goes too, not just the document's changes.
+            app.show = None;
+            app.stop_mic();
+            app.cancel_audio_recording();
             app.quit_confirmed = true;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             done = true;
@@ -308,11 +360,22 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
             if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                if app.save_all() {
-                    app.quit_confirmed = true;
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                // Live takes are written into the document first, so the file keeps them. If the
+                // audio cannot be saved, the prompt stays open rather than closing without it.
+                app.end_show_now();
+                let audio = if app.record.is_recording() { app.stop_audio_recording() } else { Ok(()) };
+                match audio {
+                    Err(e) => {
+                        app.set_status(format!("Couldn't save the recording: {e}"));
+                    }
+                    Ok(()) => {
+                        if app.save_all() {
+                            app.quit_confirmed = true;
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        done = true;
+                    }
                 }
-                done = true;
             }
             if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
                 done = true;

@@ -20,14 +20,24 @@ pub fn arrange_menu(app: &mut SlideApp, ui: &mut Ui) {
     ui.separator();
     ui.label(egui::RichText::new("Position Objects").font(theme::bold(12.0)));
     ui.menu_button("Align", |ui| align_menu(app, ui));
-    ui.menu_button("Rotate", |ui| {
-        menu_item(app, ui, Icon::RotateRight, "Rotate Right 90°", "arrange.rotateRight", json!({}));
-        menu_item(app, ui, Icon::RotateLeft, "Rotate Left 90°", "arrange.rotateLeft", json!({}));
-        menu_item(app, ui, Icon::FlipV, "Flip Vertical", "arrange.flipVertical", json!({}));
-        menu_item(app, ui, Icon::FlipH, "Flip Horizontal", "arrange.flipHorizontal", json!({}));
-    });
+    ui.menu_button("Rotate", |ui| rotate_menu(app, ui));
     if ui.button("Selection Pane…").clicked() {
         let _ = app.run("view.pane", json!({"pane": "selection"}));
+        ui.close();
+    }
+}
+
+/// PowerPoint's Rotate gallery: a quarter turn each way, the two flips, then More Rotation
+/// Options, which opens the Size and Position pane where the angle can be typed.
+pub fn rotate_menu(app: &mut SlideApp, ui: &mut Ui) {
+    menu_item(app, ui, Icon::RotateRight, "Rotate Right 90°", "arrange.rotateRight", json!({}));
+    menu_item(app, ui, Icon::RotateLeft, "Rotate Left 90°", "arrange.rotateLeft", json!({}));
+    ui.separator();
+    menu_item(app, ui, Icon::FlipV, "Flip Vertical", "arrange.flipVertical", json!({}));
+    menu_item(app, ui, Icon::FlipH, "Flip Horizontal", "arrange.flipHorizontal", json!({}));
+    ui.separator();
+    if ui.add_enabled(enabled(app, "arrange.rotateRight"), egui::Button::new("More Rotation Options…")).clicked() {
+        let _ = app.run("view.pane", json!({"pane": "format", "tab": "size"}));
         ui.close();
     }
 }
@@ -112,12 +122,7 @@ pub(super) fn arrange_group(app: &mut SlideApp, ui: &mut Ui) {
                 run(app, "arrange.rotateRight", json!({}));
             }
             if let Some(arrow) = arrow {
-                egui::Popup::menu(&arrow).show(|ui| {
-                    menu_item(app, ui, Icon::RotateRight, "Rotate Right 90°", "arrange.rotateRight", json!({}));
-                    menu_item(app, ui, Icon::RotateLeft, "Rotate Left 90°", "arrange.rotateLeft", json!({}));
-                    menu_item(app, ui, Icon::FlipV, "Flip Vertical", "arrange.flipVertical", json!({}));
-                    menu_item(app, ui, Icon::FlipH, "Flip Horizontal", "arrange.flipHorizontal", json!({}));
-                });
+                egui::Popup::menu(&arrow).show(|ui| rotate_menu(app, ui));
             }
         });
     });

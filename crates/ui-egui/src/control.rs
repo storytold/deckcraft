@@ -215,6 +215,21 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         "ui.move" | "ui.click" | "ui.drag" => {
             let (Some(x), Some(y)) = (f(p, "x"), f(p, "y")) else { return err("missing x/y") };
             let pos = egui::pos2(x, y);
+            // Validate the drag destination before queueing anything: returning after the
+            // `ModifiersChanged` event would leave the held modifiers active for the next request.
+            let drag_to = if req.method == "ui.drag" {
+                let (Some(tx), Some(ty)) = (f(p, "toX"), f(p, "toY")) else { return err("missing toX/toY") };
+                Some((tx, ty))
+            } else {
+                None
+            };
+            // Egui keeps `ModifiersChanged` state until the next change, so a request that asks
+            // for Ctrl must hand it back: otherwise the laser stays on and the next plain click
+            // cannot advance the show.
+            let modified = p.get("ctrl").is_some() || p.get("shift").is_some() || p.get("alt").is_some() || p.get("cmd").is_some();
+            if modified {
+                app.queue_input(egui::Event::ModifiersChanged(egui_mods(p)));
+            }
             app.queue_input(egui::Event::PointerMoved(pos));
             if req.method == "ui.click" {
                 let button = match s("button") {
@@ -226,8 +241,7 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
                     app.queue_input(egui::Event::PointerButton { pos, button, pressed: true, modifiers: egui::Modifiers::NONE });
                     app.queue_input(egui::Event::PointerButton { pos, button, pressed: false, modifiers: egui::Modifiers::NONE });
                 }
-            } else if req.method == "ui.drag" {
-                let (Some(tx), Some(ty)) = (f(p, "toX"), f(p, "toY")) else { return err("missing toX/toY") };
+            } else if let Some((tx, ty)) = drag_to {
                 let steps = p.get("steps").and_then(Value::as_u64).unwrap_or(8).clamp(1, 120);
                 app.queue_input(egui::Event::PointerButton {
                     pos,
@@ -245,6 +259,10 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
                     pressed: false,
                     modifiers: egui::Modifiers::NONE,
                 });
+            }
+            if modified {
+                // The gesture is over: hand the keyboard state back so later plain input is plain.
+                app.queue_input(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
             }
             ctx.request_repaint();
             ok(json!({"queued": app.synthetic_queued_len()}))
@@ -335,6 +353,12 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         }
         "show.start" => {
             let reading = p.get("reading").and_then(Value::as_bool).unwrap_or(false);
+            let recording = p.get("record").and_then(Value::as_bool) == Some(true);
+            // One microphone: a Record ▸ Audio take in progress owns it, so a recording show is
+            // refused here as it is in `UiRequest::StartShow` — before any show starts.
+            if recording && app.audio_recording() {
+                return err("stop or cancel the audio recording first: it owns the microphone");
+            }
             if let Some(name) = p.get("custom").and_then(Value::as_str).filter(|s| !s.is_empty()) {
                 app.start_custom_show(name, reading);
             } else {
@@ -344,17 +368,16 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 };
                 app.start_show(from, reading);
             }
+            if recording && let Some(show) = app.show.as_mut() {
+                show.record = true;
+            }
             ok(Value::Null)
         }
         "show.end" => {
+            // End it here: a recording show turns a queued Escape into the Record view's close
+            // question, while this command must always leave the show.
             if app.show.is_some() {
-                app.queue_input(egui::Event::Key {
-                    key: egui::Key::Escape,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers::NONE,
-                });
+                app.end_show_now();
             }
             ok(Value::Null)
         }
@@ -365,9 +388,20 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         "app.save" => wrap(app.run("file.save", p.clone())),
         "app.export" => wrap(app.run("file.export", p.clone())),
         "app.quit" => {
-            // Automation quits without asking (`{"save": true}` saves first).
-            if p.get("save").and_then(Value::as_bool) == Some(true) && !app.save_all() {
-                return err("not every presentation could be saved");
+            // Automation quits without asking (`{"save": true}` saves first). A live take is
+            // written into the document before the save, so the file keeps it.
+            if p.get("save").and_then(Value::as_bool) == Some(true) {
+                app.end_show_now();
+                // A Record ▸ Audio take is part of what "save" must keep: finish and insert it,
+                // and report the failure instead of confirming a quit that lost it.
+                if app.record.is_recording()
+                    && let Err(e) = app.stop_audio_recording()
+                {
+                    return err(e);
+                }
+                if !app.save_all() {
+                    return err("not every presentation could be saved");
+                }
             }
             app.quit_confirmed = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -375,6 +409,11 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         }
         other => err(format!("unknown method `{other}`")),
     }
+}
+
+fn egui_mods(p: &Value) -> egui::Modifiers {
+    let b = |n: &str| p.get(n).and_then(Value::as_bool).unwrap_or(false);
+    egui::Modifiers { alt: b("alt"), ctrl: b("ctrl"), shift: b("shift"), mac_cmd: false, command: b("cmd") }
 }
 
 fn mods_from(p: &Value) -> Mods {
@@ -460,6 +499,22 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+
+    /// `show.end` leaves the show here, not through a queued Escape that a recording show turns
+    /// into the Record view's close question.
+    #[test]
+    fn ending_a_show_from_the_control_channel_closes_it() {
+        let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+        app.start_show(0, false);
+        assert!(app.show.is_some(), "the show started");
+        let ctx = egui::Context::default();
+        let (req, _rx) = ControlRequest::new("show.end", json!({}));
+        match handle(&mut app, &ctx, &req) {
+            Outcome::Done(v) => assert_eq!(v["ok"], true, "{v}"),
+            _ => panic!("expected a done reply"),
+        }
+        assert!(app.show.is_none(), "the show is gone");
+    }
 
     /// A path reply writes the PNG and returns no base64 text; an inline reply returns PNG
     /// bytes base64-encoded once. Both go through the same checked memory plan.

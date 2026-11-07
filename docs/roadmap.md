@@ -1,6 +1,6 @@
 # DeckCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (beta item 9 drops Play From, now in; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: PPTX corpus, presenter and show controls, review navigation, starter decks, Grid Options and New Window, WordArt gallery and handles, pen pressure; beta items 9 and 10 narrowed; duplicated rows and headers folded; previous: minor, core-workflow alpha gate added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log folds Clear Recording, Reset to Cameo and Record ▸ Preview; previous: trivial, beta item 9 drops Play From, now in; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: PPTX corpus, presenter and show controls, review navigation, starter decks, Grid Options and New Window, WordArt gallery and handles, pen pressure; beta items 9 and 10 narrowed; duplicated rows and headers folded; previous: minor, core-workflow alpha gate added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Forward-looking: where DeckCraft is going and in what order. The one-page summary is
 [ROADMAP.md](../ROADMAP.md); every shortfall is in [gaps.md](gaps.md); numbers are in
@@ -62,7 +62,7 @@ reference renders, a Windows tester with the affected GPUs, native speakers to r
 ## After beta: toward full parity (~245–440 h more)
 
 SmartArt depth, the remaining animation effects and motion paths, edit-point segment types and
-3-D depth, bundled proofing dictionaries, Zoom depth, recording, video export, legacy `.ppt` import
+3-D depth, bundled proofing dictionaries, Zoom depth, screen and camera capture (Record Slide Show already keeps timings, narration, pen ink and a laser trace; the live Cameo preview is #1837), video export, legacy `.ppt` import
 and `.odp` (owner decision), GPU rasterization, hardware video decode, pen tilt (pressure already
 scales ink width) and pinch zoom, the other 21 languages with RTL mirroring, a larger template
 gallery (six original starters ship), and local AI features (owner decision on models). Itemized
@@ -81,7 +81,7 @@ From the local execution plan (`plan/execution-plan.md`, gitignored). Status as 
 | M4 | Design | mostly | Notes/Handout masters, variants, Designer |
 | M5 | Pictures and media | mostly | SVG/EMF, remove background, compress, icons, WMA/WMV |
 | M6 | Transitions and animations | mostly | Animation Pane timeline, remaining effects, transition sounds |
-| M7 | Slide show | mostly | second-display placement, laser, record |
+| M7 | Slide show | mostly | second-display placement, highlighter in the ordinary show (the Record view has one), screen capture |
 | M8 | Tables and charts | partly | chart data grid, elements, chartex types, draw table |
 | M9 | SmartArt, equations, WordArt | partly | SmartArt layouts and PowerPoint-diagram fidelity, equations (PR #55); the text pane, warp gallery and warp handles are in |
 | M10 | Views | done | Arrange All (grid options and New Window are in) |
@@ -139,6 +139,9 @@ plan above.
 | 2026-10-13 | minor | M10: Grid Options dialog; New Window stays open |
 | 2026-10-13 | minor | M9: WordArt adjust handles drag; the Transform gallery and command stay open |
 | 2026-10-14 | trivial | After beta: pen pressure scales ink width; tilt and pinch zoom remain |
+| 2026-11-03 | trivial | Laser pointer during a show, and Clear Timing / Clear Narration on the current slide or all slides |
+| 2026-11-03 | trivial | Record Slide Show keeps narration and a laser trace; screen capture and camera stay after beta |
+| 2026-11-03 | trivial | Record Slide Show keeps timings and pen ink; screen capture stays after beta |
 | 2026-10-10 | minor | Added the alpha gate (six core workflows): all pass, two with partial depth; stage stays alpha |
 | 2026-10-10 | major | Created: current focus, ranked beta plan with hours, milestones M0–M14 with status, the old alpha checklist as history |
 
