@@ -395,6 +395,10 @@ fn grp(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> Sha
         if let Some(fx) = pr.child("effectLst") {
             s.effects = Some(dml::effects(fx));
         }
+        let raw: String = pr.elements().filter(|c| c.is("scene3d")).map(|c| part.keep_inner(c)).collect();
+        if !raw.is_empty() {
+            s.effects.get_or_insert_with(Effects::default).raw3d = Some(raw);
+        }
     }
     let children = sp_tree(imp, part, ctx, e, depth + 1);
     let child = child.or_else(|| s.xfrm.map(|x| Xfrm::new(x.x, x.y, x.w, x.h))).unwrap_or_default();
