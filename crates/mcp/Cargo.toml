@@ -8,8 +8,12 @@ description = "DeckCraft MCP server: JSON-RPC 2.0 over stdio, driving a running 
 [lints]
 workspace = true
 
+[features]
+default = ["video"]
+video = ["deckcraft-engine/video"]
+
 [dependencies]
-deckcraft-engine = { workspace = true }
+deckcraft-engine = { workspace = true, default-features = false }
 deckcraft-render = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }

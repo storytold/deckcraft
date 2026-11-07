@@ -1,8 +1,49 @@
 //! Media probing: container, duration, audio and video stream parameters — without decoding
 //! (except for audio files whose container doesn't state a length).
 
-use crate::video::{codec_name, mkv_codec_name};
 use crate::{ASF_HEADER, Bytes, Container, MediaError, Result};
+
+pub(crate) fn codec_name(c: &deckcraft_isobmff::CodecConfig) -> String {
+    use deckcraft_isobmff::CodecConfig;
+    match c {
+        CodecConfig::Avc(_) => "H.264".into(),
+        CodecConfig::Hevc(_) => "HEVC".into(),
+        CodecConfig::Av1(_) => "AV1".into(),
+        CodecConfig::Vp9(_) => "VP9".into(),
+        CodecConfig::Apv(_) => "APV".into(),
+        CodecConfig::ProRes { .. } => "Apple ProRes".into(),
+        CodecConfig::Jpeg { .. } => "Motion JPEG".into(),
+        CodecConfig::Dnx { .. } => "DNxHD".into(),
+        CodecConfig::Aac(_) => "AAC".into(),
+        CodecConfig::Mp3 => "MP3".into(),
+        CodecConfig::Pcm(_) => "PCM".into(),
+        CodecConfig::Alac { .. } => "ALAC".into(),
+        CodecConfig::Opus(_) => "Opus".into(),
+        CodecConfig::Flac(_) => "FLAC".into(),
+        CodecConfig::Ac3 { .. } => "AC-3".into(),
+        CodecConfig::Eac3 { .. } => "E-AC-3".into(),
+        CodecConfig::Timecode(_) => "timecode".into(),
+        CodecConfig::Unknown { fourcc, .. } => format!("{fourcc:?}"),
+    }
+}
+
+pub(crate) fn mkv_codec_name(c: &deckcraft_matroska::Codec) -> String {
+    use deckcraft_matroska::Codec;
+    match c {
+        Codec::Avc { .. } => "H.264".into(),
+        Codec::Hevc { .. } => "HEVC".into(),
+        Codec::Vp8 => "VP8".into(),
+        Codec::Vp9 { .. } => "VP9".into(),
+        Codec::Av1 { .. } => "AV1".into(),
+        Codec::Aac { .. } => "AAC".into(),
+        Codec::Opus { .. } => "Opus".into(),
+        Codec::Vorbis { .. } => "Vorbis".into(),
+        Codec::Flac { .. } => "FLAC".into(),
+        Codec::Mp3 => "MP3".into(),
+        Codec::Pcm { .. } => "PCM".into(),
+        other => other.name(),
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AudioInfo {
@@ -115,7 +156,8 @@ fn probe_mp4(bytes: &Bytes) -> Result<MediaInfo> {
         let secs = if t.timescale > 0 { t.duration as f64 / t.timescale as f64 } else { 0.0 };
         if let Some(e) = t.entries.first() {
             let (w, h) = e.video.as_ref().map(|v| (v.width as u32, v.height as u32)).unwrap_or((t.width, t.height));
-            let decodable = matches!(e.codec, CodecConfig::Avc(_) | CodecConfig::Hevc(_) | CodecConfig::Vp9(_) | CodecConfig::Av1(_));
+            let decodable =
+                cfg!(feature = "video") && matches!(e.codec, CodecConfig::Avc(_) | CodecConfig::Hevc(_) | CodecConfig::Vp9(_) | CodecConfig::Av1(_));
             let frames = t.samples.len() as u64;
             info.video = Some(VideoInfo {
                 codec: codec_name(&e.codec),
@@ -159,7 +201,7 @@ fn probe_mkv(bytes: &Bytes) -> Result<MediaInfo> {
             _ if dur > 0.0 => frames as f64 / dur,
             _ => 0.0,
         };
-        let decodable = matches!(t.codec, Codec::Avc { .. } | Codec::Hevc { .. } | Codec::Vp9 { .. } | Codec::Av1 { .. });
+        let decodable = cfg!(feature = "video") && matches!(t.codec, Codec::Avc { .. } | Codec::Hevc { .. } | Codec::Vp9 { .. } | Codec::Av1 { .. });
         info.video = Some(VideoInfo { codec: mkv_codec_name(&t.codec), width: w, height: h, fps, frames, decodable });
     }
     if let Some(t) = f.tracks.iter().find(|t| t.kind == TrackKind::Audio) {

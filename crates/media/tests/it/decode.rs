@@ -197,6 +197,7 @@ fn garbage_is_an_error_not_a_panic() {
 }
 
 /// Mean colour of a 16×16 block in the middle of the frame.
+#[cfg(feature = "video")]
 fn centre(f: &video::Frame) -> [f64; 3] {
     let (w, h) = (f.width as usize, f.height as usize);
     let mut s = [0.0; 3];
@@ -214,6 +215,7 @@ fn centre(f: &video::Frame) -> [f64; 3] {
 
 /// Our gradient's mean over the same block in frame `k`: R = (4x + 20k) mod 256, G = 5y mod 256,
 /// B = 40k mod 256.
+#[cfg(feature = "video")]
 fn expected_centre(w: usize, h: usize, k: usize) -> [f64; 3] {
     let mut s = [0.0; 3];
     let mut n = 0.0;
@@ -228,6 +230,7 @@ fn expected_centre(w: usize, h: usize, k: usize) -> [f64; 3] {
     s.map(|v| v / n)
 }
 
+#[cfg(feature = "video")]
 fn check_video(name: &str, w: u32, h: u32, frames: usize, codec: &str) {
     let b = fixture(name);
     let info = probe(&b).unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -261,6 +264,7 @@ fn check_video(name: &str, w: u32, h: u32, frames: usize, codec: &str) {
 }
 
 #[test]
+#[cfg(feature = "video")]
 fn h264_mp4_with_b_frames_and_aac_audio() {
     check_video("clip-h264.mp4", 64, 48, 5, "H.264");
     // Its audio track decodes too.
@@ -272,17 +276,20 @@ fn h264_mp4_with_b_frames_and_aac_audio() {
 }
 
 #[test]
+#[cfg(feature = "video")]
 fn h264_mov() {
     check_video("clip-h264.mov", 64, 48, 6, "H.264");
     assert_eq!(probe(&fixture("clip-h264.mov")).map(|i| i.container), Ok("mov"));
 }
 
 #[test]
+#[cfg(feature = "video")]
 fn hevc_mp4() {
     check_video("clip-hevc.mp4", 64, 48, 6, "HEVC");
 }
 
 #[test]
+#[cfg(feature = "video")]
 fn vp9_webm_with_opus_audio() {
     check_video("clip-vp9.webm", 64, 48, 5, "VP9");
     let b = fixture("clip-vp9.webm");
@@ -293,11 +300,13 @@ fn vp9_webm_with_opus_audio() {
 }
 
 #[test]
+#[cfg(feature = "video")]
 fn av1_mkv() {
     check_video("clip-av1.mkv", 64, 64, 6, "AV1");
 }
 
 #[test]
+#[cfg(feature = "video")]
 fn video_feed_follows_the_clock() {
     let mut feed = deckcraft_media::VideoFeed::new(fixture("clip-h264.mov")).expect("feed");
     assert_eq!(feed.size(), (64, 48));
@@ -313,6 +322,7 @@ fn video_feed_follows_the_clock() {
 }
 
 #[test]
+#[cfg(feature = "video")]
 fn video_feed_repeated_seeks_keep_the_requested_frame() {
     let timeout = Duration::from_secs(5);
     for name in ["clip-h264.mov", "clip-hevc.mp4", "clip-vp9.webm", "clip-av1.mkv"] {

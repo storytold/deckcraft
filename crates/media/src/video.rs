@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use deckcraft_isobmff::CodecConfig;
 use deckcraft_matroska::Codec as MkvCodec;
 
+use crate::probe::{codec_name, mkv_codec_name};
 use crate::yuv::{self, Matrix, Planes};
 use crate::{Bytes, Container, MediaError, Result};
 
@@ -321,46 +322,6 @@ fn open_track(bytes: &[u8]) -> Result<(Demux, Track, Box<dyn Codec>)> {
         }
         Container::Asf => Err(MediaError::Unsupported("Windows Media Video (WMV)".into())),
         _ => Err(MediaError::Missing("video track")),
-    }
-}
-
-pub(crate) fn codec_name(c: &CodecConfig) -> String {
-    match c {
-        CodecConfig::Avc(_) => "H.264".into(),
-        CodecConfig::Hevc(_) => "HEVC".into(),
-        CodecConfig::Av1(_) => "AV1".into(),
-        CodecConfig::Vp9(_) => "VP9".into(),
-        CodecConfig::Apv(_) => "APV".into(),
-        CodecConfig::ProRes { .. } => "Apple ProRes".into(),
-        CodecConfig::Jpeg { .. } => "Motion JPEG".into(),
-        CodecConfig::Dnx { .. } => "DNxHD".into(),
-        CodecConfig::Aac(_) => "AAC".into(),
-        CodecConfig::Mp3 => "MP3".into(),
-        CodecConfig::Pcm(_) => "PCM".into(),
-        CodecConfig::Alac { .. } => "ALAC".into(),
-        CodecConfig::Opus(_) => "Opus".into(),
-        CodecConfig::Flac(_) => "FLAC".into(),
-        CodecConfig::Ac3 { .. } => "AC-3".into(),
-        CodecConfig::Eac3 { .. } => "E-AC-3".into(),
-        CodecConfig::Timecode(_) => "timecode".into(),
-        CodecConfig::Unknown { fourcc, .. } => format!("{fourcc:?}"),
-    }
-}
-
-pub(crate) fn mkv_codec_name(c: &MkvCodec) -> String {
-    match c {
-        MkvCodec::Avc { .. } => "H.264".into(),
-        MkvCodec::Hevc { .. } => "HEVC".into(),
-        MkvCodec::Vp8 => "VP8".into(),
-        MkvCodec::Vp9 { .. } => "VP9".into(),
-        MkvCodec::Av1 { .. } => "AV1".into(),
-        MkvCodec::Aac { .. } => "AAC".into(),
-        MkvCodec::Opus { .. } => "Opus".into(),
-        MkvCodec::Vorbis { .. } => "Vorbis".into(),
-        MkvCodec::Flac { .. } => "FLAC".into(),
-        MkvCodec::Mp3 => "MP3".into(),
-        MkvCodec::Pcm { .. } => "PCM".into(),
-        other => other.name(),
     }
 }
 

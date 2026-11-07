@@ -22,7 +22,12 @@ pub mod feed;
 mod mp4guard;
 pub mod player;
 pub mod probe;
+#[cfg(feature = "video")]
 pub mod video;
+#[cfg(not(feature = "video"))]
+#[path = "video_stub.rs"]
+pub mod video;
+#[cfg(feature = "video")]
 mod yuv;
 
 use std::sync::Arc;
