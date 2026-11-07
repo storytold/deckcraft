@@ -13,12 +13,13 @@ pub fn parse_zoom_percent(text: &str) -> Option<f32> {
     Some(((v / 100.0) as f32).clamp(0.1, 4.0))
 }
 
-/// Zoom dialog: a percent or Fit. Nothing changes until OK.
+/// Zoom dialog: a percent or Fit. Nothing changes until OK. In the Slide Sorter it sets the thumbnail zoom (#1753).
 pub(super) fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    let sorter = app.ui.view == crate::ViewMode::Sorter;
     if !d.fields.contains_key("mode") {
-        let shown = app.ui.zoom.unwrap_or(app.canvas_scale);
+        let shown = if sorter { app.ui.sorter_zoom } else { app.ui.zoom.unwrap_or(app.canvas_scale) };
         let pct = if shown.is_finite() { (shown * 100.0).round().clamp(10.0, 400.0) } else { 100.0 };
-        d.fields.insert("mode".into(), if app.ui.zoom.is_none() { "fit".into() } else { "percent".into() });
+        d.fields.insert("mode".into(), if !sorter && app.ui.zoom.is_none() { "fit".into() } else { "percent".into() });
         d.fields.insert("percent".into(), format!("{pct:.0}"));
     }
     let mut mode = d.get("mode", "percent");
@@ -27,7 +28,7 @@ pub(super) fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     if ui.radio(mode == "fit", "Fit").clicked() {
         mode = "fit".into();
     }
-    for pct in ZOOM_PRESETS {
+    for pct in ZOOM_PRESETS.iter().filter(|p| !sorter || (50..=300).contains(*p)) {
         let on = mode == "percent" && percent == pct.to_string();
         if ui.radio(on, format!("{pct}%")).clicked() {
             mode = "percent".into();
@@ -47,10 +48,15 @@ pub(super) fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     let (ok, cancel) = buttons(ui, "OK");
     if ok {
         if mode == "fit" {
-            app.ui.zoom = None;
+            if sorter {
+                app.ui.sorter_zoom = 1.0;
+            } else {
+                app.ui.zoom = None;
+            }
             return true;
         }
         match parse_zoom_percent(&percent) {
+            Some(scale) if sorter => app.ui.sorter_zoom = scale.clamp(0.5, 3.0),
             Some(scale) => app.ui.zoom = Some(scale),
             None => {
                 app.set_status("Enter a zoom percent");

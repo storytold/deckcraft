@@ -112,21 +112,37 @@ impl SlideApp {
                 }));
             }
             "view.zoomIn" | "view.zoomOut" => {
-                let cur = self.ui.zoom.unwrap_or(self.canvas_scale);
+                // In the Slide Sorter the zoom commands change the thumbnail size, not the editing view.
+                let sorter = self.ui.view == ViewMode::Sorter;
+                let cur = if sorter { self.ui.sorter_zoom } else { self.ui.zoom.unwrap_or(self.canvas_scale) };
                 let steps = [0.1, 0.25, 0.33, 0.5, 0.66, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0];
                 let next = if id == "view.zoomIn" {
                     steps.iter().copied().find(|s| *s > cur + 0.01).unwrap_or(4.0)
                 } else {
                     steps.iter().rev().copied().find(|s| *s < cur - 0.01).unwrap_or(0.1)
                 };
-                self.ui.zoom = Some(next);
+                if sorter {
+                    self.ui.sorter_zoom = next.clamp(0.5, 3.0);
+                } else {
+                    self.ui.zoom = Some(next);
+                }
             }
             "view.zoom" => {
                 let pct = p.get("percent").and_then(Value::as_f64).ok_or("missing `percent`")?;
-                self.ui.zoom = Some((pct as f32 / 100.0).clamp(0.1, 4.0));
+                if self.ui.view == ViewMode::Sorter {
+                    self.ui.sorter_zoom = (pct as f32 / 100.0).clamp(0.5, 3.0);
+                } else {
+                    self.ui.zoom = Some((pct as f32 / 100.0).clamp(0.1, 4.0));
+                }
             }
             "view.zoomDialog" => self.dialog = Some(dialogs::Dialog::new("zoom")),
-            "view.fit" => self.ui.zoom = None,
+            "view.fit" => {
+                if self.ui.view == ViewMode::Sorter {
+                    self.ui.sorter_zoom = 1.0;
+                } else {
+                    self.ui.zoom = None;
+                }
+            }
             "review.thesaurusPane" => {
                 let word = match p.get("word").and_then(Value::as_str) {
                     Some(w) => w.to_string(),
