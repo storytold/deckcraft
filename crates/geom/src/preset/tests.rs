@@ -418,3 +418,80 @@ fn wedge_callout_mirrors_with_its_tip() {
         assert!(a.iter().any(|p| (p.x - x).abs() < 1e-6 && (p.y - h).abs() < 1e-6), "no wedge corner at ({x}, {h}): {a:?}");
     }
 }
+
+/// The vertices, and the cubic segments' end points, of preset `name`'s path.
+fn path_points(name: &str, w: f64, h: f64, adj: &[f64]) -> Vec<(f64, f64)> {
+    let g = build(name, w, h, adj).unwrap();
+    g.paths[0].path.elements().iter().filter_map(|e| e.end_point()).map(|p| (p.x, p.y)).collect()
+}
+
+// ECMA-376 presetShapeDefinitions: bentConnector4 runs l,t → x1,t → x1,y2 → r,y2 → r,b and
+// bentConnector5 l,t → x1,t → x1,y2 → x3,y2 → x3,b → r,b, with x1 = w·adj1, y2 = h·adj2,
+// x3 = w·adj3 (in 100000ths). Both were drawn as bentConnector3, with only adj1.
+#[test]
+fn the_three_and_four_bend_elbows_follow_their_adjust_values() {
+    assert_eq!(path_points("bentConnector4", 200.0, 100.0, &[]), [(0.0, 0.0), (100.0, 0.0), (100.0, 50.0), (200.0, 50.0), (200.0, 100.0)]);
+    assert_eq!(
+        path_points("bentConnector4", 200.0, 100.0, &[20000.0, 80000.0]),
+        [(0.0, 0.0), (40.0, 0.0), (40.0, 80.0), (200.0, 80.0), (200.0, 100.0)]
+    );
+    // Outside 0..100000, as PowerPoint routes a connector around a shape.
+    assert_eq!(
+        path_points("bentConnector4", 200.0, 100.0, &[-40000.0, 120000.0]),
+        [(0.0, 0.0), (-80.0, 0.0), (-80.0, 120.0), (200.0, 120.0), (200.0, 100.0)]
+    );
+    assert_eq!(
+        path_points("bentConnector5", 200.0, 100.0, &[]),
+        [(0.0, 0.0), (100.0, 0.0), (100.0, 50.0), (100.0, 50.0), (100.0, 100.0), (200.0, 100.0)]
+    );
+    assert_eq!(
+        path_points("bentConnector5", 200.0, 100.0, &[25000.0, 75000.0, 60000.0]),
+        [(0.0, 0.0), (50.0, 0.0), (50.0, 75.0), (120.0, 75.0), (120.0, 100.0), (200.0, 100.0)]
+    );
+    // The handles sit where the spec puts them: on the leg each value moves.
+    let g = build("bentConnector5", 200.0, 100.0, &[25000.0, 75000.0, 60000.0]).unwrap();
+    let pos: Vec<(f64, f64)> = g.handles.iter().map(|h| (h.pos.x, h.pos.y)).collect();
+    assert_eq!(pos, [(50.0, 37.5), (85.0, 75.0), (120.0, 87.5)]);
+    // A handle dragged far out keeps the value: the spec's range is ±2147483647, and an imported
+    // route can use values beyond ±1000000 (noted in review).
+    for name in ["bentConnector3", "bentConnector4", "bentConnector5"] {
+        let g = build(name, 200.0, 100.0, &[]).unwrap();
+        for h in &g.handles {
+            let far = h.origin + h.dir * 5_000_000.0;
+            assert_eq!(h.value_at(far), 5_000_000.0, "{name} handle {}", h.index);
+        }
+    }
+}
+
+// curvedConnector2 is one cubic (l,t)…(r,b) through (wd2,t) and (r,hd2); 4 and 5 bend at the same
+// places as the elbows, three and four cubics. 2 was drawn as 3 at adj1 = 100%, 4 and 5 as 3.
+#[test]
+fn the_curved_connectors_follow_their_adjust_values() {
+    let g = build("curvedConnector2", 200.0, 100.0, &[]).unwrap();
+    let els = g.paths[0].path.elements();
+    assert_eq!(els.len(), 2, "a move and one cubic: {els:?}");
+    assert_eq!(els[1], kurbo::PathEl::CurveTo(Point::new(100.0, 0.0), Point::new(200.0, 50.0), Point::new(200.0, 100.0)));
+    // the joints: (x2, y1), (x3, y4), (r, b) for 4; (x3, y1), (x1, y4), (x6, y5), (r, b) for 5
+    assert_eq!(path_points("curvedConnector4", 200.0, 100.0, &[]), [(0.0, 0.0), (100.0, 25.0), (150.0, 50.0), (200.0, 100.0)]);
+    assert_eq!(path_points("curvedConnector4", 200.0, 100.0, &[20000.0, 80000.0]), [(0.0, 0.0), (40.0, 40.0), (120.0, 80.0), (200.0, 100.0)]);
+    assert_eq!(path_points("curvedConnector5", 200.0, 100.0, &[]), [(0.0, 0.0), (100.0, 25.0), (100.0, 50.0), (100.0, 75.0), (200.0, 100.0)]);
+    assert_eq!(
+        path_points("curvedConnector5", 200.0, 100.0, &[25000.0, 75000.0, 60000.0]),
+        [(0.0, 0.0), (50.0, 37.5), (85.0, 75.0), (120.0, 87.5), (200.0, 100.0)]
+    );
+}
+
+// None of these is in the gallery, so their defaults came from nowhere: a file giving no adjust
+// values, or only some, drew them at 0.
+#[test]
+fn connectors_outside_the_gallery_take_the_spec_defaults() {
+    for (name, n) in [("bentConnector4", 2), ("bentConnector5", 3), ("curvedConnector4", 2), ("curvedConnector5", 3)] {
+        assert!(info(name).is_none(), "{name} is not in the gallery");
+        assert_eq!(adjust_defaults(name), vec![50000.0; n].as_slice(), "{name}");
+        for v in [f64::NAN, f64::INFINITY, -1e12, 1e12] {
+            assert!(build(name, 120.0, 80.0, &[v; 3]).is_some(), "{name} {v}");
+        }
+    }
+    assert_eq!(adjust_defaults("bentConnector3"), [50000.0]);
+    assert!(adjust_defaults("rect").is_empty());
+}
