@@ -105,7 +105,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 /// full of entries can't stall start-up.
 pub const MAX_REOPEN: usize = 32;
 /// Largest entry read back.
-const MAX_ENTRY_BYTES: u64 = 2 << 30;
+const MAX_ENTRY_BYTES: u64 = 16 << 30;
 const MAX_META_BYTES: u64 = 64 << 10;
 
 /// `p` as bytes when it's a regular file no bigger than `max`: reading a FIFO left where an
