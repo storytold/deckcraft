@@ -1436,6 +1436,62 @@ fn a_tab_past_the_end_moves_to_the_next_line() {
     assert!((l.lines[1].edges[1].0 - l.inner.x0 - 72.0).abs() < 0.01);
 }
 
+/// #1663: a right-aligned tab stop past the right edge of the text area clamps to the edge
+/// and right-aligns the text there, instead of wrapping.
+#[test]
+fn right_tab_stop_past_right_edge_aligns_at_margin_without_wrapping() {
+    let l = tabbed("\tCorrie Ten Boom", &[(550.0, "r")], 500.0);
+    assert_eq!(l.lines.len(), 1, "must not wrap to a second line");
+    assert!((l.lines[0].extent.1 - l.inner.x1).abs() < 1.0, "text right edge {:?} should align with inner.x1 {}", l.lines[0].extent.1, l.inner.x1);
+}
+
+/// #1663: center and decimal tab stops beyond the text area right edge clamp so their content
+/// remains bounded by the margin without wrapping onto a new line.
+#[test]
+fn center_and_decimal_tab_stops_past_right_edge_align_without_wrapping() {
+    let l_ctr = tabbed("\tCentered", &[(550.0, "ctr")], 500.0);
+    assert_eq!(l_ctr.lines.len(), 1, "center stop must not wrap to a second line");
+    assert!(
+        (l_ctr.lines[0].extent.1 - l_ctr.inner.x1).abs() < 1.0,
+        "text right edge {:?} should align with inner.x1 {}",
+        l_ctr.lines[0].extent.1,
+        l_ctr.inner.x1
+    );
+
+    let l_dec = tabbed("\t123.45", &[(550.0, "dec")], 500.0);
+    assert_eq!(l_dec.lines.len(), 1, "decimal stop must not wrap to a second line");
+    assert!(
+        (l_dec.lines[0].extent.1 - l_dec.inner.x1).abs() < 1.0,
+        "text right edge {:?} should align with inner.x1 {}",
+        l_dec.lines[0].extent.1,
+        l_dec.inner.x1
+    );
+
+    // Stops inside the margin remain untouched:
+    let l_inside = tabbed("\tCentered", &[(300.0, "ctr")], 500.0);
+    assert_eq!(l_inside.lines.len(), 1);
+    let (s, e) = (l_inside.lines[0].edges[1].0, l_inside.lines[0].edges[8].1);
+    assert!(((s + e) / 2.0 - l_inside.inner.x0 - 300.0).abs() < 1.0, "center stop inside margin must stay at 300.0");
+}
+
+/// #1663: a tab whose following word fits on a fresh line but not in the remaining space
+/// moves to the next line with its word so alignment is preserved.
+#[test]
+fn tab_moves_to_next_line_with_word_when_word_does_not_fit_remaining_space() {
+    let l = tabbed("leading text here\tAligned", &[(250.0, "r")], 200.0);
+    assert_eq!(l.lines.len(), 2);
+    assert_eq!(l.lines[1].start, 17, "tab must start line 2");
+    assert!((l.lines[1].extent.1 - l.inner.x1).abs() < 1.0, "Aligned should be right-aligned on line 2");
+}
+
+/// #1663: trailing spaces after a tabbed word do not force the tab to wrap to a new line
+/// if the visible word fits in the remaining space.
+#[test]
+fn trailing_spaces_after_tab_do_not_force_line_break() {
+    let l = tabbed("a\tWord   ", &[(150.0, "r")], 200.0);
+    assert_eq!(l.lines.len(), 1, "trailing spaces do not force a line break; fits on one line");
+}
+
 /// Underline decorations of "ab cd" underlined `u` at 40 pt.
 fn underline_decos(u: &str) -> (TextLayout, Vec<Deco>) {
     let (p, mut sh) = setup("ab cd", 2000.0, 300.0);
