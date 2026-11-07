@@ -62,6 +62,8 @@ pub(crate) struct Style {
     major: bool,
     /// Pair kerning on: `a:rPr/@kern` is set and the size reaches it.
     pub(crate) kern: bool,
+    /// Numbers stand upright in East Asian vertical text (`a:rPr/@kumimoji`).
+    pub(crate) kumimoji: bool,
 }
 
 /// One character of a paragraph after shaping.
@@ -182,6 +184,7 @@ pub(crate) fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgb
         sym: r.font_sym.as_deref().map(|f| ctx.master.theme.font(f)).filter(|f| !f.trim().is_empty()),
         major,
         kern: r.kern.is_some_and(|k| k > 0.0 && size + 1e-6 >= k * scale),
+        kumimoji: r.kumimoji == Some(true),
     }
 }
 

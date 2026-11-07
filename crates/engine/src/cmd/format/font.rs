@@ -255,6 +255,13 @@ pub(super) fn spacing(s: &mut Session, p: &Value) -> Result<Value> {
     format_run(s, &move |r| r.spacing = Some(v))
 }
 
+/// 組み文字 (`a:rPr/@kumimoji`): numbers stand upright in East Asian vertical text. Off removes the
+/// attribute, which the spec reads as false.
+pub(super) fn kumimoji(s: &mut Session, p: &Value) -> Result<Value> {
+    let v = on_param(p, Some(current_run(s).kumimoji.unwrap_or(false)));
+    format_run(s, &move |r| r.kumimoji = v.then_some(true))
+}
+
 /// Character formatting applied together, so the Font dialog is one undo step.
 struct FontEdits {
     family: Option<String>,
