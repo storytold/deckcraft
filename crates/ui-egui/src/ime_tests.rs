@@ -283,7 +283,8 @@ fn accepted_no_descriptor_pass_retires_the_settled_tombstone() {
 #[test]
 fn focused_text_field_descriptor_keeps_the_settled_tombstone() {
     let mut h = harness(Session::with_new());
-    let notes = egui::Id::unique("notes_edit");
+    #[allow(deprecated)]
+    let notes = egui::Id::new("notes_edit");
     h.ctx.memory_mut(|m| m.request_focus(notes));
     h.run_steps(2);
     assert!(h.ctx.memory(|m| m.has_focus(notes)), "the notes TextEdit has focus");
@@ -331,7 +332,8 @@ fn composing_on_a_selected_shape_starts_editing_it() {
 #[test]
 fn korean_composes_in_the_notes_pane() {
     let mut h = harness(Session::with_new());
-    let id = egui::Id::unique("notes_edit");
+    #[allow(deprecated)]
+    let id = egui::Id::new("notes_edit");
     h.ctx.memory_mut(|m| m.request_focus(id));
     h.run_steps(2);
     assert!(h.ctx.memory(|m| m.has_focus(id)));
