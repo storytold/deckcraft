@@ -6872,6 +6872,443 @@ fn save_to_image_path_is_an_error_not_zip_bytes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+fn smartart_runs(s: &Session, gid: u64) -> Vec<(Option<f64>, Option<deckcraft_model::Fill>)> {
+    match s.doc().unwrap().shape(deckcraft_model::ShapeId(gid as u32)).map(|x| &x.kind) {
+        Some(deckcraft_model::ShapeKind::Group { children, .. }) => children
+            .iter()
+            .filter_map(|c| c.text.as_ref())
+            .flat_map(|t| t.paragraphs.iter().flat_map(|p| p.runs.iter().map(|r| (r.props.size, r.props.fill.clone()))))
+            .collect(),
+        _ => panic!("not a group"),
+    }
+}
+
+/// The diagrams of the SmartArt graphics in the document after a .pptx save and reopen.
+fn smartart_after_pptx(s: &Session) -> Vec<deckcraft_model::Diagram> {
+    let back = deckcraft_pptx::import(&deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap()).unwrap();
+    let mut out = vec![];
+    for sl in &back.slides {
+        deckcraft_model::walk(&sl.shapes, &mut |sh, _| out.extend(sh.diagram.clone()));
+    }
+    out
+}
+
+/// A node with many lines shrinks the whole graphic, not only itself: every shape carries the
+/// one scale the fullest node needs, so their text stays the same size, as in PowerPoint.
+#[test]
+fn smartart_shrinks_every_node_alike_for_a_tall_one() {
+    let mut s = session();
+    let mut items = vec![json!("Plan")];
+    items.extend((0..14).map(|i| json!(format!("\tStep {i}"))));
+    items.extend([json!("Build"), json!("\tTest")]);
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": items})).unwrap()["id"].as_u64().unwrap();
+    let scales: Vec<(Option<f64>, f64)> = match s.doc().unwrap().shape(deckcraft_model::ShapeId(gid as u32)).map(|x| &x.kind) {
+        Some(deckcraft_model::ShapeKind::Group { children, .. }) => children
+            .iter()
+            .filter_map(|c| c.text.as_ref())
+            .filter_map(|t| match t.body.autofit {
+                Some(deckcraft_model::text::AutoFit::Shrink { font_scale, line_reduction }) => Some((font_scale, line_reduction)),
+                _ => None,
+            })
+            .collect(),
+        _ => panic!("not a group"),
+    };
+    assert!(scales.len() >= 2, "{scales:?}");
+    assert!(scales.iter().all(|s| *s == scales[0]), "one scale for every shape: {scales:?}");
+    assert!(scales[0].0.is_some_and(|f| f < 1.0), "the tall node shrinks them all: {scales:?}");
+    // A set size turns the shared fit off.
+    s.execute("smartArt.fontSize", &json!({"id": gid, "size": 12})).unwrap();
+    assert!(smartart_runs(&s, gid).iter().all(|r| r.0 == Some(12.0)));
+}
+
+/// SmartArt text is sized alike for every node, and the user can set that size.
+#[test]
+fn smartart_font_size_is_one_value_for_every_node() {
+    let mut s = session();
+    let r = s
+        .execute(
+            "insert.smartArt",
+            &json!({"kind": "blockList", "items": ["Internationalisationinternationalisationinternationalisation", "\tScope", "Build", "\tTest"]}),
+        )
+        .unwrap();
+    let gid = r["id"].as_u64().unwrap();
+    // Automatic: the long word shrinks the whole graphic, titles and bullets by the same factor.
+    let auto = smartart_runs(&s, gid);
+    let (title, bullet) = (auto[0].0.unwrap(), auto[1].0.unwrap());
+    assert!(title < 20.0, "the long word shrinks the text: {title}");
+    assert_eq!(auto[2].0.unwrap(), title, "the other node's title is sized alike");
+    assert_eq!(auto[3].0.unwrap(), bullet, "and its bullet");
+    // Set: one size for every node.
+    s.execute("smartArt.fontSize", &json!({"id": gid, "size": 18})).unwrap();
+    assert!(smartart_runs(&s, gid).iter().all(|r| r.0 == Some(18.0)));
+    // At a set size the long word no longer narrows the bullets' indents: they match a graphic
+    // without it.
+    let indents = |s: &Session, gid: u64| match s.doc().unwrap().shape(deckcraft_model::ShapeId(gid as u32)).map(|x| &x.kind) {
+        Some(deckcraft_model::ShapeKind::Group { children, .. }) => children
+            .iter()
+            .filter_map(|c| c.text.as_ref())
+            .flat_map(|t| t.paragraphs.iter().map(|p| (p.props.margin_left, p.props.indent)))
+            .collect::<Vec<_>>(),
+        _ => panic!("not a group"),
+    };
+    let short =
+        s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "\tScope", "Build", "\tTest"]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("smartArt.fontSize", &json!({"id": short, "size": 18})).unwrap();
+    assert_eq!(indents(&s, gid), indents(&s, short));
+    // format.size with the graphic selected does the same, and it survives an edit.
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.size", &json!({"size": 26})).unwrap();
+    s.execute("smartArt.addNode", &json!({"id": gid, "text": "More"})).unwrap();
+    let runs = smartart_runs(&s, gid);
+    assert!(runs.len() >= 5 && runs.iter().all(|r| r.0 == Some(26.0)), "{runs:?}");
+    // The .pptx keeps the size each graphic set: 26 here, and 18 for the other one.
+    let sizes: Vec<Option<f64>> = smartart_after_pptx(&s).iter().map(|d| d.font_size).collect();
+    assert_eq!(sizes, vec![Some(26.0), Some(18.0)]);
+    // Back to automatic.
+    s.execute("smartArt.fontSize", &json!({"id": gid, "size": null})).unwrap();
+    assert!(smartart_runs(&s, gid).iter().any(|r| r.0 != Some(26.0)));
+    assert!(s.execute("smartArt.fontSize", &json!({"id": gid})).is_err());
+    assert!(s.execute("smartArt.fontSize", &json!({"id": gid, "size": -3})).is_err());
+}
+
+/// A SmartArt graphic selected together with a text box: `format.size` sizes the graphic's nodes
+/// and the text box, and the selection stays as it was (regenerating the graphic used to collapse
+/// it to the graphic alone, so the other shapes were skipped).
+#[test]
+fn format_size_on_a_mixed_selection_reaches_the_other_shapes_and_keeps_the_selection() {
+    let mut s = session();
+    let g = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "Build"]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 400, 200, 60], "text": "Note"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [g, b]})).unwrap();
+    s.execute("format.size", &json!({"size": 40})).unwrap();
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection.shapes, vec![ShapeId(g as u32), ShapeId(b as u32)], "the selection is as it was");
+    let run = &st.shape(ShapeId(b as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props;
+    assert_eq!(run.size, Some(40.0), "the text box was sized too: {run:?}");
+    let graphic = st.shape(ShapeId(g as u32)).unwrap();
+    assert_eq!(graphic.diagram.as_ref().unwrap().font_size, Some(40.0));
+    assert!(graphic.text.is_none(), "the run formatting skipped the graphic itself, which has no text of its own");
+}
+
+/// Increase and Decrease Font Size on a selected SmartArt graphic step every node's text from the
+/// size they share, as Font Size sets it, and the step survives a regenerate; a text box selected
+/// with it steps from its own size.
+#[test]
+fn grow_and_shrink_on_a_smartart_graphic_step_every_node() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "\tScope", "Build"]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 400, 200, 60], "text": "Note"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("smartArt.fontSize", &json!({"id": gid, "size": 18})).unwrap();
+    s.execute("edit.select", &json!({"ids": [b]})).unwrap();
+    s.execute("format.size", &json!({"size": 12})).unwrap();
+    s.execute("edit.select", &json!({"ids": [gid, b]})).unwrap();
+    s.execute("format.grow", &json!({})).unwrap();
+    let size_of = |s: &Session| s.doc().unwrap().shape(ShapeId(gid as u32)).unwrap().diagram.as_ref().unwrap().font_size;
+    let box_size = |s: &Session| s.doc().unwrap().shape(ShapeId(b as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.size;
+    assert_eq!(size_of(&s), Some(20.0), "18 grows to the next size, 20");
+    assert!(smartart_runs(&s, gid).iter().all(|r| r.0 == Some(20.0)));
+    assert_eq!(box_size(&s), Some(14.0), "the text box steps from its own 12");
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![ShapeId(gid as u32), ShapeId(b as u32)], "the selection is as it was");
+    s.execute("smartArt.addNode", &json!({"id": gid, "text": "Ship"})).unwrap();
+    assert!(smartart_runs(&s, gid).iter().all(|r| r.0 == Some(20.0)), "the step survives a regenerate");
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.shrink", &json!({})).unwrap();
+    s.execute("format.shrink", &json!({})).unwrap();
+    assert_eq!(size_of(&s), Some(16.0));
+    // An automatically sized graphic steps from the size its nodes show.
+    let auto = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    let first = smartart_runs(&s, auto)[0].0.unwrap();
+    s.execute("edit.select", &json!({"ids": [auto]})).unwrap();
+    s.execute("format.grow", &json!({})).unwrap();
+    let grown = s.doc().unwrap().shape(ShapeId(auto as u32)).unwrap().diagram.as_ref().unwrap().font_size.unwrap();
+    assert!(grown > first, "{first} grew to {grown}");
+}
+
+/// An automatically sized graphic whose text overflows is shown shrunk (the scale saved on its
+/// shapes), and Decrease and Increase Font Size step from that shown size, not the larger run size:
+/// shrinking never enlarges the text.
+#[test]
+fn grow_and_shrink_on_a_shrunk_smartart_graphic_step_from_the_shown_size() {
+    let mut s = session();
+    let items: Vec<String> = (0..6).map(|i| format!("Item number {i} with a rather long line of text to wrap")).collect();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "verticalList", "items": items})).unwrap()["id"].as_u64().unwrap();
+    let run = smartart_runs(&s, gid)[0].0.unwrap();
+    let scale = {
+        let st = s.doc().unwrap();
+        let mut f = None;
+        if let Some(deckcraft_model::ShapeKind::Group { children, .. }) = st.shape(ShapeId(gid as u32)).map(|x| &x.kind) {
+            for c in children {
+                if let Some(deckcraft_model::text::AutoFit::Shrink { font_scale: Some(v), .. }) = c.text.as_ref().and_then(|t| t.body.autofit) {
+                    f = Some(v);
+                }
+            }
+        }
+        f.unwrap_or(1.0)
+    };
+    assert!(scale < 1.0, "the graphic overflows and shrinks: {scale}");
+    let shown = run * scale;
+    let size_of = |s: &Session| s.doc().unwrap().shape(ShapeId(gid as u32)).unwrap().diagram.as_ref().unwrap().font_size.unwrap();
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.shrink", &json!({})).unwrap();
+    let down = size_of(&s);
+    assert!(down < shown, "shrink from the shown {shown} (run {run}) gives {down}");
+    s.execute("smartArt.fontSize", &json!({"id": gid, "size": null})).unwrap();
+    s.execute("format.grow", &json!({})).unwrap();
+    let up = size_of(&s);
+    let next = super::cmd::format::SIZES.iter().copied().find(|v| *v > shown + 0.01).unwrap();
+    assert_eq!(up, next, "grow from the shown {shown} (run {run}) gives the next list size");
+}
+
+/// An imported graphic keeps its drawing: the data model says 20 pt but the drawing shows 20 pt
+/// text at a 0.5 scale, so Increase Font Size steps from the shown 10 pt, not from 20.
+#[test]
+fn grow_on_an_imported_smartart_graphic_steps_from_its_drawing_not_the_data_size() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), ShapeId(gid as u32)).unwrap();
+        let d = g.diagram.as_mut().unwrap();
+        d.imported = true;
+        d.font_size = Some(20.0);
+        if let deckcraft_model::ShapeKind::Group { children, .. } = &mut g.kind {
+            for t in children.iter_mut().filter_map(|c| c.text.as_mut()) {
+                t.body.autofit = Some(deckcraft_model::text::AutoFit::Shrink { font_scale: Some(0.5), line_reduction: 0.0 });
+                for r in t.paragraphs.iter_mut().flat_map(|p| p.runs.iter_mut()) {
+                    r.props.size = Some(20.0);
+                }
+            }
+        }
+    }
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.grow", &json!({})).unwrap();
+    let z = s.doc().unwrap().shape(ShapeId(gid as u32)).unwrap().diagram.as_ref().unwrap().font_size;
+    assert_eq!(z, Some(10.5), "shown 10 pt grows to 10.5, not 24 from the data size");
+}
+
+/// A run with no size of its own shows the paragraph default's: a 12 pt default under a 20 pt run
+/// at a 0.5 scale shows 6 pt, so Increase Font Size steps from 6 (to 8), not from the explicit 10.
+#[test]
+fn grow_on_an_imported_smartart_graphic_counts_inherited_run_sizes() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), ShapeId(gid as u32)).unwrap();
+        let d = g.diagram.as_mut().unwrap();
+        d.imported = true;
+        d.font_size = Some(20.0);
+        if let deckcraft_model::ShapeKind::Group { children, .. } = &mut g.kind {
+            for t in children.iter_mut().filter_map(|c| c.text.as_mut()) {
+                t.body.autofit = Some(deckcraft_model::text::AutoFit::Shrink { font_scale: Some(0.5), line_reduction: 0.0 });
+                for r in t.paragraphs.iter_mut().flat_map(|p| p.runs.iter_mut()) {
+                    r.props.size = Some(20.0);
+                }
+            }
+            if let Some(t) = children.iter_mut().find_map(|c| c.text.as_mut()) {
+                t.paragraphs[0].def_props.size = Some(12.0);
+                t.paragraphs[0].runs[0].props.size = None;
+            }
+        }
+    }
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.grow", &json!({})).unwrap();
+    let z = s.doc().unwrap().shape(ShapeId(gid as u32)).unwrap().diagram.as_ref().unwrap().font_size;
+    assert_eq!(z, Some(8.0), "the inherited 12 pt shows 6 pt and grows to the next list size, 8, not 10.5 from the explicit run");
+}
+
+/// A scale below the renderer's 0.1 floor is drawn at 0.1, so a step starts from that shown size.
+#[test]
+fn grow_on_a_smartart_graphic_clamps_an_imported_scale_like_the_renderer() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let list = crate::shapes_mut(doc, &sel).unwrap();
+        let g = deckcraft_model::find_shape_mut(list, ShapeId(gid as u32)).unwrap();
+        if let deckcraft_model::ShapeKind::Group { children, .. } = &mut g.kind {
+            for c in children {
+                if let Some(t) = c.text.as_mut() {
+                    t.body.autofit = Some(deckcraft_model::text::AutoFit::Shrink { font_scale: Some(0.05), line_reduction: 0.0 });
+                    for r in t.paragraphs.iter_mut().flat_map(|p| p.runs.iter_mut()) {
+                        r.props.size = Some(100.0);
+                    }
+                }
+            }
+        }
+    }
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.grow", &json!({})).unwrap();
+    let z = s.doc().unwrap().shape(ShapeId(gid as u32)).unwrap().diagram.as_ref().unwrap().font_size;
+    assert_eq!(z, Some(10.5), "100 pt at the clamped 0.1 shows 10 pt; grow gives 10.5");
+}
+
+/// A node whose runs differ in size (a 20 pt title over 14 pt body) steps from the smallest, so
+/// Decrease and Increase never enlarge the body text.
+#[test]
+fn shrink_on_a_smartart_graphic_steps_from_the_smallest_run_size() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), ShapeId(gid as u32)).unwrap();
+        if let deckcraft_model::ShapeKind::Group { children, .. } = &mut g.kind {
+            for t in children.iter_mut().filter_map(|c| c.text.as_mut()) {
+                t.body.autofit = Some(deckcraft_model::text::AutoFit::None);
+                let mut second = t.paragraphs[0].runs[0].clone();
+                second.props.size = Some(14.0);
+                t.paragraphs[0].runs[0].props.size = Some(20.0);
+                t.paragraphs[0].runs.push(second);
+            }
+        }
+    }
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.shrink", &json!({})).unwrap();
+    let z = s.doc().unwrap().shape(ShapeId(gid as u32)).unwrap().diagram.as_ref().unwrap().font_size;
+    assert_eq!(z, Some(12.0), "14 pt is the smallest shown size, so shrink gives 12");
+}
+
+/// A shape saved with a scale of 1.0 whose text overflows is drawn shrunk by the renderer, so a
+/// step starts from that drawn size and Decrease never enlarges the text.
+#[test]
+fn shrink_on_a_smartart_graphic_steps_from_the_renderer_calculated_scale() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), ShapeId(gid as u32)).unwrap();
+        if let deckcraft_model::ShapeKind::Group { children, .. } = &mut g.kind {
+            for t in children.iter_mut().filter_map(|c| c.text.as_mut()) {
+                t.body.autofit = Some(deckcraft_model::text::AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
+                for r in t.paragraphs.iter_mut().flat_map(|p| p.runs.iter_mut()) {
+                    r.props.size = Some(200.0);
+                }
+            }
+        }
+    }
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.shrink", &json!({})).unwrap();
+    let z = s.doc().unwrap().shape(ShapeId(gid as u32)).unwrap().diagram.as_ref().unwrap().font_size.unwrap();
+    assert!(z < 200.0 * 0.6, "200 pt drawn much smaller steps down from the drawn size, not from 200: {z}");
+}
+
+/// A resized graphic measures its text in the box each node has on the slide, as the renderer
+/// draws it: text that fits in the child space but overflows the shrunk graphic shares a shrink,
+/// and the shown size reflects it.
+#[test]
+fn a_resized_smartart_graphic_fits_its_text_in_the_displayed_box() {
+    let mut s = session();
+    let items: Vec<String> = (0..3).map(|i| format!("Step {i} of the plan with some words")).collect();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "verticalList", "items": items})).unwrap()["id"].as_u64().unwrap();
+    let id = ShapeId(gid as u32);
+    let scales = |s: &Session| -> Vec<f64> {
+        match s.doc().unwrap().shape(id).map(|x| &x.kind) {
+            Some(deckcraft_model::ShapeKind::Group { children, .. }) => children
+                .iter()
+                .filter_map(|c| c.text.as_ref())
+                .filter_map(|t| match t.body.autofit {
+                    Some(deckcraft_model::text::AutoFit::Shrink { font_scale, .. }) => Some(font_scale.unwrap_or(1.0)),
+                    _ => None,
+                })
+                .collect(),
+            _ => panic!("not a group"),
+        }
+    };
+    assert!(scales(&s).iter().all(|v| *v == 1.0), "the text fits the graphic at full size: {:?}", scales(&s));
+    let full = crate::cmd::smartart::shown_size(&s, id).unwrap();
+    // Shrink the group's box and keep its child space: the shapes draw at 0.35 of their size.
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), id).unwrap();
+        let x = g.xfrm.as_mut().unwrap();
+        x.w *= 0.35;
+        x.h *= 0.35;
+    }
+    let first = match s.doc().unwrap().shape(id).map(|x| &x.kind) {
+        Some(deckcraft_model::ShapeKind::Group { children, .. }) => children.iter().find(|c| c.text.is_some()).unwrap().id,
+        _ => panic!("not a group"),
+    };
+    crate::cmd::smartart::share_after_edit(&mut s, first).unwrap();
+    let v = scales(&s);
+    assert!(v.len() > 1 && v.iter().all(|x| *x == v[0] && *x < 1.0), "one shared shrink for the displayed box: {v:?}");
+    let shown = crate::cmd::smartart::shown_size(&s, id).unwrap();
+    assert!(shown < full, "the shown size {shown} reflects the shrink (was {full})");
+}
+
+/// Editing one node's text refits the whole graphic at one scale, so the other nodes do not keep
+/// the scale of the old text and Increase Font Size steps from what every node shows.
+#[test]
+fn editing_a_smartart_node_shares_the_new_scale_with_the_other_nodes() {
+    let mut s = session();
+    let long = "word ".repeat(60);
+    let gid = s.execute("insert.smartArt", &json!({"kind": "verticalList", "items": ["A", "B", "C"]})).unwrap()["id"].as_u64().unwrap();
+    let scales = |s: &Session| -> Vec<Option<f64>> {
+        match s.doc().unwrap().shape(ShapeId(gid as u32)).map(|x| &x.kind) {
+            Some(deckcraft_model::ShapeKind::Group { children, .. }) => children
+                .iter()
+                .filter_map(|c| c.text.as_ref())
+                .filter_map(|t| match t.body.autofit {
+                    Some(deckcraft_model::text::AutoFit::Shrink { font_scale, .. }) => Some(font_scale),
+                    _ => None,
+                })
+                .collect(),
+            _ => panic!("not a group"),
+        }
+    };
+    let first = match s.doc().unwrap().shape(ShapeId(gid as u32)).map(|x| &x.kind) {
+        Some(deckcraft_model::ShapeKind::Group { children, .. }) => children.iter().find(|c| c.text.is_some()).unwrap().id,
+        _ => panic!("not a group"),
+    };
+    s.execute("text.edit", &json!({"id": first.0})).unwrap();
+    s.execute("text.insert", &json!({"text": long})).unwrap();
+    let v = scales(&s);
+    assert!(v.len() > 1 && v.iter().all(|x| *x == v[0]), "every node has the one shared scale: {v:?}");
+    assert!(v[0].unwrap() < 1.0, "the long text shrinks the graphic: {v:?}");
+}
+
+/// A word an edit makes too long for its line wraps mid-word without overflowing down, so the
+/// text layout asks for no shrink; the graphic still shrinks every node alike, as a freshly
+/// generated one would.
+#[test]
+fn editing_a_smartart_node_to_a_long_word_shrinks_every_node() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "verticalList", "items": ["A", "B", "C"]})).unwrap()["id"].as_u64().unwrap();
+    let scales = |s: &Session| -> Vec<Option<f64>> {
+        match s.doc().unwrap().shape(ShapeId(gid as u32)).map(|x| &x.kind) {
+            Some(deckcraft_model::ShapeKind::Group { children, .. }) => children
+                .iter()
+                .filter_map(|c| c.text.as_ref())
+                .filter_map(|t| match t.body.autofit {
+                    Some(deckcraft_model::text::AutoFit::Shrink { font_scale, .. }) => Some(font_scale),
+                    _ => None,
+                })
+                .collect(),
+            _ => panic!("not a group"),
+        }
+    };
+    let first = match s.doc().unwrap().shape(ShapeId(gid as u32)).map(|x| &x.kind) {
+        Some(deckcraft_model::ShapeKind::Group { children, .. }) => children.iter().find(|c| c.text.is_some()).unwrap().id,
+        _ => panic!("not a group"),
+    };
+    s.execute("text.edit", &json!({"id": first.0})).unwrap();
+    s.execute("text.insert", &json!({"text": "Supercalifragilisticexpialidocious_and_more_letters_still"})).unwrap();
+    let v = scales(&s);
+    assert!(v.len() > 1 && v.iter().all(|x| *x == v[0]), "every node has the one shared scale: {v:?}");
+    assert!(v[0].unwrap() < 1.0, "the long word shrinks the graphic: {v:?}");
+}
+
 /// `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
 /// end is set to the grouped shape and follows it when the group moves. The glue was dropped at
 /// once (the end stayed `None`) because rerouting only looked at the slide's top-level shapes,
@@ -7028,6 +7465,104 @@ fn outline_export_skips_footer_date_and_slide_number() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(rtf.contains("Agenda") && rtf.contains("First point"), "{rtf:?}");
     assert!(!rtf.contains("Company Confidential") && !rtf.contains("1 May 2026"), "{rtf:?}");
+}
+
+/// A line break (`a:br`) with no size of its own resolves to the paragraph default, but it does not
+/// decide a nonempty line's size: 40 pt text with a 12 pt break shows 40, so Increase Font Size
+/// goes to 44. A line holding only a break shows the break's size, so there 12 grows to 14, also
+/// for the empty line between two breaks after 40 pt text.
+#[test]
+fn grow_on_an_imported_smartart_graphic_ignores_breaks_on_nonempty_lines() {
+    use deckcraft_model::text::{Run, RunKind};
+    let grow_from = |text_run: bool, breaks: usize, after: bool| {
+        let mut s = session();
+        let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A"]})).unwrap()["id"].as_u64().unwrap();
+        {
+            let st = s.doc_mut().unwrap();
+            let doc = std::sync::Arc::make_mut(&mut st.doc);
+            let sel = st.selection.clone();
+            let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), ShapeId(gid as u32)).unwrap();
+            let d = g.diagram.as_mut().unwrap();
+            d.imported = true;
+            d.font_size = Some(40.0);
+            if let deckcraft_model::ShapeKind::Group { children, .. } = &mut g.kind {
+                let t = children.iter_mut().find_map(|c| c.text.as_mut()).unwrap();
+                t.body.autofit = None;
+                let p = &mut t.paragraphs[0];
+                p.def_props.size = Some(12.0);
+                p.runs.clear();
+                if text_run {
+                    let mut r = Run::new("Plan");
+                    r.props.size = Some(40.0);
+                    p.runs.push(r);
+                }
+                for _ in 0..breaks {
+                    p.runs.push(Run { kind: RunKind::Break, ..Run::new("") });
+                }
+                if after {
+                    let mut r = Run::new("Plan");
+                    r.props.size = Some(40.0);
+                    p.runs.push(r);
+                }
+            }
+        }
+        s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+        s.execute("format.grow", &json!({})).unwrap();
+        s.doc().unwrap().shape(ShapeId(gid as u32)).unwrap().diagram.as_ref().unwrap().font_size
+    };
+    assert_eq!(grow_from(true, 1, true), Some(44.0), "the 12 pt break beside 40 pt text does not set the size");
+    assert_eq!(grow_from(false, 1, false), Some(14.0), "a line of only a break shows the break's size");
+    assert_eq!(grow_from(true, 2, false), Some(14.0), "the empty line between two breaks shows the break's size");
+}
+
+/// Font Size on a graphic opened from a file keeps the file's drawing (PowerPoint only resizes its text): the
+/// children keep their ids and geometry, their runs and end marks take the size, and the size is recorded.
+#[test]
+fn format_size_on_an_imported_smartart_graphic_keeps_its_drawing() {
+    let mut s = session();
+    let gid = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    let gid = ShapeId(gid as u32);
+    let snapshot = |s: &Session| {
+        let g = s.doc().unwrap().shape(gid).unwrap().clone();
+        let deckcraft_model::ShapeKind::Group { children, .. } = g.kind else { panic!("group") };
+        children
+    };
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let g = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), gid).unwrap();
+        g.diagram.as_mut().unwrap().imported = true;
+    }
+    let before: Vec<_> = snapshot(&s).iter().map(|c| (c.id, c.xfrm)).collect();
+    s.execute("edit.select", &json!({"ids": [gid.0]})).unwrap();
+    s.execute("format.size", &json!({"size": 31})).unwrap();
+    let after = snapshot(&s);
+    assert_eq!(before, after.iter().map(|c| (c.id, c.xfrm)).collect::<Vec<_>>(), "the drawing's ids and geometry stay");
+    let d = s.doc().unwrap().shape(gid).unwrap().diagram.clone().unwrap();
+    assert!(d.imported, "still an imported graphic");
+    assert_eq!(d.font_size, Some(31.0));
+    let texts: Vec<_> = after.iter().filter_map(|c| c.text.as_ref()).collect();
+    assert!(!texts.is_empty());
+    for t in texts {
+        assert_eq!(t.body.autofit, Some(deckcraft_model::text::AutoFit::None));
+        for p in &t.paragraphs {
+            assert_eq!(p.end_props.size, Some(31.0));
+            assert!(p.runs.iter().all(|r| r.props.size == Some(31.0)));
+        }
+    }
+    // Automatic again: still the file's drawing, with shrink-on-overflow back on and no recorded size.
+    s.execute("smartArt.fontSize", &json!({"id": gid.0, "size": null})).unwrap();
+    let again = snapshot(&s);
+    assert_eq!(before, again.iter().map(|c| (c.id, c.xfrm)).collect::<Vec<_>>(), "ids and geometry stay after automatic");
+    let d = s.doc().unwrap().shape(gid).unwrap().diagram.clone().unwrap();
+    assert!(d.imported, "still an imported graphic");
+    assert_eq!(d.font_size, None);
+    let texts: Vec<_> = again.iter().filter_map(|c| c.text.as_ref()).collect();
+    assert!(!texts.is_empty());
+    for t in texts {
+        assert!(matches!(t.body.autofit, Some(deckcraft_model::text::AutoFit::Shrink { .. })), "shrink on overflow is back");
+    }
 }
 
 #[test]
