@@ -127,7 +127,9 @@ if has appimage; then
   fi
   APPDIR="$WORK/DeckCraft.AppDir"
   cp -R "$STAGE" "$APPDIR"
-  ln -s usr/bin/deckcraft "$APPDIR/AppRun"
+  # AppRun is a script, not a symlink: it forwards --cli to deckcraft-cli, and
+  # installs the .desktop entry and icons into $XDG_DATA_HOME before launching GUI.
+  install -Dm755 "$HERE/AppRun" "$APPDIR/AppRun"
   cp "$HERE/$APP_ID.desktop" "$APPDIR/$APP_ID.desktop"
   cp "$ROOT/assets/app-icon/hicolor/256x256/apps/$APP_ID.png" "$APPDIR/$APP_ID.png"
   ln -s "$APP_ID.png" "$APPDIR/.DirIcon"
