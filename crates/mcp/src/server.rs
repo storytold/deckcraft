@@ -24,10 +24,29 @@ const INSTRUCTIONS: &str = "DeckCraft is a presentation app (a PowerPoint clone)
 current slide (y down; the default 16:9 slide is 960×540). Every action is a command: find ids and parameters with \
 list_commands and run them with run_command (or several with batch). Typical flow: new_presentation → add_slide \
 {layout:\"titleAndContent\", title, body} → add_shape / add_text_box / insert_picture / insert_chart → \
-inspect_slide to read back ids, boxes and text → render_slide to look at the result. Shape ids are looked up on the \
-current slide. An inserted shape is selected; run_command edit.select {ids:[…]} selects others. format.* acts on \
-the selected text or shapes; shape.fill, shape.line and the other shape commands whose parameters list `ids` act on \
-those shapes, else on the selected ones. Save with save_presentation (.deckcraft or .pptx).";
+inspect_slide to read back ids, boxes and text → render_slide to look at the result (image content; a client that cannot read \
+images: export {path, format: \"png\", slide} and view the file). Shape ids are unique in the presentation: a shape or text command given an id on another slide edits it \
+there, makes that slide current and says so in its answer ({changed, onSlides, currentSlide}); the read-only lookups \
+(shape.inspect, text.get, shape.sites) find it anywhere and move nothing; shape.inspect and text.get answer its `slide`. These \
+work on the current slide and refuse an id on another slide, naming its slide (slide.go first): text.edit, edit.delete, \
+shape.connect, smartArt.* and the arrange commands that act on several shapes together (align, distribute, group, ungroup and \
+the order commands such as arrange.bringToFront). arrange.nudge, rotate and flip edit a shape on any slide. comment.add and the other comment \
+edits act on the current slide, except comment.delete {all: true}, which clears every slide's comments; comment.list, \
+comment.next and comment.prev take `slide`. An inserted shape is selected; run_command edit.select {ids:[…]} selects others. format.* acts on \
+the selected text or shapes (format.languageAll on all the text in the presentation); shape.fill, shape.line and the other shape commands whose parameters list `ids` act on \
+those shapes, else on the selected ones. Save with save_presentation (.deckcraft or .pptx). Diagram recipe (no \
+list_commands needed): shape.insert {preset: rect|roundRect|ellipse|diamond|chevron…, rect: [x,y,w,h], text, fill, \
+line, size, color, bold, name} → {id} makes one styled box; shape.connect {from, to, fromSite?, toSite?, preset?: \
+straightConnector1|bentConnector3} → {id} draws an arrow between two shapes on the current slide (a box's sites are \
+0 top, 1 left, 2 bottom, 3 right; glued connectors follow later moves); animation.add {ids, effect: fade|wipe|zoom|fly, \
+start: onClick|withPrevious|afterPrevious, duration?: ms} → {indices} (one onClick per click step); slide.notes {text}; \
+transition.set {kind: fade|push|wipe|…, index?}; section.add {name, at: slide index}; design.headerFooter {slideNumber, \
+footer, footerText} once, early: slides added later inherit it; insert.table {rows, cols, rect, \
+data: [[…]]} then set_text {id, cell: [r, c], text} and table.style; design.palette {} answers the theme's colours; \
+add_slide answers placeholders {title, body} ids; export {path, format: png|pdf} with slide?|all? for png and \
+slides?: [index] for pdf (default all). Put many commands in one \
+batch (tool names work inside it too); an item with as:\"a\" is referred to by later items as \"$a\" (its id, or its whole answer when it has none), so a \
+diagram is one batch: insert the boxes, connect $a to $b, animate [$a, $b, $ab]. Write \"$$a\" for the literal text \"$a\".";
 
 /// Resource URIs.
 pub const DOC_URI: &str = "deckcraft://document";

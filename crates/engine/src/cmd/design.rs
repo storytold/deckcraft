@@ -21,19 +21,28 @@ mod master_view;
 mod slide_background;
 mod slide_setup;
 
-use colors::{colors, effects, fonts, variant, variants};
+use colors::{colors, effects, fonts, palette, variant, variants};
 use master_view::{
     close_master, delete_layout, handout_placeholders, handout_view, in_handout, in_notes_master, insert_layout, insert_placeholder, master_view,
     notes_placeholders, notes_view, placeholders, preserve, rename_layout,
 };
 pub use master_view::{handout_placeholder, notes_placeholder};
 use slide_background::{background, hide_bg_graphics};
+pub(crate) use slide_setup::apply_header_footer;
 pub use slide_setup::{civil, date_field_text, today};
 use slide_setup::{header_footer, scale_shapes, slide_size};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("design.theme", "Themes", ["Design", "Themes"], None, "{name} (see design.themes)", has_doc, theme),
+        cmd!(
+            "design.theme",
+            "Themes",
+            ["Design", "Themes"],
+            None,
+            "{name} (see design.themes) → the palette, as design.palette answers it",
+            has_doc,
+            theme
+        ),
         cmd!(
             "design.browseTheme",
             "Browse for Themes…",
@@ -55,6 +64,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("design.variant", "Variants", ["Design", "Variants"], None, "{index: 0..3} (see design.variants)", has_doc, variant),
         cmd!(query "design.variants", "Variant Gallery", [], None, "{} → the current theme's four colour variants and which is applied", has_doc, variants),
+        cmd!(
+            query "design.palette",
+            "Theme Palette",
+            [],
+            None,
+            "{} → {theme, colors: {dk1, lt1, dk2, lt2, accent1…accent6, hlink, folHlink}, text, background, fonts: {major, minor}} — the active theme's colours as #RRGGBB; text/background are what tx1/bg1 resolve to on the current slide",
+            has_doc,
+            palette
+        ),
         cmd!("design.fonts", "Fonts", ["Design", "Variants"], None, "{} opens Create New Theme Fonts | {name} | {major, minor}", has_doc, fonts),
         cmd!("design.effects", "Effects", ["Design", "Variants"], None, "{name} (see design.themes)", has_doc, effects),
         cmd!(
@@ -81,7 +99,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Header and Footer…",
             ["Insert", "Text"],
             None,
-            "{date?: bool, dateText?: fixed text, slideNumber?: bool, footer?: bool, footerText?, hideOnTitle?: bool, all?: bool (default true)}",
+            "{date?: bool, dateText?: fixed text, dateFormat?: datetime1…datetime13 (the automatic date's format), slideNumber?: bool, footer?: bool, footerText?, hideOnTitle?: bool, all?: bool (default true; false: only the current slide)} → {slides: n, default: true} (the flags become the presentation's default, so slides added later get the same footer and number)",
             has_doc,
             header_footer
         ),
@@ -161,7 +179,8 @@ fn theme(s: &mut Session, p: &Value) -> Result<Value> {
         m.color_map = vec![];
         Ok(())
     })?;
-    Ok(json!({"theme": name}))
+    // The palette the theme brought, as design.palette answers it.
+    palette(s, &json!({}))
 }
 
 fn browse_theme(s: &mut Session, p: &Value) -> Result<Value> {

@@ -1,6 +1,6 @@
 use super::{
     Bullet, Effects, Fill, Line, ParaProps, Result, RunProps, Session, Shape, Strike, Value, bad, base64_decode, bool_or, current_para, current_run,
-    ed, edit_shapes, format_run, ids_param, json, ok, resolve, str_param,
+    ed, edit_shapes, format_run, json, ok, resolve, str_param,
 };
 
 /// Formatting picked up by the Format Painter.
@@ -76,7 +76,7 @@ pub(super) fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
     if !sticky {
         s.painter = None;
     }
-    if s.doc()?.selection.text.as_ref().is_some_and(|t| t.is_range()) && ids_param(p, "ids").is_none() {
+    if s.doc()?.selection.text.as_ref().is_some_and(|t| t.is_range()) && p.get("ids").is_none_or(Value::is_null) {
         if let Some(r) = painted.run.clone() {
             format_run(s, &move |rp| *rp = r.clone())?;
         }

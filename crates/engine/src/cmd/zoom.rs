@@ -22,7 +22,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Zoom",
         ["Insert", "Links"],
         None,
-        "{kind?: slide|section|summary (default slide); slides?: [index] (slide and summary zooms); sections?: [index] (section zoom); returnToZoom?: bool (default: on for section and summary, off for slide)}",
+        "{kind?: slide|section|summary (default slide), slides?: [index] (slide and summary zooms), sections?: [index] (section zoom), returnToZoom?: bool (default: on for section and summary, off for slide)}",
         has_slide,
         zoom
     )]

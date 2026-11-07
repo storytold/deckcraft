@@ -28,7 +28,7 @@ pub fn specs() -> Vec<CommandSpec> {
 /// together (Ctrl+click on the other kind is ignored, as in PowerPoint), and picking a hidden
 /// object from the list shows it again.
 fn select(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids = match ids_param(p, "ids") {
+    let ids = match ids_param(p, "ids")? {
         Some(ids) => ids,
         None => id_param(p, "id", "selection.select")?.map(|i| vec![i]).unwrap_or_default(),
     };

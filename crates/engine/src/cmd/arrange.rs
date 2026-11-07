@@ -17,7 +17,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Guide",
             ["View", "Show", "Guides"],
             None,
-            "{vertical: bool, pos?: pt (default: the slide's centre)} → {index}. `defaults: true` adds the two centre guides when there are none",
+            "{vertical: bool, pos?: pt (default: the slide's centre), defaults?: true (adds the two centre guides when there are none)} → {index}",
             has_doc,
             guide_add
         ),
@@ -71,8 +71,26 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-fn order(s: &mut Session, p: &Value, how: i32) -> Result<Value> {
+/// The shapes a command that works on several shapes together acts on: `ids` (or `id`), else the
+/// selection. These commands work on the current slide, so a named shape elsewhere is refused,
+/// saying where it is, instead of being left out, ignored or moved by a measure from another slide.
+fn slide_targets(s: &Session, p: &Value, cmd: &str) -> Result<Vec<ShapeId>> {
     let ids = targets(s, p)?;
+    let st = s.doc()?;
+    match ids.iter().find(|id| st.shape(**id).is_none()) {
+        Some(&id) => Err(super::no_such_shape(&st.doc, &st.selection, id, cmd)),
+        None => Ok(ids),
+    }
+}
+
+fn order(s: &mut Session, p: &Value, how: i32) -> Result<Value> {
+    let cmd = match how {
+        2 => "arrange.bringToFront",
+        1 => "arrange.bringForward",
+        -1 => "arrange.sendBackward",
+        _ => "arrange.sendToBack",
+    };
+    let ids = slide_targets(s, p, cmd)?;
     // Already in place (front of its group, say): no change and no undo step.
     let mut trial = s.doc()?.shapes().to_vec();
     order_tree(&mut trial, &ids, how, 0);
@@ -148,7 +166,7 @@ fn reorder(s: &mut Session, p: &Value) -> Result<Value> {
     let to = usize_param(p, "index").ok_or_else(|| bad("arrange.reorder", "missing `index`"))?;
     let st = s.doc()?;
     let siblings: &[Shape] = match deckcraft_model::parent_of(st.shapes(), id) {
-        None => return Err(bad("arrange.reorder", "no such shape")),
+        None => return Err(super::no_such_shape(&st.doc, &st.selection, id, "arrange.reorder")),
         Some(None) => st.shapes(),
         Some(Some(g)) => st.shape(g).map(Shape::children).unwrap_or(&[]),
     };
@@ -191,7 +209,7 @@ fn group_depth(shapes: &[Shape]) -> usize {
 }
 
 fn group(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids = targets(s, p)?;
+    let ids = slide_targets(s, p, "arrange.group")?;
     s.edit(|doc, sel| {
         let current = super::current_shapes(doc, sel).cloned().unwrap_or_default();
         let mut members: Vec<Shape> = current.iter().filter(|x| ids.contains(&x.id)).cloned().collect();
@@ -342,7 +360,7 @@ pub fn child_to_parent(group: &Xfrm, ch: &Xfrm, c: &Xfrm) -> Xfrm {
 }
 
 fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids = targets(s, p)?;
+    let ids = slide_targets(s, p, "arrange.ungroup")?;
     s.edit(|doc, sel| {
         let list = crate::shapes_mut(doc, sel).ok_or_else(|| bad("arrange.ungroup", "no slide"))?;
         let mut out = Vec::with_capacity(list.len());
@@ -387,7 +405,7 @@ fn regroup(s: &mut Session, _p: &Value) -> Result<Value> {
 
 fn align(s: &mut Session, p: &Value) -> Result<Value> {
     let edge = str_param(p, "edge").unwrap_or("left").to_string();
-    let ids = targets(s, p)?;
+    let ids = slide_targets(s, p, "arrange.align")?;
     let st = s.doc()?;
     let size = st.doc.slide_size;
     let boxes: Vec<(ShapeId, Xfrm)> = ids.iter().filter_map(|id| st.shape(*id).map(|x| (*id, xfrm_of(&st.doc, &st.selection, x)))).collect();
@@ -422,7 +440,7 @@ fn align(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn distribute(s: &mut Session, p: &Value) -> Result<Value> {
     let horiz = !str_param(p, "dir").unwrap_or("horizontal").starts_with('v');
-    let ids = targets(s, p)?;
+    let ids = slide_targets(s, p, "arrange.distribute")?;
     let st = s.doc()?;
     let size = st.doc.slide_size;
     let mut boxes: Vec<(ShapeId, Rect)> =
