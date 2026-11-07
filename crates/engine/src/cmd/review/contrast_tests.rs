@@ -1,8 +1,8 @@
 //! `review.contrast`: the contrast of each text run with what the slide draws behind it, on decks
 //! built here with commands and pictures made from pixels.
 
-use deckcraft_model::ShapeId;
 use deckcraft_model::text::{Run, RunKind, RunProps};
+use deckcraft_model::{Shape, ShapeId, ShapeKind, Xfrm};
 use serde_json::{Value, json};
 
 use crate::Session;
@@ -73,6 +73,21 @@ fn set_runs(s: &mut Session, id: &Value, runs: Vec<Run>) {
     let slide = std::sync::Arc::make_mut(&mut doc.slides[index]);
     let shape = deckcraft_model::find_shape_mut(&mut slide.shapes, shape_id(id)).unwrap();
     shape.text.as_mut().unwrap().paragraphs[0].runs = runs;
+}
+
+/// Puts shape `id`, one of the current slide's top-level shapes, in a group whose frame is `kx`
+/// times as wide and `ky` times as tall as its child space, the shape's own box.
+fn stretch_in_group(s: &mut Session, id: &Value, kx: f64, ky: f64) {
+    let st = s.doc_mut().unwrap();
+    let index = st.selection.slide;
+    let doc = std::sync::Arc::make_mut(&mut st.doc);
+    let slide = std::sync::Arc::make_mut(&mut doc.slides[index]);
+    let at = slide.shapes.iter().position(|sh| sh.id == shape_id(id)).unwrap();
+    let shape = slide.shapes.remove(at);
+    let x = shape.xfrm.unwrap();
+    let (child, frame) = (Xfrm::new(x.x, x.y, x.w, x.h), Xfrm::new(x.x, x.y, x.w * kx, x.h * ky));
+    let group = Shape { id: ShapeId(900), xfrm: Some(frame), kind: ShapeKind::Group { children: vec![shape], child }, ..Default::default() };
+    slide.shapes.push(group);
 }
 
 fn run(text: &str, props: &RunProps, kind: RunKind) -> Run {
@@ -267,6 +282,20 @@ fn a_semibold_face_at_14_pt_needs_the_normal_text_ratio() {
         let e = only(&mut s, &id, json!({"level": "AAA"}));
         assert_eq!(e["required"].as_f64(), Some(aaa), "AAA, 14 pt {family}, bold {bold}: {e}");
     }
+}
+
+#[test]
+fn text_turned_in_a_stretched_group_is_judged_at_its_font_size() {
+    // A shape turned 45° inside a group twice as wide as its child space is drawn slanted, and
+    // its 20 pt text is still 20 pt along the slant: large text, 3:1 at AA. #767676 on white is
+    // 4.54:1.
+    let mut s = white_slide();
+    let id = text_box(&mut s, [100.0, 150.0, 300.0, 80.0], "Sample", "#767676", 20.0);
+    s.execute("shape.rotate", &json!({"ids": [id], "deg": 45.0})).unwrap();
+    stretch_in_group(&mut s, &id, 2.0, 1.0);
+    let e = only(&mut s, &id, json!({}));
+    assert_eq!((e["sizePt"].as_f64(), e["required"].as_f64()), (Some(20.0), Some(3.0)), "{e}");
+    assert!((ratio(&e, "median") - 4.54).abs() < 0.011, "{e}");
 }
 
 #[test]

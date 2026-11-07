@@ -288,6 +288,11 @@ fn collect_runs(t: &PlacedText, scale: f64) -> BTreeMap<(usize, usize), RunMeasu
     if !t.transform.is_finite() || !k.is_finite() || k < 1e-9 {
         return out;
     }
+    // A glyph's size is its height: the font size times the length the transform gives text
+    // space's y, or x for a glyph standing upright in vertical text. Text in a turned shape inside
+    // a group stretched one way is drawn slanted, at that size.
+    let c = t.transform.as_coeffs();
+    let (kx, ky) = (c[0].hypot(c[1]), c[2].hypot(c[3]));
     let mut starts: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     let mut budget = MAX_GLYPHS;
     for g in &t.layout.runs {
@@ -298,7 +303,7 @@ fn collect_runs(t: &PlacedText, scale: f64) -> BTreeMap<(usize, usize), RunMeasu
         }
         let para_starts = starts.entry(g.para).or_insert_with(|| run_starts(&t.body, g.para));
         let Some(run) = para_starts.iter().rposition(|&s| s <= first) else { continue };
-        let size = round2(g.size * k);
+        let size = round2(g.size * if g.upright { kx } else { ky });
         // Bold from weight 700 (CSS's `bold`) or synthetic bold; a SemiBold face (600) is not bold.
         let bold = g.fake_bold || g.face.weight >= 700.0;
         let m = out.entry((g.para, run)).or_insert_with(|| RunMeasure {
