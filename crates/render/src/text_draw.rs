@@ -104,6 +104,62 @@ pub fn text_warp(rctx: &Ctx, s: &Shape, tr: Rect) -> Option<deckcraft_geom::warp
     deckcraft_geom::warp::warp(name, &bp.warp_adj, tr)
 }
 
+/// The stops of a text gradient as drawn: position and colour.
+fn gradient_stops(g: &deckcraft_model::style::Gradient) -> Vec<(f64, Rgba)> {
+    let scheme = deckcraft_color::ColorScheme { name: String::new(), colors: [Rgba::BLACK; 12] };
+    g.stops.iter().map(|s| (s.pos, s.color.resolve(&scheme, None))).collect()
+}
+
+/// The shading for the text between `from` and `to` of `l`, from `base`: `base` itself, or that
+/// colour lightened when that sets the selected glyphs' colours off better (black text reads best
+/// on a pale shade; white and mixed text on the mid tone, which also stays visible against the
+/// dark shapes white text sits on, where a deeper shade would vanish).
+pub fn selection_shade(l: &deckcraft_text::TextLayout, from: (usize, usize), to: (usize, usize), base: Rgba) -> Rgba {
+    // What the glyphs are drawn in: a run's colour, or every stop of its gradient.
+    let colors: Vec<Rgba> = l
+        .runs
+        .iter()
+        .filter(|r| r.alpha > 0.0 && (r.para, r.chars.1) > from && (r.para, r.chars.0) < to)
+        .flat_map(|r| match r.gradient.as_ref().filter(|g| !g.stops.is_empty()) {
+            Some(g) => gradient_stops(g).into_iter().map(|(_, c)| c).collect(),
+            None if r.color.a > 0 => vec![r.color],
+            None => vec![],
+        })
+        .collect();
+    let worst = |shade: Rgba| colors.iter().map(|c| c.with_alpha(255).contrast(shade)).fold(f64::INFINITY, f64::min);
+    let pale = base.lerp(Rgba::WHITE.with_alpha(base.a), 0.6);
+    if worst(pale) > worst(base) { pale } else { base }
+}
+
+/// Shade the text between `from` and `to` (paragraph, char) of a laid-out block, to be drawn
+/// before its glyphs so they sit on the shading ([`selection_shade`] of `c`). Each box follows its
+/// paragraph's animation state in `paras`, as the glyphs do: hidden with it, moved and faded with it.
+pub fn fill_selection(
+    ctx: &mut RenderContext,
+    l: &deckcraft_text::TextLayout,
+    tr: Rect,
+    m: Affine,
+    paras: &[(usize, ParaState)],
+    (from, to, c): Shaded,
+) {
+    let pos = |p: (usize, usize)| deckcraft_text::Pos { para: p.0, ch: p.1 };
+    let boxes = l.selection_boxes(pos(from), pos(to));
+    if boxes.is_empty() {
+        return;
+    }
+    let m = text_transform(m, tr, l.rotation);
+    let shade = selection_shade(l, from, to, c);
+    for (para, r) in boxes {
+        let ps = paras.iter().find(|(p, _)| *p == para).map(|(_, s)| *s).unwrap_or_default();
+        if !ps.visible || ps.opacity <= 0.001 {
+            continue;
+        }
+        ctx.set_transform(m * Affine::translate(ps.offset));
+        ctx.set_paint(color(shade, ps.opacity));
+        ctx.fill_rect(&r);
+    }
+}
+
 /// Draw an already laid-out text block.
 pub fn draw_layout(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine) {
     draw_layout_with(ctx, l, tr, m, &[]);
@@ -111,6 +167,23 @@ pub fn draw_layout(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: 
 
 /// Draw a laid-out text block with per-paragraph animation states.
 pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine, paras: &[(usize, ParaState)]) {
+    draw_layout_selected(ctx, l, tr, m, paras, None);
+}
+
+/// A selected range to shade: from and to (paragraph, char), and the shading's base colour.
+pub type Shaded = ((usize, usize), (usize, usize), Rgba);
+
+/// [`draw_layout_with`], shading `selection` ([`fill_selection`]) over the run highlight markers
+/// and under the glyphs, so a selected highlighted word still shows its selection.
+pub fn draw_layout_selected(
+    ctx: &mut RenderContext,
+    l: &deckcraft_text::TextLayout,
+    tr: Rect,
+    m: Affine,
+    paras: &[(usize, ParaState)],
+    selection: Option<Shaded>,
+) {
+    let outer = m;
     let para = |i: usize| paras.iter().find(|(p, _)| *p == i).map(|(_, s)| *s).unwrap_or_default();
     let m = text_transform(m, tr, l.rotation);
     let lines_of = LineIndex::new(l);
@@ -125,6 +198,9 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
     };
     for d in l.decos.iter().filter(|d| d.behind) {
         deco(ctx, d);
+    }
+    if let Some((from, to, c)) = selection {
+        fill_selection(ctx, l, tr, outer, paras, (from, to, c));
     }
     // Text shadows, then glows, under all the text.
     for pass in [TextEffect::Shadow, TextEffect::Glow] {
@@ -155,8 +231,7 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
             };
             let li = lines_of.line_at(run.para, *y);
             if !grads.iter().any(|(i, _)| *i == li) {
-                let scheme = deckcraft_color::ColorScheme { name: String::new(), colors: [Rgba::BLACK; 12] };
-                let stops = g.stops.iter().map(|s| (s.pos, s.color.resolve(&scheme, None))).collect();
+                let stops = gradient_stops(g);
                 let bounds = l.lines.get(li).and_then(line_bounds).unwrap_or(tr);
                 grads.push((li, paint::gradient(&g.shape, stops, bounds, run.alpha * ps.opacity)));
             }

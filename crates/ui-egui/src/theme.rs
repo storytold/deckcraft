@@ -42,6 +42,9 @@ pub struct Tokens {
     pub guide: Color32,
     pub caret: Color32,
     pub text_selection: Color32,
+    /// Shading behind selected slide text, solid and mid-toned so black and white text both read on
+    /// it (4.4:1 or better). The renderer lightens it under black text.
+    pub text_highlight: Color32,
     pub field_bg: Color32,
     /// Unchecked checkbox and radio boxes and slider rails, drawn without an outline, so they
     /// must stand apart from the card and the chrome.
@@ -78,6 +81,7 @@ impl Tokens {
             guide: Color32::from_rgb(0xE8, 0x5D, 0x2A),
             caret: Color32::BLACK,
             text_selection: Color32::from_rgba_unmultiplied(0x5A, 0x8F, 0xE0, 90),
+            text_highlight: Color32::from_rgb(0x33, 0x75, 0xDB),
             field_bg: Color32::WHITE,
             control: Color32::from_rgb(0xD6, 0xD6, 0xD6),
             control_hover: Color32::from_rgb(0xC8, 0xC8, 0xC8),
@@ -110,6 +114,7 @@ impl Tokens {
             guide: Color32::from_rgb(0xF2, 0x8A, 0x4B),
             caret: Color32::BLACK,
             text_selection: Color32::from_rgba_unmultiplied(0x5A, 0x8F, 0xE0, 90),
+            text_highlight: Color32::from_rgb(0x33, 0x75, 0xDB),
             field_bg: Color32::from_rgb(0x2A, 0x2A, 0x2A),
             control: Color32::from_rgb(0x2A, 0x2A, 0x2A),
             control_hover: Color32::from_rgb(0x40, 0x40, 0x40),
@@ -480,6 +485,28 @@ mod tests {
         // so notes and the outline showed gaps where they were.
         for (c, size, ink) in drawn("\u{2013}\u{2014}-_\u{2026}\u{2022}\u{00b7}\u{2018}\u{2019}\u{201c}\u{201d}=~") {
             assert!(ink, "{c:?} ({:04X}) draws nothing at {size} px", c as u32);
+        }
+    }
+
+    /// WCAG relative luminance of an opaque colour.
+    fn luminance(c: Color32) -> f64 {
+        let lin = |v: u8| {
+            let v = f64::from(v) / 255.0;
+            if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * lin(c.r()) + 0.7152 * lin(c.g()) + 0.0722 * lin(c.b())
+    }
+
+    #[test]
+    fn selected_slide_text_reads_in_black_and_in_white() {
+        // The shading goes behind the glyphs, so it must set off both a white and a black run.
+        for t in [Tokens::light(), Tokens::dark()] {
+            let l = luminance(t.text_highlight);
+            assert_eq!(t.text_highlight.a(), 255, "opaque, so the slide behind can't wash it out");
+            for (name, text) in [("white", 1.0), ("black", 0.0)] {
+                let ratio = (l.max(text) + 0.05) / (l.min(text) + 0.05);
+                assert!(ratio >= 4.0, "{name} text on the selection shading: {ratio:.2}:1");
+            }
         }
     }
 }

@@ -72,7 +72,7 @@ use geometry::shade;
 pub use geometry::{camera_turn, crop_dest, parse_path, shape_geometry};
 pub(crate) use geometry::{color, scale_of};
 use opts::SlideFields;
-pub use opts::{ParaState, RenderOpts, ShapeState};
+pub use opts::{ParaState, RenderOpts, ShapeState, TextHighlight};
 pub use raster::{Image, MAX_SIDE, dpi_for_scale, image_dpi};
 #[cfg(test)]
 use renderer::RENDERER;
@@ -85,8 +85,10 @@ pub(crate) use stroke::stroke;
 #[cfg(test)]
 use stroke::{MAX_DASHES, dash_with_caps, head_size, limit_dash_count, trim_ends};
 use text_draw::preview_empty_bullets;
+pub use text_draw::{
+    Shaded, draw_layout, draw_layout_selected, draw_layout_with, draw_text, fill_selection, selection_shade, text_transform, text_warp,
+};
 pub(crate) use text_draw::{draw_glyph, fill_deco, glyph, glyph_place};
-pub use text_draw::{draw_layout, draw_layout_with, draw_text, text_transform, text_warp};
 
 #[cfg(test)]
 mod tests;
