@@ -598,6 +598,9 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
                 p.glow = fx.glow;
                 p.reflection = fx.reflection;
                 p.soft_edge = fx.soft_edge;
+                // The run's list replaces the one its list styles give it (an empty one turns
+                // their effects off), so nothing of theirs is inherited.
+                p.own_effects = Some(true);
             }
             "highlight" => p.highlight = color(e),
             "uFill" => p.underline_color = e.child("solidFill").and_then(color),

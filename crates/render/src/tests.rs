@@ -1239,6 +1239,24 @@ fn effect_text(set: impl Fn(&mut deckcraft_model::text::RunProps)) -> Presentati
     deck_with(vec![sh])
 }
 
+/// Text whose glow comes only from its paragraph's `defRPr` needs the filters too: drawn on the
+/// worker threads it panicked (vello_cpu has no filters there) and the slide came out blank.
+#[test]
+fn a_paragraph_default_text_glow_needs_filters() {
+    let mut sh = Shape { id: ShapeId(741), xfrm: Some(Xfrm::new(100.0, 100.0, 600.0, 300.0)), text_box: true, ..Default::default() };
+    let mut t = TextBody::from_text("IIII");
+    let p = &mut t.paragraphs[0];
+    p.runs[0].props.size = Some(100.0);
+    p.runs[0].props.fill = Some(deckcraft_model::style::Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 0, 0))));
+    p.def_props.glow = Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 8.0 });
+    sh.text = Some(t);
+    let deck = deck_with(vec![sh]);
+    assert!(needs_filters(&deck, &deck.slides[0]));
+    let img = render_slide(&deck, 0, &RenderOpts { scale: 1.0, threads: 4, ..Default::default() });
+    let halo = img.pixels.as_chunks::<4>().0.iter().filter(|p| p[1] > 150 && p[0] < 120 && p[2] < 120).count();
+    assert!(halo > 300, "green halo pixels {halo}");
+}
+
 #[test]
 fn text_glow_and_shadow_are_drawn() {
     let count = |img: &Image, f: &dyn Fn(&[u8; 4]) -> bool| img.pixels.as_chunks::<4>().0.iter().filter(|px| f(px)).count();

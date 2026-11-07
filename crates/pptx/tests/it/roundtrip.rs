@@ -468,6 +468,41 @@ fn text_and_formatting_round_trip() {
     assert_eq!(run.text, "x=1");
 }
 
+/// #1662: a run's empty `a:effectLst` (text with its inherited shadow turned off) survives.
+#[test]
+fn empty_run_effect_list_round_trips() {
+    let mut p = defaults::new_presentation(None);
+    let mut slide = new_slide(&mut p, "Title");
+    let mut sh = shape(&mut p, "Plain", 10.0, 10.0, 200.0, 50.0);
+    let off = RunProps { own_effects: Some(true), ..Default::default() };
+    sh.text = Some(TextBody { paragraphs: vec![Paragraph { runs: vec![Run::with("No shadow", off)], ..Default::default() }], ..Default::default() });
+    slide.shapes.push(sh);
+    p.slides.push(slide.into());
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let run = &by_name(q.slides.last().expect("slide"), "Plain").text.as_ref().expect("text").paragraphs[0].runs[0];
+    assert_eq!(run.props.own_effects, Some(true));
+    assert!(run.props.shadow.is_none());
+}
+
+/// A run's effect list with a glow in it also replaces the inherited one: text whose inherited
+/// shadow was turned off (keeping a glow) does not get the shadow back when the file is reopened.
+#[test]
+fn run_effect_list_with_effects_keeps_replacing_the_inherited_one() {
+    let mut p = defaults::new_presentation(None);
+    let mut slide = new_slide(&mut p, "Title");
+    let mut sh = shape(&mut p, "Glow only", 10.0, 10.0, 200.0, 50.0);
+    let glow = Glow { color: ColorRef::rgb(Rgba::rgb(255, 0, 0)), radius: 5.0 };
+    let props = RunProps { glow: Some(glow.clone()), own_effects: Some(true), ..Default::default() };
+    sh.text = Some(TextBody { paragraphs: vec![Paragraph { runs: vec![Run::with("Glowing", props)], ..Default::default() }], ..Default::default() });
+    slide.shapes.push(sh);
+    p.slides.push(slide.into());
+    let q = round(&p);
+    let run = &by_name(q.slides.last().expect("slide"), "Glow only").text.as_ref().expect("text").paragraphs[0].runs[0];
+    assert_eq!(run.props.own_effects, Some(true));
+    assert_eq!(run.props.glow.as_ref().map(|g| g.radius), Some(5.0));
+}
+
 #[test]
 fn centered_cell_anchor_survives_two_pptx_round_trips() {
     let mut p = Presentation::default();
