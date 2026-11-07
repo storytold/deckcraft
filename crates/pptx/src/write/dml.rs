@@ -112,7 +112,8 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
         || adj.clear_color.is_some()
         || adj.bilevel.is_some()
         || adj.alpha_inv
-        || pf.artistic.is_some();
+        || pf.artistic.is_some()
+        || pf.svg_media.is_some();
     let a = if linked { A::new().a("r:link", &rid) } else { A::new().a("r:embed", &rid) };
     if has_kids {
         w.open("a:blip", a);
@@ -147,23 +148,31 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
         if adj.brightness != 0.0 || adj.contrast != 0.0 {
             w.empty("a:lum", A::new().a("bright", pct(adj.brightness.clamp(-1.0, 1.0))).a("contrast", pct(adj.contrast.clamp(-1.0, 1.0))));
         }
-        // Artistic effect: the blip is the processed picture; the original rides in an
-        // `a14:imgLayer` with the effect's name, as PowerPoint writes it.
-        if let Some(art) = &pf.artistic
-            && art.effect.starts_with("artistic")
-            && art.effect.chars().all(|c| c.is_ascii_alphanumeric())
-            && let Some(orig) = x.media_rel(o, art.original, "image")
-        {
+        // Artistic effect and SVG fallback extensions live under the blip extension list.
+        let svg_linked = pf.svg_media.and_then(|id| x.media(id)).is_some_and(|m| m.data.is_empty() && m.link.is_some());
+        let svg_rid = pf.svg_media.and_then(|id| x.media_rel(o, id, "image"));
+        let artistic = pf.artistic.as_ref().filter(|art| art.effect.starts_with("artistic") && art.effect.chars().all(|c| c.is_ascii_alphanumeric()));
+        if svg_rid.is_some() || artistic.is_some() {
             w.open0("a:extLst");
-            w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
-            w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
-            w.open("a14:imgLayer", A::new().a("r:embed", &orig));
-            w.open0("a14:imgEffect");
-            w.empty0(&format!("a14:{}", art.effect));
-            w.close("a14:imgEffect");
-            w.close("a14:imgLayer");
-            w.close("a14:imgProps");
-            w.close("a:ext");
+            if let Some(svg_rid) = svg_rid {
+                w.open("a:ext", A::new().a("uri", "{96DAC541-7B7A-43D3-8B79-37D633B846F1}"));
+                let rel_attr = if svg_linked { "r:link" } else { "r:embed" };
+                w.empty("asvg:svgBlip", A::new().a("xmlns:asvg", "http://schemas.microsoft.com/office/drawing/2016/SVG/main").a(rel_attr, svg_rid));
+                w.close("a:ext");
+            }
+            if let Some(art) = artistic
+                && let Some(orig) = x.media_rel(o, art.original, "image")
+            {
+                w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
+                w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
+                w.open("a14:imgLayer", A::new().a("r:embed", &orig));
+                w.open0("a14:imgEffect");
+                w.empty0(&format!("a14:{}", art.effect));
+                w.close("a14:imgEffect");
+                w.close("a14:imgLayer");
+                w.close("a14:imgProps");
+                w.close("a:ext");
+            }
             w.close("a:extLst");
         }
         w.close("a:blip");
@@ -444,13 +453,23 @@ pub fn hyperlink(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, h: &Hyperlink) 
         .t("highlightClick", h.highlight_click)
         .t("endSnd", h.stop_sound);
     let sound = h.sound.and_then(|id| x.media_rel(o, id, "audio").map(|rid| (rid, id)));
-    let Some((sound_rid, sound_id)) = sound else {
+    let has_ext = h.use_text_color;
+    if sound.is_none() && !has_ext {
         w.empty(tag, attrs);
         return;
-    };
+    }
     w.open(tag, attrs);
-    let name = x.media(sound_id).map(|m| sound_label(&m.name)).unwrap_or_else(|| "sound.wav".into());
-    w.empty("a:snd", A::new().a("r:embed", sound_rid).a("name", name));
+    if let Some((sound_rid, sound_id)) = sound {
+        let name = x.media(sound_id).map(|m| sound_label(&m.name)).unwrap_or_else(|| "sound.wav".into());
+        w.empty("a:snd", A::new().a("r:embed", sound_rid).a("name", name));
+    }
+    if h.use_text_color {
+        w.open0("a:extLst");
+        w.open("a:ext", A::new().a("uri", "{A12FA001-AC4F-418D-AE19-62706E023703}"));
+        w.empty("ahyp:hlinkClr", A::new().a("xmlns:ahyp", "http://schemas.microsoft.com/office/drawing/2018/hyperlinkcolor").a("val", "tx"));
+        w.close("a:ext");
+        w.close("a:extLst");
+    }
     w.close(tag);
 }
 
@@ -481,7 +500,8 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
         .o("vertOverflow", b.vert_overflow.map(|v| v.xml()))
         .o("horzOverflow", deckcraft_model::text::TextOverflow::horz_xml(b.horz_overflow));
     let warp = b.warp.as_deref().filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()));
-    if warp.is_none() && b.autofit.is_none() {
+    let raw3d = b.raw3d.as_deref().filter(|s| !s.is_empty());
+    if warp.is_none() && b.autofit.is_none() && raw3d.is_none() {
         w.empty("a:bodyPr", a);
         return;
     }
@@ -514,6 +534,9 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
             w.empty("a:normAutofit", A::new().o("fontScale", fs).o("lnSpcReduction", (lr != 0).then_some(lr)));
         }
         None => {}
+    }
+    if let Some(raw) = raw3d {
+        w.raw(raw);
     }
     w.close("a:bodyPr");
 }

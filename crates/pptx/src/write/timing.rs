@@ -592,7 +592,7 @@ fn shape_index<'a>(shapes: &'a [Shape], depth: usize, out: &mut std::collections
     }
 }
 
-/// Write `p:timing` for a slide's animations.
+/// Write `p:timing` for a slide's animations and media settings.
 pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idmap: &IdMap) {
     let mut grp_count: std::collections::HashMap<u32, u32> = Default::default();
     let mut main: Vec<Eff> = vec![];
@@ -686,7 +686,8 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             None => main.extend(effs),
         }
     }
-    if main.is_empty() && triggered.is_empty() {
+    let media = collect_media(shapes, idmap);
+    if main.is_empty() && triggered.is_empty() && media.is_empty() {
         return;
     }
     let mut ids = Ids(0);
@@ -757,6 +758,9 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.close("p:nextCondLst");
         w.close("p:seq");
     }
+    for (spid, clip) in &media {
+        write_media_node(w, &mut ids, *spid, clip);
+    }
     w.close("p:childTnLst");
     w.close("p:cTn");
     w.close("p:par");
@@ -769,4 +773,40 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.close("p:bldLst");
     }
     w.close("p:timing");
+}
+
+fn collect_media<'a>(shapes: &'a [Shape], idmap: &IdMap) -> Vec<(u32, &'a deckcraft_model::MediaClip)> {
+    let mut media = Vec::new();
+    deckcraft_model::walk(shapes, &mut |shape, _| {
+        if let ShapeKind::Media(clip) = &shape.kind
+            && (clip.autoplay || (clip.volume - 1.0).abs() > 1e-6 || clip.hide_while_not_playing || clip.loop_play || clip.full_screen)
+            && let Some(spid) = idmap.get(shape.id)
+        {
+            media.push((spid, clip));
+        }
+    });
+    media
+}
+
+fn write_media_node(w: &mut W, ids: &mut Ids, spid: u32, clip: &deckcraft_model::MediaClip) {
+    let tag = if clip.video { "p:video" } else { "p:audio" };
+    w.open(tag, A::new().t("fullScrn", clip.full_screen));
+    let mut cm = A::new().a("vol", (clip.volume.clamp(0.0, 1.0) * 100_000.0).round() as u32);
+    if clip.volume <= 1e-6 {
+        cm = cm.t("mute", true);
+    }
+    if clip.hide_while_not_playing {
+        cm = cm.a("showWhenStopped", 0);
+    }
+    w.open("p:cMediaNode", cm);
+    w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold").a("display", 0).o("repeatCount", clip.loop_play.then_some("indefinite")));
+    w.open0("p:stCondLst");
+    w.empty("p:cond", A::new().a("delay", if clip.autoplay { "0" } else { "indefinite" }));
+    w.close("p:stCondLst");
+    w.close("p:cTn");
+    w.open0("p:tgtEl");
+    w.empty("p:spTgt", A::new().a("spid", spid));
+    w.close("p:tgtEl");
+    w.close("p:cMediaNode");
+    w.close(tag);
 }

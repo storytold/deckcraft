@@ -1278,6 +1278,18 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
     if let Some(ext) = root.child("extLst").filter(|e| !has_rel_refs(e)) {
         s.raw_ext = Some(ext.elements().map(|e| part.keep(e)).collect());
     }
+    for rel in part.rels.items.iter().filter(|r| r.ty == crate::dgm::RT_DRAWING && !r.external) {
+        let norm = opc::norm(&rel.target);
+        let has_drawing_refs = imp.pkg.xml(&rel.target).map(|d| has_rel_refs(&d.root)).unwrap_or(true);
+        if ctx.diagram_drawings.contains(&norm)
+            || (*imp.has_rels.entry(norm).or_insert_with(|| !imp.pkg.rels(&rel.target).items.is_empty()) && has_drawing_refs)
+        {
+            continue;
+        }
+        if let Some(m) = imp.media_for(&rel.target) {
+            s.diagram_drawings.push(m);
+        }
+    }
     s
 }
 

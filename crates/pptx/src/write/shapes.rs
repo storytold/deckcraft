@@ -334,7 +334,18 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
                 dml::fill(w, x, o, f);
             }
             if let Some(fx) = &s.effects {
-                dml::effects(w, fx);
+                if fx.fill_overlay.is_some()
+                    || fx.glow.is_some()
+                    || fx.inner_shadow.is_some()
+                    || fx.outer_shadow.is_some()
+                    || fx.reflection.is_some()
+                    || fx.soft_edge.is_some()
+                {
+                    dml::effects(w, fx);
+                }
+                if let Some(raw) = &fx.raw3d {
+                    w.raw(raw);
+                }
             }
             w.close("p:grpSpPr");
             shapes(w, x, o, cx, children, depth + 1);
@@ -788,6 +799,7 @@ fn media(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, m: &deckcraft_
             action: deckcraft_model::text::Action::PlayMedia,
             tooltip: String::new(),
             highlight_click: false,
+            use_text_color: false,
             sound: None,
             stop_sound: false,
             zoom_return: None,

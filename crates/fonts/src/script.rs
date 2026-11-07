@@ -182,6 +182,11 @@ pub fn joins_preceding(c: char) -> bool {
     let cp = c as u32;
     matches!(cp, 0x0622..=0x064A | 0x066E..=0x06D3 | 0x06FA..=0x06FC | 0x06FF | 0x0750..=0x077F | 0x08A0..=0x08C9) && cp != 0x0621
 }
+/// Whether `c` is an emoji-presentation pictograph. Supplemental Arrows-C is intentionally
+/// excluded: those arrows are text symbols even though they sit inside the broad pictograph block.
+pub fn is_emoji(c: char) -> bool {
+    matches!(u32::from(c), 0x1F000..=0x1F7FF | 0x1F900..=0x1FAFF)
+}
 
 #[cfg(test)]
 mod tests {
@@ -235,6 +240,12 @@ mod tests {
         assert!(joins_preceding('ا'));
         assert!(!joins_preceding('ء'));
         assert!(!joins_following('a'));
+    }
+
+    #[test]
+    fn supplemental_arrows_are_text_symbols() {
+        assert!(!is_emoji('\u{1F86A}'));
+        assert!(is_emoji('😀'));
     }
 
     #[test]

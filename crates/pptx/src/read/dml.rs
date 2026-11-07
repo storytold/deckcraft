@@ -147,6 +147,7 @@ pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
     let media = blip.and_then(|b| media_ref(imp, part, b));
     let media = media?;
     let mut pf = PictureFill { media, upright: !bf.bool("rotWithShape").unwrap_or(true), ..Default::default() };
+    pf.svg_media = blip.and_then(|b| b.child("extLst")).and_then(|ext| ext.find("svgBlip")).and_then(|svg| media_ref(imp, part, svg));
     if let Some(layer) = blip.and_then(|b| b.child("extLst")).and_then(|x| x.find("imgLayer"))
         && let Some(effect) = layer
             .elements()
@@ -551,6 +552,7 @@ pub fn hyperlink(imp: &mut Imp, part: &Part, h: &El) -> Option<Hyperlink> {
         action: a,
         tooltip: h.attr("tooltip").unwrap_or("").to_string(),
         highlight_click: h.bool("highlightClick").unwrap_or(false),
+        use_text_color: h.child("extLst").and_then(|ext| ext.find("hlinkClr")).and_then(|clr| clr.attr("val")).is_some_and(|v| v == "tx"),
         stop_sound: h.bool("endSnd").unwrap_or(false),
         sound: h.child("snd").and_then(|s| media_ref(imp, part, s)),
         zoom_return: None,
@@ -629,7 +631,13 @@ pub fn list_style(imp: &mut Imp, part: &Part, ls: &El) -> ListStyle {
 }
 
 pub fn text_body(imp: &mut Imp, part: &Part, tx: &El) -> TextBody {
-    let body = tx.child("bodyPr").map(body_pr).unwrap_or_default();
+    let mut body = tx.child("bodyPr").map(body_pr).unwrap_or_default();
+    if let Some(b) = tx.child("bodyPr") {
+        let raw3d: String = b.elements().filter(|c| matches!(c.local(), "scene3d" | "sp3d" | "flatTx")).map(|c| part.keep_inner(c)).collect();
+        if !raw3d.is_empty() {
+            body.raw3d = Some(raw3d);
+        }
+    }
     let list_style = tx.child("lstStyle").map(|l| list_style(imp, part, l)).unwrap_or_default();
     let paragraphs = tx.children_named("p").take(100_000).map(|p| paragraph(imp, part, p)).collect();
     TextBody { body, list_style, paragraphs }

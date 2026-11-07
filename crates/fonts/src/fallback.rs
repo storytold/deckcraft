@@ -38,7 +38,8 @@ pub fn is_emoji_cluster(cluster: &[char]) -> bool {
     if cluster.contains(&'\u{FE0E}') || cluster.contains(&'\u{20E3}') {
         return false;
     }
-    let pictographic = |c: char| matches!(c as u32, 0x1F000..=0x1FAFF | 0x2600..=0x27BF | 0x2B00..=0x2BFF | 0x2190..=0x21FF | 0x2300..=0x23FF);
+    let pictographic =
+        |c: char| crate::script::is_emoji(c) || matches!(c as u32, 0x2600..=0x27BF | 0x2B00..=0x2BFF | 0x2190..=0x21FF | 0x2300..=0x23FF);
     let default_emoji = |c: char| {
         matches!(
             c as u32,

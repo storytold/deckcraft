@@ -207,11 +207,41 @@ fn behaviour_auto_reverses(c: &El) -> bool {
 /// Volume, mute, Loop until Stopped, Hide While Not Playing and Play Full Screen live in the timing tree
 /// (`p:video`/`p:audio` > `p:cMediaNode`), not on the picture: copy them onto the target's `MediaClip`.
 pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
-    let mut nodes = vec![];
-    for tag in ["video", "audio"] {
-        timing.find_all(tag, &mut nodes);
+    fn collect_media<'a>(e: &'a El, deferred: bool, out: &mut Vec<(&'a El, bool)>, depth: usize) {
+        if depth > 64 || out.len() >= 10_000 {
+            return;
+        }
+        let mut deferred = deferred;
+        if e.is("cTn")
+            && e.attr("nodeType") != Some("tmRoot")
+            && let Some(st) = e.child("stCondLst")
+        {
+            let is_auto_begin = |c: &El| {
+                c.attr("evt") == Some("onBegin")
+                    && c.attr("delay").map(str::trim) == Some("0")
+                    && c.child("tgtEl").is_none()
+                    && c.child("tn").is_none()
+                    && c.child("rtn").is_none()
+            };
+            let has_on_begin = st.children_named("cond").any(is_auto_begin);
+            if st
+                .children_named("cond")
+                .any(|c| (c.attr("evt").is_some() && !is_auto_begin(c)) || (!has_on_begin && c.attr("delay").map(str::trim) != Some("0")))
+            {
+                deferred = true;
+            }
+        }
+        if e.is("video") || e.is("audio") {
+            out.push((e, deferred));
+            return;
+        }
+        for c in e.elements() {
+            collect_media(c, deferred, out, depth + 1);
+        }
     }
-    for node in nodes.into_iter().take(10_000) {
+    let mut nodes = vec![];
+    collect_media(timing, false, &mut nodes, 0);
+    for (node, deferred) in nodes {
         let Some(cm) = node.child("cMediaNode") else { continue };
         let Some(id) = cm.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|f| ctx.lookup(f)) else { continue };
         let Some(ShapeKind::Media(clip)) = find_shape_mut(shapes, id).map(|s| &mut s.kind) else { continue };
@@ -227,6 +257,10 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         if cm.child("cTn").and_then(|c| c.attr("repeatCount")) == Some("indefinite") {
             clip.loop_play = true;
         }
+        if !deferred && cm.path(&["cTn", "stCondLst", "cond"]).is_some_and(|c| c.attr("evt").is_none() && c.attr("delay").map(str::trim) == Some("0"))
+        {
+            clip.autoplay = true;
+        }
         if node.bool("fullScrn") == Some(true) {
             clip.full_screen = true;
         }
@@ -239,13 +273,12 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
     let Some(tn) = timing.child("tnLst") else { return vec![] };
     let mut found = vec![];
     collect(tn, At { trigger: None, group: 0, offset: 0 }, &mut 0, &mut found, 0);
-    // Paragraph builds (`bldP build="p"`) by (spid, grpId).
-    let by_para: Vec<(u32, String)> = timing
+    // Paragraph builds (`bldP`) by (spid, grpId) -> whether `build="p"`.
+    let bld_p: std::collections::HashMap<(u32, String), bool> = timing
         .child("bldLst")
         .map(|b| {
             b.children_named("bldP")
-                .filter(|p| p.attr("build") == Some("p"))
-                .filter_map(|p| Some((p.u32("spid")?, p.attr("grpId").unwrap_or("0").to_string())))
+                .filter_map(|p| Some(((p.u32("spid")?, p.attr("grpId").unwrap_or("0").to_string()), p.attr("build") == Some("p"))))
                 .collect()
         })
         .unwrap_or_default();
@@ -314,7 +347,7 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
             a.color = dml::color(clr);
         }
         let grp = c.attr("grpId").unwrap_or("0").to_string();
-        let build = paragraph.is_some() && by_para.iter().any(|(s, g)| *s == file_id && *g == grp);
+        let build = paragraph.is_some() && bld_p.get(&(file_id, grp.clone())) != Some(&false);
         out.push((a, file_id, grp, build));
         at.push((f.trigger, f.group, f.offset));
     }
@@ -328,9 +361,10 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
     for run in out.chunk_by(same_build) {
         let effects: Vec<&Animation> = run.iter().map(|(a, ..)| a).collect();
         let build = run.first().is_some_and(|r| r.3);
+        let explicit_bld = run.first().is_some_and(|r| bld_p.get(&(r.1, r.2.clone())) == Some(&true));
         let text = effects.first().and_then(|a| find_shape(shapes, a.shape)).and_then(|s| s.text.as_ref());
         match (effects.first(), text) {
-            (Some(first), Some(text)) if build && plays_as_build(&effects, text) => {
+            (Some(first), Some(text)) if build && plays_as_build(&effects, text, explicit_bld) => {
                 anims.push(Animation { text_build: TextBuild::ByParagraph, paragraph: None, ..(*first).clone() });
             }
             _ => anims.extend(effects.into_iter().cloned()),
@@ -343,7 +377,7 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
 /// first one plays: one effect per paragraph the build animates, in paragraph order, later top
 /// paragraphs on click (after previous when the build doesn't start on click), deeper ones with
 /// their parent, all with the same settings?
-fn plays_as_build(effects: &[&Animation], text: &TextBody) -> bool {
+fn plays_as_build(effects: &[&Animation], text: &TextBody, explicit_bld: bool) -> bool {
     let roles = paragraph_build_roles(text);
     let expected = roles.iter().enumerate().filter(|(i, r)| match r {
         BuildRole::Top => true,
@@ -351,6 +385,9 @@ fn plays_as_build(effects: &[&Animation], text: &TextBody) -> bool {
         BuildRole::Unowned => false,
     });
     let Some(first) = effects.first() else { return false };
+    if !explicit_bld && first.start != AnimStart::OnClick && (span_ms(first) != 500 || first.delay_ms != 0) {
+        return false;
+    }
     let settings = |a: &Animation| Animation { start: AnimStart::OnClick, paragraph: None, ..a.clone() };
     let base = settings(first);
     let mut matched = 0;

@@ -154,6 +154,7 @@ fn sections() -> Presentation {
                             action: Action::Url { url: "https://example.org/brief?q=1&x=2".into() },
                             tooltip: "Open the brief".into(),
                             highlight_click: false,
+                            use_text_color: false,
                             sound: None,
                             stop_sound: false,
                             zoom_return: None,

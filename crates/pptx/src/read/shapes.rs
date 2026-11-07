@@ -27,6 +27,8 @@ pub struct IdCtx {
     /// Always allocate new ids (shapes pulled in from other parts).
     pub fresh: bool,
     pub count: usize,
+    /// Normalized target paths of `diagramDrawing` parts consumed by modeled SmartArt shapes.
+    pub diagram_drawings: HashSet<String>,
 }
 
 impl IdCtx {
@@ -395,6 +397,10 @@ fn grp(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> Sha
         if let Some(fx) = pr.child("effectLst") {
             s.effects = Some(dml::effects(fx));
         }
+        let raw: String = pr.elements().filter(|c| c.is("scene3d")).map(|c| part.keep_inner(c)).collect();
+        if !raw.is_empty() {
+            s.effects.get_or_insert_with(Effects::default).raw3d = Some(raw);
+        }
     }
     let children = sp_tree(imp, part, ctx, e, depth + 1);
     let child = child.or_else(|| s.xfrm.map(|x| Xfrm::new(x.x, x.y, x.w, x.h))).unwrap_or_default();
@@ -437,7 +443,7 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
             return s;
         }
         if uri.ends_with("/diagram")
-            && let Some(g) = smartart(imp, part, gd, &s, depth)
+            && let Some(g) = smartart(imp, part, ctx, gd, &s, depth)
         {
             return g;
         }
@@ -506,21 +512,51 @@ fn vml_preview(imp: &mut Imp, part: &Part, spid: &str) -> Option<deckcraft_model
 
 /// Every shape id in a VML drawing with a picture, mapped to that picture's part: parsed once per
 /// drawing however many objects look it up.
+fn strip_vml_conditionals(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    let mut changed = false;
+    while at < bytes.len() {
+        let rest = &bytes[at..];
+        let marker = rest.iter().position(|b| *b == b'<').map(|i| at + i);
+        let Some(start) = marker else {
+            out.extend_from_slice(rest);
+            break;
+        };
+        out.extend_from_slice(&bytes[at..start]);
+        let rest = &bytes[start..];
+        let conditional = rest.starts_with(b"<!--[if") || rest.starts_with(b"<![if") || rest.starts_with(b"<![endif");
+        if conditional && let Some(end) = rest.iter().position(|b| *b == b'>') {
+            let mut next = start + end + 1;
+            if bytes.get(next..next + 3) == Some(b"-->") {
+                next += 3;
+            }
+            at = next;
+            changed = true;
+            continue;
+        }
+        out.push(b'<');
+        at = start + 1;
+    }
+    if changed { std::borrow::Cow::Owned(out) } else { std::borrow::Cow::Borrowed(bytes) }
+}
+
 fn vml_index(pkg: &crate::opc::Package, vml: &str) -> std::collections::HashMap<String, String> {
     let mut out = std::collections::HashMap::new();
-    let Some(doc) = pkg.xml(vml) else { return out };
+    let Some(bytes) = pkg.xml_bytes(vml) else { return out };
+    let decoded = crate::xml::decode_xml_bytes(bytes);
+    let bytes = strip_vml_conditionals(&decoded);
+    let Ok(doc) = crate::xml::parse(&bytes) else { return out };
     let rels = pkg.rels(vml);
     let mut shapes = vec![];
     doc.root.find_all("shape", &mut shapes);
     for s in shapes {
-        let Some(id) = s.attr("id") else { continue };
-        if out.contains_key(id) {
-            continue; // the first shape with an id wins, as the old lookup did
-        }
         let Some(img) = s.find("imagedata") else { continue };
         let Some(rid) = img.attr("o:relid").or(img.attr("r:id")) else { continue };
-        if let Some(r) = rels.get(rid).filter(|r| !r.external) {
-            out.insert(id.to_string(), r.target.clone());
+        let Some(r) = rels.get(rid).filter(|r| !r.external) else { continue };
+        let keys = [s.attr("o:spid").or_else(|| s.attr("spid")), s.attr("id")];
+        for key in keys.into_iter().flatten().filter(|key| !key.is_empty()) {
+            out.entry(key.to_string()).or_insert_with(|| r.target.clone());
         }
     }
     out
@@ -560,7 +596,7 @@ fn diagram_data(imp: &mut Imp, target: &str) -> Option<deckcraft_model::MediaId>
 }
 
 /// SmartArt: read the pre-drawn shapes of its drawing part as a group.
-fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) -> Option<Shape> {
+fn smartart(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, gd: &El, frame: &Shape, depth: usize) -> Option<Shape> {
     if depth > 8 {
         return None;
     }
@@ -584,6 +620,7 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     g.diagram = diagram_outline(imp, part, rel_ids, &data.root);
     // Node pictures, from the blips of the data model's presentation points.
     if let Some(d) = &mut g.diagram {
+        ctx.diagram_drawings.insert(crate::opc::norm(&drawing_rel));
         let rels = imp.pkg.rels(&dm.target);
         for (k, rid) in crate::dgm::node_pictures(&data.root) {
             let Some(target) = rels.get(&rid).filter(|r| !r.external).map(|r| r.target.clone()) else { continue };
@@ -706,15 +743,17 @@ fn text_area(geom: &Geom, w: f64, h: f64) -> deckcraft_geom::Rect {
 /// parts kept to be written back.
 fn diagram_outline(imp: &Imp, part: &Part, rel_ids: &El, data: &El) -> Option<deckcraft_model::Diagram> {
     let nodes = crate::dgm::outline(data);
-    if nodes.is_empty() {
-        return None;
-    }
     let raw = |attr: &str| -> Option<String> {
         let rel = part.rels.get(rel_ids.attr(attr)?)?;
         let bytes = imp.pkg.get(&rel.target)?;
         (bytes.len() <= 4 << 20).then(|| String::from_utf8(bytes.to_vec()).ok()).flatten()
     };
     let layout_xml = raw("r:lo");
+    let style_xml = raw("r:qs");
+    let colors_xml = raw("r:cs");
+    if nodes.is_empty() && layout_xml.is_none() && style_xml.is_none() && colors_xml.is_none() {
+        return None;
+    }
     let (layout_id, cat) = layout_xml
         .as_deref()
         .and_then(|x| crate::xml::parse(x.as_bytes()).ok())
@@ -741,8 +780,8 @@ fn diagram_outline(imp: &Imp, part: &Part, rel_ids: &El, data: &El) -> Option<de
         imported: true,
         layout_id: id,
         layout_xml,
-        style_xml: raw("r:qs"),
-        colors_xml: raw("r:cs"),
+        style_xml,
+        colors_xml,
     })
 }
 

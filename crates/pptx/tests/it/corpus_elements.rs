@@ -14,7 +14,7 @@ use deckcraft_model::{Comment, CustomShow, Geom, LayoutType, PhType, Presentatio
 const CHIME: &[u8] = b"RIFFdeckcraft-chime-WAVEfmt ";
 
 fn link(action: Action) -> Hyperlink {
-    Hyperlink { action, tooltip: String::new(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None }
+    Hyperlink { action, tooltip: String::new(), highlight_click: false, use_text_color: false, sound: None, stop_sound: false, zoom_return: None }
 }
 
 fn box_at(p: &mut Presentation, name: &str, x: f64, y: f64) -> Shape {
@@ -70,6 +70,7 @@ fn deck() -> Presentation {
                             action: Action::Url { url: "https://example.com/quote".into() },
                             tooltip: "Source".into(),
                             highlight_click: false,
+                            use_text_color: false,
                             sound: None,
                             stop_sound: false,
                             zoom_return: None,
@@ -96,6 +97,7 @@ fn deck() -> Presentation {
         action: Action::Url { url: "https://example.com/deck".into() },
         tooltip: "Example".into(),
         highlight_click: true,
+        use_text_color: false,
         sound: None,
         stop_sound: false,
         zoom_return: None,
@@ -122,6 +124,7 @@ fn deck() -> Presentation {
         action: Action::PreviousSlide,
         tooltip: "Back one".into(),
         highlight_click: false,
+        use_text_color: false,
         sound: None,
         stop_sound: true,
         zoom_return: None,
@@ -134,6 +137,7 @@ fn deck() -> Presentation {
         action: Action::FirstSlide,
         tooltip: String::new(),
         highlight_click: true,
+        use_text_color: false,
         sound: None,
         stop_sound: false,
         zoom_return: None,
@@ -145,6 +149,7 @@ fn deck() -> Presentation {
         action: Action::CustomShow { name: "Board".into(), returns: false },
         tooltip: "Open the board show".into(),
         highlight_click: false,
+        use_text_color: false,
         sound: Some(chime),
         stop_sound: false,
         zoom_return: None,

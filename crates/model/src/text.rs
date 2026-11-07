@@ -124,6 +124,9 @@ pub struct BodyProps {
     pub compat_ln_spc: Option<bool>,
     pub vert_overflow: Option<TextOverflow>,
     pub horz_overflow: Option<TextOverflow>,
+    /// Unmodelled 3-D XML on the text body (`a:scene3d`, `a:sp3d`, `a:flatTx`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw3d: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,6 +190,9 @@ impl BodyProps {
         self.compat_ln_spc = self.compat_ln_spc.or(p.compat_ln_spc);
         self.vert_overflow = self.vert_overflow.or(p.vert_overflow);
         self.horz_overflow = self.horz_overflow.or(p.horz_overflow);
+        if self.raw3d.is_none() {
+            self.raw3d.clone_from(&p.raw3d);
+        }
     }
 }
 
@@ -460,6 +466,8 @@ pub struct Hyperlink {
     pub tooltip: String,
     #[serde(default)]
     pub highlight_click: bool,
+    #[serde(default)]
+    pub use_text_color: bool,
     /// Sound played when the action runs (`a:snd`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sound: Option<crate::MediaId>,

@@ -143,14 +143,21 @@ impl<'a> Exp<'a> {
         } else {
             m.content_type.clone()
         };
-        let name = if ct.starts_with("image/") {
+        let name = if ct == crate::dgm::CT_DRAWING {
+            let n = self.next_diagram();
+            format!("ppt/diagrams/drawing{n}.xml")
+        } else if ct.starts_with("image/") {
             self.n_image += 1;
             format!("ppt/media/image{}.{ext}", self.n_image)
         } else {
             self.n_media += 1;
             format!("ppt/media/media{}.{ext}", self.n_media)
         };
-        self.pkg.binary(&name, &ct, m.data.as_ref().clone());
+        if ct == crate::dgm::CT_DRAWING {
+            self.pkg.xml_part(&name, &ct, m.data.as_ref().clone());
+        } else {
+            self.pkg.binary(&name, &ct, m.data.as_ref().clone());
+        }
         self.media_parts.insert(id, name.clone());
         Some(name)
     }
@@ -690,6 +697,9 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
             x.pkg.xml_part(&mname, CT_COMMENTS_MODERN, modern_comments_xml(&s.comments, &cname, &mut authors, &mut author_map));
             comment_rel = Some(rid);
         }
+        for &d in &s.diagram_drawings {
+            let _ = x.media_rel(&mut so, d, crate::dgm::RT_DRAWING);
+        }
         let xml = slide_xml(&mut x, &mut so, s, comment_rel.as_deref());
         x.pkg.xml_part(&sname, CT_SLIDE, xml);
         x.pkg.rels(&sname, &so.rels);
@@ -813,7 +823,20 @@ fn slide_xml(x: &mut Exp, o: &mut Out, s: &Slide, comment_rel: Option<&str>) -> 
     if let Some(t) = &s.transition {
         timing::transition(&mut w, x, o, t);
     }
-    if !s.animations.is_empty() {
+    if !s.animations.is_empty()
+        || s.shapes.iter().any(|shape| {
+            fn has_nondefault(shape: &deckcraft_model::Shape) -> bool {
+                match &shape.kind {
+                    deckcraft_model::ShapeKind::Media(c) => {
+                        c.autoplay || (c.volume - 1.0).abs() > 1e-6 || c.hide_while_not_playing || c.loop_play || c.full_screen
+                    }
+                    deckcraft_model::ShapeKind::Group { children, .. } => children.iter().any(has_nondefault),
+                    _ => false,
+                }
+            }
+            has_nondefault(shape)
+        })
+    {
         timing::timing(&mut w, x, &s.animations, &s.shapes, &ids);
     }
     slide_ext_list(&mut w, s.raw_ext.as_deref(), comment_rel);
