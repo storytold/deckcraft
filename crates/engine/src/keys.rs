@@ -175,6 +175,8 @@ impl Session {
             "end" => "End",
             "tab" => "Tab",
             "space" | " " => "Space",
+            // Ctrl+Shift+= reaches us as the shifted character, `+`; shortcuts are written with `=`.
+            "+" if mods.shift => "=",
             _ => k,
         };
         let found = crate::command_specs().iter().find(|c| c.shortcut.is_some_and(|s| shortcut_matches(s, key_name, mods))).map(|c| c.id);
