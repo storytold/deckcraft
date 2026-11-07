@@ -49,6 +49,10 @@ impl SlideApp {
 
     /// Keyboard and clipboard for the slide (when no text field has focus).
     pub(super) fn keyboard(&mut self, ctx: &egui::Context) {
+        // egui's own Ctrl+=/Ctrl+- zoom acts on the same keys as Subscript and Superscript, changing
+        // the zoom factor for a frame before `ui_setup` puts it back (the screen twitches). The app
+        // has its own zoom commands.
+        ctx.options_mut(|o| o.zoom_with_keyboard = false);
         let events = ctx.input(|i| i.events.clone());
         // Ctrl+V with only an image on the clipboard: egui-winit sends no Paste event and swallows the
         // key press, so the release of a V press never seen is the paste. Tracked even while a text
