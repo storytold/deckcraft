@@ -1341,9 +1341,26 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     if d.params.get("before").is_none() {
         d.params = json!({ "before": preferences_snapshot(app) });
     }
-    ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(crate::i18n::tr("General")).font(theme::bold(13.0)));
+    ui.horizontal(|ui| {
+        ui.label(crate::i18n::tr("Language:"));
+        let mut lang = app.ui.interface_language;
+        if ui.radio_value(&mut lang, crate::i18n::Language::System, crate::i18n::tr("System language")).clicked() {
+            app.ui.interface_language = lang;
+            let active = lang.resolve(app.services.system_locale.as_deref());
+            crate::i18n::set_language(active);
+        }
+        if ui.radio_value(&mut lang, crate::i18n::Language::PtBr, "Português (Brasil)").clicked() {
+            app.ui.interface_language = lang;
+            crate::i18n::set_language(lang);
+        }
+        if ui.radio_value(&mut lang, crate::i18n::Language::En, "English").clicked() {
+            app.ui.interface_language = lang;
+            crate::i18n::set_language(lang);
+        }
+    });
     let mut dark = app.ui.brightness == theme::Brightness::Dark;
-    if ui.checkbox(&mut dark, "Dark appearance").changed() {
+    if ui.checkbox(&mut dark, crate::i18n::tr("Dark appearance")).changed() {
         let _ = app.run("view.dark", json!({"on": dark}));
     }
     // While the pointer holds the slider its value only waits in the dialog: applying it
@@ -1367,18 +1384,18 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     }
     // PowerPoint takes the unit from the system's measurement setting; DeckCraft asks here.
     ui.horizontal(|ui| {
-        ui.label("Measurement units:");
+        ui.label(crate::i18n::tr("Measurement units:"));
         let units = &mut app.session.prefs.units;
-        ui.radio_value(units, deckcraft_geom::Unit::Inches, "Inches");
-        ui.radio_value(units, deckcraft_geom::Unit::Centimeters, "Centimeters");
+        ui.radio_value(units, deckcraft_geom::Unit::Inches, crate::i18n::tr("Inches"));
+        ui.radio_value(units, deckcraft_geom::Unit::Centimeters, crate::i18n::tr("Centimeters"));
     });
-    ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
-    ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
-    ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");
-    ui.checkbox(&mut app.session.prefs.smart_quotes, "Replace straight quotes with smart quotes");
+    ui.label(egui::RichText::new(crate::i18n::tr("Editing")).font(theme::bold(13.0)));
+    ui.checkbox(&mut app.session.prefs.smart_guides, crate::i18n::tr("Show smart guides"));
+    ui.checkbox(&mut app.session.prefs.snap_to_grid, crate::i18n::tr("Snap objects to grid"));
+    ui.checkbox(&mut app.session.prefs.smart_quotes, crate::i18n::tr("Replace straight quotes with smart quotes"));
     ui.horizontal(|ui| {
-        ui.checkbox(&mut app.session.prefs.autocorrect, "AutoCorrect as you type");
-        if ui.button("AutoCorrect Options…").clicked() {
+        ui.checkbox(&mut app.session.prefs.autocorrect, crate::i18n::tr("AutoCorrect as you type"));
+        if ui.button(crate::i18n::tr("AutoCorrect Options…")).clicked() {
             *d = Dialog::new("autocorrect");
         }
     });

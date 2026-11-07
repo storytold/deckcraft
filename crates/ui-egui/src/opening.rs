@@ -36,7 +36,7 @@ impl SlideApp {
     pub fn open_path_in_background(&mut self, path: &str) {
         if let Some(o) = &self.opening {
             let name = o.name();
-            self.set_status(format!("Still opening {name}"));
+            self.set_status(crate::i18n::format("Still opening {0}", &[&name]));
             return;
         }
         #[cfg(target_arch = "wasm32")]
@@ -70,7 +70,8 @@ impl SlideApp {
     /// Stop waiting for the file being opened; the presentation stays as it is.
     pub fn cancel_opening(&mut self) {
         if let Some(o) = self.opening.take() {
-            self.set_status(format!("Stopped opening {}", o.name()));
+            let name = o.name();
+            self.set_status(crate::i18n::format("Stopped opening {0}", &[&name]));
         }
     }
 

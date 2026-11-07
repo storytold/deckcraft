@@ -79,14 +79,14 @@ impl Page {
     /// Side-menu label and page heading.
     pub fn label(self) -> &'static str {
         match self {
-            Page::Home => "Home",
-            Page::New => "New",
-            Page::Open => "Open",
-            Page::Info => "Info",
-            Page::SaveAs => "Save As",
-            Page::Print => "Print",
-            Page::Export => "Export",
-            Page::About => "About",
+            Page::Home => crate::i18n::tr("Home"),
+            Page::New => crate::i18n::tr("New"),
+            Page::Open => crate::i18n::tr("Open"),
+            Page::Info => crate::i18n::tr("Info"),
+            Page::SaveAs => crate::i18n::tr("Save As"),
+            Page::Print => crate::i18n::tr("Print"),
+            Page::Export => crate::i18n::tr("Export"),
+            Page::About => crate::i18n::tr("About"),
         }
     }
 
@@ -119,12 +119,13 @@ pub enum Nav {
 }
 
 impl Nav {
+    /// Localized side-menu label for this navigation entry.
     fn label(self) -> &'static str {
         match self {
             Nav::Page(p) => p.label(),
-            Nav::Save => "Save",
-            Nav::Close => "Close",
-            Nav::Options => "Options",
+            Nav::Save => crate::i18n::tr("Save"),
+            Nav::Close => crate::i18n::tr("Close"),
+            Nav::Options => crate::i18n::tr("Options"),
         }
     }
     fn icon(self) -> Icon {
@@ -333,7 +334,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.y = 0.0;
         if has_doc {
             let (r, resp) = ui.allocate_exact_size(vec2(NAV_W, BACK_H), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Back"));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("Back")));
             let hovered = resp.hovered();
             if hovered {
                 ui.painter().rect_filled(Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), vec2(34.0, 34.0)), 17.0, t.hover);
@@ -345,7 +346,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 t.text,
                 false,
             );
-            if resp.on_hover_text("Back (Esc)").clicked() {
+            if resp.on_hover_text(crate::i18n::tr("Back (Esc)")).clicked() {
                 out.close = true;
             }
         } else {
@@ -465,20 +466,23 @@ fn separator(ui: &mut Ui, t: &Tokens) {
 
 // ---------------------------------------------------------------- shared pieces
 
+/// Draw a section heading on a Backstage page.
 fn heading(ui: &mut Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
-    ui.label(RichText::new(text).font(theme::bold(16.0)).color(t.text));
+    ui.label(RichText::new(crate::i18n::tr(text)).font(theme::bold(16.0)).color(t.text));
     ui.add_space(8.0);
 }
 
+/// Draw dimmed descriptive text on a Backstage page.
 fn dim(ui: &mut Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
-    ui.label(RichText::new(text).font(theme::font(12.5)).color(t.text_dim));
+    ui.label(RichText::new(crate::i18n::tr(text)).font(theme::font(12.5)).color(t.text_dim));
 }
 
 /// A link with an arrow (More themes →): true when clicked.
 fn arrow_link(ui: &mut Ui, text: &str) -> bool {
     let t = Tokens::get(ui.ctx());
+    let text = crate::i18n::tr(text);
     ui.add(egui::Label::new(RichText::new(format!("{text}  →")).font(theme::font(12.5)).color(t.accent)).sense(Sense::click()))
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
@@ -486,11 +490,12 @@ fn arrow_link(ui: &mut Ui, text: &str) -> bool {
 
 /// A search box; true when its text changed.
 fn search(ui: &mut Ui, query: &mut String, hint: &str, width: f32) -> bool {
-    ui.add(egui::TextEdit::singleline(query).hint_text(hint).desired_width(width)).changed()
+    ui.add(egui::TextEdit::singleline(query).hint_text(crate::i18n::tr(hint)).desired_width(width)).changed()
 }
 
 /// Draw a labelled icon button and return whether it was clicked while enabled.
 fn icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> bool {
+    let label = crate::i18n::tr(label);
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
@@ -501,9 +506,11 @@ fn icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> bool {
     resp.on_hover_text(label).clicked()
 }
 
+/// Draw a bulleted list of translated items on a Backstage page.
 fn bullets(ui: &mut Ui, items: &[&str]) {
     ui.add_space(4.0);
     for b in items {
+        let b = crate::i18n::tr(b);
         ui.horizontal(|ui| {
             ui.add_space(6.0);
             ui.label(RichText::new(format!("•  {b}")).font(theme::font(12.5)));
