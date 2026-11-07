@@ -278,8 +278,11 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
 - **Estimate:** 2–4 h.
 
 ### Equations
-- **Evidence:** checklist row missing; PR #55 (OMML editor, +10.5k lines) is open.
-- **Estimate:** 3–6 h to review, land and round-trip.
+- **Evidence:** OMML equations are drawn in two dimensions and round-trip; Insert ▸ Equation types
+  one in place in its linear form, drawn in two dimensions as it is typed. There is no Equation
+  tab (structure galleries, symbols, Professional/Linear switch), and the caret doesn't move
+  through the drawn structure: inside an equation it shows as its linear text.
+- **Estimate:** 4–8 h for the Equation tab and built-up editing.
 
 ### Smaller missing rows
 Zoom: live thumbnails, the zoom-in animation and the native `p166:sldZm` element (3–5 h;
@@ -368,6 +371,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-05 | minor | Equations: drawn in two dimensions, typed in place in linear form, round-trip through PPTX; the remaining gap is the Equation tab and built-up editing |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |

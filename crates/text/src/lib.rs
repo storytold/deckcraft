@@ -21,6 +21,7 @@
 
 mod bidi;
 pub mod datetime;
+mod math;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -528,6 +529,36 @@ impl TextLayout {
         }
         r.unwrap_or(self.inner)
     }
+}
+
+/// The equation being typed in the text being edited: its paragraph and first character, and
+/// whether it shows as its linear text (see [`with_typed_math`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TypedMath {
+    pub para: usize,
+    pub ch: usize,
+    pub linear: bool,
+}
+
+/// `body` as the editor shows it while equation `m` is being typed: on a gray field, drawn as it
+/// will look, or as its linear text when `m.linear` (the caret is inside it, or text in it is
+/// selected, so that each character shows where it is).
+pub fn with_typed_math(body: &TextBody, m: TypedMath) -> TextBody {
+    let mut body = body.clone();
+    if let Some(p) = body.paragraphs.get_mut(m.para) {
+        let mut start = 0;
+        for r in &mut p.runs {
+            if start == m.ch && matches!(r.kind, RunKind::Math { .. }) {
+                if m.linear {
+                    r.kind = RunKind::Text;
+                }
+                r.props.highlight = Some(deckcraft_model::ColorRef::rgb(Rgba::rgba(0x80, 0x80, 0x80, 0x40)));
+                break;
+            }
+            start += r.char_len();
+        }
+    }
+    body
 }
 
 /// Height the shape needs so its text fits (Resize shape to fit text): text height + insets.

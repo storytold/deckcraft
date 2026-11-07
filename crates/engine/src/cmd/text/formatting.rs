@@ -152,6 +152,10 @@ fn master_levels(st: &DocState, t: &TextSel, range: (Pos, Pos)) -> Vec<(u8, RunP
 /// edits this same span, so the dialog reads it too.
 pub fn format_range(st: &DocState, t: &TextSel) -> (Pos, Pos) {
     let body = body_of(st, t).cloned().unwrap_or_default();
+    // In an equation: all of it.
+    if let Some((_, s, e)) = crate::cmd::equation::at(&body, t) {
+        return ((t.caret.0, s), (t.caret.0, e));
+    }
     let (mut a, mut b) = t.ordered();
     if a == b {
         let (wa, wb) = ed::word_at(&body, a);

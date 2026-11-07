@@ -65,6 +65,8 @@ craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f
 craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", features = ["egui"] }
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0" }
 i_overlay = "9"
+# Equations: the OMML tree and its linear (typed) form. No fonts or other assets.
+equashion-math = { git = "https://github.com/shuff57/equaSHion", rev = "3d3b840c65d7b6e0e7933c6cd95e171384fdfb54" }
 quick-xml = "0.41"
 zip = { version = "3", default-features = false, features = ["deflate"] }
 

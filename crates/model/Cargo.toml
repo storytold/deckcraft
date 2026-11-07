@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
+equashion-math = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

@@ -48,7 +48,7 @@ fn scale_text(t: &mut TextBody, sx: f64, sy: f64) {
         scale_run(&mut p.def_props, unit);
         scale_run(&mut p.end_props, unit);
         for r in &mut p.runs {
-            scale_run(&mut r.props, unit);
+            r.restyle(|p| scale_run(p, unit));
         }
     }
 }

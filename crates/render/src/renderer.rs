@@ -504,7 +504,9 @@ impl Renderer {
             }
             ShapeKind::Table(t) => {
                 // Rows grow with their text: what the cells cover, borders included.
-                let cells = table::draw(ctx, f.pres, rctx, t, m, x.w, x.h, &f.fields, f.opts.edit && f.opts.editing_text == Some(s.id));
+                let editing = f.opts.edit && f.opts.editing_text == Some(s.id);
+                let math = f.opts.editing_math.filter(|_| editing).and_then(|(cell, m)| Some((cell?, m)));
+                let cells = table::draw(ctx, f.pres, rctx, t, m, x.w, x.h, &f.fields, editing, math);
                 self.track(m, cells.unwrap_or(Rect::new(0.0, 0.0, x.w, x.h)).inflate(2.0, 2.0));
             }
             ShapeKind::Chart(c) => {
@@ -1083,11 +1085,14 @@ impl Renderer {
             let editing = f.opts.edit && f.opts.editing_text == Some(s.id);
             if !body.is_empty() || editing {
                 // Imported placeholders can have no paragraph until the first keystroke.
-                let mut empty;
+                let mut edited;
                 let body = if editing && body.paragraphs.is_empty() {
-                    empty = body.clone();
-                    empty.paragraphs.push(Default::default());
-                    &empty
+                    edited = body.clone();
+                    edited.paragraphs.push(Default::default());
+                    &edited
+                } else if let Some((None, m)) = f.opts.editing_math.filter(|_| editing) {
+                    edited = deckcraft_text::with_typed_math(body, m);
+                    &edited
                 } else {
                     body
                 };

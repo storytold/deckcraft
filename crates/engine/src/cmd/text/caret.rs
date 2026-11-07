@@ -16,6 +16,9 @@ pub(super) fn cell_on_slide(st: &DocState, id: ShapeId, row: usize, col: usize) 
     let heights = crate::cmd::table_drawn_heights(&st.doc, &st.selection, tb);
     let rect = deckcraft_render::table_cell_rects(tb, &heights).into_iter().find(|(r, c, _)| *r == row && *c == col)?.2;
     let mut body = deckcraft_render::table_cell_body(&ctx, tb, row, col, cell);
+    if let Some(m) = crate::cmd::equation::shown(st, &crate::TextSel { shape: id, cell: Some((row, col)), ..Default::default() }) {
+        body = deckcraft_text::with_typed_math(&body, m);
+    }
     if body.paragraphs.is_empty() {
         body.paragraphs.push(deckcraft_model::text::Paragraph::default());
     }
@@ -48,6 +51,23 @@ pub(crate) fn delete_dir(s: &mut Session, dir: &str) -> Result<Value> {
     let dir = dir.to_string();
     edit_text(s, move |body, t| {
         let (a, b) = t.ordered();
+        // In an equation, deleting edits its text: Backspace the character before the caret,
+        // Delete the one after it.
+        let math = if a != b {
+            crate::cmd::equation::at(body, t).map(|m| (m.0, a.1, b.1))
+        } else if dir == "backward" || dir == "wordBackward" {
+            let from = |s: usize| if dir == "wordBackward" { ed::word_move(body, a, false).1.max(s) } else { a.1 - 1 };
+            ed::math_at(body, a, false).filter(|m| a.1 > m.1).map(|(ri, s, _)| (ri, from(s), a.1))
+        } else {
+            let to = |e: usize| if dir == "wordForward" { ed::word_move(body, a, true).1.min(e) } else { a.1 + 1 };
+            ed::math_at(body, a, true).map(|(ri, _, e)| (ri, a.1, to(e)))
+        };
+        if let Some((ri, x, y)) = math {
+            let c = ed::math_replace(body, a.0, ri, x, y, "");
+            t.anchor = c;
+            t.caret = c;
+            return;
+        }
         let at = if dir == "wordBackward" || dir == "wordForward" {
             // Ctrl+Backspace/Delete work from the start of a selection and leave the rest of it
             // (PowerPoint for Windows).
@@ -199,6 +219,19 @@ pub(super) fn move_caret(s: &mut Session, p: &Value) -> Result<Value> {
         (x, _) => x,
     }
     .to_string();
+    // Right Arrow at an equation's end leaves it without moving; Left Arrow there goes back in.
+    if !extend && !t.is_range() {
+        let leave = to == "right" && crate::cmd::equation::at(&body, &t).is_some_and(|m| m.2 == caret.1);
+        let back = to == "left" && t.left_math == Some(caret);
+        if leave || back {
+            s.select(|_, sel| {
+                if let Some(tt) = sel.text.as_mut() {
+                    tt.left_math = leave.then_some(caret);
+                }
+            })?;
+            return Ok(json!({"caret": [caret.0, caret.1], "inEquation": back}));
+        }
+    }
     let collapse_to = |left: bool| if left { t.ordered().0 } else { t.ordered().1 };
     let mut upstream = false;
     let new = match to.as_str() {
@@ -242,6 +275,7 @@ pub(super) fn move_caret(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(tt) = sel.text.as_mut() {
             tt.caret = new;
             tt.line_end = if upstream { Some(new) } else { None };
+            tt.left_math = None;
             if !extend {
                 tt.anchor = new;
             }
@@ -351,7 +385,7 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
             }
             promote_rtl_if_needed(para, &inherited);
             for r in &mut para.runs {
-                r.props = keep.clone();
+                r.restyle(|p| *p = keep.clone());
             }
         }
         body.paragraphs = nb.paragraphs;

@@ -384,6 +384,7 @@ pub fn draw(
     _h: f64,
     fields: &dyn deckcraft_text::Fields,
     editing: bool,
+    math: Option<((usize, usize), deckcraft_text::TypedMath)>,
 ) -> Option<kurbo::Rect> {
     let _ = pres;
     let style_def = resolve_style(rctx, t);
@@ -472,7 +473,10 @@ pub fn draw(
         if (cell.text.is_empty() && !editing) || text_off_target(cell, *rect, m, (ctx.width(), ctx.height())) {
             continue;
         }
-        let body = cell_body_with_def(rctx, style_def, t, *r, *c, cell);
+        let mut body = cell_body_with_def(rctx, style_def, t, *r, *c, cell);
+        if let Some((_, m)) = math.filter(|m| m.0 == (*r, *c)) {
+            body = deckcraft_text::with_typed_math(&body, m);
+        }
         let tmp = Shape::table_cell(body.clone());
         #[cfg(test)]
         TEXT_CELLS_DRAWN.with(|n| n.set(n.get() + 1));

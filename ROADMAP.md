@@ -91,7 +91,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 | Shapes | 91% | ~75% | 8–14 | [ui-parity](docs/ui-parity.md) |
 | Format (fill, line, effects) | 83% | ~65% | 8–14 | [ui-parity](docs/ui-parity.md) |
 | Arrange | 100% | ~90% | 1–2 | [ui-parity](docs/ui-parity.md) |
-| Text | 83% | ~62% | 18–30 | [gaps](docs/gaps.md#features) |
+| Text | 84% | ~62% | 18–30 | [gaps](docs/gaps.md#features) |
 | Tables | 97% | ~75% | 3–6 | [checklist](docs/parity-checklist.md) |
 | Charts | 65% | ~45% | 12–20 | [gaps](docs/gaps.md#charts-data-grid-elements-and-the-newer-chart-types) |
 | SmartArt | 50% | ~35% | 8–14 | [gaps](docs/gaps.md#smartart-editing-is-shallow) |
@@ -154,6 +154,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-05 | Equations: OMML equations from PowerPoint are drawn in two dimensions (fractions, scripts, radicals, big operators, brackets, matrices). Insert ▸ Equation turns the selected text into an equation or types a new one in place, in its linear form (`a/b`, `x^2`, `\alpha`; `\sum` and Space make ∑), drawn in two dimensions as it is typed, on a gray field; with the caret inside it, it shows as its linear text. Right Arrow at its end leaves it. Home ▸ Font sets an equation's font, kept in .deckcraft and .pptx files (#148, #296, #604) |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
 | 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
 | 2026-11-02 | Slide show on Linux and the BSDs: Presenter View stays off when winit lists exactly one display, as in PowerPoint; if it lists none, the setting is kept. On one display the presenter window covered the show, and the hidden window stalled every frame: slide changes took up to ~1.7 s under Hyprland (#1156) |

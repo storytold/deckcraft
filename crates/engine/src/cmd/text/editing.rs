@@ -41,7 +41,7 @@ pub(super) fn edit(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.select(|_, sel| {
         sel.shapes = vec![id];
-        sel.text = Some(TextSel { shape: id, anchor: at, caret: at, cell, notes: false, line_end: None });
+        sel.text = Some(TextSel { shape: id, anchor: at, caret: at, cell, ..Default::default() });
         sel.cells = None;
     })?;
     Ok(json!({"id": id, "at": [at.0, at.1]}))
@@ -74,20 +74,41 @@ fn typed(s: &Session, body: &TextBody, at: Pos, text: &str) -> String {
 
 pub(crate) fn insert_text(s: &mut Session, text: &str, props: Option<RunProps>) -> Result<Value> {
     let inherited = inherited_aligns_for_edit(s);
-    let text = {
+    let (text, math) = {
         let st = s.doc()?;
         match &st.selection.text {
             Some(t) => {
                 let body = body_of(st, t).cloned().unwrap_or_default();
-                typed(s, &body, t.ordered().0, text)
+                // An equation is typed as it is: no smart quotes, no AutoCorrect.
+                match crate::cmd::equation::at(&body, t) {
+                    Some(m) if !text.contains(['\n', '\u{b}']) => (text.to_string(), Some(m)),
+                    _ => (typed(s, &body, t.ordered().0, text), None),
+                }
             }
-            None => text.to_string(),
+            None => (text.to_string(), None),
         }
     };
     let pos = edit_text(s, |body, t| {
+        if let Some(m) = math {
+            let c = crate::cmd::equation::type_in(body, t, m, &text);
+            t.anchor = c;
+            t.caret = c;
+            return c;
+        }
+        // A new paragraph or line typed in an equation starts after it.
+        if let Some((_, _, e)) = crate::cmd::equation::at(body, t) {
+            t.anchor = (t.caret.0, e);
+            t.caret = t.anchor;
+        }
         let (a, b) = t.ordered();
         let at = ed::delete(body, a, b);
-        let props = props.clone().or_else(|| if a != b { Some(ed::props_at(body, at)) } else { unlinked_at_link_end(body, at) });
+        // Beside an equation (just left, or before one), text takes the text's formatting.
+        let beside = a == b && (t.left_math == Some(at) || ed::math_at(body, at, true).is_some_and(|m| m.1 == at.1));
+        let props = props.clone().or_else(|| match (a != b, beside) {
+            (true, _) => Some(ed::props_at(body, at)),
+            (_, true) => Some(crate::cmd::equation::text_props(body, at)),
+            _ => unlinked_at_link_end(body, at),
+        });
         let c = ed::insert(body, at, &text, props);
         t.anchor = c;
         t.caret = c;
@@ -99,7 +120,9 @@ pub(crate) fn insert_text(s: &mut Session, text: &str, props: Option<RunProps>) 
         }
         c
     })?;
-    autocorrect(s, text.chars().count() == 1)?;
+    if math.is_none() {
+        autocorrect(s, text.chars().count() == 1)?;
+    }
     // AutoCorrect can move the caret: a replaced word, or a list lead it removed.
     let pos = s.doc()?.selection.text.as_ref().map_or(pos, |t| t.caret);
     Ok(json!({"caret": [pos.0, pos.1]}))
@@ -158,6 +181,13 @@ pub(super) fn unlinked_at_link_end(body: &TextBody, at: Pos) -> Option<RunProps>
 pub(crate) fn paste_body(s: &mut Session, src: &TextBody) -> Result<Value> {
     let inherited = inherited_aligns_for_edit(s);
     let pos = edit_text(s, |body, t| {
+        // Into an equation: as text on one line.
+        if let Some(m) = crate::cmd::equation::at(body, t) {
+            let c = crate::cmd::equation::type_in(body, t, m, &src.text().replace('\n', " "));
+            t.anchor = c;
+            t.caret = c;
+            return c;
+        }
         let (a, b) = t.ordered();
         let at = ed::delete(body, a, b);
         let c = ed::insert_body(body, at, src);

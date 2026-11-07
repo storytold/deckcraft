@@ -578,7 +578,7 @@ fn reset(s: &mut Session, p: &Value) -> Result<Value> {
                         for para in &mut t.paragraphs {
                             para.props = Default::default();
                             for r in &mut para.runs {
-                                r.props = Default::default();
+                                r.restyle(|p| *p = Default::default());
                             }
                         }
                     }
