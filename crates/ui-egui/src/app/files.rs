@@ -81,6 +81,22 @@ fn is_presentation_name(lower: &str) -> bool {
         || lower.ends_with(".ppsx")
 }
 
+/// The path a save picker returned, named for the format chosen: a picker that doesn't add the
+/// extension gives `Talk`, which would be written as `Talk` and not open by double-click. A name
+/// that already ends in an extension DeckCraft writes stays as it is. The picker only checked
+/// the name it returned for an existing file, so when `Talk.pptx` already exists nothing is
+/// replaced: the person must type the full name to confirm.
+fn with_extension(path: String, ext: &str) -> Result<String, String> {
+    if deckcraft_engine::cmd::file::writable_format_for_path(&path).is_some() {
+        return Ok(path);
+    }
+    let named = format!("{path}.{ext}");
+    if std::path::Path::new(&named).exists() {
+        return Err(format!("{named} already exists. Type its full name to replace it."));
+    }
+    Ok(named)
+}
+
 /// File → Open keeps the requested operation: a presentation opens, an outline becomes slides.
 fn open_command(name: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
@@ -206,6 +222,13 @@ impl SlideApp {
         let suggested = self.suggested_name(ext);
         if let Some(pick) = self.services.pick_save.as_mut() {
             let Some(path) = pick(&suggested) else { return false };
+            let path = match with_extension(path, ext) {
+                Ok(path) => path,
+                Err(e) => {
+                    self.set_status(e);
+                    return false;
+                }
+            };
             let mut params = json!({"path": path, "format": format, "all": all});
             if let (Some(o), Some(x)) = (params.as_object_mut(), extra.as_object()) {
                 o.extend(x.clone());
@@ -453,6 +476,13 @@ impl SlideApp {
         let suggested = format!("{name}.{ext}");
         if let Some(pick) = self.services.pick_save.as_mut() {
             if let Some(path) = pick(&suggested) {
+                let path = match with_extension(path, ext) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        self.set_status(e);
+                        return;
+                    }
+                };
                 match self.session.execute("file.saveAs", &json!({"path": path})) {
                     Ok(_) => {
                         self.set_status(format!("Saved {path}"));
