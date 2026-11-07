@@ -340,6 +340,38 @@ fn children_filled_with_the_group_fill_show_one_fill_across_the_group() {
 }
 
 #[test]
+fn a_stretched_picture_on_a_group_spans_the_group_not_each_member() {
+    use deckcraft_model::style::{PictureFill, PictureMode};
+    // Regression coverage for #1798: a picture fill set on the group itself is resolved once
+    // against the group's bounds, and members filled with grpFill show their slice of that one
+    // image — not a copy of the whole picture in each member.
+    let mut p = Presentation::default();
+    let media = p.add_media("t.png", "image/png", half_red_half_blue()).expect("media");
+    let member = |id: u32, x: f64| Shape {
+        id: ShapeId(id),
+        xfrm: Some(Xfrm::new(x, 0.0, 120.0, 60.0)),
+        fill: Some(Fill::Group),
+        line: no_line(),
+        ..Default::default()
+    };
+    let g = Shape {
+        id: ShapeId(31),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 240.0, 60.0)),
+        fill: Some(Fill::Picture(PictureFill { media, mode: PictureMode::Stretch { fill_rect: [0.0; 4] }, ..Default::default() })),
+        kind: ShapeKind::Group { children: vec![member(32, 0.0), member(33, 120.0)], child: Xfrm::new(0.0, 0.0, 240.0, 60.0) },
+        ..Default::default()
+    };
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![g];
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    let blue = Rgba::rgb(0, 0, 255);
+    // The samples sit where the two readings disagree: had each member stretched its own
+    // copy, the left member would turn blue at x=160 and the right member would start red
+    // until x=280; under one mapping across the group, the turn is at the group's middle.
+    assert!(close(img.pixel(190, 130), RED, 30), "the left member is still in the picture's left half: {:?}", img.pixel(190, 130));
+    assert!(close(img.pixel(250, 130), blue, 30), "the right member is already in the picture's right half: {:?}", img.pixel(250, 130));
+}
+
+#[test]
 fn open_freeforms_take_arrowheads_even_when_filled() {
     // An open custom path with a fill and a tail arrow: PowerPoint draws the arrow.
     let end = deckcraft_model::style::LineEnd { kind: "triangle".into(), w: "med".into(), len: "med".into() };
