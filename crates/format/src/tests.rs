@@ -516,7 +516,7 @@ fn outline_roundtrip() {
     let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
     let n = outline_to_slides(&mut p, "Intro\n\tPoint one\n\t\tSub point\nSecond\n\tMore");
     assert_eq!(n, 2);
-    let o = slides_to_outline(&p);
+    let o = slides_to_outline(&p, true);
     assert!(o.contains("Intro\n\tPoint one\n\t\tSub point\nSecond"), "{o}");
 }
 
@@ -525,7 +525,7 @@ fn outline_keeps_leading_dash_text() {
     let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
     let n = outline_to_slides(&mut p, "-5 °C tonight\n\t--verbose flag\n\t*args and **kwargs\n- Bullets\n\t- Point\n\t• Other");
     assert_eq!(n, 2);
-    let o = slides_to_outline(&p);
+    let o = slides_to_outline(&p, true);
     assert!(o.contains("-5 °C tonight\n\t--verbose flag\n\t*args and **kwargs\nBullets\n\tPoint\n\tOther"), "{o}");
 }
 
@@ -535,7 +535,7 @@ fn outline_export_keeps_multi_paragraph_title_on_one_line() {
     assert_eq!(outline_to_slides(&mut p, "Intro\n\tPoint one\nSecond\n\tMore"), 2);
     let title = Arc::make_mut(&mut p.slides[0]).shapes.iter_mut().find(|s| s.ph_type().is_some_and(|k| k.is_title())).expect("title placeholder");
     title.text = Some(TextBody::from_text("Line one\nLine two"));
-    let o = slides_to_outline(&p);
+    let o = slides_to_outline(&p, true);
     assert_eq!(o, "Line one Line two\n\tPoint one\nSecond\n\tMore\n");
     let mut q = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
     assert_eq!(outline_to_slides(&mut q, &o), 2);
@@ -583,7 +583,7 @@ fn outline_includes_table_text() {
     s.shapes.push(tbl);
     p.slides = vec![std::sync::Arc::new(s)];
 
-    let out = slides_to_outline(&p);
+    let out = slides_to_outline(&p, true);
     assert!(out.contains("Text box body"), "{out}");
     assert!(out.contains("Cell A1\tCell B1"), "{out}");
     assert!(out.contains("Cell A2\tCell B2"), "{out}");
