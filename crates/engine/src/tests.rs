@@ -7869,7 +7869,10 @@ fn format_color_null_on_a_selected_smartart_graphic_is_automatic() {
         };
         let green = Some(deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(0, 0xAA, 0))));
         for t in kids.iter().filter_map(|c| c.text.as_ref()) {
-            assert!(t.paragraphs.iter().all(|p| p.runs.iter().all(|r| r.props.fill != green)));
+            for p in &t.paragraphs {
+                assert_ne!(p.end_props.fill, green, "imported={imported}: the end mark loses the colour");
+                assert!(p.runs.iter().all(|r| r.props.fill != green), "imported={imported}");
+            }
         }
     }
     let mut s = session();
