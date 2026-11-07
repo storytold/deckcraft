@@ -129,6 +129,9 @@ pub(super) fn chart_data(s: &mut Session, p: &Value) -> Result<Value> {
                     x
                 })
                 .collect();
+            if c.auto_title == Some(true) {
+                c.title = if c.series.len() == 1 { c.series.first().map(|s| s.name.clone()).filter(|n| !n.is_empty()) } else { None };
+            }
         }
         c.raw = None;
         Ok(())
@@ -198,6 +201,7 @@ pub(super) fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if let Some(t) = p.get("title") {
             c.title = t.as_str().map(String::from);
+            c.auto_title = Some(false);
         }
         if let Some(l) = p.get("legend") {
             c.legend = l.as_str().map(String::from);

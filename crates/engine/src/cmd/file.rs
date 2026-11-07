@@ -150,10 +150,44 @@ impl Damage {
 /// [`open_presentation`], plus what the file had lost or damaged.
 pub fn open_checked(name: &str, bytes: &[u8]) -> Result<(Presentation, Damage)> {
     if deckcraft_format::sniff(bytes) {
-        let (p, media) = deckcraft_format::load_checked(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
+        let (mut p, media) = deckcraft_format::load_checked(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
+        restore_missing_chart_title_state(&mut p);
         return Ok((p, Damage { media, slides: vec![] }));
     }
     open_other(name, bytes).map(|(p, slides)| (p, Damage { media: vec![], slides }))
+}
+
+/// Older native files have no `autoTitle` field; recover it from their retained chart XML.
+fn restore_missing_chart_title_state(p: &mut Presentation) {
+    for slide in &mut p.slides {
+        restore_chart_title_state_in_shapes(&mut Arc::make_mut(slide).shapes, 0);
+    }
+    for master in &mut p.masters {
+        let master = Arc::make_mut(master);
+        restore_chart_title_state_in_shapes(&mut master.shapes, 0);
+        for layout in &mut master.layouts {
+            restore_chart_title_state_in_shapes(&mut layout.shapes, 0);
+        }
+    }
+    for master in [&mut p.notes_master, &mut p.handout_master].into_iter().flatten() {
+        restore_chart_title_state_in_shapes(&mut Arc::make_mut(master).shapes, 0);
+    }
+}
+
+fn restore_chart_title_state_in_shapes(shapes: &mut [Shape], depth: usize) {
+    if depth > 64 {
+        return;
+    }
+    for shape in shapes {
+        if let ShapeKind::Chart(chart) = &mut shape.kind
+            && chart.auto_title.is_none()
+        {
+            chart.auto_title = Some(chart.raw.as_deref().and_then(deckcraft_pptx::chart_auto_title_state).unwrap_or(false));
+        }
+        if let Some(children) = shape.children_mut() {
+            restore_chart_title_state_in_shapes(children, depth + 1);
+        }
+    }
 }
 
 fn open_other(name: &str, bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
@@ -785,7 +819,9 @@ mod color_at_tests;
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::{parse_slide_range, write_file};
+    use super::{parse_slide_range, restore_chart_title_state_in_shapes, restore_missing_chart_title_state, write_file};
+    use deckcraft_model::chart::{Chart, ChartType, Series};
+    use deckcraft_model::{Shape, ShapeKind};
 
     #[test]
     fn broad_and_repeated_slide_ranges_expand_once() {
@@ -835,5 +871,79 @@ mod tests {
         assert!(dest.is_dir());
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_native_auto_title_state_is_recovered_from_chart_xml() {
+        let raw = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:autoTitleDeleted val="0"/><c:plotArea><c:barChart><c:ser><c:tx><c:v>Old</c:v></c:tx></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let chart = Chart {
+            kind: ChartType::Column,
+            title: Some("Old".into()),
+            raw: Some(raw.into()),
+            series: vec![Series { name: "Old".into(), ..Default::default() }],
+            ..Default::default()
+        };
+        let mut value = serde_json::to_value(chart).expect("serialize chart");
+        value.as_object_mut().expect("chart object").remove("autoTitle");
+        let chart: Chart = serde_json::from_value(value).expect("load older chart");
+        assert_eq!(chart.auto_title, None);
+        let mut shapes = vec![Shape { kind: ShapeKind::Chart(Box::new(chart)), ..Default::default() }];
+        restore_chart_title_state_in_shapes(&mut shapes, 0);
+        let ShapeKind::Chart(chart) = &shapes[0].kind else { panic!("chart") };
+        assert_eq!(chart.auto_title, Some(true));
+        assert_eq!(chart.title.as_deref(), Some("Old"));
+    }
+
+    #[test]
+    fn missing_native_auto_title_state_is_recovered_for_every_chart_owner() {
+        use deckcraft_model::{Layout, Master, Presentation, Slide};
+        use std::sync::Arc;
+
+        fn shape(auto: bool, title: &str) -> Shape {
+            let raw = format!(
+                r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:autoTitleDeleted val="{}"/><c:plotArea><c:barChart><c:ser><c:tx><c:v>Series</c:v></c:tx></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#,
+                if auto { 0 } else { 1 }
+            );
+            let chart = Chart {
+                kind: ChartType::Column,
+                title: Some(title.into()),
+                raw: Some(raw),
+                series: vec![Series { name: "Series".into(), ..Default::default() }],
+                ..Default::default()
+            };
+            let mut value = serde_json::to_value(chart).unwrap();
+            value.as_object_mut().unwrap().remove("autoTitle");
+            Shape { kind: ShapeKind::Chart(Box::new(serde_json::from_value(value).unwrap())), ..Default::default() }
+        }
+
+        fn recovered(shapes: &[Shape]) -> &Chart {
+            let ShapeKind::Chart(chart) = &shapes[0].kind else { panic!("chart") };
+            chart
+        }
+
+        let mut p = Presentation {
+            slides: vec![Arc::new(Slide { shapes: vec![shape(true, "Series"), shape(false, "User title")], ..Default::default() })],
+            masters: vec![Arc::new(Master {
+                shapes: vec![shape(true, "Series")],
+                layouts: vec![Layout { shapes: vec![shape(true, "Series")], ..Default::default() }],
+                ..Default::default()
+            })],
+            notes_master: Some(Arc::new(Master { shapes: vec![shape(true, "Series")], ..Default::default() })),
+            handout_master: Some(Arc::new(Master { shapes: vec![shape(true, "Series")], ..Default::default() })),
+            ..Default::default()
+        };
+
+        restore_missing_chart_title_state(&mut p);
+        restore_missing_chart_title_state(&mut p);
+
+        assert_eq!(recovered(&p.slides[0].shapes).auto_title, Some(true));
+        let master = &p.masters[0];
+        assert_eq!(recovered(&master.shapes).auto_title, Some(true));
+        assert_eq!(recovered(&master.layouts[0].shapes).auto_title, Some(true));
+        assert_eq!(recovered(&p.notes_master.as_ref().unwrap().shapes).auto_title, Some(true));
+        assert_eq!(recovered(&p.handout_master.as_ref().unwrap().shapes).auto_title, Some(true));
+        let explicit = recovered(&p.slides[0].shapes[1..]);
+        assert_eq!(explicit.auto_title, Some(false));
+        assert_eq!(explicit.title.as_deref(), Some("User title"));
     }
 }
