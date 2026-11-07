@@ -11,6 +11,10 @@ use crate::geom::{Op, P};
 /// Line segments per Bézier when a crossing shape is flattened.
 const CURVE_STEPS: usize = 16;
 
+/// Point-against-edge tests one clipped item may cost (all its subpaths together); an item over
+/// it is dropped, as a single polygon over it already was.
+const MAX_CLIP_WORK: usize = 1_000_000;
+
 /// The bounding box `[l, t, r, b]` of the points in `ops` (control points included).
 pub(crate) fn ops_bbox(ops: &[Op]) -> Option<[f64; 4]> {
     let mut b: Option<[f64; 4]> = None;
@@ -100,14 +104,20 @@ fn is_rect(clip: &[P]) -> bool {
 
 /// Sutherland–Hodgman: `poly` cut by convex `clip`.
 pub(crate) fn clip_polygon(poly: &[P], clip: &[P]) -> Vec<P> {
-    if poly.len().saturating_mul(clip.len()) > 1_000_000 {
-        return Vec::new();
-    }
+    clip_polygon_within(poly, clip, &mut { MAX_CLIP_WORK }).unwrap_or_default()
+}
+
+/// [`clip_polygon`] charging each point visited against each clip edge to `budget`: the polygon
+/// can gain a vertex at every edge, so its cost isn't known from its input size alone. `None`
+/// once the budget is spent.
+fn clip_polygon_within(poly: &[P], clip: &[P], budget: &mut usize) -> Option<Vec<P>> {
     let mut poly = poly.to_vec();
     for i in 0..clip.len() {
-        if poly.len().saturating_mul(clip.len() - i) > 1_000_000 {
-            return Vec::new();
+        // The work actually done: this edge visits the polygon as it now stands.
+        if poly.len() > *budget {
+            return None;
         }
+        *budget -= poly.len();
         let (a, b) = (clip[i], clip[(i + 1) % clip.len()]);
         let keep = |p: P| cross(a, b, p) >= 0.0;
         let cut = |p: P, q: P| {
@@ -133,7 +143,7 @@ pub(crate) fn clip_polygon(poly: &[P], clip: &[P]) -> Vec<P> {
             break;
         }
     }
-    poly
+    Some(poly)
 }
 
 fn disjoint(b: [f64; 4], c: [f64; 4]) -> bool {
@@ -158,9 +168,12 @@ pub(crate) fn clip_raw(raw: Raw, clip: &[P]) -> Vec<Raw> {
                 return Vec::new();
             }
             let subs = flatten(&ops);
+            if too_much_work(&subs, clip, usize::from(fill.is_some()) + usize::from(stroke.is_some())) {
+                return Vec::new();
+            }
             let mut out = Vec::new();
             if fill.is_some() {
-                let f = clip_fill(&subs, clip);
+                let Some(f) = clip_fill(&subs, clip) else { return Vec::new() };
                 if !f.is_empty() {
                     out.push(Raw::Path { ops: f, fill, stroke: None, even_odd, region: region.clone() });
                 }
@@ -181,7 +194,11 @@ pub(crate) fn clip_raw(raw: Raw, clip: &[P]) -> Vec<Raw> {
             if disjoint(b, cb) {
                 return Vec::new();
             }
-            let f = clip_fill(&flatten(&ops), clip);
+            let subs = flatten(&ops);
+            if too_much_work(&subs, clip, 1) {
+                return Vec::new();
+            }
+            let f = clip_fill(&subs, clip).unwrap_or_default();
             if f.is_empty() { Vec::new() } else { vec![Raw::Pattern { ops: f, even_odd, tile, region }] }
         }
         Raw::Bitmap { rect, img, region } => crop(rect, img, clip).map(|(rect, img)| vec![Raw::Bitmap { rect, img, region }]).unwrap_or_default(),
@@ -230,17 +247,28 @@ pub(crate) fn flatten(ops: &[Op]) -> Vec<(Vec<P>, bool)> {
     subs
 }
 
-fn clip_fill(subs: &[(Vec<P>, bool)], clip: &[P]) -> Vec<Op> {
+/// Whether cutting every subpath of one item by `clip` would exceed [`MAX_CLIP_WORK`]; the
+/// per-polygon check alone lets many small subpaths each spend the whole allowance. `passes` is
+/// how many clipping passes the item gets (fill and stroke each cut every subpath), so one item
+/// shares a single allowance between them.
+fn too_much_work(subs: &[(Vec<P>, bool)], clip: &[P], passes: usize) -> bool {
+    subs.iter().map(|s| s.0.len() + 1).sum::<usize>().saturating_mul(clip.len()).saturating_mul(passes) > MAX_CLIP_WORK
+}
+
+/// The clipped fill of every subpath, its clipping work shared by all of them: `None` (the whole
+/// item goes) once [`MAX_CLIP_WORK`] is spent.
+fn clip_fill(subs: &[(Vec<P>, bool)], clip: &[P]) -> Option<Vec<Op>> {
     let mut ops = Vec::new();
+    let mut budget = MAX_CLIP_WORK;
     for (pts, _) in subs {
-        let poly = clip_polygon(pts, clip);
+        let poly = clip_polygon_within(pts, clip, &mut budget)?;
         if poly.len() >= 3 {
             ops.push(Op::M(poly[0]));
             ops.extend(poly[1..].iter().map(|p| Op::L(*p)));
             ops.push(Op::Z);
         }
     }
-    ops
+    Some(ops)
 }
 
 fn clip_stroke(subs: &[(Vec<P>, bool)], clip: &[P]) -> Vec<Op> {
