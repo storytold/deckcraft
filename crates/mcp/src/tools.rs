@@ -84,9 +84,13 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "batch",
             "Run several commands",
-            "Run commands in order; stops at the first error unless keepGoing. Returns each result.",
+            "Run commands in order; stops at the first error unless keepGoing. Returns each result. With atomic, every change to the presentation is made or none, as one undo step. A shape.rotate gesture open before an atomic batch that one of its commands ends keeps its own undo step, before the batch's. An atomic batch also fails when a shape.rotate gesture one of its commands started is still open after the last one (end it in the batch with gesture: end). A failing atomic batch also puts back the selection, the default shape look, the Format and Animation Painters, whether a shape.rotate gesture is open, the AutoCorrect options, which GIFs are paused and Edit Points, and drops the dialogs, panes and playback its commands asked for; some state is not rolled back, such as the clipboard (edit.copy, edit.cut) and the user dictionary (review.addToDictionary).",
             obj(
-                json!({"commands": {"type": "array", "items": obj(json!({"command": string("id"), "params": {"type": "object"}}), &["command"])}, "keepGoing": boolean("Continue after errors")}),
+                json!({
+                    "commands": {"type": "array", "items": obj(json!({"command": string("id"), "params": {"type": "object"}}), &["command"])},
+                    "keepGoing": boolean("Continue after errors"),
+                    "atomic": boolean("All or nothing (command edit.batch): when one command fails, none of them changes the presentation; one undo undoes them all. Not with keepGoing")
+                }),
                 &["commands"],
             ),
             false,
@@ -358,6 +362,40 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
         }
         "batch" => {
             let keep = a.get("keepGoing").and_then(Value::as_bool).unwrap_or(false);
+            // An `atomic` that is not a boolean is refused: read as false, it would keep the
+            // changes made before a failing command.
+            let atomic = match a.get("atomic") {
+                None | Some(Value::Null) => false,
+                Some(Value::Bool(v)) => *v,
+                Some(v) => {
+                    let kind = match v {
+                        Value::String(_) => "a string",
+                        Value::Number(_) => "a number",
+                        Value::Array(_) => "a list",
+                        _ => "an object",
+                    };
+                    return ToolResult::error(format!("batch: `atomic` takes true or false, not {kind}; no command ran"));
+                }
+            };
+            if atomic {
+                if keep {
+                    return ToolResult::error(
+                        "`atomic` and `keepGoing` together: an atomic batch stops at the first error and leaves the presentation as it was",
+                    );
+                }
+                let commands = a.get("commands").cloned().unwrap_or_else(|| json!([]));
+                return match exec(b, "edit.batch", json!({"commands": commands})) {
+                    Ok(v) => {
+                        let steps = v.get("results").and_then(Value::as_array).cloned().unwrap_or_default();
+                        let out: Vec<Value> = steps
+                            .into_iter()
+                            .map(|r| json!({"command": r.get("command").cloned().unwrap_or(Value::Null), "ok": true, "result": r.get("result").cloned().unwrap_or(Value::Null)}))
+                            .collect();
+                        ToolResult::json(&Value::Array(out))
+                    }
+                    Err(e) => ToolResult::error(e),
+                };
+            }
             let mut out = vec![];
             for c in a.get("commands").and_then(Value::as_array).cloned().unwrap_or_default() {
                 let id = c.get("command").and_then(Value::as_str).unwrap_or("");
