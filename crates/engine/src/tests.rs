@@ -6796,8 +6796,10 @@ fn frames_export_of_one_slide_takes_the_slide_parameter() {
     for slide in [json!(-1), json!(1.5), json!("1")] {
         let bad = frames_dir("bad-slide");
         let r = s.execute("file.export", &json!({"format": "frames", "path": bad.to_string_lossy(), "fps": 10, "width": 320, "slide": slide}));
-        assert!(r.is_err(), "slide {slide} gave {r:?}");
-        assert!(!bad.exists(), "slide {slide} wrote frames");
+        let wrote = bad.exists();
+        let _ = std::fs::remove_dir_all(&bad);
+        assert!(matches!(r, Err(crate::EngineError::BadParams { .. })), "slide {slide} gave {r:?}");
+        assert!(!wrote, "slide {slide} wrote frames");
     }
 }
 
