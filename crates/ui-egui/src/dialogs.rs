@@ -2,7 +2,7 @@
 //! About window. The start screen is File › Home (`backstage.rs`).
 
 use deckcraft_color::SchemeSlot;
-use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
 use crate::SlideApp;
@@ -70,7 +70,7 @@ fn title(id: &str) -> &'static str {
         "smartart" => "Choose a SmartArt Graphic",
         "bullets" => "Bullets and Numbering",
         "action" => "Action Settings",
-        "quit" => "DeckCraft",
+        "quit" => "Save changes?",
         "themeColors" => "Create New Theme Colors",
         "themeFonts" => "Create New Theme Fonts",
         _ => "DeckCraft",
@@ -84,11 +84,11 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let mut open = true;
     let mut close = false;
     let mut window = egui::Window::new(title(&d.id))
-        .id(egui::Id::unique(("dialog", d.id.clone())))
-        .collapsible(false)
-        .resizable(false)
-        .anchor(Align2::CENTER_CENTER, vec2(0.0, -40.0))
-        .open(&mut open);
+    .id(egui::Id::unique(("dialog", d.id.clone())))
+    .collapsible(false)
+    .resizable(false)
+    .default_pos(ctx.input(|i| i.viewport().inner_rect).map(|r| r.center() - vec2(170.0, 100.0)).unwrap_or_else(|| pos2(400.0, 300.0)))
+    .open(&mut open);
     // Two columns of colour rows plus Save must fit the first frame (Theme Colors), as must Save
     // in Theme Fonts. A later resize clips the buttons (the window size sticks) and clicks miss them.
     if d.id == "themeColors" {
