@@ -202,6 +202,13 @@ impl Decoder {
     /// pictures that became ready for output, in output order; `pts` travels with the picture of this
     /// access unit through reordering.
     pub fn decode(&mut self, data: &[u8], pts: i64) -> Result<Vec<Picture>> {
+        self.decode_limited(data, pts, usize::MAX)
+    }
+
+    /// Decode one access unit and return at most `limit` pictures. Further ready pictures remain
+    /// queued for [`Decoder::drain_ready`]. This bounds output batches for consumers that convert
+    /// decoded planes into a second pixel representation.
+    pub fn decode_limited(&mut self, data: &[u8], pts: i64, limit: usize) -> Result<Vec<Picture>> {
         let nals = match self.nal_length_size {
             Some(n) => length_prefixed_nals(data, n)?,
             None => annexb_nals(data),
@@ -218,30 +225,41 @@ impl Decoder {
             result = result.and(Err(e));
         }
         result?;
+        Ok(self.drain_ready(limit))
+    }
+
+    /// Return up to `limit` finished pictures already queued for output.
+    pub fn drain_ready(&mut self, limit: usize) -> Vec<Picture> {
         let max_queue = self.max_in_flight * 2;
         let mut pics = Vec::new();
-        while let Some(o) = self.out_queue.front() {
+        while pics.len() < limit {
+            let Some(o) = self.out_queue.front() else { break };
             if !o.frame.is_complete() && self.out_queue.len() <= max_queue {
                 break;
             }
             let Some(o) = self.out_queue.pop_front() else { break };
             pics.push(make_picture(&o));
         }
-        Ok(pics)
+        pics
     }
 
     /// Output all remaining pictures (end of stream).
     pub fn flush(&mut self) -> Vec<Picture> {
+        self.flush_limited(usize::MAX)
+    }
+
+    /// Flush the decoder and return at most `limit` pictures. Any remainder stays queued for
+    /// [`Decoder::drain_ready`].
+    pub fn flush_limited(&mut self, limit: usize) -> Vec<Picture> {
         self.submit_pending();
         let mut outs = Vec::new();
         self.dpb.flush(&mut outs);
         self.out_queue.extend(outs);
-        let pics = self.out_queue.drain(..).map(|o| make_picture(&o)).collect();
         while let Some(f) = self.in_flight.pop_front() {
             f.wait_complete();
         }
         self.first_picture = true;
-        pics
+        self.drain_ready(limit)
     }
 
     /// Statistics accumulated so far.
