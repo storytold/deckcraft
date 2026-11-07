@@ -45,9 +45,13 @@ pub(super) fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
     format_run(s, &move |r| r.baseline = Some(if v { -0.25 } else { 0.0 }))
 }
 
+/// `format.font {family}`: sets the family, then answers what a run in it asks for and the faces
+/// that draw the text it was set on.
 pub(super) fn font(s: &mut Session, p: &Value) -> Result<Value> {
     let f = str_param(p, "family").ok_or_else(|| bad("format.font", "missing `family`"))?.to_string();
-    format_run(s, &move |r| r.font = Some(f.clone()))
+    let family = f.clone();
+    format_run(s, &move |r| r.font = Some(f.clone()))?;
+    Ok(crate::cmd::text::font_answer(s.doc()?, &family))
 }
 
 pub(super) fn size(s: &mut Session, p: &Value) -> Result<Value> {
@@ -454,13 +458,19 @@ fn font_dialog_params(s: &Session) -> Value {
     v
 }
 
+/// `format.fontDialog`: with no fields, asks the UI to open the Font dialog; otherwise applies the
+/// fields in one undo step and, when they set the family, answers as `format.font` does.
 pub(super) fn font_dialog(s: &mut Session, p: &Value) -> Result<Value> {
     let edits = font_edits(p)?;
     if edits.is_empty() {
         s.ui_requests.push(crate::UiRequest::Dialog { id: "font".into(), params: font_dialog_params(s) });
         return ok();
     }
-    format_run(s, &|r| edits.write(r))
+    let answer = format_run(s, &|r| edits.write(r))?;
+    match &edits.family {
+        Some(family) => Ok(crate::cmd::text::font_answer(s.doc()?, family)),
+        None => Ok(answer),
+    }
 }
 
 pub(super) fn clear(s: &mut Session, _p: &Value) -> Result<Value> {

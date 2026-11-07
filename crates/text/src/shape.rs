@@ -1,11 +1,28 @@
 use super::autonum::autonum;
 use super::run::{RunEffects, TextShadow};
-use super::style::{Cell, Opts, ParaShaped, Style, face_chain, make_style};
+use super::style::{Cell, Fields, Opts, ParaShaped, Style, face_chain, make_style};
 use super::symbol::{covers_symbol, is_symbol_font, map_symbol_bullet, symbol_font_char, symbol_map_char};
 use super::{
-    Arc, Bullet, Caps, Ctx, Fill, FontDb, FontFace, FontSlot, HashMap, ParaProps, RunKind, RunProps, ScriptTag, Shape, ShapeParams, TextBody,
+    Arc, Bullet, Caps, Ctx, Fill, FontDb, FontFace, FontSlot, HashMap, ParaProps, Run, RunKind, RunProps, ScriptTag, Shape, ShapeParams, TextBody,
     UnicodeSegmentation, bidi, resolve, script,
 };
+
+/// A run's text as the layout sets it in its paragraph: text and math runs give their own text, a
+/// line break one U+000B, and a field its value in `fields`, written the way language `lang`
+/// writes it, or else its saved text.
+pub fn run_text(run: &Run, lang: Option<&str>, fields: &dyn Fields) -> String {
+    match &run.kind {
+        RunKind::Text | RunKind::Math { .. } => run.text.clone(),
+        RunKind::Break => "\u{b}".into(),
+        RunKind::Field { field } => fields.field_in(field, lang).unwrap_or_else(|| run.text.clone()),
+    }
+}
+
+/// Is `c` a symbol-font code? PowerPoint stores a symbol font's characters at U+F000 + their
+/// code, and the layout draws them in the run's symbol typeface (`a:sym`) when it has one.
+pub fn is_symbol_code(c: char) -> bool {
+    ('\u{F000}'..='\u{F0FF}').contains(&c)
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn shape_para(
@@ -45,12 +62,7 @@ pub(crate) fn shape_para(
     for run in &para.runs {
         let rp = resolve::run(ctx, shape, para, &run.props);
         let st = make_style(ctx, &rp, scale, opts.prompt_color);
-        let t: String = match &run.kind {
-            RunKind::Text => run.text.clone(),
-            RunKind::Break => "\u{b}".into(),
-            RunKind::Field { field } => opts.fields.field_in(field, rp.lang.as_deref()).unwrap_or_else(|| run.text.clone()),
-            RunKind::Math { .. } => run.text.clone(),
-        };
+        let t = run_text(run, rp.lang.as_deref(), opts.fields);
         let si = styles.len();
         styles.push(st);
         char_style.extend(std::iter::repeat_n(si, t.chars().count()));
@@ -197,7 +209,7 @@ fn shape_cells(
         let sym_face = st
             .sym
             .as_deref()
-            .filter(|_| cluster.first().is_some_and(|c| ('\u{F000}'..='\u{F0FF}').contains(c)))
+            .filter(|_| cluster.first().copied().is_some_and(is_symbol_code))
             .filter(|f| db.has_family(f))
             .map(|f| db.face(f, st.style_name))
             .filter(|f| covers_symbol(f, cluster.first().copied().unwrap_or(' ')));

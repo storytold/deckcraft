@@ -3,7 +3,7 @@
 
 use deckcraft_fonts::FontDb;
 use deckcraft_model::resolve::{self, Ctx};
-use deckcraft_model::text::{Bullet, TextBody};
+use deckcraft_model::text::{Bullet, RunProps, TextBody};
 use deckcraft_model::{Presentation, Shape, ShapeKind};
 
 /// Load each embedded face into the font database, so text in that family draws with the file's
@@ -50,11 +50,11 @@ pub fn used_fonts(p: &Presentation) -> Vec<String> {
         let Some(ctx) = Ctx::for_slide(p, slide) else { continue };
         deckcraft_model::walk(&slide.shapes, &mut |s, _| {
             if let Some(body) = &s.text {
-                body_fonts(&ctx, s, body, &mut add);
+                body_font_uses(&ctx, s, body, &mut |u| add(u.family));
             }
             if let ShapeKind::Table(t) = &s.kind {
                 for cell in t.rows.iter().flat_map(|r| &r.cells) {
-                    body_fonts(&ctx, s, &cell.text, &mut add);
+                    body_font_uses(&ctx, s, &cell.text, &mut |u| add(u.family));
                 }
             }
         });
@@ -62,21 +62,39 @@ pub fn used_fonts(p: &Presentation) -> Vec<String> {
     out
 }
 
-fn body_fonts(ctx: &Ctx, s: &Shape, body: &TextBody, add: &mut dyn FnMut(String)) {
-    for para in &body.paragraphs {
-        let has_text = para.runs.iter().any(|r| !r.text.trim().is_empty());
-        if !has_text {
+/// One use of a font family in a text body, as `font.used` counts them.
+pub(crate) struct FontUse<'a> {
+    /// The paragraph's index in the body.
+    pub(crate) para: usize,
+    /// The run's index in the paragraph and its properties, resolved through the style chain;
+    /// `None` for the paragraph's character bullet.
+    pub(crate) run: Option<(usize, &'a RunProps)>,
+    /// The family it is set in, theme references resolved (untrimmed, possibly empty).
+    pub(crate) family: String,
+}
+
+/// Calls `f` with each font use in `body`, text of `s`, in order. A paragraph counts when one of
+/// its runs holds non-space text: each such run is a use of its Latin typeface, and a character
+/// bullet that names a font is a use of that font. `font.used` and `font.used {detail: true}`
+/// both count through this.
+pub(crate) fn body_font_uses(ctx: &Ctx, s: &Shape, body: &TextBody, f: &mut dyn FnMut(FontUse<'_>)) {
+    for (pi, para) in body.paragraphs.iter().enumerate() {
+        if !para.runs.iter().any(|r| !r.text.trim().is_empty()) {
             continue;
         }
-        for run in para.runs.iter().filter(|r| !r.text.trim().is_empty()) {
-            let r = resolve::run(ctx, s, para, &run.props);
-            add(resolve::font_family(ctx, &r));
+        for (ri, run) in para.runs.iter().enumerate() {
+            if run.text.trim().is_empty() {
+                continue;
+            }
+            let props = resolve::run(ctx, s, para, &run.props);
+            let family = resolve::font_family(ctx, &props);
+            f(FontUse { para: pi, run: Some((ri, &props)), family });
         }
         let pp = resolve::para(ctx, s, para);
         if matches!(pp.bullet, Some(Bullet::Char { .. }))
-            && let Some(f) = pp.bullet_font.as_deref()
+            && let Some(font) = pp.bullet_font.as_deref()
         {
-            add(ctx.master.theme.font(f));
+            f(FontUse { para: pi, run: None, family: ctx.master.theme.font(font) });
         }
     }
 }
