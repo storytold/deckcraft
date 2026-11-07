@@ -618,7 +618,12 @@ fn media_node(w: &mut W, ids: &mut Ids, spid: u32, m: &MediaClip) {
         w.open0("p:audio");
     }
     w.open("p:cMediaNode", A::new().a("vol", vol).o("showWhenStopped", m.hide_while_not_playing.then_some("0")));
-    w.empty("p:cTn", A::new().a("id", ids.next()).a("fill", "hold").a("display", "0").o("repeatCount", m.loop_play.then_some("indefinite")));
+    // Like PowerPoint's own media nodes, it waits to be started (`delay="indefinite"`) instead of starting with the slide.
+    w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold").a("display", "0").o("repeatCount", m.loop_play.then_some("indefinite")));
+    w.open0("p:stCondLst");
+    w.empty("p:cond", A::new().a("delay", "indefinite"));
+    w.close("p:stCondLst");
+    w.close("p:cTn");
     w.open0("p:tgtEl");
     w.empty("p:spTgt", A::new().a("spid", spid));
     w.close("p:tgtEl");
