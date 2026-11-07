@@ -38,6 +38,8 @@ pub struct Imp<'a> {
     pub vml_previews: HashMap<String, HashMap<String, String>>,
     /// Aggregate byte count of retained chart sidecars across the presentation.
     pub kept_sidecar_bytes: usize,
+    /// Data slots of the charts decoded so far (see `chart::MAX_PRESENTATION_CHART_POINTS`).
+    pub chart_points: usize,
     /// Cached kept sidecars by normalized chart part name.
     pub kept_charts: HashMap<String, deckcraft_model::chart::ChartKept>,
     /// Add-in tags parts, parsed once each, by normalized part name.
@@ -445,6 +447,7 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         table_style_ids: Vec::new(),
         vml_previews: HashMap::new(),
         kept_sidecar_bytes: 0,
+        chart_points: 0,
         kept_charts: HashMap::new(),
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
@@ -487,6 +490,7 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         table_style_ids: Vec::new(),
         vml_previews: HashMap::new(),
         kept_sidecar_bytes: 0,
+        chart_points: 0,
         kept_charts: HashMap::new(),
         tags_by_part: HashMap::new(),
         tag_bytes: 0,

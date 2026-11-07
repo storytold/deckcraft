@@ -428,10 +428,14 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
             return s;
         }
         if let Some(c) = gd.child("chart")
+            && imp.chart_points < super::chart::MAX_PRESENTATION_CHART_POINTS
             && let Some(rel) = part.rels.get(c.attr("r:id").unwrap_or(""))
             && let Some(bytes) = imp.pkg.xml_bytes(&rel.target)
             && let Some(mut chart) = if uri.ends_with("/chartex") { super::read_chartex_xml(bytes) } else { super::read_chart_xml(bytes) }
+            // A chart that would cross the presentation limit is read as the placeholder frame instead.
+            && imp.chart_points.saturating_add(super::chart::point_count(&chart)) <= super::chart::MAX_PRESENTATION_CHART_POINTS
         {
+            imp.chart_points = imp.chart_points.saturating_add(super::chart::point_count(&chart));
             chart.kept = super::chart::capture_kept(imp, &rel.target);
             s.kind = ShapeKind::Chart(Box::new(chart));
             return s;
