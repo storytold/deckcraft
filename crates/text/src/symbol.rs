@@ -277,7 +277,7 @@ pub fn map_symbol_bullet(c: &str, font: Option<&str>) -> String {
     }
     // Only the legacy symbol fonts: "Noto Sans Symbols" and the like are Unicode fonts whose
     // characters (❑ ❖) are drawn as they are. Private-use codes are mapped only when no font is named.
-    if f.contains("wingdings") || f == "symbol" || (font.is_none() && ('\u{f000}'..='\u{f0ff}').contains(&first)) {
+    if f.contains("wingdings") || f.starts_with("monotype sorts") || f == "symbol" || (font.is_none() && ('\u{f000}'..='\u{f0ff}').contains(&first)) {
         let code = (first as u32) & 0xff;
         // Wingdings 2 and 3 put different shapes at the same codes.
         if f.starts_with("wingdings 2") {
@@ -304,6 +304,8 @@ pub fn map_symbol_bullet(c: &str, font: Option<&str>) -> String {
             return m.to_string();
         }
         let m = match code {
+            0x6d if f.starts_with("monotype sorts") => '○',
+            0xf0 if f.contains("wingdings") => '⇨',
             0xa7 => '▪',
             0xd8 => '➢',
             0xfc => '✓',
