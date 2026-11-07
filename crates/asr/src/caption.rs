@@ -323,8 +323,13 @@ pub fn wrap_tail(text: &str, per_line: usize, max_lines: usize) -> (Vec<String>,
     let capacity = per_line.saturating_mul(max_lines);
     let tail = tail_by_units(&text, capacity);
     let tail = if tail.len() < text.len() {
-        // The cut may be inside a word: start at the next boundary where there is one.
-        tail.find(char::is_whitespace).map_or(tail, |i| tail.get(i..).unwrap_or_default().trim_start())
+        let before = text.get(..text.len() - tail.len()).and_then(|head| head.chars().next_back());
+        match before {
+            // The cut fell inside a word: start at the next boundary where there is one. A cut
+            // that lands right after whitespace already starts at a word, so it is kept whole.
+            Some(c) if !c.is_whitespace() => tail.find(char::is_whitespace).map_or(tail, |i| tail.get(i..).unwrap_or_default().trim_start()),
+            _ => tail,
+        }
     } else {
         tail
     };
@@ -539,6 +544,14 @@ mod tests {
         let (lines, clipped) = wrap_tail(&"字".repeat(30), 6, 2);
         assert!(clipped);
         assert_eq!(lines.concat().chars().count(), 6, "two lines of three wide glyphs: {lines:?}");
+    }
+
+    #[test]
+    fn a_cut_at_a_word_boundary_keeps_that_word() {
+        assert_eq!(tail_by_units("abcd efgh ij", 7), "efgh ij", "the cut lands right after a space");
+        assert_eq!(wrap_tail("abcd efgh ij", 7, 1), (vec!["efgh ij".to_string()], true));
+        assert_eq!(tail_by_units("agent cdef", 4), "cdef", "a cut inside a word starts after it");
+        assert_eq!(wrap_tail("abcd cdef", 4, 2), (vec!["cdef".to_string()], true));
     }
 
     #[test]
