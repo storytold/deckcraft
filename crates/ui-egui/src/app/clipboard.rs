@@ -60,19 +60,61 @@ fn visible_text(html: &str) -> String {
 impl SlideApp {
     /// Offer the copy or cut on the system clipboard.
     ///
-    /// Slides go out as plain text. Text goes out as HTML plus the same plain words, so a paste
-    /// back into DeckCraft still uses the internal clipboard. A textless shape leaves the
-    /// invisible [`OBJECTS_MARKER`] rather than a picture: with only an image on the clipboard
-    /// egui-winit drops Ctrl+V, and the shortcut could no longer paste the shape here (#182).
+    /// Text goes out as HTML plus the same plain words, so a paste back into DeckCraft still uses
+    /// the internal clipboard and Pages keeps the bold. The HTML also carries the internal
+    /// clipboard itself (shapes, slides, media; [`deckcraft_engine::clipboard`]), so another
+    /// DeckCraft window pastes the objects; other apps see only the text and HTML. A textless
+    /// shape leaves the invisible [`OBJECTS_MARKER`] as the plain text rather than a picture: with
+    /// only an image on the clipboard egui-winit drops Ctrl+V, and the shortcut could no longer
+    /// paste the shape here (#182).
     pub(super) fn publish_clipboard(&mut self, ctx: &egui::Context, cut: bool) {
         let cmd = if cut { "edit.cut" } else { "edit.copy" };
         let Ok(v) = self.session.execute(cmd, &json!({})) else { return };
-        let text = v.get("text").and_then(Value::as_str).unwrap_or("").to_string();
-        let html = v.get("html").and_then(Value::as_str).unwrap_or("").to_string();
-        if self.session.clipboard.slides.is_empty() && !html.is_empty() && self.services.clipboard_set_html.as_mut().is_some_and(|f| f(&html, &text))
-        {
-            return;
+        if let Some(plain) = self.offer_clipboard(&v) {
+            ctx.copy_text(plain);
         }
-        ctx.copy_text(system_clipboard_text(&text));
     }
+
+    /// Offer what Copy or Cut answered (`{text, html}`) on the system clipboard through the host:
+    /// the HTML, with the session clipboard inside, and the plain text alternative. Returns the
+    /// plain text still to be put there with `ctx.copy_text` when the host took nothing.
+    pub(super) fn offer_clipboard(&mut self, copied: &Value) -> Option<String> {
+        // A caret with nothing selected copies nothing: the session clipboard is as it was, and
+        // the system clipboard stays whatever it is (not the old copy, published afresh).
+        if copied.get("copied").and_then(Value::as_bool) == Some(false) {
+            return None;
+        }
+        let text = copied.get("text").and_then(Value::as_str).unwrap_or("");
+        let html = copied.get("html").and_then(Value::as_str).unwrap_or("");
+        let plain = system_clipboard_text(text);
+        // Without a host that takes HTML (the web, the test harness) the payload is never built.
+        if let Some(f) = self.services.clipboard_set_html.as_mut() {
+            let carried = deckcraft_engine::clipboard::embed(html, text, &self.session.clipboard);
+            if let Some(rich) = carried.as_deref().or((!html.is_empty()).then_some(html)) {
+                if f(rich, &plain) {
+                    return None;
+                }
+                log::warn!("the system clipboard refused the HTML copy ({} bytes); offering the plain text only", rich.len());
+            }
+        }
+        Some(plain)
+    }
+
+    /// Before a paste that reads nothing itself (the ribbon, a menu, the control channel without
+    /// `text`/`html`/`payload`): a copy another DeckCraft window left on the system clipboard
+    /// becomes the session's clipboard, as a Ctrl+V paste would make it. Our own copy stays.
+    pub(super) fn adopt_system_clipboard(&mut self) {
+        let Some(html) = self.services.clipboard_html.as_mut().and_then(|f| f()) else { return };
+        let Some(payload) = deckcraft_engine::clipboard::extract(&html) else { return };
+        if let Err(e) = deckcraft_engine::clipboard::adopt(&mut self.session, payload) {
+            log::warn!("ignoring the DeckCraft clipboard on the system clipboard: {e}");
+        }
+    }
+}
+
+/// Whether running `id` with `params` should look at the system clipboard first
+/// ([`SlideApp::adopt_system_clipboard`]): a paste given nothing to paste.
+pub(crate) fn pastes_system_clipboard(id: &str, params: &Value) -> bool {
+    matches!(id, "edit.paste" | "edit.pasteSpecial" | "edit.pasteText" | "app.pasteSpecial")
+        && ["text", "html", "payload"].iter().all(|k| params.get(k).is_none())
 }

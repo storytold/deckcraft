@@ -20,7 +20,7 @@ pub mod points;
 pub mod recolor;
 pub mod reuse;
 pub mod review;
-mod richclip;
+pub(crate) mod richclip;
 pub mod selection;
 pub mod shape;
 pub mod slide;
