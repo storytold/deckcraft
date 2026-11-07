@@ -230,7 +230,7 @@ mod tests {
     use deckcraft_model::{Cell, Shape, ShapeId, ShapeKind, Table};
 
     fn link(action: Action) -> Hyperlink {
-        Hyperlink { action, tooltip: String::new(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None }
+        Hyperlink { action, tooltip: String::new(), highlight_click: false, use_text_color: false, sound: None, stop_sound: false, zoom_return: None }
     }
 
     #[test]

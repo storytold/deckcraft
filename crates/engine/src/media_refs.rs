@@ -28,6 +28,9 @@ macro_rules! walkers {
 
         pub fn picture(p: &$($m)? PictureFill, f: &mut F) {
             f(&$($m)? p.media);
+            if let Some(svg) = &$($m)? p.svg_media {
+                f(svg);
+            }
             if let Some(a) = &$($m)? p.artistic {
                 f(&$($m)? a.original);
             }
@@ -355,6 +358,7 @@ mod tests {
                 action: Action::NextSlide,
                 tooltip: String::new(),
                 highlight_click: false,
+                use_text_color: false,
                 sound: Some(MediaId(9006)),
                 stop_sound: false,
                 zoom_return: None,
