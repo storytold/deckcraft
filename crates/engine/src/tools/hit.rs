@@ -37,6 +37,50 @@ fn member_at(children: &[Shape], to_abs: Affine, p: Point, tol: f64) -> Option<S
     None
 }
 
+/// The member of group `sh` a plain click at `p` should select, like PowerPoint: when the group
+/// alone is selected, the topmost member under the pointer; when a member is already selected,
+/// that member or a sibling under the pointer. Nested groups are entered one level per click.
+pub(super) fn group_member_to_select(st: &crate::DocState, sh: &Shape, p: Point, tol: f64) -> Option<ShapeId> {
+    let ShapeKind::Group { children, child } = &sh.kind else { return None };
+    let x = xfrm_of(&st.doc, &st.selection, sh);
+    let ch = Rect::new(child.x, child.y, child.x + child.w, child.y + child.h);
+    member_to_select(st, children, deckcraft_geom::group_child_affine(&x, ch), p, tol, st.selection.shapes == [sh.id], 0)
+}
+
+/// `group_selected`: the group holding `children` is the selection. A click then picks one of
+/// them, as it does when the selection is made of these members.
+fn member_to_select(
+    st: &crate::DocState,
+    children: &[Shape],
+    to_abs: Affine,
+    p: Point,
+    tol: f64,
+    group_selected: bool,
+    depth: usize,
+) -> Option<ShapeId> {
+    if depth > 64 {
+        return None;
+    }
+    let sel = &st.selection.shapes;
+    let open = group_selected || (!sel.is_empty() && sel.iter().all(|id| children.iter().any(|c| c.id == *id)));
+    let q = to_abs.inverse() * p;
+    let c = children.iter().rev().find(|c| {
+        c.xfrm.is_some_and(|cx| {
+            let l = cx.affine().inverse() * q;
+            l.x >= -tol && l.y >= -tol && l.x <= cx.w + tol && l.y <= cx.h + tol
+        })
+    })?;
+    if open {
+        return Some(c.id);
+    }
+    if let (ShapeKind::Group { children: gc, child: gch }, Some(cx)) = (&c.kind, c.xfrm) {
+        let gch = Rect::new(gch.x, gch.y, gch.x + gch.w, gch.y + gch.h);
+        let nested = to_abs * deckcraft_geom::group_child_affine(&cx, gch);
+        return member_to_select(st, gc, nested, p, tol, *sel == [c.id], depth + 1);
+    }
+    None
+}
+
 /// The box whose text is being edited on the slide (not speaker notes, not a table cell).
 pub(super) struct EditedBox {
     pub(super) id: ShapeId,
