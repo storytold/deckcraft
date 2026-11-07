@@ -9,7 +9,12 @@ pub fn ime_area(app: &SlideApp, xf: Xf) -> Option<Rect> {
         if ts.notes {
             return None;
         }
-        if let Some((top, bot)) = deckcraft_engine::cmd::text::caret_line(st, ts) {
+        let line = if st.selection.math.is_some() {
+            deckcraft_engine::cmd::equation::math_caret_line(st)
+        } else {
+            deckcraft_engine::cmd::text::caret_line(st, ts)
+        };
+        if let Some((top, bot)) = line {
             return Some(Rect::from_two_pos(xf.to_screen(top), xf.to_screen(bot)).expand2(vec2(1.0, 0.0)));
         }
         let sh = st.shape(ts.shape)?;
