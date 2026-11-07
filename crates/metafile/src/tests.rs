@@ -898,6 +898,24 @@ fn place_fits_the_frame_scales_strokes_and_drops_far_paths() {
 }
 
 #[test]
+fn place_counts_the_items_own_clip_region_before_keeping_it() {
+    // A path of 499,999 elements nearly fills the 500,000 budget; a second one whose new clip
+    // region adds elements goes past it and is left out.
+    let mut segs = vec![Seg::Move(0.0, 0.0)];
+    segs.extend((0..499_998).map(|i| Seg::Line(1.0 + (i % 50) as f32, 1.0)));
+    let big = Item::Path { segs, fill: None, stroke: None, even_odd: false, region: None };
+    let small = Item::Path {
+        segs: vec![Seg::Move(0.0, 0.0), Seg::Line(1.0, 1.0)],
+        fill: None,
+        stroke: None,
+        even_odd: false,
+        region: Some(vec![[0.0, 0.0, 50.0, 25.0], [10.0, 10.0, 20.0, 20.0]]),
+    };
+    let pic = crate::Picture { width: 100.0, height: 50.0, items: vec![big, small] };
+    assert_eq!(pic.place(kurbo::Rect::new(0.0, 0.0, 100.0, 50.0), [0.0; 4]).len(), 1);
+}
+
+#[test]
 fn place_keeps_only_finite_bounded_bitmaps_with_area() {
     let bitmap = |rect: [f32; 4]| Item::Bitmap { rect, width: 1, height: 1, rgba: vec![0; 4], region: None };
     let pic = crate::Picture {
@@ -2073,4 +2091,16 @@ fn clip_polygon_work_bound() {
     let clip: Vec<(f64, f64)> = (0..2000).map(|i| (i as f64, i as f64)).collect();
     let clipped = crate::cliprect::clip_polygon(&poly, &clip);
     assert!(clipped.is_empty(), "excessive polygon clip product rejected");
+}
+
+#[test]
+fn full_canvas_does_not_sample_gradient_tiles() {
+    let mut cv = Canvas::new();
+    let big = || Rgba { w: 1, h: 1, bottom_up: false, px: vec![0u8; MAX_BYTES / 2] };
+    for _ in 0..3 {
+        cv.bitmap([0.0, 0.0, 1.0, 1.0], big());
+    }
+    assert!(cv.full());
+    cv.shade_shape(&crate::geom::rect(0.0, 0.0, 10.0, 10.0), &|_| panic!("sampled a full canvas"));
+    assert_eq!(cv.items.len(), 2);
 }

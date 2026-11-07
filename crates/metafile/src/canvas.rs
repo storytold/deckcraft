@@ -369,6 +369,11 @@ impl Canvas {
     }
 
     /// True once the item cap is hit; the readers stop there and keep what they have.
+    /// Bytes the canvas has retained so far.
+    pub fn used(&self) -> usize {
+        self.used
+    }
+
     pub fn full(&self) -> bool {
         self.full
     }
@@ -551,6 +556,10 @@ impl Canvas {
     /// of at most [`SHADE_RES`] cells on the longer side, laid out so that its one repeat covers
     /// the shape.
     pub fn shade_shape(&mut self, ops: &[Op], shade: &dyn Fn(P) -> [u8; 4]) {
+        // A full canvas keeps nothing more, so do not sample a tile for it.
+        if self.full {
+            return;
+        }
         let dev: Vec<Op> = ops.iter().map(|o| self.map_op(*o)).collect();
         let Some([l, t, r, b]) = crate::cliprect::ops_bbox(&dev) else { return };
         let side = (r - l).max(b - t);
