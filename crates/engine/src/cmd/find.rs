@@ -5,6 +5,7 @@ use std::sync::Arc;
 use deckcraft_model::text::RunKind;
 use deckcraft_model::{Paragraph, Shape, ShapeKind, Slide, TextBody};
 use serde_json::{Value, json};
+use unicode_properties::{GeneralCategoryGroup, UnicodeGeneralCategory};
 
 use super::{CommandSpec, bad, bool_or, cmd, has_doc, str_param};
 use crate::{Result, Session};
@@ -87,7 +88,7 @@ impl Opts {
     /// Non-overlapping matches as char ranges.
     fn matches(&self, text: &[char]) -> Vec<(usize, usize)> {
         let n = self.pat.len();
-        let word = |c: Option<&char>| c.is_some_and(|c| c.is_alphanumeric() || *c == '_');
+        let word = |c: Option<&char>| c.is_some_and(|c| c.is_alphanumeric() || *c == '_' || c.general_category_group() == GeneralCategoryGroup::Mark);
         let mut out = vec![];
         let mut i = 0;
         while i + n <= text.len() {
@@ -220,6 +221,16 @@ mod tests {
         assert_eq!(opts("cat", false, false).matches(&t).len(), 3);
         assert_eq!(opts("cat", true, false).matches(&t).len(), 2);
         assert_eq!(opts("cat", false, true).matches(&t), vec![(0, 3), (4, 7)]);
+    }
+
+    #[test]
+    fn whole_word_boundaries_include_unicode_combining_marks() {
+        let latin: Vec<char> = "cafe\u{301}ine cafe! café".chars().collect();
+        assert_eq!(opts("cafe", false, true).matches(&latin), vec![(9, 13)]);
+
+        // Hebrew niqqud is a combining mark outside the Latin combining-diacritic block.
+        let hebrew: Vec<char> = "אבְג אב!".chars().collect();
+        assert_eq!(opts("אב", true, true).matches(&hebrew), vec![(5, 7)]);
     }
 
     fn text_run(t: &str) -> Run {

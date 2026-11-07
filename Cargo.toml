@@ -48,6 +48,7 @@ proptest = "1"
 rayon = "1"
 unicode-bidi = "0.3"
 unicode-segmentation = "1"
+unicode-properties = { version = "0.1", features = ["general-category"] }
 unicode-linebreak = "0.1"
 # Base features are wasm-safe (`std` only). The non-wasm `clock` feature is requested
 # per-crate for targets that read the local clock (see crates/text).
