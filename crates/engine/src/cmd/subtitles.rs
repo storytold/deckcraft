@@ -23,7 +23,7 @@ pub fn specs() -> Vec<CommandSpec> {
             always,
             set
         ),
-        cmd!(query "show.subtitles.state", "Subtitle Status", ["Slide Show", "Captions & Subtitles"], None, "{} → {on, settings, provider: {state, detail, model, language, microphone}}", always, state),
+        cmd!(query "show.subtitles.state", "Subtitle Status", ["Slide Show", "Captions & Subtitles"], None, "{} → {on, settings, provider: {state, detail, model, language, microphone, accelerator, capabilities}}", always, state),
     ]
 }
 
