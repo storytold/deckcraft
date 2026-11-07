@@ -229,11 +229,7 @@ pub fn outline_text(bytes: &[u8]) -> String {
 
 pub fn add_opened(s: &mut Session, name: &str, path: Option<String>, p: Presentation) -> usize {
     let title = std::path::Path::new(name).file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| name.to_string());
-    crate::fonts::install_embedded_fonts(&p);
-    let missing_fonts = crate::fonts::missing_fonts(&p);
-    let mut st = DocState::new(p, path, title);
-    st.missing_fonts = missing_fonts;
-    s.add_document(st)
+    s.add_document(DocState::new(p, path, title))
 }
 
 /// A presentation read from disk, not yet added to a session: [`read_presentation_file`] needs no

@@ -163,6 +163,14 @@ fn body_mut<'a>(doc: &'a mut Presentation, sel: &Selection, t: &TextSel) -> Opti
 
 /// Edit the active text body and selection; refits auto-sizing text boxes afterwards.
 pub(crate) fn edit_text<T>(s: &mut Session, f: impl FnOnce(&mut TextBody, &mut TextSel) -> T) -> Result<T> {
+    edit_text_before_fit(s, f, |_, _| Ok(()))
+}
+
+fn edit_text_before_fit<T>(
+    s: &mut Session,
+    f: impl FnOnce(&mut TextBody, &mut TextSel) -> T,
+    before_fit: impl FnOnce(&mut Session, &T) -> Result<()>,
+) -> Result<T> {
     let t0 = s.doc()?.selection.text.clone().ok_or_else(|| bad("text", NO_TEXT_POINT))?;
     // Materialise an inherited placeholder box before editing (so autofit can change it).
     let r = s.edit(|doc, sel| {
@@ -181,6 +189,7 @@ pub(crate) fn edit_text<T>(s: &mut Session, f: impl FnOnce(&mut TextBody, &mut T
         sel.text = Some(t);
         Ok(r)
     })?;
+    before_fit(s, &r)?;
     if !t0.notes && t0.cell.is_none() {
         fit_text_box(s, t0.shape)?;
     }

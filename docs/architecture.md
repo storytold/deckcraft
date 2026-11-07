@@ -1,6 +1,6 @@
 # DeckCraft architecture
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: minor, community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-05 · **Change:** minor (engine-integrated embedded font scopes, content reuse and paste undo; previous: native chart payloads stored in bounded ZIP members) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
@@ -26,6 +26,38 @@ nothing below L6 uses egui, eframe, winit or rfd.
 
 The media codecs and containers are clean-room pure Rust, 59k lines, shared in spirit with
 FilmCraft.
+
+## Document font registration
+
+The engine installs supported embedded fonts when a `DocState` is created, including PPTX/native
+opens and recovery. `FontDb::register_document_fonts` interns a declared family and its complete
+set of embedded font bytes under a private alias. Identical content reuses loaded faces across
+documents and repeated opens; changed content or a different declared family gets a separate
+alias. Registration is serialized and verifies bytes, rather than relying on hash equality.
+The database retains loaded faces for the process lifetime; distinct embedded content is not
+unloaded when a presentation closes.
+
+The lower-level `FontDb::add_document_fonts` accepts `(bytes, source_family, private_alias)`
+entries for embedders that manage aliases themselves. Face selection honors typographic and
+Windows family names before single-family fallback; an unmatched multi-family collection
+contributes nothing. Styles, weights and variable instances stay intact. Private faces are
+excluded from global discovery and implicit fallback.
+
+`Presentation::font_aliases` is runtime-only. Rendering resolves explicit, theme, script,
+symbol, bullet and metafile families through it without rewriting editing or exported font
+names. Metafile caches include font scope; ordinary raster caches remain shared. Font pickers
+include the active document's original embedded family names.
+
+Formatting-preserving paste imports only needed source-only embedded families and media,
+including families used only in a pasted slide's speaker notes.
+Notes font discovery resolves a notes-slide body placeholder against the destination notes
+master's inherited list/body styles and theme, rather than the slide's theme. Notes-local
+list styles and explicit paragraph/run formatting take precedence over the master.
+Existing destination families stay authoritative; plain-text paste imports no fonts. All
+content and font-import edits run inside the same outer command snapshot, so one undo/redo
+restores both. Paste as Picture renders with the source aliases. Installed-font loading and
+`add_font` retain their public naming and deduplication behavior.
+
 
 ## Data model
 
@@ -81,6 +113,7 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-05 | minor | Document-local font registration is integrated into engine opens and recovery, with content reuse across repeated opens and private rendering aliases. Clipboard font imports share the paste undo boundary; original editing/native/PPTX names and parity scores remain unchanged |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-14 | minor | Community PR wave folded: one L2/L5/L6 row each; command registry 320 (`cmd!` registrations in `cmd/*`), 41 dialogs (titled in `dialogs.rs`), 202k lines, 24 crates (`metafile` added at L0), 1,641 tests. The per-PR rows below give the counts each PR saw on its own branch |
 | 2026-10-14 | minor | Size and Position dialog (`shape.sizePosition`): position, size, rotation, scale and lock aspect in one undo step. 227 commands, 28 dialogs |

@@ -198,6 +198,7 @@ fn shape_cells(
             .sym
             .as_deref()
             .filter(|_| cluster.first().is_some_and(|c| ('\u{F000}'..='\u{F0FF}').contains(c)))
+            .map(|f| ctx.pres.render_font_family(f))
             .filter(|f| db.has_family(f))
             .map(|f| db.face(f, st.style_name))
             .filter(|f| covers_symbol(f, cluster.first().copied().unwrap_or(' ')));
@@ -206,7 +207,7 @@ fn shape_cells(
             (None, Some(p))
                 if neutral
                     && !p.is_color()
-                    && !is_symbol_font(&p.family)
+                    && !is_symbol_font(p.source_family())
                     && deckcraft_fonts::covers_cluster(p, cluster)
                     && char_style.get(a.wrapping_sub(1)) == Some(&si) =>
             {

@@ -155,22 +155,31 @@ pub(super) fn unlinked_at_link_end(body: &TextBody, at: Pos) -> Option<RunProps>
     Some(props)
 }
 
-pub(crate) fn paste_body(s: &mut Session, src: &TextBody) -> Result<Value> {
+pub(crate) fn paste_body(s: &mut Session, src: &TextBody, retain_fonts: bool) -> Result<Value> {
     let inherited = inherited_aligns_for_edit(s);
-    let pos = edit_text(s, |body, t| {
-        let (a, b) = t.ordered();
-        let at = ed::delete(body, a, b);
-        let c = ed::insert_body(body, at, src);
-        t.anchor = c;
-        t.caret = c;
-        let last = body.paragraphs.len().saturating_sub(1);
-        for pi in at.0..=c.0.min(last) {
-            if let Some(para) = body.paragraphs.get_mut(pi) {
-                promote_rtl_if_needed(para, &inherited);
+    let (_, pos) = super::edit_text_before_fit(
+        s,
+        |body, t| {
+            let (a, b) = t.ordered();
+            let at = ed::delete(body, a, b);
+            let c = ed::insert_body(body, at, src);
+            t.anchor = c;
+            t.caret = c;
+            let last = body.paragraphs.len().saturating_sub(1);
+            for pi in at.0..=c.0.min(last) {
+                if let Some(para) = body.paragraphs.get_mut(pi) {
+                    promote_rtl_if_needed(para, &inherited);
+                }
             }
-        }
-        c
-    })?;
+            (at, c)
+        },
+        |s, &(a, b)| {
+            if retain_fonts {
+                super::super::edit::retain_pasted_text_fonts(s, a, b)?;
+            }
+            Ok(())
+        },
+    )?;
     Ok(json!({"caret": [pos.0, pos.1]}))
 }
 
