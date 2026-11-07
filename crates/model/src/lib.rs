@@ -27,7 +27,7 @@ pub use deckcraft_color::{ColorScheme, ColorTransform, Rgba, SchemeSlot};
 pub use deckcraft_geom::{Rect, Size, Xfrm};
 use serde::{Deserialize, Serialize};
 
-pub use anim::{AnimClass, AnimStart, Animation, Transition};
+pub use anim::{AnimClass, AnimStart, Animation, KeptSequence, Transition};
 pub use bidi::{first_strong_is_rtl, is_rtl_script};
 pub use chart::Chart;
 pub use style::{ColorBase, ColorRef, Effects, Fill, Line, ShapeStyle};
@@ -624,6 +624,10 @@ pub struct Slide {
     pub show_master_shapes: bool,
     pub transition: Option<Transition>,
     pub animations: Vec<Animation>,
+    /// Animation sequences kept verbatim from the file (media bookmark triggers), written back on
+    /// save while every shape they name is still on the slide.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub kept_sequences: Vec<KeptSequence>,
     /// Speaker notes.
     pub notes: TextBody,
     pub comments: Vec<Comment>,
@@ -651,6 +655,7 @@ impl Default for Slide {
             show_master_shapes: true,
             transition: None,
             animations: vec![],
+            kept_sequences: vec![],
             notes: TextBody::default(),
             comments: vec![],
             color_map: None,
