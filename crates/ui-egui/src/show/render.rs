@@ -1,4 +1,3 @@
-use super::zoom::GRID_CAP;
 use super::{
     BackKey, Color32, Key, Layer, Mesh, Prefetch, Presentation, Rect, RenderOpts, ShapeId, Show, ShowState, StepStamp, TextureHandle, Timeline,
     TriggerPlay, pos2, state_for, vec2,
@@ -196,16 +195,37 @@ pub(super) fn part_textures(ctx: &egui::Context, doc: &Presentation, from: Optio
     ]
 }
 
-pub(super) fn render_thumb(ctx: &egui::Context, show: &mut Show, doc: &Presentation, i: usize) -> Option<TextureHandle> {
-    if show.thumbs.len() >= GRID_CAP {
+/// Target pixel budget for all visible grid previews (64 MiB of RGBA pixels).
+const GRID_CACHE_PIXELS: usize = 16 * 1024 * 1024;
+
+/// Keep extreme slide shapes, GPU limits and a large visible grid within the preview budget.
+pub(super) fn grid_thumb_size(ctx: &egui::Context, doc: &Presentation, visible: usize) -> (u32, u32) {
+    let aspect = doc.slide_size.width / doc.slide_size.height;
+    let aspect = if aspect.is_finite() && aspect > 0.0 { aspect } else { 16.0 / 9.0 };
+    let (w, h) = if aspect >= 1.0 { (320.0, (320.0 / aspect).max(1.0)) } else { ((320.0 * aspect).max(1.0), 320.0) };
+    let pixels = (GRID_CACHE_PIXELS / visible.max(1)).max(1) as u32;
+    let scale = (pixels as f64 / (w * h)).sqrt().min(1.0);
+    let w = ((w * scale).floor() as u32).clamp(1, pixels);
+    let h = ((h * scale).floor() as u32).clamp(1, (pixels / w).max(1));
+    crate::textures::fit_size((w, h), crate::textures::max_side(ctx))
+}
+
+pub(super) fn render_thumb(
+    ctx: &egui::Context,
+    show: &mut Show,
+    doc: &Presentation,
+    i: usize,
+    visible: usize,
+    size: (u32, u32),
+) -> Option<TextureHandle> {
+    doc.slides.get(i)?;
+    if show.thumbs.len() >= visible {
         return None;
     }
-    let w = 320.0_f64;
-    let h = (w * doc.slide_size.height / doc.slide_size.width.max(1.0)).round().max(1.0);
     let img = deckcraft_render::render_slide(
         doc,
         i,
-        &RenderOpts { scale: w / doc.slide_size.width.max(1.0), size: Some((w as u32, h as u32)), ..Default::default() },
+        &RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), ..Default::default() },
     );
     let tex = crate::textures::upload(ctx, format!("show-grid-{i}"), crate::textures::to_color_image(&img, false));
     show.thumbs.push((i, tex.clone()));

@@ -2,6 +2,38 @@
 
 use super::*;
 
+/// A show opened before the first UI frame must let the root upload its font atlas
+/// before an immediate presenter viewport can paint a partial atlas update.
+#[test]
+fn startup_show_defers_presenter_until_the_root_has_finished_a_frame() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    let mut app = SlideApp::new(session, crate::Services::default());
+    app.ui.presenter_view = true;
+    app.start_show(0, false);
+    let ctx = egui::Context::default();
+    let input = || egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1100.0, 700.0))), ..Default::default() };
+    let mut first = ctx.run_ui(input(), |ui| {
+        app.logic(ui.ctx());
+        app.ui(ui);
+    });
+    assert!(!first.viewport_output.contains_key(&egui::ViewportId::from_hash_of("deckcraft_presenter")));
+    assert_eq!(app.show.as_ref().unwrap().preview_spawns, 0);
+    first.textures_delta.clear();
+    for _ in 0..5 {
+        ctx.run_ui(input(), |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .textures_delta
+        .clear();
+        if app.show.as_ref().unwrap().preview_spawns > 0 {
+            break;
+        }
+    }
+    assert!(app.show.as_ref().unwrap().preview_spawns > 0, "presenter opens after the first root frame");
+}
+
 /// #1005: shapes stacked above a playing video must be drawn over its frame; the video, what
 /// is below it and other videos stay out of that overlay.
 #[test]
@@ -677,24 +709,186 @@ fn zoom_stays_on_the_slide_and_the_grid_hits_a_thumbnail() {
     let corner = zoom_uv(0.0, 0.0, 2.0);
     assert_eq!(corner.min, pos2(0.0, 0.0));
     assert!(corner.max.x <= 1.0 && corner.max.y <= 1.0);
+    let mut session = deckcraft_engine::Session::with_new();
+    for _ in 0..6 {
+        session.execute("slide.new", &json!({})).unwrap();
+    }
+    let doc = session.active().unwrap().doc.clone();
     let full = Rect::from_min_size(Pos2::ZERO, vec2(1728.0, 1084.0));
-    let cells = see_all_cells(full, 7, 16.0 / 9.0);
-    assert_eq!(cells.len(), 7);
-    for (i, a) in cells.iter().enumerate() {
-        assert!(full.contains_rect(*a), "cell {i} leaves the window");
-        for b in cells.iter().skip(i + 1) {
-            let overlap = a.intersect(*b);
-            assert!(overlap.width() < 1.0 || overlap.height() < 1.0, "thumbnails overlap {a:?} {b:?}");
+    let frame = grid_frame(full, &doc);
+    let slides: Vec<usize> = (0..7).collect();
+    let layout = grid_layout(frame.inner, &slides, 16.0 / 9.0, 0.0);
+    assert_eq!(layout.cells.len(), 7);
+    for (i, cell) in layout.cells.iter().enumerate() {
+        assert!(frame.inner.contains_rect(cell.rect), "cell {i} leaves the grid");
+        for other in layout.cells.iter().skip(i + 1) {
+            let overlap = cell.rect.intersect(other.rect);
+            assert!(overlap.width() < 1.0 || overlap.height() < 1.0, "thumbnails overlap {:?} {:?}", cell.rect, other.rect);
         }
     }
-    let hit = see_all_hit(full, 7, 16.0 / 9.0, cells[3].center());
+    let hit = grid_slide_hit(full, &doc, crate::sections::GridFilter::All, 0.0, layout.cells[3].rect.center());
     assert_eq!(hit, Some(3));
-    assert_eq!(see_all_hit(full, 7, 16.0 / 9.0, pos2(2.0, 2.0)), None);
+    assert_eq!(grid_slide_hit(full, &doc, crate::sections::GridFilter::All, 0.0, pos2(2.0, 2.0)), None);
     let srect = Rect::from_min_size(pos2(10.0, 20.0), vec2(200.0, 100.0));
     assert_eq!(norm_on_slide(srect, unit_uv(), pos2(110.0, 70.0)), Some((0.5, 0.5)));
     let zoomed = zoom_uv(0.5, 0.5, 2.0);
     let back = norm_on_slide(srect, zoomed, pos2(110.0, 70.0)).expect("on the slide");
     assert!((back.0 - 0.5).abs() < 1e-3 && (back.1 - 0.5).abs() < 1e-3);
+}
+
+/// The grid no longer stops at 48 slides: it scrolls, and a click on the last one reaches it.
+#[test]
+fn the_grid_reaches_slides_past_the_old_cap() {
+    let mut session = deckcraft_engine::Session::with_new();
+    for _ in 0..199 {
+        session.execute("slide.new", &json!({})).unwrap();
+    }
+    let doc = session.active().unwrap().doc.clone();
+    assert_eq!(doc.slides.len(), 200);
+    let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+    let frame = grid_frame(full, &doc);
+    let slides: Vec<usize> = (0..200).collect();
+    let top = grid_layout(frame.inner, &slides, 16.0 / 9.0, 0.0);
+    assert!(top.max_scroll > 0.0, "200 slides need scrolling");
+    assert!(top.cells.len() < 100, "only the cells in view are laid out: {}", top.cells.len());
+    assert!(!top.cells.iter().any(|c| c.slide == 199), "the last slide is below the fold");
+    let bottom = grid_layout(frame.inner, &slides, 16.0 / 9.0, top.max_scroll);
+    let last = bottom.cells.iter().find(|c| c.slide == 199).expect("the last slide is reachable");
+    assert_eq!(grid_slide_hit(full, &doc, crate::sections::GridFilter::All, top.max_scroll, last.rect.center()), Some(199));
+}
+
+/// A click above the scrolled grid (in the title or tab strip) must not hit a cell whose
+/// invisible top is still part of the layout.
+#[test]
+fn a_click_outside_the_grid_does_not_pick_a_scrolled_cell() {
+    let mut session = deckcraft_engine::Session::with_new();
+    for _ in 0..29 {
+        session.execute("slide.new", &json!({})).unwrap();
+    }
+    let doc = session.active().unwrap().doc.clone();
+    let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+    let frame = grid_frame(full, &doc);
+    let slides: Vec<usize> = (0..30).collect();
+    let layout = grid_layout(frame.inner, &slides, 16.0 / 9.0, 100.0);
+    let cell = layout.cells.iter().find(|c| c.rect.min.y < frame.inner.min.y).expect("a partly scrolled row");
+    let p = pos2(cell.rect.center().x, frame.inner.min.y - 1.0);
+    assert_eq!(grid_slide_hit(full, &doc, crate::sections::GridFilter::All, 100.0, p), None);
+}
+
+#[test]
+fn grid_scroll_clamps_to_its_content() {
+    let mut session = deckcraft_engine::Session::with_new();
+    for _ in 0..29 {
+        session.execute("slide.new", &json!({})).unwrap();
+    }
+    let doc = session.active().unwrap().doc.clone();
+    let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+    let frame = grid_frame(full, &doc);
+    let slides: Vec<usize> = (0..30).collect();
+    assert_eq!(grid_layout(frame.inner, &slides, 16.0 / 9.0, -100.0).scroll, 0.0);
+    let end = grid_layout(frame.inner, &slides, 16.0 / 9.0, f32::MAX);
+    assert!(end.max_scroll > 0.0);
+    assert!((end.scroll - end.max_scroll).abs() < 1e-3);
+}
+
+#[test]
+fn section_tabs_survive_the_grid_layout_and_name_the_section() {
+    let mut session = deckcraft_engine::Session::with_new();
+    for _ in 0..11 {
+        session.execute("slide.new", &json!({})).unwrap();
+    }
+    session.execute("section.add", &json!({"name": "Intro", "at": 0})).unwrap();
+    session.execute("section.add", &json!({"name": "Demo", "at": 4})).unwrap();
+    session.execute("section.add", &json!({"name": "Questions", "at": 9})).unwrap();
+    let doc = session.active().unwrap().doc.clone();
+    let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+    let frame = grid_frame(full, &doc);
+    let questions = frame.tabs.iter().find(|t| t.label == "Questions").expect("the Questions tab");
+    assert_eq!(questions.filter, crate::sections::GridFilter::Section(2));
+    assert_eq!(questions.count, 3);
+    assert_eq!(crate::sections::current_filter(&doc, 5), crate::sections::GridFilter::Section(1));
+    assert_eq!(crate::sections::grid_slides(&doc, questions.filter), vec![9, 10, 11]);
+}
+
+#[test]
+fn presenter_enter_closes_the_grid_after_selection() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    let doc = session.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, true);
+    show.presenter_grid = true;
+    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
+        |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
+            let now = ui.input(|i| i.time);
+            presenter_window(ui.ctx(), show, doc, now, keep);
+        },
+        (doc, show, true),
+    );
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+    assert!(!harness.state().1.presenter_grid, "Enter returns to the classic presenter layout");
+}
+
+#[test]
+fn picking_a_presenter_slide_closes_the_grid_and_resets_overlays() {
+    let session = deckcraft_engine::Session::with_new();
+    let doc = &session.active().unwrap().doc;
+    let mut show = Show::new(doc, 0, false, true);
+    show.presenter_grid = true;
+    show.blank = Some(Color32::BLACK);
+    show.zoom_arm = true;
+    super::presenter::pick_presenter_slide(&mut show);
+    assert!(!show.presenter_grid);
+    assert!(show.blank.is_none());
+    assert!(show.zoom.is_none());
+    assert!(!show.zoom_arm);
+}
+
+/// Opening the grid from a section keeps that section selected; clicking another tab filters,
+/// and clicking a thumbnail jumps to its global slide and closes the grid.
+#[test]
+fn the_show_opens_the_grid_on_the_current_section_and_jumps_from_a_tab() {
+    let mut session = deckcraft_engine::Session::with_new();
+    for _ in 0..11 {
+        session.execute("slide.new", &json!({})).unwrap();
+    }
+    session.execute("section.add", &json!({"name": "Intro", "at": 0})).unwrap();
+    session.execute("section.add", &json!({"name": "Demo", "at": 4})).unwrap();
+    session.execute("section.add", &json!({"name": "Questions", "at": 9})).unwrap();
+    let app = SlideApp::new(session, crate::Services::default());
+    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run_steps(2);
+    harness.state_mut().start_show(5, false);
+    harness.run_steps(2);
+    harness.key_press(egui::Key::G);
+    harness.run_steps(2);
+    let show = harness.state().show.as_ref().unwrap();
+    assert!(show.grid, "G opens the grid");
+    assert_eq!(show.grid_filter, crate::sections::GridFilter::Section(1), "the current section is selected");
+    let doc = harness.state().session.active().unwrap().doc.clone();
+    let full = harness.ctx.content_rect();
+    let frame = grid_frame(full, &doc);
+    let questions = frame.tabs.iter().find(|t| t.label == "Questions").expect("the Questions tab");
+    click_at(&mut harness, questions.rect.center());
+    harness.run_steps(2);
+    let show = harness.state().show.as_ref().unwrap();
+    assert_eq!(show.grid_filter, crate::sections::GridFilter::Section(2));
+    let frame = grid_frame(full, &doc);
+    let slides = crate::sections::grid_slides(&doc, show.grid_filter);
+    let layout = grid_layout(frame.inner, &slides, 16.0 / 9.0, show.grid_scroll);
+    let second = layout.cells.get(1).expect("a second Questions slide");
+    click_at(&mut harness, second.rect.center());
+    harness.run_steps(2);
+    let show = harness.state().show.as_ref().unwrap();
+    assert!(!show.grid, "choosing a slide closes the grid");
+    assert_eq!(show.state.slide, 10, "the click goes to the second Questions slide");
 }
 
 fn near(a: f32, b: f32) -> bool {
@@ -984,7 +1178,7 @@ fn presenter_timer_pauses_resets_and_notes_size_clamps() {
     assert_eq!(show.notes_px, NOTES_MIN);
     show.nudge_notes(f32::NAN);
     assert_eq!(show.notes_px, NOTES_MIN);
-    let v = show.showing_value(1, 16.0 / 9.0, Rect::from_min_size(Pos2::ZERO, vec2(100.0, 100.0)), 0.0);
+    let v = show.showing_value(&doc, Rect::from_min_size(Pos2::ZERO, vec2(100.0, 100.0)), 0.0);
     assert_eq!(v["presenterPaused"], json!(false));
     assert_eq!(v["notesPx"], json!(NOTES_MIN));
 }
@@ -1101,6 +1295,12 @@ fn input_state_tracks_the_modes_that_move_show_click_targets() {
 
     show.grid = true;
     assert_ne!(show.input_state(), base, "See All Slides replaces the slide with thumbnails");
+    show.grid_filter = crate::sections::GridFilter::Section(1);
+    assert_ne!(show.input_state(), base, "a section tab moves every thumbnail");
+    show.grid_scroll = 120.0;
+    assert_ne!(show.input_state(), base, "scrolling moves every thumbnail");
+    show.grid_filter = crate::sections::GridFilter::All;
+    show.grid_scroll = 0.0;
     show.grid = false;
 
     show.pen = true;
@@ -1368,4 +1568,317 @@ fn transition_preview_for_first_slide_transitions_from_black() {
     assert_eq!(tr.kind, "fade");
     assert_eq!(tr.from, None, "slide 0 transitions from black (None)");
     assert_eq!(tr.dur, 0.5);
+}
+
+/// Regression coverage for grid keyboard navigation, pointer targets and preview caching.
+mod grid_regressions {
+    use super::*;
+    use crate::show::{keys, zoom};
+
+    fn empty_deck(count: usize) -> Presentation {
+        let mut session = deckcraft_engine::Session::with_new();
+        for _ in 1..count {
+            session.execute("slide.new", &json!({})).unwrap();
+        }
+        let mut doc = Presentation::clone(&session.active().unwrap().doc);
+        for slide in &mut doc.slides {
+            std::sync::Arc::make_mut(slide).shapes.clear();
+        }
+        doc
+    }
+
+    fn number_then_escape(presenter: bool) {
+        let doc = empty_deck(3);
+        let mut show = Show::new(&doc, 0, false, presenter);
+        keys::handle_keys(&mut show, &doc, 0.0, vec![(egui::Key::Num1, egui::Modifiers::NONE)], presenter);
+        keys::handle_keys(&mut show, &doc, 0.1, vec![(egui::Key::G, egui::Modifiers::NONE)], presenter);
+        assert_eq!(show.goto, "1");
+        assert!(if presenter { show.presenter_grid } else { show.grid });
+        let (keep, _) = keys::handle_keys(&mut show, &doc, 0.2, vec![(egui::Key::Escape, egui::Modifiers::NONE)], presenter);
+        let open = if presenter { show.presenter_grid } else { show.grid };
+        assert!(keep);
+        assert_eq!((open, show.goto.as_str()), (true, ""), "first Escape must clear the typed number and leave the grid open");
+        let (keep, _) = keys::handle_keys(&mut show, &doc, 0.3, vec![(egui::Key::Escape, egui::Modifiers::NONE)], presenter);
+        assert!(keep, "the second Escape closes the grid, not the show");
+        assert!(!if presenter { show.presenter_grid } else { show.grid });
+    }
+
+    #[test]
+    fn escape_first_clears_the_number_in_audience_grid() {
+        number_then_escape(false);
+    }
+
+    #[test]
+    fn escape_first_clears_the_number_in_presenter_grid() {
+        number_then_escape(true);
+    }
+
+    #[test]
+    fn slide_number_label_selects_its_slide() {
+        let doc = empty_deck(12);
+        let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+        let frame = grid_frame(full, &doc);
+        let slides: Vec<usize> = (0..doc.slides.len()).collect();
+        let layout = grid_layout(frame.inner, &slides, zoom::slide_aspect(&doc), 0.0);
+        let cell = layout.cells.get(1).unwrap();
+        assert_eq!(grid_slide_hit(full, &doc, GridFilter::All, 0.0, cell.rect.center()), Some(cell.slide));
+        let label = pos2(cell.rect.center().x, cell.rect.max.y + 12.0);
+        assert!(frame.inner.contains(label), "the label really is visible");
+        let hit = grid_slide_hit(full, &doc, GridFilter::All, 0.0, label);
+        assert_eq!(hit, Some(cell.slide), "clicking the visible slide number must select that slide");
+    }
+
+    #[test]
+    fn every_visible_thumbnail_eventually_renders_above_128_cells() {
+        let doc = empty_deck(200);
+        let full = Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 2560.0));
+        let frame = grid_frame(full, &doc);
+        let slides: Vec<usize> = (0..doc.slides.len()).collect();
+        let layout = grid_layout(frame.inner, &slides, zoom::slide_aspect(&doc), 0.0);
+        assert!(layout.cells.len() > 128, "the setup must exceed the former cache cap");
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        let mut show = Show::new(&doc, 0, false, false);
+        show.open_grid(false, &doc);
+        for _ in 0..80 {
+            let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
+                zoom::paint_grid(ui.painter(), ui.ctx(), &mut show, &doc, full);
+            });
+            output.textures_delta.clear();
+        }
+        let missing: Vec<usize> =
+            layout.cells.iter().filter(|cell| !show.thumbs.iter().any(|(i, _)| *i == cell.slide)).map(|cell| cell.slide).collect();
+        assert!(missing.is_empty(), "all visible cells must finish rendering after 80 frames, missing {}", missing.len());
+    }
+
+    #[test]
+    fn escape_g_and_minus_close_an_empty_number_grid_without_ending_show() {
+        let doc = empty_deck(3);
+        for presenter in [false, true] {
+            for key in [egui::Key::Escape, egui::Key::G, egui::Key::Minus] {
+                let mut show = Show::new(&doc, 0, false, presenter);
+                show.open_grid(presenter, &doc);
+                let (keep, consumed) = keys::handle_keys(&mut show, &doc, 0.0, vec![(key, egui::Modifiers::NONE)], presenter);
+                assert!(keep);
+                assert_eq!(consumed.len(), 1);
+                assert!(!if presenter { show.presenter_grid } else { show.grid });
+                assert_eq!(show.state.slide, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn number_hit_targets_keep_clipping_and_do_not_select_neighbors() {
+        let doc = empty_deck(200);
+        let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+        let frame = grid_frame(full, &doc);
+        let slides: Vec<usize> = (0..doc.slides.len()).collect();
+        for scroll in [0.0, 100.0, f32::MAX] {
+            let layout = grid_layout(frame.inner, &slides, zoom::slide_aspect(&doc), scroll);
+            for cell in &layout.cells {
+                let label = pos2(cell.rect.center().x, cell.rect.max.y + 12.0);
+                if frame.inner.contains(label) {
+                    assert_eq!(grid_slide_hit(full, &doc, GridFilter::All, scroll, label), Some(cell.slide));
+                }
+                let gap = pos2(cell.rect.center().x, cell.rect.max.y + 30.0);
+                assert_eq!(grid_slide_hit(full, &doc, GridFilter::All, scroll, gap), None, "the space between rows is not a slide");
+            }
+            let above = pos2(frame.inner.center().x, frame.inner.min.y - 1.0);
+            let below = pos2(frame.inner.center().x, frame.inner.max.y + 1.0);
+            assert_eq!(grid_slide_hit(full, &doc, GridFilter::All, scroll, above), None);
+            assert_eq!(grid_slide_hit(full, &doc, GridFilter::All, scroll, below), None);
+        }
+    }
+    #[test]
+    fn grid_cache_releases_offscreen_previews_and_finishes_repainting() {
+        let doc = empty_deck(200);
+        let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        let mut show = Show::new(&doc, 0, false, false);
+        show.open_grid(false, &doc);
+        for scroll in [0.0, f32::MAX] {
+            show.grid_scroll = scroll;
+            for _ in 0..24 {
+                let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
+                    zoom::paint_grid(ui.painter(), ui.ctx(), &mut show, &doc, full);
+                });
+                output.textures_delta.clear();
+            }
+            let slides: Vec<usize> = (0..doc.slides.len()).collect();
+            let layout = grid_layout(grid_frame(full, &doc).inner, &slides, zoom::slide_aspect(&doc), show.grid_scroll);
+            assert_eq!(show.thumbs.len(), layout.cells.len());
+            assert!(show.thumbs.iter().all(|(i, _)| layout.cells.iter().any(|c| c.slide == *i)), "only visible previews remain");
+            assert!(!ctx.has_requested_repaint(), "a fully loaded grid must stop requesting immediate repaints");
+        }
+        assert!(show.thumbs.iter().any(|(i, _)| *i == 199), "the last slide loads after scrolling");
+    }
+
+    #[test]
+    fn grid_preview_dimensions_bound_extreme_shapes_and_large_viewports() {
+        let mut doc = empty_deck(1);
+        let ctx = egui::Context::default();
+        for (w, h) in [(960.0, 540.0), (1.0, 1e12), (1e12, 1.0), (f64::NAN, 0.0)] {
+            doc.slide_size.width = w;
+            doc.slide_size.height = h;
+            for visible in [1, 160, 10_000] {
+                let (w, h) = crate::show::render::grid_thumb_size(&ctx, &doc, visible);
+                assert!((1..=320).contains(&w) && (1..=320).contains(&h));
+                assert!((w as usize) * (h as usize) * visible <= 16 * 1024 * 1024);
+            }
+        }
+    }
+}
+
+mod review_round_two {
+    use super::*;
+
+    fn sectioned_deck() -> Presentation {
+        let mut session = deckcraft_engine::Session::with_new();
+        for _ in 0..3 {
+            session.execute("slide.new", &json!({})).unwrap();
+        }
+        session.execute("section.add", &json!({"name":"Intro","at":0})).unwrap();
+        session.execute("section.add", &json!({"name":"Demo","at":2})).unwrap();
+        (*session.active().unwrap().doc).clone()
+    }
+
+    #[test]
+    fn removing_sections_while_the_grid_is_open_restores_all_slides() {
+        let mut doc = sectioned_deck();
+        let mut show = Show::new(&doc, 0, false, false);
+        show.open_grid(false, &doc);
+        show.grid_scroll = 120.0;
+        doc.sections.clear();
+        let ctx = egui::Context::default();
+        let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+        ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
+            super::super::zoom::paint_grid(ui.painter(), ui.ctx(), &mut show, &doc, full);
+        })
+        .textures_delta
+        .clear();
+        assert_eq!(show.grid_filter, crate::sections::GridFilter::All);
+        assert_eq!(show.grid_scroll, 0.0);
+        assert_eq!(show.thumbs.len(), doc.slides.len());
+        let snapshot = show.showing_value(&doc, full, 0.0);
+        assert_eq!(snapshot["gridFilter"], "all");
+        assert_eq!(snapshot["cells"].as_array().unwrap().len(), doc.slides.len());
+    }
+
+    #[test]
+    fn removing_sections_before_enter_recovers_in_both_native_grids() {
+        for presenter in [false, true] {
+            let mut doc = sectioned_deck();
+            let mut show = Show::new(&doc, 2, false, presenter);
+            show.open_grid(presenter, &doc);
+            doc.sections.clear();
+            let (keep, consumed) = super::super::keys::handle_keys(&mut show, &doc, 0.0, vec![(egui::Key::Enter, egui::Modifiers::NONE)], presenter);
+            assert!(keep && consumed.len() == 1);
+            assert_eq!(show.grid_filter, crate::sections::GridFilter::All);
+            assert_eq!(show.state.slide, 0);
+            assert!(!show.grid && !show.presenter_grid);
+        }
+    }
+}
+
+#[test]
+fn many_long_section_tabs_preserve_a_thumbnail_viewport() {
+    let mut session = deckcraft_engine::Session::with_new();
+    for i in 0..61 {
+        if i > 0 {
+            session.execute("slide.new", &json!({})).unwrap();
+        }
+        session.execute("section.add", &json!({"name":format!("A long section title number {i}"), "at":i})).unwrap();
+    }
+    let doc = &session.active().unwrap().doc;
+    let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+    let frame = grid_frame(full, doc);
+    assert!(frame.inner.height() >= 400.0, "section tabs must leave space for slide previews");
+    assert!(!grid_layout(frame.inner, &[0], 16.0 / 9.0, 0.0).cells.is_empty());
+}
+
+/// Scrolling sections leaves slides stationary, reveals the last tab, and clips hidden targets.
+#[test]
+fn section_tabs_scroll_independently_and_keyboard_reveals_selection() {
+    let mut session = deckcraft_engine::Session::with_new();
+    for i in 0..61 {
+        if i > 0 {
+            session.execute("slide.new", &json!({})).unwrap();
+        }
+        session.execute("section.add", &json!({"name":format!("A long section title number {i}"), "at":i})).unwrap();
+    }
+    let doc = &session.active().unwrap().doc;
+    let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+    let mut show = Show::new(doc, 0, false, false);
+    show.open_grid(false, doc);
+    let frame = grid_frame(full, doc);
+    let first = frame.tabs.first().unwrap().rect.center();
+    let last = frame.tabs.last().unwrap();
+    assert_eq!(zoom::grid_tab_hit(full, doc, 0.0, last.rect.center()), None);
+    zoom::scroll_grid_at(&mut show, f32::MAX, full, doc, Some(first));
+    assert_eq!(show.grid_tab_scroll, frame.max_tab_scroll);
+    assert_eq!(show.grid_scroll, 0.0);
+    let target = last.rect.center() - vec2(0.0, show.grid_tab_scroll);
+    assert_eq!(zoom::grid_tab_hit(full, doc, show.grid_tab_scroll, target), Some(last.filter));
+    assert_ne!(zoom::grid_tab_hit(full, doc, show.grid_tab_scroll, first), Some(crate::sections::GridFilter::All));
+    let ctx = egui::Context::default();
+    keys::handle_keys(&mut show, doc, 0.0, vec![(egui::Key::ArrowLeft, egui::Modifiers::NONE)], false);
+    // From the first section, left selects All, which must become visible again.
+    ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
+        zoom::paint_grid(ui.painter(), ui.ctx(), &mut show, doc, full);
+    })
+    .textures_delta
+    .clear();
+    assert_eq!(show.grid_tab_scroll, 0.0);
+    assert_eq!(zoom::grid_tab_hit(full, doc, show.grid_tab_scroll, first), Some(crate::sections::GridFilter::All));
+    let snapshot = show.input_state();
+    show.grid_tab_scroll = 1.0;
+    assert_ne!(snapshot, show.input_state(), "scrolling tabs changes input targets");
+}
+
+/// The popup has no native section controls, so arrows and Enter cannot select hidden tabs.
+#[test]
+fn remote_popup_grid_does_not_use_native_section_keyboard() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    session.execute("section.add", &json!({"name":"Intro", "at":0})).unwrap();
+    session.execute("section.add", &json!({"name":"Demo", "at":1})).unwrap();
+    let doc = &session.active().unwrap().doc;
+    let mut show = Show::new(doc, 1, false, true);
+    show.grid_filter = crate::sections::GridFilter::Section(1);
+    let original = show.grid_filter;
+    assert!(keys::remote_key(&mut show, doc, 0.0, egui::Key::G, egui::Modifiers::NONE));
+    for key in [egui::Key::ArrowLeft, egui::Key::ArrowRight, egui::Key::Enter, egui::Key::PageDown] {
+        assert!(keys::remote_key(&mut show, doc, 0.0, key, egui::Modifiers::NONE));
+        assert!(show.presenter_grid);
+        assert_eq!(show.grid_filter, original);
+        assert_eq!(show.state.slide, 1);
+        assert_eq!(show.grid_scroll, 0.0);
+    }
+    keys::remote_key(&mut show, doc, 0.0, egui::Key::Escape, egui::Modifiers::NONE);
+    assert!(!show.presenter_grid);
+    keys::remote_key(&mut show, doc, 0.0, egui::Key::ArrowLeft, egui::Modifiers::NONE);
+    assert_eq!(show.state.slide, 0, "normal popup navigation remains available");
+}
+
+/// A preview track shorter than the minimum scrollbar thumb must still paint without a panic.
+#[test]
+fn very_short_grid_viewport_keeps_scrollbar_bounds_valid() {
+    let mut session = deckcraft_engine::Session::with_new();
+    for _ in 0..30 {
+        session.execute("slide.new", &json!({})).unwrap();
+    }
+    let doc = &session.active().unwrap().doc;
+    let mut show = Show::new(doc, 0, false, false);
+    show.open_grid(false, doc);
+    let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 110.0));
+    let frame = grid_frame(full, doc);
+    assert!((8.0..18.0).contains(&frame.inner.height()));
+    let ctx = egui::Context::default();
+    ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
+        zoom::paint_grid(ui.painter(), ui.ctx(), &mut show, doc, full);
+    })
+    .textures_delta
+    .clear();
+    assert!(!show.thumbs.is_empty());
 }

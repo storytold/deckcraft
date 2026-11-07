@@ -10,6 +10,7 @@ use egui::{Align2, Color32, CornerRadius, Mesh, Pos2, Rect, Sense, Stroke, Textu
 use serde_json::json;
 
 use crate::SlideApp;
+use crate::sections::GridFilter;
 use crate::theme;
 
 mod keys;
@@ -18,7 +19,6 @@ mod presenter;
 mod render;
 mod ui;
 mod zoom;
-pub(crate) use zoom::GRID_CAP;
 
 #[cfg(test)]
 use media::{on_screen, pointer_on_media_bar, shown_slide_rect, slide_media_bars};
@@ -33,7 +33,7 @@ use ui::transition_layers;
 pub use ui::ui;
 use zoom::Zoom;
 #[cfg(test)]
-use zoom::{GOTO_DIGITS, norm_on_slide, see_all_cells, see_all_hit, toggle_blank, unit_uv, wheel_zoom_lines, zoom_uv};
+use zoom::{GOTO_DIGITS, grid_frame, grid_layout, grid_slide_hit, norm_on_slide, toggle_blank, unit_uv, wheel_zoom_lines, zoom_uv};
 
 pub struct Show {
     /// Monotonic identity of this show instance. Starting a show again (even at the same slide
@@ -80,6 +80,14 @@ pub struct Show {
     pub grid: bool,
     /// The Presenter View's own See All Slides: the grid replaces the slide and notes in that window only; the audience keeps the slide.
     pub presenter_grid: bool,
+    /// Which part of the deck the grid shows (`All`, a section, or the slides outside every section).
+    pub grid_filter: GridFilter,
+    /// The grid's vertical scroll offset, in points, clamped to its content on every frame.
+    pub grid_scroll: f32,
+    /// Independent scroll offset for the bounded section tab strip.
+    pub grid_tab_scroll: f32,
+    /// Reveal a newly selected tab after opening the grid or using the keyboard.
+    grid_tab_reveal: bool,
     /// The next click on the slide zooms in there.
     pub zoom_arm: bool,
     zoom: Option<Zoom>,
@@ -201,6 +209,10 @@ pub(crate) struct ShowInputState {
     pub reading: bool,
     pub presenter: bool,
     pub grid: bool,
+    /// Which section the grid shows and how far it is scrolled: both move every thumbnail.
+    pub grid_filter: GridFilter,
+    pub grid_scroll: u32,
+    pub grid_tab_scroll: u32,
     pub pen: bool,
     pub laser: bool,
     pub blank: Option<[u8; 4]>,
@@ -248,6 +260,10 @@ impl Show {
             blank: None,
             grid: false,
             presenter_grid: false,
+            grid_filter: GridFilter::All,
+            grid_scroll: 0.0,
+            grid_tab_scroll: 0.0,
+            grid_tab_reveal: true,
             zoom_arm: false,
             zoom: None,
             thumbs: vec![],
@@ -305,6 +321,9 @@ impl Show {
             reading: self.reading,
             presenter: self.presenter,
             grid: self.grid,
+            grid_filter: self.grid_filter,
+            grid_scroll: if self.grid_scroll.is_finite() { self.grid_scroll.to_bits() } else { 0 },
+            grid_tab_scroll: if self.grid_tab_scroll.is_finite() { self.grid_tab_scroll.to_bits() } else { 0 },
             pen: self.pen,
             laser: self.laser,
             blank: self.blank.map(|c| [c.r(), c.g(), c.b(), c.a()]),

@@ -1,6 +1,6 @@
 use super::keys::keyboard;
 use super::render::{fit, next_rect};
-use super::zoom::{Zoom, grid_indices, paint_grid, see_all_hit, slide_aspect, toggle_blank, zoom_frame};
+use super::zoom::{Zoom, grid_slide_hit, grid_tab_hit, paint_grid, scroll_grid_at, toggle_blank, zoom_frame};
 use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, Stroke, Ui, pos2, theme, vec2};
 
 pub(super) const NOTES_DEFAULT: f32 = 18.0;
@@ -193,7 +193,11 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                         toggle_blank(show, Color32::WHITE);
                     }
                     if button(ui, if show.presenter_grid { "All slides on" } else { "All slides" }).clicked() {
-                        show.presenter_grid = !show.presenter_grid;
+                        if show.presenter_grid {
+                            show.presenter_grid = false;
+                        } else {
+                            show.open_grid(true, doc);
+                        }
                     }
                     if button(ui, show.zoom_label()).clicked() {
                         show.zoom_key();
@@ -203,18 +207,25 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                 let avail = ui.available_rect_before_wrap();
                 if show.presenter_grid {
                     // The grid fills this window; the audience keeps seeing the current slide.
+                    let delta = ui.input(|i| i.smooth_scroll_delta.y);
+                    if delta != 0.0 {
+                        scroll_grid_at(show, -delta, avail, doc, ui.input(|i| i.pointer.hover_pos()));
+                    }
                     paint_grid(ui.painter(), ui.ctx(), show, doc, avail);
                     let hit = ui.interact(avail, ui.scope_id().with("presenter_grid"), Sense::click());
                     if hit.clicked()
                         && let Some(p) = hit.interact_pointer_pos()
-                        && let Some(n) = see_all_hit(avail, grid_indices(doc.slides.len()).len(), slide_aspect(doc), p)
-                        && let Some(&i) = grid_indices(doc.slides.len()).get(n)
                     {
-                        show.presenter_grid = false;
-                        show.blank = None;
-                        show.zoom = None;
-                        show.zoom_arm = false;
-                        actions.push(show.state.goto(doc, i));
+                        if let Some(filter) = grid_tab_hit(avail, doc, show.grid_tab_scroll, p) {
+                            if filter != show.grid_filter {
+                                show.grid_filter = filter;
+                                show.grid_scroll = 0.0;
+                                ui.ctx().request_repaint();
+                            }
+                        } else if let Some(i) = grid_slide_hit(avail, doc, show.grid_filter, show.grid_scroll, p) {
+                            pick_presenter_slide(show);
+                            actions.push(show.state.goto(doc, i));
+                        }
                     }
                     return;
                 }
@@ -288,6 +299,14 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
             *keep = false;
         }
     }
+}
+
+/// A thumbnail picked in the Presenter View grid returns to the current/next/notes layout.
+pub(super) fn pick_presenter_slide(show: &mut Show) {
+    show.presenter_grid = false;
+    show.blank = None;
+    show.zoom = None;
+    show.zoom_arm = false;
 }
 
 /// The current slide's notes in the presenter's notes pane, `px` for 12 pt text.
