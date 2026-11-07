@@ -7,6 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod clipboard;
 pub mod cmd;
 pub mod compare;
 pub mod connect;
@@ -453,11 +454,10 @@ pub struct MediaStatus {
     pub error: Option<String>,
 }
 
-/// Clipboard contents copied within the app.
 /// The theme a copy drew with. The colours and the map stay apart, as in
 /// `deckcraft_model::resolve::Ctx::color`: the map renames only `tx1`, `bg1`, `tx2` and `bg2`, and
 /// a direct `dk1` keeps the theme's colour.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SourceTheme {
     /// The theme's own colours, no colour map applied.
     pub colors: deckcraft_color::ColorScheme,
@@ -465,11 +465,13 @@ pub struct SourceTheme {
     pub fonts: deckcraft_model::theme::FontScheme,
 }
 
-#[derive(Clone, Debug, Default)]
+/// Clipboard contents copied within the app.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Clipboard {
     pub shapes: Vec<Shape>,
     /// The copied placeholders as they were, by id. `shapes` holds a slide's placeholders as
     /// regular shapes; a paste in Slide Master view takes these, which stay placeholders.
+    #[serde(default)]
     pub placeholders: Vec<Shape>,
     pub slides: Vec<Slide>,
     /// Media the copied shapes/slides reference.
@@ -478,8 +480,22 @@ pub struct Clipboard {
     pub plain: String,
     /// The theme the shapes were copied under, for Paste Special › Keep Source Formatting.
     pub source_theme: Option<SourceTheme>,
+    /// Source layout name and kind for each copied slide, for destination-theme matching.
+    #[serde(default)]
+    pub slide_layouts: Vec<(String, deckcraft_model::LayoutType)>,
+    /// Slides from another process use the destination theme and layouts.
+    #[serde(skip)]
+    pub foreign: bool,
     /// How many times the shapes were pasted (each paste offsets further).
+    #[serde(skip)]
     pub pastes: u32,
+    /// Where foreign shapes were last pasted: the target and slide. Shapes from another window
+    /// have no source slide here, so a paste on another slide than the last keeps the position.
+    #[serde(skip)]
+    pub pasted_on: Option<(Target, SlideId)>,
+    /// Cached system representation used to recognize repeated offers.
+    #[serde(skip)]
+    pub system_bytes: Option<Vec<u8>>,
 }
 
 pub struct Session {
