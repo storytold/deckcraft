@@ -18,7 +18,13 @@ fn walk(dir: &Path, c: &mut Counts) {
         let p = e.path();
         let name = e.file_name();
         let name = name.to_string_lossy();
-        if p.is_dir() {
+        // `file_type` does not follow links, so a directory link is not walked (and aliases are
+        // not counted twice).
+        let Ok(kind) = e.file_type() else { continue };
+        if kind.is_symlink() {
+            continue;
+        }
+        if kind.is_dir() {
             // Nested fuzz workspaces and build output are not part of the crate.
             if name != "target" && name != "fuzz" && !name.starts_with('.') {
                 walk(&p, c);
