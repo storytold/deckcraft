@@ -4,7 +4,7 @@
 //! The crate owns the JavaScript side (`request`, `execute`, `commands`, `docInspect`, `uiInspect`,
 //! `screenshot`, as promises with a timeout). This module is DeckCraft's part: a [`Request`] that
 //! queues a [`ControlRequest`] for the app, which answers it on its next frame, and waits for the
-//! reply. A call the page gave up on is released ([`Pending`]), so the app drops it unrun instead of
+//! reply. A call the page gave up on is released ([`Pending`]), so the app skips it if it has not started it, instead of
 //! applying a command the page was told had failed.
 
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 const POLL_MS: i32 = 16;
 
 /// A queued control request whose reply has not arrived. Dropping it before the reply (the page's
-/// timeout fired, or the call was abandoned) releases the request: the app skips it unrun.
+/// timeout fired, or the call was abandoned) releases the request: the app skips it if it has not started it (one it has taken still finishes).
 struct Pending {
     reply: Receiver<Value>,
     state: Arc<AtomicU8>,
