@@ -74,3 +74,27 @@ fn muted_audio_has_no_volume_and_other_clips_keep_theirs() {
     assert_eq!(c[0].volume, 1.0);
     assert_eq!((c[1].volume, c[1].loop_play, c[1].full_screen), (0.0, false, false));
 }
+
+#[test]
+fn media_autoplay_respects_ancestor_conditions_and_delays() {
+    let immediate = clips(|v, _| {
+        format!(
+            r#"<p:par><p:cTn id="2" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:video><p:cMediaNode><p:cTn id="3" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="{v}"/></p:tgtEl></p:cMediaNode></p:video></p:childTnLst></p:cTn></p:par>"#
+        )
+    });
+    assert!(immediate[0].autoplay);
+
+    let delayed_ancestor = clips(|v, _| {
+        format!(
+            r#"<p:par><p:cTn id="2" fill="hold"><p:stCondLst><p:cond delay="2000"/></p:stCondLst><p:childTnLst><p:video><p:cMediaNode><p:cTn id="3" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="{v}"/></p:tgtEl></p:cMediaNode></p:video></p:childTnLst></p:cTn></p:par>"#
+        )
+    });
+    assert!(!delayed_ancestor[0].autoplay);
+
+    let targeted_tn_ancestor = clips(|v, _| {
+        format!(
+            r#"<p:par><p:cTn id="2" fill="hold"><p:stCondLst><p:cond evt="onBegin" delay="0"><p:tn val="2"/></p:cond></p:stCondLst><p:childTnLst><p:video><p:cMediaNode><p:cTn id="3" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="{v}"/></p:tgtEl></p:cMediaNode></p:video></p:childTnLst></p:cTn></p:par>"#
+        )
+    });
+    assert!(!targeted_tn_ancestor[0].autoplay);
+}

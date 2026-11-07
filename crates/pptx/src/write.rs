@@ -813,7 +813,20 @@ fn slide_xml(x: &mut Exp, o: &mut Out, s: &Slide, comment_rel: Option<&str>) -> 
     if let Some(t) = &s.transition {
         timing::transition(&mut w, x, o, t);
     }
-    if !s.animations.is_empty() {
+    if !s.animations.is_empty()
+        || s.shapes.iter().any(|shape| {
+            fn has_nondefault(shape: &deckcraft_model::Shape) -> bool {
+                match &shape.kind {
+                    deckcraft_model::ShapeKind::Media(c) => {
+                        c.autoplay || (c.volume - 1.0).abs() > 1e-6 || c.hide_while_not_playing || c.loop_play || c.full_screen
+                    }
+                    deckcraft_model::ShapeKind::Group { children, .. } => children.iter().any(has_nondefault),
+                    _ => false,
+                }
+            }
+            has_nondefault(shape)
+        })
+    {
         timing::timing(&mut w, x, &s.animations, &s.shapes, &ids);
     }
     slide_ext_list(&mut w, s.raw_ext.as_deref(), comment_rel);

@@ -207,11 +207,41 @@ fn behaviour_auto_reverses(c: &El) -> bool {
 /// Volume, mute, Loop until Stopped, Hide While Not Playing and Play Full Screen live in the timing tree
 /// (`p:video`/`p:audio` > `p:cMediaNode`), not on the picture: copy them onto the target's `MediaClip`.
 pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
-    let mut nodes = vec![];
-    for tag in ["video", "audio"] {
-        timing.find_all(tag, &mut nodes);
+    fn collect_media<'a>(e: &'a El, deferred: bool, out: &mut Vec<(&'a El, bool)>, depth: usize) {
+        if depth > 64 || out.len() >= 10_000 {
+            return;
+        }
+        let mut deferred = deferred;
+        if e.is("cTn")
+            && e.attr("nodeType") != Some("tmRoot")
+            && let Some(st) = e.child("stCondLst")
+        {
+            let is_auto_begin = |c: &El| {
+                c.attr("evt") == Some("onBegin")
+                    && c.attr("delay").map(str::trim) == Some("0")
+                    && c.child("tgtEl").is_none()
+                    && c.child("tn").is_none()
+                    && c.child("rtn").is_none()
+            };
+            let has_on_begin = st.children_named("cond").any(is_auto_begin);
+            if st
+                .children_named("cond")
+                .any(|c| (c.attr("evt").is_some() && !is_auto_begin(c)) || (!has_on_begin && c.attr("delay").map(str::trim) != Some("0")))
+            {
+                deferred = true;
+            }
+        }
+        if e.is("video") || e.is("audio") {
+            out.push((e, deferred));
+            return;
+        }
+        for c in e.elements() {
+            collect_media(c, deferred, out, depth + 1);
+        }
     }
-    for node in nodes.into_iter().take(10_000) {
+    let mut nodes = vec![];
+    collect_media(timing, false, &mut nodes, 0);
+    for (node, deferred) in nodes {
         let Some(cm) = node.child("cMediaNode") else { continue };
         let Some(id) = cm.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|f| ctx.lookup(f)) else { continue };
         let Some(ShapeKind::Media(clip)) = find_shape_mut(shapes, id).map(|s| &mut s.kind) else { continue };
@@ -226,6 +256,10 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         }
         if cm.child("cTn").and_then(|c| c.attr("repeatCount")) == Some("indefinite") {
             clip.loop_play = true;
+        }
+        if !deferred && cm.path(&["cTn", "stCondLst", "cond"]).is_some_and(|c| c.attr("evt").is_none() && c.attr("delay").map(str::trim) == Some("0"))
+        {
+            clip.autoplay = true;
         }
         if node.bool("fullScrn") == Some(true) {
             clip.full_screen = true;
