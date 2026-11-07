@@ -400,6 +400,19 @@ pub fn slide_media(doc: &Presentation, index: usize) -> Vec<(ShapeId, deckcraft_
         .collect()
 }
 
+/// Ids of the clips on slide `index` set to "Hide During Show" (inside groups too).
+pub fn hide_during_show(doc: &Presentation, index: usize) -> Vec<ShapeId> {
+    let mut ids = Vec::new();
+    if let Some(s) = doc.slides.get(index) {
+        deckcraft_model::walk(&s.shapes, &mut |sh, _| {
+            if matches!(&sh.kind, ShapeKind::Media(m) if m.hide_while_not_playing) {
+                ids.push(sh.id);
+            }
+        });
+    }
+    ids
+}
+
 /// "1:05.25" style time.
 pub fn clock(secs: f64) -> String {
     let s = secs.max(0.0);
