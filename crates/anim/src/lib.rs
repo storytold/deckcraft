@@ -47,8 +47,8 @@ pub use transition::{DEFAULT_ASPECT, Layer, Source, transition_frame, transition
 /// Animation state of one shape (or one paragraph of a shape's text) at one moment of the show.
 ///
 /// Same meaning as the renderer's `ShapeState`: translation in points, scale and rotation (degrees)
-/// around the shape's centre, a reveal clip in shape-local unit space `[l, t, r, b]`, and a fill
-/// colour override.
+/// around the shape's centre, a reveal clip in shape-local unit space `[l, t, r, b]`, a fill
+/// colour override, and a dissolve level.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AnimState {
     pub visible: bool,
@@ -60,11 +60,25 @@ pub struct AnimState {
     pub rotate: f64,
     pub clip: Option<[f64; 4]>,
     pub tint: Option<Rgba>,
+    /// The share (0..1) of the shape's area a dissolve effect shows: which parts is up to the
+    /// renderer's fixed noise, so what shows only ever grows with the level.
+    pub dissolve: Option<f64>,
 }
 
 impl Default for AnimState {
     fn default() -> Self {
-        AnimState { visible: true, opacity: 1.0, offset_x: 0.0, offset_y: 0.0, scale_x: 1.0, scale_y: 1.0, rotate: 0.0, clip: None, tint: None }
+        AnimState {
+            visible: true,
+            opacity: 1.0,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            rotate: 0.0,
+            clip: None,
+            tint: None,
+            dissolve: None,
+        }
     }
 }
 
@@ -77,8 +91,12 @@ impl AnimState {
     pub fn is_identity(&self) -> bool {
         *self == AnimState::default()
     }
+    /// Opacity for a part that cannot dissolve (a paragraph of a text build): a dissolve fades.
+    pub fn fade_opacity(&self) -> f64 {
+        self.opacity * self.dissolve.unwrap_or(1.0)
+    }
     /// Apply `d` on top of `self`: opacities and scales multiply, offsets and rotations add, clips
-    /// intersect, a tint replaces.
+    /// intersect, a tint replaces, dissolves show only what both show.
     pub fn compose(&self, d: &AnimState) -> AnimState {
         let clip = match (self.clip, d.clip) {
             (Some(a), Some(b)) => Some([a[0].max(b[0]), a[1].max(b[1]), a[2].min(b[2]), a[3].min(b[3])]),
@@ -95,6 +113,11 @@ impl AnimState {
             rotate: self.rotate + d.rotate,
             clip,
             tint: d.tint.or(self.tint),
+            dissolve: match (self.dissolve, d.dissolve) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, None) => a,
+                (None, b) => b,
+            },
         }
     }
     /// Replace any non-finite number with its neutral value and clamp opacity and clip.
@@ -106,6 +129,7 @@ impl AnimState {
         self.scale_x = f(self.scale_x, 1.0);
         self.scale_y = f(self.scale_y, 1.0);
         self.rotate = f(self.rotate, 0.0);
+        self.dissolve = self.dissolve.map(|d| f(d, 1.0).clamp(0.0, 1.0));
         self.clip = self.clip.map(|c| {
             let l = f(c[0], 0.0).clamp(0.0, 1.0);
             let t = f(c[1], 0.0).clamp(0.0, 1.0);

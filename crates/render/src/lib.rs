@@ -16,6 +16,7 @@ mod extrude;
 mod light;
 
 mod compound;
+mod dissolve;
 mod extent;
 mod images;
 mod metafile;
