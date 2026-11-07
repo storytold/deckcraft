@@ -169,7 +169,7 @@ impl FontDb {
                 if bundled.contains(fam) {
                     continue;
                 }
-                if self.is_loaded(fam) || self.has_family(fam) {
+                if self.is_loaded(fam) || (self.system_fallback_enabled() && self.has_family(fam)) {
                     let f = self.face(fam, style);
                     if f.family.eq_ignore_ascii_case(fam) && covers_cluster(&f, cluster) {
                         return f;
