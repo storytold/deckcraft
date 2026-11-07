@@ -480,6 +480,9 @@ pub struct Clipboard {
     pub source_theme: Option<SourceTheme>,
     /// How many times the shapes were pasted (each paste offsets further).
     pub pastes: u32,
+    /// Identity of the copied slides' payload on the system clipboard, so a paste can tell this
+    /// copy from another process's.
+    pub slides_payload: Option<u64>,
 }
 
 pub struct Session {
