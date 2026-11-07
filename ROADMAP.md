@@ -2,6 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
+> **Last reviewed:** 2026-11-05 · **Last updated:** 2026-11-05 · **Change:** minor (native macOS menus through craft-menu, the shared Craft menu layer) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Ogg Opus recovery includes trailing packets without granules in its reported duration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** trivial (progress log: web `?host=parent` bridge opens and saves through a same-origin framing page; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
@@ -84,7 +85,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 | Area | Breadth (measured) | Ready (est.) | Hours | Doc |
 |---|---:|---:|---|---|
-| Application shell | 81% | ~55% | 8–14 | [ui-parity](docs/ui-parity.md) |
+| Application shell | 85% | ~55% | 8–14 | [ui-parity](docs/ui-parity.md) |
 | Slides and sections | 92% | ~85% | 3–5 | [checklist](docs/parity-checklist.md) |
 | Views | 98% | ~80% | 3–6 | [ui-parity](docs/ui-parity.md) |
 | Masters and themes | 92% | ~70% | 8–14 | [checklist](docs/parity-checklist.md) |
@@ -154,6 +155,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-05 | Native macOS menu bar through craft-menu, the menu layer the Craft apps share: File/Edit/View/Insert/Format/Arrange/Slide Show/Help from `menus::menu_tree()`, with Settings, Quit, Hide, Services, Minimize, Zoom and the Window menu in their macOS places. Key equivalents go back to egui, so text fields keep ⌘C/⌘V/⌘Z; items follow the command registry (enabled, checks, Undo/Redo names); ⌘W closes the window in front (the presentation with its save prompt, a secondary window, or the empty start screen's window). |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
 | 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
 | 2026-11-02 | Slide show on Linux and the BSDs: Presenter View stays off when winit lists exactly one display, as in PowerPoint; if it lists none, the setting is kept. On one display the presenter window covered the show, and the hidden window stalled every frame: slide changes took up to ~1.7 s under Hyprland (#1156) |
@@ -340,6 +342,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-05 | minor | Native macOS menus through craft-menu (the Craft apps' shared menu layer) from the existing command catalogue; text fields keep their own edit keys, native window controls, and ⌘W closes the window in front |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
 | 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |
