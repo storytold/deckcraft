@@ -13,6 +13,10 @@ mod fontdb;
 pub mod script;
 mod shape;
 
+#[cfg(test)]
+#[path = "../tests/support/font_fixture.rs"]
+mod test_font;
+
 pub use fallback::{bundled_families, covers_cluster, is_emoji_cluster, ligature_carets};
 pub use fontdb::{
     FALLBACK_FAMILY, FaceRef, FontDb, FontFace, LAST_RESORT_FAMILY, MISSING_FONT_FAMILY, base_style, bundled, is_monospace_family, substitutes,

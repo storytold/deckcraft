@@ -3,8 +3,8 @@ use super::run::{Deco, DecoLine, GlyphRun};
 use super::shape::{SUB_SUPER, Upright, shape_para};
 use super::style::{Cell, Opts, ParaShaped, Style, spacing_pts};
 use super::{
-    Align, Anchor, Arc, AutoFit, BodyProps, Bullet, Caps, Ctx, FontFace, LineInfo, Rect, Shape, Spacing, Strike, TextBody, TextDir, TextLayout, bidi,
-    joins_following, joins_preceding, resolve,
+    Align, Anchor, Arc, AutoFit, BodyProps, Bullet, Caps, Ctx, FontDb, FontFace, LineInfo, Rect, Shape, Spacing, Strike, TextBody, TextDir,
+    TextLayout, bidi, joins_following, joins_preceding, resolve,
 };
 
 #[cfg(test)]
@@ -233,6 +233,7 @@ struct ParaEnv<'a> {
     first_x: f64,
     rest_x: f64,
     tabs: &'a [Tab],
+    configured_faces: &'a [Vec<Arc<FontFace>>],
 }
 
 impl ParaEnv<'_> {
@@ -330,7 +331,22 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
     let before = if pi == 0 && !first_last { 0.0 } else { spacing_pts(props.space_before, p.lead_size) };
     flow.y += before.max(0.0) + flow.prev_after;
     let first_line_idx = flow.lines.len();
-    let env = ParaEnv { p, g, reduce, margin, indent, mr, bullet_w, first_x, rest_x, tabs: &tabs };
+    // Resolve ownership once per style: aliases on unrelated fallback fonts do not
+    // make those faces part of the configured run fonts.
+    let db = FontDb::global();
+    let configured_faces: Vec<Vec<_>> = p
+        .styles
+        .iter()
+        .map(|st| {
+            [st.ea.as_deref(), st.cs.as_deref(), st.sym.as_deref()]
+                .into_iter()
+                .flatten()
+                .filter(|f| db.has_family(f))
+                .map(|f| db.face(f, st.style_name))
+                .collect()
+        })
+        .collect();
+    let env = ParaEnv { p, g, reduce, margin, indent, mr, bullet_w, first_x, rest_x, tabs: &tabs, configured_faces: &configured_faces };
     for (li, rl) in raw.iter().enumerate() {
         let is_last = li + 1 == raw.len();
         let placed = place_line(&env, pi, rl, li, is_last, flow);
@@ -342,15 +358,16 @@ fn place_paragraph(p: &ParaShaped, pi: usize, g: &BoxGeom, spacing: (f64, bool),
 }
 
 /// Max ascent / descent / size over the line's styles (or the lead style if empty).
-fn line_extent(p: &ParaShaped, rl: &RawLine) -> (f64, f64, f64) {
+fn line_extent(env: &ParaEnv, rl: &RawLine) -> (f64, f64, f64) {
+    let p = env.p;
     let (mut asc, mut desc, mut size) = (0.0f64, 0.0f64, 0.0f64);
     for c in p.cells.get(rl.start..rl.end.max(rl.start)).unwrap_or(&[]) {
         if let (Some(st), Some(face)) = (p.styles.get(c.style), p.faces.get(c.face)) {
             let sz = st.size;
             // The run's own fonts set the line; a fallback face (emoji, a symbol or a
             // script the run's fonts lack) does not move the baseline in PowerPoint.
-            let own = Arc::ptr_eq(face, &st.face)
-                || [st.ea.as_deref(), st.cs.as_deref(), st.sym.as_deref()].into_iter().flatten().any(|f| face.family.eq_ignore_ascii_case(f));
+            let own =
+                Arc::ptr_eq(face, &st.face) || env.configured_faces.get(c.style).is_some_and(|fonts| fonts.iter().any(|f| Arc::ptr_eq(face, f)));
             let (a, d) = line_metrics(if own { face } else { &st.face }, sz);
             asc = asc.max(a);
             desc = desc.max(d);
@@ -499,7 +516,7 @@ fn line_bullet(env: &ParaEnv, align: Align, content_shift: f64, baseline: f64) -
 fn place_line(env: &ParaEnv, pi: usize, rl: &RawLine, li: usize, is_last: bool, flow: &mut Flow) -> PlacedLine {
     let (p, g) = (env.p, env.g);
     let props = &p.props;
-    let (asc, desc, size) = line_extent(p, rl);
+    let (asc, desc, size) = line_extent(env, rl);
     let natural = (asc + desc).max(size * 1.0);
     let lh = match props.line_spacing {
         // The reduction comes off the percentage (90 % less 20 % is 70 %), as PowerPoint
