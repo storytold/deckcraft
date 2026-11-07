@@ -49,9 +49,10 @@ fn big_button_width(text_w: f32, split: bool) -> f32 {
 /// response). Like Office's split buttons, the icon and the label text run the main command; only
 /// the chevron at the end of the label row opens the menu.
 pub fn big_button_ex(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, split: bool, selected: bool) -> (Response, Option<Response>) {
+    let label = crate::i18n::context_text(ui.ctx(), label);
     let t = Tokens::get(ui.ctx());
     let font = theme::font(11.0);
-    let lines: Vec<&str> = wrap_label(label);
+    let lines: Vec<&str> = wrap_label(&label);
     let text_w = lines.iter().map(|l| ui.fonts_mut(|f| f.layout_no_wrap(l.to_string(), font.clone(), t.text).size().x)).fold(0.0f32, f32::max);
     let w = big_button_width(text_w, split);
     // The whole button runs the main command; the narrow strip at the end of the label row is the
@@ -148,6 +149,8 @@ pub fn small_button_named(
     selected: bool,
     split: bool,
 ) -> (Response, Option<Response>) {
+    let label = crate::i18n::context_text(ui.ctx(), label);
+    let name = crate::i18n::context_text(ui.ctx(), name);
     let t = Tokens::get(ui.ctx());
     let font = theme::font(12.0);
     let tw = if label.is_empty() { 0.0 } else { ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 5.0 };
@@ -156,7 +159,7 @@ pub fn small_button_named(
     // As in `big_button_ex`, a split row is two targets and must not add a third named node.
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 22.0), if enabled && !split { Sense::click() } else { Sense::hover() });
     if !name.is_empty() && !split {
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &name));
     }
     let painter = ui.painter_at(rect);
     let main_rect = Rect::from_min_max(rect.min, pos2(rect.max.x - arrow_w, rect.max.y));
@@ -170,7 +173,7 @@ pub fn small_button_named(
         )
     });
     if split {
-        main_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
+        main_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &name));
         if let Some(a) = &arrow_resp {
             a.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, format!("{name} options")));
         }
@@ -244,11 +247,12 @@ fn split_popup_id(main: &Response) -> egui::Id {
 /// A menu choice ticked in the icon column (Align to Slide…), its text lined up with the
 /// [`small_button`] items around it.
 pub fn check_item(ui: &mut Ui, label: &str, enabled: bool, on: bool) -> Response {
+    let label = crate::i18n::context_text(ui.ctx(), label);
     let t = Tokens::get(ui.ctx());
     let font = theme::font(12.0);
     let tw = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 5.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(24.0 + tw, 22.0), if enabled { Sense::click() } else { Sense::hover() });
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, on, label));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, on, &label));
     let painter = ui.painter_at(rect);
     if let Some(c) = bg(ui, &resp, false, &t) {
         painter.rect_filled(rect, CornerRadius::same(4), c);
@@ -262,6 +266,7 @@ pub fn check_item(ui: &mut Ui, label: &str, enabled: bool, on: bool) -> Response
 
 /// A square icon toggle (B, I, U, alignment…).
 pub fn icon_toggle(ui: &mut Ui, icon: Icon, tip: &str, enabled: bool, on: bool) -> Response {
+    let tip = crate::i18n::context_text(ui.ctx(), tip);
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(24.0, 22.0), if enabled { Sense::click() } else { Sense::hover() });
     let painter = ui.painter_at(rect);
@@ -270,16 +275,17 @@ pub fn icon_toggle(ui: &mut Ui, icon: Icon, tip: &str, enabled: bool, on: bool) 
     }
     icons::paint(&painter, rect.shrink(3.0), icon, t.text, !enabled);
     // Named for screen readers (and tests) by its tooltip.
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, tip));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &tip));
     resp.on_hover_text(tip)
 }
 
 /// Icon with a colour bar under it and a dropdown arrow (Font Color, Highlight, Shape Fill…).
 pub fn color_split(ui: &mut Ui, icon: Icon, tip: &str, color: Color32, enabled: bool) -> (Response, Response) {
+    let tip = crate::i18n::context_text(ui.ctx(), tip);
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(34.0, 22.0), Sense::hover());
     let main = ui.interact(Rect::from_min_size(rect.min, vec2(23.0, 22.0)), resp.id.with("m"), if enabled { Sense::click() } else { Sense::hover() });
-    main.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, tip));
+    main.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &tip));
     let arrow = ui.interact(
         Rect::from_min_max(pos2(rect.min.x + 23.0, rect.min.y), rect.max),
         resp.id.with("a"),

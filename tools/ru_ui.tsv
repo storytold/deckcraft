@@ -1,0 +1,224 @@
+Home|Главная
+File|Файл
+Edit|Правка
+View|Вид
+Insert|Вставка
+Draw|Рисование
+Design|Дизайн
+Transitions|Переходы
+Animations|Анимация
+Record|Запись
+Review|Рецензирование
+Shape Format|Формат фигуры
+Picture Format|Формат изображения
+Table Design|Конструктор таблиц
+Layout|Макет
+SmartArt Design|Конструктор SmartArt
+Chart Design|Конструктор диаграмм
+Playback|Воспроизведение
+Handout Master|Образец выдач
+Notes Master|Образец заметок
+Format|Формат
+Arrange|Упорядочить
+Help|Справка
+New|Создать
+New Slide|Новый слайд
+New Window|Новое окно
+Open|Открыть
+Open…|Открыть…
+Close|Закрыть
+Save|Сохранить
+Save As|Сохранить как
+Save As…|Сохранить как…
+Export|Экспорт
+Export…|Экспорт…
+Print|Печать
+Print…|Печать…
+Properties|Свойства
+Info|Сведения
+Account|Учётная запись
+Undo|Отменить
+Redo|Повторить
+Cut|Вырезать
+Copy|Копировать
+Paste|Вставить
+Paste Special…|Специальная вставка…
+Select All|Выделить всё
+Duplicate|Дублировать
+Delete|Удалить
+Delete Slide|Удалить слайд
+Find|Найти
+Find…|Найти…
+Replace|Заменить
+Replace…|Заменить…
+Font|Шрифт
+Fonts|Шрифты
+Font…|Шрифт…
+Paragraph|Абзац
+Paragraph…|Абзац…
+Bold|Полужирный
+Italic|Курсив
+Underline|Подчёркнутый
+Text Box|Текстовое поле
+Table|Таблица
+Chart|Диаграмма
+Picture|Изображение
+Shapes|Фигуры
+Icons|Значки
+Section|Раздел
+Group|Группировать
+Ungroup|Разгруппировать
+Bring to Front|На передний план
+Send to Back|На задний план
+Ruler|Линейка
+Gridlines|Линии сетки
+Guides|Направляющие
+Grid|Сетка
+Fit to Window|Вписать в окно
+Fit|Вписать
+General|Общие
+Editing|Редактирование
+Dark appearance|Тёмное оформление
+Measurement units:|Единицы измерения:
+Inches|Дюймы
+Centimeters|Сантиметры
+Show smart guides|Показывать умные направляющие
+Snap objects to grid|Привязывать объекты к сетке
+Replace straight quotes with smart quotes|Заменять прямые кавычки типографскими
+AutoCorrect as you type|Автозамена при вводе
+AutoCorrect Options…|Параметры автозамены…
+Your name (comments):|Ваше имя (для комментариев):
+Preferences|Настройки
+Preferences…|Настройки…
+Options|Параметры
+Done|Готово
+Cancel|Отмена
+OK|ОК
+Apply|Применить
+Apply to All|Применить ко всем
+Add|Добавить
+Remove|Удалить
+None|Нет
+Automatic|Автоматически
+Color|Цвет
+Colors|Цвета
+Fill|Заливка
+Line|Линия
+Effects|Эффекты
+Size|Размер
+Position|Положение
+Shadow|Тень
+Glow|Свечение
+Reflection|Отражение
+Soft Edges|Сглаживание краёв
+Transparency|Прозрачность
+Weight|Толщина
+Rotate|Повернуть
+Rotate Left|Повернуть влево
+Rotate Right|Повернуть вправо
+Crop|Обрезка
+Borders|Границы
+Bullets|Маркеры
+Numbering|Нумерация
+Line Spacing|Межстрочный интервал
+Text Direction|Направление текста
+Shape Fill|Заливка фигуры
+Shape Outline|Контур фигуры
+Shape Effects|Эффекты фигуры
+Text Fill|Заливка текста
+Text Outline|Контур текста
+Text Effects|Текстовые эффекты
+Align Text|Выровнять текст
+Align|Выровнять
+Themes|Темы
+Layouts|Макеты
+Preview|Предпросмотр
+Play|Воспроизвести
+Pause|Пауза
+Volume|Громкость
+Start Automatically|Запускать автоматически
+On Mouse Click|По щелчку мыши
+Use Timings|Использовать время показа
+Presenter View|Режим докладчика
+From Beginning|С начала
+From Current Slide|С текущего слайда
+Hide Slide|Скрыть слайд
+End Show|Завершить показ
+Search commands…|Поиск команд…
+Command Palette|Палитра команд
+About DeckCraft|О программе DeckCraft
+Check for Updates…|Проверить обновления…
+New Comment|Новый комментарий
+Post|Отправить
+Resolve|Разрешить
+Accept|Принять
+Reject|Отклонить
+Recent|Последние
+Templates|Шаблоны
+Browse for Themes…|Обзор тем…
+More Colors… #|Другие цвета… #
+More Columns…|Другие столбцы…
+Insert Table…|Вставить таблицу…
+Format Shape…|Формат фигуры…
+Format Background…|Формат фона…
+Selection Pane…|Область выделения…
+Add Pictures…|Добавить изображения…
+Pictures in album|Изображения в альбоме
+Picture layout|Макет изображений
+Frame shape|Форма рамки
+Album theme|Тема альбома
+New Text Box|Новое текстовое поле
+More Brightness|Увеличить яркость
+Less Brightness|Уменьшить яркость
+More Contrast|Увеличить контрастность
+Less Contrast|Уменьшить контрастность
+Clear|Очистить
+Clear All|Очистить всё
+Set|Задать
+Name:|Имя:
+Width:|Ширина:
+Height:|Высота:
+Orientation:|Ориентация:
+Portrait|Книжная
+Landscape|Альбомная
+Number of columns:|Число столбцов:
+Number of rows:|Число строк:
+Slides|Слайды
+Slides sized for:|Размер слайдов:
+Slide Size|Размер слайда
+Header and Footer|Колонтитулы
+Date and Time|Дата и время
+Date and time|Дата и время
+Slide number|Номер слайда
+Footer|Нижний колонтитул
+Footers|Нижние колонтитулы
+Don't show on title slide|Не показывать на титульном слайде
+Language:|Язык:
+Spelling|Проверка орфографии
+The spelling check is complete. No issues found.|Проверка орфографии завершена. Ошибок не найдено.
+Email address:|Адрес электронной почты:
+Address:|Адрес:
+ScreenTip:|Всплывающая подсказка:
+Insert Hyperlink|Вставка гиперссылки
+This Document|Этот документ
+Web Page or File|Веб-страница или файл
+Email Address|Адрес электронной почты
+Rename|Переименовать
+Rename Section…|Переименовать раздел…
+Add Section|Добавить раздел
+Move Up|Переместить вверх
+Move Down|Переместить вниз
+Edit Points|Изменить точки
+Edit Text|Изменить текст
+Add Point|Добавить точку
+Delete Point|Удалить точку
+Eyedropper|Пипетка
+No Glow|Без свечения
+Change Shape|Изменить фигуру
+Change Picture…|Изменить изображение…
+Copy path|Копировать путь
+Open file location|Открыть папку файла
+No pictures yet|Изображений пока нет
+No comments.|Комментариев нет.
+No notes.|Заметок нет.
+Your changes will be lost if you don't save them.|Несохранённые изменения будут потеряны.
