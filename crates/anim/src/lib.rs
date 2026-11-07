@@ -19,6 +19,7 @@ mod interact;
 mod mesh;
 mod morph;
 mod path;
+mod reveal;
 mod show;
 mod timeline;
 mod transition;
@@ -40,6 +41,7 @@ pub use interact::{Click, HitShape, Target};
 pub use mesh::{MeshVertex, layer_mesh};
 pub use morph::{MorphFrame, MorphPath, MorphText, morph_crop, morph_frame, morph_pairs, morph_xfrm};
 pub use path::{MotionPath, default_path};
+pub use reveal::{RAMP, Reveal, RevealShape};
 pub use show::{LinkJump, ShowAction, ShowState, safe_url, show_order};
 pub use timeline::{EffectTiming, Sequence, StepStamp, Timeline, TriggerPlay};
 pub use transition::{DEFAULT_ASPECT, Layer, Source, transition_frame, transition_layers, uses_slide_parts};
@@ -47,8 +49,8 @@ pub use transition::{DEFAULT_ASPECT, Layer, Source, transition_frame, transition
 /// Animation state of one shape (or one paragraph of a shape's text) at one moment of the show.
 ///
 /// Same meaning as the renderer's `ShapeState`: translation in points, scale and rotation (degrees)
-/// around the shape's centre, a reveal clip in shape-local unit space `[l, t, r, b]`, and a fill
-/// colour override.
+/// around the shape's centre, a reveal clip in shape-local unit space `[l, t, r, b]`, a soft edged
+/// reveal over the shape's visual bounds, and a fill colour override.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AnimState {
     pub visible: bool,
@@ -59,12 +61,24 @@ pub struct AnimState {
     pub scale_y: f64,
     pub rotate: f64,
     pub clip: Option<[f64; 4]>,
+    pub reveal: Option<Reveal>,
     pub tint: Option<Rgba>,
 }
 
 impl Default for AnimState {
     fn default() -> Self {
-        AnimState { visible: true, opacity: 1.0, offset_x: 0.0, offset_y: 0.0, scale_x: 1.0, scale_y: 1.0, rotate: 0.0, clip: None, tint: None }
+        AnimState {
+            visible: true,
+            opacity: 1.0,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            rotate: 0.0,
+            clip: None,
+            reveal: None,
+            tint: None,
+        }
     }
 }
 
@@ -78,7 +92,7 @@ impl AnimState {
         *self == AnimState::default()
     }
     /// Apply `d` on top of `self`: opacities and scales multiply, offsets and rotations add, clips
-    /// intersect, a tint replaces.
+    /// intersect, a reveal or a tint replaces.
     pub fn compose(&self, d: &AnimState) -> AnimState {
         let clip = match (self.clip, d.clip) {
             (Some(a), Some(b)) => Some([a[0].max(b[0]), a[1].max(b[1]), a[2].min(b[2]), a[3].min(b[3])]),
@@ -94,6 +108,7 @@ impl AnimState {
             scale_y: self.scale_y * d.scale_y,
             rotate: self.rotate + d.rotate,
             clip,
+            reveal: d.reveal.or(self.reveal),
             tint: d.tint.or(self.tint),
         }
     }
@@ -106,6 +121,7 @@ impl AnimState {
         self.scale_x = f(self.scale_x, 1.0);
         self.scale_y = f(self.scale_y, 1.0);
         self.rotate = f(self.rotate, 0.0);
+        self.reveal = self.reveal.filter(|r| r.edge.is_finite());
         self.clip = self.clip.map(|c| {
             let l = f(c[0], 0.0).clamp(0.0, 1.0);
             let t = f(c[1], 0.0).clamp(0.0, 1.0);

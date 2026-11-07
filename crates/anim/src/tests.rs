@@ -8,8 +8,8 @@ use deckcraft_model::{
 };
 
 use crate::{
-    AnimState, Layer, LinkJump, MotionPath, ShowAction, ShowState, Source, Timeline, TriggerPlay, default_path, ease, morph_crop, morph_frame,
-    morph_pairs, morph_xfrm, show_order, transition_frame, transition_layers,
+    AnimState, Layer, LinkJump, MotionPath, RAMP, Reveal, RevealShape, ShowAction, ShowState, Source, Timeline, TriggerPlay, default_path, ease,
+    morph_crop, morph_frame, morph_pairs, morph_xfrm, show_order, transition_frame, transition_layers,
 };
 
 const W: f64 = 960.0;
@@ -35,6 +35,7 @@ fn finite(s: &AnimState) -> bool {
         && s.scale_y.is_finite()
         && s.rotate.is_finite()
         && s.clip.is_none_or(|c| c.iter().all(|v| v.is_finite()))
+        && s.reveal.is_none_or(|r| r.edge.is_finite())
 }
 
 #[test]
@@ -207,12 +208,131 @@ fn fly_starts_off_slide() {
 }
 
 #[test]
-fn wipe_clips() {
+fn wipe_reveals_through_a_soft_front_that_moves_linearly() {
     let mut a = anim(1, AnimClass::Entrance, "wipe", AnimStart::OnClick);
     a.option = "l".into();
     let tl = Timeline::new(&slide_with(vec![a]), W, H);
-    let c = tl.state(ShapeId(1), None, 0, 0.5).clip.unwrap();
-    assert!(c[0] == 0.0 && c[2] > 0.0 && c[2] < 1.0);
+    let s = tl.state(ShapeId(1), None, 0, 0.5);
+    let r = s.reveal.expect("a soft reveal");
+    assert_eq!((r.shape, r.inward), (RevealShape::WipeLeft, false));
+    assert!(s.clip.is_none() && s.opacity == 1.0, "no hard clip and no fade: {s:?}");
+    // The front goes from 0 to 1 + RAMP in a straight line (PowerPoint's own timing, no smoothing).
+    assert!((r.edge - 0.5 * (1.0 + RAMP)).abs() < 1e-9, "{r:?}");
+    let q = tl.state(ShapeId(1), None, 0, 0.25).reveal.expect("a soft reveal");
+    assert!((q.edge - 0.25 * (1.0 + RAMP)).abs() < 1e-9, "{q:?}");
+}
+
+#[test]
+fn the_clip_effects_reveal_with_the_shape_and_direction_their_option_names() {
+    use RevealShape::*;
+    for (effect, option, shape, inward) in [
+        ("box", "out", Box, false),
+        ("box", "in", Box, true),
+        ("circle", "out", Circle, false),
+        ("circle", "in", Circle, true),
+        ("diamond", "out", Diamond, false),
+        ("diamond", "in", Diamond, true),
+        ("shape", "circleOut", Circle, false),
+        ("shape", "boxIn", Box, true),
+        ("shape", "diamondIn", Diamond, true),
+        ("shape", "plusOut", Plus, false),
+        ("shape", "plusIn", Plus, true),
+        ("split", "vertOut", SplitVertical, false),
+        ("split", "vertIn", SplitVertical, true),
+        ("split", "horzOut", SplitHorizontal, false),
+        ("split", "horzIn", SplitHorizontal, true),
+        ("wipe", "l", WipeLeft, false),
+        ("wipe", "r", WipeRight, false),
+        ("wipe", "t", WipeTop, false),
+        ("wipe", "b", WipeBottom, false),
+    ] {
+        let mut a = anim(1, AnimClass::Entrance, effect, AnimStart::OnClick);
+        a.option = option.into();
+        let tl = Timeline::new(&slide_with(vec![a]), W, H);
+        let s = tl.state(ShapeId(1), None, 0, 0.5);
+        let r = s.reveal.unwrap_or_else(|| panic!("{effect} {option} has no reveal: {s:?}"));
+        assert_eq!((r.shape, r.inward), (shape, inward), "{effect} {option}");
+        // The "in" directions do not fade either (PowerPoint's Box In is a hole closing, not a fade).
+        assert!(s.clip.is_none() && s.opacity == 1.0, "{effect} {option}: {s:?}");
+    }
+}
+
+#[test]
+fn a_reveal_runs_from_nothing_to_everything_whatever_its_shape_and_direction() {
+    use RevealShape::*;
+    let grid = || (0..=20).flat_map(|i| (0..=20).map(move |j| (f64::from(i) / 20.0, f64::from(j) / 20.0)));
+    for shape in [Box, Circle, Diamond, Plus, WipeLeft, WipeRight, WipeTop, WipeBottom, SplitVertical, SplitHorizontal] {
+        for inward in [false, true] {
+            let (start, end) = (Reveal::new(shape, inward, 0.0), Reveal::new(shape, inward, 1.0));
+            for (u, v) in grid() {
+                assert_eq!(start.alpha(u, v), 0.0, "{shape:?} inward {inward} shows ({u}, {v}) at the start");
+                assert_eq!(end.alpha(u, v), 1.0, "{shape:?} inward {inward} hides ({u}, {v}) at the end");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_reveal_edge_is_a_linear_ramp_of_the_ramp_width_with_an_opaque_inside() {
+    // A Box at 43 %: opaque up to edge - RAMP, hidden from the edge, half way in the middle of the ramp.
+    let r = Reveal::new(RevealShape::Box, false, 0.43);
+    let at = |d: f64| r.alpha(0.5 + d / 2.0, 0.5);
+    assert_eq!((at(0.0), at(r.edge - RAMP - 1e-9), at(r.edge + 1e-9)), (1.0, 1.0, 0.0));
+    assert!((at(r.edge - RAMP / 2.0) - 0.5).abs() < 1e-9);
+    assert!((at(r.edge - RAMP * 0.25) - 0.25).abs() < 1e-9 && (at(r.edge - RAMP * 0.75) - 0.75).abs() < 1e-9, "linear, not smoothstep");
+    // The same on the vertical axis: the distance is measured on each axis of the bounds.
+    assert!((r.alpha(0.5, 0.5 + (r.edge - RAMP / 2.0) / 2.0) - 0.5).abs() < 1e-9);
+    // The "in" direction is the mirror image: hidden inside, opaque outside the ramp.
+    let r = Reveal::new(RevealShape::Box, true, 0.43);
+    assert_eq!((r.alpha(0.5, 0.5), r.alpha(1.0, 0.5)), (0.0, 1.0));
+    assert!((r.alpha(0.5 + (r.edge + RAMP / 2.0) / 2.0, 0.5) - 0.5).abs() < 1e-9);
+}
+
+#[test]
+fn a_rows_alpha_bytes_are_the_alpha_of_each_point_within_a_level() {
+    use RevealShape::*;
+    // The fast path for masks agrees with the plain rule: every shape, both directions, a front
+    // before, in and after the box, rows and columns past the box too.
+    let us: Vec<f64> = (-10..=50).map(|i| f64::from(i) / 40.0).collect();
+    for shape in [Box, Circle, Diamond, Plus, WipeLeft, WipeRight, WipeTop, WipeBottom, SplitVertical, SplitHorizontal] {
+        for inward in [false, true] {
+            for p in [0.0, 0.1, 0.43, 0.8, 1.0] {
+                let r = Reveal::new(shape, inward, p);
+                for v in (-5..=45).map(|i| f64::from(i) / 40.0) {
+                    let mut row = vec![0u8; us.len()];
+                    r.row_alpha(v, &us, &mut row);
+                    for (u, got) in us.iter().zip(&row) {
+                        let want = (r.alpha(*u, v) * 255.0).round();
+                        assert!((f64::from(*got) - want).abs() <= 1.0, "{shape:?} inward {inward} p {p} at ({u}, {v}): {got} against {want}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_fronts_have_the_shapes_of_their_names() {
+    use RevealShape::*;
+    let same = |shape, a: (f64, f64), b: (f64, f64)| {
+        let r = Reveal::new(shape, false, 0.4);
+        assert!((r.distance(a.0, a.1) - r.distance(b.0, b.1)).abs() < 1e-9, "{shape:?}: {a:?} and {b:?} are on one front");
+    };
+    // Circle: an ellipse through the corners of the bounds, in a box of any proportions.
+    same(Circle, (1.0, 0.5), (0.5, 1.0));
+    same(Circle, (0.5 + 0.4, 0.5 + 0.3), (1.0, 0.5));
+    // Diamond: a rhombus with the box's diagonals; Box: a rectangle; Plus: arms along the axes.
+    same(Diamond, (1.0, 0.5), (0.5, 1.0));
+    same(Diamond, (0.75, 0.75), (1.0, 0.5));
+    same(Box, (1.0, 0.0), (1.0, 0.5));
+    same(Plus, (0.5, 0.0), (0.0, 0.5));
+    same(Plus, (0.5, 0.0), (0.5, 1.0));
+    // The distance is 1 at the edge of the box for Box, Wipe and Split, and at the corners for the rest.
+    assert_eq!(Reveal::new(Circle, false, 0.0).distance(0.0, 0.0), 1.0);
+    assert_eq!(Reveal::new(Diamond, false, 0.0).distance(1.0, 1.0), 1.0);
+    assert_eq!(Reveal::new(Plus, false, 0.0).distance(0.0, 0.0), 1.0);
+    assert_eq!(Reveal::new(WipeRight, false, 0.0).distance(0.0, 0.3), 1.0);
+    assert_eq!(Reveal::new(SplitVertical, false, 0.0).distance(1.0, 0.3), 1.0);
 }
 
 #[test]
@@ -923,6 +1043,15 @@ fn compose_and_sanitize() {
     assert!((c.opacity - 0.25).abs() < 1e-9 && c.offset_x == 3.0 && c.clip == Some([0.25, 0.0, 0.5, 1.0]));
     let bad = AnimState { opacity: f64::NAN, rotate: f64::INFINITY, clip: Some([f64::NAN, 2.0, -1.0, 0.5]), ..Default::default() }.sanitized();
     assert!(finite(&bad));
+    // A reveal replaces an earlier one; a hostile edge is dropped.
+    let (first, second) = (Reveal::new(RevealShape::Box, false, 0.2), Reveal::new(RevealShape::Circle, true, 0.6));
+    let both = AnimState { reveal: Some(first), ..Default::default() }.compose(&AnimState { reveal: Some(second), ..Default::default() });
+    assert_eq!(both.reveal, Some(second));
+    assert_eq!(AnimState { reveal: Some(first), ..Default::default() }.compose(&AnimState::default()).reveal, Some(first));
+    let mut hostile = first;
+    hostile.edge = f64::NAN;
+    assert!(AnimState { reveal: Some(hostile), ..Default::default() }.sanitized().reveal.is_none());
+    assert_eq!(Reveal::new(RevealShape::Box, false, f64::NAN).edge, 0.0);
 }
 
 #[test]

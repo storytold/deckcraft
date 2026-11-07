@@ -1,5 +1,5 @@
 use super::geometry::{
-    Caster, blur, border_outside, camera_turn, color, drawable, fill_opacity, outside_line, scale_of, shadow_local, shape_geometry,
+    Caster, blur, border_outside, camera_turn, color, drawable, fill_opacity, outline_reach, outside_line, scale_of, shadow_local, shape_geometry,
 };
 use super::opts::{RenderOpts, ShapeState, SlideFields};
 use super::raster::Image;
@@ -449,11 +449,25 @@ impl Renderer {
         if let Some(a) = camera_turn(rctx, s, x.w, x.h) {
             m *= a;
         }
-        let layered = st.opacity < 0.999 || st.clip.is_some();
+        let layered = st.opacity < 0.999 || st.clip.is_some() || st.reveal.is_some();
         if layered {
             ctx.set_transform(m);
             let clip = st.clip.map(|[l, t, r, b]| Rect::new(l * x.w, t * x.h, r * x.w, b * x.h).to_path(0.1));
-            ctx.push_layer(clip.as_ref(), None, Some(st.opacity.clamp(0.0, 1.0) as f32), None, None);
+            let mut opacity = st.opacity.clamp(0.0, 1.0);
+            // PowerPoint measures the reveal on the shape's visual bounds (its outline included) on
+            // the slide's axes, whatever the shape's turn or its groups' scale.
+            let mask = st.reveal.and_then(|r| {
+                let (kx, ky) = self.per_point_xy(m, depth);
+                let is_pic = matches!(s.kind, ShapeKind::Picture { .. });
+                let reach = outline_reach(&resolve::line(rctx, s).0, is_pic, resolve::effects(rctx, s).0.as_ref());
+                let bounds = m.transform_rect_bbox(Rect::new(-reach * kx, -reach * ky, x.w + reach * kx, x.h + reach * ky));
+                let mask = reveal::mask(ctx.width(), ctx.height(), bounds, &r);
+                if mask.is_none() {
+                    opacity *= r.alpha(0.5, 0.5);
+                }
+                mask
+            });
+            ctx.push_layer(clip.as_ref(), None, Some(opacity as f32), mask, None);
         }
         match &s.kind {
             ShapeKind::Group { children, child } => {

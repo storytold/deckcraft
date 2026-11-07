@@ -19,6 +19,7 @@ pub fn shape_state(tl: &Timeline, id: ShapeId, step: usize, t: f64) -> ShapeStat
         scale: (a.scale_x, a.scale_y),
         rotate: a.rotate,
         clip: a.clip,
+        reveal: a.reveal,
         tint: a.tint,
         paras: tl
             .paragraph_targets(id)
