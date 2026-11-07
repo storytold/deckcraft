@@ -1,0 +1,14 @@
+[package]
+name = "deckcraft-asr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft live subtitles: provider protocol, audio preprocessing, caption layout and the Whisper model manifest (pure, wasm-safe)"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }

@@ -25,6 +25,7 @@ pub mod selection;
 pub mod shape;
 pub mod slide;
 pub mod smartart;
+pub mod subtitles;
 pub mod table;
 pub mod text;
 pub mod three_d;
@@ -185,6 +186,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(table::specs());
         v.extend(find::specs());
         v.extend(review::specs());
+        v.extend(subtitles::specs());
         v.extend(inspect::specs());
         v.extend(media::specs());
         v.extend(artistic::specs());

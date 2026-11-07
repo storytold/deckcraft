@@ -35,6 +35,16 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
         let _ = r.on_hover_text("Recording narration needs audio capture (coming soon)");
     });
     group(ui, |ui| {
+        let available = app.subtitles.available();
+        let on = app.session.prefs.subtitles.on;
+        let (r, _) = big_button_ex(ui, Icon::Subtitles, "Always Use\nSubtitles", available, false, on);
+        let r = if available { r } else { r.on_hover_text("Live subtitles need the whisper-tiny model: open Subtitle Settings to download it") };
+        if r.clicked() {
+            run(app, "show.subtitles", json!({"on": !on}));
+        }
+        big(app, ui, Icon::Subtitles, "Subtitle\nSettings", "app.dialog", json!({"id": "subtitles"}));
+    });
+    group(ui, |ui| {
         rows(ui, |ui| {
             let mut use_t = app.session.active().is_none_or(|d| d.doc.show.use_timings);
             if ui.checkbox(&mut use_t, "Use Timings").changed() {

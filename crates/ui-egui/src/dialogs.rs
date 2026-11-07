@@ -37,6 +37,7 @@ fn title(id: &str) -> &'static str {
         "headerFooter" => "Header and Footer",
         "hyperlink" => "Insert Hyperlink",
         "setupShow" => "Set Up Slide Show",
+        "subtitles" => "Subtitle Settings",
         "zoom" => "Zoom",
         "comment" => "New Comment",
         "altText" => "Alt Text",
@@ -219,6 +220,7 @@ mod photo_album;
 mod preferences;
 mod size_position;
 mod slide_size;
+mod subtitles;
 mod tabs;
 mod theme_colors;
 mod theme_fonts;

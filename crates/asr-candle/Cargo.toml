@@ -1,0 +1,19 @@
+[package]
+name = "deckcraft-asr-candle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft live subtitles: Whisper (candle) transcription backend, microphone capture and the model loader. Native only"
+
+[lints]
+workspace = true
+
+[dependencies]
+deckcraft-asr = { workspace = true }
+candle-core = { workspace = true }
+candle-nn = { workspace = true }
+candle-transformers = { workspace = true }
+tokenizers = { workspace = true }
+cpal = { workspace = true }
+log = { workspace = true }
+serde_json = { workspace = true }

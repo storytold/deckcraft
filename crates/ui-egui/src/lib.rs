@@ -32,6 +32,7 @@ pub mod settings;
 pub mod show;
 pub mod sorter;
 pub mod status;
+pub mod subtitles;
 pub mod textures;
 pub mod theme;
 pub mod toast;
@@ -232,6 +233,8 @@ pub struct SlideApp {
     /// The word looked up in the Thesaurus pane.
     pub thesaurus_query: String,
     pub show: Option<show::Show>,
+    /// Live captions: provider, caption text and model state (Slide Show ▸ Captions).
+    pub subtitles: subtitles::Subtitles,
     /// Current slide's animations playing on the editor canvas (not the full-screen show).
     anim_preview: Option<AnimPreview>,
     /// Where the Reuse Slides picker inserts: the presentation and slide current when it opened.
@@ -476,6 +479,8 @@ mod reuse_picker_tests;
 mod slide_size_tests;
 #[cfg(test)]
 mod split_button_tests;
+#[cfg(test)]
+mod subtitles_tests;
 #[cfg(test)]
 mod texture_limit_tests;
 #[cfg(test)]

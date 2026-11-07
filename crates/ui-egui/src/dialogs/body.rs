@@ -14,6 +14,7 @@ use super::photo_album::photo_album_dialog;
 use super::preferences::{preferences_snapshot, restore_preferences};
 use super::size_position::size_position_dialog;
 use super::slide_size::{put_slide_dim, slide_dim_points, unit_abbr};
+use super::subtitles::subtitles_dialog;
 use super::tabs::tabs_dialog;
 use super::theme_colors::theme_colors_dialog;
 use super::theme_fonts::theme_fonts_dialog;
@@ -30,6 +31,7 @@ pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         "headerFooter" => dlg_header_footer(app, ui, d),
         "hyperlink" => dlg_hyperlink(app, ui, d),
         "setupShow" => dlg_setup_show(app, ui, d),
+        "subtitles" => subtitles_dialog(app, ui, d),
         "quit" => dlg_quit(app, ui, d),
         "close" => dlg_close(app, ui, d),
         "zoom" => zoom_dialog(app, ui, d),

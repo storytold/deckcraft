@@ -360,14 +360,19 @@ Detail in [localization-parity.md](localization-parity.md).
 
 ## AI features
 
-- **No Designer, Copilot, Speaker Coach, live subtitles or Translate.** All are Microsoft cloud
-  services; an offline rule-based Designer is in the catalogue (P2). Local models (speech-to-text
-  for subtitles, translation) need an owner decision on licensed models. 20–40 h.
+- **No Designer, Copilot, Speaker Coach or Translate.** All are Microsoft cloud services; an
+  offline rule-based Designer is in the catalogue (P2). Local translation needs a model choice of
+  its own (the subtitle model transcribes, it does not translate). 20–40 h.
+- **Live subtitles are one small model.** Whisper tiny is user-downloaded and offline, so it is
+  slower and less accurate than PowerPoint's cloud captions, and only the audience window shows
+  the caption. A larger whisper model needs a manifest entry and a download the disk can hold;
+  translating the caption needs a second model. 6–12 h.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-07 | minor | Live subtitles from a locally run Whisper model; the AI gap now lists only Designer, Copilot, Speaker Coach and translation, plus the model-accuracy and Presenter View limits (#1811) |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |

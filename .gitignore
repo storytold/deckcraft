@@ -8,6 +8,8 @@ plan/
 .DS_Store
 /.claude/
 /craft-fonts/
+# User-downloaded model weights (never committed; see docs/captions.md).
+/models/
 packaging/env.sh
 /packaging/linux/flatpak/cargo-sources.json
 /build-flatpak/
