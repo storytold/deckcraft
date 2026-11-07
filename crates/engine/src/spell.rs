@@ -70,8 +70,8 @@ fn parse_cond(s: &str) -> Vec<Cond> {
 struct Affix {
     flag: Flag,
     cross: bool,
-    strip: String,
-    add: String,
+    strip: Vec<char>,
+    add: Vec<char>,
     cond: Vec<Cond>,
     cont: Vec<Flag>,
 }
@@ -96,6 +96,14 @@ pub struct Dictionary {
     words: HashMap<String, Vec<Vec<Flag>>>,
     pfx: Vec<Affix>,
     sfx: Vec<Affix>,
+    /// Indexes into `pfx` and `sfx` by the exact text an affix adds (empty for one that adds
+    /// nothing), so a check looks up the few affixes that fit the word's ends instead of trying
+    /// every rule (pt_BR has about 26,000).
+    pfx_add: HashMap<Vec<char>, Vec<usize>>,
+    sfx_add: HashMap<Vec<char>, Vec<usize>>,
+    /// The longest text any prefix or suffix adds.
+    max_pfx: usize,
+    max_sfx: usize,
     try_chars: Vec<char>,
     rep: Vec<(String, String)>,
     word_chars: Vec<char>,
@@ -191,8 +199,8 @@ impl Dictionary {
                         let a = Affix {
                             flag,
                             cross,
-                            strip: if *strip == "0" { String::new() } else { strip.to_string() },
-                            add: if add == "0" { String::new() } else { add.to_string() },
+                            strip: if *strip == "0" { vec![] } else { strip.chars().collect() },
+                            add: if add == "0" { vec![] } else { add.chars().collect() },
                             cond: parse_cond(rest.first().copied().unwrap_or(".")),
                             cont,
                         };
@@ -219,7 +227,29 @@ impl Dictionary {
             };
             d.words.entry(word.to_string()).or_default().push(flags);
         }
+        d.index_affixes();
         d
+    }
+
+    fn index_affixes(&mut self) {
+        for (i, a) in self.pfx.iter().enumerate() {
+            self.pfx_add.entry(a.add.clone()).or_default().push(i);
+            self.max_pfx = self.max_pfx.max(a.add.len());
+        }
+        for (i, a) in self.sfx.iter().enumerate() {
+            self.sfx_add.entry(a.add.clone()).or_default().push(i);
+            self.max_sfx = self.max_sfx.max(a.add.len());
+        }
+    }
+
+    /// The suffixes that can end `w`: those whose added text is the end of `w` (or nothing).
+    fn suffixes<'a>(&'a self, w: &'a [char]) -> impl Iterator<Item = &'a Affix> + 'a {
+        (0..=self.max_sfx.min(w.len())).filter_map(move |k| self.sfx_add.get(w.get(w.len() - k..)?)).flatten().filter_map(move |&i| self.sfx.get(i))
+    }
+
+    /// The prefixes that can start `w`: those whose added text is the start of `w` (or nothing).
+    fn prefixes<'a>(&'a self, w: &'a [char]) -> impl Iterator<Item = &'a Affix> + 'a {
+        (0..=self.max_pfx.min(w.len())).filter_map(move |k| self.pfx_add.get(w.get(..k)?)).flatten().filter_map(move |&i| self.pfx.get(i))
     }
 
     /// Add `word` (no flags), as a user's own dictionary entry.
@@ -250,7 +280,7 @@ impl Dictionary {
     /// Strip suffixes from `w` (one, or two through continuation flags); `extra` flags must also be
     /// on the root, `cross` means the suffix must allow a prefix.
     fn suffixed(&self, w: &[char], extra: &[Flag], cross: bool) -> bool {
-        for s in &self.sfx {
+        for s in self.suffixes(w) {
             if cross && !s.cross {
                 continue;
             }
@@ -265,10 +295,10 @@ impl Dictionary {
                 return true;
             }
             // A second suffix whose continuation allows this one (`walk/A` + `ing/B`…).
-            for s2 in &self.sfx {
-                if !s.cont.is_empty() || !s2.cont.contains(&s.flag) {
-                    continue;
-                }
+            if !s.cont.is_empty() {
+                continue;
+            }
+            for s2 in self.suffixes(&stem).filter(|s2| s2.cont.contains(&s.flag)) {
                 let Some(stem2) = strip_end(&stem, &s2.add, &s2.strip) else { continue };
                 if s2.cond_ok(&stem2, false) {
                     let mut need = extra.to_vec();
@@ -291,7 +321,7 @@ impl Dictionary {
 
     /// The last part of a compound with a suffix: the root must carry the compound `flag`.
     fn suffixed_compound_end(&self, w: &[char], flag: Flag) -> bool {
-        self.sfx.iter().any(|s| {
+        self.suffixes(w).any(|s| {
             strip_end(w, &s.add, &s.strip).is_some_and(|stem| {
                 s.cond_ok(&stem, false)
                     && self
@@ -340,7 +370,7 @@ impl Dictionary {
         if self.suffixed(&w, &[], false) {
             return true;
         }
-        for p in &self.pfx {
+        for p in self.prefixes(&w) {
             let Some(stem) = strip_start(&w, &p.add, &p.strip) else { continue };
             if !p.cond_ok(&stem, true) {
                 continue;
@@ -407,7 +437,7 @@ impl Dictionary {
         let mut out: Vec<String> = vec![];
         let mut seen = HashSet::new();
         let mut push = |s: String, out: &mut Vec<String>| {
-            if s == lower {
+            if out.len() >= n || s == lower {
                 return;
             }
             // Checked in capitals, so a KEEPCASE entry ("NASA") is offered for an all-caps word.
@@ -418,7 +448,9 @@ impl Dictionary {
         };
         for (a, b) in &self.rep {
             let mut from = 0;
-            while let Some(i) = lower.get(from..).and_then(|t| t.find(a.as_str())) {
+            while out.len() < n
+                && let Some(i) = lower.get(from..).and_then(|t| t.find(a.as_str()))
+            {
                 let at = from + i;
                 push(format!("{}{}{}", &lower[..at], b, &lower[at + a.len()..]), &mut out);
                 from = at + a.len().max(1);
@@ -427,16 +459,25 @@ impl Dictionary {
         let try_chars: Vec<char> = if self.try_chars.is_empty() { "esianrtolcdugmphbyfvkwzxjq".chars().collect() } else { self.try_chars.clone() };
         let s = |v: &[char]| v.iter().collect::<String>();
         for i in 0..w.len().saturating_sub(1) {
+            if out.len() >= n {
+                break;
+            }
             let mut v = w.clone();
             v.swap(i, i + 1);
             push(s(&v), &mut out);
         }
         for i in 0..w.len() {
+            if out.len() >= n {
+                break;
+            }
             let mut v = w.clone();
             v.remove(i);
             push(s(&v), &mut out);
         }
         for i in 0..w.len() {
+            if out.len() >= n {
+                break;
+            }
             for c in &try_chars {
                 if *c != w[i] {
                     let mut v = w.clone();
@@ -446,6 +487,9 @@ impl Dictionary {
             }
         }
         for i in 0..=w.len() {
+            if out.len() >= n {
+                break;
+            }
             for c in &try_chars {
                 let mut v = w.clone();
                 v.insert(i, *c);
@@ -453,6 +497,9 @@ impl Dictionary {
             }
         }
         for i in 1..w.len() {
+            if out.len() >= n {
+                break;
+            }
             push(format!("{} {}", s(&w[..i]), s(&w[i..])), &mut out);
         }
         out.truncate(n);
@@ -473,22 +520,20 @@ fn capitalise(s: &str) -> String {
     c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
 }
 
-fn strip_end(w: &[char], add: &str, strip: &str) -> Option<Vec<char>> {
-    let add: Vec<char> = add.chars().collect();
-    if w.len() <= add.len() && strip.is_empty() || !w.ends_with(&add) {
+fn strip_end(w: &[char], add: &[char], strip: &[char]) -> Option<Vec<char>> {
+    if w.len() <= add.len() && strip.is_empty() || !w.ends_with(add) {
         return None;
     }
     let mut v = w.get(..w.len() - add.len())?.to_vec();
-    v.extend(strip.chars());
+    v.extend_from_slice(strip);
     (!v.is_empty()).then_some(v)
 }
 
-fn strip_start(w: &[char], add: &str, strip: &str) -> Option<Vec<char>> {
-    let add: Vec<char> = add.chars().collect();
-    if w.len() <= add.len() && strip.is_empty() || !w.starts_with(&add) {
+fn strip_start(w: &[char], add: &[char], strip: &[char]) -> Option<Vec<char>> {
+    if w.len() <= add.len() && strip.is_empty() || !w.starts_with(add) {
         return None;
     }
-    let mut v: Vec<char> = strip.chars().collect();
+    let mut v: Vec<char> = strip.to_vec();
     v.extend_from_slice(w.get(add.len()..)?);
     (!v.is_empty()).then_some(v)
 }
@@ -643,7 +688,8 @@ pub fn set_user_dictionary_path(path: PathBuf) {
     }
 }
 
-/// Bumped whenever the user dictionary changes, so cached results can be dropped.
+/// Bumped whenever the user dictionary changes or a language's dictionary is installed, so cached
+/// results can be dropped.
 pub fn user_generation() -> u64 {
     user_state().lock().map(|u| u.generation).unwrap_or(0)
 }
@@ -824,6 +870,10 @@ pub fn install(lang: &str, d: Dictionary) {
     if let Ok(mut c) = cache().lock() {
         c.insert(lang.to_string(), Some(Arc::new(d)));
     }
+    // After the insert: whoever sees the new generation also sees the new dictionary.
+    if let Ok(mut u) = user_state().lock() {
+        u.generation += 1;
+    }
 }
 
 #[cfg(test)]
@@ -841,6 +891,13 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
 
     fn d() -> Dictionary {
         Dictionary::parse(AFF.as_bytes(), DIC.as_bytes())
+    }
+
+    #[test]
+    fn installing_a_dictionary_bumps_the_generation_that_keys_cached_results() {
+        let before = user_generation();
+        install("xx-GEN", d());
+        assert!(user_generation() > before, "a cache keyed on the generation must see the new dictionary");
     }
 
     #[test]
@@ -895,6 +952,41 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         assert!(d.suggest("foto", 5).contains(&"photo".to_string()));
         assert!(d.suggest("Slidse", 5).contains(&"Slides".to_string()));
         assert!(d.suggest("workingslides", 5).contains(&"working slides".to_string()));
+    }
+
+    /// Opening Review › Spelling froze on a deck in Brazilian Portuguese: its dictionary has about
+    /// 26,000 affix rules and every check (and each candidate of every suggestion) tried them all.
+    /// A check now tries only the suffixes and prefixes that can match the word's ends.
+    #[test]
+    fn a_check_tries_only_the_affixes_that_can_match() {
+        let mut aff = String::from("SET UTF-8\nFLAG num\n");
+        aff += "SFX 1 Y 20001\nSFX 1 0 ing .\n";
+        for i in 0..20_000 {
+            aff += &format!("SFX 1 0 q{}x .\n", i);
+        }
+        aff += "PFX 2 Y 1\nPFX 2 0 re .\n";
+        for i in 0..5_000 {
+            aff += &format!("PFX 3 Y 1\nPFX 3 0 z{}y .\n", i);
+        }
+        let d = Dictionary::parse(aff.as_bytes(), b"2\nwalk/1,2\nsit\n".as_slice());
+        assert_eq!(d.sfx.len(), 20_001);
+        let w: Vec<char> = "walking".chars().collect();
+        assert!(d.suffixes(&w).count() < 10, "{}", d.suffixes(&w).count());
+        assert!(d.prefixes(&w).count() < 10);
+        assert!(d.check("walking") && d.check("rewalk") && d.check("walkq7x") && !d.check("walkq7y") && !d.check("sitting"));
+        assert!(d.suggest("wlak", 5).contains(&"walk".to_string()));
+    }
+
+    /// `suggest` stops once it has `n`, and the `n` it keeps are the first `n` of the longer list.
+    #[test]
+    fn suggestions_are_the_first_n_of_all_of_them() {
+        let d = d();
+        for word in ["sldie", "foto", "Slidse", "workingslides", "maek"] {
+            let all = d.suggest(word, 100);
+            for n in 0..=all.len().min(6) {
+                assert_eq!(d.suggest(word, n), all[..n], "{word} {n}");
+            }
+        }
     }
 
     /// #1175: compound splitting is quadratic in the word's length, so a word longer than

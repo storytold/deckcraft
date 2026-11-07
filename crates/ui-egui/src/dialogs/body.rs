@@ -923,8 +923,22 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     // Words skipped with Ignore All while the dialog is open, one per line.
     let ignored = d.get("ignore", "");
     let ignore: Vec<&str> = ignored.lines().filter(|l| !l.is_empty()).collect();
-    let v = app.session.execute("review.spelling", &json!({"ignore": ignore})).unwrap_or_default();
-    let list = v.as_array().cloned().unwrap_or_default();
+    // The check reads every slide, so it runs again only when the document's content, the ignored
+    // words or the user dictionary changed; a change of selection (Go to) does not count.
+    let user = deckcraft_engine::spell::user_generation();
+    let current = app.session.active().map(|st| (st.uid, st.doc.clone()));
+    let kept = match (&d.spelling, &current) {
+        (Some(f), Some((uid, doc))) if f.uid == *uid && std::sync::Arc::ptr_eq(&f.doc, doc) && f.ignored == ignored && f.user == user => {
+            Some(f.list.clone())
+        }
+        _ => None,
+    };
+    let list = kept.unwrap_or_else(|| {
+        let v = app.session.execute("review.spelling", &json!({"ignore": ignore})).unwrap_or_default();
+        let list = std::sync::Arc::new(v.as_array().cloned().unwrap_or_default());
+        d.spelling = current.map(|(uid, doc)| super::SpellingFindings { uid, doc, ignored: ignored.clone(), user, list: list.clone() });
+        list
+    });
     let info = app.session.execute("review.dictionary", &json!({})).unwrap_or_default();
     let available = info.get("available").and_then(Value::as_bool).unwrap_or(false);
     match info.get("found").and_then(Value::as_str) {
@@ -951,7 +965,7 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     }
     let mut add_ignore = None;
     egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-        for item in &list {
+        for item in list.iter() {
             let w = item.get("word").and_then(Value::as_str).unwrap_or("");
             let slide = item.get("slide").cloned().unwrap_or_default();
             let shape = item.get("shape").cloned().unwrap_or_default();
