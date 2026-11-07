@@ -461,9 +461,13 @@ fn coverage_ranges(path: &std::path::Path) -> (Box<[(u32, u32)]>, bool) {
         let Some(rec) = records.as_chunks::<16>().0.iter().find(|r| r.starts_with(b"cmap")) else { continue };
         let (Some(offset), Some(len)) = (be32(rec, 8), be32(rec, 12)) else { continue };
         if len > MAX_CMAP_TABLE {
+            complete = false;
             continue;
         }
-        let Some(table) = read_at(offset.into(), len as usize) else { continue };
+        let Some(table) = read_at(offset.into(), len as usize) else {
+            complete = false;
+            continue;
+        };
         let mut font = Vec::with_capacity(28 + table.len());
         font.extend_from_slice(&0x0001_0000_u32.to_be_bytes());
         font.extend_from_slice(&[0, 1, 0, 16, 0, 0, 0, 0]);
@@ -472,7 +476,10 @@ fn coverage_ranges(path: &std::path::Path) -> (Box<[(u32, u32)]>, bool) {
             font.extend_from_slice(&u32::to_be_bytes(v));
         }
         font.extend_from_slice(&table);
-        let Ok(f) = skrifa::FontRef::new(&font) else { continue };
+        let Ok(f) = skrifa::FontRef::new(&font) else {
+            complete = false;
+            continue;
+        };
         for (cp, _) in f.charmap().mappings() {
             budget = match budget.checked_sub(1) {
                 Some(v) => v,
