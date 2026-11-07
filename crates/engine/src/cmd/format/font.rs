@@ -207,8 +207,10 @@ fn automatic_rest(s: &mut Session) -> Result<Value> {
     let only_charts = charts.len() == st.selection.shapes.len();
     if !charts.is_empty() {
         edit_shapes(s, &json!({"ids": charts}), "format.color", |sh| {
-            if let ShapeKind::Chart(ch) = &mut sh.kind {
-                ch.text_color = None;
+            // A chart with no colour of its own is already Automatic: its imported XML is kept.
+            if let ShapeKind::Chart(ch) = &mut sh.kind
+                && ch.text_color.take().is_some()
+            {
                 ch.raw = None;
             }
             Ok(())

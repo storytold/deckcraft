@@ -7893,6 +7893,17 @@ fn format_color_null_on_a_selected_smartart_graphic_is_automatic() {
     let body = st.shape(ShapeId(b as u32)).unwrap().text.as_ref().unwrap();
     assert!(body.paragraphs.iter().all(|p| p.runs.iter().all(|r| r.props.fill.is_none())), "the text box is Automatic: {body:?}");
     assert_eq!(chart_of(&s, c).text_color, None, "the chart's text is Automatic");
+    // A chart opened from a file with no colour of its own is already Automatic: its XML is kept.
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sel = st.selection.clone();
+        let sh = deckcraft_model::find_shape_mut(crate::shapes_mut(doc, &sel).unwrap(), ShapeId(c as u32)).unwrap();
+        let deckcraft_model::ShapeKind::Chart(ch) = &mut sh.kind else { panic!("chart") };
+        ch.raw = Some("<c:chartSpace/>".into());
+    }
+    s.execute("format.color", &json!({"color": null})).unwrap();
+    assert_eq!(chart_of(&s, c).raw.as_deref(), Some("<c:chartSpace/>"), "the imported chart XML is kept");
     let mut s = session();
     let b = s.execute("insert.textBox", &json!({"text": "x"})).unwrap()["id"].as_u64().unwrap();
     s.execute("edit.select", &json!({"ids": [b]})).unwrap();
