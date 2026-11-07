@@ -447,8 +447,10 @@ impl SlideApp {
         }
     }
 
-    pub fn save_as_dialog(&mut self, format: &str) {
-        let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
+    pub fn save_as_dialog(&mut self, format: &str, custom_name: Option<&str>) {
+        let name = custom_name.filter(|n| !n.trim().is_empty()).map_or_else(|| {
+            self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into())
+        }, |n| n.to_string());
         let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
         let suggested = format!("{name}.{ext}");
         if let Some(pick) = self.services.pick_save.as_mut() {
@@ -499,7 +501,7 @@ impl SlideApp {
                 Err(e) => self.set_status(e.to_string()),
             }
         } else {
-            self.save_as_dialog("deckcraft");
+            self.save_as_dialog("deckcraft", None);
         }
     }
 
@@ -596,7 +598,7 @@ impl SlideApp {
                 UiRequest::Message { text } => self.set_status(text),
                 UiRequest::PickFile { purpose } => {
                     if purpose == "saveAs" {
-                        self.save_as_dialog("deckcraft");
+                        self.save_as_dialog("deckcraft", None);
                     }
                 }
                 UiRequest::Media { action, shape, ms } => {
