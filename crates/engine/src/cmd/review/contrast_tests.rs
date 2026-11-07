@@ -1,6 +1,8 @@
 //! `review.contrast`: the contrast of each text run with what the slide draws behind it, on decks
 //! built here with commands and pictures made from pixels.
 
+use deckcraft_model::ShapeId;
+use deckcraft_model::text::{Run, RunKind, RunProps};
 use serde_json::{Value, json};
 
 use crate::Session;
@@ -40,6 +42,53 @@ fn dark_picture(s: &mut Session) {
     image::DynamicImage::ImageRgba8(img).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
     let data = crate::cmd::base64_encode(&png);
     s.execute("insert.picture", &json!({"data": data, "name": "dark.png", "rect": [0, 0, 960, 540]})).unwrap();
+}
+
+/// Adds a rectangle with no text, filled with `fill` (`transparency` 0..1), drawn over the
+/// shapes added before it.
+fn band(s: &mut Session, rect: [f64; 4], fill: &str, transparency: f64) -> Value {
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": rect})).unwrap()["id"].clone();
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    s.execute("shape.fill", &json!({"color": fill, "transparency": transparency})).unwrap();
+    id
+}
+
+fn shape_id(id: &Value) -> ShapeId {
+    ShapeId(u32::try_from(id.as_u64().unwrap()).unwrap())
+}
+
+/// The properties of the first run of shape `id` on the current slide.
+fn first_run_props(s: &mut Session, id: &Value) -> RunProps {
+    let st = s.doc().unwrap();
+    let slide = &st.doc.slides[st.selection.slide];
+    let shape = deckcraft_model::find_shape(&slide.shapes, shape_id(id)).unwrap();
+    shape.text.as_ref().unwrap().paragraphs[0].runs[0].props.clone()
+}
+
+/// Puts `runs` in place of the runs of the first paragraph of shape `id` on the current slide.
+fn set_runs(s: &mut Session, id: &Value, runs: Vec<Run>) {
+    let st = s.doc_mut().unwrap();
+    let index = st.selection.slide;
+    let doc = std::sync::Arc::make_mut(&mut st.doc);
+    let slide = std::sync::Arc::make_mut(&mut doc.slides[index]);
+    let shape = deckcraft_model::find_shape_mut(&mut slide.shapes, shape_id(id)).unwrap();
+    shape.text.as_mut().unwrap().paragraphs[0].runs = runs;
+}
+
+fn run(text: &str, props: &RunProps, kind: RunKind) -> Run {
+    Run { text: text.into(), props: props.clone(), kind }
+}
+
+/// A 12 pt text box on a white slide whose first paragraph holds `runs`, built from the
+/// properties of black text and of #767676 grey text.
+fn runs_box(runs: impl Fn(&RunProps, &RunProps) -> Vec<Run>) -> (Session, Value) {
+    let mut s = white_slide();
+    let id = text_box(&mut s, [100.0, 100.0, 700.0, 60.0], "Grey", "#767676", 12.0);
+    let grey = first_run_props(&mut s, &id);
+    s.execute("format.color", &json!({"color": "#000000"})).unwrap();
+    let black = first_run_props(&mut s, &id);
+    set_runs(&mut s, &id, runs(&black, &grey));
+    (s, id)
 }
 
 /// The entries `review.contrast` gives for shape `id`, with `more` parameters.
@@ -265,4 +314,113 @@ fn bad_parameters_are_refused_with_the_reason() {
         let v = contrast_of(&mut s, &id, p.clone());
         assert_eq!(v.len(), 1, "{p}: {v:?}");
     }
+}
+
+#[test]
+fn black_text_under_a_half_clear_white_band_is_measured_as_seen() {
+    let mut s = white_slide();
+    let id = text_box(&mut s, [100.0, 100.0, 400.0, 60.0], "Covered text", "#000000", 12.0);
+    band(&mut s, [80.0, 80.0, 440.0, 100.0], "#FFFFFF", 0.5);
+    let e = only(&mut s, &id, json!({}));
+    // The band turns the black text mid grey and leaves the white slide white: about 3.95:1,
+    // where the text without the band gives 21:1.
+    for key in ["min", "p5", "median"] {
+        let r = ratio(&e, key);
+        assert!(r > 3.85 && r < 4.1, "{key}: {e}");
+    }
+    assert_eq!(e["color"], "#000000");
+    assert_eq!(e["passShare"].as_f64(), Some(0.0), "{e}");
+}
+
+#[test]
+fn text_under_an_opaque_shape_measures_1_to_1() {
+    let mut s = white_slide();
+    let id = text_box(&mut s, [100.0, 100.0, 400.0, 60.0], "Hidden text", "#000000", 12.0);
+    band(&mut s, [80.0, 80.0, 440.0, 100.0], "#3366CC", 0.0);
+    let e = only(&mut s, &id, json!({}));
+    for key in ["min", "p5", "median"] {
+        assert_eq!(ratio(&e, key), 1.0, "{key}: {e}");
+    }
+    assert_eq!(e["passShare"].as_f64(), Some(0.0), "{e}");
+}
+
+#[test]
+fn a_shape_drawn_over_another_part_of_the_slide_changes_nothing() {
+    let mut s = white_slide();
+    let id = text_box(&mut s, [100.0, 100.0, 400.0, 60.0], "Plain text", "#000000", 12.0);
+    band(&mut s, [80.0, 300.0, 440.0, 100.0], "#3366CC", 0.0);
+    let e = only(&mut s, &id, json!({}));
+    for key in ["min", "p5", "median"] {
+        assert_eq!(ratio(&e, key), 21.0, "{key}: {e}");
+    }
+    assert_eq!(e["passShare"].as_f64(), Some(1.0), "{e}");
+}
+
+#[test]
+fn a_later_member_of_the_texts_group_counts_as_drawn_over_it() {
+    let mut s = white_slide();
+    let id = text_box(&mut s, [100.0, 100.0, 400.0, 60.0], "Grouped text", "#000000", 12.0);
+    let cover = band(&mut s, [80.0, 80.0, 440.0, 100.0], "#FFFFFF", 0.5);
+    s.execute("arrange.group", &json!({"ids": [id, cover]})).unwrap();
+    let e = only(&mut s, &id, json!({}));
+    let r = ratio(&e, "median");
+    assert!(r > 3.85 && r < 4.1, "{e}");
+}
+
+#[test]
+fn text_half_under_a_band_is_read_on_both_sides() {
+    let mut s = white_slide();
+    let id = text_box(&mut s, [100.0, 100.0, 600.0, 60.0], "Half of this line sits under the band", "#000000", 12.0);
+    band(&mut s, [180.0, 80.0, 500.0, 100.0], "#FFFFFF", 0.5);
+    let e = only(&mut s, &id, json!({}));
+    assert!(ratio(&e, "min") < 4.1, "{e}");
+    let pass = e["passShare"].as_f64().unwrap();
+    assert!(pass > 0.1 && pass < 0.9, "{e}");
+}
+
+#[test]
+fn a_slide_number_field_reports_the_number_it_draws() {
+    let (mut s, id) = runs_box(|black, grey| {
+        vec![
+            run("Page ", black, RunKind::Text),
+            run("‹#›", black, RunKind::Field { field: "slidenum".into() }),
+            run(" of the deck", grey, RunKind::Text),
+        ]
+    });
+    let v = contrast_of(&mut s, &id, json!({}));
+    // The field draws the slide's number, 2, in place of its three saved characters, and the run
+    // after it is measured with its own glyphs.
+    let found: Vec<(Option<u64>, Option<&str>, Option<&str>)> =
+        v.iter().map(|e| (e["run"].as_u64(), e["text"].as_str(), e["color"].as_str())).collect();
+    assert_eq!(
+        found,
+        [(Some(0), Some("Page "), Some("#000000")), (Some(1), Some("2"), Some("#000000")), (Some(2), Some(" of the deck"), Some("#767676"))],
+        "{v:?}"
+    );
+    assert_eq!(v[2]["ratio"]["min"].as_f64(), Some(4.54), "{v:?}");
+}
+
+#[test]
+fn runs_after_two_fields_are_measured_with_their_own_glyphs() {
+    let (mut s, id) = runs_box(|black, grey| {
+        vec![
+            run("Slide ", black, RunKind::Text),
+            run("‹#›", black, RunKind::Field { field: "slidenum".into() }),
+            run(" printed ", black, RunKind::Text),
+            run("date", black, RunKind::Field { field: "datetime1".into() }),
+            run(" in grey", grey, RunKind::Text),
+        ]
+    });
+    let v = contrast_of(&mut s, &id, json!({}));
+    let runs: Vec<Option<u64>> = v.iter().map(|e| e["run"].as_u64()).collect();
+    assert_eq!(runs, [Some(0), Some(1), Some(2), Some(3), Some(4)], "{v:?}");
+    assert_eq!(v[1]["text"], "2", "{v:?}");
+    // datetime1 draws the date as month/day/year, longer than its four saved characters.
+    let date = v[3]["text"].as_str().unwrap();
+    assert!(date.chars().count() >= 8 && date.contains('/'), "{v:?}");
+    for e in &v[..4] {
+        assert_eq!(e["color"], "#000000", "{e}");
+    }
+    assert_eq!((v[4]["text"].as_str(), v[4]["color"].as_str()), (Some(" in grey"), Some("#767676")), "{v:?}");
+    assert_eq!(v[4]["ratio"]["min"].as_f64(), Some(4.54), "{v:?}");
 }

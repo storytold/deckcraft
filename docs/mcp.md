@@ -107,8 +107,9 @@ command's parameters.
 
 To check text contrast after building a slide, `review.contrast {slide?, ids?, level?}` draws the
 slide without each text shape's text and compares each run's colour with the pixels under its
-glyphs, so a photo, a gradient, a card or a see-through band behind the text counts as drawn. Each
-run reports its colour, drawn size and weight, the ratio WCAG 2.2 asks for at that size
-(`required`: 4.5, or 3 for 18 pt or 14 pt bold text; 7 and 4.5 with `level: "AAA"`), the smallest,
-5th-percentile and median contrast (`ratio`), the share of its pixels that reach `required`
-(`passShare`) and what lies behind it (`backdrop`).
+glyphs, so a photo, a gradient, a card or a see-through band behind the text counts as drawn. A
+shape drawn over the text counts too: the run is measured as seen through it, and text under an
+opaque shape measures 1:1. Each run reports its colour, drawn size and weight, the ratio WCAG 2.2
+asks for at that size (`required`: 4.5, or 3 for 18 pt or 14 pt bold text; 7 and 4.5 with
+`level: "AAA"`), the smallest, 5th-percentile and median contrast (`ratio`), the share of its
+pixels that reach `required` (`passShare`) and what lies behind it (`backdrop`).

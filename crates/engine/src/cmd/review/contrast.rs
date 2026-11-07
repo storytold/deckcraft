@@ -3,6 +3,9 @@
 //! The slide is drawn once per text shape with that shape's text left out. Each pixel under a
 //! run's glyph boxes is compared, by WCAG relative luminance, with the run's colour drawn over
 //! it, so a photo, a gradient, a card or a see-through band behind the text counts as drawn.
+//! When the slide draws shapes over the text, those shapes are also drawn on their own over
+//! transparency and laid over the run's colour, so text under a see-through band is measured as
+//! the band leaves it and text under an opaque shape measures 1:1.
 //! The answer gives the smallest, 5th-percentile and median contrast of each run, the share of
 //! pixels that reach the ratio WCAG 2.2 asks for at the run's drawn size and weight, and what
 //! lies behind the run.
@@ -13,17 +16,18 @@ use deckcraft_color::Rgba;
 use deckcraft_geom::{Affine, Point, Rect};
 use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::style::{ColorRef, Fill};
-use deckcraft_model::text::{Run, RunKind, TextBody};
+use deckcraft_model::text::TextBody;
 use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, Slide};
-use deckcraft_render::{Image, Placed, PlacedText, RenderOpts};
-use deckcraft_text::{GlyphRun, TextLayout};
+use deckcraft_render::{Image, Placed, PlacedText, RenderOpts, SlidePart};
+use deckcraft_text::GlyphRun;
 use serde_json::{Value, json};
 
 use crate::cmd::{bad, f64_or, opt_usize_param};
 use crate::{Result, Session};
 
 const CMD: &str = "review.contrast";
-/// Text shapes measured in one call: each one costs a drawing of the slide.
+/// Text shapes measured in one call: each one costs a drawing of the slide, two when shapes are
+/// drawn over it.
 const MAX_SHAPES: usize = 64;
 /// Runs reported by one call.
 const MAX_RUNS: usize = 5_000;
@@ -79,6 +83,15 @@ struct RunMeasure {
     boxes: Vec<(Rect, Affine)>,
     /// Slide-space bounding box of the glyph boxes.
     bounds: Option<Rect>,
+}
+
+/// One pixel under a run's glyphs: what the slide draws there without the text, and what the
+/// slide's shapes drawn over the text draw there on their own (straight RGBA, all zero where
+/// nothing is).
+#[derive(Clone, Copy)]
+struct Sample {
+    slide: [u8; 4],
+    over: [u8; 4],
 }
 
 /// Contrast statistics of one run's pixels.
@@ -197,9 +210,11 @@ fn measure_text(sc: &Scene, t: &PlacedText, out: &mut Vec<Value>) {
     }
     let opts = RenderOpts { scale: sc.scale, skip_text: Some(t.shape), ..Default::default() };
     let img = deckcraft_render::render_slide(sc.doc, sc.index, &opts);
+    let over_text = drawn_over(sc, t.shape);
     for ((para, run), m) in runs {
         let required = required_ratio(sc.level, m.size, m.bold);
-        let (Some(r), Some(bounds)) = (ratios(&sample_boxes(&img, &m.boxes), m.color, m.opacity, required), m.bounds) else { continue };
+        let samples = sample_boxes(&img, over_text.as_ref(), &m.boxes);
+        let (Some(r), Some(bounds)) = (ratios(&samples, m.color, m.opacity, required), m.bounds) else { continue };
         let text = t.body.paragraphs.get(para).and_then(|p| p.runs.get(run)).map(|r| r.text.as_str()).unwrap_or_default();
         out.push(json!({
             "slide": sc.index,
@@ -216,6 +231,28 @@ fn measure_text(sc: &Scene, t: &PlacedText, out: &mut Vec<Value>) {
             "backdrop": backdrop(sc, shape, bounds),
         }));
     }
+}
+
+/// The slide's own shapes drawn after `shape`, drawn on their own over transparency: what lies
+/// over its text. `None` when nothing is drawn after it. The drawing leaves out every shape drawn
+/// before `shape` and `shape` itself, but keeps the groups `shape` sits in, so their later
+/// members are drawn.
+fn drawn_over(sc: &Scene, shape: ShapeId) -> Option<Image> {
+    let shapes = &sc.placed.shapes;
+    let me = shapes.iter().position(|ps| ps.id == shape)?;
+    if !shapes.get(me.saturating_add(1)..)?.iter().any(|ps| !ps.is_group) {
+        return None;
+    }
+    let mut groups = vec![];
+    let mut at = shapes.get(me).and_then(|ps| ps.parent);
+    for _ in 0..=64 {
+        let Some(k) = at else { break };
+        groups.push(k);
+        at = shapes.get(k).and_then(|ps| ps.parent);
+    }
+    let skip: Vec<ShapeId> = shapes.iter().take(me.saturating_add(1)).enumerate().filter(|(k, _)| !groups.contains(k)).map(|(_, ps)| ps.id).collect();
+    let opts = RenderOpts { scale: sc.scale, skip: &skip, ..Default::default() };
+    Some(deckcraft_render::render_slide_part(sc.doc, sc.index, SlidePart::Content, &opts))
 }
 
 fn round2(v: f64) -> f64 {
@@ -239,7 +276,7 @@ fn collect_runs(t: &PlacedText, scale: f64) -> BTreeMap<(usize, usize), RunMeasu
         if !opacity.is_finite() || opacity <= 0.0 || g.face.is_color() {
             continue;
         }
-        let para_starts = starts.entry(g.para).or_insert_with(|| run_starts(&t.body, &t.layout, g.para));
+        let para_starts = starts.entry(g.para).or_insert_with(|| run_starts(&t.body, g.para));
         let Some(run) = para_starts.iter().rposition(|&s| s <= first) else { continue };
         let size = round2(g.size * k);
         // Bold from weight 700 (CSS's `bold`) or synthetic bold; a SemiBold face (600) is not bold.
@@ -260,24 +297,17 @@ fn collect_runs(t: &PlacedText, scale: f64) -> BTreeMap<(usize, usize), RunMeasu
     out
 }
 
-/// Where each model run of paragraph `para` starts in the paragraph's drawn text. A field draws
-/// its current value (a slide number, a date) in place of its stored text: when the paragraph
-/// holds one field, the field's drawn length is what the layout's character count leaves for it.
-fn run_starts(body: &TextBody, layout: &TextLayout, para: usize) -> Vec<usize> {
+/// Where each model run of paragraph `para` starts in the paragraph's drawn text. In the placed
+/// body a field's run holds the text the field draws (a slide number, a date), so the runs'
+/// lengths add up to the drawn text.
+fn run_starts(body: &TextBody, para: usize) -> Vec<usize> {
     let Some(p) = body.paragraphs.get(para) else { return vec![] };
-    let mut lens: Vec<usize> = p.runs.iter().map(Run::char_len).collect();
-    let stored = lens.iter().fold(0usize, |a, n| a.saturating_add(*n));
-    let fields: Vec<usize> = p.runs.iter().enumerate().filter(|(_, r)| matches!(r.kind, RunKind::Field { .. })).map(|(i, _)| i).collect();
-    if let (Some(drawn), [f]) = (layout.boundaries.get(para).map(|b| b.len().saturating_sub(1)), fields.as_slice())
-        && let Some(len) = lens.get_mut(*f)
-    {
-        *len = len.saturating_add(drawn).saturating_sub(stored);
-    }
     let mut at = 0usize;
-    lens.iter()
-        .map(|n| {
+    p.runs
+        .iter()
+        .map(|r| {
             let start = at;
-            at = at.saturating_add(*n);
+            at = at.saturating_add(r.char_len());
             start
         })
         .collect()
@@ -311,31 +341,40 @@ fn glyph_boxes(g: &GlyphRun, to_slide: Affine, scale: f64, budget: &mut usize, m
     }
 }
 
-/// The pixels of `img` under glyph boxes `boxes`, read on a grid spaced so that about
-/// MAX_SAMPLES pixels are read, plus a box's centre pixel when the grid misses the box.
-fn sample_boxes(img: &Image, boxes: &[(Rect, Affine)]) -> Vec<[u8; 4]> {
+/// The pixels of `img` under glyph boxes `boxes`, each with the pixel of `over_text` (what is
+/// drawn over the text) at the same place, read on a grid spaced so that about MAX_SAMPLES
+/// pixels are read, plus a box's centre pixel when the grid misses the box.
+fn sample_boxes(img: &Image, over_text: Option<&Image>, boxes: &[(Rect, Affine)]) -> Vec<Sample> {
     let area: f64 = boxes.iter().map(|(r, m)| r.area() * m.determinant().abs()).filter(|a| a.is_finite()).sum();
     let step = (area / MAX_SAMPLES).sqrt().ceil();
     let step = if step.is_finite() { step.max(1.0) } else { 1.0 };
-    let mut out = vec![];
+    let mut points = vec![];
     for (r, m) in boxes {
-        if out.len() >= MAX_KEPT {
+        if points.len() >= MAX_KEPT {
             break;
         }
-        let before = out.len();
-        sample_box(img, *r, *m, step, &mut out);
-        if out.len() == before
-            && let Some(px) = pixel_at(img, *m * r.center())
-        {
-            out.push(px);
+        let before = points.len();
+        sample_box(img, *r, *m, step, &mut points);
+        let centre = *m * r.center();
+        if points.len() == before && pixel_at(img, centre).is_some() {
+            points.push(centre);
         }
     }
-    out
+    points
+        .into_iter()
+        .filter_map(|p| {
+            let on_top = match over_text {
+                Some(o) => pixel_at(o, p)?,
+                None => [0; 4],
+            };
+            Some(Sample { slide: pixel_at(img, p)?, over: on_top })
+        })
+        .collect()
 }
 
-/// Appends the pixels of `img` whose centres lie in box `r` mapped by `m`, every `step` pixels
-/// across and down.
-fn sample_box(img: &Image, r: Rect, m: Affine, step: f64, out: &mut Vec<[u8; 4]>) {
+/// Appends the centres of the pixels of `img` that lie in box `r` mapped by `m`, every `step`
+/// pixels across and down.
+fn sample_box(img: &Image, r: Rect, m: Affine, step: f64, out: &mut Vec<Point>) {
     if !m.is_finite() || m.determinant().abs() < 1e-12 {
         return;
     }
@@ -351,10 +390,8 @@ fn sample_box(img: &Image, r: Rect, m: Affine, step: f64, out: &mut Vec<[u8; 4]>
         let mut x = (bb.x0 / step).floor() * step;
         while x < bb.x1 {
             let c = Point::new(x + 0.5, y + 0.5);
-            if r.contains(inv * c)
-                && let Some(px) = pixel_at(img, c)
-            {
-                out.push(px);
+            if r.contains(inv * c) && pixel_at(img, c).is_some() {
+                out.push(c);
             }
             x += step;
         }
@@ -366,14 +403,16 @@ fn pixel_at(img: &Image, p: Point) -> Option<[u8; 4]> {
     if p.x.is_finite() && p.y.is_finite() && p.x >= 0.0 && p.y >= 0.0 { img.straight_at(p.x as u32, p.y as u32) } else { None }
 }
 
-/// The contrast of `color` at `opacity`, drawn over each pixel, against that pixel: smallest,
-/// 5th percentile, median and the share at or above `required`.
-fn ratios(pixels: &[[u8; 4]], color: Rgba, opacity: f64, required: f64) -> Option<Ratios> {
-    let mut v: Vec<f64> = pixels
+/// The contrast of text in `color` at `opacity` with the slide at each sampled pixel, the text
+/// seen through what is drawn over it: smallest, 5th percentile, median and the share at or
+/// above `required`.
+fn ratios(samples: &[Sample], color: Rgba, opacity: f64, required: f64) -> Option<Ratios> {
+    let mut v: Vec<f64> = samples
         .iter()
-        .map(|&[r, g, b, _]| {
+        .map(|px| {
+            let [r, g, b, _] = px.slide;
             let under = Rgba::rgb(r, g, b);
-            over(color, opacity, under).contrast(under)
+            seen(color, opacity, px).contrast(under)
         })
         .filter(|c| c.is_finite())
         .collect();
@@ -382,6 +421,17 @@ fn ratios(pixels: &[[u8; 4]], color: Rgba, opacity: f64, required: f64) -> Optio
     let at = |f: f64| v.get(((n as f64 * f) as usize).min(n.saturating_sub(1))).copied();
     let pass = v.iter().filter(|c| **c >= required).count() as f64 / n.max(1) as f64;
     Some(Ratios { min: v.first().copied()?, p5: at(0.05)?, median: at(0.5)?, pass })
+}
+
+/// The colour a pixel of text in `color` at `opacity` shows at `px`. The text lies between what
+/// is under it and what is drawn over it, and the slide's pixel already holds the second laid
+/// over the first, so the text pixel is the text's colour seen through what is drawn over it,
+/// laid at `opacity` over the slide's pixel.
+fn seen(color: Rgba, opacity: f64, px: &Sample) -> Rgba {
+    let [r, g, b, _] = px.slide;
+    let [tr, tg, tb, ta] = px.over;
+    let through = if ta == 0 { color } else { over(Rgba::rgb(tr, tg, tb), f64::from(ta) / 255.0, color) };
+    over(through, opacity, Rgba::rgb(r, g, b))
 }
 
 /// `color` at `opacity` drawn over the opaque colour `under`.
