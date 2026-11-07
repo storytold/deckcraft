@@ -94,6 +94,7 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-28 | minor | PowerPoint COM captures every MsoAnimEffect; DeckCraft adds 66 measured entrance, emphasis and exit presets with default durations and tested PPTX IDs |
 | 2026-10-30 | trivial | Animation Effect Options show readable, effect-aware labels for all gallery option codes; stored values and command parameters stay unchanged |
 | 2026-10-29 | minor | Going back in the show plays the transition of the slide being left, reversed, instead of the previous slide's entrance transition (#1531); new row in the transition features. Scores unchanged |
 | 2026-10-22 | minor | Animation Pane ▸ Play From: with an effect selected, the preview starts at that effect on the play-all clock; the row says yes and the estimate drops to ~14–26 h |

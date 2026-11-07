@@ -1422,6 +1422,23 @@ fn float_down_is_preset_47_both_ways() {
 }
 
 #[test]
+fn legacy_fade_preset_seven_round_trips_as_fade() {
+    let mut p = defaults::new_presentation(None);
+    let mut s = new_slide(&mut p, "Legacy Fade");
+    let sh = shape(&mut p, "Building", 0.0, 0.0, 100.0, 100.0);
+    let id = sh.id;
+    s.shapes.push(sh);
+    s.animations.push(Animation { shape: id, class: AnimClass::Entrance, effect: "fade".into(), preset_id: Some(7), ..Default::default() });
+    p.slides.push(Arc::new(s));
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("zip");
+    let xml = std::io::read_to_string(z.by_name("ppt/slides/slide2.xml").expect("slide")).expect("read");
+    assert!(xml.contains(r#"presetID="10" presetClass="entr""#), "{xml}");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    assert_eq!(q.slides[1].animations[0].effect, "fade");
+}
+
+#[test]
 fn embedded_fonts_round_trip() {
     let mut p = Presentation::default();
     let regular = p.add_media("font1.fntdata", "application/x-fontdata", b"REGULAR-FONT-BYTES-0123456789".to_vec()).expect("media");
