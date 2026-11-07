@@ -24,7 +24,7 @@ pub use appearance::quick_style_for;
 use appearance::{adjust, change, effects, fill, line, picture_props, quick_style, smooth_corners};
 pub use freeform::freeform_path;
 use freeform::{connect, freeform, ink_to_shape, sites};
-use picture::{crop, media_options, picture_adjust, picture_change, picture_reset};
+use picture::{crop, crop_mode, media_options, picture_adjust, picture_change, picture_reset};
 use size::{clamp_pos, clamp_side, flip, rotate, size_position};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -155,6 +155,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{left?: fraction 0..1, top?: fraction 0..1, right?: fraction 0..1, bottom?: fraction 0..1, ids?}",
             has_selection,
             crop
+        ),
+        cmd!(
+            "picture.cropMode",
+            "Crop",
+            ["Picture Format", "Size"],
+            None,
+            "{on?: bool (default: toggle)}: crop handles on the selected picture; drag them, or the picture inside the frame. Enter or Escape ends it",
+            has_selection,
+            crop_mode
         ),
         cmd!(
             "picture.adjust",
