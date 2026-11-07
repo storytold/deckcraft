@@ -4,6 +4,7 @@ impl SlideApp {
     /// Style, fonts and zoom setup. Runs in a real UI pass, not from `run_logic`, because
     /// `set_fonts`/`set_visuals` only take effect for the pass that lays out the UI.
     pub(super) fn ui_setup(&mut self, ctx: &egui::Context) -> bool {
+        ctx.options_mut(|o| o.zoom_with_keyboard = false);
         let scale = self.ui.ui_scale.clamp(0.5, 3.0);
         if (ctx.zoom_factor() - scale).abs() > 1e-3 {
             ctx.set_zoom_factor(scale);
