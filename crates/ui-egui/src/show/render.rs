@@ -1,7 +1,7 @@
 use super::zoom::GRID_CAP;
 use super::{
-    BackKey, Color32, Key, Layer, Mesh, Prefetch, Presentation, Rect, RenderOpts, ShapeId, Show, ShowState, StepStamp, TextureHandle, Timeline,
-    TriggerPlay, pos2, state_for, vec2,
+    BackKey, Color32, Key, Layer, Mesh, Prefetch, Presentation, Rect, RenderOpts, ShapeId, ShapeState, Show, ShowState, StepStamp, TextureHandle,
+    Timeline, TriggerPlay, pos2, vec2,
 };
 
 pub(super) fn render_threads() -> u16 {
@@ -51,7 +51,7 @@ pub(super) fn render_frame(
     backdrop: Option<&deckcraft_render::Image>,
 ) -> egui::ColorImage {
     let f = move |id: ShapeId| {
-        let mut st = state_for(&tl, id, step, t, plays, stamps);
+        let mut st = ShapeState::from(deckcraft_anim::state_for(&tl, id, step, t, plays, stamps));
         if hidden.contains(&id) {
             st.visible = false;
         }
@@ -89,7 +89,7 @@ pub(super) fn render_overlay(
     stamps: &[StepStamp],
 ) -> egui::ColorImage {
     let f = move |id: ShapeId| {
-        let mut st = state_for(&tl, id, step, t, plays, stamps);
+        let mut st = ShapeState::from(deckcraft_anim::state_for(&tl, id, step, t, plays, stamps));
         if hidden.contains(&id) {
             st.visible = false;
         }

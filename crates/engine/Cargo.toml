@@ -19,6 +19,7 @@ deckcraft-pdf = { workspace = true }
 deckcraft-format = { workspace = true }
 deckcraft-pptx = { workspace = true }
 deckcraft-media = { workspace = true }
+deckcraft-anim = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 i_overlay = { workspace = true }
@@ -28,7 +29,6 @@ image = { workspace = true }
 chrono = { workspace = true }
 
 [dev-dependencies]
-deckcraft-anim = { workspace = true }
 zip = { workspace = true }
 
 # The browser clock for comment timestamps (wasm has no std::time::SystemTime).

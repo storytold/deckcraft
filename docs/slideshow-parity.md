@@ -60,7 +60,7 @@ ready** (estimated), **10–16 h** to parity.
 | Rehearse Timings, keep timings | yes | yes |
 | Record Slide Show (narration, ink, laser, camera; Cameo) | yes | no |
 | Clear timing / narration | yes | timings only |
-| Export the recorded show to video | yes | no (see [file-format-parity.md](file-format-parity.md)) |
+| Export the recorded show to video | yes | frame sequence only: `file.export {format: "frames"}` plays builds, transitions and the slides' After timings (Use Recorded Timings) into numbered PNGs for a video encoder; no MP4 writer (see [file-format-parity.md](file-format-parity.md)) |
 
 ## Reading View
 
@@ -82,6 +82,7 @@ Reading View in a window with navigation: present (checklist row done).
 | 2026-11-02 | minor | On Linux and the BSDs, Presenter View stays off when winit lists exactly one display; if it lists none, the setting is kept (#1156) |
 | 2026-10-27 | minor | Set Up Slide Show ▸ Keep mouse cursor visible: full-screen shows keep a still pointer, so clickable choices stay targetable; Reading View unchanged (#1445) |
 | 2026-10-22 | minor | See All Slides from presenter view opens in presenter view, not on the audience screen (#1130) |
+| 2026-10-18 | minor | The show exports as a PNG frame sequence (builds with holds, transitions, frame caps) for a video encoder |
 | 2026-10-14 | trivial | Community PR wave folded: one media playback row, the presenter pen/laser row matches the laser that exists, estimates keep only the open work (~9–16 h); checklist breadth 68% |
 | 2026-10-13 | minor | Click handling for interactive decks: triggers, per-slide state kept across visits, visible-shape hit testing with hand cursor, advance on click |
 | 2026-10-13 | minor | Video seek handoff no longer discards freshly decoded frames or end-of-stream (upstream #416); deterministic queue and four-codec seek regression tests |
