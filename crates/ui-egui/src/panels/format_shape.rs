@@ -1,5 +1,6 @@
 use super::effect_presets;
 use super::{Fill, Icon, ShapeKind, SlideApp, Tokens, Ui, color_button, cref_param, json, run, scheme, theme, vec2, widgets};
+use serde_json::Value;
 
 /// Percent transparency (0 = opaque) of a solid fill, the same number `shape.fill`'s
 /// `transparency` parameter writes as an alpha transform. Anything else (no fill, a
@@ -254,6 +255,30 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
     ui.data_mut(|d| d.insert_temp(id, (sh.descr.clone(), alt)));
 }
 
+fn picture_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
+    let adj = if let ShapeKind::Picture { fill } = &sh.kind { fill.adjust.clone() } else { Default::default() };
+    let mut b = adj.brightness as f32;
+    if ui.add(egui::Slider::new(&mut b, -1.0..=1.0).text("Brightness")).drag_stopped() {
+        run(app, "picture.adjust", json!({"brightness": b}));
+    }
+    let mut c = adj.contrast as f32;
+    if ui.add(egui::Slider::new(&mut c, -1.0..=1.0).text("Contrast")).drag_stopped() {
+        run(app, "picture.adjust", json!({"contrast": c}));
+    }
+    let mut s = adj.saturation.unwrap_or(1.0) as f32;
+    if ui.add(egui::Slider::new(&mut s, 0.0..=4.0).text("Saturation")).drag_stopped() {
+        run(app, "picture.adjust", json!({"saturation": s}));
+    }
+    let alpha = if let ShapeKind::Picture { fill } = &sh.kind { fill.alpha.unwrap_or(1.0) } else { 1.0 };
+    let mut tr = (1.0 - alpha) as f32;
+    if ui.add(egui::Slider::new(&mut tr, 0.0..=1.0).text("Transparency")).drag_stopped() {
+        run(app, "picture.adjust", json!({"transparency": tr}));
+    }
+    if ui.button("Reset Picture").clicked() {
+        run(app, "picture.reset", json!({}));
+    }
+}
+
 /// Render the shape-format pane with fill/line, effects, size/properties, text, and picture tabs.
 pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
@@ -327,29 +352,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
         }
-        "picture" => {
-            let adj = if let ShapeKind::Picture { fill } = &sh.kind { fill.adjust.clone() } else { Default::default() };
-            let mut b = adj.brightness as f32;
-            if ui.add(egui::Slider::new(&mut b, -1.0..=1.0).text("Brightness")).drag_stopped() {
-                run(app, "picture.adjust", json!({"brightness": b}));
-            }
-            let mut c = adj.contrast as f32;
-            if ui.add(egui::Slider::new(&mut c, -1.0..=1.0).text("Contrast")).drag_stopped() {
-                run(app, "picture.adjust", json!({"contrast": c}));
-            }
-            let mut s = adj.saturation.unwrap_or(1.0) as f32;
-            if ui.add(egui::Slider::new(&mut s, 0.0..=4.0).text("Saturation")).drag_stopped() {
-                run(app, "picture.adjust", json!({"saturation": s}));
-            }
-            let alpha = if let ShapeKind::Picture { fill } = &sh.kind { fill.alpha.unwrap_or(1.0) } else { 1.0 };
-            let mut tr = (1.0 - alpha) as f32;
-            if ui.add(egui::Slider::new(&mut tr, 0.0..=1.0).text("Transparency")).drag_stopped() {
-                run(app, "picture.adjust", json!({"transparency": tr}));
-            }
-            if ui.button("Reset Picture").clicked() {
-                run(app, "picture.reset", json!({}));
-            }
-        }
+        "picture" => picture_tab(app, ui, &sh),
         _ => {
             // Fill & Line.
             ui.label(egui::RichText::new("Fill").font(theme::bold(13.0)));
@@ -474,29 +477,65 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                     run(app, "shape.line", json!({"width": v.max(0.0)}));
                 }
             });
-            ui.horizontal_wrapped(|ui| {
-                ui.label("Dash");
-                for (l, d) in [("—", "solid"), ("···", "sysDot"), ("- -", "dash"), ("-·-", "dashDot"), ("— —", "lgDash")] {
-                    if ui.small_button(l).clicked() {
-                        run(app, "shape.line", json!({"dash": d}));
-                    }
+            use deckcraft_model::style::{Dash, LineCap};
+            let l = sh.line.clone().unwrap_or_default();
+            let dash = match (&l.dash, l.cap) {
+                (Some(Dash::Preset { name }), cap) if name == "dot" && matches!(cap, Some(LineCap::Round | LineCap::Square)) => {
+                    if cap == Some(LineCap::Round) { "roundDot" } else { "squareDot" }
                 }
-            });
+                (Some(Dash::Preset { name }), _) => name.as_str(),
+                _ => "solid",
+            };
+            line_choice_with(app, ui, "Dash type", "dash", dash, &DASH_TYPES, dash_params);
             line_details(app, ui, &sh);
         }
+    }
+}
+
+/// Dash types, in the order of PowerPoint's list. Round Dot and Square Dot are the `dot` dash with
+/// a round or square cap, as PowerPoint saves them.
+const DASH_TYPES: [(&str, &str); 13] = [
+    ("Solid", "solid"),
+    ("Round Dot", "roundDot"),
+    ("Square Dot", "squareDot"),
+    ("Dot", "dot"),
+    ("Dash", "dash"),
+    ("Dash Dot", "dashDot"),
+    ("Long Dash", "lgDash"),
+    ("Long Dash Dot", "lgDashDot"),
+    ("Long Dash Dot Dot", "lgDashDotDot"),
+    ("System Dash", "sysDash"),
+    ("System Dot", "sysDot"),
+    ("System Dash Dot", "sysDashDot"),
+    ("System Dash Dot Dot", "sysDashDotDot"),
+];
+
+/// The `shape.line` parameters for a `DASH_TYPES` value.
+pub(super) fn dash_params(v: &str) -> Value {
+    match v {
+        "roundDot" => json!({"dash": "dot", "cap": "round"}),
+        "squareDot" => json!({"dash": "dot", "cap": "square"}),
+        // Plain Dot has a flat cap, so it does not stay Round Dot or Square Dot.
+        "dot" => json!({"dash": "dot", "cap": "flat"}),
+        v => json!({"dash": v, "cap": "flat"}),
     }
 }
 
 /// A labelled drop-down on the Format Shape pane: picks one of `items` (label, value) and runs
 /// `shape.line` with `{key: value}`.
 fn line_choice(app: &mut SlideApp, ui: &mut Ui, label: &str, key: &str, current: &str, items: &[(&str, &str)]) {
+    line_choice_with(app, ui, label, key, current, items, |v| json!({key: v}));
+}
+
+/// `line_choice` with the `shape.line` parameters made from the picked value.
+fn line_choice_with(app: &mut SlideApp, ui: &mut Ui, label: &str, key: &str, current: &str, items: &[(&str, &str)], params: impl Fn(&str) -> Value) {
     ui.horizontal(|ui| {
         let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
         let shown = items.iter().find(|(_, v)| *v == current).map_or(current, |(l, _)| *l);
         let combo = craft_ui::ComboBox::from_id_salt(("fmt-line", key)).selected_text(shown).width(120.0).show_ui(ui, |ui| {
             for (l, v) in items {
                 if ui.selectable_label(*v == current, *l).clicked() {
-                    run(app, "shape.line", json!({key: v}));
+                    run(app, "shape.line", params(v));
                 }
             }
         });
@@ -538,12 +577,16 @@ fn line_details(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
     line_choice(app, ui, "Join type", "join", join, &[("Round", "round"), ("Bevel", "bevel"), ("Miter", "miter")]);
     let arrows = [("None", "none"), ("Arrow", "triangle"), ("Open Arrow", "arrow"), ("Stealth", "stealth"), ("Diamond", "diamond"), ("Oval", "oval")];
     let sizes = [("Small", "sm"), ("Medium", "med"), ("Large", "lg")];
-    for (label, key, size_label, size_key, end) in
-        [("Begin arrow", "head", "Begin size", "headSize", &l.head), ("End arrow", "tail", "End size", "tailSize", &l.tail)]
-    {
+    // PowerPoint sizes an arrowhead's width and length apart.
+    let ends = [
+        ("Begin arrow", "head", "Begin width", "headWidth", "Begin length", "headLength", &l.head),
+        ("End arrow", "tail", "End width", "tailWidth", "End length", "tailLength", &l.tail),
+    ];
+    for (label, key, w_label, w_key, len_label, len_key, end) in ends {
         line_choice(app, ui, label, key, end.as_ref().map_or("none", |e| e.kind.as_str()), &arrows);
         if let Some(e) = end {
-            line_choice(app, ui, size_label, size_key, &e.w, &sizes);
+            line_choice(app, ui, w_label, w_key, &e.w, &sizes);
+            line_choice(app, ui, len_label, len_key, &e.len, &sizes);
         }
     }
 }
