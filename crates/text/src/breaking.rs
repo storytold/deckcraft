@@ -258,6 +258,7 @@ enum TabAlign {
 pub(crate) struct Tab {
     pos: f64,
     align: TabAlign,
+    implicit: bool,
 }
 
 /// The paragraph's tab stops in position order (a stop at no finite position is left out), so
@@ -277,10 +278,21 @@ pub(crate) fn tabs_of(props: &ParaProps) -> Vec<Tab> {
                         "dec" => TabAlign::Decimal,
                         _ => TabAlign::Left,
                     },
+                    implicit: false,
                 })
                 .collect()
         })
         .unwrap_or_default();
+    // In a hanging-indent paragraph, PowerPoint treats the indent position (marL)
+    // as an implicit tab stop (#1683).
+    let margin = props.margin_left.unwrap_or(0.0).max(0.0);
+    let indent = props.indent.unwrap_or(0.0);
+    if indent < 0.0 && margin > 0.0 {
+        let stop = margin;
+        if !tabs.iter().any(|t| (t.pos - stop).abs() < 0.01) {
+            tabs.push(Tab { pos: stop, align: TabAlign::Left, implicit: true });
+        }
+    }
     tabs.sort_by(|a, b| a.pos.total_cmp(&b.pos));
     tabs
 }
@@ -306,16 +318,19 @@ pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64) {
 /// (`seg`: its width, and its width before the decimal point) as the stop aligns it but never
 /// moving back, as PowerPoint does; past the last stop, to the next default stop.
 pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64)) -> f64 {
-    // `stops` is in position order (`tabs_of`): the next stop is the first past x.
-    // A NaN `x` (a NaN spacing upstream) skips the lookup and takes the finite default-stop path.
-    if let Some(s) = stops.get(stops.partition_point(|s| s.pos <= x + 0.5)).filter(|_| !x.is_nan()) {
-        let to = s.pos - x;
-        return match s.align {
-            TabAlign::Left => to,
-            TabAlign::Right => (to - seg.0).max(0.0),
-            TabAlign::Center => (to - seg.0 / 2.0).max(0.0),
-            TabAlign::Decimal => (to - seg.1).max(0.0),
-        };
+    if !x.is_nan() {
+        for s in stops {
+            let thresh = if s.implicit { 0.01 } else { 0.5 };
+            if s.pos > x + thresh {
+                let to = s.pos - x;
+                return match s.align {
+                    TabAlign::Left => to,
+                    TabAlign::Right => (to - seg.0).max(0.0),
+                    TabAlign::Center => (to - seg.0 / 2.0).max(0.0),
+                    TabAlign::Decimal => (to - seg.1).max(0.0),
+                };
+            }
+        }
     }
     let d = if default_tab > 1.0 { default_tab } else { 72.0 };
     let next = ((x / d).floor() + 1.0) * d;
