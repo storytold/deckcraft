@@ -109,7 +109,7 @@ questions, the maths tools in Teacher Mode, your lesson templates, the Question 
 then from the repository on the Mac:
 
 ```bash
-CRAFT_FONTS_DIR=~/maths-office/craft-fonts packaging/web/deploy-private.sh kieran@100.74.218.18
+CRAFT_FONTS_DIR=~/Projects/personal/craft-fonts packaging/web/deploy-private.sh kieran@100.74.218.18
 ```
 
 It reads what the Mac app has now, from `~/Library/Application Support/DeckCraft/`, and builds it
