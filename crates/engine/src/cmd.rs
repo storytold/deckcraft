@@ -297,6 +297,16 @@ pub fn parse_params(doc: &str) -> std::result::Result<Vec<Param<'_>>, String> {
 /// growing would duplicate ids (#407).
 pub(crate) const NO_ID_SPACE: &str = "the presentation has used every object id and can hold no more";
 
+/// A style command whose keys are all optional is refused when it is given none of them, rather
+/// than answering `changed` for a call that sets nothing.
+pub(crate) fn require_any(p: &Value, cmd: &str, keys: &[&str]) -> Result<()> {
+    if keys.iter().any(|k| p.get(*k).is_some_and(|v| !v.is_null())) {
+        return Ok(());
+    }
+    let (last, rest) = keys.split_last().map_or(("", &[][..]), |(l, r)| (*l, r));
+    Err(bad(cmd, format!("`{cmd}` was given nothing to set: pass {} or {last}", rest.join(", "))))
+}
+
 pub(crate) fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
     EngineError::BadParams { cmd: cmd.into(), msg: msg.into() }
 }
@@ -534,6 +544,10 @@ pub(crate) fn current_names(doc: &deckcraft_model::Presentation, sel: &crate::Se
 /// A name ending in `?` is optional. Text after `→` is the result, not an input.
 pub fn needs_arguments(params: &str) -> bool {
     let input = params.split('→').next().unwrap_or(params);
+    // Every key optional, but the command refuses a call that gives none of them.
+    if input.contains("(at least one key)") {
+        return true;
+    }
     let Some(start) = input.find('{') else { return false };
     let inside = input.get(start + 1..).unwrap_or("");
     let inside = inside.split('}').next().unwrap_or(inside);
@@ -657,6 +671,7 @@ mod tests {
         assert!(needs_arguments("{axis: horizontal|vertical, ids?}"));
         assert!(needs_arguments("{percent}"));
         assert!(!needs_arguments("{}"));
+        assert!(needs_arguments("{left?: pt, top?: pt} (at least one key)"));
         assert!(!needs_arguments("{on?: bool}"));
         assert!(!needs_arguments("{theme?: name, size?: [w,h] pt, blank?: bool}"));
         assert!(!needs_arguments("{uid?: one entry, else all}"));

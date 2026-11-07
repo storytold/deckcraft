@@ -6751,6 +6751,81 @@ fn invalid_slide_index_never_falls_back_to_the_selection_in_export_commands() {
 }
 
 #[test]
+fn style_commands_given_nothing_to_set_are_refused() {
+    let mut s = session();
+    s.execute("insert.textBox", &json!({"text": "Hi", "rect": [50.0, 50.0, 200.0, 100.0]})).unwrap();
+    for cmd in ["shape.line", "shape.effects", "picture.adjust", "format.paragraph", "format.margins"] {
+        let rev = s.doc().unwrap().revision;
+        let e = s.execute(cmd, &json!({})).unwrap_err().to_string();
+        assert!(e.contains("given nothing to set") && e.contains(cmd), "{cmd}: {e}");
+        assert_eq!(s.doc().unwrap().revision, rev, "{cmd} changed the deck");
+    }
+    let e = s.execute("shape.line", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("pass color, none, width, dash"), "{e}");
+    // A key, even one that changes nothing visible, is something to set.
+    s.execute("shape.line", &json!({"width": 2})).unwrap();
+    s.execute("format.margins", &json!({"left": 5})).unwrap();
+    // A null glow or soft edge clears it (No Glow, No Soft Edges): that is something to set.
+    let fx = |s: &Session| s.doc().unwrap().selected_shapes()[0].effects.clone().unwrap_or_default();
+    s.execute("shape.effects", &json!({"glow": 8, "softEdges": 5})).unwrap();
+    assert!(fx(&s).glow.is_some() && fx(&s).soft_edge.is_some());
+    s.execute("shape.effects", &json!({"glow": null})).unwrap();
+    assert!(fx(&s).glow.is_none() && fx(&s).soft_edge.is_some());
+    s.execute("shape.effects", &json!({"softEdges": null})).unwrap();
+    assert!(fx(&s).soft_edge.is_none());
+    // The Paragraph dialog's own fields are format.paragraphDialog's, and the refusal says so.
+    for (k, v) in [("special", json!("hanging")), ("spaceBeforeKind", json!("pct")), ("indentRight", json!(10))] {
+        let e = s.execute("format.paragraph", &json!({ k: v })).unwrap_err().to_string();
+        assert!(e.contains("format.paragraphDialog") && e.contains(k), "{k}: {e}");
+    }
+    let e = s.execute("format.paragraph", &json!({"spaceBeforeKind": "pct"})).unwrap_err().to_string();
+    assert!(e.contains("together with `spaceBefore`"), "{e}");
+    // The palette lists only commands that run without arguments; these need one key.
+    for cmd in ["shape.line", "shape.effects", "picture.adjust", "format.paragraph", "format.margins"] {
+        let spec = crate::command_specs().iter().find(|c| c.id == cmd).unwrap();
+        assert!(crate::cmd::needs_arguments(spec.params), "{cmd}: {}", spec.params);
+    }
+    s.execute("format.paragraphDialog", &json!({"special": "hanging", "specialBy": 18})).unwrap();
+}
+
+/// A call whose keys are all null sets nothing and is refused like an empty one, changing
+/// nothing; one valid key is enough, nulls beside it ignored.
+#[test]
+fn style_commands_refuse_only_nulls_and_take_one_key() {
+    let mut png = vec![];
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(4, 2, image::Rgba([200, 30, 30, 255])))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let mut s = session();
+    let pic =
+        s.execute("insert.picture", &json!({"data": cmd::base64_encode(&png), "name": "a.png", "rect": [100, 100, 40, 20]})).unwrap()["id"].clone();
+    let text = s.execute("insert.textBox", &json!({"text": "Hi", "rect": [50, 300, 200, 100]})).unwrap()["id"].clone();
+    let nulls = |keys: &[&str]| serde_json::Value::Object(keys.iter().map(|k| ((*k).to_string(), serde_json::Value::Null)).collect());
+    for (cmd, id, keys, one) in [
+        (
+            "picture.adjust",
+            &pic,
+            &["brightness", "contrast", "saturation", "grayscale", "transparency", "reset"][..],
+            json!({"brightness": 0.3, "contrast": null}),
+        ),
+        (
+            "format.paragraph",
+            &text,
+            &["align", "indentLeft", "indentFirst", "spaceBefore", "spaceAfter", "lineSpacing", "lineSpacingPt"][..],
+            json!({"align": "center", "spaceBefore": null}),
+        ),
+    ] {
+        s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+        let rev = s.doc().unwrap().revision;
+        let e = s.execute(cmd, &nulls(keys)).unwrap_err().to_string();
+        assert!(e.contains("given nothing to set") && e.contains(cmd), "{cmd}: {e}");
+        assert_eq!(s.doc().unwrap().revision, rev, "{cmd}: only nulls changed the deck");
+        s.execute(cmd, &one).unwrap_or_else(|e| panic!("{cmd} {one}: {e}"));
+        assert_ne!(s.doc().unwrap().revision, rev, "{cmd}: one key set something");
+    }
+}
+
+#[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
     let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
