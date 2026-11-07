@@ -1,0 +1,55 @@
+name: Bug report
+description: Something in DeckCraft doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Search existing issues first. If you opened this from DeckCraft's
+        Report an Issue… item, the version and system fields are already filled in: check them
+        before you submit. Use made-up data only: don't attach confidential files.
+  - type: input
+    id: version
+    attributes:
+      label: DeckCraft version
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: For the web build, also your browser and its version.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: document-info
+    attributes:
+      label: Document details (optional)
+      description: File type and how it was made. No confidential content.
+  - type: textarea
+    id: system-info
+    attributes:
+      label: System information (optional)
+      render: text
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Screenshots, sample files or logs (optional)
