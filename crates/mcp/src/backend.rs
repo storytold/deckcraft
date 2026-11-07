@@ -24,15 +24,28 @@ pub trait Backend {
 /// A running DeckCraft app, reached through its loopback control port.
 pub struct Remote {
     addr: String,
+    token: String,
+    /// The token came from the app's own source (env or the token file), not from the caller,
+    /// so a reconnect re-reads it: an app that restarted wrote a fresh token file, and the
+    /// token from the first connection would authenticate nothing.
+    file_backed: bool,
     conn: Option<(BufReader<TcpStream>, TcpStream)>,
     next_id: u64,
 }
 
 impl Remote {
-    /// Connect to `addr` (`127.0.0.1:7979`), failing fast when nothing is listening.
+    /// Connect to `addr` (`127.0.0.1:7979`), failing fast when nothing is listening. The app
+    /// requires a token (#777): `DECKCRAFT_CONTROL_TOKEN`, else the file the app wrote for this port.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1 };
-        r.reconnect()?;
+        let mut r = Self { addr: addr.to_string(), token: String::new(), file_backed: true, conn: None, next_id: 1 };
+        r.reconnect(true)?;
+        Ok(r)
+    }
+
+    /// Like [`Remote::connect`] with a token the caller already has (kept as given).
+    pub fn connect_with_token(addr: &str, token: String) -> std::io::Result<Self> {
+        let mut r = Self { addr: addr.to_string(), token, file_backed: false, conn: None, next_id: 1 };
+        r.reconnect(false)?;
         Ok(r)
     }
 
@@ -40,8 +53,14 @@ impl Remote {
         &self.addr
     }
 
-    fn reconnect(&mut self) -> std::io::Result<()> {
+    fn reconnect(&mut self, first: bool) -> std::io::Result<()> {
         self.conn = None;
+        // A file-backed token is re-read once a connection is up: the app may have restarted
+        // since and written a fresh token file. On a later connection a lookup failure keeps
+        // the stored token and lets the handshake decide (the app may run with a token of its
+        // own and no file). The first connection reports it instead — without a token there is
+        // nothing to authenticate with — and only after the socket connects, so "nothing is
+        // listening" and "no token" stay apart.
         let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, format!("cannot resolve {}", self.addr));
         for sa in self.addr.to_socket_addrs()? {
             match TcpStream::connect_timeout(&sa, Duration::from_millis(800)) {
@@ -49,8 +68,17 @@ impl Remote {
                     s.set_nodelay(true).ok();
                     // The app answers within 60 s (its own timeout); leave headroom.
                     s.set_read_timeout(Some(Duration::from_secs(90))).ok();
+                    if self.file_backed {
+                        match crate::control_auth::client_token(&self.addr) {
+                            Ok(token) => self.token = token,
+                            Err(_) if !first => {}
+                            Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, e)),
+                        }
+                    }
                     let read = s.try_clone()?;
-                    self.conn = Some((BufReader::new(read), s));
+                    let mut conn = (BufReader::new(read), s);
+                    Self::authenticate(&mut conn, &self.token)?;
+                    self.conn = Some(conn);
                     return Ok(());
                 }
                 Err(e) => last = e,
@@ -59,11 +87,37 @@ impl Remote {
         Err(last)
     }
 
+    /// The handshake every connection starts with: the app closes one that doesn't send the token first.
+    fn authenticate(conn: &mut (BufReader<TcpStream>, TcpStream), token: &str) -> std::io::Result<()> {
+        let (reader, writer) = conn;
+        writer.write_all(crate::control_auth::auth_line(0, token).as_bytes())?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        let mut reply = String::new();
+        let n = std::io::Read::take(reader, 64 * 1024).read_line(&mut reply)?;
+        let parsed = if n > 0 { serde_json::from_str::<Value>(reply.trim()).ok() } else { None };
+        if parsed.as_ref().and_then(|v| v.get("ok")).and_then(Value::as_bool) == Some(true) {
+            return Ok(());
+        }
+        // A `busy` refusal says the app is up and full, so retrying or freeing a slot is the fix —
+        // the token message would send the user to check the wrong thing. Every other refusal keeps
+        // the token hint, the app's own answer for a wrong or missing token.
+        if let Some(error) = parsed.as_ref().and_then(|v| v.get("error")).and_then(Value::as_str)
+            && error.starts_with("busy")
+        {
+            return Err(std::io::Error::new(std::io::ErrorKind::ConnectionRefused, error.to_string()));
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "the app refused the control token (is DECKCRAFT_CONTROL_TOKEN or the app's token file for this port out of date?)",
+        ))
+    }
+
     /// Write one request line. A failure here means the app never got a complete line, so retrying is safe.
     /// A connection the app has already closed (it restarted since the last call) is replaced before writing.
     fn send(&mut self, line: &str) -> std::io::Result<()> {
         if self.conn.as_ref().is_none_or(|(reader, writer)| !reader.buffer().is_empty() || is_closed(writer)) {
-            self.reconnect()?;
+            self.reconnect(false)?;
         }
         let Some((_, writer)) = self.conn.as_mut() else {
             return Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "not connected"));
@@ -155,6 +209,19 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    const TEST_TOKEN: &str = "test-token-0123456789";
+
+    /// The handshake a test peer answers before serving its scripted replies, as the app does.
+    fn answer_auth(stream: &TcpStream) {
+        let mut line = String::new();
+        BufReader::new(stream).read_line(&mut line).expect("auth line");
+        let auth = serde_json::from_str::<Value>(&line).expect("auth JSON");
+        assert_eq!(auth["method"], "auth");
+        assert_eq!(auth["params"]["token"], TEST_TOKEN);
+        let mut w = stream;
+        w.write_all(b"{\"id\":0,\"ok\":true,\"result\":{\"authenticated\":true}}\n").expect("auth reply");
+    }
+
     fn reply_once(reply: Vec<u8>) -> (Remote, std::thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("addr").to_string();
@@ -162,13 +229,14 @@ mod tests {
             let (mut stream, _) = listener.accept().expect("accept");
             stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
             stream.set_write_timeout(Some(Duration::from_secs(5))).expect("write timeout");
+            answer_auth(&stream);
             let mut line = String::new();
             BufReader::new(&stream).read_line(&mut line).expect("request");
             assert_eq!(serde_json::from_str::<Value>(&line).expect("JSON")["id"], 1);
             // An oversized reply may be rejected before the peer finishes writing it.
             let _ = stream.write_all(&reply);
         });
-        (Remote::connect(&addr).expect("connect"), peer)
+        (Remote::connect_with_token(&addr, TEST_TOKEN.into()).expect("connect"), peer)
     }
 
     #[test]
@@ -179,6 +247,123 @@ mod tests {
         let error = result.expect_err("an unrelated reply cannot confirm a mutation");
         assert!(error.contains("may or may not have run"), "{error}");
         assert!(remote.conn.is_none(), "discard the invalid connection without replaying");
+    }
+
+    /// A peer that refuses the handshake with a scripted error and closes.
+    fn refuse_once(error: &'static str) -> std::io::Result<Remote> {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr").to_string();
+        let peer = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+            stream.set_write_timeout(Some(Duration::from_secs(5))).expect("write timeout");
+            // The auth line still arrives (the client sends it first); the refusal answers it.
+            let _ = BufReader::new(&stream).read_line(&mut String::new());
+            let _ = stream.write_all(format!("{{\"id\":0,\"ok\":false,\"error\":\"{error}\"}}\n").as_bytes());
+        });
+        let result = Remote::connect_with_token(&addr, TEST_TOKEN.into());
+        peer.join().expect("peer");
+        result
+    }
+
+    #[test]
+    fn a_busy_refusal_reports_what_the_app_said_not_the_token() {
+        let error = refuse_once("busy: too many control connections").err().expect("busy refuses");
+        assert_eq!(error.kind(), std::io::ErrorKind::ConnectionRefused);
+        assert!(error.to_string().starts_with("busy"), "{error}");
+    }
+
+    #[test]
+    fn a_token_refusal_keeps_the_token_hint() {
+        let error = refuse_once("authentication required").err().expect("the refusal refuses");
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("refused the control token"), "{error}");
+    }
+
+    /// A file-backed reconnect re-reads the token: the app restarted, wrote a fresh token
+    /// file, and the token from the first connection authenticates nothing.
+    #[test]
+    fn a_file_backed_reconnect_follows_the_apps_new_token() {
+        if std::env::var(crate::control_auth::TOKEN_ENV).is_ok_and(|t| !t.trim().is_empty()) {
+            eprintln!("skipped: DECKCRAFT_CONTROL_TOKEN is set (it wins over the token file)");
+            return;
+        }
+        // The listener takes its port first: a PID-derived port could belong to a running
+        // app, whose token file write_token_file would replace before a bind failure.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let (token_a, token_b) = ("file-token-a-0123456789", "file-token-b-0123456789");
+        let path = crate::control_auth::write_token_file(port, token_a).expect("write token file");
+        let addr = format!("127.0.0.1:{port}");
+        let peer = std::thread::spawn(move || {
+            let check_auth = |stream: &TcpStream, expected: &str| {
+                stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+                stream.set_write_timeout(Some(Duration::from_secs(5))).expect("write timeout");
+                let mut line = String::new();
+                BufReader::new(stream).read_line(&mut line).expect("auth line");
+                let auth = serde_json::from_str::<Value>(&line).expect("auth JSON");
+                assert_eq!(auth["method"], "auth");
+                assert_eq!(auth["params"]["token"], expected, "the reconnect sends the fresh token");
+                let mut w = stream;
+                w.write_all(b"{\"id\":0,\"ok\":true,\"result\":{\"authenticated\":true}}\n").expect("auth reply");
+            };
+            // First app run: accepts the token from the file.
+            let (stream, _) = listener.accept().expect("accept 1");
+            check_auth(&stream, token_a);
+            drop(stream); // the app restarts
+            // The restarted app: the fresh token authenticates.
+            let (mut stream, _) = listener.accept().expect("accept 2");
+            check_auth(&stream, token_b);
+            let mut line = String::new();
+            BufReader::new(&stream).read_line(&mut line).expect("request");
+            stream.write_all(b"{\"id\":1,\"ok\":true,\"result\":null}\n").expect("request reply");
+        });
+        let mut remote = Remote::connect(&addr).expect("connect");
+        std::fs::write(&path, format!("{token_b}\n")).expect("rewrite token file");
+        let result = remote.call("engine.execute", json!({"command":"slide.new"}));
+        peer.join().expect("peer");
+        std::fs::remove_file(&path).ok();
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    /// Without a token file and with nothing listening, the error is the connect one:
+    /// "nothing is listening" and "no token" must stay apart, or the user checks the wrong thing.
+    #[test]
+    fn connect_with_nothing_listening_reports_the_connect_error() {
+        if std::env::var(crate::control_auth::TOKEN_ENV).is_ok_and(|t| !t.trim().is_empty()) {
+            eprintln!("skipped: DECKCRAFT_CONTROL_TOKEN is set (it wins over the token file)");
+            return;
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let addr = listener.local_addr().expect("addr").to_string();
+        drop(listener);
+        crate::control_auth::remove_token_file(port);
+        let error = Remote::connect(&addr).err().expect("nothing is listening");
+        assert_ne!(error.kind(), std::io::ErrorKind::PermissionDenied, "{error}");
+        assert!(!error.to_string().contains("control token"), "{error}");
+    }
+
+    /// With the app up but no token file for this machine and user, the first connection says
+    /// so, instead of authenticating with an empty token and failing with the generic refusal.
+    #[test]
+    fn connect_without_a_token_file_names_the_token() {
+        if std::env::var(crate::control_auth::TOKEN_ENV).is_ok_and(|t| !t.trim().is_empty()) {
+            eprintln!("skipped: DECKCRAFT_CONTROL_TOKEN is set (it wins over the token file)");
+            return;
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        crate::control_auth::remove_token_file(port);
+        let addr = format!("127.0.0.1:{port}");
+        let peer = std::thread::spawn(move || {
+            let (_stream, _) = listener.accept().expect("accept");
+            // The client sends nothing: it has no token, and the app is left holding the line.
+        });
+        let error = Remote::connect(&addr).err().expect("no token file");
+        peer.join().expect("peer");
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("no control token"), "{error}");
     }
 
     #[test]
@@ -261,6 +446,7 @@ mod tests {
         let peer = std::thread::spawn(move || {
             let (mut first, _) = listener.accept().expect("first connection");
             first.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+            answer_auth(&first);
             let mut line = String::new();
             BufReader::new(&first).read_line(&mut line).expect("initial request");
             // Even a stale frame whose ID happens to match must not answer a new request.
@@ -272,12 +458,13 @@ mod tests {
             if !sent_on_stale {
                 let (mut fresh, _) = listener.accept().expect("fresh connection");
                 fresh.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+                answer_auth(&fresh);
                 BufReader::new(&fresh).read_line(&mut line).expect("fresh request");
                 fresh.write_all(b"{\"id\":2,\"ok\":false,\"error\":\"rejected\"}\n").expect("actual reply");
             }
             sent_on_stale
         });
-        let mut remote = Remote::connect(&addr).expect("connect");
+        let mut remote = Remote::connect_with_token(&addr, TEST_TOKEN.into()).expect("connect");
         assert_eq!(remote.call("document.inspect", json!({})), Ok(json!("first")));
         // Force the stale frame into BufReader, where a socket-only peek cannot see it.
         assert!(!remote.conn.as_mut().expect("connection").0.fill_buf().expect("buffer").is_empty());
@@ -295,6 +482,7 @@ mod tests {
         let count = Arc::clone(&executed);
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
+                answer_auth(&stream);
                 let mut reader = BufReader::new(&stream);
                 let mut line = String::new();
                 if reader.read_line(&mut line).unwrap_or(0) == 0 {
@@ -308,7 +496,7 @@ mod tests {
                 // The first request is executed, then the connection drops without a reply.
             }
         });
-        let mut remote = Remote::connect(&addr).expect("connect");
+        let mut remote = Remote::connect_with_token(&addr, TEST_TOKEN.into()).expect("connect");
         let err = remote.call("engine.execute", json!({})).expect_err("lost reply must be an error");
         assert!(err.contains("may or may not have run"), "{err}");
         assert_eq!(executed.load(Ordering::SeqCst), 1, "the command must not be replayed");
@@ -328,12 +516,15 @@ mod tests {
             let mut first = true;
             for stream in listener.incoming().flatten() {
                 if first {
-                    // The app restarts: the first connection closes before any request arrives.
+                    // The app restarts: the first connection completes the handshake, then closes
+                    // before any request arrives.
                     first = false;
+                    answer_auth(&stream);
                     drop(stream);
                     let _ = closed_tx.send(());
                     continue;
                 }
+                answer_auth(&stream);
                 let mut reader = BufReader::new(&stream);
                 let mut line = String::new();
                 if reader.read_line(&mut line).unwrap_or(0) == 0 {
@@ -344,7 +535,7 @@ mod tests {
                 let _ = w.write_all(b"{\"id\":1,\"ok\":true,\"result\":null}\n");
             }
         });
-        let mut remote = Remote::connect(&addr).expect("connect");
+        let mut remote = Remote::connect_with_token(&addr, TEST_TOKEN.into()).expect("connect");
         closed_rx.recv().expect("server closed the first connection");
         std::thread::sleep(Duration::from_millis(200));
         assert!(remote.call("engine.execute", json!({})).is_ok(), "a request that never left must be sent on a fresh connection");

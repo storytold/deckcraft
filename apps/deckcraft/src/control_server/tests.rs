@@ -1,3 +1,5 @@
+/// The control server's tests: auth handshakes, refusals, limits, idle connections, and the
+/// pipelined/rejected paths, against a real listener.
 use super::*;
 
 /// A failed accept is followed by a wait before the next one, so a listener that keeps
@@ -26,15 +28,38 @@ fn small() -> Limits {
 }
 
 fn server(limits: Limits) -> (SocketAddr, Receiver<ControlRequest>) {
+    server_with(limits, "test-token-0123456789")
+}
+
+fn server_with(limits: Limits, token: &str) -> (SocketAddr, Receiver<ControlRequest>) {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = l.local_addr().unwrap();
-    (addr, serve_listener(l, limits, egui::Context::default()))
+    (addr, serve_listener(l, limits, token.into(), egui::Context::default()))
 }
 
 fn client(addr: SocketAddr) -> (BufReader<TcpStream>, TcpStream) {
+    client_with(addr, "test-token-0123456789")
+}
+
+/// Connect and authenticate first, as [`crate::control_auth`] requires.
+fn client_with(addr: SocketAddr, token: &str) -> (BufReader<TcpStream>, TcpStream) {
     let s = TcpStream::connect(addr).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-    (BufReader::new(s.try_clone().unwrap()), s)
+    let read = s.try_clone().unwrap();
+    let mut writer = s.try_clone().unwrap();
+    writer.write_all(format!("{}\n", serde_json::json!({"id": 0, "method": "auth", "params": {"token": token}})).as_bytes()).unwrap();
+    let mut hello = String::new();
+    BufReader::new(read.try_clone().unwrap()).read_line(&mut hello).unwrap();
+    (BufReader::new(read), writer)
+}
+
+/// Connect without the auth handshake: a refusal (busy, or an unauthenticated line) arrives
+/// before or instead of one, and [`client_with`] would swallow it as the auth reply.
+fn raw_client(addr: SocketAddr) -> (BufReader<TcpStream>, TcpStream) {
+    let s = TcpStream::connect(addr).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let read = s.try_clone().unwrap();
+    (BufReader::new(read), s)
 }
 
 fn reply(r: &mut BufReader<TcpStream>) -> Option<Value> {
@@ -65,6 +90,47 @@ fn request_round_trip() {
     assert_eq!(v["result"], "ui.inspect");
 }
 
+/// A connection that doesn't authenticate first gets one refusal and nothing is dispatched.
+#[test]
+fn a_connection_without_a_token_is_refused() {
+    let (addr, rx) = server(small());
+    let (mut r, mut w) = raw_client(addr);
+    // The first line is a request, not the auth handshake: refused before it is read.
+    w.write_all(b"{\"id\":1,\"method\":\"ui.inspect\"}\n").unwrap();
+    w.write_all(b"{\"id\":2,\"method\":\"engine.execute\",\"params\":{\"command\":\"slide.new\"}}\n").unwrap();
+    let replies = replies_until_closed(&mut r);
+    assert_eq!(replies.len(), 1, "{replies:?}");
+    assert_eq!(replies[0]["error"], "authentication required");
+    assert!(rx.try_recv().is_err(), "an unauthenticated request was dispatched");
+}
+
+/// A wrong token is refused the same way as a missing one.
+#[test]
+fn a_wrong_token_is_refused() {
+    let (addr, rx) = server(small());
+    let (mut r, mut w) = raw_client(addr);
+    // `auth_line` carries no newline; the server refuses an unterminated first line.
+    w.write_all(format!("{}\n", control_auth::auth_line(0, "wrong-token-012345678")).as_bytes()).unwrap();
+    let refused = reply(&mut r).unwrap();
+    assert_eq!(refused["error"], "authentication required");
+    // The refusal closed the connection: nothing serves requests after a wrong token.
+    assert!(reply(&mut r).is_none());
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(rx.try_recv().is_err(), "a request behind a wrong token was dispatched");
+}
+
+/// The right token authenticates and the connection serves requests after it.
+#[test]
+fn the_right_token_authenticates() {
+    let (addr, rx) = server(small());
+    ui(rx);
+    let (mut r, mut w) = client(addr);
+    writeln!(w, r#"{{"id":3,"method":"ui.inspect"}}"#).unwrap();
+    let v = reply(&mut r).unwrap();
+    assert_eq!(v["id"], 3);
+    assert_eq!(v["result"], "ui.inspect");
+}
+
 /// Every reply line until the server closes the connection.
 fn replies_until_closed(r: &mut BufReader<TcpStream>) -> Vec<Value> {
     std::iter::from_fn(|| reply(r)).collect()
@@ -78,7 +144,7 @@ fn an_http_request_closes_the_connection_before_its_body_is_dispatched() {
     let (mut r, mut w) = client(addr);
     w.write_all(
         b"POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: text/plain\r\n\r\n\
-              {\"id\":1,\"method\":\"engine.execute\",\"params\":{\"command\":\"slide.new\"}}\n",
+          {\"id\":1,\"method\":\"engine.execute\",\"params\":{\"command\":\"slide.new\"}}\n",
     )
     .unwrap();
     let replies = replies_until_closed(&mut r);
@@ -140,7 +206,7 @@ fn a_pipelined_peer_refused_as_busy_still_reads_why() {
     writeln!(hw, r#"{{"id":1,"method":"m"}}"#).unwrap();
     assert!(reply(&mut hr).is_some());
     for _ in 0..50 {
-        let (mut r, mut w) = client(addr);
+        let (mut r, mut w) = raw_client(addr);
         let _ = w.write_all(b"{\"id\":2,\"method\":\"m\"}\n");
         let replies = replies_until_closed(&mut r);
         assert_eq!(replies.len(), 1, "{replies:?}");
@@ -159,9 +225,9 @@ fn silent_refused_peers_do_not_delay_the_next_refusal() {
     writeln!(hw, r#"{{"id":1,"method":"m"}}"#).unwrap();
     assert!(reply(&mut hr).is_some());
     // Twenty drains of 250 ms each, one after another, would take five seconds.
-    let silent: Vec<_> = (0..MAX_REFUSING + 4).map(|_| client(addr)).collect();
+    let silent: Vec<_> = (0..MAX_REFUSING + 4).map(|_| raw_client(addr)).collect();
     let start = Instant::now();
-    let (mut r, _w) = client(addr);
+    let (mut r, _w) = raw_client(addr);
     let refused = reply(&mut r).unwrap();
     assert!(refused["error"].as_str().unwrap_or_default().starts_with("busy"), "{refused}");
     assert!(start.elapsed() < Duration::from_secs(1), "refused after {:?}", start.elapsed());
@@ -224,7 +290,7 @@ fn connection_limit_refuses_then_frees_slot() {
     // Make sure both are being served before the third arrives.
     writeln!(bw, r#"{{"id":1,"method":"m"}}"#).unwrap();
     assert!(reply(&mut br).is_some());
-    let (mut cr, _cw) = client(addr);
+    let (mut cr, _cw) = raw_client(addr);
     let v = reply(&mut cr).unwrap();
     assert!(v["error"].as_str().unwrap().starts_with("busy"));
     drop(a);
@@ -296,4 +362,87 @@ fn a_request_already_started_when_the_reply_times_out_reports_an_unknown_outcome
     let v = reply(&mut r).unwrap();
     assert!(v["error"].as_str().unwrap().contains("outcome is unknown"), "{v}");
     ui.join().unwrap();
+}
+
+/// A peer that dribbles the first line one byte at a time still ends at the deadline: the
+/// authentication timeout bounds the whole line, not each read, so a slot is never held
+/// for line-length × timeout.
+#[test]
+fn a_slowloris_first_line_ends_at_the_deadline() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let peer = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        for b in b"dribble" {
+            stream.write_all(&[*b]).expect("write");
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        std::thread::sleep(Duration::from_millis(400));
+    });
+    let stream = TcpStream::connect(addr).expect("connect");
+    let read = stream.try_clone().expect("clone");
+    let mut reader = BufReader::new(read);
+    let deadline = Instant::now() + Duration::from_millis(800);
+    let line = read_first_line(&mut reader, deadline, control_auth::MAX_AUTH_LINE);
+    peer.join().expect("peer");
+    assert!(line.is_none(), "{line:?}");
+}
+
+#[test]
+fn a_first_line_that_arrives_whole_comes_through() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let peer = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        stream.write_all(b"{\"id\":1}\n").expect("write");
+    });
+    let stream = TcpStream::connect(addr).expect("connect");
+    let read = stream.try_clone().expect("clone");
+    let mut reader = BufReader::new(read);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let line = read_first_line(&mut reader, deadline, control_auth::MAX_AUTH_LINE);
+    peer.join().expect("peer");
+    assert_eq!(line.as_deref(), Some("{\"id\":1}\n"));
+}
+
+/// After the handshake, reads go against the idle deadline again, not against what was left of
+/// the auth one: a client that authenticated at once and then says nothing is closed at the idle
+/// deadline, well inside the 10 s [`AUTH_TIMEOUT`] allows.
+#[test]
+fn an_authenticated_connection_closes_at_the_idle_timeout() {
+    let (addr, rx) = server(small());
+    ui(rx);
+    let (mut r, _w) = client(addr);
+    let started = Instant::now();
+    let _ = replies_until_closed(&mut r);
+    assert!(started.elapsed() < Duration::from_secs(5), "closed at the idle deadline, not the auth one ({:?})", started.elapsed());
+}
+
+/// A peer refused without auth is drained for the short grace, as a busy refusal is: it holds a
+/// client slot only briefly even when it keeps talking, not for the whole write timeout.
+#[test]
+fn an_unauthenticated_peer_is_drained_for_a_short_grace() {
+    let (addr, _rx) = server(small());
+    let (mut r, mut w) = raw_client(addr);
+    // Pipelined bytes without a token: the refusal still arrives, then the server closes.
+    let _ = w.write_all(b"x\n".repeat(500).as_slice());
+    let started = Instant::now();
+    let refusal = reply(&mut r);
+    assert!(refusal.is_some(), "the refusal arrives");
+    assert_eq!(refusal.expect("the refusal")["ok"], false);
+    let _ = reply(&mut r);
+    assert!(started.elapsed() < Duration::from_secs(5), "closed after the grace, not the write timeout ({:?})", started.elapsed());
+}
+
+/// A chosen token writes no file, and takes a file an earlier run left behind out of the way: a
+/// client without DECKCRAFT_CONTROL_TOKEN would otherwise read the stale secret.
+#[test]
+fn a_chosen_token_removes_a_stale_token_file() {
+    // A range of its own, below the ephemeral ports: a parallel test's listener on :0 must not
+    // own this token file, and no two tests of the token file may share one.
+    let port = 10_000 + (std::process::id() % 2_000) as u16;
+    let path = control_auth::write_token_file(port, "tok-0123456789abcdef").expect("write token file");
+    let token = make_token(port, Some("chosen-token-0123456789".into())).expect("chosen token");
+    assert_eq!(token, "chosen-token-0123456789");
+    assert!(!path.exists(), "the stale file is gone");
 }
