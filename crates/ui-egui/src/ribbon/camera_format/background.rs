@@ -19,6 +19,10 @@ pub(super) fn background_section(app: &mut SlideApp, ui: &mut Ui) {
     let current = current_mode(app);
     let state = app.matte.as_mut().map(|m| m.state());
     let ready = state.as_ref().is_some_and(|s| s.is_ready());
+    // The session loads the model by itself for `cameo.backgroundPreview` and
+    // `cameo.background.state`; a model installed or removed since then must be retried, so tell
+    // the session what the service above reports.
+    app.session.sync_segmenter(ready);
     let can_edit = enabled(app, "cameo.background");
     group(ui, |ui| {
         for (mode, icon) in [
@@ -31,9 +35,16 @@ pub(super) fn background_section(app: &mut SlideApp, ui: &mut Ui) {
             let response = widgets::small_button(ui, icon, mode.label(), usable, current == mode);
             let response = if usable { response } else { response.on_hover_text(disabled_reason(&state, mode)) };
             if response.clicked() {
-                let ids = cameo_ids(app);
-                let p = if ids.is_empty() { json!({"mode": mode.as_str()}) } else { json!({"mode": mode.as_str(), "ids": ids}) };
-                run(app, "cameo.background", p);
+                if mode == CameraBackgroundMode::Custom {
+                    // A Custom background needs a replacement: ask for it first and send the mode
+                    // and the picture as one edit, so the document never holds a Custom
+                    // background with nothing behind it.
+                    choose_replacement(app);
+                } else {
+                    let ids = cameo_ids(app);
+                    let p = if ids.is_empty() { json!({"mode": mode.as_str()}) } else { json!({"mode": mode.as_str(), "ids": ids}) };
+                    run(app, "cameo.background", p);
+                }
             }
         }
     });

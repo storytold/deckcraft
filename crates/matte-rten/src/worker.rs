@@ -6,7 +6,6 @@
 //! caller's cadence. Reused frames are counted so the panel and the docs can be honest.
 
 use std::sync::{Arc, Condvar, Mutex};
-use std::thread::JoinHandle;
 use std::time::Duration;
 
 use deckcraft_matte::compositing::CompositeOptions;
@@ -23,10 +22,10 @@ struct State {
     stop: bool,
 }
 
-/// Runs a [`Segmenter`] on its own thread. Drop stops and joins it.
+/// Runs a [`Segmenter`] on its own thread. Drop asks it to stop and detaches: the thread exits at
+/// its next check, after the inference it is running, and a new worker may overlap it briefly.
 pub struct MatteWorker {
     shared: Arc<(Mutex<State>, Condvar)>,
-    handle: Option<JoinHandle<()>>,
     /// Minimum time between submissions.
     interval: Duration,
 }
@@ -46,8 +45,10 @@ impl MatteWorker {
             Condvar::new(),
         ));
         let thread_shared = Arc::clone(&shared);
-        let handle = std::thread::Builder::new().name("deckcraft-matte".into()).spawn(move || run(thread_shared)).ok();
-        MatteWorker { shared, handle, interval }
+        // The handle is not kept: joining on drop would block the caller (the UI thread) for the
+        // rest of a running inference. The thread owns an `Arc` of the state and exits on `stop`.
+        let _ = std::thread::Builder::new().name("deckcraft-matte".into()).spawn(move || run(thread_shared));
+        MatteWorker { shared, interval }
     }
 
     /// Offer a frame. At most one waits; a newer frame replaces an older one.
@@ -88,10 +89,10 @@ impl MatteWorker {
     ) -> Result<Option<RgbaFrame>, MatteError> {
         let latest = self.latest();
         let mut submitted = false;
-        if submit && latest.is_none() {
-            self.submit(frame.clone());
-            submitted = true;
-        } else if submit
+        // One gate for every submission, first or later: a frame already waiting is not replaced,
+        // and a segmenter that fails persistently is retried on the interval instead of on every
+        // call. `last_submit` is `None` before the first submit, so the first frame goes now.
+        if submit
             && let Ok(s) = self.shared.0.lock()
             && s.pending.is_none()
             && s.last_submit.is_none_or(|t| t.elapsed() >= self.interval)
@@ -120,9 +121,6 @@ impl Drop for MatteWorker {
             s.stop = true;
             s.pending = None;
             self.shared.1.notify_one();
-        }
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
         }
     }
 }
@@ -181,6 +179,36 @@ mod tests {
             }
         }
         RgbaFrame::new(16, 16, px).expect("frame")
+    }
+
+    /// A segmenter that takes long enough for a second `process` call to land while it runs.
+    struct SlowSegmenter;
+
+    impl Segmenter for SlowSegmenter {
+        fn matte(&mut self, frame: &RgbaFrame) -> Result<Matte, MatteError> {
+            std::thread::sleep(Duration::from_millis(200));
+            EllipseSegmenter::default().matte(frame)
+        }
+
+        fn name(&self) -> &'static str {
+            "slow"
+        }
+    }
+
+    /// The first submission runs on the interval like every other one: during the first inference
+    /// a caller drawing at 60 Hz must not queue a second frame, and a segmenter that keeps failing
+    /// must not be retried on every call.
+    #[test]
+    fn the_first_submission_honours_the_interval() {
+        let w = MatteWorker::new(Box::new(SlowSegmenter), Duration::from_millis(2_000));
+        let f = frame();
+        let opts = CompositeOptions::new(CameraBackgroundMode::Blur);
+        for _ in 0..20 {
+            let _ = w.process(&f, &opts, None, true);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(w.timings().runs, 1, "100 ms of calls while the first inference ran must not queue another");
     }
 
     #[test]

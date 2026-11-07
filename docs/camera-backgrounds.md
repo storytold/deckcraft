@@ -18,9 +18,12 @@ and **Custom** (a replacement picture). A Cameo is an ordinary picture with the 
 | Native inference | `crates/matte-rten`: RTen 0.27 on a worker thread, CPU only |
 | Live camera capture and the live composited preview | **not yet**: issue #1837 owns capture. `Services.matte` exposes `MatteService::process` for the seam; the UI says so |
 
-The background mode is document state. Segmentation is not: the host installs a
-`deckcraft_matte::Segmenter` (CLI, tests) or a `MatteService` (desktop UI). With no model, every mode
-but Normal is refused with an actionable message, never a panic and never a partial write.
+The background mode is document state and never needs the model: `cameo.background` stores
+Normal, Removed, Blur or Custom (a PPTX can import Blur or Removed) with or without one.
+Segmentation is not document state: the host installs a `deckcraft_matte::Segmenter` (CLI, tests)
+or points the session at a loader for the installed model (desktop, MCP). Without a model,
+`cameo.backgroundPreview` and the Camera Format controls refuse a non-Normal mode with an
+actionable message, never a panic and never a partial write.
 
 ## Model manifest
 

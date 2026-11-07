@@ -70,10 +70,20 @@ impl Service {
         if self.worker.is_some() {
             return Ok(());
         }
-        let ModelState::Ready { path, .. } = &self.state else {
-            return Err(MatteError::Unavailable(self.state.message()));
+        let path = match &self.state {
+            ModelState::Ready { path, .. } => path.clone(),
+            other => return Err(MatteError::Unavailable(other.message())),
         };
-        let segmenter = RtenSegmenter::load(Path::new(path)).map_err(MatteError::Unavailable)?.with_feather(self.feather);
+        // A model RTen cannot load (a bad DECKCRAFT_MATTE_THREADS value, a file the hash check
+        // accepted but the parser rejects) must not be re-hashed and re-parsed on every frame:
+        // remember the sentence as the model state until `refresh()` or `install()` runs again.
+        let segmenter = match RtenSegmenter::load(Path::new(&path)) {
+            Ok(s) => s.with_feather(self.feather),
+            Err(detail) => {
+                self.state = ModelState::Failed { detail: format!("{path}: {detail}") };
+                return Err(MatteError::Unavailable(self.state.message()));
+            }
+        };
         self.worker = Some(MatteWorker::new(Box::new(segmenter) as Box<dyn Segmenter>, self.interval));
         Ok(())
     }
@@ -91,13 +101,19 @@ impl Service {
         if let Some(h) = self.download.take() {
             let _ = h.join();
         }
-        self.download_state = None;
-        // The worker either installed the file or wrote a failure; probing tells them apart.
+        // The thread records why the download failed. Probing the disk cannot tell a network
+        // error, a size mismatch or a hash failure from "never installed" — both leave no
+        // file — so keep the failure sentence for the panel.
+        let failure =
+            self.download_state.take().and_then(|shared| shared.lock().ok().map(|s| s.clone())).filter(|s| matches!(s, ModelState::Failed { .. }));
         self.refresh();
         if !self.state.is_ready()
-            && let ModelState::Failed { detail } = &self.state
+            && let Some(failed) = failure
         {
-            log::warn!("camera background model download did not install: {detail}");
+            if let ModelState::Failed { detail } = &failed {
+                log::warn!("camera background model download did not install: {detail}");
+            }
+            self.state = failed;
         }
     }
 }
@@ -197,5 +213,43 @@ mod tests {
         let f = RgbaFrame::solid(8, 8, [1, 2, 3, 255]).expect("frame");
         let out = s.process(&f, &CompositeOptions::new(deckcraft_model::CameraBackgroundMode::Normal), None).expect("normal").expect("returned");
         assert_eq!(out, f);
+    }
+
+    /// A download that fails leaves no file, so probing the disk cannot say why: the panel must
+    /// still show the thread's sentence instead of "not installed".
+    #[test]
+    fn a_failed_download_keeps_the_threads_sentence() {
+        let mut s = Service::new(0);
+        if s.state().is_ready() {
+            return; // a machine with the model installed always probes Ready; nothing to prove
+        }
+        let shared = Arc::new(Mutex::new(ModelState::Failed { detail: "download failed: connection reset".into() }));
+        s.download = Some(std::thread::spawn(|| {}));
+        s.download_state = Some(Arc::clone(&shared));
+        match s.state() {
+            ModelState::Failed { detail } => assert!(detail.contains("connection reset"), "{detail}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A model the hash check accepts but RTen cannot load is remembered as the state, so the
+    /// next frame does not re-hash and re-parse the file.
+    #[test]
+    fn a_model_that_cannot_load_is_not_retried_on_every_frame() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-matte-load-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("model.onnx");
+        std::fs::write(&path, b"not the model").expect("file");
+        let mut s = Service::new(0);
+        s.state = ModelState::Ready { path: path.display().to_string(), bytes: 13 };
+        let f = RgbaFrame::solid(8, 8, [1, 2, 3, 255]).expect("frame");
+        let opts = CompositeOptions::new(deckcraft_model::CameraBackgroundMode::Removed);
+        let first = s.process(&f, &opts, None).expect_err("unloadable").message();
+        assert!(first.contains("unusable"), "{first}");
+        assert!(!s.state.is_ready(), "the load failure is the model state now");
+        std::fs::remove_file(&path).expect("remove");
+        let second = s.process(&f, &opts, None).expect_err("still remembered").message();
+        assert_eq!(first, second, "the failure is cached, not re-probed");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

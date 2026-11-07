@@ -112,6 +112,20 @@ fn write_manifest(root: &Path) {
     let _ = std::fs::write(dir.join("manifest.json"), sidecar);
 }
 
+/// The download agent. ureq's defaults are no limit at all, so a stalled connect or a stalled body
+/// read would leave the download thread — and the panel's "Downloading" — stuck forever, with no
+/// way to retry. Per-read is a stall detector: it restarts for each transport read, so a slow but
+/// live 191 MB transfer is never cut off, and no total budget is set for the same reason.
+fn download_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_resolve(Some(Duration::from_secs(30)))
+        .timeout_connect(Some(Duration::from_secs(30)))
+        .timeout_recv_response(Some(Duration::from_secs(60)))
+        .timeout_per_read(Some(Duration::from_secs(30)))
+        .build()
+        .new_agent()
+}
+
 /// Download the model into `root` from the manifest's pinned URL, reporting progress. Blocking:
 /// the caller runs it on a worker thread after the consent screen. A short download is rejected
 /// by the size check and never renamed into place.
@@ -121,7 +135,7 @@ pub fn download_to(root: &Path, on_progress: &mut dyn FnMut(u64, u64)) -> Result
     let dir = target.parent().ok_or_else(|| format!("{} has no parent", target.display()))?;
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let tmp = dir.join("model.onnx.part");
-    let mut response = ureq::Agent::new_with_defaults().get(&m.url()).call().map_err(|e| format!("download failed: {e}"))?;
+    let mut response = download_agent().get(&m.url()).call().map_err(|e| format!("download failed: {e}"))?;
     let total = response.body().content_length().unwrap_or(0);
     if total > 0 && total != m.bytes {
         return Err(format!("the server offered {total} bytes, the model is {} bytes", m.bytes));
@@ -240,6 +254,17 @@ mod tests {
         let roots = model_roots();
         assert!(!roots.is_empty());
         assert!(roots.last().is_some_and(|p| p.ends_with("models")), "{roots:?}");
+    }
+
+    #[test]
+    fn the_download_agent_bounds_every_stage() {
+        let agent = download_agent();
+        let t = agent.config().timeouts();
+        assert!(t.resolve.is_some(), "DNS");
+        assert!(t.connect.is_some(), "connect");
+        assert!(t.recv_response.is_some(), "response headers");
+        assert!(agent.config().timeout_per_read().is_some(), "a stalled body read must fail, not hang the thread");
+        assert!(t.global.is_none() && t.per_call.is_none() && t.recv_body.is_none(), "a slow but live 191 MB transfer is never cut off");
     }
 
     #[test]

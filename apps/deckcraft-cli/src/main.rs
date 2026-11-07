@@ -308,15 +308,19 @@ fn camera_background(args: &[String]) -> Result<(), String> {
     }
     let image = image.ok_or("camera-background needs --image")?;
     let mode = mode.ok_or("camera-background needs --mode")?;
+    // The engine's own parser, so `NORMAL`, ` normal ` and `none` are Normal here too: only the
+    // modes that segment need the model.
+    let mode = deckcraft_engine::model::CameraBackgroundMode::parse(&mode)
+        .ok_or_else(|| format!("unknown --mode `{mode}`; use normal, removed, blur or custom"))?;
     let out = out.ok_or("camera-background needs --out")?;
     let bytes = std::fs::read(&image).map_err(|e| format!("{image}: {e}"))?;
-    let mut params = json!({"image": deckcraft_engine::cmd::base64_encode(&bytes), "mode": mode});
+    let mut params = json!({"image": deckcraft_engine::cmd::base64_encode(&bytes), "mode": mode.as_str()});
     if let Some(bg) = background {
         let bytes = std::fs::read(&bg).map_err(|e| format!("{bg}: {e}"))?;
         params["background"] = json!(deckcraft_engine::cmd::base64_encode(&bytes));
     }
     if let Some(c) = color {
-        let ch: Vec<u8> = c.split(',').filter_map(|v| v.trim().parse::<u8>().ok()).collect();
+        let ch: Vec<u8> = c.split(',').map(|v| v.trim().parse::<u8>().ok().ok_or("--color needs r,g,b (0..255)")).collect::<Result<_, _>>()?;
         if ch.len() != 3 {
             return Err("--color needs r,g,b (0..255)".into());
         }
@@ -329,7 +333,7 @@ fn camera_background(args: &[String]) -> Result<(), String> {
         params["blur"] = json!(b);
     }
     let mut s = Session::with_new();
-    if mode != "normal" {
+    if mode != deckcraft_engine::model::CameraBackgroundMode::Normal {
         let segmenter = match &model {
             Some(dir) => deckcraft_matte_rten::RtenSegmenter::load(&deckcraft_matte::manifest::MANIFEST.path_in(std::path::Path::new(dir))),
             None => deckcraft_matte_rten::RtenSegmenter::load_installed(),
@@ -788,6 +792,11 @@ so drop --connect (or use --connect without the roots)"
         Some(c) => Box::new(Remote::connect(&control_addr(&c)).map_err(|e| format!("can't reach the app at {c}: {e}"))?),
         None => {
             let mut h = Headless::new();
+            // `cameo.backgroundPreview` runs offscreen in this session: let it find the model the
+            // user installed. The loader runs on the first preview, not at startup.
+            h.session.set_segmenter_loader(Box::new(|| {
+                deckcraft_matte_rten::RtenSegmenter::load_installed().map(|s| Box::new(s) as Box<dyn deckcraft_matte::Segmenter>)
+            }));
             // `--sample` is the operator's own choice, made before the roots come into force.
             if sample {
                 deckcraft_engine::sample::open_sample(&mut h.session).map_err(|e| e.to_string())?;
@@ -906,6 +915,54 @@ mod tests {
         assert!(run(&args(&["--sample", "--export", &bad, "--export-params", "[1]"])).is_err());
         assert!(run(&args(&["--sample", "--export-params", "{}"])).is_ok());
         assert!(run(&args(&["--sample", "--export-params", r#"{"width": 64}"#])).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A 1x1 RGBA PNG: the preview needs a real image, not a placeholder file.
+    const ONE_PIXEL_PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+    fn camera_background_args(dir: &std::path::Path, mode: &str, extra: &[&str]) -> Vec<String> {
+        let image = dir.join("in.png");
+        if !image.exists() {
+            std::fs::write(&image, deckcraft_engine::cmd::base64_decode(ONE_PIXEL_PNG).unwrap()).unwrap();
+        }
+        let out = dir.join(format!("out-{}.png", mode.trim().replace(' ', "_")));
+        let mut a = vec![
+            "--image".to_string(),
+            image.to_string_lossy().to_string(),
+            "--mode".into(),
+            mode.into(),
+            "--out".into(),
+            out.to_string_lossy().to_string(),
+        ];
+        a.extend(extra.iter().map(|s| s.to_string()));
+        a
+    }
+
+    /// `10,x,20,30` is three parseable channels; the old parser dropped `x` and used `[10,20,30]`.
+    #[test]
+    fn camera_background_rejects_a_colour_channel_it_cannot_parse() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-cli-colour-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = camera_background_args(&dir, "normal", &["--color", "10,x,20,30"]);
+        let err = camera_background(&a).unwrap_err();
+        assert!(err.contains("--color"), "{err}");
+        assert!(!dir.join("out-normal.png").exists(), "nothing was written");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The engine's aliases decide whether a model is needed: `none` and any case of Normal are
+    /// Normal, so the command succeeds with no model installed.
+    #[test]
+    fn camera_background_treats_none_and_case_aliases_as_normal() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-cli-normal-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for mode in ["none", "Normal", " NORMAL "] {
+            let a = camera_background_args(&dir, mode, &[]);
+            camera_background(&a).unwrap_or_else(|e| panic!("{mode}: {e}"));
+        }
+        let err = camera_background(&camera_background_args(&dir, "magic", &[])).unwrap_err();
+        assert!(err.contains("unknown --mode"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

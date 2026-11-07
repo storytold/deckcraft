@@ -2,9 +2,11 @@
 //! offscreen preview the control channel and the CLI use to prove the pipeline.
 //!
 //! The mode is part of the document (undoable, saved in `.deckcraft` and written as
-//! `alf:liveFeedProps/alf:backgroundProps` in PPTX). The segmentation model is not: the host
-//! installs a [`deckcraft_matte::Segmenter`] on the session, and without one every mode but Normal
-//! is refused with a sentence naming what is missing.
+//! `alf:liveFeedProps/alf:backgroundProps` in PPTX), and a mode is stored whether or not a model
+//! is installed: a PPTX can import Blur or Removed. Segmentation is the host's: it installs a
+//! [`deckcraft_matte::Segmenter`] on the session (or a loader the session asks on first use), and
+//! without one `cameo.backgroundPreview` and the Camera Format controls refuse a non-Normal
+//! preview with a sentence naming what is missing. The other commands only store the mode.
 
 use std::io::Cursor;
 use std::sync::Arc;
@@ -177,7 +179,7 @@ pub fn specs() -> Vec<CommandSpec> {
             apply_to_all
         ),
         cmd!(
-            noundo "cameo.backgroundPreview",
+            query "cameo.backgroundPreview",
             "Preview Camera Background",
             ["Camera Format", "Camera Background"],
             None,
@@ -276,12 +278,7 @@ fn set_one(sh: &mut deckcraft_model::Shape, bg: &CameraBackground) -> Result<()>
 
 fn background(s: &mut Session, p: &Value) -> Result<Value> {
     let bg = requested(p)?;
-    if let Some(image) = bg.image {
-        let doc = s.doc()?;
-        if doc.doc.media(image).is_none() {
-            return Err(bad("cameo.background", format!("no media with id {}", image.0)));
-        }
-    }
+    check_media(s, "cameo.background", &bg)?;
     let data = image_data(p)?;
     if bool_or(p, "all", false) {
         let changed = s.edit(|doc, _| {
@@ -367,16 +364,39 @@ fn state(s: &mut Session, _p: &Value) -> Result<Value> {
     }))
 }
 
+/// `image` must name a media item the document already holds. Both commands that store a
+/// background check it, so a dangling id never reaches save or export; `imageData` adds the media
+/// in the same undo step instead.
+fn check_media(s: &Session, cmd: &str, bg: &CameraBackground) -> Result<()> {
+    let Some(image) = bg.image else { return Ok(()) };
+    if s.doc()?.doc.media(image).is_none() {
+        return Err(bad(cmd, format!("no media with id {}", image.0)));
+    }
+    Ok(())
+}
+
 fn apply_to_all(s: &mut Session, p: &Value) -> Result<Value> {
     let bg = if p.get("mode").is_some() {
         requested(p)?
     } else {
+        // A mixed selection is allowed by `has_cameo`, and a plain shape has no background to
+        // copy: take the first Cameo in the targets, not the first target.
         let ids = targets(s, p)?;
         let doc = s.doc()?;
-        let id = ids.first().copied().ok_or_else(|| bad("cameo.backgroundApplyToAll", "nothing selected"))?;
-        doc.shape(id).filter(|sh| sh.is_cameo()).and_then(|sh| sh.cameo.as_ref()).and_then(|c| c.background.clone()).unwrap_or_default()
+        let id = ids
+            .iter()
+            .copied()
+            .find(|id| doc.shape(*id).is_some_and(Shape::is_cameo))
+            .ok_or_else(|| bad("cameo.backgroundApplyToAll", "select a Cameo to copy its background"))?;
+        doc.shape(id).and_then(|sh| sh.cameo.as_ref()).and_then(|c| c.background.clone()).unwrap_or_default()
     };
+    check_media(s, "cameo.backgroundApplyToAll", &bg)?;
+    let data = image_data(p)?;
     let changed = s.edit(|doc, _| {
+        let mut bg = bg.clone();
+        if let Some((name, mime, bytes)) = data.clone() {
+            bg.image = Some(doc.add_media(&name, &mime, bytes).ok_or_else(|| bad("cameo.backgroundApplyToAll", NO_ID_SPACE))?);
+        }
         let mut n = 0usize;
         for slide in &mut doc.slides {
             let slide = std::sync::Arc::make_mut(slide);
@@ -453,6 +473,7 @@ fn preview(s: &mut Session, p: &Value) -> Result<Value> {
     let matte = if mode == CameraBackgroundMode::Normal {
         None
     } else {
+        s.ensure_segmenter().map_err(EngineError::Other)?;
         let segmenter = s.segmenter_mut().ok_or_else(|| {
             EngineError::Other(
                 deckcraft_matte::MatteError::Unavailable(
@@ -503,6 +524,69 @@ mod tests {
         let mut out = std::io::Cursor::new(Vec::new());
         image::DynamicImage::ImageRgba8(img).write_to(&mut out, image::ImageFormat::Png).expect("png");
         super::super::base64_encode(out.get_ref())
+    }
+
+    #[test]
+    fn apply_to_all_copies_from_a_cameo_in_a_mixed_selection() {
+        let mut s = with_cameo();
+        let rect = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 40, 40]})).expect("rect")["id"].as_u64().expect("id");
+        let cameo = s.execute("insert.cameo", &json!({})).expect("second cameo")["id"].as_u64().expect("id");
+        s.execute("cameo.background", &json!({"mode": "blur", "id": cameo})).expect("blur");
+        // A mixed selection is allowed by `has_cameo`; the plain shape must not become the source.
+        s.execute("edit.select", &json!({"ids": [rect, cameo]})).expect("mixed selection");
+        let v = s.execute("cameo.backgroundApplyToAll", &json!({})).expect("apply all");
+        assert_eq!(v["mode"], "blur", "the first Cameo is the source, not the first selected shape");
+        assert!(v["changed"].as_u64().unwrap_or(0) >= 2);
+    }
+
+    #[test]
+    fn apply_to_all_refuses_a_media_id_the_document_does_not_hold() {
+        let mut s = with_cameo();
+        assert!(s.execute("cameo.backgroundApplyToAll", &json!({"mode": "custom", "image": 9999})).is_err());
+    }
+
+    #[test]
+    fn apply_to_all_adds_an_inline_picture_as_media() {
+        let mut s = with_cameo();
+        s.execute("cameo.backgroundApplyToAll", &json!({"mode": "custom", "imageData": png(4, 4, [9, 8, 7, 255])})).expect("inline picture");
+        let bg = selected_background(&s).expect("background");
+        assert_eq!(bg.mode, CameraBackgroundMode::Custom);
+        let id = bg.image.expect("media id");
+        assert_eq!(s.doc().expect("doc").doc.media(id).map(|m| m.content_type.as_str()), Some("image/png"));
+    }
+
+    /// The desktop and MCP sessions have no segmenter of their own: the host hands the session a
+    /// loader, which runs on first use and is asked again after the model changes.
+    #[test]
+    fn the_hosts_loader_supplies_the_segmenter_on_first_use() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        let model = Arc::new(AtomicBool::new(true));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (flag, count) = (Arc::clone(&model), Arc::clone(&calls));
+        let mut s = with_cameo();
+        s.set_segmenter_loader(Box::new(move || {
+            count.fetch_add(1, Ordering::Relaxed);
+            if flag.load(Ordering::Relaxed) {
+                Ok(Box::new(EllipseSegmenter::default()) as Box<dyn Segmenter>)
+            } else {
+                Err("Background model not installed".to_string())
+            }
+        }));
+        let name = Segmenter::name(&EllipseSegmenter::default());
+        assert_eq!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"], name);
+        assert_eq!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"], name);
+        assert_eq!(calls.load(Ordering::Relaxed), 1, "loaded once, then cached");
+
+        // The model goes away and the host says so; the next command asks the loader again.
+        model.store(false, Ordering::Relaxed);
+        s.sync_segmenter(false);
+        assert!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"].is_null());
+        assert!(s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).is_err());
+        let before = calls.load(Ordering::Relaxed);
+        assert!(s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).is_err());
+        assert_eq!(calls.load(Ordering::Relaxed), before, "a remembered failure is not retried per call");
     }
 
     #[test]

@@ -482,6 +482,10 @@ pub struct Clipboard {
     pub pastes: u32,
 }
 
+/// How a host provides its camera-background model to a [`Session`]: load and verify the installed
+/// model, or say why it cannot. Called lazily, at most once per `clear_segmenter`.
+pub type SegmenterLoader = Box<dyn Fn() -> std::result::Result<Box<dyn deckcraft_matte::Segmenter>, String>>;
+
 pub struct Session {
     docs: Vec<DocState>,
     active: Option<usize>,
@@ -507,8 +511,14 @@ pub struct Session {
     /// Animated GIF pictures paused with `media.gifPlay` (the others play).
     pub gif_paused: std::collections::HashSet<ShapeId>,
     /// The host's camera-background segmenter. `None` until a host installs one (the CLI for an
-    /// offscreen preview); commands that need it say so.
+    /// offscreen preview) or the loader below supplies one; commands that need it say so.
     segmenter: Option<Box<dyn deckcraft_matte::Segmenter>>,
+    /// How the host finds a model when nobody installed a segmenter; see
+    /// [`Session::set_segmenter_loader`].
+    segmenter_loader: Option<SegmenterLoader>,
+    /// Why the loader last failed. Kept so `cameo.background.state`, which the panels poll, does
+    /// not re-verify the model file on every call; [`Session::clear_segmenter`] forgets it.
+    segmenter_failed: Option<String>,
     /// Text keys follow the Mac (Option+arrows move by word, Cmd+arrows to the line or text
     /// ends) instead of Windows and Linux (Ctrl+arrows by word or paragraph). Defaults to the
     /// platform DeckCraft was built for.
@@ -550,6 +560,8 @@ impl Session {
             media_status: Default::default(),
             gif_paused: Default::default(),
             segmenter: None,
+            segmenter_loader: None,
+            segmenter_failed: None,
             mac_keys: cfg!(target_os = "macos"),
             panics_caught: 0,
             loaded: vec![],
@@ -561,15 +573,64 @@ impl Session {
     /// only runs `cameo.backgroundPreview` through it.
     pub fn set_segmenter(&mut self, segmenter: Box<dyn deckcraft_matte::Segmenter>) {
         self.segmenter = Some(segmenter);
+        self.segmenter_failed = None;
     }
 
-    /// Drop the segmenter (the model was removed or failed verification).
+    /// Hand the engine the host's way of finding its model. A desktop app that knows where the
+    /// model lives (and that installing or removing it is out of the engine's hands) points the
+    /// session at its loader once; the first command that needs a segmenter calls it, so a
+    /// session that never previews never pays for the 191 MB load. A loader failure is remembered
+    /// as an actionable sentence until [`Session::clear_segmenter`] (see also
+    /// [`Session::sync_segmenter`]).
+    pub fn set_segmenter_loader(&mut self, loader: SegmenterLoader) {
+        self.segmenter_loader = Some(loader);
+        self.clear_segmenter();
+    }
+
+    /// Load the host's segmenter if no one installed one. Returns the sentence to show when the
+    /// host cannot provide a model; a session with neither a segmenter nor a loader is
+    /// `Ok(())` and its commands name the missing model themselves.
+    pub fn ensure_segmenter(&mut self) -> std::result::Result<(), String> {
+        if self.segmenter.is_some() {
+            return Ok(());
+        }
+        if let Some(detail) = &self.segmenter_failed {
+            return Err(detail.clone());
+        }
+        let Some(load) = &self.segmenter_loader else { return Ok(()) };
+        match load() {
+            Ok(segmenter) => {
+                self.segmenter = Some(segmenter);
+                Ok(())
+            }
+            Err(detail) => {
+                self.segmenter_failed = Some(detail.clone());
+                Err(detail)
+            }
+        }
+    }
+
+    /// Drop the segmenter (the model was removed or failed verification) and the remembered
+    /// failure, so the next command asks the loader again.
     pub fn clear_segmenter(&mut self) {
         self.segmenter = None;
+        self.segmenter_failed = None;
     }
 
-    /// The installed segmenter's name, for `cameo.background.state`.
-    pub fn segmenter_name(&self) -> Option<&'static str> {
+    /// Forget a loaded segmenter or a remembered failure that disagrees with the host's model
+    /// state. `ready` is what the host's model panel reports; a host calls this where it learns
+    /// the model was installed or removed, then the next command asks the loader again.
+    pub fn sync_segmenter(&mut self, ready: bool) {
+        let stale = if ready { self.segmenter_failed.is_some() } else { self.segmenter.is_some() };
+        if stale {
+            self.clear_segmenter();
+        }
+    }
+
+    /// The installed segmenter's name, for `cameo.background.state`. Asks the host's loader on the
+    /// first call, so a session whose model is installed reports it before any preview.
+    pub fn segmenter_name(&mut self) -> Option<&'static str> {
+        let _ = self.ensure_segmenter();
         self.segmenter.as_ref().map(|s| s.name())
     }
 
