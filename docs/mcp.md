@@ -114,4 +114,5 @@ asks for at that size (`required`: 4.5, or 3 for 18 pt or 14 pt bold text; 7 and
 `level: "AAA"`), the smallest, 5th-percentile and median contrast (`ratio`), the share of its
 pixels that reach `required` (`passShare`) and what lies behind it (`backdrop`). A call that would
 draw more than 200 million pixels in all is refused with the count; measure fewer shapes at a time
-with `ids`, or lower `scale`.
+with `ids`, or lower `scale`. `review.accessibility` judges contrast from declared colours, so it
+can disagree with `review.contrast` on the same text; `review.contrast` reports what is drawn.
