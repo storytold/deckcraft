@@ -192,16 +192,7 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
     };
     let px_scale = crate::scale_of(m);
     let dest = match &pf.mode {
-        PictureMode::Stretch { fill_rect } => {
-            let [l, t, r, b] = *fill_rect;
-            let inner = Rect::new(
-                bounds.x0 + l * bounds.width(),
-                bounds.y0 + t * bounds.height(),
-                bounds.x1 - r * bounds.width(),
-                bounds.y1 - b * bounds.height(),
-            );
-            crate::crop_dest(inner, pf.crop)
-        }
+        PictureMode::Stretch { fill_rect } => crate::stretch_dest(bounds, *fill_rect, pf.crop),
         PictureMode::Tile { .. } => bounds,
     };
     // Decode for the whole image's size on screen, not the box's: a cropped picture shows only part

@@ -5,6 +5,7 @@ pub mod arrange;
 pub mod artistic;
 pub mod background;
 pub mod compress;
+pub mod crop;
 pub mod design;
 pub mod edit;
 pub mod file;
@@ -176,6 +177,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(selection::specs());
         v.extend(merge::specs());
         v.extend(points::specs());
+        v.extend(crop::specs());
         v.extend(text::specs());
         v.extend(format::specs());
         v.extend(design::specs());

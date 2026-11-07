@@ -782,6 +782,27 @@ fn pictures_media_and_ink_round_trip() {
 }
 
 #[test]
+fn a_src_rect_that_crops_everything_away_round_trips_unchanged() {
+    // `l` + `r` past 100%, `t` + `b` exactly 100%, one side at 100%, and an ordinary crop with
+    // padding: the file's values come back as written, over and over. Only crop mode and the crop
+    // commands read such a crop as one showing a sliver.
+    for crop in [[0.6, 0.5, 0.6, 0.5], [0.5, 0.0, 0.5, 0.0], [1.0, 0.0, 0.0, 0.0], [-2.5, 0.1, 0.3, 0.0]] {
+        let mut p = rich_deck();
+        let slide = Arc::make_mut(&mut p.slides[2]);
+        let Some(ShapeKind::Picture { fill }) = slide.shapes.iter_mut().find(|s| s.name == "Picture").map(|s| &mut s.kind) else {
+            panic!("no picture")
+        };
+        fill.crop = crop;
+        let once = round(&p);
+        let twice = round(&once);
+        for q in [&once, &twice] {
+            let ShapeKind::Picture { fill } = &by_name(&q.slides[2], "Picture").kind else { panic!("not a picture") };
+            assert!(fill.crop.iter().zip(crop).all(|(a, b)| (a - b).abs() < 1e-4), "{crop:?} read back as {:?}", fill.crop);
+        }
+    }
+}
+
+#[test]
 fn pressured_ink_exports_at_its_mean_width() {
     let mut p = Presentation::default();
     let id = ShapeId(p.alloc_id().expect("id"));

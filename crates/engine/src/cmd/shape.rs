@@ -152,7 +152,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Crop",
             ["Picture Format", "Size"],
             None,
-            "{left?: fraction 0..1, top?: fraction 0..1, right?: fraction 0..1, bottom?: fraction 0..1, ids?}",
+            "{left?: fraction 0..1, top?: fraction 0..1, right?: fraction 0..1, bottom?: fraction 0..1, keepFrame?: bool, ids?} — set the crop. By default (keepFrame false) the box moves and resizes with the crop, so the picture keeps its size and place on the slide, as in PowerPoint; keepFrame true is the earlier behaviour: the box stays and the part left stretches to fill it",
             has_selection,
             crop
         ),

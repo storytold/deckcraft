@@ -116,6 +116,15 @@ pub fn crop_dest(bounds: Rect, crop: [f64; 4]) -> Rect {
     Rect::new(bounds.x0 - l * fw, bounds.y0 - t * fh, bounds.x0 - l * fw + fw, bounds.y0 - t * fh + fh)
 }
 
+/// The rectangle a stretched picture's whole image occupies in `bounds`: the box inset by its
+/// `fillRect` (left, top, right, bottom, as fractions of the box), then the crop ([`crop_dest`]).
+pub fn stretch_dest(bounds: Rect, fill_rect: [f64; 4], crop: [f64; 4]) -> Rect {
+    let [l, t, r, b] = fill_rect;
+    let inner =
+        Rect::new(bounds.x0 + l * bounds.width(), bounds.y0 + t * bounds.height(), bounds.x1 - r * bounds.width(), bounds.y1 - b * bounds.height());
+    crop_dest(inner, crop)
+}
+
 /// Whether a shape's border is drawn outside its outline: a picture's is, unless the picture is
 /// drawn in 3-D (a bevel seen through a 3-D scene), where PowerPoint centres it on the edge as on
 /// any shape (observed: an 18 pt border covers 9 pt of the picture then).
