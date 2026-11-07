@@ -12,6 +12,9 @@ use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, TextureHand
 
 use crate::icons::{self, Icon};
 
+/// Video shapes that get a decoder at once; more play their sound without a picture.
+const MAX_VIDEO_FEEDS: usize = 16;
+
 /// Who started a voice: the editor's control bar stops when you leave the slide, the slide show
 /// manages its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -227,12 +230,21 @@ impl MediaHost {
             audio: clip.volume > 0.0,
         };
         let source_changed = self.owners.get(&id).is_some_and(|o| o.source != media_key);
-        if clip.video && (source_changed || !self.videos.contains_key(&id)) {
-            let feed = match VideoFeed::new(bytes.clone()) {
-                Ok(f) => Some(f),
-                Err(e) => {
-                    log::info!("video {id}: {e}");
-                    None
+        // A shape whose feed could not be had (the cap, a decode error) tries again on each play.
+        let feedless = self.videos.get(&id).is_some_and(|v| v.feed.is_none());
+        if clip.video && (source_changed || feedless || !self.videos.contains_key(&id)) {
+            // One decoder and frame queue per video shape: past the cap a shape plays its sound only.
+            let live = self.videos.iter().filter(|(vid, v)| **vid != id && v.feed.is_some()).count();
+            let feed = if live >= MAX_VIDEO_FEEDS {
+                log::info!("video {id}: more than {MAX_VIDEO_FEEDS} videos playing; showing no picture");
+                None
+            } else {
+                match VideoFeed::new(bytes.clone()) {
+                    Ok(f) => Some(f),
+                    Err(e) => {
+                        log::info!("video {id}: {e}");
+                        None
+                    }
                 }
             };
             self.videos.insert(id, Video { feed, frame: None, tex: None });
