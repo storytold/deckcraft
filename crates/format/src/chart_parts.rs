@@ -6,7 +6,7 @@ use std::sync::Arc;
 use deckcraft_model::chart::ChartPart;
 use deckcraft_model::{Master, Presentation, Shape, ShapeKind};
 
-use crate::{FormatError, MAX_ENTRY, Result, read_entry_max};
+use crate::{ArchiveIndex, FormatError, MAX_ENTRY, Result, read_entry_max_index};
 
 const PREFIX: &str = "chart-parts/";
 type Payload = (String, String, Vec<u8>);
@@ -27,6 +27,7 @@ pub(super) fn separate(p: &mut Presentation) -> Result<Vec<Payload>> {
 pub(super) fn restore(
     p: &mut Presentation,
     z: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    names: &ArchiveIndex,
     left: &mut u64,
     mut items: usize,
     max_items: usize,
@@ -44,17 +45,17 @@ pub(super) fn restore(
             if !canonical || !seen.insert(entry.clone()) || !part.bytes.is_empty() {
                 return Err(FormatError::Damaged("invalid or ambiguous chart part reference".into()));
             }
-            if z.index_for_name(&entry).is_none() {
+            let Some(index) = names.index_for_name(&entry) else {
                 // Missing members consume no inflation work and can be reported for recovery.
                 damaged.push(format!("{entry}: missing chart part"));
                 return Ok(());
-            }
-            if z.by_name(&entry).is_ok_and(|f| f.size() > *left) {
+            };
+            if z.by_index(index).is_ok_and(|f| f.size() > *left) {
                 return Err(FormatError::Damaged("embedded media and chart parts are larger than DeckCraft can open".into()));
             }
             // A CRC/decode error may already have inflated bytes. Stop on that first error
             // rather than letting later corrupt members reuse the unchanged byte budget.
-            let bytes = read_entry_max(z, &entry, (*left).min(MAX_ENTRY))?;
+            let bytes = read_entry_max_index(z, index, &entry, (*left).min(MAX_ENTRY))?;
             *left -= bytes.len() as u64;
             part.bytes = bytes;
         } else {
@@ -68,6 +69,51 @@ pub(super) fn restore(
         }
         Ok(())
     })
+}
+
+pub(super) fn referenced_entries(p: &Presentation, max_items: usize) -> Result<HashSet<String>> {
+    let mut names = HashSet::new();
+    let mut count = 0;
+    for slide in &p.slides {
+        referenced_shapes(&slide.shapes, max_items, &mut count, &mut names)?;
+    }
+    for master in &p.masters {
+        referenced_shapes(&master.shapes, max_items, &mut count, &mut names)?;
+        for layout in &master.layouts {
+            referenced_shapes(&layout.shapes, max_items, &mut count, &mut names)?;
+        }
+    }
+    for master in [&p.notes_master, &p.handout_master].into_iter().flatten() {
+        referenced_shapes(&master.shapes, max_items, &mut count, &mut names)?;
+        for layout in &master.layouts {
+            referenced_shapes(&layout.shapes, max_items, &mut count, &mut names)?;
+        }
+    }
+    Ok(names)
+}
+
+fn referenced_shapes(root: &[Shape], max_items: usize, count: &mut usize, names: &mut HashSet<String>) -> Result<()> {
+    let mut pending = vec![root];
+    while let Some(shapes) = pending.pop() {
+        for shape in shapes {
+            match &shape.kind {
+                ShapeKind::Group { children, .. } => pending.push(children),
+                ShapeKind::Chart(chart) => {
+                    for part in &chart.kept.parts {
+                        if let Some(entry) = &part.native_entry {
+                            if *count >= max_items {
+                                return Err(FormatError::Damaged("media and chart parts exceed the item limit".into()));
+                            }
+                            *count += 1;
+                            names.insert(entry.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 fn visit_parts(p: &mut Presentation, mut visit: impl FnMut(&mut ChartPart) -> Result<()>) -> Result<()> {
