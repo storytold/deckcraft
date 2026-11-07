@@ -1316,6 +1316,7 @@ dependencies = [
  "skrifa 0.47.0",
  "toml",
  "web-time",
+ "zbus",
 ]
 
 [[package]]
