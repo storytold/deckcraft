@@ -70,9 +70,8 @@ fn redo(s: &mut Session, _p: &Value) -> Result<Value> {
     restore(s, true)
 }
 
-fn slides_scope(s: &Session, p: &Value) -> bool {
+fn slides_scope(_s: &Session, p: &Value) -> bool {
     str_param(p, "scope") == Some("slides")
-        || s.active().is_some_and(|d| d.selection.shapes.is_empty() && d.selection.text.is_none() && !d.selection.slides.is_empty())
 }
 
 fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
@@ -285,7 +284,7 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
 fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     // External plain text (from the system clipboard) wins when given and differs from ours.
     // HTML from Pages or Keynote keeps bold, italic and underline when it says the same words.
-    if let Some(t) = str_param(p, "text")
+    if let Some(t) = str_param(p, "text").filter(|t| !t.is_empty())
         && t != s.clipboard.plain
     {
         if let Some(html) = str_param(p, "html")
