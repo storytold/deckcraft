@@ -19,16 +19,21 @@ The shapes of one slide, with their ids, boxes and text, come from the slide.ins
     },
     Subcommand {
         name: "render",
-        usage: "render (FILE | --sample) [--slide N | --all] [--scale S] [--edit] [--transparent] OUT",
+        usage: "render (FILE | --sample) [--slide N | --all] [--scale S | --width PX] [--edit] [--transparent] [--include-hidden] OUT",
         summary: "draw slides as PNG images",
         details: "Draws slides of FILE, or of the sample presentation with --sample, as PNG images. FILE comes first;
 OUT is the image to write. With --all, OUT is a folder that gets one slide-01.png, slide-02.png… per
-slide. Prints each image's path and size.
+slide, named from the slide's number so callers can map images back to slides. Prints each image's
+path and size.
 
-  --slide N        the slide at index N; indices start at 0, and 0 is the default
-  --scale S        pixels per point, 2 by default: a 960×540 slide becomes 1920×1080
-  --edit           draw what the editor shows: placeholder prompts and their dashed outlines
-  --transparent    leave the slide background out, so only what is on the slide is drawn
+  --slide N         the slide at index N; indices start at 0, and 0 is the default
+  --scale S         pixels per point, 2 by default: a 960×540 slide becomes 1920×1080
+  --width PX        the image's width in pixels instead of --scale: --width 1920 gives a
+                    1920-pixel-wide image whatever the slide's size is
+  --edit            draw what the editor shows: placeholder prompts and their dashed outlines
+  --transparent     leave the slide background out, so only what is on the slide is drawn
+  --include-hidden  with --all, draw slides the author hid (`slide.hide` or PowerPoint's Hide
+                    Slide) too; without it --all skips them, as PowerPoint's own export does
 
   deckcraft-cli render deck.deckcraft --slide 2 slide-3.png",
     },
