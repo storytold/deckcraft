@@ -1656,12 +1656,30 @@ fn emfplus_only_fill_rects_with_argb_colour() {
 }
 
 #[test]
-fn emfplus_dual_files_draw_only_the_emf_records() {
+fn emfplus_dual_files_draw_the_emfplus_records_like_gdiplus() {
     let fill = prec(0x400A, 0x8000, &cat(vec![h32(0xFFFF_0000), h32(1), f32s(&[0.0, 0.0, 5.0, 5.0])]));
     let gdi = erec(43, &cat(vec![e32(0), e32(0), e32(9), e32(9)]));
     let p = parse(&emf(&[plus_comment(&[plus_header(true), fill]), gdi], [0; 4], [0; 4])).unwrap();
     assert_eq!(p.items.len(), 1);
-    assert_eq!(path_segs(&p.items[0]).1, Some([255, 255, 255, 255]));
+    assert_eq!(path_segs(&p.items[0]).1, Some([255, 0, 0, 255]));
+}
+
+#[test]
+fn emfplus_dual_files_play_plain_records_after_get_dc() {
+    let gdi = erec(43, &cat(vec![e32(0), e32(0), e32(9), e32(9)]));
+    let get_dc = prec(0x4004, 0, &[]);
+    let p = parse(&emf(&[plus_comment(&[plus_header(true)]), plus_comment(&[get_dc]), gdi], [0; 4], [0; 4])).unwrap();
+    assert_eq!(p.items.len(), 1);
+}
+
+#[test]
+fn emfplus_record_after_get_dc_in_one_comment_closes_the_plain_window() {
+    let gdi = erec(43, &cat(vec![e32(0), e32(0), e32(9), e32(9)]));
+    let get_dc = prec(0x4004, 0, &[]);
+    let fill = prec(0x400A, 0x8000, &cat(vec![h32(0xFFFF_0000), h32(1), f32s(&[0.0, 0.0, 5.0, 5.0])]));
+    let p = parse(&emf(&[plus_comment(&[plus_header(true), get_dc, fill]), gdi], [0; 4], [0; 4])).unwrap();
+    assert_eq!(p.items.len(), 1);
+    assert_eq!(path_segs(&p.items[0]).1, Some([255, 0, 0, 255]));
 }
 
 #[test]

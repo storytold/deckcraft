@@ -63,7 +63,7 @@ pub(crate) fn parse(input: Bytes) -> Result<(Canvas, Option<Frame>), Error> {
             if let Some(data) = Bytes(rec).tail(16) {
                 plus.comment(&mut cv, data);
             }
-        } else {
+        } else if plus.plays_gdi() {
             record(&mut cv, typ, Bytes(rec));
         }
         parsed += 1;
