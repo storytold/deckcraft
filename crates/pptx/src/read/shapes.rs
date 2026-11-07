@@ -510,8 +510,7 @@ fn vml_preview(imp: &mut Imp, part: &Part, spid: &str) -> Option<deckcraft_model
     None
 }
 
-/// Every shape id in a VML drawing with a picture, mapped to that picture's part: parsed once per
-/// drawing however many objects look it up.
+/// The VML part with Office conditional-comment markers (`<!--[if …]>`, `<![if …]>`, `<![endif]-->`) removed, so shapes wrapped in them are parsed.
 fn strip_vml_conditionals(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut at = 0;
@@ -541,12 +540,20 @@ fn strip_vml_conditionals(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     if changed { std::borrow::Cow::Owned(out) } else { std::borrow::Cow::Borrowed(bytes) }
 }
 
+/// Every shape id and o:spid in a VML drawing with a picture, mapped to that picture's part: parsed once per
+/// drawing however many objects look it up.
 fn vml_index(pkg: &crate::opc::Package, vml: &str) -> std::collections::HashMap<String, String> {
     let mut out = std::collections::HashMap::new();
     let Some(bytes) = pkg.xml_bytes(vml) else { return out };
     let decoded = crate::xml::decode_xml_bytes(bytes);
     let bytes = strip_vml_conditionals(&decoded);
-    let Ok(doc) = crate::xml::parse(&bytes) else { return out };
+    let doc = match crate::xml::parse(&bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("pptx: {vml}: {e}");
+            return out;
+        }
+    };
     let rels = pkg.rels(vml);
     let mut shapes = vec![];
     doc.root.find_all("shape", &mut shapes);
