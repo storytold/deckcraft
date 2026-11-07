@@ -112,4 +112,6 @@ shape drawn over the text counts too: the run is measured as seen through it, an
 opaque shape measures 1:1. Each run reports its colour, drawn size and weight, the ratio WCAG 2.2
 asks for at that size (`required`: 4.5, or 3 for 18 pt or 14 pt bold text; 7 and 4.5 with
 `level: "AAA"`), the smallest, 5th-percentile and median contrast (`ratio`), the share of its
-pixels that reach `required` (`passShare`) and what lies behind it (`backdrop`).
+pixels that reach `required` (`passShare`) and what lies behind it (`backdrop`). A call that would
+draw more than 200 million pixels in all is refused with the count; measure fewer shapes at a time
+with `ids`, or lower `scale`.

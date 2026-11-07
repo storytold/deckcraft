@@ -26,8 +26,8 @@ use crate::cmd::{bad, f64_or, opt_usize_param};
 use crate::{Result, Session};
 
 const CMD: &str = "review.contrast";
-/// Text shapes measured in one call: each one costs a drawing of the slide, two when shapes are
-/// drawn over it.
+/// Text shapes measured in one call: each one costs a drawing of the slide, two when the slide
+/// draws shapes after it.
 const MAX_SHAPES: usize = 64;
 /// Runs reported by one call.
 const MAX_RUNS: usize = 5_000;
@@ -39,6 +39,8 @@ const MAX_SAMPLES: f64 = 10_000.0;
 const MAX_KEPT: usize = 40_000;
 /// Largest drawing, in pixels (64 MB of RGBA).
 const MAX_PIXELS: f64 = 16_000_000.0;
+/// Pixels one call may draw in all, the cap a GIF export has (`gif_export::MAX_TOTAL_PIXELS`).
+const MAX_CALL_PIXELS: f64 = 200_000_000.0;
 /// Entries `ids` may hold.
 const MAX_IDS: usize = 10_000;
 
@@ -121,16 +123,9 @@ pub(super) fn contrast(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(CMD, format!("slide {index} has {} text shapes; give `ids` to measure at most {MAX_SHAPES} at a time", texts.len())));
     }
     let Some(ctx) = Ctx::for_slide(doc, slide) else { return Ok(json!([])) };
-    let sc = Scene {
-        doc,
-        index,
-        slide,
-        ctx: &ctx,
-        placed: &placed,
-        graphics: background_graphics(doc, slide, &ctx),
-        scale: measure_scale(doc, f64_or(p, "scale", 1.0)),
-        level,
-    };
+    let scale = measure_scale(doc, f64_or(p, "scale", 1.0));
+    within_budget(doc, index, &placed, &texts, scale)?;
+    let sc = Scene { doc, index, slide, ctx: &ctx, placed: &placed, graphics: background_graphics(doc, slide, &ctx), scale, level };
     let mut out = vec![];
     for t in texts {
         measure_text(&sc, t, &mut out);
@@ -174,6 +169,20 @@ fn measure_scale(doc: &Presentation, scale: f64) -> f64 {
     let (w, h) = (doc.slide_size.width.max(1.0), doc.slide_size.height.max(1.0));
     let cap = (MAX_PIXELS / (w * h)).sqrt().min(f64::from(deckcraft_render::MAX_SIDE) / w.max(h));
     if cap.is_finite() { scale.min(cap) } else { scale }
+}
+
+/// Refuses a call whose drawings would pass MAX_CALL_PIXELS together, before anything is drawn:
+/// one drawing per text shape, two when the slide draws shapes after it.
+fn within_budget(doc: &Presentation, index: usize, placed: &Placed, texts: &[&PlacedText], scale: f64) -> Result<()> {
+    let drawings: usize = texts.iter().map(|t| 1 + usize::from(drawn_after(placed, t.shape))).sum();
+    // The size the renderer gives the drawing.
+    let (w, h) = ((doc.slide_size.width * scale).round().max(1.0), (doc.slide_size.height * scale).round().max(1.0));
+    if drawings as f64 * w * h <= MAX_CALL_PIXELS {
+        return Ok(());
+    }
+    let limit = MAX_CALL_PIXELS / 1e6;
+    let ask = "give `ids` to measure fewer shapes at a time, or a lower `scale`";
+    Err(bad(CMD, format!("slide {index} needs {drawings} drawings of {w}×{h} pixels, more than the {limit} million pixels one call may draw; {ask}")))
 }
 
 /// Whether placed text `t` is measured: text of the slide's own shapes, not a table (its cells
@@ -238,11 +247,11 @@ fn measure_text(sc: &Scene, t: &PlacedText, out: &mut Vec<Value>) {
 /// before `shape` and `shape` itself, but keeps the groups `shape` sits in, so their later
 /// members are drawn.
 fn drawn_over(sc: &Scene, shape: ShapeId) -> Option<Image> {
-    let shapes = &sc.placed.shapes;
-    let me = shapes.iter().position(|ps| ps.id == shape)?;
-    if !shapes.get(me.saturating_add(1)..)?.iter().any(|ps| !ps.is_group) {
+    if !drawn_after(sc.placed, shape) {
         return None;
     }
+    let shapes = &sc.placed.shapes;
+    let me = shapes.iter().position(|ps| ps.id == shape)?;
     let mut groups = vec![];
     let mut at = shapes.get(me).and_then(|ps| ps.parent);
     for _ in 0..=64 {
@@ -253,6 +262,17 @@ fn drawn_over(sc: &Scene, shape: ShapeId) -> Option<Image> {
     let skip: Vec<ShapeId> = shapes.iter().take(me.saturating_add(1)).enumerate().filter(|(k, _)| !groups.contains(k)).map(|(_, ps)| ps.id).collect();
     let opts = RenderOpts { scale: sc.scale, skip: &skip, ..Default::default() };
     Some(deckcraft_render::render_slide_part(sc.doc, sc.index, SlidePart::Content, &opts))
+}
+
+/// Whether the slide draws a shape other than a group after `shape`, one that may lie over its
+/// text.
+fn drawn_after(placed: &Placed, shape: ShapeId) -> bool {
+    let shapes = &placed.shapes;
+    shapes
+        .iter()
+        .position(|ps| ps.id == shape)
+        .and_then(|me| shapes.get(me.saturating_add(1)..))
+        .is_some_and(|rest| rest.iter().any(|ps| !ps.is_group))
 }
 
 fn round2(v: f64) -> f64 {

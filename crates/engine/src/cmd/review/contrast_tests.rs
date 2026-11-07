@@ -424,3 +424,19 @@ fn runs_after_two_fields_are_measured_with_their_own_glyphs() {
     assert_eq!((v[4]["text"].as_str(), v[4]["color"].as_str()), (Some(" in grey"), Some("#767676")), "{v:?}");
     assert_eq!(v[4]["ratio"]["min"].as_f64(), Some(4.54), "{v:?}");
 }
+
+#[test]
+fn a_call_past_the_pixel_budget_is_refused_before_drawing() {
+    let mut s = white_slide();
+    // At scale 4 the 960 by 540 point slide is drawn at 3840 by 2160 pixels. Thirteen text boxes,
+    // each with a shape drawn after it, take 26 drawings: 216 million pixels.
+    let ids: Vec<Value> = (0..13).map(|k| text_box(&mut s, [20.0 + 70.0 * f64::from(k), 100.0, 60.0, 40.0], "Text", "#000000", 12.0)).collect();
+    band(&mut s, [0.0, 400.0, 960.0, 100.0], "#3366CC", 0.0);
+    let e = s.execute("review.contrast", &json!({"scale": 4})).unwrap_err().to_string();
+    assert!(e.contains("26 drawings of 3840×2160 pixels"), "{e}");
+    assert!(e.contains("200 million") && e.contains("`ids`") && e.contains("`scale`"), "{e}");
+    // One of them on its own takes two drawings and is measured.
+    let entry = only(&mut s, &ids[0], json!({"scale": 4}));
+    assert_eq!(entry["text"], "Text");
+    assert_eq!(ratio(&entry, "median"), 21.0);
+}
