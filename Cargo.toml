@@ -52,6 +52,9 @@ unicode-linebreak = "0.1"
 # Base features are wasm-safe (`std` only). The non-wasm `clock` feature is requested
 # per-crate for targets that read the local clock (see crates/text).
 chrono = { version = "0.4", default-features = false, features = ["std"] }
+# The interface language setting follows the operating system (#8): display language on Windows,
+# preferred languages on macOS, LANG/LC_* elsewhere, the browser on the web.
+sys-locale = { version = "0.3", features = ["js"] }
 
 # text / rendering / formats
 skrifa = "0.47"

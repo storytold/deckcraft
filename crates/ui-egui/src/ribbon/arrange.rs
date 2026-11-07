@@ -19,14 +19,14 @@ pub fn arrange_menu(app: &mut SlideApp, ui: &mut Ui) {
     menu_item(app, ui, Icon::Group, "Regroup", "arrange.regroup", json!({}));
     ui.separator();
     ui.label(egui::RichText::new("Position Objects").font(theme::bold(12.0)));
-    ui.menu_button("Align", |ui| align_menu(app, ui));
-    ui.menu_button("Rotate", |ui| {
+    ui.menu_button(tl!("Align"), |ui| align_menu(app, ui));
+    ui.menu_button(tl!("Rotate"), |ui| {
         menu_item(app, ui, Icon::RotateRight, "Rotate Right 90°", "arrange.rotateRight", json!({}));
         menu_item(app, ui, Icon::RotateLeft, "Rotate Left 90°", "arrange.rotateLeft", json!({}));
         menu_item(app, ui, Icon::FlipV, "Flip Vertical", "arrange.flipVertical", json!({}));
         menu_item(app, ui, Icon::FlipH, "Flip Horizontal", "arrange.flipHorizontal", json!({}));
     });
-    if ui.button("Selection Pane…").clicked() {
+    if ui.button(tl!("Selection Pane…")).clicked() {
         let _ = app.run("view.pane", json!({"pane": "selection"}));
         ui.close();
     }
@@ -132,8 +132,8 @@ pub(super) fn size_group(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         rows(ui, |ui| {
             let Some(x) = bx else {
-                ui.label("Height:");
-                ui.label("Width:");
+                ui.label(tl!("Height:"));
+                ui.label(tl!("Width:"));
                 return;
             };
             let len = app.session.prefs.units;
@@ -141,19 +141,19 @@ pub(super) fn size_group(app: &mut SlideApp, ui: &mut Ui) {
             // " cm" needs more room than the inch mark.
             let width = if len == deckcraft_geom::Unit::Inches { 54.0 } else { 66.0 };
             ui.horizontal(|ui| {
-                ui.label("Height:");
-                if let Some(v) = widgets::spinner(ui, "sh", "Height", x.h / ppu, 0.1, suffix, width) {
+                ui.label(tl!("Height:"));
+                if let Some(v) = widgets::spinner(ui, "sh", tl!("Height"), x.h / ppu, 0.1, suffix, width) {
                     run(app, "shape.resize", json!({"h": v.max(0.0) * ppu}));
                 }
             });
             ui.horizontal(|ui| {
-                ui.label("Width: ");
-                if let Some(v) = widgets::spinner(ui, "sw", "Width", x.w / ppu, 0.1, suffix, width) {
+                ui.label(tl!("Width: "));
+                if let Some(v) = widgets::spinner(ui, "sw", tl!("Width"), x.w / ppu, 0.1, suffix, width) {
                     run(app, "shape.resize", json!({"w": v.max(0.0) * ppu}));
                 }
             });
         });
-        if ui.add_enabled(bx.is_some(), egui::Button::new("Size and Position…")).clicked() {
+        if ui.add_enabled(bx.is_some(), egui::Button::new(tl!("Size and Position…"))).clicked() {
             run(app, "shape.sizePosition", json!({}));
         }
     });
