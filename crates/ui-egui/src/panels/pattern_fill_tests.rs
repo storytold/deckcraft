@@ -79,7 +79,8 @@ fn shape_pattern_fill_picks_a_preset_from_the_gallery() {
     let (s, id) = patterned_shape();
     let mut h = harness(SlideApp::new(s, Services::default()), "format");
     let _ = h.get_by_label("Pattern fill");
-    assert!(h.query_by_label("Transparency").is_none(), "a pattern has no solid-fill transparency");
+    // The one Transparency slider left is the automatic line's.
+    assert_eq!(h.query_all_by_role_and_label(Role::Slider, "Transparency").count(), 1, "a pattern has no solid-fill transparency");
     assert_eq!(crate::fillui::pattern_gallery().count(), 48);
     for name in crate::fillui::pattern_gallery() {
         assert!(deckcraft_render::pattern_presets().any(|p| p == name), "{name}");
@@ -143,8 +144,8 @@ fn shape_solid_fill_keeps_its_transparency_without_a_pattern_gallery() {
     s.execute("shape.fill", &json!({"color": "accent2"})).unwrap();
     let h = harness(SlideApp::new(s, Services::default()), "format");
     // 0.37 exposes the slider's numeric entry as a SpinButton with the same name; the slider is
-    // the control the user drags.
-    let _ = h.get_by_role_and_label(Role::Slider, "Transparency");
+    // the control the user drags. The second slider is the automatic line's.
+    assert_eq!(h.query_all_by_role_and_label(Role::Slider, "Transparency").count(), 2);
     assert!(h.query_by_label("Foreground color").is_none());
     assert!(h.query_by_label("Zig zag").is_none());
 }
