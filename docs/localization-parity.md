@@ -1,5 +1,6 @@
 # Localization parity with PowerPoint
 
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** minor (Japanese date and time fields follow PowerPoint 16.0 with `lang="ja-JP"`: the system short and long date for `datetime1`/`datetime2`, the 令和 era for `datetime3`/`datetime6`/`datetime7`, `時`/`分`/`秒` for `datetime8`/`datetime9`/`datetime12`/`datetime13`; a bare `ja` tag is not expanded; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** minor (opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft's interface is English only today: strings are literals in the UI and engine code, with
@@ -32,7 +33,7 @@ support partly there), **55–90 h** to parity plus native-speaker review.
 | French | fr | 0 (0%) | no | full (Latin) | no | none | yes (fr, fr-CA) | 3–5 |
 | Portuguese | pt | 0 (0%) | no | full (Latin) | no | none | yes (pt-BR, pt-PT) | 3–5 |
 | Indonesian | id | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
-| Japanese | ja | 0 (0%) | no | renders with system or craft-fonts Japanese faces; IME composition (#101); vertical text is rotated, not laid out vertically | no | none | yes | 4–7 |
+| Japanese | ja | 0 (0%) | no | renders with system or craft-fonts Japanese faces; date and time fields (`datetime1`–`datetime13`) follow PowerPoint 16.0 with `lang="ja-JP"` (system short and long date for `datetime1`/`datetime2`, the 令和 era for `datetime3`/`datetime6`/`datetime7`, `時`/`分`/`秒` for `datetime8`/`datetime9`/`datetime12`/`datetime13`); IME composition (#101); vertical text is rotated, not laid out vertically | no | none | yes | 4–7 |
 | German | de | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
 | Korean | ko | 0 (0%) | no | system Hangul fonts, in the interface too; IME composition (#101) | no | none | yes | 4–7 |
 | Vietnamese | vi | 0 (0%) | no | stacked diacritics through HarfRust | no | none | **no** (Windows only) | 3–5 |
@@ -60,6 +61,7 @@ of every text in the file and the default for new text (`format.languageAll`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-27 | minor | Japanese date and time fields follow PowerPoint 16.0 measured with `lang="ja-JP"` on an en-US Windows: `datetime1`/`datetime2` keep the system regional short and long date, `datetime3`/`datetime6`/`datetime7` use the 令和 era (kanji numerals for `datetime7`), `datetime8`/`datetime9`/`datetime12`/`datetime13` use `時`/`分`/`秒`, `datetime5` keeps `27-Oct-26`, no kind shows a Japanese weekday, and a bare `ja` tag is not expanded |
 | 2026-10-24 | minor | Local 0.37 candidate adds an opt-in native LXGW WenKai Lite glyph fallback and CJK interface-test coverage. This records local implementation only: managed tests, formatting, clippy, wasm-size and native GUI qualification remain pending. Browser font budget and uniform Chinese typography are unchanged. |
 | 2026-10-21 | minor | Review › Language can set the proofing language of the whole presentation |
 | 2026-10-14 | minor | IME composition in a table cell is underlined in place; the candidate window sits on that cell's caret |
