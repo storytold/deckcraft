@@ -206,15 +206,25 @@ fn behaviour_auto_reverses(c: &El) -> bool {
 
 /// Volume, mute, Loop until Stopped, Hide While Not Playing and Play Full Screen live in the timing tree
 /// (`p:video`/`p:audio` > `p:cMediaNode`), not on the picture: copy them onto the target's `MediaClip`.
+/// The first node of a clip decides all four options, so an option another application turned off stays off
+/// even if DeckCraft's private copy on the picture says on; a further node for the same clip can only switch options on.
 pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
     let mut nodes = vec![];
     for tag in ["video", "audio"] {
         timing.find_all(tag, &mut nodes);
     }
+    let mut seen = std::collections::HashSet::new();
     for node in nodes.into_iter().take(10_000) {
         let Some(cm) = node.child("cMediaNode") else { continue };
         let Some(id) = cm.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|f| ctx.lookup(f)) else { continue };
         let Some(ShapeKind::Media(clip)) = find_shape_mut(shapes, id).map(|s| &mut s.kind) else { continue };
+        let first = seen.insert(id);
+        if first {
+            clip.volume = 1.0;
+            clip.hide_while_not_playing = false;
+            clip.loop_play = false;
+            clip.full_screen = false;
+        }
         if let Some(v) = cm.attr("vol").and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite()) {
             clip.volume = (v / 100_000.0).clamp(0.0, 1.0);
         }

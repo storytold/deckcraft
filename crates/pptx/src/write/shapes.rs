@@ -832,7 +832,8 @@ fn media(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, m: &deckcraft_
             w.close("p14:media");
             w.close("p:ext");
         }
-        // PowerPoint keeps playback options in the timing tree; they are kept here so a round trip does not reset them.
+        // Volume, loop, hide and full screen are also written to the timing tree, which wins on read; autoplay, rewind and
+        // play across slides have no node of their own, so they live only in this private copy.
         w.open("p:ext", A::new().a("uri", "{6F1D3A52-5B0E-4C1B-9D6A-DECC4A17E001}"));
         w.empty(
             "dk:mediaOptions",
