@@ -242,6 +242,7 @@ pub fn repair(p: &mut Presentation) {
         }
     }
     reid_duplicate_shapes(p);
+    retarget_group_glue(p);
     p.slide_size = sane_slide_size(p.slide_size);
     // The notes page only lays out notes, but its size divides too.
     if !(p.notes_size.width.is_finite() && p.notes_size.width > 0.0 && p.notes_size.height.is_finite() && p.notes_size.height > 0.0) {
@@ -304,6 +305,37 @@ fn reid_duplicate_shapes(p: &mut Presentation) {
         }
     }
     p.next_id = next;
+}
+
+/// A connector saved glued to a group by the position of a site among its members' (the first
+/// version of group glue) is glued to that member and its own site, as connectors are now.
+fn retarget_group_glue(p: &mut Presentation) {
+    fn glued_to_group(shapes: &[deckcraft_model::Shape]) -> bool {
+        let mut groups = std::collections::HashSet::new();
+        let mut ends = vec![];
+        deckcraft_model::walk(shapes, &mut |sh, _| match &sh.kind {
+            deckcraft_model::ShapeKind::Group { .. } => {
+                groups.insert(sh.id);
+            }
+            deckcraft_model::ShapeKind::Connector { start, end } => ends.extend(start.iter().chain(end.iter()).map(|(id, _)| *id)),
+            _ => {}
+        });
+        ends.iter().any(|id| groups.contains(id))
+    }
+    for s in &mut p.slides {
+        if glued_to_group(&s.shapes) {
+            deckcraft_model::retarget_group_glue(&mut Arc::make_mut(s).shapes);
+        }
+    }
+    for m in p.masters.iter_mut().chain(p.notes_master.iter_mut()).chain(p.handout_master.iter_mut()) {
+        if glued_to_group(&m.shapes) || m.layouts.iter().any(|l| glued_to_group(&l.shapes)) {
+            let m = Arc::make_mut(m);
+            deckcraft_model::retarget_group_glue(&mut m.shapes);
+            for l in &mut m.layouts {
+                deckcraft_model::retarget_group_glue(&mut l.shapes);
+            }
+        }
+    }
 }
 
 /// Smallest and largest slide side, in points: PowerPoint's 1–56 in, as Design › Slide Size allows.

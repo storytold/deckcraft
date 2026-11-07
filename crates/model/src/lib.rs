@@ -223,6 +223,22 @@ impl Default for CustomPath {
     }
 }
 
+/// A connection site of a custom geometry (`a:cxnLst`): where a connector end glues. `x` and `y`
+/// are fractions of the shape's box (0 = left/top, 1 = right/bottom; outside that range is
+/// allowed), so the site keeps its place when the shape is resized.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ConnectionSite {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl ConnectionSite {
+    pub const fn new(x: f64, y: f64) -> Self {
+        ConnectionSite { x, y }
+    }
+}
+
 /// Embedded audio or video on a slide.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -296,6 +312,8 @@ pub enum ShapeKind {
         /// Child coordinate space.
         child: Xfrm,
     },
+    /// Each end glued to a shape and that shape's own connection site index (`stCxn`/`endCxn`);
+    /// the shape may be a group member, a group itself has no sites.
     Connector {
         start: Option<(ShapeId, u32)>,
         end: Option<(ShapeId, u32)>,
@@ -335,6 +353,10 @@ pub struct Shape {
     pub xfrm: Option<Xfrm>,
     pub kind: ShapeKind,
     pub geom: Geom,
+    /// Connection sites of a custom geometry, in order (a connector's site index points into
+    /// this list). Empty: the four box midpoints; a preset has its own sites.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sites: Vec<ConnectionSite>,
     pub ph: Option<Placeholder>,
     /// `None`: inherited (placeholder chain or style); `Some(Fill::None)`: no fill.
     pub fill: Option<Fill>,
@@ -419,6 +441,7 @@ impl Default for Shape {
             xfrm: None,
             kind: ShapeKind::Shape,
             geom: Geom::default(),
+            sites: vec![],
             ph: None,
             fill: None,
             line: None,
@@ -502,6 +525,76 @@ pub fn walk<'a>(shapes: &'a [Shape], f: &mut dyn FnMut(&'a Shape, usize)) {
         }
     }
     rec(shapes, 0, f);
+}
+
+/// What a connector glued to a group meant before connectors named the member: `.deckcraft`
+/// files saved by the first version of group glue store the position of the site in this walk
+/// over the members' own `Shape::sites` (groups within walked, lines, ink and members without a
+/// transform left out, hidden members kept in place), each the member and its own site index.
+fn legacy_group_sites(children: &[Shape]) -> Vec<(ShapeId, u32)> {
+    fn rec(children: &[Shape], out: &mut Vec<(ShapeId, u32)>, depth: usize) {
+        if depth > 64 {
+            return;
+        }
+        for c in children.iter().filter(|c| c.xfrm.is_some()) {
+            match &c.kind {
+                ShapeKind::Group { children, .. } => rec(children, out, depth + 1),
+                ShapeKind::Ink { .. } => {}
+                _ if c.is_line() => {}
+                _ => out.extend((0..c.sites.len()).map(|i| (c.id, i as u32))),
+            }
+        }
+    }
+    let mut v = vec![];
+    rec(children, &mut v, 0);
+    v
+}
+
+/// Glue every connector end in `shapes` (groups within included) that names a group of `shapes`
+/// to the member and site its index meant (`legacy_group_sites`; an index past the walk means its
+/// first site, as rerouting then took it): a connector names the shape it is glued to and that
+/// shape's own site, a group member included, as Open XML's `stCxn`/`endCxn` do. An end whose
+/// group has no such site is left as it is.
+pub fn retarget_group_glue(shapes: &mut [Shape]) {
+    fn ends(shapes: &mut [Shape], f: &mut dyn FnMut(&mut Option<(ShapeId, u32)>), depth: usize) {
+        if depth > 64 {
+            return;
+        }
+        for s in shapes {
+            match &mut s.kind {
+                ShapeKind::Connector { start, end } => {
+                    f(start);
+                    f(end);
+                }
+                ShapeKind::Group { children, .. } => ends(children, f, depth + 1),
+                _ => {}
+            }
+        }
+    }
+    let mut glued_to = std::collections::HashSet::new();
+    ends(shapes, &mut |e| glued_to.extend(e.map(|(id, _)| id)), 0);
+    let mut groups: std::collections::HashMap<ShapeId, Vec<(ShapeId, u32)>> = std::collections::HashMap::new();
+    walk(shapes, &mut |s, _| {
+        if let ShapeKind::Group { children, .. } = &s.kind
+            && glued_to.contains(&s.id)
+        {
+            groups.insert(s.id, legacy_group_sites(children));
+        }
+    });
+    if groups.is_empty() {
+        return;
+    }
+    ends(
+        shapes,
+        &mut |e| {
+            if let Some((id, k)) = *e
+                && let Some(t) = groups.get(&id).and_then(|v| v.get(k as usize).or(v.first()))
+            {
+                *e = Some(*t);
+            }
+        },
+        0,
+    );
 }
 
 pub fn find_shape(shapes: &[Shape], id: ShapeId) -> Option<&Shape> {

@@ -588,3 +588,28 @@ fn outline_includes_table_text() {
     assert!(out.contains("Cell A1\tCell B1"), "{out}");
     assert!(out.contains("Cell A2\tCell B2"), "{out}");
 }
+
+/// A file from the first version of group glue stores a connector glued to a group by the
+/// position of the site among the members' own; it opens glued to that member and its own site.
+#[test]
+fn a_connector_saved_glued_to_a_group_opens_glued_to_the_member() {
+    use deckcraft_model::{ConnectionSite, Shape, ShapeId, ShapeKind, Xfrm};
+    let pin = |id: u32, x: f64, n: usize| Shape {
+        id: ShapeId(id),
+        xfrm: Some(Xfrm::new(x, 0.0, 10.0, 10.0)),
+        sites: (0..n).map(|i| ConnectionSite::new(i as f64, 0.5)).collect(),
+        ..Default::default()
+    };
+    let group = Shape {
+        id: ShapeId(10),
+        xfrm: Some(Xfrm::new(0.0, 0.0, 30.0, 10.0)),
+        kind: ShapeKind::Group { children: vec![pin(11, 0.0, 2), pin(12, 20.0, 2)], child: Xfrm::new(0.0, 0.0, 30.0, 10.0) },
+        ..Default::default()
+    };
+    let wire = Shape { id: ShapeId(20), kind: ShapeKind::Connector { start: Some((ShapeId(10), 3)), end: None }, ..Default::default() };
+    let mut p = Presentation::default();
+    p.slides.push(Arc::new(deckcraft_model::Slide { shapes: vec![group, wire], ..Default::default() }));
+    let q = load(&save(&p).unwrap()).unwrap();
+    let w = q.slides.last().and_then(|s| s.shapes.iter().find(|s| s.id == ShapeId(20))).unwrap();
+    assert!(matches!(w.kind, ShapeKind::Connector { start: Some((ShapeId(12), 1)), end: None }), "{:?}", w.kind);
+}

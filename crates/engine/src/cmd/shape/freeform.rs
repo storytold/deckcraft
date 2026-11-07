@@ -14,32 +14,38 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let st = s.doc()?;
     // Anywhere in the slide's tree: a shape inside a group takes a connector too (PowerPoint
-    // glues to grouped shapes), its sites where the group draws them.
-    let site_list = |id| {
-        crate::connect::sites_of(&st.doc, &st.selection, st.shapes(), id)
-            .ok_or_else(|| bad("shape.connect", format!("no shape {} on the current slide", id.0)))
+    // glues to grouped shapes), its sites where the group draws them. Offered sites with their
+    // index in `shape.sites` (a hidden member's are listed, not offered).
+    let site_list = |id| -> Result<Vec<(usize, crate::connect::Site)>> {
+        let v = crate::connect::site_list_of(&st.doc, &st.selection, st.shapes(), id)
+            .ok_or_else(|| bad("shape.connect", format!("no shape {} on the current slide", id.0)))?;
+        Ok(v.into_iter().enumerate().filter(|(_, q)| q.offered).collect())
     };
     let (a, b) = (site_list(from)?, site_list(to)?);
     if a.is_empty() || b.is_empty() {
-        return Err(bad("shape.connect", "both shapes need connection sites (lines and groups have none)"));
+        return Err(bad("shape.connect", "both shapes need connection sites (lines have none, nor a group of shapes without any or hidden)"));
     }
-    let pick = |v: &[deckcraft_geom::Point], key: &str| usize_param(p, key).filter(|i| *i < v.len());
+    let pick = |v: &[(usize, crate::connect::Site)], key: &str| usize_param(p, key).filter(|i| v.iter().any(|(k, _)| k == i));
     let (ia, ib) = match (pick(&a, "fromSite"), pick(&b, "toSite")) {
         (Some(i), Some(j)) => (i, j),
         (fi, fj) => {
             let mut best = (f64::MAX, 0, 0);
-            for (i, pa) in a.iter().enumerate().filter(|(i, _)| fi.is_none_or(|f| f == *i)) {
-                for (j, pb) in b.iter().enumerate().filter(|(j, _)| fj.is_none_or(|f| f == *j)) {
-                    let d = (*pa - *pb).hypot();
+            for (i, qa) in a.iter().filter(|(i, _)| fi.is_none_or(|f| f == *i)) {
+                for (j, qb) in b.iter().filter(|(j, _)| fj.is_none_or(|f| f == *j)) {
+                    let d = (qa.at - qb.at).hypot();
                     if d < best.0 {
-                        best = (d, i, j);
+                        best = (d, *i, *j);
                     }
                 }
             }
             (best.1, best.2)
         }
     };
-    let (p0, p1) = (a[ia], b[ib]);
+    let at = |v: &[(usize, crate::connect::Site)], i: usize| v.iter().find(|(k, _)| *k == i).map(|(_, q)| *q);
+    let (Some(sa), Some(sb)) = (at(&a, ia), at(&b, ib)) else {
+        return Err(bad("shape.connect", "no such connection site"));
+    };
+    let (p0, p1) = (sa.at, sb.at);
     let id = match id_param(p, "id", "shape.connect")? {
         // The ends are in slide space and rerouting follows the slide's own connectors, so a line
         // inside a group would be drawn in the group's space and never follow its shapes.
@@ -60,7 +66,8 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad("shape.connect", "`id` is not a line or connector"));
         }
         sh.xfrm = Some(crate::tools::line_xfrm(p0, p1, 0.0));
-        sh.kind = deckcraft_model::ShapeKind::Connector { start: Some((from, ia as u32)), end: Some((to, ib as u32)) };
+        // A group's site names its member and the member's own site, as the file does.
+        sh.kind = deckcraft_model::ShapeKind::Connector { start: Some(sa.target), end: Some(sb.target) };
         Ok(())
     })?;
     Ok(json!({"id": id.0, "fromSite": ia, "toSite": ib}))
