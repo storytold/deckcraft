@@ -595,6 +595,13 @@ mod tests {
         let attempts = loads.load(Ordering::Relaxed);
         assert!(s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).is_err());
         assert_eq!(loads.load(Ordering::Relaxed), attempts, "a remembered failure is not retried per call");
+
+        // The model is installed while the session runs (an MCP server outlives the install): the
+        // probe now names it, so the cached failure is dropped without a restart.
+        installed.store(true, Ordering::Relaxed);
+        assert_eq!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"], "stub-segmenter");
+        s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).expect("the model appeared");
+        assert_eq!(loads.load(Ordering::Relaxed), attempts + 1);
     }
 
     #[test]

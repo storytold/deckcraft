@@ -527,6 +527,11 @@ pub struct Session {
     /// Why the loader last failed. Kept so `cameo.background.state`, which the panels poll, does
     /// not re-verify the model file on every call; [`Session::clear_segmenter`] forgets it.
     segmenter_failed: Option<String>,
+    /// What the host's cheap probe said when that failure was recorded (`None` = no model
+    /// installed then). A probe that now disagrees means a model appeared or went away, and the
+    /// loader is asked again: an MCP server that started before the user installed the model
+    /// picks it up without a restart.
+    segmenter_failed_probe: Option<&'static str>,
     /// Text keys follow the Mac (Option+arrows move by word, Cmd+arrows to the line or text
     /// ends) instead of Windows and Linux (Ctrl+arrows by word or paragraph). Defaults to the
     /// platform DeckCraft was built for.
@@ -570,6 +575,7 @@ impl Session {
             segmenter: None,
             segmenter_loader: None,
             segmenter_failed: None,
+            segmenter_failed_probe: None,
             mac_keys: cfg!(target_os = "macos"),
             panics_caught: 0,
             loaded: vec![],
@@ -582,6 +588,7 @@ impl Session {
     pub fn set_segmenter(&mut self, segmenter: Box<dyn deckcraft_matte::Segmenter>) {
         self.segmenter = Some(segmenter);
         self.segmenter_failed = None;
+        self.segmenter_failed_probe = None;
     }
 
     /// Hand the engine the host's way of finding its model. A desktop app that knows where the
@@ -602,20 +609,34 @@ impl Session {
         if self.segmenter.is_some() {
             return Ok(());
         }
-        if let Some(detail) = &self.segmenter_failed {
+        // A model that appeared since the failure (installed while the app was running) is worth
+        // another attempt; an unchanged probe keeps the remembered sentence instead of hashing the
+        // file on every call.
+        let probe = self.probe_model();
+        if let Some(detail) = &self.segmenter_failed
+            && self.segmenter_failed_probe == probe
+        {
             return Err(detail.clone());
         }
         let Some(loader) = &self.segmenter_loader else { return Ok(()) };
         match (loader.load)() {
             Ok(segmenter) => {
                 self.segmenter = Some(segmenter);
+                self.segmenter_failed = None;
+                self.segmenter_failed_probe = None;
                 Ok(())
             }
             Err(detail) => {
                 self.segmenter_failed = Some(detail.clone());
+                self.segmenter_failed_probe = probe;
                 Err(detail)
             }
         }
+    }
+
+    /// The host's cheap "is a model installed" answer, when it has one: a name, never a load.
+    fn probe_model(&self) -> Option<&'static str> {
+        self.segmenter_loader.as_ref().and_then(|loader| (loader.name)())
     }
 
     /// Drop the segmenter (the model was removed or failed verification) and the remembered
@@ -623,6 +644,7 @@ impl Session {
     pub fn clear_segmenter(&mut self) {
         self.segmenter = None;
         self.segmenter_failed = None;
+        self.segmenter_failed_probe = None;
     }
 
     /// Forget a loaded segmenter or a remembered failure that disagrees with the host's model
@@ -642,10 +664,7 @@ impl Session {
         if let Some(segmenter) = &self.segmenter {
             return Some(segmenter.name());
         }
-        if self.segmenter_failed.is_some() {
-            return None;
-        }
-        (self.segmenter_loader.as_ref()?.name)()
+        self.probe_model()
     }
 
     pub(crate) fn segmenter_mut(&mut self) -> Option<&mut (dyn deckcraft_matte::Segmenter + 'static)> {
