@@ -1,4 +1,67 @@
-use super::*;
+use super::{
+    FilePlace, FilePurpose, FileTarget, InboxEvent, LocatedPlace, PendingFile, RECENT_MAX, SlideApp, Target, UiRequest, Value, ViewMode, dialogs,
+    json, media,
+};
+
+#[derive(Default)]
+pub(crate) struct PrintPreviews(Vec<std::path::PathBuf>);
+
+impl PrintPreviews {
+    fn create(&mut self, title: &str) -> std::io::Result<std::path::PathBuf> {
+        self.create_in(&std::env::temp_dir(), title)
+    }
+
+    fn create_in(&mut self, base: &std::path::Path, title: &str) -> std::io::Result<std::path::PathBuf> {
+        let dir = create_private_print_dir(base)?;
+        self.0.push(dir.clone());
+        let safe: String = title.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' }).collect();
+        Ok(dir.join(format!("{safe} (print).pdf")))
+    }
+
+    fn discard(&mut self, path: &std::path::Path) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+            self.0.retain(|owned| owned != dir);
+        }
+    }
+
+    pub(crate) fn cleanup(&mut self) {
+        for dir in self.0.drain(..) {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+}
+
+impl Drop for PrintPreviews {
+    fn drop(&mut self) {
+        self.cleanup();
+    }
+}
+
+fn create_private_print_dir(base: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
+
+    for _ in 0..128 {
+        let id = NEXT_DIR.fetch_add(1, Ordering::Relaxed);
+        let path = base.join(format!("deckcraft-print-{}-{id}", std::process::id()));
+        #[cfg(unix)]
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(not(unix))]
+        let builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        match builder.create(&path) {
+            Ok(()) => return Ok(path),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "could not allocate a unique print preview directory"))
+}
 
 fn purpose_of(purpose: &str) -> FilePurpose {
     match purpose {
@@ -204,8 +267,14 @@ impl SlideApp {
             let bytes = deckcraft_engine::cmd::file::pdf_bytes(&doc, &params);
             return self.download(&format!("{title}.pdf"), bytes);
         }
-        let safe: String = title.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' }).collect();
-        let path = std::env::temp_dir().join(format!("{safe} (print).pdf")).to_string_lossy().to_string();
+        let preview_path = match self.print_previews.create(&title) {
+            Ok(path) => path,
+            Err(e) => {
+                self.set_status(format!("Couldn't create a private print preview: {e}"));
+                return false;
+            }
+        };
+        let path = preview_path.to_string_lossy().to_string();
         if let Some(o) = params.as_object_mut() {
             o.insert("path".into(), json!(path));
             o.insert("format".into(), json!("pdf"));
@@ -216,7 +285,10 @@ impl SlideApp {
                 self.set_status("Opened the presentation as a PDF to print");
                 true
             }
-            Err(_) => false,
+            Err(_) => {
+                self.print_previews.discard(&preview_path);
+                false
+            }
         }
     }
 
@@ -390,6 +462,8 @@ impl SlideApp {
                     Err(e) => self.set_status(e.to_string()),
                 }
             }
+        } else if self.services.host_save.is_some() {
+            let _ = self.save_to_host(Some(ext));
         } else if let Some(dl) = self.services.download.as_mut()
             && let Some(d) = self.session.active()
         {
@@ -415,6 +489,10 @@ impl SlideApp {
     }
 
     pub fn save(&mut self) {
+        if self.services.host_save.is_some() {
+            let _ = self.save_to_host(None);
+            return;
+        }
         if self.session.active().and_then(|d| d.path.clone()).is_some() {
             match self.session.execute("file.save", &json!({})) {
                 Ok(_) => self.set_status("Saved"),
@@ -423,6 +501,85 @@ impl SlideApp {
         } else {
             self.save_as_dialog("deckcraft");
         }
+    }
+
+    /// Saves to the page that keeps the files ([`Services::host_save`](crate::Services::host_save)).
+    /// Save (`ext` `None`) writes the presentation's own file (the one the page sent, or the
+    /// last one saved there) in that file's format, as the desktop app does; a presentation with
+    /// no file of its own is a new `.deckcraft` file, the name Save suggests on the desktop. Save
+    /// As (`pptx`, `deckcraft`) is a new file named after the presentation. Once the page has the
+    /// bytes, the presentation is saved and that name is its file. Returns the name, or why it
+    /// wasn't saved (also shown in the status bar).
+    pub(super) fn save_to_host(&mut self, ext: Option<&str>) -> Result<String, String> {
+        use deckcraft_engine::cmd::file::{format_for_path, mark_saved, save_bytes};
+        let Some(d) = self.session.active() else { return Err("no presentation is open".into()) };
+        let own = d.path.as_deref().and_then(|p| std::path::Path::new(p).file_name()).map(|n| n.to_string_lossy().to_string());
+        let (name, save_as) = match (ext, own) {
+            (None, Some(own)) => (own, false),
+            (ext, _) => (format!("{}.{}", d.title(), ext.unwrap_or("deckcraft")), true),
+        };
+        let saved = save_bytes(&d.doc, format_for_path(&name)).map_err(|e| e.to_string()).and_then(|bytes| {
+            let host = self.services.host_save.as_mut().ok_or("no page to save to")?;
+            host(&name, &bytes, save_as).map_err(|e| format!("Couldn't save {name}: {e}"))?;
+            mark_saved(&mut self.session, Some(name.clone())).map_err(|e| e.to_string())
+        });
+        match saved {
+            Ok(()) => {
+                self.set_status(format!("Saved {name}"));
+                Ok(name)
+            }
+            Err(e) => {
+                self.set_status(e.clone());
+                Err(e)
+            }
+        }
+    }
+
+    /// A file the page that keeps the files sent (`?host=parent`), with the name it sent, if any.
+    /// It opens as File › Open opens it on the desktop: a presentation as itself, an outline
+    /// (.txt, .md, .rtf) as a new untitled presentation. The name is the presentation's file only
+    /// when the page sent one with a presentation extension and the file is an intact
+    /// presentation, so Save hands it back under that name and format; anything else (no name, an
+    /// outline, a damaged file opened as a repaired copy) is untitled, and its first Save is a new
+    /// file. The first presentation that opens takes the place of the empty one host mode started
+    /// with ([`Self::start_for_host`]), if that one is still open, untitled and unchanged; later
+    /// files open beside the others.
+    pub fn open_from_host(&mut self, name: Option<&str>, bytes: &[u8]) {
+        let blank = self.host_start.filter(|&uid| self.session.documents().iter().any(|d| d.uid == uid && d.path.is_none() && !d.is_dirty()));
+        let before = self.session.documents().len();
+        let shown = name.unwrap_or("Presentation");
+        let named = name.is_some_and(|n| is_presentation_name(&n.to_ascii_lowercase()));
+        let opened = deckcraft_engine::cmd::file::loaded_file(shown, bytes).and_then(|mut f| {
+            // `file.adopt` keeps the path only for a native file; a name the page didn't send
+            // for a presentation must not become one.
+            f.native &= named;
+            let token = self.session.stage_loaded(f);
+            self.session.execute("file.adopt", &json!({"path": shown, "token": token}))
+        });
+        if let Err(e) = opened {
+            self.notify(e.to_string());
+        }
+        self.drain_requests();
+        if self.session.documents().len() <= before {
+            return;
+        }
+        self.host_start = None;
+        if let Some(opened) = self.session.active().map(|d| d.uid)
+            && let Some(i) = self.session.documents().iter().position(|d| Some(d.uid) == blank)
+        {
+            self.session.close_document(i);
+            if let Some(i) = self.session.documents().iter().position(|d| d.uid == opened) {
+                self.session.set_active(i);
+            }
+        }
+    }
+
+    /// Host mode (`?host=parent`) starts with an empty presentation instead of the sample, for
+    /// the first file the page sends to take its place ([`Self::open_from_host`]).
+    pub fn start_for_host(&mut self) -> Result<(), String> {
+        self.run("file.new", json!({}))?;
+        self.host_start = self.session.active().map(|d| d.uid);
+        Ok(())
     }
 
     /// Act on requests commands left for the UI.
@@ -446,7 +603,7 @@ impl SlideApp {
                     let owner = if self.show.is_some() { media::Owner::Show } else { media::Owner::Editor };
                     // The command resolved `shape` on the editor's slide, also while a show runs.
                     if let Some((uid, doc, slide)) = self.session.active().map(|d| (d.uid, d.doc.clone(), d.selection.slide)) {
-                        self.media.request(uid, &doc, slide, &action, shape, ms, owner);
+                        self.media.request(uid, &doc, slide, &action, (shape, ms), owner);
                     }
                 }
             }
@@ -661,4 +818,50 @@ pub(crate) fn web_image_files(
             (file, bytes)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod print_preview_tests {
+    use super::PrintPreviews;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn same_title_gets_distinct_private_paths_and_drop_cleans_them() {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
+        let base = std::env::temp_dir().join(format!("deckcraft-print-test-{}-{stamp}", std::process::id()));
+        std::fs::create_dir(&base).unwrap();
+        let (first, second) = {
+            let mut previews = PrintPreviews::default();
+            let first = previews.create_in(&base, "Same title").unwrap();
+            let second = previews.create_in(&base, "Same title").unwrap();
+            assert_ne!(first, second);
+            assert_eq!(first.file_name(), second.file_name());
+            assert!(first.parent().is_some_and(|dir| dir.is_dir()));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(first.parent().unwrap()).unwrap().permissions().mode();
+                assert_eq!(mode & 0o777, 0o700);
+            }
+            (first, second)
+        };
+        assert!(!first.parent().is_some_and(|dir| dir.exists()));
+        assert!(!second.parent().is_some_and(|dir| dir.exists()));
+        std::fs::remove_dir(base).unwrap();
+    }
+
+    #[test]
+    fn explicit_cleanup_removes_previews() {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
+        let base = std::env::temp_dir().join(format!("deckcraft-print-cleanup-test-{}-{stamp}", std::process::id()));
+        std::fs::create_dir(&base).unwrap();
+        let mut previews = PrintPreviews::default();
+        let path = previews.create_in(&base, "Explicit cleanup").unwrap();
+        let dir = path.parent().unwrap().to_path_buf();
+
+        previews.cleanup();
+
+        assert!(!dir.exists());
+        std::fs::remove_dir(base).unwrap();
+    }
 }

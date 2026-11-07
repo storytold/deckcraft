@@ -1,4 +1,4 @@
-use super::*;
+use super::{Color32, CornerRadius, Point, Rect, SlideApp, Stroke, Tokens, Xf, pos2, theme};
 
 /// The presentation's drawing guides; the one being dragged at its new place, labelled with its
 /// distance from the slide's centre in points.
