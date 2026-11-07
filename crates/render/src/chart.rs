@@ -250,7 +250,19 @@ fn axis_ticks((lo, hi, st): (f64, f64, f64)) -> impl Iterator<Item = f64> {
     (0..=n).map(move |k| lo + k as f64 * st)
 }
 
+/// Most category-by-series cells one chart draws; ordinary charts hold a few hundred.
+const MAX_CHART_CELLS: usize = 4_000_000;
+
+/// Whether the independent category and series lists make the drawing loops multiply past the budget.
+fn over_cell_budget(c: &Chart) -> bool {
+    let ncat = c.categories.len().max(c.series.iter().map(|s| s.values.len()).max().unwrap_or(0));
+    ncat.saturating_mul(c.series.len().max(1)) > MAX_CHART_CELLS
+}
+
 pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64, h: f64) {
+    if over_cell_budget(c) {
+        return;
+    }
     match c.kind {
         // Histograms and Pareto charts are drawn as the column (and line) chart of their bins.
         ChartType::Histogram | ChartType::Pareto => {
@@ -1424,6 +1436,14 @@ mod tests {
     use super::*;
 
     const AREA: Rect = Rect::new(0.0, 0.0, 400.0, 300.0);
+
+    #[test]
+    fn category_by_series_cells_are_budgeted() {
+        let mut c = Chart::sample(ChartType::Column);
+        assert!(!over_cell_budget(&c));
+        c.categories = vec![String::new(); MAX_CHART_CELLS / c.series.len() + 1];
+        assert!(over_cell_budget(&c));
+    }
 
     #[test]
     fn tiny_data_gets_several_ticks() {
