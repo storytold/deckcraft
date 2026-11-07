@@ -125,7 +125,9 @@ pub fn draw(ctx: &mut RenderContext, bevel: &Bevel, fill: Option<Rgba>, path: &B
     let longest = bounds.width().max(bounds.height()) * k;
     let s = (MAX_SIDE / longest).min(1.0) * k;
     let (pw, ph) = (((bounds.width() * s).ceil() as u32).clamp(1, 2048), ((bounds.height() * s).ceil() as u32).clamp(1, 2048));
-    let polys = crate::pathgrad::polygons(path);
+    // Each pixel tests every edge, so a dense outline is simplified to the raster's edge budget.
+    let pixel = (bounds.width() / f64::from(pw)).min(bounds.height() / f64::from(ph));
+    let polys = crate::pathgrad::simplify(crate::pathgrad::polygons(path), pixel, crate::pathgrad::edge_budget(pw, ph));
     if polys.is_empty() {
         return;
     }
