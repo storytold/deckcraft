@@ -16,11 +16,12 @@ pub(super) fn hyperlink(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("insert.hyperlink", "missing `url` or `slide`"));
     };
     let display = str_param(p, "text").map_or(display, str::to_string);
+    let use_text_color = bool_param(p, "useTextColor");
     let link = Hyperlink {
         action,
         tooltip: str_param(p, "tooltip").unwrap_or("").to_string(),
         highlight_click: bool_or(p, "highlightClick", false),
-        use_text_color: false,
+        use_text_color: use_text_color.unwrap_or(false),
         sound: None,
         stop_sound: false,
         zoom_return: None,
@@ -29,7 +30,13 @@ pub(super) fn hyperlink(s: &mut Session, p: &Value) -> Result<Value> {
         return crate::cmd::text::link_text(s, link, &display);
     }
     edit_shapes(s, p, "insert.hyperlink", |sh| {
-        sh.click = Some(link.clone());
+        let mut next = link.clone();
+        if use_text_color.is_none()
+            && let Some(prev) = &sh.click
+        {
+            next.use_text_color = prev.use_text_color;
+        }
+        sh.click = Some(next);
         Ok(())
     })
 }

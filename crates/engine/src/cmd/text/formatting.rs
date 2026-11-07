@@ -177,7 +177,13 @@ pub(crate) fn link_text(s: &mut Session, link: Hyperlink, display: &str) -> Resu
     let Some(t) = st.selection.text.clone() else { return Err(bad("insert.hyperlink", "not editing text")) };
     let (a, b) = format_range(st, &t);
     if a != b {
-        return format_run(s, &move |rp| rp.link = Some(link.clone()));
+        return format_run(s, &move |rp| {
+            let mut next = link.clone();
+            if let Some(prev) = &rp.link {
+                next.use_text_color |= prev.use_text_color;
+            }
+            rp.link = Some(next);
+        });
     }
     if display.is_empty() {
         return Err(bad("insert.hyperlink", "nothing to link: select text or give `text`"));

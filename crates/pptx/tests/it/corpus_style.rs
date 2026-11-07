@@ -316,3 +316,51 @@ fn left_of(p: &Presentation) -> ShapeId {
 fn right_of(p: &Presentation) -> ShapeId {
     by_name(p, "Right").id
 }
+
+fn rewrite_zip_entry(bytes: &[u8], entry_name: &str, f: impl Fn(&str) -> String) -> Vec<u8> {
+    use std::io::{Cursor, Read, Write};
+    let mut r = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut out = Cursor::new(Vec::new());
+    {
+        let mut w = zip::ZipWriter::new(&mut out);
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for i in 0..r.len() {
+            let mut file = r.by_index(i).unwrap();
+            let name = file.name().to_string();
+            let mut buf = Vec::new();
+            file.read_to_end(&mut buf).unwrap();
+            w.start_file(&name, opts).unwrap();
+            if name == entry_name {
+                let text = String::from_utf8(buf).unwrap();
+                w.write_all(f(&text).as_bytes()).unwrap();
+            } else {
+                w.write_all(&buf).unwrap();
+            }
+        }
+        w.finish().unwrap();
+    }
+    out.into_inner()
+}
+
+#[test]
+fn svg_only_blip_without_primary_embed_falls_back_to_svg_blip() {
+    let mut pres = defaults::new_presentation(None);
+    let png = pres.add_media("img.png", "image/png", vec![137, 80, 78, 71, 13, 10, 26, 10]).unwrap();
+    let svg = pres.add_media("img.svg", "image/svg+xml", b"<svg xmlns='http://www.w3.org/2000/svg'/>".to_vec()).unwrap();
+    let mut sh = shape(&mut pres, "Picture 1", 50.0, 50.0, 100.0, 100.0);
+    sh.kind = ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media: png, svg_media: Some(svg), ..Default::default() } };
+    Arc::make_mut(&mut pres.slides[0]).shapes.push(sh);
+    let out = deckcraft_pptx::export(&pres).unwrap();
+    let svg_only = rewrite_zip_entry(&out, "ppt/slides/slide1.xml", |xml| xml.replace(r#"<a:blip r:embed="rId2">"#, "<a:blip>"));
+    let back = deckcraft_pptx::import(&svg_only).unwrap();
+    let pf = back.slides[0]
+        .shapes
+        .iter()
+        .find_map(|s| match &s.kind {
+            ShapeKind::Picture { fill } => Some(fill),
+            _ => None,
+        })
+        .expect("Picture");
+    assert!(pf.svg_media.is_some());
+    assert_eq!(Some(pf.media), pf.svg_media);
+}
