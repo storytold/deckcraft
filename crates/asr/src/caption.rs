@@ -160,7 +160,7 @@ pub struct CaptionLayout {
     pub font_pt: f64,
     /// Baseline-to-baseline distance, in points.
     pub line_height: f64,
-    /// Some text did not fit in `max_lines` (or in [`MAX_TEXT_CHARS`]).
+    /// Text was dropped to fit `max_lines` (or [`MAX_TEXT_CHARS`]); the newest words are kept.
     pub clipped: bool,
     /// There was no room outside the slide, so the caption sits over it (Below/Above Slide).
     pub overlaps_slide: bool,
@@ -194,7 +194,7 @@ pub fn layout(input: &LayoutInput) -> CaptionLayout {
     let advance = (font_pt * ADVANCE_RATIO).max(1.0);
     // A line's capacity in wrapping units, so a wide glyph takes the room of two average ones.
     let per_line = ((usable / advance).floor() as usize).clamp(1, MAX_TEXT_CHARS);
-    let (lines, clipped) = wrap(input.text, per_line, max_lines);
+    let (lines, clipped) = wrap_tail(input.text, per_line, max_lines);
     out.clipped = clipped;
     if lines.is_empty() {
         return out;
@@ -303,6 +303,59 @@ pub fn wrap(text: &str, per_line: usize, max_lines: usize) -> (Vec<String>, bool
         clipped = true;
     }
     (lines, clipped)
+}
+
+/// Wrap `text` keeping its newest words. When the whole text does not fit `max_lines` lines of
+/// `per_line` units, leading words are dropped so the tail — what is being said now — is what
+/// the caption shows; `clipped` then reports that text was dropped. A short text wraps exactly
+/// as [`wrap`] does.
+///
+/// Captions are read while they are still being spoken, so the beginning of a long transcript
+/// scrolls off rather than the newest words.
+pub fn wrap_tail(text: &str, per_line: usize, max_lines: usize) -> (Vec<String>, bool) {
+    let per_line = per_line.clamp(1, MAX_TEXT_CHARS);
+    let max_lines = max_lines.clamp(1, MAX_LINES_CAP);
+    // A transcript longer than the layout considers keeps its end, like the wrapping does.
+    let total_chars = text.chars().count();
+    let text: String = if total_chars > MAX_TEXT_CHARS { text.chars().skip(total_chars - MAX_TEXT_CHARS).collect() } else { text.to_string() };
+    // Keep at most the newest characters that can fit by units — a run with no spaces (CJK)
+    // has no word boundary to cut on — then start at a word boundary where there is one.
+    let capacity = per_line.saturating_mul(max_lines);
+    let tail = tail_by_units(&text, capacity);
+    let tail = if tail.len() < text.len() {
+        // The cut may be inside a word: start at the next boundary where there is one.
+        tail.find(char::is_whitespace).map_or(tail, |i| tail.get(i..).unwrap_or_default().trim_start())
+    } else {
+        tail
+    };
+    // The greedy wrap can still leave a line partly empty; drop one more leading word per pass,
+    // never below the last word, which [`wrap`] splits instead.
+    let words: Vec<&str> = tail.split_whitespace().collect();
+    let mut dropped = total_chars > MAX_TEXT_CHARS || tail.len() < text.len();
+    let mut start = 0;
+    loop {
+        let (lines, over) = wrap(&words.get(start..).unwrap_or_default().join(" "), per_line, max_lines);
+        if !over || start + 1 >= words.len() {
+            return (lines, dropped || over);
+        }
+        start += 1;
+        dropped = true;
+    }
+}
+
+/// The newest part of `s` whose characters cost at most `units`; at least one character.
+fn tail_by_units(s: &str, units: usize) -> &str {
+    let mut used = 0;
+    let mut at_least_one = false;
+    for (i, c) in s.char_indices().rev() {
+        let cost = glyph_units(c);
+        if at_least_one && used + cost > units {
+            return s.get(i + c.len_utf8()..).unwrap_or_default();
+        }
+        used += cost;
+        at_least_one = true;
+    }
+    s
 }
 
 /// The wrapping cost of one character in units of [`ADVANCE_RATIO`] em: an East Asian wide
@@ -460,6 +513,32 @@ mod tests {
             let estimated = units_of(line) as f64 * advance;
             assert!(estimated <= l.rect.w + 1e-9, "{line:?} estimates {estimated} wide, the box is {}", l.rect.w);
         }
+    }
+
+    #[test]
+    fn a_long_caption_keeps_its_newest_words() {
+        let (screen, slide) = screen_slide();
+        let text =
+            "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty";
+        let mut input = LayoutInput::new(screen, slide, Position::BottomOverlay, text);
+        input.max_lines = 3;
+        input.width_fraction = 0.2;
+        let l = layout(&input);
+        assert_eq!(l.lines.len(), 3, "{:?}", l.lines);
+        assert!(l.clipped, "the beginning scrolls off");
+        assert!(l.lines.iter().any(|line| line.contains("twenty")), "the newest word is shown: {:?}", l.lines);
+        assert!(!l.lines.iter().any(|line| line.split_whitespace().any(|w| w == "one")), "the oldest word is dropped: {:?}", l.lines);
+    }
+
+    #[test]
+    fn wrap_tail_drops_the_beginning_not_the_end() {
+        assert_eq!(wrap_tail("one two three", 5, 2), (vec!["two".to_string(), "three".to_string()], true));
+        assert_eq!(wrap_tail("how are you", 20, 3), (vec!["how are you".to_string()], false));
+        assert_eq!(wrap_tail("   ", 10, 2), (vec![], false));
+        // A run with no word boundaries (CJK) keeps its newest glyphs.
+        let (lines, clipped) = wrap_tail(&"字".repeat(30), 6, 2);
+        assert!(clipped);
+        assert_eq!(lines.concat().chars().count(), 6, "two lines of three wide glyphs: {lines:?}");
     }
 
     #[test]

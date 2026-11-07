@@ -125,7 +125,8 @@ library, so a machine with OpenVINO installed but no backend behaves exactly lik
   quiet measurement below; the capture queue holds up to 60 s so nothing is lost while it runs).
   A line becomes final after ~0.9 s without speech; the window then starts fresh, and while no
   speech has been heard since the last final line the worker keeps only the newest second instead
-  of re-decoding the same audio.
+  of re-decoding the same audio. When a transcript is longer than the line cap, the caption shows
+  its newest words — the beginning scrolls off — so the audience never loses what is being said.
 - The UI thread does not wait for inference while captions run: `crates/ui-egui/src/subtitles.rs`
   polls the channel once a frame, the show draws the caption after the slide (above its media
   controls, below the pen and the bars), and asks egui for a repaint every 120 ms while the stream
