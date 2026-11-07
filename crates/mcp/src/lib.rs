@@ -34,4 +34,6 @@ pub fn control_addr(s: &str) -> String {
 }
 
 #[cfg(test)]
+mod picture_fit_tests;
+#[cfg(test)]
 mod tests;
