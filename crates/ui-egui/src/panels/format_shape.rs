@@ -1,5 +1,6 @@
 use super::effect_presets;
 use super::{Fill, Icon, ShapeKind, SlideApp, Tokens, Ui, color_button, cref_param, json, run, scheme, theme, vec2, widgets};
+use deckcraft_model::text::TextDir;
 
 /// Percent transparency (0 = opaque) of a solid fill, the same number `shape.fill`'s
 /// `transparency` parameter writes as an alpha transform. Anything else (no fill, a
@@ -272,14 +273,27 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
         "effects" => effects_tab(app, ui, &sh),
         "size" => size_tab(app, ui, &sh, x, single, uid),
         "text" => {
-            ui.label(egui::RichText::new("Text Fill").font(theme::bold(13.0)));
-            color_button(app, ui, "Color", None, |c| match c {
-                Some(c) => ("format.color".into(), json!({"color": cref_param(&c)})),
-                None => ("format.color".into(), json!({"color": "tx1"})),
-            });
-            text_transparency_slider(app, ui, &sh);
+            text_fill_options(app, ui, &sh);
+            ui.add_space(6.0);
+            text_outline_options(app, ui, &sh);
             ui.add_space(6.0);
             ui.label(egui::RichText::new("Text Box").font(theme::bold(13.0)));
+            let body = effective_body(app, &sh);
+            let dir = match body.vert {
+                None | Some(TextDir::Horizontal) => "horizontal",
+                Some(TextDir::Vertical270) => "rotate270",
+                Some(TextDir::Stacked | TextDir::StackedRtl) => "stacked",
+                Some(_) => "rotate90",
+            };
+            text_choice(
+                app,
+                ui,
+                "Text direction",
+                "format.direction",
+                "dir",
+                dir,
+                &[("Horizontal", "horizontal"), ("Rotate all text 90°", "rotate90"), ("Rotate all text 270°", "rotate270"), ("Stacked", "stacked")],
+            );
             ui.horizontal(|ui| {
                 ui.label("Vertical alignment");
                 for (l, a) in [("Top", "top"), ("Middle", "middle"), ("Bottom", "bottom")] {
@@ -295,13 +309,17 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 }
             });
-            let wrap = sh.text.as_ref().and_then(|t| t.body.wrap).unwrap_or(true);
+            let mut upright = body.upright == Some(true);
+            if ui.checkbox(&mut upright, "Do not rotate text").changed() {
+                run(app, "format.upright", json!({"on": upright}));
+            }
+            let wrap = body.wrap.unwrap_or(true);
             let mut w = wrap;
             if ui.checkbox(&mut w, "Wrap text in shape").changed() {
                 run(app, "format.wrap", json!({"on": w}));
             }
             ui.label("Margins (pt)");
-            let b = sh.text.as_ref().map(|t| t.body.clone()).unwrap_or_default();
+            let b = body;
             for (l, k, v) in [
                 ("Left", "left", b.inset_l.unwrap_or(7.2)),
                 ("Right", "right", b.inset_r.unwrap_or(7.2)),
@@ -485,6 +503,146 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             line_details(app, ui, &sh);
         }
     }
+}
+
+/// A labelled drop-down on the Text Options tab: picks one of `items` (label, value) and runs
+/// `cmd` with `{key: value}`.
+fn text_choice(app: &mut SlideApp, ui: &mut Ui, label: &str, cmd: &str, key: &str, current: &str, items: &[(&str, &str)]) {
+    ui.horizontal(|ui| {
+        let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
+        let shown = items.iter().find(|(_, v)| *v == current).map_or(current, |(l, _)| *l);
+        let combo = craft_ui::ComboBox::from_id_salt(("fmt-text", cmd, key)).selected_text(shown).width(150.0).show_ui(ui, |ui| {
+            for (l, v) in items {
+                if ui.selectable_label(*v == current, *l).clicked() {
+                    run(app, cmd, json!({key: v}));
+                }
+            }
+        });
+        let _ = combo.response.labelled_by(field.id);
+    });
+}
+
+/// The effective body properties shown by Text Options, including placeholder inheritance.
+fn effective_body(app: &SlideApp, sh: &deckcraft_model::Shape) -> deckcraft_model::text::BodyProps {
+    let local = || sh.text.as_ref().map(|t| t.body.clone()).unwrap_or_default();
+    let Some(st) = app.session.active() else { return local() };
+    let Some(ctx) = selection_context(st) else { return local() };
+    deckcraft_model::resolve::body(&ctx, sh)
+}
+
+fn selection_context(st: &deckcraft_engine::DocState) -> Option<deckcraft_model::resolve::Ctx<'_>> {
+    use deckcraft_engine::Target;
+    use deckcraft_model::resolve::Ctx;
+    match st.selection.target {
+        Target::Slides => st.current_slide().and_then(|slide| Ctx::for_slide(&st.doc, slide)),
+        Target::Master { master } => st.doc.masters.get(master).map(|m| Ctx::for_master(&st.doc, m)),
+        Target::Layout { master, layout } => st.doc.masters.get(master).and_then(|m| m.layouts.get(layout).map(|l| Ctx::for_layout(&st.doc, m, l))),
+        target @ (Target::Handout | Target::NotesMaster) => deckcraft_engine::page_master(&st.doc, target).map(|m| Ctx::for_master(&st.doc, m)),
+    }
+}
+
+/// The selected run's effective props, or the first run for a shape-level selection.
+pub(crate) fn first_run_props(app: &SlideApp, sh: &deckcraft_model::Shape) -> Option<deckcraft_model::text::RunProps> {
+    let st = app.session.active()?;
+    let ctx = selection_context(st)?;
+    let shape = if let Some(t) = st.selection.text.as_ref() { st.shape(t.shape)? } else { sh };
+    let (para, run) = if let Some(t) = st.selection.text.as_ref() {
+        let body = deckcraft_engine::cmd::text::body_of(st, t)?;
+        let (a, _) = t.ordered();
+        let para = body.paragraphs.get(a.0)?;
+        let pos = if t.is_range() { (a.0, a.1.saturating_add(1)) } else { a };
+        (para, deckcraft_model::edit::props_at(body, pos))
+    } else {
+        let body = sh.text.as_ref()?;
+        let para = body.paragraphs.iter().find(|p| !p.runs.is_empty()).or_else(|| body.paragraphs.first())?;
+        let run = para.runs.first().map(|r| r.props.clone()).unwrap_or_default();
+        (para, run)
+    };
+    Some(deckcraft_model::resolve::run(&ctx, shape, para, &run))
+}
+
+/// Text Fill: No fill, Solid fill or Gradient fill (with its angle), the colour and the transparency.
+fn text_fill_options(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
+    use deckcraft_model::style::GradientShape;
+    ui.label(egui::RichText::new("Text Fill").font(theme::bold(13.0)));
+    let fill = first_run_props(app, sh).and_then(|r| r.fill);
+    let (kind, angle) = match &fill {
+        Some(Fill::None) => ("none", 0.0),
+        Some(Fill::Gradient(g)) => ("gradient", if let GradientShape::Linear { angle, .. } = g.shape { angle } else { 0.0 }),
+        _ => ("solid", 0.0),
+    };
+    ui.horizontal(|ui| {
+        for (l, m) in [("No fill", "none"), ("Solid fill", "solid"), ("Gradient fill", "gradient")] {
+            if ui.selectable_label(kind == m, l).clicked() && kind != m {
+                run(app, "format.textFill", json!({"mode": m}));
+            }
+        }
+    });
+    if kind == "solid" {
+        color_button(app, ui, "Color", None, |c| match c {
+            Some(c) => ("format.color".into(), json!({"color": cref_param(&c)})),
+            None => ("format.color".into(), json!({"color": "tx1"})),
+        });
+    }
+    if kind == "gradient" {
+        ui.horizontal(|ui| {
+            ui.add_sized(vec2(90.0, 20.0), egui::Label::new("Angle"));
+            if let Some(nv) = widgets::spinner(ui, "text-fill-angle", "Angle", angle, 15.0, "°", 70.0) {
+                run(app, "format.textFill", json!({"mode": "gradient", "angle": nv}));
+            }
+        });
+    }
+    if kind != "none" {
+        text_transparency_slider(app, ui, sh, fill.as_ref());
+    }
+}
+
+/// Text Outline: No line or Solid line, with its colour, width and dash.
+fn text_outline_options(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
+    ui.label(egui::RichText::new("Text Outline").font(theme::bold(13.0)));
+    let line = first_run_props(app, sh).and_then(|r| r.outline).filter(|l| !matches!(l.fill, Some(Fill::None)));
+    ui.horizontal(|ui| {
+        if ui.selectable_label(line.is_none(), "No line").clicked() && line.is_some() {
+            run(app, "format.textOutline", json!({"none": true}));
+        }
+        if ui.selectable_label(line.is_some(), "Solid line").clicked() && line.is_none() {
+            run(app, "format.textOutline", json!({"width": 0.75}));
+        }
+    });
+    let Some(line) = line else { return };
+    color_button(app, ui, "Color", None, |c| match c {
+        Some(c) => ("format.textOutline".into(), json!({"color": cref_param(&c)})),
+        None => ("format.textOutline".into(), json!({"none": true})),
+    });
+    ui.horizontal(|ui| {
+        ui.add_sized(vec2(90.0, 20.0), egui::Label::new("Width"));
+        if let Some(nv) = widgets::spinner(ui, "text-outline-width", "Width", line.width.unwrap_or(0.75), 0.25, " pt", 70.0) {
+            run(app, "format.textOutline", json!({"width": nv.clamp(0.0, 1584.0)}));
+        }
+    });
+    let dash = match &line.dash {
+        None => "solid",
+        Some(deckcraft_model::style::Dash::Preset { name }) => name.as_str(),
+        Some(_) => "custom",
+    };
+    text_choice(
+        app,
+        ui,
+        "Dash type",
+        "format.textOutline",
+        "dash",
+        dash,
+        &[
+            ("Solid", "solid"),
+            ("Round Dot", "sysDot"),
+            ("Square Dot", "sysDash"),
+            ("Dash", "dash"),
+            ("Dash Dot", "dashDot"),
+            ("Long Dash", "lgDash"),
+            ("Long Dash Dot", "lgDashDot"),
+            ("Long Dash Dot Dot", "lgDashDotDot"),
+        ],
+    );
 }
 
 /// A labelled drop-down on the Format Shape pane: picks one of `items` (label, value) and runs
@@ -759,10 +917,9 @@ fn three_d_options(app: &mut SlideApp, ui: &mut Ui, id: u32, raw: Option<&str>) 
     }
 }
 
-/// The transparency (0–1) of a shape's first text run as stored on it.
-pub(crate) fn text_transparency_of(sh: &deckcraft_model::Shape) -> f64 {
-    let run = sh.text.as_ref().and_then(|t| t.paragraphs.iter().flat_map(|p| p.runs.iter()).next());
-    match run.and_then(|r| r.props.fill.as_ref()) {
+/// The transparency (0–1) of the effective fill shown by Text Options.
+pub(crate) fn text_transparency_of(fill: Option<&Fill>) -> f64 {
+    match fill {
         Some(Fill::Solid { color }) => 1.0 - color.alpha(),
         Some(Fill::Gradient(g)) => g.stops.first().map_or(0.0, |s| 1.0 - s.color.alpha()),
         _ => 0.0,
@@ -770,11 +927,11 @@ pub(crate) fn text_transparency_of(sh: &deckcraft_model::Shape) -> f64 {
 }
 
 /// Text Fill › Transparency, as in PowerPoint's Format Shape › Text Options (#32).
-pub(crate) fn text_transparency_slider(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
+pub(crate) fn text_transparency_slider(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, fill: Option<&Fill>) {
     ui.horizontal(|ui| {
         let label = ui.label("Transparency");
         let id = ui.scope_id().with(("text-transparency", sh.id));
-        let stored = (text_transparency_of(sh) * 100.0) as f32;
+        let stored = (text_transparency_of(fill) * 100.0) as f32;
         let mut v: f32 = ui.data_mut(|d| d.get_temp(id).unwrap_or(stored));
         let r = ui.add(egui::Slider::new(&mut v, 0.0..=100.0).suffix("%")).labelled_by(label.id);
         if r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged()) {
