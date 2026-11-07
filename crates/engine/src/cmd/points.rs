@@ -10,7 +10,7 @@ use deckcraft_geom::{PathEl, Point, Xfrm};
 use deckcraft_model::{CustomPath, Geom, Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, bad, cmd, f64_param, has_selection, id_param, ok, str_param, xfrm_of};
+use super::{CommandSpec, bad, cmd, f64_param, has_selection, id_param, ok, opt_usize_param, str_param, xfrm_of};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -599,12 +599,12 @@ pub(crate) fn edit_path(
 }
 
 fn index_param(p: &Value, key: &str, cmd: &str) -> Result<usize> {
-    p.get(key).and_then(Value::as_u64).map(|v| v as usize).ok_or_else(|| bad(cmd, format!("give `{key}`")))
+    p.get(key).and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok()).ok_or_else(|| bad(cmd, format!("give `{key}`")))
 }
 
 fn move_point(s: &mut Session, p: &Value) -> Result<Value> {
     let id = target(s, p, "shape.movePoint")?;
-    let path = p.get("path").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let path = opt_usize_param(p, "path", "shape.movePoint")?.unwrap_or(0);
     let index = index_param(p, "index", "shape.movePoint")?;
     let to = match (f64_param(p, "x"), f64_param(p, "y")) {
         (Some(x), Some(y)) if x.is_finite() && y.is_finite() => Point::new(x.clamp(-1e5, 1e5), y.clamp(-1e5, 1e5)),
@@ -621,7 +621,7 @@ fn move_point(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn add_point(s: &mut Session, p: &Value) -> Result<Value> {
     let id = target(s, p, "shape.addPoint")?;
-    let path = p.get("path").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let path = opt_usize_param(p, "path", "shape.addPoint")?.unwrap_or(0);
     let seg = index_param(p, "segment", "shape.addPoint")?;
     let t = f64_param(p, "t").filter(|t| t.is_finite()).unwrap_or(0.5).clamp(0.01, 0.99);
     let r = edit_path(s, id, path, "shape.addPoint", move |segs, vs, _| {
@@ -636,7 +636,7 @@ fn add_point(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn delete_point(s: &mut Session, p: &Value) -> Result<Value> {
     let id = target(s, p, "shape.deletePoint")?;
-    let path = p.get("path").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let path = opt_usize_param(p, "path", "shape.deletePoint")?.unwrap_or(0);
     let index = index_param(p, "index", "shape.deletePoint")?;
     let r = edit_path(s, id, path, "shape.deletePoint", move |segs, vs, _| {
         let si = *vs.get(index).ok_or_else(|| bad("shape.deletePoint", "no such point"))?;
@@ -887,7 +887,7 @@ pub fn slide_handles(
 
 fn point_type(s: &mut Session, p: &Value) -> Result<Value> {
     let id = target(s, p, "shape.pointType")?;
-    let path = p.get("path").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let path = opt_usize_param(p, "path", "shape.pointType")?.unwrap_or(0);
     let index = index_param(p, "index", "shape.pointType")?;
     let kind = match str_param(p, "type") {
         Some(k @ ("smooth" | "straight" | "corner")) => k.to_string(),
@@ -904,7 +904,7 @@ fn point_type(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn move_handle(s: &mut Session, p: &Value) -> Result<Value> {
     let id = target(s, p, "shape.moveHandle")?;
-    let path = p.get("path").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let path = opt_usize_param(p, "path", "shape.moveHandle")?.unwrap_or(0);
     let index = index_param(p, "index", "shape.moveHandle")?;
     let out = match str_param(p, "side") {
         Some("out") => true,
@@ -941,7 +941,7 @@ pub(crate) fn move_handle_raw(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn segment_type(s: &mut Session, p: &Value) -> Result<Value> {
     let id = target(s, p, "shape.segmentType")?;
-    let path = p.get("path").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let path = opt_usize_param(p, "path", "shape.segmentType")?.unwrap_or(0);
     let seg = index_param(p, "segment", "shape.segmentType")?;
     let curved = match str_param(p, "type") {
         Some("straight") => false,
@@ -963,7 +963,7 @@ fn segment_type(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn open_path(s: &mut Session, p: &Value) -> Result<Value> {
     let id = target(s, p, "shape.openPath")?;
-    let path = p.get("path").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let path = opt_usize_param(p, "path", "shape.openPath")?.unwrap_or(0);
     let index = index_param(p, "index", "shape.openPath")?;
     let r = edit_path(s, id, path, "shape.openPath", move |segs, vs, _| {
         let si = *vs.get(index).ok_or_else(|| bad("shape.openPath", "no such point"))?;
@@ -975,7 +975,7 @@ fn open_path(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn close_path(s: &mut Session, p: &Value) -> Result<Value> {
     let id = target(s, p, "shape.closePath")?;
-    let path = p.get("path").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let path = opt_usize_param(p, "path", "shape.closePath")?.unwrap_or(0);
     let index = index_param(p, "index", "shape.closePath")?;
     let r = edit_path(s, id, path, "shape.closePath", move |segs, vs, _| {
         let si = *vs.get(index).ok_or_else(|| bad("shape.closePath", "no such point"))?;
@@ -987,7 +987,7 @@ fn close_path(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn delete_segment(s: &mut Session, p: &Value) -> Result<Value> {
     let id = target(s, p, "shape.deleteSegment")?;
-    let path = p.get("path").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let path = opt_usize_param(p, "path", "shape.deleteSegment")?.unwrap_or(0);
     let seg = index_param(p, "segment", "shape.deleteSegment")?;
     let r = edit_path(s, id, path, "shape.deleteSegment", move |segs, vs, _| {
         let si = *vs.get(seg).ok_or_else(|| bad("shape.deleteSegment", "no such segment"))?;
