@@ -1077,6 +1077,7 @@ name = "deckcraft-color"
 version = "0.15.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]

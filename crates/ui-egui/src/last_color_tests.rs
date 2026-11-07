@@ -152,3 +152,140 @@ fn before_any_pick_the_buttons_still_apply_accent_1_and_text_1() {
     assert_eq!(slot(&sh.fill), Some(SchemeSlot::Accent1));
     assert_eq!(slot(&sh.line.as_ref().unwrap().fill), Some(SchemeSlot::Tx1));
 }
+
+/// Open the drop-down arrow of a split button and click the swatch labelled `swatch`.
+fn pick_swatch(h: &mut Harness<'static, SlideApp>, button: &str, swatch: &str) {
+    open_menu(h, button);
+    // Several columns may share a computed row's label ("Lighter 80%"): the first one will do.
+    let cell =
+        h.get_all_by_role_and_label(egui::accesskit::Role::Button, swatch).next().unwrap_or_else(|| panic!("no swatch {swatch}")).rect().center();
+    h.input_mut().events.push(Event::PointerMoved(cell));
+    h.run_steps(2);
+    for pressed in [true, false] {
+        h.input_mut().events.push(Event::PointerButton { pos: cell, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.run_steps(2);
+    }
+    h.run_steps(2);
+}
+
+#[test]
+fn the_gallery_offers_extra_colours_and_explicit_tint_rows() {
+    use deckcraft_color::Rgba;
+    use egui_kittest::kittest::Queryable;
+    let (mut h, [a, _]) = harness("Home");
+    let two = vec!["#C7EBBA", "#0D4A21"];
+    h.state_mut()
+        .session
+        .execute(
+            "design.colors",
+            &json!({"tints": {"accent5": two, "accent6": []}, "extra": [{"name": "Sand", "color": "#EBE5E0", "tints": two}, {"name": "Navy", "color": "#000061"}, {"name": "Broken white", "color": "#FCFCFC", "tints": []}]}),
+        )
+        .unwrap();
+    h.run_steps(2);
+    // An extra colour stores its RGB.
+    pick_swatch(&mut h, "Shape Fill", "Sand #EBE5E0");
+    assert_eq!(fill_rgb(&h, a).as_deref(), Some("EBE5E0"));
+    // An explicit row stores the exact RGB, under a slot or an extra colour; a list is exactly
+    // the rows shown (no filling), an empty list no rows.
+    pick_swatch(&mut h, "Shape Fill", "Accent 5 #0D4A21");
+    assert_eq!(fill_rgb(&h, a).as_deref(), Some("0D4A21"));
+    pick_swatch(&mut h, "Shape Fill", "Sand #EBE5E0 #C7EBBA");
+    assert_eq!(fill_rgb(&h, a).as_deref(), Some("C7EBBA"));
+    open_menu(&mut h, "Shape Fill");
+    assert_eq!(h.get_all_by_label("Accent 5 #0D4A21").count(), 1);
+    // Computed rows are labelled by their transform alone ("Lighter 80%"), so a column is told
+    // by its x: no computed row sits under a listed colour or under an empty list, while the
+    // other theme colours keep theirs.
+    let column = |h: &Harness<'static, SlideApp>, label: &str| h.get_by_label(label).rect().center().x;
+    let computed_in =
+        |h: &Harness<'static, SlideApp>, x: f32| h.get_all_by_label("Lighter 80%").filter(|n| (n.rect().center().x - x).abs() < 1.0).count();
+    let (x5, x6, x1) = (column(&h, "Accent 5"), column(&h, "Accent 6"), column(&h, "Accent 1"));
+    assert_eq!(computed_in(&h, x5), 0, "no computed rows under a listed colour");
+    assert_eq!(computed_in(&h, x1), 1, "other theme colours keep their computed rows");
+    assert_eq!(computed_in(&h, x6) + h.query_all_by_label("Accent 6 #FFBE00").count(), 0, "an empty list: no rows");
+    assert_eq!(h.query_all_by_label("Broken white #FCFCFC Lighter 80%").count(), 0);
+    let _ = h.get_by_label("Broken white #FCFCFC");
+    // An extra colour without a list gets computed rows, stored as RGB too.
+    let navy = Rgba::rgb(0, 0, 0x61);
+    let rows = deckcraft_color::variants_of(navy, None, true);
+    pick_swatch(&mut h, "Shape Fill", &format!("Navy #000061 {}", rows[0].label));
+    assert_eq!(fill_rgb(&h, a).as_deref(), Some(rows[0].color.hex().as_str()));
+    // A computed row under a theme colour still stores the slot with its transforms.
+    pick_swatch(&mut h, "Shape Fill", "Lighter 80%");
+    let sh = h.state().session.active().unwrap().shape(a).unwrap().clone();
+    match sh.fill {
+        Some(Fill::Solid { color: ColorRef { base: ColorBase::Scheme { .. }, mods } }) => assert_eq!(mods.len(), 2),
+        other => panic!("{other:?}"),
+    }
+    // computedTints: false leaves every column without a list with just its base colour.
+    h.state_mut().session.execute("design.colors", &json!({"computedTints": false})).unwrap();
+    h.run_steps(2);
+    open_menu(&mut h, "Shape Fill");
+    assert_eq!(h.query_all_by_label("Lighter 80%").count(), 0);
+    assert_eq!(h.query_all_by_label(&format!("Navy #000061 {}", rows[0].label)).count(), 0);
+    let _ = h.get_by_label("Navy #000061");
+    let _ = h.get_by_label("Accent 5 #0D4A21");
+    pick_swatch(&mut h, "Shape Fill", "Text/Background - Dark 2");
+    assert!(fill_rgb(&h, a).is_none(), "a theme colour pick is still scheme-relative");
+}
+
+/// Open the drop-down arrow of a split button (and leave it open); a menu already open stays.
+fn open_menu(h: &mut Harness<'static, SlideApp>, button: &str) {
+    use egui_kittest::kittest::Queryable;
+    if h.query_by_label("Theme Colors").is_some() {
+        return;
+    }
+    let arrow = h.get_by_role_and_label(egui::accesskit::Role::Button, &format!("{button} options")).rect().center();
+    h.input_mut().events.push(Event::PointerMoved(arrow));
+    h.run_steps(2);
+    for pressed in [true, false] {
+        h.input_mut().events.push(Event::PointerButton { pos: arrow, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.run_steps(2);
+    }
+    h.run_steps(2);
+}
+
+/// A scheme with many extra colours makes the gallery taller than the window: it scrolls, so
+/// the last colours and the hex field stay reachable; a scrolled-to swatch still applies.
+#[test]
+fn a_long_gallery_scrolls() {
+    let (mut h, [a, _]) = harness("Home");
+    let extra: Vec<serde_json::Value> =
+        (1..=100).map(|i| json!({"name": format!("Extra {i}"), "color": format!("#{:02X}{:02X}40", i, 255 - i)})).collect();
+    h.state_mut().session.execute("design.colors", &json!({"extra": extra})).unwrap();
+    h.run_steps(2);
+    open_menu(&mut h, "Shape Fill");
+    let window = h.ctx.content_rect().bottom();
+    let last = h.get_by_label("Extra 100 #649B40").rect();
+    assert!(last.bottom() > window, "laid out, the gallery is taller than the window: {last:?}");
+    // The popup (the visible area holding the gallery) is bounded; what is laid out past it,
+    // the last colours and the hex field, is reached by scrolling.
+    let first = h.get_by_label("Theme Colors").rect();
+    let popup = h.ctx.memory(|m| {
+        m.areas().visible_layer_ids().iter().filter_map(|l| m.area_rect(l.id)).find(|r| r.contains(first.center()) && r.height() < window).unwrap()
+    });
+    assert!(popup.height() <= crate::widgets::GALLERY_MAX_HEIGHT + 16.0, "bounded: {popup:?}");
+    assert!(h.get_by_label("More Colors… #").rect().top() > popup.bottom(), "the hex field is past the visible part");
+    let view = popup.shrink(8.0);
+    let at = egui::pos2(first.center().x, first.top() + 100.0);
+    let in_view = |h: &Harness<'static, SlideApp>| view.contains_rect(h.get_by_label("Extra 100 #649B40").rect());
+    for _ in 0..200 {
+        if in_view(&h) {
+            break;
+        }
+        h.input_mut().events.push(Event::PointerMoved(at));
+        h.input_mut().events.push(Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -20.0),
+            modifiers: Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+        });
+        // Wheel scrolling is animated over a few frames: let it settle before looking.
+        h.run_steps(12);
+    }
+    assert!(in_view(&h), "scrolled into the visible part: {:?} in {view:?}", h.get_by_label("Extra 100 #649B40").rect());
+    h.get_by_label("Extra 100 #649B40").click();
+    h.run_steps(3);
+    assert_eq!(fill_rgb(&h, a).as_deref(), Some("649B40"));
+}

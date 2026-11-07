@@ -134,3 +134,107 @@ fn typing_a_hex_replaces_accent_1() {
     assert_eq!(scheme(&h).get(SchemeSlot::Accent1).hex(), "11AA22");
     assert_eq!(undo_len(&h), n + 1);
 }
+
+#[test]
+fn extra_colours_are_listed_added_and_removed() {
+    use deckcraft_color::Rgba;
+    let mut h = harness();
+    let two = vec!["#C7EBBA", "#0D4A21"];
+    h.state_mut()
+        .session
+        .execute(
+            "design.colors",
+            &serde_json::json!({"computedTints": false, "tints": {"accent5": two, "accent6": []}, "extra": [{"name": "Sand", "color": "#EBE5E0", "tints": two}, {"name": "Navy", "color": "#000061"}]}),
+        )
+        .unwrap();
+    h.run_steps(2);
+    let n = undo_len(&h);
+    open_dialog(&mut h);
+    assert_eq!(h.get_by_label("Extra colour 1 name").value().as_deref(), Some("Sand"));
+    assert_eq!(h.get_by_label("Extra colour 2 hex").value().as_deref(), Some("#000061"));
+    let save = h.get_by_label("Save").rect();
+    let win = h.get_by_label("Create New Theme Colors").rect();
+    assert!(win.contains(save.center()), "Save {save:?} is outside the dialog window {win:?}");
+    // Remove Navy, add Digital blue.
+    h.get_by_label("Remove extra colour 2").click();
+    h.run_steps(2);
+    h.get_by_label("Add colour").click();
+    h.run_steps(2);
+    {
+        let d = h.state_mut().dialog.as_mut().unwrap();
+        assert_eq!(d.fields["extraCount"], "2");
+        d.fields.insert("extra.1.name".into(), "Digital blue".into());
+        d.fields.insert("extra.1.color".into(), "#0029ED".into());
+    }
+    h.get_by_label("Save").click();
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none(), "status: {:?}", h.state().status);
+    let after = scheme(&h);
+    assert_eq!(after.extra.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), vec!["Sand", "Digital blue"]);
+    assert_eq!(after.extra[1].color, Rgba::rgb(0x00, 0x29, 0xED));
+    assert_eq!(after.extra[0].tints.as_ref().map(Vec::len), Some(2), "Sand keeps its tint rows");
+    assert_eq!(after.tints.get(&SchemeSlot::Accent5).map(Vec::len), Some(2), "slot tint rows pass through");
+    assert_eq!(after.tints.get(&SchemeSlot::Accent6).map(Vec::len), Some(0), "an empty list passes through");
+    assert!(!after.computed_tints, "the checkbox keeps the flag");
+    assert_eq!(undo_len(&h), n + 1);
+    // The checkbox turns computed rows back on.
+    open_dialog(&mut h);
+    h.get_by_label("Computed tints and shades under colours without their own rows").click();
+    h.run_steps(2);
+    h.get_by_label("Save").click();
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none(), "status: {:?}", h.state().status);
+    assert!(scheme(&h).computed_tints);
+    assert_eq!(undo_len(&h), n + 2);
+    // An extra colour without a name keeps the dialog open.
+    open_dialog(&mut h);
+    h.get_by_label("Add colour").click();
+    h.run_steps(2);
+    h.get_by_label("Save").click();
+    h.run_steps(2);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("themeColors"));
+    let status = h.state().status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    assert!(status.contains("needs a name"), "{status}");
+}
+
+/// An extra colour's explicit tint rows follow its row through a rename, and through the removal
+/// of a row above it; a row added in the dialog has none.
+#[test]
+fn renaming_or_removing_extra_colours_keeps_the_others_tint_rows() {
+    use serde_json::json;
+    let sand = vec!["#C7EBBA", "#0D4A21"];
+    let navy = vec!["#000061"];
+    let extras = json!([{"name": "Sand", "color": "#EBE5E0", "tints": sand}, {"name": "Navy", "color": "#000061", "tints": navy}]);
+    let mut h = harness();
+    h.state_mut().session.execute("design.colors", &json!({"extra": extras})).unwrap();
+    h.run_steps(2);
+    open_dialog(&mut h);
+    h.state_mut().dialog.as_mut().unwrap().fields.insert("extra.0.name".into(), "Beach".into());
+    h.get_by_label("Add colour").click();
+    h.run_steps(2);
+    {
+        let d = h.state_mut().dialog.as_mut().unwrap();
+        d.fields.insert("extra.2.name".into(), "Mint".into());
+        d.fields.insert("extra.2.color".into(), "#A0FFC0".into());
+    }
+    h.get_by_label("Save").click();
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none(), "status: {:?}", h.state().status);
+    let extra = scheme(&h).extra;
+    let rows = |e: &deckcraft_color::ExtraColor| e.tints.as_ref().map(|t| t.iter().map(|c| format!("#{}", c.hex())).collect::<Vec<_>>());
+    assert_eq!(extra.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["Beach", "Navy", "Mint"]);
+    assert_eq!(rows(&extra[0]).as_deref(), Some(&["#C7EBBA".to_string(), "#0D4A21".to_string()][..]), "renamed: rows kept");
+    assert_eq!(rows(&extra[1]).as_deref(), Some(&["#000061".to_string()][..]));
+    assert_eq!(rows(&extra[2]), None, "an added colour has no rows");
+    // Remove the first row: the second keeps its own rows, not the first's.
+    open_dialog(&mut h);
+    h.get_by_label("Remove extra colour 1").click();
+    h.run_steps(2);
+    h.get_by_label("Save").click();
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none(), "status: {:?}", h.state().status);
+    let extra = scheme(&h).extra;
+    assert_eq!(extra.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["Navy", "Mint"]);
+    assert_eq!(rows(&extra[0]).as_deref(), Some(&["#000061".to_string()][..]), "removal above: rows kept");
+    assert_eq!(rows(&extra[1]), None);
+}
