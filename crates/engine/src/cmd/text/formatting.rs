@@ -8,22 +8,34 @@ use super::{
 /// selected shapes). A caret without a range formats the word it's in (PowerPoint behaviour),
 /// or sets the formatting for what is typed next at a word boundary.
 pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sync)) -> Result<Value> {
+    format_run_levels(s, f, &|r, _| f(r))
+}
+
+/// Like [`format_run`], with a separate change for the list-style levels of a layout or master
+/// placeholder: `lf` gets the level's own run props and the level's effective ones (what a run at
+/// that level resolves to), so a relative change (grow/shrink) steps each level from its own value.
+pub(crate) fn format_run_levels(
+    s: &mut Session,
+    f: &(dyn Fn(&mut RunProps) + Send + Sync),
+    lf: &(dyn Fn(&mut RunProps, &RunProps) + Send + Sync),
+) -> Result<Value> {
     let st = s.doc()?;
     if let Some(t) = st.selection.text.clone() {
         let (a, b) = format_range(st, &t);
-        let collapsed = a == b;
+        // Only the levels of the paragraphs the selected range touches.
+        let levels = if a == b { Vec::new() } else { master_levels(st, &t, t.ordered()) };
         edit_text(s, |body, _| {
-            if collapsed {
-                // Next typed text: put the props on an empty paragraph's end mark or keep pending.
+            if levels.is_empty() {
                 ed::format(body, a, b, f);
             } else {
-                ed::format(body, a, b, f);
+                format_by_level(body, a, b, lf, &levels);
+            }
+            for (l, eff) in &levels {
+                let mut lvl = body.list_style.level(*l).cloned().unwrap_or_default();
+                lf(&mut lvl.run, eff);
+                body.list_style.set(*l, lvl);
             }
         })?;
-        if collapsed {
-            // Remember as pending typing props by inserting nothing: handled via end mark for
-            // empty paragraphs; mid-paragraph carets keep surrounding formatting.
-        }
         return ok();
     }
     let ids = st.selection.shapes.clone();
@@ -31,6 +43,19 @@ pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sy
         return Err(bad("format", SELECT_TEXT_OR_SHAPE));
     }
     let cells = st.selection.cells;
+    // Effective run props of every level of the selected placeholders, resolved before editing.
+    let effective: Vec<(ShapeId, Vec<RunProps>)> = if editing_master(st) {
+        let ctx = crate::cmd::text::ctx_for(&st.doc, &st.selection);
+        ids.iter()
+            .filter_map(|id| {
+                let sh = st.shape(*id).filter(|sh| sh.ph.is_some())?;
+                let ctx = ctx.as_ref()?;
+                Some((*id, (0..LIST_LEVELS).map(|l| deckcraft_model::resolve::level_style(ctx, sh, l).run).collect()))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
         let id = sh.id;
         match &mut sh.kind {
@@ -47,7 +72,22 @@ pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sy
             }
             _ => {
                 let body = sh.text.get_or_insert_with(TextBody::default);
-                ed::format_all(body, f);
+                let eff = effective.iter().find(|(i, _)| *i == id).map(|(_, e)| e);
+                match eff {
+                    Some(eff) => {
+                        let levels: Vec<(u8, RunProps)> = (0..LIST_LEVELS).zip(eff.iter().cloned()).collect();
+                        format_by_level(body, (0, 0), (usize::MAX, usize::MAX), lf, &levels);
+                    }
+                    None => ed::format_all(body, f),
+                }
+                // The whole shape is selected: every level of its list style.
+                if let Some(eff) = eff {
+                    for (l, eff) in (0..LIST_LEVELS).zip(eff) {
+                        let mut lvl = body.list_style.level(l).cloned().unwrap_or_default();
+                        lf(&mut lvl.run, eff);
+                        body.list_style.set(l, lvl);
+                    }
+                }
             }
         }
         Ok(())
@@ -56,6 +96,55 @@ pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sy
         fit_text_box(s, id)?;
     }
     ok()
+}
+
+/// Format the runs of [a, b) paragraph by paragraph, each with its own level's effective props, so
+/// a relative change (grow/shrink) steps every paragraph from its own size instead of one shared
+/// value. `a`/`b` are clamped to the body.
+fn format_by_level(body: &mut TextBody, a: Pos, b: Pos, lf: &(dyn Fn(&mut RunProps, &RunProps) + Send + Sync), levels: &[(u8, RunProps)]) {
+    let Some(last) = body.paragraphs.len().checked_sub(1) else { return };
+    let (first, end) = (a.0.min(last), b.0.min(last));
+    for pi in first..=end {
+        let p = &body.paragraphs[pi];
+        let from = if pi == first { a.1.min(p.char_len()) } else { 0 };
+        let to = if pi == end { b.1.min(p.char_len()) } else { p.char_len() };
+        if from == to && p.char_len() > 0 {
+            continue;
+        }
+        let lvl = p.level.min(LIST_LEVELS - 1);
+        let Some((_, eff)) = levels.iter().find(|(l, _)| *l == lvl) else { continue };
+        ed::format(body, (pi, from), (pi, to), &|r| lf(r, eff));
+    }
+}
+
+/// List-style levels (`lvl1pPr`–`lvl9pPr`) a placeholder passes on to the slides that use it.
+const LIST_LEVELS: u8 = 9;
+
+/// Formatting a placeholder on a layout or master (Slide Master view) also sets its list style,
+/// which is what the placeholders on slides inherit; its own runs may be few or none.
+fn editing_master(st: &DocState) -> bool {
+    matches!(st.selection.target, crate::Target::Layout { .. } | crate::Target::Master { .. })
+}
+
+/// The distinct list-style levels of the paragraphs `range` touches in a layout or master
+/// placeholder, with each level's effective run props. Empty anywhere else.
+fn master_levels(st: &DocState, t: &TextSel, range: (Pos, Pos)) -> Vec<(u8, RunProps)> {
+    if !editing_master(st) || t.notes || t.cell.is_some() {
+        return Vec::new();
+    }
+    let (Some(sh), Some(body), Some(ctx)) =
+        (st.shape(t.shape).filter(|sh| sh.ph.is_some()), body_of(st, t), crate::cmd::text::ctx_for(&st.doc, &st.selection))
+    else {
+        return Vec::new();
+    };
+    let mut levels: Vec<u8> =
+        body.paragraphs.iter().enumerate().filter(|(i, _)| (range.0.0..=range.1.0).contains(i)).map(|(_, p)| p.level.min(LIST_LEVELS - 1)).collect();
+    if body.paragraphs.is_empty() {
+        levels.push(0);
+    }
+    levels.sort_unstable();
+    levels.dedup();
+    levels.into_iter().map(|l| (l, deckcraft_model::resolve::level_style(&ctx, sh, l).run)).collect()
 }
 
 /// What `format_run` formats while editing: the selection, or for a bare caret the word it's in
@@ -110,6 +199,8 @@ pub(crate) fn format_para(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
     let st = s.doc()?;
     if let Some(t) = st.selection.text.clone() {
         let (a, b) = t.ordered();
+        // Only the list-style levels of the paragraphs touched, on a layout or master placeholder.
+        let levels: Vec<u8> = master_levels(st, &t, (a, b)).into_iter().map(|(l, _)| l).collect();
         edit_text(s, |body, _| {
             if body.paragraphs.is_empty() {
                 body.paragraphs.push(Default::default());
@@ -120,6 +211,9 @@ pub(crate) fn format_para(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
                     f(p);
                 }
             }
+            for l in levels {
+                format_list_level(body, l, f);
+            }
         })?;
         return ok();
     }
@@ -128,8 +222,10 @@ pub(crate) fn format_para(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
         return Err(bad("format", SELECT_TEXT_OR_SHAPE));
     }
     let cells = st.selection.cells;
+    let on_master = editing_master(st);
     edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
         let id = sh.id;
+        let inherited = on_master && sh.ph.is_some();
         match &mut sh.kind {
             ShapeKind::Table(t) => {
                 let range = crate::cmd::table::selected_range(cells, id, t);
@@ -147,6 +243,12 @@ pub(crate) fn format_para(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
                     body.paragraphs.push(Default::default());
                 }
                 body.paragraphs.iter_mut().for_each(f);
+                // The whole shape is selected: every level of its list style.
+                if inherited {
+                    for l in 0..LIST_LEVELS {
+                        format_list_level(body, l, f);
+                    }
+                }
             }
         }
         Ok(())
@@ -155,6 +257,18 @@ pub(crate) fn format_para(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
         fit_text_box(s, id)?;
     }
     ok()
+}
+
+/// Apply a paragraph change to one level of a body's list style.
+fn format_list_level(body: &mut TextBody, l: u8, f: &(dyn Fn(&mut deckcraft_model::text::Paragraph) + Send + Sync)) {
+    let mut lvl = body.list_style.level(l).cloned().unwrap_or_default();
+    let mut p = deckcraft_model::text::Paragraph { level: l, props: lvl.para, ..Default::default() };
+    f(&mut p);
+    // A level change (indent/outdent) means nothing for a list-style level.
+    if p.level == l {
+        lvl.para = p.props;
+        body.list_style.set(l, lvl);
+    }
 }
 
 /// Apply body (text box) changes to the edited or selected shapes.

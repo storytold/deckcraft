@@ -14,6 +14,7 @@ pub(super) fn align(s: &mut Session, p: &Value) -> Result<Value> {
         "justify" | "just" => Align::Justify,
         "justifyLow" | "justLow" => Align::JustLow,
         "distributed" | "dist" => Align::Distributed,
+        "thaiDist" => Align::ThaiDistributed,
         _ => Align::Left,
     };
     align_to(s, a)
@@ -45,12 +46,18 @@ pub(super) fn bullets(s: &mut Session, p: &Value) -> Result<Value> {
     format_para(s, &move |para| {
         if on {
             para.props.bullet = Some(Bullet::Char { char: ch.clone() });
-            para.props.bullet_font = if explicit_char { Some("Arial".into()) } else { para.props.bullet_font.clone() };
+            if explicit_char {
+                para.props.bullet_font = Some("Arial".into());
+                para.props.bullet_font_follow_text = None;
+            }
             if col.is_some() {
                 para.props.bullet_color = col.clone();
+                para.props.bullet_color_follow_text = None;
             }
             if size.is_some() {
                 para.props.bullet_size = size;
+                para.props.bullet_size_points = None;
+                para.props.bullet_size_follow_text = None;
             }
             if para.props.indent.is_none_or(|i| i >= 0.0) && para.props.margin_left.is_none_or(|m| m == 0.0) {
                 para.props.margin_left = Some(18.0 + 36.0 * para.level as f64);
@@ -76,9 +83,12 @@ pub(super) fn numbering(s: &mut Session, p: &Value) -> Result<Value> {
             para.props.bullet = Some(Bullet::AutoNum { scheme: scheme.clone(), start_at: start });
             if col.is_some() {
                 para.props.bullet_color = col.clone();
+                para.props.bullet_color_follow_text = None;
             }
             if size.is_some() {
                 para.props.bullet_size = size;
+                para.props.bullet_size_points = None;
+                para.props.bullet_size_follow_text = None;
             }
             para.props.margin_left = Some(27.0 + 36.0 * para.level as f64);
             para.props.indent = Some(-27.0);
@@ -177,7 +187,8 @@ fn parse_align(cmd: &str, s: &str) -> Result<Align> {
         "justify" | "just" => Align::Justify,
         "justLow" => Align::JustLow,
         "distributed" | "dist" => Align::Distributed,
-        _ => return Err(bad(cmd, "`align` must be left, center, right, justify, justLow or distributed")),
+        "thaiDist" => Align::ThaiDistributed,
+        _ => return Err(bad(cmd, "`align` must be left, center, right, justify, justLow, distributed or thaiDist")),
     })
 }
 
@@ -189,6 +200,7 @@ fn align_name(a: Align) -> &'static str {
         Align::Justify => "justify",
         Align::JustLow => "justLow",
         Align::Distributed => "distributed",
+        Align::ThaiDistributed => "thaiDist",
     }
 }
 
