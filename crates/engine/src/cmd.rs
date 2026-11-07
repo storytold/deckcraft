@@ -300,6 +300,26 @@ pub(crate) const NO_ID_SPACE: &str = "the presentation has used every object id 
 pub(crate) fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
     EngineError::BadParams { cmd: cmd.into(), msg: msg.into() }
 }
+/// The message for an index past the end of a list of `what` (slides, animations): it names the
+/// valid indices, because they count from 0 while the editor counts from 1, and an agent that
+/// passed the editor's number learns the base from this answer instead of from the user.
+pub fn out_of_range(what: &str, i: usize, n: usize) -> String {
+    match n.checked_sub(1) {
+        None => format!("no {what} at index {i}: there are no {what}s"),
+        Some(last) => format!("no {what} at index {i}; indices run 0 through {last}"),
+    }
+}
+/// [`out_of_range`] for slides, with the editor's numbering spelled out.
+pub fn no_slide_message(i: usize, n: usize) -> String {
+    let mut s = out_of_range("slide", i, n);
+    if n > 0 {
+        s.push_str(" (the editor shows index + 1)");
+    }
+    s
+}
+pub(crate) fn no_slide(cmd: &str, i: usize, n: usize) -> EngineError {
+    bad(cmd, no_slide_message(i, n))
+}
 pub(crate) fn f64_param(p: &Value, key: &str) -> Option<f64> {
     p.get(key).and_then(Value::as_f64).filter(|v| v.is_finite())
 }

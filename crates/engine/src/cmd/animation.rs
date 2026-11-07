@@ -5,9 +5,7 @@ use std::sync::Arc;
 use deckcraft_model::anim::{ANIMATIONS, AnimClass, AnimStart, Animation, TextBuild, animation_info};
 use serde_json::{Value, json};
 
-use super::{
-    CommandSpec, always, bad, bool_or, bool_param, cmd, has_selection, has_slide, id_param, ok, opt_usize_param, str_param, targets, usize_param,
-};
+use super::{CommandSpec, always, bad, bool_or, bool_param, cmd, has_selection, has_slide, id_param, ok, opt_usize_param, str_param, targets};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -30,8 +28,24 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             add
         ),
-        cmd!("animation.remove", "Remove Animation", ["Animation Pane"], None, "{index} | {ids? (all of the shapes' animations)}", has_slide, remove),
-        cmd!("animation.move", "Reorder Animation", ["Animations", "Timing"], None, "{index, to}", has_slide, move_anim),
+        cmd!(
+            "animation.remove",
+            "Remove Animation",
+            ["Animation Pane"],
+            None,
+            "{index (0-based)} | {ids? (all of the shapes' animations)}",
+            has_slide,
+            remove
+        ),
+        cmd!(
+            "animation.move",
+            "Reorder Animation",
+            ["Animations", "Timing"],
+            None,
+            "{index, to} (0-based; to is the final index)",
+            has_slide,
+            move_anim
+        ),
         cmd!(
             "animation.timing",
             "Timing",
@@ -50,7 +64,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_slide,
             options
         ),
-        cmd!("animation.clear", "Remove All Animations", [], None, "{index?: slide}", has_slide, clear),
+        cmd!("animation.clear", "Remove All Animations", [], None, "{index?: slide (0-based)}", has_slide, clear),
         cmd!(
             noundo "animation.painter",
             "Animation Painter",
@@ -343,7 +357,7 @@ fn remove(s: &mut Session, p: &Value) -> Result<Value> {
             Some(i) if i < sl.animations.len() => {
                 sl.animations.remove(i);
             }
-            Some(_) => return Err(bad("animation.remove", "no such animation")),
+            Some(i) => return Err(bad("animation.remove", super::out_of_range("animation", i, sl.animations.len()))),
             None => sl.animations.retain(|a| !ids.contains(&a.shape)),
         }
         Ok(())
@@ -353,25 +367,29 @@ fn remove(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn move_anim(s: &mut Session, p: &Value) -> Result<Value> {
     let i = opt_usize_param(p, "index", "animation.move")?.ok_or_else(|| bad("animation.move", "missing `index`"))?;
-    let to = usize_param(p, "to").ok_or_else(|| bad("animation.move", "missing `to`"))?;
+    let to = opt_usize_param(p, "to", "animation.move")?.ok_or_else(|| bad("animation.move", "missing `to`"))?;
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.move", "no slide"))?);
-        if i >= sl.animations.len() {
-            return Err(bad("animation.move", "no such animation"));
+        // `to` is the final index, so it has the same range as `index`: refused, never clamped.
+        let n = sl.animations.len();
+        if let Some(j) = [i, to].into_iter().find(|j| *j >= n) {
+            return Err(bad("animation.move", super::out_of_range("animation", j, n)));
         }
         let a = sl.animations.remove(i);
-        let to = to.min(sl.animations.len());
         sl.animations.insert(to, a);
         Ok(())
     })?;
     ok()
 }
 
-fn each_target(s: &mut Session, p: &Value, f: impl Fn(&mut Animation)) -> Result<Value> {
-    let index = opt_usize_param(p, "index", "animation")?;
+fn each_target(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Animation)) -> Result<Value> {
+    let index = opt_usize_param(p, "index", cmd)?;
     let ids = if index.is_none() { targets(s, p)? } else { vec![] };
     s.edit(|doc, sel| {
-        let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation", "no slide"))?);
+        let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad(cmd, "no slide"))?);
+        if let Some(i) = index.filter(|i| *i >= sl.animations.len()) {
+            return Err(bad(cmd, super::out_of_range("animation", i, sl.animations.len())));
+        }
         let mut n = 0;
         for (k, a) in sl.animations.iter_mut().enumerate() {
             if index == Some(k) || (index.is_none() && ids.contains(&a.shape)) {
@@ -380,7 +398,7 @@ fn each_target(s: &mut Session, p: &Value, f: impl Fn(&mut Animation)) -> Result
             }
         }
         if n == 0 {
-            return Err(bad("animation", "no animation to change (select an animated object or give `index`)"));
+            return Err(bad(cmd, "no animation to change (select an animated object or give `index`)"));
         }
         Ok(json!({"changed": n}))
     })
@@ -393,7 +411,7 @@ fn timing(s: &mut Session, p: &Value) -> Result<Value> {
     let repeat = p.get("repeat").and_then(Value::as_u64).map(|v| v.min(u32::MAX as u64) as u32);
     let rewind = bool_param(p, "rewind");
     let trigger = p.get("trigger").map(|v| v.as_u64().and_then(|x| u32::try_from(x).ok()).map(deckcraft_model::ShapeId));
-    each_target(s, p, |a| {
+    each_target(s, p, "animation.timing", |a| {
         if let Some(x) = start {
             a.start = x;
         }
@@ -424,7 +442,7 @@ fn options(s: &mut Session, p: &Value) -> Result<Value> {
         _ => TextBuild::AsOne,
     });
     let path = path_param(p, slide_extent(s)?)?;
-    each_target(s, p, |a| {
+    each_target(s, p, "animation.options", |a| {
         if let (Some(path), AnimClass::Path) = (&path, a.class) {
             a.path = Some(path.clone());
         }
@@ -450,6 +468,10 @@ fn clear(s: &mut Session, p: &Value) -> Result<Value> {
         Some(i) => i,
         None => s.doc()?.selection.slide,
     };
+    let n = s.doc()?.doc.slides.len();
+    if i >= n {
+        return Err(super::no_slide("animation.clear", i, n));
+    }
     s.edit(|doc, _| {
         if let Some(sl) = doc.slides.get_mut(i) {
             Arc::make_mut(sl).animations.clear();
@@ -465,8 +487,8 @@ fn list(_s: &mut Session, _p: &Value) -> Result<Value> {
 
 fn get(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
-    let sl = st.doc.slides.get(i).ok_or_else(|| bad("animation.get", "no such slide"))?;
+    let i = super::opt_usize_param(p, "slide", "animation.get")?.unwrap_or(st.selection.slide);
+    let sl = st.doc.slides.get(i).ok_or_else(|| super::no_slide("animation.get", i, st.doc.slides.len()))?;
     Ok(serde_json::to_value(&sl.animations).unwrap_or_default())
 }
 

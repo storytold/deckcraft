@@ -195,9 +195,20 @@ fn resolve(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
-fn list(s: &mut Session, p: &Value) -> Result<Value> {
+/// The slide `slide` names (the current one by default); a malformed one or one past the end is
+/// refused with the valid range.
+fn slide_param(s: &Session, p: &Value, cmd: &str) -> Result<usize> {
     let st = s.doc()?;
-    let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
+    let i = super::opt_usize_param(p, "slide", cmd)?.unwrap_or(st.selection.slide);
+    if i >= st.doc.slides.len() {
+        return Err(super::no_slide(cmd, i, st.doc.slides.len()));
+    }
+    Ok(i)
+}
+
+fn list(s: &mut Session, p: &Value) -> Result<Value> {
+    let i = slide_param(s, p, "comment.list")?;
+    let st = s.doc()?;
     Ok(serde_json::to_value(st.doc.slides.get(i).map(|x| x.comments.clone()).unwrap_or_default()).unwrap_or_default())
 }
 
@@ -217,10 +228,8 @@ fn comment_threads(doc: &deckcraft_model::Presentation) -> Vec<(usize, usize)> {
 /// current slide when omitted) and previous is the last thread strictly before it.
 fn neighbour(s: &mut Session, p: &Value, forward: bool) -> Result<Value> {
     let cmd = if forward { "comment.next" } else { "comment.prev" };
-    let (threads, slide, index) = {
-        let st = s.doc()?;
-        (comment_threads(&st.doc), usize_param(p, "slide").unwrap_or(st.selection.slide), super::opt_usize_param(p, "index", cmd)?)
-    };
+    let slide = slide_param(s, p, cmd)?;
+    let (threads, index) = (comment_threads(&s.doc()?.doc), super::opt_usize_param(p, "index", cmd)?);
     if threads.is_empty() {
         return Err(bad(cmd, "no comments"));
     }

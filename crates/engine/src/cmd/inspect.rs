@@ -5,7 +5,7 @@ use deckcraft_model::text::Hyperlink;
 use deckcraft_model::{Shape, ShapeKind};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, always, bad, cmd, has_doc, id_param, opt_usize_param, str_param, usize_param, xfrm_of};
+use super::{CommandSpec, always, bad, cmd, has_doc, id_param, opt_usize_param, str_param, xfrm_of};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -27,7 +27,7 @@ fn document(s: &mut Session, _p: &Value) -> Result<Value> {
         .enumerate()
         .map(|(i, sl)| {
             let layout = d.layout(sl.layout).map(|(_, l)| l.name.clone()).unwrap_or_default();
-            json!({"index": i, "id": sl.id, "title": sl.title(), "layout": layout, "shapes": sl.shapes.len(), "hidden": sl.hidden, "transition": sl.transition.as_ref().map(|t| t.kind.clone()), "animations": sl.animations.len(), "notes": sl.notes_text()})
+            json!({"index": i, "number": i + 1, "id": sl.id, "title": sl.title(), "layout": layout, "shapes": sl.shapes.len(), "hidden": sl.hidden, "transition": sl.transition.as_ref().map(|t| t.kind.clone()), "animations": sl.animations.len(), "notes": sl.notes_text()})
         })
         .collect();
     let m = d.masters.first();
@@ -113,8 +113,8 @@ fn round(v: f64) -> f64 {
 
 fn slide(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let i = usize_param(p, "index").unwrap_or(st.selection.slide);
-    let sl = st.doc.slides.get(i).ok_or_else(|| bad("slide.inspect", format!("no slide {i}")))?;
+    let i = opt_usize_param(p, "index", "slide.inspect")?.unwrap_or(st.selection.slide);
+    let sl = st.doc.slides.get(i).ok_or_else(|| super::no_slide("slide.inspect", i, st.doc.slides.len()))?;
     let ctx = Ctx::for_slide(&st.doc, sl);
     let shapes: Vec<Value> = sl.shapes.iter().map(|sh| shape_summary(ctx.as_ref(), sh, 0)).collect();
     let bg = ctx.as_ref().map(|c| match resolve::background(c, Some(sl)) {
@@ -123,6 +123,7 @@ fn slide(s: &mut Session, p: &Value) -> Result<Value> {
     });
     Ok(json!({
         "index": i,
+        "number": i + 1,
         "id": sl.id,
         "layout": st.doc.layout(sl.layout).map(|(_, l)| l.name.clone()),
         "title": sl.title(),
@@ -140,7 +141,7 @@ fn slide(s: &mut Session, p: &Value) -> Result<Value> {
 fn actions(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let i = opt_usize_param(p, "index", "slide.actions")?.unwrap_or(st.selection.slide);
-    let sl = st.doc.slides.get(i).ok_or_else(|| bad("slide.actions", format!("no slide {i}")))?;
+    let sl = st.doc.slides.get(i).ok_or_else(|| super::no_slide("slide.actions", i, st.doc.slides.len()))?;
     let mut found = Vec::new();
     for sh in &sl.shapes {
         collect_actions(sh, &mut Vec::new(), &mut found);
@@ -297,5 +298,7 @@ mod tests {
         for index in [json!(-1), json!("0"), json!(1.5)] {
             assert!(s.execute("slide.actions", &json!({"index": index})).is_err(), "{index}");
         }
+        let e = s.execute("slide.actions", &json!({"index": 5})).unwrap_err().to_string();
+        assert!(e.contains("no slide at index 5"), "{e}");
     }
 }
