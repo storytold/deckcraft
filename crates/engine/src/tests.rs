@@ -7056,3 +7056,18 @@ fn selection_highlight_is_the_range_in_order_for_the_renderer_to_shade() {
     let h = highlight(&s, &sel(table, (0, 0), (0, 5), Some((0, 0)))).expect("cell text is shaded");
     assert_eq!((h.shape, h.cell), (table, Some((0, 0))));
 }
+
+#[test]
+fn shape_adjust_and_quick_style_reject_invalid_index() {
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [100, 100, 200, 100]})).unwrap();
+    let id = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    let before = s.doc().unwrap().shape(id).unwrap().clone();
+    for bad in [json!(-1), json!(1.5)] {
+        assert!(s.execute("shape.adjust", &json!({"index": bad, "value": 0.4})).is_err(), "adjust accepted {bad}");
+        assert!(s.execute("shape.quickStyle", &json!({"index": bad})).is_err(), "quickStyle accepted {bad}");
+    }
+    assert_eq!(s.doc().unwrap().shape(id).unwrap().geom, before.geom);
+    assert_eq!(s.doc().unwrap().shape(id).unwrap().style, before.style);
+    s.execute("shape.adjust", &json!({"value": 0.4})).unwrap();
+}
