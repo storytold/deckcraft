@@ -27,7 +27,7 @@ pub(super) fn hyperlink(s: &mut Session, p: &Value) -> Result<Value> {
         zoom_return: None,
     };
     if s.doc()?.selection.text.is_some() {
-        return crate::cmd::text::link_text(s, link, &display);
+        return crate::cmd::text::link_text(s, link, use_text_color.is_none(), &display);
     }
     edit_shapes(s, p, "insert.hyperlink", |sh| {
         let mut next = link.clone();
