@@ -252,7 +252,7 @@ fn json_text(v: Option<&Value>, default: &str) -> String {
 fn color_label(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
-        Value::Object(o) => o.get("scheme").or_else(|| o.get("rgb")).and_then(Value::as_str).unwrap_or("").to_string(),
+        Value::Object(o) => ["scheme", "rgb", "preset", "last"].iter().find_map(|k| o.get(*k)).and_then(Value::as_str).unwrap_or("").to_string(),
         _ => String::new(),
     }
 }
