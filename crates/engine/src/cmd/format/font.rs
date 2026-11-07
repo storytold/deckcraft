@@ -159,10 +159,11 @@ pub(super) fn shrink(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
-    // `color: null` is Automatic: a selected SmartArt graphic goes back to its style's text colour.
+    // `color: null` is Automatic: a selected SmartArt graphic goes back to its style's text colour,
+    // and the shapes selected with it lose their text colour too, as Automatic does in PowerPoint.
     if p.get("color").is_some_and(Value::is_null) {
         let automatic = |s: &mut Session, gid| crate::cmd::smartart::clear_text_color(s, gid, "format.color");
-        return on_graphics(s, automatic, |_| Ok(Value::Null))
+        return on_graphics(s, automatic, automatic_rest)
             .unwrap_or_else(|| Err(bad("format.color", "missing or invalid `color` (null is Automatic, for a SmartArt graphic)")));
     }
     let c = color_param(p, "color").ok_or_else(|| bad("format.color", "missing or invalid `color`"))?;
@@ -195,6 +196,28 @@ pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     format_run(s, &move |r| r.fill = Some(Fill::solid(c.clone())))
+}
+
+/// Automatic for the shapes selected with a SmartArt graphic: a chart's text and the other shapes'
+/// runs lose their colour and show the one they inherit.
+fn automatic_rest(s: &mut Session) -> Result<Value> {
+    let st = s.doc()?;
+    let charts: Vec<ShapeId> =
+        st.selection.shapes.iter().copied().filter(|id| matches!(st.shape(*id).map(|sh| &sh.kind), Some(ShapeKind::Chart(_)))).collect();
+    let only_charts = charts.len() == st.selection.shapes.len();
+    if !charts.is_empty() {
+        edit_shapes(s, &json!({"ids": charts}), "format.color", |sh| {
+            if let ShapeKind::Chart(ch) = &mut sh.kind {
+                ch.text_color = None;
+                ch.raw = None;
+            }
+            Ok(())
+        })?;
+        if only_charts {
+            return ok();
+        }
+    }
+    format_run(s, &|r| r.fill = None)
 }
 
 /// `a:alpha` for `transparency` (0–1) on `c`, replacing any alpha it had; fully opaque drops it.

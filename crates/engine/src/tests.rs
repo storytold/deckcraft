@@ -7872,9 +7872,27 @@ fn format_color_null_on_a_selected_smartart_graphic_is_automatic() {
             for p in &t.paragraphs {
                 assert_ne!(p.end_props.fill, green, "imported={imported}: the end mark loses the colour");
                 assert!(p.runs.iter().all(|r| r.props.fill != green), "imported={imported}");
+                if imported {
+                    assert!(p.end_props.fill.is_none() && p.runs.iter().all(|r| r.props.fill.is_none()), "imported: no fill is left");
+                }
             }
         }
     }
+    // The shapes selected with the graphic lose their text colour too, as Automatic does in
+    // PowerPoint: a text box's runs and a chart's text.
+    let mut s = session();
+    let g = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 400, 200, 60], "text": "Note"})).unwrap()["id"].as_u64().unwrap();
+    let c = s.execute("insert.chart", &json!({"type": "column", "title": "Sales"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [g, b, c]})).unwrap();
+    s.execute("format.color", &json!({"color": "#00AA00"})).unwrap();
+    s.execute("format.color", &json!({"color": null})).unwrap();
+    assert_eq!(smartart_diagram(&s, ShapeId(g as u32)).text_color, None);
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection.shapes, vec![ShapeId(g as u32), ShapeId(b as u32), ShapeId(c as u32)], "the selection is as it was");
+    let body = st.shape(ShapeId(b as u32)).unwrap().text.as_ref().unwrap();
+    assert!(body.paragraphs.iter().all(|p| p.runs.iter().all(|r| r.props.fill.is_none())), "the text box is Automatic: {body:?}");
+    assert_eq!(chart_of(&s, c).text_color, None, "the chart's text is Automatic");
     let mut s = session();
     let b = s.execute("insert.textBox", &json!({"text": "x"})).unwrap()["id"].as_u64().unwrap();
     s.execute("edit.select", &json!({"ids": [b]})).unwrap();
