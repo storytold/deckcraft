@@ -40,7 +40,9 @@ Two paths, both supported:
    `manifest.json` provenance sidecar is written beside the files when the set is complete.
 2. **By hand.** Put `model.safetensors`, `config.json` and `tokenizer.json` in a `whisper-tiny`
    folder, or point the app at the folder with **Choose Files…** (pick any of the three). The
-   folder is checked again with **Check Again**.
+   folder is checked again with **Check Again**. A folder chosen this way is used for the current
+   session only: discovery searches the roots below again after a restart, so copy the three files
+   into one of those roots to keep the model installed.
 
 The model directory is resolved first hit wins, the same shape as the other Craft apps:
 
@@ -52,9 +54,11 @@ models/whisper-tiny/                        (beside the executable)
 models/whisper-tiny/                        (in the source tree, for development)
 ```
 
-A missing, incomplete or hash-mismatched model disables the ribbon entry with an explanation; the
-show itself is never blocked and never panics. The app makes no network call at start-up, on file
-open or when a pane opens.
+A missing or incomplete set disables the ribbon entry with an explanation; the show itself is
+never blocked and never panics. Discovery and show start check that the three files are present,
+not their size or SHA-256, so a file placed by hand can still enable the entry while its contents
+are wrong; the full check runs on download and when a folder is chosen with **Choose Files…**. The
+app makes no network call at start-up, on file open or when a pane opens.
 
 ## Settings
 
@@ -119,16 +123,22 @@ library, so a machine with OpenVINO installed but no backend behaves exactly lik
   downmix and resampler). After every 0.5 s of new audio it encodes that window and decodes
   greedily with no timestamps, so a partial appears as fast as a decode finishes (2–3 s in the
   quiet measurement below; the capture queue holds up to 60 s so nothing is lost while it runs).
-  A line becomes final after ~0.9 s without speech.
-- The UI thread never waits: `crates/ui-egui/src/subtitles.rs` polls the channel once a frame, the
-  show draws the caption after the slide (above its media controls, below the pen and the bars),
-  and asks egui for a repaint every 120 ms while the stream is running.
+  A line becomes final after ~0.9 s without speech; the window then starts fresh, and while no
+  speech has been heard since the last final line the worker keeps only the newest second instead
+  of re-decoding the same audio.
+- The UI thread does not wait for inference while captions run: `crates/ui-egui/src/subtitles.rs`
+  polls the channel once a frame, the show draws the caption after the slide (above its media
+  controls, below the pen and the bars), and asks egui for a repaint every 120 ms while the stream
+  is running or a download is in progress. Stopping does wait: `stop` joins the worker, so ending
+  the show or turning subtitles off can block the UI thread for as long as the decode already in
+  flight (2–3 s on an idle machine, up to 27 s on a loaded one, per the measurements below).
 - Captions survive slide changes; they are covered by a blank screen and by See All Slides; they
   end with the show. Ending the show, turning subtitles off, or losing the microphone stops the
   provider, joins its thread and releases the model and the device.
 - A provider that fails after starting (the microphone is unplugged, the model file is damaged)
-  reports once in the status bar and is not restarted until the settings change. The show keeps
-  running.
+  reports once in the status bar and is not restarted until the settings change or the next show
+  starts. The same holds for a start that fails: it is reported once per show, not once per frame.
+  The show keeps running.
 - The browser build has no provider (no microphone capture, no 153 MB model): the settings and the
   caption overlay compile, and the ribbon entry is disabled with an explanation.
 

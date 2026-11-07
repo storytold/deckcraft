@@ -116,3 +116,41 @@ fn the_fake_provider_reports_lines_through_the_host() {
     fake.stop();
     assert!(fake.poll().is_empty());
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+fn missing_model_dir() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("deckcraft-subtitles-restart-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_second_show_starts_again_after_the_first_one_ended() {
+    let settings = on(SubtitleSettings::default());
+    let mut subs = Subtitles::default();
+    subs.set_model_dir(missing_model_dir());
+    let first = subs.sync(&settings, true).expect("a missing model is reported");
+    assert!(first.contains("not installed"), "{first}");
+    subs.sync(&settings, false);
+    // Ending a show must not remember that captions "already started": the next one tries again.
+    let second = subs.sync(&settings, true).expect("the next show reports again");
+    assert!(second.contains("not installed"), "{second}");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_settings_change_restarts_a_running_stream() {
+    let settings = on(SubtitleSettings::default());
+    let mut subs = Subtitles::default();
+    subs.set_model_dir(missing_model_dir());
+    subs.install(Box::new(FakeTranscriber::scripted(&["one"])), &settings);
+    subs.sync(&settings, true);
+    assert!(subs.is_running());
+    // The model vanished after the provider started; a spoken-language change must still stop the
+    // old stream and attempt the new settings instead of keeping the stale provider.
+    let changed = on(SubtitleSettings { spoken: "es".into(), ..settings.clone() });
+    let message = subs.sync(&changed, true).expect("the restart is reported");
+    assert!(message.contains("not installed"), "{message}");
+    assert!(!subs.is_running(), "the provider started with the old settings was stopped");
+}

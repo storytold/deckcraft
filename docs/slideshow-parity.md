@@ -5,7 +5,7 @@
 Presenting is the job PowerPoint is hired for. This doc covers the show window, presenter view,
 rehearsal and recording. Transition and animation playback are in
 [animation-parity.md](animation-parity.md); display hardware in
-[hardware-parity.md](hardware-parity.md). Area score: checklist breadth **68%** (measured), **~60%
+[hardware-parity.md](hardware-parity.md). Area score: checklist breadth **67%** (measured), **~60%
 ready** (estimated), **10–16 h** to parity.
 
 ## Running the show

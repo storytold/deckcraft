@@ -96,7 +96,9 @@ impl Transcriber for WhisperTranscriber {
         let manifest = whisper_tiny();
         let found = model::check_dir_files(&self.model_dir, &manifest);
         if found.state != ModelState::Ready {
-            let message = format!("{} ({})", found.summary(), self.model_dir.display());
+            // Name the model and the folder: the status bar shows this, and "not installed" on
+            // its own does not say which model or where it was looked for.
+            let message = format!("{}: {} ({})", found.summary(), manifest.id, self.model_dir.display());
             self.set_status(ProviderStatus::failed(message.clone()));
             return Err(AsrError::new(message));
         }
@@ -210,6 +212,17 @@ fn run(model_dir: PathBuf, settings: SubtitleSettings, stop: Arc<AtomicBool>, st
         if new_samples < MIN_NEW_SAMPLES || ring.len() < MIN_WINDOW_SAMPLES {
             continue;
         }
+        // Nothing has been said since the last final line: the window holds only silence, and a
+        // decode could only repeat text that has already been shown. Keep the newest second so
+        // the next decode starts near the speech instead of over 30 s of silence.
+        if is_idle(pending.as_deref(), last_voice) {
+            if ring.len() > MIN_WINDOW_SAMPLES {
+                let cut = ring.len() - MIN_WINDOW_SAMPLES;
+                ring.drain(..cut);
+            }
+            new_samples = 0;
+            continue;
+        }
         new_samples = 0;
         match engine.transcribe(&ring, hint.as_deref()) {
             Ok(text) if !text.is_empty() => {
@@ -225,11 +238,21 @@ fn run(model_dir: PathBuf, settings: SubtitleSettings, stop: Arc<AtomicBool>, st
             && let Some(text) = pending.take()
         {
             let _ = tx.send(Event::final_line(text));
+            // The finalized speech is in the window: drop it, so the next partial covers only
+            // what has been said since instead of sending the same line again.
+            ring.clear();
+            new_samples = 0;
         }
     }
     if let Ok(mut s) = status.lock() {
         *s = ProviderStatus::stopped();
     }
+}
+
+/// Whether the window only holds silence since the last final line, so another decode would
+/// repeat text that has already been shown.
+fn is_idle(pending: Option<&str>, last_voice: Instant) -> bool {
+    pending.is_none() && last_voice.elapsed() >= FINAL_AFTER
 }
 
 /// Add a captured chunk (converted to 16 kHz mono) to the ring, remembering when speech was last
@@ -303,5 +326,14 @@ mod tests {
         assert_eq!(rms(&[]), 0.0);
         assert_eq!(rms(&[0.0; 100]), 0.0);
         assert!((rms(&[0.5, -0.5]) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn silence_after_a_final_line_does_not_decode_again() {
+        let quiet_for_a_while = Instant::now() - FINAL_AFTER - Duration::from_millis(1);
+        assert!(is_idle(None, quiet_for_a_while), "silence with nothing pending would only repeat the last line");
+        assert!(is_idle(None, Instant::now() - FINAL_AFTER), "the final line has just gone out");
+        assert!(!is_idle(Some("still pending"), quiet_for_a_while), "a pending line still has to be finalized");
+        assert!(!is_idle(None, Instant::now()), "speech heard now keeps the decoder running");
     }
 }

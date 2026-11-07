@@ -270,8 +270,8 @@ pub fn check_dir(dir: &Path, manifest: &ModelManifest) -> ModelStatus {
     check_impl(dir, manifest, true)
 }
 
-/// Check a model directory without hashing: presence and size only, cheap enough for a UI
-/// frame or a show start. The hash is checked when a model is installed or downloaded.
+/// Check a model directory without hashing: presence only, cheap enough for a UI frame or a
+/// show start. The hash and the size are checked when a model is installed or downloaded.
 pub fn check_dir_files(dir: &Path, manifest: &ModelManifest) -> ModelStatus {
     check_impl(dir, manifest, false)
 }
@@ -305,7 +305,7 @@ pub fn discover(roots: &ModelRoots, manifest: &ModelManifest) -> (ModelStatus, P
     discover_with(roots, manifest, check_dir)
 }
 
-/// Find the model among `roots` by presence and size only.
+/// Find the model among `roots` by presence only.
 pub fn discover_files(roots: &ModelRoots, manifest: &ModelManifest) -> (ModelStatus, PathBuf) {
     discover_with(roots, manifest, check_dir_files)
 }

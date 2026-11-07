@@ -162,11 +162,14 @@ impl Subtitles {
         }
     }
 
+    /// Install a provider as the start path would: `start` runs, the applied settings are
+    /// recorded, and the status is the provider's own.
     #[cfg(test)]
-    pub(crate) fn install(&mut self, provider: Box<dyn Transcriber>, settings: &SubtitleSettings) {
+    pub(crate) fn install(&mut self, mut provider: Box<dyn Transcriber>, settings: &SubtitleSettings) {
+        let _ = provider.start();
+        self.status = provider.status();
         self.provider = Some(provider);
         self.applied = Some(settings.clone());
-        self.status = self.provider.as_ref().map(|p| p.status()).unwrap_or_default();
     }
 
     #[cfg(test)]
@@ -229,8 +232,11 @@ impl Subtitles {
         if !(settings.on && show_active) {
             self.stop();
             self.caption = None;
+            // The stream is not wanted. Forget what it was started with, so the next show
+            // starts from the settings then in force, and a failed start is retried there
+            // rather than every frame of this one.
+            self.applied = None;
             if !settings.on {
-                self.applied = None;
                 if self.status.state != ProviderState::Idle {
                     self.status = ProviderStatus::idle();
                 }
@@ -239,7 +245,11 @@ impl Subtitles {
             }
             return None;
         }
-        if self.provider.is_none() && self.applied.as_ref().is_none_or(|applied| !applied.provider_equivalent(settings)) {
+        // Start when there is no provider, and restart when the settings changed while one ran:
+        // `applied` is set before starting, so a failure is not retried until they change again.
+        let applied = self.applied.as_ref().is_some_and(|applied| applied.provider_equivalent(settings));
+        if !applied {
+            self.stop();
             self.applied = Some(settings.clone());
             if let Some(message) = self.start(settings) {
                 return Some(message);
@@ -315,8 +325,8 @@ impl SlideApp {
             self.set_status(text);
         }
         let status = self.subtitles.status();
-        if status.state.is_active() {
-            // Partial lines must appear without waiting for the pointer.
+        if status.state.is_active() || self.subtitles.download.is_some() {
+            // Partial lines and download progress must appear without waiting for the pointer.
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
         self.session.subtitle_status = status;

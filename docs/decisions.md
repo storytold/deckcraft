@@ -10,9 +10,9 @@ the whole batch shares is in the maintainer's `MODEL-POLICY.md`.
 
 **Chosen: `openai/whisper-tiny` run by `candle-transformers` on the CPU.**
 
-- Offline and permissive. Whisper's weights are MIT; candle, tokenizers and cpal are
-  `MIT OR Apache-2.0`, all inside the shared licence allowlist. No cloud service, no account, no
-  network call during inference.
+- Offline and permissive. Whisper's weights are MIT; candle is `MIT OR Apache-2.0`; tokenizers and
+  cpal are Apache-2.0. All are inside the shared licence allowlist. No cloud service, no account,
+  no network call during inference.
 - Pure Rust, no `unsafe`. A binding to whisper.cpp would drag C/C++ and an FFI boundary into a
   workspace that forbids `unsafe`; candle is Rust and the workspace lints hold.
 - Small enough to download on a laptop: 153.5 MB, 151 MB of it weights. `whisper-large-v3-turbo`,
@@ -42,8 +42,10 @@ Following the shared policy:
   licence and hashes, then HTTPS through the desktop host's `ureq` hook) or places them by hand in
   the documented directory. Both paths are supported; the dialog shows the folder either way.
 - Files are written beside their final name, checked against the size and SHA-256, and only then
-  renamed, so an interrupted download never looks installed. A missing, incomplete or mismatched
-  model disables the feature with an explanation and never blocks the show.
+  renamed, so an interrupted download never looks installed. A missing or incomplete model
+  disables the feature with an explanation and never blocks the show; a hand-placed file whose
+  contents are wrong is caught by the full check on download and on **Choose Files…**, not by the
+  presence check that discovery and show start use.
 - No network at start-up, on file open, on pane open, or during inference.
 
 Model directories are resolved first hit wins: `$DECKCRAFT_MODELS`, the platform config directory
@@ -69,9 +71,10 @@ host-reported `Session::subtitle_status`. Consequences:
 - One implementation for macOS, Windows, Linux and the BSDs (cpal, candle); the browser builds the
   settings and the overlay but no provider, so the ribbon entry is disabled there with an
   explanation.
-- The UI thread never waits for inference: the provider runs on its own thread and the overlay
-  polls a channel once per frame. Starting a show does not stall the first frame beyond building
-  the provider, and stopping joins the worker so no thread or microphone is left behind.
+- The UI thread does not wait for inference while captions run: the provider runs on its own
+  thread and the overlay polls a channel once per frame. Starting a show does not stall the first
+  frame beyond building the provider; stopping joins the worker so no thread or microphone is left
+  behind, which means a stop can wait for the decode already in flight.
 - `show.subtitles` and `show.subtitles.state` are ordinary engine commands, so the control channel,
   the CLI and MCP drive the same settings as the ribbon and the dialog.
 

@@ -112,7 +112,8 @@ pub const DEFAULT_MARGIN: f64 = 18.0;
 pub const DEFAULT_WIDTH_FRACTION: f64 = 0.9;
 /// Longest text a single layout considers; a transcript line longer than this is truncated.
 pub const MAX_TEXT_CHARS: usize = 640;
-/// Average glyph advance as a fraction of the font size, for wrapping without a font.
+/// Average glyph advance as a fraction of the font size, for wrapping without a font. This is
+/// one wrapping unit: [wrap] charges an average Latin glyph one unit and a wide one two.
 pub const ADVANCE_RATIO: f64 = 0.52;
 
 /// What to lay out.
@@ -191,6 +192,7 @@ pub fn layout(input: &LayoutInput) -> CaptionLayout {
         return out;
     }
     let advance = (font_pt * ADVANCE_RATIO).max(1.0);
+    // A line's capacity in wrapping units, so a wide glyph takes the room of two average ones.
     let per_line = ((usable / advance).floor() as usize).clamp(1, MAX_TEXT_CHARS);
     let (lines, clipped) = wrap(input.text, per_line, max_lines);
     out.clipped = clipped;
@@ -240,9 +242,11 @@ fn fit_axis(y: f64, h: f64, lo: f64, hi: f64) -> Option<f64> {
     (y >= lo && y + h <= hi).then_some(y)
 }
 
-/// Wrap `text` to at most `per_line` characters and `max_lines` lines. Words are kept whole
+/// Wrap `text` to at most `per_line` wrapping units and `max_lines` lines. Words are kept whole
 /// where they fit; a word longer than a line is split. Returns the lines and whether anything
 /// was dropped, along with a flag cut off by the line cap.
+///
+/// A unit is one average Latin advance ([`ADVANCE_RATIO`] em); see [`glyph_units`].
 pub fn wrap(text: &str, per_line: usize, max_lines: usize) -> (Vec<String>, bool) {
     let per_line = per_line.clamp(1, MAX_TEXT_CHARS);
     let max_lines = max_lines.clamp(1, MAX_LINES_CAP);
@@ -256,7 +260,7 @@ pub fn wrap(text: &str, per_line: usize, max_lines: usize) -> (Vec<String>, bool
             break;
         }
         let sep = usize::from(!current.is_empty());
-        if current.chars().count() + sep + word.chars().count() <= per_line {
+        if units_of(&current) + sep + units_of(word) <= per_line {
             if sep == 1 {
                 current.push(' ');
             }
@@ -266,10 +270,10 @@ pub fn wrap(text: &str, per_line: usize, max_lines: usize) -> (Vec<String>, bool
         if !current.is_empty() {
             if lines.len() + 1 >= max_lines {
                 // This is the last line: keep what fits of the word and drop the rest.
-                let room = per_line.saturating_sub(current.chars().count() + 1);
+                let room = per_line.saturating_sub(units_of(&current) + 1);
                 if room > 0 {
                     current.push(' ');
-                    current.extend(word.chars().take(room));
+                    current.push_str(take_units(word, room));
                 }
                 lines.push(std::mem::take(&mut current));
                 return (lines, true);
@@ -278,15 +282,15 @@ pub fn wrap(text: &str, per_line: usize, max_lines: usize) -> (Vec<String>, bool
         }
         let mut rest: &str = word;
         loop {
-            if rest.chars().count() <= per_line {
+            if units_of(rest) <= per_line {
                 current.push_str(rest);
                 break;
             }
             if lines.len() + 1 >= max_lines {
-                lines.push(rest.chars().take(per_line).collect());
+                lines.push(take_units(rest, per_line).to_string());
                 return (lines, true);
             }
-            let cut = char_cut(rest, per_line);
+            let cut = units_cut(rest, per_line);
             lines.push(rest.get(..cut).unwrap_or_default().to_string());
             rest = rest.get(cut..).unwrap_or_default();
         }
@@ -301,9 +305,59 @@ pub fn wrap(text: &str, per_line: usize, max_lines: usize) -> (Vec<String>, bool
     (lines, clipped)
 }
 
-/// The byte index after the `n`th character of `s` (or its end).
-fn char_cut(s: &str, n: usize) -> usize {
-    s.char_indices().nth(n).map(|(i, _)| i).unwrap_or(s.len())
+/// The wrapping cost of one character in units of [`ADVANCE_RATIO`] em: an East Asian wide
+/// character or an emoji occupies about one em, everything else about half an em.
+fn glyph_units(c: char) -> usize {
+    if is_wide(c) { 2 } else { 1 }
+}
+
+/// The wrapping cost of `s`; see [`glyph_units`].
+fn units_of(s: &str) -> usize {
+    s.chars().map(glyph_units).sum()
+}
+
+/// Whether `c` is drawn about two average Latin advances wide: the East Asian wide and
+/// fullwidth blocks (CJK ideographs, kana, Hangul, their punctuation) and emoji.
+fn is_wide(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x1100..=0x115F
+            | 0x2E80..=0x303E
+            | 0x3041..=0x33FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xA000..=0xA4CF
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+            | 0xFE10..=0xFE19
+            | 0xFE30..=0xFE6F
+            | 0xFF00..=0xFF60
+            | 0xFFE0..=0xFFE6
+            | 0x1F300..=0x1F64F
+            | 0x1F900..=0x1F9FF
+            | 0x20000..=0x3FFFD
+    )
+}
+
+/// The longest prefix of `s` that costs at most `units`; at least one character.
+fn take_units(s: &str, units: usize) -> &str {
+    s.get(..units_cut(s, units)).unwrap_or_default()
+}
+
+/// The byte index after the longest prefix of `s` that costs at most `units`; at least one
+/// character, so a single glyph wider than the line still advances.
+fn units_cut(s: &str, units: usize) -> usize {
+    let mut used = 0;
+    let mut at_least_one = false;
+    for (i, c) in s.char_indices() {
+        let cost = glyph_units(c);
+        if at_least_one && used + cost > units {
+            return i;
+        }
+        used += cost;
+        at_least_one = true;
+    }
+    s.len()
 }
 
 #[cfg(test)]
@@ -381,6 +435,31 @@ mod tests {
         assert_eq!(wrap("a b c d", 5, 2), (vec!["a b c".to_string(), "d".to_string()], false));
         assert_eq!(wrap("   ", 10, 2), (vec![], false));
         assert!(wrap(&"x".repeat(MAX_TEXT_CHARS + 10), 4, 2).1, "an overlong line is clipped");
+    }
+
+    #[test]
+    fn wide_characters_take_two_wrapping_units() {
+        assert_eq!(wrap("中文字", 6, 1), (vec!["中文字".to_string()], false));
+        assert_eq!(wrap("中文字", 5, 2), (vec!["中文".to_string(), "字".to_string()], false));
+        assert_eq!(wrap("字字字", 1, 2), (vec!["字".to_string(), "字".to_string()], true), "a glyph wider than the line still advances");
+        assert_eq!(units_of("abc"), 3);
+        assert_eq!(units_of("日本"), 4);
+    }
+
+    #[test]
+    fn a_cjk_caption_stays_inside_its_box() {
+        let (screen, slide) = screen_slide();
+        let text = "字幕测试这是一段非常长的中文文本用于检查换行是否超出字幕边框".repeat(8);
+        let mut input = LayoutInput::new(screen, slide, Position::BottomOverlay, &text);
+        input.max_lines = 3;
+        let l = layout(&input);
+        assert_eq!(l.lines.len(), 3, "{:?}", l.lines);
+        assert!(l.clipped, "the rest of the text does not fit");
+        let advance = l.font_pt * ADVANCE_RATIO;
+        for line in &l.lines {
+            let estimated = units_of(line) as f64 * advance;
+            assert!(estimated <= l.rect.w + 1e-9, "{line:?} estimates {estimated} wide, the box is {}", l.rect.w);
+        }
     }
 
     #[test]

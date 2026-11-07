@@ -172,7 +172,9 @@ fn window(audio: &[f32]) -> Vec<f32> {
     let mut pcm = vec![0.0f32; N_SAMPLES];
     let tail = &audio[audio.len().saturating_sub(N_SAMPLES)..];
     for (slot, sample) in pcm.iter_mut().zip(tail) {
-        *slot = if sample.is_finite() { sample.clamp(-1.0, 1.0) } else { 0.0 };
+        // A NaN has no amplitude, so it becomes silence; an infinity is clamped like any other
+        // out-of-range sample.
+        *slot = if sample.is_nan() { 0.0 } else { sample.clamp(-1.0, 1.0) };
     }
     pcm
 }

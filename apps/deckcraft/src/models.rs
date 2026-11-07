@@ -31,6 +31,20 @@ pub fn download(manifest: &ModelManifest, dir: &Path, progress: &mut dyn FnMut(u
     Ok(())
 }
 
+/// The HTTP agent for model downloads: a stalled host fails instead of blocking the download
+/// thread forever, while the body budget stays generous for 151 MB on a slow link.
+fn download_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_connect(Some(std::time::Duration::from_secs(20)))
+        .timeout_recv_response(Some(std::time::Duration::from_secs(60)))
+        // Each read resets; this is the stall guard in the middle of a body.
+        .timeout_per_read(Some(std::time::Duration::from_secs(60)))
+        // The whole body, which is not reset by reads.
+        .timeout_recv_body(Some(std::time::Duration::from_secs(60 * 60)))
+        .build()
+        .into()
+}
+
 fn fetch(file: &ModelFile, dir: &Path, total: u64, done: &mut u64, progress: &mut dyn FnMut(u64, u64)) -> Result<(), String> {
     let name = file.safe_name().ok_or_else(|| format!("the manifest names an unsafe file: {}", file.name))?;
     let part = dir.join(format!("{name}.part"));
@@ -39,7 +53,7 @@ fn fetch(file: &ModelFile, dir: &Path, total: u64, done: &mut u64, progress: &mu
         let _ = std::fs::remove_file(&part);
         why
     };
-    let mut response = ureq::get(&file.url).call().map_err(|e| clean_up(format!("{name}: {e}")))?;
+    let mut response = download_agent().get(&file.url).call().map_err(|e| clean_up(format!("{name}: {e}")))?;
     if !response.status().is_success() {
         return Err(clean_up(format!("{name}: the server answered {}", response.status())));
     }

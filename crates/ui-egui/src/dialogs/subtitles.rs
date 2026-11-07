@@ -161,7 +161,12 @@ fn model_block(app: &mut SlideApp, ui: &mut Ui) {
     ui.hyperlink_to("Model card and licence", &manifest.license_url);
     let colour = if status.state == ModelState::Ready { theme::Tokens::get(ui.ctx()).text } else { Color32::from_rgb(0xB0, 0x60, 0x10) };
     ui.label(egui::RichText::new(status.summary()).color(colour));
-    ui.label(format!("Folder: {}", app.subtitles.model_dir.display()));
+    let can_download = app.services.download_model.is_some();
+    let can_pick = app.services.pick_open.is_some();
+    let folder = !app.subtitles.model_dir.as_os_str().is_empty();
+    if folder {
+        ui.label(format!("Folder: {}", app.subtitles.model_dir.display()));
+    }
     if let Some(job) = &app.subtitles.download {
         let fraction = if job.total == 0 { 0.0 } else { job.done as f32 / job.total as f32 };
         ui.add(egui::ProgressBar::new(fraction.clamp(0.0, 1.0)).text(format!("{} of {}", size_label(job.done), size_label(job.total))));
@@ -178,7 +183,7 @@ fn model_block(app: &mut SlideApp, ui: &mut Ui) {
         {
             app.subtitles.begin_download(hook);
         }
-        if ui.add_enabled(!busy, egui::Button::new("Choose Files…")).clicked()
+        if ui.add_enabled(!busy && can_pick, egui::Button::new("Choose Files…")).clicked()
             && let Some(pick) = app.services.pick_open.as_mut()
             && let Some(path) = pick("model")
         {
@@ -192,7 +197,11 @@ fn model_block(app: &mut SlideApp, ui: &mut Ui) {
             app.subtitles.refresh();
         }
     });
-    if app.services.download_model.is_none() {
-        ui.label("Downloading is not available here; place the files in the folder above.");
+    if !can_download {
+        if folder {
+            ui.label("Downloading is not available here; place the files in the folder above.");
+        } else if !can_pick {
+            ui.label("Subtitles are not available here: this host can neither download the model nor open a file picker.");
+        }
     }
 }
