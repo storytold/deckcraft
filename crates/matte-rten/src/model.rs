@@ -84,6 +84,11 @@ pub fn install_from(source: &Path, root: &Path) -> Result<PathBuf, String> {
         return Err(format!("{} is not a file", source.display()));
     }
     let size = std::fs::metadata(source).map_err(|e| format!("cannot read {}: {e}", source.display()))?.len();
+    // Reject the size before hashing: a user who picks a multi-GB video must not pay for reading
+    // every byte of it just to be told it is the wrong file.
+    if size != manifest::MANIFEST.bytes {
+        return Err(format!("the model is {} bytes, {} is {size}", manifest::MANIFEST.bytes, source.display()));
+    }
     manifest::MANIFEST.verify(size, &manifest::sha256_file(source).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let target = manifest::MANIFEST.path_in(root);
     let dir = target.parent().ok_or_else(|| format!("{} has no parent", target.display()))?;

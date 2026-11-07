@@ -236,7 +236,9 @@ mod tests {
     fn an_unavailable_segmenter_reports_its_reason() {
         let w = MatteWorker::new(Box::new(deckcraft_matte::NoSegmenter::default()), Duration::from_millis(0));
         let f = frame();
-        assert!(w.process(&f, &CompositeOptions::new(CameraBackgroundMode::Blur), None, true).expect("first").is_none());
+        // The first call returns `None` or the worker's error, depending on whether the worker has
+        // already failed it: both are valid for the caller, so the assertion is on the error below.
+        let _ = w.process(&f, &CompositeOptions::new(CameraBackgroundMode::Blur), None, true);
         let mut error = None;
         for _ in 0..200 {
             error = w.error();

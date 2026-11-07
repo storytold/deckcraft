@@ -62,9 +62,16 @@ pub(super) fn background_section(app: &mut SlideApp, ui: &mut Ui) {
 /// is local), and send it inline so the picture and the mode are one undo step.
 fn choose_replacement(app: &mut SlideApp) {
     let Some(path) = app.services.pick_open.as_mut().and_then(|pick| pick("picture")) else { return };
-    let Some(bytes) = app.services.read.as_mut().and_then(|read| read(&path).ok()) else {
-        app.set_status(format!("Cannot read {path}"));
+    let Some(read) = app.services.read.as_ref() else {
+        app.set_status("This build cannot read files: the host has no file reader".to_string());
         return;
+    };
+    let bytes = match read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            app.set_status(format!("Cannot read {path}: {e}"));
+            return;
+        }
     };
     let ids = cameo_ids(app);
     let data = deckcraft_engine::cmd::base64_encode(&bytes);
@@ -122,7 +129,10 @@ fn model_panel(app: &mut SlideApp, ui: &mut Ui, state: Option<ModelState>) {
                 ui.label(format!("Install directory: {root}"));
             });
             let download = ui.add_enabled(true, egui::Button::new("Download Model…"));
-            if download.on_hover_text("Downloads 191.9 MB after this click; nothing is fetched at startup").clicked() {
+            if download
+                .on_hover_text(format!("Downloads {:.1} MB after this click; nothing is fetched at startup", *bytes as f64 / 1_000_000.0))
+                .clicked()
+            {
                 match app.matte.as_mut().map(|m| m.start_download()) {
                     Some(Ok(())) => app.set_status("Downloading the background model…"),
                     Some(Err(e)) => app.set_status(e),

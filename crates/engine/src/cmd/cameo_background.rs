@@ -27,18 +27,6 @@ pub const DEFAULT_SIZE: f64 = 162.0;
 /// Gap between the cameo and the slide's right and bottom edges.
 pub const DEFAULT_MARGIN: f64 = 6.5;
 
-/// Enabled state: a Cameo must be selected. The Camera Format tab stays up for a mixed
-/// selection; one Cameo in it is enough for a background command to know its target.
-pub fn has_cameo(s: &Session) -> std::result::Result<(), String> {
-    super::has_doc(s)?;
-    let doc = s.active().ok_or_else(|| "no presentation open".to_string())?;
-    let shapes = doc.selected_shapes();
-    if shapes.is_empty() {
-        return Err(super::NOTHING_SELECTED.to_string());
-    }
-    if shapes.iter().any(|sh| sh.is_cameo()) { Ok(()) } else { Err("no Cameo selected".into()) }
-}
-
 /// Our own cameo placeholder: a camera body and lens drawn as an SVG, no vendor artwork. It is
 /// embedded as the picture's image, so PowerPoint shows it. Capture is #1837's work; this PR only
 /// needs a Cameo to exist and keep its background.
@@ -157,7 +145,7 @@ pub fn specs() -> Vec<CommandSpec> {
             ["Camera Format", "Camera Background"],
             None,
             "{mode: normal|removed|blur|custom, color?: [r,g,b]|#RRGGBB, image?: media id, imageData?: base64 png/jpeg, all?: bool, id?: shape, ids?: [shape]} → {mode}",
-            has_cameo,
+            super::has_doc,
             background
         ),
         cmd!(
@@ -175,7 +163,7 @@ pub fn specs() -> Vec<CommandSpec> {
             ["Camera Format", "Camera Background"],
             None,
             "{mode?, color?, image?, imageData?, id?: shape, ids?: [shape]} → {mode, changed} (without `mode`, copies the selected Cameo's background)",
-            has_cameo,
+            super::has_doc,
             apply_to_all
         ),
         cmd!(
@@ -379,7 +367,7 @@ fn apply_to_all(s: &mut Session, p: &Value) -> Result<Value> {
     let bg = if p.get("mode").is_some() {
         requested(p)?
     } else {
-        // A mixed selection is allowed by `has_cameo`, and a plain shape has no background to
+        // A mixed selection is allowed by the command, and a plain shape has no background to
         // copy: take the first Cameo in the targets, not the first target.
         let ids = targets(s, p)?;
         let doc = s.doc()?;
@@ -440,6 +428,20 @@ fn decode_frame(bytes: &[u8], what: &str) -> Result<RgbaFrame> {
     RgbaFrame::new(img.width(), img.height(), img.into_raw()).map_err(|e| EngineError::Other(e.message()))
 }
 
+/// A millisecond clock for the preview's timing. `Instant::now()` panics on
+/// `wasm32-unknown-unknown`, where the browser's clock stands in, as in `cmd::review` and
+/// `recovery`.
+fn now_ms() -> f64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Date::now()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64)
+    }
+}
+
 fn preview(s: &mut Session, p: &Value) -> Result<Value> {
     let mode = parse_mode(p, "cameo.backgroundPreview")?;
     if let Some(name) = str_param(p, "accelerator") {
@@ -469,7 +471,7 @@ fn preview(s: &mut Session, p: &Value) -> Result<Value> {
     let feather = p.get("feather").and_then(Value::as_f64).map(|v| if v.is_finite() { v.clamp(0.0, 64.0) as u32 } else { 2 }).unwrap_or(2);
     let blur = p.get("blur").and_then(Value::as_f64).map(|v| if v.is_finite() { v.clamp(0.0, 64.0) as u32 } else { 0 }).unwrap_or(0);
     let options = CompositeOptions { mode, color: color.map(|c| [c.r, c.g, c.b]), blur_radius: (blur > 0).then_some(blur), feather };
-    let start = std::time::Instant::now();
+    let start = now_ms();
     let matte = if mode == CameraBackgroundMode::Normal {
         None
     } else {
@@ -497,7 +499,7 @@ fn preview(s: &mut Session, p: &Value) -> Result<Value> {
         "width": w,
         "height": h,
         "mode": mode.as_str(),
-        "ms": start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+        "ms": (now_ms() - start).max(0.0) as u64,
     }))
 }
 
@@ -532,7 +534,7 @@ mod tests {
         let rect = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 40, 40]})).expect("rect")["id"].as_u64().expect("id");
         let cameo = s.execute("insert.cameo", &json!({})).expect("second cameo")["id"].as_u64().expect("id");
         s.execute("cameo.background", &json!({"mode": "blur", "id": cameo})).expect("blur");
-        // A mixed selection is allowed by `has_cameo`; the plain shape must not become the source.
+        // A mixed selection is allowed; the plain shape must not become the source.
         s.execute("edit.select", &json!({"ids": [rect, cameo]})).expect("mixed selection");
         let v = s.execute("cameo.backgroundApplyToAll", &json!({})).expect("apply all");
         assert_eq!(v["mode"], "blur", "the first Cameo is the source, not the first selected shape");
@@ -602,6 +604,21 @@ mod tests {
         assert_eq!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"], "stub-segmenter");
         s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).expect("the model appeared");
         assert_eq!(loads.load(Ordering::Relaxed), attempts + 1);
+    }
+
+    /// A scripted caller has no selection (`file.open` leaves none), and the Camera Format tab's
+    /// selection gate must not decide `enabled` for it: `all` and `id` name their targets.
+    #[test]
+    fn a_scripted_background_needs_no_cameo_in_the_selection() {
+        let mut s = Session::with_new();
+        let cameo = s.execute("insert.cameo", &json!({})).expect("cameo")["id"].as_u64().expect("id");
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 40, 40]})).expect("rect");
+        // The selection holds only a plain shape now; the explicit id still gets through.
+        s.execute("cameo.background", &json!({"mode": "removed", "id": cameo})).expect("an explicit id needs no Cameo in the selection");
+        // `file.open` leaves no selection at all: `all` must still apply.
+        s.execute("slide.new", &json!({})).expect("empty slide");
+        let v = s.execute("cameo.background", &json!({"mode": "blur", "all": true})).expect("all needs no selection");
+        assert_eq!(v["changed"].as_u64(), Some(1), "the one Cameo on slide 1");
     }
 
     #[test]

@@ -107,9 +107,13 @@ No C/C++ runtime is added by this PR, and DirectML is not used.
 ## Using it
 
 ```sh
-# Save a mode on the selected Cameo (undoable; `ids` targets a mixed selection).
+# Save a mode on every Cameo (undoable; `all` needs no selection).
 deckcraft-cli run --in talk.deckcraft \
-  --cmd 'cameo.background={"mode":"blur"}' --save talk.deckcraft
+  --cmd 'cameo.background={"mode":"blur","all":true}' --save talk.deckcraft
+
+# Or name the shapes: a scripted run has no selection, so `ids` (or `id`) does the targeting.
+deckcraft-cli run --in talk.deckcraft \
+  --cmd 'cameo.background={"mode":"removed","ids":[7]}' --save talk.deckcraft
 
 # Prove the pipeline offscreen with the installed model.
 deckcraft-cli camera-background --image frame.png --mode removed --out cutout.png
