@@ -133,7 +133,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         // PowerPoint.
         let mut x = rect.min.x + 12.0;
         let y = rect.min.y + 2.0;
-        {
+        if !app.ui.hide_filetab {
             let w = ui.fonts_mut(|f| f.layout_no_wrap("File".to_string(), theme::font(13.0), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
             let resp = ui.interact(r, ui.scope_id().with("tab_file"), Sense::click());
