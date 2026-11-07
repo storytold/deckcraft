@@ -184,7 +184,7 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
     let (idx, uid) = (st.selection.slide, st.uid);
     // Save an edited draft once the field has lost focus or another slide is shown (before
     // anything reloads it), to the slide it was written on.
-    let id = egui::Id::unique("notes_edit");
+    let id = egui::Id::from("notes_edit");
     let focused = ui.ctx().memory(|m| m.has_focus(id));
     if app.notes_buf.2.edited && (!focused || app.notes_buf.0 != uid || app.notes_buf.1 != idx) {
         app.notes_buf.2.edited = false;
