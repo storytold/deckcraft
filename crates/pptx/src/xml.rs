@@ -211,16 +211,19 @@ impl Doc {
     }
 }
 
+pub(crate) fn decode_xml_bytes(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
+        std::borrow::Cow::Owned(decode_utf16(bytes).into_bytes())
+    } else {
+        std::borrow::Cow::Borrowed(bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes))
+    }
+}
+
 /// Parse XML bytes into a DOM. Bounded depth and node count; entity references are resolved.
 pub fn parse(bytes: &[u8]) -> Result<Doc, PptxError> {
     // Skip a UTF-8 BOM; UTF-16 parts (rare) are decoded first.
-    let owned;
-    let bytes = if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
-        owned = decode_utf16(bytes);
-        owned.as_bytes()
-    } else {
-        bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes)
-    };
+    let decoded = decode_xml_bytes(bytes);
+    let bytes = decoded.as_ref();
     let mut reader = quick_xml::Reader::from_reader(bytes);
     {
         let c = reader.config_mut();
