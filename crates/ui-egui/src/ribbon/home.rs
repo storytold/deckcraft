@@ -196,7 +196,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                     }
                 });
                 let size_text = size.map(|s| widgets::fmt_num(s, "")).unwrap_or_default();
-                dropdown(ui, "size", &size_text, 52.0, en, |ui| {
+                let (_, typed) = widgets::number_dropdown(ui, "size", "Font Size", &size_text, 60.0, en, |ui| {
                     for s in deckcraft_engine::cmd::format::SIZES.iter().chain([72.0, 80.0, 88.0, 96.0].iter()) {
                         if ui.button(widgets::fmt_num(*s, "")).clicked() {
                             run(app, "format.size", json!({"size": s}));
@@ -204,6 +204,12 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                         }
                     }
                 });
+                if let Some(text) = typed {
+                    match widgets::parse_size(&text) {
+                        Some(size) => run(app, "format.size", json!({"size": size})),
+                        None => app.set_status(format!("“{}” isn't a font size", text.trim())),
+                    }
+                }
                 toggle(app, ui, Icon::FontGrow, "Increase Font Size", "format.grow", false);
                 toggle(app, ui, Icon::FontShrink, "Decrease Font Size", "format.shrink", false);
                 toggle(app, ui, Icon::ClearFormatting, "Clear All Formatting", "format.clear", false);
