@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 deckcraft-model = { workspace = true }
+deckcraft-text = { workspace = true }
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
 quick-xml = { workspace = true }
