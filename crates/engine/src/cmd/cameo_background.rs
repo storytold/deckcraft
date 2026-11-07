@@ -1,0 +1,652 @@
+//! Camera Format ▸ Camera Background: Normal, Remove, Blur and Replace on a Cameo, plus the
+//! offscreen preview the control channel and the CLI use to prove the pipeline.
+//!
+//! The mode is part of the document (undoable, saved in `.deckcraft` and written as
+//! `alf:liveFeedProps/alf:backgroundProps` in PPTX). The segmentation model is not: the host
+//! installs a [`deckcraft_matte::Segmenter`] on the session, and without one every mode but Normal
+//! is refused with a sentence naming what is missing.
+
+use std::io::Cursor;
+use std::sync::Arc;
+
+use deckcraft_geom::{Size, Xfrm};
+use deckcraft_matte::compositing::{CompositeOptions, composite};
+use deckcraft_matte::frame::RgbaFrame;
+use deckcraft_model::style::PictureFill;
+use deckcraft_model::{Cameo, CameraBackground, CameraBackgroundMode, Geom, MediaId, Rgba, Shape, ShapeId, ShapeKind};
+use serde_json::{Value, json};
+
+use super::insert::first_free_name;
+use super::{CommandSpec, NO_ID_SPACE, always, bad, bool_or, cmd, opt_usize_param, rect_param, str_param, targets};
+use crate::{EngineError, Result, Session};
+
+/// Default side of an inserted cameo: 2.25 in.
+pub const DEFAULT_SIZE: f64 = 162.0;
+/// Gap between the cameo and the slide's right and bottom edges.
+pub const DEFAULT_MARGIN: f64 = 6.5;
+
+/// Enabled state: a Cameo must be selected. The Camera Format tab stays up for a mixed
+/// selection; one Cameo in it is enough for a background command to know its target.
+pub fn has_cameo(s: &Session) -> std::result::Result<(), String> {
+    super::has_doc(s)?;
+    let doc = s.active().ok_or_else(|| "no presentation open".to_string())?;
+    let shapes = doc.selected_shapes();
+    if shapes.is_empty() {
+        return Err(super::NOTHING_SELECTED.to_string());
+    }
+    if shapes.iter().any(|sh| sh.is_cameo()) { Ok(()) } else { Err("no Cameo selected".into()) }
+}
+
+/// Our own cameo placeholder: a camera body and lens drawn as an SVG, no vendor artwork. It is
+/// embedded as the picture's image, so PowerPoint shows it. Capture is #1837's work; this PR only
+/// needs a Cameo to exist and keep its background.
+pub const PLACEHOLDER_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320" viewBox="0 0 320 320">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#33404f"/>
+      <stop offset="1" stop-color="#141a22"/>
+    </linearGradient>
+  </defs>
+  <rect width="320" height="320" rx="36" fill="url(#bg)"/>
+  <path d="M104 112h36l14-22h44l14 22h32a18 18 0 0 1 18 18v92a18 18 0 0 1-18 18H104a18 18 0 0 1-18-18v-92a18 18 0 0 1 18-18Z"
+        fill="none" stroke="#e8eef7" stroke-width="11" stroke-linejoin="round"/>
+  <circle cx="160" cy="176" r="40" fill="#0d1218" stroke="#e8eef7" stroke-width="11"/>
+  <circle cx="160" cy="176" r="17" fill="#8fd3ff"/>
+  <circle cx="244" cy="128" r="6" fill="#8fd3ff"/>
+</svg>"##;
+
+/// Bottom-right default box for a slide.
+pub(super) fn default_rect(size: Size) -> Xfrm {
+    let w = DEFAULT_SIZE.min(size.width.max(0.0));
+    let h = DEFAULT_SIZE.min(size.height.max(0.0));
+    Xfrm::new((size.width - w - DEFAULT_MARGIN).max(0.0), (size.height - h - DEFAULT_MARGIN).max(0.0), w, h)
+}
+
+fn cameo(id: ShapeId, name: String, xfrm: Xfrm, media: MediaId) -> Shape {
+    Shape {
+        id,
+        name,
+        xfrm: Some(xfrm),
+        kind: ShapeKind::Picture { fill: PictureFill { media, ..Default::default() } },
+        geom: Geom::preset("ellipse"),
+        cameo: Some(Cameo::live()),
+        descr: "Camera preview".into(),
+        ..Default::default()
+    }
+}
+
+fn slide_names(shapes: &[Shape]) -> (std::collections::HashSet<String>, usize) {
+    let mut names = std::collections::HashSet::new();
+    let mut count = 0;
+    deckcraft_model::walk(shapes, &mut |sh, _| {
+        names.insert(sh.name.clone());
+        count += 1;
+    });
+    (names, count)
+}
+
+fn insert_cameo(s: &mut Session, p: &Value) -> Result<Value> {
+    let all = bool_or(p, "all", false);
+    let wanted = opt_usize_param(p, "slide", "insert.cameo")?;
+    let rect = rect_param(p, "rect");
+    if rect.is_some_and(|r| r.w < 1.0 || r.h < 1.0) {
+        return Err(bad("insert.cameo", "rect needs a positive width and height"));
+    }
+    let (target, ids, id) = s.edit(|doc, sel| {
+        let n = doc.slides.len();
+        if n == 0 {
+            return Err(bad("insert.cameo", "no slides"));
+        }
+        let target = match wanted {
+            Some(i) if i < n => i,
+            Some(i) => return Err(bad("insert.cameo", format!("no slide {}", i.saturating_add(1)))),
+            None => sel.slide.min(n - 1),
+        };
+        let size = doc.slide_size;
+        let media = doc
+            .add_media("cameo-placeholder.svg", "image/svg+xml", PLACEHOLDER_SVG.as_bytes().to_vec())
+            .ok_or_else(|| bad("insert.cameo", NO_ID_SPACE))?;
+        let box_ = rect.unwrap_or_else(|| default_rect(size));
+        let mut ids = Vec::new();
+        let mut on_target = None;
+        for i in 0..n {
+            if !all && i != target {
+                continue;
+            }
+            let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("insert.cameo", NO_ID_SPACE))?);
+            let shapes = &mut Arc::make_mut(&mut doc.slides[i]).shapes;
+            let (taken, count) = slide_names(shapes);
+            let name = first_free_name("Camera", &taken, count);
+            shapes.push(cameo(id, name, box_, media));
+            if i == target {
+                on_target = Some(id);
+            }
+            ids.push(id);
+        }
+        sel.target = crate::Target::Slides;
+        sel.slide = target;
+        sel.text = None;
+        let Some(first) = on_target.or_else(|| ids.first().copied()) else {
+            return Err(bad("insert.cameo", "no slide"));
+        };
+        sel.shapes = vec![first];
+        Ok((target, ids, first))
+    })?;
+    Ok(json!({"id": id, "ids": ids, "slide": target}))
+}
+
+/// Largest base64 PNG the preview command accepts (about 48 MB decoded).
+const MAX_PREVIEW_BASE64: usize = 64 * 1024 * 1024;
+
+pub fn specs() -> Vec<CommandSpec> {
+    vec![
+        cmd!(
+            "insert.cameo",
+            "Cameo",
+            ["Insert", "Images"],
+            None,
+            "{slide?: index, all?: bool, rect?: [x,y,w,h] pt} → {id, ids, slide}",
+            super::has_doc,
+            insert_cameo
+        ),
+        cmd!(
+            "cameo.background",
+            "Camera Background",
+            ["Camera Format", "Camera Background"],
+            None,
+            "{mode: normal|removed|blur|custom, color?: [r,g,b]|#RRGGBB, image?: media id, imageData?: base64 png/jpeg, all?: bool, id?: shape, ids?: [shape]} → {mode}",
+            has_cameo,
+            background
+        ),
+        cmd!(
+            query "cameo.background.state",
+            "Camera Background State",
+            ["Camera Format", "Camera Background"],
+            None,
+            "{} → {mode, color, image, segmenter, accelerator, accelerators}",
+            always,
+            state
+        ),
+        cmd!(
+            "cameo.backgroundApplyToAll",
+            "Apply Background to All Cameos",
+            ["Camera Format", "Camera Background"],
+            None,
+            "{mode?, color?, image?, imageData?, id?: shape, ids?: [shape]} → {mode, changed} (without `mode`, copies the selected Cameo's background)",
+            has_cameo,
+            apply_to_all
+        ),
+        cmd!(
+            noundo "cameo.backgroundPreview",
+            "Preview Camera Background",
+            ["Camera Format", "Camera Background"],
+            None,
+            "{image: base64 png, mode: normal|removed|blur|custom, background?: base64 png, color?: [r,g,b], feather?, blur?, accelerator?: cpu} → {image: base64 png, width, height, ms} (does not touch the deck)",
+            always,
+            preview
+        ),
+    ]
+}
+
+fn parse_mode(p: &Value, cmd: &str) -> Result<CameraBackgroundMode> {
+    let raw = str_param(p, "mode").ok_or_else(|| bad(cmd, "missing `mode`"))?;
+    CameraBackgroundMode::parse(raw).ok_or_else(|| bad(cmd, format!("unknown mode `{raw}`; use normal, removed, blur or custom")))
+}
+
+/// `[r, g, b]`, `[r, g, b, a]`, `#RRGGBB` or `#RRGGBBAA`; a value that is present but not one of
+/// those is an error rather than silently dropped.
+fn parse_color(p: &Value) -> Result<Option<Rgba>> {
+    let Some(v) = p.get("color") else { return Ok(None) };
+    if v.is_null() {
+        return Ok(None);
+    }
+    if let Some(s) = v.as_str() {
+        let hex = s.trim().trim_start_matches('#');
+        let byte = |i: usize| u8::from_str_radix(hex.get(i..i + 2).unwrap_or(""), 16).ok();
+        if hex.len() == 6 || hex.len() == 8 {
+            let (Some(r), Some(g), Some(b)) = (byte(0), byte(2), byte(4)) else {
+                return Err(bad("cameo.background", format!("`color` is not a hex colour: {s}")));
+            };
+            let a = if hex.len() == 8 { byte(6).unwrap_or(255) } else { 255 };
+            return Ok(Some(Rgba { r, g, b, a }));
+        }
+        return Err(bad("cameo.background", format!("`color` is not #RRGGBB: {s}")));
+    }
+    let Some(a) = v.as_array() else {
+        return Err(bad("cameo.background", "`color` must be [r,g,b], [r,g,b,a] or #RRGGBB"));
+    };
+    if a.len() != 3 && a.len() != 4 {
+        return Err(bad("cameo.background", "`color` needs 3 or 4 channels"));
+    }
+    let mut c = [0u8; 4];
+    c[3] = 255;
+    for (i, slot) in c.iter_mut().enumerate() {
+        if let Some(v) = a.get(i) {
+            let n = v.as_u64().filter(|n| *n <= 255).ok_or_else(|| bad("cameo.background", "`color` channels are 0..255 integers"))?;
+            *slot = n as u8;
+        }
+    }
+    Ok(Some(Rgba { r: c[0], g: c[1], b: c[2], a: c[3] }))
+}
+
+fn parse_image(p: &Value) -> Result<Option<MediaId>> {
+    match p.get("image") {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .map(|n| Some(MediaId(n)))
+            .ok_or_else(|| bad("cameo.background", "`image` is not a media id")),
+    }
+}
+
+fn requested(p: &Value) -> Result<CameraBackground> {
+    let mode = parse_mode(p, "cameo.background")?;
+    let color = parse_color(p)?;
+    let image = parse_image(p)?;
+    if mode == CameraBackgroundMode::Custom && color.is_none() && image.is_none() && p.get("imageData").is_none() {
+        return Err(bad("cameo.background", "custom needs `color` or `image` for the replacement"));
+    }
+    Ok(CameraBackground { mode, color, image })
+}
+
+/// A replacement picture the caller sends inline: bytes, the name and content type PowerPoint and
+/// the media list will show. The command adds it to the document in the same undo step.
+fn image_data(p: &Value) -> Result<Option<(String, String, Vec<u8>)>> {
+    let Some(encoded) = str_param(p, "imageData") else { return Ok(None) };
+    if encoded.len() > MAX_PREVIEW_BASE64 {
+        return Err(bad("cameo.background", "`imageData` is larger than the command accepts"));
+    }
+    let bytes = super::base64_decode(encoded).ok_or_else(|| bad("cameo.background", "`imageData` is not base64"))?;
+    let (ext, mime) = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        ("png", "image/png")
+    } else if bytes.starts_with(&[0xFF, 0xD8]) {
+        ("jpg", "image/jpeg")
+    } else {
+        return Err(bad("cameo.background", "`imageData` must be a PNG or JPEG"));
+    };
+    Ok(Some((format!("cameo-background.{ext}"), mime.to_string(), bytes)))
+}
+
+fn set_one(sh: &mut deckcraft_model::Shape, bg: &CameraBackground) -> Result<()> {
+    let c = sh.cameo.as_mut().ok_or_else(|| bad("cameo.background", "select a Cameo"))?;
+    c.background = Some(bg.clone());
+    Ok(())
+}
+
+fn background(s: &mut Session, p: &Value) -> Result<Value> {
+    let bg = requested(p)?;
+    if let Some(image) = bg.image {
+        let doc = s.doc()?;
+        if doc.doc.media(image).is_none() {
+            return Err(bad("cameo.background", format!("no media with id {}", image.0)));
+        }
+    }
+    let data = image_data(p)?;
+    if bool_or(p, "all", false) {
+        let changed = s.edit(|doc, _| {
+            let mut bg = bg.clone();
+            if let Some((name, mime, bytes)) = data.clone() {
+                bg.image = Some(doc.add_media(&name, &mime, bytes).ok_or_else(|| bad("cameo.background", NO_ID_SPACE))?);
+            }
+            let mut n = 0usize;
+            for slide in &mut doc.slides {
+                let mut ids = Vec::new();
+                deckcraft_model::walk(&slide.shapes, &mut |sh, _| {
+                    if sh.is_cameo() {
+                        ids.push(sh.id);
+                    }
+                });
+                let slide = std::sync::Arc::make_mut(slide);
+                for id in ids {
+                    if let Some(sh) = slide.shape_mut(id) {
+                        set_one(sh, &bg)?;
+                        n += 1;
+                    }
+                }
+            }
+            Ok(n)
+        })?;
+        return Ok(json!({"mode": bg.mode.as_str(), "all": true, "changed": changed}));
+    }
+    let mut ids = targets(s, p)?;
+    let explicit = p.get("ids").is_some() || p.get("id").is_some();
+    if !explicit {
+        let doc = s.doc()?;
+        ids.retain(|id| doc.shape(*id).is_some_and(deckcraft_model::Shape::is_cameo));
+    }
+    let ids = cameo_ids(s, ids)?;
+    s.edit(|doc, sel| {
+        let mut bg = bg.clone();
+        if let Some((name, mime, bytes)) = data.clone() {
+            bg.image = Some(doc.add_media(&name, &mime, bytes).ok_or_else(|| bad("cameo.background", NO_ID_SPACE))?);
+        }
+        let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad("cameo.background", "no slide"))?;
+        for id in &ids {
+            let sh = deckcraft_model::find_shape_mut(shapes, *id).ok_or_else(|| bad("cameo.background", "no such shape"))?;
+            set_one(sh, &bg)?;
+        }
+        Ok(())
+    })?;
+    Ok(json!({"mode": bg.mode.as_str(), "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>()}))
+}
+
+fn cameo_ids(s: &Session, ids: Vec<ShapeId>) -> Result<Vec<ShapeId>> {
+    if ids.is_empty() {
+        return Err(bad("cameo.background", "nothing selected"));
+    }
+    let doc = s.doc()?;
+    if !ids.iter().all(|id| doc.shape(*id).is_some_and(deckcraft_model::Shape::is_cameo)) {
+        return Err(bad("cameo.background", "select a Cameo"));
+    }
+    Ok(ids)
+}
+
+fn state(s: &mut Session, _p: &Value) -> Result<Value> {
+    let (bg, has) = {
+        let doc = s.doc().ok();
+        let selected = doc
+            .as_ref()
+            .and_then(|d| d.selected_shapes().iter().find(|sh| sh.is_cameo()).map(|sh| (sh.cameo.as_ref().and_then(|c| c.background.clone()), true)));
+        match selected {
+            Some((bg, has)) => (bg, has),
+            None => (None, false),
+        }
+    };
+    let mode = bg.as_ref().map(|b| b.mode).unwrap_or_default();
+    let color = bg.as_ref().and_then(|b| b.color).map(|c| json!([c.r, c.g, c.b, c.a]));
+    let image = bg.as_ref().and_then(|b| b.image).map(|m| m.0);
+    Ok(json!({
+        "mode": mode.as_str(),
+        "color": color,
+        "image": image,
+        "hasCameo": has,
+        "segmenter": s.segmenter_name(),
+        "accelerator": deckcraft_matte::MANIFEST.default_accelerator.as_str(),
+        "accelerators": deckcraft_matte::MANIFEST.accelerators.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
+    }))
+}
+
+fn apply_to_all(s: &mut Session, p: &Value) -> Result<Value> {
+    let bg = if p.get("mode").is_some() {
+        requested(p)?
+    } else {
+        let ids = targets(s, p)?;
+        let doc = s.doc()?;
+        let id = ids.first().copied().ok_or_else(|| bad("cameo.backgroundApplyToAll", "nothing selected"))?;
+        doc.shape(id).filter(|sh| sh.is_cameo()).and_then(|sh| sh.cameo.as_ref()).and_then(|c| c.background.clone()).unwrap_or_default()
+    };
+    let changed = s.edit(|doc, _| {
+        let mut n = 0usize;
+        for slide in &mut doc.slides {
+            let slide = std::sync::Arc::make_mut(slide);
+            let mut ids = Vec::new();
+            deckcraft_model::walk(&slide.shapes, &mut |sh, _| {
+                if sh.is_cameo() {
+                    ids.push(sh.id);
+                }
+            });
+            for id in ids {
+                if let Some(sh) = slide.shape_mut(id)
+                    && let Some(c) = sh.cameo.as_mut()
+                {
+                    c.background = Some(bg.clone());
+                    n += 1;
+                }
+            }
+        }
+        Ok(n)
+    })?;
+    Ok(json!({"mode": bg.mode.as_str(), "changed": changed}))
+}
+
+fn decode_frame(bytes: &[u8], what: &str) -> Result<RgbaFrame> {
+    // Read only the header first: a hostile PNG that claims a huge canvas is refused before the
+    // decoder allocates it.
+    let (w, h) = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| EngineError::Other(format!("{what} is not an image: {e}")))?
+        .into_dimensions()
+        .map_err(|e| EngineError::Other(format!("{what} could not be read: {e}")))?;
+    if w == 0 || h == 0 || w > deckcraft_matte::MAX_DIM || h > deckcraft_matte::MAX_DIM {
+        return Err(EngineError::Other(format!(
+            "{what} is {w}x{h}; the pipeline accepts up to {}x{}",
+            deckcraft_matte::MAX_DIM,
+            deckcraft_matte::MAX_DIM
+        )));
+    }
+    let img = image::load_from_memory(bytes).map_err(|e| EngineError::Other(format!("{what} could not be decoded: {e}")))?;
+    let img = img.to_rgba8();
+    RgbaFrame::new(img.width(), img.height(), img.into_raw()).map_err(|e| EngineError::Other(e.message()))
+}
+
+fn preview(s: &mut Session, p: &Value) -> Result<Value> {
+    let mode = parse_mode(p, "cameo.backgroundPreview")?;
+    if let Some(name) = str_param(p, "accelerator") {
+        let accelerator =
+            deckcraft_matte::Accelerator::parse(name).ok_or_else(|| bad("cameo.backgroundPreview", format!("unknown accelerator `{name}`")))?;
+        if accelerator != deckcraft_matte::Accelerator::Cpu {
+            return Err(EngineError::Other(deckcraft_matte::ACCELERATOR_UNAVAILABLE.to_string()));
+        }
+    }
+    let color = parse_color(p)?;
+    let encoded = str_param(p, "image").ok_or_else(|| bad("cameo.backgroundPreview", "missing `image` (base64 PNG)"))?;
+    if encoded.len() > MAX_PREVIEW_BASE64 {
+        return Err(bad("cameo.backgroundPreview", "`image` is larger than the preview command accepts"));
+    }
+    let bytes = super::base64_decode(encoded).ok_or_else(|| bad("cameo.backgroundPreview", "`image` is not base64"))?;
+    let frame = decode_frame(&bytes, "`image`")?;
+    let replacement = match str_param(p, "background") {
+        None => None,
+        Some(b) => {
+            if b.len() > MAX_PREVIEW_BASE64 {
+                return Err(bad("cameo.backgroundPreview", "`background` is larger than the preview command accepts"));
+            }
+            let bytes = super::base64_decode(b).ok_or_else(|| bad("cameo.backgroundPreview", "`background` is not base64"))?;
+            Some(decode_frame(&bytes, "`background`")?)
+        }
+    };
+    let feather = p.get("feather").and_then(Value::as_f64).map(|v| if v.is_finite() { v.clamp(0.0, 64.0) as u32 } else { 2 }).unwrap_or(2);
+    let blur = p.get("blur").and_then(Value::as_f64).map(|v| if v.is_finite() { v.clamp(0.0, 64.0) as u32 } else { 0 }).unwrap_or(0);
+    let options = CompositeOptions { mode, color: color.map(|c| [c.r, c.g, c.b]), blur_radius: (blur > 0).then_some(blur), feather };
+    let start = std::time::Instant::now();
+    let matte = if mode == CameraBackgroundMode::Normal {
+        None
+    } else {
+        let segmenter = s.segmenter_mut().ok_or_else(|| {
+            EngineError::Other(
+                deckcraft_matte::MatteError::Unavailable(
+                    "camera background segmentation is not available: install the birefnet-lite-512 model".into(),
+                )
+                .message(),
+            )
+        })?;
+        Some(segmenter.matte(&frame).map_err(|e| EngineError::Other(e.message()))?)
+    };
+    let out = composite(&frame, matte.as_ref(), &options, replacement.as_ref()).map_err(|e| EngineError::Other(e.message()))?;
+    let (w, h) = (out.width(), out.height());
+    let img =
+        image::RgbaImage::from_raw(w, h, out.pixels().to_vec()).ok_or_else(|| EngineError::Other("the composite does not match its size".into()))?;
+    let mut png = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .map_err(|e| EngineError::Other(format!("cannot encode the preview: {e}")))?;
+    Ok(json!({
+        "image": super::base64_encode(png.get_ref()),
+        "width": w,
+        "height": h,
+        "mode": mode.as_str(),
+        "ms": start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use deckcraft_matte::{EllipseSegmenter, Segmenter};
+    use deckcraft_model::{CameraBackground, CameraBackgroundMode};
+    use serde_json::json;
+
+    use crate::Session;
+
+    fn with_cameo() -> Session {
+        let mut s = Session::with_new();
+        s.execute("insert.cameo", &json!({})).expect("cameo");
+        s
+    }
+
+    fn selected_background(s: &Session) -> Option<CameraBackground> {
+        s.doc().expect("doc").selected_shapes().iter().find_map(|sh| sh.cameo.as_ref()?.background.clone())
+    }
+
+    fn png(w: u32, h: u32, px: [u8; 4]) -> String {
+        let img = image::RgbaImage::from_pixel(w, h, image::Rgba(px));
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img).write_to(&mut out, image::ImageFormat::Png).expect("png");
+        super::super::base64_encode(out.get_ref())
+    }
+
+    #[test]
+    fn each_mode_is_stored_undoable_and_queryable() {
+        let mut s = with_cameo();
+        for mode in ["normal", "removed", "blur"] {
+            s.execute("cameo.background", &json!({"mode": mode})).expect(mode);
+            assert_eq!(selected_background(&s).map(|b| b.mode.as_str()), Some(mode));
+            let state = s.execute("cameo.background.state", &json!({})).expect("state");
+            assert_eq!(state["mode"], mode);
+        }
+        s.execute("cameo.background", &json!({"mode": "custom", "color": [10, 20, 30]})).expect("custom");
+        assert_eq!(selected_background(&s).and_then(|b| b.color).map(|c| [c.r, c.g, c.b]), Some([10, 20, 30]));
+        s.execute("edit.undo", &json!({})).expect("undo");
+        assert_eq!(selected_background(&s).map(|b| b.mode.as_str()), Some("blur"));
+        s.execute("edit.redo", &json!({})).expect("redo");
+        assert_eq!(selected_background(&s).map(|b| b.mode.as_str()), Some("custom"));
+    }
+
+    #[test]
+    fn a_colour_can_be_a_hex_string_and_a_bad_mode_is_refused() {
+        let mut s = with_cameo();
+        s.execute("cameo.background", &json!({"mode": "custom", "color": "#0A141E"})).expect("hex");
+        let c = selected_background(&s).and_then(|b| b.color).expect("colour");
+        assert_eq!([c.r, c.g, c.b, c.a], [10, 20, 30, 255]);
+        assert!(s.execute("cameo.background", &json!({"mode": "magic"})).is_err());
+        assert!(s.execute("cameo.background", &json!({"mode": "custom"})).is_err(), "custom needs a replacement");
+        assert!(s.execute("cameo.background", &json!({})).is_err(), "empty params are refused");
+        assert!(s.execute("cameo.background", &json!({"mode": "blur", "color": "nope"})).is_err());
+    }
+
+    #[test]
+    fn the_mode_survives_a_deckcraft_save_and_reopen() {
+        let mut s = with_cameo();
+        s.execute("cameo.background", &json!({"mode": "removed"})).expect("removed");
+        let bytes = deckcraft_format::save(&s.doc().expect("doc").doc).expect("save");
+        let back = deckcraft_format::load(&bytes).expect("load");
+        let mut found = None;
+        deckcraft_model::walk(&back.slides[0].shapes, &mut |sh, _| {
+            if sh.is_cameo() {
+                found = sh.cameo.as_ref().and_then(|c| c.background.clone());
+            }
+        });
+        assert_eq!(found.map(|b| b.mode), Some(CameraBackgroundMode::Removed));
+    }
+
+    #[test]
+    fn apply_to_all_copies_the_selected_background() {
+        let mut s = with_cameo();
+        s.execute("slide.new", &json!({})).expect("slide");
+        s.execute("insert.cameo", &json!({"slide": 1})).expect("second cameo");
+        s.execute("cameo.backgroundApplyToAll", &json!({"mode": "custom", "color": [1, 2, 3]})).expect("apply all");
+        let mut modes = Vec::new();
+        for slide in &s.doc().expect("doc").doc.slides {
+            deckcraft_model::walk(&slide.shapes, &mut |sh, _| {
+                if sh.is_cameo() {
+                    modes.push(sh.cameo.as_ref().and_then(|c| c.background.as_ref()).map(|b| b.mode));
+                }
+            });
+        }
+        assert_eq!(modes, [Some(CameraBackgroundMode::Custom), Some(CameraBackgroundMode::Custom)]);
+    }
+
+    #[test]
+    fn a_replacement_picture_arrives_inline_and_becomes_media() {
+        let mut s = with_cameo();
+        s.execute("cameo.background", &json!({"mode": "custom", "imageData": png(4, 4, [9, 8, 7, 255])})).expect("inline picture");
+        let bg = selected_background(&s).expect("background");
+        assert_eq!(bg.mode, CameraBackgroundMode::Custom);
+        let id = bg.image.expect("media id");
+        let doc = s.doc().expect("doc");
+        assert_eq!(doc.doc.media(id).map(|m| m.content_type.as_str()), Some("image/png"));
+        assert!(s.execute("cameo.background", &json!({"mode": "custom", "imageData": "bm90IGFuIGltYWdl"})).is_err());
+        // The media and the mode are one undo step: the cameo had no background before.
+        s.execute("edit.undo", &json!({})).expect("undo");
+        assert_eq!(selected_background(&s), None, "one undo removes the mode and the media");
+    }
+
+    #[test]
+    fn a_plain_shape_is_not_a_cameo_and_is_refused() {
+        let mut s = Session::with_new();
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 40, 40]})).expect("shape");
+        assert!(s.execute("cameo.background", &json!({"mode": "blur"})).is_err());
+    }
+
+    #[test]
+    fn the_offscreen_preview_composites_with_the_installed_segmenter() {
+        let mut s = with_cameo();
+        // Normal needs no model at all.
+        let r = s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [40, 50, 60, 255]), "mode": "normal"})).expect("normal");
+        assert_eq!(r["mode"], "normal");
+        assert!(s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [0, 0, 0, 255]), "mode": "removed"})).is_err(), "no segmenter yet");
+
+        s.set_segmenter(Box::new(EllipseSegmenter::default()));
+        let removed = s
+            .execute("cameo.backgroundPreview", &json!({"image": png(16, 16, [40, 50, 60, 255]), "mode": "removed", "feather": 0}))
+            .expect("removed");
+        let bytes = super::super::base64_decode(removed["image"].as_str().expect("png")).expect("base64");
+        let img = image::load_from_memory(&bytes).expect("decode").to_rgba8();
+        assert_eq!(img.get_pixel(8, 8)[3], 255, "the subject stays opaque");
+        assert_eq!(img.get_pixel(0, 0)[3], 0, "the corner is transparent");
+
+        let custom = s
+            .execute(
+                "cameo.backgroundPreview",
+                &json!({
+                    "image": png(16, 16, [40, 50, 60, 255]),
+                    "mode": "custom",
+                    "color": [200, 10, 10],
+                    "feather": 0
+                }),
+            )
+            .expect("custom");
+        let bytes = super::super::base64_decode(custom["image"].as_str().expect("png")).expect("base64");
+        let img = image::load_from_memory(&bytes).expect("decode").to_rgba8();
+        assert_eq!(img.get_pixel(0, 0), &image::Rgba([200, 10, 10, 255]));
+        assert_eq!(img.get_pixel(8, 8), &image::Rgba([40, 50, 60, 255]));
+
+        assert!(s.execute("cameo.backgroundPreview", &json!({})).is_err());
+        let err = s
+            .execute("cameo.backgroundPreview", &json!({"image": png(4, 4, [1, 2, 3, 255]), "mode": "normal", "accelerator": "openvino"}))
+            .expect_err("no openvino");
+        assert!(err.to_string().contains("OpenVINO"), "{err}");
+        assert!(s.execute("cameo.backgroundPreview", &json!({"image": "%%%", "mode": "blur"})).is_err());
+    }
+
+    #[test]
+    fn the_preview_does_not_change_the_document() {
+        let mut s = with_cameo();
+        s.set_segmenter(Box::new(EllipseSegmenter::default()));
+        let before = deckcraft_format::save(&s.doc().expect("doc").doc).expect("save");
+        s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [1, 2, 3, 255]), "mode": "blur"})).expect("preview");
+        let after = deckcraft_format::save(&s.doc().expect("doc").doc).expect("save");
+        assert_eq!(before, after, "the preview is not a document edit");
+    }
+
+    #[test]
+    fn the_installed_segmenter_names_itself_in_the_state() {
+        let mut s = with_cameo();
+        assert!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"].is_null());
+        s.set_segmenter(Box::new(EllipseSegmenter::default()));
+        assert_eq!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"], Segmenter::name(&EllipseSegmenter::default()));
+        let state = s.execute("cameo.background.state", &json!({})).expect("state");
+        assert_eq!(state["accelerator"], "cpu");
+        assert_eq!(state["accelerators"], json!(["cpu"]));
+    }
+}

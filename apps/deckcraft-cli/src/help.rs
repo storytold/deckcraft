@@ -47,6 +47,23 @@ OUT-t0.250.png and so on. Prints each image's path, size, transition and time.
   deckcraft-cli render-transition deck.deckcraft --slide 1 --t 0.25,0.5,0.75 fade.png",
     },
     Subcommand {
+        name: "camera-background",
+        usage: "camera-background --image IN.png --mode normal|removed|blur|custom --out OUT.png [--background BG.png] [--color R,G,B] [--feather N] [--blur N] [--model DIR]",
+        summary: "run the camera-background segmentation pipeline on one image",
+        details: "Reads a PNG, runs the user-installed birefnet-lite-512 model (or the model under --model), composites
+the chosen background mode, writes OUT.png and prints the time in milliseconds. Normal needs no model.
+
+  --image IN.png   the camera frame
+  --mode           normal, removed (transparent), blur, or custom (replacement image or colour)
+  --background     the replacement image for custom mode
+  --color R,G,B    the replacement colour for custom mode
+  --model DIR      the model root holding birefnet-lite-512/onnx/model.onnx
+  --feather N      soft-edge radius in pixels (2 by default)
+  --blur N         blur radius in pixels (1/24 of the shorter side by default)
+
+  deckcraft-cli camera-background --image frame.png --mode removed --out cutout.png",
+    },
+    Subcommand {
         name: "convert",
         usage: "convert IN OUT",
         summary: "save a presentation in the format OUT's extension names",

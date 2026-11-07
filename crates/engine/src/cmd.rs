@@ -4,6 +4,7 @@ pub mod animation;
 pub mod arrange;
 pub mod artistic;
 pub mod background;
+pub mod cameo_background;
 pub mod compress;
 pub mod design;
 pub mod edit;
@@ -189,6 +190,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(media::specs());
         v.extend(artistic::specs());
         v.extend(zoom::specs());
+        v.extend(cameo_background::specs());
         v.extend(compress::specs());
         v
     })

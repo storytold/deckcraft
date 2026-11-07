@@ -71,6 +71,10 @@ pub struct Services {
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
+    /// Camera-background segmentation: model state, install/download and the cached-matte
+    /// processor. The desktop app supplies the RTen service; the web build leaves it `None` and
+    /// the Camera Background controls say why they are disabled.
+    pub matte: Option<Box<dyn deckcraft_matte::MatteService>>,
     /// How many displays are connected, when the host can tell: Presenter View needs a second.
     pub displays: Option<Box<dyn FnMut() -> Option<usize>>>,
 }

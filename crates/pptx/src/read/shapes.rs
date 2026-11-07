@@ -335,6 +335,13 @@ fn read_model_alternate(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> 
 
 fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
     let mut s = base(imp, part, ctx, e.child("nvPicPr"));
+    if let Some(props) = crate::cameo::live_feed_props(e.path(&["nvPicPr", "cNvPicPr"])) {
+        // A feed naming a relationship cannot be written back: the export creates no such
+        // relationship, so keep it only when it names none. Unknown children survive verbatim.
+        let raw = (!super::has_rel_refs(props)).then(|| part.keep_inner(props));
+        let background = crate::cameo::read_background(props);
+        s.cameo = Some(deckcraft_model::Cameo { live: true, raw, background });
+    }
     if let Some(pr) = e.child("spPr") {
         sp_pr(imp, part, &mut s, pr);
     }

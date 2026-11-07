@@ -121,6 +121,7 @@ fn services(native_wayland: bool) -> Services {
                 ),
                 "video" => d.add_filter("Video", &["mp4", "m4v", "mov", "webm", "mkv", "wmv"]),
                 "theme" => d.add_filter("Themes and presentations", &["thmx", "pptx", "potx", "ppsx"]).add_filter("Office Theme", &["thmx"]),
+                "model" => d.add_filter("ONNX model", &["onnx"]),
                 _ => d
                     .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx"])
                     .add_filter("DeckCraft", &["deckcraft"])
@@ -139,6 +140,9 @@ fn services(native_wayland: bool) -> Services {
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()
             .then(|| Box::new(audio::CpalOut::default()) as Box<dyn deckcraft_media::AudioOut>),
+        // Camera backgrounds: discover the user-installed model (no network, no load until a
+        // frame asks for a matte).
+        matte: Some(Box::new(deckcraft_matte_rten::Service::default()) as Box<dyn deckcraft_matte::MatteService>),
         ..Default::default()
     }
 }

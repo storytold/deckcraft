@@ -71,6 +71,7 @@ fn main() -> ExitCode {
         Some("render-transition") => report(render_transition(rest)),
         Some("convert") => report(convert(rest)),
         Some("run") => report(run(rest)),
+        Some("camera-background") => report(camera_background(rest)),
         Some("commands") => {
             let f = rest.first().map(|x| x.to_lowercase());
             for c in deckcraft_engine::command_specs()
@@ -273,6 +274,76 @@ fn info(args: &[String]) -> Result<(), String> {
     open(&mut s, Some(path), false)?;
     let v = s.execute("document.inspect", &json!({})).map_err(|e| e.to_string())?;
     outln!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+    Ok(())
+}
+
+/// `camera-background`: the offscreen proof of the segmentation pipeline. It reads a PNG, runs the
+/// installed model (or the model at `--model`), writes the composite as a PNG and prints the time.
+fn camera_background(args: &[String]) -> Result<(), String> {
+    let mut image = None;
+    let mut mode = None;
+    let mut background = None;
+    let mut color = None;
+    let mut out = None;
+    let mut model = None;
+    let mut feather = None;
+    let mut blur = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--image" => image = Some(it.next().ok_or("--image needs a path")?.clone()),
+            "--mode" => mode = Some(it.next().ok_or("--mode needs normal, removed, blur or custom")?.clone()),
+            "--background" => background = Some(it.next().ok_or("--background needs a path")?.clone()),
+            "--color" => color = Some(it.next().ok_or("--color needs r,g,b")?.clone()),
+            "--out" | "-o" => out = Some(it.next().ok_or("--out needs a path")?.clone()),
+            "--model" => model = Some(it.next().ok_or("--model needs a directory")?.clone()),
+            "--feather" => feather = Some(it.next().and_then(|v| v.parse::<f64>().ok()).ok_or("--feather needs a number")?),
+            "--blur" => blur = Some(it.next().and_then(|v| v.parse::<f64>().ok()).ok_or("--blur needs a number")?),
+            "--help" | "-h" => {
+                outln!("{}", help_page("camera-background"));
+                return Ok(());
+            }
+            other => return Err(format!("unknown argument `{other}`")),
+        }
+    }
+    let image = image.ok_or("camera-background needs --image")?;
+    let mode = mode.ok_or("camera-background needs --mode")?;
+    let out = out.ok_or("camera-background needs --out")?;
+    let bytes = std::fs::read(&image).map_err(|e| format!("{image}: {e}"))?;
+    let mut params = json!({"image": deckcraft_engine::cmd::base64_encode(&bytes), "mode": mode});
+    if let Some(bg) = background {
+        let bytes = std::fs::read(&bg).map_err(|e| format!("{bg}: {e}"))?;
+        params["background"] = json!(deckcraft_engine::cmd::base64_encode(&bytes));
+    }
+    if let Some(c) = color {
+        let ch: Vec<u8> = c.split(',').filter_map(|v| v.trim().parse::<u8>().ok()).collect();
+        if ch.len() != 3 {
+            return Err("--color needs r,g,b (0..255)".into());
+        }
+        params["color"] = json!(ch);
+    }
+    if let Some(f) = feather {
+        params["feather"] = json!(f);
+    }
+    if let Some(b) = blur {
+        params["blur"] = json!(b);
+    }
+    let mut s = Session::with_new();
+    if mode != "normal" {
+        let segmenter = match &model {
+            Some(dir) => deckcraft_matte_rten::RtenSegmenter::load(&deckcraft_matte::manifest::MANIFEST.path_in(std::path::Path::new(dir))),
+            None => deckcraft_matte_rten::RtenSegmenter::load_installed(),
+        }
+        .map_err(|e| {
+            format!("{e}\nInstall the model under $DECKCRAFT_MODELS, the config models/ directory, beside the executable, or pass --model")
+        })?;
+        s.set_segmenter(Box::new(segmenter));
+    }
+    let answer = s.execute("cameo.backgroundPreview", &params).map_err(|e| e.to_string())?;
+    let data = answer.get("image").and_then(Value::as_str).and_then(deckcraft_engine::cmd::base64_decode).ok_or("the preview returned no image")?;
+    std::fs::write(&out, &data).map_err(|e| format!("{out}: {e}"))?;
+    let (w, h) = image::load_from_memory(&data).map(|i| (i.width(), i.height())).map_err(|e| format!("{out}: {e}"))?;
+    outln!("{out} ({w}×{h}, {} ms)", answer.get("ms").and_then(Value::as_u64).unwrap_or(0));
     Ok(())
 }
 

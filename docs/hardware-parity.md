@@ -27,7 +27,7 @@ because it mostly follows from hardware use.
 | 4K video in the show | smooth on hardware decode | unmeasured; likely CPU-bound |
 | Audio output | Core Audio / WASAPI | `cpal` (Core Audio, WASAPI, ALSA); browser Web Audio |
 | Microphone (record audio, narration) | yes | no |
-| Camera (Cameo, record with camera) | yes | no |
+| Camera (Cameo, record with camera) | yes | no live capture (#1837); backgrounds (Normal/Remove/Blur/Replace) persist and the segmentation pipeline works offscreen: RTen CPU, BiRefNet Lite 512, ~2.1 s/frame, user-installed model ([camera-backgrounds.md](camera-backgrounds.md)) |
 | Screen recording | yes | no |
 
 ## Displays
@@ -73,6 +73,7 @@ alignment runs once per transition (#67), and the decoders run in software.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-07 | trivial | Camera row: backgrounds and the segmentation pipeline landed; live capture remains #1837 |
 | 2026-11-02 | minor | On Linux and the BSDs, Presenter View stays off when winit lists exactly one display: the presenter window covered the show and stalled it. If winit lists none, the setting is kept (#1156) |
 | 2026-10-14 | minor | PNG and JPEG slide export record 144 dpi at the default 2 pixels per point, so a Retina picture opens at the slide's size |
 | 2026-10-13 | trivial | Editor slide rasters sit on the physical pixel grid (#184) |

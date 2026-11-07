@@ -506,6 +506,9 @@ pub struct Session {
     pub media_status: std::collections::HashMap<ShapeId, MediaStatus>,
     /// Animated GIF pictures paused with `media.gifPlay` (the others play).
     pub gif_paused: std::collections::HashSet<ShapeId>,
+    /// The host's camera-background segmenter. `None` until a host installs one (the CLI for an
+    /// offscreen preview); commands that need it say so.
+    segmenter: Option<Box<dyn deckcraft_matte::Segmenter>>,
     /// Text keys follow the Mac (Option+arrows move by word, Cmd+arrows to the line or text
     /// ends) instead of Windows and Linux (Ctrl+arrows by word or paragraph). Defaults to the
     /// platform DeckCraft was built for.
@@ -546,6 +549,7 @@ impl Session {
             recovery_dir: None,
             media_status: Default::default(),
             gif_paused: Default::default(),
+            segmenter: None,
             mac_keys: cfg!(target_os = "macos"),
             panics_caught: 0,
             loaded: vec![],
@@ -553,6 +557,26 @@ impl Session {
             composition_settles: 0,
         }
     }
+    /// Install (or replace) the camera-background segmenter. The host owns the model; the engine
+    /// only runs `cameo.backgroundPreview` through it.
+    pub fn set_segmenter(&mut self, segmenter: Box<dyn deckcraft_matte::Segmenter>) {
+        self.segmenter = Some(segmenter);
+    }
+
+    /// Drop the segmenter (the model was removed or failed verification).
+    pub fn clear_segmenter(&mut self) {
+        self.segmenter = None;
+    }
+
+    /// The installed segmenter's name, for `cameo.background.state`.
+    pub fn segmenter_name(&self) -> Option<&'static str> {
+        self.segmenter.as_ref().map(|s| s.name())
+    }
+
+    pub(crate) fn segmenter_mut(&mut self) -> Option<&mut (dyn deckcraft_matte::Segmenter + 'static)> {
+        self.segmenter.as_deref_mut()
+    }
+
     /// Hand over a presentation read on another thread ([`cmd::file::read_presentation_file`]);
     /// `file.adopt` with the returned token adds it as a document, through the command path like
     /// `file.open` (journaled, panic-guarded). Only the latest few wait; older ones are dropped.

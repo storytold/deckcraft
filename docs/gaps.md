@@ -281,6 +281,19 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
 - **Evidence:** checklist row missing; PR #55 (OMML editor, +10.5k lines) is open.
 - **Estimate:** 3–6 h to review, land and round-trip.
 
+### Camera backgrounds and live capture
+
+- **Evidence:** a Cameo's four background modes (`alf:backgroundProps`: Normal/Removed/Blur/Custom)
+  are now structured model state, round-trip through `.deckcraft` and PPTX, and the segmentation
+  pipeline runs offscreen with a user-installed BiRefNet Lite 512 model
+  ([camera-backgrounds.md](camera-backgrounds.md)). There is still no camera capture and no live
+  composited preview: issue #1837 owns the capture seam, and `MatteService::process` is the hook it
+  feeds.
+- **Impact:** a background can be chosen and saved (and imported from PowerPoint) but not seen on a
+  live feed yet. On wasm the controls are disabled with the message.
+- **Estimate:** capture is #1837's scope; wiring its frames through the existing `MatteService` seam
+  is a small follow-up (2–4 h). Not a beta blocker for file exchange.
+
 ### Smaller missing rows
 Zoom: live thumbnails, the zoom-in animation and the native `p166:sldZm` element (3–5 h;
 `insert.zoom` makes linked pictures with Return to Zoom), reuse slides pane with thumbnails
@@ -368,6 +381,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-07 | trivial | Camera backgrounds: modes and the segmentation pipeline landed; live capture and preview stay with #1837 |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |

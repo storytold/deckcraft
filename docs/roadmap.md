@@ -113,6 +113,7 @@ plan above.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-07 | minor | Camera backgrounds landed (four modes, PPTX round trip, RTen BiRefNet Lite 512, offscreen preview); live capture and the live composited preview stay with #1837 |
 | 2026-10-22 | trivial | Beta item 9: Animation Pane ▸ Play From landed, the item keeps effect options (3–6 h) |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native save/reopen retains imported chart workbooks and related parts; headless command tests cover a PPTX → native → PPTX cycle and stale-workbook rejection. Milestone scope and scores unchanged |

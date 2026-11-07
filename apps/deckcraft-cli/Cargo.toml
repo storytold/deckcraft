@@ -15,6 +15,9 @@ path = "src/main.rs"
 
 [dependencies]
 deckcraft-engine = { workspace = true }
+deckcraft-matte = { workspace = true }
+deckcraft-matte-rten = { workspace = true }
+image = { workspace = true }
 deckcraft-mcp = { workspace = true }
 serde_json = { workspace = true }
 

@@ -223,6 +223,8 @@ pub struct SlideApp {
     pub table_pen: serde_json::Value,
     pub session: Session,
     pub services: Services,
+    /// Camera-background model and processor (desktop); `None` in the web build.
+    pub matte: Option<Box<dyn deckcraft_matte::MatteService>>,
     pub ui: UiState,
     pub textures: textures::Textures,
     pub control_rx: Option<Receiver<ControlRequest>>,

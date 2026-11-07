@@ -1,0 +1,15 @@
+[package]
+name = "deckcraft-matte"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft camera backgrounds: the BiRefNet Lite manifest, pre/post-processing, matte compositing (Normal, Removed, Blur, Custom) and the Segmenter seam"
+
+[lints]
+workspace = true
+
+[dependencies]
+deckcraft-model = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+sha2 = "0.10"
