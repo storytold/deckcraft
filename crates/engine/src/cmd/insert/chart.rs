@@ -1,5 +1,5 @@
 use super::{
-    Chart, ChartType, Result, RunKind, Session, Shape, ShapeKind, Value, Xfrm, add_shape, bad, bool_param, color_value, edit_shapes, json,
+    Chart, ChartType, Result, RunKind, Session, Shape, ShapeId, ShapeKind, Value, Xfrm, add_shape, bad, bool_param, color_value, edit_shapes, json,
     rect_param, str_param,
 };
 
@@ -85,6 +85,70 @@ pub(super) fn chart_type_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         c.raw = None;
         Ok(())
     })
+}
+
+pub(super) fn chart_axis_title(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "chart.axisTitle";
+    let category = match str_param(p, "axis") {
+        Some("category") => true,
+        Some("value") => false,
+        _ => return Err(bad(CMD, "`axis` is `category` or `value`")),
+    };
+    let text = match p.get("text") {
+        Some(Value::Null) => None,
+        Some(Value::String(t)) => Some(t.clone()),
+        _ => return Err(bad(CMD, "`text` is the title, or null to remove it")),
+    };
+    // The charts edited: `ids`/`id` when given, else the selection, as the edit resolves them.
+    let ids: Vec<u32> = crate::cmd::targets(s, p)?.iter().map(|i| i.0).collect();
+    // Only charts whose titles are drawn and saved: the classic charts with a category and a
+    // value axis. Pie, doughnut and radar charts have none to title; the Office 2016 charts
+    // (waterfall, funnel, histogram…) are drawn and saved without them so far.
+    let mut todo = Vec::new();
+    let mut found = false;
+    for id in &ids {
+        let Some(sh) = s.doc()?.shape(ShapeId(*id)) else { continue };
+        // A shape that is not a chart is refused up front, as `with_chart` does, even when the
+        // other targets would be edited.
+        let ShapeKind::Chart(c) = &sh.kind else { return Err(bad(CMD, "not a chart")) };
+        found = true;
+        if c.kind.is_chartex() || matches!(c.kind, ChartType::Pie | ChartType::Doughnut | ChartType::Radar | ChartType::FilledRadar) {
+            return Err(bad(CMD, "axis titles are for column, bar, line, area, scatter, bubble, stock, surface and combo charts"));
+        }
+        // The same title again leaves the chart, and the imported XML it is saved from, as it is.
+        if *(if category { &c.axis_titles.0 } else { &c.axis_titles.1 }) != text {
+            todo.push(*id);
+        }
+    }
+    // Nothing to change is no edit: no undo step, no dirty document, `changed: 0`.
+    let changed = if found && todo.is_empty() {
+        Value::from(0)
+    } else {
+        let only = if found { crate::cmd::with_param(p, "ids", Value::from(todo)) } else { p.clone() };
+        with_chart(s, &only, CMD, |c| {
+            if category {
+                c.axis_titles.0.clone_from(&text);
+            } else {
+                c.axis_titles.1.clone_from(&text);
+            }
+            c.raw = None;
+            Ok(())
+        })?
+    };
+    // Only the charts the edit reached (a missing id is skipped); the titles are the first one's.
+    let charts: Vec<(u32, (Option<String>, Option<String>))> = {
+        let st = s.doc()?;
+        ids.iter()
+            .filter_map(|id| match &st.shape(ShapeId(*id))?.kind {
+                ShapeKind::Chart(c) => Some((*id, c.axis_titles.clone())),
+                _ => None,
+            })
+            .collect()
+    };
+    let ids: Vec<u32> = charts.iter().map(|(id, _)| *id).collect();
+    let titles = charts.into_iter().next().map(|(_, t)| t);
+    let (cat, val) = titles.unwrap_or_default();
+    Ok(json!({"changed": changed, "ids": ids, "axisTitles": {"category": cat, "value": val}}))
 }
 
 pub(super) fn chart_data(s: &mut Session, p: &Value) -> Result<Value> {

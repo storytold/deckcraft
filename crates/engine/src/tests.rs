@@ -6846,6 +6846,86 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
 }
 
 #[test]
+fn chart_axis_title_sets_clears_and_draws() {
+    let mut s = session();
+    let id = s.execute("insert.chart", &json!({"type": "column"})).unwrap()["id"].clone();
+    let draw = |s: &Session| {
+        let st = s.doc().unwrap();
+        deckcraft_render::render_slide(&st.doc, 0, &deckcraft_render::RenderOpts { scale: 0.5, ..Default::default() }).pixels
+    };
+    let before = draw(&s);
+    let r = s.execute("chart.axisTitle", &json!({"id": id, "axis": "category", "text": "Quarter"})).unwrap();
+    assert_eq!(r["axisTitles"], json!({"category": "Quarter", "value": null}), "{r}");
+    let with_category = draw(&s);
+    assert_ne!(before, with_category, "the category title is drawn");
+    s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Revenue"})).unwrap();
+    let with = draw(&s);
+    assert_ne!(with_category, with, "the value title is drawn");
+    let st = s.doc().unwrap();
+    let sh = st.doc.slides[0].shapes.iter().find(|x| x.id.0 as u64 == id.as_u64().unwrap()).unwrap();
+    let deckcraft_model::ShapeKind::Chart(c) = &sh.kind else { panic!("chart") };
+    assert_eq!(c.axis_titles, (Some("Quarter".into()), Some("Revenue".into())));
+    let r = s.execute("chart.axisTitle", &json!({"id": id, "axis": "category", "text": null})).unwrap();
+    assert_eq!(r["axisTitles"], json!({"category": null, "value": "Revenue"}), "{r}");
+    assert!(s.execute("chart.axisTitle", &json!({"id": id, "axis": "depth", "text": "x"})).is_err());
+    assert!(s.execute("chart.axisTitle", &json!({"id": id, "axis": "value"})).is_err(), "text is required (null removes)");
+    // Named by `ids` with nothing selected, the answer names the chart it edited and its titles.
+    s.doc_mut().unwrap().selection.shapes.clear();
+    let r = s.execute("chart.axisTitle", &json!({"ids": [id], "axis": "category", "text": "Year"})).unwrap();
+    assert_eq!(r["ids"], json!([id]), "{r}");
+    assert_eq!(r["axisTitles"], json!({"category": "Year", "value": "Revenue"}), "{r}");
+    // Setting a title a chart already has keeps its imported XML.
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+        let sh = slide.shapes.iter_mut().find(|x| x.id.0 as u64 == id.as_u64().unwrap()).unwrap();
+        let deckcraft_model::ShapeKind::Chart(c) = &mut sh.kind else { panic!("chart") };
+        c.raw = Some(Default::default());
+    }
+    let has_raw = |s: &Session| {
+        let st = s.doc().unwrap();
+        let sh = st.doc.slides[0].shapes.iter().find(|x| x.id.0 as u64 == id.as_u64().unwrap()).unwrap();
+        let deckcraft_model::ShapeKind::Chart(c) = &sh.kind else { panic!("chart") };
+        c.raw.is_some()
+    };
+    s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Revenue"})).unwrap();
+    assert!(has_raw(&s), "an unchanged title keeps the imported chart XML");
+    // ...and is no edit: nothing changed, no dirty document, the redo history stays.
+    let rev = s.doc().unwrap().revision;
+    let r = s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Revenue"})).unwrap();
+    assert_eq!(r["changed"], 0, "{r}");
+    assert_eq!(s.doc().unwrap().revision, rev);
+    s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Sales"})).unwrap();
+    assert!(!has_raw(&s), "a changed title rebuilds the chart");
+    s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Revenue"})).unwrap();
+    // A chart without axes has no axis titles, as in PowerPoint; nothing changes.
+    let pie = s.execute("insert.chart", &json!({"type": "pie"})).unwrap()["id"].clone();
+    let rev = s.doc().unwrap().revision;
+    let e = s.execute("chart.axisTitle", &json!({"id": pie, "axis": "value", "text": "x"})).unwrap_err().to_string();
+    assert!(e.contains("axis titles are for"), "{e}");
+    assert_eq!(s.doc().unwrap().revision, rev);
+    for kind in ["radar", "funnel", "waterfall", "treemap"] {
+        let c = s.execute("insert.chart", &json!({ "type": kind })).unwrap()["id"].clone();
+        assert!(s.execute("chart.axisTitle", &json!({"id": c, "axis": "category", "text": "x"})).is_err(), "{kind}");
+    }
+    // A missing id before the chart is skipped, in the answer too.
+    let r = s.execute("chart.axisTitle", &json!({"ids": [999_999, id], "axis": "category", "text": "Y"})).unwrap();
+    assert_eq!(r["ids"], json!([id]), "{r}");
+    assert_eq!(r["axisTitles"]["category"], "Y", "{r}");
+    // A target that is not a chart is refused with the chart, not skipped, whatever its order.
+    let tb = s.execute("insert.textBox", &json!({"text": "x"})).unwrap()["id"].clone();
+    let rev = s.doc().unwrap().revision;
+    for ids in [json!([id, tb]), json!([tb, id])] {
+        let e = s.execute("chart.axisTitle", &json!({"ids": ids, "axis": "category", "text": "Z"})).unwrap_err().to_string();
+        assert!(e.contains("not a chart"), "{e}");
+    }
+    let e = s.execute("chart.axisTitle", &json!({"ids": [tb], "axis": "category", "text": "Y"})).unwrap_err().to_string();
+    assert!(e.contains("not a chart"), "{e}");
+    assert_eq!(s.doc().unwrap().revision, rev);
+}
+
+#[test]
 fn slide_master_view_rejects_invalid_indices() {
     let mut s = Session::with_new();
     for p in [json!({"master": -1}), json!({"master": 0.5}), json!({"master": 0, "layout": -1}), json!({"master": 0, "layout": 1.5})] {
