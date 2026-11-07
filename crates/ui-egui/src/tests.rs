@@ -378,6 +378,54 @@ fn title_bar_export_opens_the_export_dialog() {
     assert_eq!(harness.state().dialog.as_ref().map(|d| d.id.as_str()), Some("export"));
 }
 
+/// A browser's Copy Image puts the picture on the clipboard with text that only names it: the
+/// address (and the alt text), and an `<img>` fragment as HTML. Ctrl+V pastes the picture, as
+/// PowerPoint does, instead of a text box with the link. Without a picture the link pastes as text.
+#[test]
+fn ctrl_v_pastes_the_picture_a_browser_copied_not_its_link() {
+    let url = "https://github.com/storytold/deckcraft/raw/main/assets/app-icon/hicolor/256x256/apps/ai.storyteller.deckcraft.png";
+    let caption = format!("{url}\nDeckCraft icon: a presentation screen with a bar chart on an orange tile");
+    for (text, html, with_picture, pictures_after) in [
+        (caption.clone(), Some(format!("<img src=\"{url}\" alt=\"DeckCraft icon\">")), true, 1),
+        (url.to_string(), None, true, 1),
+        // Firefox's text/x-moz-url is UTF-16; read as UTF-8 it carries NULs.
+        (url.chars().flat_map(|c| [c, '\0']).collect(), None, true, 1),
+        (url.to_string(), None, false, 0),
+        ("See https://example.com for the photos".to_string(), None, true, 0),
+    ] {
+        let session = Session::with_new();
+        let png = {
+            let d = session.active().unwrap();
+            deckcraft_engine::cmd::file::render_png(&d.doc, 0, 0.1, false).0
+        };
+        let services = Services {
+            clipboard_image: Some(Box::new(move || with_picture.then(|| png.clone()))),
+            clipboard_html: Some(Box::new(move || html.clone())),
+            ..Default::default()
+        };
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(session, services),
+        );
+        harness.run_steps(2);
+        let shapes_before = harness.state().session.active().unwrap().doc.slides[0].shapes.len();
+        harness.event(egui::Event::Paste(text.clone()));
+        harness.run_steps(2);
+        let d = harness.state().session.active().unwrap();
+        let shapes = &d.doc.slides[0].shapes;
+        let pictures = shapes.iter().filter(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })).count();
+        assert_eq!(pictures, pictures_after, "{text:?}");
+        assert_eq!(shapes.len(), shapes_before + 1, "one shape, picture or text, for {text:?}");
+        if pictures_after == 0 {
+            let pasted = shapes.last().and_then(|s| s.text.as_ref()).map(deckcraft_model::TextBody::text);
+            assert_eq!(pasted.as_deref(), Some(text.as_str()), "the text survives");
+        }
+    }
+}
+
 /// #53: Ctrl+V did nothing for an image-only clipboard: egui-winit sends no Paste event for it and
 /// swallows the key press, so only the V release reaches the app.
 #[test]
@@ -999,7 +1047,8 @@ fn the_language_dialog_marks_the_selected_text() {
     harness.state_mut().run("app.dialog", json!({"id": "language"})).unwrap();
     // The anchored window settles over its first frames; click once it stays put.
     harness.run_steps(4);
-    harness.get_by_label("Français (France)").click();
+    // Installed dictionaries append a marker to the language's accessible label.
+    harness.get_by_label_contains("Français (France)").click();
     harness.run_steps(2);
     harness.get_by_label("OK").click();
     harness.run_steps(2);
@@ -2359,4 +2408,48 @@ fn overdue_visible_logic_does_not_reanchor_a_later_hidden_show() {
     // the slide would not advance.
     let _ = ctx.run_logic(&raw_at(12.0, true, false), |ctx| app.tick_hidden_show(ctx, visible_anchor + std::time::Duration::from_secs(3)));
     assert_eq!(app.show.as_ref().unwrap().state.slide, 1, "time from the full visible frame is preserved through the logic-only pass");
+}
+
+/// #1431: a comment card's reply row was wider than the pane, so the Comments pane grew every
+/// frame until it stuck at its widest and dragging its edge did nothing.
+#[test]
+fn comments_pane_keeps_its_width_and_resizes() {
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        SlideApp::new(Session::with_new(), Services::default()),
+    );
+    h.run_steps(3);
+    h.state_mut().run("comment.add", json!({"text": "Check the figures on this slide"})).unwrap();
+    h.state_mut().run("comment.add", json!({"text": "Resolved one"})).unwrap();
+    h.state_mut().run("comment.resolve", json!({"index": 1, "resolved": true})).unwrap();
+    h.state_mut().run("view.pane", json!({"pane": "comments"})).unwrap();
+    h.run_steps(30);
+    let width = h.state().ui.pane_width;
+    assert!(width < 320.0, "the pane keeps its default width, not {width}");
+    // The cards stay compact: the second one starts near the top, not below a stretched first.
+    let second = h.get_by_label("Resolved one").rect();
+    assert!(second.top() < 450.0, "the second comment sits near the top, at {second:?}");
+
+    // Drag the pane's left edge: right narrows it, left widens it.
+    let drag = |h: &mut egui_kittest::Harness<'_, SlideApp>, dx: f32| {
+        let start = egui::pos2(1200.0 - h.state().ui.pane_width - 1.0, 500.0);
+        let end = start + egui::vec2(dx, 0.0);
+        h.event(egui::Event::PointerMoved(start));
+        h.run_steps(1);
+        h.event(egui::Event::PointerButton { pos: start, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+        for i in 1..=6 {
+            h.event(egui::Event::PointerMoved(start + (end - start) * (i as f32 / 6.0)));
+            h.run_steps(1);
+        }
+        h.event(egui::Event::PointerButton { pos: end, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+        h.run_steps(10);
+        h.state().ui.pane_width
+    };
+    let narrow = drag(&mut h, 50.0);
+    assert!(narrow < width - 40.0, "dragging right narrows the pane: {width} -> {narrow}");
+    let wide = drag(&mut h, -150.0);
+    assert!(wide > narrow + 140.0, "dragging left widens the pane: {narrow} -> {wide}");
 }
