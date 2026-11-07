@@ -1,7 +1,7 @@
-use super::breaking::{BreakParams, RawLine, Tab, break_lines, line_metrics, measure_str, tab_advance, tab_segment, tabs_of};
+use super::breaking::{BreakParams, LINE_PITCH, RawLine, Tab, break_lines, line_metrics, measure_str, tab_advance, tab_segment, tabs_of};
 use super::run::{Deco, DecoLine, GlyphRun};
 use super::shape::{SUB_SUPER, Upright, shape_para};
-use super::style::{Cell, Opts, ParaShaped, Style, spacing_pts};
+use super::style::{Cell, Opts, ParaShaped, Style, make_style, spacing_pts};
 use super::{
     Align, Anchor, Arc, AutoFit, BodyProps, Bullet, Caps, Ctx, FontFace, LineInfo, Rect, Shape, Spacing, Strike, TextBody, TextDir, TextLayout, bidi,
     joins_following, joins_preceding, resolve,
@@ -79,7 +79,7 @@ struct BoxGeom {
 }
 
 impl BoxGeom {
-    fn new(shape: &Shape, bp: &BodyProps, text_rect: Rect) -> Self {
+    fn new(shape: &Shape, bp: &BodyProps, text_rect: Rect, single_line_autofit: bool) -> Self {
         let vert = bp.vert.unwrap_or(TextDir::Horizontal);
         let rotation = match vert {
             TextDir::Vertical | TextDir::EaVertical | TextDir::Stacked | TextDir::StackedRtl | TextDir::MongolianVertical => 90.0,
@@ -113,7 +113,10 @@ impl BoxGeom {
         let inner = Rect::new(r.x0 + ins_l, r.y0 + ins_t, (r.x1 - ins_r).max(r.x0 + ins_l), (r.y1 - ins_b).max(r.y0 + ins_t));
         // Text that follows a WordArt arch or circle is set on one line per paragraph.
         let follow = bp.warp.as_deref().is_some_and(deckcraft_geom::warp::is_follow);
-        let wrap = bp.wrap.unwrap_or(true) && !follow && !matches!(bp.autofit, Some(AutoFit::Shape) if shape.text_box && !bp.wrap.unwrap_or(true));
+        let wrap = bp.wrap.unwrap_or(true)
+            && !follow
+            && !single_line_autofit
+            && !matches!(bp.autofit, Some(AutoFit::Shape) if shape.text_box && !bp.wrap.unwrap_or(true));
         let ncols = bp.columns.unwrap_or(1).clamp(1, 16) as usize;
         let col_gap = bp.col_spacing.unwrap_or(0.0).max(0.0);
         let col_w = ((inner.width() - col_gap * (ncols as f64 - 1.0)) / ncols as f64).max(1.0);
@@ -244,7 +247,27 @@ impl ParaEnv<'_> {
 pub(crate) fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts: &Opts, scale: f64, reduce: f64) -> TextLayout {
     #[cfg(test)]
     LAYOUT_PASSES.with(|n| n.set(n.get() + 1));
-    let g = BoxGeom::new(shape, bp, opts.rect);
+    // A spAutoFit text box whose saved height fits exactly one line of its largest run is a
+    // single-line label the author sized by fit-to-text. Renderers whose metrics differ slightly
+    // must not fold it into two lines at the stored width (a WPS-authored "变式3：" label broke
+    // apart) — render it on one line, overflowing to the right instead. The run sizes come from
+    // the resolved properties (`shape_para`'s resolution, placeholder inheritance included), not
+    // from the raw overrides a run happens to carry.
+    let single_line_autofit = matches!(bp.autofit, Some(AutoFit::Shape)) && shape.text_box && body.paragraphs.len() == 1 && {
+        let para = &body.paragraphs[0];
+        let max_sz = para
+            .runs
+            .iter()
+            .filter(|r| !r.text.trim().is_empty())
+            .map(|r| make_style(ctx, &resolve::run(ctx, shape, para, &r.props), scale, opts.prompt_color).size)
+            .fold(0.0f64, f64::max)
+            .max(1.0);
+        let v_insets = bp.inset_t.unwrap_or(3.6) + bp.inset_b.unwrap_or(3.6);
+        let one_line = max_sz * LINE_PITCH + v_insets;
+        let h = opts.rect.height();
+        h > 0.0 && h <= one_line + 2.0
+    };
+    let g = BoxGeom::new(shape, bp, opts.rect, single_line_autofit);
     let shaped_paras = shape_paragraphs(ctx, shape, body, opts, scale, g.upright());
     let mut out = TextLayout { inner: g.inner, font_scale: scale, line_reduction: reduce, rotation: g.rotation, ..Default::default() };
     let first_last = bp.space_first_last.unwrap_or(false);
