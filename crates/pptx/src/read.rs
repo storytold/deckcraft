@@ -46,6 +46,12 @@ pub struct Imp<'a> {
     pub tag_bytes: usize,
     /// The tag budget ran out and the warning was given.
     pub tags_capped: bool,
+    /// Bytes of preserved theme XML kept by the masters read so far.
+    pub theme_extra_bytes: usize,
+    /// Shapes read from SmartArt drawings so far (see `shapes::MAX_SMARTART_SHAPES`).
+    pub smartart_shapes: usize,
+    /// Bytes of SmartArt layout, style and colour definitions copied into diagrams so far.
+    pub diagram_xml_bytes: usize,
     /// Whether a part has relationships of its own, by normalized part name: looked up once
     /// however many embedded objects point at the part.
     pub has_rels: HashMap<String, bool>,
@@ -449,6 +455,9 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
+        theme_extra_bytes: 0,
+        smartart_shapes: 0,
+        diagram_xml_bytes: 0,
         has_rels: HashMap::new(),
     };
     let part = Part::new(&pkg, &theme_path, &doc);
@@ -491,6 +500,9 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         tags_by_part: HashMap::new(),
         tag_bytes: 0,
         tags_capped: false,
+        theme_extra_bytes: 0,
+        smartart_shapes: 0,
+        diagram_xml_bytes: 0,
         has_rels: HashMap::new(),
     };
     // Slide ids first so hyperlinks anywhere can point at slides.

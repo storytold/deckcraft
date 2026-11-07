@@ -559,9 +559,20 @@ fn diagram_data(imp: &mut Imp, target: &str) -> Option<deckcraft_model::MediaId>
     Some(id)
 }
 
+/// Shapes all SmartArt drawings of one presentation may add; a frame read after that is left as a
+/// placeholder. Each frame that references a drawing reads it again.
+const MAX_SMARTART_SHAPES: usize = 250_000;
+
+/// SmartArt definition XML (layout, style, colours) all diagrams of one presentation may copy.
+const MAX_DIAGRAM_XML_BYTES: usize = 32 << 20;
+
+fn count_shapes(shapes: &[Shape]) -> usize {
+    shapes.iter().map(|s| 1 + count_shapes(s.children())).sum()
+}
+
 /// SmartArt: read the pre-drawn shapes of its drawing part as a group.
 fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) -> Option<Shape> {
-    if depth > 8 {
+    if depth > 8 || imp.smartart_shapes >= MAX_SMARTART_SHAPES {
         return None;
     }
     let rel_ids = gd.child("relIds")?;
@@ -573,10 +584,13 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     let dpart = Part::new(imp.pkg, &drawing_rel, &d);
     let tree = d.root.child("spTree")?;
     let mut sub = IdCtx { fresh: true, ..Default::default() };
+    let before = imp.smartart_shapes;
     let children = sp_tree(imp, &dpart, &mut sub, tree, depth + 1);
     if children.is_empty() {
         return None;
     }
+    // Counted once here, nested SmartArt included: a drawing that frames reuse counts every time it is read.
+    imp.smartart_shapes = before.saturating_add(count_shapes(&children));
     let children = smartart_text_rects(imp, &mut sub, tree, children, depth + 1);
     let mut g = frame.clone();
     let x = frame.xfrm.unwrap_or_default();
@@ -704,15 +718,22 @@ fn text_area(geom: &Geom, w: f64, h: f64) -> deckcraft_geom::Rect {
 
 /// The outline of a SmartArt graphic (for the Text Pane), with its layout, quick style and colour
 /// parts kept to be written back.
-fn diagram_outline(imp: &Imp, part: &Part, rel_ids: &El, data: &El) -> Option<deckcraft_model::Diagram> {
+fn diagram_outline(imp: &mut Imp, part: &Part, rel_ids: &El, data: &El) -> Option<deckcraft_model::Diagram> {
     let nodes = crate::dgm::outline(data);
     if nodes.is_empty() {
         return None;
     }
+    let (pkg, spent) = (imp.pkg, std::cell::Cell::new(imp.diagram_xml_bytes));
     let raw = |attr: &str| -> Option<String> {
         let rel = part.rels.get(rel_ids.attr(attr)?)?;
-        let bytes = imp.pkg.get(&rel.target)?;
-        (bytes.len() <= 4 << 20).then(|| String::from_utf8(bytes.to_vec()).ok()).flatten()
+        let bytes = pkg.get(&rel.target)?;
+        // Every diagram copies its definitions, so the copies share one presentation-wide budget.
+        if bytes.len() > 4 << 20 || spent.get().saturating_add(bytes.len()) > MAX_DIAGRAM_XML_BYTES {
+            return None;
+        }
+        let xml = String::from_utf8(bytes.to_vec()).ok()?;
+        spent.set(spent.get() + xml.len());
+        Some(xml)
     };
     let layout_xml = raw("r:lo");
     let (layout_id, cat) = layout_xml
@@ -733,6 +754,8 @@ fn diagram_outline(imp: &Imp, part: &Part, rel_ids: &El, data: &El) -> Option<de
     let pr = data.path(&["ptLst"]).and_then(|l| l.children_named("pt").find(|p| p.attr("type") == Some("doc"))).and_then(|p| p.child("prSet"));
     let style = crate::dgm::style_for(pr.and_then(|p| p.attr("qsTypeId")).unwrap_or("")).to_string();
     let colors = crate::dgm::colors_for(pr.and_then(|p| p.attr("csTypeId")).unwrap_or(""));
+    let (style_xml, colors_xml) = (raw("r:qs"), raw("r:cs"));
+    imp.diagram_xml_bytes = spent.get();
     Some(deckcraft_model::Diagram {
         kind: crate::dgm::kind_for(&id, &cat).to_string(),
         nodes,
@@ -741,8 +764,8 @@ fn diagram_outline(imp: &Imp, part: &Part, rel_ids: &El, data: &El) -> Option<de
         imported: true,
         layout_id: id,
         layout_xml,
-        style_xml: raw("r:qs"),
-        colors_xml: raw("r:cs"),
+        style_xml,
+        colors_xml,
     })
 }
 
