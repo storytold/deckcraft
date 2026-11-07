@@ -73,3 +73,6 @@ sync_github_name = true
 display_name = "Arshiya"
 real_name = "Arshiya Rahgozar"
 sync_github_name = false
+
+[people.ashokram-si]
+real_name = "Ashok Ram"

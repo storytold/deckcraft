@@ -2410,6 +2410,96 @@ fn overdue_visible_logic_does_not_reanchor_a_later_hidden_show() {
     assert_eq!(app.show.as_ref().unwrap().state.slide, 1, "time from the full visible frame is preserved through the logic-only pass");
 }
 
+/// The `ViewportCommand::Title`s one logic tick sends to the window.
+fn sent_titles(app: &mut SlideApp, ctx: &egui::Context) -> Vec<String> {
+    titles_sent(ctx.run_ui(egui::RawInput::default(), |ui| app.logic(ui.ctx())))
+}
+
+/// The `ViewportCommand::Title`s in a pass's output.
+fn titles_sent(out: egui::FullOutput) -> Vec<String> {
+    let titles = out
+        .viewport_output
+        .values()
+        .flat_map(|v| &v.commands)
+        .filter_map(|c| match c {
+            egui::ViewportCommand::Title(t) => Some(t.clone()),
+            _ => None,
+        })
+        .collect();
+    out.drop_without_applying_deltas();
+    titles
+}
+
+/// #1058: the window title names the open presentation, with • while it has unsaved changes, so a
+/// host embedding the web build can tell which file a drop opened. It goes out once per change.
+#[test]
+fn the_window_title_follows_the_dropped_presentation_and_its_changes() {
+    let inbox = Inbox::default();
+    let mut app = SlideApp::new(Session::new(), Services { inbox: Some(inbox.clone()), ..Default::default() });
+    let ctx = egui::Context::default();
+    assert_eq!(sent_titles(&mut app, &ctx), ["DeckCraft"]);
+    assert!(sent_titles(&mut app, &ctx).is_empty(), "an unchanged title is not sent again");
+
+    // The web build's drop: the file arrives through the inbox and opens on the next tick.
+    let mut deck = Session::with_new();
+    let data = deck.execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
+    let id = app.begin_external_file("drop");
+    let bytes = deckcraft_engine::cmd::base64_decode(&data).unwrap();
+    inbox.lock().unwrap().push(InboxEvent::File(InboxFile { id, name: "Quarterly review.deckcraft".into(), bytes }));
+    assert_eq!(sent_titles(&mut app, &ctx), ["Quarterly review — DeckCraft"]);
+
+    app.session.execute("slide.new", &json!({})).unwrap();
+    assert_eq!(sent_titles(&mut app, &ctx), ["Quarterly review • — DeckCraft"]);
+    assert!(sent_titles(&mut app, &ctx).is_empty());
+
+    // Save As under another name renames it and clears the mark.
+    let dir = std::env::temp_dir().join(format!("deckcraft-title-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Board update.deckcraft").to_string_lossy().to_string();
+    app.session.execute("file.saveAs", &json!({"path": path})).unwrap();
+    assert_eq!(sent_titles(&mut app, &ctx), ["Board update — DeckCraft"]);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    app.session.execute("file.close", &json!({})).unwrap();
+    assert_eq!(sent_titles(&mut app, &ctx), ["DeckCraft"]);
+}
+
+/// An edit made by the UI pass itself (a click, a key) marks the title in that same pass: the end
+/// of the pass sends it too, so the • doesn't wait for whatever repaints the window next.
+#[test]
+fn an_edit_in_the_ui_pass_marks_the_title_in_the_same_pass() {
+    let mut app = SlideApp::new(Session::new(), Services::default());
+    let data = Session::with_new().execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
+    app.session.execute("file.openBytes", &json!({"name": "Plan.deckcraft", "data": data})).unwrap();
+    let ctx = egui::Context::default();
+    // A first full pass installs the interface fonts (that pass is discarded and run again).
+    let titles = titles_sent(ctx.run_ui(egui::RawInput::default(), |ui| {
+        app.logic(ui.ctx());
+        app.ui(ui);
+    }));
+    assert_eq!(titles, ["Plan — DeckCraft"]);
+    let mut edited = false;
+    let titles = titles_sent(ctx.run_ui(egui::RawInput::default(), |ui| {
+        app.logic(ui.ctx());
+        // What a button the pass draws would do.
+        if !std::mem::replace(&mut edited, true) {
+            app.session.execute("slide.new", &json!({})).unwrap();
+        }
+        app.ui(ui);
+    }));
+    assert_eq!(titles, ["Plan • — DeckCraft"]);
+}
+
+/// X11 window titles are C strings (a NUL panicked there in a sibling app): a file name sent with a
+/// NUL over the control channel must not carry it into the window title.
+#[test]
+fn the_window_title_drops_nul_characters() {
+    let mut app = SlideApp::new(Session::new(), Services::default());
+    let data = Session::with_new().execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
+    app.session.execute("file.openBytes", &json!({"name": "Q3\u{0}deck.deckcraft", "data": data})).unwrap();
+    assert_eq!(app.window_title(), "Q3deck — DeckCraft");
+}
+
 /// #1431: a comment card's reply row was wider than the pane, so the Comments pane grew every
 /// frame until it stuck at its widest and dragging its edge did nothing.
 #[test]
