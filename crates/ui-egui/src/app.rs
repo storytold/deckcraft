@@ -54,6 +54,7 @@ impl SlideApp {
             show: None,
             anim_preview: None,
             reuse_target: None,
+            reuse_preview: None,
             media: media::MediaHost::new(audio_out),
             status: None,
             opening: None,
