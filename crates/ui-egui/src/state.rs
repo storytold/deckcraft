@@ -94,12 +94,15 @@ pub struct UiState {
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    #[serde(default)]
+    pub language: crate::UiLanguage,
 }
 
 impl Default for UiState {
     fn default() -> Self {
         UiState {
             brightness: theme::Brightness::Light,
+            language: crate::UiLanguage::default(),
             tab: "Home".into(),
             ribbon_collapsed: false,
             view: ViewMode::Normal,
