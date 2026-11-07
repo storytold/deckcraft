@@ -556,37 +556,45 @@ mod tests {
     }
 
     /// The desktop and MCP sessions have no segmenter of their own: the host hands the session a
-    /// loader, which runs on first use and is asked again after the model changes.
+    /// loader. `cameo.background.state` must answer from the cheap name probe — a status query
+    /// cannot hash and parse 191 MB on the UI thread — and only a preview loads the model.
     #[test]
-    fn the_hosts_loader_supplies_the_segmenter_on_first_use() {
+    fn the_hosts_loader_loads_only_for_a_preview() {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-        let model = Arc::new(AtomicBool::new(true));
-        let calls = Arc::new(AtomicUsize::new(0));
-        let (flag, count) = (Arc::clone(&model), Arc::clone(&calls));
+        let installed = Arc::new(AtomicBool::new(true));
+        let loads = Arc::new(AtomicUsize::new(0));
+        let (name_flag, load_flag, load_count) = (Arc::clone(&installed), Arc::clone(&installed), Arc::clone(&loads));
         let mut s = with_cameo();
-        s.set_segmenter_loader(Box::new(move || {
-            count.fetch_add(1, Ordering::Relaxed);
-            if flag.load(Ordering::Relaxed) {
-                Ok(Box::new(EllipseSegmenter::default()) as Box<dyn Segmenter>)
-            } else {
-                Err("Background model not installed".to_string())
-            }
-        }));
-        let name = Segmenter::name(&EllipseSegmenter::default());
-        assert_eq!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"], name);
-        assert_eq!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"], name);
-        assert_eq!(calls.load(Ordering::Relaxed), 1, "loaded once, then cached");
+        s.set_segmenter_loader(crate::SegmenterLoader {
+            name: Box::new(move || name_flag.load(Ordering::Relaxed).then_some("stub-segmenter")),
+            load: Box::new(move || {
+                load_count.fetch_add(1, Ordering::Relaxed);
+                if load_flag.load(Ordering::Relaxed) {
+                    Ok(Box::new(EllipseSegmenter::default()) as Box<dyn Segmenter>)
+                } else {
+                    Err("Background model not installed".to_string())
+                }
+            }),
+        });
+        assert_eq!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"], "stub-segmenter");
+        assert_eq!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"], "stub-segmenter");
+        assert_eq!(loads.load(Ordering::Relaxed), 0, "a status query never loads the model");
 
-        // The model goes away and the host says so; the next command asks the loader again.
-        model.store(false, Ordering::Relaxed);
+        // The preview is what loads it, and from then on the state names the loaded segmenter.
+        s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).expect("preview");
+        assert_eq!(loads.load(Ordering::Relaxed), 1);
+        assert_eq!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"], Segmenter::name(&EllipseSegmenter::default()));
+
+        // The model goes away and the host says so: a preview asks the loader again, once.
+        installed.store(false, Ordering::Relaxed);
         s.sync_segmenter(false);
         assert!(s.execute("cameo.background.state", &json!({})).expect("state")["segmenter"].is_null());
         assert!(s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).is_err());
-        let before = calls.load(Ordering::Relaxed);
+        let attempts = loads.load(Ordering::Relaxed);
         assert!(s.execute("cameo.backgroundPreview", &json!({"image": png(8, 8, [1, 2, 3, 255]), "mode": "removed"})).is_err());
-        assert_eq!(calls.load(Ordering::Relaxed), before, "a remembered failure is not retried per call");
+        assert_eq!(loads.load(Ordering::Relaxed), attempts, "a remembered failure is not retried per call");
     }
 
     #[test]

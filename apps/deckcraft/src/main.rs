@@ -295,9 +295,11 @@ fn main() -> eframe::Result {
             // Control-channel and MCP calls run `cameo.backgroundPreview` on this session; the
             // model the panel installs is the one it must use. Loaded on first need, and the
             // panel's model state clears it again when a model appears or goes away.
-            session.set_segmenter_loader(Box::new(|| {
-                deckcraft_matte_rten::RtenSegmenter::load_installed().map(|s| Box::new(s) as Box<dyn deckcraft_matte::Segmenter>)
-            }));
+            session.set_segmenter_loader(deckcraft_engine::SegmenterLoader {
+                // `cameo.background.state` asks this from the control channel: a stat, no hash.
+                name: Box::new(deckcraft_matte_rten::RtenSegmenter::installed_name),
+                load: Box::new(|| deckcraft_matte_rten::RtenSegmenter::load_installed().map(|s| Box::new(s) as Box<dyn deckcraft_matte::Segmenter>)),
+            });
             let mut app = SlideApp::new(session, services(native_wayland));
             // Presenter View asks winit how many displays there are when a show starts.
             #[cfg(all(unix, not(target_os = "macos")))]

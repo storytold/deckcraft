@@ -482,9 +482,17 @@ pub struct Clipboard {
     pub pastes: u32,
 }
 
-/// How a host provides its camera-background model to a [`Session`]: load and verify the installed
-/// model, or say why it cannot. Called lazily, at most once per `clear_segmenter`.
-pub type SegmenterLoader = Box<dyn Fn() -> std::result::Result<Box<dyn deckcraft_matte::Segmenter>, String>>;
+/// How a host provides its camera-background model to a [`Session`]. Two callbacks, because a
+/// status query must stay cheap: `name` answers from the file system, and only a preview pays for
+/// `load` (verify 191 MB, parse the graph).
+pub struct SegmenterLoader {
+    /// The segmenter's name while a model is installed, worked out without hashing or parsing the
+    /// file — `cameo.background.state` asks this on the UI thread. `None` when nothing is
+    /// installed.
+    pub name: Box<dyn Fn() -> Option<&'static str>>,
+    /// Load and verify the installed model, or say why it cannot.
+    pub load: Box<dyn Fn() -> std::result::Result<Box<dyn deckcraft_matte::Segmenter>, String>>,
+}
 
 pub struct Session {
     docs: Vec<DocState>,
@@ -578,10 +586,10 @@ impl Session {
 
     /// Hand the engine the host's way of finding its model. A desktop app that knows where the
     /// model lives (and that installing or removing it is out of the engine's hands) points the
-    /// session at its loader once; the first command that needs a segmenter calls it, so a
-    /// session that never previews never pays for the 191 MB load. A loader failure is remembered
-    /// as an actionable sentence until [`Session::clear_segmenter`] (see also
-    /// [`Session::sync_segmenter`]).
+    /// session at its loader once. Nothing is loaded until a preview asks: `cameo.background.state`
+    /// only calls the cheap `name` probe, so a status query never stalls the UI thread on 191 MB.
+    /// A load failure is remembered as an actionable sentence until [`Session::clear_segmenter`]
+    /// (see also [`Session::sync_segmenter`]).
     pub fn set_segmenter_loader(&mut self, loader: SegmenterLoader) {
         self.segmenter_loader = Some(loader);
         self.clear_segmenter();
@@ -597,8 +605,8 @@ impl Session {
         if let Some(detail) = &self.segmenter_failed {
             return Err(detail.clone());
         }
-        let Some(load) = &self.segmenter_loader else { return Ok(()) };
-        match load() {
+        let Some(loader) = &self.segmenter_loader else { return Ok(()) };
+        match (loader.load)() {
             Ok(segmenter) => {
                 self.segmenter = Some(segmenter);
                 Ok(())
@@ -627,11 +635,17 @@ impl Session {
         }
     }
 
-    /// The installed segmenter's name, for `cameo.background.state`. Asks the host's loader on the
-    /// first call, so a session whose model is installed reports it before any preview.
-    pub fn segmenter_name(&mut self) -> Option<&'static str> {
-        let _ = self.ensure_segmenter();
-        self.segmenter.as_ref().map(|s| s.name())
+    /// The segmenter's name, for `cameo.background.state`: the loaded one, else the host's cheap
+    /// "is a model installed" probe. This never loads the model, so a status query cannot stall
+    /// the caller; a preview does the loading.
+    pub fn segmenter_name(&self) -> Option<&'static str> {
+        if let Some(segmenter) = &self.segmenter {
+            return Some(segmenter.name());
+        }
+        if self.segmenter_failed.is_some() {
+            return None;
+        }
+        (self.segmenter_loader.as_ref()?.name)()
     }
 
     pub(crate) fn segmenter_mut(&mut self) -> Option<&mut (dyn deckcraft_matte::Segmenter + 'static)> {

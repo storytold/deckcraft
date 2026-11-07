@@ -178,6 +178,9 @@ pub struct RtenSegmenter {
 }
 
 impl RtenSegmenter {
+    /// The name `cameo.background.state` reports for this backend.
+    pub const NAME: &'static str = "birefnet-lite-512";
+
     /// Verify and load the model at `path`. The hash is checked again here even if a caller
     /// probed it earlier: the bytes are about to be interpreted, so they must match.
     pub fn load(path: &Path) -> Result<Self, String> {
@@ -194,6 +197,17 @@ impl RtenSegmenter {
             }
         };
         Ok(RtenSegmenter { model, options, feather: 2 })
+    }
+
+    /// The name `cameo.background.state` reports before anything is loaded: `None` unless a file
+    /// of the manifest's size sits in one of the model roots. A `stat` per root — never a hash and
+    /// never a parse, so a status query on the UI thread stays cheap; a preview proves the bytes.
+    pub fn installed_name() -> Option<&'static str> {
+        let present = model_roots().iter().any(|root| {
+            let path = manifest::MANIFEST.path_in(root);
+            std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() == manifest::MODEL_BYTES)
+        });
+        present.then_some(RtenSegmenter::NAME)
     }
 
     /// Load from the first model root that holds a verified install.
@@ -235,7 +249,7 @@ impl Segmenter for RtenSegmenter {
     }
 
     fn name(&self) -> &'static str {
-        "birefnet-lite-512"
+        RtenSegmenter::NAME
     }
 }
 

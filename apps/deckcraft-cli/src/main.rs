@@ -794,9 +794,11 @@ so drop --connect (or use --connect without the roots)"
             let mut h = Headless::new();
             // `cameo.backgroundPreview` runs offscreen in this session: let it find the model the
             // user installed. The loader runs on the first preview, not at startup.
-            h.session.set_segmenter_loader(Box::new(|| {
-                deckcraft_matte_rten::RtenSegmenter::load_installed().map(|s| Box::new(s) as Box<dyn deckcraft_matte::Segmenter>)
-            }));
+            h.session.set_segmenter_loader(deckcraft_engine::SegmenterLoader {
+                // `cameo.background.state` answers from the file system; a preview loads the model.
+                name: Box::new(deckcraft_matte_rten::RtenSegmenter::installed_name),
+                load: Box::new(|| deckcraft_matte_rten::RtenSegmenter::load_installed().map(|s| Box::new(s) as Box<dyn deckcraft_matte::Segmenter>)),
+            });
             // `--sample` is the operator's own choice, made before the roots come into force.
             if sample {
                 deckcraft_engine::sample::open_sample(&mut h.session).map_err(|e| e.to_string())?;
