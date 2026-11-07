@@ -78,7 +78,8 @@ fn ctrl_arrows_stop_where_powerpoint_does() {
 #[test]
 fn ctrl_arrows_over_cjk_rtl_emoji_and_marks() {
     let (mut s, _) = editing("日本語のテキスト abc 한국어", (0, 0));
-    assert_eq!(walk(&mut s, "Right", CTRL), vec![0, 1, 2, 3, 4, 5, 6, 7, 9, 13, 14, 15, 16]);
+    // Japanese stops at each character; Korean words are separated by spaces.
+    assert_eq!(walk(&mut s, "Right", CTRL), vec![0, 1, 2, 3, 4, 5, 6, 7, 9, 13, 16]);
     // Arabic and Hebrew words inside a left-to-right paragraph: in logical order.
     let (mut s, _) = editing("Hello مرحبا بالعالم world שלום end", (0, 0));
     assert_eq!(walk(&mut s, "Right", CTRL), vec![0, 6, 12, 20, 26, 31, 34]);
