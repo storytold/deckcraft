@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use deckcraft_model::edit;
 use deckcraft_model::text::{Bullet, Paragraph, RunProps, Strike, TextBody};
-use egui::text::{CCursor, Galley, LayoutJob, TextFormat};
+use egui::text::{Galley, LayoutJob, TextFormat};
 use egui::{Align2, Color32, Stroke, Ui, vec2};
 
 use crate::theme;
@@ -210,16 +210,30 @@ pub fn editor(
     out
 }
 
+/// The (min y, max y) of the row holding char index `at`; `walk` (row index, chars through that
+/// row) carries over between calls, so successive non-decreasing `at`s cost one pass in all.
+fn row_span_at(galley: &Galley, walk: &mut (usize, usize), at: usize) -> (f32, f32) {
+    while walk.1 <= at && walk.0 + 1 < galley.rows.len() {
+        walk.0 += 1;
+        walk.1 += galley.rows[walk.0].char_count_including_newline().0;
+    }
+    galley.rows.get(walk.0).map_or((0.0, 0.0), |r| (r.min_y(), r.max_y()))
+}
+
 /// Bullets and numbers at the start of each paragraph's first line of `galley` (laid out from
 /// `body`), drawn at `origin`.
 fn paint_bullets(painter: &egui::Painter, body: &TextBody, galley: &Galley, origin: egui::Pos2, size: f32, color: Color32) {
     let k = size / 12.0;
     let mut at = 0usize;
+    // Paragraph starts only grow, so one forward walk over the rows finds each start's row
+    // (`pos_from_cursor` would rescan from the top for every bullet).
+    let mut walk = (0usize, galley.rows.first().map_or(0, |r| r.char_count_including_newline().0));
     for (p, bullet) in body.paragraphs.iter().zip(bullets(body)) {
         if let Some(b) = bullet {
-            let row = galley.pos_from_cursor(CCursor::new(at));
-            let pos = origin + vec2(px(indents(p).0, k), row.center().y);
-            let font = theme::font(row.height().clamp(size * 0.75, size * 2.0) * 0.8);
+            let (min_y, max_y) = row_span_at(galley, &mut walk, at);
+            let (center_y, height) = ((min_y + max_y) / 2.0, max_y - min_y);
+            let pos = origin + vec2(px(indents(p).0, k), center_y);
+            let font = theme::font(height.clamp(size * 0.75, size * 2.0) * 0.8);
             painter.text(pos, Align2::LEFT_CENTER, b, font, color);
         }
         at += p.char_len() + 1;
@@ -241,6 +255,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use deckcraft_model::text::{ParaProps, Run};
+    use egui::text::CCursor;
 
     use super::*;
 
@@ -315,6 +330,23 @@ mod tests {
             g.rows.iter().filter(|r| r.pos.y > first_row.min.y + 1.0 && r.pos.y < g.pos_from_cursor(CCursor::new(long + 80)).max.y).collect();
         assert!(!wrapped.is_empty(), "the long point wraps");
         assert!(wrapped.iter().all(|r| (r.pos.x - 22.5).abs() < 1.0), "wrapped lines align with the text");
+    }
+
+    #[test]
+    fn row_walk_matches_cursor_lookup_at_paragraph_starts() {
+        let ctx = egui::Context::default();
+        let body = notes();
+        let mut laid = None;
+        let mut out = ctx.run_ui(Default::default(), |ui| laid = Some(galley(ui, &body, 12.0, Color32::BLACK, 300.0)));
+        out.textures_delta.clear();
+        let g = laid.unwrap();
+        let mut walk = (0usize, g.rows.first().map_or(0, |r| r.char_count_including_newline().0));
+        let mut at = 0usize;
+        for p in &body.paragraphs {
+            let want = g.pos_from_cursor(CCursor::new(at));
+            assert_eq!(row_span_at(&g, &mut walk, at), (want.min.y, want.max.y), "paragraph at char {at}");
+            at += p.char_len() + 1;
+        }
     }
 
     #[test]
