@@ -88,7 +88,7 @@ the round trip even though DeckCraft doesn't model it.
 | Text warp (`prstTxWarp`) | yes | yes | All 40 presets rendered (`crates/geom/src/warp.rs`); adjust values (`avLst`) round-trip |
 | Pictures with crop, recolour, duotone, alpha, luminance | yes | yes | |
 | Tables with styles | yes | yes | Merges, both diagonal borders and optional RTL column direction round-trip; Reuse Slides transfers definitions referenced by source tables, including grouped tables, with conflicting ids remapped |
-| Charts (`c:chartSpace`) | yes | yes | Original XML kept in `Chart.raw`. Trendlines (type, order or period, forecast, intercept, equation and R²) are read, written and drawn. A combo chart's secondary value axis is read and is not written back when the chart is rebuilt. An unchanged chart also keeps its embedded workbook and the other parts its relationships point at, under fresh `keptN` names so they never replace a part DeckCraft writes (#335); editing the chart drops that workbook instead of writing a stale one |
+| Charts (`c:chartSpace`) | yes | yes | Original XML kept in `Chart.raw`. Manual plot-area x/y/width/height and inner/outer target are read, drawn and written when valid; otherwise layout stays automatic. Trendlines (type, order or period, forecast, intercept, equation and R²) are read, written and drawn. A combo chart's secondary value axis is read and is not written back when the chart is rebuilt. An unchanged chart also keeps its embedded workbook and the other parts its relationships point at, under fresh `keptN` names so they never replace a part DeckCraft writes (#335); editing the chart drops that workbook instead of writing a stale one |
 | Charts (`cx:` chartex: waterfall, funnel, treemap, sunburst, histogram, Pareto, box) | yes | yes | Unchanged parts kept, with their embedded workbook (#335); edited and new ones written from the model with a plain-chart fallback. Treemap and sunburst hierarchy levels kept; region maps kept, drawn as tiles (no map geometry) |
 | SmartArt (`dgm`) | the drawing part as a group (text laid out on its `dsp:txXfrm` rectangle), and the outline from the data model (Text Pane) | as a diagram: data model from the outline; layout, quick style and colour parts (the file's own kept until the layout is switched); the group as the cached drawing | DeckCraft's layout definitions are simple; a diagram without a cached drawing isn't drawn. SmartArt kept only as XML, without its relationship parts, still loses the drawing and data parts (#203) |
 | Equations (OMML, `a14:m`) | no | no | PR #55 open |
@@ -119,6 +119,7 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-28 | trivial | Chart manual plot-area rectangles, inner/outer layout targets and save round-trip |
 | 2026-11-02 | minor | Optional table RTL direction is read and written as `a:tblPr/@rtl`; native and two PPTX saves preserve true, false and absent values with distinguishable column text |
 | 2026-11-02 | minor | Text runs preserve alternate-language metadata in native and PPTX round trips |
 | 2026-11-03 | trivial | Reuse Slides transfers referenced custom table styles from native and PPTX sources; grouped tables, undo, native save/reopen and style-id conflicts are covered |

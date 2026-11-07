@@ -1,6 +1,6 @@
 //! Chart parts (`c:chartSpace`) → [`Chart`]. The original XML is kept in `Chart.raw`.
 
-use deckcraft_model::chart::{Chart, ChartType, ErrorBars, Series, Trendline, TrendlineType};
+use deckcraft_model::chart::{Chart, ChartType, ErrorBars, ManualLayout, ManualLayoutTarget, Series, Trendline, TrendlineType};
 use deckcraft_model::style::Fill;
 
 use crate::xml::El;
@@ -123,6 +123,35 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
     c.legend_overlay = ch.child("legend").and_then(|l| l.child("overlay")).and_then(|o| o.bool("val")).unwrap_or(false);
     c.chart_fill = simple_fill(root.child("spPr"));
     c.plot_fill = simple_fill(pa.child("spPr"));
+    c.manual_layout = pa.child("layout").and_then(|layout| layout.child("manualLayout")).and_then(|layout| {
+        let mode = |name, default| match layout.child_val(name).unwrap_or(default) {
+            "edge" => Some(true),
+            "factor" => Some(false),
+            _ => None,
+        };
+        let target = match layout.child_val("layoutTarget").unwrap_or("outer") {
+            "inner" => ManualLayoutTarget::Inner,
+            "outer" => ManualLayoutTarget::Outer,
+            _ => return None,
+        };
+        let x_edge = mode("xMode", "factor")?;
+        let y_edge = mode("yMode", "factor")?;
+        let w_edge = mode("wMode", "factor")?;
+        let h_edge = mode("hMode", "factor")?;
+        let x = layout.child("x")?.f64("val")?;
+        let y = layout.child("y")?.f64("val")?;
+        let w = layout.child("w")?.f64("val")?;
+        let h = layout.child("h")?.f64("val")?;
+        // The model stores absolute chart-frame positions. Factor positions are
+        // relative to an automatic position, which is only available in rendering.
+        if !x_edge || !y_edge {
+            return None;
+        }
+        // In edge mode w/h name the far edge; the model stores dimensions. x/y
+        // are absolute chart-frame coordinates.
+        let manual = ManualLayout { x, y, width: if w_edge { w - x } else { w }, height: if h_edge { h - y } else { h }, target };
+        manual.is_valid().then_some(manual)
+    });
 
     let mut kinds: Vec<ChartType> = vec![];
     // The value axis the first plot group uses is the primary one; a group on another value axis
@@ -858,5 +887,35 @@ mod tests {
     fn explicit_vary_colors_is_respected() {
         assert!(read_chart_xml(vary_xml(r#"<c:varyColors val="0"/>"#).as_bytes()).is_some_and(|c| !c.vary_colors));
         assert!(read_chart_xml(vary_xml(r#"<c:varyColors val="1"/>"#).as_bytes()).is_some_and(|c| c.vary_colors));
+    }
+
+    #[test]
+    fn plot_area_manual_layout_is_read_only_when_valid() {
+        let xml = |manual: &str| {
+            format!(
+                r#"<c:chartSpace xmlns:c="{NS_CHART}"><c:chart><c:plotArea><c:layout>{manual}</c:layout><c:barChart><c:barDir val="col"/></c:barChart></c:plotArea></c:chart></c:chartSpace>"#
+            )
+        };
+        let inner = r#"<c:manualLayout><c:layoutTarget val="inner"/><c:xMode val="edge"/><c:yMode val="edge"/><c:wMode val="edge"/><c:hMode val="edge"/><c:x val="0.1"/><c:y val="0.2"/><c:w val="0.7"/><c:h val="0.9"/></c:manualLayout>"#;
+        assert_eq!(
+            read_chart_xml(xml(inner).as_bytes()).unwrap().manual_layout,
+            Some(ManualLayout { x: 0.1, y: 0.2, width: 0.6, height: 0.7, target: ManualLayoutTarget::Inner })
+        );
+        let factor_dimensions = r#"<c:manualLayout><c:xMode val="edge"/><c:yMode val="edge"/><c:x val="0.1"/><c:y val="0.2"/><c:w val="0.6"/><c:h val="0.7"/></c:manualLayout>"#;
+        assert_eq!(
+            read_chart_xml(xml(factor_dimensions).as_bytes()).unwrap().manual_layout,
+            Some(ManualLayout { x: 0.1, y: 0.2, width: 0.6, height: 0.7, target: ManualLayoutTarget::Outer })
+        );
+        let factor = r#"<c:manualLayout><c:x val="0.1"/><c:y val="0.2"/><c:w val="0.6"/><c:h val="0.7"/></c:manualLayout>"#;
+        assert_eq!(read_chart_xml(xml(factor).as_bytes()).unwrap().manual_layout, None);
+        for invalid in [
+            r#"<c:manualLayout><c:x val="-0.1"/><c:y val="0"/><c:w val="0.5"/><c:h val="0.5"/></c:manualLayout>"#,
+            r#"<c:manualLayout><c:x val="0.8"/><c:y val="0"/><c:w val="0.5"/><c:h val="0.5"/></c:manualLayout>"#,
+            r#"<c:manualLayout><c:x val="NaN"/><c:y val="0"/><c:w val="0.5"/><c:h val="0.5"/></c:manualLayout>"#,
+            r#"<c:manualLayout><c:xMode val="unknown"/><c:x val="0"/><c:y val="0"/><c:w val="0.5"/><c:h val="0.5"/></c:manualLayout>"#,
+            r#"<c:manualLayout><c:x val="0.2"/><c:y val="0.1"/><c:wMode val="edge"/><c:hMode val="edge"/><c:w val="0.1"/><c:h val="0.05"/></c:manualLayout>"#,
+        ] {
+            assert_eq!(read_chart_xml(xml(invalid).as_bytes()).unwrap().manual_layout, None);
+        }
     }
 }
