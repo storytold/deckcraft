@@ -21,6 +21,11 @@ impl Default for Rgba {
     }
 }
 
+#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "rounding and clamping bound the cast to 0..=255; NaN maps to zero")]
+fn channel_from_f64(value: f64) -> u8 {
+    value.round().clamp(0.0, 255.0) as u8
+}
+
 impl Rgba {
     pub const BLACK: Rgba = Rgba::rgb(0, 0, 0);
     pub const WHITE: Rgba = Rgba::rgb(255, 255, 255);
@@ -58,16 +63,18 @@ impl Rgba {
         Rgba { a, ..self }
     }
     pub fn to_f32(self) -> [f32; 4] {
-        [self.r as f32 / 255.0, self.g as f32 / 255.0, self.b as f32 / 255.0, self.a as f32 / 255.0]
+        [f32::from(self.r) / 255.0, f32::from(self.g) / 255.0, f32::from(self.b) / 255.0, f32::from(self.a) / 255.0]
     }
-    pub fn from_f64(r: f64, g: f64, b: f64, a: f64) -> Self {
-        let c = |v: f64| if v.is_finite() { (v.clamp(0.0, 1.0) * 255.0).round() as u8 } else { 0 };
-        Rgba { r: c(r), g: c(g), b: c(b), a: c(a) }
+    pub fn from_f64(red: f64, green: f64, blue: f64, alpha: f64) -> Self {
+        let channel = |value: f64| {
+            if value.is_finite() { channel_from_f64(value * 255.0) } else { 0 }
+        };
+        Rgba { r: channel(red), g: channel(green), b: channel(blue), a: channel(alpha) }
     }
     /// Relative luminance (WCAG), 0–1.
     pub fn luminance(self) -> f64 {
         let lin = |c: u8| {
-            let v = c as f64 / 255.0;
+            let v = f64::from(c) / 255.0;
             if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
         };
         0.2126 * lin(self.r) + 0.7152 * lin(self.g) + 0.0722 * lin(self.b)
@@ -79,60 +86,60 @@ impl Rgba {
         (hi + 0.05) / (lo + 0.05)
     }
     pub fn to_hsl(self) -> (f64, f64, f64) {
-        let r = self.r as f64 / 255.0;
-        let g = self.g as f64 / 255.0;
-        let b = self.b as f64 / 255.0;
-        let max = r.max(g).max(b);
-        let min = r.min(g).min(b);
-        let l = (max + min) / 2.0;
+        let red = f64::from(self.r) / 255.0;
+        let green = f64::from(self.g) / 255.0;
+        let blue = f64::from(self.b) / 255.0;
+        let max = red.max(green).max(blue);
+        let min = red.min(green).min(blue);
+        let lightness = f64::midpoint(max, min);
         if (max - min).abs() < 1e-12 {
-            return (0.0, 0.0, l);
+            return (0.0, 0.0, lightness);
         }
-        let d = max - min;
-        let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
-        let h = if (max - r).abs() < 1e-12 {
-            (g - b) / d + if g < b { 6.0 } else { 0.0 }
-        } else if (max - g).abs() < 1e-12 {
-            (b - r) / d + 2.0
+        let delta = max - min;
+        let saturation = if lightness > 0.5 { delta / (2.0 - max - min) } else { delta / (max + min) };
+        let hue = if (max - red).abs() < 1e-12 {
+            (green - blue) / delta + if green < blue { 6.0 } else { 0.0 }
+        } else if (max - green).abs() < 1e-12 {
+            (blue - red) / delta + 2.0
         } else {
-            (r - g) / d + 4.0
+            (red - green) / delta + 4.0
         };
-        (h * 60.0, s, l)
+        (hue * 60.0, saturation, lightness)
     }
-    pub fn from_hsl(h: f64, s: f64, l: f64, a: u8) -> Self {
-        let h = ((h % 360.0) + 360.0) % 360.0 / 360.0;
-        let s = s.clamp(0.0, 1.0);
-        let l = l.clamp(0.0, 1.0);
-        if s == 0.0 {
-            return Rgba::from_f64(l, l, l, a as f64 / 255.0);
+    pub fn from_hsl(hue: f64, saturation: f64, lightness: f64, alpha: u8) -> Self {
+        let hue = ((hue % 360.0) + 360.0) % 360.0 / 360.0;
+        let saturation = saturation.clamp(0.0, 1.0);
+        let lightness = lightness.clamp(0.0, 1.0);
+        if saturation == 0.0 {
+            return Rgba::from_f64(lightness, lightness, lightness, f64::from(alpha) / 255.0);
         }
-        let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
-        let p = 2.0 * l - q;
-        let f = |t: f64| {
-            let t = if t < 0.0 {
-                t + 1.0
-            } else if t > 1.0 {
-                t - 1.0
+        let upper = if lightness < 0.5 { lightness * (1.0 + saturation) } else { lightness + saturation - lightness * saturation };
+        let lower = 2.0 * lightness - upper;
+        let channel = |position: f64| {
+            let position = if position < 0.0 {
+                position + 1.0
+            } else if position > 1.0 {
+                position - 1.0
             } else {
-                t
+                position
             };
-            if t < 1.0 / 6.0 {
-                p + (q - p) * 6.0 * t
-            } else if t < 0.5 {
-                q
-            } else if t < 2.0 / 3.0 {
-                p + (q - p) * (2.0 / 3.0 - t) * 6.0
+            if position < 1.0 / 6.0 {
+                lower + (upper - lower) * 6.0 * position
+            } else if position < 0.5 {
+                upper
+            } else if position < 2.0 / 3.0 {
+                lower + (upper - lower) * (2.0 / 3.0 - position) * 6.0
             } else {
-                p
+                lower
             }
         };
-        Rgba::from_f64(f(h + 1.0 / 3.0), f(h), f(h - 1.0 / 3.0), a as f64 / 255.0)
+        Rgba::from_f64(channel(hue + 1.0 / 3.0), channel(hue), channel(hue - 1.0 / 3.0), f64::from(alpha) / 255.0)
     }
     /// Linear interpolation (straight alpha).
-    pub fn lerp(self, o: Rgba, t: f64) -> Rgba {
-        let t = if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 };
-        let m = |a: u8, b: u8| (a as f64 + (b as f64 - a as f64) * t).round().clamp(0.0, 255.0) as u8;
-        Rgba { r: m(self.r, o.r), g: m(self.g, o.g), b: m(self.b, o.b), a: m(self.a, o.a) }
+    pub fn lerp(self, other: Rgba, amount: f64) -> Rgba {
+        let amount = if amount.is_finite() { amount.clamp(0.0, 1.0) } else { 0.0 };
+        let interpolate = |start: u8, end: u8| channel_from_f64(f64::from(start) + (f64::from(end) - f64::from(start)) * amount);
+        Rgba { r: interpolate(self.r, other.r), g: interpolate(self.g, other.g), b: interpolate(self.b, other.b), a: interpolate(self.a, other.a) }
     }
 }
 
@@ -247,12 +254,12 @@ pub struct ColorScheme {
 
 impl ColorScheme {
     pub fn get(&self, slot: SchemeSlot) -> Rgba {
-        let i = match slot {
+        let index = match slot {
             SchemeSlot::Dk1 | SchemeSlot::Tx1 => 0,
             SchemeSlot::Lt1 | SchemeSlot::Bg1 => 1,
             SchemeSlot::Dk2 | SchemeSlot::Tx2 => 2,
             SchemeSlot::Lt2 | SchemeSlot::Bg2 => 3,
-            SchemeSlot::Accent1 => 4,
+            SchemeSlot::Accent1 | SchemeSlot::PhClr => 4,
             SchemeSlot::Accent2 => 5,
             SchemeSlot::Accent3 => 6,
             SchemeSlot::Accent4 => 7,
@@ -260,9 +267,8 @@ impl ColorScheme {
             SchemeSlot::Accent6 => 9,
             SchemeSlot::Hlink => 10,
             SchemeSlot::FolHlink => 11,
-            SchemeSlot::PhClr => 4,
         };
-        self.colors.get(i).copied().unwrap_or(Rgba::BLACK)
+        self.colors.get(index).copied().unwrap_or(Rgba::BLACK)
     }
     pub fn set(&mut self, slot: SchemeSlot, c: Rgba) {
         if let Some(i) = SchemeSlot::THEME.iter().position(|s| *s == slot)
@@ -364,88 +370,88 @@ impl ColorTransform {
 
 /// Apply transforms to a base colour.
 pub fn apply(base: Rgba, transforms: &[ColorTransform]) -> Rgba {
-    let mut c = base;
-    for t in transforms {
-        c = apply_one(c, *t);
+    let mut color = base;
+    for transform in transforms {
+        color = apply_one(color, *transform);
     }
-    c
+    color
 }
 
-fn pct(v: i32) -> f64 {
-    v as f64 / 100_000.0
+fn pct(value: i32) -> f64 {
+    f64::from(value) / 100_000.0
 }
 
-fn apply_one(c: Rgba, t: ColorTransform) -> Rgba {
-    match t {
+fn apply_one(color: Rgba, transform: ColorTransform) -> Rgba {
+    match transform {
         // tint: towards white by (1 - value); shade: towards black by (1 - value). Office applies
         // these in linear light, which keeps mid-tones from washing out.
-        ColorTransform::Tint(v) => {
-            let k = pct(v).clamp(0.0, 1.0);
-            map_linear(c, |x| x * k + (1.0 - k))
+        ColorTransform::Tint(value) => {
+            let factor = pct(value).clamp(0.0, 1.0);
+            map_linear(color, |channel| channel * factor + (1.0 - factor))
         }
-        ColorTransform::Shade(v) => {
-            let k = pct(v).clamp(0.0, 1.0);
-            map_linear(c, |x| x * k)
+        ColorTransform::Shade(value) => {
+            let factor = pct(value).clamp(0.0, 1.0);
+            map_linear(color, |channel| channel * factor)
         }
-        ColorTransform::LumMod(v) => {
-            let (h, s, l) = c.to_hsl();
-            Rgba::from_hsl(h, s, l * pct(v), c.a)
+        ColorTransform::LumMod(value) => {
+            let (hue, saturation, lightness) = color.to_hsl();
+            Rgba::from_hsl(hue, saturation, lightness * pct(value), color.a)
         }
-        ColorTransform::LumOff(v) => {
-            let (h, s, l) = c.to_hsl();
-            Rgba::from_hsl(h, s, l + pct(v), c.a)
+        ColorTransform::LumOff(value) => {
+            let (hue, saturation, lightness) = color.to_hsl();
+            Rgba::from_hsl(hue, saturation, lightness + pct(value), color.a)
         }
-        ColorTransform::SatMod(v) => {
-            let (h, s, l) = c.to_hsl();
-            Rgba::from_hsl(h, s * pct(v), l, c.a)
+        ColorTransform::SatMod(value) => {
+            let (hue, saturation, lightness) = color.to_hsl();
+            Rgba::from_hsl(hue, saturation * pct(value), lightness, color.a)
         }
-        ColorTransform::SatOff(v) => {
-            let (h, s, l) = c.to_hsl();
-            Rgba::from_hsl(h, s + pct(v), l, c.a)
+        ColorTransform::SatOff(value) => {
+            let (hue, saturation, lightness) = color.to_hsl();
+            Rgba::from_hsl(hue, saturation + pct(value), lightness, color.a)
         }
-        ColorTransform::HueMod(v) => {
-            let (h, s, l) = c.to_hsl();
-            Rgba::from_hsl(h * pct(v), s, l, c.a)
+        ColorTransform::HueMod(value) => {
+            let (hue, saturation, lightness) = color.to_hsl();
+            Rgba::from_hsl(hue * pct(value), saturation, lightness, color.a)
         }
-        ColorTransform::HueOff(v) => {
-            let (h, s, l) = c.to_hsl();
-            Rgba::from_hsl(h + v as f64 / 60_000.0, s, l, c.a)
+        ColorTransform::HueOff(value) => {
+            let (hue, saturation, lightness) = color.to_hsl();
+            Rgba::from_hsl(hue + f64::from(value) / 60_000.0, saturation, lightness, color.a)
         }
-        ColorTransform::Alpha(v) => c.with_alpha((pct(v).clamp(0.0, 1.0) * 255.0).round() as u8),
-        ColorTransform::AlphaMod(v) => c.with_alpha((c.a as f64 * pct(v)).round().clamp(0.0, 255.0) as u8),
-        ColorTransform::AlphaOff(v) => c.with_alpha((c.a as f64 + pct(v) * 255.0).round().clamp(0.0, 255.0) as u8),
+        ColorTransform::Alpha(value) => color.with_alpha(channel_from_f64(pct(value) * 255.0)),
+        ColorTransform::AlphaMod(value) => color.with_alpha(channel_from_f64(f64::from(color.a) * pct(value))),
+        ColorTransform::AlphaOff(value) => color.with_alpha(channel_from_f64(f64::from(color.a) + pct(value) * 255.0)),
         ColorTransform::Comp => {
-            let (h, s, l) = c.to_hsl();
-            Rgba::from_hsl(h + 180.0, s, l, c.a)
+            let (hue, saturation, lightness) = color.to_hsl();
+            Rgba::from_hsl(hue + 180.0, saturation, lightness, color.a)
         }
-        ColorTransform::Inv => Rgba { r: 255 - c.r, g: 255 - c.g, b: 255 - c.b, a: c.a },
+        ColorTransform::Inv => Rgba { r: 255 - color.r, g: 255 - color.g, b: 255 - color.b, a: color.a },
         ColorTransform::Gray => {
-            let y = (0.299 * c.r as f64 + 0.587 * c.g as f64 + 0.114 * c.b as f64).round().clamp(0.0, 255.0) as u8;
-            Rgba { r: y, g: y, b: y, a: c.a }
+            let intensity = channel_from_f64(0.299 * f64::from(color.r) + 0.587 * f64::from(color.g) + 0.114 * f64::from(color.b));
+            Rgba { r: intensity, g: intensity, b: intensity, a: color.a }
         }
-        ColorTransform::RedMod(v) => Rgba { r: (c.r as f64 * pct(v)).round().clamp(0.0, 255.0) as u8, ..c },
-        ColorTransform::GreenMod(v) => Rgba { g: (c.g as f64 * pct(v)).round().clamp(0.0, 255.0) as u8, ..c },
-        ColorTransform::BlueMod(v) => Rgba { b: (c.b as f64 * pct(v)).round().clamp(0.0, 255.0) as u8, ..c },
+        ColorTransform::RedMod(value) => Rgba { r: channel_from_f64(f64::from(color.r) * pct(value)), ..color },
+        ColorTransform::GreenMod(value) => Rgba { g: channel_from_f64(f64::from(color.g) * pct(value)), ..color },
+        ColorTransform::BlueMod(value) => Rgba { b: channel_from_f64(f64::from(color.b) * pct(value)), ..color },
     }
 }
 
-fn to_lin(v: u8) -> f64 {
-    let v = v as f64 / 255.0;
-    if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+fn to_lin(value: u8) -> f64 {
+    let value = f64::from(value) / 255.0;
+    if value <= 0.04045 { value / 12.92 } else { ((value + 0.055) / 1.055).powf(2.4) }
 }
-fn from_lin(v: f64) -> f64 {
-    let v = v.clamp(0.0, 1.0);
-    if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 }
+fn from_lin(value: f64) -> f64 {
+    let value = value.clamp(0.0, 1.0);
+    if value <= 0.003_130_8 { value * 12.92 } else { 1.055 * value.powf(1.0 / 2.4) - 0.055 }
 }
-fn map_linear(c: Rgba, f: impl Fn(f64) -> f64) -> Rgba {
-    Rgba::from_f64(from_lin(f(to_lin(c.r))), from_lin(f(to_lin(c.g))), from_lin(f(to_lin(c.b))), c.a as f64 / 255.0)
+fn map_linear(color: Rgba, map: impl Fn(f64) -> f64) -> Rgba {
+    Rgba::from_f64(from_lin(map(to_lin(color.r))), from_lin(map(to_lin(color.g))), from_lin(map(to_lin(color.b))), f64::from(color.a) / 255.0)
 }
 
 /// The colour-picker grid shown under each theme colour: lighter 80/60/40%, darker 25/50%
 /// (for dark colours: lighter 90/75/50/25/10%).
-pub fn theme_variants(c: Rgba) -> [(Vec<ColorTransform>, &'static str); 5] {
-    let (_, _, l) = c.to_hsl();
-    if l < 0.2 {
+pub fn theme_variants(color: Rgba) -> [(Vec<ColorTransform>, &'static str); 5] {
+    let (_, _, lightness) = color.to_hsl();
+    if lightness < 0.2 {
         [
             (vec![ColorTransform::LumMod(10000), ColorTransform::LumOff(90000)], "Lighter 90%"),
             (vec![ColorTransform::LumMod(25000), ColorTransform::LumOff(75000)], "Lighter 75%"),
@@ -453,7 +459,7 @@ pub fn theme_variants(c: Rgba) -> [(Vec<ColorTransform>, &'static str); 5] {
             (vec![ColorTransform::LumMod(75000), ColorTransform::LumOff(25000)], "Lighter 25%"),
             (vec![ColorTransform::LumMod(90000), ColorTransform::LumOff(10000)], "Lighter 10%"),
         ]
-    } else if l > 0.8 {
+    } else if lightness > 0.8 {
         [
             (vec![ColorTransform::LumMod(95000)], "Darker 5%"),
             (vec![ColorTransform::LumMod(85000)], "Darker 15%"),
@@ -488,7 +494,7 @@ pub const STANDARD_COLORS: [(Rgba, &str); 10] = [
 
 /// A few CSS-like preset colour names (`prstClr`).
 pub fn preset(name: &str) -> Option<Rgba> {
-    let c = match name {
+    let channels = match name {
         "black" => (0, 0, 0),
         "white" => (255, 255, 255),
         "red" => (255, 0, 0),
@@ -513,7 +519,7 @@ pub fn preset(name: &str) -> Option<Rgba> {
         "dkGray" | "darkGray" => (169, 169, 169),
         _ => return None,
     };
-    Some(Rgba::rgb(c.0, c.1, c.2))
+    Some(Rgba::rgb(channels.0, channels.1, channels.2))
 }
 
 /// Every preset colour name a file may write (`ST_PresetColorVal`, with the later editions' aliases).
@@ -787,12 +793,14 @@ mod tests {
 
     #[test]
     fn hsl_roundtrip() {
-        for c in [Rgba::rgb(10, 200, 30), Rgba::rgb(255, 0, 0), Rgba::rgb(128, 128, 128), Rgba::rgb(21, 96, 130)] {
-            let (h, s, l) = c.to_hsl();
-            let d = Rgba::from_hsl(h, s, l, 255);
+        for color in [Rgba::rgb(10, 200, 30), Rgba::rgb(255, 0, 0), Rgba::rgb(128, 128, 128), Rgba::rgb(21, 96, 130)] {
+            let (hue, saturation, lightness) = color.to_hsl();
+            let converted = Rgba::from_hsl(hue, saturation, lightness, 255);
             assert!(
-                (d.r as i32 - c.r as i32).abs() <= 1 && (d.g as i32 - c.g as i32).abs() <= 1 && (d.b as i32 - c.b as i32).abs() <= 1,
-                "{c:?} {d:?}"
+                (i32::from(converted.r) - i32::from(color.r)).abs() <= 1
+                    && (i32::from(converted.g) - i32::from(color.g)).abs() <= 1
+                    && (i32::from(converted.b) - i32::from(color.b)).abs() <= 1,
+                "{color:?} {converted:?}"
             );
         }
     }
