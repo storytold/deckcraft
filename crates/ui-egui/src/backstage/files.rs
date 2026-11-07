@@ -41,7 +41,7 @@ fn new_tiles(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize, blank: 
     }
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
-        if blank && tile(ui, "Blank Presentation", None, false).clicked() {
+        if blank && tile(ui, crate::tl!("Blank Presentation"), None, false).clicked() {
             let _ = app.run("file.new", json!({}));
         }
         let mut shown = 0;
@@ -56,7 +56,7 @@ fn new_tiles(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize, blank: 
         }
         if sample && shown < limit {
             let th = deckcraft_model::theme::builtin_themes().into_iter().find(|t| t.name == "DeckCraft");
-            if tile(ui, "Sample deck: Northern Lights", th.as_ref(), false).clicked()
+            if tile(ui, crate::tl!("Sample deck: Northern Lights"), th.as_ref(), false).clicked()
                 && let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session)
             {
                 app.set_status(e.to_string());
@@ -97,7 +97,7 @@ pub fn split_path(path: &str) -> (String, String) {
 fn recent_list(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize) {
     let t = Tokens::get(ui.ctx());
     if app.ui.recent.is_empty() {
-        dim(ui, "Presentations you open show up here. Use Open to browse for one.");
+        dim(ui, crate::tl!("Presentations you open show up here. Use Open to browse for one."));
         return;
     }
     let q = query.trim().to_lowercase();
@@ -138,12 +138,12 @@ fn recent_list(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize) {
             Rect::from_min_max(pos2(visible_right - 32.0, rect.top() + 5.0), pos2(visible_right, rect.bottom() - 5.0)),
             Sense::click(),
         );
-        x.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Remove from Recent"));
+        x.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::tl!("Remove from Recent")));
         if x.hovered() {
             ui.painter().rect_filled(x.rect, CornerRadius::same(3), t.hover);
         }
         icons::paint(ui.painter(), Rect::from_center_size(x.rect.center(), vec2(14.0, 14.0)), Icon::Close, t.text_dim, false);
-        if x.on_hover_text("Remove from Recent").clicked() {
+        if x.on_hover_text(crate::tl!("Remove from Recent")).clicked() {
             app.forget_recent(&path);
         }
         if resp.clicked() {
@@ -214,9 +214,9 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mu
     });
     ui.add_space(18.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("New").font(theme::bold(16.0)).color(t.text));
+        ui.label(RichText::new(crate::tl!("New")).font(theme::bold(16.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if arrow_link(ui, "More themes") {
+            if arrow_link(ui, crate::tl!("More themes")) {
                 out.page = Some(Page::New);
             }
         });
@@ -225,9 +225,9 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mu
     new_tiles(app, ui, "", 5, true);
     ui.add_space(22.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Templates").font(theme::bold(16.0)).color(t.text));
+        ui.label(RichText::new(crate::tl!("Templates")).font(theme::bold(16.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if arrow_link(ui, "More templates") {
+            if arrow_link(ui, crate::tl!("More templates")) {
                 out.page = Some(Page::New);
             }
         });
@@ -236,9 +236,9 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mu
     template_tiles(app, ui, "", 3);
     ui.add_space(22.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Recent").font(theme::bold(16.0)).color(t.text));
+        ui.label(RichText::new(crate::tl!("Recent")).font(theme::bold(16.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            search(ui, &mut bs.query, "Search for a file", 280.0);
+            search(ui, &mut bs.query, crate::tl!("Search for a file"), 280.0);
         });
     });
     ui.add_space(6.0);
@@ -246,19 +246,19 @@ pub(super) fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mu
     if app.ui.recent.len() > 8 {
         ui.add_space(6.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            if arrow_link(ui, "More presentations") {
+            if arrow_link(ui, crate::tl!("More presentations")) {
                 out.page = Some(Page::Open);
             }
         });
     }
     ui.add_space(30.0);
-    ui.hyperlink_to("Join the ArtCraft community on Discord", deckcraft_engine::links::DISCORD);
+    ui.hyperlink_to(crate::tl!("Join the ArtCraft community on Discord"), deckcraft_engine::links::DISCORD);
 }
 
 /// New: a blank presentation, then every theme and starter template, with a search box.
 pub(super) fn new_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     let t = Tokens::get(ui.ctx());
-    if tile(ui, "Blank Presentation", None, true).clicked() {
+    if tile(ui, crate::tl!("Blank Presentation"), None, true).clicked() {
         let _ = app.run("file.new", json!({}));
     }
     ui.add_space(8.0);
@@ -266,13 +266,13 @@ pub(super) fn new_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     let (r, _) = ui.allocate_exact_size(vec2(w, 1.0), Sense::hover());
     ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0, t.separator));
     ui.add_space(14.0);
-    search(ui, &mut bs.query, "Search for themes and templates", 380.0);
+    search(ui, &mut bs.query, crate::tl!("Search for themes and templates"), 380.0);
     ui.add_space(14.0);
     let q = bs.query.clone();
     let themes = new_tiles(app, ui, &q, usize::MAX, false);
     let templates = if q.trim().is_empty() || !deckcraft_engine::templates::matching(&q).is_empty() {
         ui.add_space(18.0);
-        heading(ui, "Templates");
+        heading(ui, crate::tl!("Templates"));
         template_tiles(app, ui, &q, usize::MAX)
     } else {
         false
@@ -288,16 +288,19 @@ pub(super) fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(230.0);
-            place_row(ui, Icon::Recent, "Recent", true, 220.0);
-            if place_row(ui, Icon::OpenFolder, "Browse", false, 220.0).on_hover_text("Open a presentation from a folder (Ctrl+O)").clicked() {
+            place_row(ui, Icon::Recent, crate::tl!("Recent"), true, 220.0);
+            if place_row(ui, Icon::OpenFolder, crate::tl!("Browse"), false, 220.0)
+                .on_hover_text(crate::tl!("Open a presentation from a folder (Ctrl+O)"))
+                .clicked()
+            {
                 let _ = app.run("app.openDialog", json!({}));
             }
             if app.session.recovery_dir.is_some() {
                 ui.add_space(24.0);
-                if ui.button("Recover Unsaved Presentations").clicked() {
+                if ui.button(crate::tl!("Recover Unsaved Presentations")).clicked() {
                     match app.run("file.recovery.open", json!({})) {
                         Ok(v) if v.get("opened").and_then(Value::as_array).is_some_and(|a| a.is_empty()) => {
-                            app.set_status("There are no unsaved presentations to recover");
+                            app.set_status(crate::tl!("There are no unsaved presentations to recover"));
                         }
                         _ => {}
                     }
@@ -309,9 +312,9 @@ pub(super) fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
         ui.painter().line_segment([r.center_top(), r.center_bottom()], Stroke::new(1.0, t.separator));
         ui.add_space(24.0);
         ui.vertical(|ui| {
-            search(ui, &mut bs.query, "Search for a file", 380.0);
+            search(ui, &mut bs.query, crate::tl!("Search for a file"), 380.0);
             ui.add_space(12.0);
-            heading(ui, "Presentations");
+            heading(ui, crate::tl!("Presentations"));
             let q = bs.query.clone();
             recent_list(app, ui, &q, usize::MAX);
         });

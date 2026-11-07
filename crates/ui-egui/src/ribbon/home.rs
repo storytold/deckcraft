@@ -15,16 +15,16 @@ fn clipboard_group(app: &mut SlideApp, ui: &mut Ui) {
         }
         if let Some(a) = arrow {
             egui::Popup::menu(&a).show(|ui| {
-                if ui.button("Paste").clicked() {
+                if ui.button(crate::tl!("Paste")).clicked() {
                     run(app, "edit.paste", json!({}));
                 }
-                if ui.button("Paste and Match Formatting").clicked() {
+                if ui.button(crate::tl!("Paste and Match Formatting")).clicked() {
                     run(app, "edit.pasteText", json!({}));
                 }
-                if ui.button("Paste Special…").clicked() {
+                if ui.button(crate::tl!("Paste Special…")).clicked() {
                     run(app, "app.pasteSpecial", json!({}));
                 }
-                if ui.button("Paste Formatting").clicked() {
+                if ui.button(crate::tl!("Paste Formatting")).clicked() {
                     run(app, "format.painterApply", json!({}));
                 }
             });
@@ -124,14 +124,14 @@ fn slides_group(app: &mut SlideApp, ui: &mut Ui) {
 fn new_slide_menu(app: &mut SlideApp, ui: &mut Ui) {
     layout_menu(app, ui, "slide.new");
     ui.separator();
-    if ui.button("Duplicate Selected Slides").clicked() {
+    if ui.button(crate::tl!("Duplicate Selected Slides")).clicked() {
         run(app, "slide.duplicate", json!({}));
     }
-    if ui.button("Slides from Outline…").clicked() {
+    if ui.button(crate::tl!("Slides from Outline…")).clicked() {
         app.dialog = Some(crate::dialogs::Dialog::new("outline"));
     }
     let desktop = app.services.pick_open.is_some();
-    for (label, keep) in [("Reuse Slides…", false), ("Reuse Slides (Keep Source Formatting)…", true)] {
+    for (label, keep) in [(crate::tl!("Reuse Slides…"), false), (crate::tl!("Reuse Slides (Keep Source Formatting)…"), true)] {
         let r = ui.add_enabled(desktop, egui::Button::new(label));
         if r.clicked() {
             run(app, "app.reuseSlidesDialog", json!({"keepFormatting": keep}));
@@ -142,10 +142,10 @@ fn new_slide_menu(app: &mut SlideApp, ui: &mut Ui) {
 
 /// The Section split button's menu.
 fn section_menu(app: &mut SlideApp, ui: &mut Ui) {
-    if ui.button("Add Section").clicked() {
+    if ui.button(crate::tl!("Add Section")).clicked() {
         run(app, "section.add", json!({}));
     }
-    if ui.button("Remove All Sections").clicked() {
+    if ui.button(crate::tl!("Remove All Sections")).clicked() {
         run(app, "section.removeAll", json!({}));
     }
 }
@@ -174,9 +174,9 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 dropdown(ui, "font", &font, 150.0, en, |ui| {
                     for (k, f) in fams.iter().enumerate() {
                         let label = if k == 0 && theme_fonts.len() == 2 {
-                            format!("{f} (Headings)")
+                            format!("{f} ({})", crate::tl!("Headings"))
                         } else if k == 1 && theme_fonts.len() == 2 {
-                            format!("{f} (Body)")
+                            format!("{f} ({})", crate::tl!("Body"))
                         } else {
                             f.clone()
                         };
@@ -190,7 +190,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                     }
                     ui.separator();
                     // Fonts installed while DeckCraft runs (e.g. into ~/.local/share/fonts).
-                    if ui.button("Rescan Installed Fonts").clicked() {
+                    if ui.button(crate::tl!("Rescan Installed Fonts")).clicked() {
                         run(app, "font.rescan", json!({}));
                         ui.close();
                     }
@@ -220,7 +220,13 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 toggle(app, ui, Icon::Subscript, "Subscript", "format.subscript", b("subscript"));
                 let r = icon_toggle(ui, Icon::CharSpacing, "Character Spacing", en, false);
                 egui::Popup::menu(&r).show(|ui| {
-                    for (label, pt) in [("Very Tight", -3.0), ("Tight", -1.5), ("Normal", 0.0), ("Loose", 3.0), ("Very Loose", 6.0)] {
+                    for (label, pt) in [
+                        (crate::tl!("Very Tight"), -3.0),
+                        (crate::tl!("Tight"), -1.5),
+                        (crate::tl!("Normal"), 0.0),
+                        (crate::tl!("Loose"), 3.0),
+                        (crate::tl!("Very Loose"), 6.0),
+                    ] {
                         if ui.button(label).clicked() {
                             run(app, "format.spacing", json!({"pt": pt}));
                         }
@@ -229,11 +235,11 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 let r = icon_toggle(ui, Icon::ChangeCase, "Change Case", en, false);
                 egui::Popup::menu(&r).show(|ui| {
                     for (label, mode) in [
-                        ("Sentence case.", "sentence"),
-                        ("lowercase", "lower"),
-                        ("UPPERCASE", "upper"),
-                        ("Capitalize Each Word", "title"),
-                        ("tOGGLE cASE", "toggle"),
+                        (crate::tl!("Sentence case."), "sentence"),
+                        (crate::tl!("lowercase"), "lower"),
+                        (crate::tl!("UPPERCASE"), "upper"),
+                        (crate::tl!("Capitalize Each Word"), "title"),
+                        (crate::tl!("tOGGLE cASE"), "toggle"),
                     ] {
                         if ui.button(label).clicked() {
                             run(app, "format.case", json!({"mode": mode}));
@@ -246,7 +252,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                     run(app, "format.highlight", json!({"color": "#FFFF00"}));
                 }
                 widgets::color_popup(&a).show(|ui| {
-                    if let Some(c) = widgets::color_grid(ui, &sc, Some("No Color")) {
+                    if let Some(c) = widgets::color_grid(ui, &sc, Some(crate::tl!("No Color"))) {
                         run(app, "format.highlight", json!({"color": c.map(|c| serde_json::to_value(cref_param(&c)).unwrap_or_default())}));
                     }
                 });
@@ -259,7 +265,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                         run(app, "format.color", json!({"color": cref_param(&c)}));
                     }
                 });
-                if ui.add_enabled(en, egui::Button::new("Font…").min_size(vec2(52.0, 22.0))).on_hover_text("Font").clicked() {
+                if ui.add_enabled(en, egui::Button::new(crate::tl!("Font…")).min_size(vec2(52.0, 22.0))).on_hover_text("Font").clicked() {
                     run(app, "format.fontDialog", json!({}));
                 }
             });
@@ -281,7 +287,7 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 }
                 if let Some(a) = a {
                     egui::Popup::menu(&a).show(|ui| {
-                        if ui.button("None").clicked() {
+                        if ui.button(crate::tl!("None")).clicked() {
                             run(app, "format.bullets", json!({"on": false}));
                         }
                         for ch in ["•", "○", "■", "□", "◆", "➢", "✓", "–", "★"] {
@@ -290,7 +296,7 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                             }
                         }
                         ui.separator();
-                        if ui.button("Bullets and Numbering…").clicked() {
+                        if ui.button(crate::tl!("Bullets and Numbering…")).clicked() {
                             let mut dlg = crate::dialogs::Dialog::new("bullets");
                             dlg.fields.insert("tab".into(), "bulleted".into());
                             app.dialog = Some(dlg);
@@ -303,7 +309,7 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 }
                 if let Some(a) = a {
                     egui::Popup::menu(&a).show(|ui| {
-                        if ui.button("None").clicked() {
+                        if ui.button(crate::tl!("None")).clicked() {
                             run(app, "format.numbering", json!({"on": false}));
                         }
                         for (label, sch) in [
@@ -320,7 +326,7 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                             }
                         }
                         ui.separator();
-                        if ui.button("Bullets and Numbering…").clicked() {
+                        if ui.button(crate::tl!("Bullets and Numbering…")).clicked() {
                             let mut dlg = crate::dialogs::Dialog::new("bullets");
                             dlg.fields.insert("tab".into(), "numbered".into());
                             app.dialog = Some(dlg);
@@ -336,10 +342,10 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                             run(app, "format.lineSpacing", json!({"lines": v}));
                         }
                     }
-                    if ui.button("Line Spacing Options…").clicked() {
+                    if ui.button(crate::tl!("Line Spacing Options…")).clicked() {
                         run(app, "format.paragraphDialog", json!({}));
                     }
-                    if ui.button("Tabs…").clicked() {
+                    if ui.button(crate::tl!("Tabs…")).clicked() {
                         app.dialog = Some(crate::dialogs::Dialog::new("tabs"));
                     }
                 });
@@ -350,7 +356,7 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                             run(app, "format.columns", json!({"count": n, "spacing": 18}));
                         }
                     }
-                    if ui.button("More Columns…").clicked() {
+                    if ui.button(crate::tl!("More Columns…")).clicked() {
                         run(app, "format.columns", json!({}));
                     }
                 });
@@ -366,10 +372,10 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 let r = icon_toggle(ui, Icon::TextDirection, "Text Direction", en, false);
                 egui::Popup::menu(&r).show(|ui| {
                     for (l, d) in [
-                        ("Horizontal", "horizontal"),
-                        ("Rotate all text 90°", "rotate90"),
-                        ("Rotate all text 270°", "rotate270"),
-                        ("Stacked", "stacked"),
+                        (crate::tl!("Horizontal"), "horizontal"),
+                        (crate::tl!("Rotate all text 90°"), "rotate90"),
+                        (crate::tl!("Rotate all text 270°"), "rotate270"),
+                        (crate::tl!("Stacked"), "stacked"),
                     ] {
                         if ui.button(l).clicked() {
                             run(app, "format.direction", json!({"dir": d}));
@@ -378,7 +384,7 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 });
                 let r = icon_toggle(ui, Icon::AlignText, "Align Text", en, false);
                 egui::Popup::menu(&r).show(|ui| {
-                    for (l, a) in [("Top", "top"), ("Middle", "middle"), ("Bottom", "bottom")] {
+                    for (l, a) in [(crate::tl!("Top"), "top"), (crate::tl!("Middle"), "middle"), (crate::tl!("Bottom"), "bottom")] {
                         if ui.button(l).clicked() {
                             run(app, "format.anchor", json!({"anchor": a}));
                         }
@@ -386,7 +392,7 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 });
                 let r = icon_toggle(ui, Icon::SmartArt, "Convert to SmartArt", enabled(app, "smartArt.fromText"), false);
                 egui::Popup::menu(&r).show(|ui| smartart_gallery(app, ui, "smartArt.fromText", json!({}), "", ("", ""), None));
-                if ui.add_enabled(en, egui::Button::new("Paragraph…").min_size(vec2(88.0, 22.0))).on_hover_text("Paragraph").clicked() {
+                if ui.add_enabled(en, egui::Button::new(crate::tl!("Paragraph…")).min_size(vec2(88.0, 22.0))).on_hover_text("Paragraph").clicked() {
                     run(app, "format.paragraphDialog", json!({}));
                 }
             });
@@ -419,7 +425,7 @@ fn drawing_group(app: &mut SlideApp, ui: &mut Ui) {
             }
             if let Some(a) = a {
                 widgets::color_popup(&a).show(|ui| {
-                    if let Some(c) = widgets::color_grid(ui, &sc, Some("No Fill")) {
+                    if let Some(c) = widgets::color_grid(ui, &sc, Some(crate::tl!("No Fill"))) {
                         match c {
                             Some(c) => {
                                 app.last_fill = cref_param(&c);

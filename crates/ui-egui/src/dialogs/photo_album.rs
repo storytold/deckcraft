@@ -1,24 +1,28 @@
 use super::{Dialog, SlideApp, Tokens, Ui, Value, buttons, check, field, json};
 
+/// Parse the list of pictures and text boxes currently held in the album dialog.
 fn album_items(d: &Dialog) -> Option<Vec<Value>> {
     let raw = d.fields.get("items").map(String::as_str).unwrap_or("[]");
     serde_json::from_str::<Value>(raw).ok().and_then(|v| v.as_array().cloned())
 }
 
+/// Store the updated list of pictures and text boxes back into dialog fields.
 fn store_album_items(d: &mut Dialog, items: &[Value]) {
     let raw = serde_json::to_string(items).unwrap_or_else(|_| "[]".into());
     d.fields.insert("items".into(), raw);
 }
 
+/// Produce a display label for an item in the photo album list.
 fn album_item_label(v: &Value) -> String {
     if let Some(text) = v.get("text").and_then(Value::as_str) {
         let text = text.trim();
-        if text.is_empty() { "Text Box".to_string() } else { format!("Text: {text}") }
+        if text.is_empty() { crate::tl!("Text Box").to_string() } else { format!("{}: {text}", crate::tl!("Text")) }
     } else {
-        v.get("name").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or("Picture").to_string()
+        v.get("name").and_then(Value::as_str).filter(|s| !s.is_empty()).map(|s| s.to_string()).unwrap_or_else(|| crate::tl!("Picture").to_string())
     }
 }
 
+/// Prompt the user to pick an image file and return its name and base64-encoded payload.
 fn pick_album_picture(app: &mut SlideApp) -> Option<Value> {
     let path = if let Some(pick) = app.services.pick_open.as_mut() {
         pick("picture")
@@ -69,15 +73,16 @@ fn pick_album_picture(app: &mut SlideApp) -> Option<Value> {
 fn album_choice(ui: &mut Ui, d: &mut Dialog, id: &str, name: &str, key: &str, default: &str, choices: &[(&str, &str)]) {
     let cur = d.get(key, default);
     let label = choices.iter().find(|(k, _)| *k == cur).map(|(_, l)| *l).unwrap_or(default);
-    let opened = craft_ui::ComboBox::from_id_salt(id).selected_text(label).width(220.0).show_ui(ui, |ui| {
+    let label_tr = crate::i18n::t(label);
+    let opened = craft_ui::ComboBox::from_id_salt(id).selected_text(label_tr).width(220.0).show_ui(ui, |ui| {
         for (k, l) in choices {
-            if ui.selectable_label(cur == *k, *l).clicked() {
+            if ui.selectable_label(cur == *k, crate::i18n::t(l)).clicked() {
                 d.fields.insert(key.into(), (*k).to_string());
             }
         }
     });
-    let access = name.to_string();
-    let shown = label.to_string();
+    let access = crate::i18n::t(name).to_string();
+    let shown = label_tr.to_string();
     opened.response.widget_info(move || {
         let mut info = egui::WidgetInfo::labeled(egui::Role::ComboBox, true, access.clone());
         info.current_text_value = Some(shown.clone());
@@ -87,6 +92,7 @@ fn album_choice(ui: &mut Ui, d: &mut Dialog, id: &str, name: &str, key: &str, de
 
 const ALBUM_THEMES: &[&str] = &["DeckCraft", "Harbor", "Ember", "Meadow", "Nocturne", "Paper", "Coral Reef", "Slate"];
 
+/// Determine the theme name active on the current presentation's first master.
 fn current_theme(app: &SlideApp) -> String {
     app.session
         .active()
@@ -96,6 +102,7 @@ fn current_theme(app: &SlideApp) -> String {
         .unwrap_or_else(|| "DeckCraft".into())
 }
 
+/// Parse an album identifier from a JSON value.
 fn album_json_id(v: &Value) -> Option<u64> {
     v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
 }
@@ -131,11 +138,13 @@ fn seed_photo_album(app: &SlideApp, d: &mut Dialog) {
     d.fields.entry("themeWas".into()).or_insert(theme_was);
 }
 
+/// Check whether the currently selected album item is a picture rather than a text box.
 fn selected_album_picture(d: &Dialog, items: &[Value]) -> bool {
     let i = d.fields.get("sel").and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
     items.get(i).is_some_and(|item| item.get("data").is_some() || item.get("path").is_some())
 }
 
+/// Mutate the JSON object of the currently selected picture item.
 fn with_selected_picture(d: &mut Dialog, f: impl FnOnce(&mut serde_json::Map<String, Value>)) {
     let Some(mut list) = album_items(d) else { return };
     let i = d.fields.get("sel").and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
@@ -154,13 +163,13 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
     ui.set_min_width(440.0);
     egui::ScrollArea::vertical().max_height(520.0).id_salt("album_body").show(ui, |ui| {
         ui.set_min_width(420.0);
-        ui.label("Pictures in album");
+        ui.label(crate::tl!("Pictures in album"));
         let items = album_items(d).unwrap_or_default();
         let mut sel = d.get("sel", "0").parse::<usize>().unwrap_or(0);
         // Fixed height so adding pictures does not push Create past the window.
         egui::ScrollArea::vertical().max_height(120.0).min_scrolled_height(120.0).auto_shrink([false, false]).id_salt("album_list").show(ui, |ui| {
             if items.is_empty() {
-                ui.label(egui::RichText::new("No pictures yet").color(Tokens::get(ui.ctx()).text_dim));
+                ui.label(egui::RichText::new(crate::tl!("No pictures yet")).color(Tokens::get(ui.ctx()).text_dim));
             }
             for (i, item) in items.iter().enumerate() {
                 if ui.selectable_label(sel == i, album_item_label(item)).clicked() {
@@ -170,7 +179,7 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
         });
         d.fields.insert("sel".into(), sel.to_string());
         ui.horizontal(|ui| {
-            if ui.button("Add Pictures…").clicked()
+            if ui.button(crate::tl!("Add Pictures…")).clicked()
                 && let Some(item) = pick_album_picture(app)
             {
                 match album_items(d) {
@@ -184,8 +193,8 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
                     None => app.set_status("The picture list is invalid"),
                 }
             }
-            if ui.button("New Text Box").clicked() {
-                let text = d.get("boxText", "Text Box");
+            if ui.button(crate::tl!("New Text Box")).clicked() {
+                let text = d.get("boxText", crate::tl!("Text Box"));
                 let text = text.trim();
                 if text.is_empty() {
                     app.set_status("Type the text for the new text box");
@@ -202,7 +211,7 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
                     }
                 }
             }
-            if ui.button("Remove").clicked()
+            if ui.button(crate::tl!("Remove")).clicked()
                 && let Some(mut list) = album_items(d)
                 && let Some(i) = d.get("sel", "0").parse::<usize>().ok()
                 && i < list.len()
@@ -213,41 +222,41 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
                 d.fields.insert("sel".into(), next.to_string());
             }
         });
-        field(ui, d, "Text box:", "boxText", "Text Box");
+        field(ui, d, "Text box:", "boxText", crate::tl!("Text Box"));
         let picture = selected_album_picture(d, &items);
         ui.label(album_picture_status(&items, sel));
         ui.horizontal_wrapped(|ui| {
             ui.add_enabled_ui(picture, |ui| {
-                if ui.button("Rotate Left").clicked() {
+                if ui.button(crate::tl!("Rotate Left")).clicked() {
                     with_selected_picture(d, |obj| {
                         let cur = obj.get("rot").and_then(Value::as_f64).unwrap_or(0.0);
                         let next = ((cur - 90.0) % 360.0 + 360.0) % 360.0;
                         obj.insert("rot".into(), json!(next));
                     });
                 }
-                if ui.button("Rotate Right").clicked() {
+                if ui.button(crate::tl!("Rotate Right")).clicked() {
                     with_selected_picture(d, |obj| {
                         let cur = obj.get("rot").and_then(Value::as_f64).unwrap_or(0.0);
                         let next = ((cur + 90.0) % 360.0 + 360.0) % 360.0;
                         obj.insert("rot".into(), json!(next));
                     });
                 }
-                if ui.button("More Brightness").clicked() {
+                if ui.button(crate::tl!("More Brightness")).clicked() {
                     nudge_picture(d, "brightness", 0.1);
                 }
-                if ui.button("Less Brightness").clicked() {
+                if ui.button(crate::tl!("Less Brightness")).clicked() {
                     nudge_picture(d, "brightness", -0.1);
                 }
-                if ui.button("More Contrast").clicked() {
+                if ui.button(crate::tl!("More Contrast")).clicked() {
                     nudge_picture(d, "contrast", 0.1);
                 }
-                if ui.button("Less Contrast").clicked() {
+                if ui.button(crate::tl!("Less Contrast")).clicked() {
                     nudge_picture(d, "contrast", -0.1);
                 }
             });
         });
         ui.add_space(4.0);
-        ui.label("Picture layout");
+        ui.label(crate::tl!("Picture layout"));
         album_choice(
             ui,
             d,
@@ -265,7 +274,7 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
                 ("4title", "4 pictures with title"),
             ],
         );
-        ui.label("Frame shape");
+        ui.label(crate::tl!("Frame shape"));
         album_choice(
             ui,
             d,
@@ -277,7 +286,7 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
         );
         check(ui, d, "Captions under pictures", "captions", false);
         check(ui, d, "ALL pictures black and white", "grayscale", false);
-        ui.label("Album theme");
+        ui.label(crate::tl!("Album theme"));
         album_choice(ui, d, "album_theme", "Album theme", "theme", "DeckCraft", &ALBUM_THEMES.iter().map(|n| (*n, *n)).collect::<Vec<_>>());
     });
     let captions = d.fields.get("captions").is_some_and(|v| v == "1");
@@ -317,19 +326,21 @@ pub(super) fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog
     cancel
 }
 
+/// Format rotation, brightness, and contrast values for the selected album picture.
 fn album_picture_status(items: &[Value], sel: usize) -> String {
     let Some(item) = items.get(sel) else {
-        return "Select a picture to rotate it or change brightness and contrast".into();
+        return crate::tl!("Select a picture to rotate it or change brightness and contrast").to_string();
     };
     if item.get("data").is_none() && item.get("path").is_none() {
-        return "Text boxes have no picture options".into();
+        return crate::tl!("Text boxes have no picture options").to_string();
     }
     let rot = item.get("rot").and_then(Value::as_f64).unwrap_or(0.0);
     let brightness = item.get("brightness").and_then(Value::as_f64).unwrap_or(0.0);
     let contrast = item.get("contrast").and_then(Value::as_f64).unwrap_or(0.0);
-    format!("Rotation {rot:.0}°, brightness {brightness:.1}, contrast {contrast:.1}")
+    format!("{} {rot:.0}°, {} {brightness:.1}, {} {contrast:.1}", crate::tl!("Rotation"), crate::tl!("brightness"), crate::tl!("contrast"))
 }
 
+/// Adjust an album picture's numeric property (brightness or contrast) by a given delta.
 fn nudge_picture(d: &mut Dialog, key: &str, delta: f64) {
     with_selected_picture(d, |obj| {
         let cur = obj.get(key).and_then(Value::as_f64).unwrap_or(0.0);

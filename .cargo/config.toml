@@ -1,7 +1,10 @@
-# Local development builds embed the craft-fonts checkout next to this repo when it exists
-# (build.rs warns and continues without it). CI and releases set CRAFT_FONTS_DIR explicitly.
+# Local development builds embed the craft-fonts and craft-i18n checkouts next to this repo when
+# they exist (each build.rs warns and continues with an English-only fallback without them).
+# CI and releases pin the craft-i18n revision in `craft-i18n.rev` and set CRAFT_FONTS_DIR and
+# CRAFT_I18N_DIR explicitly.
 [env]
 CRAFT_FONTS_DIR = { value = "../craft-fonts", relative = true }
+CRAFT_I18N_DIR = { value = "../craft-i18n", relative = true }
 
 [alias]
 xtask = "run --package xtask --"

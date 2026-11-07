@@ -8,7 +8,9 @@ impl SlideApp {
         if (ctx.zoom_factor() - scale).abs() > 1e-3 {
             ctx.set_zoom_factor(scale);
         }
+        let cur_lang = crate::i18n::current();
         if !self.styled {
+            self.fonts_lang = Some(cur_lang);
             theme::install_fonts_with(ctx, &self.ui_fonts.faces);
             self.styled = true;
             self.restyle = true;
@@ -16,6 +18,16 @@ impl SlideApp {
             // or symbol with the old font set while the new set is still pending.
             ctx.request_discard("install interface fonts before layout");
             return false;
+        }
+        if self.fonts_lang.is_some() && self.fonts_lang != Some(cur_lang) {
+            self.fonts_lang = Some(cur_lang);
+            theme::install_fonts_with(ctx, &self.ui_fonts.faces);
+            self.restyle = true;
+            ctx.request_discard("install interface fonts for language change");
+            return false;
+        }
+        if self.fonts_lang.is_none() {
+            self.fonts_lang = Some(cur_lang);
         }
         if self.restyle {
             theme::apply(ctx, &theme::Tokens::for_brightness(self.ui.brightness));

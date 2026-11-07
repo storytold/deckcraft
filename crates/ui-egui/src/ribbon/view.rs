@@ -33,15 +33,15 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         rows(ui, |ui| {
             let mut r = app.ui.ruler;
-            if ui.checkbox(&mut r, "Ruler").changed() {
+            if ui.checkbox(&mut r, crate::tl!("Ruler")).changed() {
                 app.ui.ruler = r;
             }
             let mut g = app.ui.gridlines;
-            if ui.checkbox(&mut g, "Gridlines").changed() {
+            if ui.checkbox(&mut g, crate::tl!("Gridlines")).changed() {
                 app.ui.gridlines = g;
             }
             let mut gd = app.ui.guides;
-            if ui.checkbox(&mut gd, "Guides").changed() {
+            if ui.checkbox(&mut gd, crate::tl!("Guides")).changed() {
                 app.ui.guides = gd;
             }
         });
@@ -66,7 +66,7 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
                         ui.close();
                     }
                 }
-                if ui.button("Fit").clicked() {
+                if ui.button(crate::tl!("Fit")).clicked() {
                     let _ = app.run("view.fit", json!({}));
                     ui.close();
                 }
@@ -103,7 +103,7 @@ pub(super) fn zoom_menu(app: &mut SlideApp, ui: &mut Ui) {
     let id = egui::Id::unique("insert_zoom_menu");
     let (mut kind, mut picked): (u8, Vec<usize>) = ui.data_mut(|d| d.get_temp(id).unwrap_or((0, vec![])));
     ui.horizontal(|ui| {
-        for (k, label) in [(0u8, "Slide Zoom"), (1, "Section Zoom"), (2, "Summary Zoom")] {
+        for (k, label) in [(0u8, crate::tl!("Slide Zoom")), (1, crate::tl!("Section Zoom")), (2, crate::tl!("Summary Zoom"))] {
             if ui.selectable_label(kind == k, label).clicked() && kind != k {
                 kind = k;
                 picked.clear();
@@ -124,7 +124,7 @@ pub(super) fn zoom_menu(app: &mut SlideApp, ui: &mut Ui) {
             .collect()
     };
     if items.is_empty() {
-        ui.label(if kind == 1 { "The presentation has no sections. Add one with Home › Section." } else { "No slides." });
+        ui.label(if kind == 1 { crate::tl!("The presentation has no sections. Add one with Home › Section.") } else { crate::tl!("No slides.") });
     }
     egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
         for (i, label) in items.iter().enumerate() {
@@ -140,7 +140,7 @@ pub(super) fn zoom_menu(app: &mut SlideApp, ui: &mut Ui) {
     });
     ui.data_mut(|d| d.insert_temp(id, (kind, picked.clone())));
     ui.separator();
-    if ui.add_enabled(!picked.is_empty(), egui::Button::new("Insert")).clicked() {
+    if ui.add_enabled(!picked.is_empty(), egui::Button::new(crate::tl!("Insert"))).clicked() {
         let mut v = picked.clone();
         v.sort_unstable();
         let p = match kind {
