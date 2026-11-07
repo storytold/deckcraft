@@ -321,6 +321,66 @@ fn arch_and_inflate_handles_follow_the_pointer() {
 }
 
 #[test]
+fn a_guides_direction_turns_continuously_across_its_vertices() {
+    // A coarse circle of radius 100: a vertex every 20 degrees, a 35 pt chord.
+    let mut path = BezPath::new();
+    for k in 0..=18 {
+        let a = f64::from(k) * 20.0_f64.to_radians();
+        let p = Point::new(100.0 * a.cos(), 100.0 * a.sin());
+        if k == 0 { path.move_to(p) } else { path.line_to(p) }
+    }
+    let g = Guide::from_path(&path, false);
+    let chord = 2.0 * 100.0 * 10.0_f64.to_radians().sin();
+    let angle = |s: f64| {
+        let (_, t) = g.at(s);
+        t.y.atan2(t.x)
+    };
+    for k in 1..18 {
+        let s = f64::from(k) * chord;
+        let step = (angle(s + 1e-6) - angle(s - 1e-6)).abs();
+        assert!(step < 1e-4, "the direction jumps by {step} rad at vertex {k}");
+    }
+    // Along the guide, away from its two ends (which keep the end chords' direction), the direction follows the circle:
+    // the tangent is 90 degrees ahead of the radius, within a degree even in the middle of a chord.
+    for k in 10..350 {
+        let s = f64::from(k) * 0.05 * chord;
+        let (p, t) = g.at(s);
+        let radius = p.y.atan2(p.x);
+        let want = radius + std::f64::consts::FRAC_PI_2;
+        let diff = (t.y.atan2(t.x) - want + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+        assert!(diff.abs() < 1.0_f64.to_radians(), "at {s}: the direction is {diff} rad off the circle's");
+    }
+}
+
+#[test]
+fn a_glyph_on_a_follow_guide_is_set_down_whole_and_a_fill_warp_still_bends_it() {
+    let ink = Rect::new(100.0, 50.0, 300.0, 90.0);
+    let lines = one_line(ink);
+    // The corners of a 20 x 30 glyph whose advance is centred on x = 150, baseline at the line's bottom.
+    let glyph = [(140.0, 60.0), (160.0, 60.0), (160.0, 90.0), (140.0, 90.0)].map(|(x, y)| Point::new(x, y));
+    let mapped = |name: &str, whole: bool| {
+        let w = warp(name, &[], rect()).unwrap();
+        let m = w.mapper(&lines, rect().inset(-5.0));
+        glyph.map(|p| if whole { m.map_rigid(0, 150.0, p) } else { m.map(0, p) })
+    };
+    let sides = |q: &[Point; 4]| {
+        [(q[0] - q[1]).hypot(), (q[1] - q[2]).hypot(), (q[2] - q[3]).hypot(), (q[3] - q[0]).hypot(), (q[0] - q[2]).hypot(), (q[1] - q[3]).hypot()]
+    };
+    let want = sides(&glyph);
+    for name in ["textArchUp", "textArchDown", "textCircle", "textButton"] {
+        let whole = sides(&mapped(name, true));
+        for (a, b) in whole.iter().zip(&want) {
+            assert!((a - b).abs() < 1e-6, "{name}: a glyph's size changed ({a} against {b})");
+        }
+        // Mapped point by point along the same guide, the glyph is bent: its two sides differ.
+        let bent = sides(&mapped(name, false));
+        assert!(bent.iter().zip(&want).any(|(a, b)| (a - b).abs() > 0.05), "{name}: bending left the glyph whole");
+    }
+    // A fill warp bends the glyph either way.
+    assert_eq!(mapped("textInflate", true), mapped("textInflate", false));
+}
+
+#[test]
 fn many_lines_on_a_follow_band_are_mapped_from_one_measurement() {
     // 50,000 lines on an arch: each line's scale and anchor come from the band measured once.
     let w = warp("textArchUp", &[], rect()).unwrap();

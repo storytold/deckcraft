@@ -1639,6 +1639,29 @@ fn wordart_arch_up_lifts_the_middle_of_the_line() {
     assert!((70..=110).contains(&ay0), "arch top {ay0}");
 }
 
+/// How many dark pixels `text` draws at 48 pt in a 200 x 200 box warped by `warp`.
+fn wordart_ink(warp: Option<&str>, text: &str) -> usize {
+    let mut t = TextBody::from_text(text);
+    t.paragraphs[0].runs[0].props.size = Some(48.0);
+    t.paragraphs[0].props.align = Some(deckcraft_model::text::Align::Center);
+    t.body.warp = warp.map(String::from);
+    let p = deck_with(vec![Shape { id: ShapeId(701), xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 200.0)), text: Some(t), ..Default::default() }]);
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    (0..img.height).flat_map(|y| (0..img.width).map(move |x| (x, y))).filter(|&(x, y)| img.pixel(x, y)[0] < 128).count()
+}
+
+#[test]
+fn wordart_on_a_guide_sets_each_glyph_down_whole() {
+    // Turning a glyph keeps its ink; bending it along a tight circle would stretch the outer side
+    // and squeeze the inner one.
+    let _ = wordart_ink(None, "HHH"); // warm the font database
+    let flat = wordart_ink(None, "HHH") as f64;
+    for name in ["textCircle", "textArchUp", "textArchDown", "textButton"] {
+        let warped = wordart_ink(Some(name), "HHH") as f64;
+        assert!((warped / flat - 1.0).abs() < 0.03, "{name}: {warped} dark pixels against {flat} flat");
+    }
+}
+
 #[test]
 fn wordart_plain_stretches_the_ink_over_the_text_rect() {
     let img = render_slide(&wordart(Some("textPlain"), "PLAIN"), 0, &RenderOpts { scale: 1.0, ..Default::default() });

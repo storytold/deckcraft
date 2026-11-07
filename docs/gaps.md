@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-04 · **Change:** trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-11-04 · **Change:** trivial (workflow-breaking regression fixed: Ctrl+C/X/V use the system clipboard again; #1414 to re-test on Windows; previous: trivial (WordArt follow-guide text (Arch Up, Arch Down, Circle, Button) sets each glyph down whole; its placement offset remains in the text warp entry; previous: trivial, run alternate language and reflection transforms survive saves; reused slide contents scale to the destination, picker thumbnails remain a gap; previous: trivial (locked No Fill and no-outline click-through regression coverage added; No Fill hit-testing follows resolved fill instead of the presence of a style (#1621); scores unchanged))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -241,7 +241,9 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
   on a segment, and Open/Close Path on a point), "Text warp transforms" (partial: all 40
   `prstTxWarp` presets render, their adjusts round-trip, Shape Format ▸ Text Effects ▸ Transform
   applies one with `format.textWarp`, and a selected warp shows a yellow handle per adjust that
-  dragging sets; arc/circle placement can differ from PowerPoint by 1–3 % of the path length),
+  dragging sets; follow-guide text (Arch Up, Arch Down, Circle, Button) sets each glyph down
+  whole, turned to the guide, as PowerPoint does, but its placement along the guide can still
+  differ by 1–3 % of the path length),
   "Bevel and 3-D rotation" (partial: bevels, camera presets and rotations and face lighting render
   as approximations and `scene3d`/`sp3d` round-trip as raw XML; extrusions draw their sides under
   turned cameras, each lit for its own normal; the preset light rigs, rig directions and materials
@@ -368,6 +370,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | trivial | WordArt follow-guide text (Arch Up, Arch Down, Circle, Button) sets each glyph down whole, as PowerPoint does; the text warp gap stays open for the 1–3 % placement offset and the other items in its entry |
 | 2026-11-02 | trivial | Run alternate-language metadata now survives native and PPTX saves; UI and proofing gaps remain; scores unchanged |
 | 2026-11-02 | trivial | PPTX reflection geometry is retained through native and PPTX resaves; no rendering parity claim |
 | 2026-11-02 | trivial | Reused slide geometry and content scale to the destination; picker thumbnails remain the reuse gap |

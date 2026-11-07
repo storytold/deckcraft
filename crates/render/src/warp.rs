@@ -1,8 +1,9 @@
 //! Drawing laid-out text through a WordArt warp ([`deckcraft_geom::warp`]).
 //!
 //! Glyph outlines are placed in layout space, flattened, cut into short segments and every point
-//! is mapped through the warp, so straight glyph edges bend with the guides. Underlines and
-//! highlights are warped the same way.
+//! is mapped through the warp, so straight glyph edges bend with the guides. On a follow guide
+//! (arches, circles) a glyph is not bent but set down whole and turned, as PowerPoint does.
+//! Underlines and highlights are warped the same way, bent.
 
 use deckcraft_geom::warp::{Warp, WarpLine};
 use deckcraft_text::{GlyphRun, TextLayout};
@@ -103,6 +104,8 @@ struct Item<'a> {
     run: &'a GlyphRun,
     path: BezPath,
     line: usize,
+    /// Layout x of the middle of the glyph's advance, where a follow guide holds it.
+    pivot: f64,
     state: ParaState,
 }
 
@@ -136,7 +139,8 @@ pub(crate) fn draw(ctx: &mut RenderContext, l: &TextLayout, tr: Rect, m: Affine,
             if let Some(slot) = ink.get_mut(li) {
                 *slot = Some(slot.map_or(b, |r| r.union(b)));
             }
-            items.push(Item { run, path, line: li, state: para(run.para) });
+            let pivot = x + run.face.advance(*gid) * k / 2.0;
+            items.push(Item { run, path, line: li, pivot, state: para(run.para) });
         }
     }
     let lines: Vec<WarpLine> = l
@@ -178,7 +182,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, l: &TextLayout, tr: Rect, m: Affine,
         if (alpha <= 0.0 || run.color.a == 0) && run.outline.is_none() {
             continue;
         }
-        let path = warp_path(&it.path, tol, seg, &|p| mapper.map(it.line, p));
+        let path = warp_path(&it.path, tol, seg, &|p| mapper.map_rigid(it.line, it.pivot, p));
         ctx.set_transform(m * Affine::translate(ps.offset));
         if alpha > 0.0 && run.color.a > 0 {
             ctx.set_paint(color(run.color, alpha));

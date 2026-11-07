@@ -107,7 +107,50 @@ impl Guide {
         let d = b - a;
         let l = d.hypot();
         let t = if l > 1e-12 { d / l } else { Vec2::new(1.0, 0.0) };
-        (a + t * (s - c0), t)
+        let u = if l > 1e-12 { (s - c0) / l } else { 0.0 };
+        (a + t * (s - c0), self.blended(i, t, u))
+    }
+
+    /// The direction of the guide's segment `i` bent towards its neighbour's (the previous one in
+    /// the first half of the segment, the next in the second) so it turns continuously: `t` at the
+    /// middle of the segment, the mean of both at a vertex. A letter placed at a distance along
+    /// the normal would otherwise step by the turn of the segment at each vertex, which shows as
+    /// a ragged outline on tightly curved or large text.
+    fn blended(&self, i: usize, t: Vec2, u: f64) -> Vec2 {
+        let n = self.pts.len();
+        let u = u.clamp(0.0, 1.0);
+        let (other, w) = if u < 0.5 {
+            (
+                if i > 0 {
+                    Some(i - 1)
+                } else if self.closed {
+                    n.checked_sub(2)
+                } else {
+                    None
+                },
+                0.5 - u,
+            )
+        } else {
+            (
+                if i + 2 < n {
+                    Some(i + 1)
+                } else if self.closed {
+                    Some(0)
+                } else {
+                    None
+                },
+                u - 0.5,
+            )
+        };
+        let unit = |j: usize| -> Option<Vec2> {
+            let v = *self.pts.get(j + 1)? - *self.pts.get(j)?;
+            let l = v.hypot();
+            (l > 1e-12).then(|| v / l)
+        };
+        let Some(o) = other.and_then(unit) else { return t };
+        let m = t * (1.0 - w) + o * w;
+        let l = m.hypot();
+        if l > 1e-12 { m / l } else { t }
     }
 
     /// The parallel curve `d` points away on the left of the direction of travel (above a
@@ -990,6 +1033,22 @@ impl Mapper<'_> {
     /// How much the warp magnifies text at most (for flattening tolerances), ≥ 1.
     pub fn zoom(&self) -> f64 {
         self.zoom
+    }
+
+    /// Map point `p` of a glyph of line `line` whose advance is centred on layout x `pivot`, for
+    /// the lines that follow a guide: PowerPoint sets such a glyph down whole, turned to the
+    /// guide's direction where its centre falls, instead of bending it along the guide. Other lines
+    /// map as [`Mapper::map`].
+    pub fn map_rigid(&self, line: usize, pivot: f64, p: Point) -> Point {
+        let Some(&LineMap::Follow { band, guide, e0, s0, k, ref_y }) = self.lines.get(line) else { return self.map(line, p) };
+        let path = match (guide.and_then(|g| self.offsets.get(g)), self.warp.bands.get(band)) {
+            (Some(g), _) => g,
+            (None, Some(Band::Follow { path, .. })) => path,
+            _ => return p,
+        };
+        let (q, t) = path.at(s0 + (pivot - e0) * k);
+        let out = q + t * ((p.x - pivot) * k) + Vec2::new(t.y, -t.x) * ((ref_y - p.y) * k);
+        if out.x.is_finite() && out.y.is_finite() { out } else { p }
     }
 
     /// Map point `p` of line `line` (layout coordinates) onto the warp.
