@@ -216,6 +216,9 @@ pub struct Decoder {
     out: VecDeque<Output>,
     /// pts of the temporal unit being decoded.
     pts: i64,
+    /// Bytes of the repeated-frame (`show_existing_frame`) pictures queued by the current
+    /// [`Decoder::decode_pts`] call; each is copied out in full when it is returned.
+    chunk_output_bytes: u64,
 }
 
 /// Whether `pictures` frames of `width` x `height`, padded as `FrameBuf::new` pads them, fit in
@@ -298,6 +301,7 @@ impl Decoder {
             memory_budget: deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET,
             out: VecDeque::new(),
             pts: 0,
+            chunk_output_bytes: 0,
         }
     }
 
@@ -330,6 +334,7 @@ impl Decoder {
     /// [`Decoder::decode`] with a timestamp that the pictures shown by this chunk carry.
     pub fn decode_pts(&mut self, data: &[u8], pts: i64) -> Result<Vec<Picture>> {
         self.pts = pts;
+        self.chunk_output_bytes = 0;
         let parsed = self.parse(data);
         // Hand out what is finished, then report a parse error.
         let mut pics = Vec::new();
@@ -503,6 +508,20 @@ impl Decoder {
             let idx = fh.frame_to_show_map_idx;
             let slot = self.ref_frames[idx].clone().ok_or(Error::Invalid("show_existing_frame of an empty slot"))?;
             let info = self.refs[idx].clone();
+            // Every repeat is copied out whole, so a compact header must not queue more
+            // pictures than half the decoder budget allows.
+            let shape = deckcraft_bitstream::budget::PictureShape {
+                width: u64::from(info.upscaled_width),
+                height: u64::from(info.frame_height),
+                shift_x: u32::from(seq.color.subsampling_x),
+                shift_y: u32::from(seq.color.subsampling_y),
+                chroma_planes: if seq.color.mono_chrome { 0 } else { 2 },
+                bytes_per_sample: 2,
+            };
+            self.chunk_output_bytes = self.chunk_output_bytes.saturating_add(shape.bytes().unwrap_or(u64::MAX));
+            if self.chunk_output_bytes > self.memory_budget / 2 {
+                return Err(Error::Invalid("repeated frame outputs exceed the decoder memory budget"));
+            }
             let o = Output::Existing {
                 slot: slot.clone(),
                 seq: seq.clone(),
