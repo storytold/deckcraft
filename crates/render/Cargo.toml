@@ -19,6 +19,7 @@ deckcraft-text = { workspace = true }
 vello_cpu = { workspace = true }
 vello_common = { workspace = true }
 image = { workspace = true }
+resvg = { workspace = true }
 log = { workspace = true }
 kurbo = { workspace = true }
 skrifa = { workspace = true }

@@ -148,18 +148,19 @@ fn artistic_effect(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
     let st = s.doc()?;
     // (shape, original picture, its bytes and name)
-    let mut work: Vec<(ShapeId, MediaId, Option<(Vec<u8>, String)>)> = Vec::new();
+    let mut work: Vec<(ShapeId, MediaId, Option<MediaId>, Option<(Vec<u8>, String)>)> = Vec::new();
     for id in ids {
         let Some(ShapeKind::Picture { fill }) = st.shape(id).map(|sh| &sh.kind) else { continue };
         let original = fill.artistic.as_ref().map_or(fill.media, |a| a.original);
+        let svg = fill.artistic.as_ref().map_or(fill.svg, |a| a.svg);
         let item = st.doc.media(original).map(|m| (m.data.to_vec(), m.name.clone()));
-        work.push((id, original, item));
+        work.push((id, original, svg, item));
     }
     if work.is_empty() {
         return Err(bad("picture.artisticEffect", "select a picture"));
     }
-    let mut results: Vec<(ShapeId, MediaId, Option<(String, Vec<u8>)>)> = Vec::new();
-    for (id, original, item) in work {
+    let mut results: Vec<(ShapeId, MediaId, Option<MediaId>, Option<(String, Vec<u8>)>)> = Vec::new();
+    for (id, original, svg, item) in work {
         let processed = match (&effect, item) {
             (None, _) => None,
             (Some(e), Some((data, name))) => {
@@ -167,30 +168,33 @@ fn artistic_effect(s: &mut Session, p: &Value) -> Result<Value> {
             }
             (Some(_), None) => return Err(bad("picture.artisticEffect", "the picture's data is missing")),
         };
-        results.push((id, original, processed));
+        results.push((id, original, svg, processed));
     }
     let effect2 = effect.clone();
     s.edit(move |doc, sel| {
-        let mut set: Vec<(ShapeId, MediaId, Option<MediaId>)> = Vec::new();
-        for (id, original, processed) in &results {
+        let mut set: Vec<(ShapeId, MediaId, Option<MediaId>, Option<MediaId>)> = Vec::new();
+        for (id, original, svg, processed) in &results {
             let m = match processed {
                 Some((name, png)) => Some(doc.add_media(name, "image/png", png.clone()).ok_or_else(|| bad("picture.artisticEffect", NO_ID_SPACE))?),
                 None => None,
             };
-            set.push((*id, *original, m));
+            set.push((*id, *original, *svg, m));
         }
         let list = crate::shapes_mut(doc, sel).ok_or_else(|| bad("picture.artisticEffect", "no slide"))?;
-        for (id, original, m) in set {
+        for (id, original, svg, m) in set {
             if let Some(sh) = deckcraft_model::find_shape_mut(list, id)
                 && let ShapeKind::Picture { fill } = &mut sh.kind
             {
                 match (m, &effect2) {
                     (Some(m), Some(e)) => {
                         fill.media = m;
-                        fill.artistic = Some(Artistic { effect: e.clone(), original });
+                        fill.artistic = Some(Artistic { effect: e.clone(), original, svg });
+                        // The effect is drawn on the raster picture; an SVG would show without it.
+                        fill.svg = None;
                     }
                     _ => {
                         fill.media = original;
+                        fill.svg = svg;
                         fill.artistic = None;
                     }
                 }
