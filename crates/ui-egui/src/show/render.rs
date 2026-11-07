@@ -138,7 +138,9 @@ pub(super) fn start_prefetch(doc: &std::sync::Arc<Presentation>, next: usize, si
     let threads = render_threads().saturating_sub(1).max(1);
     let spawned = std::thread::Builder::new().name("show-prefetch".into()).spawn(move || {
         let tl = ShowState::timeline(&doc, next);
-        let _ = tx.send(render_frame(&doc, next, tl, 0, 0.0, size, hidden, &[], threads, &[], &[], None));
+        let (times, gif) = crate::media::initial_gif_frames(&doc, next);
+        let frame = render_frame(&doc, next, tl, 0, 0.0, size, hidden, &times, threads, &[], &[], None);
+        let _ = tx.send((gif, frame));
     });
     spawned.ok().map(|_| Prefetch { key, rx })
 }

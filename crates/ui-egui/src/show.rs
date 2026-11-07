@@ -136,7 +136,7 @@ struct Key {
 /// A slide frame being rendered on another thread: what it will be (`key`) and where it arrives.
 struct Prefetch {
     key: Key,
-    rx: std::sync::mpsc::Receiver<egui::ColorImage>,
+    rx: std::sync::mpsc::Receiver<(u64, egui::ColorImage)>,
 }
 
 /// What a slide's backdrop was rendered for.

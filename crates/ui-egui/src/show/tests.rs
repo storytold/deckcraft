@@ -443,12 +443,23 @@ fn slideshow_navigation_advances_once_with_presenter_view() {
 fn the_prefetched_frame_is_the_frame_shown_on_entry() {
     let mut s = deckcraft_engine::Session::with_new();
     s.execute("slide.new", &json!({"title": "Second"})).unwrap();
-    let doc = s.active().unwrap().doc.clone();
+    let mut doc = (*s.active().unwrap().doc).clone();
+    let media = doc.add_media("a.gif", "image/gif", two_frame_gif()).unwrap();
+    std::sync::Arc::make_mut(&mut doc.slides[1]).shapes.push(deckcraft_model::Shape {
+        id: ShapeId(7400),
+        xfrm: Some(deckcraft_geom::Xfrm::new(100.0, 100.0, 300.0, 200.0)),
+        kind: deckcraft_model::ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media, ..Default::default() } },
+        ..Default::default()
+    });
+    let doc = std::sync::Arc::new(doc);
     let size = (96, 54);
     let p = start_prefetch(&doc, 1, size).expect("prefetch starts");
     assert_eq!(p.key, Key { slide: 1, step: 0, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: vec![], gif: 0, plays: vec![] });
-    let got = p.rx.recv().expect("the frame arrives");
-    let want = render_frame(&doc, 1, ShowState::timeline(&doc, 1), 0, 0.0, size, vec![], &[], 0, &[], &[], None);
+    let (times, expected_key) = crate::media::initial_gif_frames(&doc, 1);
+    assert!(!times.is_empty(), "the prefetch recognizes the animated GIF");
+    let (got_key, got) = p.rx.recv().expect("the frame arrives");
+    assert_eq!(got_key, expected_key);
+    let want = render_frame(&doc, 1, ShowState::timeline(&doc, 1), 0, 0.0, size, vec![], &times, 0, &[], &[], None);
     assert_eq!(got.size, want.size);
     assert_eq!(got.pixels, want.pixels);
 }

@@ -390,11 +390,11 @@ fn frame_texture(show: &mut Show, f: &Fr, sl: &Sl) -> Option<TextureHandle> {
     } else {
         // The frame rendered ahead of time, when it is this one (waiting for it beats starting over).
         let ready = match show.prefetch.take() {
-            Some(p) if p.key == sl.key && !animating => p.rx.recv().ok(),
+            Some(p) if same_prefetch_scene(&p.key, &sl.key) && !animating => p.rx.recv().ok().filter(|(gif, _)| *gif == sl.key.gif),
             _ => None,
         };
         let ci = match ready {
-            Some(ci) => ci,
+            Some((_, ci)) => ci,
             None => {
                 let tl = show.timeline(doc).clone();
                 // Animating: the backdrop doesn't change, only the shapes over it are drawn.
@@ -417,19 +417,26 @@ fn frame_texture(show: &mut Show, f: &Fr, sl: &Sl) -> Option<TextureHandle> {
     }
 }
 
-fn prefetch_next(app: &mut SlideApp, show: &mut Show, f: &Fr, sl: &Sl) {
-    let Fr { doc, doc_uid, now, .. } = *f;
+fn same_prefetch_scene(prefetched: &Key, current: &Key) -> bool {
+    prefetched.slide == current.slide
+        && prefetched.step == current.step
+        && prefetched.size == current.size
+        && prefetched.doc == current.doc
+        && prefetched.hidden == current.hidden
+        && prefetched.plays == current.plays
+}
+
+fn prefetch_next(show: &mut Show, f: &Fr, sl: &Sl) {
+    let Fr { doc, .. } = *f;
     let Sl { animating, size, .. } = *sl;
-    // While this slide rests, render the next one's first frame (not one with GIFs, whose
-    // frame depends on when it is entered).
+    // While this slide rests, render the next one's first frame, including GIFs at time zero.
     // A slide with animations gets its backdrop ready while it rests, so they start smoothly.
     if !animating && !show.timeline(doc).is_empty() {
         show.prefetch_backdrop(doc, sl.back_key);
     }
     if !animating && show.trans.is_none() && !show.preview_only {
         let next = show.state.peek_next(doc);
-        let wanted = next.filter(|n| app.media.gifs(doc_uid, doc, *n, now, &app.session.gif_paused).is_empty());
-        if let Some(n) = wanted
+        if let Some(n) = next
             && show.prefetch.as_ref().is_none_or(|p| p.key.slide != n || p.key.size != size || p.key.doc != std::sync::Arc::as_ptr(doc) as usize)
         {
             show.prefetch = start_prefetch(doc, n, size);
@@ -670,7 +677,7 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
     } else {
         let sl = begin_slide(app, show, f, size);
         let tex = frame_texture(show, f, &sl);
-        prefetch_next(app, show, f, &sl);
+        prefetch_next(show, f, &sl);
         if !draw_transition(show, f, &sl, painter, &tex) {
             show.trans = None;
             let (framed, full_screen) = draw_videos(app, show, f, &sl, painter, &tex);

@@ -84,6 +84,25 @@ fn collect_pictures<'a>(shapes: &'a [Shape], group: Option<(Xfrm, Xfrm)>, depth:
     }
 }
 
+/// Animated GIFs' first-frame times and cache key for a slide before it is entered.
+/// Decode on the prefetch worker so entering the slide does not block on GIF decoding.
+pub(crate) fn initial_gif_frames(doc: &Presentation, index: usize) -> (Vec<(ShapeId, f64)>, u64) {
+    let Some(slide) = doc.slides.get(index) else { return (vec![], 0) };
+    let mut pictures = vec![];
+    collect_pictures(&slide.shapes, None, 0, &mut pictures);
+    let mut times = vec![];
+    let mut key = 0u64;
+    for (shape, _) in pictures {
+        let ShapeKind::Picture { fill } = &shape.kind else { continue };
+        let Some(item) = doc.media(fill.media).filter(|m| m.data.starts_with(b"GIF8")) else { continue };
+        if let Some((frame, _)) = deckcraft_render::gif_frame(&item.data, &fill.adjust, 0.0) {
+            times.push((shape.id, 0.0));
+            key = (key ^ (((shape.id.0 as u64) << 32) | frame as u64)).wrapping_mul(1099511628211);
+        }
+    }
+    (times, key)
+}
+
 impl Default for MediaHost {
     fn default() -> Self {
         MediaHost::new(None)

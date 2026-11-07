@@ -154,6 +154,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-07 | Slide show: the next slide's first GIF frames are decoded and rendered in the background, avoiding UI-thread GIF rendering when a transition enters the slide (#1657) |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
 | 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
 | 2026-11-02 | Slide show on Linux and the BSDs: Presenter View stays off when winit lists exactly one display, as in PowerPoint; if it lists none, the setting is kept. On one display the presenter window covered the show, and the hidden window stalled every frame: slide changes took up to ~1.7 s under Hyprland (#1156) |
@@ -340,6 +341,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-07 | trivial | Progress log: animated GIF frames are prefetched off the show UI thread before slide entry (#1657); parity scores unchanged |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
 | 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |
