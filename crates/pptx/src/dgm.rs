@@ -461,7 +461,6 @@ fn outline_ids(data: &El) -> Vec<(String, DiagramNode)> {
             _ => {}
         }
     }
-    let Some(doc) = doc else { return vec![] };
     let mut kids: HashMap<&str, Vec<(i64, &str)>> = HashMap::new();
     if let Some(cx) = data.child("cxnLst") {
         for c in cx.children_named("cxn").take(MAX_NODES * 4) {
@@ -480,7 +479,7 @@ fn outline_ids(data: &El) -> Vec<(String, DiagramNode)> {
     let mut out = vec![];
     let mut seen = std::collections::HashSet::new();
     // Depth first, iteratively; a node reached twice (a cycle in a hostile file) is skipped.
-    let mut stack: Vec<(&str, u8)> = kids.get(doc).map(|v| v.iter().rev().map(|(_, id)| (*id, 0u8)).collect()).unwrap_or_default();
+    let mut stack: Vec<(&str, u8)> = doc.and_then(|d| kids.get(d)).map(|v| v.iter().rev().map(|(_, id)| (*id, 0u8)).collect()).unwrap_or_default();
     while let Some((id, level)) = stack.pop() {
         if out.len() >= MAX_NODES || !seen.insert(id) {
             continue;
