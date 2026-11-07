@@ -202,7 +202,65 @@ pub fn paint_anim_tile(p: &egui::Painter, r: Rect, label: &str, class: AnimClass
         _ => Icon::AnimPath,
     };
     icons::paint(p, Rect::from_center_size(pos2(r.center().x, r.min.y + 18.0), vec2(28.0, 28.0)), icon, t.text, !enabled);
-    p.text(pos2(r.center().x, r.max.y - 8.0), Align2::CENTER_CENTER, label, theme::font(10.0), if enabled { t.text } else { t.text_faint });
+    paint_tile_caption(p, r, r.min.y + 32.0, r.max.y - 8.0, label, if enabled { t.text } else { t.text_faint });
+}
+
+/// Size, in points, of a gallery tile caption: it starts at the maximum, shrinks to the minimum on one line,
+/// and to the floor when it is split over two lines.
+const CAPTION_MAX: f32 = 10.0;
+const CAPTION_MIN: f32 = 7.0;
+const CAPTION_FLOOR: f32 = 6.0;
+
+/// The size of `text` laid out at `size` points.
+fn caption_extent(p: &egui::Painter, text: &str, size: f32, color: egui::Color32) -> egui::Vec2 {
+    p.layout_no_wrap(text.to_string(), theme::font(size), color).size()
+}
+
+/// The largest size from `from` down to `to`, in quarter points, for which `fits` holds.
+fn largest_size(from: f32, to: f32, fits: impl Fn(f32) -> bool) -> Option<f32> {
+    let mut size = from;
+    while size >= to {
+        if fits(size) {
+            return Some(size);
+        }
+        size -= 0.25;
+    }
+    None
+}
+
+/// Splits `label` at the space nearest its middle.
+fn split_caption(label: &str) -> Option<(&str, &str)> {
+    let mid = label.len() / 2;
+    let (i, _) = label.match_indices(' ').min_by_key(|(i, _)| i.abs_diff(mid))?;
+    let (a, b) = label.split_at(i);
+    Some((a, b.trim_start()))
+}
+
+/// Draws a gallery tile's name inside `r`. `top` is the top of the strip below the tile's picture or icon, and
+/// `y` the centre of a one-line name. A name that fits is drawn at 10 pt; a wider one is drawn smaller, then
+/// on two lines in the strip when it has a space, and whatever still overflows is clipped to the tile.
+pub(super) fn paint_tile_caption(p: &egui::Painter, r: Rect, top: f32, y: f32, label: &str, color: egui::Color32) {
+    let x = r.center().x;
+    let width = r.width();
+    if let Some(size) = largest_size(CAPTION_MAX, CAPTION_MIN, |s| caption_extent(p, label, s, color).x <= width) {
+        p.text(pos2(x, y), Align2::CENTER_CENTER, label, theme::font(size), color);
+        return;
+    }
+    let clipped = p.with_clip_rect(r.intersect(p.clip_rect()));
+    let Some((a, b)) = split_caption(label) else {
+        clipped.text(pos2(x, y), Align2::CENTER_CENTER, label, theme::font(CAPTION_MIN), color);
+        return;
+    };
+    let strip = r.max.y - top;
+    let fits = |s: f32| {
+        let (ea, eb) = (caption_extent(p, a, s, color), caption_extent(p, b, s, color));
+        ea.x <= width && eb.x <= width && ea.y + eb.y <= strip
+    };
+    let size = largest_size(CAPTION_MAX, CAPTION_FLOOR, fits).unwrap_or(CAPTION_FLOOR);
+    let (ha, hb) = (caption_extent(p, a, size, color).y, caption_extent(p, b, size, color).y);
+    let first = top + ((strip - ha - hb) / 2.0).max(0.0);
+    clipped.text(pos2(x, first), Align2::CENTER_TOP, a, theme::font(size), color);
+    clipped.text(pos2(x, first + ha), Align2::CENTER_TOP, b, theme::font(size), color);
 }
 
 /// The stored id is the one marked row. Every other id stays unmarked.
