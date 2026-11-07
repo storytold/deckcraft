@@ -189,6 +189,79 @@ fn preview_rejects_a_from_that_is_not_an_effect_index() {
     assert_eq!(h.state_mut().run("animation.preview", json!({"from": 1})).unwrap()["from"], 1.0);
 }
 
+/// #1725: deleting an animation in the Animation Pane removes the animation effect,
+/// never deleting the underlying shape on the slide.
+#[test]
+fn deleting_an_animation_in_the_pane_removes_animation_and_keeps_shape() {
+    let mut h = harness();
+    let shape_count_before = h.state().session.active().unwrap().current_slide().unwrap().shapes.len();
+    let anim_count_before = h.state().session.active().unwrap().current_slide().unwrap().animations.len();
+    assert_eq!(anim_count_before, 2);
+
+    // Click effect 1 in the Animation Pane to select it.
+    click_row(&mut h, 1, egui::PointerButton::Primary);
+
+    // Press Delete on the keyboard.
+    h.key_press(egui::Key::Delete);
+    h.run_steps(2);
+
+    let slide = h.state().session.active().unwrap().current_slide().unwrap();
+    // The animation is removed.
+    assert_eq!(slide.animations.len(), 1);
+    // The shape itself is NOT deleted!
+    assert_eq!(slide.shapes.len(), shape_count_before);
+}
+
+/// #1725: consecutive Delete keypresses in the Animation Pane remove remaining animations
+/// sequentially and keep the shape intact.
+#[test]
+fn consecutive_delete_in_the_pane_removes_all_animations_and_keeps_shape() {
+    let mut h = harness();
+    let shape_count_before = h.state().session.active().unwrap().current_slide().unwrap().shapes.len();
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().animations.len(), 2);
+
+    // Select the first animation.
+    click_row(&mut h, 1, egui::PointerButton::Primary);
+
+    // First delete removes effect 1.
+    h.key_press(egui::Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().animations.len(), 1);
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), shape_count_before);
+
+    // Second delete removes the second effect.
+    h.key_press(egui::Key::Delete);
+    h.run_steps(2);
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().animations.len(), 0);
+    assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), shape_count_before);
+}
+
+/// #1725: selecting "None" in the animations gallery removes the shape's animations and keeps the shape.
+#[test]
+fn selecting_none_in_animations_gallery_removes_animation_and_keeps_shape() {
+    let mut h = harness();
+    let shape_count_before = h.state().session.active().unwrap().current_slide().unwrap().shapes.len();
+
+    // Select the first shape which has an animation.
+    let first = h.state().session.active().unwrap().current_slide().unwrap().animations[0].shape.0;
+    h.state_mut().session.execute("edit.select", &json!({"ids": [first]})).unwrap();
+    h.run_steps(2);
+
+    // Switch to Animations tab ribbon.
+    h.state_mut().ui.tab = "Animations".into();
+    h.run_steps(2);
+
+    // Click the "None" tile in the animations gallery.
+    h.get_by_label("None").click();
+    h.run_steps(2);
+
+    let slide = h.state().session.active().unwrap().current_slide().unwrap();
+    // Shape still exists on the slide.
+    assert_eq!(slide.shapes.len(), shape_count_before);
+    // Shape's animation is removed.
+    assert!(!slide.animations.iter().any(|a| a.shape.0 == first));
+}
+
 #[test]
 #[ignore = "writes a screenshot for review"]
 fn screenshot() {

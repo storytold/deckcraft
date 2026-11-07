@@ -187,6 +187,15 @@ impl SlideApp {
                         self.anim_preview = None;
                         continue;
                     }
+                    // When an animation effect is selected in the Animation Pane, Delete/Backspace removes
+                    // the animation rather than deleting the underlying shape (#1725).
+                    if (key == egui::Key::Delete || key == egui::Key::Backspace)
+                        && !modifiers.command
+                        && !modifiers.ctrl
+                        && self.handle_anim_pane_delete(ctx)
+                    {
+                        continue;
+                    }
                     let mods = Mods { shift: modifiers.shift, alt: modifiers.alt, cmd: modifiers.command || modifiers.ctrl };
                     if !self.session.tool.drawing_freeform() && menus::ui_shortcut(self, key, mods) {
                         continue;
@@ -205,6 +214,41 @@ impl SlideApp {
             }
         }
         self.drain_requests();
+    }
+
+    fn handle_anim_pane_delete(&mut self, ctx: &egui::Context) -> bool {
+        if self.ui.pane.as_deref() != Some("animation") {
+            return false;
+        }
+        let Some(st) = self.session.active() else { return false };
+        let pick_id = egui::Id::unique(("anim_pane_pick", st.uid, st.selection.slide));
+        let Some(i) = ctx.data(|m| m.get_temp::<usize>(pick_id)) else { return false };
+        let valid = st.current_slide().and_then(|sl| sl.animations.get(i)).is_some_and(|a| st.selection.shapes.contains(&a.shape));
+        if valid {
+            if let Err(e) = self.session.execute("animation.remove", &json!({"index": i})) {
+                self.set_status(e.to_string());
+            }
+            self.note_application_edit(ctx);
+            let next_pick = self.session.active().and_then(|d| {
+                let sl = d.current_slide()?;
+                if sl.animations.is_empty() {
+                    None
+                } else {
+                    let new_idx = i.min(sl.animations.len() - 1);
+                    let sh_id = sl.animations[new_idx].shape;
+                    Some((new_idx, sh_id))
+                }
+            });
+            if let Some((np, sh_id)) = next_pick {
+                let _ = self.session.execute("edit.select", &json!({"ids": [sh_id.0]}));
+                ctx.data_mut(|m| m.insert_temp(pick_id, np));
+            } else {
+                ctx.data_mut(|m| m.remove::<usize>(pick_id));
+            }
+        } else {
+            ctx.data_mut(|m| m.remove::<usize>(pick_id));
+        }
+        true
     }
 }
 
