@@ -1,5 +1,8 @@
 # DeckCraft roadmap
 
+> **Last reviewed:** 2026-11-06 · **Last updated:** 2026-11-06 · **Change:** minor (native Presenter View section rail and optional grid persistence; DeckCraft additions, parity scores unchanged)
+> **Last reviewed:** 2026-11-06 · **Last updated:** 2026-11-06 · **Change:** minor (native grid section tabs scroll within a bounded area, deleted filters recover, remote popup keyboard behavior is preserved; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
 > **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** trivial (Ogg Opus recovery includes trailing packets without granules in its reported duration; parity scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -154,6 +157,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-06 | Direct show startup waits for the root window's first frame before opening native Presenter View, so a child viewport cannot update the font atlas before its initial GPU allocation |
+| 2026-11-06 | Native See All Slides removes the 48-slide cap, scrolls and filters by section. Only visible thumbnails are cached within a pixel budget. Thumbnail labels are clickable and Escape clears a typed slide number before closing the grid. Presenter selection returns to current/next/notes; the remote web presenter retains its 48-slide cap. Section tabs are a DeckCraft navigation addition; checklist scores unchanged |
 | 2026-11-04 | Ogg Opus recovery keeps trailing packets without granules in the total duration, matching their recovered positions; valid end trimming stays covered |
 | 2026-11-03 | Web: the `?host=parent` bridge (as in GridCraft, WordCraft and PdfCraft) lets a same-origin page that frames DeckCraft send a presentation and store its saves; Save writes an opened .pptx back as .pptx under its own name, as on the desktop |
 | 2026-11-02 | Slide show on Linux and the BSDs: Presenter View stays off when winit lists exactly one display, as in PowerPoint; if it lists none, the setting is kept. On one display the presenter window covered the show, and the hidden window stalled every frame: slide changes took up to ~1.7 s under Hyprland (#1156) |
