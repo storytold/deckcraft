@@ -3,6 +3,7 @@
 use deckcraft_engine::{Mods, PointerEvent, PointerKind, Session, ToolKind};
 use std::sync::Arc;
 
+use deckcraft_engine::command_access::{self, CommandAllowlist};
 use deckcraft_engine::file_access::{self, AutomationRoots};
 use serde_json::{Value, json};
 
@@ -12,6 +13,7 @@ use crate::backend::Backend;
 pub struct Headless {
     pub session: Session,
     roots: Option<Arc<AutomationRoots>>,
+    commands: Option<Arc<CommandAllowlist>>,
 }
 
 impl Default for Headless {
@@ -63,18 +65,25 @@ pub fn tool_kind(name: &str, preset: Option<&str>) -> Option<ToolKind> {
 
 impl Headless {
     pub fn new() -> Self {
-        Self { session: Session::new(), roots: None }
+        Self { session: Session::new(), roots: None, commands: None }
     }
 
     /// A session with a fresh presentation.
     pub fn with_document() -> Self {
-        Self { session: Session::with_new(), roots: None }
+        Self { session: Session::with_new(), roots: None, commands: None }
     }
 
     /// Confine every file the session's commands read and write to `roots`
     /// (`deckcraft-cli mcp --automation-read-root … --automation-write-root …`).
     pub fn with_automation_roots(mut self, roots: Option<Arc<AutomationRoots>>) -> Self {
         self.roots = roots;
+        self
+    }
+
+    /// Hold every command the session's clients run to `commands`
+    /// (`deckcraft-cli mcp --allow-commands …`; see [`command_access`]).
+    pub fn with_command_allowlist(mut self, commands: Option<Arc<CommandAllowlist>>) -> Self {
+        self.commands = commands;
         self
     }
 
@@ -85,6 +94,18 @@ impl Headless {
         });
         self.session.ui_requests.clear();
         r
+    }
+
+    /// Run command `id` if the command list in force allows it.
+    fn checked_exec(&mut self, id: &str, params: &Value) -> Result<Value, String> {
+        command_access::check(id)?;
+        self.exec(id, params)
+    }
+
+    /// The commands the client may run: all of them, or with a list in force only those on it.
+    fn allowed_commands(&self) -> Vec<deckcraft_engine::CommandInfo> {
+        let list = command_access::current();
+        self.session.commands().into_iter().filter(|c| list.as_ref().is_none_or(|l| l.allows(c.id))).collect()
     }
 
     fn pointer(&mut self, p: &Value) -> Result<Value, String> {
@@ -120,19 +141,26 @@ impl Headless {
             i,
             &deckcraft_engine::render::RenderOpts { scale, edit: p.get("edit").and_then(Value::as_bool).unwrap_or(false), ..Default::default() },
         );
-        let png = img.to_png_at(deckcraft_engine::render::dpi_for_scale(scale));
         if let Some(path) = s(p, "path") {
+            // Writing the picture to a file is an export: it needs `file.export` on the command
+            // list in force, like `app.export`. Returning it inline only reads the deck.
+            command_access::check("file.export")?;
+            let png = img.to_png_at(deckcraft_engine::render::dpi_for_scale(scale));
             deckcraft_engine::io::write_file(path, &png)?;
             return Ok(json!({"path": path, "width": img.width, "height": img.height}));
         }
+        let png = img.to_png_at(deckcraft_engine::render::dpi_for_scale(scale));
         Ok(json!({"png": deckcraft_engine::cmd::base64_encode(&png), "width": img.width, "height": img.height, "slide": i}))
     }
 }
 
 impl Backend for Headless {
+    /// Answer one request with this server's automation roots and command list in force on the
+    /// calling thread, and the previous ones restored afterwards.
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let roots = self.roots.clone();
-        file_access::confine(roots.as_ref(), || self.answer(method, params))
+        let commands = self.commands.clone();
+        command_access::confine(commands.as_ref(), || file_access::confine(roots.as_ref(), || self.answer(method, params)))
     }
     fn has_ui(&self) -> bool {
         false
@@ -143,35 +171,47 @@ impl Backend for Headless {
 }
 
 impl Headless {
+    /// Answer one control-channel `method`. A command the client names (`engine.execute`, the
+    /// `document.inspect` method, `app.open`/`app.save`/`app.export`) must be on the command list in
+    /// force, `engine.commands` lists only those, and gestures are refused while a list is in force
+    /// ([`command_access::check_gesture`]). Rendering a slide reads it and stays available; writing
+    /// the picture to a `path` is an export and needs `file.export`.
     fn answer(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let p = &params;
         match method {
             "engine.execute" | "command" | "ui.menu.invoke" => {
                 let id = s(p, "command").or(s(p, "id")).ok_or("missing `command`")?.to_string();
+                command_access::check(&id)?;
                 let cp = p.get("params").cloned().filter(|v| !v.is_null()).unwrap_or(json!({}));
                 self.exec(&id, &cp)
             }
-            "engine.commands" => Ok(serde_json::to_value(self.session.commands()).unwrap_or_default()),
-            "document.inspect" => self.exec("document.inspect", &json!({})),
-            "ui.pointer" => self.pointer(p),
+            "engine.commands" => Ok(serde_json::to_value(self.allowed_commands()).unwrap_or_default()),
+            "document.inspect" => self.checked_exec("document.inspect", &json!({})),
+            "ui.pointer" => {
+                command_access::check_gesture("pointer")?;
+                self.pointer(p)
+            }
             "ui.key" => {
+                command_access::check_gesture("key")?;
                 let key = s(p, "key").ok_or("missing `key`")?;
                 self.session.key(key, mods_from(p)).map_err(|e| e.to_string())
             }
             "ui.text" => {
+                command_access::check_gesture("type_text")?;
                 let t = s(p, "text").ok_or("missing `text`")?;
                 self.session.type_text(t).map_err(|e| e.to_string())
             }
             "ui.tool.select" => {
+                command_access::check_gesture("select_tool")?;
                 let name = s(p, "tool").ok_or("missing `tool`")?;
                 let kind = tool_kind(name, s(p, "preset")).ok_or_else(|| format!("unknown tool `{name}`"))?;
                 self.session.set_tool(kind);
                 Ok(json!({"tool": name}))
             }
             "ui.render" | "app.renderSlide" => self.render(p),
-            "app.open" => self.exec("file.open", p),
-            "app.save" => self.exec("file.save", p),
-            "app.export" => self.exec("file.export", p),
+            "app.open" => self.checked_exec("file.open", p),
+            "app.save" => self.checked_exec("file.save", p),
+            "app.export" => self.checked_exec("file.export", p),
             "ui.inspect" => Ok(json!({"headless": true, "tool": serde_json::to_value(&self.session.tool.kind).unwrap_or_default()})),
             m if m.starts_with("ui.") || m.starts_with("app.") => Err(format!("`{m}`: {NEEDS_APP}")),
             other => Err(format!("unknown method `{other}`")),
