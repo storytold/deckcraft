@@ -32,22 +32,36 @@ impl SlideApp {
     pub fn start_show(&mut self, from: usize, reading: bool) {
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);
-        let presenter = self.ui.presenter_view && !reading && self.second_display();
+        let wanted = self.ui.presenter_view && !reading;
+        // Presenter View needs a screen of its own: on one screen, PowerPoint shows only the
+        // slides (two windows on one screen also hid one, and a hidden window stalled the show).
+        // A show started over a running one keeps its screens: the window is now on the slides'
+        // screen, so choosing again would swap them and put the speaker notes in front of the
+        // audience. It also keeps where the window was before the first show.
+        let running = self.show.as_ref().and_then(|s| s.screens.map(|p| (p, s.window_before)));
+        let (presenter, screens) = match wanted.then(|| self.services.screens.as_mut().and_then(|f| f())).flatten() {
+            Some(s) => match running.map(|(p, _)| p).or_else(|| {
+                s.for_presenter_view_on(self.ui.show_display)
+                    .inspect(|p| log::info!("slide show on screen {} and Presenter View on {} of {s:?}", p.0, p.1))
+            }) {
+                Some(placed) => (true, Some(placed)),
+                None => (false, None),
+            },
+            None => (wanted, None),
+        };
         if let Some(d) = self.session.active() {
             self.show_instance = self.show_instance.wrapping_add(1).max(1);
             let mut show = show::Show::new(&d.doc, from, reading, presenter);
+            // A show that stays in its window (browsed) has no screen to place: Presenter View
+            // would open full screen over it.
+            if show::show_fills_screen(reading, &d.doc.show.show_type) {
+                show.screens = screens;
+                show.window_before = running.and_then(|(_, w)| w);
+            }
             show.instance = self.show_instance;
             show.keep_cursor = self.ui.show_keep_cursor;
             self.show = Some(show);
         }
-    }
-
-    /// Whether a second display can take Presenter View. Like PowerPoint, one display shows only
-    /// the slides: the presenter window would open on the same screen, and whichever of the two
-    /// windows ends up behind the other stalls the show (the compositor stops pacing a hidden
-    /// window). Hosts that can't count displays keep Presenter View.
-    fn second_display(&mut self) -> bool {
-        self.services.displays.as_mut().and_then(|f| f()).is_none_or(|n| n >= 2)
     }
 
     /// Play custom show `name` from its first slide. Set Up Slide Show is left as it was.

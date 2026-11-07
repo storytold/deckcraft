@@ -275,8 +275,39 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     });
     let _ = combo.response.labelled_by(field.id);
+    // Where the slides go with Presenter View on; kept until OK, so Cancel discards it.
+    let screens = app.services.screens.as_mut().and_then(|f| f()).map(|s| s.list).unwrap_or_default();
+    let mut display = match d.fields.get("showDisplay") {
+        Some(v) => v.parse::<usize>().ok(),
+        None => app.ui.show_display,
+    };
+    if screens.len() > 1 {
+        ui.add_space(8.0);
+        ui.label(egui::RichText::new("Multiple monitors").font(theme::bold(13.0)));
+        let enabled = d.get("type", &sh.show_type) != "browsed";
+        ui.add_enabled_ui(enabled, |ui| {
+            ui.horizontal(|ui| {
+                let label = ui.label("Slide show monitor:");
+                let name = |i: usize| screens.iter().position(|s| *s == i).map(|n| format!("Display {}", n + 1));
+                craft_ui::ComboBox::from_id_salt("setup-show-monitor")
+                    .selected_text(display.and_then(name).unwrap_or_else(|| "Automatic".into()))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut display, None, "Automatic");
+                        for (n, i) in screens.iter().enumerate() {
+                            ui.selectable_value(&mut display, Some(*i), format!("Display {}", n + 1));
+                        }
+                    })
+                    .response
+                    .labelled_by(label.id);
+            });
+        });
+        d.fields.insert("showDisplay".into(), display.map_or_else(String::new, |i| i.to_string()));
+    }
     let (ok, cancel) = buttons(ui, "OK");
     if ok {
+        if screens.len() > 1 {
+            app.ui.show_display = display;
+        }
         let ty = d.get("type", "speaker");
         let custom = d.fields.get("custom").cloned().unwrap_or_default();
         run(app, "show.setup", json!({"type": ty, "loop": lp, "noNarration": nn, "noAnimation": na, "useTimings": ut, "custom": custom}));

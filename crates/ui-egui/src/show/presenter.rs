@@ -142,147 +142,156 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
     // The presenter clock only moves when this window is drawn again.
     ctx.request_repaint_after(std::time::Duration::from_millis(500));
     let mut actions = vec![];
+    let mut swap = false;
     // The presenter window is dark; default buttons draw dark text on it (#221).
     let button = |ui: &mut Ui, s: &str| {
         ui.add(egui::Button::new(egui::RichText::new(s).size(15.0).color(Color32::WHITE)).fill(Color32::from_gray(60)).min_size(vec2(0.0, 30.0)))
     };
-    ctx.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("deckcraft_presenter"),
-        egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
-        |ui, _| {
-            if !keyboard(ui.ctx(), show, doc, now, true) {
-                *keep = false;
-            }
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
-            let elapsed = show.timer.elapsed(now);
-            let paused = show.timer.paused();
-            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::from_gray(24)).inner_margin(egui::Margin::same(16))).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format_elapsed(elapsed)).size(22.0).color(if paused {
-                        Color32::from_gray(160)
-                    } else {
-                        Color32::WHITE
-                    }));
-                    ui.add_space(12.0);
-                    ui.label(egui::RichText::new(clock.clone()).size(16.0).color(Color32::from_gray(200)));
-                    ui.add_space(20.0);
-                    ui.label(egui::RichText::new(format!("Slide {} of {}", cur + 1, doc.slides.len())).size(16.0).color(Color32::from_gray(200)));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if button(ui, "End Show").clicked() {
-                            *keep = false;
-                        }
-                        if button(ui, "Next ▶").clicked() {
-                            actions.push(show.state.next(doc));
-                        }
-                        if button(ui, "◀ Previous").clicked() {
-                            actions.push(show.state.prev(doc));
-                        }
-                    });
-                });
-                ui.horizontal(|ui| {
-                    if button(ui, if paused { "Resume" } else { "Pause" }).clicked() {
-                        show.timer.toggle(now);
+    let mut window = egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]);
+    if let Some((_, screen)) = show.screens {
+        window = window.with_monitor(screen);
+    }
+    ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("deckcraft_presenter"), window, |ui, _| {
+        if !keyboard(ui.ctx(), show, doc, now, true) {
+            *keep = false;
+        }
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+        let elapsed = show.timer.elapsed(now);
+        let paused = show.timer.paused();
+        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::from_gray(24)).inner_margin(egui::Margin::same(16))).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format_elapsed(elapsed)).size(22.0).color(if paused {
+                    Color32::from_gray(160)
+                } else {
+                    Color32::WHITE
+                }));
+                ui.add_space(12.0);
+                ui.label(egui::RichText::new(clock.clone()).size(16.0).color(Color32::from_gray(200)));
+                ui.add_space(20.0);
+                ui.label(egui::RichText::new(format!("Slide {} of {}", cur + 1, doc.slides.len())).size(16.0).color(Color32::from_gray(200)));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if button(ui, "End Show").clicked() {
+                        *keep = false;
                     }
-                    if button(ui, "Reset").clicked() {
-                        show.timer.reset(now);
+                    // As PowerPoint's Display Settings ▸ Swap Presenter View and Slide Show.
+                    if show.screens.is_some() && button(ui, "Swap Displays").clicked() {
+                        swap = true;
                     }
-                    if button(ui, if show.blank == Some(Color32::BLACK) { "Black on" } else { "Black" }).clicked() {
-                        toggle_blank(show, Color32::BLACK);
+                    if button(ui, "Next ▶").clicked() {
+                        actions.push(show.state.next(doc));
                     }
-                    if button(ui, if show.blank == Some(Color32::WHITE) { "White on" } else { "White" }).clicked() {
-                        toggle_blank(show, Color32::WHITE);
+                    if button(ui, "◀ Previous").clicked() {
+                        actions.push(show.state.prev(doc));
                     }
-                    if button(ui, if show.presenter_grid { "All slides on" } else { "All slides" }).clicked() {
-                        show.presenter_grid = !show.presenter_grid;
-                    }
-                    if button(ui, show.zoom_label()).clicked() {
-                        show.zoom_key();
-                    }
-                });
-                ui.add_space(8.0);
-                let avail = ui.available_rect_before_wrap();
-                if show.presenter_grid {
-                    // The grid fills this window; the audience keeps seeing the current slide.
-                    paint_grid(ui.painter(), ui.ctx(), show, doc, avail);
-                    let hit = ui.interact(avail, ui.scope_id().with("presenter_grid"), Sense::click());
-                    if hit.clicked()
-                        && let Some(p) = hit.interact_pointer_pos()
-                        && let Some(n) = see_all_hit(avail, grid_indices(doc.slides.len()).len(), slide_aspect(doc), p)
-                        && let Some(&i) = grid_indices(doc.slides.len()).get(n)
-                    {
-                        show.presenter_grid = false;
-                        show.blank = None;
-                        show.zoom = None;
-                        show.zoom_arm = false;
-                        actions.push(show.state.goto(doc, i));
-                    }
-                    return;
-                }
-                let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, avail.max.y));
-                let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), avail.max);
-                let cr = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.8)), doc);
-                let cr = Rect::from_min_size(left.min, cr.size());
-                if let Some(t) = &cur_tex {
-                    ui.painter().image(t.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-                }
-                if let Some(z) = show.zoom {
-                    let mark = zoom_frame(cr, z.uv());
-                    ui.painter().rect_stroke(mark, CornerRadius::ZERO, Stroke::new(2.0, Color32::WHITE), egui::StrokeKind::Inside);
-                }
-                if show.zoom_arm {
-                    let hit = ui.interact(cr, ui.scope_id().with("presenter_zoom"), Sense::click());
-                    hit.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Zoom"));
-                    if hit.clicked()
-                        && let Some(p) = hit.interact_pointer_pos()
-                        && cr.width() > 1.0
-                        && cr.height() > 1.0
-                    {
-                        show.zoom = Some(Zoom::at((p.x - cr.min.x) / cr.width(), (p.y - cr.min.y) / cr.height()));
-                        show.zoom_arm = false;
-                    }
-                }
-                if let Some(c) = show.blank {
-                    ui.painter().rect_filled(cr, CornerRadius::ZERO, c);
-                }
-                let nr = next_rect(right, doc);
-                ui.painter().text(right.min, Align2::LEFT_TOP, "Next", theme::font(13.0), Color32::from_gray(170));
-                match &next_tex {
-                    Some(t) => {
-                        ui.painter().image(t.id(), nr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-                    }
-                    None => {
-                        ui.painter().rect_filled(nr, CornerRadius::ZERO, Color32::from_gray(40));
-                        // A next slide whose preview is still on its way is not the end.
-                        if next.is_none() {
-                            ui.painter().text(nr.center(), Align2::CENTER_CENTER, "End of slide show", theme::font(13.0), Color32::from_gray(170));
-                        }
-                    }
-                }
-                let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
-                let mut head = ui.new_child(egui::UiBuilder::new().max_rect(notes_head));
-                head.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Notes").size(13.0).color(Color32::from_gray(170)));
-                    if ui.button("A-").clicked() {
-                        show.nudge_notes(-NOTES_STEP);
-                    }
-                    ui.label(egui::RichText::new(format!("{}", show.notes_px as i32)).size(13.0).color(Color32::from_gray(200)));
-                    if ui.button("A+").clicked() {
-                        show.nudge_notes(NOTES_STEP);
-                    }
-                });
-                let notes_rect = Rect::from_min_max(pos2(right.min.x, notes_head.max.y + 4.0), right.max);
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
-                egui::ScrollArea::vertical().show(&mut child, |ui| {
-                    presenter_notes(ui, notes, show.notes_px);
                 });
             });
-            if ui.input(|i| i.viewport().close_requested()) {
-                show.presenter = false;
-                // A grid left open in the closed window would hold auto-advance for the rest of the show.
-                show.presenter_grid = false;
+            ui.horizontal(|ui| {
+                if button(ui, if paused { "Resume" } else { "Pause" }).clicked() {
+                    show.timer.toggle(now);
+                }
+                if button(ui, "Reset").clicked() {
+                    show.timer.reset(now);
+                }
+                if button(ui, if show.blank == Some(Color32::BLACK) { "Black on" } else { "Black" }).clicked() {
+                    toggle_blank(show, Color32::BLACK);
+                }
+                if button(ui, if show.blank == Some(Color32::WHITE) { "White on" } else { "White" }).clicked() {
+                    toggle_blank(show, Color32::WHITE);
+                }
+                if button(ui, if show.presenter_grid { "All slides on" } else { "All slides" }).clicked() {
+                    show.presenter_grid = !show.presenter_grid;
+                }
+                if button(ui, show.zoom_label()).clicked() {
+                    show.zoom_key();
+                }
+            });
+            ui.add_space(8.0);
+            let avail = ui.available_rect_before_wrap();
+            if show.presenter_grid {
+                // The grid fills this window; the audience keeps seeing the current slide.
+                paint_grid(ui.painter(), ui.ctx(), show, doc, avail);
+                let hit = ui.interact(avail, ui.scope_id().with("presenter_grid"), Sense::click());
+                if hit.clicked()
+                    && let Some(p) = hit.interact_pointer_pos()
+                    && let Some(n) = see_all_hit(avail, grid_indices(doc.slides.len()).len(), slide_aspect(doc), p)
+                    && let Some(&i) = grid_indices(doc.slides.len()).get(n)
+                {
+                    show.presenter_grid = false;
+                    show.blank = None;
+                    show.zoom = None;
+                    show.zoom_arm = false;
+                    actions.push(show.state.goto(doc, i));
+                }
+                return;
             }
-        },
-    );
+            let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, avail.max.y));
+            let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), avail.max);
+            let cr = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.8)), doc);
+            let cr = Rect::from_min_size(left.min, cr.size());
+            if let Some(t) = &cur_tex {
+                ui.painter().image(t.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+            }
+            if let Some(z) = show.zoom {
+                let mark = zoom_frame(cr, z.uv());
+                ui.painter().rect_stroke(mark, CornerRadius::ZERO, Stroke::new(2.0, Color32::WHITE), egui::StrokeKind::Inside);
+            }
+            if show.zoom_arm {
+                let hit = ui.interact(cr, ui.scope_id().with("presenter_zoom"), Sense::click());
+                hit.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Zoom"));
+                if hit.clicked()
+                    && let Some(p) = hit.interact_pointer_pos()
+                    && cr.width() > 1.0
+                    && cr.height() > 1.0
+                {
+                    show.zoom = Some(Zoom::at((p.x - cr.min.x) / cr.width(), (p.y - cr.min.y) / cr.height()));
+                    show.zoom_arm = false;
+                }
+            }
+            if let Some(c) = show.blank {
+                ui.painter().rect_filled(cr, CornerRadius::ZERO, c);
+            }
+            let nr = next_rect(right, doc);
+            ui.painter().text(right.min, Align2::LEFT_TOP, "Next", theme::font(13.0), Color32::from_gray(170));
+            match &next_tex {
+                Some(t) => {
+                    ui.painter().image(t.id(), nr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                }
+                None => {
+                    ui.painter().rect_filled(nr, CornerRadius::ZERO, Color32::from_gray(40));
+                    // A next slide whose preview is still on its way is not the end.
+                    if next.is_none() {
+                        ui.painter().text(nr.center(), Align2::CENTER_CENTER, "End of slide show", theme::font(13.0), Color32::from_gray(170));
+                    }
+                }
+            }
+            let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
+            let mut head = ui.new_child(egui::UiBuilder::new().max_rect(notes_head));
+            head.horizontal(|ui| {
+                ui.label(egui::RichText::new("Notes").size(13.0).color(Color32::from_gray(170)));
+                if ui.button("A-").clicked() {
+                    show.nudge_notes(-NOTES_STEP);
+                }
+                ui.label(egui::RichText::new(format!("{}", show.notes_px as i32)).size(13.0).color(Color32::from_gray(200)));
+                if ui.button("A+").clicked() {
+                    show.nudge_notes(NOTES_STEP);
+                }
+            });
+            let notes_rect = Rect::from_min_max(pos2(right.min.x, notes_head.max.y + 4.0), right.max);
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
+            egui::ScrollArea::vertical().show(&mut child, |ui| {
+                presenter_notes(ui, notes, show.notes_px);
+            });
+        });
+        if ui.input(|i| i.viewport().close_requested()) {
+            show.presenter = false;
+            // A grid left open in the closed window would hold auto-advance for the rest of the show.
+            show.presenter_grid = false;
+        }
+    });
+    if swap && let Some((slides, presenter)) = show.swap_screens() {
+        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::SetMonitor(slides));
+        ctx.send_viewport_cmd_to(egui::ViewportId::from_hash_of("deckcraft_presenter"), egui::ViewportCommand::SetMonitor(presenter));
+    }
     for a in actions {
         if !show.apply(a, doc, now) {
             *keep = false;

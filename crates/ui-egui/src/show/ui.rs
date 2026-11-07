@@ -221,7 +221,13 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
         show.timer = PresenterTimer::start(now);
         show.last_move = now;
         if show_fills_screen(show.reading, &doc.show.show_type) && !(show.presenter && remote) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+            if show.screens.is_some() && show.window_before.is_none() {
+                show.window_before = ctx.input(|i| i.viewport().outer_rect.zip(i.viewport().inner_rect));
+            }
+            ctx.send_viewport_cmd(match show.screens {
+                Some((slides, _)) => egui::ViewportCommand::SetMonitor(slides),
+                None => egui::ViewportCommand::Fullscreen(true),
+            });
         }
         show.after_enter(doc, now);
     }
@@ -859,6 +865,10 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
         app.media.stop_owned(crate::media::Owner::Show);
         if !show.reading {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+            if let Some((outer, inner)) = show.window_before {
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(outer.min));
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(inner.size()));
+            }
         }
         if show.rehearse {
             if let Some((_, tl)) = &show.timeline {
