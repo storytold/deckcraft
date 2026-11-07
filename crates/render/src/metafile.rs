@@ -181,9 +181,10 @@ fn draw_text(ctx: &mut RenderContext, t: &Text, m: Affine) {
     if !k.is_finite() || k <= 0.0 {
         return;
     }
-    // Characters as drawn: symbol fonts (Wingdings…) map like bullets; each character takes the
-    // face that has it.
-    let chars: Vec<char> = t.text.chars().map(|c| deckcraft_text::symbol_char(&face, family, c).unwrap_or(c)).collect();
+    // Characters as drawn: symbol fonts (Wingdings…) map like bullets, a SYMBOL_CHARSET font
+    // that is not a symbol family falls back from its U+F000+byte codes to the bytes' characters
+    // where the face lacks them; each character takes the face that has it.
+    let chars: Vec<char> = t.text.chars().map(|c| deckcraft_text::metafile_char(&face, family, font.charset, c)).collect();
     let faces: Vec<Arc<FontFace>> = chars
         .iter()
         .map(|c| {
