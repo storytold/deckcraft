@@ -22,7 +22,7 @@ commands:
   assets          check that every icon/image/font/asset is attributed in ATTRIBUTION.md
   pdf-deps        verify pinned writer sources and the production feature boundary
   layers          enforce the crate dependency layering (plan/architecture.md §3)
-  wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates (one call)
+  wasm            cargo clippy --target wasm32-unknown-unknown -D warnings for the wasm-safe crates (one call)
   test            workspace tests (cargo nextest when installed, else cargo test), then doctests
   ci              fmt --check, pdf-deps, clippy -D warnings, test, doctest, assets, layers, wasm
                   (stops at first failure)
@@ -139,7 +139,7 @@ fn wasm_set() -> Result<Vec<String>, String> {
         .collect())
 }
 
-/// One `cargo check` for the whole set: each crate is checked once, and
+/// One `cargo clippy -- -D warnings` for the whole set: each crate is checked once, and
 /// `--keep-going` still reports every failing crate. Features unify across the
 /// set, so each crate is checked with the union of the features the set enables.
 fn cmd_wasm() -> Result<(), String> {
