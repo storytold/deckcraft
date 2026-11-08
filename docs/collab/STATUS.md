@@ -167,7 +167,7 @@ whole merge).
 | Viewer cannot edit | ✅ server + engine gate | socket test, UI test |
 | Commit creates a new version, original kept | ⚠️ bytes and `409` ready; cabinet callback missing | host-bridge task |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests |
-| RFC, protocol, tests, docs | ✅ design accepted; formal `proposal` posted to `rfc/deckcraft` on 2026-11-08 | this tree, bus message |
+| RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
 | PR in `storytold/deckcraft` | ⏳ description prepared, nothing pushed | [`pr10.md`](pr10.md); fork + human decision |
 
 ## What is NOT done (ordered by production impact)
