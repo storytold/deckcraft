@@ -124,7 +124,7 @@ stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decisi
 | Command | Result |
 |---|---|
 | `cargo test -p deckcraft-collab` | 106 unit + 7 integration |
-| `cargo test -p deckcraft-collab-server` | 3 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist) |
+| `cargo test -p deckcraft-collab-server` | 4 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist) |
 | `cargo test -p deckcraft-collab-proto` | 19 |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 |
 | `cargo test -p deckcraft-engine` | 562 passed, 1 ignored |
@@ -133,7 +133,7 @@ stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decisi
 | `cargo xtask layers` | 31 crates, no violations |
 
 Re-run on 2026-11-08 after `4e666b95`: `fmt` clean, `collab-proto` 19, `collab` 106 + 7,
-`collab-server` 3 + 6, `ui-egui collab::` 17, `deckcraft-engine` 562 + 1 ignored; clippy over the
+`collab-server` 4 + 6, `ui-egui collab::` 17, `deckcraft-engine` 562 + 1 ignored; clippy over the
 four collab crates and `ui-egui` with `-D warnings` clean; `xtask layers` 31 crates.
 
 The socket tests were run against a real loopback server; the restart test creates a room, moves
@@ -274,10 +274,14 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 - Tests: two-replica undo/redo of a group fill and of a slide delete/insert, a foreign member
   repaint refused with `undo-conflict`, a forged `slide_restore` refused with `invalid`; engine
   tests for `slide.restore` (index, section, duplicate id) and `shape.setFields` (atomic refusal).
-- `collab` 106 + 7, `collab-proto` 19, `collab-server` 3 + 6, `ui-egui collab::` 17,
+- Journal replay of a history operation: `DocSession::replay` runs the stored confirmed command
+  without the history check, so an exact `shape_field`, a group's `shape_fields` or a
+  `slide_restore` survives a restart; the store uses it and a test deletes a slide, journals the
+  undo and reloads the room.
+- `collab` 106 + 7, `collab-proto` 19, `collab-server` 4 + 6, `ui-egui collab::` 17,
   `engine` 562 + 1 ignored; clippy `-D warnings`, `fmt` and `xtask layers` clean.
-- Commit `4e666b95` on `collab/pr10`; RFC (§3.2.1, §6, §11, §13, §14.1) and this file updated.
-  Nothing pushed.
+- Commits `4e666b95` (undo) and `f6281736` (replay) on `collab/pr10`; RFC (§3.2.1, §6, §11,
+  §13, §14.1) and this file updated. Nothing pushed.
 
 ### 2026-11-08 — undo of fill, line and format steps
 
