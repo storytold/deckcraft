@@ -213,7 +213,6 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         }
         let mut deferred = deferred;
         if e.is("cTn")
-            && e.attr("nodeType") != Some("tmRoot")
             && let Some(st) = e.child("stCondLst")
         {
             let is_auto_begin = |c: &El| {
@@ -257,12 +256,53 @@ pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
         if cm.child("cTn").and_then(|c| c.attr("repeatCount")) == Some("indefinite") {
             clip.loop_play = true;
         }
+        if cm.child("cTn").and_then(|c| c.attr("fill")) == Some("remove") {
+            clip.rewind = true;
+        }
+        if cm.u32("numSld").is_some_and(|n| n > 1) {
+            clip.play_across_slides = true;
+        }
         if !deferred && cm.path(&["cTn", "stCondLst", "cond"]).is_some_and(|c| c.attr("evt").is_none() && c.attr("delay").map(str::trim) == Some("0"))
         {
             clip.autoplay = true;
         }
         if node.bool("fullScrn") == Some(true) {
             clip.full_screen = true;
+        }
+    }
+    let root_deferred = timing.path(&["tnLst", "par", "cTn", "stCondLst"]).is_some_and(|st| {
+        let is_auto_begin = |c: &El| {
+            c.attr("evt") == Some("onBegin")
+                && c.attr("delay").map(str::trim) == Some("0")
+                && c.child("tgtEl").is_none()
+                && c.child("tn").is_none()
+                && c.child("rtn").is_none()
+        };
+        let has_on_begin = st.children_named("cond").any(is_auto_begin);
+        st.children_named("cond")
+            .any(|c| (c.attr("evt").is_some() && !is_auto_begin(c)) || (!has_on_begin && c.attr("delay").map(str::trim) != Some("0")))
+    });
+    if !root_deferred && let Some(tn) = timing.child("tnLst") {
+        let mut found = vec![];
+        collect(tn, At { trigger: None, group: 0, offset: 0 }, &mut 0, &mut found, 0);
+        for f in found.into_iter().filter(|f| f.trigger.is_none()) {
+            let c = f.ctn;
+            if c.attr("nodeType") == Some("clickEffect") {
+                break;
+            }
+            let class = AnimClass::from_xml(c.attr("presetClass").unwrap_or("entr"));
+            let preset = c.u32("presetID").unwrap_or(0);
+            let effect = maps::effect_for_preset(class, preset).unwrap_or_else(|| maps::fallback_effect(class));
+            let delay = c.path(&["stCondLst", "cond"]).and_then(|d| ms_attr(d, "delay")).unwrap_or(0);
+            if class == AnimClass::Media
+                && effect == "play"
+                && f.offset == 0
+                && delay == 0
+                && let Some(id) = c.find("spTgt").and_then(|t| t.u32("spid")).and_then(|s| ctx.lookup(s))
+                && let Some(ShapeKind::Media(clip)) = find_shape_mut(shapes, id).map(|s| &mut s.kind)
+            {
+                clip.autoplay = true;
+            }
         }
     }
 }

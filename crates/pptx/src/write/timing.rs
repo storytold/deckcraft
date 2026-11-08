@@ -779,7 +779,13 @@ fn collect_media<'a>(shapes: &'a [Shape], idmap: &IdMap) -> Vec<(u32, &'a deckcr
     let mut media = Vec::new();
     deckcraft_model::walk(shapes, &mut |shape, _| {
         if let ShapeKind::Media(clip) = &shape.kind
-            && (clip.autoplay || (clip.volume - 1.0).abs() > 1e-6 || clip.hide_while_not_playing || clip.loop_play || clip.full_screen)
+            && (clip.autoplay
+                || (clip.volume - 1.0).abs() > 1e-6
+                || clip.hide_while_not_playing
+                || clip.loop_play
+                || clip.rewind
+                || clip.play_across_slides
+                || clip.full_screen)
             && let Some(spid) = idmap.get(shape.id)
         {
             media.push((spid, clip));
@@ -798,8 +804,18 @@ fn write_media_node(w: &mut W, ids: &mut Ids, spid: u32, clip: &deckcraft_model:
     if clip.hide_while_not_playing {
         cm = cm.a("showWhenStopped", 0);
     }
+    if clip.play_across_slides {
+        cm = cm.a("numSld", 999);
+    }
     w.open("p:cMediaNode", cm);
-    w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold").a("display", 0).o("repeatCount", clip.loop_play.then_some("indefinite")));
+    w.open(
+        "p:cTn",
+        A::new()
+            .a("id", ids.next())
+            .a("fill", if clip.rewind { "remove" } else { "hold" })
+            .a("display", 0)
+            .o("repeatCount", clip.loop_play.then_some("indefinite")),
+    );
     w.open0("p:stCondLst");
     w.empty("p:cond", A::new().a("delay", if clip.autoplay { "0" } else { "indefinite" }));
     w.close("p:stCondLst");

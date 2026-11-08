@@ -128,6 +128,8 @@ fn media_only_slide_exports_and_round_trips_video_and_audio_timing_nodes() {
             volume: 0.75,
             hide_while_not_playing: true,
             loop_play: true,
+            rewind: true,
+            play_across_slides: true,
             full_screen: true,
             ..Default::default()
         }),
@@ -151,8 +153,32 @@ fn media_only_slide_exports_and_round_trips_video_and_audio_timing_nodes() {
         })
         .collect();
     assert_eq!(clips.len(), 2);
-    assert!(clips[0].video && clips[0].autoplay && clips[0].hide_while_not_playing && clips[0].loop_play && clips[0].full_screen);
+    assert!(
+        clips[0].video
+            && clips[0].autoplay
+            && clips[0].hide_while_not_playing
+            && clips[0].loop_play
+            && clips[0].rewind
+            && clips[0].play_across_slides
+            && clips[0].full_screen
+    );
     assert!((clips[0].volume - 0.75).abs() < 1e-4);
-    assert!(!clips[1].video && !clips[1].autoplay && clips[1].loop_play && !clips[1].hide_while_not_playing && !clips[1].full_screen);
+    assert!(
+        !clips[1].video
+            && !clips[1].autoplay
+            && clips[1].loop_play
+            && !clips[1].rewind
+            && !clips[1].play_across_slides
+            && !clips[1].hide_while_not_playing
+            && !clips[1].full_screen
+    );
     assert_eq!(clips[1].volume, 0.0);
+
+    // Main-sequence automatic Play (mediacall) effect with indefinite media node also sets autoplay.
+    let main_seq_play = self::clips(|v, _| {
+        format!(
+            r#"<p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst><p:par><p:cTn id="3" fill="hold"><p:stCondLst><p:cond delay="indefinite"/><p:cond evt="onBegin" delay="0"><p:tn val="2"/></p:cond></p:stCondLst><p:childTnLst><p:par><p:cTn id="4" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:par><p:cTn id="5" presetID="1" presetClass="mediacall" presetSubtype="0" fill="hold" nodeType="withEffect"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:cmd type="call" cmd="playFrom(0.0)"><p:cBhvr><p:cTn id="6" dur="1" fill="hold"/><p:tgtEl><p:spTgt spid="{v}"/></p:tgtEl></p:cBhvr></p:cmd></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:seq><p:video><p:cMediaNode><p:cTn id="7" fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="{v}"/></p:tgtEl></p:cMediaNode></p:video>"#
+        )
+    });
+    assert!(main_seq_play[0].autoplay, "main-sequence automatic Play effect sets autoplay");
 }
