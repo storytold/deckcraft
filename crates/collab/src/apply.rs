@@ -14,6 +14,7 @@
 
 use std::collections::HashSet;
 
+use base64::Engine as _;
 use deckcraft_collab_proto::{ChangeKind, Delta, HistoryAction, OpEnvelope, OpKind, Payload, RejectCode, ShapeKey, SlideKey, Target};
 use deckcraft_engine::{Session, Target as EngineTarget, TextSel};
 use deckcraft_model::text::TextBody;
@@ -23,6 +24,7 @@ use serde_json::{Value, json};
 use crate::delta::delta;
 use crate::history::{Histories, Image, Snapshot, Step};
 use crate::keys::{KeyIssuer, KeyMap};
+use crate::media::MediaCache;
 
 /// Why the adapter refused an operation. The server turns this into `Rejected`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,6 +58,12 @@ impl Rejection {
         Rejection { code: RejectCode::Unsupported, message: message.into(), retryable: false, hint_version: version }
     }
 
+    /// The operation refers to picture bytes this replica does not have. Fetching them and
+    /// sending the same operation again can succeed, so the refusal is retryable.
+    pub fn missing_media(message: impl Into<String>, version: Option<u64>) -> Self {
+        Rejection { code: RejectCode::Unsupported, message: message.into(), retryable: true, hint_version: version }
+    }
+
     /// Undo would overwrite someone else's later change (ADR 0010 §3).
     pub fn undo_conflict(message: impl Into<String>, version: Option<u64>) -> Self {
         Rejection { code: RejectCode::UndoConflict, message: message.into(), retryable: false, hint_version: version }
@@ -71,12 +79,30 @@ pub struct Adapter {
     dead_slides: HashSet<SlideKey>,
     /// Per-actor undo/redo (ADR 0010). One participant's undo never takes back another's edit.
     history: Histories,
+    /// Picture bytes this replica holds, by digest. An operation only refers to them.
+    media: MediaCache,
 }
 
 impl Adapter {
     /// `prefix` separates the keys of one session from another; the server passes a random one.
     pub fn new(prefix: impl Into<String>) -> Self {
-        Adapter { keys: KeyMap::new(), issuer: KeyIssuer::new(prefix), dead_slides: HashSet::new(), history: Histories::default() }
+        Adapter {
+            keys: KeyMap::new(),
+            issuer: KeyIssuer::new(prefix),
+            dead_slides: HashSet::new(),
+            history: Histories::default(),
+            media: MediaCache::new(),
+        }
+    }
+
+    /// Picture bytes this adapter can run an operation against.
+    pub fn media(&self) -> &MediaCache {
+        &self.media
+    }
+
+    /// The cache to fill before applying a `picture.insert` (server upload, local replica, test).
+    pub fn media_mut(&mut self) -> &mut MediaCache {
+        &mut self.media
     }
 
     /// Issue keys for everything in `doc`. Called at join and after every applied operation.
@@ -290,6 +316,22 @@ impl Adapter {
                     args["text"] = json!(text);
                 }
                 self.call(session, "shape.insert", args, head)
+            }
+            Payload::PictureInsert { sha256, name, rect } => {
+                let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
+                let bytes = self
+                    .media
+                    .get(sha256)
+                    .ok_or_else(|| Rejection::missing_media(format!("picture `{sha256}` has not been uploaded to this session"), Some(head)))?;
+                self.select_slide(session, before, slide, head)?;
+                let mut args = json!({
+                    "name": name,
+                    "data": base64::engine::general_purpose::STANDARD.encode(bytes.as_slice()),
+                });
+                if let Some(rect) = rect {
+                    args["rect"] = json!(rect);
+                }
+                self.call(session, "insert.picture", args, head)
             }
             Payload::ShapeDelete {} => {
                 let (_, shapes) = self.resolve_many(before, &op.target, head)?;
@@ -530,6 +572,7 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::TextInsert { .. }
         | Payload::TextDelete { .. } => OpKind::Command,
         Payload::ShapeInsert { .. }
+        | Payload::PictureInsert { .. }
         | Payload::ShapeDelete {}
         | Payload::Reorder { .. }
         | Payload::Group {}
@@ -919,5 +962,59 @@ mod tests {
         let err = ad.apply(&mut s, 1, "a", &undo).expect_err("wrong step");
         assert_eq!(err.code, RejectCode::UndoConflict);
         assert_eq!(ad.history.get("a").map(ActorHistory::undo_len), Some(1));
+    }
+
+    /// 8×8 red PNG.
+    fn png() -> Vec<u8> {
+        vec![
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 8, 0, 0, 0, 8, 8, 2, 0, 0, 0, 75, 109, 41, 220, 0, 0, 0, 17, 73,
+            68, 65, 84, 120, 156, 99, 184, 163, 161, 129, 21, 49, 12, 45, 9, 0, 123, 123, 75, 1, 251, 162, 81, 240, 0, 0, 0, 0, 73, 69, 78, 68, 174,
+            66, 96, 130,
+        ]
+    }
+
+    #[test]
+    fn a_picture_operation_runs_from_the_media_channel_on_both_replicas() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let bytes = png();
+        let sha = aa.media_mut().put("red.png", bytes.clone()).expect("media");
+        bb.media_mut().insert(&sha, bytes).expect("the same object");
+
+        let slide = aa.keys().slide_key(doc_of(&a).slides[0].id).expect("slide").clone();
+        let envelope = op(
+            OpKind::Structural,
+            0,
+            Target { slide: Some(slide), ..Target::default() },
+            Payload::PictureInsert { sha256: sha.clone(), name: "red.png".into(), rect: Some([50.0, 60.0, 80.0, 80.0]) },
+        );
+        let da = aa.apply(&mut a, 0, "a", &envelope).expect("apply a");
+        let db = bb.apply(&mut b, 0, "b", &envelope).expect("apply b");
+        assert_eq!(da, db, "the same operation has the same delta on both replicas");
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas hold the same picture");
+        let after = doc_of(&a);
+        let picture = after.slides[0].shapes.iter().find(|s| matches!(s.kind, ShapeKind::Picture { .. })).expect("a picture shape");
+        assert_eq!(picture.xfrm.expect("xfrm").x, 50.0);
+        assert_eq!(aa.media().len(), 1, "one object for one digest");
+    }
+
+    #[test]
+    fn a_picture_operation_without_its_bytes_is_refused() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let slide = ad.keys().slide_key(doc_of(&s).slides[0].id).expect("slide").clone();
+        let envelope = op(
+            OpKind::Structural,
+            0,
+            Target { slide: Some(slide), ..Target::default() },
+            Payload::PictureInsert { sha256: crate::media::sha256_hex(&png()), name: "red.png".into(), rect: None },
+        );
+        let err = ad.apply(&mut s, 0, "a", &envelope).expect_err("no bytes");
+        assert_eq!(err.code, RejectCode::Unsupported);
+        assert!(err.retryable, "a fetch can make the same operation work");
     }
 }

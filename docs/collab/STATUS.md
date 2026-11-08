@@ -21,6 +21,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr7` | `d28c8ae5` | `CollabDoc` command glue + in-memory `Hub` |
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
+| `collab/pr10` | `5c4d5f81` | media channel: pictures by `sha256`, upload/fetch, persistence |
 
 All work is local. Nothing was pushed to `storytold/deckcraft`; a fork and a human decision are
 required for the upstream PR.
@@ -59,6 +60,12 @@ required for the upstream PR.
   journal tail since `baseVersion` (inserts shift right, deletes pull left and clamp), so two
   people typing in one paragraph keep both texts. Confirmed commands carry the rebased offset.
 - `shape.insert`: preset, final geometry, optional text; ids are deterministic on all replicas.
+- `insert.picture`: the operation carries `sha256`, `name` and an optional final rect, never bytes.
+  The server stores one object per digest (`PUT /v1/sessions/{id}/media/{sha256}`), every replica
+  fetches it (`GET /media/{sha256}`), and a journal replay loads the object before the operation.
+  The desktop link uploads and fetches over plain `http://` derived from its `ws://` URL; a
+  `wss://` link needs a TLS HTTP client and refuses with a visible error until the host supplies
+  one.
 
 ### Server (`apps/deckcraft-collab-server`)
 
@@ -68,6 +75,9 @@ required for the upstream PR.
 - Limits: message size, operations/second, participants.
 - Commit: `.pptx` from the authoritative document, `sha256`, base64 bytes, `warnings[]`, `409`
   on a stale `expectedVersion`.
+- Media: `PUT /v1/sessions/{id}/media/{sha256}` (session token, writer only, image allowlist,
+  8 MiB), `GET /media/{sha256}` (session/service token). Content-addressed under
+  `<store>/media/<sha256>`; 512 objects / 64 MiB per session; upload and byte counters in metrics.
 - Persistence: native base + append-only journal, snapshot every N ops, replay on restart
   through the same `apply` path. Without `COLLAB_STORE_DIR` the server is memory-only.
 - Logs/metrics contain ids, versions and counts; no slide content, text, media or tokens.
@@ -76,8 +86,9 @@ required for the upstream PR.
 
 | Command | Result |
 |---|---|
-| `cargo test -p deckcraft-collab` | 67 unit + 5 integration |
-| `cargo test -p deckcraft-collab-server` | 1 unit + 3 socket tests (two editors, viewer, health/metrics, invalid token, restart replay) |
+| `cargo test -p deckcraft-collab` | 75 unit + 6 integration |
+| `cargo test -p deckcraft-collab-server` | 3 unit + 5 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch) |
+| `cargo test -p deckcraft-collab-proto` | 16 |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 |
 | `cargo test -p deckcraft-engine` | 558 passed, 1 ignored |
 | `cargo clippy -p deckcraft-engine -p deckcraft-collab -p deckcraft-collab-proto -p deckcraft-collab-server -p deckcraft-ui-egui --all-targets -- -D warnings` | clean |
@@ -86,13 +97,16 @@ required for the upstream PR.
 
 The socket tests were run against a real loopback server; the restart test creates a room, moves
 the version, shuts the server down, starts a new one on the same store and asserts the version
-and document came back.
+and document came back. The media tests cover a rejected upload (viewer, wrong digest, no token),
+one object for repeated bytes, a picture applied from a reference, and a journal replay that
+loads the object before running the operation.
 
 ## TASK.md acceptance matrix
 
 | Criterion | State | Where / why |
 |---|---|---|
 | Two or more clients edit one presentation | ✅ for the v1 command set | hub, socket test, UI pipe test |
+| Insert a picture in a shared session | ✅ pictures on a plain `ws://` link | media channel, adapter and socket tests; video/audio open |
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
 | Slides, shapes and order converge | ✅ for move/bounds/insert/delete/slide/group/order | collab tests |
 | Reconnect works | ✅ within the retained journal tail | client queue + resync; base transfer for an evicted tail is still open |
@@ -105,12 +119,9 @@ and document came back.
 
 ## What is NOT done (ordered by production impact)
 
-1. **Media channel.** Pictures/video cannot be inserted in a shared session: the operation limit
-   is 256 KiB and there is no upload/store/fetch path. Planned:
-   `PUT /v1/sessions/{id}/media/{sha256}` and `GET /media/{sha256}` with the session token,
-   content-type allowlist and size limit; `Payload::PictureInsert { sha256, name, rect }`; the
-   adapter materialises bytes from a media cache (server: store, client: HTTP fetch) and runs
-   `insert.picture {data}`; broadcast only the reference.
+1. **Media beyond pictures.** The channel carries images only: video, audio, 3D models and fonts
+   need their own allowlists and limits, and a `wss://` desktop link needs a TLS HTTP client
+   (plain `ws://` already uploads and fetches). The browser link needs a media bridge too.
 2. **Full command surface.** Only the operations in `production.md` "What v1 syncs" are
    collaborative. Fill, fonts, animations, transitions, tables, charts, SmartArt, diagrams and
    most slide commands are refused in a shared session. The design rule stands: only commands
@@ -170,8 +181,8 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 
 1. Run the verification table above; if the tree is clean, continue on `collab/pr9` (or branch
    `collab/pr10` from it).
-2. Implement the media channel (design in item 1 above) with a socket test: upload two copies of
-   one picture from two clients, assert one media object and two shapes on both replicas.
+2. Extend the media channel to video/audio (allowlist, limits, adapter commands) and add the TLS
+   HTTP client for `wss://` links; test a large picture and a picture inserted twice.
 3. Extend the command set in vertical slices with the same pattern: payload → normalize →
    adapter run → confirmed command → test on two clients. Start with `shape.fill`, `shape.line`,
    `format.*` over explicit shapes, then `slide.duplicate`.

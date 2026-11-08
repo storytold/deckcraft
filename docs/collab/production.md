@@ -123,6 +123,7 @@ The first release deliberately normalises a small, idempotent command set:
 | `text.set` | command | whole body or one table cell |
 | `text.insert`, `text.delete` | command | character offsets; the server rebases them against operations since the base, so two people typing in one paragraph keep both texts |
 | `shape.insert` | structural | preset, final geometry, optional text; ids are deterministic on every replica |
+| `insert.picture` | structural | the operation carries a sha256 reference, not bytes; see "Media channel" |
 | `edit.delete` (shapes) | structural | explicit shape keys |
 | `slide.new`, `slide.delete`, `slide.move` | structural | anchor, not index |
 | `arrange.group`, `arrange.ungroup`, `arrange.reorder` | structural | explicit sibling anchor |
@@ -131,6 +132,25 @@ Anything else that changes the document is refused with a "not available in a sh
 yet" message instead of being applied locally and silently diverging. The full command surface is
 the next slice; it needs a final-value normalisation for each command, not a raw `execute` on the
 wire.
+
+## Media channel
+
+Pictures do not travel in an operation: the socket limit is 256 KiB and the same picture can be
+inserted twice. The bytes go to a content-addressed store and the operation carries only the
+digest.
+
+- `PUT /v1/sessions/{id}/media/{sha256}` with the session token (a viewer is refused). The body is
+  the picture, the path must match its digest; only PNG, JPEG, GIF, WebP, BMP, TIFF and SVG are
+  accepted, at most 8 MiB per object.
+- `GET /media/{sha256}` with a session or service token returns the bytes with their image type.
+- One object per digest per session (512 objects / 64 MiB total); a repeated upload is a no-op.
+- Wire: `Payload::PictureInsert { sha256, name, rect }`. `rect` is optional: without it the server
+  and every replica compute the natural size from the same bytes and slide size.
+- With `COLLAB_STORE_DIR` the objects live under `<store>/media/<sha256>` and a journal replay
+  loads them before the operation runs.
+- The desktop link uploads and fetches over plain `http://` derived from its `ws://` URL. A
+  `wss://` link has no TLS HTTP client yet: `Transport::put_media` refuses and the status bar says
+  so; the cabinet host must supply the bridge.
 
 ## Commit
 
@@ -160,16 +180,17 @@ must be treated as a development instance.
 
 | Suite | What it covers |
 |---|---|
-| `cargo test -p deckcraft-collab` | 67 unit + 5 integration: convergence, dedup, structural exclusion, tombstones, undo per actor, text rebase, shape insert, presence, snapshots, commit |
-| `cargo test -p deckcraft-collab-server` | unit JWT test + 3 real-socket tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay |
+| `cargo test -p deckcraft-collab` | 75 unit + 6 integration: convergence, dedup, structural exclusion, tombstones, undo per actor, text rebase, shape insert, pictures through the media channel, presence, snapshots, commit |
+| `cargo test -p deckcraft-collab-server` | 3 unit + 5 real-socket tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay, media upload/fetch, picture insert |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue |
 | `cargo test -p deckcraft-engine` | 558: the collaboration queue and read-only gate did not change single-user behaviour |
 | `cargo clippy … --all-targets -- -D warnings`, `cargo fmt --check`, `cargo xtask layers` | clean |
 
 ## Known gaps before this is a finished product
 
-1. **Media**: pictures/video are not uploaded once and referenced by hash; a large binary cannot
-   travel in a 256 KiB operation.
+1. **Media beyond pictures**: the channel carries images only; video, audio and fonts need their
+   own allowlist and size limits, and a `wss://` desktop link needs a TLS HTTP client (plain
+   `ws://` links already upload and fetch).
 2. **Full command surface**: fill, fonts, animations, tables, diagrams, charts and other commands
    are refused in a shared session instead of being normalised (see "What v1 syncs"). This is the
    largest product gap.

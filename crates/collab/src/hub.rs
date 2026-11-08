@@ -63,6 +63,17 @@ impl Hub {
         self.session.file_id()
     }
 
+    /// Store picture bytes uploaded over the media channel. The digest is the object's name.
+    pub fn put_media(&mut self, name: &str, bytes: Vec<u8>) -> Result<String, crate::MediaError> {
+        self.session.put_media(name, bytes)
+    }
+
+    /// Picture bytes this room holds, for `GET /media/{sha256}` and for a client that is about
+    /// to apply a `picture.insert`.
+    pub fn media(&self, sha: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+        self.session.media(sha)
+    }
+
     /// Participants in a stable order, with the role the server enforces.
     pub fn participants(&self) -> Vec<(String, Role)> {
         self.peers.iter().map(|(actor, peer)| (actor.clone(), peer.role)).collect()
@@ -102,6 +113,7 @@ impl Hub {
                     "text.insert".into(),
                     "text.delete".into(),
                     "shape.insert".into(),
+                    "insert.picture".into(),
                     "edit.delete".into(),
                     "slide.new".into(),
                     "slide.delete".into(),

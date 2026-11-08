@@ -91,6 +91,45 @@ fn pump(server: &mut DocSession, peer: &mut Peer, others: &mut [&mut Peer]) {
     }
 }
 
+#[test]
+fn a_picture_is_stored_once_and_reaches_both_clients() {
+    let mut server = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+    let bytes = png();
+    let sha = server.put_media("red.png", bytes.clone()).expect("media");
+    assert_eq!(server.put_media("red.png", bytes).expect("same bytes"), sha, "content-addressed: one object");
+    assert_eq!(server.media_entries().len(), 1);
+
+    let (slide, _first, _second) = keys(&server);
+    let mut a = join(&server, "alice", Role::Editor);
+    let mut b = join(&server, "bob", Role::Editor);
+    let op = OpEnvelope {
+        op_id: "pic-1".into(),
+        doc: "d".into(),
+        base_version: 0,
+        kind: OpKind::Structural,
+        target: Target { slide: Some(slide), ..Target::default() },
+        payload: Payload::PictureInsert { sha256: sha.clone(), name: "red.png".into(), rect: Some([60.0, 60.0, 80.0, 80.0]) },
+        history: None,
+    };
+    a.client.submit(op).expect("submit picture");
+    pump(&mut server, &mut a, &mut [&mut b]);
+
+    assert_eq!(server.version(), 1);
+    assert_eq!(a.client.version(), 1);
+    assert_eq!(b.client.version(), 1);
+    let doc = server.document().expect("doc");
+    assert!(doc.slides[0].shapes.iter().any(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })), "the picture is on the slide");
+    assert_eq!(server.media_entries().len(), 1);
+}
+
+fn png() -> Vec<u8> {
+    vec![
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 8, 0, 0, 0, 8, 8, 2, 0, 0, 0, 75, 109, 41, 220, 0, 0, 0, 17, 73, 68,
+        65, 84, 120, 156, 99, 184, 163, 161, 129, 21, 49, 12, 45, 9, 0, 123, 123, 75, 1, 251, 162, 81, 240, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
+        130,
+    ]
+}
+
 fn move_op(slide: &SlideKey, shape: &ShapeKey, x: f64) -> OpEnvelope {
     OpEnvelope {
         op_id: format!("op-{x}"),

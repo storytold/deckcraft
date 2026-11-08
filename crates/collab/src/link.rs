@@ -10,6 +10,11 @@ pub trait Transport: Send {
     fn next(&mut self) -> Option<ServerMsg>;
     /// Whether the socket is connected right now (not whether the session is live).
     fn is_open(&self) -> bool;
+    /// Upload picture bytes to the media channel. A transport without a media side channel
+    /// refuses: a picture inserted over it would be rejected by the server, never silently lost.
+    fn put_media(&mut self, _sha: &str, _bytes: &[u8]) -> Result<(), String> {
+        Err("this transport has no media channel".into())
+    }
 }
 
 /// An in-process transport: tests (and a browser bridge that is not built yet) can drive the full

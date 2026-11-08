@@ -10,7 +10,9 @@
 //! (ADR 0002). A version gap is repaired by `resync`, not by guessing a key.
 
 use std::fmt;
+use std::sync::Arc;
 
+use base64::Engine as _;
 use deckcraft_collab_proto::{
     Applied, Change, ClientInfo, ClientMsg, ConfirmedCommand, OpEnvelope, OpKind, Payload, ServerMsg, ShapeKey, SlideKey, Target,
 };
@@ -71,6 +73,12 @@ pub struct CollabDoc {
     /// Undo/redo requests waiting for a live link (they are not operations until the server builds
     /// the inverse).
     control: std::collections::VecDeque<ClientMsg>,
+    /// Where a replica gets picture bytes it does not have yet (`GET /media/{sha256}`). The
+    /// transport owns the connection, so the host supplies this callback; without it a picture
+    /// inserted by someone else cannot be applied and the status bar says so.
+    media_fetcher: Option<Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>>,
+    /// Pictures this replica should upload before its `picture.insert` reaches the server.
+    uploads: std::collections::VecDeque<(String, Arc<Vec<u8>>)>,
 }
 
 impl CollabDoc {
@@ -84,7 +92,38 @@ impl CollabDoc {
             version: 0,
             last_apply_error: None,
             control: std::collections::VecDeque::new(),
+            media_fetcher: None,
+            uploads: std::collections::VecDeque::new(),
         }
+    }
+
+    /// Picture bytes waiting to be uploaded before their operation is sent. The host drains this
+    /// every frame and calls [`crate::Transport::put_media`]; the operation is already queued, so
+    /// an upload that fails ends in a server `rejected`, never in a silent divergence.
+    pub fn take_uploads(&mut self) -> Vec<(String, Arc<Vec<u8>>)> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        while let Some((sha, bytes)) = self.uploads.pop_front() {
+            if seen.insert(sha.clone()) {
+                out.push((sha, bytes));
+            }
+        }
+        out
+    }
+
+    /// Supply the media fetch for a client that is not the picture's author. Called with the
+    /// digest; returns the bytes or `None` when they cannot be fetched.
+    pub fn set_media_fetcher(&mut self, fetch: Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>) {
+        self.media_fetcher = Some(fetch);
+    }
+
+    /// Register picture bytes this replica has (the author uploads them through `submit`).
+    pub fn put_media(&mut self, name: &str, bytes: Vec<u8>) -> Result<String, LocalError> {
+        self.adapter.media_mut().put(name, bytes).map_err(|e| LocalError::BadParams(e.message))
+    }
+
+    pub fn has_media(&self, sha: &str) -> bool {
+        self.adapter.media().contains(sha)
     }
 
     /// Start a connection and issue keys for the document the host opened. The caller sends the
@@ -151,6 +190,26 @@ impl CollabDoc {
     /// document changes when the server's `applied` comes back.
     pub fn submit(&mut self, session: &Session, cmd: &str, params: &Value, op_id: &str) -> Result<usize, LocalError> {
         let st = session.active().ok_or(LocalError::NoDocument)?;
+        // A picture travels in two pieces: the bytes to the media channel, the digest on the
+        // operation. The author always has the bytes, so the confirmed command can run here too.
+        let mut wire;
+        let params = if cmd == "insert.picture" {
+            let (name, bytes) = picture_bytes(params)?;
+            let sha = self.adapter.media_mut().put(&name, bytes).map_err(|e| LocalError::BadParams(e.message))?;
+            if let Some(stored) = self.adapter.media().get(&sha) {
+                self.uploads.push_back((sha.clone(), stored));
+            }
+            wire = params.clone();
+            if let Some(object) = wire.as_object_mut() {
+                object.remove("data");
+                object.remove("path");
+            }
+            wire["sha256"] = Value::String(sha);
+            wire["name"] = Value::String(name);
+            &wire
+        } else {
+            params
+        };
         let ops = normalize(self.adapter.keys(), st, cmd, params, op_id, &self.file_id)?;
         for op in &ops {
             self.client.submit(op.clone())?;
@@ -163,6 +222,14 @@ impl CollabDoc {
     fn apply_command(&mut self, session: &mut Session, version: u64, actor: &str, command: &ConfirmedCommand) -> bool {
         if version != self.version + 1 {
             return false;
+        }
+        if let Payload::PictureInsert { sha256, .. } = &command.payload
+            && !self.adapter.media().contains(sha256)
+            && let Some(fetch) = self.media_fetcher.clone()
+            && let Some(bytes) = fetch(sha256)
+            && let Err(e) = self.adapter.media_mut().insert(sha256, bytes)
+        {
+            self.last_apply_error = Some(e.message);
         }
         let op = OpEnvelope {
             op_id: String::new(),
@@ -373,6 +440,33 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
             let text = p.get("text").and_then(Value::as_str).map(str::to_string);
             Ok(vec![make(Target { slide: slide_key, ..Target::default() }, Payload::ShapeInsert { preset: preset.to_string(), rect: r, text })])
         }
+        "insert.picture" => {
+            let sha = p.get("sha256").and_then(Value::as_str).ok_or_else(|| LocalError::BadParams("insert.picture needs a media digest".into()))?;
+            if !crate::media::valid_sha(sha) {
+                return Err(LocalError::BadParams("insert.picture: the media digest is not a sha256".into()));
+            }
+            let name = p.get("name").and_then(Value::as_str).unwrap_or("media").to_string();
+            let rect = match p.get("rect") {
+                None => None,
+                Some(value) => {
+                    let array = value
+                        .as_array()
+                        .filter(|a| a.len() == 4)
+                        .ok_or_else(|| LocalError::BadParams("insert.picture rect must be [x,y,w,h]".into()))?;
+                    let mut r = [0.0; 4];
+                    for (i, v) in array.iter().enumerate() {
+                        r[i] = v.as_f64().ok_or_else(|| LocalError::BadParams("insert.picture rect values must be numbers".into()))?;
+                    }
+                    Some(r)
+                }
+            };
+            for key in p.as_object().map(|o| o.keys()).into_iter().flatten() {
+                if !matches!(key.as_str(), "sha256" | "name" | "rect") {
+                    return Err(LocalError::Unsupported(format!("insert.picture {key}")));
+                }
+            }
+            Ok(vec![make(Target { slide: slide_key, ..Target::default() }, Payload::PictureInsert { sha256: sha.to_string(), name, rect })])
+        }
         "slide.new" => {
             if p.get("title").is_some() || p.get("body").is_some() {
                 return Err(LocalError::Unsupported("slide.new with title/body".into()));
@@ -429,6 +523,24 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
         }
         other => Err(LocalError::Unsupported(other.into())),
     }
+}
+
+/// Bytes for `insert.picture`: base64 `data`, or a local `path` on desktop. The web build has
+/// no file system, so the host passes `data`.
+fn picture_bytes(p: &Value) -> Result<(String, Vec<u8>), LocalError> {
+    let name = p.get("name").and_then(Value::as_str).unwrap_or("media").to_string();
+    if let Some(data) = p.get("data").and_then(Value::as_str) {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|_| LocalError::BadParams("insert.picture: `data` is not base64".into()))?;
+        return Ok((name, bytes));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(path) = p.get("path").and_then(Value::as_str) {
+        let bytes = std::fs::read(path).map_err(|e| LocalError::BadParams(format!("{path}: {e}")))?;
+        return Ok((name, bytes));
+    }
+    Err(LocalError::BadParams("insert.picture needs `data` or `path`".into()))
 }
 
 fn slide_delete_ops(
@@ -593,6 +705,91 @@ mod tests {
         let km = keys(s.doc().expect("doc").doc.as_ref());
         let e = normalize(&km, s.doc().expect("doc"), "format.bold", &json!({}), "op", &doc).expect_err("refused");
         assert_eq!(e, LocalError::Unsupported("format.bold".into()));
+    }
+
+    /// 8×8 red PNG, enough for `insert.picture` to decode.
+    fn png() -> Vec<u8> {
+        vec![
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 8, 0, 0, 0, 8, 8, 2, 0, 0, 0, 75, 109, 41, 220, 0, 0, 0, 17, 73,
+            68, 65, 84, 120, 156, 99, 184, 163, 161, 129, 21, 49, 12, 45, 9, 0, 123, 123, 75, 1, 251, 162, 81, 240, 0, 0, 0, 0, 73, 69, 78, 68, 174,
+            66, 96, 130,
+        ]
+    }
+
+    fn welcome(version: u64) -> ServerMsg {
+        ServerMsg::Welcome(deckcraft_collab_proto::Welcome {
+            v: deckcraft_collab_proto::PROTO_VERSION,
+            session_id: "s".into(),
+            actor_id: "alice".into(),
+            role: deckcraft_collab_proto::Role::Editor,
+            lease: None,
+            version,
+            snapshot: deckcraft_collab_proto::SnapshotRef {
+                mode: deckcraft_collab_proto::SnapshotMode::BaseAndTail,
+                cursor: format!("tail@{version}"),
+            },
+            capabilities: deckcraft_collab_proto::Capabilities {
+                kinds: vec![OpKind::Command, OpKind::Structural],
+                limits: deckcraft_collab_proto::Limits::default(),
+                commands: vec![],
+            },
+        })
+    }
+
+    #[test]
+    fn a_picture_command_uploads_bytes_and_sends_only_a_reference() {
+        let (mut s, _doc, _slide, _shapes) = deck();
+        let mut client = CollabDoc::new("d");
+        client.connect(&s, "jwt", ClientInfo { name: "test".into(), ver: "1".into() });
+        client.on_msg(&mut s, welcome(0));
+        let bytes = png();
+        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let sent = client.submit(&s, "insert.picture", &json!({"name": "red.png", "data": data}), "op-1").expect("submit");
+        assert_eq!(sent, 1);
+        let Some(ClientMsg::Op(op)) = client.next_outgoing() else { panic!("expected an operation") };
+        match &op.payload {
+            Payload::PictureInsert { sha256, name, rect } => {
+                assert_eq!(name, "red.png");
+                assert!(rect.is_none());
+                assert_eq!(sha256, &crate::media::sha256_hex(&bytes), "the operation names the bytes by their digest");
+                assert!(!serde_json::to_string(&op.payload).expect("json").contains("data"), "no bytes on the wire");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(client.has_media(&crate::media::sha256_hex(&bytes)));
+        assert_eq!(op.kind, OpKind::Structural);
+    }
+
+    #[test]
+    fn a_remote_picture_is_fetched_before_it_is_applied() {
+        let (mut s, _doc, slide, _shapes) = deck();
+        let mut client = CollabDoc::new("d");
+        client.connect(&s, "jwt", ClientInfo { name: "test".into(), ver: "1".into() });
+        client.on_msg(&mut s, welcome(0));
+        let bytes = png();
+        let sha = crate::media::sha256_hex(&bytes);
+        let wanted = sha.clone();
+        let served = bytes.clone();
+        client.set_media_fetcher(std::sync::Arc::new(move |asked: &str| (asked == wanted).then(|| served.clone())));
+        let slide_key = client.keys().slide_key(slide).expect("slide").clone();
+        let applied = Applied {
+            op_id: "op".into(),
+            version: 1,
+            actor_id: "bob".into(),
+            command: Some(ConfirmedCommand {
+                cmd: "insert.picture".into(),
+                target: Target { slide: Some(slide_key), ..Target::default() },
+                payload: Payload::PictureInsert { sha256: sha.clone(), name: "red.png".into(), rect: Some([50.0, 50.0, 60.0, 60.0]) },
+            }),
+            delta: Default::default(),
+        };
+        client.on_msg(&mut s, ServerMsg::Applied(applied));
+        assert_eq!(client.version(), 1, "the fetcher supplied the bytes and the command ran");
+        assert!(client.has_media(&sha));
+        assert!(client.last_apply_error().is_none());
+        let doc = s.doc().expect("doc").doc.clone();
+        let picture = doc.slides[0].shapes.iter().find(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })).expect("picture");
+        assert_eq!(picture.xfrm.expect("xfrm").x, 50.0);
     }
 
     #[test]

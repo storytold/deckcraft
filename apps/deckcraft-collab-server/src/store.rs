@@ -19,6 +19,7 @@ use sha2::{Digest, Sha256};
 const BASE: &str = "base.deckcraft";
 const JOURNAL: &str = "journal.jsonl";
 const META: &str = "meta.json";
+const MEDIA: &str = "media";
 const MAX_JOURNAL_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -78,6 +79,12 @@ impl Store {
                     continue;
                 }
                 let Some(command) = applied.command else { continue };
+                // A picture operation can only run with its bytes; they are content-addressed and
+                // stored beside the journal, so load them before replaying the operation.
+                if let deckcraft_collab_proto::Payload::PictureInsert { sha256, .. } = &command.payload {
+                    let bytes = self.media(sha256).ok_or_else(|| format!("replay {}: media {sha256} is missing", applied.version))?;
+                    session.insert_media(sha256, bytes).map_err(|e| format!("replay {}: {e}", applied.version))?;
+                }
                 let op = OpEnvelope {
                     op_id: applied.op_id.clone(),
                     doc: file_id.to_string(),
@@ -155,6 +162,37 @@ impl Store {
     pub fn journal_bytes(&self, file_id: &str) -> std::io::Result<Vec<u8>> {
         fs::read(self.room_dir(file_id).join(JOURNAL))
     }
+
+    fn media_path(&self, sha: &str) -> Option<PathBuf> {
+        deckcraft_collab::valid_sha(sha).then(|| self.root.join(MEDIA).join(sha))
+    }
+
+    /// Store one picture object. Content-addressed, so the name is the digest and a repeat is a
+    /// no-op; the write is atomic (temporary file + rename).
+    pub fn save_media(&self, sha: &str, bytes: &[u8]) -> Result<(), String> {
+        let path = self.media_path(sha).ok_or_else(|| "the media name is not a sha256 digest".to_string())?;
+        if path.exists() {
+            return Ok(());
+        }
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir).map_err(|e| format!("media: {e}"))?;
+        }
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = path.with_extension(format!("{seq}.tmp"));
+        {
+            let mut f = fs::File::create(&tmp).map_err(|e| format!("media: {e}"))?;
+            f.write_all(bytes).map_err(|e| format!("media: {e}"))?;
+            f.sync_all().map_err(|e| format!("media: {e}"))?;
+        }
+        fs::rename(&tmp, &path).map_err(|e| format!("media: {e}"))
+    }
+
+    /// One stored picture, if this server has it.
+    pub fn media(&self, sha: &str) -> Option<Vec<u8>> {
+        let path = self.media_path(sha)?;
+        fs::read(path).ok()
+    }
 }
 
 /// Encode one applied operation for a log line without exposing slide content.
@@ -173,6 +211,51 @@ mod tests {
         let mut s = deckcraft_engine::Session::with_new();
         s.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).expect("shape");
         s.doc().expect("doc").doc.as_ref().clone()
+    }
+
+    #[test]
+    fn a_picture_survives_a_restart_through_the_media_store() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-store-media-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = Store::new(&dir, 100).expect("store");
+        let mut session = DocSession::from_document("file-p", deck(), SessionConfig::default()).expect("session");
+        let picture = png();
+        let sha = session.put_media("red.png", picture.clone()).expect("media");
+        store.save_media(&sha, &picture).expect("store media");
+        store.snapshot("file-p", &mut session).expect("base at version 0");
+        let doc = session.document().expect("doc").clone();
+        let slide = session.keys().slide_key(doc.slides[0].id).expect("slide").clone();
+        let op = OpEnvelope {
+            op_id: "pic-1".into(),
+            doc: "file-p".into(),
+            base_version: 0,
+            kind: deckcraft_collab_proto::OpKind::Structural,
+            target: deckcraft_collab_proto::Target { slide: Some(slide), ..Default::default() },
+            payload: deckcraft_collab_proto::Payload::PictureInsert {
+                sha256: sha.clone(),
+                name: "red.png".into(),
+                rect: Some([40.0, 40.0, 60.0, 60.0]),
+            },
+            history: None,
+        };
+        let applied = session.apply("alice", &op).expect("apply");
+        store.record("file-p", &mut session, &applied).expect("record");
+
+        // Only the journal is written (one operation, no snapshot); the replay needs the picture.
+        let restored = store.load("file-p").expect("load").expect("stored");
+        assert_eq!(restored.version(), 1);
+        assert!(restored.media(&sha).is_some(), "the media object came back");
+        let doc = restored.document().expect("doc");
+        assert!(doc.slides[0].shapes.iter().any(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })), "the picture was replayed");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn png() -> Vec<u8> {
+        vec![
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 8, 0, 0, 0, 8, 8, 2, 0, 0, 0, 75, 109, 41, 220, 0, 0, 0, 17, 73,
+            68, 65, 84, 120, 156, 99, 184, 163, 161, 129, 21, 49, 12, 45, 9, 0, 123, 123, 75, 1, 251, 162, 81, 240, 0, 0, 0, 0, 73, 69, 78, 68, 174,
+            66, 96, 130,
+        ]
     }
 
     #[test]

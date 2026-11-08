@@ -9,7 +9,9 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 
 use base64::Engine as _;
-use deckcraft_collab_proto::{ClientInfo, ClientMsg, Hello, OpEnvelope, OpKind, PROTO_VERSION, Payload, ServerMsg, decode_server, encode_client};
+use deckcraft_collab_proto::{
+    ClientInfo, ClientMsg, Hello, OpEnvelope, OpKind, PROTO_VERSION, Payload, ServerMsg, Target, decode_server, encode_client,
+};
 use deckcraft_collab_server::{Config, Handle, TokenClaims, serve_ephemeral};
 use tungstenite::stream::MaybeTlsStream;
 
@@ -35,6 +37,23 @@ fn http(addr: std::net::SocketAddr, method: &str, path: &str, token: Option<&str
     let status = response.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
     let body = response.split("\r\n\r\n").nth(1).unwrap_or_default().to_string();
     (status, body)
+}
+
+/// An HTTP request with binary bodies on either side (media upload and fetch).
+fn http_bytes(addr: std::net::SocketAddr, method: &str, path: &str, token: Option<&str>, body: &[u8]) -> (u16, Vec<u8>) {
+    let mut stream = TcpStream::connect(addr).expect("connect");
+    let auth = token.map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default();
+    let head = format!(
+        "{method} {path} HTTP/1.1\r\nHost: test\r\n{auth}Content-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(head.as_bytes()).expect("write head");
+    stream.write_all(body).expect("write body");
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).expect("read");
+    let split = response.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4).unwrap_or(response.len());
+    let status = String::from_utf8_lossy(&response[..split]).split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    (status, response[split..].to_vec())
 }
 
 fn token(actor: &str, role: &str, file: &str) -> String {
@@ -86,6 +105,32 @@ fn native_deck() -> Vec<u8> {
     let mut s = deckcraft_engine::Session::with_new();
     s.apply_remote("shape.insert", &serde_json::json!({"preset": "rect", "rect": [100, 100, 200, 100]})).expect("shape");
     deckcraft_format::save(s.doc().expect("doc").doc.as_ref()).expect("save")
+}
+
+/// 8×8 red PNG.
+fn png() -> Vec<u8> {
+    vec![
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 8, 0, 0, 0, 8, 8, 2, 0, 0, 0, 75, 109, 41, 220, 0, 0, 0, 17, 73, 68,
+        65, 84, 120, 156, 99, 184, 163, 161, 129, 21, 49, 12, 45, 9, 0, 123, 123, 75, 1, 251, 162, 81, 240, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
+        130,
+    ]
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::digest(bytes);
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The slide key a client derives for the first slide of `native_deck()` (ADR 0002).
+fn first_slide_key(file_id: &str) -> deckcraft_collab_proto::SlideKey {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.apply_remote("shape.insert", &serde_json::json!({"preset": "rect", "rect": [100, 100, 200, 100]})).expect("shape");
+    let doc = s.doc().expect("doc").doc.as_ref().clone();
+    let mut map = deckcraft_collab::KeyMap::new();
+    let mut issuer = deckcraft_collab::KeyIssuer::new(format!("{file_id}-"));
+    map.sync(&doc, &mut issuer);
+    map.slide_key(doc.slides[0].id).expect("slide key").clone()
 }
 
 #[test]
@@ -154,6 +199,95 @@ fn a_session_accepts_two_editors_and_refuses_a_viewer() {
     // Session control fails closed without the service token.
     let (status, _) = http(addr, "GET", "/v1/sessions/file-1", None, "");
     assert_eq!(status, 200, "read-only session info is public to the service network");
+    handle.shutdown();
+}
+
+#[test]
+fn a_picture_is_uploaded_once_and_reaches_a_second_editor() {
+    let handle = start();
+    let addr = handle.addr;
+    let body =
+        serde_json::json!({"fileId": "file-m", "app": "deckcraft", "initialBytes": base64::engine::general_purpose::STANDARD.encode(native_deck())})
+            .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+
+    let editor = token("alice", "editor", "file-m");
+    let viewer = token("victor", "viewer", "file-m");
+    let picture = png();
+    let sha = sha256(&picture);
+    let upload = format!("/v1/sessions/file-m/media/{sha}");
+
+    // A picture is not public and a viewer cannot add one.
+    let (status, _) = http_bytes(addr, "GET", &format!("/media/{sha}"), None, b"");
+    assert_eq!(status, 401);
+    let (status, _) = http_bytes(addr, "PUT", &upload, Some(&viewer), &picture);
+    assert_eq!(status, 403);
+    let (status, _) = http_bytes(addr, "PUT", &format!("/v1/sessions/file-m/media/{}", "0".repeat(64)), Some(&editor), &picture);
+    assert_eq!(status, 400, "the path must name the body's digest");
+
+    let (status, uploaded) = http_bytes(addr, "PUT", &upload, Some(&editor), &picture);
+    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&uploaded));
+    let (status, fetched) = http_bytes(addr, "GET", &format!("/media/{sha}"), Some(&editor), b"");
+    assert_eq!(status, 200);
+    assert_eq!(fetched, picture, "the bytes come back unchanged");
+
+    // Two editors; the picture arrives as a reference, not as bytes in the operation.
+    let mut a = join(addr, "file-m", "alice", "editor");
+    let mut b = join(addr, "file-m", "bob", "editor");
+    let op = ClientMsg::Op(OpEnvelope {
+        op_id: "pic-1".into(),
+        doc: "file-m".into(),
+        base_version: 0,
+        kind: OpKind::Structural,
+        target: Target { slide: Some(first_slide_key("file-m")), ..Target::default() },
+        payload: Payload::PictureInsert { sha256: sha.clone(), name: "red.png".into(), rect: Some([80.0, 80.0, 120.0, 120.0]) },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&op).expect("encode").into())).expect("send op");
+    let applied_a = read(&mut a);
+    let applied_b = read(&mut b);
+    for applied in [&applied_a, &applied_b] {
+        match applied {
+            ServerMsg::Applied(applied) => {
+                assert_eq!(applied.version, 1);
+                assert!(applied.delta.changes.iter().any(|c| c.shape.is_some()), "a shape was inserted: {applied:?}");
+            }
+            other => panic!("expected applied, got {other:?}"),
+        }
+    }
+    let (_, metrics) = http(addr, "GET", "/metrics", None, "");
+    assert!(metrics.contains("deckcraft_collab_media_uploads_total 1"), "{metrics}");
+    assert!(metrics.contains(&format!("deckcraft_collab_media_bytes_total {}", picture.len())), "{metrics}");
+    handle.shutdown();
+}
+
+#[test]
+fn the_desktop_link_uploads_and_fetches_pictures_over_http() {
+    use deckcraft_collab::Transport as _;
+    let handle = start();
+    let addr = handle.addr;
+    let body = serde_json::json!({"fileId": "file-l", "app": "deckcraft"}).to_string();
+    let (status, _) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201);
+
+    let editor = token("alice", "editor", "file-l");
+    let picture = png();
+    let sha = sha256(&picture);
+    let hello = ClientMsg::Hello(Hello {
+        v: PROTO_VERSION,
+        app: "deckcraft".into(),
+        doc: "file-l".into(),
+        jwt: editor.clone(),
+        client: ClientInfo { name: "alice".into(), ver: "1".into() },
+        last_version: None,
+    });
+    let mut link = deckcraft_collab::WsTransport::start(format!("ws://{addr}/v1/sessions/file-l/ws"), hello);
+    link.put_media(&sha, &picture).expect("the link uploads the picture");
+
+    let fetch = deckcraft_collab::WsTransport::media_fetcher(&format!("ws://{addr}"), &editor).expect("a plain ws:// link has a fetcher");
+    assert_eq!(fetch(&sha).expect("fetched"), picture);
+    drop(link);
     handle.shutdown();
 }
 

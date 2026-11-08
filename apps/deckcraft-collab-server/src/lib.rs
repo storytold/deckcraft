@@ -3,9 +3,9 @@
 //! The process around [`deckcraft_collab::Hub`]: HTTP session control, a WebSocket per
 //! participant, JWT authentication in the first frame, limits, health and metrics.
 //!
-//! What it deliberately does not do yet: persist rooms across a restart, a media upload channel
-//! and a lease table. The room model and the wire types are in `deckcraft-collab`; this crate is
-//! the transport around them.
+//! What it deliberately does not do yet: a lease table, a video/audio media channel (the v1
+//! channel carries pictures only) and a browser transport. The room model and the wire types are
+//! in `deckcraft-collab`; this crate is the transport around them.
 //!
 //! Security rules (ADR-0008, RFC §12):
 //! - the JWT travels in the first WebSocket frame, never in the URL;
@@ -24,7 +24,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use deckcraft_collab::session::SessionConfig;
-use deckcraft_collab::{Claims, Hub};
+use deckcraft_collab::{Claims, Hub, MAX_MEDIA_BYTES, image_type, sha256_hex, valid_sha};
 use deckcraft_collab_proto::{ClientMsg, PROTO_VERSION, Role, ServerError, ServerMsg, decode_client, encode_server};
 use deckcraft_model::Presentation;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
@@ -133,6 +133,8 @@ struct Metrics {
     rejected: AtomicU64,
     commits: AtomicU64,
     resyncs: AtomicU64,
+    media_uploads: AtomicU64,
+    media_bytes: AtomicU64,
     bytes_in: AtomicU64,
     bytes_out: AtomicU64,
 }
@@ -150,6 +152,8 @@ impl Metrics {
         out.push_str(&row("rejected_total", self.rejected.load(Ordering::Relaxed)));
         out.push_str(&row("commits_total", self.commits.load(Ordering::Relaxed)));
         out.push_str(&row("resyncs_total", self.resyncs.load(Ordering::Relaxed)));
+        out.push_str(&row("media_uploads_total", self.media_uploads.load(Ordering::Relaxed)));
+        out.push_str(&row("media_bytes_total", self.media_bytes.load(Ordering::Relaxed)));
         out.push_str(&row("bytes_in_total", self.bytes_in.load(Ordering::Relaxed)));
         out.push_str(&row("bytes_out_total", self.bytes_out.load(Ordering::Relaxed)));
         out
@@ -276,6 +280,9 @@ impl Response {
     fn text(status: u16, reason: &'static str, body: String) -> Self {
         Response { status, reason, content_type: "text/plain; version=0.0.4", body: body.into_bytes() }
     }
+    fn binary(status: u16, content_type: &'static str, body: Vec<u8>) -> Self {
+        Response { status, reason: "OK", content_type, body }
+    }
 }
 
 fn read_request(stream: &mut TcpStream) -> std::io::Result<Request> {
@@ -348,16 +355,15 @@ fn route(request: &Request, shared: &Arc<Shared>) -> std::io::Result<Response> {
             Ok(Response::text(200, "OK", shared.metrics.render(rooms)))
         }
         ("POST", "/v1/sessions") => create_session(request, shared),
+        ("GET", path) if path.starts_with("/media/") => Ok(get_media(&path["/media/".len()..], request, shared)),
         (method, path) if path.starts_with("/v1/sessions/") => {
             let rest = &path["/v1/sessions/".len()..];
-            let id = rest.trim_end_matches('/');
-            if id.contains('/') {
-                return Ok(Response::json(404, json!({"error": "not found"})));
-            }
-            match method {
-                "GET" => session_info(id, shared, request),
-                "DELETE" => close_session(id, shared, request),
-                _ => Ok(Response::json(405, json!({"error": "method not allowed"}))),
+            let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
+            match (method, parts.as_slice()) {
+                ("GET", [id]) => session_info(id, shared, request),
+                ("DELETE", [id]) => close_session(id, shared, request),
+                ("PUT", [id, "media", sha]) => put_media(id, sha, request, shared),
+                _ => Ok(Response::json(if parts.len() > 2 { 404 } else { 405 }, json!({"error": "not found"}))),
             }
         }
         _ => Ok(Response::json(404, json!({"error": "not found"}))),
@@ -476,6 +482,102 @@ fn close_session(id: &str, shared: &Arc<Shared>, request: &Request) -> std::io::
         Some(_) => Ok(Response::json(200, json!({"closed": true}))),
         None => Ok(Response::json(404, json!({"error": "no such session"}))),
     }
+}
+
+/// `PUT /v1/sessions/{id}/media/{sha256}`: upload one picture. The session token decides the
+/// role and the file; the body is the object, and the path must name its digest. Content-addressed,
+/// so a repeated upload of the same bytes changes nothing.
+fn put_media(id: &str, sha: &str, request: &Request, shared: &Arc<Shared>) -> std::io::Result<Response> {
+    if !valid_sha(sha) {
+        return Ok(Response::json(400, json!({"error": "the media name is not a sha256 digest"})));
+    }
+    let Some(token) = request.bearer() else {
+        return Ok(Response::json(401, json!({"error": "a session token is required"})));
+    };
+    let claims = match verify_token(token, &shared.config.jwt, &shared.config.audience) {
+        Ok(claims) => claims,
+        Err(_) => return Ok(Response::json(401, json!({"error": "the token is not valid"}))),
+    };
+    if claims.app.as_deref().is_some_and(|app| app != "deckcraft") {
+        return Ok(Response::json(403, json!({"error": "the token is for another app"})));
+    }
+    if claims.file_id.as_deref().is_some_and(|file| file != id) {
+        return Ok(Response::json(403, json!({"error": "the token is for another file"})));
+    }
+    if !role_of(&claims.role).is_some_and(Role::may_write) {
+        return Ok(Response::json(403, json!({"error": "a viewer cannot upload pictures"})));
+    }
+    if request.body.is_empty() {
+        return Ok(Response::json(400, json!({"error": "the picture is empty"})));
+    }
+    if request.body.len() > MAX_MEDIA_BYTES {
+        return Ok(Response::json(413, json!({"error": format!("the picture is larger than {MAX_MEDIA_BYTES} bytes")})));
+    }
+    if image_type("", &request.body).is_none() {
+        return Ok(Response::json(400, json!({"error": "the body is not a picture this channel stores"})));
+    }
+    if sha256_hex(&request.body) != sha {
+        return Ok(Response::json(400, json!({"error": "the media bytes do not match their digest"})));
+    }
+    let hub = {
+        let hubs = shared.hubs.lock().map_err(|_| std::io::Error::other("hub lock"))?;
+        hubs.get(id).cloned()
+    };
+    let Some(hub) = hub else {
+        return Ok(Response::json(404, json!({"error": "no such session"})));
+    };
+    {
+        let mut hub = hub.lock().map_err(|_| std::io::Error::other("hub lock"))?;
+        if let Err(e) = hub.put_media("", request.body.clone()) {
+            return Ok(Response::json(400, json!({"error": e.message})));
+        }
+    }
+    if let Some(store) = &shared.store
+        && let Err(e) = store.save_media(sha, &request.body)
+    {
+        log::error!("media {sha}: {e}");
+        return Ok(Response::json(500, json!({"error": "the picture could not be stored"})));
+    }
+    shared.metrics.media_uploads.fetch_add(1, Ordering::Relaxed);
+    shared.metrics.media_bytes.fetch_add(request.body.len() as u64, Ordering::Relaxed);
+    Ok(Response::json(201, json!({"sha256": sha, "bytes": request.body.len()})))
+}
+
+/// `GET /media/{sha256}`: one picture by digest. Content-addressed, so any authenticated session
+/// may fetch it if it knows the name.
+fn get_media(sha: &str, request: &Request, shared: &Arc<Shared>) -> Response {
+    if !valid_sha(sha) {
+        return Response::json(404, json!({"error": "not found"}));
+    }
+    if !media_reader_allowed(request, shared) {
+        return Response::json(401, json!({"error": "a session or service token is required"}));
+    }
+    if let Some(bytes) = shared.store.as_ref().and_then(|store| store.media(sha)) {
+        return media_response(bytes);
+    }
+    let hubs = match shared.hubs.lock() {
+        Ok(hubs) => hubs,
+        Err(_) => return Response::json(500, json!({"error": "internal"})),
+    };
+    for hub in hubs.values() {
+        if let Some(bytes) = hub.lock().ok().and_then(|hub| hub.media(sha)) {
+            return media_response(bytes.as_ref().clone());
+        }
+    }
+    Response::json(404, json!({"error": "no such picture"}))
+}
+
+fn media_reader_allowed(request: &Request, shared: &Shared) -> bool {
+    let Some(token) = request.bearer() else { return false };
+    if shared.config.service_token.as_deref() == Some(token) {
+        return true;
+    }
+    verify_token(token, &shared.config.jwt, &shared.config.audience).is_ok_and(|claims| claims.app.as_deref().is_none_or(|app| app == "deckcraft"))
+}
+
+fn media_response(bytes: Vec<u8>) -> Response {
+    let content_type = image_type("", &bytes).unwrap_or("application/octet-stream");
+    Response::binary(200, content_type, bytes)
 }
 
 fn now_secs() -> u64 {

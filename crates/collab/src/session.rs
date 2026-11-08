@@ -152,6 +152,28 @@ impl DocSession {
         self.base_file_etag.as_deref()
     }
 
+    /// Store an uploaded picture and return its digest, or explain why it was refused. The
+    /// server calls this before accepting a `picture.insert` that refers to it.
+    pub fn put_media(&mut self, name: &str, bytes: Vec<u8>) -> Result<String, crate::MediaError> {
+        self.adapter.media_mut().put(name, bytes)
+    }
+
+    /// Insert bytes that came with their digest (a journal replay, or a client that fetched
+    /// them). The digest is verified, never trusted.
+    pub fn insert_media(&mut self, sha: &str, bytes: Vec<u8>) -> Result<(), crate::MediaError> {
+        self.adapter.media_mut().insert(sha, bytes)
+    }
+
+    /// The bytes named by `sha`, if this session has them.
+    pub fn media(&self, sha: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+        self.adapter.media().get(sha)
+    }
+
+    /// Every picture this session holds, for persistence.
+    pub fn media_entries(&self) -> Vec<(String, std::sync::Arc<Vec<u8>>)> {
+        self.adapter.media().entries()
+    }
+
     pub fn document(&self) -> Option<&Presentation> {
         self.engine.doc().ok().map(|d| d.doc.as_ref())
     }

@@ -17,6 +17,7 @@ pub mod hub;
 pub mod keys;
 pub mod link;
 pub mod local;
+pub mod media;
 pub mod presence;
 pub mod session;
 #[cfg(not(target_arch = "wasm32"))]
@@ -30,6 +31,7 @@ pub use hub::{Claims, Hub, Peer};
 pub use keys::{KeyIssuer, KeyMap};
 pub use link::{PipeTransport, Transport};
 pub use local::{CollabDoc, LocalError, normalize};
+pub use media::{MAX_MEDIA_BYTES, MediaCache, MediaError, image_type, sha256_hex, valid_sha};
 pub use presence::{DEFAULT_TTL_MS, Participant, PresenceSet, color_for};
 pub use session::{DocSession, SessionConfig, SnapshotState, warnings};
 #[cfg(not(target_arch = "wasm32"))]

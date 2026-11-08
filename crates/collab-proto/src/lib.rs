@@ -148,6 +148,18 @@ pub enum Payload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         text: Option<String>,
     },
+    /// Inserts a picture that was uploaded to the session's media channel. The bytes travel on
+    /// the media channel, not in the operation: `sha256` names a content-addressed object the
+    /// server stores and every replica fetches, so an operation stays small and the same picture
+    /// inserted twice is stored once. `rect` is the final box; when it is absent the server
+    /// computes the natural size from the bytes and the slide size, which every replica can
+    /// reproduce.
+    PictureInsert {
+        sha256: String,
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rect: Option<[f64; 4]>,
+    },
     /// Removes one shape (`target.shape`) or several (`target.shapes`).
     ShapeDelete {},
     /// Inserts a slide before `target.slide` (`None`: at the end).
@@ -185,6 +197,7 @@ impl Payload {
             Payload::TextInsert { .. } => "text.insert",
             Payload::TextDelete { .. } => "text.delete",
             Payload::ShapeInsert { .. } => "shape.insert",
+            Payload::PictureInsert { .. } => "insert.picture",
             Payload::ShapeDelete {} => "edit.delete",
             Payload::SlideInsert { .. } => "slide.new",
             Payload::SlideDelete {} => "slide.delete",
@@ -702,6 +715,20 @@ mod tests {
         assert_eq!(Payload::TextSet { text: "hi".into(), cell: None }.command(), "text.set");
         assert_eq!(Payload::SlideMove { before: None }.command(), "slide.move");
         assert_eq!(Payload::Reorder { before: None }.command(), "arrange.reorder");
+    }
+
+    #[test]
+    fn a_picture_operation_carries_a_reference_not_bytes() {
+        let payload = Payload::PictureInsert { sha256: "9f2c".into(), name: "logo.png".into(), rect: Some([10.0, 20.0, 300.0, 200.0]) };
+        let text = serde_json::to_string(&payload).expect("encode");
+        assert!(text.contains("\"cmd\":\"picture_insert\""), "{text}");
+        assert!(text.contains("\"sha256\":\"9f2c\""), "{text}");
+        assert!(!text.contains("data"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), payload);
+        assert_eq!(payload.command(), "insert.picture");
+        let natural = Payload::PictureInsert { sha256: "9f2c".into(), name: "logo.png".into(), rect: None };
+        let text = serde_json::to_string(&natural).expect("encode");
+        assert!(!text.contains("rect"), "{text}");
     }
 
     #[test]

@@ -154,6 +154,9 @@ impl CollabUi {
         let info = deckcraft_collab_proto::ClientInfo { name: "DeckCraft".into(), ver: env!("CARGO_PKG_VERSION").into() };
         let mut doc = CollabDoc::new(file_id);
         let hello = doc.connect(session, jwt, info);
+        if let Some(fetch) = deckcraft_collab::WsTransport::media_fetcher(url, jwt) {
+            doc.set_media_fetcher(fetch);
+        }
         let transport = deckcraft_collab::WsTransport::start(url, hello);
         self.attach(doc, Box::new(transport));
         Ok(())
@@ -208,6 +211,17 @@ impl CollabUi {
             };
             if let Err(e) = result {
                 self.error = Some(e);
+            }
+        }
+        let uploads = self.doc.as_mut().map(CollabDoc::take_uploads).unwrap_or_default();
+        for (sha, bytes) in uploads {
+            match self.transport.as_mut() {
+                Some(transport) => {
+                    if let Err(e) = transport.put_media(&sha, &bytes) {
+                        self.error = Some(format!("picture upload: {e}"));
+                    }
+                }
+                None => self.error = Some("picture upload: collaboration is not connected".into()),
             }
         }
         while let Some(msg) = self.doc.as_mut().and_then(CollabDoc::next_outgoing) {
