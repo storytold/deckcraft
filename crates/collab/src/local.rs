@@ -510,6 +510,11 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
         }
         cmd if cmd.starts_with("format.") => {
             let format = FormatCmd::from_id(cmd).ok_or_else(|| LocalError::Unsupported(cmd.into()))?;
+            if st.selection.text.is_some() {
+                // The replica has no caret; a range would become the whole body. Run-level
+                // formatting needs its own payload (RFC §15), so refuse it instead of widening.
+                return Err(LocalError::Unsupported(format!("{cmd} on a text range (whole shape only in v1)")));
+            }
             let mut args = p.clone();
             if let Some(object) = args.as_object_mut() {
                 object.remove("ids");
