@@ -27,3 +27,4 @@ rustls-native-certs = "0.8"
 [dev-dependencies]
 deckcraft-engine = { workspace = true }
 deckcraft-pptx = { workspace = true }
+deckcraft-render = { workspace = true }

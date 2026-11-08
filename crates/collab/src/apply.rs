@@ -658,12 +658,17 @@ impl Adapter {
     fn run(&mut self, session: &mut Session, before: &Presentation, head: u64, op: &OpEnvelope) -> Result<(), Rejection> {
         match &op.payload {
             Payload::ShapeMove { x, y } => {
-                let (_, shape) = self.resolve_one(before, &op.target, head)?;
+                // The engine command acts on the selection: a replica whose own active slide is
+                // another one must be put on this slide first, or a move on slide 5 is refused as
+                // "no such shape" (TASK.md §8, two clients on different slides).
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                self.select_shapes(session, before, slide, &[shape], head)?;
                 let args = json!({"ids": [shape.0], "x": x, "y": y});
                 self.call(session, "shape.move", args, head)
             }
             Payload::ShapeSetBounds { x, y, w, h } => {
-                let (_, shape) = self.resolve_one(before, &op.target, head)?;
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                self.select_shapes(session, before, slide, &[shape], head)?;
                 let args = json!({"ids": [shape.0], "x": x, "y": y, "w": w, "h": h});
                 self.call(session, "shape.setBounds", args, head)
             }
@@ -692,7 +697,10 @@ impl Adapter {
                 self.call(session, "shape.setBoundsMany", json!({"items": boxes}), head)
             }
             Payload::TextSet { text, cell } => {
-                let (_, shape) = self.resolve_one(before, &op.target, head)?;
+                // `text.set` looks the shape up through the engine selection; select it on its
+                // own slide so a remote set on slide 5 is not refused by a replica on slide 0.
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                self.select_shapes(session, before, slide, &[shape], head)?;
                 let mut args = json!({"id": shape.0, "text": text});
                 if let Some((r, c)) = cell {
                     args["cell"] = json!([r, c]);
@@ -1305,6 +1313,46 @@ mod tests {
         assert_eq!(da, db, "the same operation has the same delta on both replicas");
         assert_eq!(doc_of(&a), doc_of(&b), "the replicas converge");
         assert!(!da.is_empty());
+    }
+
+    /// Two slides, each with a shape: the receiver may be looking at either one.
+    fn two_slide_deck() -> Session {
+        let mut s = deck();
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("second slide");
+        s.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).expect("shape on the second slide");
+        s
+    }
+
+    #[test]
+    fn an_operation_on_another_slide_applies_whatever_the_replica_is_looking_at() {
+        let (mut a, mut b) = (two_slide_deck(), two_slide_deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        // The receiving replica looks at slide 0; the operation targets slide 1.
+        b.doc_mut().expect("doc").selection.slide = 0;
+        b.doc_mut().expect("doc").selection.shapes.clear();
+
+        let doc = doc_of(&a);
+        let slide_id = doc.slides[1].id;
+        let slide = aa.keys().slide_key(slide_id).expect("slide").clone();
+        let shape_id = doc.slides[1].shapes[0].id;
+        let shape = aa.keys().shape_key(slide_id, shape_id).expect("shape").clone();
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+
+        let mv = op(OpKind::Command, 0, target.clone(), Payload::ShapeMove { x: 300.0, y: 200.0 });
+        aa.apply(&mut a, 0, "a", &mv).expect("author moves");
+        bb.apply(&mut b, 0, "b", &mv).expect("the other replica moves a shape on the slide it is not looking at");
+
+        let set = op(OpKind::Command, 1, target, Payload::TextSet { text: "hello".into(), cell: None });
+        aa.apply(&mut a, 1, "a", &set).expect("author sets text");
+        bb.apply(&mut b, 1, "b", &set).expect("the other replica sets text on the slide it is not looking at");
+
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas converge");
+        let shape = &doc_of(&a).slides[1].shapes[0];
+        assert_eq!(shape.xfrm.expect("xfrm").x, 300.0);
+        assert_eq!(shape.text.as_ref().map(|text| text.text()).as_deref(), Some("hello"));
     }
 
     #[test]
