@@ -2633,6 +2633,37 @@ mod copy_remap {
         assert_eq!(ids.len(), d.doc.media.len(), "media ids are unique");
     }
 
+    /// A Cameo's replacement background picture is media like any other: copying the Cameo into
+    /// another deck must carry the bytes and give the pasted shape the destination deck's id.
+    #[test]
+    fn a_pasted_cameo_carries_its_replacement_background_picture() {
+        let mut a = Session::with_new();
+        let png = solid_png([10, 20, 30]);
+        a.execute("insert.cameo", &json!({})).unwrap();
+        a.execute("cameo.background", &json!({"mode": "custom", "imageData": cmd::base64_encode(&png)})).unwrap();
+        let source = {
+            let doc = a.doc().unwrap();
+            let cameo = doc.selected_shapes().iter().find(|s| s.is_cameo()).map(|s| s.id).unwrap();
+            let image = doc.shape(cameo).and_then(|s| s.cameo.as_ref()).and_then(|c| c.background.as_ref()).and_then(|b| b.image);
+            (cameo, image.expect("custom background picture"))
+        };
+        select(&mut a, &[source.0]);
+        a.execute("edit.copy", &json!({})).unwrap();
+        let mut b = Session::with_new();
+        b.clipboard = a.clipboard.clone();
+        b.doc_mut().unwrap().selection.shapes.clear();
+        let r = b.execute("edit.paste", &json!({})).unwrap();
+        let pasted = ShapeId(r["ids"][0].as_u64().unwrap() as u32);
+        let doc = b.doc().unwrap();
+        let image = doc
+            .shape(pasted)
+            .and_then(|s| s.cameo.as_ref())
+            .and_then(|c| c.background.as_ref())
+            .and_then(|b| b.image)
+            .expect("the pasted Cameo keeps its replacement");
+        assert_eq!(doc.doc.media(image).map(|m| m.data.as_ref().clone()), Some(png), "the pasted Cameo can draw its replacement");
+    }
+
     /// Slide 0 of `s` gets a table whose first cell, background and second cell's picture bullet
     /// each use a picture of their own, and a transition sound. `tag` starts the bytes of each.
     /// Returns the table.

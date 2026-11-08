@@ -8,7 +8,7 @@
 use deckcraft_model::CameraBackgroundMode;
 
 use crate::MatteError;
-use crate::frame::{Matte, RgbaFrame, lerp};
+use crate::frame::{Matte, RgbaFrame, box_blur, lerp};
 
 /// How a frame should be composited.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -176,26 +176,6 @@ fn blur_frame(frame: &RgbaFrame, radius: u32) -> Result<RgbaFrame, MatteError> {
         }
     }
     RgbaFrame::new(w, h, pixels)
-}
-
-fn box_blur(src: &[u8], dst: &mut [u8], width: u32, height: u32, radius: u32, horizontal: bool) {
-    let (w, h) = (width as i64, height as i64);
-    let r = radius as i64;
-    let n = (2 * r + 1) as u32;
-    for y in 0..h {
-        for x in 0..w {
-            let mut sum = 0u32;
-            for d in -r..=r {
-                let (sx, sy) = if horizontal { ((x + d).clamp(0, w - 1), y) } else { (x, (y + d).clamp(0, h - 1)) };
-                let i = (sy * w + sx) as usize;
-                sum += u32::from(src.get(i).copied().unwrap_or(0));
-            }
-            let i = (y * w + x) as usize;
-            if let Some(v) = dst.get_mut(i) {
-                *v = (sum / n).min(255) as u8;
-            }
-        }
-    }
 }
 
 #[cfg(test)]

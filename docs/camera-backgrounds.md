@@ -46,9 +46,10 @@ The download URL is derived from the repository and revision:
 `https://huggingface.co/studioludens/birefnet-lite-512/resolve/962e67969ec6acec9c19fab76acee4f5e22e990c/onnx/model.onnx`.
 
 The file was re-downloaded and measured on 2026-11-07; its SHA-256 and size match the manifest.
-`deckcraft_matte::manifest::verify_file` checks both before the model is loaded, and
-`crates/matte-rten` verifies again in `RtenSegmenter::load` because those bytes are about to be
-interpreted. Install and download write to `model.onnx.part` and rename only after verification.
+Discovery (`probe`) checks presence and size only — hashing 191 MB at startup or on a status query
+would stall the caller — and `deckcraft_matte::manifest::verify_file` runs where the bytes matter:
+`RtenSegmenter::load` hashes again before it parses the model, and `install_from`/`download_to`
+verify before renaming `model.onnx.part` into place (and remove the part file on every failure).
 
 ### Install paths
 

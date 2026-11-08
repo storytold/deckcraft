@@ -5,8 +5,9 @@
 //! wherever a fill can sit (shapes, lines, text runs, table cells and styles, chart series and
 //! points, backgrounds, theme format schemes), media clips and their posters, 3-D models, OLE and
 //! SmartArt previews and kept parts, SmartArt node pictures, picture bullets, hyperlink, transition and
-//! animation sounds, and embedded font faces. Adding a `MediaId` field to the model means adding
-//! it here; the shape kinds are matched exhaustively so a new kind can't be missed.
+//! animation sounds, embedded font faces and a Cameo's replacement background picture. Adding a
+//! `MediaId` field to the model means adding it here; the shape kinds are matched exhaustively so a
+//! new kind can't be missed.
 
 use std::collections::HashSet;
 
@@ -189,6 +190,14 @@ macro_rules! walkers {
                     }
                 }
             }
+            // A Cameo's replacement picture is a media reference like any other: copying or reusing
+            // the slide must carry it, or the stored id dangles in the destination deck.
+            if let Some(cameo) = &$($m)? s.cameo
+                && let Some(bg) = &$($m)? cameo.background
+                && let Some(image) = &$($m)? bg.image
+            {
+                f(&$($m)? *image);
+            }
         }
 
         /// A shape and, for a group, everything in it.
@@ -362,8 +371,21 @@ mod tests {
             text: Some(text),
             ..Default::default()
         };
+        let cameo = Shape {
+            kind: ShapeKind::Picture { fill: pf(9011) },
+            cameo: Some(deckcraft_model::Cameo {
+                live: true,
+                raw: None,
+                background: Some(deckcraft_model::CameraBackground {
+                    mode: deckcraft_model::CameraBackgroundMode::Custom,
+                    color: None,
+                    image: Some(MediaId(9012)),
+                }),
+            }),
+            ..Default::default()
+        };
         let group = Shape { kind: ShapeKind::Group { children: vec![pic, clip], child: Default::default() }, ..Default::default() };
-        s.shapes = vec![group, filled];
+        s.shapes = vec![group, filled, cameo];
         s.background = Some(Background::Fill { fill: Fill::Picture(pf(9008)) });
         p.slides = vec![Arc::new(s)];
         if let Some(m) = p.masters.first_mut() {
@@ -378,10 +400,10 @@ mod tests {
         let p = deck();
         let mut got = presentation_media(&p);
         got.sort();
-        assert_eq!(got, (9001..=9010).map(MediaId).collect::<Vec<_>>());
+        assert_eq!(got, (9001..=9012).map(MediaId).collect::<Vec<_>>());
         let mut slide = p.slides.first().map(|s| slide_media(s)).unwrap_or_default();
         slide.sort();
-        assert_eq!(slide, (9001..=9008).map(MediaId).collect::<Vec<_>>());
+        assert_eq!(slide, (9001..=9008).chain([9011, 9012]).map(MediaId).collect::<Vec<_>>());
     }
 
     #[test]
@@ -391,7 +413,7 @@ mod tests {
         visit_mut::slide(&mut s, &mut |id: &mut MediaId| id.0 += 100);
         let mut got = slide_media(&s);
         got.sort();
-        assert_eq!(got, (9101..=9108).map(MediaId).collect::<Vec<_>>());
+        assert_eq!(got, (9101..=9108).chain([9111, 9112]).map(MediaId).collect::<Vec<_>>());
     }
 
     /// SmartArt and OLE objects keep their parts as media items (#209); those count as used.

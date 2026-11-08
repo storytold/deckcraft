@@ -45,24 +45,38 @@ fn config_dir() -> Option<PathBuf> {
 }
 
 /// The first root whose model file exists at the expected size, or the missing state naming the
-/// first root to install into.
+/// first root to install into. Size only: the hash is checked by [`RtenSegmenter::load`] and by the
+/// install and download paths, never by a status query.
 pub fn probe() -> (PathBuf, ModelState) {
     let roots = model_roots();
     let root = roots.first().cloned().unwrap_or_else(|| PathBuf::from("models"));
     for candidate in &roots {
         let path = manifest::MANIFEST.path_in(candidate);
-        if !path.is_file() {
+        let Ok(meta) = std::fs::metadata(&path) else { continue };
+        if !meta.is_file() {
             continue;
         }
-        match manifest::verify_file(&path) {
-            Ok(()) => return (candidate.clone(), ModelState::Ready { path: path.display().to_string(), bytes: manifest::MODEL_BYTES }),
-            Err(e) => {
-                return (candidate.clone(), ModelState::Failed { detail: format!("{}: {e}", path.display()) });
-            }
+        // Presence and size only: the bytes are verified where they are used — `RtenSegmenter::load`
+        // before it parses them, `install_from` and `download_to` before they rename a file into
+        // place. Hashing here would read 191 MB twice before the first frame on every start.
+        if meta.len() == manifest::MODEL_BYTES {
+            return (candidate.clone(), ModelState::Ready { path: path.display().to_string(), bytes: manifest::MODEL_BYTES });
         }
+        return (
+            candidate.clone(),
+            ModelState::Failed { detail: format!("{} is {} bytes, the model is {}", path.display(), meta.len(), manifest::MODEL_BYTES) },
+        );
     }
     let state = missing_state(&root);
     (root, state)
+}
+
+/// The manifest's file in `root` when it is present at the manifest's size, without opening or
+/// hashing it: the cheap "is a model installed" answer.
+fn present_model(root: &Path) -> Option<PathBuf> {
+    let path = manifest::MANIFEST.path_in(root);
+    let meta = std::fs::metadata(&path).ok()?;
+    (meta.is_file() && meta.len() == manifest::MODEL_BYTES).then_some(path)
 }
 
 fn missing_state(root: &Path) -> ModelState {
@@ -94,7 +108,10 @@ pub fn install_from(source: &Path, root: &Path) -> Result<PathBuf, String> {
     let dir = target.parent().ok_or_else(|| format!("{} has no parent", target.display()))?;
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let tmp = dir.join("model.onnx.part");
-    std::fs::copy(source, &tmp).map_err(|e| format!("cannot copy to {}: {e}", tmp.display()))?;
+    std::fs::copy(source, &tmp).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("cannot copy to {}: {e}", tmp.display())
+    })?;
     std::fs::rename(&tmp, &target).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         format!("cannot install {}: {e}", target.display())
@@ -133,20 +150,37 @@ fn download_agent() -> ureq::Agent {
 
 /// Download the model into `root` from the manifest's pinned URL, reporting progress. Blocking:
 /// the caller runs it on a worker thread after the consent screen. A short download is rejected
-/// by the size check and never renamed into place.
+/// by the size check and never renamed into place, and no failure leaves `model.onnx.part` behind.
 pub fn download_to(root: &Path, on_progress: &mut dyn FnMut(u64, u64)) -> Result<PathBuf, String> {
     let m = manifest::MANIFEST;
     let target = m.path_in(root);
     let dir = target.parent().ok_or_else(|| format!("{} has no parent", target.display()))?;
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let tmp = dir.join("model.onnx.part");
+    // One cleanup point for every failure: a network error, a short body, a write error, a hash
+    // mismatch or a failed rename would otherwise leave up to 192 MB behind.
+    match download_into(&tmp, &target, on_progress) {
+        Ok(()) => {
+            write_manifest(root);
+            Ok(target)
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
+/// The transfer itself, into `tmp`; the caller removes `tmp` when this returns `Err`.
+fn download_into(tmp: &Path, target: &Path, on_progress: &mut dyn FnMut(u64, u64)) -> Result<(), String> {
+    let m = manifest::MANIFEST;
     let mut response = download_agent().get(&m.url()).call().map_err(|e| format!("download failed: {e}"))?;
     let total = response.body().content_length().unwrap_or(0);
     if total > 0 && total != m.bytes {
         return Err(format!("the server offered {total} bytes, the model is {} bytes", m.bytes));
     }
     let mut reader = response.body_mut().as_reader();
-    let mut file = std::fs::File::create(&tmp).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    let mut file = std::fs::File::create(tmp).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
     let mut buf = vec![0u8; 256 * 1024];
     let mut received = 0u64;
     loop {
@@ -156,23 +190,14 @@ pub fn download_to(root: &Path, on_progress: &mut dyn FnMut(u64, u64)) -> Result
         }
         received = received.saturating_add(n as u64);
         if received > m.bytes {
-            let _ = std::fs::remove_file(&tmp);
             return Err("the download is larger than the model".into());
         }
         file.write_all(buf.get(..n).unwrap_or_default()).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
         on_progress(received, if total == 0 { m.bytes } else { total });
     }
     drop(file);
-    if let Err(e) = manifest::verify_file(&tmp) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    std::fs::rename(&tmp, &target).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        format!("cannot install {}: {e}", target.display())
-    })?;
-    write_manifest(root);
-    Ok(target)
+    manifest::verify_file(tmp).map_err(|e| e.to_string())?;
+    std::fs::rename(tmp, target).map_err(|e| format!("cannot install {}: {e}", target.display()))
 }
 
 /// The RTen implementation of [`Segmenter`].
@@ -208,11 +233,7 @@ impl RtenSegmenter {
     /// of the manifest's size sits in one of the model roots. A `stat` per root — never a hash and
     /// never a parse, so a status query on the UI thread stays cheap; a preview proves the bytes.
     pub fn installed_name() -> Option<&'static str> {
-        let present = model_roots().iter().any(|root| {
-            let path = manifest::MANIFEST.path_in(root);
-            std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() == manifest::MODEL_BYTES)
-        });
-        present.then_some(RtenSegmenter::NAME)
+        model_roots().iter().any(|root| present_model(root).is_some()).then_some(RtenSegmenter::NAME)
     }
 
     /// Load from the first model root that holds a verified install.

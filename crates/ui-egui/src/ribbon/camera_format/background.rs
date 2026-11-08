@@ -128,25 +128,32 @@ fn model_panel(app: &mut SlideApp, ui: &mut Ui, state: Option<ModelState>) {
                 ui.label(format!("Source: {url}"));
                 ui.label(format!("Install directory: {root}"));
             });
-            let download = ui.add_enabled(true, egui::Button::new("Download Model…"));
-            if download
-                .on_hover_text(format!("Downloads {:.1} MB after this click; nothing is fetched at startup", *bytes as f64 / 1_000_000.0))
-                .clicked()
-            {
-                match app.matte.as_mut().map(|m| m.start_download()) {
-                    Some(Ok(())) => app.set_status("Downloading the background model…"),
-                    Some(Err(e)) => app.set_status(e),
-                    None => {}
-                }
-            }
+            download_button(app, ui, *bytes);
             import_button(app, ui);
         }
         ModelState::Failed { detail } => {
             ui.label(format!("Background model unusable: {detail}"));
+            // A failed download leaves no file, and `start_download` accepts a retry (the thread is
+            // gone by then), so the same button belongs here; so does a corrupt install, which
+            // `download_to` replaces after verifying the new file.
+            download_button(app, ui, deckcraft_matte::manifest::MODEL_BYTES);
             import_button(app, ui);
         }
     }
     ui.label("Live capture arrives with issue #1837; backgrounds are saved and previewable now.");
+}
+
+/// The consented download, offered wherever there is no usable model: missing, or present but
+/// unusable (a failed download, a corrupt install).
+fn download_button(app: &mut SlideApp, ui: &mut Ui, bytes: u64) {
+    let download = ui.add_enabled(true, egui::Button::new("Download Model…"));
+    if download.on_hover_text(format!("Downloads {:.1} MB after this click; nothing is fetched at startup", bytes as f64 / 1_000_000.0)).clicked() {
+        match app.matte.as_mut().map(|m| m.start_download()) {
+            Some(Ok(())) => app.set_status("Downloading the background model…"),
+            Some(Err(e)) => app.set_status(e),
+            None => {}
+        }
+    }
 }
 
 fn import_button(app: &mut SlideApp, ui: &mut Ui) {

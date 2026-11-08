@@ -217,24 +217,30 @@ pub(crate) fn lerp(a: f64, b: f64, t: f64) -> f64 {
 }
 
 /// One-direction box blur (horizontal when `horizontal`, otherwise vertical), clamping at edges.
-fn box_blur(src: &[u8], dst: &mut [u8], width: u32, height: u32, radius: u32, horizontal: bool) {
-    let (w, h) = (width as i64, height as i64);
-    if w <= 0 || h <= 0 {
+///
+/// A sliding-window sum, so the cost does not grow with the radius: the blur compositor runs 18
+/// passes per frame at radius 24 on the caller's thread. Edge samples repeat the last byte, as the
+/// naive window did, so the output is unchanged.
+pub(crate) fn box_blur(src: &[u8], dst: &mut [u8], width: u32, height: u32, radius: u32, horizontal: bool) {
+    let (w, h) = (width as usize, height as usize);
+    if w == 0 || h == 0 {
         return;
     }
-    let r = radius as i64;
-    let idx = |x: i64, y: i64| -> usize { (y * w + x) as usize };
-    for y in 0..h {
-        for x in 0..w {
-            let mut sum = 0u32;
-            for d in -r..=r {
-                let (sx, sy) = if horizontal { ((x + d).clamp(0, w - 1), y) } else { (x, (y + d).clamp(0, h - 1)) };
-                sum += u32::from(src.get(idx(sx, sy)).copied().unwrap_or(0));
-            }
-            let n = (2 * r + 1) as u32;
-            if let Some(v) = dst.get_mut(idx(x, y)) {
+    let r = radius as isize;
+    let n = 2 * radius + 1;
+    let (lines, len, line_stride, item_stride) = if horizontal { (h, w, w, 1) } else { (w, h, 1, w) };
+    for line in 0..lines {
+        let base = line * line_stride;
+        let at = |i: isize| -> u32 {
+            let c = i.clamp(0, len as isize - 1) as usize;
+            u32::from(src.get(base + c * item_stride).copied().unwrap_or(0))
+        };
+        let mut sum: u32 = (-r..=r).map(at).sum();
+        for i in 0..len {
+            if let Some(v) = dst.get_mut(base + i * item_stride) {
                 *v = (sum / n).min(255) as u8;
             }
+            sum = sum + at(i as isize + r + 1) - at(i as isize - r);
         }
     }
 }
@@ -251,6 +257,37 @@ mod tests {
         assert!(Matte::new(2, 2, vec![0; 3]).is_err());
         let ok = RgbaFrame::new(2, 2, vec![7; 16]).expect("frame");
         assert_eq!(ok.at(1, 1), [7, 7, 7, 7]);
+    }
+
+    /// The sliding-window blur must equal the naive window it replaced, edges included.
+    #[test]
+    fn the_box_blur_matches_the_naive_window() {
+        let (w, h) = (7u32, 5u32);
+        let src: Vec<u8> = (0..(w * h) as u8).map(|i| i.wrapping_mul(7)).collect();
+        let naive = |horizontal: bool, radius: u32| -> Vec<u8> {
+            let (wi, hi) = (w as i64, h as i64);
+            let r = radius as i64;
+            let n = (2 * r + 1) as u32;
+            let mut out = vec![0u8; (w * h) as usize];
+            for y in 0..hi {
+                for x in 0..wi {
+                    let mut sum = 0u32;
+                    for d in -r..=r {
+                        let (sx, sy) = if horizontal { ((x + d).clamp(0, wi - 1), y) } else { (x, (y + d).clamp(0, hi - 1)) };
+                        sum += u32::from(src[(sy * wi + sx) as usize]);
+                    }
+                    out[(y * wi + x) as usize] = (sum / n).min(255) as u8;
+                }
+            }
+            out
+        };
+        for radius in [0u32, 1, 3, 9] {
+            for horizontal in [true, false] {
+                let mut got = vec![0u8; (w * h) as usize];
+                box_blur(&src, &mut got, w, h, radius, horizontal);
+                assert_eq!(got, naive(horizontal, radius), "radius {radius}, horizontal {horizontal}");
+            }
+        }
     }
 
     #[test]

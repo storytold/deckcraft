@@ -82,6 +82,9 @@ fn insert_cameo(s: &mut Session, p: &Value) -> Result<Value> {
     if rect.is_some_and(|r| r.w < 1.0 || r.h < 1.0) {
         return Err(bad("insert.cameo", "rect needs a positive width and height"));
     }
+    if s.doc()?.selection.target != crate::Target::Slides {
+        return Err(bad("insert.cameo", "a Cameo goes on a slide: switch to Normal view first"));
+    }
     let (target, ids, id) = s.edit(|doc, sel| {
         let n = doc.slides.len();
         if n == 0 {
@@ -113,7 +116,6 @@ fn insert_cameo(s: &mut Session, p: &Value) -> Result<Value> {
             }
             ids.push(id);
         }
-        sel.target = crate::Target::Slides;
         sel.slide = target;
         sel.text = None;
         let Some(first) = on_target.or_else(|| ids.first().copied()) else {
@@ -608,6 +610,18 @@ mod tests {
 
     /// A scripted caller has no selection (`file.open` leaves none), and the Camera Format tab's
     /// selection gate must not decide `enabled` for it: `all` and `id` name their targets.
+    #[test]
+    fn insert_cameo_refuses_a_master_view_instead_of_leaving_it() {
+        let mut s = Session::with_new();
+        s.execute("view.slideMaster", &json!({})).expect("master view");
+        let e = s.execute("insert.cameo", &json!({})).expect_err("not on the master");
+        assert!(e.to_string().contains("slide"), "{e}");
+        // The user is still in the master view and nothing was inserted.
+        let doc = s.doc().expect("doc");
+        assert_ne!(doc.selection.target, crate::Target::Slides, "still in the view the user was in");
+        assert!(doc.doc.slides.iter().all(|sl| !sl.shapes.iter().any(deckcraft_model::Shape::is_cameo)));
+    }
+
     #[test]
     fn a_scripted_background_needs_no_cameo_in_the_selection() {
         let mut s = Session::with_new();
