@@ -40,9 +40,6 @@ impl SlideApp {
     pub fn start_show(&mut self, from: usize, reading: bool) {
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);
-        // A show replaced mid-take loses the take (the new instance has its own state), so its
-        // narration microphone must stop with it: otherwise the stream keeps capturing for a view
-        // that is gone, and its samples land on the next show's first slide.
         // A show being replaced loses its take: save it if it captured one, then stop the
         // microphone it started — the new instance knows nothing about that stream, so its
         // samples would otherwise land on the next show's first slide.
@@ -50,8 +47,10 @@ impl SlideApp {
             let started = show.mic_started();
             if show.take_captured() {
                 let now = show.command_now();
-                if let (Some(ctx), Some(doc)) = (self.last_ctx.clone(), self.session.active().map(|d| d.doc.clone())) {
-                    self.end_show(&ctx, show, &doc, now);
+                match (self.last_ctx.clone(), self.session.active().map(|d| d.doc.clone())) {
+                    (Some(ctx), Some(doc)) => self.end_show(&ctx, show, &doc, now),
+                    // No window to draw into, or no document to insert into: say the take went.
+                    _ => self.set_status("The recording was not saved: the window or presentation it was made for is gone"),
                 }
             }
             if started {

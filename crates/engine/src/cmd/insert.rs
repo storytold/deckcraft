@@ -66,7 +66,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Photo Album…",
             ["Insert", "Images"],
             None,
-            "{pictures?: [{path?|data: base64, name?, rot?: deg, brightness?: -1..1, contrast?: -1..1} | {text}], layout?: fit|1|2|4|1title|2title|4title, frame?: none|rect|rounded|simple, captions?: bool, grayscale?: bool, theme?: name} — omit pictures to open the dialog",
+            "{pictures?: [{path?|data: base64, name?, typeName?, rot?: deg, brightness?: -1..1, contrast?: -1..1} | {text}], layout?: fit|1|2|4|1title|2title|4title, frame?: none|rect|rounded|simple, captions?: bool, grayscale?: bool, theme?: name} — omit pictures to open the dialog. `typeName` names the source file for inline `data` (an SVG whose tag is past the sniffing window needs it)",
             has_doc,
             photo_album
         ),

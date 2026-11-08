@@ -676,9 +676,9 @@ fn media_node(w: &mut W, ids: &mut Ids, spid: u32, m: &MediaClip) {
     if m.full_screen && m.video {
         outer = outer.a("fullScrn", "1");
     }
-    if m.narration {
-        // PresentationML's own flag: without it PowerPoint keeps playing a narration clip when
-        // "Play Narrations" is off.
+    if m.narration && !m.video {
+        // PresentationML's own flag, on the audio clip: without it PowerPoint keeps playing a
+        // narration clip when "Play Narrations" is off. A video is never a narration.
         outer = outer.a("isNarration", "1");
     }
     w.open(tag, outer);
