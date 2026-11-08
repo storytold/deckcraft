@@ -512,6 +512,12 @@ impl SlideApp {
     /// wasn't saved (also shown in the status bar).
     pub(super) fn save_to_host(&mut self, ext: Option<&str>) -> Result<String, String> {
         use deckcraft_engine::cmd::file::{format_for_path, mark_saved, save_bytes};
+        // A read-only session (#1898) hands the page nothing to store: Save and Save As alike.
+        if self.session.read_only {
+            let e = deckcraft_engine::READ_ONLY_REFUSED.to_string();
+            self.set_status(e.clone());
+            return Err(e);
+        }
         let Some(d) = self.session.active() else { return Err("no presentation is open".into()) };
         let own = d.path.as_deref().and_then(|p| std::path::Path::new(p).file_name()).map(|n| n.to_string_lossy().to_string());
         let (name, save_as) = match (ext, own) {
