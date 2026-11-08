@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-08. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e` + `58eee059`, docs commits on top).
+Updated: 2026-11-08. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, docs commits on top).
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -23,10 +23,10 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr7` | `d28c8ae5` | `CollabDoc` command glue + in-memory `Hub` |
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
-| `collab/pr10` | `7fe75711` + `0a57b61e` + `58eee059` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate` |
+| `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate` |
 
 The Commit column names the slice commits; each branch also carries documentation commits. Heads:
-`collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711`, `0a57b61e`, `58eee059`, plus the docs commits on
+`collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711`, `0a57b61e`, `58eee059`, `69c2ff22`, plus the docs commits on
 top. The working tree is clean: the chair's uncommitted finding of 2026-11-08 is `7fe75711`; the
 second slice added `0a57b61e` (media kinds, TLS, command slices, tests, docs).
 
@@ -241,7 +241,7 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
   `args`, explicit `on`), `slide.duplicate` addressed by slide key.
 - Tests: `collab-proto` 18, `collab` 91 + 7, `collab-server` 3 + 6, `ui-egui collab::` 17;
   clippy `-D warnings` and `fmt` clean; `xtask layers` 31 crates. Engine not re-run.
-- Commits `0a57b61e` and `58eee059` on `collab/pr10`; docs (rfc §3.2.1/§4.1/§13/§14.1, production,
+- Commits `0a57b61e`…`69c2ff22` on `collab/pr10`; docs (rfc §3.2.1/§4.1/§13/§14.1, production,
   pr10) updated. Nothing pushed.
 
 ### 2026-11-08 — PR prep and formal RFC proposal
