@@ -132,6 +132,7 @@ The first release deliberately normalises a small, idempotent command set:
 | `slide.new`, `slide.delete`, `slide.move` | structural | anchor, not index |
 | `slide.duplicate` | structural | the source slide key; the copy is inserted after it |
 | `arrange.group`, `arrange.ungroup`, `arrange.reorder` | structural | explicit sibling anchor |
+| `shape.restore` | structural | server-built undo/redo image of whole shapes (model JSON, parent, z-order index, animations); a client cannot send it as an edit |
 
 Anything else that changes the document is refused with a "not available in a shared session
 yet" message instead of being applied locally and silently diverging. The full command surface is
@@ -188,10 +189,10 @@ must be treated as a development instance.
 
 | Suite | What it covers |
 |---|---|
-| `cargo test -p deckcraft-collab` | 106 unit + 7 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, text, fill, outline, format, group fill, slide insert/delete), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate slices, presence, snapshots, commit |
-| `cargo test -p deckcraft-collab-server` | 4 unit + 6 real-socket tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including an undo), media upload/fetch (picture and audio allowlists), picture insert |
+| `cargo test -p deckcraft-collab` | 113 unit + 7 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, text, fill, outline, format, group fill, slide insert/delete, shape insert/delete with z-order and animations), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate slices, presence, snapshots, commit |
+| `cargo test -p deckcraft-collab-server` | 5 unit + 6 real-socket tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue |
-| `cargo test -p deckcraft-engine` | 562: the collaboration queue, read-only gate, `shape.setField`/`shape.setFields` and `slide.restore` did not change single-user behaviour |
+| `cargo test -p deckcraft-engine` | 565: the collaboration queue, read-only gate, `shape.setField`/`shape.setFields`/`shape.restore` and `slide.restore` did not change single-user behaviour |
 | `cargo clippy … --all-targets -- -D warnings`, `cargo fmt --check`, `cargo xtask layers` | clean |
 
 ## Known gaps before this is a finished product
@@ -215,9 +216,9 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    host page must also forward media fetches and the session token.
 6. **P2 — Optimistic preview**: edits become visible on `applied`; correctness first, preview and
    rollback are the next latency slice.
-7. **P2 — Undo of shape insert/delete and group/ungroup** is still out of v1, as RFC §13 records.
-   Move, bounds, text, fill, outline, `format.*`, a group's fill/line and slide insert/delete are
-   undoable.
+7. **P2 — Undo of group/ungroup** is still out of v1, as RFC §13 records. Move, bounds, text,
+   fill, outline, `format.*`, a group's fill/line, slide insert/delete and shape insert/delete
+   (z-order, animations and triggers included) are undoable.
 8. **P2 — Base transfer for a compacted journal tail**: restart and tail replay work, but a client
    that missed the base needs a chunked `snapshot`.
 9. **P2 — Large-deck gate**: a 100+ slide/media performance run and a LibreOffice open/repair gate
