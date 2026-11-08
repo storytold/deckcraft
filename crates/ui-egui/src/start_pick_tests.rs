@@ -213,3 +213,17 @@ fn close_save_closes_after_the_sheet_answers() {
     app.resume_after_save(&ctx);
     assert_eq!(app.session.documents().len(), before - 1, "a cancelled save closes nothing");
 }
+
+/// Save All keeps saving after a failure, and the status line keeps that failure.
+#[test]
+fn save_all_keeps_the_first_failure_on_the_status_line() {
+    let (mut app, _senders) = untitled_apps(2);
+    let missing = std::env::temp_dir().join("deckcraft-no-such-dir").join("a.deckcraft");
+    app.session.set_active(0);
+    app.session.active_mut().unwrap().path = Some(missing.to_string_lossy().to_string());
+    app.session.set_active(1);
+    app.session.active_mut().unwrap().path = Some(temp_deck("save-all-2.deckcraft"));
+    assert!(!app.save_all());
+    assert!(!app.session.documents()[1].is_dirty(), "the one after the failure was saved");
+    assert_ne!(app.status.as_ref().map(|s| s.0.as_str()), Some("Saved"));
+}

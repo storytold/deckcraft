@@ -648,12 +648,22 @@ impl SlideApp {
     pub fn save_all(&mut self) -> bool {
         let dirty: Vec<usize> = self.session.documents().iter().enumerate().filter(|(_, d)| d.is_dirty()).map(|(i, _)| i).collect();
         let mut saved = true;
+        let mut error = None;
         for i in dirty {
             self.session.set_active(i);
+            let before = self.status.clone();
             self.save();
             // A Save dialog shown as a sheet answers later: the other presentations are saved
             // meanwhile, and Save All reports that one as not saved yet.
-            saved &= self.session.documents().get(i).is_none_or(|d| !d.is_dirty());
+            let unsaved = self.session.documents().get(i).is_some_and(|d| d.is_dirty());
+            saved &= !unsaved;
+            if unsaved && error.is_none() && self.status != before {
+                error = self.status.clone();
+            }
+        }
+        // A later "Saved" must not hide an earlier failure
+        if error.is_some() {
+            self.status = error;
         }
         saved
     }
