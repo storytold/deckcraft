@@ -123,7 +123,9 @@ Detail in [file-format-parity.md](file-format-parity.md).
   video; tables arrive as grouped shapes, OLE objects and charts as their preview pictures, WordArt
   as plain text; PICT pictures don't show. Only checked against decks built in tests and one
   outside lecture deck.
-- **Impact:** old decks open and read correctly but lose their motion and links.
+- **Impact:** old decks open with their text, layout and pictures, but lose their motion, links,
+  sounds and video. Tables, OLE objects, charts and WordArt come in degraded and can't be edited as
+  such. PICT pictures are missing.
 - **Estimate:** 10–18 h (transitions and build effects, interactive info, tables, a corpus).
 
 ### No OpenDocument `.odp`
