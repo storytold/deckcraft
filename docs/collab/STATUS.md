@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-08. Branch: `collab/pr10` (media slice `7fe75711`, docs commits on top).
+Updated: 2026-11-08. Branch: `collab/pr10` (media slice `7fe75711`, new feature slice `0a57b61e`, docs commits on top).
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -23,14 +23,12 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr7` | `d28c8ae5` | `CollabDoc` command glue + in-memory `Hub` |
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
-| `collab/pr10` | `7fe75711` | media channel: pictures by `sha256`, upload/fetch, persistence |
+| `collab/pr10` | `7fe75711` + `0a57b61e` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate` |
 
-The Commit column names the slice commit; each branch also carries a documentation commit. Heads:
-`collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711` plus the docs commits on top.
-The working tree is
-clean: the work the chair saw uncommitted on 2026-11-08 is in `7fe75711` (`local.rs`,
-`transport.rs`, `session.rs`, `hub.rs`, `collab-proto`, `tests/two_clients.rs`, `ui-egui/collab.rs`,
-`docs/collab/*`) plus the docs commits.
+The Commit column names the slice commits; each branch also carries documentation commits. Heads:
+`collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711` then `0a57b61e`, plus the docs commits on
+top. The working tree is clean: the chair's uncommitted finding of 2026-11-08 is `7fe75711`; the
+second slice added `0a57b61e` (media kinds, TLS, command slices, tests, docs).
 
 All work is local. Nothing was pushed to `storytold/deckcraft`; a fork and a human decision are
 required for the upstream PR. The PR body is prepared in [`pr10.md`](pr10.md): title
@@ -74,9 +72,18 @@ stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decisi
 - `insert.picture`: the operation carries `sha256`, `name` and an optional final rect, never bytes.
   The server stores one object per digest (`PUT /v1/sessions/{id}/media/{sha256}`), every replica
   fetches it (`GET /media/{sha256}`), and a journal replay loads the object before the operation.
-  The desktop link uploads and fetches over plain `http://` derived from its `ws://` URL; a
-  `wss://` link needs a TLS HTTP client and refuses with a visible error until the host supplies
-  one.
+- `insert.video` / `insert.audio`: the same media channel with their own allowlist; the payload adds
+  `kind`. The media cache keeps separate budgets for pictures and for audio/video, so a clip cannot
+  evict pictures. The desktop link derives the HTTP scheme from the WebSocket link: `ws://` is a
+  plain socket, `wss://` a `rustls` connection with the platform root store.
+- `shape.fill`: a final fill (solid colour, `none`, `background`), one operation per shape.
+- `shape.line`: final outline values (colour, width, dash, cap, join, compound, heads) or `none`.
+- `format.*`: 17 allowlisted commands (`bold`, `italic`, `underline`, `strikethrough`,
+  `superscript`, `subscript`, `font`, `size`, `color`, `highlight`, `alignLeft/Center/Right`,
+  `justify`, `caps`, `spacing`, `clear`) over one explicit shape's text. Toggles need an explicit
+  `on`; `args` cannot carry `id`/`ids`/`index`; a table or a shape without text is refused.
+- `slide.duplicate`: structural, addressed by the source slide key; the copy is inserted after it.
+  Fill, line and format steps are not in per-user undo yet (only move/bounds/text are).
 
 ### Server (`apps/deckcraft-collab-server`)
 
@@ -86,9 +93,10 @@ stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decisi
 - Limits: message size, operations/second, participants.
 - Commit: `.pptx` from the authoritative document, `sha256`, base64 bytes, `warnings[]`, `409`
   on a stale `expectedVersion`.
-- Media: `PUT /v1/sessions/{id}/media/{sha256}` (session token, writer only, image allowlist,
-  8 MiB), `GET /media/{sha256}` (session/service token). Content-addressed under
-  `<store>/media/<sha256>`; 512 objects / 64 MiB per session; upload and byte counters in metrics.
+- Media: `PUT /v1/sessions/{id}/media/{sha256}` (session token, writer only, signature allowlist
+  for pictures/audio/video, 8 MiB per picture, 32 MiB per clip), `GET /media/{sha256}` (session or
+  service token). Content-addressed under `<store>/media/<sha256>`; 512 pictures / 64 MiB and 32
+  clips / 192 MiB per session; upload and byte counters in metrics.
 - Persistence: native base + append-only journal, snapshot every N ops, replay on restart
   through the same `apply` path. Without `COLLAB_STORE_DIR` the server is memory-only.
 - Logs/metrics contain ids, versions and counts; no slide content, text, media or tokens.
@@ -97,34 +105,36 @@ stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decisi
 
 | Command | Result |
 |---|---|
-| `cargo test -p deckcraft-collab` | 75 unit + 6 integration |
-| `cargo test -p deckcraft-collab-server` | 3 unit + 5 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch) |
-| `cargo test -p deckcraft-collab-proto` | 16 |
+| `cargo test -p deckcraft-collab` | 90 unit + 7 integration |
+| `cargo test -p deckcraft-collab-server` | 3 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist) |
+| `cargo test -p deckcraft-collab-proto` | 18 |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 |
 | `cargo test -p deckcraft-engine` | 558 passed, 1 ignored |
 | `cargo clippy -p deckcraft-engine -p deckcraft-collab -p deckcraft-collab-proto -p deckcraft-collab-server -p deckcraft-ui-egui --all-targets -- -D warnings` | clean |
 | `cargo fmt --check` | clean |
-| `cargo xtask layers` | 30 crates, no violations |
+| `cargo xtask layers` | 31 crates, no violations |
 
-Re-run on 2026-11-08 before the PR description: `fmt`, `collab-proto` 16, `collab` 75 + 6,
-`collab-server` 3 + 5, `ui-egui collab::` 17, all green; clippy over the four collab crates with
-`-D warnings` clean. `cargo test -p deckcraft-engine` and `cargo xtask layers` are from the earlier
+Re-run on 2026-11-08 after `0a57b61e`: `fmt`, `collab-proto` 18, `collab` 90 + 7, `collab-server`
+3 + 6, `ui-egui collab::` 17, all green; clippy over the four collab crates and `ui-egui` with
+`-D warnings` clean; `xtask layers` 31 crates. `cargo test -p deckcraft-engine` is from the earlier
 session, not re-run here.
 
 The socket tests were run against a real loopback server; the restart test creates a room, moves
 the version, shuts the server down, starts a new one on the same store and asserts the version
 and document came back. The media tests cover a rejected upload (viewer, wrong digest, no token),
-one object for repeated bytes, a picture applied from a reference, and a journal replay that
-loads the object before running the operation.
+one object for repeated bytes, a picture applied from a reference, an audio upload with its own
+allowlist, and a journal replay that loads the object before running the operation. The two-client
+convergence tests compare the delta of a fill/line/format/duplicate step on two adapters and the
+same MediaInsert applied on both replicas.
 
 ## TASK.md acceptance matrix
 
 | Criterion | State | Where / why |
 |---|---|---|
 | Two or more clients edit one presentation | ✅ for the v1 command set | hub, socket test, UI pipe test |
-| Insert a picture in a shared session | ✅ pictures on a plain `ws://` link | media channel, adapter and socket tests; video/audio open |
+| Insert a picture in a shared session | ✅ pictures, audio and video over `ws://` and `wss://` | media channel, adapter and socket tests |
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
-| Slides, shapes and order converge | ✅ for move/bounds/insert/delete/slide/group/order | collab tests |
+| Slides, shapes and order converge | ✅ for move/bounds/insert/delete/slide/group/order/fill/line/format/duplicate | collab tests |
 | Reconnect works | ✅ within the retained journal tail | client queue + resync; base transfer for an evicted tail is still open |
 | Per-user undo/redo | ✅ text/shape values; structural undo open | server history, `undo-conflict` |
 | Viewer cannot edit | ✅ server + engine gate | socket test, UI test |
@@ -135,37 +145,40 @@ loads the object before running the operation.
 
 ## What is NOT done (ordered by production impact)
 
-1. **Media beyond pictures.** The channel carries images only: video, audio, 3D models and fonts
-   need their own allowlists and limits, and a `wss://` desktop link needs a TLS HTTP client
-   (plain `ws://` already uploads and fetches). The browser link needs a media bridge too.
-2. **Full command surface.** Only the operations in `production.md` "What v1 syncs" are
-   collaborative. Fill, fonts, animations, transitions, tables, charts, SmartArt, diagrams and
-   most slide commands are refused in a shared session. The design rule stands: only commands
-   whose result is a deterministic function of the authoritative state, expressed as final
-   values, go on the wire; a raw `execute` is not safe (toggles and relative edits diverge).
-   Next candidates: `shape.fill/line`, `format.*` over explicit shapes/runs, `slide.duplicate`,
-   table cell edits, transitions.
+1. **Command surface beyond the new slices.** Fill, line, 17 `format.*` commands over whole shape
+   text and `slide.duplicate` are collaborative now. Still refused: fonts as a document asset,
+   animations, transitions, tables/SmartArt/charts, notes, run-range formatting and relative
+   effects. The design rule stands: only commands whose result is a deterministic function of the
+   authoritative state, expressed as final values, go on the wire; a raw `execute` is not safe
+   (toggles and relative edits diverge). Next candidates: table cell edits, transitions,
+   `arrange.align`/`distribute` as final bounds, animation steps.
+2. **Media refinement.** Fonts and 3D models are not in the media allowlist, and the browser link
+   still needs the same HTTP bridge. The desktop `wss://` path has a TLS client now (system roots;
+   a private CA must be in the store or `SSL_CERT_FILE`).
 3. **Text in tables and notes, rich runs.** Shape text is covered; table cells and notes need
    their own addressing and rebase. Formatting runs need a run-level payload, not whole-body.
-4. **Cabinet callback / host bridge.** The cabinet must create the file version from
+4. **Undo of fill/line/format.** Only move/bounds/text steps have a before/after image; the new
+   value steps are accepted but not undoable yet. Extending `Snapshot` to a fill/line image is the
+   next undo slice.
+5. **Cabinet callback / host bridge.** The cabinet must create the file version from
    `commit-result` and push `session/presence/commit` through `craft-web-host`. The desktop
    stores the bytes in `CollabUi::take_commit()`; no callback is wired. This is an external
    contract (same blocker as WordCraft).
-5. **Browser transport.** `apps/deckcraft-web` has no `web-sys` WebSocket link yet; `?collab=1`
+6. **Browser transport.** `apps/deckcraft-web` has no `web-sys` WebSocket link yet; `?collab=1`
    shows the UI in a truthful offline state. A browser bridge must forward frames and media
    fetches, and the host page must send the session token.
-6. **Optimistic preview.** Edits appear on `applied`, not on the keystroke/pointer release.
+7. **Optimistic preview.** Edits appear on `applied`, not on the keystroke/pointer release.
    Correct on a LAN, noticeable on a WAN. Preview needs a before-image and a rollback path; a
    rejected preview can be rolled back only if no other command has been applied since, otherwise
    the client must resync.
-7. **Structural undo.** Undo of slide/shape insert/delete is still out of v1; merge operations
+8. **Structural undo.** Undo of slide/shape insert/delete is still out of v1; merge operations
    (move, bounds, text set/insert/delete) are covered.
-8. **Large-deck and compatibility gates.** A 100+ slide/media performance test, a LibreOffice
+9. **Large-deck and compatibility gates.** A 100+ slide/media performance test, a LibreOffice
    open/repair gate for every commit, and a longer soak with three clients are still to add.
-9. **Base transfer for an evicted journal tail.** `resync` sends the tail only; if the tail was
-   compacted, a client that missed the base cannot rebuild. The store now survives restarts, so
-   the next step is a chunked `snapshot` carrying the native base.
-10. **Upstream PR.** Local only.
+10. **Base transfer for an evicted journal tail.** `resync` sends the tail only; if the tail was
+    compacted, a client that missed the base cannot rebuild. The store now survives restarts, so
+    the next step is a chunked `snapshot` carrying the native base.
+11. **Upstream PR.** Local only.
 
 ## How to run locally
 
@@ -200,17 +213,36 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 2. **Publish the PR only on a human decision**: the body is in [`pr10.md`](pr10.md); fork
    `storytold/deckcraft`, push the final stack as `feature/realtime-collaboration`, do not touch
    CI, do not mention agents. Nothing is pushed today.
-3. Extend the media channel to video/audio (allowlist, limits, adapter commands) and add the TLS
-   HTTP client for `wss://` links; test a large picture and a picture inserted twice.
+3. Add the web-sys link once the host contract is agreed; until then keep the browser UI honest,
+   and add the media bridge for `wss://` pages.
 4. Extend the command set in vertical slices with the same pattern: payload → normalize →
-   adapter run → confirmed command → test on two clients. Start with `shape.fill`, `shape.line`,
-   `format.*` over explicit shapes, then `slide.duplicate`.
-5. Add the web-sys link once the host contract is agreed; until then keep the browser UI honest.
+   adapter run → confirmed command → test on two clients. Next: table cell text, transitions,
+   `arrange.align`/`distribute` as final bounds, run-range formatting.
+5. Extend undo to fill/line/format value steps (an `Image::Fill`/`Image::Line` snapshot) so the
+   new slices are undoable like move/bounds/text.
 6. Add the LibreOffice commit gate and the 100-slide performance test.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-08 — media kinds, TLS and four command slices
+
+- Added audio and video to the media channel: signature allowlists (MP4/MOV/WebM/AVI,
+  WAV/FLAC/Ogg/MP3/M4A/AIFF/MIDI), 32 MiB per clip, separate 32 objects / 192 MiB budgets so a
+  clip cannot evict pictures; `Payload::MediaInsert { kind, sha256, name, rect }`, adapter run
+  through `insert.video`/`insert.audio`, `GET /media` content type from the signature.
+- Added the TLS HTTP client for media: the desktop link derives `http`/`https` from
+  `ws://`/`wss://`, `rustls` + `rustls-native-certs` (system roots, `SSL_CERT_FILE`), default
+  ports, `Host` without the default port, IPv6 brackets.
+- Added four command slices with the same pattern (payload → normalize → adapter → confirmed →
+  two-replica test): `shape.fill` (solid/none/background), `shape.line` (final outline values),
+  17 `format.*` commands over one explicit shape's text (`FormatCmd` allowlist, no address in
+  `args`, explicit `on`), `slide.duplicate` addressed by slide key.
+- Tests: `collab-proto` 18, `collab` 90 + 7, `collab-server` 3 + 6, `ui-egui collab::` 17;
+  clippy `-D warnings` and `fmt` clean; `xtask layers` 31 crates. Engine not re-run.
+- Commit `0a57b61e` on `collab/pr10`; docs (rfc §3.2.1/§4.1/§13/§14.1, production, pr10) updated.
+  Nothing pushed.
 
 ### 2026-11-08 — PR prep and formal RFC proposal
 
