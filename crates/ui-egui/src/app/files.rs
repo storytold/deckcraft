@@ -309,6 +309,9 @@ impl SlideApp {
     pub(crate) fn pick_at(&mut self, arg: &str, then: impl FnOnce(&mut Self, String) + 'static) {
         let bind = match self.capture_file_target() {
             FileTarget::Absent => PickBind::Free,
+            // Nothing is selected to put the file on (an empty presentation): the file goes to the
+            // presentation, which `viewing_target` would otherwise refuse as a moved selection.
+            FileTarget::Document { doc, place: FilePlace::Unspecified } => PickBind::Doc(doc),
             target => PickBind::Place(target),
         };
         self.pick_bound(bind, false, arg, then);
@@ -321,10 +324,12 @@ impl SlideApp {
 
     fn pick_bound(&mut self, bind: PickBind, save: bool, arg: &str, then: impl FnOnce(&mut Self, String) + 'static) {
         if let Some(start) = self.services.start_pick.as_mut() {
-            if self.pending_picks.is_empty()
-                && let Some(answer) = start(save, arg)
-            {
+            if !self.pending_picks.is_empty() {
+                self.set_status("A file dialog is already open");
+            } else if let Some(answer) = start(save, arg) {
                 self.pending_picks.push(PendingPick { answer, bind, then: Box::new(then) });
+            } else {
+                self.set_status("The file dialog could not be opened");
             }
             return;
         }

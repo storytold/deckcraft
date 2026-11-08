@@ -79,3 +79,48 @@ fn an_answer_runs_on_the_presentation_that_asked() {
     app.drain_picks();
     assert_eq!(ran_on.get(), Some(asked));
 }
+
+/// A second request while a sheet is open is dropped, and the status line says why.
+#[test]
+fn a_request_while_a_sheet_is_open_says_so() {
+    let (_tx, rx) = mpsc::channel();
+    let rx = Rc::new(Cell::new(Some(rx)));
+    let services = Services { start_pick: Some(Box::new(move |_, _| rx.take())), ..Services::default() };
+    let mut app = SlideApp::new(Session::with_new(), services);
+    app.pick_free("open", |_, _| {});
+    app.pick_free("open", |_, _| {});
+    assert_eq!(app.pending_picks.len(), 1);
+    assert_eq!(app.status.as_ref().map(|s| s.0.as_str()), Some("A file dialog is already open"));
+}
+
+/// A sheet that cannot start leaves nothing pending, and the status line says why.
+#[test]
+fn a_sheet_that_cannot_start_says_so() {
+    let services = Services { start_pick: Some(Box::new(|_, _| None)), ..Services::default() };
+    let mut app = SlideApp::new(Session::with_new(), services);
+    app.pick_free("open", |_, _| {});
+    assert!(app.pending_picks.is_empty());
+    assert_eq!(app.status.as_ref().map(|s| s.0.as_str()), Some("The file dialog could not be opened"));
+}
+
+/// Inserting a file into a presentation with no slide to select binds to the presentation, so the
+/// answer runs instead of being refused as a moved selection.
+#[test]
+fn an_insert_into_a_presentation_with_no_slide_runs() {
+    let (tx, rx) = mpsc::channel();
+    let rx = Rc::new(Cell::new(Some(rx)));
+    let services = Services { start_pick: Some(Box::new(move |_, _| rx.take())), ..Services::default() };
+    let mut app = SlideApp::new(Session::with_new(), services);
+    while app.session.active().is_some_and(|d| d.current_slide().is_some()) {
+        let _ = app.session.execute("slide.delete", &serde_json::json!({}));
+        if app.session.active().is_some_and(|d| d.current_slide().is_some()) && app.session.active().map(|d| d.doc.slides.len()) == Some(1) {
+            break;
+        }
+    }
+    let ran = Rc::new(Cell::new(false));
+    let seen = Rc::clone(&ran);
+    app.pick_at("picture", move |_, _| seen.set(true));
+    tx.send(Some("/tmp/x.png".into())).unwrap();
+    app.drain_picks();
+    assert!(ran.get());
+}
