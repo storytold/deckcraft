@@ -125,12 +125,8 @@ impl Adapter {
         // v1 (RFC §13, open question 4).
         let old_image = self.capture(&before, op);
 
-        self.run(session, &before, head, op)?;
-
+        let out = self.apply_confirmed(session, head, actor, op)?;
         let after = session.doc().map_err(|_| Rejection::invalid("the document closed while applying", Some(head)))?.doc.clone();
-        self.keys.sync(&after, &mut self.issuer);
-        let out = delta(&self.keys, &before, &after);
-        self.bury(&before, &out);
 
         match &op.history {
             Some(HistoryAction::Undo { .. }) => self.history.of(actor).commit_undo(),
@@ -144,6 +140,20 @@ impl Adapter {
                 }
             }
         }
+        Ok(out)
+    }
+
+    /// Apply one already-confirmed operation and answer its delta, without touching the actor's
+    /// history. The client uses this for `applied`: the server sent the command it actually ran,
+    /// so every replica can run the same command in the same order and converge. The server's
+    /// own [`Self::apply`] uses it too, then records the undo step.
+    pub fn apply_confirmed(&mut self, session: &mut Session, head: u64, _actor: &str, op: &OpEnvelope) -> Result<Delta, Rejection> {
+        let before = session.doc().map_err(|_| Rejection::invalid("no document open", Some(head)))?.doc.clone();
+        self.run(session, &before, head, op)?;
+        let after = session.doc().map_err(|_| Rejection::invalid("the document closed while applying", Some(head)))?.doc.clone();
+        self.keys.sync(&after, &mut self.issuer);
+        let out = delta(&self.keys, &before, &after);
+        self.bury(&before, &out);
         Ok(out)
     }
 

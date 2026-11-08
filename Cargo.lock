@@ -1087,12 +1087,14 @@ dependencies = [
 name = "deckcraft-collab"
 version = "0.15.0"
 dependencies = [
+ "base64 0.22.1",
  "deckcraft-collab-proto",
  "deckcraft-engine",
  "deckcraft-format",
  "deckcraft-model",
  "deckcraft-pptx",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
