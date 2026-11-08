@@ -7,8 +7,13 @@ use crate::record::Rec;
 
 /// Largest picture inflated from a compressed metafile.
 const MAX_INFLATED: usize = 64 << 20;
-/// Most bytes all of a file's pictures may decode to together (the native format's media budget).
-const MAX_TOTAL: usize = 4 << 30;
+/// Most bytes all of a file's pictures may decode to together (the native format's media budget,
+/// `MAX_TOTAL_MEDIA` in `deckcraft-format`). It is 4 GiB, which a 32-bit `usize` (wasm32) can't
+/// hold: there `4 << 30` wraps to 0, so the address space is the limit instead.
+const MAX_TOTAL: usize = if usize::BITS > 32 { 4 << 30 } else { usize::MAX };
+// A zero or tiny budget would drop every picture without a word, and the shift above can wrap on
+// a 32-bit target (wasm32) without any error, so the build checks it on every target.
+const _: () = assert!(MAX_TOTAL >= MAX_INFLATED);
 
 /// A decoded picture: file extension, content type and bytes as a file of that type.
 #[derive(Clone, Debug, PartialEq)]
