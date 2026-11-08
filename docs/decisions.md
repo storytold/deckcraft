@@ -27,10 +27,11 @@ size and SHA-256.
 
 ## D2. Inference is isolated and runs at a reduced cadence
 
-**Decision:** one worker thread owns the model. At most one frame waits; a newer frame replaces it.
-The compositor uses the last matte until a new one arrives, with a minimum 2 s between submissions,
-and reports `last_ms`, `runs` and `reused`. RTen sizes its own CPU pool; `DECKCRAFT_MATTE_THREADS`
-caps it explicitly.
+**Decision:** one worker thread owns the model. At most one frame waits, and the caller offers a new
+one only when nothing is waiting and the 2 s minimum interval has elapsed, so a frame already in the
+queue is never replaced (`MatteWorker::submit` does replace it when a host calls it directly).
+The compositor uses the last matte until a new one arrives, and reports `last_ms`, `runs` and
+`reused`. RTen sizes its own CPU pool; `DECKCRAFT_MATTE_THREADS` caps it explicitly.
 
 **Why:** 2.1 s/frame against a 30–60 Hz camera and a UI thread that must keep drawing. Running the
 model inline would freeze the window; running it per frame would queue minutes of work.

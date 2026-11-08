@@ -51,7 +51,8 @@ impl MatteWorker {
         MatteWorker { shared, interval }
     }
 
-    /// Offer a frame. At most one waits; a newer frame replaces an older one.
+    /// Offer a frame. At most one waits; a newer frame replaces an older one. `process` only calls
+    /// this when nothing is waiting and the interval has elapsed, so the queue never grows.
     pub fn submit(&self, frame: RgbaFrame) {
         if let Ok(mut s) = self.shared.0.lock() {
             s.pending = Some(frame);
@@ -145,7 +146,14 @@ fn run(shared: Arc<(Mutex<State>, Condvar)>) {
         };
         if let (Some(frame), Some(mut segmenter)) = job {
             let start = std::time::Instant::now();
-            let result = segmenter.matte(&frame);
+            // A backend that panics must not take the thread with it: the state would keep a
+            // pending frame that nobody consumes, `process` would return `Ok(None)` forever and
+            // nothing would report it. The panic becomes an `Inference` error, which the caller
+            // already shows, and the interval gate retries.
+            let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| segmenter.matte(&frame))) {
+                Ok(result) => result,
+                Err(payload) => Err(MatteError::Inference(format!("the segmenter panicked: {}", panic_text(&*payload)))),
+            };
             let ms = start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
             if let Ok(mut s) = shared.0.lock() {
                 s.segmenter = Some(segmenter);
@@ -161,6 +169,11 @@ fn run(shared: Arc<(Mutex<State>, Condvar)>) {
             }
         }
     }
+}
+
+/// The message a caught panic payload carries, for the error the caller sees.
+fn panic_text(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload.downcast_ref::<&str>().copied().or_else(|| payload.downcast_ref::<String>().map(String::as_str)).unwrap_or("no message")
 }
 
 #[cfg(test)]
@@ -230,6 +243,49 @@ mod tests {
         let t = w.timings();
         assert!(t.runs >= 1);
         assert!(t.last_ms <= 5_000);
+    }
+
+    /// A backend that panics must be reported, not allowed to end the thread and strand the
+    /// pending frame (which would make `process` return `Ok(None)` forever).
+    struct PanicSegmenter;
+
+    impl Segmenter for PanicSegmenter {
+        fn matte(&mut self, _frame: &RgbaFrame) -> Result<Matte, MatteError> {
+            panic!("the model exploded");
+        }
+
+        fn name(&self) -> &'static str {
+            "panicking"
+        }
+    }
+
+    #[test]
+    fn a_panicking_segmenter_is_an_error_and_the_worker_keeps_running() {
+        let w = MatteWorker::new(Box::new(PanicSegmenter), Duration::from_millis(0));
+        let f = frame();
+        let opts = CompositeOptions::new(CameraBackgroundMode::Blur);
+        let _ = w.process(&f, &opts, None, true);
+        let mut error = None;
+        for _ in 0..200 {
+            error = w.error();
+            if error.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        match &error {
+            Some(MatteError::Inference(message)) => assert!(message.contains("the model exploded"), "{message}"),
+            other => panic!("{other:?}"),
+        }
+        // The thread survived: a later submission is consumed and runs again.
+        let _ = w.process(&f, &opts, None, true);
+        for _ in 0..200 {
+            if w.timings().runs >= 2 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(w.timings().runs >= 2, "the worker still runs after the panic");
     }
 
     #[test]

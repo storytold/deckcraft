@@ -76,11 +76,12 @@ Measured on this Windows x64 machine, release build, CPU only, 2026-11-07:
 | tract-onnx 0.23 / `BiRefNet_lite` (onnx-community) | 1024×1024 | 33.7 s | rejected: unusable live, and 224 MB |
 
 Two seconds per frame is far below a camera's frame rate, so inference never runs on the UI thread:
-`MatteWorker` owns one thread, keeps at most one pending frame (a newer frame replaces an older one),
-and the compositor reuses the last matte until a new one arrives. `Timings` reports `last_ms`,
-`runs` and `reused` frames; the panel shows them. The default minimum interval is 2 s. RTen sizes
-its own CPU pool to the machine's physical cores; `DECKCRAFT_MATTE_THREADS=N` caps it for a
-constrained machine (a hand-made pool was measured slower, so it is not the default).
+`MatteWorker` owns one thread, keeps at most one pending frame and offers a new one only when nothing
+is waiting and the interval has elapsed (a queued frame is not replaced), and the compositor reuses
+the last matte until a new one arrives. `Timings` reports `last_ms`, `runs` and `reused` frames; the
+panel shows them. The default minimum interval is 2 s. RTen sizes its own CPU pool to the machine's
+physical cores; `DECKCRAFT_MATTE_THREADS=N` caps it for a constrained machine (a hand-made pool was
+measured slower, so it is not the default).
 
 The real-model test is ignored by default:
 
