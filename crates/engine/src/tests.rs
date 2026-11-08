@@ -932,6 +932,7 @@ fn ungrouping_a_nested_group_frees_its_shapes_into_the_outer_group() {
         assert_eq!(order, [sid(a), sid(b), sid(c)], "case {n}");
         for (id, was) in [a, b, c].into_iter().zip(before) {
             let now = sites(&s, id);
+            assert_eq!(was.len(), now.len(), "case {n}: shape {id}");
             assert!(was.iter().zip(&now).all(|(p, q)| (*p - *q).hypot() < 1e-6), "case {n}: shape {id} moved from {was:?} to {now:?}");
         }
     }
@@ -947,11 +948,13 @@ fn ungrouping_a_nested_group_frees_its_shapes_into_the_outer_group() {
     let before = [a, b, c, d].map(|id| sites(&s, id));
     let r = s.execute("arrange.ungroup", &json!({"ids": [inner, middle]})).unwrap();
     assert_eq!(r["ids"], json!([a, b, c]));
+    assert_eq!(s.doc().unwrap().selection.shapes, [sid(a), sid(b), sid(c)]);
     let st = s.doc().unwrap();
     let order: Vec<ShapeId> = deckcraft_model::find_shape(st.shapes(), sid(outer)).unwrap().children().iter().map(|x| x.id).collect();
     assert_eq!(order, [sid(a), sid(b), sid(c), sid(d)]);
     for (id, was) in [a, b, c, d].into_iter().zip(before) {
         let now = sites(&s, id);
+        assert_eq!(was.len(), now.len(), "shape {id}");
         assert!(was.iter().zip(&now).all(|(p, q)| (*p - *q).hypot() < 1e-6), "shape {id} moved from {was:?} to {now:?}");
     }
 }
