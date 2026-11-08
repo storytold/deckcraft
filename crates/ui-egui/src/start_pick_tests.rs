@@ -124,3 +124,92 @@ fn an_insert_into_a_presentation_with_no_slide_runs() {
     app.drain_picks();
     assert!(ran.get());
 }
+
+/// An app whose sheets answer on the channels in `answers`, in the order they are asked for, with
+/// `n` untitled presentations that have unsaved changes.
+fn untitled_apps(n: usize) -> (SlideApp, Rc<std::cell::RefCell<Vec<mpsc::Sender<Option<String>>>>>) {
+    let senders = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let kept = Rc::clone(&senders);
+    let services = Services {
+        start_pick: Some(Box::new(move |_, _| {
+            let (tx, rx) = mpsc::channel();
+            kept.borrow_mut().push(tx);
+            Some(rx)
+        })),
+        ..Services::default()
+    };
+    let mut app = SlideApp::new(Session::with_new(), services);
+    for i in 0..n {
+        if i > 0 {
+            app.session.execute("file.new", &serde_json::json!({})).unwrap();
+        }
+        app.session.execute("slide.new", &serde_json::json!({})).unwrap();
+    }
+    assert_eq!(app.session.documents().iter().filter(|d| d.is_dirty()).count(), n);
+    (app, senders)
+}
+
+fn answer(app: &mut SlideApp, senders: &Rc<std::cell::RefCell<Vec<mpsc::Sender<Option<String>>>>>, path: Option<String>) {
+    let tx = senders.borrow_mut().pop().unwrap();
+    tx.send(path).unwrap();
+    app.drain_picks();
+}
+
+fn temp_deck(name: &str) -> String {
+    let dir = std::env::temp_dir().join("deckcraft-after-save-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.join(name).to_string_lossy().to_string()
+}
+
+/// Quit › Save with two untitled presentations asks for each in turn, and quits after the last.
+#[test]
+fn quit_save_goes_on_after_each_sheet_and_quits_at_the_end() {
+    let ctx = egui::Context::default();
+    let (mut app, senders) = untitled_apps(2);
+    app.save_all_then_quit(&ctx);
+    assert!(!app.quit_confirmed, "the sheet has not answered");
+    app.resume_after_save(&ctx);
+    assert!(!app.quit_confirmed, "still waiting for the dialog");
+
+    answer(&mut app, &senders, Some(temp_deck("quit-1.deckcraft")));
+    app.resume_after_save(&ctx);
+    assert!(!app.quit_confirmed, "one presentation is still unsaved");
+    assert!(app.file_dialog_open(), "its dialog is open");
+
+    answer(&mut app, &senders, Some(temp_deck("quit-2.deckcraft")));
+    app.resume_after_save(&ctx);
+    assert!(app.quit_confirmed);
+}
+
+/// Cancelling the Save sheet keeps the app open and ends the wait.
+#[test]
+fn quit_save_cancelled_does_not_quit() {
+    let ctx = egui::Context::default();
+    let (mut app, senders) = untitled_apps(1);
+    app.save_all_then_quit(&ctx);
+    answer(&mut app, &senders, None);
+    app.resume_after_save(&ctx);
+    assert!(!app.quit_confirmed);
+    assert!(!app.file_dialog_open());
+    app.resume_after_save(&ctx);
+    assert!(!app.quit_confirmed, "the wait ended");
+}
+
+/// Close › Save closes the presentation once the sheet has saved it, and not if it was cancelled.
+#[test]
+fn close_save_closes_after_the_sheet_answers() {
+    let ctx = egui::Context::default();
+    let (mut app, senders) = untitled_apps(2);
+    let before = app.session.documents().len();
+    app.save();
+    app.close_after_save();
+    answer(&mut app, &senders, Some(temp_deck("close.deckcraft")));
+    app.resume_after_save(&ctx);
+    assert_eq!(app.session.documents().len(), before - 1);
+
+    app.save();
+    app.close_after_save();
+    answer(&mut app, &senders, None);
+    app.resume_after_save(&ctx);
+    assert_eq!(app.session.documents().len(), before - 1, "a cancelled save closes nothing");
+}

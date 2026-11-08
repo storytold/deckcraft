@@ -1,6 +1,6 @@
 use super::{
-    FilePlace, FilePurpose, FileTarget, InboxEvent, LocatedPlace, PendingFile, PendingPick, PickBind, RECENT_MAX, SlideApp, Target, UiRequest, Value,
-    ViewMode, dialogs, json, media,
+    AfterSave, FilePlace, FilePurpose, FileTarget, InboxEvent, LocatedPlace, PendingFile, PendingPick, PickBind, RECENT_MAX, SlideApp, Target,
+    UiRequest, Value, ViewMode, dialogs, json, media,
 };
 
 #[derive(Default)]
@@ -375,6 +375,54 @@ impl SlideApp {
                     {
                         (pick.then)(self, path);
                     }
+                }
+            }
+        }
+    }
+
+    fn dirty_count(&self) -> usize {
+        self.session.documents().iter().filter(|d| d.is_dirty()).count()
+    }
+
+    /// Quit › Save: quits at once when everything is saved; otherwise a Save dialog is open, and
+    /// the quit goes on from [`Self::resume_after_save`] as each one answers.
+    pub(crate) fn save_all_then_quit(&mut self, ctx: &egui::Context) {
+        if self.save_all() {
+            self.quit_confirmed = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else {
+            self.after_save = Some(AfterSave::Quit { dirty: self.dirty_count() });
+        }
+    }
+
+    /// Close › Save of the active presentation, after `save` left it unsaved because a Save dialog
+    /// is open: it closes once that dialog has saved it.
+    pub(crate) fn close_after_save(&mut self) {
+        if self.file_dialog_open()
+            && let Some(uid) = self.session.active().map(|d| d.uid)
+        {
+            self.after_save = Some(AfterSave::Close(uid));
+        }
+    }
+
+    /// Goes on with a Quit or Close that waited for Save dialogs, once none is open. A dialog that
+    /// was cancelled (or failed) saved nothing more, and ends the wait.
+    pub(crate) fn resume_after_save(&mut self, ctx: &egui::Context) {
+        if self.file_dialog_open() {
+            return;
+        }
+        match self.after_save.take() {
+            None => {}
+            Some(AfterSave::Quit { dirty }) => {
+                let now = self.dirty_count();
+                if now < dirty {
+                    self.save_all_then_quit(ctx);
+                }
+            }
+            Some(AfterSave::Close(uid)) => {
+                if let Some(index) = self.session.documents().iter().position(|d| d.uid == uid && !d.is_dirty()) {
+                    self.session.set_active(index);
+                    let _ = self.session.execute("file.close", &json!({}));
                 }
             }
         }

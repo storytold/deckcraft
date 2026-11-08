@@ -5,7 +5,7 @@ use super::state::{FilePlace, FilePurpose, ImeDescriptorKey, ImeDestination, Ime
 #[cfg(not(target_arch = "wasm32"))]
 use super::updates_ui;
 use super::{
-    AnimPreview, ControlRequest, FileTarget, HashMap, ImeCancelled, ImeComposition, ImeResetPhase, ImeTerminalPending, InputTarget, Mods,
+    AfterSave, AnimPreview, ControlRequest, FileTarget, HashMap, ImeCancelled, ImeComposition, ImeResetPhase, ImeTerminalPending, InputTarget, Mods,
     PendingFile, PendingPick, Perf, PickBind, Receiver, Session, SlideApp, Target, UI_COMMANDS, UiRequest, Value, backstage, canvas, capture,
     dialogs, doc_window, eyedropper, json, media, menus, notes, panes, preview, qat, ribbon, selpane, show, sorter, status, textures, theme, thumbs,
     toast, uifonts,
@@ -108,6 +108,7 @@ impl SlideApp {
             next_file_id: 1,
             pending_files: Vec::new(),
             pending_picks: Vec::new(),
+            after_save: None,
             host_start: None,
             ime_tracker: egui::ime_context::ImeContextTracker::new(),
             ime_pending: None,
@@ -229,6 +230,7 @@ impl SlideApp {
             // window that starts hidden must still apply a file picked before its first UI pass.
             self.drain_inbox();
             self.drain_picks();
+            self.resume_after_save(ctx);
         }
         self.drain_screenshots();
         // `raw_input_hook` ran before this logic pass. This is normally a no-op now that
