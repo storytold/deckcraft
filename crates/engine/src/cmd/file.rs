@@ -361,7 +361,8 @@ pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
 pub use deckcraft_pdf::{PAPERS, paper_size};
 
 /// PDF options from command params: `{layout: slides|notes|handouts, perPage, dpi, slides,
-/// includeHidden, textLayer, frame, grayscale, paper: letter|a4|legal|a3, orientation: portrait|landscape}` for a presentation of `count` slides. `slides` is a list of
+/// includeHidden, textLayer, frame, grayscale, annotations, paper: letter|a4|legal|a3, orientation: portrait|landscape}` for a presentation of `count` slides. `annotations`
+/// (default true) writes link annotations for hyperlinks and shape actions; a print job turns it off. `slides` is a list of
 /// 0-based indices or a range as typed in PowerPoint's Print page (`"1-3, 5"`, 1-based).
 pub fn pdf_options(p: &Value, count: usize) -> Result<deckcraft_pdf::PdfOptions> {
     let mut o = deckcraft_pdf::PdfOptions { layout: deckcraft_pdf::PageLayout::Slides, ..Default::default() };

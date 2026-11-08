@@ -66,8 +66,8 @@ craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.
 # Shared frontend components (printing::network is storytold/craft-libs#112) and the shared print
 # backends and registry (WS-Print, IPP, tracked jobs: storytold/craft-libs#116, which carries the
 # craft-wsd core and craft-job). Engines stay independent of both; only deckcraft-ui-egui uses them.
-craft-ui = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "refs/pull/112/head" }
-craft-print = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "refs/pull/116/head", default-features = false }
+craft-ui = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "refs/pull/112/head" }
+craft-print = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "refs/pull/116/head", default-features = false }
 i_overlay = "9"
 quick-xml = "0.41"
 zip = { version = "3", default-features = false, features = ["deflate"] }

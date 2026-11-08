@@ -10,9 +10,11 @@ workspace = true
 
 [features]
 # File > Print > Network printer (WS-Print and IPP). On by default; build with --no-default-features to
-# leave the destination, its code and craft-print's `wsd` and `ipp` backends out. Web builds (wasm32)
-# never have it: there is no socket to open (build.rs turns the feature and the target into the
-# `network_print` cfg). Nothing connects until a printer's address is queried or a job is confirmed.
+# leave out the Network printer destination, its code and craft-print's network backends (`wsd` and
+# `ipp`). craft-print itself stays a required dependency: printing to a system queue uses it either
+# way. Web builds (wasm32) never have the feature: there is no socket to open (build.rs turns the
+# feature and the target into the `network_print` cfg). Nothing connects until a printer's address
+# is queried or a job is confirmed.
 default = ["network-print"]
 network-print = ["craft-print/wsd", "craft-print/ipp"]
 
