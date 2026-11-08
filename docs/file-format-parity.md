@@ -1,16 +1,6 @@
 # File-format parity with PowerPoint
 
-> **2026-11-07 update:** missing slide relationships participate in damage reporting
-> and repaired-copy handling. Fidelity estimates unchanged.
-
-A listed slide whose relationship is missing is included in `lostSlides`, as an
-unreadable slide part already was. A synthetic 13-slide test verifies that all
-seven omitted slides are reported and that the engine opens a repaired copy
-without the original save path. This prevents a normal Save from overwriting the
-damaged source with the partial deck. It does not recover missing slide contents
-or establish the cause of the field report #1910.
-
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** minor (cell anchorCtr, vertOverflow/horzOverflow, compatLnSpc, normalizeH, thaiDist, table rtl, run altLang and reflection transforms round-trip; Reuse Slides brings referenced custom table styles; previous: minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-07 · **Change:** trivial (a slide whose relationship is missing is reported in `lostSlides`; previous: minor (cell anchorCtr, vertOverflow/horzOverflow, compatLnSpc, normalizeH, thaiDist, table rtl, run altLang and reflection transforms round-trip; Reuse Slides brings referenced custom table styles; previous: minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233))) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every format PowerPoint reads or writes, DeckCraft's support, fidelity and how it is tested.
 Gaps are itemized in [gaps.md](gaps.md#file-formats). Dimension score: **~58% ready**
@@ -127,11 +117,9 @@ the round trip even though DeckCraft doesn't model it.
 
 ## Revision history
 
-- 2026-11-07: Report missing slide relationships and protect the damaged source;
-  no fidelity score change.
-
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-07 | trivial | A slide-list entry whose relationship is missing is reported in `lostSlides` like an unreadable slide part, so the deck opens as a repaired copy (#1910) |
 | 2026-11-02 | minor | Optional table RTL direction is read and written as `a:tblPr/@rtl`; native and two PPTX saves preserve true, false and absent values with distinguishable column text |
 | 2026-11-02 | minor | Text runs preserve alternate-language metadata in native and PPTX round trips |
 | 2026-11-03 | trivial | Reuse Slides transfers referenced custom table styles from native and PPTX sources; grouped tables, undo, native save/reopen and style-id conflicts are covered |
