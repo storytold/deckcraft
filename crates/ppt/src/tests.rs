@@ -177,6 +177,10 @@ fn streams(token: u32) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
 
 /// The test document with its slide listed `times` times in the slide list.
 fn streams_listing(token: u32, times: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    streams_of(token, times, slide())
+}
+
+fn streams_of(token: u32, times: usize, slide: Vec<u8>) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let pictures = atom(0xF01E, 0x6E0, &[&[0u8; 17][..], &png()].concat());
     let mut fbse = vec![0u8; 36];
     fbse[0] = 6;
@@ -223,7 +227,7 @@ fn streams_listing(token: u32, times: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     );
     let mut stream = vec![];
     let mut offsets = vec![];
-    for part in [document, master(), slide(), notes()] {
+    for part in [document, master(), slide, notes()] {
         offsets.push(stream.len() as u32);
         stream.extend_from_slice(&part);
     }
@@ -342,6 +346,36 @@ fn a_slide_listed_again_is_imported_once() {
         "Say hello
 Then wave"
     );
+}
+
+/// Text with very many formatting runs is laid into runs in about linear time. Each lookup used to
+/// scan the run starts from the beginning, so the cost grew with runs²: in a debug build these 640k
+/// one-character runs (about 6 MB of file) took 75 s that way, and take about 2 s with binary search.
+#[test]
+fn many_character_runs_are_not_quadratic() {
+    const N: usize = 640_000;
+    let text: String = (0..N).map(|i| if i % 2 == 0 { 'a' } else { '\u{0B}' }).collect();
+    let mut style = vec![];
+    style.extend_from_slice(&(N as u32 + 1).to_le_bytes());
+    style.extend_from_slice(&0u16.to_le_bytes());
+    style.extend_from_slice(&0u32.to_le_bytes()); // a paragraph exception with no fields
+    for _ in 0..=N {
+        style.extend_from_slice(&1u32.to_le_bytes());
+        style.extend_from_slice(&0u32.to_le_bytes()); // a character exception with no fields
+    }
+    let shape = container(
+        rt::SP_CONTAINER,
+        0,
+        &[fsp(202, 2060, 0xA00), anchor(0, 0, 1000, 1000), text_box(1, &text, &[atom(rt::STYLE_TEXT_PROP, 0, &style)])],
+    );
+    let slide = container(rt::SLIDE, 0, &[slide_atom(1, MASTER_ID, 0x7), drawing(None, &[shape])]);
+    let (cu, doc, pics) = streams_of(0xE391_C05F, 1, slide);
+    let bytes = crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &doc), ("Pictures", &pics)]);
+    let t = std::time::Instant::now();
+    let p = crate::import(&bytes).unwrap();
+    assert!(t.elapsed() < std::time::Duration::from_secs(20), "{:?}", t.elapsed());
+    let runs = &p.slides[0].shapes[0].text.as_ref().unwrap().paragraphs[0].runs;
+    assert_eq!(runs.iter().filter(|r| r.kind == RunKind::Break).count(), N / 2);
 }
 
 #[test]

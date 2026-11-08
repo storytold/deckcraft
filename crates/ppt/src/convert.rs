@@ -606,7 +606,10 @@ impl<'a> Ctx<'a> {
         };
         let para_starts = starts(&mut block.para_runs.iter().map(|r| r.0));
         let char_starts = starts(&mut block.char_runs.iter().map(|r| r.0));
-        let run_at = |starts: &[usize], i: usize| starts.iter().rposition(|&s| s <= i);
+        // The starts never decrease (a running sum), so both lookups are binary searches. A scan per
+        // run, break and field made text with many runs quadratic: 1M one-character runs, about 10 MB
+        // of file, took minutes.
+        let run_at = |starts: &[usize], i: usize| starts.partition_point(|&s| s <= i).checked_sub(1);
         let mut out = vec![];
         let mut start = 0usize;
         loop {
@@ -656,7 +659,7 @@ impl<'a> Ctx<'a> {
                     continue;
                 }
                 // A text run: up to the next format change, field, break or the paragraph's end.
-                let next_change = char_starts.iter().copied().find(|&s| s > i).unwrap_or(end).min(end);
+                let next_change = char_starts.get(char_starts.partition_point(|&s| s <= i)).copied().unwrap_or(end).min(end);
                 let mut j = i;
                 while j < next_change && !fields.contains_key(&j) && chars.get(j) != Some(&0x0B) {
                     j += 1;
