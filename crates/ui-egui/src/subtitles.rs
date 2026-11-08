@@ -101,6 +101,8 @@ impl Subtitles {
         let (status, dir) = model::discover_files(&model::default_roots(), &whisper_tiny());
         self.model = status;
         self.model_dir = dir;
+        // A pending hash check belongs to the folder it was started for; this one replaced it.
+        self.verifying = None;
     }
 
     /// Use a directory the user chose by hand: any of the model files' folder. It is reported by

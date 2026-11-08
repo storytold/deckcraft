@@ -223,12 +223,10 @@ mod tests {
         assert!(!a.provider_equivalent(&SubtitleSettings { microphone: None, ..b.clone() }));
         assert!(!a.provider_equivalent(&SubtitleSettings { on: false, ..b }));
         // A hand-edited or newer accelerator spelling must not cost the rest of the settings.
-        let lenient: SubtitleSettings =
-            serde_json::from_str(r#"{"spoken":"fr","accelerator":"npu-3000"}"#).expect("lenient accelerator");
+        let lenient: SubtitleSettings = serde_json::from_str(r#"{"spoken":"fr","accelerator":"npu-3000"}"#).expect("lenient accelerator");
         assert_eq!(lenient.spoken, "fr");
         assert_eq!(lenient.accelerator, Accelerator::Cpu, "an unknown accelerator is the default");
-        let spelled: SubtitleSettings =
-            serde_json::from_str(r#"{"accelerator":"OpenVINO"}"#).expect("a lenient spelling is read");
+        let spelled: SubtitleSettings = serde_json::from_str(r#"{"accelerator":"OpenVINO"}"#).expect("a lenient spelling is read");
         assert_eq!(spelled.accelerator, Accelerator::OpenVino, "a known accelerator spelled differently is kept");
         assert!(SPOKEN_LANGUAGES.iter().any(|(t, _)| *t == AUTO_LANGUAGE));
         assert!(SUBTITLE_LANGUAGES.iter().all(|(t, _)| *t != AUTO_LANGUAGE));

@@ -84,6 +84,7 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-07 | minor | Live subtitles register `deckcraft-asr` at L2 (`wasm32`-checked: provider protocol, audio preprocessing, caption layout, settings, model manifest) and the native `deckcraft-asr-candle` backend at L6 (candle Whisper, cpal capture, the decode worker) |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-14 | minor | Community PR wave folded: one L2/L5/L6 row each; command registry 320 (`cmd!` registrations in `cmd/*`), 41 dialogs (titled in `dialogs.rs`), 202k lines, 24 crates (`metafile` added at L0), 1,641 tests. The per-PR rows below give the counts each PR saw on its own branch |
 | 2026-10-14 | minor | Size and Position dialog (`shape.sizePosition`): position, size, rotation, scale and lock aspect in one undo step. 227 commands, 28 dialogs |
