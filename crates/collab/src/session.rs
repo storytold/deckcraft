@@ -227,6 +227,36 @@ impl DocSession {
         Ok(out)
     }
 
+    /// Replay one already-accepted operation from the journal.
+    ///
+    /// The stored `Applied` already carries the authoritative command: replay must not re-run the
+    /// history checks (there is no client undo on this path) and must not record a new undo step,
+    /// but it fills the same version, dedup window and journal tail as [`Self::apply`]. This is
+    /// what lets an undo operation (an exact `shape_field`, a group's `shape_fields` or a
+    /// `slide_restore`) survive a restart.
+    pub fn replay(&mut self, actor: &str, stored: &Applied) -> Result<(), String> {
+        let Some(command) = &stored.command else { return Ok(()) };
+        let op = OpEnvelope {
+            op_id: stored.op_id.clone(),
+            doc: self.file_id.clone(),
+            base_version: self.version,
+            kind: crate::apply::class_of(&command.payload),
+            target: command.target.clone(),
+            payload: command.payload.clone(),
+            history: None,
+        };
+        let delta = self.adapter.apply_confirmed(&mut self.engine, self.version, actor, &op).map_err(|e| e.message)?;
+        self.version = self.version.saturating_add(1);
+        let out = Applied { op_id: op.op_id, version: self.version, actor_id: actor.to_string(), command: Some(command.clone()), delta };
+        self.remember(&out);
+        self.tail.push(out);
+        if self.tail.len() > self.config.max_tail {
+            self.tail.remove(0);
+        }
+        self.maybe_snapshot();
+        Ok(())
+    }
+
     /// Move a text operation's offsets past the operations that arrived after its base. The
     /// journal tail is the source: inserts shift positions right, deletes pull them left (and
     /// clamp positions inside a removed range). Ties go to the earlier operation, so two people

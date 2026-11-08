@@ -12,7 +12,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use deckcraft_collab::DocSession;
-use deckcraft_collab_proto::{Applied, OpEnvelope, encode_server};
+use deckcraft_collab_proto::{Applied, encode_server};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -78,23 +78,14 @@ impl Store {
                 if applied.version <= session.version() {
                     continue;
                 }
-                let Some(command) = applied.command else { continue };
+                let Some(ref command) = applied.command else { continue };
                 // A picture operation can only run with its bytes; they are content-addressed and
                 // stored beside the journal, so load them before replaying the operation.
                 if let deckcraft_collab_proto::Payload::PictureInsert { sha256, .. } = &command.payload {
                     let bytes = self.media(sha256).ok_or_else(|| format!("replay {}: media {sha256} is missing", applied.version))?;
                     session.insert_media(sha256, bytes).map_err(|e| format!("replay {}: {e}", applied.version))?;
                 }
-                let op = OpEnvelope {
-                    op_id: applied.op_id.clone(),
-                    doc: file_id.to_string(),
-                    base_version: applied.version.saturating_sub(1),
-                    kind: deckcraft_collab::class_of(&command.payload),
-                    target: command.target,
-                    payload: command.payload,
-                    history: None,
-                };
-                session.apply(&entry.actor, &op).map_err(|e| format!("replay {}: {}", applied.version, e.message))?;
+                session.replay(&entry.actor, &applied).map_err(|e| format!("replay {}: {e}", applied.version))?;
             }
         }
         Ok(Some(session))
@@ -204,6 +195,7 @@ pub fn journal_summary(applied: &Applied) -> String {
 mod tests {
     use super::*;
     use deckcraft_collab::SessionConfig;
+    use deckcraft_collab_proto::OpEnvelope;
     use deckcraft_model::Presentation;
     use serde_json::json;
 
@@ -247,6 +239,42 @@ mod tests {
         assert!(restored.media(&sha).is_some(), "the media object came back");
         let doc = restored.document().expect("doc");
         assert!(doc.slides[0].shapes.iter().any(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })), "the picture was replayed");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_undo_operation_replays_from_the_journal() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-store-undo-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = Store::new(&dir, 100).expect("store");
+        let mut session = DocSession::from_document("file-u", deck(), SessionConfig::default()).expect("session");
+        store.snapshot("file-u", &mut session).expect("snapshot");
+        let doc = session.document().expect("doc").clone();
+        let shapes_before = doc.slides[0].shapes.len();
+        let slide = session.keys().slide_key(doc.slides[0].id).expect("slide").clone();
+        let delete = OpEnvelope {
+            op_id: "del-1".into(),
+            doc: "file-u".into(),
+            base_version: 0,
+            kind: deckcraft_collab_proto::OpKind::Structural,
+            target: deckcraft_collab_proto::Target { slide: Some(slide), ..Default::default() },
+            payload: deckcraft_collab_proto::Payload::SlideDelete {},
+            history: None,
+        };
+        let applied = session.apply("alice", &delete).expect("delete");
+        store.record("file-u", &mut session, &applied).expect("record delete");
+        let undo = session.undo("alice", "undo-1").expect("undo");
+        assert!(matches!(undo.payload, deckcraft_collab_proto::Payload::SlideRestore { .. }));
+        let applied = session.apply("alice", &undo).expect("undo");
+        store.record("file-u", &mut session, &applied).expect("record undo");
+        assert_eq!(session.version(), 2);
+
+        // Replay runs the confirmed commands, not the history checks: the restore must survive.
+        let restored = store.load("file-u").expect("load").expect("stored");
+        assert_eq!(restored.version(), 2);
+        let doc = restored.document().expect("doc");
+        assert_eq!(doc.slides.len(), 1);
+        assert_eq!(doc.slides[0].shapes.len(), shapes_before, "the slide and its shapes came back");
         let _ = fs::remove_dir_all(&dir);
     }
 
