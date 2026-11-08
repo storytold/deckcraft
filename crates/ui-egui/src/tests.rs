@@ -1223,6 +1223,31 @@ fn step_app(services: Services) -> egui_kittest::Harness<'static, SlideApp> {
     h
 }
 
+/// #1956: the ribbon's drop-downs are announced by their purpose, not by their value or an
+/// internal key. Animations › Start with a shape that has no animation was "astart"; Home's Font
+/// and Font size boxes were "font" and "size" while nothing told them a font or size.
+#[test]
+fn ribbon_dropdowns_are_named_by_purpose_even_when_empty() {
+    use egui::accesskit::Role;
+    let mut h = step_app(Services::default());
+    // A fresh shape, selected but not edited and without an animation.
+    h.state_mut().run("shape.insert", json!({"preset": "rect", "rect": [100.0, 100.0, 200.0, 100.0]})).unwrap();
+    h.state_mut().run("text.exit", json!({})).unwrap();
+    h.state_mut().ui.tab = "Animations".into();
+    h.run_steps(2);
+    let start = h.get_by_role_and_label(Role::ComboBox, "Start");
+    assert_eq!(start.value(), None, "no animation, no start value");
+    assert!(h.query_by_label("astart").is_none(), "the internal key is not a name");
+
+    h.state_mut().ui.tab = "Home".into();
+    h.state_mut().run("edit.select", json!({"ids": []})).unwrap();
+    h.run_steps(2);
+    for (name, key) in [("Font", "font"), ("Font size", "size")] {
+        assert!(h.query_by_role_and_label(Role::ComboBox, name).is_some(), "{name} is named while empty");
+        assert!(h.query_by_role_and_label(Role::ComboBox, key).is_none(), "{key} is not announced");
+    }
+}
+
 /// Copy of a bold selection offers HTML; paste of Pages-like HTML keeps the bold.
 #[test]
 fn copy_offers_html_and_paste_keeps_bold() {
