@@ -147,13 +147,15 @@ fn cmd_wasm() -> Result<(), String> {
     if set.is_empty() {
         return Err("no wasm-safe crates found in the workspace metadata".into());
     }
+    // Clippy with `-D warnings`, as the host step: a plain `check` let wasm-only dead code through (#1954).
     let mut c = cargo();
-    c.args(["check", "--target", "wasm32-unknown-unknown", "--keep-going"]);
+    c.args(["clippy", "--target", "wasm32-unknown-unknown", "--keep-going"]);
     for pkg in &set {
         c.args(["-p", pkg]);
     }
-    run(c, &format!("cargo check --target wasm32-unknown-unknown --keep-going -p {}", set.join(" -p ")))?;
-    println!("\nwasm32-unknown-unknown check: ok ({} crates: {})", set.len(), set.join(", "));
+    c.args(["--", "-D", "warnings"]);
+    run(c, &format!("cargo clippy --target wasm32-unknown-unknown --keep-going -p {} -- -D warnings", set.join(" -p ")))?;
+    println!("\nwasm32-unknown-unknown clippy: ok ({} crates: {})", set.len(), set.join(", "));
     Ok(())
 }
 
