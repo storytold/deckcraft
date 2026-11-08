@@ -448,6 +448,14 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
                 let sid = cx.ids.fresh();
                 sp(w, x, o, sid, &stroke, false);
             }
+            // A recorded layer also keeps its strokes, each with the time it was drawn, in a
+            // private extension: a freeform line cannot say when its stroke appeared, and it
+            // flattens the pressure samples to one width.
+            if let Some(ext) = ink_ext(strokes) {
+                w.open0("p:extLst");
+                w.raw(&ext);
+                w.close("p:extLst");
+            }
             w.close("p:grpSp");
         }
         ShapeKind::Opaque { xml, preview, label, parts } => opaque(w, x, o, cx, s, xml, *preview, label, parts),
@@ -593,6 +601,39 @@ fn diagram(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, d: &dec
     w.empty("dgm:relIds", A::new().a("xmlns:dgm", dgm::NS_DGM).a("r:dm", dm).a("r:lo", lo).a("r:qs", qs).a("r:cs", cs));
     w.close("a:graphicData");
     frame_close(w);
+}
+
+/// The recorded-ink extension: every stroke that has a recorded time, with the samples, colour and
+/// width a freeform line cannot carry. `None` for ink drawn in the editor, which has no timeline.
+fn ink_ext(strokes: &[deckcraft_model::InkStroke]) -> Option<String> {
+    let mut body = String::new();
+    for st in strokes.iter().take(10_000) {
+        let Some(at) = st.at_ms else { continue };
+        let mut pts = String::new();
+        for (x, y, p) in st.points.iter().filter(|p| p.0.is_finite() && p.1.is_finite()).take(4096) {
+            let (x, y) = (x.clamp(-1.0e7, 1.0e7), y.clamp(-1.0e7, 1.0e7));
+            let p = if p.is_finite() { p.clamp(0.0, 1.0) } else { 0.5 };
+            let _ = std::fmt::Write::write_fmt(&mut pts, format_args!("<dc:pt x=\"{x:.2}\" y=\"{y:.2}\" p=\"{p:.3}\"/>"));
+        }
+        if pts.is_empty() {
+            continue;
+        }
+        let width = if st.width.is_finite() { st.width.clamp(0.0, 1.0e6) } else { 0.0 };
+        let _ = std::fmt::Write::write_fmt(
+            &mut body,
+            format_args!(
+                "<dc:stroke r=\"{}\" g=\"{}\" b=\"{}\" w=\"{width:.2}\" hl=\"{}\" at=\"{at}\">{pts}</dc:stroke>",
+                st.color.r,
+                st.color.g,
+                st.color.b,
+                u8::from(st.highlighter),
+            ),
+        );
+    }
+    if body.is_empty() {
+        return None;
+    }
+    Some(format!("<p:ext uri=\"{}\"><dc:ink xmlns:dc=\"https://deckcraft.app/ns/ink\">{body}</dc:ink></p:ext>", crate::INK_EXT_URI))
 }
 
 fn ink_shape(st: &deckcraft_model::InkStroke, i: usize) -> Option<Shape> {

@@ -405,9 +405,46 @@ fn grp(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> Sha
         }
     }
     let children = sp_tree(imp, part, ctx, e, depth + 1);
+    // Our own recorded pen layer keeps its strokes, times included, in a private extension: the
+    // freeform lines beside it cannot say when a stroke was drawn. Restore the ink they were.
+    if let Some(strokes) = e.child("extLst").and_then(ink_strokes) {
+        s.kind = ShapeKind::Ink { strokes };
+        return s;
+    }
     let child = child.or_else(|| s.xfrm.map(|x| Xfrm::new(x.x, x.y, x.w, x.h))).unwrap_or_default();
     s.kind = ShapeKind::Group { children, child };
     s
+}
+
+/// The recorded-ink extension on a group: each stroke with the samples, colour, width and time the
+/// freeform lines cannot carry. `None` when the group has no such extension.
+fn ink_strokes(ext: &El) -> Option<Vec<deckcraft_model::InkStroke>> {
+    let e = ext.elements().find(|e| e.attr("uri") == Some(crate::INK_EXT_URI))?;
+    let ink = e.child("ink")?;
+    let byte = |st: &El, name: &str| st.u32(name).map(|v| v.min(255) as u8).unwrap_or(0);
+    let mut out = Vec::new();
+    for st in ink.children_named("stroke").take(10_000) {
+        let mut points = Vec::new();
+        for pt in st.children_named("pt").take(4096) {
+            let (Some(x), Some(y)) = (pt.f64("x"), pt.f64("y")) else { continue };
+            if x.abs() > 1.0e7 || y.abs() > 1.0e7 {
+                continue;
+            }
+            let p = pt.f64("p").unwrap_or(0.5).clamp(0.0, 1.0) as f32;
+            points.push((x, y, p));
+        }
+        if points.is_empty() {
+            continue;
+        }
+        out.push(deckcraft_model::InkStroke {
+            points,
+            color: deckcraft_model::Rgba::rgb(byte(st, "r"), byte(st, "g"), byte(st, "b")),
+            width: st.f64("w").unwrap_or(2.25).clamp(0.0, 1.0e6),
+            highlighter: st.bool("hl").unwrap_or(false),
+            at_ms: st.u32("at"),
+        });
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 fn cxn(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {

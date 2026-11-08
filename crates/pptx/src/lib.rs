@@ -34,6 +34,10 @@ pub(crate) const COMMENTS_EXT_URI: &str = "{6950BFC3-D8DA-4A85-94F7-54DA5524770B
 /// Private extension for a laser trace recorded in the show. PowerPoint ignores an extension it
 /// does not know; DeckCraft reads it back.
 pub(crate) const LASER_EXT_URI: &str = "{D3C4A571-1A5E-4E01-9C11-DEC0A7710001}";
+/// Private extension on the ink group of a Record Slide Show pen layer: its strokes with the time
+/// each was drawn. The freeform lines beside it are what PowerPoint draws; this is what DeckCraft
+/// reads back, so a reopened recording still reveals every stroke on its recorded time.
+pub(crate) const INK_EXT_URI: &str = "{D3C4A571-1A5E-4E01-9C11-DEC0A7710002}";
 
 /// PowerPoint 2010 laser-pointer colour (`p14:laserClr` on `showPr`). [MS-PPTX] 2.3.1.16.
 pub(crate) const LASER_CLR_URI: &str = "{EC167BDD-8182-4AB7-AECC-EB403E3ABB37}";

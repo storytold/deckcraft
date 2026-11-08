@@ -2324,12 +2324,41 @@ fn a_recorded_ink_layer_keeps_its_tag_through_pptx() {
     let doc = s.active().expect("doc").doc.clone();
     let bytes = deckcraft_pptx::export(&doc).expect("export");
     let q = deckcraft_pptx::import(&bytes).expect("import");
-    // The layer may come back as a group of freeforms rather than an `Ink` shape; the tag is what
-    // `show.clearRecording` looks for.
+    // The layer may come back as a group of freeforms when the ink carried no recorded time; the
+    // tag is what `show.clearRecording` looks for either way.
     let tagged = q.slides[0].shapes.iter().any(|sh| sh.tags.iter().any(|(_, v)| v == "ink"));
     assert!(
         tagged,
         "the ink layer's marker survives the round trip: {:?}",
         q.slides[0].shapes.iter().map(|s| (&s.name, &s.tags)).collect::<Vec<_>>()
     );
+}
+
+/// A recorded layer keeps when each stroke was drawn: the freeform lines the group writes for
+/// PowerPoint cannot carry it, so the private extension does, and reopening restores the ink with
+/// its per-stroke times instead of revealing every stroke at slide entry.
+#[test]
+fn a_recorded_ink_layer_keeps_each_stroke_time_through_pptx() {
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &serde_json::json!({"layout": "blank"})).expect("slide");
+    for (points, at) in [([[10, 10], [40, 40]], 250), ([[50, 50], [80, 80]], 1500)] {
+        s.execute("ink.stroke", &serde_json::json!({"index": 0, "points": points, "width": 3.0, "at": at})).expect("ink");
+    }
+    let doc = s.active().expect("doc").doc.clone();
+    let bytes = deckcraft_pptx::export(&doc).expect("export");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let ink = q.slides[0]
+        .shapes
+        .iter()
+        .find_map(|sh| match &sh.kind {
+            ShapeKind::Ink { strokes } => Some(strokes),
+            _ => None,
+        })
+        .unwrap_or_else(|| {
+            panic!("the recorded layer comes back as ink: {:?}", q.slides[0].shapes.iter().map(|s| (&s.name, &s.kind)).collect::<Vec<_>>())
+        });
+    let times: Vec<Option<u32>> = ink.iter().map(|st| st.at_ms).collect();
+    assert_eq!(times, vec![Some(250), Some(1500)], "each stroke keeps its recorded time");
+    assert_eq!(ink[0].points.len(), 2, "the samples come back with the time: {:?}", ink[0].points);
+    assert!((ink[0].width - 3.0).abs() < 1e-6, "the pen width survives, got {}", ink[0].width);
 }
