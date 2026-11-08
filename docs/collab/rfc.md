@@ -489,14 +489,17 @@ CRDT, макросы/legacy-форматы.
 
 ## 14.1. Статус реализации (2026-11-08)
 
-Пункты 1–5 плана закрыты в ветках `collab/pr1`–`collab/pr9`: протокол и
+Пункты 1–5 плана закрыты в ветках `collab/pr1`–`collab/pr10`: протокол и
 адаптер, per-user undo, `DocSession` с дедупом/снапшотами/commit, клиентская
 машина состояний, UI за флагом, in-memory hub, WebSocket-сервер, персистентность
-(base + journal + replay), undo/redo запросами, ввод текста с серверным rebase и
-`shape.insert`. Тесты, точные коммиты, матрица приёмки `TASK.md` и список
-незакрытых блокеров (медиа, полная поверхность команд, web-транспорт,
-host-bridge кабинета, оптимистичный preview, structural undo, PR) —
-`docs/collab/STATUS.md`; эксплуатация — `docs/collab/production.md`.
+(base + journal + replay), undo/redo запросами, ввод текста с серверным rebase,
+`shape.insert` и медиа-канал картинок (операция несёт `sha256`, байты идут через
+`PUT/GET /media/{sha256}`, объекты переживают рестарт). Тесты, точные коммиты,
+матрица приёмки `TASK.md` и список незакрытых блокеров (видео/аудио, TLS для
+`wss://`, полная поверхность команд, web-транспорт, host-bridge кабинета,
+оптимистичный preview, structural undo, base-transfer, PR) —
+`docs/collab/STATUS.md`; эксплуатация — `docs/collab/production.md`; описание PR —
+`docs/collab/pr10.md`.
 
 ## 15. Соответствие ADR → разделы RFC
 

@@ -1,7 +1,9 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-08. Branch: `collab/pr9`. The production operator view is
-[`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md).
+Updated: 2026-11-08. Branch: `collab/pr10` (media slice `7fe75711`, docs `a4aac7c7`..`e9062bd6`).
+The production operator view is
+[`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
+description is [`pr10.md`](pr10.md).
 
 This file is the handoff between sessions: what is done, how it was verified, what is not done,
 and what to do next. Update it at the end of every collaboration session.
@@ -23,8 +25,17 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
 | `collab/pr10` | `7fe75711` | media channel: pictures by `sha256`, upload/fetch, persistence |
 
+The Commit column names the slice commit; each branch also carries a documentation commit. Heads:
+`collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711` plus the docs commits `a4aac7c7`..`e9062bd6`.
+The working tree is
+clean: the work the chair saw uncommitted on 2026-11-08 is in `7fe75711` (`local.rs`,
+`transport.rs`, `session.rs`, `hub.rs`, `collab-proto`, `tests/two_clients.rs`, `ui-egui/collab.rs`,
+`docs/collab/*`) plus the docs commits.
+
 All work is local. Nothing was pushed to `storytold/deckcraft`; a fork and a human decision are
-required for the upstream PR.
+required for the upstream PR. The PR body is prepared in [`pr10.md`](pr10.md): title
+`feat(collab): realtime collaborative editing`, one description, a review order over the slice
+stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decision.
 
 ## What is implemented
 
@@ -95,6 +106,11 @@ required for the upstream PR.
 | `cargo fmt --check` | clean |
 | `cargo xtask layers` | 30 crates, no violations |
 
+Re-run on 2026-11-08 before the PR description: `fmt`, `collab-proto` 16, `collab` 75 + 6,
+`collab-server` 3 + 5, `ui-egui collab::` 17, all green; clippy over the four collab crates with
+`-D warnings` clean. `cargo test -p deckcraft-engine` and `cargo xtask layers` are from the earlier
+session, not re-run here.
+
 The socket tests were run against a real loopback server; the restart test creates a room, moves
 the version, shuts the server down, starts a new one on the same store and asserts the version
 and document came back. The media tests cover a rejected upload (viewer, wrong digest, no token),
@@ -114,8 +130,8 @@ loads the object before running the operation.
 | Viewer cannot edit | ✅ server + engine gate | socket test, UI test |
 | Commit creates a new version, original kept | ⚠️ bytes and `409` ready; cabinet callback missing | host-bridge task |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests |
-| RFC, protocol, tests, docs | ✅ | this tree |
-| PR in `storytold/deckcraft` | ❌ | fork + human decision |
+| RFC, protocol, tests, docs | ✅ design accepted; formal `proposal` posted to `rfc/deckcraft` on 2026-11-08 | this tree, bus message |
+| PR in `storytold/deckcraft` | ⏳ description prepared, nothing pushed | [`pr10.md`](pr10.md); fork + human decision |
 
 ## What is NOT done (ordered by production impact)
 
@@ -181,12 +197,29 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 
 1. Run the verification table above; if the tree is clean, continue on `collab/pr10` (or branch
    `collab/pr11` from it).
-2. Extend the media channel to video/audio (allowlist, limits, adapter commands) and add the TLS
+2. **Publish the PR only on a human decision**: the body is in [`pr10.md`](pr10.md); fork
+   `storytold/deckcraft`, push the final stack as `feature/realtime-collaboration`, do not touch
+   CI, do not mention agents. Nothing is pushed today.
+3. Extend the media channel to video/audio (allowlist, limits, adapter commands) and add the TLS
    HTTP client for `wss://` links; test a large picture and a picture inserted twice.
-3. Extend the command set in vertical slices with the same pattern: payload → normalize →
+4. Extend the command set in vertical slices with the same pattern: payload → normalize →
    adapter run → confirmed command → test on two clients. Start with `shape.fill`, `shape.line`,
    `format.*` over explicit shapes, then `slide.duplicate`.
-4. Add the web-sys link once the host contract is agreed; until then keep the browser UI honest.
-5. Add the LibreOffice commit gate and the 100-slide performance test.
-6. Update `production.md` and this file at the end of the session; post a bus status with the
+5. Add the web-sys link once the host contract is agreed; until then keep the browser UI honest.
+6. Add the LibreOffice commit gate and the 100-slide performance test.
+7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
+
+## Session log
+
+### 2026-11-08 — PR prep and formal RFC proposal
+
+- Audited the chair's finding: the tree is clean; the change it saw uncommitted is `7fe75711`
+  (media channel) plus `a4aac7c7`/`e7ad45cf` (docs), 1129 insertions in the slice commit.
+- Re-ran fmt, tests of `collab-proto`, `collab`, `collab-server`, `ui-egui collab::` and clippy;
+  results are in the verification table above.
+- Added [`pr10.md`](pr10.md): title, description, review order, `PR-CHECKLIST.md` mapping and the
+  limitations. No push.
+- Posted a formal `proposal` with the RFC artifact to `rfc/deckcraft` on the bus.
+- Re-prioritised the gaps in [`production.md`](production.md) (P0 cabinet callback, P1 command
+  surface/media/text, P2 transport/preview/undo/base-transfer/perf).

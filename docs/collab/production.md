@@ -188,19 +188,28 @@ must be treated as a development instance.
 
 ## Known gaps before this is a finished product
 
-1. **Media beyond pictures**: the channel carries images only; video, audio and fonts need their
-   own allowlist and size limits, and a `wss://` desktop link needs a TLS HTTP client (plain
-   `ws://` links already upload and fetch).
-2. **Full command surface**: fill, fonts, animations, tables, diagrams, charts and other commands
-   are refused in a shared session instead of being normalised (see "What v1 syncs"). This is the
-   largest product gap.
-3. **Text in tables/notes and rich runs** are not normalised; shape text is.
-4. **Cabinet callback and host bridge**: `session`, `presence`, `commit` in `craft-web-host` are
-   an external contract; without them there is no new file version in the cabinet.
-5. **Browser transport**: the web build shows the UI but has no `web-sys` WebSocket link.
-6. **Optimistic preview**: edits become visible on `applied`; correctness first, preview and
-   rollback are the next latency slice.
-7. **Structural undo** (deleting a slide/shape) is still out of v1, as RFC §13 records.
-8. **Upstream PR**: the work is local branches; a fork and a human decision are required.
+Priorities are for the production cut, not for the upstream PR: the PR ships the v1 surface and
+documents the rest. `STATUS.md` tracks the same list by slice, with test evidence.
 
-These are the acceptance blockers for the production cut; `STATUS.md` tracks them by slice.
+1. **P0 — Cabinet callback and host bridge**: `session`, `presence`, `commit` in `craft-web-host`
+   are an external contract; without them there is no new file version in the cabinet. This is the
+   only gap that blocks a usable cabinet deployment.
+2. **P1 — Full command surface**: fill, fonts, animations, tables, diagrams, charts and other
+   commands are refused in a shared session instead of being normalised (see "What v1 syncs").
+   This is the largest product gap; add commands in vertical slices, one normalisation each.
+3. **P1 — Media beyond pictures**: the channel carries images only; video, audio and fonts need
+   their own allowlist and size limits, and a `wss://` desktop link needs a TLS HTTP client (plain
+   `ws://` links already upload and fetch). The browser link needs the same HTTP bridge.
+4. **P1 — Text in tables/notes and rich runs** are not normalised; shape text is. Table cells and
+   notes need their own addressing and rebase; formatting runs need a run-level payload.
+5. **P2 — Browser transport**: the web build shows the UI but has no `web-sys` WebSocket link; the
+   host page must also forward media fetches and the session token.
+6. **P2 — Optimistic preview**: edits become visible on `applied`; correctness first, preview and
+   rollback are the next latency slice.
+7. **P2 — Structural undo** (deleting a slide/shape) is still out of v1, as RFC §13 records.
+8. **P2 — Base transfer for a compacted journal tail**: restart and tail replay work, but a client
+   that missed the base needs a chunked `snapshot`.
+9. **P2 — Large-deck gate**: a 100+ slide/media performance run and a LibreOffice open/repair gate
+   for commits are still to add; the three-client soak is short.
+10. **Human action — Upstream PR**: the work is local branches; a fork and a human decision are
+    required. The prepared body is [`pr10.md`](pr10.md); nothing was pushed.
