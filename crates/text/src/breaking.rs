@@ -343,7 +343,7 @@ mod tab_tests {
 
     #[test]
     fn a_nan_position_takes_the_finite_default_stop() {
-        let stops = [Tab { pos: 100.0, align: TabAlign::Left }];
+        let stops = [Tab { pos: 100.0, align: TabAlign::Left, implicit: false }];
         assert!(tab_advance(f64::NAN, &stops, 72.0, (0.0, 0.0)).is_finite());
         assert_eq!(tab_advance(10.0, &stops, 72.0, (0.0, 0.0)), 90.0);
     }
