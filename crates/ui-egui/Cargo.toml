@@ -21,6 +21,8 @@ deckcraft-media = { workspace = true }
 egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
 egui_extras = { workspace = true }
 craft-ui = { workspace = true }
+# The menu bar (the native macOS menus): the menu layer the Craft apps share.
+craft-menu = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }

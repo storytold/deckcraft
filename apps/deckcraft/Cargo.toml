@@ -39,6 +39,8 @@ cpal = "0.16"
 # GridCraft, PdfCraft and PhotoCraft) registers the handler (Objective-C interop needs unsafe, which
 # our workspace forbids) behind a safe API. Pinned exactly: review the diff before bumping.
 fmv-macos-events = "=0.1.0"
+# The native menu bar (`craft_menu::mac`), built on muda.
+craft-menu = { workspace = true }
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }

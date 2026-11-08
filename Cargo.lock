@@ -873,11 +873,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-keymap"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+dependencies = [
+ "egui",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "craft-media"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
 dependencies = [
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "craft-menu"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+dependencies = [
+ "craft-keymap",
+ "craft-quit",
+ "egui",
+ "muda",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
 ]
 
 [[package]]
@@ -887,6 +910,17 @@ source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955
 dependencies = [
  "krilla",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "craft-quit"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+dependencies = [
+ "dispatch2",
+ "egui",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
 ]
 
 [[package]]
@@ -1033,6 +1067,7 @@ dependencies = [
  "arboard",
  "chrono",
  "cpal",
+ "craft-menu",
  "craft-update",
  "deckcraft-engine",
  "deckcraft-media",
@@ -1307,6 +1342,7 @@ dependencies = [
 name = "deckcraft-ui-egui"
 version = "0.15.0"
 dependencies = [
+ "craft-menu",
  "craft-ui",
  "craft-update",
  "deckcraft-anim",
@@ -2762,6 +2798,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "keyboard-types"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
+dependencies = [
+ "bitflags 2.13.2",
+ "serde",
+]
+
+[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2988,6 +3034,24 @@ checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
 dependencies = [
  "num-traits",
  "pxfm",
+]
+
+[[package]]
+name = "muda"
+version = "0.21.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4340e89c178916e62879c5c36b7f699019369be413e496178a6983ce91b8bc03"
+dependencies = [
+ "crossbeam-channel",
+ "dpi",
+ "keyboard-types",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "png",
+ "thiserror 2.0.21",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3570,7 +3634,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]

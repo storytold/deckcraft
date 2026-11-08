@@ -23,6 +23,8 @@ mod display;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
 mod logging;
+#[cfg(target_os = "macos")]
+mod native_menu;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
 
@@ -34,6 +36,9 @@ struct App(
     /// Files opened from Finder and quit requests (see `apple_events`).
     #[cfg(target_os = "macos")]
     fmv_macos_events::Inbox,
+    /// The menu bar (see `native_menu`); `None` when AppKit refused it.
+    #[cfg(target_os = "macos")]
+    Option<native_menu::Menus>,
 );
 
 impl eframe::App for App {
@@ -44,10 +49,18 @@ impl eframe::App for App {
     }
     /// Forward native raw input to the wrapped application once per pass.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        #[cfg(target_os = "macos")]
+        if let Some(menus) = &mut self.2 {
+            menus.raw_input(raw);
+        }
         self.0.raw_input_hook(ctx, raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.0.ui(ui);
+        #[cfg(target_os = "macos")]
+        if let Some(menus) = &mut self.2 {
+            menus.after_ui(ui.ctx(), &mut self.0);
+        }
     }
     fn on_exit(&mut self) {
         save_prefs(&self.0);
@@ -319,10 +332,19 @@ fn main() -> eframe::Result {
             if show {
                 app.start_show(0, false);
             }
+            #[cfg(target_os = "macos")]
+            let menus = native_menu::Menus::install(&cc.egui_ctx, &app);
+            #[cfg(target_os = "macos")]
+            if menus.is_none() {
+                log::error!("native menu: AppKit refused the menu bar");
+                app.set_status("Couldn't install the macOS menus".to_string());
+            }
             Ok(Box::new(App(
                 app,
                 #[cfg(target_os = "macos")]
                 apple_events.connect(&cc.egui_ctx),
+                #[cfg(target_os = "macos")]
+                menus,
             )))
         }),
     )
@@ -341,6 +363,8 @@ mod tests {
                 SlideApp::new(Session::new(), Services::default()),
                 #[cfg(target_os = "macos")]
                 fmv_macos_events::Inbox::default(),
+                #[cfg(target_os = "macos")]
+                None,
             );
             println!("calling on_exit");
             eframe::App::on_exit(&mut app);
