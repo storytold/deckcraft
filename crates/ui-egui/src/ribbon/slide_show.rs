@@ -37,7 +37,9 @@ pub(super) fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let available = app.subtitles.available();
         let on = app.session.prefs.subtitles.on;
-        let (r, _) = big_button_ex(ui, Icon::Subtitles, "Always Use\nSubtitles", available, false, on);
+        // A toggle that is on stays clickable even when the model has gone: the ribbon is the
+        // only way to turn captions off without opening the dialog.
+        let (r, _) = big_button_ex(ui, Icon::Subtitles, "Always Use\nSubtitles", available || on, false, on);
         let r = if available { r } else { r.on_hover_text("Live subtitles need the whisper-tiny model: open Subtitle Settings to download it") };
         if r.clicked() {
             run(app, "show.subtitles", json!({"on": !on}));

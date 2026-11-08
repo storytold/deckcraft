@@ -61,6 +61,7 @@ pub(super) fn subtitles_dialog(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog)
             }
         });
     });
+    ui.label(egui::RichText::new("Captions are shown in the spoken language; translating them is not implemented yet.").weak());
     let devices = microphones();
     if !devices.is_empty() {
         ui.horizontal(|ui| {

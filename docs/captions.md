@@ -50,7 +50,8 @@ The model directory is resolved first hit wins, the same shape as the other Craf
 
 ```text
 $DECKCRAFT_MODELS/whisper-tiny/            (the environment variable names the root)
-<config dir>/DeckCraft/models/whisper-tiny  (APPDATA on Windows, ~/.config/deckcraft on Linux,
+<config dir>/DeckCraft/models/whisper-tiny  (APPDATA on Windows; $XDG_CONFIG_HOME/deckcraft on
+                                             Linux, or ~/.config/deckcraft when it is unset;
                                              ~/Library/Application Support/DeckCraft on macOS)
 models/whisper-tiny/                        (beside the executable)
 models/whisper-tiny/                        (in the source tree, for development)
@@ -134,7 +135,9 @@ library, so a machine with OpenVINO installed but no backend behaves exactly lik
   controls, below the pen and the bars), and asks egui for a repaint every 120 ms while the stream
   is running or a download is in progress. Stopping does wait: `stop` joins the worker, so ending
   the show or turning subtitles off can block the UI thread for as long as the decode already in
-  flight (2–3 s on an idle machine, up to 27 s on a loaded one, per the measurements below).
+  flight (2–3 s on an idle machine, up to 27 s on a loaded one, per the measurements below). A
+  worker that is still starting stops between its stages — after the load, after the warm-up, or
+  before the microphone opens — so that wait is one stage at most.
 - Captions survive slide changes; they are covered by a blank screen and by See All Slides; they
   end with the show. Ending the show, turning subtitles off, or losing the microphone stops the
   provider, joins its thread and releases the model and the device.

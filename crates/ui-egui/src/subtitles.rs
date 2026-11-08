@@ -319,7 +319,9 @@ impl SlideApp {
     /// engine. Called once per frame, before the show draws.
     pub(crate) fn sync_subtitles(&mut self, ctx: &egui::Context) {
         let settings = self.session.prefs.subtitles.clone();
-        let show_active = self.show.is_some();
+        // A preview from the Transitions or Animations tab is not a presentation: it must not
+        // open the microphone or start the model.
+        let show_active = self.show.as_ref().is_some_and(|show| !show.preview_only);
         let message = self.subtitles.sync(&settings, show_active);
         if let Some(text) = message {
             self.set_status(text);

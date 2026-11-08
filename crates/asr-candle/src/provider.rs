@@ -164,12 +164,20 @@ fn run(model_dir: PathBuf, settings: SubtitleSettings, stop: Arc<AtomicBool>, st
         Ok(engine) => engine,
         Err(e) => return fail(&status, &tx, e),
     };
+    // `stop` joins this thread, so the flag is checked between the start-up stages: ending a
+    // show or changing the settings then waits for one stage, not for load + warm-up + capture.
+    if stop.load(Ordering::Relaxed) {
+        return;
+    }
     // One short silent decode first: the first inference in a process pays the allocation and
     // kernel warm-up (measured ~4x the steady-state cost), and doing it before the microphone
     // opens keeps that out of the first caption.
     let warm = std::time::Instant::now();
     let _ = engine.transcribe(&vec![0.0f32; 16_000], settings.language_hint());
     log::debug!("subtitles: warm-up took {:?}", warm.elapsed());
+    if stop.load(Ordering::Relaxed) {
+        return;
+    }
     let capture = match Capture::open(settings.microphone.as_deref()) {
         Ok(capture) => capture,
         Err(e) => return fail(&status, &tx, e),
