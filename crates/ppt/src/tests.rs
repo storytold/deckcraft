@@ -419,6 +419,38 @@ fn a_damaged_current_user_falls_back_to_the_scan() {
     assert!(matches!(open(&cu, &atom(rt::DOCUMENT_ATOM, 0, &[0; 40])), Err(crate::PptError::Damaged(_))));
 }
 
+/// Persist directories nested inside one another are not each read to the end of the stream. A chain
+/// of edits, each naming a directory header 8 bytes after the last one, made every edit reparse the
+/// rest of the stream (4095 edits × the filler): about 48 s for this 64 MiB stream in a debug build.
+/// Within the shared budget it takes milliseconds, and the file is reported as damaged.
+#[test]
+fn nested_persist_directories_are_read_within_the_stream() {
+    const FILLER: usize = 1 << 26;
+    const EDITS: u32 = 4095;
+    let (_, mut stream, _) = streams(0xE391_C05F);
+    let mut prev = stream.len() as u32 - 36; // the test document's own UserEditAtom (8 + 28 bytes)
+    let base = stream.len() as u32;
+    for _ in 0..EDITS {
+        // A PersistDirectoryAtom header whose length runs past the end (clipped to the stream).
+        stream.extend_from_slice(&0u16.to_le_bytes());
+        stream.extend_from_slice(&rt::PERSIST_DIRECTORY.to_le_bytes());
+        stream.extend_from_slice(&0xFFFF_FFF0u32.to_le_bytes());
+    }
+    stream.resize(stream.len() + FILLER, 0);
+    for k in 0..EDITS {
+        let at = stream.len() as u32;
+        let mut edit = le32(&[0, 0x0300_03F4, prev, base + 8 * k, 1, 5]);
+        edit.extend_from_slice(&[0; 4]);
+        stream.extend_from_slice(&atom(rt::USER_EDIT, 0, &edit));
+        prev = at;
+    }
+    let cu = atom(rt::CURRENT_USER, 0, &le32(&[0x14, 0xE391_C05F, prev, 0, 0]));
+    // The streams are read directly: the test file builder can't hold a stream this size.
+    let t = std::time::Instant::now();
+    let _ = crate::doc::read(&cu, &stream);
+    assert!(t.elapsed() < std::time::Duration::from_secs(20), "{:?}", t.elapsed());
+}
+
 #[test]
 fn an_encrypted_presentation_says_so() {
     assert!(matches!(crate::import(&file_with(0xF3D1_C4DF)), Err(crate::PptError::Encrypted)));

@@ -118,6 +118,10 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
     let mut seen = HashSet::new();
     // Many edits may name one persist directory; it is read once (its first reading wins anyway).
     let mut dirs_seen = HashSet::new();
+    // All directories together are read within one stream's worth of words. Real directories
+    // don't overlap, so they fit. Hostile ones nested inside each other would otherwise each be
+    // read to the end of the stream, once per edit (MAX_EDITS × the stream).
+    let mut words = stream.len() / 4;
     let mut at = edit_at;
     for _ in 0..MAX_EDITS {
         if !seen.insert(at) {
@@ -134,7 +138,7 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
         if let Some(dir) =
             edit.u32(12).filter(|&o| dirs_seen.insert(o)).and_then(|o| Rec::at(stream, o as usize)).filter(|r| r.kind == rt::PERSIST_DIRECTORY)
         {
-            read_persist_directory(dir.data, &mut persist);
+            read_persist_directory(dir.data, &mut persist, &mut words);
         }
         match edit.u32(8) {
             Some(0) | None => break,
@@ -185,13 +189,18 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
     Ok(doc)
 }
 
-fn read_persist_directory(b: &[u8], persist: &mut HashMap<u32, usize>) {
+/// Read one persist directory into `persist`, taking each word read from `words`.
+fn read_persist_directory(b: &[u8], persist: &mut HashMap<u32, usize>, words: &mut usize) {
     let mut c = crate::record::Cursor::new(b);
-    while let Some(head) = c.u32() {
+    let mut next = |c: &mut crate::record::Cursor| {
+        *words = words.checked_sub(1)?;
+        c.u32()
+    };
+    while let Some(head) = next(&mut c) {
         let first = head & 0x000F_FFFF;
         let count = head >> 20;
         for k in 0..count {
-            let Some(off) = c.u32() else { return };
+            let Some(off) = next(&mut c) else { return };
             persist.entry(first.saturating_add(k)).or_insert(off as usize);
         }
     }
