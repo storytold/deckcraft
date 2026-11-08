@@ -251,6 +251,9 @@ impl Popup {
                     if value.get("nextChanged").and_then(|v| v.as_bool()) == Some(false) {
                         data.next = previous.next.clone();
                     }
+                    if data.slides.is_none() {
+                        data.slides = previous.slides.clone();
+                    }
                 }
                 *target.borrow_mut() = Some(data);
                 *received.borrow_mut() = js_sys::Date::now();
