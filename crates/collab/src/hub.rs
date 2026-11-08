@@ -285,6 +285,17 @@ impl Hub {
         self.session.accept_file_version(etag);
     }
 
+    /// Whether this participant may build a commit. A viewer may not (ADR-0008).
+    pub fn may_commit(&self, actor: &str) -> bool {
+        self.peers.get(actor).is_some_and(|peer| peer.role.may_write())
+    }
+
+    /// Queue one message for a peer. A transport that publishes a commit to the cabinet outside
+    /// the room lock answers with this after the cabinet took the file (ADR-0009).
+    pub fn answer(&mut self, actor: &str, msg: ServerMsg) {
+        self.send(actor, msg);
+    }
+
     /// Remove a peer (socket closed). Its queued answers go too.
     pub fn remove_peer(&mut self, actor: &str) {
         self.peers.remove(actor);

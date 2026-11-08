@@ -399,7 +399,11 @@ impl DocSession {
         if let Some(done) = &self.last_commit
             && done.version == self.version
         {
-            return Ok(done.clone());
+            // The cabinet may have accepted a version since this file was built; the cached bytes
+            // are still current, but the version they were built against has moved.
+            let mut done = done.clone();
+            done.file_version = self.base_file_etag.clone();
+            return Ok(done);
         }
         let bytes = self.commit_bytes().map_err(CommitError::Build)?;
         let warnings = self.commit_warnings().map_err(CommitError::Build)?;

@@ -25,14 +25,20 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use deckcraft_collab::session::SessionConfig;
+use deckcraft_collab::session::{CommitError, Committed};
 use deckcraft_collab::{Claims, Hub, media_type, sha256_hex, valid_sha};
-use deckcraft_collab_proto::{ClientMsg, PROTO_VERSION, Role, ServerError, ServerMsg, decode_client, encode_server};
+use deckcraft_collab_proto::{
+    ClientMsg, CommitResult, PROTO_VERSION, RejectCode, Rejected, Role, ServerError, ServerMsg, decode_client, encode_server,
+};
 use deckcraft_model::Presentation;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tungstenite::error::Error as WsError;
 
+use crate::cabinet::{Cabinet, PublishError};
+
+pub mod cabinet;
 pub mod store;
 use store::Store;
 
@@ -80,6 +86,8 @@ pub struct Config {
     pub store_dir: Option<PathBuf>,
     /// Operations between base snapshots.
     pub snapshot_every: u64,
+    /// Where a commit becomes a cabinet file version. `None` keeps commits inside the process.
+    pub cabinet: Option<cabinet::CabinetConfig>,
 }
 
 impl Config {
@@ -93,6 +101,7 @@ impl Config {
             max_ops_per_sec: 50,
             store_dir: None,
             snapshot_every: 200,
+            cabinet: None,
         }
     }
 }
@@ -136,6 +145,9 @@ struct Metrics {
     resyncs: AtomicU64,
     media_uploads: AtomicU64,
     media_bytes: AtomicU64,
+    cabinet_commits: AtomicU64,
+    cabinet_conflicts: AtomicU64,
+    cabinet_failures: AtomicU64,
     bytes_in: AtomicU64,
     bytes_out: AtomicU64,
 }
@@ -155,6 +167,9 @@ impl Metrics {
         out.push_str(&row("resyncs_total", self.resyncs.load(Ordering::Relaxed)));
         out.push_str(&row("media_uploads_total", self.media_uploads.load(Ordering::Relaxed)));
         out.push_str(&row("media_bytes_total", self.media_bytes.load(Ordering::Relaxed)));
+        out.push_str(&row("cabinet_commits_total", self.cabinet_commits.load(Ordering::Relaxed)));
+        out.push_str(&row("cabinet_conflicts_total", self.cabinet_conflicts.load(Ordering::Relaxed)));
+        out.push_str(&row("cabinet_failures_total", self.cabinet_failures.load(Ordering::Relaxed)));
         out.push_str(&row("bytes_in_total", self.bytes_in.load(Ordering::Relaxed)));
         out.push_str(&row("bytes_out_total", self.bytes_out.load(Ordering::Relaxed)));
         out
@@ -164,8 +179,12 @@ impl Metrics {
 struct Shared {
     config: Config,
     hubs: Mutex<HashMap<String, Arc<Mutex<Hub>>>>,
+    /// The display name each room was opened with, for the cabinet callback.
+    names: Mutex<HashMap<String, String>>,
     metrics: Metrics,
     store: Option<Store>,
+    /// The cabinet's commit endpoint; `None` keeps commits inside the process.
+    cabinet: Option<Cabinet>,
 }
 
 /// A running server. Dropping it stops the accept loop.
@@ -196,7 +215,14 @@ pub fn serve(addr: SocketAddr, config: Config) -> std::io::Result<Handle> {
         },
         None => None,
     };
-    let shared = Arc::new(Shared { config, hubs: Mutex::new(HashMap::new()), metrics: Metrics::default(), store });
+    let shared = Arc::new(Shared {
+        cabinet: config.cabinet.clone().map(Cabinet::new),
+        config,
+        hubs: Mutex::new(HashMap::new()),
+        names: Mutex::new(HashMap::new()),
+        metrics: Metrics::default(),
+        store,
+    });
     let stop = Arc::new(AtomicBool::new(false));
     let stop_flag = stop.clone();
     let join = thread::spawn(move || {
@@ -274,6 +300,7 @@ impl Response {
             405 => "Method Not Allowed",
             409 => "Conflict",
             413 => "Payload Too Large",
+            502 => "Bad Gateway",
             _ => "Internal Server Error",
         };
         Response { status, reason, content_type: "application/json", body: value.to_string().into_bytes() }
@@ -363,6 +390,7 @@ fn route(request: &Request, shared: &Arc<Shared>) -> std::io::Result<Response> {
             match (method, parts.as_slice()) {
                 ("GET", [id]) => session_info(id, shared, request),
                 ("DELETE", [id]) => close_session(id, shared, request),
+                ("POST", [id, "commit"]) => commit_session(id, request, shared),
                 ("PUT", [id, "media", sha]) => put_media(id, sha, request, shared),
                 _ => Ok(Response::json(if parts.len() > 2 { 404 } else { 405 }, json!({"error": "not found"}))),
             }
@@ -379,6 +407,8 @@ struct CreateBody {
     app: Option<String>,
     #[serde(default)]
     initial_bytes: Option<String>,
+    #[serde(default)]
+    initial_name: Option<String>,
     #[serde(default)]
     expected_version: Option<String>,
 }
@@ -434,6 +464,14 @@ fn create_session(request: &Request, shared: &Arc<Shared>) -> std::io::Result<Re
     if let Some(version) = body.expected_version {
         session.set_base_file_etag(version);
     }
+    if let Some(name) = body.initial_name.as_deref().map(str::trim).filter(|name| !name.is_empty()) {
+        if name.len() > 255 || name.chars().any(char::is_control) {
+            return Ok(Response::json(400, json!({"error": "initialName is not a display name"})));
+        }
+        if let Ok(mut names) = shared.names.lock() {
+            names.entry(body.file_id.clone()).or_insert_with(|| name.to_string());
+        }
+    }
     if let Some(store) = &shared.store
         && let Err(e) = store.snapshot(&body.file_id, &mut session)
     {
@@ -483,6 +521,175 @@ fn close_session(id: &str, shared: &Arc<Shared>, request: &Request) -> std::io::
         Some(_) => Ok(Response::json(200, json!({"closed": true}))),
         None => Ok(Response::json(404, json!({"error": "no such session"}))),
     }
+}
+
+/// `POST /v1/sessions/{id}/commit`: build the `.pptx` from the authoritative document and give
+/// it to the cabinet, which creates the new file version. The service token guards the call; the
+/// cabinet answers the version it stored, or `409` when the file changed outside the session.
+///
+/// Without a configured callback the bytes come back inline, as `INTEGRATION.md` §4.1 describes.
+fn commit_session(id: &str, request: &Request, shared: &Arc<Shared>) -> std::io::Result<Response> {
+    if !service_allowed(request, shared) {
+        return Ok(Response::json(401, json!({"error": "service token required"})));
+    }
+    let body = if request.body.is_empty() {
+        CommitBody::default()
+    } else {
+        match serde_json::from_slice::<CommitBody>(&request.body) {
+            Ok(body) => body,
+            Err(_) => return Ok(Response::json(400, json!({"error": "invalid JSON"}))),
+        }
+    };
+    shared.metrics.commits.fetch_add(1, Ordering::Relaxed);
+    match build_and_publish(shared, id, body.expected_version.as_deref()) {
+        Ok(done) => {
+            let mut value = json!({
+                "fileId": id,
+                "version": done.committed.version,
+                "sha256": done.sha256,
+                "fileVersion": done.etag.clone().or_else(|| done.committed.file_version.clone()),
+                "warnings": done.committed.warnings,
+            });
+            if let Some(name) = &done.name {
+                value["name"] = json!(name);
+            }
+            if shared.cabinet.is_none() {
+                value["bytes"] = json!(base64::engine::general_purpose::STANDARD.encode(&done.committed.bytes));
+            }
+            Ok(Response::json(200, value))
+        }
+        Err(CommitFailure::NotFound) => Ok(Response::json(404, json!({"error": "no such session"}))),
+        Err(CommitFailure::Conflict(message)) => Ok(Response::json(409, json!({"error": message}))),
+        Err(CommitFailure::Build(message)) => Ok(Response::json(500, json!({"error": message}))),
+        Err(CommitFailure::Publish(message)) => Ok(Response::json(502, json!({"error": message}))),
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct CommitBody {
+    /// The file version the caller believes the session last saw (ADR-0009 §4).
+    #[serde(default)]
+    expected_version: Option<String>,
+}
+
+/// One built file, answered with the version the cabinet now holds.
+struct CommittedFile {
+    name: Option<String>,
+    sha256: String,
+    committed: Committed,
+    /// The cabinet's file version after it took the bytes; `None` without a callback.
+    etag: Option<String>,
+}
+
+/// Why a commit did not produce a cabinet version.
+enum CommitFailure {
+    NotFound,
+    Conflict(String),
+    Build(String),
+    Publish(String),
+}
+
+/// Build the file from the room's authoritative state, then post it to the cabinet. The room lock
+/// is released before the callback, so one slow cabinet cannot stall the other participants.
+fn build_and_publish(shared: &Arc<Shared>, file_id: &str, expected: Option<&str>) -> Result<CommittedFile, CommitFailure> {
+    let (committed, expected_version) = {
+        let hub = shared
+            .hubs
+            .lock()
+            .map_err(|_| CommitFailure::Publish("the room lock is poisoned".into()))?
+            .get(file_id)
+            .cloned()
+            .ok_or(CommitFailure::NotFound)?;
+        let mut hub = hub.lock().map_err(|_| CommitFailure::Publish("the room lock is poisoned".into()))?;
+        let committed = hub.session_mut().commit_checked(expected).map_err(|error| match error {
+            CommitError::Conflict { expected, current } => CommitFailure::Conflict(match current {
+                Some(current) => format!("the file changed outside the session: expected {expected}, current {current}"),
+                None => format!("the file changed outside the session: expected {expected}"),
+            }),
+            CommitError::Build(message) => CommitFailure::Build(message),
+        })?;
+        let expected_version = hub.session().base_file_etag().map(str::to_string);
+        (committed, expected_version)
+    };
+    let sha256 = sha256_hex(&committed.bytes);
+    let name = shared.names.lock().ok().and_then(|names| names.get(file_id).cloned());
+    let published = match &shared.cabinet {
+        Some(cabinet) => match cabinet.publish(file_id, name.as_deref(), committed.version, expected_version.as_deref(), &committed.bytes, &sha256) {
+            Ok(published) => Some(published),
+            Err(PublishError::Conflict(message)) => {
+                shared.metrics.cabinet_conflicts.fetch_add(1, Ordering::Relaxed);
+                return Err(CommitFailure::Conflict(message));
+            }
+            Err(PublishError::Failed(message)) => {
+                shared.metrics.cabinet_failures.fetch_add(1, Ordering::Relaxed);
+                return Err(CommitFailure::Publish(message));
+            }
+        },
+        None => None,
+    };
+    let etag = published.as_ref().map(|published| published.etag.clone());
+    if let Some(etag) = &etag {
+        let hub = shared
+            .hubs
+            .lock()
+            .map_err(|_| CommitFailure::Publish("the room lock is poisoned".into()))?
+            .get(file_id)
+            .cloned()
+            .ok_or(CommitFailure::NotFound)?;
+        hub.lock().map_err(|_| CommitFailure::Publish("the room lock is poisoned".into()))?.accept_file_version(etag.clone());
+        if let Some(store) = &shared.store
+            && let Err(e) = store.set_file_version(file_id, etag)
+        {
+            log::error!("file version not stored: {e}");
+        }
+        shared.metrics.cabinet_commits.fetch_add(1, Ordering::Relaxed);
+    }
+    Ok(CommittedFile { name, sha256, committed, etag })
+}
+
+fn commit_result(done: &CommittedFile) -> CommitResult {
+    CommitResult {
+        sha256: done.sha256.clone(),
+        version: done.committed.version,
+        file_version: done.etag.clone().or_else(|| done.committed.file_version.clone()),
+        bytes_base64: Some(base64::engine::general_purpose::STANDARD.encode(&done.committed.bytes)),
+        blob: None,
+        warnings: done.committed.warnings.clone(),
+    }
+}
+
+/// A commit requested by a peer. The answer is queued only after the cabinet took the file, so a
+/// `commit-result` never promises a version that does not exist.
+fn commit_from_client(hub: &Arc<Mutex<Hub>>, actor: &str, expected: Option<&str>, shared: &Arc<Shared>) -> std::io::Result<()> {
+    shared.metrics.commits.fetch_add(1, Ordering::Relaxed);
+    let (file_id, allowed) = {
+        let hub = hub.lock().map_err(|_| std::io::Error::other("hub lock"))?;
+        (hub.file_id().to_string(), hub.may_commit(actor))
+    };
+    if !allowed {
+        return answer(hub, actor, ServerMsg::Rejected(rejected("commit", RejectCode::Forbidden, "a viewer cannot commit")));
+    }
+    match build_and_publish(shared, &file_id, expected) {
+        Ok(done) => answer(hub, actor, ServerMsg::CommitResult(commit_result(&done))),
+        Err(CommitFailure::Conflict(message)) => answer(hub, actor, ServerMsg::Rejected(rejected("commit", RejectCode::Conflict, &message))),
+        Err(CommitFailure::Build(message)) => answer(hub, actor, ServerMsg::Error(ServerError { code: "commit".into(), message, retryable: true })),
+        Err(CommitFailure::Publish(message)) => {
+            answer(hub, actor, ServerMsg::Error(ServerError { code: "commit-publish".into(), message, retryable: true }))
+        }
+        Err(CommitFailure::NotFound) => {
+            answer(hub, actor, ServerMsg::Error(ServerError { code: "not-found".into(), message: "no such session".into(), retryable: false }))
+        }
+    }
+}
+
+fn answer(hub: &Arc<Mutex<Hub>>, actor: &str, msg: ServerMsg) -> std::io::Result<()> {
+    hub.lock().map_err(|_| std::io::Error::other("hub lock"))?.answer(actor, msg);
+    Ok(())
+}
+
+fn rejected(op_id: &str, code: RejectCode, message: &str) -> Rejected {
+    Rejected { op_id: op_id.into(), code, message: message.into(), retryable: false, hint: None }
 }
 
 /// `PUT /v1/sessions/{id}/media/{sha256}`: upload one picture. The session token decides the
@@ -704,8 +911,10 @@ fn ws_session(ws: &mut tungstenite::WebSocket<TcpStream>, shared: &Arc<Shared>) 
 }
 
 fn handle_client_message(hub: &Arc<Mutex<Hub>>, actor: &str, msg: ClientMsg, shared: &Arc<Shared>) -> std::io::Result<()> {
+    if let ClientMsg::Commit { expected_file_version } = &msg {
+        return commit_from_client(hub, actor, expected_file_version.as_deref(), shared);
+    }
     let is_resync = matches!(msg, ClientMsg::Resync { .. });
-    let is_commit = matches!(msg, ClientMsg::Commit { .. });
     let is_op = matches!(msg, ClientMsg::Op(_));
     let mut hub = hub.lock().map_err(|_| std::io::Error::other("hub lock"))?;
     if let Err(e) = hub.receive(actor, msg) {
@@ -722,9 +931,6 @@ fn handle_client_message(hub: &Arc<Mutex<Hub>>, actor: &str, msg: ClientMsg, sha
     }
     if is_op {
         shared.metrics.ops.fetch_add(1, Ordering::Relaxed);
-    }
-    if is_commit {
-        shared.metrics.commits.fetch_add(1, Ordering::Relaxed);
     }
     if is_resync {
         shared.metrics.resyncs.fetch_add(1, Ordering::Relaxed);

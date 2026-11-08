@@ -69,6 +69,9 @@ impl Store {
         }
         let bytes = fs::read(&base).map_err(|e| format!("base: {e}"))?;
         let mut session = DocSession::open(file_id, &bytes).map_err(|e| format!("base: {e}"))?;
+        if let Some(etag) = stored.get("fileEtag").and_then(|value| value.as_str()) {
+            session.set_base_file_etag(etag);
+        }
         let journal = dir.join(JOURNAL);
         if journal.exists() {
             let text = fs::read_to_string(&journal).map_err(|e| format!("journal: {e}"))?;
@@ -96,7 +99,10 @@ impl Store {
         let dir = self.room_dir(file_id);
         fs::create_dir_all(&dir).map_err(|e| format!("store: {e}"))?;
         let state = session.take_snapshot().map_err(|e| format!("snapshot: {e}"))?.clone();
-        let meta = serde_json::json!({"fileId": file_id, "version": state.version});
+        let mut meta = serde_json::json!({"fileId": file_id, "version": state.version});
+        if let Some(etag) = session.base_file_etag() {
+            meta["fileEtag"] = serde_json::Value::String(etag.to_string());
+        }
         fs::write(dir.join(META), meta.to_string()).map_err(|e| format!("meta: {e}"))?;
         let tmp = dir.join("base.deckcraft.tmp");
         {
@@ -107,6 +113,23 @@ impl Store {
         fs::rename(&tmp, dir.join(BASE)).map_err(|e| format!("base: {e}"))?;
         self.trim_journal(&dir, state.version);
         Ok(())
+    }
+
+    /// Record the file version the cabinet accepted after a commit, so a restart still compares
+    /// the next commit against the copy the cabinet holds (ADR-0009 §4).
+    pub fn set_file_version(&self, file_id: &str, etag: &str) -> Result<(), String> {
+        let dir = self.room_dir(file_id);
+        fs::create_dir_all(&dir).map_err(|e| format!("store: {e}"))?;
+        let path = dir.join(META);
+        let mut meta = fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .unwrap_or_else(|| serde_json::json!({"fileId": file_id}));
+        meta["fileId"] = serde_json::Value::String(file_id.to_string());
+        meta["fileEtag"] = serde_json::Value::String(etag.to_string());
+        let tmp = dir.join("meta.json.tmp");
+        fs::write(&tmp, meta.to_string()).map_err(|e| format!("meta: {e}"))?;
+        fs::rename(&tmp, &path).map_err(|e| format!("meta: {e}"))
     }
 
     /// Append one accepted operation, then take a base when the version reaches the boundary.
@@ -324,6 +347,27 @@ mod tests {
             68, 65, 84, 120, 156, 99, 184, 163, 161, 129, 21, 49, 12, 45, 9, 0, 123, 123, 75, 1, 251, 162, 81, 240, 0, 0, 0, 0, 73, 69, 78, 68, 174,
             66, 96, 130,
         ]
+    }
+
+    #[test]
+    fn the_file_version_the_cabinet_accepted_survives_a_restart() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-store-etag-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = Store::new(&dir, 100).expect("store");
+        let mut session = DocSession::from_document("file-e", deck(), SessionConfig::default()).expect("session");
+        store.snapshot("file-e", &mut session).expect("base at version 0");
+        assert!(store.load("file-e").expect("load").expect("stored").base_file_etag().is_none(), "a fresh room has no file version");
+
+        session.accept_file_version("etag-1");
+        store.set_file_version("file-e", "etag-1").expect("etag");
+        let restored = store.load("file-e").expect("load").expect("stored");
+        assert_eq!(restored.base_file_etag(), Some("etag-1"), "the next commit compares against the cabinet's copy");
+
+        // A later snapshot keeps the version with the base.
+        store.snapshot("file-e", &mut session).expect("snapshot");
+        let restored = store.load("file-e").expect("load").expect("stored");
+        assert_eq!(restored.base_file_etag(), Some("etag-1"));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

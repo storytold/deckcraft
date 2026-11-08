@@ -10,7 +10,12 @@
 //! - `COLLAB_MAX_PARTICIPANTS` (16), `COLLAB_MAX_MESSAGE_BYTES` (262144),
 //!   `COLLAB_MAX_OPS_PER_SEC` (50);
 //! - `COLLAB_STORE_DIR` — persist rooms here (native base + journal); absent = memory only;
-//! - `COLLAB_SNAPSHOT_EVERY` — operations between base snapshots (200).
+//! - `COLLAB_SNAPSHOT_EVERY` — operations between base snapshots (200);
+//! - `COLLAB_CABINET_URL` — the cabinet's commit endpoint (`{sessionId}` is substituted); when
+//!   set, a commit becomes a file version there instead of staying in this process;
+//! - `COLLAB_CABINET_TOKEN` — the service token the callback is authenticated with (required
+//!   with the URL, never logged);
+//! - `COLLAB_CABINET_TIMEOUT_MS` — deadline for one callback (10000).
 //!
 //! TLS is terminated by the ingress: this process speaks plain HTTP/WS on a private network.
 //! Logs name sessions, versions and counts; slide content, text and tokens are never logged.
@@ -21,7 +26,9 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
+use deckcraft_collab_server::cabinet::CabinetConfig;
 use deckcraft_collab_server::{Config, JwtConfig, serve};
 
 fn main() -> ExitCode {
@@ -43,6 +50,18 @@ fn main() -> ExitCode {
         }
     };
     let number = |name: &str, default: usize| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
+    let cabinet_url = std::env::var("COLLAB_CABINET_URL").ok().filter(|url| !url.is_empty());
+    let cabinet_token = std::env::var("COLLAB_CABINET_TOKEN").ok().filter(|token| !token.is_empty());
+    let cabinet = match (cabinet_url, cabinet_token) {
+        (Some(url), Some(token)) => {
+            Some(CabinetConfig { url, token, timeout: Duration::from_millis(number("COLLAB_CABINET_TIMEOUT_MS", 10_000) as u64) })
+        }
+        (Some(_), None) => {
+            eprintln!("COLLAB_CABINET_TOKEN is required with COLLAB_CABINET_URL");
+            return ExitCode::from(2);
+        }
+        _ => None,
+    };
     let config = Config {
         service_token,
         jwt,
@@ -52,6 +71,7 @@ fn main() -> ExitCode {
         max_ops_per_sec: number("COLLAB_MAX_OPS_PER_SEC", 50),
         store_dir: std::env::var("COLLAB_STORE_DIR").ok().filter(|d| !d.is_empty()).map(PathBuf::from),
         snapshot_every: number("COLLAB_SNAPSHOT_EVERY", 200) as u64,
+        cabinet,
     };
     match serve(bind, config) {
         Ok(handle) => {
