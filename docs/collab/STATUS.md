@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-08. Branch: `collab/pr10` (media slice `7fe75711`, docs `a4aac7c7`..`e9062bd6`).
+Updated: 2026-11-08. Branch: `collab/pr10` (media slice `7fe75711`, docs commits on top).
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -26,7 +26,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr10` | `7fe75711` | media channel: pictures by `sha256`, upload/fetch, persistence |
 
 The Commit column names the slice commit; each branch also carries a documentation commit. Heads:
-`collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711` plus the docs commits `a4aac7c7`..`e9062bd6`.
+`collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711` plus the docs commits on top.
 The working tree is
 clean: the work the chair saw uncommitted on 2026-11-08 is in `7fe75711` (`local.rs`,
 `transport.rs`, `session.rs`, `hub.rs`, `collab-proto`, `tests/two_clients.rs`, `ui-egui/collab.rs`,
@@ -220,6 +220,7 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
   results are in the verification table above.
 - Added [`pr10.md`](pr10.md): title, description, review order, `PR-CHECKLIST.md` mapping and the
   limitations. No push.
-- Posted a formal `proposal` with the RFC artifact to `rfc/deckcraft` on the bus.
+- Posted a formal `proposal` with the RFC/PR/STATUS artifacts to `rfc/deckcraft`:
+  `20261108T105421Z-deckcraft-47b7` (refs `…-7302`, `…-7c9b`, `…-7c4a`).
 - Re-prioritised the gaps in [`production.md`](production.md) (P0 cabinet callback, P1 command
   surface/media/text, P2 transport/preview/undo/base-transfer/perf).
