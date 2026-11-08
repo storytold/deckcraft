@@ -385,13 +385,13 @@ fn regroup(s: &mut Session, _p: &Value) -> Result<Value> {
     }
 }
 
-fn align(s: &mut Session, p: &Value) -> Result<Value> {
-    let edge = str_param(p, "edge").unwrap_or("left").to_string();
-    let ids = targets(s, p)?;
-    let st = s.doc()?;
+/// Final boxes `arrange.align` gives its targets, in parent space. The command applies them; a
+/// collaborating replica sends the same values as final bounds in one step, so no replica
+/// recomputes the reference (RFC §3.2.1, RFC §13 item 4).
+pub fn align_plan(st: &crate::DocState, ids: &[ShapeId], edge: &str, to: Option<&str>) -> Vec<(ShapeId, Xfrm)> {
     let size = st.doc.slide_size;
     let boxes: Vec<(ShapeId, Xfrm)> = ids.iter().filter_map(|id| st.shape(*id).map(|x| (*id, xfrm_of(&st.doc, &st.selection, x)))).collect();
-    let to_slide = match str_param(p, "to") {
+    let to_slide = match to {
         Some("slide") => true,
         Some(_) => false,
         None => boxes.len() < 2,
@@ -401,10 +401,11 @@ fn align(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         union_bounds(&boxes.iter().map(|b| b.1).collect::<Vec<_>>()).unwrap_or_default()
     };
-    edit_geometry(s, p, "arrange.align", |sh| {
-        if let Some(x) = sh.xfrm.as_mut() {
+    boxes
+        .into_iter()
+        .map(|(id, mut x)| {
             let b = x.bounds();
-            let (dx, dy) = match edge.as_str() {
+            let (dx, dy) = match edge {
                 "left" => (reference.x0 - b.x0, 0.0),
                 "center" => (reference.center().x - b.center().x, 0.0),
                 "right" => (reference.x1 - b.x1, 0.0),
@@ -415,21 +416,33 @@ fn align(s: &mut Session, p: &Value) -> Result<Value> {
             };
             x.x += dx;
             x.y += dy;
+            (id, x)
+        })
+        .collect()
+}
+
+fn align(s: &mut Session, p: &Value) -> Result<Value> {
+    let edge = str_param(p, "edge").unwrap_or("left").to_string();
+    let ids = targets(s, p)?;
+    let plan = align_plan(s.doc()?, &ids, &edge, str_param(p, "to"));
+    edit_geometry(s, p, "arrange.align", |sh| {
+        if let (Some(x), Some((_, target))) = (sh.xfrm.as_mut(), plan.iter().find(|(i, _)| *i == sh.id)) {
+            *x = *target;
         }
         Ok(())
     })
 }
 
-fn distribute(s: &mut Session, p: &Value) -> Result<Value> {
-    let horiz = !str_param(p, "dir").unwrap_or("horizontal").starts_with('v');
-    let ids = targets(s, p)?;
-    let st = s.doc()?;
+/// Final boxes `arrange.distribute` gives its targets, sorted by the distributing axis. The
+/// command applies them; a collaborating replica sends the same values as final bounds.
+pub fn distribute_plan(st: &crate::DocState, ids: &[ShapeId], dir: Option<&str>) -> Vec<(ShapeId, Xfrm)> {
+    let horiz = !dir.unwrap_or("horizontal").starts_with('v');
     let size = st.doc.slide_size;
-    let mut boxes: Vec<(ShapeId, Rect)> =
-        ids.iter().filter_map(|id| st.shape(*id).map(|x| (*id, xfrm_of(&st.doc, &st.selection, x).bounds()))).collect();
-    let to_slide = str_param(p, "to") == Some("slide") || boxes.len() < 3;
+    let mut boxes: Vec<(ShapeId, Rect, Xfrm)> =
+        ids.iter().filter_map(|id| st.shape(*id).map(|x| (*id, xfrm_of(&st.doc, &st.selection, x)))).map(|(id, x)| (id, x.bounds(), x)).collect();
+    let to_slide = dir == Some("slide") || boxes.len() < 3;
     if boxes.is_empty() {
-        return ok();
+        return Vec::new();
     }
     boxes.sort_by(|a, b| if horiz { a.1.x0.total_cmp(&b.1.x0) } else { a.1.y0.total_cmp(&b.1.y0) });
     let total: f64 = boxes.iter().map(|b| if horiz { b.1.width() } else { b.1.height() }).sum();
@@ -442,24 +455,32 @@ fn distribute(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let n = boxes.len();
     let gap = if n > 1 { ((end - start) - total) / (n - 1) as f64 } else { 0.0 };
-    let mut targets_pos: Vec<(ShapeId, f64)> = vec![];
     let mut cur = start;
     if n == 1 {
         let b = boxes.first().map(|b| b.1).unwrap_or_default();
         cur = start + ((end - start) - if horiz { b.width() } else { b.height() }) / 2.0;
     }
-    for (id, b) in &boxes {
+    let mut out = Vec::with_capacity(n);
+    for (id, b, x) in &boxes {
         let d = cur - if horiz { b.x0 } else { b.y0 };
-        targets_pos.push((*id, d));
+        let mut x = *x;
+        if horiz {
+            x.x += d;
+        } else {
+            x.y += d;
+        }
+        out.push((*id, x));
         cur += (if horiz { b.width() } else { b.height() }) + gap;
     }
+    out
+}
+
+fn distribute(s: &mut Session, p: &Value) -> Result<Value> {
+    let ids = targets(s, p)?;
+    let plan = distribute_plan(s.doc()?, &ids, str_param(p, "dir"));
     edit_geometry(s, p, "arrange.distribute", |sh| {
-        if let (Some(x), Some((_, d))) = (sh.xfrm.as_mut(), targets_pos.iter().find(|(i, _)| *i == sh.id)) {
-            if horiz {
-                x.x += d;
-            } else {
-                x.y += d;
-            }
+        if let (Some(x), Some((_, target))) = (sh.xfrm.as_mut(), plan.iter().find(|(i, _)| *i == sh.id)) {
+            *x = *target;
         }
         Ok(())
     })

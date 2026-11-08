@@ -299,6 +299,7 @@ impl Adapter {
     fn capture_step(&self, before: &Presentation, after: &Presentation, op: &OpEnvelope) -> Option<(Vec<Change>, Vec<Change>)> {
         let (cell, image) = match &op.payload {
             Payload::ShapeMove { .. } | Payload::ShapeSetBounds { .. } => (None, Image::Xfrm { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }),
+            Payload::ShapesSetBounds { items } => return self.capture_bounds_step(before, after, op, items),
             Payload::TextSet { cell, .. } => (*cell, Image::Text(String::new())),
             Payload::TextInsert { .. } | Payload::TextDelete { .. } => (None, Image::Text(String::new())),
             Payload::ShapeFill { .. } => return self.capture_appearance(before, after, op, Image::Fill(None)),
@@ -317,6 +318,28 @@ impl Adapter {
         };
         let template = Snapshot { slide: op.target.slide.clone()?, shape: op.target.shape.clone()?, cell, image };
         Some((vec![Change::Shape(self.capture_snapshot(before, &template)?)], vec![Change::Shape(self.capture_snapshot(after, &template)?)]))
+    }
+
+    /// Undo of `arrange.align`/`arrange.distribute`: one geometry image per target, so the step
+    /// moves the whole selection back in one operation (`shape.setBoundsMany`) instead of one
+    /// step per object. A member that went away makes the step unrecordable.
+    fn capture_bounds_step(
+        &self,
+        before: &Presentation,
+        after: &Presentation,
+        op: &OpEnvelope,
+        items: &[deckcraft_collab_proto::ShapeBounds],
+    ) -> Option<(Vec<Change>, Vec<Change>)> {
+        let slide = op.target.slide.clone()?;
+        let mut was = Vec::with_capacity(items.len());
+        let mut now = Vec::with_capacity(items.len());
+        for item in items {
+            let template =
+                Snapshot { slide: slide.clone(), shape: item.shape.clone(), cell: None, image: Image::Xfrm { x: 0.0, y: 0.0, w: 0.0, h: 0.0 } };
+            was.push(Change::Shape(self.capture_snapshot(before, &template)?));
+            now.push(Change::Shape(self.capture_snapshot(after, &template)?));
+        }
+        Some((was, now))
     }
 
     /// Undo of `shape.insert`, `insert.picture` or `insert.video`/`insert.audio`: the one top-most
@@ -643,6 +666,30 @@ impl Adapter {
                 let (_, shape) = self.resolve_one(before, &op.target, head)?;
                 let args = json!({"ids": [shape.0], "x": x, "y": y, "w": w, "h": h});
                 self.call(session, "shape.setBounds", args, head)
+            }
+            Payload::ShapesSetBounds { items } => {
+                let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
+                if items.is_empty() || items.len() > 4096 {
+                    return Err(Rejection::invalid("a bounds step carries 1–4096 boxes", Some(head)));
+                }
+                // Resolve every object before the first write: `arrange.align`/`distribute` is one
+                // atomic step, so a stale member must refuse it instead of moving half a selection.
+                let mut seen = HashSet::with_capacity(items.len());
+                let mut boxes = Vec::with_capacity(items.len());
+                for item in items {
+                    let shape = self.resolve_shape(before, slide, &item.shape, head)?;
+                    if !seen.insert(shape) {
+                        return Err(Rejection::invalid("a bounds step names the same shape twice", Some(head)));
+                    }
+                    for value in [item.x, item.y, item.w, item.h] {
+                        if !value.is_finite() {
+                            return Err(Rejection::invalid("a bounds value is not finite", Some(head)));
+                        }
+                    }
+                    boxes.push(json!({"id": shape.0, "x": item.x, "y": item.y, "w": item.w, "h": item.h}));
+                }
+                self.select_slide(session, before, slide, head)?;
+                self.call(session, "shape.setBoundsMany", json!({"items": boxes}), head)
             }
             Payload::TextSet { text, cell } => {
                 let (_, shape) = self.resolve_one(before, &op.target, head)?;
@@ -1144,6 +1191,7 @@ pub fn class_of(payload: &Payload) -> OpKind {
     match payload {
         Payload::ShapeMove { .. }
         | Payload::ShapeSetBounds { .. }
+        | Payload::ShapesSetBounds { .. }
         | Payload::TextSet { .. }
         | Payload::TextInsert { .. }
         | Payload::TextDelete { .. }
@@ -1210,7 +1258,7 @@ fn reorder_index(
 mod tests {
     use super::*;
     use crate::history::ActorHistory;
-    use deckcraft_collab_proto::{FillSpec, FormatCmd, LineSpec, ShapeRestoreItem, TextCursor};
+    use deckcraft_collab_proto::{FillSpec, FormatCmd, LineSpec, ShapeBounds, ShapeRestoreItem, TextCursor};
 
     /// A deck with one blank slide and two shapes, built through the same commands on every
     /// replica so ids and keys line up.
@@ -2206,6 +2254,80 @@ mod tests {
         let group = &doc_of(&a).slides[0].shapes[0];
         assert_eq!(group.id, group_id, "the group came back with its id");
         assert_eq!(group.children().len(), 2, "and its members");
+    }
+
+    /// The final boxes `arrange.align` would send for the two shapes of `deck()` aligned to the
+    /// selection's centre (union `[100, 520]`, centre `310`).
+    fn aligned_boxes(adapter: &Adapter, doc: &Presentation) -> Vec<ShapeBounds> {
+        let (_, first) = key_of(adapter, doc, 0);
+        let (_, second) = key_of(adapter, doc, 1);
+        vec![
+            ShapeBounds { shape: first, x: 210.0, y: 100.0, w: 200.0, h: 100.0 },
+            ShapeBounds { shape: second, x: 250.0, y: 100.0, w: 120.0, h: 100.0 },
+        ]
+    }
+
+    #[test]
+    fn align_is_one_operation_and_one_undo_step_on_two_replicas() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let doc = doc_of(&a);
+        let slide = aa.keys().slide_key(doc.slides[0].id).expect("slide").clone();
+        let items = aligned_boxes(&aa, &doc);
+        let target = Target { slide: Some(slide), shapes: items.iter().map(|b| b.shape.clone()).collect(), ..Target::default() };
+        let envelope = op(OpKind::Command, 0, target, Payload::ShapesSetBounds { items });
+
+        let da = aa.apply(&mut a, 0, "alice", &envelope).expect("apply a");
+        let db = bb.apply(&mut b, 0, "bob", &envelope).expect("apply b");
+        assert_eq!(da, db, "the same operation has the same delta on both replicas");
+        assert_eq!(doc_of(&a), doc_of(&b), "the replicas converge");
+        let xs: Vec<f64> = doc_of(&a).slides[0].shapes.iter().map(|sh| sh.xfrm.expect("xfrm").x).collect();
+        assert_eq!(xs, vec![210.0, 250.0]);
+        assert_eq!(aa.history().get("alice").map(|h| h.undo_len()), Some(1), "one step for the whole selection");
+
+        // One undo moves both objects back, in one operation and one new version.
+        let undo = aa.undo(&a, 1, "alice", "alice-undo").expect("undo");
+        assert!(matches!(&undo.payload, Payload::ShapesSetBounds { items } if items.len() == 2));
+        aa.apply(&mut a, 1, "alice", &undo).expect("undo a");
+        bb.apply(&mut b, 1, "bob", &undo).expect("undo b");
+        let xs: Vec<f64> = doc_of(&a).slides[0].shapes.iter().map(|sh| sh.xfrm.expect("xfrm").x).collect();
+        assert_eq!(xs, vec![100.0, 400.0], "both objects are back");
+        assert_eq!(doc_of(&a), doc_of(&b));
+
+        let redo = aa.redo(&a, 2, "alice", "alice-redo").expect("redo");
+        aa.apply(&mut a, 2, "alice", &redo).expect("redo a");
+        bb.apply(&mut b, 2, "bob", &redo).expect("redo b");
+        let xs: Vec<f64> = doc_of(&a).slides[0].shapes.iter().map(|sh| sh.xfrm.expect("xfrm").x).collect();
+        assert_eq!(xs, vec![210.0, 250.0], "redo puts the aligned boxes back");
+        assert_eq!(doc_of(&a), doc_of(&b));
+    }
+
+    #[test]
+    fn an_align_undo_is_refused_after_someone_else_moved_a_member() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let doc = doc_of(&a);
+        let slide = aa.keys().slide_key(doc.slides[0].id).expect("slide").clone();
+        let items = aligned_boxes(&aa, &doc);
+        let first = items[0].shape.clone();
+        let target = Target { slide: Some(slide.clone()), shapes: items.iter().map(|b| b.shape.clone()).collect(), ..Target::default() };
+        let align = op(OpKind::Command, 0, target, Payload::ShapesSetBounds { items });
+        aa.apply(&mut a, 0, "alice", &align).expect("align a");
+        bb.apply(&mut b, 0, "bob", &align).expect("align b");
+
+        let foreign =
+            op(OpKind::Command, 1, Target { slide: Some(slide), shape: Some(first), ..Target::default() }, Payload::ShapeMove { x: 700.0, y: 300.0 });
+        bb.apply(&mut b, 1, "bob", &foreign).expect("bob moves a member");
+        aa.apply(&mut a, 1, "bob", &foreign).expect("a sees bob's move");
+
+        let err = aa.undo(&a, 2, "alice", "alice-undo").expect_err("undo conflict");
+        assert_eq!(err.code, RejectCode::UndoConflict, "alice's step no longer holds the object");
     }
 
     #[test]

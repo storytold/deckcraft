@@ -17,7 +17,7 @@
 
 use std::collections::HashMap;
 
-use deckcraft_collab_proto::{Payload, ShapeField, ShapeFieldItem, ShapeKey, ShapeRestoreItem, SlideKey};
+use deckcraft_collab_proto::{Payload, ShapeBounds, ShapeField, ShapeFieldItem, ShapeKey, ShapeRestoreItem, SlideKey};
 use deckcraft_model::text::TextBody;
 use deckcraft_model::{Fill, Line};
 
@@ -212,9 +212,10 @@ pub fn restores(changes: &[Change]) -> Option<Restore> {
             body_restore(&bodies)
         }
         many => {
-            // A group's fill/outline is one step over its members: every image is an exact model
-            // value of the same kind, and the restore is one atomic operation.
-            let mut items = Vec::with_capacity(many.len());
+            // A step over several objects of one slide is restored atomically. `arrange.align`
+            // and `arrange.distribute` record one geometry image per moved shape and go back in
+            // one `shape.setBoundsMany`; a group's fill/outline records an exact model value per
+            // member and goes back in one `shape.setFields`.
             let mut slide: Option<&SlideKey> = None;
             for change in many {
                 let Change::Shape(at) = change else { return None };
@@ -222,12 +223,31 @@ pub fn restores(changes: &[Change]) -> Option<Restore> {
                     return None;
                 }
                 slide = Some(&at.slide);
+            }
+            let slide = slide?.clone();
+            if many.iter().all(|change| matches!(change, Change::Shape(Snapshot { image: Image::Xfrm { .. }, .. }))) {
+                let mut items = Vec::with_capacity(many.len());
+                for change in many {
+                    let Change::Shape(at) = change else { return None };
+                    let Image::Xfrm { x, y, w, h } = at.image else { return None };
+                    items.push(ShapeBounds { shape: at.shape.clone(), x, y, w, h });
+                }
+                return Some(Restore {
+                    slide,
+                    shape: None,
+                    shapes: items.iter().map(|b| b.shape.clone()).collect(),
+                    payload: Payload::ShapesSetBounds { items },
+                });
+            }
+            let mut items = Vec::with_capacity(many.len());
+            for change in many {
+                let Change::Shape(at) = change else { return None };
                 match at.image.payload(at.cell)? {
                     Payload::ShapeField { field, value } => items.push(ShapeFieldItem { shape: at.shape.clone(), field, value }),
                     _ => return None,
                 }
             }
-            Some(Restore { slide: slide?.clone(), shape: None, shapes: Vec::new(), payload: Payload::ShapeFields { items } })
+            Some(Restore { slide, shape: None, shapes: Vec::new(), payload: Payload::ShapeFields { items } })
         }
     }
 }

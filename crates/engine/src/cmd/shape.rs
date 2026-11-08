@@ -9,8 +9,8 @@ use deckcraft_model::{ColorRef, Effects, Fill, Geom, Line, ShapeId, ShapeStyle};
 use serde_json::{Value, json};
 
 use super::{
-    CommandSpec, NO_ID_SPACE, bad, bool_or, bool_param, cmd, color_param, color_value, edit_geometry, edit_shapes, f64_param, has_selection,
-    has_slide, id_param, ok, opt_usize_param, str_param, targets, usize_param, with_param, xfrm_of,
+    CommandSpec, NO_ID_SPACE, bad, bool_or, bool_param, cmd, color_param, color_value, current_shapes, edit_geometry, edit_shapes, f64_param,
+    has_selection, has_slide, id_param, ok, opt_usize_param, str_param, targets, usize_param, with_param, xfrm_of,
 };
 use crate::{Result, Session};
 
@@ -68,6 +68,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("shape.resize", "Size", ["Shape Format", "Size"], None, "{w?: pt, h?: pt, lockAspect?: bool, ids?}", has_selection, resize),
         cmd!("shape.setBounds", "Position and Size", [], None, "{x, y, w, h, ids?}", has_selection, set_bounds),
+        cmd!(
+            "shape.setBoundsMany",
+            "Set Final Boxes",
+            [],
+            None,
+            "{items: [{id, x, y, w, h}]} (puts several objects at their final boxes in one atomic step; `arrange.align`/`arrange.distribute` use it so a shared session gets one confirmed command and one undo step)",
+            has_slide,
+            set_bounds_many
+        ),
         cmd!(
             "shape.rotate",
             "Rotation",
@@ -231,6 +240,75 @@ fn move_by(s: &mut Session, p: &Value) -> Result<Value> {
             x.y = clamp_pos(ay.unwrap_or(x.y) + dy.unwrap_or(0.0));
         }
         Ok(())
+    })
+}
+
+/// Most objects one `shape.setBoundsMany` may move in one step.
+const MAX_BOUNDS_ITEMS: usize = 4096;
+
+/// Put several objects at their final boxes in one atomic step.
+///
+/// `arrange.align` and `arrange.distribute` move every target at once, and a shared session needs
+/// that as **one** confirmed command with **one** undo step (RFC §3.2.1). The boxes are final
+/// values computed by the sender; no replica recomputes the reference. Every id is checked before
+/// the first write, so a stale member refuses the whole operation instead of moving half a
+/// selection, and a locked object is left where it is (as with `shape.move`).
+fn set_bounds_many(s: &mut Session, p: &Value) -> Result<Value> {
+    let items = p.get("items").and_then(Value::as_array).ok_or_else(|| bad("shape.setBoundsMany", "missing `items`"))?;
+    if items.is_empty() || items.len() > MAX_BOUNDS_ITEMS {
+        return Err(bad("shape.setBoundsMany", format!("`items` must hold 1–{MAX_BOUNDS_ITEMS} boxes")));
+    }
+    let mut boxes: Vec<(ShapeId, f64, f64, f64, f64)> = Vec::with_capacity(items.len());
+    for item in items {
+        let id =
+            item.get("id").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok()).ok_or_else(|| bad("shape.setBoundsMany", "missing `id`"))?;
+        let mut v = [0.0f64; 4];
+        for (i, key) in ["x", "y", "w", "h"].iter().enumerate() {
+            v[i] = item
+                .get(*key)
+                .and_then(Value::as_f64)
+                .filter(|f| f.is_finite())
+                .ok_or_else(|| bad("shape.setBoundsMany", format!("missing `{key}`")))?;
+        }
+        if boxes.iter().any(|(other, ..)| *other == ShapeId(id)) {
+            return Err(bad("shape.setBoundsMany", "a box names the same shape twice"));
+        }
+        boxes.push((ShapeId(id), clamp_pos(v[0]), clamp_pos(v[1]), clamp_side(v[2]), clamp_side(v[3])));
+    }
+    s.edit(|doc, sel| {
+        // A shape without an explicit transform gets the box it resolves to before the final one.
+        let resolved: Vec<(ShapeId, deckcraft_model::Xfrm)> = boxes
+            .iter()
+            .filter_map(|(id, ..)| {
+                current_shapes(doc, sel)
+                    .and_then(|list| deckcraft_model::find_shape(list, *id))
+                    .filter(|sh| sh.xfrm.is_none())
+                    .map(|sh| (*id, xfrm_of(doc, sel, sh)))
+            })
+            .collect();
+        let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad("shape.setBoundsMany", "no slide"))?;
+        for (id, ..) in &boxes {
+            if deckcraft_model::find_shape(&shapes[..], *id).is_none() {
+                return Err(bad("shape.setBoundsMany", format!("no shape {}", id.0)));
+            }
+        }
+        let mut n = 0usize;
+        for (id, x, y, w, h) in &boxes {
+            let Some(sh) = deckcraft_model::find_shape_mut(&mut shapes[..], *id) else { continue };
+            if sh.locked {
+                continue;
+            }
+            let xf = sh.xfrm.get_or_insert_with(|| resolved.iter().find(|(other, _)| other == id).map(|(_, xf)| *xf).unwrap_or_default());
+            xf.x = *x;
+            xf.y = *y;
+            xf.w = *w;
+            xf.h = *h;
+            n += 1;
+        }
+        if n == 0 {
+            return Err(bad("shape.setBoundsMany", "the objects are locked"));
+        }
+        Ok(json!({"updated": n}))
     })
 }
 
@@ -750,6 +828,70 @@ mod tests {
         let fill_of = |id: u64| doc.slides[0].shapes.iter().find(|sh| sh.id.0 as u64 == id).and_then(|sh| sh.fill.clone());
         assert_eq!(fill_of(a), Some(Fill::Background));
         assert_eq!(fill_of(b), Some(Fill::None));
+    }
+
+    #[test]
+    fn set_bounds_many_moves_every_target_in_one_atomic_step() {
+        let mut s = blank();
+        let mut ids = Vec::new();
+        for x in [40, 200, 360] {
+            ids.push(s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap());
+        }
+        let out = s
+            .execute(
+                "shape.setBoundsMany",
+                &json!({"items": [
+                    {"id": ids[0], "x": 10, "y": 20, "w": 80, "h": 60},
+                    {"id": ids[1], "x": 150, "y": 20, "w": 80, "h": 60},
+                    {"id": ids[2], "x": 290, "y": 20, "w": 80, "h": 60},
+                ]}),
+            )
+            .expect("move all");
+        assert_eq!(out["updated"].as_u64(), Some(3));
+        let boxes: Vec<(f64, f64)> = {
+            let st = s.doc().unwrap();
+            st.doc.slides[0].shapes.iter().map(|sh| (sh.xfrm.unwrap().x, sh.xfrm.unwrap().y)).collect()
+        };
+        assert_eq!(boxes, vec![(10.0, 20.0), (150.0, 20.0), (290.0, 20.0)]);
+
+        // One step, not three: a single undo puts the whole selection back.
+        s.execute("edit.undo", &json!({})).unwrap();
+        let boxes: Vec<f64> = {
+            let st = s.doc().unwrap();
+            st.doc.slides[0].shapes.iter().map(|sh| sh.xfrm.unwrap().x).collect()
+        };
+        assert_eq!(boxes, vec![40.0, 200.0, 360.0]);
+    }
+
+    #[test]
+    fn set_bounds_many_refuses_a_missing_or_repeated_shape_before_writing() {
+        let mut s = blank();
+        let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap();
+        let b = s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [200, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap();
+
+        let missing = json!({"items": [
+            {"id": a, "x": 10, "y": 10, "w": 80, "h": 60},
+            {"id": 9999, "x": 10, "y": 10, "w": 80, "h": 60},
+        ]});
+        assert!(s.execute("shape.setBoundsMany", &missing).is_err(), "an unknown id refuses the whole step");
+        let xs: Vec<f64> = {
+            let st = s.doc().unwrap();
+            st.doc.slides[0].shapes.iter().map(|sh| sh.xfrm.unwrap().x).collect()
+        };
+        assert_eq!(xs, vec![40.0, 200.0], "nothing moved");
+
+        let repeated = json!({"items": [
+            {"id": a, "x": 10, "y": 10, "w": 80, "h": 60},
+            {"id": b, "x": 10, "y": 10, "w": 80, "h": 60},
+            {"id": a, "x": 30, "y": 30, "w": 80, "h": 60},
+        ]});
+        assert!(s.execute("shape.setBoundsMany", &repeated).is_err(), "one id twice is ambiguous");
+
+        s.execute("shape.lock", &json!({"ids": [a], "locked": true})).unwrap();
+        assert!(
+            s.execute("shape.setBoundsMany", &json!({"items": [{"id": a, "x": 10, "y": 10, "w": 80, "h": 60}]})).is_err(),
+            "a locked target is not moved"
+        );
     }
 
     /// One empty slide, so the sample deck's shapes do not shift the ids and the z-order.

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use base64::Engine as _;
 use deckcraft_collab_proto::{
     Applied, Change, ClientInfo, ClientMsg, ConfirmedCommand, FillSpec, FormatCmd, LineSpec, MediaKind, OpEnvelope, OpKind, Payload, ServerMsg,
-    ShapeKey, SlideKey, Target,
+    ShapeBounds, ShapeKey, SlideKey, Target,
 };
 use deckcraft_engine::{DocState, Session, Target as EngineTarget};
 use deckcraft_model::{Presentation, Shape, ShapeId, SlideId, find_shape, parent_of};
@@ -594,6 +594,42 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
                 Ok(vec![make(Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() }, Payload::Ungroup {})])
             }
         }
+        "arrange.align" | "arrange.distribute" => {
+            let ids = shape_ids(p, st)?;
+            if ids.is_empty() {
+                return Err(LocalError::BadParams(format!("{cmd} needs a shape")));
+            }
+            // Final boxes come from the engine's own plan, so a shared session reaches exactly the
+            // values the single-user command would set. One operation for the whole selection
+            // means one version and one undo step (RFC §3.2.1, §13 item 4).
+            let plan = if cmd == "arrange.align" {
+                deckcraft_engine::cmd::arrange::align_plan(
+                    st,
+                    &ids,
+                    p.get("edge").and_then(Value::as_str).unwrap_or("left"),
+                    p.get("to").and_then(Value::as_str),
+                )
+            } else {
+                deckcraft_engine::cmd::arrange::distribute_plan(st, &ids, p.get("dir").and_then(Value::as_str))
+            };
+            let mut items = Vec::new();
+            for (id, xf) in plan {
+                let shape = find_shape(&slide.shapes, id).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
+                if shape.locked {
+                    continue;
+                }
+                let now = current_xfrm(&st.doc, st, shape);
+                if xf.x == now.x && xf.y == now.y && xf.w == now.w && xf.h == now.h {
+                    continue;
+                }
+                items.push(ShapeBounds { shape: shape_key(keys, slide.id, id)?, x: xf.x, y: xf.y, w: xf.w, h: xf.h });
+            }
+            if items.is_empty() {
+                return Ok(Vec::new());
+            }
+            let shapes = items.iter().map(|b| b.shape.clone()).collect();
+            Ok(vec![make(Target { slide: slide_key, shapes, ..Target::default() }, Payload::ShapesSetBounds { items })])
+        }
         "arrange.reorder" => {
             let id = p
                 .get("id")
@@ -760,7 +796,7 @@ pub fn local_op_id(seed: u64) -> String {
 
 /// Only used by the UI to keep a stable shape while a command is in flight.
 pub fn is_merge(payload: &Payload) -> bool {
-    matches!(payload, Payload::ShapeMove { .. } | Payload::ShapeSetBounds { .. } | Payload::TextSet { .. })
+    matches!(payload, Payload::ShapeMove { .. } | Payload::ShapeSetBounds { .. } | Payload::ShapesSetBounds { .. } | Payload::TextSet { .. })
 }
 
 /// Description of a change for logs and tests (no content).
@@ -815,6 +851,55 @@ mod tests {
         assert_eq!(ops[0].payload, Payload::ShapeMove { x: 125.0, y: 95.0 });
         assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
         assert_eq!(ops[0].kind, OpKind::Command);
+    }
+
+    #[test]
+    fn align_normalises_the_whole_selection_into_one_final_bounds_step() {
+        let (mut s, doc, slide, shapes) = deck();
+        s.execute("edit.select", &json!({"ids": shapes})).expect("select both");
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        let ops = normalize(&km, st, "arrange.align", &json!({"edge": "center"}), "op", &doc).expect("align");
+        assert_eq!(ops.len(), 1, "one operation for the whole selection");
+        assert_eq!(ops[0].kind, OpKind::Command);
+        match &ops[0].payload {
+            Payload::ShapesSetBounds { items } => {
+                assert_eq!(items.len(), 2, "both objects move to the selection's centre");
+                assert_eq!(items[0].shape, km.shape_key(slide, shapes[0]).expect("key").clone());
+                assert_eq!((items[0].x, items[0].y), (210.0, 100.0));
+                assert_eq!(items[1].shape, km.shape_key(slide, shapes[1]).expect("key").clone());
+                assert_eq!((items[1].x, items[1].y), (250.0, 100.0));
+                assert_eq!((items[0].w, items[0].h), (200.0, 100.0), "the size is not recomputed on the wire");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
+        assert_eq!(ops[0].target.shapes.len(), 2, "the address lists every moved shape");
+    }
+
+    #[test]
+    fn distribute_normalises_gaps_into_one_final_bounds_step_and_skips_a_no_op() {
+        let (mut s, doc, _, shapes) = deck();
+        s.execute("edit.select", &json!({"ids": shapes})).expect("select both");
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        let ops = normalize(&km, st, "arrange.distribute", &json!({"dir": "horizontal"}), "op", &doc).expect("distribute");
+        assert_eq!(ops.len(), 1);
+        match &ops[0].payload {
+            Payload::ShapesSetBounds { items } => {
+                // Two objects against the slide: even gaps from 0 to the 960 pt width.
+                assert_eq!(items.len(), 2);
+                assert_eq!(items[0].x, 0.0);
+                assert_eq!(items[1].x, 840.0);
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // Already aligned left: the step would change nothing, so nothing is sent.
+        s.execute("arrange.align", &json!({"edge": "left"})).expect("align left in the single-user engine");
+        let st = s.doc().expect("doc");
+        let ops = normalize(&km, st, "arrange.align", &json!({"edge": "left"}), "op", &doc).expect("no-op align");
+        assert!(ops.is_empty(), "an operation that moves nothing is not sent");
     }
 
     #[test]

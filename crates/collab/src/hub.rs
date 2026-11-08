@@ -109,6 +109,7 @@ impl Hub {
                 commands: vec![
                     "shape.move".into(),
                     "shape.setBounds".into(),
+                    "shape.setBoundsMany".into(),
                     "text.set".into(),
                     "text.insert".into(),
                     "text.delete".into(),

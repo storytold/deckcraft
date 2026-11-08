@@ -217,6 +217,12 @@ pub enum Payload {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         shows: Vec<(u32, u32)>,
     },
+    /// Final boxes for several shapes of one slide, in one atomic step. `arrange.align` and
+    /// `arrange.distribute` move every target at once and must reach every replica as one
+    /// undoable step; each item carries the final box, so no replica recomputes the reference
+    /// (a slide edge, a selection frame or the gaps between objects). Like [`Payload::ShapeMove`],
+    /// the values are absolute and the delta is the changed geometry.
+    ShapesSetBounds { items: Vec<ShapeBounds> },
     /// Removes one shape (`target.shape`) or several (`target.shapes`).
     ShapeDelete {},
     /// Inserts a slide before `target.slide` (`None`: at the end).
@@ -274,6 +280,18 @@ pub struct ShapeFieldItem {
     pub field: ShapeField,
     /// The model value as JSON; `null` = unset.
     pub value: serde_json::Value,
+}
+
+/// One shape in a [`Payload::ShapesSetBounds`] step: the final box in slide points. The shape is
+/// named by key, never by id from the sender's replica.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShapeBounds {
+    pub shape: ShapeKey,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
 }
 
 /// One shape in a [`Payload::ShapeRestore`].
@@ -493,6 +511,7 @@ impl Payload {
             Payload::FormatSet { format, .. } => format.id(),
             Payload::ShapeField { .. } => "shape.setField",
             Payload::ShapeFields { .. } => "shape.setFields",
+            Payload::ShapesSetBounds { .. } => "shape.setBoundsMany",
             Payload::ShapeRestore { .. } => "shape.restore",
             Payload::SlideRestore { .. } => "slide.restore",
             Payload::ShapeDelete {} => "edit.delete",
@@ -912,6 +931,30 @@ mod tests {
         let text = encode_client(&msg).expect("encode");
         assert!(text.contains("\"type\":\"op\""), "{text}");
         assert!(text.contains("\"cmd\":\"shape_move\""), "{text}");
+        assert_eq!(decode_client(&text).expect("decode"), msg);
+    }
+
+    #[test]
+    fn a_final_bounds_step_round_trips_as_a_command() {
+        let payload = Payload::ShapesSetBounds {
+            items: vec![
+                ShapeBounds { shape: "7".into(), x: 210.0, y: 100.0, w: 200.0, h: 100.0 },
+                ShapeBounds { shape: "8".into(), x: 250.0, y: 100.0, w: 120.0, h: 100.0 },
+            ],
+        };
+        assert_eq!(payload.command(), "shape.setBoundsMany");
+        let msg = ClientMsg::Op(OpEnvelope {
+            op_id: "6f1c".into(),
+            doc: "f42".into(),
+            base_version: 7,
+            kind: OpKind::Command,
+            target: Target { slide: Some("s1".into()), shapes: vec!["7".into(), "8".into()], ..Target::default() },
+            payload,
+            history: None,
+        });
+        let text = encode_client(&msg).expect("encode");
+        assert!(text.contains("\"cmd\":\"shapes_set_bounds\""), "{text}");
+        assert!(text.contains("\"shape\":\"7\""), "{text}");
         assert_eq!(decode_client(&text).expect("decode"), msg);
     }
 

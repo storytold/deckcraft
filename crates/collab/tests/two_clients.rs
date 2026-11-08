@@ -264,6 +264,47 @@ fn a_viewer_cannot_write() {
 }
 
 #[test]
+fn an_align_step_reaches_both_clients_as_one_confirmed_command_and_one_undo() {
+    let mut server = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+    let (slide, first, second) = keys(&server);
+    let mut a = join(&server, "alice", Role::Editor);
+    let mut b = join(&server, "bob", Role::Editor);
+
+    let align = OpEnvelope {
+        op_id: "alice-align".into(),
+        doc: "d".into(),
+        base_version: 0,
+        kind: OpKind::Command,
+        target: Target { slide: Some(slide), shapes: vec![first.clone(), second.clone()], ..Target::default() },
+        payload: Payload::ShapesSetBounds {
+            items: vec![
+                deckcraft_collab_proto::ShapeBounds { shape: first, x: 210.0, y: 100.0, w: 200.0, h: 100.0 },
+                deckcraft_collab_proto::ShapeBounds { shape: second, x: 250.0, y: 100.0, w: 120.0, h: 100.0 },
+            ],
+        },
+        history: None,
+    };
+    a.client.submit(align).expect("submit align");
+    pump(&mut server, &mut a, &mut [&mut b]);
+
+    assert_eq!(server.version(), 1, "the whole selection is one authoritative step");
+    assert_eq!(a.client.version(), 1);
+    assert_eq!(b.client.version(), 1);
+    let xs: Vec<f64> = server.document().expect("doc").slides[0].shapes.iter().map(|sh| sh.xfrm.expect("xfrm").x).collect();
+    assert_eq!(xs, vec![210.0, 250.0], "the confirmed command moved both objects");
+
+    let undo = server.undo("alice", "alice-undo").expect("undo");
+    assert!(matches!(&undo.payload, Payload::ShapesSetBounds { items } if items.len() == 2), "one operation takes the step back");
+    a.client.submit(undo).expect("submit undo");
+    pump(&mut server, &mut a, &mut [&mut b]);
+    assert_eq!(server.version(), 2, "the undo is its own version");
+    assert_eq!(a.client.version(), 2);
+    assert_eq!(b.client.version(), 2);
+    let xs: Vec<f64> = server.document().expect("doc").slides[0].shapes.iter().map(|sh| sh.xfrm.expect("xfrm").x).collect();
+    assert_eq!(xs, vec![100.0, 400.0], "both objects are back");
+}
+
+#[test]
 fn undo_of_one_editor_leaves_the_other_alone() {
     let mut server = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
     let (slide, first, second) = keys(&server);
