@@ -188,10 +188,10 @@ must be treated as a development instance.
 
 | Suite | What it covers |
 |---|---|
-| `cargo test -p deckcraft-collab` | 91 unit + 7 integration: convergence, dedup, structural exclusion, tombstones, undo per actor, text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate slices, presence, snapshots, commit |
+| `cargo test -p deckcraft-collab` | 99 unit + 7 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, text, fill, outline, format), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate slices, presence, snapshots, commit |
 | `cargo test -p deckcraft-collab-server` | 3 unit + 6 real-socket tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay, media upload/fetch (picture and audio allowlists), picture insert |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue |
-| `cargo test -p deckcraft-engine` | 558: the collaboration queue and read-only gate did not change single-user behaviour |
+| `cargo test -p deckcraft-engine` | 560: the collaboration queue, read-only gate and `shape.setField` did not change single-user behaviour |
 | `cargo clippy … --all-targets -- -D warnings`, `cargo fmt --check`, `cargo xtask layers` | clean |
 
 ## Known gaps before this is a finished product
@@ -215,7 +215,9 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    host page must also forward media fetches and the session token.
 6. **P2 — Optimistic preview**: edits become visible on `applied`; correctness first, preview and
    rollback are the next latency slice.
-7. **P2 — Structural undo** (deleting a slide/shape) is still out of v1, as RFC §13 records.
+7. **P2 — Undo of a group's fill/outline and of structural steps** (slide/shape insert/delete) is
+   still out of v1, as RFC §13 records. Move, bounds, text, fill, outline and `format.*` steps of
+   one shape are undoable.
 8. **P2 — Base transfer for a compacted journal tail**: restart and tail replay work, but a client
    that missed the base needs a chunked `snapshot`.
 9. **P2 — Large-deck gate**: a 100+ slide/media performance run and a LibreOffice open/repair gate
