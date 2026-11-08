@@ -192,6 +192,8 @@ pub struct Backstage {
     pub pdf_hidden: bool,
     /// Export › Change File Type › PNG: leave the slide background out (#784).
     pub png_transparent: bool,
+    /// Save As › File name: the name the Save dialog is opened with (the title until edited, #1826).
+    pub save_as_filename: String,
 }
 
 impl Backstage {
@@ -217,9 +219,9 @@ impl Backstage {
             handouts_per_page: 3,
             pdf_hidden: false,
             png_transparent: false,
+            save_as_filename: String::new(),
         }
     }
-
     /// Show `page`, as a click in the side menu does.
     pub fn go(&mut self, page: Page) {
         if self.page != page {

@@ -447,10 +447,16 @@ impl SlideApp {
         }
     }
 
-    pub fn save_as_dialog(&mut self, format: &str) {
-        let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
+    /// Save As: the Save dialog (desktop), the host (embedded web) or a download (web), suggesting
+    /// `name` (Save As › File name, #1826) or else the presentation's title, with `format`'s extension.
+    pub fn save_as_dialog(&mut self, format: &str, name: Option<&str>) {
+        let name = name
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map_or_else(|| self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into()), str::to_string);
         let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
-        let suggested = format!("{name}.{ext}");
+        // A typed name may already carry the extension.
+        let suggested = if name.to_ascii_lowercase().ends_with(&format!(".{ext}")) { name } else { format!("{name}.{ext}") };
         if let Some(pick) = self.services.pick_save.as_mut() {
             if let Some(path) = pick(&suggested) {
                 match self.session.execute("file.saveAs", &json!({"path": path})) {
@@ -499,7 +505,7 @@ impl SlideApp {
                 Err(e) => self.set_status(e.to_string()),
             }
         } else {
-            self.save_as_dialog("deckcraft");
+            self.save_as_dialog("deckcraft", None);
         }
     }
 
@@ -596,7 +602,7 @@ impl SlideApp {
                 UiRequest::Message { text } => self.set_status(text),
                 UiRequest::PickFile { purpose } => {
                     if purpose == "saveAs" {
-                        self.save_as_dialog("deckcraft");
+                        self.save_as_dialog("deckcraft", None);
                     }
                 }
                 UiRequest::Media { action, shape, ms } => {
