@@ -112,6 +112,17 @@ fn forward_delete_removes_whole_grapheme_cluster() {
         let t = s.execute("text.get", &json!({"id": title})).unwrap();
         assert_eq!(t["text"], rest);
     }
+    // Inside a cluster, Delete stops at that cluster's end and leaves the next flag intact.
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("text.selectAll", &json!({})).unwrap();
+    s.execute("text.insert", &json!({"text": "\u{1F1FA}\u{1F1F8}\u{1F1E8}\u{1F1E6}"})).unwrap();
+    s.execute("text.move", &json!({"to": "start"})).unwrap();
+    s.execute("text.move", &json!({"to": "right"})).unwrap();
+    s.execute("text.delete", &json!({"dir": "forward"})).unwrap();
+    let t = s.execute("text.get", &json!({"id": title})).unwrap();
+    assert_eq!(t["text"], "\u{1F1FA}\u{1F1E8}\u{1F1E6}");
 }
 
 /// `text.set` treats CRLF (or a lone CR) as one paragraph break and keeps no `\r` in the text.

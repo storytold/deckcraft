@@ -424,14 +424,15 @@ fn smart_space(body: &mut TextBody, at: Pos) -> Pos {
 pub fn cluster_end(body: &TextBody, pos: Pos) -> Pos {
     let (pi, ch) = clamp(body, pos);
     let text = body.paragraphs.get(pi).map(Paragraph::text).unwrap_or_default();
-    match text.chars().nth(ch) {
-        Some(_) => {
-            let rest: String = text.chars().skip(ch).collect();
-            let n = rest.graphemes(true).next().map_or(1, |g| g.chars().count());
-            (pi, ch + n)
+    // Boundaries come from the whole paragraph, so a caret inside a cluster deletes only to its end.
+    let mut end = 0;
+    for g in text.graphemes(true) {
+        end += g.chars().count();
+        if end > ch {
+            return (pi, end);
         }
-        None => char_move(body, pos, true),
     }
+    char_move(body, pos, true)
 }
 
 /// One character left/right across paragraph boundaries.
