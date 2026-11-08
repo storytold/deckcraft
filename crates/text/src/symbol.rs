@@ -24,7 +24,7 @@ pub(crate) fn symbol_map_char(face: &FontFace, ch: char, sym: Option<&str>) -> O
         return None;
     }
     let sym = sym?;
-    if !is_symbol_font(sym) || !face.family.eq_ignore_ascii_case(sym) {
+    if !is_symbol_font(sym) || !face.source_family().eq_ignore_ascii_case(sym) {
         return None;
     }
     symbol_font_draw(face, code)
@@ -206,7 +206,7 @@ pub(crate) fn symbol_font_draw(face: &FontFace, code: u32) -> Option<char> {
         return Some(pua);
     }
     // The table below is the Symbol font's encoding; Wingdings, Webdings and the like are not Symbol.
-    if !face.family.eq_ignore_ascii_case("symbol") {
+    if !face.source_family().eq_ignore_ascii_case("symbol") {
         return None;
     }
     if let Some(real) = symbol_unicode(code) {
@@ -227,7 +227,7 @@ pub(crate) fn symbol_font_draw(face: &FontFace, code: u32) -> Option<char> {
 /// symbol font that `face` is (not a substitute) and it has the glyph.
 pub(crate) fn symbol_font_char(face: &FontFace, c: &str, font: Option<&str>) -> Option<char> {
     let font = font?;
-    if !is_symbol_font(font) || !face.family.eq_ignore_ascii_case(font) {
+    if !is_symbol_font(font) || !face.source_family().eq_ignore_ascii_case(font) {
         return None;
     }
     let first = c.chars().next()?;

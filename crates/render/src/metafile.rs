@@ -2,9 +2,9 @@
 //! `deckcraft-metafile` and drawn as vectors into a bitmap of the size the slide needs, so they go
 //! through the same crop, tile and recolour path as any other picture.
 //!
-//! Text items name the font the file asks for; they are drawn with the face slide text would use
-//! for that family (`FontDb::document_face`, so a missing font falls back the same way), symbol
-//! fonts mapped as bullets map them, and the file's own advances (the dx array) placing each
+//! Text items keep the source family for symbol mapping, while document rendering resolves it
+//! through the presentation's private font aliases before `FontDb::document_face` lookup.
+//! Missing fonts fall back as slide text does, and the file's own advances (the dx array) place each
 //! character.
 
 use std::collections::HashMap;
@@ -34,6 +34,11 @@ pub fn is_metafile(bytes: &[u8]) -> bool {
 /// Draw the metafile `bytes` into straight RGBA with its longer side `side` px (transparent where
 /// it draws nothing). `None` when it doesn't parse or has no size.
 pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
+    rasterize_in(bytes, side, None)
+}
+
+/// Draw with the containing document's private fonts, or ordinary fonts for standalone export.
+pub(crate) fn rasterize_in(bytes: &[u8], side: u32, pres: Option<&deckcraft_model::Presentation>) -> Option<image::RgbaImage> {
     let mut pic = deckcraft_metafile::parse(bytes).ok()?;
     if !pic.has_size() {
         return None;
@@ -107,7 +112,7 @@ pub fn rasterize(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
                 if let Some(c) = clip {
                     ctx.push_clip_layer(&c.to_path(0.1));
                 }
-                draw_text(ctx, t, transform);
+                draw_text(ctx, t, transform, pres);
                 if clip.is_some() {
                     ctx.pop_layer();
                 }
@@ -154,7 +159,7 @@ struct Glyph {
 }
 
 /// Draws a text item; `m` maps its text space to the output.
-fn draw_text(ctx: &mut RenderContext, t: &Text, m: Affine) {
+fn draw_text(ctx: &mut RenderContext, t: &Text, m: Affine, pres: Option<&deckcraft_model::Presentation>) {
     let db = FontDb::global();
     let font = &t.font;
     let family = if font.family.trim().is_empty() { "Arial" } else { font.family.trim() };
@@ -165,7 +170,8 @@ fn draw_text(ctx: &mut RenderContext, t: &Text, m: Affine) {
         (false, true) => "Italic",
         (false, false) => "Regular",
     };
-    let face = db.document_face(family, style);
+    let lookup_family = pres.map_or(family, |p| p.render_font_family(family));
+    let face = db.document_face(lookup_family, style);
     let upem = face.upem.max(1.0);
     let (asc, desc) = win_metrics(&face);
     // LOGFONT height: negative is the em, positive the cell (ascent plus descent).

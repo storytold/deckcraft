@@ -1269,6 +1269,78 @@ fn symbol_unicode_table_covers_the_adobe_encoding() {
 }
 
 #[test]
+fn embedded_symbol_alias_does_not_capture_following_neutrals() {
+    // Reuse the CC0 square fixture with distinct advances and exact character coverage.
+    fn font(advance: u16, characters: &[u32]) -> Vec<u8> {
+        fn replace(bytes: &mut Vec<u8>, tag: &[u8; 4], table: &[u8]) {
+            let count = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
+            let record = (0..count).map(|i| 12 + 16 * i).find(|&r| &bytes[r..r + 4] == tag).unwrap();
+            while !bytes.len().is_multiple_of(4) {
+                bytes.push(0);
+            }
+            let offset = bytes.len() as u32;
+            bytes.extend_from_slice(table);
+            bytes[record + 8..record + 12].copy_from_slice(&offset.to_be_bytes());
+            bytes[record + 12..record + 16].copy_from_slice(&(table.len() as u32).to_be_bytes());
+        }
+        let mut bytes = include_bytes!("../../fonts/tests/fixtures/legacy-regular.ttf").to_vec();
+        let mut cmap = Vec::new();
+        for value in [0_u16, 1, 3, 10] {
+            cmap.extend_from_slice(&value.to_be_bytes());
+        }
+        cmap.extend_from_slice(&12_u32.to_be_bytes());
+        cmap.extend_from_slice(&12_u16.to_be_bytes());
+        cmap.extend_from_slice(&0_u16.to_be_bytes());
+        for value in [16 + 12 * characters.len() as u32, 0, characters.len() as u32] {
+            cmap.extend_from_slice(&value.to_be_bytes());
+        }
+        for &character in characters {
+            for value in [character, character, 1] {
+                cmap.extend_from_slice(&value.to_be_bytes());
+            }
+        }
+        replace(&mut bytes, b"cmap", &cmap);
+        let mut hmtx = Vec::new();
+        for value in [500_u16, 0, advance, 100] {
+            hmtx.extend_from_slice(&value.to_be_bytes());
+        }
+        replace(&mut bytes, b"hmtx", &hmtx);
+        bytes
+    }
+    const TEXT: &str = "DeckCraft Neutral Regression Text";
+    let text_font = font(700, &[0x20, 0x21, 0x41]);
+    let symbol_font = font(900, &[0x20, 0x21, 0xF041]);
+    let db = FontDb::global();
+    // Private registrations never change public family lookup or global fallback.
+    let aliases = db.register_document_fonts([(text_font.as_slice(), TEXT), (symbol_font.as_slice(), "Symbol")]);
+    let symbol_alias = &aliases.iter().find(|(source, _)| source == "Symbol").unwrap().1;
+    let text_alias = &aliases.iter().find(|(source, _)| source == TEXT).unwrap().1;
+    let symbol_face = db.face(symbol_alias, "Regular");
+    let text_face = db.face(text_alias, "Regular");
+    assert_eq!(symbol_face.source_family(), "Symbol");
+    assert!(!is_symbol_font(&symbol_face.family), "exercise a private alias, not the public symbol name");
+    for text in ["\u{F041} !", "A !"] {
+        let (mut p, mut sh) = setup(text, 600.0, 300.0);
+        p.font_aliases = Arc::new(aliases.clone());
+        let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+        para.props.bullet = Some(Bullet::None);
+        para.runs[0].props.font = Some(TEXT.into());
+        para.runs[0].props.font_sym = Some("Symbol".into());
+        para.runs[0].props.size = Some(40.0);
+        let l = lay(&p, &sh, 600.0, 300.0);
+        for i in 0..3 {
+            let run = l.runs.iter().find(|r| (r.chars.0..r.chars.1).contains(&i)).unwrap();
+            let expected = if i == 0 && text.starts_with('\u{F041}') { &symbol_face } else { &text_face };
+            assert_eq!(run.face.id(), expected.id(), "{text:?}, character {i}");
+            assert!(run.glyphs.iter().all(|g| g.0 == 1), "draw the embedded square, not .notdef");
+            let advance = l.lines[0].caret_x[i + 1] - l.lines[0].caret_x[i];
+            let expected_advance = if Arc::ptr_eq(expected, &symbol_face) { 36.0 } else { 28.0 };
+            assert!((advance - expected_advance).abs() < 0.01, "{text:?}, character {i}: {advance}");
+        }
+    }
+}
+
+#[test]
 fn symbol_font_characters_draw_in_the_sym_font() {
     // PowerPoint stores a Symbol-font character as U+F0xx with `<a:sym typeface="Symbol"/>`:
     // U+F0DE is the Symbol font's double arrow (⇒). It must come from that font, not from

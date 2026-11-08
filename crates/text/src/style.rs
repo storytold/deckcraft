@@ -123,7 +123,7 @@ pub(crate) fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgb
     let family = resolve::font_family(ctx, r);
     let bold = r.bold.unwrap_or(false);
     let italic = r.italic.unwrap_or(false);
-    let face = FontDb::global().document_face(&family, style_name(bold, italic));
+    let face = FontDb::global().document_face(ctx.pres.render_font_family(&family), style_name(bold, italic));
     let fake_bold = bold && face.weight < 550.0;
     let fake_italic = italic && !face.italic;
     let size = (r.size.unwrap_or(18.0) * scale).clamp(0.5, 4000.0);
@@ -191,6 +191,7 @@ pub(crate) fn face_chain(ctx: &Ctx, st: &Style, slot: FontSlot, script: Option<S
     let db = FontDb::global();
     let mut chain: Vec<Arc<FontFace>> = Vec::with_capacity(3);
     let mut push = |family: &str| {
+        let family = ctx.pres.render_font_family(family);
         // Only families that exist: `FontDb::face` would substitute the default face.
         if db.has_family(family) {
             let f = db.face(family, st.style_name);

@@ -76,6 +76,21 @@ fn slides_scope(s: &Session, p: &Value) -> bool {
 }
 
 fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
+    let caret = copying_caret(s);
+    let plain = copy_content(s, p)?;
+    if !caret {
+        let st = s.doc()?;
+        let aliases = st.doc.font_aliases.clone();
+        let fonts = st.doc.embedded_fonts.clone();
+        let media = st.doc.media.iter().filter(|m| fonts.iter().any(|f| f.faces().contains(&Some(m.id)))).cloned().collect();
+        s.clipboard.source_font_aliases = aliases;
+        s.clipboard.source_fonts = fonts;
+        s.clipboard.source_font_media = media;
+    }
+    Ok(plain)
+}
+
+fn copy_content(s: &mut Session, p: &Value) -> Result<String> {
     let st = s.doc()?;
     // Text selection.
     if let Some(t) = &st.selection.text {
@@ -283,6 +298,118 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
 }
 
 fn paste(s: &mut Session, p: &Value) -> Result<Value> {
+    let external = str_param(p, "text").is_some_and(|t| t != s.clipboard.plain);
+    if external || s.clipboard.source_fonts.is_empty() || s.doc()?.selection.text.is_some() {
+        return paste_content(s, p);
+    }
+    // Inspect the pasted result, not the source's layout or placeholder formatting.
+    let pasted = paste_content(s, p)?;
+    let mut families = Vec::<String>::new();
+    {
+        let st = s.doc()?;
+        let mut add = |family: &str| {
+            if !family.is_empty() && !families.iter().any(|f| f.eq_ignore_ascii_case(family)) {
+                families.push(family.to_string());
+            }
+        };
+        let visit = |ctx: &deckcraft_model::resolve::Ctx<'_>, shapes: &[Shape], add: &mut dyn FnMut(&str)| {
+            deckcraft_model::walk(shapes, &mut |shape, _| {
+                if let Some(body) = &shape.text {
+                    crate::fonts::body_fonts(ctx, shape, body, true, None, add);
+                }
+                if let deckcraft_model::ShapeKind::Table(table) = &shape.kind {
+                    for cell in table.rows.iter().flat_map(|r| &r.cells) {
+                        crate::fonts::body_fonts(ctx, shape, &cell.text, true, None, add);
+                    }
+                }
+            });
+        };
+        if !s.clipboard.slides.is_empty() {
+            for slide in st.doc.slides.iter().filter(|slide| st.selection.slides.contains(&slide.id)) {
+                if let Some(ctx) = deckcraft_model::resolve::Ctx::for_slide(&st.doc, slide) {
+                    visit(&ctx, &slide.shapes, &mut add);
+                    if let Some(master) = st.doc.notes_master.as_deref().filter(|master| !master.shapes.is_empty()) {
+                        let notes_ctx = deckcraft_model::resolve::Ctx {
+                            owner: deckcraft_model::resolve::Owner::Slide,
+                            ..deckcraft_model::resolve::Ctx::for_master(&st.doc, master)
+                        };
+                        let notes_shape = Shape {
+                            ph: Some(deckcraft_model::Placeholder { kind: deckcraft_model::PhType::Body, idx: 1, ..Default::default() }),
+                            ..Default::default()
+                        };
+                        crate::fonts::body_fonts(&notes_ctx, &notes_shape, &slide.notes, true, None, &mut add);
+                    } else {
+                        crate::fonts::body_fonts(&ctx, &Shape::default(), &slide.notes, true, None, &mut add);
+                    }
+                }
+            }
+        } else if !s.clipboard.shapes.is_empty()
+            && let Some(ctx) = super::text::ctx_for(&st.doc, &st.selection)
+        {
+            for id in &st.selection.shapes {
+                if let Some(shape) = st.shape(*id) {
+                    visit(&ctx, std::slice::from_ref(shape), &mut add);
+                }
+            }
+        }
+    }
+    retain_pasted_fonts(s, &families)?;
+    Ok(pasted)
+}
+
+pub(super) fn retain_pasted_text_fonts(s: &mut Session, a: deckcraft_model::edit::Pos, b: deckcraft_model::edit::Pos) -> Result<()> {
+    if a == b || s.clipboard.source_fonts.is_empty() {
+        return Ok(());
+    }
+    let mut families = Vec::<String>::new();
+    let st = s.doc()?;
+    if let Some(t) = &st.selection.text
+        && let (Some(body), Some(ctx)) = (super::text::body_of(st, t), super::text::ctx_for(&st.doc, &st.selection))
+    {
+        let notes_shape = Shape::default();
+        let shape = if t.notes { Some(&notes_shape) } else { st.shape(t.shape) };
+        if let Some(shape) = shape {
+            crate::fonts::body_fonts(&ctx, shape, body, true, Some((a, b)), &mut |f| {
+                if !f.is_empty() && !families.iter().any(|family| family.eq_ignore_ascii_case(f)) {
+                    families.push(f.to_string());
+                }
+            });
+        }
+    }
+    retain_pasted_fonts(s, &families)
+}
+
+fn retain_pasted_fonts(s: &mut Session, families: &[String]) -> Result<()> {
+    let clip = &s.clipboard;
+    let doc = &s.doc()?.doc;
+    let fonts: Vec<_> = clip
+        .source_fonts
+        .iter()
+        .filter(|font| {
+            families.iter().any(|f| f.eq_ignore_ascii_case(font.typeface.trim()))
+                && !doc.embedded_fonts.iter().any(|f| f.typeface.trim().eq_ignore_ascii_case(font.typeface.trim()))
+                && clip.source_font_aliases.iter().any(|(f, _)| f.eq_ignore_ascii_case(font.typeface.trim()))
+        })
+        .cloned()
+        .collect();
+    if !fonts.is_empty() {
+        let media: Vec<_> = clip.source_font_media.iter().filter(|m| fonts.iter().any(|f| f.faces().contains(&Some(m.id)))).cloned().collect();
+        let aliases: Vec<_> =
+            clip.source_font_aliases.iter().filter(|(f, _)| fonts.iter().any(|font| font.typeface.trim().eq_ignore_ascii_case(f))).cloned().collect();
+        s.edit(|doc, _| {
+            let media_map = bring_media("edit.paste", doc, &media)?;
+            for mut font in fonts {
+                crate::media_refs::visit_mut::font(&mut font, &mut remap_media(&media_map));
+                doc.embedded_fonts.push(font);
+            }
+            Arc::make_mut(&mut doc.font_aliases).extend(aliases);
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+fn paste_content(s: &mut Session, p: &Value) -> Result<Value> {
     // External plain text (from the system clipboard) wins when given and differs from ours.
     // HTML from Pages or Keynote keeps bold, italic and underline when it says the same words.
     if let Some(t) = str_param(p, "text")
@@ -299,7 +426,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     let editing = s.doc()?.selection.text.is_some();
     if editing {
         if let Some(body) = s.clipboard.text.clone() {
-            return super::text::paste_body(s, &body);
+            return super::text::paste_body(s, &body, true);
         }
         let plain = s.clipboard.plain.clone();
         return paste_plain(s, &plain);
@@ -389,7 +516,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn paste_external_body(s: &mut Session, body: &TextBody) -> Result<Value> {
     if s.doc()?.selection.text.is_some() {
-        return super::text::paste_body(s, body);
+        return super::text::paste_body(s, body, false);
     }
     let plain = body.text();
     let st = s.doc()?;
@@ -509,6 +636,7 @@ fn paste_picture(s: &mut Session) -> Result<Value> {
     }
     let st = s.doc()?;
     let mut doc = (*st.doc).clone();
+    doc.font_aliases = clip.source_font_aliases.clone();
     let media = bring_media("edit.pasteSpecial", &mut doc, &clip.media)?;
     crate::media_refs::visit_mut::shapes(&mut clip.shapes, &mut remap_media(&media));
     let mut slide = st.current_slide().cloned().ok_or_else(|| bad("edit.pasteSpecial", "no slide"))?;
