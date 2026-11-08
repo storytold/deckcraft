@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-08. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, docs commits on top).
+Updated: 2026-11-09. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, docs commits on top).
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -23,23 +23,30 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr7` | `d28c8ae5` | `CollabDoc` command glue + in-memory `Hub` |
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
-| `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete and shape insert/delete; commit published to the cabinet as a new file version (`409` on an external change) |
+| `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete and group/ungroup; commit published to the cabinet as a new file version (`409` on an external change) |
 
 The Commit column names the slice commits; each branch also carries documentation commits. Heads:
 `collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711`, `0a57b61e`, `58eee059`, `69c2ff22`,
 `41fe1ad9`, `4e666b95`, `f6281736` (journal replay of history operations), `3ec81d70` (shape
-insert/delete undo), `31842050` (cabinet commit publication), plus the docs commits on top. The
-working tree is clean: the chair's uncommitted finding of 2026-11-08 is `7fe75711`; the second
-slice added `0a57b61e` (media kinds, TLS, command slices, tests, docs), `69c2ff22` hardened the
-format command, `41fe1ad9` added undo of fill/line/format steps, `4e666b95` added undo of a
-group's fill/line and of slide insert/delete, `3ec81d70` added undo of a shape insert and a shape
-delete (whole-shape image with z-order, animations and triggers), and `31842050` sends a commit
-to the cabinet, which creates the new version and keeps the original.
+insert/delete undo), `31842050` (cabinet commit publication), `f28ee048` (docs), `98d9e9ce`
+(group/ungroup undo), plus the docs commits on top. The working tree is clean: the chair's
+uncommitted finding of 2026-11-08 is `7fe75711`; the second slice added `0a57b61e` (media kinds,
+TLS, command slices, tests, docs), `69c2ff22` hardened the format command, `41fe1ad9` added undo
+of fill/line/format steps, `4e666b95` added undo of a group's fill/line and of slide
+insert/delete, `3ec81d70` added undo of a shape insert and a shape delete (whole-shape image with
+z-order, animations and triggers), `31842050` sends a commit to the cabinet, which creates the new
+version and keeps the original, and `98d9e9ce` makes `arrange.group`/`arrange.ungroup` undoable
+with whole-subtree images on both sides.
 
-All work is local. Nothing was pushed to `storytold/deckcraft`; a fork and a human decision are
-required for the upstream PR. The PR body is prepared in [`pr10.md`](pr10.md): title
-`feat(collab): realtime collaborative editing`, one description, a review order over the slice
-stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decision.
+All work up to `31842050` is in the fork branch `copoka/deckcraft:collab/pr10` and open as
+[PR #1975](https://github.com/storytold/deckcraft/pull/1975). At the 2026-11-09 check the PR head
+was `63ec1ebe`; local `collab/pr10` is ahead by `3ec81d70`, `ded9d1ee`, `31842050`, `f28ee048`
+and `98d9e9ce`. `git fetch fork` shows no commit on the fork side that is missing locally, and a
+`git push --dry-run` from this workspace is refused by the environment policy, so publishing the
+new head is a manual step. Nothing was pushed to `storytold/deckcraft`; the PR comes from the
+fork and a human decision still governs merging it. The PR body is prepared in [`pr10.md`](pr10.md):
+title `feat(collab): realtime collaborative editing`, one description, a review order over the
+slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decision.
 
 ## What is implemented
 
@@ -114,7 +121,11 @@ stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decisi
   record the whole slide and undo through `slide_restore` / `slide_delete`. `shape.insert`,
   `insert.picture`, `insert.video`/`insert.audio` and `edit.delete` record the whole shape and undo
   through `shape_restore` / `shape_delete` (z-order, animations and triggers included, group images
-  carry their children). Group/ungroup is still outside per-user undo.
+  carry their children). `arrange.group` and `arrange.ungroup` record a whole-subtree image on both
+  sides (the group with its children, or every former member at the top level) and move between
+  them in one `shape_restore{items, remove}`: the engine removes the other side's shapes first
+  without dropping animations, then inserts the recorded images, all validated before the first
+  write.
 
 ### Server (`apps/deckcraft-collab-server`)
 
@@ -142,11 +153,11 @@ stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decisi
 
 | Command | Result |
 |---|---|
-| `cargo test -p deckcraft-collab` | 113 unit + 7 integration |
+| `cargo test -p deckcraft-collab` | 118 unit + 7 integration |
 | `cargo test -p deckcraft-collab-server` | 10 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist, shape-undo replay) + 4 commit tests (two copies with their originals kept, an external change is a `409`, a client commit answered after publication, the no-callback mode) |
 | `cargo test -p deckcraft-collab-proto` | 19 |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 |
-| `cargo test -p deckcraft-engine` | 565 passed, 1 ignored |
+| `cargo test -p deckcraft-engine` | 567 passed, 1 ignored |
 | `cargo clippy -p deckcraft-engine -p deckcraft-collab -p deckcraft-collab-proto -p deckcraft-collab-server -p deckcraft-ui-egui --all-targets -- -D warnings` | clean |
 | `cargo fmt --check` | clean |
 | `cargo xtask layers` | 31 crates, no violations |
@@ -159,6 +170,10 @@ Re-run on 2026-11-08 after `31842050`: `fmt` clean, `collab-proto` 19, `collab` 
 `collab-server` 10 + 6 + 4 (`tests/commit.rs`), `ui-egui collab::` 17, `deckcraft-engine` 565 + 1
 ignored; clippy over the four collab crates and `ui-egui` with `-D warnings` clean; `xtask layers`
 31 crates.
+
+Re-run on 2026-11-09 after `98d9e9ce`: `fmt` clean, `collab-proto` 19, `collab` 118 + 7,
+`collab-server` 10 + 6 + 4, `ui-egui collab::` 17, `deckcraft-engine` 567 + 1 ignored; clippy over
+the four collab crates and `ui-egui` with `-D warnings` clean; `xtask layers` 31 crates.
 
 The socket tests were run against a real loopback server; the restart test creates a room, moves
 the version, shuts the server down, starts a new one on the same store and asserts the version
@@ -180,9 +195,14 @@ refused after a foreign edit of the *inserted* shape itself (`undo-conflict`); a
 undone after a foreign edit of the neighbour that is left, restoring the shape at its z-order with
 its animation, and a deleted group comes back as one image carrying its children. Replay of a
 `shape_restore` after a restart is covered by the store test, which also proves the restored shape
-keeps its key. The engine tests cover `slide.restore` (index, section, duplicate id),
-`shape.setFields` (a bad value refuses the whole merge) and `shape.restore` (z-order, animation,
-group child, duplicate id, missing parent).
+keeps its key. Grouping is undone on two replicas as one `shape_restore` that removes the group and
+puts both members back at their z-order; redo removes the members and restores the whole group
+image. Ungrouping is undone the other way round (the group image comes back, the members go out),
+and a foreign move of a member refuses the group undo with `undo-conflict`. The engine tests cover
+`slide.restore` (index, section, duplicate id), `shape.setFields` (a bad value refuses the whole
+merge), `shape.restore` (z-order, animation, group child, duplicate id, missing parent) and
+`shape.restore` with `remove` (group ↔ members in one step, a missing removal refuses before any
+write).
 
 The commit tests run the server against a fake cabinet on loopback that keeps versions like the
 cabinet does. Two copies of the same original file are opened as two rooms; each commit posts a
@@ -201,12 +221,12 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
 | Slides, shapes and order converge | ✅ for move/bounds/insert/delete/slide/group/order/fill/line/format/duplicate | collab tests |
 | Reconnect works | ✅ within the retained journal tail | client queue + resync; base transfer for an evicted tail is still open |
-| Per-user undo/redo | ✅ text/shape values, fill, outline, `format.*`, group fill/line, slide insert/delete, shape insert/delete | server history, `undo-conflict`, `shape_field`/`shape_fields`/`shape_restore`/`slide_restore`; group/ungroup still open |
+| Per-user undo/redo | ✅ text/shape values, fill, outline, `format.*`, group fill/line, slide insert/delete, shape insert/delete, group/ungroup | server history, `undo-conflict`, `shape_field`/`shape_fields`/`shape_restore`/`slide_restore` (the last with `remove`) |
 | Viewer cannot edit | ✅ server + engine gate | socket test, UI test |
 | Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
-| PR in `storytold/deckcraft` | ⏳ description prepared, nothing pushed | [`pr10.md`](pr10.md); fork + human decision |
+| PR in `storytold/deckcraft` | ✅ open as [#1975](https://github.com/storytold/deckcraft/pull/1975) from the fork, MERGEABLE at the last check; local head is ahead of the PR head and the push is manual | [`pr10.md`](pr10.md); merge needs a human decision |
 
 ## What is NOT done (ordered by production impact)
 
@@ -222,14 +242,15 @@ whose `expectedVersion` does not match the room is refused before any callback i
    a private CA must be in the store or `SSL_CERT_FILE`).
 3. **Text in tables and notes, rich runs.** Shape text is covered; table cells and notes need
    their own addressing and rebase. Formatting runs need a run-level payload, not whole-body.
-4. **Structural undo of shapes.** A group's fill/outline is undoable (one image per changed
-   member, one `shape_fields`), `slide.delete`/`slide.new`/`slide.duplicate` are undoable through a
-   whole-slide image and `slide_restore`, and `shape.insert`/`insert.picture`/`insert.video`/
-   `insert.audio`/`edit.delete` are undoable through a whole-shape image and `shape_restore` /
-   `shape_delete` (z-order, animations and triggers included; group images carry their children).
-   Still out of v1: undo of group/ungroup. A slide image is capped at 192 KiB and a shape restore
-   at 192 KiB / 64 images, so an undo of an unusually large object is refused `invalid` instead of
-   breaking the wire limit.
+4. **Structural undo is covered; size limits remain.** A group's fill/outline (one image per
+   changed member, one `shape_fields`), `slide.delete`/`slide.new`/`slide.duplicate` (whole-slide
+   image, `slide_restore`), `shape.insert`/`insert.picture`/`insert.video`/`insert.audio`/
+   `edit.delete` (whole-shape image, `shape_restore`/`shape_delete`) and `arrange.group`/
+   `arrange.ungroup` (whole-subtree images on both sides, one `shape_restore{items, remove}`) are
+   undoable. Merge operations (move, bounds, text set/insert/delete, fill/line/format, group
+   appearance) are covered too. A slide image is capped at 192 KiB and a shape restore at 192 KiB /
+   64 images, so an undo of an unusually large object is refused `invalid` instead of breaking the
+   wire limit.
 5. **Cabinet callback / host bridge.** The server side is wired: `POST /v1/sessions/{id}/commit`
    (service token) builds the `.pptx` and posts it to `COLLAB_CABINET_URL`
    (`{fileId, name?, bytes, sha256, version, expectedVersion?}` → `{version, etag}`); a cabinet
@@ -245,16 +266,13 @@ whose `expectedVersion` does not match the room is refused before any callback i
    Correct on a LAN, noticeable on a WAN. Preview needs a before-image and a rollback path; a
    rejected preview can be rolled back only if no other command has been applied since, otherwise
    the client must resync.
-8. **Structural undo.** Slide insert/delete/duplicate undo (whole-slide image) and shape
-   insert/delete undo (whole-shape image with z-order, animations and triggers) are covered. Group
-   and ungroup are still out of v1. Merge operations (move, bounds, text set/insert/delete,
-   fill/line/format, group appearance) are covered.
-9. **Large-deck and compatibility gates.** A 100+ slide/media performance test, a LibreOffice
+8. **Large-deck and compatibility gates.** A 100+ slide/media performance test, a LibreOffice
    open/repair gate for every commit, and a longer soak with three clients are still to add.
-10. **Base transfer for an evicted journal tail.** `resync` sends the tail only; if the tail was
-    compacted, a client that missed the base cannot rebuild. The store now survives restarts, so
-    the next step is a chunked `snapshot` carrying the native base.
-11. **Upstream PR.** Local only.
+9. **Base transfer for an evicted journal tail.** `resync` sends the tail only; if the tail was
+   compacted, a client that missed the base cannot rebuild. The store now survives restarts, so
+   the next step is a chunked `snapshot` carrying the native base.
+10. **Upstream PR head.** The PR is open from the fork; the local head is ahead of it and the push
+    is manual. Nothing was pushed to `storytold/deckcraft`.
 
 ## How to run locally
 
@@ -286,9 +304,9 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 
 1. Run the verification table above; if the tree is clean, continue on `collab/pr10` (or branch
    `collab/pr11` from it).
-2. **Publish the PR only on a human decision**: the body is in [`pr10.md`](pr10.md); fork
-   `storytold/deckcraft`, push the final stack as `feature/realtime-collaboration`, do not touch
-   CI, do not mention agents. Nothing is pushed today.
+2. **PR #1975 is open from the fork**; the local head is ahead of the PR head. Publishing the new
+   head needs a manual push from a checkout that may push; do not touch CI and do not mention
+   agents. Merging needs a human decision.
 3. The cabinet must implement its side: `POST /api/v1/internal/office/sessions/{sessionId}/commit`
    (`INTEGRATION.md` §5.2, answers `{version, etag}`, keeps the previous version) and the
    host-bridge messages; the server already posts the bytes, refuses on `409` and stores the
@@ -298,13 +316,40 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    adapter run → confirmed command → test on two clients. Next: table cell text, transitions,
    `arrange.align`/`distribute` as final bounds, run-range formatting.
 5. Undo is covered for move/bounds/text/fill/line/format, a group's fill/line, slide
-   insert/delete/duplicate and shape insert/delete (whole-shape image with z-order, animations and
-   triggers). Next undo slice: group/ungroup (whole-subtree images on both sides).
+   insert/delete/duplicate, shape insert/delete and group/ungroup (whole-subtree images on both
+   sides). The remaining undo work is table/notes text and run-level formatting, which wait for
+   their command slices.
 6. Add the LibreOffice commit gate and the 100-slide performance test.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-09 — group/ungroup undo and fork/PR reconciliation
+
+- Reconciled the fork with the local branch: `git fetch fork` leaves `fork/collab/pr10` at
+  `63ec1ebe`, the PR head; local `collab/pr10` was ahead by `3ec81d70`, `ded9d1ee`, `31842050`,
+  `f28ee048`. There is no fork commit missing locally. The three-way diff (fork head, local head,
+  merge base) is the four local commits above; `git push --dry-run` is refused by this workspace's
+  policy, so the PR head update stays manual. This file, `pr10.md` and `production.md` now say the
+  PR is open from the fork instead of "nothing pushed".
+- `arrange.group` and `arrange.ungroup` are undoable (RFC §6, §13 item 4). A step records a
+  `GroupImage` on both sides: the group present (model JSON carrying its children, direct-child
+  keys, z-order index and animations) or absent with a whole image of every former member at the
+  top level. Undo and redo are one structural `shape_restore{items, remove}`: the engine removes
+  the other side's shapes first without dropping animations, validates and deserialises every
+  image before the first write, and inserts what the step recorded. `same_state` compares the
+  present group or every absent member's content and owner, not positions.
+- Tests: two-replica undo/redo of a group (members return in their order, then the group image
+  comes back with its id and children); two-replica undo/redo of an ungroup the other way round;
+  a foreign move of a member refuses the undo with `undo-conflict`; forged restores remain
+  refused. Engine tests move group ↔ members in one `shape.restore` and prove a missing `remove`
+  id refuses before any write. History and proto tests cover both payload directions.
+- Verified: `fmt` clean, `collab-proto` 19, `collab` 118 + 7, `collab-server` 10 + 6 + 4,
+  `ui-egui collab::` 17, `deckcraft-engine` 567 + 1 ignored; clippy over the four collab crates
+  and `ui-egui` with `-D warnings` clean; `xtask layers` 31 crates.
+- Commit `98d9e9ce` (code) plus this docs commit on `collab/pr10`; RFC (§6, §13.4, §14.1),
+  production and this file updated. Nothing pushed; CI untouched.
 
 ### 2026-11-08 — a commit becomes a cabinet file version
 

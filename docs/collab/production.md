@@ -256,12 +256,12 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    host page must also forward media fetches and the session token.
 6. **P2 — Optimistic preview**: edits become visible on `applied`; correctness first, preview and
    rollback are the next latency slice.
-7. **P2 — Undo of group/ungroup** is still out of v1, as RFC §13 records. Move, bounds, text,
-   fill, outline, `format.*`, a group's fill/line, slide insert/delete and shape insert/delete
-   (z-order, animations and triggers included) are undoable.
-8. **P2 — Base transfer for a compacted journal tail**: restart and tail replay work, but a client
+7. **P2 — Base transfer for a compacted journal tail**: restart and tail replay work, but a client
    that missed the base needs a chunked `snapshot`.
-9. **P2 — Large-deck gate**: a 100+ slide/media performance run and a LibreOffice open/repair gate
+8. **P2 — Large-deck gate**: a 100+ slide/media performance run and a LibreOffice open/repair gate
    for commits are still to add; the three-client soak is short.
-10. **Human action — Upstream PR**: the work is local branches; a fork and a human decision are
-    required. The prepared body is [`pr10.md`](pr10.md); nothing was pushed.
+9. **Human action — Upstream PR**: the work is in the fork branch `copoka/deckcraft:collab/pr10`
+   and open as PR #1975; the local head holds commits the PR head did not have at the last check
+   (`63ec1ebe`), and the push is manual because this workspace cannot push. The body is
+   [`pr10.md`](pr10.md); merging requires a human decision. Nothing was pushed to
+   `storytold/deckcraft`.

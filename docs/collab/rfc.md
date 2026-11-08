@@ -357,7 +357,19 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
   но не позицию, поэтому чужая правка соседа не блокирует undo, а чужая правка
   самой фигуры даёт `undo-conflict`. Ключи фигуры стабильны: карта ключей
   сохраняет обе стороны и после удаления, поэтому восстановленная фигура
-  возвращается под тем же `shapeKey`. Вне v1 остаётся undo group/ungroup.
+  возвращается под тем же `shapeKey`.
+- **Структурный шаг группы.** `arrange.group` и `arrange.ungroup` хранят
+  образ всего поддерева **с обеих сторон**: группа присутствует (модель в JSON
+  вместе с детьми, ключи прямых детей, позиция на верхнем уровне и анимации,
+  которые называют её или потомков) либо отсутствует (полные образы бывших
+  участников на верхнем уровне с геометрией до группировки или после
+  разгруппировки). Undo и redo — одна структурная операция
+  `shape_restore{items, remove}`: она сначала убирает фигуры другой стороны
+  (`remove`), затем восстанавливает образы этой. Движок удаляет без потери
+  анимаций, проверяет и десериализует все образы до первой записи, поэтому шаг
+  атомарен; `same_state` сравнивает содержимое присутствующей группы или
+  каждого отсутствующего участника, а не позицию. `regroup` по-прежнему
+  отключён в collab (§4.4).
 - Redo симметричен; лимит 200 шагов / 24 ч на пользователя (ADR-0010).
 - `regroup` в collab отключён (см. §4.4).
 - Offline: очередь допускается только для merge-операций; `structural` ждёт
@@ -552,8 +564,9 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
    `slide.duplicate` — полный образ слайда, `slide_restore`/`slide_delete`) и
    шаги **фигур**: `shape.insert`, `insert.picture`/`insert.video`/`insert.audio`
    и `edit.delete` (полный образ фигуры с z-order и анимациями,
-   `shape_restore`/`shape_delete`, §6). Открыто: undo group/ungroup, текст в
-   таблицах и заметках, run-level формат.
+   `shape_restore`/`shape_delete`, §6), а также `arrange.group`/`arrange.ungroup`
+   (образ всего поддерева с обеих сторон, одна операция `shape_restore` с
+   `remove`, §6). Открыто: текст в таблицах и заметках, run-level формат.
 5. **Presence во время показа:** показывать ли курсоры других в presenter view
    (сейчас — нет).
 6. **Commit при выходе последнего участника**, если он viewer: коммитить
@@ -601,14 +614,16 @@ fill/line/`format.*` из точного образа значения, undo ш�
 (`slide.delete`/`slide.new`/`slide.duplicate` через полный образ слайда и
 `slide_restore`) и structural undo фигур (`shape.insert`, `insert.picture`,
 `insert.video`/`insert.audio`, `edit.delete` через полный образ фигуры с
-z-order, анимациями и триггерами, `shape_restore`/`shape_delete`). Сверх этого —
+z-order, анимациями и триггерами, `shape_restore`/`shape_delete`), undo
+`arrange.group`/`arrange.ungroup` (образ всего поддерева с обеих сторон, одна
+операция `shape_restore{items, remove}`). Сверх этого —
 публикация commit в кабинет: `POST /v1/sessions/{id}/commit` (service token)
 строит `.pptx`, сервер сам отправляет его на callback кабинета
 (`{fileId, name?, bytes, sha256, version, expectedVersion?}` → `{version, etag}`),
 `409` кабинета отдаётся вызывающему, исходная версия в кабинете не
 перезаписывается, `etag` переживает рестарт. Тесты, точные коммиты,
 матрица приёмки `TASK.md` и список незакрытых блокеров (web-транспорт,
-host-bridge кабинета, оптимистичный preview, undo group/ungroup, base-transfer,
+host-bridge кабинета, оптимистичный preview, base-transfer,
 PR) — `docs/collab/STATUS.md`; эксплуатация — `docs/collab/production.md`;
 описание PR — `docs/collab/pr10.md`.
 
