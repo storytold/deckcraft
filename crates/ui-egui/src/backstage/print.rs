@@ -230,7 +230,8 @@ fn preview(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, doc: &deckcraft_
     let gray = crate::print_dest::print_grayscale(app, bs);
     let mut draw_slide = |ui: &mut Ui, i: usize, r: Rect| {
         let px = (r.width() * ui.ctx().pixels_per_point()).round().clamp(16.0, 1600.0) as u32;
-        match app.textures.thumb_in(ui.ctx(), doc, i, px, &mut budget, gray) {
+        // Print preview matches the printed PDF: gray when Grayscale is chosen, else full colour.
+        match app.textures.thumb(ui.ctx(), doc, i, px, gray, &mut budget) {
             Some(tex) => {
                 ui.painter().image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
             }

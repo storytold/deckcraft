@@ -29,6 +29,7 @@ deckcraft-media = { workspace = true }
 craft-ui = { workspace = true }
 craft-print = { workspace = true }
 egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
+egui_extras = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }

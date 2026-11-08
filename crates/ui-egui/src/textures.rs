@@ -368,23 +368,20 @@ impl Textures {
         self.thumbs.clear();
     }
 
-    /// A thumbnail texture; renders at most `budget` new thumbnails per frame (returns None when
-    /// it is over budget, so the caller draws a placeholder and asks for another frame).
-    pub fn thumb(&mut self, ctx: &egui::Context, p: &Presentation, index: usize, width_px: u32, budget: &mut u32) -> Option<TextureHandle> {
-        self.thumb_in(ctx, p, index, width_px, budget, false)
-    }
-
-    /// [`Self::thumb`], in gray when `gray` (the Print page's Grayscale preview). The gray and colour
-    /// thumbnails of a slide are cached apart, and a stale one of the other mode is never shown while
-    /// the right one waits for the render budget.
-    pub fn thumb_in(
+    /// A thumbnail texture; renders at most `budget` new thumbnails per frame. Over budget it
+    /// returns the slide's previous thumbnail if there is one (and asks for another frame), else
+    /// None, so the caller draws a placeholder.
+    /// When `gray` is true, the thumbnail renders in black-and-white (Grayscale view and the Print
+    /// page's Grayscale preview). The gray and colour thumbnails of a slide are cached apart, and a
+    /// stale one of the other mode is never shown while the right one waits for the render budget.
+    pub fn thumb(
         &mut self,
         ctx: &egui::Context,
         p: &Presentation,
         index: usize,
         width_px: u32,
-        budget: &mut u32,
         gray: bool,
+        budget: &mut u32,
     ) -> Option<TextureHandle> {
         let slide = p.slides.get(index)?.clone();
         let master = master_of(p, &slide);
@@ -408,7 +405,8 @@ impl Textures {
             return Some(e.tex.clone());
         }
         if *budget == 0 {
-            // Keep showing the stale thumbnail while the new one waits.
+            // Keep showing the stale thumbnail while the new one waits; request a repaint to finish rendering.
+            ctx.request_repaint();
             return self.thumbs.get(&(key.slide, gray)).map(|e| e.tex.clone());
         }
         *budget -= 1;
@@ -451,18 +449,18 @@ mod tests {
         let p = deckcraft_model::defaults::new_presentation(None);
         let mut t = Textures::default();
         let mut budget = 4;
-        assert!(t.thumb_in(&ctx, &p, 0, 120, &mut budget, false).is_some());
+        assert!(t.thumb(&ctx, &p, 0, 120, false, &mut budget).is_some());
         assert_eq!((budget, t.thumb_count()), (3, 1));
         // Toggling to gray with no render budget left: nothing is shown, not the colour thumbnail.
         let mut none = 0;
-        assert!(t.thumb_in(&ctx, &p, 0, 120, &mut none, true).is_none(), "no flash of the colour thumbnail");
+        assert!(t.thumb(&ctx, &p, 0, 120, true, &mut none).is_none(), "no flash of the colour thumbnail");
         // With budget, the gray raster is requested (rendered), and cached next to the colour one.
-        assert!(t.thumb_in(&ctx, &p, 0, 120, &mut budget, true).is_some());
+        assert!(t.thumb(&ctx, &p, 0, 120, true, &mut budget).is_some());
         assert_eq!((budget, t.thumb_count()), (2, 2));
         // Both modes now hit their own entries without rendering.
         let mut none = 0;
-        assert!(t.thumb_in(&ctx, &p, 0, 120, &mut none, true).is_some());
-        assert!(t.thumb_in(&ctx, &p, 0, 120, &mut none, false).is_some());
+        assert!(t.thumb(&ctx, &p, 0, 120, true, &mut none).is_some());
+        assert!(t.thumb(&ctx, &p, 0, 120, false, &mut none).is_some());
         // And back to colour after gray is not stale either.
         assert_eq!(t.thumb_count(), 2);
     }
@@ -499,6 +497,20 @@ mod tests {
         assert!((s.height() / px.1 as f32 * ppp - 1.0).abs() < 1e-3);
         let aligned = Rect::from_min_max(pos2(1.0, 2.5), pos2(80.0, 40.0));
         assert_eq!(device_pixel_rect(aligned, ppp), aligned);
+    }
+
+    #[test]
+    fn to_color_image_turns_colors_to_grayscale_when_flag_is_set() {
+        let img = deckcraft_render::Image { width: 2, height: 1, pixels: vec![0, 0, 255, 255, 255, 0, 0, 255] };
+        let color = super::to_color_image(&img, false);
+        assert_eq!(color.pixels[0], egui::Color32::from_rgba_premultiplied(0, 0, 255, 255));
+        assert_eq!(color.pixels[1], egui::Color32::from_rgba_premultiplied(255, 0, 0, 255));
+
+        let gray = super::to_color_image(&img, true);
+        assert_eq!(gray.pixels[0].r(), gray.pixels[0].g());
+        assert_eq!(gray.pixels[0].g(), gray.pixels[0].b());
+        assert_eq!(gray.pixels[1].r(), gray.pixels[1].g());
+        assert_eq!(gray.pixels[1].g(), gray.pixels[1].b());
     }
 
     #[test]

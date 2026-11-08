@@ -206,7 +206,7 @@ impl Session {
         let Some(f) = st.shape(id).and_then(|sh| cmd::table::table_frame(st, sh)) else { return Ok(()) };
         let size = if column { f.cols.get(index) } else { f.heights.get(index) }.copied().unwrap_or(0.0);
         let (start, frame) = (f.local(p), f.affine);
-        if !st.selection.text.as_ref().is_some_and(|t| t.shape == id) {
+        if st.selection.text.as_ref().is_none_or(|t| t.shape != id) {
             self.select(|_, sel| {
                 sel.shapes = vec![id];
                 sel.text = None;
