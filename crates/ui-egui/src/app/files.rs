@@ -81,6 +81,14 @@ fn is_presentation_name(lower: &str) -> bool {
         || lower.ends_with(".ppsx")
 }
 
+/// The Save dialog's path with `ext` added when it names no format DeckCraft writes. Typing a
+/// name over the suggested one leaves the extension off on Windows, and the file was then written
+/// under the bare name (#1929). A path that already names a writable format (`.deckcraft` typed in
+/// a `.pptx` Save As, `.jpeg` for `.jpg`) is kept as typed.
+pub(crate) fn with_save_extension(path: String, ext: &str) -> String {
+    if deckcraft_engine::cmd::file::writable_format_for_path(&path).is_some() { path } else { format!("{path}.{ext}") }
+}
+
 /// File → Open keeps the requested operation: a presentation opens, an outline becomes slides.
 fn open_command(name: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
@@ -205,7 +213,7 @@ impl SlideApp {
         };
         let suggested = self.suggested_name(ext);
         if let Some(pick) = self.services.pick_save.as_mut() {
-            let Some(path) = pick(&suggested) else { return false };
+            let Some(path) = pick(&suggested).map(|p| with_save_extension(p, ext)) else { return false };
             let mut params = json!({"path": path, "format": format, "all": all});
             if let (Some(o), Some(x)) = (params.as_object_mut(), extra.as_object()) {
                 o.extend(x.clone());
@@ -452,7 +460,7 @@ impl SlideApp {
         let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
         let suggested = format!("{name}.{ext}");
         if let Some(pick) = self.services.pick_save.as_mut() {
-            if let Some(path) = pick(&suggested) {
+            if let Some(path) = pick(&suggested).map(|p| with_save_extension(p, ext)) {
                 match self.session.execute("file.saveAs", &json!({"path": path})) {
                     Ok(_) => {
                         self.set_status(format!("Saved {path}"));
@@ -863,5 +871,23 @@ mod print_preview_tests {
 
         assert!(!dir.exists());
         std::fs::remove_dir(base).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod save_extension_tests {
+    use super::with_save_extension;
+
+    /// #1929: a bare name gets the chosen extension; a typed one DeckCraft writes stays, and one
+    /// it doesn't (a version number taken for an extension) is completed too.
+    #[test]
+    fn a_bare_or_unknown_extension_gets_the_chosen_one() {
+        let p = |s: &str| with_save_extension(s.to_string(), "pptx");
+        assert_eq!(p("/tmp/Quarterly"), "/tmp/Quarterly.pptx");
+        assert_eq!(p("/tmp/Quarterly.pptx"), "/tmp/Quarterly.pptx");
+        assert_eq!(p("/tmp/Quarterly.PPTX"), "/tmp/Quarterly.PPTX");
+        assert_eq!(p("/tmp/Quarterly.deckcraft"), "/tmp/Quarterly.deckcraft", "a typed writable format is kept");
+        assert_eq!(p("/tmp/Plan v2.1"), "/tmp/Plan v2.1.pptx", "\"1\" names no format");
+        assert_eq!(with_save_extension("/tmp/Slide 3.jpeg".into(), "jpg"), "/tmp/Slide 3.jpeg");
     }
 }
