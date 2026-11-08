@@ -3,9 +3,10 @@
 //! The process around [`deckcraft_collab::Hub`]: HTTP session control, a WebSocket per
 //! participant, JWT authentication in the first frame, limits, health and metrics.
 //!
-//! What it deliberately does not do yet: a lease table, a video/audio media channel (the v1
-//! channel carries pictures only) and a browser transport. The room model and the wire types are
-//! in `deckcraft-collab`; this crate is the transport around them.
+//! What it deliberately does not do yet: a lease table and a browser transport. The media
+//! channel carries pictures, audio and video by `sha256` (separate allowlists and byte budgets).
+//! The room model and the wire types are in `deckcraft-collab`; this crate is the transport
+//! around them.
 //!
 //! Security rules (ADR-0008, RFC §12):
 //! - the JWT travels in the first WebSocket frame, never in the URL;
@@ -24,7 +25,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use deckcraft_collab::session::SessionConfig;
-use deckcraft_collab::{Claims, Hub, MAX_MEDIA_BYTES, image_type, sha256_hex, valid_sha};
+use deckcraft_collab::{Claims, Hub, media_type, sha256_hex, valid_sha};
 use deckcraft_collab_proto::{ClientMsg, PROTO_VERSION, Role, ServerError, ServerMsg, decode_client, encode_server};
 use deckcraft_model::Presentation;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
@@ -508,13 +509,14 @@ fn put_media(id: &str, sha: &str, request: &Request, shared: &Arc<Shared>) -> st
         return Ok(Response::json(403, json!({"error": "a viewer cannot upload pictures"})));
     }
     if request.body.is_empty() {
-        return Ok(Response::json(400, json!({"error": "the picture is empty"})));
+        return Ok(Response::json(400, json!({"error": "the media object is empty"})));
     }
-    if request.body.len() > MAX_MEDIA_BYTES {
-        return Ok(Response::json(413, json!({"error": format!("the picture is larger than {MAX_MEDIA_BYTES} bytes")})));
-    }
-    if image_type("", &request.body).is_none() {
-        return Ok(Response::json(400, json!({"error": "the body is not a picture this channel stores"})));
+    let Some(kind) = deckcraft_collab::media_type("", &request.body) else {
+        return Ok(Response::json(400, json!({"error": "the body is not a picture, video or audio file this channel stores"})));
+    };
+    let max = kind.max_bytes();
+    if request.body.len() > max {
+        return Ok(Response::json(413, json!({"error": format!("the {} is larger than {max} bytes", kind.noun())})));
     }
     if sha256_hex(&request.body) != sha {
         return Ok(Response::json(400, json!({"error": "the media bytes do not match their digest"})));
@@ -576,7 +578,7 @@ fn media_reader_allowed(request: &Request, shared: &Shared) -> bool {
 }
 
 fn media_response(bytes: Vec<u8>) -> Response {
-    let content_type = image_type("", &bytes).unwrap_or("application/octet-stream");
+    let content_type = media_type("", &bytes).map(|kind| kind.content_type(&bytes)).unwrap_or("application/octet-stream");
     Response::binary(200, content_type, bytes)
 }
 

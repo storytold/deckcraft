@@ -263,6 +263,33 @@ fn a_picture_is_uploaded_once_and_reaches_a_second_editor() {
 }
 
 #[test]
+fn audio_and_video_use_the_same_media_channel_with_their_own_allowlist() {
+    let handle = start();
+    let addr = handle.addr;
+    let body =
+        serde_json::json!({"fileId": "file-a", "app": "deckcraft", "initialBytes": base64::engine::general_purpose::STANDARD.encode(native_deck())})
+            .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let editor = token("alice", "editor", "file-a");
+
+    let wav = b"RIFF\x24\0\0\0WAVEfmt \x10\0\0\0\x01\0\x01\0\x44\xac\0\0\x88\x58\x01\0\x02\0\x10\0data\0\0\0\0".to_vec();
+    let sha = sha256(&wav);
+    let (status, uploaded) = http_bytes(addr, "PUT", &format!("/v1/sessions/file-a/media/{sha}"), Some(&editor), &wav);
+    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&uploaded));
+    let (status, fetched) = http_bytes(addr, "GET", &format!("/media/{sha}"), Some(&editor), b"");
+    assert_eq!(status, 200);
+    assert_eq!(fetched, wav);
+
+    // Not a picture, video or audio signature: the channel refuses it by name.
+    let text = b"not media at all".to_vec();
+    let sha = sha256(&text);
+    let (status, _) = http_bytes(addr, "PUT", &format!("/v1/sessions/file-a/media/{sha}"), Some(&editor), &text);
+    assert_eq!(status, 400, "an arbitrary file is refused");
+    handle.shutdown();
+}
+
+#[test]
 fn the_desktop_link_uploads_and_fetches_pictures_over_http() {
     use deckcraft_collab::Transport as _;
     let handle = start();

@@ -122,6 +122,21 @@ S→C {"type":"applied","opId":"<uuid>","version":42,
 - **`preview`** — необязательный локальный id: клиент применяет команду
   оптимистично и при `applied` заменяет результат авторитетным.
 
+#### 3.2.1 Действия v1, добавленные срезом `collab/pr10` (2026-11-08)
+
+| Payload | Класс | Значения на проводе | Отказ |
+|---|---|---|---|
+| `picture_insert` | structural | `sha256`, `name`, `rect?` | нет объекта в медиа-канале → `missing_media` |
+| `media_insert` | structural | `kind: video\|audio`, `sha256`, `name`, `rect?` | то же |
+| `shape_fill` | command | `fill: solid{color} \| none \| background` | градиент, картинка, узор, `transparency` (относительна унаследованному стилю), `reset` |
+| `shape_line` | command | `color`, `width`, `dash`, `cap`, `join`, `compound`, `head/tail`, `headSize/tailSize`, `none` | `reset`; пустой набор значений |
+| `format_set` | command | `format: <allowlisted FormatCmd>`, `args` только из собственного набора команды | `id/ids/index` в `args`, относительный toggle без `on`, таблица, фигура без текста |
+| `slide_duplicate` | structural | ничего; адрес — `target.slide` | слайд удалён → `stale` |
+
+`format_set` покрывает `format.bold/italic/underline/strikethrough/superscript/subscript/font/size/color/highlight/alignLeft/alignCenter/alignRight/justify/caps/spacing/clear`. Перечисление `FormatCmd` (а не строка) закрывает allowlist на уровне типа; `FormatCmd::accepts` не даёт положить в `args` чужой ключ. Множество фигур нормализуется в **N операций по одной фигуре** (решение по §13 п. 3): так undo остаётся объектным, а `applied` несёт понятный адрес; атомарность группы — отдельный merge-payload позже.
+
+`shape.fill`/`shape.line` в v1 не входят в per-user undo (образ before/after хранится для `shape.move`, `shape.setBounds`, текста): это записано в §13 п. 4 и `STATUS.md`.
+
 ### 3.3 Идентификаторы (ADR-0002)
 
 - `slideKey` — UUID, выдаётся сервером при первом входе в сессию для каждого
@@ -158,9 +173,18 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
   TCP (`apps/deckcraft-web/src/main.rs:1-14`).
 - Медиа **не** едет в операциях: отдельная загрузка по `sha256`
   (`PUT /v1/sessions/{id}/media/{sha256}`, чтение `GET /media/{sha256}`), в
-  операции — только `{sha256, name, rect?}`. Сервер хранит один объект на
-  дайджест; клиент загружает байты до операции и подтягивает чужие по
-  `GET /media/{sha256}`.
+  операции — только `{sha256, name, rect?}` (и `kind` для видео/аудио). Сервер
+  хранит один объект на дайджест; клиент загружает байты до операции и
+  подтягивает чужие по `GET /media/{sha256}`.
+- Allowlist медиа — по подписи (не по расширению, кроме контейнеров с общей
+  подписью): PNG/JPEG/GIF/WebP/BMP/TIFF/SVG ≤ 8 МиБ, 512 объектов и 64 МиБ на
+  сессию; MP4/MOV/WebM/AVI и WAV/FLAC/Ogg/MP3/M4A/AIFF/MIDI ≤ 32 МиБ, 32
+  объекта и 192 МиБ на сессию. Счётчики и лимиты раздельные, чтобы большие
+  клипы не вытесняли картинки.
+- HTTP-клиент медиа у desktop-клиента повторяет схему WebSocket-URL: `ws://` →
+  TCP, `wss://` → `rustls` с системным хранилищем корней (`rustls-native-certs`,
+  `SSL_CERT_FILE`/`SSL_CERT_DIR` учитываются). Порт по умолчанию 80/443,
+  `Host` без порта по умолчанию, IPv6 — в скобках.
 
 ### 4.2 Сообщения
 
@@ -413,6 +437,8 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
 | 8 | текст в одном абзаце, две вставки | оба текста, позиции сдвинуты |
 | 9 | таблица: две ячейки одной таблицы | обе правки |
 | 10 | вставка картинки двумя клиентами (один sha256) | один `MediaId`, две фигуры |
+| 10a | видео/аудио по `sha256`, нераспознанный контейнер | клип вставляется с warning; чужой файл отвергается каналом |
+| 10b | `shape.fill` / `shape.line` / `format_set` / `slide.duplicate` | одна и та же дельта на обеих репликах; адрес из `args` не принимается |
 | 11 | reconnect после разрыва | догон, `opId`-дедуп, без дублей |
 | 12 | догон при вытесненном хвосте | `resync` снапшотом, состояние сходится |
 | 13 | viewer шлёт `op` | `forbidden`, документ не меняется |
@@ -446,16 +472,19 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
 ## 13. Открытые вопросы
 
 1. **Канал медиа:** решено — отдельный `PUT /v1/sessions/{id}/media/{sha256}` и
-   `GET /media/{sha256}`, чанки по WS не нужны. Реализовано для картинок; видео и
-   аудио — следующий срез с собственным allowlist.
+   `GET /media/{sha256}`, чанки по WS не нужны. Реализовано для картинок,
+   видео и аудио (раздельные allowlist и бюджеты, §4.1); TLS-клиент медиа для
+   `wss://` добавлен в том же срезе.
 2. **Форма `delta`:** список изменённых `(slideKey, shapeKey, fields[])` или
    значения полей целиком? Второе дороже, но проще применять.
-3. **`format.*` на множестве фигур:** одна операция на N целей или N операций?
-   Влияет на атомарность undo.
+3. **`format.*` на множестве фигур:** решено для v1 — N операций по одной
+   фигуре (§3.2.1); групповая атомарность и один шаг undo на N фигур — позже.
 4. **Undo структурных операций:** в v1 отменяются только merge-операции
    (`shape.move`, `shape.setBounds`, `text.set`): PR 2 хранит before/after-образ
    одного объекта. Отмена `slide.delete` требует полного снимка слайда и
    отдельного решения; до него structural-шаги в историю не попадают.
+   `shape.fill`, `shape.line` и `format_set` тоже вне undo v1 — это значение
+   фигуры, но образ ещё не хранится.
 5. **Presence во время показа:** показывать ли курсоры других в presenter view
    (сейчас — нет).
 6. **Commit при выходе последнего участника**, если он viewer: коммитить
@@ -493,13 +522,15 @@ CRDT, макросы/legacy-форматы.
 адаптер, per-user undo, `DocSession` с дедупом/снапшотами/commit, клиентская
 машина состояний, UI за флагом, in-memory hub, WebSocket-сервер, персистентность
 (base + journal + replay), undo/redo запросами, ввод текста с серверным rebase,
-`shape.insert` и медиа-канал картинок (операция несёт `sha256`, байты идут через
-`PUT/GET /media/{sha256}`, объекты переживают рестарт). Тесты, точные коммиты,
-матрица приёмки `TASK.md` и список незакрытых блокеров (видео/аудио, TLS для
-`wss://`, полная поверхность команд, web-транспорт, host-bridge кабинета,
-оптимистичный preview, structural undo, base-transfer, PR) —
-`docs/collab/STATUS.md`; эксплуатация — `docs/collab/production.md`; описание PR —
-`docs/collab/pr10.md`.
+`shape.insert` и медиа-канал (операция несёт `sha256`, байты идут через
+`PUT/GET /media/{sha256}`, объекты переживают рестарт). На `collab/pr10` сверх
+`7fe75711`: видео и аудио в медиа-канале (раздельные allowlist и бюджеты),
+TLS HTTP-клиент для `wss://`, вертикальные срезы `shape.fill`, `shape.line`,
+`format.*` по явной фигуре и `slide.duplicate` (§3.2.1). Тесты, точные коммиты,
+матрица приёмки `TASK.md` и список незакрытых блокеров (web-транспорт,
+host-bridge кабинета, оптимистичный preview, structural undo, base-transfer,
+PR) — `docs/collab/STATUS.md`; эксплуатация — `docs/collab/production.md`;
+описание PR — `docs/collab/pr10.md`.
 
 ## 15. Соответствие ADR → разделы RFC
 

@@ -14,7 +14,8 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use deckcraft_collab_proto::{
-    Applied, Change, ClientInfo, ClientMsg, ConfirmedCommand, OpEnvelope, OpKind, Payload, ServerMsg, ShapeKey, SlideKey, Target,
+    Applied, Change, ClientInfo, ClientMsg, ConfirmedCommand, FillSpec, FormatCmd, LineSpec, MediaKind, OpEnvelope, OpKind, Payload, ServerMsg,
+    ShapeKey, SlideKey, Target,
 };
 use deckcraft_engine::{DocState, Session, Target as EngineTarget};
 use deckcraft_model::{Presentation, Shape, ShapeId, SlideId, find_shape, parent_of};
@@ -190,11 +191,12 @@ impl CollabDoc {
     /// document changes when the server's `applied` comes back.
     pub fn submit(&mut self, session: &Session, cmd: &str, params: &Value, op_id: &str) -> Result<usize, LocalError> {
         let st = session.active().ok_or(LocalError::NoDocument)?;
-        // A picture travels in two pieces: the bytes to the media channel, the digest on the
-        // operation. The author always has the bytes, so the confirmed command can run here too.
+        // Pictures, audio and video travel in two pieces: the bytes to the media channel, the
+        // digest on the operation. The author always has the bytes, so the confirmed command can
+        // run here too.
         let mut wire;
-        let params = if cmd == "insert.picture" {
-            let (name, bytes) = picture_bytes(params)?;
+        let params = if matches!(cmd, "insert.picture" | "insert.audio" | "insert.video") {
+            let (name, bytes) = media_bytes(params, cmd)?;
             let sha = self.adapter.media_mut().put(&name, bytes).map_err(|e| LocalError::BadParams(e.message))?;
             if let Some(stored) = self.adapter.media().get(&sha) {
                 self.uploads.push_back((sha.clone(), stored));
@@ -223,13 +225,18 @@ impl CollabDoc {
         if version != self.version + 1 {
             return false;
         }
-        if let Payload::PictureInsert { sha256, .. } = &command.payload
-            && !self.adapter.media().contains(sha256)
+        if let Some((sha256, kind)) = match &command.payload {
+            Payload::PictureInsert { sha256, .. } => Some((sha256, crate::MediaType::Picture)),
+            Payload::MediaInsert { sha256, kind, .. } => {
+                Some((sha256, if matches!(kind, MediaKind::Video) { crate::MediaType::Video } else { crate::MediaType::Audio }))
+            }
+            _ => None,
+        } && !self.adapter.media().contains(sha256)
             && let Some(fetch) = self.media_fetcher.clone()
             && let Some(bytes) = fetch(sha256)
             && let Err(e) = self.adapter.media_mut().insert(sha256, bytes)
         {
-            self.last_apply_error = Some(e.message);
+            self.last_apply_error = Some(format!("{}: {}", kind.noun(), e.message));
         }
         let op = OpEnvelope {
             op_id: String::new(),
@@ -440,32 +447,106 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
             let text = p.get("text").and_then(Value::as_str).map(str::to_string);
             Ok(vec![make(Target { slide: slide_key, ..Target::default() }, Payload::ShapeInsert { preset: preset.to_string(), rect: r, text })])
         }
-        "insert.picture" => {
-            let sha = p.get("sha256").and_then(Value::as_str).ok_or_else(|| LocalError::BadParams("insert.picture needs a media digest".into()))?;
+        "insert.picture" | "insert.audio" | "insert.video" => {
+            let sha = p.get("sha256").and_then(Value::as_str).ok_or_else(|| LocalError::BadParams(format!("{cmd} needs a media digest")))?;
             if !crate::media::valid_sha(sha) {
-                return Err(LocalError::BadParams("insert.picture: the media digest is not a sha256".into()));
+                return Err(LocalError::BadParams(format!("{cmd}: the media digest is not a sha256")));
             }
             let name = p.get("name").and_then(Value::as_str).unwrap_or("media").to_string();
             let rect = match p.get("rect") {
                 None => None,
                 Some(value) => {
-                    let array = value
-                        .as_array()
-                        .filter(|a| a.len() == 4)
-                        .ok_or_else(|| LocalError::BadParams("insert.picture rect must be [x,y,w,h]".into()))?;
+                    let array =
+                        value.as_array().filter(|a| a.len() == 4).ok_or_else(|| LocalError::BadParams(format!("{cmd} rect must be [x,y,w,h]")))?;
                     let mut r = [0.0; 4];
                     for (i, v) in array.iter().enumerate() {
-                        r[i] = v.as_f64().ok_or_else(|| LocalError::BadParams("insert.picture rect values must be numbers".into()))?;
+                        r[i] = v.as_f64().ok_or_else(|| LocalError::BadParams(format!("{cmd} rect values must be numbers")))?;
                     }
                     Some(r)
                 }
             };
             for key in p.as_object().map(|o| o.keys()).into_iter().flatten() {
                 if !matches!(key.as_str(), "sha256" | "name" | "rect") {
-                    return Err(LocalError::Unsupported(format!("insert.picture {key}")));
+                    return Err(LocalError::Unsupported(format!("{cmd} {key}")));
                 }
             }
-            Ok(vec![make(Target { slide: slide_key, ..Target::default() }, Payload::PictureInsert { sha256: sha.to_string(), name, rect })])
+            let target = Target { slide: slide_key, ..Target::default() };
+            let payload = match cmd {
+                "insert.picture" => Payload::PictureInsert { sha256: sha.to_string(), name, rect },
+                "insert.video" => Payload::MediaInsert { kind: MediaKind::Video, sha256: sha.to_string(), name, rect },
+                _ => Payload::MediaInsert { kind: MediaKind::Audio, sha256: sha.to_string(), name, rect },
+            };
+            Ok(vec![make(target, payload)])
+        }
+        "shape.fill" => {
+            let fill = fill_spec(p)?;
+            let ids = shape_ids(p, st)?;
+            if ids.is_empty() {
+                return Err(LocalError::BadParams("shape.fill needs a shape".into()));
+            }
+            let mut out = Vec::new();
+            for id in ids {
+                out.push(make(
+                    Target { slide: slide_key.clone(), shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() },
+                    Payload::ShapeFill { fill: fill.clone() },
+                ));
+            }
+            Ok(out)
+        }
+        "shape.line" => {
+            let line = line_spec(p)?;
+            let ids = shape_ids(p, st)?;
+            if ids.is_empty() {
+                return Err(LocalError::BadParams("shape.line needs a shape".into()));
+            }
+            let mut out = Vec::new();
+            for id in ids {
+                out.push(make(
+                    Target { slide: slide_key.clone(), shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() },
+                    Payload::ShapeLine { line: line.clone() },
+                ));
+            }
+            Ok(out)
+        }
+        cmd if cmd.starts_with("format.") => {
+            let format = FormatCmd::from_id(cmd).ok_or_else(|| LocalError::Unsupported(cmd.into()))?;
+            let mut args = p.clone();
+            if let Some(object) = args.as_object_mut() {
+                object.remove("ids");
+                object.remove("id");
+            }
+            if !format.accepts(&args) {
+                return Err(LocalError::BadParams(format!("{cmd} takes only its own arguments")));
+            }
+            if matches!(
+                format,
+                FormatCmd::Bold | FormatCmd::Italic | FormatCmd::Underline | FormatCmd::Strikethrough | FormatCmd::Superscript | FormatCmd::Subscript
+            ) && args.get("on").and_then(Value::as_bool).is_none()
+            {
+                return Err(LocalError::BadParams(format!("{cmd} needs an explicit `on` in a shared session")));
+            }
+            let ids = shape_ids(p, st)?;
+            if ids.is_empty() {
+                return Err(LocalError::BadParams("formatting needs a shape".into()));
+            }
+            let mut out = Vec::new();
+            for id in ids {
+                let shape = find_shape(&slide.shapes, id).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
+                if !matches!(shape.kind, deckcraft_model::ShapeKind::Table(_)) && shape.text.is_none() {
+                    return Err(LocalError::Unsupported(format!("{cmd} on a shape without text")));
+                }
+                out.push(make(
+                    Target { slide: slide_key.clone(), shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() },
+                    Payload::FormatSet { format, args: args.clone() },
+                ));
+            }
+            Ok(out)
+        }
+        "slide.duplicate" => {
+            let index = p.get("index").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(st.selection.slide);
+            let slide_id = st.doc.slides.get(index).map(|s| s.id).ok_or_else(|| LocalError::BadParams("no such slide".into()))?;
+            let key = keys.slide_key(slide_id).cloned().ok_or(LocalError::NoDocument)?;
+            Ok(vec![make(Target { slide: Some(key), ..Target::default() }, Payload::SlideDuplicate {})])
         }
         "slide.new" => {
             if p.get("title").is_some() || p.get("body").is_some() {
@@ -525,14 +606,13 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
     }
 }
 
-/// Bytes for `insert.picture`: base64 `data`, or a local `path` on desktop. The web build has
-/// no file system, so the host passes `data`.
-fn picture_bytes(p: &Value) -> Result<(String, Vec<u8>), LocalError> {
+/// Bytes for `insert.picture|insert.audio|insert.video`: base64 `data`, or a local `path` on
+/// desktop. The web build has no file system, so the host passes `data`.
+fn media_bytes(p: &Value, cmd: &str) -> Result<(String, Vec<u8>), LocalError> {
     let name = p.get("name").and_then(Value::as_str).unwrap_or("media").to_string();
     if let Some(data) = p.get("data").and_then(Value::as_str) {
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(data)
-            .map_err(|_| LocalError::BadParams("insert.picture: `data` is not base64".into()))?;
+        let bytes =
+            base64::engine::general_purpose::STANDARD.decode(data).map_err(|_| LocalError::BadParams(format!("{cmd}: `data` is not base64")))?;
         return Ok((name, bytes));
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -540,7 +620,69 @@ fn picture_bytes(p: &Value) -> Result<(String, Vec<u8>), LocalError> {
         let bytes = std::fs::read(path).map_err(|e| LocalError::BadParams(format!("{path}: {e}")))?;
         return Ok((name, bytes));
     }
-    Err(LocalError::BadParams("insert.picture needs `data` or `path`".into()))
+    Err(LocalError::BadParams(format!("{cmd} needs `data` or `path`")))
+}
+
+/// A final fill from a `shape.fill` request. Only absolute forms are normalised: a solid colour
+/// (string), `none: true` or `background: true`. Gradients, pictures, patterns and transparency
+/// relative to an inherited style stay out of v1 (RFC §15).
+fn fill_spec(p: &Value) -> Result<FillSpec, LocalError> {
+    for key in p.as_object().map(|o| o.keys()).into_iter().flatten() {
+        if !matches!(key.as_str(), "color" | "none" | "background" | "id" | "ids") {
+            return Err(LocalError::Unsupported(format!("shape.fill {key}")));
+        }
+    }
+    let color = p.get("color").and_then(Value::as_str);
+    let none = p.get("none").and_then(Value::as_bool).unwrap_or(false);
+    let background = p.get("background").and_then(Value::as_bool).unwrap_or(false);
+    match (color, none, background) {
+        (Some(color), false, false) => Ok(FillSpec::Solid { color: color.to_string() }),
+        (None, true, false) => Ok(FillSpec::None),
+        (None, false, true) => Ok(FillSpec::Background),
+        (None, false, false) => Err(LocalError::BadParams("shape.fill needs `color`, `none` or `background`".into())),
+        _ => Err(LocalError::BadParams("shape.fill takes one of `color`, `none` or `background`".into())),
+    }
+}
+
+/// A final outline from a `shape.line` request. `reset` is not a value on the wire; a client that
+/// wants the shape's default outline sends the explicit colour and width.
+fn line_spec(p: &Value) -> Result<LineSpec, LocalError> {
+    let mut spec = LineSpec::default();
+    for (key, value) in p.as_object().map(|o| o.iter()).into_iter().flatten() {
+        match key.as_str() {
+            "none" => spec.none = value.as_bool().unwrap_or(false),
+            "color" => {
+                spec.color = Some(value.as_str().ok_or_else(|| LocalError::BadParams("shape.line color must be a string".into()))?.to_string())
+            }
+            "width" => {
+                spec.width = Some(
+                    value
+                        .as_f64()
+                        .filter(|w| w.is_finite() && *w >= 0.0)
+                        .ok_or_else(|| LocalError::BadParams("shape.line width must be a number".into()))?,
+                )
+            }
+            "dash" | "cap" | "join" | "compound" | "head" | "tail" | "headSize" | "tailSize" => {
+                let text = value.as_str().ok_or_else(|| LocalError::BadParams(format!("shape.line {key} must be a string")))?;
+                match key.as_str() {
+                    "dash" => spec.dash = Some(text.to_string()),
+                    "cap" => spec.cap = Some(text.to_string()),
+                    "join" => spec.join = Some(text.to_string()),
+                    "compound" => spec.compound = Some(text.to_string()),
+                    "head" => spec.head = Some(text.to_string()),
+                    "tail" => spec.tail = Some(text.to_string()),
+                    "headSize" => spec.head_size = Some(text.to_string()),
+                    _ => spec.tail_size = Some(text.to_string()),
+                }
+            }
+            "id" | "ids" => {}
+            other => return Err(LocalError::Unsupported(format!("shape.line {other}"))),
+        }
+    }
+    if !spec.none && spec.color.is_none() && spec.width.is_none() && spec.dash.is_none() {
+        return Err(LocalError::BadParams("shape.line needs `none` or at least one outline value".into()));
+    }
+    Ok(spec)
 }
 
 fn slide_delete_ops(
@@ -703,8 +845,58 @@ mod tests {
     fn commands_outside_the_v1_set_are_refused_by_name() {
         let (s, doc, _, _) = deck();
         let km = keys(s.doc().expect("doc").doc.as_ref());
-        let e = normalize(&km, s.doc().expect("doc"), "format.bold", &json!({}), "op", &doc).expect_err("refused");
-        assert_eq!(e, LocalError::Unsupported("format.bold".into()));
+        let e = normalize(&km, s.doc().expect("doc"), "transition.set", &json!({}), "op", &doc).expect_err("refused");
+        assert_eq!(e, LocalError::Unsupported("transition.set".into()));
+    }
+
+    #[test]
+    fn fill_line_and_format_normalise_explicit_shapes() {
+        let (s, doc, slide, shapes) = deck();
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        let key = km.shape_key(slide, shapes[0]).expect("key").clone();
+
+        let ops = normalize(&km, st, "shape.fill", &json!({"color": "#ff0000", "id": shapes[0].0}), "op", &doc).expect("fill");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].target.shape.as_ref(), Some(&key));
+        assert_eq!(ops[0].payload, Payload::ShapeFill { fill: FillSpec::Solid { color: "#ff0000".into() } });
+        assert_eq!(ops[0].kind, OpKind::Command);
+
+        let ops =
+            normalize(&km, st, "shape.fill", &json!({"gradient": {"stops": []}, "id": shapes[0].0}), "op", &doc).expect_err("relative/gradient fill");
+        assert!(matches!(ops, LocalError::Unsupported(_)) || matches!(ops, LocalError::BadParams(_)));
+
+        let ops = normalize(&km, st, "shape.line", &json!({"color": "#0044ff", "width": 2.0, "id": shapes[0].0}), "op", &doc).expect("line");
+        match &ops[0].payload {
+            Payload::ShapeLine { line } => {
+                assert_eq!(line.color.as_deref(), Some("#0044ff"));
+                assert_eq!(line.width, Some(2.0));
+            }
+            other => panic!("{other:?}"),
+        }
+
+        let ops = normalize(&km, st, "format.bold", &json!({"on": true, "id": shapes[0].0}), "op", &doc).expect("format");
+        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}) });
+        let e = normalize(&km, st, "format.bold", &json!({"id": shapes[0].0}), "op", &doc).expect_err("relative toggle");
+        assert!(matches!(e, LocalError::BadParams(_)), "{e:?}");
+        let second_key = km.shape_key(slide, shapes[1]).expect("key").clone();
+        let ops = normalize(&km, st, "format.bold", &json!({"on": true, "ids": [shapes[1].0]}), "op", &doc)
+            .expect("the address is taken from the command params, not from the args");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].target.shape.as_ref(), Some(&second_key));
+        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}) });
+    }
+
+    #[test]
+    fn slide_duplicate_targets_the_source_slide() {
+        let (s, doc, slide, _) = deck();
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        let ops = normalize(&km, st, "slide.duplicate", &json!({"index": 0}), "op", &doc).expect("duplicate");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].payload, Payload::SlideDuplicate {});
+        assert_eq!(ops[0].kind, OpKind::Structural);
+        assert_eq!(ops[0].target.slide.as_ref(), km.slide_key(slide));
     }
 
     /// 8×8 red PNG, enough for `insert.picture` to decode.
@@ -758,6 +950,52 @@ mod tests {
         }
         assert!(client.has_media(&crate::media::sha256_hex(&bytes)));
         assert_eq!(op.kind, OpKind::Structural);
+    }
+
+    #[test]
+    fn a_video_command_uploads_bytes_and_sends_only_a_reference() {
+        let (mut s, _doc, _slide, _shapes) = deck();
+        let mut client = CollabDoc::new("d");
+        client.connect(&s, "jwt", ClientInfo { name: "test".into(), ver: "1".into() });
+        client.on_msg(&mut s, welcome(0));
+        let bytes = mp4();
+        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        client.submit(&s, "insert.video", &json!({"name": "clip.mp4", "data": data}), "op-v").expect("submit");
+        let Some(ClientMsg::Op(op)) = client.next_outgoing() else { panic!("expected an operation") };
+        match &op.payload {
+            Payload::MediaInsert { kind, sha256, name, .. } => {
+                assert_eq!(*kind, MediaKind::Video);
+                assert_eq!(name, "clip.mp4");
+                assert_eq!(sha256, &crate::media::sha256_hex(&bytes));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(op.payload.command(), "insert.video");
+        assert_eq!(op.kind, OpKind::Structural);
+        assert_eq!(client.take_uploads().len(), 1, "the bytes go to the media channel first");
+    }
+
+    #[test]
+    fn a_fill_command_normalises_to_a_final_value() {
+        let (mut s, doc, slide, shapes) = deck();
+        let mut client = CollabDoc::new("d");
+        client.connect(&s, "jwt", ClientInfo { name: "test".into(), ver: "1".into() });
+        client.on_msg(&mut s, welcome(0));
+        let km = keys(s.doc().expect("doc").doc.as_ref());
+        let key = km.shape_key(slide, shapes[0]).expect("key").clone();
+        let _ = doc;
+        client.submit(&s, "shape.fill", &json!({"color": "accent1", "ids": [shapes[0].0]}), "op-f").expect("submit");
+        let Some(ClientMsg::Op(op)) = client.next_outgoing() else { panic!("expected an operation") };
+        assert_eq!(op.payload, Payload::ShapeFill { fill: FillSpec::Solid { color: "accent1".into() } });
+        assert_eq!(op.target.shape.as_ref(), Some(&key));
+    }
+
+    /// A minimal ISO base media file: enough for the media allowlist, not for a decoder.
+    fn mp4() -> Vec<u8> {
+        let mut bytes = vec![0, 0, 0, 0x18];
+        bytes.extend(b"ftypisom\0\0\x02\x00isomiso2");
+        bytes.extend([0u8; 32]);
+        bytes
     }
 
     #[test]

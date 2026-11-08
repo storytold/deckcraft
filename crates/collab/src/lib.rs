@@ -31,7 +31,10 @@ pub use hub::{Claims, Hub, Peer};
 pub use keys::{KeyIssuer, KeyMap};
 pub use link::{PipeTransport, Transport};
 pub use local::{CollabDoc, LocalError, normalize};
-pub use media::{MAX_MEDIA_BYTES, MediaCache, MediaError, image_type, sha256_hex, valid_sha};
+pub use media::{
+    MAX_AV_BYTES, MAX_AV_OBJECTS, MAX_AV_TOTAL_BYTES, MAX_MEDIA_BYTES, MAX_MEDIA_OBJECTS, MAX_MEDIA_TOTAL_BYTES, MediaCache, MediaError, MediaType,
+    audio_type, image_type, media_type, sha256_hex, valid_sha, video_type,
+};
 pub use presence::{DEFAULT_TTL_MS, Participant, PresenceSet, color_for};
 pub use session::{DocSession, SessionConfig, SnapshotState, warnings};
 #[cfg(not(target_arch = "wasm32"))]

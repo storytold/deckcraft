@@ -15,7 +15,7 @@
 use std::collections::HashSet;
 
 use base64::Engine as _;
-use deckcraft_collab_proto::{ChangeKind, Delta, HistoryAction, OpEnvelope, OpKind, Payload, RejectCode, ShapeKey, SlideKey, Target};
+use deckcraft_collab_proto::{ChangeKind, Delta, HistoryAction, MediaKind, OpEnvelope, OpKind, Payload, RejectCode, ShapeKey, SlideKey, Target};
 use deckcraft_engine::{Session, Target as EngineTarget, TextSel};
 use deckcraft_model::text::TextBody;
 use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, SlideId, find_shape, parent_of};
@@ -333,6 +333,59 @@ impl Adapter {
                 }
                 self.call(session, "insert.picture", args, head)
             }
+            Payload::MediaInsert { kind, sha256, name, rect } => {
+                let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
+                let bytes = self
+                    .media
+                    .get(sha256)
+                    .ok_or_else(|| Rejection::missing_media(format!("media `{sha256}` has not been uploaded to this session"), Some(head)))?;
+                self.select_slide(session, before, slide, head)?;
+                let mut args = json!({
+                    "name": name,
+                    "data": base64::engine::general_purpose::STANDARD.encode(bytes.as_slice()),
+                });
+                if let Some(rect) = rect {
+                    args["rect"] = json!(rect);
+                }
+                let cmd = match kind {
+                    MediaKind::Video => "insert.video",
+                    MediaKind::Audio => "insert.audio",
+                };
+                self.call(session, cmd, args, head)
+            }
+            Payload::ShapeFill { fill } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                let mut args = fill.args();
+                args["ids"] = json!([shape.0]);
+                self.call(session, "shape.fill", args, head)
+            }
+            Payload::ShapeLine { line } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                let mut args = line.args();
+                args["ids"] = json!([shape.0]);
+                self.call(session, "shape.line", args, head)
+            }
+            Payload::FormatSet { format, args } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                let target = before.slide(slide).and_then(|s| find_shape(&s.shapes, shape));
+                match target {
+                    Some(sh) if matches!(sh.kind, ShapeKind::Table(_)) => {
+                        return Err(Rejection::unsupported("formatting a table needs a cell address", Some(head)));
+                    }
+                    Some(sh) if sh.text.is_none() => {
+                        return Err(Rejection::invalid("the shape has no text to format", Some(head)));
+                    }
+                    Some(_) => {}
+                    None => return Err(Rejection::stale("the shape is gone", Some(head))),
+                }
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                if !format.accepts(args) {
+                    return Err(Rejection::invalid(format!("`{}` does not take these arguments", format.id()), Some(head)));
+                }
+                self.call(session, format.id(), args.clone(), head)
+            }
             Payload::ShapeDelete {} => {
                 let (_, shapes) = self.resolve_many(before, &op.target, head)?;
                 let ids: Vec<u32> = shapes.iter().map(|s| s.0).collect();
@@ -390,7 +443,26 @@ impl Adapter {
                 };
                 self.call(session, "slide.move", json!({"ids": [slide.0], "to": to}), head)
             }
+            Payload::SlideDuplicate {} => {
+                let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
+                let index = before.slide_index(slide).ok_or_else(|| Rejection::stale("the slide is gone", Some(head)))?;
+                self.call(session, "slide.duplicate", json!({"index": index}), head)
+            }
         }
+    }
+
+    /// Put the engine's selection on one shape, so formatting and fill commands act on the
+    /// authoritative shape rather than on whatever this replica had selected.
+    fn select_shapes(&self, session: &mut Session, before: &Presentation, slide: SlideId, shapes: &[ShapeId], head: u64) -> Result<(), Rejection> {
+        let index = before.slide_index(slide).ok_or_else(|| Rejection::stale("the slide is gone", Some(head)))?;
+        let st = session.doc_mut().map_err(|_| Rejection::invalid("no document open", Some(head)))?;
+        st.selection.target = EngineTarget::Slides;
+        st.selection.slide = index;
+        st.selection.slides.clear();
+        st.selection.shapes = shapes.to_vec();
+        st.selection.cells = None;
+        st.selection.text = None;
+        Ok(())
     }
 
     /// Put the engine's selection on one shape's text, so `text.insert`/`text.delete` act at the
@@ -570,16 +642,21 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::ShapeSetBounds { .. }
         | Payload::TextSet { .. }
         | Payload::TextInsert { .. }
-        | Payload::TextDelete { .. } => OpKind::Command,
+        | Payload::TextDelete { .. }
+        | Payload::ShapeFill { .. }
+        | Payload::ShapeLine { .. }
+        | Payload::FormatSet { .. } => OpKind::Command,
         Payload::ShapeInsert { .. }
         | Payload::PictureInsert { .. }
+        | Payload::MediaInsert { .. }
         | Payload::ShapeDelete {}
         | Payload::Reorder { .. }
         | Payload::Group {}
         | Payload::Ungroup {}
         | Payload::SlideInsert { .. }
         | Payload::SlideDelete {}
-        | Payload::SlideMove { .. } => OpKind::Structural,
+        | Payload::SlideMove { .. }
+        | Payload::SlideDuplicate {} => OpKind::Structural,
     }
 }
 
@@ -625,7 +702,7 @@ fn reorder_index(
 mod tests {
     use super::*;
     use crate::history::ActorHistory;
-    use deckcraft_collab_proto::TextCursor;
+    use deckcraft_collab_proto::{FillSpec, FormatCmd, LineSpec, TextCursor};
 
     /// A deck with one blank slide and two shapes, built through the same commands on every
     /// replica so ids and keys line up.
@@ -850,6 +927,110 @@ mod tests {
             Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
             Payload::ShapeMove { x, y: 100.0 },
         )
+    }
+
+    #[test]
+    fn fill_line_format_and_a_slide_copy_converge_on_both_replicas() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let (slide, first) = key_of(&aa, &doc_of(&a), 0);
+        let (slide_b, second) = key_of(&bb, &doc_of(&b), 1);
+        assert_eq!(slide, slide_b);
+
+        let steps = [
+            (Payload::ShapeFill { fill: FillSpec::Solid { color: "#ff0000".into() } }, first.clone()),
+            (Payload::ShapeLine { line: LineSpec { color: Some("#0044ff".into()), width: Some(3.0), ..LineSpec::default() } }, first.clone()),
+            (Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}) }, first.clone()),
+            (Payload::FormatSet { format: FormatCmd::Size, args: json!({"size": 24.0}) }, second.clone()),
+        ];
+        for (version, (payload, shape)) in steps.into_iter().enumerate() {
+            let envelope =
+                op(OpKind::Command, version as u64, Target { slide: Some(slide.clone()), shape: Some(shape), ..Target::default() }, payload);
+            let da = aa.apply(&mut a, version as u64, "a", &envelope).expect("apply a");
+            let db = bb.apply(&mut b, version as u64, "b", &envelope).expect("apply b");
+            assert_eq!(da, db, "the same operation has the same delta on both replicas");
+        }
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas hold the same formatting");
+
+        // The copy is structural: it lands on the head and both replicas keep the same order.
+        let duplicate = op(OpKind::Structural, 4, Target { slide: Some(slide.clone()), ..Target::default() }, Payload::SlideDuplicate {});
+        aa.apply(&mut a, 4, "a", &duplicate).expect("duplicate a");
+        bb.apply(&mut b, 4, "b", &duplicate).expect("duplicate b");
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas hold the same slide order");
+        assert_eq!(doc_of(&a).slides.len(), 2);
+        assert_ne!(doc_of(&a).slides[0].id, doc_of(&a).slides[1].id, "the copy has fresh ids");
+    }
+
+    #[test]
+    fn a_format_operation_cannot_move_off_its_target_with_args() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let (slide, first) = key_of(&ad, &doc_of(&s), 0);
+        let envelope = op(
+            OpKind::Command,
+            0,
+            Target { slide: Some(slide), shape: Some(first), ..Target::default() },
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true, "ids": [99]}) },
+        );
+        let err = ad.apply(&mut s, 0, "a", &envelope).expect_err("an address in args");
+        assert_eq!(err.code, RejectCode::Invalid);
+    }
+
+    #[test]
+    fn a_video_operation_runs_from_the_media_channel_on_both_replicas() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let bytes = mp4();
+        let sha = aa.media_mut().put("clip.mp4", bytes.clone()).expect("media");
+        bb.media_mut().insert(&sha, bytes).expect("the same object");
+
+        let slide = aa.keys().slide_key(doc_of(&a).slides[0].id).expect("slide").clone();
+        let envelope = op(
+            OpKind::Structural,
+            0,
+            Target { slide: Some(slide), ..Target::default() },
+            Payload::MediaInsert { kind: MediaKind::Video, sha256: sha.clone(), name: "clip.mp4".into(), rect: Some([40.0, 40.0, 320.0, 180.0]) },
+        );
+        let da = aa.apply(&mut a, 0, "a", &envelope).expect("apply a");
+        let db = bb.apply(&mut b, 0, "b", &envelope).expect("apply b");
+        assert_eq!(da, db);
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas hold the same clip");
+        let after = doc_of(&a);
+        let clip = after.slides[0].shapes.iter().find(|s| matches!(s.kind, ShapeKind::Media(_))).expect("a media shape");
+        assert_eq!(clip.xfrm.expect("xfrm").x, 40.0);
+    }
+
+    #[test]
+    fn an_unplayable_clip_is_still_one_operation() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let bytes = b"RIFF\x0c\0\0\0WAVEfmt ".to_vec();
+        let sha = ad.media_mut().put("hit.wav", bytes).expect("media");
+        let (slide, _) = key_of(&ad, &doc_of(&s), 0);
+        let envelope = op(
+            OpKind::Structural,
+            0,
+            Target { slide: Some(slide), ..Target::default() },
+            Payload::MediaInsert { kind: MediaKind::Audio, sha256: sha, name: "hit.wav".into(), rect: None },
+        );
+        ad.apply(&mut s, 0, "a", &envelope).expect("an unrecognised codec is a warning, not a refusal");
+        assert!(doc_of(&s).slides[0].shapes.iter().any(|s| matches!(s.kind, ShapeKind::Media(ref m) if !m.video)));
+    }
+
+    /// A minimal ISO base media file: enough for the media allowlist, not for a decoder.
+    fn mp4() -> Vec<u8> {
+        let mut bytes = vec![0, 0, 0, 0x18];
+        bytes.extend(b"ftypisom\0\0\x02\x00isomiso2");
+        bytes.extend([0u8; 32]);
+        bytes
     }
 
     #[test]

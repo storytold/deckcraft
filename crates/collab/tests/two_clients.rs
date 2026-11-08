@@ -214,6 +214,47 @@ fn a_resend_is_settled_but_changes_nothing() {
 }
 
 #[test]
+fn media_and_format_slices_go_through_the_server() {
+    let mut server = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
+    let (slide, first, second) = keys(&server);
+    let mut a = join(&server, "alice", Role::Editor);
+    let mut b = join(&server, "bob", Role::Editor);
+
+    let steps = vec![
+        (Payload::ShapeFill { fill: deckcraft_collab_proto::FillSpec::Solid { color: "#ff0000".into() } }, OpKind::Command, first.clone(), 0u64),
+        (
+            Payload::ShapeLine { line: deckcraft_collab_proto::LineSpec { color: Some("#0000ff".into()), width: Some(2.0), ..Default::default() } },
+            OpKind::Command,
+            second.clone(),
+            1,
+        ),
+        (Payload::FormatSet { format: deckcraft_collab_proto::FormatCmd::Bold, args: json!({"on": true}) }, OpKind::Command, first.clone(), 2),
+        (Payload::SlideDuplicate {}, OpKind::Structural, first.clone(), 3),
+    ];
+    for (n, (payload, kind, shape, base)) in steps.into_iter().enumerate() {
+        let op = OpEnvelope {
+            op_id: format!("op-{n}"),
+            doc: "d".into(),
+            base_version: base,
+            kind,
+            target: Target { slide: Some(slide.clone()), shape: Some(shape), ..Target::default() },
+            payload,
+            history: None,
+        };
+        a.client.submit(op).expect("submit");
+        pump(&mut server, &mut a, &mut [&mut b]);
+    }
+
+    assert_eq!(server.version(), 4, "every slice is one authoritative step");
+    assert_eq!(b.client.version(), 4);
+    let doc = server.document().expect("doc");
+    assert_eq!(doc.slides.len(), 2, "the copy landed");
+    let first_shape = &doc.slides[0].shapes[0];
+    assert!(matches!(first_shape.fill, Some(deckcraft_model::Fill::Solid { .. })), "the fill came from the confirmed command");
+    assert_eq!(doc.slides[0].shapes[1].line.as_ref().and_then(|l| l.width), Some(2.0), "the outline is a final value");
+}
+
+#[test]
 fn a_viewer_cannot_write() {
     let server = DocSession::from_document("d", deck(), SessionConfig::default()).expect("session");
     let (_slide, first, _) = keys(&server);

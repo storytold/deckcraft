@@ -124,8 +124,13 @@ The first release deliberately normalises a small, idempotent command set:
 | `text.insert`, `text.delete` | command | character offsets; the server rebases them against operations since the base, so two people typing in one paragraph keep both texts |
 | `shape.insert` | structural | preset, final geometry, optional text; ids are deterministic on every replica |
 | `insert.picture` | structural | the operation carries a sha256 reference, not bytes; see "Media channel" |
+| `insert.video`, `insert.audio` | structural | same reference; the clip's bytes are allowlisted separately |
+| `shape.fill` | command | a final fill: solid colour, `none` or `background`; gradients, pictures, patterns and relative transparency are refused |
+| `shape.line` | command | final outline values (`color`, `width`, `dash`, `cap`, `join`, `compound`, heads) or `none` |
+| `format.*` (17 commands) | command | `format.bold/italic/underline/strikethrough/superscript/subscript/font/size/color/highlight/alignLeft/alignCenter/alignRight/justify/caps/spacing/clear` on one explicit shape's text; toggles need an explicit `on`, `args` cannot carry an address |
 | `edit.delete` (shapes) | structural | explicit shape keys |
 | `slide.new`, `slide.delete`, `slide.move` | structural | anchor, not index |
+| `slide.duplicate` | structural | the source slide key; the copy is inserted after it |
 | `arrange.group`, `arrange.ungroup`, `arrange.reorder` | structural | explicit sibling anchor |
 
 Anything else that changes the document is refused with a "not available in a shared session
@@ -135,22 +140,25 @@ wire.
 
 ## Media channel
 
-Pictures do not travel in an operation: the socket limit is 256 KiB and the same picture can be
-inserted twice. The bytes go to a content-addressed store and the operation carries only the
-digest.
+Pictures, audio and video do not travel in an operation: the socket limit is 256 KiB and the same
+picture can be inserted twice. The bytes go to a content-addressed store and the operation carries
+only the digest.
 
 - `PUT /v1/sessions/{id}/media/{sha256}` with the session token (a viewer is refused). The body is
-  the picture, the path must match its digest; only PNG, JPEG, GIF, WebP, BMP, TIFF and SVG are
-  accepted, at most 8 MiB per object.
-- `GET /media/{sha256}` with a session or service token returns the bytes with their image type.
-- One object per digest per session (512 objects / 64 MiB total); a repeated upload is a no-op.
-- Wire: `Payload::PictureInsert { sha256, name, rect }`. `rect` is optional: without it the server
-  and every replica compute the natural size from the same bytes and slide size.
+  the object, the path must match its digest. The allowlist is by signature: PNG, JPEG, GIF, WebP,
+  BMP, TIFF and SVG up to 8 MiB; MP4/MOV/WebM/AVI and WAV/FLAC/Ogg/MP3/M4A/AIFF/MIDI up to 32 MiB.
+  Pictures keep 512 objects / 64 MiB per session; audio and video keep their own 32 objects /
+  192 MiB, so a large clip cannot evict the pictures.
+- `GET /media/{sha256}` with a session or service token returns the bytes with their content type.
+- One object per digest per session; a repeated upload is a no-op.
+- Wire: `Payload::PictureInsert { sha256, name, rect }` and
+  `Payload::MediaInsert { kind: video|audio, sha256, name, rect }`. `rect` is optional: without it
+  the server and every replica compute the frame from the same bytes and slide size.
 - With `COLLAB_STORE_DIR` the objects live under `<store>/media/<sha256>` and a journal replay
   loads them before the operation runs.
-- The desktop link uploads and fetches over plain `http://` derived from its `ws://` URL. A
-  `wss://` link has no TLS HTTP client yet: `Transport::put_media` refuses and the status bar says
-  so; the cabinet host must supply the bridge.
+- The desktop link derives the HTTP endpoint from its WebSocket URL: `ws://` opens a plain socket,
+  `wss://` a `rustls` connection with the platform root store (`rustls-native-certs`; the
+  `SSL_CERT_FILE`/`SSL_CERT_DIR` variables are honoured). A custom CA must be in the system store.
 
 ## Commit
 
@@ -180,8 +188,8 @@ must be treated as a development instance.
 
 | Suite | What it covers |
 |---|---|
-| `cargo test -p deckcraft-collab` | 75 unit + 6 integration: convergence, dedup, structural exclusion, tombstones, undo per actor, text rebase, shape insert, pictures through the media channel, presence, snapshots, commit |
-| `cargo test -p deckcraft-collab-server` | 3 unit + 5 real-socket tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay, media upload/fetch, picture insert |
+| `cargo test -p deckcraft-collab` | 90 unit + 7 integration: convergence, dedup, structural exclusion, tombstones, undo per actor, text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate slices, presence, snapshots, commit |
+| `cargo test -p deckcraft-collab-server` | 3 unit + 6 real-socket tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay, media upload/fetch (picture and audio allowlists), picture insert |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue |
 | `cargo test -p deckcraft-engine` | 558: the collaboration queue and read-only gate did not change single-user behaviour |
 | `cargo clippy … --all-targets -- -D warnings`, `cargo fmt --check`, `cargo xtask layers` | clean |
@@ -194,12 +202,13 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
 1. **P0 — Cabinet callback and host bridge**: `session`, `presence`, `commit` in `craft-web-host`
    are an external contract; without them there is no new file version in the cabinet. This is the
    only gap that blocks a usable cabinet deployment.
-2. **P1 — Full command surface**: fill, fonts, animations, tables, diagrams, charts and other
-   commands are refused in a shared session instead of being normalised (see "What v1 syncs").
-   This is the largest product gap; add commands in vertical slices, one normalisation each.
-3. **P1 — Media beyond pictures**: the channel carries images only; video, audio and fonts need
-   their own allowlist and size limits, and a `wss://` desktop link needs a TLS HTTP client (plain
-   `ws://` links already upload and fetch). The browser link needs the same HTTP bridge.
+2. **P1 — Command surface**: fill, line and 17 `format.*` commands over explicit shapes and
+   `slide.duplicate` are normalised now; fonts, animations, transitions, tables, diagrams and
+   charts are still refused (see "What v1 syncs"). The largest remaining product gap; add
+   commands in vertical slices, one normalisation each.
+3. **P1 — Media refinement**: pictures, video and audio are on the channel, but fonts and 3D
+   models are not, and the browser link needs the same HTTP bridge (the desktop `wss://` path
+   now has a TLS client).
 4. **P1 — Text in tables/notes and rich runs** are not normalised; shape text is. Table cells and
    notes need their own addressing and rebase; formatting runs need a run-level payload.
 5. **P2 — Browser transport**: the web build shows the UI but has no `web-sys` WebSocket link; the

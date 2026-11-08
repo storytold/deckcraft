@@ -1201,6 +1201,8 @@ dependencies = [
  "deckcraft-model",
  "deckcraft-pptx",
  "log",
+ "rustls",
+ "rustls-native-certs",
  "serde_json",
  "sha2",
  "tungstenite",

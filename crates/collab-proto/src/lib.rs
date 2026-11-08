@@ -160,6 +160,26 @@ pub enum Payload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rect: Option<[f64; 4]>,
     },
+    /// Inserts audio or video that was uploaded to the session's media channel. Like a picture,
+    /// the bytes travel on the channel and the operation names them by `sha256`; `rect` is the
+    /// final box (absent: the frame size the engine derives from the probed media).
+    MediaInsert {
+        kind: MediaKind,
+        sha256: String,
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rect: Option<[f64; 4]>,
+    },
+    /// Replaces one shape's fill with a final value. Absolute only: no "next theme colour", no
+    /// transparency relative to an inherited style.
+    ShapeFill { fill: FillSpec },
+    /// Replaces one shape's outline with the fields given. Every field is a final value; a field
+    /// left out keeps the shape's value on every replica because the confirmed command carries
+    /// the same arguments.
+    ShapeLine { line: LineSpec },
+    /// One allowlisted `format.*` command with absolute arguments, aimed at the whole text body
+    /// of `target.shape`. Run-level ranges are a later slice (RFC §15).
+    FormatSet { format: FormatCmd, args: serde_json::Value },
     /// Removes one shape (`target.shape`) or several (`target.shapes`).
     ShapeDelete {},
     /// Inserts a slide before `target.slide` (`None`: at the end).
@@ -176,6 +196,9 @@ pub enum Payload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         before: Option<SlideKey>,
     },
+    /// Copies the slide in `target.slide` and inserts the copy right after it. Structural: it
+    /// changes every index after the copy and allocates ids.
+    SlideDuplicate {},
     /// Groups `target.shapes` into one group.
     Group {},
     /// Ungroups `target.shape`.
@@ -185,6 +208,190 @@ pub enum Payload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         before: Option<ShapeKey>,
     },
+}
+
+/// Audio or video addressed by a digest on the media channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaKind {
+    Video,
+    Audio,
+}
+
+/// A final fill value. Only absolute forms are on the wire: a solid colour from the palette or
+/// the theme, no fill, or the slide background showing through.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FillSpec {
+    Solid { color: String },
+    None,
+    Background,
+}
+
+impl FillSpec {
+    /// The `shape.fill` arguments that reproduce this value.
+    pub fn args(&self) -> serde_json::Value {
+        match self {
+            FillSpec::Solid { color } => serde_json::json!({"color": color}),
+            FillSpec::None => serde_json::json!({"none": true}),
+            FillSpec::Background => serde_json::json!({"background": true}),
+        }
+    }
+}
+
+/// A final outline. A field left out is not a relative change: the confirmed command carries the
+/// same fields, so every replica leaves that part of the outline as it is.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LineSpec {
+    /// Clears the outline; the other fields are then ignored.
+    #[serde(default)]
+    pub none: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cap: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compound: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head_size: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tail_size: Option<String>,
+}
+
+impl LineSpec {
+    /// The `shape.line` arguments that reproduce this value. `None` clears the outline.
+    pub fn args(&self) -> serde_json::Value {
+        let mut out = serde_json::Map::new();
+        if self.none {
+            out.insert("none".into(), serde_json::Value::Bool(true));
+            return serde_json::Value::Object(out);
+        }
+        if let Some(color) = &self.color {
+            out.insert("color".into(), serde_json::Value::String(color.clone()));
+        }
+        if let Some(width) = self.width
+            && let Some(n) = serde_json::Number::from_f64(width)
+        {
+            out.insert("width".into(), serde_json::Value::Number(n));
+        }
+        for (key, value) in [
+            ("dash", &self.dash),
+            ("cap", &self.cap),
+            ("join", &self.join),
+            ("compound", &self.compound),
+            ("head", &self.head),
+            ("tail", &self.tail),
+            ("headSize", &self.head_size),
+            ("tailSize", &self.tail_size),
+        ] {
+            if let Some(v) = value {
+                out.insert(key.into(), serde_json::Value::String(v.clone()));
+            }
+        }
+        serde_json::Value::Object(out)
+    }
+}
+
+/// The character/paragraph formatting v1 carries over the wire. Each maps to the engine command
+/// of the same id; the arguments are absolute (`on: true`, an explicit colour, an explicit size).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FormatCmd {
+    Bold,
+    Italic,
+    Underline,
+    Strikethrough,
+    Superscript,
+    Subscript,
+    Font,
+    Size,
+    Color,
+    Highlight,
+    AlignLeft,
+    AlignCenter,
+    AlignRight,
+    Justify,
+    Caps,
+    Spacing,
+    Clear,
+}
+
+impl FormatCmd {
+    /// The engine command id, also the name on the wire.
+    pub fn id(self) -> &'static str {
+        match self {
+            FormatCmd::Bold => "format.bold",
+            FormatCmd::Italic => "format.italic",
+            FormatCmd::Underline => "format.underline",
+            FormatCmd::Strikethrough => "format.strikethrough",
+            FormatCmd::Superscript => "format.superscript",
+            FormatCmd::Subscript => "format.subscript",
+            FormatCmd::Font => "format.font",
+            FormatCmd::Size => "format.size",
+            FormatCmd::Color => "format.color",
+            FormatCmd::Highlight => "format.highlight",
+            FormatCmd::AlignLeft => "format.alignLeft",
+            FormatCmd::AlignCenter => "format.alignCenter",
+            FormatCmd::AlignRight => "format.alignRight",
+            FormatCmd::Justify => "format.justify",
+            FormatCmd::Caps => "format.caps",
+            FormatCmd::Spacing => "format.spacing",
+            FormatCmd::Clear => "format.clear",
+        }
+    }
+
+    /// Parse the engine command id.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Some(match id {
+            "format.bold" => FormatCmd::Bold,
+            "format.italic" => FormatCmd::Italic,
+            "format.underline" => FormatCmd::Underline,
+            "format.strikethrough" => FormatCmd::Strikethrough,
+            "format.superscript" => FormatCmd::Superscript,
+            "format.subscript" => FormatCmd::Subscript,
+            "format.font" => FormatCmd::Font,
+            "format.size" => FormatCmd::Size,
+            "format.color" => FormatCmd::Color,
+            "format.highlight" => FormatCmd::Highlight,
+            "format.alignLeft" => FormatCmd::AlignLeft,
+            "format.alignCenter" => FormatCmd::AlignCenter,
+            "format.alignRight" => FormatCmd::AlignRight,
+            "format.justify" => FormatCmd::Justify,
+            "format.caps" => FormatCmd::Caps,
+            "format.spacing" => FormatCmd::Spacing,
+            "format.clear" => FormatCmd::Clear,
+            _ => return None,
+        })
+    }
+
+    /// Whether `args` is a value of this command's own shape: only the keys it reads, no address
+    /// (`id`/`ids`/`index`) that would move the command off the operation's target.
+    pub fn accepts(self, args: &serde_json::Value) -> bool {
+        let Some(map) = args.as_object() else { return false };
+        let allowed: &[&str] = match self {
+            FormatCmd::Bold | FormatCmd::Italic | FormatCmd::Superscript | FormatCmd::Subscript => &["on"],
+            FormatCmd::Underline => &["on", "style"],
+            FormatCmd::Strikethrough => &["on", "double"],
+            FormatCmd::Font => &["family"],
+            FormatCmd::Size => &["size"],
+            FormatCmd::Color | FormatCmd::Highlight => &["color"],
+            FormatCmd::Caps => &["caps"],
+            FormatCmd::Spacing => &["spacing"],
+            FormatCmd::AlignLeft | FormatCmd::AlignCenter | FormatCmd::AlignRight | FormatCmd::Justify | FormatCmd::Clear => &[],
+        };
+        map.keys().all(|k| allowed.contains(&k.as_str()))
+    }
 }
 
 impl Payload {
@@ -198,10 +405,18 @@ impl Payload {
             Payload::TextDelete { .. } => "text.delete",
             Payload::ShapeInsert { .. } => "shape.insert",
             Payload::PictureInsert { .. } => "insert.picture",
+            Payload::MediaInsert { kind, .. } => match kind {
+                MediaKind::Video => "insert.video",
+                MediaKind::Audio => "insert.audio",
+            },
+            Payload::ShapeFill { .. } => "shape.fill",
+            Payload::ShapeLine { .. } => "shape.line",
+            Payload::FormatSet { format, .. } => format.id(),
             Payload::ShapeDelete {} => "edit.delete",
             Payload::SlideInsert { .. } => "slide.new",
             Payload::SlideDelete {} => "slide.delete",
             Payload::SlideMove { .. } => "slide.move",
+            Payload::SlideDuplicate {} => "slide.duplicate",
             Payload::Group {} => "arrange.group",
             Payload::Ungroup {} => "arrange.ungroup",
             Payload::Reorder { .. } => "arrange.reorder",
@@ -588,6 +803,7 @@ pub fn decode_server(s: &str) -> Result<ServerMsg, serde_json::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn op() -> OpEnvelope {
         OpEnvelope {
@@ -729,6 +945,41 @@ mod tests {
         let natural = Payload::PictureInsert { sha256: "9f2c".into(), name: "logo.png".into(), rect: None };
         let text = serde_json::to_string(&natural).expect("encode");
         assert!(!text.contains("rect"), "{text}");
+    }
+
+    #[test]
+    fn media_and_format_payloads_round_trip_and_name_their_command() {
+        let media =
+            Payload::MediaInsert { kind: MediaKind::Video, sha256: "9f2c".into(), name: "clip.mp4".into(), rect: Some([10.0, 20.0, 300.0, 200.0]) };
+        let text = serde_json::to_string(&media).expect("encode");
+        assert!(text.contains("\"cmd\":\"media_insert\""), "{text}");
+        assert!(text.contains("\"kind\":\"video\""), "{text}");
+        assert!(!text.contains("data"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), media);
+        assert_eq!(media.command(), "insert.video");
+
+        let fill = Payload::ShapeFill { fill: FillSpec::Solid { color: "#ff0000".into() } };
+        assert_eq!(fill.command(), "shape.fill");
+        assert_eq!(FillSpec::Solid { color: "#ff0000".into() }.args(), json!({"color": "#ff0000"}));
+        let text = serde_json::to_string(&fill).expect("encode");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), fill);
+
+        let spec = LineSpec { none: false, color: Some("#0044ff".into()), width: Some(2.0), dash: Some("dash".into()), ..LineSpec::default() };
+        let line = Payload::ShapeLine { line: spec.clone() };
+        assert_eq!(line.command(), "shape.line");
+        assert_eq!(spec.args(), json!({"color": "#0044ff", "width": 2.0, "dash": "dash"}));
+
+        let format = Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}) };
+        assert_eq!(format.command(), "format.bold");
+        assert_eq!(FormatCmd::from_id("format.bold"), Some(FormatCmd::Bold));
+        assert_eq!(FormatCmd::from_id("format.nope"), None);
+        assert_eq!(Payload::SlideDuplicate {}.command(), "slide.duplicate");
+    }
+
+    #[test]
+    fn clearing_an_outline_carries_only_the_flag() {
+        let line = LineSpec { none: true, color: Some("#000000".into()), width: Some(4.0), ..LineSpec::default() };
+        assert_eq!(line.args(), json!({"none": true}));
     }
 
     #[test]

@@ -218,10 +218,10 @@ impl CollabUi {
             match self.transport.as_mut() {
                 Some(transport) => {
                     if let Err(e) = transport.put_media(&sha, &bytes) {
-                        self.error = Some(format!("picture upload: {e}"));
+                        self.error = Some(format!("media upload: {e}"));
                     }
                 }
-                None => self.error = Some("picture upload: collaboration is not connected".into()),
+                None => self.error = Some("media upload: collaboration is not connected".into()),
             }
         }
         while let Some(msg) = self.doc.as_mut().and_then(CollabDoc::next_outgoing) {
