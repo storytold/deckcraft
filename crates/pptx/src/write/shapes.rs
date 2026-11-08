@@ -334,7 +334,20 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
                 dml::fill(w, x, o, f);
             }
             if let Some(fx) = &s.effects {
-                dml::effects(w, fx);
+                if fx.fill_overlay.is_some()
+                    || fx.glow.is_some()
+                    || fx.inner_shadow.is_some()
+                    || fx.outer_shadow.is_some()
+                    || fx.reflection.is_some()
+                    || fx.soft_edge.is_some()
+                {
+                    dml::effects(w, fx);
+                }
+                if let Some(raw) =
+                    fx.raw3d.as_deref().map(|s| s.find("<a:sp3d").map_or(s, |i| &s[..i])).and_then(|s| dml::valid_raw3d(s, &["scene3d"]))
+                {
+                    w.raw(raw);
+                }
             }
             w.close("p:grpSpPr");
             shapes(w, x, o, cx, children, depth + 1);
