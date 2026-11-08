@@ -47,7 +47,8 @@ impl Service {
             download: None,
             download_state: None,
             interval: Duration::from_millis(interval_ms.clamp(0, 60_000)),
-            feather: 2,
+            // One stage owns the feather: the compositor (`CompositeOptions`), not the model.
+            feather: 0,
             accelerator: Accelerator::default(),
         }
     }
@@ -125,6 +126,12 @@ impl MatteService for Service {
     }
 
     fn install(&mut self, path: &str) -> Result<(), String> {
+        // A finished download no longer blocks an install; a running one does: both write the same
+        // `model.onnx.part`, so racing them can install a truncated file.
+        self.poll_download();
+        if self.download.is_some() {
+            return Err("a download is running: wait for it to finish before importing the model".into());
+        }
         let target = model::install_from(Path::new(path), &self.root)?;
         self.state = ModelState::Ready { path: target.display().to_string(), bytes: deckcraft_matte::manifest::MODEL_BYTES };
         self.worker = None;
@@ -202,6 +209,26 @@ impl MatteService for Service {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One stage owns the feather: the compositor's `CompositeOptions.feather`. The segmenter must
+    /// not soften the matte too, or `feather: 0` could never give a hard edge.
+    #[test]
+    fn the_service_leaves_feathering_to_the_compositor() {
+        assert_eq!(Service::new(0).feather, 0);
+    }
+
+    /// `install` and a running download both write `model.onnx.part`; racing them can install a
+    /// truncated file. A finished download must not block a later install.
+    #[test]
+    fn install_is_refused_while_a_download_runs() {
+        let mut s = Service::new(0);
+        s.download = Some(std::thread::spawn(|| std::thread::sleep(Duration::from_millis(50))));
+        let e = s.install("picked-model.onnx").expect_err("download running");
+        assert!(e.contains("download"), "{e}");
+        if let Some(h) = s.download.take() {
+            let _ = h.join();
+        }
+    }
 
     #[test]
     fn a_missing_model_is_named_and_a_normal_frame_needs_no_model() {

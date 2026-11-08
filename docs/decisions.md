@@ -53,7 +53,10 @@ and required accelerators are excluded. A C/C++ runtime is not added by the came
 **Decision:** `Custom`'s replacement image and the replacement colour live in the `.deckcraft`
 document. PPTX writes `<alf:backgroundProps><alf:Custom/></alf:backgroundProps>` and keeps every
 other mode exactly; unknown children of the feed and of `backgroundProps` survive through
-`Cameo.raw`.
+`Cameo.raw`. **Exception:** a child that names a package relationship (`r:embed`, `r:link`, `r:id`)
+is not kept — export creates no such relationship, so such a feed is written back with the mode only
+and its other unknown children are lost with it; PowerPoint would otherwise see a dangling reference
+and repair the file.
 
 **Why:** the `livefeed` schema (MS-ODRAWXML) gives `Custom` only an `extLst`; it has no colour and no
 image relationship. Writing an invented attribute or a dangling relationship would make PowerPoint

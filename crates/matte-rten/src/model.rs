@@ -241,7 +241,9 @@ impl RtenSegmenter {
                 rten::RunOptions::default().with_thread_pool(Some(Arc::new(rten::ThreadPool::with_num_threads(threads))))
             }
         };
-        Ok(RtenSegmenter { model, options, feather: 2 })
+        // The matte is feathered once, by the compositor (`CompositeOptions::feather`); a second
+        // blur here would widen every requested radius and make `feather: 0` impossible.
+        Ok(RtenSegmenter { model, options, feather: 0 })
     }
 
     /// The name `cameo.background.state` reports before anything is loaded: `None` unless a file

@@ -46,6 +46,21 @@ fn deck(media: &str, bytes: Vec<u8>) -> Presentation {
     p
 }
 
+/// `asvg:svgBlip` carries `r:embed`, which may only name a part inside the package: an SVG that
+/// lives outside it must be written as an ordinary blip with `r:link`, or PowerPoint repairs the
+/// file.
+#[test]
+fn a_linked_svg_cameo_placeholder_is_a_link_not_an_embed() {
+    let mut p = deck("cameo-placeholder.svg", Vec::new());
+    for m in &mut p.media {
+        m.link = Some("file:///tmp/cameo-placeholder.svg".into());
+    }
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let xml = part(&bytes, "ppt/slides/slide1.xml");
+    assert!(!xml.contains("asvg:svgBlip"), "an external SVG has no part to embed: {xml}");
+    assert!(xml.contains("r:link="), "the blip names the external file: {xml}");
+}
+
 #[test]
 fn cameo_round_trip_writes_the_live_feed_marker_and_svg_blip() {
     let p = deck("cameo-placeholder.svg", svg());
