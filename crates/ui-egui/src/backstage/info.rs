@@ -144,8 +144,9 @@ pub fn format_bytes(b: u64) -> String {
     }
 }
 
-/// Save As: the file type, then the system Save dialog (desktop) or a download (web). A
-/// presentation saved as .pptx or .deckcraft takes the new file; the other types are copies.
+/// Save As: the file name (it starts as the presentation's title), the file type, then the
+/// system Save dialog (desktop) or a download (web). A presentation saved as .pptx or .deckcraft
+/// takes the new file; the other types are copies.
 pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) {
     let t = Tokens::get(ui.ctx());
     let (title, path) = app.session.active().map(|d| (d.title(), d.path.clone())).unwrap_or_default();

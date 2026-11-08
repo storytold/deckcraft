@@ -910,6 +910,8 @@ fn typed_file_names_are_cleaned() {
     assert_eq!(clean_file_stem("Talk", "pptx").as_deref(), Some("Talk"));
     assert_eq!(clean_file_stem("  Talk.PPTX ", "pptx").as_deref(), Some("Talk"));
     assert_eq!(clean_file_stem("Talk.pdf", "pptx").as_deref(), Some("Talk.pdf"));
+    assert_eq!(clean_file_stem("x .pptx", "pptx").as_deref(), Some("x"));
+    assert_eq!(clean_file_stem("café.PPTX", "pptx").as_deref(), Some("café"));
     assert_eq!(clean_file_stem("a/b\\c", "pptx").as_deref(), Some("a b c"));
     assert_eq!(clean_file_stem("a\tb", "pptx").as_deref(), Some("ab"));
     for nothing in ["", "   ", "/", ".", "..", ".pptx"] {
