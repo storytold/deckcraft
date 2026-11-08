@@ -3,14 +3,59 @@ use super::render::{grid_thumb_size, render_thumb};
 use super::{Align2, Color32, CornerRadius, Pos2, Presentation, Rect, Show, Stroke, json, pos2, theme, vec2};
 use crate::sections::{self, GridFilter};
 
+/// Native-only identity; the remote popup continues to use its own unfiltered snapshot.
+#[derive(Clone, Debug)]
+pub(super) struct GridSection {
+    name: String,
+    slides: Vec<deckcraft_model::SlideId>,
+    unique_name: bool,
+}
+
 impl Show {
-    /// Recover when document edits remove the section currently selected in an open grid.
+    /// Store section identity whenever a native grid selection changes. The model has no
+    /// section IDs: use the exact name, with slide IDs to disambiguate duplicate names.
+    pub(super) fn select_grid_filter(&mut self, doc: &Presentation, filter: GridFilter) {
+        self.grid_section = match filter {
+            GridFilter::Section(i) => doc.sections.get(i).map(|section| GridSection {
+                name: section.name.clone(),
+                slides: section.slides.clone(),
+                unique_name: doc.sections.iter().filter(|s| s.name == section.name).count() == 1,
+            }),
+            _ => None,
+        };
+        self.grid_filter = filter;
+    }
+
+    /// Resolve the saved identity before any native grid read, including control snapshots.
+    fn resolved_grid_filter(&self, doc: &Presentation) -> GridFilter {
+        let filter = if let Some(selected) = &self.grid_section {
+            let candidates: Vec<_> = doc.sections.iter().enumerate().filter(|(_, s)| s.name == selected.name).collect();
+            let index = if selected.unique_name && candidates.len() == 1 {
+                candidates.first().map(|(i, _)| *i)
+            } else {
+                // Require an intact slide list for homonyms: section.remove can transfer the
+                // removed slides to a neighbour. Overlap alone would select that other section.
+                let mut matches = candidates.iter().filter(|(_, s)| !selected.slides.is_empty() && s.slides == selected.slides);
+                matches.next().map(|(i, _)| *i).filter(|_| matches.next().is_none())
+            };
+            index.map(GridFilter::Section).unwrap_or(GridFilter::All)
+        } else {
+            self.grid_filter
+        };
+        if filter != GridFilter::All && !sections::tabs(doc).iter().any(|(f, _, _)| *f == filter) { GridFilter::All } else { filter }
+    }
+
+    /// Reordering preserves identity; removal resets the filter and both scroll offsets.
     pub(super) fn normalize_grid_filter(&mut self, doc: &Presentation) {
-        if self.grid_filter != GridFilter::All && !sections::tabs(doc).iter().any(|(filter, _, _)| *filter == self.grid_filter) {
-            self.grid_filter = GridFilter::All;
-            self.grid_scroll = 0.0;
-            self.grid_tab_scroll = 0.0;
+        let filter = self.resolved_grid_filter(doc);
+        if filter != self.grid_filter {
+            self.grid_filter = filter;
             self.grid_tab_reveal = true;
+            if filter == GridFilter::All {
+                self.grid_section = None;
+                self.grid_scroll = 0.0;
+                self.grid_tab_scroll = 0.0;
+            }
         }
     }
     pub(super) fn zoom_uv(&self) -> Rect {
@@ -30,7 +75,7 @@ impl Show {
     /// G opens See All Slides in the window it was pressed in: Presenter View's grid stays off the audience screen (#1130).
     /// The grid starts on the slide's section, at the top.
     pub(super) fn open_grid(&mut self, presenter: bool, doc: &Presentation) {
-        self.grid_filter = sections::current_filter(doc, self.state.slide);
+        self.select_grid_filter(doc, sections::current_filter(doc, self.state.slide));
         self.grid_tab_scroll = 0.0;
         self.grid_tab_reveal = true;
         self.grid_scroll = 0.0;
@@ -153,13 +198,15 @@ impl Show {
     }
 
     pub fn showing_value(&self, doc: &Presentation, full: Rect, now: f64) -> serde_json::Value {
+        let filter = self.resolved_grid_filter(doc);
+        let scroll = if filter == GridFilter::All && self.grid_filter != GridFilter::All { 0.0 } else { self.grid_scroll };
         let mut v = json!({
             "slide": self.state.slide,
             "step": self.state.step,
             "ended": self.ended,
             "grid": self.grid,
-            "gridFilter": grid_filter_value(self.grid_filter),
-            "gridScroll": self.grid_scroll,
+            "gridFilter": grid_filter_value(filter),
+            "gridScroll": scroll,
             "sections": sections::tabs(doc).into_iter().map(|(filter, name, count)| json!({
                 "filter": grid_filter_value(filter),
                 "name": name,
@@ -176,8 +223,8 @@ impl Show {
         });
         if self.grid {
             let frame = grid_frame(full, doc);
-            let slides = sections::grid_slides(doc, self.grid_filter);
-            let layout = grid_layout(frame.inner, &slides, slide_aspect(doc), self.grid_scroll);
+            let slides = sections::grid_slides(doc, filter);
+            let layout = grid_layout(frame.inner, &slides, slide_aspect(doc), scroll);
             v["gridScroll"] = json!(layout.scroll);
             v["cells"] = serde_json::Value::Array(
                 layout.cells.iter().map(|c| json!({"slide": c.slide, "x": c.rect.center().x, "y": c.rect.center().y})).collect(),
@@ -454,6 +501,7 @@ fn grid_scrollbar(frame: &GridFrame) -> Rect {
 
 /// Scroll the grid by `delta` points, clamped to its content.
 pub(super) fn scroll_grid(show: &mut Show, delta: f32, full: Rect, doc: &Presentation) {
+    show.normalize_grid_filter(doc);
     let frame = grid_frame(full, doc);
     let slides = sections::grid_slides(doc, show.grid_filter);
     let layout = grid_layout(frame.inner, &slides, slide_aspect(doc), show.grid_scroll);

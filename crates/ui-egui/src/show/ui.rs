@@ -257,10 +257,11 @@ fn handle_clicks(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, out: 
             LinkJump::None => {}
         }
     } else if show.grid && clicked {
+        show.normalize_grid_filter(doc);
         if let Some(p) = pointer {
             if let Some(filter) = grid_tab_hit(full, doc, show.grid_tab_scroll, p) {
                 if filter != show.grid_filter {
-                    show.grid_filter = filter;
+                    show.select_grid_filter(doc, filter);
                     show.grid_scroll = 0.0;
                     ctx.request_repaint();
                 }

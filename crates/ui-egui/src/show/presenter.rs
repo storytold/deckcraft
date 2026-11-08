@@ -218,7 +218,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
                     {
                         if let Some(filter) = grid_tab_hit(avail, doc, show.grid_tab_scroll, p) {
                             if filter != show.grid_filter {
-                                show.grid_filter = filter;
+                                show.select_grid_filter(doc, filter);
                                 show.grid_scroll = 0.0;
                                 ui.ctx().request_repaint();
                             }

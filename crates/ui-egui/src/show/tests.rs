@@ -1882,3 +1882,138 @@ fn very_short_grid_viewport_keeps_scrollbar_bounds_valid() {
     .clear();
     assert!(!show.thumbs.is_empty());
 }
+
+/// Section positions are ephemeral in both native grids; exercise reads before normalization,
+/// drawing/hit testing and keyboard input independently after each edit.
+mod review_seven {
+    use super::*;
+    use crate::sections::{self, GridFilter};
+
+    fn check_edit(presenter: bool, command: &str, params: serde_json::Value, survives: bool) {
+        for paint_first in [false, true] {
+            let mut session = deckcraft_engine::Session::with_new();
+            for _ in 0..3 {
+                session.execute("slide.new", &json!({})).unwrap();
+            }
+            for (at, name) in ["Before", "Selected", "After", "Last"].iter().enumerate() {
+                session.execute("section.add", &json!({"at":at,"name":name})).unwrap();
+            }
+            let doc = session.active().unwrap().doc.clone();
+            let selected_slide = doc.slides[1].id;
+            let mut show = Show::new(&doc, 1, false, presenter);
+            show.open_grid(presenter, &doc);
+            show.grid_scroll = 120.0;
+            session.execute(command, &params).unwrap();
+            let doc = &session.active().unwrap().doc;
+            let expected =
+                if survives { GridFilter::Section(doc.sections.iter().position(|s| s.name == "Selected").unwrap()) } else { GridFilter::All };
+            let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+            // A read-only control snapshot must not report the old positional selection.
+            let snapshot = show.showing_value(doc, full, 0.0);
+            assert_eq!(
+                snapshot["gridFilter"],
+                match expected {
+                    GridFilter::Section(i) => json!(i),
+                    _ => json!("all"),
+                }
+            );
+            if !survives {
+                assert_eq!(snapshot["gridScroll"], 0.0);
+            }
+            if paint_first {
+                let ctx = egui::Context::default();
+                ctx.run_ui(egui::RawInput { screen_rect: Some(full), ..Default::default() }, |ui| {
+                    zoom::paint_grid(ui.painter(), ui.ctx(), &mut show, doc, full);
+                })
+                .textures_delta
+                .clear();
+                let frame = grid_frame(full, doc);
+                if expected != GridFilter::All {
+                    let tab = frame.tabs.iter().find(|t| t.filter == expected).unwrap();
+                    assert_eq!(zoom::grid_tab_hit(full, doc, show.grid_tab_scroll, tab.rect.center()), Some(expected));
+                }
+                let slides = sections::grid_slides(doc, expected);
+                let cell = grid_layout(frame.inner, &slides, 16.0 / 9.0, show.grid_scroll).cells[0].rect.center();
+                assert_eq!(grid_slide_hit(full, doc, show.grid_filter, show.grid_scroll, cell), slides.first().copied());
+            } else {
+                keys::handle_keys(&mut show, doc, 0.0, vec![], presenter);
+            }
+            assert_eq!(show.grid_filter, expected);
+            if !survives {
+                assert_eq!(show.grid_scroll, 0.0);
+                assert_eq!(show.grid_tab_scroll, 0.0);
+            }
+            let expected_slide = sections::grid_slides(doc, expected)[0];
+            if survives {
+                assert!(sections::grid_slides(doc, expected).contains(&doc.slide_index(selected_slide).unwrap()));
+            }
+            keys::handle_keys(&mut show, doc, 0.0, vec![(egui::Key::Enter, egui::Modifiers::NONE)], presenter);
+            assert_eq!(show.state.slide, expected_slide);
+        }
+    }
+
+    #[test]
+    fn show_removing_a_preceding_section_keeps_selection() {
+        check_edit(false, "section.remove", json!({"index":0}), true);
+    }
+    #[test]
+    fn presenter_removing_a_preceding_section_keeps_selection() {
+        check_edit(true, "section.remove", json!({"index":0}), true);
+    }
+    #[test]
+    fn show_reordering_sections_keeps_selection() {
+        check_edit(false, "section.move", json!({"index":1,"to":2}), true);
+    }
+    #[test]
+    fn presenter_reordering_sections_keeps_selection() {
+        check_edit(true, "section.move", json!({"index":1,"to":2}), true);
+    }
+    #[test]
+    fn show_removing_selected_section_restores_all() {
+        check_edit(false, "section.remove", json!({"index":1}), false);
+    }
+    #[test]
+    fn presenter_removing_selected_section_restores_all() {
+        check_edit(true, "section.remove", json!({"index":1}), false);
+    }
+    #[test]
+    fn show_remove_all_sections_restores_all() {
+        check_edit(false, "section.removeAll", json!({}), false);
+    }
+    #[test]
+    fn presenter_remove_all_sections_restores_all() {
+        check_edit(true, "section.removeAll", json!({}), false);
+    }
+
+    #[test]
+    fn duplicate_names_use_slide_identity_and_ambiguous_empty_sections_reset() {
+        for presenter in [false, true] {
+            let mut session = deckcraft_engine::Session::with_new();
+            for _ in 0..2 {
+                session.execute("slide.new", &json!({})).unwrap();
+            }
+            for at in 0..3 {
+                session.execute("section.add", &json!({"at":at,"name":"Same"})).unwrap();
+            }
+            let mut doc = (*session.active().unwrap().doc).clone();
+            let mut show = Show::new(&doc, 1, false, presenter);
+            show.open_grid(presenter, &doc);
+            doc.sections.swap(0, 1);
+            show.normalize_grid_filter(&doc);
+            assert_eq!(show.grid_filter, GridFilter::Section(0));
+            doc.sections.remove(0);
+            show.normalize_grid_filter(&doc);
+            assert_eq!(show.grid_filter, GridFilter::All);
+            // The engine transfers removed section slides to a neighbour; overlapping IDs
+            // must not turn a deleted selection into the surviving homonym.
+            show.open_grid(presenter, &session.active().unwrap().doc);
+            session.execute("section.remove", &json!({"index":1})).unwrap();
+            show.normalize_grid_filter(&session.active().unwrap().doc);
+            assert_eq!(show.grid_filter, GridFilter::All);
+            doc.sections.iter_mut().for_each(|s| s.slides.clear());
+            show.select_grid_filter(&doc, GridFilter::Section(0));
+            show.normalize_grid_filter(&doc);
+            assert_eq!(show.grid_filter, GridFilter::All);
+        }
+    }
+}

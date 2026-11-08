@@ -130,13 +130,13 @@ fn grid_key(show: &mut Show, doc: &Presentation, k: egui::Key, m: egui::Modifier
 fn cycle_tab(show: &mut Show, doc: &Presentation, delta: isize) {
     let tabs = sections::tabs(doc);
     if tabs.is_empty() {
-        show.grid_filter = GridFilter::All;
+        show.select_grid_filter(doc, GridFilter::All);
         show.grid_scroll = 0.0;
         return;
     }
     let current = tabs.iter().position(|(filter, _, _)| *filter == show.grid_filter).unwrap_or(0);
     let next = (current as isize + delta).rem_euclid(tabs.len() as isize) as usize;
-    show.grid_filter = tabs.get(next).map(|(filter, _, _)| *filter).unwrap_or(GridFilter::All);
+    show.select_grid_filter(doc, tabs.get(next).map(|(filter, _, _)| *filter).unwrap_or(GridFilter::All));
     show.grid_scroll = 0.0;
     show.grid_tab_reveal = true;
 }

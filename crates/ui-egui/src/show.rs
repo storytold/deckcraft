@@ -82,6 +82,8 @@ pub struct Show {
     pub presenter_grid: bool,
     /// Which part of the deck the grid shows (`All`, a section, or the slides outside every section).
     pub grid_filter: GridFilter,
+    /// Stable selection; grid_filter is only its resolved position in the current document.
+    grid_section: Option<zoom::GridSection>,
     /// The grid's vertical scroll offset, in points, clamped to its content on every frame.
     pub grid_scroll: f32,
     /// Independent scroll offset for the bounded section tab strip.
@@ -261,6 +263,7 @@ impl Show {
             grid: false,
             presenter_grid: false,
             grid_filter: GridFilter::All,
+            grid_section: None,
             grid_scroll: 0.0,
             grid_tab_scroll: 0.0,
             grid_tab_reveal: true,
