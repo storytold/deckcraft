@@ -163,20 +163,19 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
     }
 
     group(ui, |ui| {
-            rows(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Start:");
-                    let s = cur.as_ref().map(|c| match c.start {
-                        deckcraft_model::AnimStart::OnClick => "On Click",
-                        deckcraft_model::AnimStart::WithPrevious => "With Previous",
-                        deckcraft_model::AnimStart::AfterPrevious => "After Previous",
-                    });
-                    dropdown(ui, "astart", s.unwrap_or(""), 112.0, cur.is_some(), |ui| {
-                        for (l, v) in [("On Click", "onClick"), ("With Previous", "withPrevious"), ("After Previous", "afterPrevious")] {
-                            if ui.button(l).clicked() {
-                                run(app, "animation.timing", json!({"start": v}));
-                                ui.close();
-                            }
+        rows(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Start:");
+                let s = cur.as_ref().map(|c| match c.start {
+                    deckcraft_model::AnimStart::OnClick => "On Click",
+                    deckcraft_model::AnimStart::WithPrevious => "With Previous",
+                    deckcraft_model::AnimStart::AfterPrevious => "After Previous",
+                });
+                dropdown(ui, "Start", s.unwrap_or(""), 112.0, cur.is_some(), |ui| {
+                    for (l, v) in [("On Click", "onClick"), ("With Previous", "withPrevious"), ("After Previous", "afterPrevious")] {
+                        if ui.button(l).clicked() {
+                            run(app, "animation.timing", json!({"start": v}));
+                            ui.close();
                         }
                     });
                 });
