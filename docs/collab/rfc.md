@@ -401,6 +401,16 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
 - `409`: сравниваем с `baseFileETag`, который сервер запомнил при открытии
   сессии, и с etag собственной предыдущей записи этой сессии. Иначе повторный
   commit даёт ложный конфликт (ревью commit/pdfcraft).
+- Публикация — server-to-server: сервер POST'ит
+  `{fileId, name?, bytes(base64), sha256, version, expectedVersion?}` на
+  callback-URL кабинета (`INTEGRATION.md` §5.2) и ждёт `{version, etag}`;
+  `409` кабинета — тот же конфликт, вызывающий получает
+  `rejected{code:"conflict"}`. Финальный файл никогда не несёт клиент, поэтому
+  закрытая вкладка не теряет сохранение. Кабинет может инициировать commit сам:
+  `POST /v1/sessions/{sessionId}/commit` с service token; без callback байты
+  возвращаются в ответе.
+- Принятый `etag` записывается в сессию и в `meta.json` (рестарт не теряет
+  версию) и становится `expectedFileVersion` следующего commit.
 - Идемпотентность: повторный commit с той же `(doc, version)` возвращает тот же
   результат.
 - Приёмка: файл открывается в PowerPoint/LibreOffice без repair; части,
@@ -591,7 +601,12 @@ fill/line/`format.*` из точного образа значения, undo ш�
 (`slide.delete`/`slide.new`/`slide.duplicate` через полный образ слайда и
 `slide_restore`) и structural undo фигур (`shape.insert`, `insert.picture`,
 `insert.video`/`insert.audio`, `edit.delete` через полный образ фигуры с
-z-order, анимациями и триггерами, `shape_restore`/`shape_delete`). Тесты, точные коммиты,
+z-order, анимациями и триггерами, `shape_restore`/`shape_delete`). Сверх этого —
+публикация commit в кабинет: `POST /v1/sessions/{id}/commit` (service token)
+строит `.pptx`, сервер сам отправляет его на callback кабинета
+(`{fileId, name?, bytes, sha256, version, expectedVersion?}` → `{version, etag}`),
+`409` кабинета отдаётся вызывающему, исходная версия в кабинете не
+перезаписывается, `etag` переживает рестарт. Тесты, точные коммиты,
 матрица приёмки `TASK.md` и список незакрытых блокеров (web-транспорт,
 host-bridge кабинета, оптимистичный preview, undo group/ungroup, base-transfer,
 PR) — `docs/collab/STATUS.md`; эксплуатация — `docs/collab/production.md`;

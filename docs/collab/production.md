@@ -45,6 +45,9 @@ Binary: `deckcraft-collab-server`.
 | `COLLAB_MAX_PARTICIPANTS` | participants per room | `16` |
 | `COLLAB_MAX_MESSAGE_BYTES` | largest client frame | `262144` |
 | `COLLAB_MAX_OPS_PER_SEC` | operations per second per connection | `50` |
+| `COLLAB_CABINET_URL` | the cabinet's commit endpoint; `{sessionId}`/`{fileId}` are substituted | — |
+| `COLLAB_CABINET_TOKEN` | service token the callback is authenticated with (required with the URL) | — |
+| `COLLAB_CABINET_TIMEOUT_MS` | deadline for one callback | `10000` |
 
 TLS is terminated by the ingress. The server speaks plain HTTP/WS on a private network and must
 not be exposed directly.
@@ -53,10 +56,15 @@ not be exposed directly.
 
 ```text
 POST   /v1/sessions                 Authorization: Bearer <service token>
-       { "fileId", "app": "deckcraft", "initialBytes"?: base64, "expectedVersion"? }
+       { "fileId", "app": "deckcraft", "initialBytes"?: base64, "initialName"?: string,
+         "expectedVersion"? }
        → 201 { sessionId, fileId, wsUrl, participants, version, expiresAt }
 
 GET    /v1/sessions/{id}            → session state (participants, version)
+POST   /v1/sessions/{id}/commit     Authorization: Bearer <service token>
+       { "expectedVersion"?: string }
+       → 200 { fileId, name?, version, sha256, fileVersion, warnings[], bytes? }
+       → 409 / 500 / 502            see "Commit" below
 DELETE /v1/sessions/{id}            Authorization: Bearer <service token>
 GET    /healthz, /readyz            → { "ok": true, "version" }
 GET    /metrics                     → Prometheus text format
@@ -86,8 +94,9 @@ and answers with `error{code:"rate-limit"|"too-large"}`.
 ### Metrics
 
 `/metrics` exposes counters only: rooms, sessions, connections, messages, operations, rejected,
-commits, resyncs, bytes in/out. No file names, slide content, text or tokens are logged or
-exported.
+commits, resyncs, bytes in/out, media uploads and bytes, and the cabinet publication
+(`cabinet_commits_total`, `cabinet_conflicts_total`, `cabinet_failures_total`). No file names,
+slide content, text or tokens are logged or exported.
 
 ## Client
 
@@ -163,15 +172,42 @@ only the digest.
 
 ## Commit
 
-The server builds the `.pptx` from the authoritative document and answers `commit-result` with
-`sha256`, `version`, inline base64 bytes and `warnings[]` (what the writer could not keep). A
-stale `expectedVersion` is a `409`/`rejected{code:"conflict"}`; the session never overwrites an
-externally changed file.
+The server builds the `.pptx` from the authoritative document; the client never sends the final
+file. Two ways to ask for a commit:
 
-The desktop client stores the last committed file in `CollabUi::take_commit()` and shows the
-warning banner. The **cabinet callback** that would create the new file version is not wired yet:
-that is the host-bridge task (external contract). Until it exists, commit produces verified bytes
-in the process, not a new cabinet version.
+- `POST /v1/sessions/{id}/commit` with the service token — the cabinet's trigger ("Save", the
+  last participant leaving, a TTL). The body may name `expectedVersion`; without one the session's
+  own version is used.
+- the `commit` WebSocket message from an editor. A viewer's `commit` is refused.
+
+In both cases the bytes leave the process only through the **cabinet callback**: the server POSTs
+
+```json
+{ "fileId", "name"?, "bytes": "<base64 .pptx>", "sha256", "version", "expectedVersion"? }
+```
+
+to `COLLAB_CABINET_URL` (the `{sessionId}`/`{fileId}` placeholders are replaced with the room id)
+with `Authorization: Bearer $COLLAB_CABINET_TOKEN`. The cabinet answers `{ "version", "etag" }`.
+It creates a **new** file version and keeps the previous one: the server never overwrites the
+original, and its own base/journal is not touched by a commit.
+
+- `409` from the cabinet means the file changed outside the session (WebDAV, another client). The
+  caller gets `409` (`rejected{code:"conflict"}` on the socket), no version is created, and the
+  user is offered a copy. A commit whose `expectedVersion` does not match the session's own base
+  is refused before the callback is made.
+- The accepted `etag` becomes the session's `expectedVersion` for the next commit and is written
+  to `meta.json`, so a restart still compares against the copy the cabinet holds.
+- `warnings[]` (what the writer could not keep) stay in the answer; the WS `commit-result` also
+  carries the bytes for the desktop, the HTTP answer does not (the callback already delivered
+  them).
+- Without `COLLAB_CABINET_URL` the server keeps the old behaviour: the HTTP answer contains the
+  base64 `bytes` and no cabinet version is created. That is a development mode, not a save.
+- A cabinet that answers `200` without an `etag` is compared by `sha256:<digest of the committed
+  bytes>`.
+
+The desktop UI has no "save to the cabinet" command yet; today the cabinet triggers the commit
+through the HTTP endpoint. The host-bridge messages (`deckcraft:session` / `presence` / `commit`)
+remain the external contract with the cabinet.
 
 ## Restart and persistence
 
@@ -190,7 +226,7 @@ must be treated as a development instance.
 | Suite | What it covers |
 |---|---|
 | `cargo test -p deckcraft-collab` | 113 unit + 7 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, text, fill, outline, format, group fill, slide insert/delete, shape insert/delete with z-order and animations), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate slices, presence, snapshots, commit |
-| `cargo test -p deckcraft-collab-server` | 5 unit + 6 real-socket tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert |
+| `cargo test -p deckcraft-collab-server` | 10 unit + 6 real-socket + 4 commit tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert; the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode) |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue |
 | `cargo test -p deckcraft-engine` | 565: the collaboration queue, read-only gate, `shape.setField`/`shape.setFields`/`shape.restore` and `slide.restore` did not change single-user behaviour |
 | `cargo clippy … --all-targets -- -D warnings`, `cargo fmt --check`, `cargo xtask layers` | clean |
@@ -200,9 +236,13 @@ must be treated as a development instance.
 Priorities are for the production cut, not for the upstream PR: the PR ships the v1 surface and
 documents the rest. `STATUS.md` tracks the same list by slice, with test evidence.
 
-1. **P0 — Cabinet callback and host bridge**: `session`, `presence`, `commit` in `craft-web-host`
-   are an external contract; without them there is no new file version in the cabinet. This is the
-   only gap that blocks a usable cabinet deployment.
+1. **P0 — Cabinet callback**: the server side is in place — `POST /v1/sessions/{id}/commit`, a
+   server-to-server POST with the bytes (`{fileId, name?, bytes, sha256, version,
+   expectedVersion?}` → `{version, etag}`), `409` on an external change, the accepted version
+   surviving a restart. What remains is outside this repository: the cabinet's endpoint
+   (`INTEGRATION.md` §5.2), the host-bridge messages (`session`, `presence`, `commit`/`committed`)
+   and a desktop "save to cabinet" command. Without the cabinet endpoint a deployment still
+   builds verified bytes in the process, not a new cabinet version.
 2. **P1 — Command surface**: fill, line and 17 `format.*` commands over explicit shapes and
    `slide.duplicate` are normalised now; fonts, animations, transitions, tables, diagrams and
    charts are still refused (see "What v1 syncs"). The largest remaining product gap; add

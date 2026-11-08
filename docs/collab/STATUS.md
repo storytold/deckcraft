@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-08. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, docs commits on top).
+Updated: 2026-11-08. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, docs commits on top).
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -23,17 +23,18 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr7` | `d28c8ae5` | `CollabDoc` command glue + in-memory `Hub` |
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
-| `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete and shape insert/delete |
+| `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete and shape insert/delete; commit published to the cabinet as a new file version (`409` on an external change) |
 
 The Commit column names the slice commits; each branch also carries documentation commits. Heads:
 `collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711`, `0a57b61e`, `58eee059`, `69c2ff22`,
 `41fe1ad9`, `4e666b95`, `f6281736` (journal replay of history operations), `3ec81d70` (shape
-insert/delete undo), plus the docs commits on top. The working tree is clean: the chair's
-uncommitted finding of 2026-11-08 is `7fe75711`; the second slice added `0a57b61e` (media kinds,
-TLS, command slices, tests, docs), `69c2ff22` hardened the format command, `41fe1ad9` added undo
-of fill/line/format steps, `4e666b95` added undo of a group's fill/line and of slide
-insert/delete, and `3ec81d70` added undo of a shape insert and a shape delete (whole-shape image
-with z-order, animations and triggers).
+insert/delete undo), `31842050` (cabinet commit publication), plus the docs commits on top. The
+working tree is clean: the chair's uncommitted finding of 2026-11-08 is `7fe75711`; the second
+slice added `0a57b61e` (media kinds, TLS, command slices, tests, docs), `69c2ff22` hardened the
+format command, `41fe1ad9` added undo of fill/line/format steps, `4e666b95` added undo of a
+group's fill/line and of slide insert/delete, `3ec81d70` added undo of a shape insert and a shape
+delete (whole-shape image with z-order, animations and triggers), and `31842050` sends a commit
+to the cabinet, which creates the new version and keeps the original.
 
 All work is local. Nothing was pushed to `storytold/deckcraft`; a fork and a human decision are
 required for the upstream PR. The PR body is prepared in [`pr10.md`](pr10.md): title
@@ -119,10 +120,16 @@ stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decisi
 
 - HTTP: `POST/GET/DELETE /v1/sessions`, `GET /healthz`, `/readyz`, `/metrics`.
 - WS: first frame is `hello` with the JWT; signature/`exp`/`aud`/app/file/session checks; actor
-  and role from the token. Viewer `op` is refused before the engine.
+  and role from the token. Viewer `op` is refused before the engine. Viewer `commit` is refused too.
 - Limits: message size, operations/second, participants.
-- Commit: `.pptx` from the authoritative document, `sha256`, base64 bytes, `warnings[]`, `409`
-  on a stale `expectedVersion`.
+- Commit: `.pptx` from the authoritative document, `sha256`, `warnings[]`, `409` on a stale
+  `expectedVersion`. The server POSTs it to the cabinet (`COLLAB_CABINET_URL`, service token):
+  `{fileId, name?, bytes(base64), sha256, version, expectedVersion?}` → `{version, etag}`; the
+  cabinet creates a new file version and keeps the previous one. A cabinet `409` (the file changed
+  outside the session) is the caller's `409`, and no version is created. The accepted `etag` is
+  stored in the session and in `meta.json` (a restart keeps comparing against it). Without a
+  callback, `POST /v1/sessions/{id}/commit` returns the bytes inline (development mode); a client
+  `commit` is answered only after the cabinet took the file.
 - Media: `PUT /v1/sessions/{id}/media/{sha256}` (session token, writer only, signature allowlist
   for pictures/audio/video, 8 MiB per picture, 32 MiB per clip), `GET /media/{sha256}` (session or
   service token). Content-addressed under `<store>/media/<sha256>`; 512 pictures / 64 MiB and 32
@@ -136,7 +143,7 @@ stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decisi
 | Command | Result |
 |---|---|
 | `cargo test -p deckcraft-collab` | 113 unit + 7 integration |
-| `cargo test -p deckcraft-collab-server` | 5 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist, shape-undo replay) |
+| `cargo test -p deckcraft-collab-server` | 10 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist, shape-undo replay) + 4 commit tests (two copies with their originals kept, an external change is a `409`, a client commit answered after publication, the no-callback mode) |
 | `cargo test -p deckcraft-collab-proto` | 19 |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 |
 | `cargo test -p deckcraft-engine` | 565 passed, 1 ignored |
@@ -147,6 +154,11 @@ stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decisi
 Re-run on 2026-11-08 after `3ec81d70`: `fmt` clean, `collab-proto` 19, `collab` 113 + 7,
 `collab-server` 5 + 6, `ui-egui collab::` 17, `deckcraft-engine` 565 + 1 ignored; clippy over the
 four collab crates and `ui-egui` with `-D warnings` clean; `xtask layers` 31 crates.
+
+Re-run on 2026-11-08 after `31842050`: `fmt` clean, `collab-proto` 19, `collab` 113 + 7,
+`collab-server` 10 + 6 + 4 (`tests/commit.rs`), `ui-egui collab::` 17, `deckcraft-engine` 565 + 1
+ignored; clippy over the four collab crates and `ui-egui` with `-D warnings` clean; `xtask layers`
+31 crates.
 
 The socket tests were run against a real loopback server; the restart test creates a room, moves
 the version, shuts the server down, starts a new one on the same store and asserts the version
@@ -172,6 +184,14 @@ keeps its key. The engine tests cover `slide.restore` (index, section, duplicate
 `shape.setFields` (a bad value refuses the whole merge) and `shape.restore` (z-order, animation,
 group child, duplicate id, missing parent).
 
+The commit tests run the server against a fake cabinet on loopback that keeps versions like the
+cabinet does. Two copies of the same original file are opened as two rooms; each commit posts a
+`.pptx` that reimports with its own edit, both cabinets keep their original version byte for byte,
+and a name passed at session creation reaches the callback. The `409` test changes the cabinet's
+file under a live room: the server posts the commit anyway, the cabinet refuses it, no version is
+created, the original stays, and the conflict counters move (`cabinet_conflicts_total`). A commit
+whose `expectedVersion` does not match the room is refused before any callback is made.
+
 ## TASK.md acceptance matrix
 
 | Criterion | State | Where / why |
@@ -183,7 +203,7 @@ group child, duplicate id, missing parent).
 | Reconnect works | ✅ within the retained journal tail | client queue + resync; base transfer for an evicted tail is still open |
 | Per-user undo/redo | ✅ text/shape values, fill, outline, `format.*`, group fill/line, slide insert/delete, shape insert/delete | server history, `undo-conflict`, `shape_field`/`shape_fields`/`shape_restore`/`slide_restore`; group/ungroup still open |
 | Viewer cannot edit | ✅ server + engine gate | socket test, UI test |
-| Commit creates a new version, original kept | ⚠️ bytes and `409` ready; cabinet callback missing | host-bridge task |
+| Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
 | PR in `storytold/deckcraft` | ⏳ description prepared, nothing pushed | [`pr10.md`](pr10.md); fork + human decision |
@@ -210,10 +230,14 @@ group child, duplicate id, missing parent).
    Still out of v1: undo of group/ungroup. A slide image is capped at 192 KiB and a shape restore
    at 192 KiB / 64 images, so an undo of an unusually large object is refused `invalid` instead of
    breaking the wire limit.
-5. **Cabinet callback / host bridge.** The cabinet must create the file version from
-   `commit-result` and push `session/presence/commit` through `craft-web-host`. The desktop
-   stores the bytes in `CollabUi::take_commit()`; no callback is wired. This is an external
-   contract (same blocker as WordCraft).
+5. **Cabinet callback / host bridge.** The server side is wired: `POST /v1/sessions/{id}/commit`
+   (service token) builds the `.pptx` and posts it to `COLLAB_CABINET_URL`
+   (`{fileId, name?, bytes, sha256, version, expectedVersion?}` → `{version, etag}`); a cabinet
+   `409` is the caller's `409`, the original version is kept, and the accepted `etag` is stored in
+   `meta.json` so a restart still refuses an external change. What remains is outside this
+   repository: the cabinet's endpoint (`INTEGRATION.md` §5.2), the host-bridge messages
+   (`session`/`presence`/`commit`/`committed`) and a desktop "save to cabinet" command. Without
+   `COLLAB_CABINET_URL` a deployment only builds verified bytes in the process.
 6. **Browser transport.** `apps/deckcraft-web` has no `web-sys` WebSocket link yet; `?collab=1`
    shows the UI in a truthful offline state. A browser bridge must forward frames and media
    fetches, and the host page must send the session token.
@@ -265,8 +289,11 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 2. **Publish the PR only on a human decision**: the body is in [`pr10.md`](pr10.md); fork
    `storytold/deckcraft`, push the final stack as `feature/realtime-collaboration`, do not touch
    CI, do not mention agents. Nothing is pushed today.
-3. Add the web-sys link once the host contract is agreed; until then keep the browser UI honest,
-   and add the media bridge for `wss://` pages.
+3. The cabinet must implement its side: `POST /api/v1/internal/office/sessions/{sessionId}/commit`
+   (`INTEGRATION.md` §5.2, answers `{version, etag}`, keeps the previous version) and the
+   host-bridge messages; the server already posts the bytes, refuses on `409` and stores the
+   accepted version. Then add the web-sys link once the host contract is agreed; until then keep
+   the browser UI honest, and add the media bridge for `wss://` pages.
 4. Extend the command set in vertical slices with the same pattern: payload → normalize →
    adapter run → confirmed command → test on two clients. Next: table cell text, transitions,
    `arrange.align`/`distribute` as final bounds, run-range formatting.
@@ -278,6 +305,38 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-08 — a commit becomes a cabinet file version
+
+- P0 from [`production.md`](production.md) closed on the server side. `POST /v1/sessions/{id}/commit`
+  (service token, optional `{expectedVersion}`) builds the `.pptx` from the authoritative room and
+  posts it to the cabinet (`COLLAB_CABINET_URL`, `COLLAB_CABINET_TOKEN`): body
+  `{fileId, name?, bytes(base64), sha256, version, expectedVersion?}`, answer `{version, etag}`,
+  parsed through a small HTTP/TLS client (`rustls`, system roots; `Connection: close`; chunked
+  answers decoded). The file version is created by the cabinet, which keeps the previous one; the
+  server never writes over the original.
+- `409` is preserved end to end: a room whose `expectedVersion` does not match is refused before
+  the callback; a cabinet `409` (file changed through WebDAV or another client) is the caller's
+  `409` and no version is created. The accepted `etag` becomes the session's `expectedVersion` and
+  is written to `meta.json`, so a restart still compares against the cabinet's copy.
+- A client `commit` over WebSocket is answered only after the cabinet took the file; a viewer's
+  `commit` is refused. The `initialName` a session is opened with is passed through to the
+  callback. Without a callback the endpoint returns the base64 bytes (development mode, as
+  `INTEGRATION.md` §4.1 describes).
+- Counters: `cabinet_commits_total` (accepted publications), `cabinet_conflicts_total`,
+  `cabinet_failures_total`; no file content, names or tokens are logged.
+- Tests (`apps/deckcraft-collab-server/tests/commit.rs`): a fake cabinet keeps versions like the
+  real one. Two rooms opened from two copies of the same `.pptx`; each commit reimports with its
+  own edit, each original stays byte for byte, the name reaches the callback. An external change
+  under a live room makes the server post and the cabinet answer `409`, with the conflict counter
+  moving and nothing overwritten; a wrong `expectedVersion` is refused without a callback. The
+  WebSocket path answers `commit-result` with the cabinet's `etag-1`, a stale second commit gets
+  `conflict`, a viewer gets `forbidden`. A no-callback commit returns a `.pptx` inline and
+  `fileVersion` stays the room's own.
+- `collab` 113 + 7, `collab-proto` 19, `collab-server` 10 + 6 + 4, `ui-egui collab::` 17,
+  `engine` 565 + 1 ignored; clippy `-D warnings` and `fmt` clean; `xtask layers` 31 crates.
+- Commit `31842050` plus the docs commit on `collab/pr10` (RFC §8/§14.1, production, this file).
+  Nothing pushed; CI untouched.
 
 ### 2026-11-08 — structural undo of shape insert and delete
 
