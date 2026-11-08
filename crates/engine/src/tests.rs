@@ -10,6 +10,54 @@ fn session() -> Session {
     Session::with_new()
 }
 
+/// #1898: a host opened the presentation to be viewed. Every command that would change it is
+/// refused at the command layer (Undo and Redo too), the tools can't reach it through
+/// `Session::edit`, it never becomes dirty; navigation, selection, Copy, Find and the show work.
+#[test]
+fn a_read_only_session_refuses_changes_and_keeps_viewing() {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100], "text": "Keep"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    let path = std::env::temp_dir().join(format!("deckcraft-ro-{}.deckcraft", std::process::id()));
+    s.execute("file.saveAs", &json!({"path": path.to_string_lossy()})).unwrap();
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    assert!(!s.doc().unwrap().is_dirty());
+    let before = s.doc().unwrap().doc.clone();
+    s.read_only = true;
+
+    let refused = |s: &mut Session, cmd: &str, p: Value| {
+        let e = s.execute(cmd, &p).unwrap_err().to_string();
+        assert!(e.contains(crate::READ_ONLY_REFUSED), "{cmd}: {e}");
+    };
+    refused(&mut s, "shape.insert", json!({"preset": "ellipse", "rect": [10, 10, 50, 50]}));
+    refused(&mut s, "slide.new", json!({}));
+    refused(&mut s, "slide.delete", json!({}));
+    refused(&mut s, "slide.notes", json!({"text": "note", "index": 0}));
+    refused(&mut s, "edit.undo", json!({}));
+    refused(&mut s, "edit.redo", json!({}));
+    refused(&mut s, "file.save", json!({}));
+    // Typing and the tools' drags only reach the document through `edit`.
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    assert!(s.key("Delete", Mods::default()).is_err(), "Delete is an edit");
+    assert!(s.edit(|_, _| Ok(())).is_err());
+    assert_eq!(s.doc().unwrap().doc, before, "nothing changed");
+    assert!(!s.doc().unwrap().is_dirty(), "never dirty, so nothing would be saved");
+
+    // What a viewer still does.
+    assert_eq!(s.execute("edit.copy", &json!({})).unwrap()["text"], "Keep");
+    s.execute("edit.selectAll", &json!({})).unwrap();
+    s.execute("slide.next", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.slide, 1);
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    s.execute("slide.selectSlides", &json!({"indices": [0, 1]})).unwrap();
+    assert_eq!(s.execute("text.find", &json!({"text": "Keep"})).unwrap().as_array().map(Vec::len), Some(1));
+    s.execute("show.fromStart", &json!({})).unwrap();
+    s.execute("slide.inspect", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc, before);
+    assert!(!s.doc().unwrap().is_dirty());
+    let _ = std::fs::remove_file(path);
+}
+
 #[test]
 fn new_presentation_and_slides() {
     let mut s = session();
