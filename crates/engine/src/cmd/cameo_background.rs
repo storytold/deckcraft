@@ -199,7 +199,7 @@ fn parse_color(p: &Value) -> Result<Option<Rgba>> {
             let (Some(r), Some(g), Some(b)) = (byte(0), byte(2), byte(4)) else {
                 return Err(bad("cameo.background", format!("`color` is not a hex colour: {s}")));
             };
-            let a = if hex.len() == 8 { byte(6).unwrap_or(255) } else { 255 };
+            let a = if hex.len() == 8 { byte(6).ok_or_else(|| bad("cameo.background", format!("`color` is not a hex colour: {s}")))? } else { 255 };
             return Ok(Some(Rgba { r, g, b, a }));
         }
         return Err(bad("cameo.background", format!("`color` is not #RRGGBB: {s}")));
@@ -650,6 +650,18 @@ mod tests {
         assert_eq!(selected_background(&s).map(|b| b.mode.as_str()), Some("blur"));
         s.execute("edit.redo", &json!({})).expect("redo");
         assert_eq!(selected_background(&s).map(|b| b.mode.as_str()), Some("custom"));
+    }
+
+    #[test]
+    fn a_bad_alpha_nibble_is_refused_and_a_good_one_kept() {
+        let mut s = with_cameo();
+        assert!(
+            s.execute("cameo.background", &json!({"mode": "custom", "color": "#0A141Ezz"})).is_err(),
+            "an unparseable alpha is not silently opaque"
+        );
+        s.execute("cameo.background", &json!({"mode": "custom", "color": "#0A141E80"})).expect("alpha");
+        let c = selected_background(&s).and_then(|b| b.color).expect("colour");
+        assert_eq!([c.r, c.g, c.b, c.a], [10, 20, 30, 128]);
     }
 
     #[test]

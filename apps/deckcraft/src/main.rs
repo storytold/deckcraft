@@ -141,8 +141,11 @@ fn services(native_wayland: bool) -> Services {
             .is_none()
             .then(|| Box::new(audio::CpalOut::default()) as Box<dyn deckcraft_media::AudioOut>),
         // Camera backgrounds: discover the user-installed model (no network, no load until a
-        // frame asks for a matte).
-        matte: Some(Box::new(deckcraft_matte_rten::Service::default()) as Box<dyn deckcraft_matte::MatteService>),
+        // frame asks for a matte). `DECKCRAFT_NO_MATTE` keeps the service, and with it the session's
+        // segmenter loader, out of the desktop app.
+        matte: std::env::var_os("DECKCRAFT_NO_MATTE")
+            .is_none()
+            .then(|| Box::new(deckcraft_matte_rten::Service::default()) as Box<dyn deckcraft_matte::MatteService>),
         ..Default::default()
     }
 }
@@ -295,11 +298,16 @@ fn main() -> eframe::Result {
             // Control-channel and MCP calls run `cameo.backgroundPreview` on this session; the
             // model the panel installs is the one it must use. Loaded on first need, and the
             // panel's model state clears it again when a model appears or goes away.
-            session.set_segmenter_loader(deckcraft_engine::SegmenterLoader {
-                // `cameo.background.state` asks this from the control channel: a stat, no hash.
-                name: Box::new(deckcraft_matte_rten::RtenSegmenter::installed_name),
-                load: Box::new(|| deckcraft_matte_rten::RtenSegmenter::load_installed().map(|s| Box::new(s) as Box<dyn deckcraft_matte::Segmenter>)),
-            });
+            // `DECKCRAFT_NO_MATTE` keeps the service, and with it this loader, out of the session.
+            if std::env::var_os("DECKCRAFT_NO_MATTE").is_none() {
+                session.set_segmenter_loader(deckcraft_engine::SegmenterLoader {
+                    // `cameo.background.state` asks this from the control channel: a stat, no hash.
+                    name: Box::new(deckcraft_matte_rten::RtenSegmenter::installed_name),
+                    load: Box::new(|| {
+                        deckcraft_matte_rten::RtenSegmenter::load_installed().map(|s| Box::new(s) as Box<dyn deckcraft_matte::Segmenter>)
+                    }),
+                });
+            }
             let mut app = SlideApp::new(session, services(native_wayland));
             // Presenter View asks winit how many displays there are when a show starts.
             #[cfg(all(unix, not(target_os = "macos")))]

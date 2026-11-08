@@ -62,9 +62,15 @@ impl Service {
     pub fn refresh(&mut self) {
         let (root, state) = model::probe();
         self.root = root;
-        if self.download.is_none() {
-            self.state = state;
+        if self.download.is_some() {
+            return;
         }
+        // A download failure sentence stays until the user acts on it: a probe that finds no
+        // file must not replace it with "not installed". A model that appeared does win.
+        if matches!(self.state, ModelState::Failed { .. }) && !state.is_ready() {
+            return;
+        }
+        self.state = state;
     }
 
     fn ensure_worker(&mut self) -> Result<(), MatteError> {
@@ -123,6 +129,10 @@ impl MatteService for Service {
     fn state(&mut self) -> ModelState {
         self.poll_download();
         self.state.clone()
+    }
+
+    fn refresh(&mut self) {
+        Service::refresh(self);
     }
 
     fn install(&mut self, path: &str) -> Result<(), String> {
@@ -222,9 +232,15 @@ mod tests {
     #[test]
     fn install_is_refused_while_a_download_runs() {
         let mut s = Service::new(0);
-        s.download = Some(std::thread::spawn(|| std::thread::sleep(Duration::from_millis(50))));
+        // The thread stays alive until this test releases it, so a slow CI machine cannot
+        // finish the "download" before `install` looks.
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        s.download = Some(std::thread::spawn(move || {
+            let _ = rx.recv();
+        }));
         let e = s.install("picked-model.onnx").expect_err("download running");
         assert!(e.contains("download"), "{e}");
+        drop(tx);
         if let Some(h) = s.download.take() {
             let _ = h.join();
         }

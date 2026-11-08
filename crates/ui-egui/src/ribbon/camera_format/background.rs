@@ -17,6 +17,11 @@ use super::cameo_ids;
 
 pub(super) fn background_section(app: &mut SlideApp, ui: &mut Ui) {
     let current = current_mode(app);
+    // The panel is the only place the model directory can change under a running app (the user
+    // copies the file in): re-read it here, not per frame of the canvas.
+    if let Some(matte) = app.matte.as_mut() {
+        matte.refresh();
+    }
     let state = app.matte.as_mut().map(|m| m.state());
     let ready = state.as_ref().is_some_and(|s| s.is_ready());
     // The session loads the model by itself for `cameo.backgroundPreview` and
@@ -112,11 +117,9 @@ fn model_panel(app: &mut SlideApp, ui: &mut Ui, state: Option<ModelState>) {
                 ui.label(format!("Last matte {} ms; {} reused frames", timings.last_ms, timings.reused));
             }
         }
-        ModelState::Downloading { .. } => {
-            if let ModelState::Downloading { received, total } = &state {
-                let fraction = if *total == 0 { 0.0 } else { *received as f32 / *total as f32 };
-                ui.add(egui::ProgressBar::new(fraction.clamp(0.0, 1.0)).text(state.message()));
-            }
+        ModelState::Downloading { received, total } => {
+            let fraction = if *total == 0 { 0.0 } else { *received as f32 / *total as f32 };
+            ui.add(egui::ProgressBar::new(fraction.clamp(0.0, 1.0)).text(state.message()));
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
         }
         ModelState::Missing { root, url, bytes, sha256, license } => {

@@ -59,6 +59,10 @@ pub struct Timings {
 /// The host's camera-background service.
 pub trait MatteService: Send {
     fn state(&mut self) -> ModelState;
+    /// Re-read the model directory: a host calls this when the panel opens, so a model the user
+    /// copied in while the app ran is noticed. A no-op for a host with no model of its own, and
+    /// never while a download runs.
+    fn refresh(&mut self) {}
     /// Copy a file the user picked into the model directory and verify it. Never leaves a partial
     /// file behind.
     fn install(&mut self, path: &str) -> Result<(), String>;
