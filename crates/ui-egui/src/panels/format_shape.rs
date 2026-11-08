@@ -217,8 +217,9 @@ fn size_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape, x: dec
     ui.add_enabled_ui(single, |ui| {
         ui.horizontal(|ui| {
             ui.add_sized(vec2(90.0, 20.0), egui::Label::new(tl!("From")));
-            let combo =
-                craft_ui::ComboBox::from_id_salt("fmt-origin").selected_text(if center { "Center" } else { "Top Left Corner" }).show_ui(ui, |ui| {
+            let combo = craft_ui::ComboBox::from_id_salt("fmt-origin")
+                .selected_text(if center { tl!("Center") } else { tl!("Top Left Corner") })
+                .show_ui(ui, |ui| {
                     ui.selectable_value(&mut center, false, tl!("Top Left Corner"));
                     ui.selectable_value(&mut center, true, tl!("Center"));
                 });
