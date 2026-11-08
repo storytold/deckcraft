@@ -122,6 +122,31 @@ fn the_file_tab_opens_the_backstage_and_esc_or_back_returns() {
     assert_eq!(h.state().session.documents().len(), 1, "nothing was created or closed");
 }
 
+/// `?chrome=none` / `nofiletab` (#1897): the ribbon has no File tab, and Alt+F or `app.backstage`
+/// don't open Backstage either, so an embedding host never gets a save for a file it didn't send.
+/// `notitlebar` drops the title bar on its own.
+#[test]
+fn without_the_file_tab_nothing_opens_the_backstage() {
+    let mut app = new_app();
+    app.ui.hide_filetab = true;
+    let mut h = harness(app);
+    assert!(h.query_by_label("File").is_none(), "no File tab in the ribbon");
+    assert!(h.query_by_role_and_label(Role::Window, "Window title bar").is_some(), "the title bar stays unless asked");
+    h.key_press_modifiers(Modifiers::ALT, Key::F);
+    h.run_steps(3);
+    assert!(!h.state().backstage_open(), "Alt+F is ignored");
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    assert!(!h.state().backstage_open(), "the command is ignored too");
+    assert!(h.query_by_label("Blank Presentation").is_none());
+
+    let mut app = new_app();
+    app.ui.hide_titlebar = true;
+    let h = harness(app);
+    assert!(h.query_by_role_and_label(Role::Window, "Window title bar").is_none(), "notitlebar leaves the title bar out");
+    assert!(h.query_by_label("File").is_some(), "but keeps the File tab");
+}
+
 /// Alt+F opens it with the keyboard in the side menu; arrows walk it (pages show as they get the
 /// focus); Enter runs an action; Esc goes back.
 #[test]
