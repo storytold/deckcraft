@@ -51,6 +51,9 @@ impl eframe::App for App {
     }
     fn on_exit(&mut self) {
         save_prefs(&self.0);
+        // The window is closing for good: a ready update's helper starts now and installs it once
+        // the process has exited.
+        self.0.start_pending_update();
         // macOS (#279): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
         // AppKit's Touch Bar support observes that view (KVO), so in the next display cycle
