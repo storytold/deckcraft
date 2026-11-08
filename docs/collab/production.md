@@ -129,6 +129,7 @@ The first release deliberately normalises a small, idempotent command set:
 | Operation | Class | Notes |
 |---|---|---|
 | `shape.move`, `shape.setBounds` | command | absolute position and size |
+| `arrange.align`, `arrange.distribute` | command | final boxes for the whole selection in one `shape.setBoundsMany` operation: the client computes them from the engine's own plan, so no replica recomputes the slide edge or the gaps; one version and one undo step |
 | `text.set` | command | whole body or one table cell |
 | `text.insert`, `text.delete` | command | character offsets; the server rebases them against operations since the base, so two people typing in one paragraph keep both texts |
 | `shape.insert` | structural | preset, final geometry, optional text; ids are deterministic on every replica |
@@ -225,10 +226,10 @@ must be treated as a development instance.
 
 | Suite | What it covers |
 |---|---|
-| `cargo test -p deckcraft-collab` | 113 unit + 7 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, text, fill, outline, format, group fill, slide insert/delete, shape insert/delete with z-order and animations), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate slices, presence, snapshots, commit |
+| `cargo test -p deckcraft-collab` | 122 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format, group fill, slide insert/delete, shape insert/delete with z-order and animations), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate slices, presence, snapshots, commit |
 | `cargo test -p deckcraft-collab-server` | 10 unit + 6 real-socket + 4 commit tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert; the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode) |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue |
-| `cargo test -p deckcraft-engine` | 565: the collaboration queue, read-only gate, `shape.setField`/`shape.setFields`/`shape.restore` and `slide.restore` did not change single-user behaviour |
+| `cargo test -p deckcraft-engine` | 569 (1 ignored): the collaboration queue, read-only gate, `shape.setField`/`shape.setFields`/`shape.setBoundsMany`/`shape.restore` and `slide.restore` did not change single-user behaviour; `arrange.align`/`distribute` keep their numbers after the plan refactor |
 | `cargo clippy … --all-targets -- -D warnings`, `cargo fmt --check`, `cargo xtask layers` | clean |
 
 ## Known gaps before this is a finished product

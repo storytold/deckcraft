@@ -133,10 +133,13 @@ S→C {"type":"applied","opId":"<uuid>","version":42,
 | `format_set` | command | `format: <allowlisted FormatCmd>`, `args` только из собственного набора команды | `id/ids/index` в `args`, относительный toggle без `on`, таблица, фигура без текста |
 | `slide_duplicate` | structural | ничего; адрес — `target.slide` | слайд удалён → `stale` |
 | `shape_fields` | command | `items:[{shape, field: fill\|line\|text, value}]` | только undo/redo шага группы; иначе → `invalid`; > 4096 значений или > 192 KiB → `invalid` |
+| `shapes_set_bounds` | command | `items:[{shape, x, y, w, h}]` — итоговые боксы всей выборки (`arrange.align`/`arrange.distribute`); адрес — `target.shapes` | неизвестная или удалённая фигура, ключ дважды, нечисловое значение, > 4096 боксов → `invalid`/`stale`; заблокированная фигура не двигается |
 | `slide_restore` | structural | `index`, `slide` (модель JSON), `sections?: [[section, pos]]`, `shows?: [[show, pos]]` | только undo/redo шага слайда; id уже открыт или образ > 192 KiB → `invalid` |
 | `shape_restore` | structural | `items:[{shape, parent?, index, value: фигура как JSON, animations?}]` | только undo/redo шага фигуры; id уже открыт, родитель не группа, > 64 образов или > 192 KiB → `invalid` |
 
-`format_set` покрывает `format.bold/italic/underline/strikethrough/superscript/subscript/font/size/color/highlight/alignLeft/alignCenter/alignRight/justify/caps/spacing/clear`. Перечисление `FormatCmd` (а не строка) закрывает allowlist на уровне типа; `FormatCmd::accepts` не даёт положить в `args` чужой ключ. Множество фигур нормализуется в **N операций по одной фигуре** (решение по §13 п. 3): так undo остаётся объектным, а `applied` несёт понятный адрес; атомарность группы — отдельный merge-payload позже.
+`format_set` покрывает `format.bold/italic/underline/strikethrough/superscript/subscript/font/size/color/highlight/alignLeft/alignCenter/alignRight/justify/caps/spacing/clear`. Перечисление `FormatCmd` (а не строка) закрывает allowlist на уровне типа; `FormatCmd::accepts` не даёт положить в `args` чужой ключ. Множество фигур для `format.*` нормализуется в **N операций по одной фигуре** (решение по §13 п. 3): так undo остаётся объектным, а `applied` несёт понятный адрес.
+
+`arrange.align` и `arrange.distribute` — исключение из этого правила, потому что это одна пользовательская команда над несколькими объектами и её undo обязан отменять шаг целиком. Клиент считает итоговые боксы сам, через движковые `align_plan`/`distribute_plan` — ту же арифметику, что использует одиночная команда (край слайда, рамка выборки, равные промежутки), и отправляет **одну** `shapes_set_bounds`. Адаптер прогоняет движковую `shape.setBoundsMany`: она проверяет все id и дубликаты до первой записи, клампит значения и пишет геометрию в одном `edit`, поэтому вся выборка — один version и один шаг undo. Фигуры, чей бокс не меняется, в операцию не попадают; если не меняется ни одна, клиент не отправляет ничего.
 
 `shape.fill`, `shape.line` и `format_set` входят в per-user undo с точным образом значения (§6): undo/redo несут само значение модели в `shape_field`, а не повторяют пользовательскую команду, потому что `shape.fill`/`shape.line`/`format.*` выражают только часть модели (tile и scaled градиента, custom dash, форматирование ранов). `shape_field` — операция истории, а не пользовательская: адаптер принимает её только как undo/redo и только с тем значением, которое записал последний шаг актора.
 
@@ -329,6 +332,12 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
   значения валидируются и десериализуются до первой записи, поэтому сбой
   одного участника отказывает всей операции, а не оставляет половину группы
   перекрашенной. Неизменившиеся звенья в шаг не попадают.
+- **Шаг выравнивания/распределения.** `arrange.align`/`arrange.distribute` двигают всю
+  выборку одной командой, поэтому шаг хранит образ `xfrm` **на каждую сдвинутую фигуру** и
+  восстанавливается **одной** операцией `shapes_set_bounds` → движковая
+  `shape.setBoundsMany` (значения и адреса проверяются до первой записи). `same_state`
+  сравнивает бокс каждого участника: если кто-то передвинул или изменил одного из них после
+  шага, undo отказывает `undo-conflict` и не перезаписывает чужую правку.
 - **Структурный шаг слайда.** `slide.delete` (а также undo `slide.new` и
   `slide.duplicate`) хранит полный образ слайда: модель в JSON, позицию и
   членство в секциях и custom show. Undo `slide.delete` — structural-операция
@@ -559,8 +568,10 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
    (для undo fill/line шага группы merge-payload уже есть, §6).
 4. **Undo структурных операций:** в v1 отменяются Merge-операции одного
    объекта (`shape.move`, `shape.setBounds`, текст, `shape.fill`, `shape.line`,
-   `format.*`), fill/outline шага **группы** (образ на каждого участника, один
-   `shape_fields`, §6), слайдовые structural-шаги (`slide.delete`, `slide.new`,
+   `format.*`), шаг `arrange.align`/`arrange.distribute` (образ `xfrm` на
+   каждую сдвинутую фигуру, одна `shapes_set_bounds`, §6), fill/outline шага
+   **группы** (образ на каждого участника, один `shape_fields`, §6),
+   слайдовые structural-шаги (`slide.delete`, `slide.new`,
    `slide.duplicate` — полный образ слайда, `slide_restore`/`slide_delete`) и
    шаги **фигур**: `shape.insert`, `insert.picture`/`insert.video`/`insert.audio`
    и `edit.delete` (полный образ фигуры с z-order и анимациями,
