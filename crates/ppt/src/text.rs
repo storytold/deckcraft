@@ -373,7 +373,8 @@ pub fn read_block<'a>(records: impl Iterator<Item = Rec<'a>>) -> Option<TextBloc
         return None;
     }
     if let Some(st) = style {
-        read_style_runs(&st, b.chars.len() as u32 + 1, &mut b);
+        // Text past u32::MAX characters can't be addressed by the runs; saturate rather than wrap.
+        read_style_runs(&st, u32::try_from(b.chars.len()).unwrap_or(u32::MAX).saturating_add(1), &mut b);
     }
     Some(b)
 }

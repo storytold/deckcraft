@@ -199,7 +199,9 @@ impl<'a> CompoundFile<'a> {
                 return Err(invalid("mini sector chain loops"));
             }
             let at = (s as usize).checked_mul(MINI_SECTOR_SIZE).ok_or_else(|| invalid("mini sector overflow"))?;
-            let b = self.mini_stream.get(at..at + MINI_SECTOR_SIZE).ok_or_else(|| invalid("mini sector outside the mini stream"))?;
+            // Checked: on a 32-bit target a sector number near 0x03FF_FFFF puts `at` at the top of usize.
+            let end = at.checked_add(MINI_SECTOR_SIZE).ok_or_else(|| invalid("mini sector overflow"))?;
+            let b = self.mini_stream.get(at..end).ok_or_else(|| invalid("mini sector outside the mini stream"))?;
             out.extend_from_slice(b);
             s = *self.minifat.get(s as usize).ok_or_else(|| invalid("mini sector has no mini FAT entry"))?;
         }
