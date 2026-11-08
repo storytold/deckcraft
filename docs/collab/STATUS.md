@@ -179,8 +179,8 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 
 ## Next session: start here
 
-1. Run the verification table above; if the tree is clean, continue on `collab/pr9` (or branch
-   `collab/pr10` from it).
+1. Run the verification table above; if the tree is clean, continue on `collab/pr10` (or branch
+   `collab/pr11` from it).
 2. Extend the media channel to video/audio (allowlist, limits, adapter commands) and add the TLS
    HTTP client for `wss://` links; test a large picture and a picture inserted twice.
 3. Extend the command set in vertical slices with the same pattern: payload → normalize →
