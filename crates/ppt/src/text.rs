@@ -208,6 +208,20 @@ pub fn read_cf(c: &mut Cursor) -> Option<Cf> {
     if bit(m, 19) {
         cf.position = Some(c.i16()?);
     }
+    // The fields PowerPoint 2002 and later add are not used, but they must be read past: the next
+    // run's count and mask follow them, so stopping short garbles every later run's formatting.
+    if bit(m, 20) {
+        c.u32()?; // pp10runid (4 bits) and unused (28 bits)
+    }
+    if bit(m, 24) {
+        c.u16()?; // newEAFontRef
+    }
+    if bit(m, 25) {
+        c.u16()?; // csFontRef
+    }
+    if bit(m, 26) {
+        c.u32()?; // pp11ext
+    }
     Some(cf)
 }
 
@@ -474,6 +488,41 @@ pub(crate) mod tests {
         assert_eq!(b.para_runs[1].1, 1);
         assert_eq!(b.char_runs.len(), 2);
         assert_eq!(b.char_runs[0].1.bold, Some(true));
+    }
+
+    /// A CF exception with only the fields PowerPoint 2002 and later add after `position`:
+    /// pp10runid (bit 20), newEAFontRef (bit 24), csFontRef (bit 25) and pp11ext (bit 26).
+    fn cf_later_fields() -> Vec<u8> {
+        let mut v = (1u32 << 20 | 1 << 24 | 1 << 25 | 1 << 26).to_le_bytes().to_vec();
+        v.extend_from_slice(&0x0000_0003u32.to_le_bytes()); // pp10runid + unused
+        v.extend_from_slice(&7u16.to_le_bytes()); // newEAFontRef
+        v.extend_from_slice(&8u16.to_le_bytes()); // csFontRef
+        v.extend_from_slice(&0u32.to_le_bytes()); // pp11ext
+        v
+    }
+
+    #[test]
+    fn later_character_fields_are_read_past() {
+        let bytes = cf_later_fields();
+        let mut c = Cursor::new(&bytes);
+        assert!(read_cf(&mut c).is_some());
+        assert!(c.u8().is_none(), "the cursor stopped inside the exception");
+
+        // A run carrying those fields, then a bold 18 pt run: the second must read as written.
+        let chars: Vec<u8> = "abcd".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let mut style = vec![];
+        style.extend_from_slice(&5u32.to_le_bytes());
+        style.extend_from_slice(&0u16.to_le_bytes());
+        style.extend_from_slice(&pf_bytes(0, false));
+        style.extend_from_slice(&2u32.to_le_bytes());
+        style.extend_from_slice(&cf_later_fields());
+        style.extend_from_slice(&3u32.to_le_bytes());
+        style.extend_from_slice(&cf_bytes(true, 1, 18, [0, 0, 0]));
+        let recs = [atom(rt::TEXT_HEADER, 0, &1u32.to_le_bytes()), atom(rt::TEXT_CHARS, 0, &chars), atom(rt::STYLE_TEXT_PROP, 0, &style)].concat();
+        let b = read_block(crate::record::Records::new(&recs)).unwrap();
+        assert_eq!(b.char_runs.len(), 2, "{:?}", b.char_runs);
+        let (n, cf) = &b.char_runs[1];
+        assert_eq!((*n, cf.bold, cf.font, cf.size), (3, Some(true), Some(1), Some(18)));
     }
 
     #[test]
