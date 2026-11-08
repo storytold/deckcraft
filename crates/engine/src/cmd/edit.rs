@@ -120,6 +120,12 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
             })
         })
         .collect();
+    // A shape in a group is copied with the box it is drawn in, so it pastes where it was seen.
+    for sh in &mut shapes {
+        if let Some(x) = sh.xfrm.and_then(|x| box_on_slide(&st.doc, &st.selection, st.shapes(), sh.id, &x)) {
+            sh.xfrm = Some(x);
+        }
+    }
     // Copying is the last chance to read what a placeholder inherits: a cut removes it, and the
     // paste can be in another deck. Slide Master view pastes the originals instead.
     let placeholders: Vec<Shape> = shapes.iter().filter(|x| x.ph.is_some()).cloned().collect();
@@ -145,6 +151,39 @@ pub(crate) fn detach_on_slide(doc: &deckcraft_model::Presentation, sel: &crate::
     {
         shapes.iter_mut().for_each(|sh| deckcraft_model::resolve::detach_placeholder(&ctx, sh));
     }
+}
+
+/// Where shape `id` is drawn on the slide when it is inside a group: `x`, its box in its group's
+/// space, mapped out through each group around it, as Ungroup places a freed shape. `None` for a
+/// shape on the top level or not found. A turned shape in a group stretched more one way than the
+/// other is drawn skewed, which a box cannot hold, so it gets the unskewed box Ungroup gives it.
+fn box_on_slide(
+    doc: &deckcraft_model::Presentation,
+    sel: &crate::Selection,
+    shapes: &[Shape],
+    id: ShapeId,
+    x: &deckcraft_geom::Xfrm,
+) -> Option<deckcraft_geom::Xfrm> {
+    fn rec(
+        doc: &deckcraft_model::Presentation,
+        sel: &crate::Selection,
+        shapes: &[Shape],
+        id: ShapeId,
+        x: &deckcraft_geom::Xfrm,
+        depth: usize,
+    ) -> Option<deckcraft_geom::Xfrm> {
+        if depth > 64 {
+            return None;
+        }
+        shapes.iter().find_map(|sh| {
+            let deckcraft_model::ShapeKind::Group { children, child } = &sh.kind else {
+                return None;
+            };
+            let inner = if children.iter().any(|c| c.id == id) { *x } else { rec(doc, sel, children, id, x, depth + 1)? };
+            Some(super::arrange::child_to_parent(&xfrm_of(doc, sel, sh), child, &inner))
+        })
+    }
+    rec(doc, sel, shapes, id, x, 0)
 }
 
 fn copying_caret(s: &Session) -> bool {
