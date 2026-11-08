@@ -219,6 +219,13 @@ impl Subtitles {
         self.provider.is_some()
     }
 
+    /// The status as it stands without taking a finished background check, so a test can see the
+    /// presence-only state before the worker reports.
+    #[cfg(test)]
+    pub(crate) fn presence_state(&self) -> ModelState {
+        self.model.state
+    }
+
     fn poll_download(&mut self) {
         let mut finished: Option<Result<(), String>> = None;
         if let Some(job) = &mut self.download {

@@ -128,7 +128,9 @@ fn adopting_a_folder_verifies_it_off_the_ui_thread() {
     let settings = SubtitleSettings::default();
     let mut subs = Subtitles::default();
     subs.adopt_dir(dir.clone());
-    assert_eq!(subs.model().state, ModelState::Ready, "the presence check reports without waiting for the hash");
+    // Read without polling: the worker may finish at any moment, and this asserts what `adopt_dir`
+    // reports before it does.
+    assert_eq!(subs.presence_state(), ModelState::Ready, "the presence check reports without waiting for the hash");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while std::time::Instant::now() < deadline {
         subs.sync(&settings, false);

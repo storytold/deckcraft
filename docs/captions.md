@@ -144,9 +144,11 @@ library, so a machine with OpenVINO installed but no backend behaves exactly lik
   end with the show. Ending the show, turning subtitles off, or losing the microphone stops the
   provider, joins its thread and releases the model and the device.
 - A provider that fails after starting (the microphone is unplugged, the model file is damaged)
-  reports once in the status bar and is not restarted until the settings change or the next show
-  starts. The same holds for a start that fails: it is reported once per show, not once per frame.
-  The show keeps running.
+  reports once in the status bar and is not restarted by itself. To retry, turn subtitles off and
+  on again, change the microphone or the spoken language, or start another show; the caption's
+  position, text size, line count and subtitle language do not restart the stream. A start that
+  fails behaves the same way: it is reported once per show, not once per frame. The show keeps
+  running.
 - The browser build has no provider (no microphone capture, no 153 MB model): the settings and the
   caption overlay compile, and the ribbon entry is disabled with an explanation.
 
