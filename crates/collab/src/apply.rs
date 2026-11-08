@@ -24,7 +24,7 @@ use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, SlideId, find_sha
 use serde_json::{Value, json};
 
 use crate::delta::delta;
-use crate::history::{Change, Histories, Image, Restore, ShapeImage, SlideImage, Snapshot, Step};
+use crate::history::{Change, GroupImage, Histories, Image, Restore, ShapeImage, SlideImage, Snapshot, Step};
 use crate::keys::{KeyIssuer, KeyMap};
 use crate::media::MediaCache;
 
@@ -309,6 +309,8 @@ impl Adapter {
                 return self.capture_shape_insert(before, after, op);
             }
             Payload::ShapeDelete {} => return self.capture_shape_delete(before, after, op),
+            Payload::Group {} => return self.capture_group(before, after, op),
+            Payload::Ungroup {} => return self.capture_ungroup(before, after, op),
             Payload::SlideDelete {} => return self.capture_slide_delete(before, after, op),
             Payload::SlideInsert { .. } | Payload::SlideDuplicate {} => return self.capture_slide_insert(before, after),
             _ => return None,
@@ -350,6 +352,75 @@ impl Adapter {
             now.push(Change::ShapeBody(absent_shape(slide_key.clone(), key)));
         }
         Some((was, now))
+    }
+
+    /// Undo of `arrange.group`: the new group on one side and the former members on the other.
+    /// Both sides are whole-subtree images, so one atomic `shape.restore` moves between them
+    /// (`remove` takes the other side's shapes out before the images go in).
+    fn capture_group(&self, before: &Presentation, after: &Presentation, op: &OpEnvelope) -> Option<(Vec<Change>, Vec<Change>)> {
+        let slide_key = op.target.slide.clone()?;
+        let slide_id = self.keys.slide_id(&slide_key)?;
+        let old = before.slide(slide_id)?;
+        let new = after.slide(slide_id)?;
+        let group_id = top_most_added(&old.shapes, &new.shapes)?;
+        let group_key = self.keys.shape_key(slide_id, group_id)?.clone();
+        let image = self.shape_image(after, &slide_key, slide_id, group_id)?;
+        let child_ids: Vec<ShapeId> = find_shape(&new.shapes, group_id)?.children().iter().map(|child| child.id).collect();
+        if child_ids.len() < 2 {
+            return None;
+        }
+        let children = child_ids.iter().map(|id| self.keys.shape_key(slide_id, *id).cloned()).collect::<Option<Vec<_>>>()?;
+        let members = child_ids.iter().map(|id| self.shape_image(before, &slide_key, slide_id, *id)).collect::<Option<Vec<_>>>()?;
+        let was = GroupImage {
+            slide: slide_key.clone(),
+            key: group_key.clone(),
+            index: 0,
+            group: None,
+            children: Vec::new(),
+            members,
+            animations: Vec::new(),
+        };
+        let now = GroupImage {
+            slide: slide_key,
+            key: group_key,
+            index: image.index,
+            group: image.shape,
+            children,
+            members: Vec::new(),
+            animations: image.animations,
+        };
+        Some((vec![Change::GroupSubtree(was)], vec![Change::GroupSubtree(now)]))
+    }
+
+    /// Undo of `arrange.ungroup`: the group on one side and its members after ungrouping on the
+    /// other. The members carry the geometry `arrange.ungroup` gave them, so a redo puts the same
+    /// values back instead of recomputing them.
+    fn capture_ungroup(&self, before: &Presentation, after: &Presentation, op: &OpEnvelope) -> Option<(Vec<Change>, Vec<Change>)> {
+        let slide_key = op.target.slide.clone()?;
+        let slide_id = self.keys.slide_id(&slide_key)?;
+        let old = before.slide(slide_id)?;
+        let new = after.slide(slide_id)?;
+        let gone = top_most_gone(&old.shapes, &new.shapes);
+        let [group_id] = gone.as_slice() else { return None };
+        let group_key = self.keys.shape_key(slide_id, *group_id)?.clone();
+        let child_ids: Vec<ShapeId> = find_shape(&old.shapes, *group_id)?.children().iter().map(|child| child.id).collect();
+        if child_ids.len() < 2 {
+            return None;
+        }
+        let children = child_ids.iter().map(|id| self.keys.shape_key(slide_id, *id).cloned()).collect::<Option<Vec<_>>>()?;
+        let image = self.shape_image(before, &slide_key, slide_id, *group_id)?;
+        let members = child_ids.iter().map(|id| self.shape_image(after, &slide_key, slide_id, *id)).collect::<Option<Vec<_>>>()?;
+        let was = GroupImage {
+            slide: slide_key.clone(),
+            key: group_key.clone(),
+            index: image.index,
+            group: image.shape,
+            children,
+            members: Vec::new(),
+            animations: image.animations,
+        };
+        let now = GroupImage { slide: slide_key, key: group_key, index: 0, group: None, children: Vec::new(), members, animations: Vec::new() };
+        Some((vec![Change::GroupSubtree(was)], vec![Change::GroupSubtree(now)]))
     }
 
     /// The whole image of one present shape: its model value, the group that holds it, its place
@@ -452,12 +523,58 @@ impl Adapter {
         match at {
             Change::Shape(snapshot) => self.capture_snapshot(doc, snapshot).map(Change::Shape),
             Change::ShapeBody(snapshot) => self.capture_shape_body(doc, snapshot).map(Change::ShapeBody),
+            Change::GroupSubtree(snapshot) => self.capture_group_image(doc, snapshot).map(Change::GroupSubtree),
             Change::Slide(snapshot) => {
                 let id = self.keys.slide_id(&snapshot.key)?;
                 match doc.slide(id) {
                     Some(_) => Some(Change::Slide(self.slide_image(doc, &snapshot.key, id)?)),
                     None => Some(Change::Slide(absent_slide(snapshot.key.clone()))),
                 }
+            }
+        }
+    }
+
+    /// The current state of a recorded group image: the group present with its children, or the
+    /// group absent and its former members wherever they are now.
+    fn capture_group_image(&self, doc: &Presentation, at: &GroupImage) -> Option<GroupImage> {
+        let slide_id = self.keys.slide_id(&at.slide)?;
+        let group_id = self.keys.shape_id(slide_id, &at.key)?;
+        let slide = doc.slide(slide_id)?;
+        match find_shape(&slide.shapes, group_id) {
+            Some(shape) if shape.is_group() => {
+                let image = self.shape_image(doc, &at.slide, slide_id, group_id)?;
+                let children = shape.children().iter().map(|child| self.keys.shape_key(slide_id, child.id).cloned()).collect::<Option<Vec<_>>>()?;
+                Some(GroupImage {
+                    slide: at.slide.clone(),
+                    key: at.key.clone(),
+                    index: image.index,
+                    group: image.shape,
+                    children,
+                    members: Vec::new(),
+                    animations: image.animations,
+                })
+            }
+            _ => {
+                let mut members = Vec::with_capacity(at.members.len());
+                for member in &at.members {
+                    let current = match self.keys.shape_id(slide_id, &member.key) {
+                        Some(id) => match find_shape(&slide.shapes, id) {
+                            Some(_) => self.shape_image(doc, &at.slide, slide_id, id)?,
+                            None => absent_shape(at.slide.clone(), member.key.clone()),
+                        },
+                        None => absent_shape(at.slide.clone(), member.key.clone()),
+                    };
+                    members.push(current);
+                }
+                Some(GroupImage {
+                    slide: at.slide.clone(),
+                    key: at.key.clone(),
+                    index: 0,
+                    group: None,
+                    children: Vec::new(),
+                    members,
+                    animations: Vec::new(),
+                })
             }
         }
     }
@@ -680,13 +797,14 @@ impl Adapter {
                     .collect();
                 self.call(session, "shape.setFields", json!({"items": values}), head)
             }
-            Payload::ShapeRestore { items } => {
+            Payload::ShapeRestore { items, remove } => {
                 let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
-                if items.is_empty() || items.len() > 64 {
-                    return Err(Rejection::invalid("a shape restore carries 1–64 shapes", Some(head)));
+                if items.is_empty() || items.len() > 64 || remove.len() > 64 {
+                    return Err(Rejection::invalid("a shape restore carries 1–64 shapes and up to 64 removals", Some(head)));
                 }
-                // Resolve every parent before the first write: the operation is one atomic step,
-                // so a missing group must refuse it instead of putting half a subtree back.
+                // Resolve every parent and every removed shape before the first write: the
+                // operation is one atomic step, so a missing group must refuse it instead of
+                // putting half a subtree back.
                 let mut parents = Vec::with_capacity(items.len());
                 for item in items {
                     let parent = match &item.parent {
@@ -695,13 +813,17 @@ impl Adapter {
                     };
                     parents.push(parent);
                 }
+                let mut removed = Vec::with_capacity(remove.len());
+                for key in remove {
+                    removed.push(self.resolve_shape(before, slide, key, head)?.0);
+                }
                 self.select_slide(session, before, slide, head)?;
                 let values: Vec<Value> = items
                     .iter()
                     .zip(parents)
                     .map(|(item, parent)| json!({"value": item.value, "parent": parent, "index": item.index, "animations": item.animations}))
                     .collect();
-                self.call(session, "shape.restore", json!({"items": values}), head)
+                self.call(session, "shape.restore", json!({"items": values, "remove": removed}), head)
             }
             Payload::SlideRestore { index, slide: image, sections, shows } => {
                 self.call(session, "slide.restore", json!({"index": index, "slide": image, "sections": sections, "shows": shows}), head)
@@ -1751,7 +1873,7 @@ mod tests {
         aa.apply(&mut a, 1, "a", &fill).expect("fill the group");
         bb.apply_confirmed(&mut b, 1, "a", &fill).expect("b fills the group");
         assert_eq!(doc_of(&a), doc_of(&b));
-        assert_eq!(aa.history().get("a").map(|h| h.undo_len()), Some(1), "the group's appearance step is now recorded");
+        assert_eq!(aa.history().get("a").map(|h| h.undo_len()), Some(2), "the group step and its appearance step are recorded");
 
         let undo = aa.undo(&a, 2, "a", "undo-1").expect("undo the group fill");
         let Payload::ShapeFields { items } = &undo.payload else { panic!("a group restore is one merge payload: {:?}", undo.payload) };
@@ -1804,7 +1926,7 @@ mod tests {
         let err = ad.undo(&s, 3, "a", "undo-1").expect_err("a member no longer holds the step's value");
         assert_eq!(err.code, RejectCode::UndoConflict);
         assert!(!err.retryable);
-        assert_eq!(ad.history().get("a").map(|h| h.undo_len()), Some(1), "the refused undo moves nothing");
+        assert_eq!(ad.history().get("a").map(|h| h.undo_len()), Some(2), "the refused undo moves nothing");
     }
 
     #[test]
@@ -2070,7 +2192,7 @@ mod tests {
         assert!(doc_of(&a).slides[0].shapes.is_empty());
 
         let undo = aa.undo(&a, 2, "a", "undo-1").expect("undo the delete");
-        let Payload::ShapeRestore { items } = &undo.payload else { panic!("a group restore: {:?}", undo.payload) };
+        let Payload::ShapeRestore { items, .. } = &undo.payload else { panic!("a group restore: {:?}", undo.payload) };
         assert_eq!(items.len(), 1, "one image carries the whole group");
         assert_eq!(items[0].value.get("id").and_then(Value::as_u64), Some(group_id.0 as u64));
         assert_eq!(
@@ -2087,6 +2209,125 @@ mod tests {
     }
 
     #[test]
+    fn undo_of_group_restores_members_and_redo_groups_them_on_two_replicas() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let before = doc_of(&a);
+        let (slide, first) = key_of(&aa, &before, 0);
+        let (_, second) = key_of(&aa, &before, 1);
+        let group = op(
+            OpKind::Structural,
+            0,
+            Target { slide: Some(slide), shapes: vec![first.clone(), second.clone()], ..Target::default() },
+            Payload::Group {},
+        );
+        aa.apply(&mut a, 0, "a", &group).expect("a groups");
+        bb.apply_confirmed(&mut b, 0, "a", &group).expect("b groups");
+        let grouped = doc_of(&a);
+        assert_eq!(grouped.slides[0].shapes.len(), 1, "one group holds both shapes");
+        let (_, group_key) = key_of(&aa, &grouped, 0);
+        assert_eq!(aa.history().get("a").map(|h| h.undo_len()), Some(1), "grouping is one step");
+
+        let undo = aa.undo(&a, 1, "a", "undo-1").expect("undo the group");
+        let Payload::ShapeRestore { items, remove } = &undo.payload else { panic!("a group restore: {:?}", undo.payload) };
+        assert_eq!(remove, &vec![group_key.clone()], "the group is taken out");
+        assert_eq!(items.len(), 2, "both members come back at the top level");
+        assert!(items.iter().all(|item| item.parent.is_none()));
+        aa.apply(&mut a, 1, "a", &undo).expect("undo on a");
+        bb.apply_confirmed(&mut b, 1, "a", &undo).expect("b applies the undo");
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas converge on the undo");
+        assert_eq!(doc_of(&a).slides[0].shapes, before.slides[0].shapes, "the members are back exactly where they were");
+        assert_eq!(doc_of(&a).slides[0].shapes.len(), 2);
+
+        let redo = aa.redo(&a, 2, "a", "redo-1").expect("redo the group");
+        let Payload::ShapeRestore { items, remove } = &redo.payload else { panic!("a group restore: {:?}", redo.payload) };
+        assert_eq!(items.len(), 1, "one image carries the whole group");
+        assert_eq!(remove.len(), 2, "its members are taken out first");
+        aa.apply(&mut a, 2, "a", &redo).expect("redo on a");
+        bb.apply_confirmed(&mut b, 2, "a", &redo).expect("b applies the redo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides[0].shapes, grouped.slides[0].shapes, "the group came back with its id and children");
+    }
+
+    #[test]
+    fn undo_of_ungroup_restores_the_group_on_two_replicas() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let doc = doc_of(&a);
+        let (slide, first) = key_of(&aa, &doc, 0);
+        let (_, second) = key_of(&aa, &doc, 1);
+        let group = op(
+            OpKind::Structural,
+            0,
+            Target { slide: Some(slide.clone()), shapes: vec![first.clone(), second.clone()], ..Target::default() },
+            Payload::Group {},
+        );
+        aa.apply(&mut a, 0, "a", &group).expect("a groups");
+        bb.apply_confirmed(&mut b, 0, "a", &group).expect("b groups");
+        let grouped = doc_of(&a);
+        let (_, group_key) = key_of(&aa, &grouped, 0);
+
+        let ungroup =
+            op(OpKind::Structural, 1, Target { slide: Some(slide), shape: Some(group_key.clone()), ..Target::default() }, Payload::Ungroup {});
+        aa.apply(&mut a, 1, "a", &ungroup).expect("a ungroups");
+        bb.apply_confirmed(&mut b, 1, "a", &ungroup).expect("b ungroups");
+        let ungrouped = doc_of(&a);
+        assert_eq!(ungrouped.slides[0].shapes.len(), 2, "the members are at the top level again");
+
+        let undo = aa.undo(&a, 2, "a", "undo-1").expect("undo the ungroup");
+        let Payload::ShapeRestore { items, remove } = &undo.payload else { panic!("a group restore: {:?}", undo.payload) };
+        assert_eq!(items.len(), 1, "the whole group image goes back");
+        assert_eq!(remove.len(), 2, "its members are taken out first");
+        aa.apply(&mut a, 2, "a", &undo).expect("undo on a");
+        bb.apply_confirmed(&mut b, 2, "a", &undo).expect("b applies the undo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a), grouped, "the group and its child values are back");
+
+        let redo = aa.redo(&a, 3, "a", "redo-1").expect("redo the ungroup");
+        let Payload::ShapeRestore { items, remove } = &redo.payload else { panic!("a group restore: {:?}", redo.payload) };
+        assert_eq!(items.len(), 2, "the members with their ungrouped geometry");
+        assert_eq!(remove, &vec![group_key], "the group is taken out");
+        aa.apply(&mut a, 3, "a", &redo).expect("redo on a");
+        bb.apply_confirmed(&mut b, 3, "a", &redo).expect("b applies the redo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a), ungrouped);
+    }
+
+    #[test]
+    fn undo_of_a_group_is_refused_after_someone_moved_a_member() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let doc = doc_of(&a);
+        let (slide, first) = key_of(&aa, &doc, 0);
+        let (_, second) = key_of(&aa, &doc, 1);
+        let group = op(
+            OpKind::Structural,
+            0,
+            Target { slide: Some(slide.clone()), shapes: vec![first.clone(), second], ..Target::default() },
+            Payload::Group {},
+        );
+        aa.apply(&mut a, 0, "a", &group).expect("group");
+        bb.apply_confirmed(&mut b, 0, "a", &group).expect("b groups");
+
+        // b moves a member inside the group: the recorded group image no longer holds.
+        let moved = command("op-b", 1, &slide, &first, Payload::ShapeMove { x: 520.0, y: 100.0 });
+        aa.apply_confirmed(&mut a, 1, "b", &moved).expect("a sees b's move");
+        bb.apply(&mut b, 1, "b", &moved).expect("b moves");
+        let err = aa.undo(&a, 2, "a", "undo-1").expect_err("undo would drop b's move");
+        assert_eq!(err.code, RejectCode::UndoConflict);
+        assert_eq!(doc_of(&a).slides[0].shapes.len(), 1, "nothing was ungrouped");
+    }
+
+    #[test]
     fn a_shape_restore_is_refused_without_a_history_step() {
         let mut s = deck();
         let mut ad = Adapter::new("k");
@@ -2098,6 +2339,7 @@ mod tests {
             Target { slide: Some(slide), ..Target::default() },
             Payload::ShapeRestore {
                 items: vec![ShapeRestoreItem { shape: first, parent: None, index: 0, value: json!({"id": 999}), animations: Vec::new() }],
+                remove: Vec::new(),
             },
         );
         let err = ad.apply(&mut s, 0, "a", &forged).expect_err("a restore is not a user edit");

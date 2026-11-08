@@ -88,11 +88,36 @@ pub struct ShapeImage {
     pub animations: Vec<serde_json::Value>,
 }
 
-/// One object a step touched: a shape value, a whole shape or a whole slide.
+/// A whole group, present or absent, for `arrange.group` and `arrange.ungroup` (RFC §6).
+///
+/// While the group is present its model value carries the children, so one image puts the whole
+/// subtree back; `children` keeps the keys needed to take the group's members out again before
+/// that image is inserted, and `index` is the group's place at the top level. While the group is
+/// absent, `members` holds the whole image of every former member at the top level, with the
+/// value it had before grouping (undo) or after ungrouping (redo).
+#[derive(Clone, Debug, PartialEq)]
+pub struct GroupImage {
+    pub slide: SlideKey,
+    /// The group's key, stable for the session.
+    pub key: ShapeKey,
+    /// Position among the top-level shapes while the group was present.
+    pub index: u32,
+    /// `None` = the group was absent.
+    pub group: Option<serde_json::Value>,
+    /// The group's direct children while it was present (used to remove them before a restore).
+    pub children: Vec<ShapeKey>,
+    /// Whole images of the former members while the group was absent.
+    pub members: Vec<ShapeImage>,
+    /// Animations that named the group or a descendant while it was present.
+    pub animations: Vec<serde_json::Value>,
+}
+
+/// One object a step touched: a shape value, a whole shape, a whole group or a whole slide.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Change {
     Shape(Snapshot),
     ShapeBody(ShapeImage),
+    GroupSubtree(GroupImage),
     Slide(SlideImage),
 }
 
@@ -107,6 +132,15 @@ impl Change {
             (Change::ShapeBody(a), Change::ShapeBody(b)) => match (&a.shape, &b.shape) {
                 (None, None) => a.key == b.key,
                 (Some(x), Some(y)) => a.key == b.key && a.parent == b.parent && x == y && a.animations == b.animations,
+                _ => false,
+            },
+            (Change::GroupSubtree(a), Change::GroupSubtree(b)) => match (&a.group, &b.group) {
+                (None, None) => {
+                    a.key == b.key
+                        && a.members.len() == b.members.len()
+                        && a.members.iter().zip(&b.members).all(|(x, y)| Change::ShapeBody(x.clone()).same_state(&Change::ShapeBody(y.clone())))
+                }
+                (Some(x), Some(y)) => a.key == b.key && x == y && a.animations == b.animations,
                 _ => false,
             },
             (Change::Slide(a), Change::Slide(b)) => match (&a.slide, &b.slide) {
@@ -156,6 +190,7 @@ pub fn restores(changes: &[Change]) -> Option<Restore> {
             Some(Restore { slide: at.slide.clone(), shape: Some(at.shape.clone()), shapes: Vec::new(), payload: at.image.payload(at.cell)? })
         }
         [Change::ShapeBody(at)] => body_restore(&[at]),
+        [Change::GroupSubtree(at)] => Some(group_restore(at)),
         [Change::Slide(at)] => {
             let payload = match &at.slide {
                 Some(slide) => {
@@ -221,7 +256,45 @@ fn body_restore(bodies: &[&ShapeImage]) -> Option<Restore> {
             animations: b.animations.clone(),
         });
     }
-    Some(Restore { slide, shape: None, shapes: Vec::new(), payload: Payload::ShapeRestore { items } })
+    Some(Restore { slide, shape: None, shapes: Vec::new(), payload: Payload::ShapeRestore { items, remove: Vec::new() } })
+}
+
+/// One operation that moves between a group and its members. The payload removes the shapes of
+/// the *other* side and restores the images of this one in the same atomic step: undoing a group
+/// removes the group and puts its members back at the top level; redoing it removes the members
+/// and puts the whole group image back.
+fn group_restore(at: &GroupImage) -> Restore {
+    match &at.group {
+        Some(value) => {
+            let item =
+                ShapeRestoreItem { shape: at.key.clone(), parent: None, index: at.index, value: value.clone(), animations: at.animations.clone() };
+            Restore {
+                slide: at.slide.clone(),
+                shape: None,
+                shapes: Vec::new(),
+                payload: Payload::ShapeRestore { items: vec![item], remove: at.children.clone() },
+            }
+        }
+        None => {
+            let items = at
+                .members
+                .iter()
+                .map(|member| ShapeRestoreItem {
+                    shape: member.key.clone(),
+                    parent: None,
+                    index: member.index,
+                    value: member.shape.clone().unwrap_or(serde_json::Value::Null),
+                    animations: member.animations.clone(),
+                })
+                .collect();
+            Restore {
+                slide: at.slide.clone(),
+                shape: None,
+                shapes: Vec::new(),
+                payload: Payload::ShapeRestore { items, remove: vec![at.key.clone()] },
+            }
+        }
+    }
 }
 
 /// One undoable step of one actor. A step may touch several objects (a group's members) or one
@@ -411,6 +484,109 @@ mod tests {
     }
 
     #[test]
+    fn a_group_step_moves_between_the_group_and_its_members() {
+        let member = |key: &str, id: u64, index: u32| ShapeImage {
+            slide: "s1".into(),
+            key: key.into(),
+            parent: None,
+            index,
+            shape: Some(serde_json::json!({"id": id})),
+            animations: Vec::new(),
+        };
+        let step = Step {
+            op_id: "op".into(),
+            version: 1,
+            before: vec![Change::GroupSubtree(GroupImage {
+                slide: "s1".into(),
+                key: "g".into(),
+                index: 0,
+                group: None,
+                children: Vec::new(),
+                members: vec![member("h1", 1, 0), member("h2", 2, 1)],
+                animations: Vec::new(),
+            })],
+            after: vec![Change::GroupSubtree(GroupImage {
+                slide: "s1".into(),
+                key: "g".into(),
+                index: 1,
+                group: Some(serde_json::json!({"id": 9, "kind": {"kind": "group", "children": [{"id": 1}, {"id": 2}]}})),
+                children: vec!["h1".into(), "h2".into()],
+                members: Vec::new(),
+                animations: vec![serde_json::json!({"shape": 1})],
+            })],
+        };
+        let undo = step.restoring_payload().expect("undo of a group");
+        assert_eq!(undo.slide.0, "s1");
+        let Payload::ShapeRestore { items, remove } = undo.payload else { panic!("one atomic restore") };
+        assert_eq!(remove, vec![ShapeKey("g".into())], "the group goes out first");
+        let keys: Vec<&str> = items.iter().map(|i| i.shape.0.as_str()).collect();
+        assert_eq!(keys, ["h1", "h2"]);
+        assert!(items.iter().all(|i| i.parent.is_none() && i.index < 2));
+
+        let redo = step.reapplying_payload().expect("redo of a group");
+        let Payload::ShapeRestore { items, remove } = redo.payload else { panic!("one atomic restore") };
+        assert_eq!(items.len(), 1, "one image carries the whole group");
+        assert_eq!(items[0].shape.0, "g");
+        assert_eq!(items[0].index, 1);
+        assert_eq!(items[0].animations.len(), 1);
+        assert_eq!(remove, vec![ShapeKey("h1".into()), ShapeKey("h2".into())], "the members go out first");
+    }
+
+    #[test]
+    fn a_group_image_compares_the_group_or_every_member() {
+        let member = |key: &str, id: u64| ShapeImage {
+            slide: "s1".into(),
+            key: key.into(),
+            parent: None,
+            index: 0,
+            shape: Some(serde_json::json!({"id": id})),
+            animations: Vec::new(),
+        };
+        let closed = Change::GroupSubtree(GroupImage {
+            slide: "s1".into(),
+            key: "g".into(),
+            index: 0,
+            group: Some(serde_json::json!({"id": 9})),
+            children: vec!["h1".into()],
+            members: Vec::new(),
+            animations: Vec::new(),
+        });
+        let edited = Change::GroupSubtree(GroupImage {
+            slide: "s1".into(),
+            key: "g".into(),
+            index: 0,
+            group: Some(serde_json::json!({"id": 9, "name": "Edited"})),
+            children: vec!["h1".into()],
+            members: Vec::new(),
+            animations: Vec::new(),
+        });
+        assert!(closed.same_state(&closed));
+        assert!(!closed.same_state(&edited), "a member was edited inside the group");
+
+        let open = Change::GroupSubtree(GroupImage {
+            slide: "s1".into(),
+            key: "g".into(),
+            index: 0,
+            group: None,
+            children: Vec::new(),
+            members: vec![member("h1", 1)],
+            animations: Vec::new(),
+        });
+        let open_edited = Change::GroupSubtree(GroupImage {
+            slide: "s1".into(),
+            key: "g".into(),
+            index: 0,
+            group: None,
+            children: Vec::new(),
+            members: vec![member("h1", 2)],
+            animations: Vec::new(),
+        });
+        assert!(open.same_state(&open));
+        assert!(!open.same_state(&open_edited), "a former member changed after the ungroup");
+        assert!(!open.same_state(&closed), "the group is present where the image says absent");
+    }
+
+    #[test]
     fn a_slide_step_restores_or_deletes_the_whole_slide() {
         let s = Step {
             op_id: "op".into(),
@@ -481,7 +657,7 @@ mod tests {
         assert_eq!(restore.slide.0, "s1");
         assert!(restore.shape.is_none(), "the payload names the shape");
         assert!(restore.shapes.is_empty());
-        let Payload::ShapeRestore { items } = restore.payload else { panic!("one shape restore") };
+        let Payload::ShapeRestore { items, .. } = restore.payload else { panic!("one shape restore") };
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].shape.0, "h1");
         assert_eq!(items[0].parent.as_ref().map(|k| k.0.as_str()), Some("h9"));

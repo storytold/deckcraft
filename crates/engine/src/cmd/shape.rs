@@ -170,7 +170,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Restore Shapes",
             [],
             None,
-            "{items: [{shape: the whole shape as JSON, parent?: the group that holds it, index: position among its siblings (0 = back), animations?: [entries that name it]}]} (puts back shapes a collaborative step removed; undo of a shape insert or delete uses it)",
+            "{items: [{shape: the whole shape as JSON, parent?: the group that holds it, index: position among its siblings (0 = back), animations?: [entries that name it]}], remove?: [ids this step takes out first]} (moves between a group and its members: undo/redo of arrange.group/ungroup, and undo of a shape insert or delete)",
             has_slide,
             restore
         ),
@@ -546,6 +546,24 @@ fn restore(s: &mut Session, p: &Value) -> Result<Value> {
         let parent = item.get("parent").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok()).map(ShapeId);
         prepared.push(Restored { shape, parent, index, animations });
     }
+    // Shapes this step takes out first. The undo of `arrange.group` removes the group and puts
+    // its members back at the top level; the redo removes the members and puts the group back.
+    let remove = match p.get("remove") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(list)) => {
+            if list.len() > MAX_RESTORE_ITEMS {
+                return Err(bad("shape.restore", format!("`remove` must hold at most {MAX_RESTORE_ITEMS} ids")));
+            }
+            let mut ids = Vec::with_capacity(list.len());
+            for value in list {
+                let id =
+                    value.as_u64().and_then(|v| u32::try_from(v).ok()).ok_or_else(|| bad("shape.restore", "`remove` must be a list of shape ids"))?;
+                ids.push(ShapeId(id));
+            }
+            ids
+        }
+        Some(_) => return Err(bad("shape.restore", "`remove` must be a list of shape ids")),
+    };
     // Insert siblings in the order they sat in, and let a round of the loop put a parent back
     // before its children: the payload may name a group and a child of it that is not one image.
     prepared.sort_by_key(|item| item.index);
@@ -555,6 +573,11 @@ fn restore(s: &mut Session, p: &Value) -> Result<Value> {
         }
         {
             let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad("shape.restore", "no slide"))?;
+            for id in &remove {
+                let list = deckcraft_model::sibling_list_mut(shapes, *id)
+                    .ok_or_else(|| bad("shape.restore", format!("shape {} to remove is not on the slide", id.0)))?;
+                list.retain(|s| s.id != *id);
+            }
             let mut present = Vec::new();
             deckcraft_model::walk(shapes, &mut |sh, _| present.push(sh.id));
             for item in &prepared {
@@ -764,6 +787,70 @@ mod tests {
         assert_eq!(order, ids, "the shape is back where it sat");
         assert_eq!(slide.animations.len(), 1);
         assert_eq!(slide.animations[0], animation, "its animation came back");
+    }
+
+    #[test]
+    fn restore_moves_between_a_group_and_its_members_in_one_step() {
+        let mut s = blank();
+        let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap();
+        let b = s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [200, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap();
+        let (va, vb) = {
+            let st = s.doc().unwrap();
+            let slide = &st.doc.slides[0];
+            (
+                serde_json::to_value(deckcraft_model::find_shape(&slide.shapes, ShapeId(a as u32)).unwrap()).unwrap(),
+                serde_json::to_value(deckcraft_model::find_shape(&slide.shapes, ShapeId(b as u32)).unwrap()).unwrap(),
+            )
+        };
+        s.execute("edit.select", &json!({"ids": [a, b]})).unwrap();
+        let group = s.execute("arrange.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+        let value = {
+            let st = s.doc().unwrap();
+            serde_json::to_value(deckcraft_model::find_shape(&st.doc.slides[0].shapes, ShapeId(group as u32)).unwrap()).unwrap()
+        };
+        assert_eq!(s.doc().unwrap().doc.slides[0].shapes.len(), 1, "the group holds both shapes");
+
+        // Undo of the group: remove it and put its members back at the top level.
+        s.execute(
+            "shape.restore",
+            &json!({
+                "items": [{"value": va, "index": 0}, {"value": vb, "index": 1}],
+                "remove": [group],
+            }),
+        )
+        .unwrap();
+        {
+            let st = s.doc().unwrap();
+            let order: Vec<u64> = st.doc.slides[0].shapes.iter().map(|sh| sh.id.0 as u64).collect();
+            assert_eq!(order, [a, b], "both members are back in their order");
+        }
+
+        // Redo of the group: remove the members and put the whole group image back.
+        s.execute(
+            "shape.restore",
+            &json!({
+                "items": [{"value": value, "index": 0}],
+                "remove": [a, b],
+            }),
+        )
+        .unwrap();
+        let st = s.doc().unwrap();
+        let group = deckcraft_model::find_shape(&st.doc.slides[0].shapes, ShapeId(group as u32)).expect("the group is back");
+        assert_eq!(group.children().len(), 2, "with its members inside");
+        assert_eq!(st.doc.slides[0].shapes.len(), 1);
+    }
+
+    #[test]
+    fn restore_refuses_a_missing_removal_before_writing_anything() {
+        let mut s = blank();
+        let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap();
+        let value = {
+            let st = s.doc().unwrap();
+            serde_json::to_value(deckcraft_model::find_shape(&st.doc.slides[0].shapes, ShapeId(a as u32)).unwrap()).unwrap()
+        };
+        let err = s.execute("shape.restore", &json!({"items": [{"value": value, "index": 0}], "remove": [9999]}));
+        assert!(err.is_err(), "a removal that is not on the slide refuses the whole step");
+        assert_eq!(s.doc().unwrap().doc.slides[0].shapes.len(), 1, "nothing was inserted");
     }
 
     #[test]

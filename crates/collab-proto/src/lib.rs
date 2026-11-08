@@ -194,11 +194,17 @@ pub enum Payload {
     /// Puts back shapes a step removed (undo of `shape.delete`, or the redo of an insert) from the
     /// server's whole-shape images. Each item is one shape the step changed, with its model value
     /// as JSON (its id included, so every replica restores the same object), its place among its
-    /// siblings and the animations that name it or a descendant. Structural: a restored shape
-    /// shifts the z-order of its siblings and can carry a whole group.
+    /// siblings and the animations that name it or a descendant. `remove` names shapes the same
+    /// atomic step takes out first: the undo of `arrange.group` removes the group and puts its
+    /// members back at the top level, the redo removes the members and puts the whole group back.
+    /// Structural: a restored shape shifts the z-order of its siblings and can carry a whole group.
     ///
     /// Like [`Payload::ShapeField`], the server builds this from the actor's history only.
-    ShapeRestore { items: Vec<ShapeRestoreItem> },
+    ShapeRestore {
+        items: Vec<ShapeRestoreItem>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        remove: Vec<ShapeKey>,
+    },
     /// Puts back a deleted slide from the server's whole-slide image (undo of `slide.delete`, or
     /// the redo of `slide.new`/`slide.duplicate`). `slide` is the model serialised as JSON; the
     /// membership lists return it to the sections and custom shows it belonged to. Structural:
@@ -1074,6 +1080,7 @@ mod tests {
                 value: json!({"id": 7, "name": "Gone", "kind": {"kind": "group", "children": []}}),
                 animations: vec![json!({"shape": 7, "effect": "fade"})],
             }],
+            remove: Vec::new(),
         };
         let text = serde_json::to_string(&restore).expect("encode");
         assert!(text.contains("\"cmd\":\"shape_restore\""), "{text}");
@@ -1081,10 +1088,13 @@ mod tests {
         assert_eq!(restore.command(), "shape.restore");
         let single = Payload::ShapeRestore {
             items: vec![ShapeRestoreItem { shape: ShapeKey("k-h3".into()), parent: None, index: 0, value: json!({"id": 7}), animations: Vec::new() }],
+            remove: vec![ShapeKey("k-h9".into())],
         };
         let text = serde_json::to_string(&single).expect("encode");
         assert!(!text.contains("animations"), "an empty list is omitted: {text}");
         assert!(!text.contains("parent"), "a top-level shape names no parent: {text}");
+        assert!(text.contains("\"remove\":[\"k-h9\"]"), "the shapes one step takes out travel with it: {text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), single);
 
         let slide = Payload::SlideRestore { index: 2, slide: json!({"id": 7, "name": "Back"}), sections: vec![(0, 1)], shows: vec![] };
         let text = serde_json::to_string(&slide).expect("encode");
