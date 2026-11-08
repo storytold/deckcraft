@@ -75,27 +75,67 @@ pub(super) fn wall_clock() -> String {
     }
 }
 
+/// The Presenter View's preview of slide `n`, `size` pixels.
+fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) -> egui::ColorImage {
+    let opts = RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), threads, ..Default::default() };
+    crate::textures::to_color_image(&deckcraft_render::render_slide(doc, n, &opts), false)
+}
+
 /// Render the presenter window and set `keep` false when the user ends or closes the show.
-pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, keep: &mut bool) {
+pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, now: f64, keep: &mut bool) {
     let cur = show.state.slide;
     let next = show.state.peek_next(doc);
     let cur_tex = show.tex.as_ref().map(|(_, t)| t.clone());
+    // The preview wanted: slide `n` of this presentation (an edit replaces it).
+    let is = |d: &std::sync::Arc<Presentation>, k: usize, n: usize| std::sync::Arc::ptr_eq(d, doc) && k == n;
     if let Some(n) = next
-        && show.next_tex.as_ref().is_none_or(|(k, _)| *k != n)
+        && show.next_tex.as_ref().is_none_or(|(d, k, _)| !is(d, *k, n))
     {
         // A very tall slide shape would otherwise ask for a picture taller than the GPU's limit.
         let next_size = crate::textures::fit_size(
             (480, (480.0 * doc.slide_size.height / doc.slide_size.width.max(1.0)).clamp(1.0, 1e9) as u32),
             crate::textures::max_side(ctx),
         );
-        let img = deckcraft_render::render_slide(
-            doc,
-            n,
-            &RenderOpts { scale: next_size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(next_size), ..Default::default() },
-        );
-        show.next_tex = Some((n, crate::textures::upload(ctx, "presenter-next", crate::textures::to_color_image(&img, false))));
+        // Rendered on another thread, so turning the page doesn't wait for the preview (#964). One
+        // render at a time: paging faster than it renders asks for the newest preview once it is
+        // done, and a finished one no longer wanted is dropped.
+        if let Some((d, k, rx)) = show.next_job.take() {
+            match rx.try_recv() {
+                Ok(ci) if is(&d, k, n) => show.next_tex = Some((d, k, crate::textures::upload(ctx, "presenter-next", ci))),
+                Ok(_) => {}
+                Err(std::sync::mpsc::TryRecvError::Empty) => show.next_job = Some((d, k, rx)),
+                // The worker died: render this one here, as before, rather than start another.
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    show.next_tex = Some((doc.clone(), n, crate::textures::upload(ctx, "presenter-next", render_preview(doc, n, next_size, 0))));
+                }
+            }
+        }
+        if show.next_job.is_none() && show.next_tex.as_ref().is_none_or(|(d, k, _)| !is(d, *k, n)) {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let worker_doc = doc.clone();
+            // The web has no threads: render it here.
+            let spawned = !cfg!(target_arch = "wasm32")
+                && std::thread::Builder::new()
+                    .name("show-next-preview".into())
+                    .spawn(move || {
+                        let _ = tx.send(render_preview(&worker_doc, n, next_size, 1));
+                    })
+                    .is_ok();
+            if spawned {
+                #[cfg(test)]
+                {
+                    show.preview_spawns += 1;
+                }
+                show.next_job = Some((doc.clone(), n, rx));
+            } else {
+                show.next_tex = Some((doc.clone(), n, crate::textures::upload(ctx, "presenter-next", render_preview(doc, n, next_size, 0))));
+            }
+        }
+        if show.next_job.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
     }
-    let next_tex = show.next_tex.as_ref().filter(|(k, _)| Some(*k) == next).map(|(_, t)| t.clone());
+    let next_tex = show.next_tex.as_ref().filter(|(d, k, _)| next.is_some_and(|n| is(d, *k, n))).map(|(_, _, t)| t.clone());
     let no_notes = deckcraft_model::text::TextBody::default();
     let notes = doc.slides.get(cur).map_or(&no_notes, |s| &s.notes);
     let clock = wall_clock();
@@ -212,7 +252,10 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Prese
                     }
                     None => {
                         ui.painter().rect_filled(nr, CornerRadius::ZERO, Color32::from_gray(40));
-                        ui.painter().text(nr.center(), Align2::CENTER_CENTER, "End of slide show", theme::font(13.0), Color32::from_gray(170));
+                        // A next slide whose preview is still on its way is not the end.
+                        if next.is_none() {
+                            ui.painter().text(nr.center(), Align2::CENTER_CENTER, "End of slide show", theme::font(13.0), Color32::from_gray(170));
+                        }
                     }
                 }
                 let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
