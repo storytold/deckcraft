@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-08. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, docs commits on top).
+Updated: 2026-11-08. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, docs commits on top).
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -23,14 +23,15 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr7` | `d28c8ae5` | `CollabDoc` command glue + in-memory `Hub` |
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
-| `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`; undo of fill, line and `format.*` steps from exact before-images (`shape_field`) |
+| `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`; undo of fill, line, `format.*`, a group's fill/line and slide insert/delete |
 
 The Commit column names the slice commits; each branch also carries documentation commits. Heads:
 `collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711`, `0a57b61e`, `58eee059`, `69c2ff22`,
-`41fe1ad9`, plus the docs commits on top. The working tree is clean: the chair's uncommitted
-finding of 2026-11-08 is `7fe75711`; the second slice added `0a57b61e` (media kinds, TLS, command
-slices, tests, docs), `69c2ff22` hardened the format command, and `41fe1ad9` added undo of
-fill/line/format steps.
+`41fe1ad9`, `4e666b95`, plus the docs commits on top. The working tree is clean: the chair's
+uncommitted finding of 2026-11-08 is `7fe75711`; the second slice added `0a57b61e` (media kinds,
+TLS, command slices, tests, docs), `69c2ff22` hardened the format command, `41fe1ad9` added undo
+of fill/line/format steps, and `4e666b95` added undo of a group's fill/line and of slide
+insert/delete.
 
 All work is local. Nothing was pushed to `storytold/deckcraft`; a fork and a human decision are
 required for the upstream PR. The PR body is prepared in [`pr10.md`](pr10.md): title
@@ -55,6 +56,12 @@ stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decisi
   whole `TextBody` of a `format.*` step; the last three travel as an exact model value
   (`shape_field`) because the user-facing fill/line/format commands cannot express the whole
   model, and the adapter accepts that payload only as an undo/redo of the actor's own latest step.
+  A group's fill/line step records one image per changed member and restores them atomically with
+  `shape_fields` (engine `shape.setFields`, values validated before the first write). A
+  `slide.delete`, `slide.new` or `slide.duplicate` records the whole slide (model JSON, position,
+  section and custom-show membership); undo restores it with `slide_restore`, redo deletes it.
+  Every history move is checked against the recorded image and address (`check_restore`), so a
+  client cannot send an undo envelope for another object or with another value.
 - Presence: ephemeral, latest-state-wins, 30 s TTL, FNV colours, never enters a version.
 
 ### Client (`CollabDoc`, `CollabUi`, `WsTransport`)
@@ -89,10 +96,12 @@ stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decisi
   `on`; `args` cannot carry `id`/`ids`/`index`; a table or a shape without text is refused.
 - `slide.duplicate`: structural, addressed by the source slide key; the copy is inserted after it.
 - Undo/redo: move, bounds, text, fill, outline and `format.*` steps. A restore carries the exact
-  model value (`shape_field`) and runs through the new `shape.setField` engine command, which
-  bounds the JSON and deserialises it into the model type. A group's fill/outline step is not
-  recorded (the command also formats the members, and one object's image cannot put them back).
-  Structural steps are still not in per-user undo.
+  model value (`shape_field`) and runs through the `shape.setField` engine command, which bounds
+  the JSON and deserialises it into the model type. A group's fill/outline step records an image
+  per changed member and restores all of them in one `shape_fields` operation (`shape.setFields`
+  validates every value before the first write). `slide.delete`, `slide.new` and `slide.duplicate`
+  record the whole slide and undo through `slide_restore` / `slide_delete`; shape insert/delete
+  and group/ungroup are still outside per-user undo.
 
 ### Server (`apps/deckcraft-collab-server`)
 
@@ -114,17 +123,17 @@ stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decisi
 
 | Command | Result |
 |---|---|
-| `cargo test -p deckcraft-collab` | 99 unit + 7 integration |
+| `cargo test -p deckcraft-collab` | 106 unit + 7 integration |
 | `cargo test -p deckcraft-collab-server` | 3 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist) |
-| `cargo test -p deckcraft-collab-proto` | 18 |
+| `cargo test -p deckcraft-collab-proto` | 19 |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 |
-| `cargo test -p deckcraft-engine` | 560 passed, 1 ignored |
+| `cargo test -p deckcraft-engine` | 562 passed, 1 ignored |
 | `cargo clippy -p deckcraft-engine -p deckcraft-collab -p deckcraft-collab-proto -p deckcraft-collab-server -p deckcraft-ui-egui --all-targets -- -D warnings` | clean |
 | `cargo fmt --check` | clean |
 | `cargo xtask layers` | 31 crates, no violations |
 
-Re-run on 2026-11-08 after `41fe1ad9`: `fmt` clean, `collab-proto` 18, `collab` 99 + 7,
-`collab-server` 3 + 6, `ui-egui collab::` 17, `deckcraft-engine` 560 + 1 ignored; clippy over the
+Re-run on 2026-11-08 after `4e666b95`: `fmt` clean, `collab-proto` 19, `collab` 106 + 7,
+`collab-server` 3 + 6, `ui-egui collab::` 17, `deckcraft-engine` 562 + 1 ignored; clippy over the
 four collab crates and `ui-egui` with `-D warnings` clean; `xtask layers` 31 crates.
 
 The socket tests were run against a real loopback server; the restart test creates a room, moves
@@ -137,7 +146,13 @@ same MediaInsert applied on both replicas. Undo of a fill, an outline and a `for
 tested on one replica and on two (the restore is an ordinary confirmed command, so both replicas
 converge); a foreign fill or a foreign format on the same object is refused with `undo-conflict`,
 a forged `shape_field` (no history step, or a value other than the recorded one) is refused with
-`invalid`, and a group's fill step leaves the history empty.
+`invalid`. Undo of a group's fill restores the group and both members with one `shape_fields`
+operation on two replicas, and a foreign repaint of one member is refused with `undo-conflict`.
+Undo of `slide.delete` restores the whole slide (position, content, section membership) on two
+replicas and redo deletes it again; undo of `slide.new` deletes the slide and redo restores it;
+a forged `slide_restore` aimed at another slide is refused with `invalid`. The engine tests cover
+`slide.restore` (index, section, duplicate id) and `shape.setFields` (a bad value refuses the
+whole merge).
 
 ## TASK.md acceptance matrix
 
@@ -148,7 +163,7 @@ a forged `shape_field` (no history step, or a value other than the recorded one)
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
 | Slides, shapes and order converge | ✅ for move/bounds/insert/delete/slide/group/order/fill/line/format/duplicate | collab tests |
 | Reconnect works | ✅ within the retained journal tail | client queue + resync; base transfer for an evicted tail is still open |
-| Per-user undo/redo | ✅ text/shape values, fill, outline and `format.*`; structural undo open | server history, `undo-conflict`, `shape_field` |
+| Per-user undo/redo | ✅ text/shape values, fill, outline, `format.*`, group fill/line, slide insert/delete | server history, `undo-conflict`, `shape_field`/`shape_fields`/`slide_restore`; shape insert/delete still open |
 | Viewer cannot edit | ✅ server + engine gate | socket test, UI test |
 | Commit creates a new version, original kept | ⚠️ bytes and `409` ready; cabinet callback missing | host-bridge task |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests |
@@ -169,11 +184,13 @@ a forged `shape_field` (no history step, or a value other than the recorded one)
    a private CA must be in the store or `SSL_CERT_FILE`).
 3. **Text in tables and notes, rich runs.** Shape text is covered; table cells and notes need
    their own addressing and rebase. Formatting runs need a run-level payload, not whole-body.
-4. **Undo of a group's fill/outline, and of structural steps.** Fill, line and `format.*` steps of
-   one shape are undoable now (`shape_field` with the exact model value). A fill or outline on a
-   group is not recorded: the command also formats the members and one object's image cannot put
-   them back — the next slice needs an image per member or one merge payload. Slide/shape
-   insert/delete are still out of v1.
+4. **Structural undo of shapes.** A group's fill/outline is undoable now (one image per changed
+   member, one `shape_fields`), and `slide.delete`/`slide.new`/`slide.duplicate` are undoable
+   through a whole-slide image and `slide_restore`. Still out of v1: undo of shape insert/delete
+   and of group/ungroup. Shape insert would need the same whole-object image and a restore
+   command; a shape delete also carries animations and z-order. A slide image is capped at
+   192 KiB, so an undo of an unusually large slide is refused `invalid` instead of breaking the
+   wire limit.
 5. **Cabinet callback / host bridge.** The cabinet must create the file version from
    `commit-result` and push `session/presence/commit` through `craft-web-host`. The desktop
    stores the bytes in `CollabUi::take_commit()`; no callback is wired. This is an external
@@ -185,8 +202,9 @@ a forged `shape_field` (no history step, or a value other than the recorded one)
    Correct on a LAN, noticeable on a WAN. Preview needs a before-image and a rollback path; a
    rejected preview can be rolled back only if no other command has been applied since, otherwise
    the client must resync.
-8. **Structural undo.** Undo of slide/shape insert/delete is still out of v1; merge operations
-   (move, bounds, text set/insert/delete) are covered.
+8. **Structural undo.** Slide insert/delete/duplicate undo is covered (whole-slide image); undo
+   of shape insert/delete and group/ungroup is still out of v1. Merge operations (move, bounds,
+   text set/insert/delete, fill/line/format, group appearance) are covered.
 9. **Large-deck and compatibility gates.** A 100+ slide/media performance test, a LibreOffice
    open/repair gate for every commit, and a longer soak with three clients are still to add.
 10. **Base transfer for an evicted journal tail.** `resync` sends the tail only; if the tail was
@@ -232,13 +250,34 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 4. Extend the command set in vertical slices with the same pattern: payload → normalize →
    adapter run → confirmed command → test on two clients. Next: table cell text, transitions,
    `arrange.align`/`distribute` as final bounds, run-range formatting.
-5. Undo is covered for move/bounds/text/fill/line/format. Next undo slices: an image per member
-   for a group's fill/outline, then structural undo (slide/shape insert/delete).
+5. Undo is covered for move/bounds/text/fill/line/format, a group's fill/line and slide
+   insert/delete/duplicate. Next undo slice: shape insert/delete (whole-shape image plus z-order
+   and animation restoration), then group/ungroup.
 6. Add the LibreOffice commit gate and the 100-slide performance test.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-08 — undo of a group's fill/line and structural slide undo
+
+- A step now carries a list of images on both sides (`Change::{Shape, Slide}`), so one operation
+  can touch several objects. `shape.fill`/`shape.line` on a group record one image per changed
+  member and restore them in one `shape_fields` payload; the engine command `shape.setFields`
+  validates and deserialises every value before the first write (4096 items, 192 KiB combined).
+- `slide.delete`, `slide.new` and `slide.duplicate` record the whole slide: model JSON, index,
+  section and custom-show membership. Undo restores it with the structural `slide.restore`
+  command (`slide_restore` payload), redo deletes it with `slide_delete`; slide and shape ids are
+  kept, the image is capped at 192 KiB, and a restored slide is removed from the tombstone set.
+- `check_restore` now guards **every** history move (not only `shape_field`): a client cannot send
+  an undo envelope that addresses another object, names another slide or carries another value.
+- Tests: two-replica undo/redo of a group fill and of a slide delete/insert, a foreign member
+  repaint refused with `undo-conflict`, a forged `slide_restore` refused with `invalid`; engine
+  tests for `slide.restore` (index, section, duplicate id) and `shape.setFields` (atomic refusal).
+- `collab` 106 + 7, `collab-proto` 19, `collab-server` 3 + 6, `ui-egui collab::` 17,
+  `engine` 562 + 1 ignored; clippy `-D warnings`, `fmt` and `xtask layers` clean.
+- Commit `4e666b95` on `collab/pr10`; RFC (§3.2.1, §6, §11, §13, §14.1) and this file updated.
+  Nothing pushed.
 
 ### 2026-11-08 — undo of fill, line and format steps
 

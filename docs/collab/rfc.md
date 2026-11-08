@@ -132,10 +132,14 @@ S→C {"type":"applied","opId":"<uuid>","version":42,
 | `shape_line` | command | `color`, `width`, `dash`, `cap`, `join`, `compound`, `head/tail`, `headSize/tailSize`, `none` | `reset`; пустой набор значений |
 | `format_set` | command | `format: <allowlisted FormatCmd>`, `args` только из собственного набора команды | `id/ids/index` в `args`, относительный toggle без `on`, таблица, фигура без текста |
 | `slide_duplicate` | structural | ничего; адрес — `target.slide` | слайд удалён → `stale` |
+| `shape_fields` | command | `items:[{shape, field: fill\|line\|text, value}]` | только undo/redo шага группы; иначе → `invalid`; > 4096 значений или > 192 KiB → `invalid` |
+| `slide_restore` | structural | `index`, `slide` (модель JSON), `sections?: [[section, pos]]`, `shows?: [[show, pos]]` | только undo/redo шага слайда; id уже открыт или образ > 192 KiB → `invalid` |
 
 `format_set` покрывает `format.bold/italic/underline/strikethrough/superscript/subscript/font/size/color/highlight/alignLeft/alignCenter/alignRight/justify/caps/spacing/clear`. Перечисление `FormatCmd` (а не строка) закрывает allowlist на уровне типа; `FormatCmd::accepts` не даёт положить в `args` чужой ключ. Множество фигур нормализуется в **N операций по одной фигуре** (решение по §13 п. 3): так undo остаётся объектным, а `applied` несёт понятный адрес; атомарность группы — отдельный merge-payload позже.
 
 `shape.fill`, `shape.line` и `format_set` входят в per-user undo с точным образом значения (§6): undo/redo несут само значение модели в `shape_field`, а не повторяют пользовательскую команду, потому что `shape.fill`/`shape.line`/`format.*` выражают только часть модели (tile и scaled градиента, custom dash, форматирование ранов). `shape_field` — операция истории, а не пользовательская: адаптер принимает её только как undo/redo и только с тем значением, которое записал последний шаг актора.
+
+То же правило у `shape_fields` (шаг группы: один образ на каждое изменившееся звено) и `slide_restore` (structural undo слайда: полный образ слайда). Обе операции строит только сервер из своей истории; `check_restore` сверяет и адрес, и payload с записанным образом, поэтому клиент не может через undo подменить объект или значение. Для undo `slide.new`/`slide.duplicate` обратная операция — обычный `slide_delete`, тоже проверяемый по истории.
 
 ### 3.3 Идентификаторы (ADR-0002)
 
@@ -317,8 +321,22 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
   undo/redo своего шага и только с тем значением, которое шаг записал (иначе —
   `invalid`). `shape.setField` в движке ставит значение обратно, ограничив
   размер и провалидировав JSON в тип модели.
-- Fill/outline шага **группы** в историю не попадает: `shape.fill`/`shape.line`
-  форматируют и участников, а один образ объекта их не вернёт (§13 п. 4).
+- **Шаг группы.** `shape.fill`/`shape.line` по группе форматируют и всех её
+  видимых участников. Шаг хранит образ на каждое изменившееся звено (сама
+  группа и потомки, глубина ≤ 64) и восстанавливает их **одной** операцией
+  `shape_fields{items:[{shape, field, value}]}` → движковая `shape.setFields`:
+  значения валидируются и десериализуются до первой записи, поэтому сбой
+  одного участника отказывает всей операции, а не оставляет половину группы
+  перекрашенной. Неизменившиеся звенья в шаг не попадают.
+- **Структурный шаг слайда.** `slide.delete` (а также undo `slide.new` и
+  `slide.duplicate`) хранит полный образ слайда: модель в JSON, позицию и
+  членство в секциях и custom show. Undo `slide.delete` — structural-операция
+  `slide_restore{index, slide, sections?, shows?}`, redo — обычный
+  `slide_delete`; и то и другое идёт через `check_restore` и требует
+  `baseVersion == head`. Образ ограничен 192 KiB (лимит сообщения — 256 KiB),
+  иначе undo отказывается `invalid`; id слайда и фигур сохраняются, чтобы
+  операция была детерминированной на всех репликах. Структурный undo
+  вставки/удаления **фигур** остаётся вне v1.
 - Redo симметричен; лимит 200 шагов / 24 ч на пользователя (ADR-0010).
 - `regroup` в collab отключён (см. §4.4).
 - Offline: очередь допускается только для merge-операций; `structural` ждёт
@@ -455,7 +473,9 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
 | 12 | догон при вытесненном хвосте | `resync` снапшотом, состояние сходится |
 | 13 | viewer шлёт `op` | `forbidden`, документ не меняется |
 | 14 | per-user undo при чужой правке | чужая правка на месте |
-| 15 | undo после чужой правки того же объекта | `undo-conflict` |
+| 15 | undo после чужой правки того же объекта (фигура, звено группы, слайд) | `undo-conflict` |
+| 15a | undo fill/line шага группы на двух репликах | `shape_fields` на каждое звено, обе реплики равны |
+| 15b | undo `slide.delete`, redo `slide.new`/`slide.duplicate` | `slide_restore`/`slide_delete`, обе реплики равны, секции на месте |
 | 16 | 100+ слайдов + медиа | применение < 100 мс p95, снапшот/commit в лимитах |
 | 17 | commit → reopen | `.pptx` открывается, `Opaque`/`raw_ext`/`kept_parts` на месте |
 | 18 | commit при внешнем изменении файла | `409`, файл не перезаписан |
@@ -490,14 +510,15 @@ WebSocket over TLS (WSS), один набор сообщений на пять �
 2. **Форма `delta`:** список изменённых `(slideKey, shapeKey, fields[])` или
    значения полей целиком? Второе дороже, но проще применять.
 3. **`format.*` на множестве фигур:** решено для v1 — N операций по одной
-   фигуре (§3.2.1); групповая атомарность и один шаг undo на N фигур — позже.
+   фигуре (§3.2.1); групповая атомарность и один шаг undo на N фигур — позже
+   (для undo fill/line шага группы merge-payload уже есть, §6).
 4. **Undo структурных операций:** в v1 отменяются Merge-операции одного
-   объекта: `shape.move`, `shape.setBounds`, текст, а также `shape.fill`,
-   `shape.line` и `format.*` (точный before-image значения, §6). Отмена
-   `slide.delete` требует полного снимка слайда и отдельного решения; до него
-   structural-шаги в историю не попадают. Открыто: fill/outline шага группы
-   (нужен образ всех участников или один merge-payload), текст в таблицах и
-   заметках, run-level формат.
+   объекта (`shape.move`, `shape.setBounds`, текст, `shape.fill`, `shape.line`,
+   `format.*`), fill/outline шага **группы** (образ на каждого участника, один
+   `shape_fields`, §6) и слайдовые structural-шаги: `slide.delete`, `slide.new`,
+   `slide.duplicate` (полный образ слайда, `slide_restore`/`slide_delete`).
+   Открыто: undo вставки/удаления **фигур** (`shape.insert`, `edit.delete`,
+   group/ungroup), текст в таблицах и заметках, run-level формат.
 5. **Presence во время показа:** показывать ли курсоры других в presenter view
    (сейчас — нет).
 6. **Commit при выходе последнего участника**, если он viewer: коммитить
@@ -539,7 +560,11 @@ CRDT, макросы/legacy-форматы.
 `PUT/GET /media/{sha256}`, объекты переживают рестарт). На `collab/pr10` сверх
 `7fe75711`: видео и аудио в медиа-канале (раздельные allowlist и бюджеты),
 TLS HTTP-клиент для `wss://`, вертикальные срезы `shape.fill`, `shape.line`,
-`format.*` по явной фигуре и `slide.duplicate` (§3.2.1). Тесты, точные коммиты,
+`format.*` по явной фигуре и `slide.duplicate` (§3.2.1). Сверх этого — undo
+fill/line/`format.*` из точного образа значения и undo шага группы (образ на
+каждого участника, один `shape_fields`) и слайдовый structural undo
+(`slide.delete`/`slide.new`/`slide.duplicate` через полный образ слайда и
+`slide_restore`). Тесты, точные коммиты,
 матрица приёмки `TASK.md` и список незакрытых блокеров (web-транспорт,
 host-bridge кабинета, оптимистичный preview, structural undo, base-transfer,
 PR) — `docs/collab/STATUS.md`; эксплуатация — `docs/collab/production.md`;
