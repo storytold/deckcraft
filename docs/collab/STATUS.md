@@ -27,7 +27,8 @@ and what to do next. Update it at the end of every collaboration session.
 
 The Commit column names the slice commits; each branch also carries documentation commits. Heads:
 `collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711`, `0a57b61e`, `58eee059`, `69c2ff22`,
-`41fe1ad9`, `4e666b95`, plus the docs commits on top. The working tree is clean: the chair's
+`41fe1ad9`, `4e666b95`, `f6281736` (journal replay of history operations), plus the docs commits
+on top. The working tree is clean: the chair's
 uncommitted finding of 2026-11-08 is `7fe75711`; the second slice added `0a57b61e` (media kinds,
 TLS, command slices, tests, docs), `69c2ff22` hardened the format command, `41fe1ad9` added undo
 of fill/line/format steps, and `4e666b95` added undo of a group's fill/line and of slide
