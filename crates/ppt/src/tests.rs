@@ -74,6 +74,7 @@ fn master_style(instance: u16, pf: &[u8], cf: &[u8]) -> Vec<u8> {
 
 const MASTER_ID: u32 = 0x8000_0001;
 const SLIDE_ID: u32 = 256;
+const TITLE_MASTER_ID: u32 = 0x8000_0002;
 
 fn master() -> Vec<u8> {
     // Background, text, shadow, title, fill, accent, hyperlink, followed hyperlink.
@@ -177,10 +178,12 @@ fn streams(token: u32) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
 
 /// The test document with its slide listed `times` times in the slide list.
 fn streams_listing(token: u32, times: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-    streams_of(token, times, slide())
+    streams_of(token, times, slide(), None)
 }
 
-fn streams_of(token: u32, times: usize, slide: Vec<u8>) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+/// The test document with `slide` as its slide and, when given, a title master (persist id 5,
+/// slide id `TITLE_MASTER_ID`) listed after the main master.
+fn streams_of(token: u32, times: usize, slide: Vec<u8>, title_master: Option<Vec<u8>>) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let pictures = atom(0xF01E, 0x6E0, &[&[0u8; 17][..], &png()].concat());
     let mut fbse = vec![0u8; 36];
     fbse[0] = 6;
@@ -204,6 +207,8 @@ fn streams_of(token: u32, times: usize, slide: Vec<u8>) -> (Vec<u8>, Vec<u8>, Ve
                 0,
                 if id == 2 {
                     MASTER_ID
+                } else if id == 5 {
+                    TITLE_MASTER_ID
                 } else if id == 3 {
                     SLIDE_ID
                 } else {
@@ -220,19 +225,20 @@ fn streams_of(token: u32, times: usize, slide: Vec<u8>) -> (Vec<u8>, Vec<u8>, Ve
             atom(rt::DOCUMENT_ATOM, 0, &doc_atom),
             container(rt::ENVIRONMENT, 0, &[container(rt::FONT_COLLECTION, 0, &[atom(rt::FONT_ENTITY, 0, &font), atom(rt::FONT_ENTITY, 1, &wing)])]),
             container(rt::DRAWING_GROUP, 0, &[container(rt::DGG_CONTAINER, 0, &[bstore])]),
-            container(rt::SLIDE_LIST_WITH_TEXT, 1, &[persist(2)]),
+            container(rt::SLIDE_LIST_WITH_TEXT, 1, &if title_master.is_some() { vec![persist(2), persist(5)] } else { vec![persist(2)] }),
             container(rt::SLIDE_LIST_WITH_TEXT, 0, &vec![persist(3); times]),
             container(rt::SLIDE_LIST_WITH_TEXT, 2, &[persist(4)]),
         ],
     );
     let mut stream = vec![];
     let mut offsets = vec![];
-    for part in [document, master(), slide, notes()] {
+    let parts: Vec<Vec<u8>> = [document, master(), slide, notes()].into_iter().chain(title_master).collect();
+    for part in &parts {
         offsets.push(stream.len() as u32);
-        stream.extend_from_slice(&part);
+        stream.extend_from_slice(part);
     }
     let dir_at = stream.len() as u32;
-    let mut dir = vec![1u32 | (4 << 20)];
+    let mut dir = vec![1u32 | ((parts.len() as u32) << 20)];
     dir.extend_from_slice(&offsets);
     stream.extend_from_slice(&atom(rt::PERSIST_DIRECTORY, 0, &le32(&dir)));
     let edit_at = stream.len() as u32;
@@ -369,13 +375,30 @@ fn many_character_runs_are_not_quadratic() {
         &[fsp(202, 2060, 0xA00), anchor(0, 0, 1000, 1000), text_box(1, &text, &[atom(rt::STYLE_TEXT_PROP, 0, &style)])],
     );
     let slide = container(rt::SLIDE, 0, &[slide_atom(1, MASTER_ID, 0x7), drawing(None, &[shape])]);
-    let (cu, doc, pics) = streams_of(0xE391_C05F, 1, slide);
+    let (cu, doc, pics) = streams_of(0xE391_C05F, 1, slide, None);
     let bytes = crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &doc), ("Pictures", &pics)]);
     let t = std::time::Instant::now();
     let p = crate::import(&bytes).unwrap();
     assert!(t.elapsed() < std::time::Duration::from_secs(20), "{:?}", t.elapsed());
     let runs = &p.slides[0].shapes[0].text.as_ref().unwrap().paragraphs[0].runs;
     assert_eq!(runs.iter().filter(|r| r.kind == RunKind::Break).count(), N / 2);
+}
+
+/// A slide naming a master that doesn't exist falls back to the first main master, every time. The
+/// fallback used to be the lowest index in a HashMap where a title master ties with its main
+/// master, so the slide took the "Title Master" layout on some opens and not on others.
+#[test]
+fn a_slide_with_an_unknown_master_falls_back_the_same_way_every_time() {
+    let title_master = container(rt::SLIDE, 0, &[slide_atom(0, MASTER_ID, 0x7), drawing(None, &[])]);
+    let slide = container(rt::SLIDE, 0, &[slide_atom(1, 0x8000_0099, 0x7), drawing(None, &[])]);
+    let (cu, doc, pics) = streams_of(0xE391_C05F, 1, slide, Some(title_master));
+    let bytes = crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &doc), ("Pictures", &pics)]);
+    for _ in 0..30 {
+        let p = crate::import(&bytes).unwrap();
+        assert_eq!(p.masters[0].layouts.iter().filter(|l| l.name == "Title Master").count(), 1, "the title master became a layout");
+        let (_, layout) = p.layout(p.slides[0].layout).unwrap();
+        assert_ne!(layout.name, "Title Master");
+    }
 }
 
 #[test]

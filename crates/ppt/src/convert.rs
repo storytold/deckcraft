@@ -262,7 +262,10 @@ impl<'a> Ctx<'a> {
 
     fn slide(&mut self, d: &Doc<'a>, s: &Listed<'a>, masters: &HashMap<u32, MasterInfo>, notes_of: &HashMap<u32, usize>) -> Option<Slide> {
         let atom = doc::slide_atom(&s.rec);
-        let info = masters.get(&atom.master_id).or_else(|| masters.values().min_by_key(|m| m.index)).cloned();
+        // An unknown master falls back to the first main master. Title masters share their main
+        // master's index, so including them would tie, and HashMap order would pick the winner.
+        let first_main = || masters.values().filter(|m| m.layout.is_none()).min_by_key(|m| m.index);
+        let info = masters.get(&atom.master_id).or_else(first_main).cloned();
         let (index, master_scheme, styles, title_layout) = match &info {
             Some(m) => (m.index, m.scheme, m.styles.clone(), m.layout),
             None => (0, DEFAULT_SCHEME, Arc::new(StyleSheet::new(d.document.child(rt::ENVIRONMENT), None)), None),
