@@ -97,8 +97,8 @@ channel and MCP all use them:
 
 ## Processors and the accelerator seam
 
-The default backend is pure Rust on the CPU and runs on every platform DeckCraft ships for; no
-accelerator, driver or C/C++ runtime is required or fetched.
+The default backend is pure Rust on the CPU and runs on every supported native platform (the
+browser build ships no provider); no accelerator, driver or C/C++ runtime is required or fetched.
 
 | Platform | Usable today | Optional later |
 |---|---|---|
