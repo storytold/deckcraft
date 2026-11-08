@@ -14,5 +14,4 @@ deckcraft-model = { workspace = true }
 rten = "0.27"
 rten-tensor = "0.27"
 ureq = "3"
-thiserror = { workspace = true }
 log = { workspace = true }

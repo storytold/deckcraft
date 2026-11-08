@@ -1204,7 +1204,6 @@ dependencies = [
  "log",
  "rten",
  "rten-tensor",
- "thiserror 2.0.21",
  "ureq",
 ]
 

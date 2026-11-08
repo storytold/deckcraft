@@ -11,7 +11,7 @@ and **Custom** (a replacement picture). A Cameo is an ordinary picture with the 
 | Piece | State |
 |---|---|
 | Model and mode saved in `.deckcraft` | yes: `CameraBackground` on `Shape.cameo`, four modes, undoable |
-| PPTX import/export of `alf:backgroundProps` | yes: Normal/Removed/Blur/Custom; unknown children kept through `Cameo.raw` |
+| PPTX import/export of `alf:backgroundProps` | yes: Normal/Removed/Blur/Custom; unknown children kept through `Cameo.raw` **except** children that name a package relationship (`r:embed`/`r:link`/`r:id`) — a feed that does is replaced by one carrying only the mode, because export creates no such relationship and PowerPoint would see a dangling reference |
 | Camera Format ▸ Camera Background UI | yes: four on-state buttons and a model panel; disabled with the reason when the model is missing |
 | Engine commands | `cameo.background`, `cameo.background.state`, `cameo.backgroundApplyToAll`, `cameo.backgroundPreview` |
 | Offscreen pipeline proof | `cameo.backgroundPreview` (base64 PNG in/out) and `deckcraft-cli camera-background` |

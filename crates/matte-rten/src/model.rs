@@ -44,13 +44,20 @@ fn config_dir() -> Option<PathBuf> {
     }
 }
 
-/// The first root whose model file exists at the expected size, or the missing state naming the
-/// first root to install into. Size only: the hash is checked by [`RtenSegmenter::load`] and by the
-/// install and download paths, never by a status query.
+/// The first root whose model file exists at the expected size, else the first root's failure, else
+/// the missing state naming the root to install into. Size only: the hash is checked by
+/// [`RtenSegmenter::load`] and by the install and download paths, never by a status query.
 pub fn probe() -> (PathBuf, ModelState) {
-    let roots = model_roots();
+    probe_roots(&model_roots())
+}
+
+/// [`probe`] over an explicit root order: the first root with a file of the manifest's size wins,
+/// a wrong-size file is remembered and reported only when no root has a valid one, and an empty
+/// list falls back to the missing state for `models`.
+fn probe_roots(roots: &[PathBuf]) -> (PathBuf, ModelState) {
     let root = roots.first().cloned().unwrap_or_else(|| PathBuf::from("models"));
-    for candidate in &roots {
+    let mut failure: Option<(PathBuf, ModelState)> = None;
+    for candidate in roots {
         let path = manifest::MANIFEST.path_in(candidate);
         let Ok(meta) = std::fs::metadata(&path) else { continue };
         if !meta.is_file() {
@@ -62,10 +69,18 @@ pub fn probe() -> (PathBuf, ModelState) {
         if meta.len() == manifest::MODEL_BYTES {
             return (candidate.clone(), ModelState::Ready { path: path.display().to_string(), bytes: manifest::MODEL_BYTES });
         }
-        return (
-            candidate.clone(),
-            ModelState::Failed { detail: format!("{} is {} bytes, the model is {}", path.display(), meta.len(), manifest::MODEL_BYTES) },
-        );
+        // A wrong-size file in a high-priority root must not hide a valid install further down, and
+        // `installed_name` (which scans every root) must not disagree with this answer: remember the
+        // first failure and keep looking.
+        if failure.is_none() {
+            failure = Some((
+                candidate.clone(),
+                ModelState::Failed { detail: format!("{} is {} bytes, the model is {}", path.display(), meta.len(), manifest::MODEL_BYTES) },
+            ));
+        }
+    }
+    if let Some(failure) = failure {
+        return failure;
     }
     let state = missing_state(&root);
     (root, state)
@@ -305,6 +320,35 @@ mod tests {
         assert!(t.recv_response.is_some(), "response headers");
         assert!(agent.config().timeout_per_read().is_some(), "a stalled body read must fail, not hang the thread");
         assert!(t.global.is_none() && t.per_call.is_none() && t.recv_body.is_none(), "a slow but live 191 MB transfer is never cut off");
+    }
+
+    /// A wrong-size file in a high-priority root must not hide a valid install further down, and
+    /// the answer must agree with `installed_name` (which scans every root).
+    #[test]
+    fn a_wrong_size_file_does_not_hide_a_valid_root() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-probe-{}", std::process::id()));
+        let (bad, good) = (dir.join("bad"), dir.join("good"));
+        for root in [&bad, &good] {
+            let path = manifest::MANIFEST.path_in(root);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        }
+        std::fs::write(manifest::MANIFEST.path_in(&bad), b"short").expect("bad file");
+        // A sparse file of exactly the manifest's size: `probe` never reads the bytes.
+        std::fs::File::create(manifest::MANIFEST.path_in(&good)).and_then(|f| f.set_len(manifest::MODEL_BYTES)).expect("good file");
+
+        let (root, state) = probe_roots(&[bad.clone(), good.clone()]);
+        assert_eq!(root, good, "the valid root wins over an earlier wrong-size file");
+        assert!(state.is_ready());
+        assert!(present_model(&good).is_some() && present_model(&bad).is_none(), "installed_name agrees");
+
+        let (root, state) = probe_roots(std::slice::from_ref(&bad));
+        assert_eq!(root, bad, "only a failure to report");
+        assert!(matches!(state, ModelState::Failed { .. }), "{state:?}");
+
+        let (root, state) = probe_roots(&[dir.join("empty")]);
+        assert_eq!(root, dir.join("empty"));
+        assert!(matches!(state, ModelState::Missing { .. }), "{state:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

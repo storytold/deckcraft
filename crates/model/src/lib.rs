@@ -358,6 +358,13 @@ pub struct Cameo {
     pub live: bool,
     /// The feed's `alf:liveFeedProps` element kept verbatim (`backgroundProps`, `extLst`…), so a
     /// camera background set in PowerPoint survives a save. `None` writes a plain live feed.
+    ///
+    /// A feed whose children name a package relationship (`r:embed`, `r:link`, `r:id`) is **not**
+    /// kept: export creates no such relationship, so writing the old feed back would leave a
+    /// dangling reference in a file PowerPoint repairs. Such a feed is replaced by one carrying only
+    /// the structured background; a replacement picture PowerPoint stored behind a relationship is
+    /// therefore not read back (DeckCraft's own `CameraBackground.image` is a media id, written as
+    /// package media rather than as a feed relationship).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
     /// The background the cameo applies to its feed. `None` is an ordinary (Normal) feed imported
