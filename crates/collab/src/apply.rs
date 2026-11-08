@@ -15,7 +15,9 @@
 use std::collections::HashSet;
 
 use base64::Engine as _;
-use deckcraft_collab_proto::{ChangeKind, Delta, HistoryAction, MediaKind, OpEnvelope, OpKind, Payload, RejectCode, ShapeKey, SlideKey, Target};
+use deckcraft_collab_proto::{
+    ChangeKind, Delta, HistoryAction, MediaKind, OpEnvelope, OpKind, Payload, RejectCode, ShapeField, ShapeKey, SlideKey, Target,
+};
 use deckcraft_engine::{Session, Target as EngineTarget, TextSel};
 use deckcraft_model::text::TextBody;
 use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, SlideId, find_shape, parent_of};
@@ -114,6 +116,11 @@ impl Adapter {
         &self.keys
     }
 
+    /// The per-actor undo/redo stacks (diagnostics and tests).
+    pub fn history(&self) -> &Histories {
+        &self.history
+    }
+
     /// Apply an operation to `session` and return the authoritative delta.
     ///
     /// `head` is the document version the operation was ordered against: a `structural`
@@ -144,6 +151,11 @@ impl Adapter {
             if head_of(undo) != Some(op_id.as_str()) {
                 return Err(Rejection::undo_conflict("that operation is not the latest step of this history", Some(head)));
             }
+        }
+        if let Payload::ShapeField { .. } = &op.payload {
+            // The exact model value is the server's own before/after image, never a client edit:
+            // a forged value would go around the fill/line/format allowlists.
+            self.check_restore(actor, op, head)?;
         }
 
         let before = session.doc().map_err(|_| Rejection::invalid("no document open", Some(head)))?.doc.clone();
@@ -197,7 +209,8 @@ impl Adapter {
         if current != step.after {
             return Err(Rejection::undo_conflict("someone else changed this object after the step", Some(head)));
         }
-        let (slide, shape, payload) = step.restoring_payload();
+        let (slide, shape, payload) =
+            step.restoring_payload().ok_or_else(|| Rejection::invalid("the recorded value cannot be restored", Some(head)))?;
         Ok(OpEnvelope {
             op_id: op_id.to_string(),
             doc: String::new(),
@@ -218,19 +231,38 @@ impl Adapter {
         if current != step.before {
             return Err(Rejection::undo_conflict("someone else changed this object after the undo", Some(head)));
         }
-        let payload = match &step.after.image {
-            Image::Xfrm { x, y, w, h } => Payload::ShapeSetBounds { x: *x, y: *y, w: *w, h: *h },
-            Image::Text(text) => Payload::TextSet { text: text.clone(), cell: step.after.cell },
-        };
+        let (slide, shape, payload) =
+            step.reapplying_payload().ok_or_else(|| Rejection::invalid("the recorded value cannot be restored", Some(head)))?;
         Ok(OpEnvelope {
             op_id: op_id.to_string(),
             doc: String::new(),
             base_version: head,
             kind: OpKind::Command,
-            target: Target { slide: Some(step.after.slide.clone()), shape: Some(step.after.shape.clone()), ..Target::default() },
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
             payload,
             history: Some(HistoryAction::Redo { op_id: step.op_id.clone() }),
         })
+    }
+
+    /// A restore payload may only repeat a value this actor's own latest step recorded: it is a
+    /// history move, not a way to set any model value.
+    fn check_restore(&self, actor: &str, op: &OpEnvelope, head: u64) -> Result<(), Rejection> {
+        let history = self.history.get(actor);
+        let step = match (&op.history, history) {
+            (Some(HistoryAction::Undo { .. }), Some(h)) => h.peek_undo(),
+            (Some(HistoryAction::Redo { .. }), Some(h)) => h.peek_redo(),
+            _ => None,
+        }
+        .ok_or_else(|| Rejection::invalid("a restore is only sent as an undo or redo of this actor's own step", Some(head)))?;
+        let redo = matches!(op.history, Some(HistoryAction::Redo { .. }));
+        let at = if redo { &step.after } else { &step.before };
+        if op.target.slide.as_ref() != Some(&at.slide) || op.target.shape.as_ref() != Some(&at.shape) {
+            return Err(Rejection::invalid("a restore must address the object of its step", Some(head)));
+        }
+        match at.image.payload(at.cell) {
+            Some(expected) if expected == op.payload => Ok(()),
+            _ => Err(Rejection::invalid("the restore value is not the one its step recorded", Some(head))),
+        }
     }
 
     /// The image an operation replaces, when it is a merge of one object's values.
@@ -240,6 +272,12 @@ impl Adapter {
             Payload::ShapeMove { .. } | Payload::ShapeSetBounds { .. } => (None, Image::Xfrm { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }),
             Payload::TextSet { cell, .. } => (*cell, Image::Text(String::new())),
             Payload::TextInsert { .. } | Payload::TextDelete { .. } => (None, Image::Text(String::new())),
+            // A fill, an outline and a `format.*` step replace one object's value, so they are
+            // undoable too (the value is captured from the document, not from the payload).
+            Payload::ShapeFill { .. } => (None, Image::Fill(None)),
+            Payload::ShapeLine { .. } => (None, Image::Line(None)),
+            Payload::FormatSet { .. } => (None, Image::Format(TextBody::default())),
+            Payload::ShapeField { field, .. } => (None, image_of_field(*field)),
             _ => return None,
         };
         let snapshot = Snapshot { slide: op.target.slide.clone()?, shape: op.target.shape.clone()?, cell, image };
@@ -265,6 +303,21 @@ impl Adapter {
                 };
                 Image::Text(body.text())
             }
+            Image::Fill(_) => {
+                // `shape.fill` also formats a group's members; one object's image could not put
+                // them back, so a group's fill step is not recorded (RFC §13.4).
+                if matches!(shape.kind, ShapeKind::Group { .. }) {
+                    return None;
+                }
+                Image::Fill(shape.fill.clone())
+            }
+            Image::Line(_) => {
+                if matches!(shape.kind, ShapeKind::Group { .. }) {
+                    return None;
+                }
+                Image::Line(shape.line.clone())
+            }
+            Image::Format(_) => Image::Format(shape.text.clone()?),
         };
         Some(Snapshot { slide: at.slide.clone(), shape: at.shape.clone(), cell: at.cell, image })
     }
@@ -399,6 +452,16 @@ impl Adapter {
                     return Err(Rejection::invalid(format!("`{}` does not take these arguments", format.id()), Some(head)));
                 }
                 self.call(session, format.id(), args.clone(), head)
+            }
+            Payload::ShapeField { field, value } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                let name = match field {
+                    ShapeField::Fill => "fill",
+                    ShapeField::Line => "line",
+                    ShapeField::Text => "text",
+                };
+                self.call(session, "shape.setField", json!({"field": name, "value": value, "ids": [shape.0]}), head)
             }
             Payload::ShapeDelete {} => {
                 let (_, shapes) = self.resolve_many(before, &op.target, head)?;
@@ -609,6 +672,16 @@ fn walk_ids(shapes: &[Shape], out: &mut Vec<ShapeId>, depth: usize) {
     }
 }
 
+/// The kind of value a restore puts back. The document supplies the value itself; the payload
+/// only says which field to read.
+fn image_of_field(field: ShapeField) -> Image {
+    match field {
+        ShapeField::Fill => Image::Fill(None),
+        ShapeField::Line => Image::Line(None),
+        ShapeField::Text => Image::Format(TextBody::default()),
+    }
+}
+
 /// Which kind an operation must carry. Structure-changing operations are exclusive.
 /// Length of a text body in characters, counting one newline between paragraphs.
 pub fn body_len(body: Option<&TextBody>) -> usize {
@@ -659,7 +732,8 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::TextDelete { .. }
         | Payload::ShapeFill { .. }
         | Payload::ShapeLine { .. }
-        | Payload::FormatSet { .. } => OpKind::Command,
+        | Payload::FormatSet { .. }
+        | Payload::ShapeField { .. } => OpKind::Command,
         Payload::ShapeInsert { .. }
         | Payload::PictureInsert { .. }
         | Payload::MediaInsert { .. }
@@ -1230,5 +1304,187 @@ mod tests {
         let err = ad.apply(&mut s, 0, "a", &envelope).expect_err("no bytes");
         assert_eq!(err.code, RejectCode::Unsupported);
         assert!(err.retryable, "a fetch can make the same operation work");
+    }
+
+    fn command(op_id: &str, base: u64, slide: &SlideKey, shape: &ShapeKey, payload: Payload) -> OpEnvelope {
+        OpEnvelope {
+            op_id: op_id.into(),
+            doc: "d".into(),
+            base_version: base,
+            kind: OpKind::Command,
+            target: Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
+            payload,
+            history: None,
+        }
+    }
+
+    fn fill_of(doc: &Presentation, index: usize) -> Option<deckcraft_model::Fill> {
+        doc.slides[0].shapes[index].fill.clone()
+    }
+
+    #[test]
+    fn undo_of_a_fill_and_an_outline_restores_the_values_they_replaced() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let (slide, first) = key_of(&aa, &doc_of(&a), 0);
+
+        let red = Payload::ShapeFill { fill: FillSpec::Solid { color: "#ff0000".into() } };
+        let green = Payload::ShapeFill { fill: FillSpec::Solid { color: "#00ff00".into() } };
+        let outline = Payload::ShapeLine { line: LineSpec { color: Some("#0000ff".into()), width: Some(2.0), ..LineSpec::default() } };
+        aa.apply(&mut a, 0, "a", &command("op-1", 0, &slide, &first, red)).expect("red");
+        let red_fill = fill_of(&doc_of(&a), 0).expect("a fill");
+        aa.apply(&mut a, 1, "a", &command("op-2", 1, &slide, &first, green)).expect("green");
+        aa.apply(&mut a, 2, "a", &command("op-3", 2, &slide, &first, outline)).expect("outline");
+        // Replica b sees the same confirmed operations.
+        for op in [
+            command("op-1", 0, &slide, &first, Payload::ShapeFill { fill: FillSpec::Solid { color: "#ff0000".into() } }),
+            command("op-2", 1, &slide, &first, Payload::ShapeFill { fill: FillSpec::Solid { color: "#00ff00".into() } }),
+            command(
+                "op-3",
+                2,
+                &slide,
+                &first,
+                Payload::ShapeLine { line: LineSpec { color: Some("#0000ff".into()), width: Some(2.0), ..LineSpec::default() } },
+            ),
+        ] {
+            let base = op.base_version;
+            bb.apply_confirmed(&mut b, base, "a", &op).expect("b applies the confirmed command");
+        }
+        assert_eq!(doc_of(&a), doc_of(&b));
+
+        // Undo the outline, then the second fill: each puts back the value its own step replaced.
+        let undo_outline = aa.undo(&a, 3, "a", "undo-1").expect("undo outline");
+        assert!(matches!(undo_outline.payload, Payload::ShapeField { field: ShapeField::Line, .. }));
+        aa.apply(&mut a, 3, "a", &undo_outline).expect("undo outline");
+        bb.apply_confirmed(&mut b, 3, "a", &undo_outline).expect("b applies the undo");
+        assert_eq!(doc_of(&a), doc_of(&b), "the restore converges");
+        assert!(doc_of(&a).slides[0].shapes[0].line.is_none(), "the outline is gone again");
+
+        let undo_green = aa.undo(&a, 4, "a", "undo-2").expect("undo green");
+        aa.apply(&mut a, 4, "a", &undo_green).expect("undo green");
+        bb.apply_confirmed(&mut b, 4, "a", &undo_green).expect("b applies the undo");
+        assert_eq!(fill_of(&doc_of(&a), 0), Some(red_fill.clone()), "the first fill is back");
+        assert_eq!(doc_of(&a), doc_of(&b));
+
+        // Redo puts the green fill back as a new operation.
+        let redo = aa.redo(&a, 5, "a", "redo-1").expect("redo");
+        aa.apply(&mut a, 5, "a", &redo).expect("redo green");
+        assert_ne!(fill_of(&doc_of(&a), 0), Some(red_fill), "green is back");
+    }
+
+    #[test]
+    fn an_undo_after_someone_else_changed_the_same_fill_is_refused() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let (slide, first) = key_of(&ad, &doc_of(&s), 0);
+        ad.apply(&mut s, 0, "a", &command("op-1", 0, &slide, &first, Payload::ShapeFill { fill: FillSpec::Solid { color: "#ff0000".into() } }))
+            .expect("a fills red");
+        ad.apply(&mut s, 1, "b", &command("op-2", 1, &slide, &first, Payload::ShapeFill { fill: FillSpec::Solid { color: "#00ff00".into() } }))
+            .expect("b fills green");
+
+        let err = ad.undo(&s, 2, "a", "undo-1").expect_err("b changed the same object");
+        assert_eq!(err.code, RejectCode::UndoConflict);
+        assert!(!err.retryable, "an undo never overwrites someone else's edit");
+        assert_eq!(ad.history().get("a").map(|h| h.undo_len()), Some(1), "a refused undo moves nothing");
+    }
+
+    #[test]
+    fn undo_of_a_format_step_restores_the_body_formatting() {
+        let mut s = deck();
+        s.apply_remote("text.set", &json!({"id": doc_of(&s).slides[0].shapes[0].id.0, "text": "Hello"})).expect("text");
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let (slide, first) = key_of(&ad, &doc_of(&s), 0);
+        let bold =
+            |op_id: &str, base: u64| command(op_id, base, &slide, &first, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}) });
+        ad.apply(&mut s, 0, "a", &bold("op-1", 0)).expect("bold");
+        let bold_of = |s: &Session| {
+            doc_of(s).slides[0].shapes[0].text.as_ref().and_then(|t| t.paragraphs.first()).and_then(|p| p.runs.first()).and_then(|r| r.props.bold)
+        };
+        assert_eq!(bold_of(&s), Some(true));
+
+        let undo = ad.undo(&s, 1, "a", "undo-1").expect("undo bold");
+        assert!(matches!(undo.payload, Payload::ShapeField { field: ShapeField::Text, .. }), "{undo:?}");
+        ad.apply(&mut s, 1, "a", &undo).expect("undo bold");
+        assert_eq!(bold_of(&s), None, "the body formatting went back to what it was");
+        let redo = ad.redo(&s, 2, "a", "redo-1").expect("redo bold");
+        ad.apply(&mut s, 2, "a", &redo).expect("redo bold");
+        assert_eq!(bold_of(&s), Some(true));
+    }
+
+    #[test]
+    fn an_undo_after_someone_else_formatted_the_same_text_is_refused() {
+        let mut s = deck();
+        s.apply_remote("text.set", &json!({"id": doc_of(&s).slides[0].shapes[0].id.0, "text": "Hello"})).expect("text");
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let (slide, first) = key_of(&ad, &doc_of(&s), 0);
+        let bold = command("op-1", 0, &slide, &first, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}) });
+        let italic = command("op-2", 1, &slide, &first, Payload::FormatSet { format: FormatCmd::Italic, args: json!({"on": true}) });
+        ad.apply(&mut s, 0, "a", &bold).expect("a bolds");
+        ad.apply(&mut s, 1, "b", &italic).expect("b italicises");
+        let err = ad.undo(&s, 2, "a", "undo-1").expect_err("b changed the same body");
+        assert_eq!(err.code, RejectCode::UndoConflict);
+    }
+
+    #[test]
+    fn a_fill_step_on_a_group_is_not_recorded_for_undo() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let doc = doc_of(&s);
+        let slide = ad.keys().slide_key(doc.slides[0].id).expect("slide").clone();
+        let ids: Vec<ShapeKey> = doc.slides[0].shapes.iter().map(|x| ad.keys().shape_key(doc.slides[0].id, x.id).expect("key").clone()).collect();
+        let group = op(OpKind::Structural, 0, Target { slide: Some(slide.clone()), shapes: ids, ..Target::default() }, Payload::Group {});
+        ad.apply(&mut s, 0, "a", &group).expect("group");
+        let group_key = {
+            let after = doc_of(&s);
+            ad.keys().shape_key(after.slides[0].id, after.slides[0].shapes[0].id).expect("group key").clone()
+        };
+        ad.apply(&mut s, 1, "a", &command("op-1", 1, &slide, &group_key, Payload::ShapeFill { fill: FillSpec::Solid { color: "#ff0000".into() } }))
+            .expect("fill the group");
+        assert_eq!(
+            ad.history().get("a").map(|h| h.undo_len()),
+            None,
+            "one object's fill image cannot put a group's members back, so the step is not undoable"
+        );
+    }
+
+    #[test]
+    fn a_restore_value_is_refused_without_a_history_step() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let (slide, first) = key_of(&ad, &doc_of(&s), 0);
+        let forged = command(
+            "op-1",
+            0,
+            &slide,
+            &first,
+            Payload::ShapeField { field: ShapeField::Fill, value: serde_json::to_value(deckcraft_model::Fill::Background).expect("json") },
+        );
+        let err = ad.apply(&mut s, 0, "a", &forged).expect_err("an exact value is not a user edit");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert!(fill_of(&doc_of(&s), 0).is_none(), "nothing was written");
+    }
+
+    #[test]
+    fn an_undo_cannot_replace_its_recorded_value_with_another() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let (slide, first) = key_of(&ad, &doc_of(&s), 0);
+        ad.apply(&mut s, 0, "a", &command("op-1", 0, &slide, &first, Payload::ShapeFill { fill: FillSpec::Solid { color: "#ff0000".into() } }))
+            .expect("a fills red");
+        let mut undo = ad.undo(&s, 1, "a", "undo-1").expect("undo");
+        // A client could send its own history action; it may only repeat the value the step recorded.
+        undo.payload = Payload::ShapeField { field: ShapeField::Fill, value: serde_json::to_value(deckcraft_model::Fill::Background).expect("json") };
+        let err = ad.apply(&mut s, 1, "a", &undo).expect_err("a different value");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert!(matches!(fill_of(&doc_of(&s), 0), Some(deckcraft_model::Fill::Solid { .. })), "the recorded fill is still there");
     }
 }

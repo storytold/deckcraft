@@ -148,6 +148,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("shape.setDefault", "Set as Default Shape", [], None, "{}", has_selection, set_default),
         cmd!(
+            "shape.setField",
+            "Set Exact Value",
+            [],
+            None,
+            "{field: fill|line|text, value: the exact model value as JSON, ids?} (restores the value an undoable step replaced; the fill, line and format commands cannot express the whole model, so collaboration undo uses this)",
+            has_selection,
+            set_field
+        ),
+        cmd!(
             "picture.crop",
             "Crop",
             ["Picture Format", "Size"],
@@ -339,6 +348,64 @@ fn apply_fill(
         }
     }
     Ok(())
+}
+
+/// Longest model value a `shape.setField` restore may carry, as JSON bytes.
+const MAX_FIELD_JSON: usize = 256 * 1024;
+/// Most paragraphs and runs one restored text body may hold.
+const MAX_PARAGRAPHS: usize = 10_000;
+const MAX_RUNS: usize = 50_000;
+
+/// Set one shape field to an exact model value.
+///
+/// The collaboration adapter uses this to put back the value an undoable step replaced: the
+/// user-facing `shape.fill`, `shape.line` and `format.*` commands accept only a subset of the
+/// model (a gradient's tile and scaling, a custom dash, a run's whole formatting have no
+/// argument), so a lossless restore cannot go through them. The value is still hostile input:
+/// it is size-bounded and deserialised into the model type before anything is touched.
+fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
+    let field = str_param(p, "field").ok_or_else(|| bad("shape.setField", "missing `field` (fill, line or text)"))?;
+    let value = p.get("value").cloned().unwrap_or(Value::Null);
+    let bytes = serde_json::to_vec(&value).map_err(|e| bad("shape.setField", format!("invalid value: {e}")))?;
+    if bytes.len() > MAX_FIELD_JSON {
+        return Err(bad("shape.setField", "the value is too large"));
+    }
+    match field {
+        "fill" => {
+            let fill = decode_field::<Fill>(&value, "fill")?;
+            edit_shapes(s, p, "shape.setField", |sh| {
+                sh.fill.clone_from(&fill);
+                Ok(())
+            })
+        }
+        "line" => {
+            let line = decode_field::<Line>(&value, "line")?;
+            edit_shapes(s, p, "shape.setField", |sh| {
+                sh.line.clone_from(&line);
+                Ok(())
+            })
+        }
+        "text" => {
+            let body = decode_field::<deckcraft_model::text::TextBody>(&value, "text")?
+                .ok_or_else(|| bad("shape.setField", "a text body cannot be cleared"))?;
+            if body.paragraphs.len() > MAX_PARAGRAPHS || body.paragraphs.iter().map(|q| q.runs.len()).sum::<usize>() > MAX_RUNS {
+                return Err(bad("shape.setField", "the text body is too large"));
+            }
+            edit_shapes(s, p, "shape.setField", |sh| {
+                sh.text = Some(body.clone());
+                Ok(())
+            })
+        }
+        other => Err(bad("shape.setField", format!("unknown field `{other}` (fill, line or text)"))),
+    }
+}
+
+/// One model value from the wire JSON; `null` means "unset".
+fn decode_field<T: serde::de::DeserializeOwned>(v: &Value, what: &str) -> Result<Option<T>> {
+    if v.is_null() {
+        return Ok(None);
+    }
+    serde_json::from_value(v.clone()).map(Some).map_err(|e| bad("shape.setField", format!("invalid {what}: {e}")))
 }
 
 fn rename(s: &mut Session, p: &Value) -> Result<Value> {
@@ -641,5 +708,68 @@ mod tests {
         st.interaction = Some(crate::Interaction { label: "Move".into(), doc: st.doc.clone(), selection: st.selection.clone(), vertex_kind: None });
         s.execute("shape.rotate", &json!({"gesture": "end", "ids": []})).unwrap();
         assert_eq!(s.active().unwrap().interaction.as_ref().unwrap().label, "Move");
+    }
+
+    #[test]
+    fn set_field_puts_back_the_exact_values_the_user_commands_cannot_express() {
+        use deckcraft_model::style::{Compound, Dash, Gradient, GradientShape, GradientStop, LineAlign, LineCap, LineJoin};
+
+        let mut s = Session::with_new();
+        let id =
+            s.execute("shape.insert", &json!({"preset": "rect", "rect": [40.0, 40.0, 80.0, 60.0], "text": "Hello"})).unwrap()["id"].as_u64().unwrap();
+        let id = ShapeId(id as u32);
+        // A gradient with a tile and a custom dash: neither has an argument on `shape.fill` /
+        // `shape.line`, so a lossless restore can only go through the exact value.
+        let fill = Some(Fill::Gradient(Gradient {
+            stops: vec![
+                GradientStop { pos: 0.0, color: ColorRef::rgb(Rgba::rgb(255, 0, 0)) },
+                GradientStop { pos: 1.0, color: ColorRef::rgb(Rgba::rgb(0, 0, 255)) },
+            ],
+            shape: GradientShape::Linear { angle: 45.0, scaled: true },
+            flip: None,
+            rotate_with_shape: true,
+            tile: [0.1, 0.2, 0.3, 0.4],
+        }));
+        let line = Some(Line {
+            fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(0, 255, 0)))),
+            width: Some(3.5),
+            dash: Some(Dash::Custom { pattern: vec![(1.0, 2.0), (3.0, 4.0)] }),
+            cap: Some(LineCap::Round),
+            join: Some(LineJoin::Miter),
+            miter_limit: Some(8),
+            align: Some(LineAlign::Inside),
+            compound: Some(Compound::Double),
+            head: None,
+            tail: None,
+        });
+        s.execute("shape.setField", &json!({"field": "fill", "value": serde_json::to_value(&fill).unwrap()})).unwrap();
+        s.execute("shape.setField", &json!({"field": "line", "value": serde_json::to_value(&line).unwrap()})).unwrap();
+        let doc = s.doc().unwrap();
+        let sh = doc.shape(id).unwrap();
+        assert_eq!(sh.fill, fill);
+        assert_eq!(sh.line, line);
+        let text = serde_json::to_value(sh.text.as_ref().unwrap()).unwrap();
+        s.execute("shape.setField", &json!({"field": "text", "value": text})).unwrap();
+        assert_eq!(s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().text(), "Hello");
+        // `null` puts the field back to "unset" (inherited).
+        s.execute("shape.setField", &json!({"field": "fill", "value": null})).unwrap();
+        s.execute("shape.setField", &json!({"field": "line", "value": null})).unwrap();
+        let doc = s.doc().unwrap();
+        let sh = doc.shape(id).unwrap();
+        assert!(sh.fill.is_none() && sh.line.is_none());
+        assert_eq!(sh.text.as_ref().unwrap().text(), "Hello", "the text is untouched");
+    }
+
+    #[test]
+    fn set_field_refuses_a_hostile_or_unknown_value_without_editing() {
+        let mut s = Session::with_new();
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 30.0, 30.0]})).unwrap();
+        let before = serde_json::to_value(&s.doc().unwrap().doc).unwrap();
+        assert!(s.execute("shape.setField", &json!({"field": "geometry", "value": {}})).is_err());
+        assert!(s.execute("shape.setField", &json!({"field": "fill", "value": "red"})).is_err());
+        assert!(s.execute("shape.setField", &json!({"field": "text", "value": 7})).is_err());
+        assert!(s.execute("shape.setField", &json!({"field": "text", "value": null})).is_err());
+        assert!(s.execute("shape.setField", &json!({"field": "line", "value": {"width": "wide"}})).is_err());
+        assert_eq!(serde_json::to_value(&s.doc().unwrap().doc).unwrap(), before);
     }
 }

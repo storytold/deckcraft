@@ -180,6 +180,12 @@ pub enum Payload {
     /// One allowlisted `format.*` command with absolute arguments, aimed at the whole text body
     /// of `target.shape`. Run-level ranges are a later slice (RFC §15).
     FormatSet { format: FormatCmd, args: serde_json::Value },
+    /// Puts back the exact value an undoable step replaced (ADR 0010). The server builds this
+    /// from the actor's history and never a client from a user edit: `value` is the model value
+    /// of `field` as JSON (`null` = unset), because the user-facing fill, line and format
+    /// commands accept only a lossy subset of the model. A replica runs it through
+    /// `shape.setField`, so every replica puts the same value back.
+    ShapeField { field: ShapeField, value: serde_json::Value },
     /// Removes one shape (`target.shape`) or several (`target.shapes`).
     ShapeDelete {},
     /// Inserts a slide before `target.slide` (`None`: at the end).
@@ -216,6 +222,17 @@ pub enum Payload {
 pub enum MediaKind {
     Video,
     Audio,
+}
+
+/// The shape value a [`Payload::ShapeField`] restore puts back. These are exactly the values
+/// the v1 command surface can replace but not reproduce: a fill or an outline with fields the
+/// fill/line commands do not carry, and a whole text body with its run and paragraph formatting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShapeField {
+    Fill,
+    Line,
+    Text,
 }
 
 /// A final fill value. Only absolute forms are on the wire: a solid colour from the palette or
@@ -412,6 +429,7 @@ impl Payload {
             Payload::ShapeFill { .. } => "shape.fill",
             Payload::ShapeLine { .. } => "shape.line",
             Payload::FormatSet { format, .. } => format.id(),
+            Payload::ShapeField { .. } => "shape.setField",
             Payload::ShapeDelete {} => "edit.delete",
             Payload::SlideInsert { .. } => "slide.new",
             Payload::SlideDelete {} => "slide.delete",
