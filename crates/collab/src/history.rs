@@ -9,10 +9,15 @@
 //! - the before image becomes the restoring payload;
 //! - the after image is the expectation — if the object no longer holds it, someone else changed
 //!   it and the undo is refused with `undo_conflict` instead of overwriting their edit.
+//!
+//! One step may touch several objects: `shape.fill` and `shape.line` on a group also format every
+//! visible member, so the step records one image per member and the restore is a single
+//! `shape.setFields` operation. A structural step (`slide.delete`, `slide.new`, `slide.duplicate`)
+//! records a whole slide snapshot instead of a shape value.
 
 use std::collections::HashMap;
 
-use deckcraft_collab_proto::{Payload, ShapeField, ShapeKey, SlideKey};
+use deckcraft_collab_proto::{Payload, ShapeField, ShapeFieldItem, ShapeKey, SlideKey};
 use deckcraft_model::text::TextBody;
 use deckcraft_model::{Fill, Line};
 
@@ -35,7 +40,7 @@ pub enum Image {
     Format(TextBody),
 }
 
-/// One object a step touched.
+/// One shape a step touched.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
     pub slide: SlideKey,
@@ -45,8 +50,53 @@ pub struct Snapshot {
     pub image: Image,
 }
 
-/// The payload that puts one image back. `None` when the value cannot be described on the wire
-/// (a text image of a table cell keeps using `text.set`).
+/// A whole slide, present or absent, for a structural step. `slide` is the model serialised as
+/// JSON (the same value `shape.setField` carries: an exact model value, never a user edit), and
+/// the membership lists put the slide back into the sections and custom shows it belonged to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SlideImage {
+    pub key: SlideKey,
+    /// Position among the slides while the slide was present.
+    pub index: u32,
+    /// `None` = the slide was absent.
+    pub slide: Option<serde_json::Value>,
+    /// `(section index, position in that section)`.
+    pub sections: Vec<(u32, u32)>,
+    /// `(custom show index, position in that show)`.
+    pub shows: Vec<(u32, u32)>,
+}
+
+/// One object a step touched: a shape value or a whole slide.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Change {
+    Shape(Snapshot),
+    Slide(SlideImage),
+}
+
+impl Change {
+    /// Whether `current` still holds the value this image recorded. A slide's position may have
+    /// moved because other slides came and went; only its presence and content are compared.
+    pub fn same_state(&self, current: &Change) -> bool {
+        match (self, current) {
+            (Change::Shape(a), Change::Shape(b)) => a == b,
+            (Change::Slide(a), Change::Slide(b)) => match (&a.slide, &b.slide) {
+                (None, None) => a.key == b.key,
+                (Some(x), Some(y)) => a.key == b.key && x == y,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+}
+
+/// The payload that puts one image back, and the object it addresses. `None` when the value
+/// cannot be described on the wire (a text image of a table cell keeps using `text.set`).
+pub struct Restore {
+    pub slide: SlideKey,
+    pub shape: Option<ShapeKey>,
+    pub payload: Payload,
+}
+
 impl Image {
     pub fn payload(&self, cell: Option<(u32, u32)>) -> Option<Payload> {
         Some(match self {
@@ -60,29 +110,68 @@ impl Image {
         })
     }
 }
-/// One undoable step of one actor.
+
+/// The operation that puts back one step's before or after image.
+///
+/// One shape value keeps the single-object `ShapeField` payload; a group's appearance step is one
+/// `ShapeFields` merge so its members are restored atomically; a slide is a `SlideRestore` or a
+/// `SlideDelete`.
+pub fn restores(changes: &[Change]) -> Option<Restore> {
+    match changes {
+        [Change::Shape(at)] => Some(Restore { slide: at.slide.clone(), shape: Some(at.shape.clone()), payload: at.image.payload(at.cell)? }),
+        [Change::Slide(at)] => {
+            let payload = match &at.slide {
+                Some(slide) => {
+                    Payload::SlideRestore { index: at.index, slide: slide.clone(), sections: at.sections.clone(), shows: at.shows.clone() }
+                }
+                None => Payload::SlideDelete {},
+            };
+            Some(Restore { slide: at.key.clone(), shape: None, payload })
+        }
+        [] => None,
+        many => {
+            // A group's fill/outline is one step over its members: every image is an exact model
+            // value of the same kind, and the restore is one atomic operation.
+            let mut items = Vec::with_capacity(many.len());
+            let mut slide: Option<&SlideKey> = None;
+            for change in many {
+                let Change::Shape(at) = change else { return None };
+                if slide.is_some_and(|s| s != &at.slide) {
+                    return None;
+                }
+                slide = Some(&at.slide);
+                match at.image.payload(at.cell)? {
+                    Payload::ShapeField { field, value } => items.push(ShapeFieldItem { shape: at.shape.clone(), field, value }),
+                    _ => return None,
+                }
+            }
+            Some(Restore { slide: slide?.clone(), shape: None, payload: Payload::ShapeFields { items } })
+        }
+    }
+}
+
+/// One undoable step of one actor. A step may touch several objects (a group's members) or one
+/// slide (a structural step), so both images are lists.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Step {
     /// The operation that made the change.
     pub op_id: String,
     /// The document version it produced.
     pub version: u64,
-    pub before: Snapshot,
-    pub after: Snapshot,
+    pub before: Vec<Change>,
+    pub after: Vec<Change>,
 }
 
 impl Step {
     /// The operation that takes this step back. `undo_of` marks it so the adapter moves the step
     /// to redo instead of recording a new one.
-    pub fn restoring_payload(&self) -> Option<(SlideKey, ShapeKey, Payload)> {
-        let payload = self.before.image.payload(self.before.cell)?;
-        Some((self.before.slide.clone(), self.before.shape.clone(), payload))
+    pub fn restoring_payload(&self) -> Option<Restore> {
+        restores(&self.before)
     }
 
     /// The operation that re-applies this step after an undo.
-    pub fn reapplying_payload(&self) -> Option<(SlideKey, ShapeKey, Payload)> {
-        let payload = self.after.image.payload(self.after.cell)?;
-        Some((self.after.slide.clone(), self.after.shape.clone(), payload))
+    pub fn reapplying_payload(&self) -> Option<Restore> {
+        restores(&self.after)
     }
 }
 
@@ -185,34 +274,110 @@ mod tests {
         Step {
             op_id: op.into(),
             version,
-            before: Snapshot { slide: "s1".into(), shape: "h1".into(), cell: None, image: Image::Xfrm { x: 1.0, y: 2.0, w: 3.0, h: 4.0 } },
-            after: Snapshot { slide: "s1".into(), shape: "h1".into(), cell: None, image: Image::Xfrm { x: 10.0, y: 20.0, w: 3.0, h: 4.0 } },
+            before: vec![Change::Shape(Snapshot {
+                slide: "s1".into(),
+                shape: "h1".into(),
+                cell: None,
+                image: Image::Xfrm { x: 1.0, y: 2.0, w: 3.0, h: 4.0 },
+            })],
+            after: vec![Change::Shape(Snapshot {
+                slide: "s1".into(),
+                shape: "h1".into(),
+                cell: None,
+                image: Image::Xfrm { x: 10.0, y: 20.0, w: 3.0, h: 4.0 },
+            })],
         }
     }
 
     #[test]
     fn a_restoring_payload_uses_the_before_image() {
-        let (slide, shape, payload) = step("op-1", 5).restoring_payload().expect("payload");
-        assert_eq!(slide.0, "s1");
-        assert_eq!(shape.0, "h1");
-        assert_eq!(payload, Payload::ShapeSetBounds { x: 1.0, y: 2.0, w: 3.0, h: 4.0 });
+        let restore = step("op-1", 5).restoring_payload().expect("payload");
+        assert_eq!(restore.slide.0, "s1");
+        assert_eq!(restore.shape.as_ref().map(|k| k.0.as_str()), Some("h1"));
+        assert_eq!(restore.payload, Payload::ShapeSetBounds { x: 1.0, y: 2.0, w: 3.0, h: 4.0 });
     }
 
     #[test]
     fn a_fill_or_line_image_restores_the_exact_model_value() {
         let mut s = step("op-1", 1);
         let fill = deckcraft_model::Fill::Background;
-        s.before.image = Image::Fill(Some(fill.clone()));
-        s.after.image = Image::Fill(None);
-        let (_, _, payload) = s.restoring_payload().expect("fill payload");
-        let Payload::ShapeField { field, value } = payload else { panic!("a shape field restore") };
+        let Change::Shape(at) = &mut s.before[0] else { panic!("a shape") };
+        at.image = Image::Fill(Some(fill.clone()));
+        let Change::Shape(at) = &mut s.after[0] else { panic!("a shape") };
+        at.image = Image::Fill(None);
+        let restore = s.restoring_payload().expect("fill payload");
+        let Payload::ShapeField { field, value } = restore.payload else { panic!("a shape field restore") };
         assert_eq!(field, ShapeField::Fill);
         assert_eq!(value, serde_json::to_value(Some(fill)).expect("json"));
 
-        s.before.image = Image::Line(None);
-        let (_, _, payload) = s.restoring_payload().expect("line payload");
-        let Payload::ShapeField { field, value } = payload else { panic!("a shape field restore") };
+        let Change::Shape(at) = &mut s.before[0] else { panic!("a shape") };
+        at.image = Image::Line(None);
+        let restore = s.restoring_payload().expect("line payload");
+        let Payload::ShapeField { field, value } = restore.payload else { panic!("a shape field restore") };
         assert_eq!((field, value), (ShapeField::Line, serde_json::Value::Null), "no outline is `null`");
+    }
+
+    #[test]
+    fn a_group_step_restores_every_member_in_one_operation() {
+        let image =
+            |shape: &str, fill| Change::Shape(Snapshot { slide: "s1".into(), shape: shape.into(), cell: None, image: Image::Fill(Some(fill)) });
+        let s = Step {
+            op_id: "op".into(),
+            version: 1,
+            before: vec![image("g", deckcraft_model::Fill::Background), image("h1", deckcraft_model::Fill::Background)],
+            after: vec![image("g", deckcraft_model::Fill::None), image("h1", deckcraft_model::Fill::None)],
+        };
+        let restore = s.restoring_payload().expect("group payload");
+        assert_eq!(restore.slide.0, "s1");
+        assert!(restore.shape.is_none(), "the restore addresses the slide and every member");
+        let Payload::ShapeFields { items } = restore.payload else { panic!("one merge payload") };
+        let keys: Vec<&str> = items.iter().map(|i| i.shape.0.as_str()).collect();
+        assert_eq!(keys, ["g", "h1"]);
+        assert!(items.iter().all(|i| i.field == ShapeField::Fill));
+    }
+
+    #[test]
+    fn a_slide_step_restores_or_deletes_the_whole_slide() {
+        let s = Step {
+            op_id: "op".into(),
+            version: 1,
+            before: vec![Change::Slide(SlideImage {
+                key: "s1".into(),
+                index: 2,
+                slide: Some(serde_json::json!({"id": 7, "name": "Gone"})),
+                sections: vec![(0, 1)],
+                shows: vec![],
+            })],
+            after: vec![Change::Slide(SlideImage { key: "s1".into(), index: 0, slide: None, sections: vec![], shows: vec![] })],
+        };
+        let restore = s.restoring_payload().expect("slide restore");
+        assert_eq!(restore.slide.0, "s1");
+        assert!(restore.shape.is_none());
+        let Payload::SlideRestore { index, sections, .. } = restore.payload else { panic!("a slide restore") };
+        assert_eq!((index, sections), (2, vec![(0, 1)]));
+        let redo = s.reapplying_payload().expect("slide delete");
+        assert_eq!(redo.payload, Payload::SlideDelete {});
+    }
+
+    #[test]
+    fn a_slide_image_compares_presence_and_content_not_position() {
+        let at = Change::Slide(SlideImage { key: "s1".into(), index: 2, slide: Some(serde_json::json!({"id": 7})), sections: vec![], shows: vec![] });
+        let moved = Change::Slide(SlideImage {
+            key: "s1".into(),
+            index: 5,
+            slide: Some(serde_json::json!({"id": 7})),
+            sections: vec![(1, 0)],
+            shows: vec![],
+        });
+        assert!(at.same_state(&moved), "another slide was inserted before it");
+        let edited = Change::Slide(SlideImage {
+            key: "s1".into(),
+            index: 2,
+            slide: Some(serde_json::json!({"id": 7, "name": "Edited"})),
+            sections: vec![],
+            shows: vec![],
+        });
+        assert!(!at.same_state(&edited), "the slide itself changed");
     }
 
     #[test]

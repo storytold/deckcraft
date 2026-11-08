@@ -22,6 +22,15 @@ pub fn specs() -> Vec<CommandSpec> {
             new
         ),
         cmd!("slide.duplicate", "Duplicate Slide", ["Insert"], None, "{index?}", has_slide, duplicate),
+        cmd!(
+            "slide.restore",
+            "Restore Slide",
+            [],
+            None,
+            "{index, slide: the slide as JSON, sections?: [[section, position]], shows?: [[show, position]]} (puts back a deleted slide for collaboration undo)",
+            has_doc,
+            restore
+        ),
         cmd!("slide.delete", "Delete Slide", ["Edit"], None, "{index?, ids?: [slide id]}", has_slide, delete),
         cmd!(
             "slide.move",
@@ -243,6 +252,73 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn src_id(doc: &Presentation, i: usize) -> SlideId {
     doc.slides.get(i).map(|s| s.id).unwrap_or_default()
+}
+
+/// Longest slide image a `slide.restore` may carry, as JSON bytes; the wire message limit is
+/// 256 KiB, so the rest of the envelope must fit in what is left.
+const MAX_SLIDE_JSON: usize = 192 * 1024;
+
+/// Put back a deleted slide from a whole-slide image (collaboration undo, ADR 0010).
+///
+/// The value is hostile input even though the server builds it: it is size-bounded, deserialised
+/// into the model type and refused if its id is already open. Section and custom-show membership
+/// comes from `(list index, position)` pairs so the slide returns where it was.
+fn restore(s: &mut Session, p: &Value) -> Result<Value> {
+    let index = usize_param(p, "index").ok_or_else(|| bad("slide.restore", "missing `index`"))?;
+    let value = p.get("slide").ok_or_else(|| bad("slide.restore", "missing `slide`"))?;
+    let bytes = serde_json::to_vec(value).map_err(|e| bad("slide.restore", format!("invalid slide: {e}")))?;
+    if bytes.len() > MAX_SLIDE_JSON {
+        return Err(bad("slide.restore", "the slide image is too large"));
+    }
+    let slide: deckcraft_model::Slide = serde_json::from_value(value.clone()).map_err(|e| bad("slide.restore", format!("invalid slide: {e}")))?;
+    let sections = positions(p, "sections", "slide.restore")?;
+    let shows = positions(p, "shows", "slide.restore")?;
+    s.edit(|doc, sel| {
+        if doc.slides.iter().any(|x| x.id == slide.id) {
+            return Err(bad("slide.restore", "a slide with this id is already open"));
+        }
+        let id = slide.id;
+        let at = index.min(doc.slides.len());
+        let mut slide = slide;
+        // Animations and shapes keep their ids: the image is the exact slide that was deleted.
+        slide.id = id;
+        for (list, pos) in &sections {
+            if let Some(section) = doc.sections.get_mut(*list as usize)
+                && !section.slides.contains(&id)
+            {
+                let pos = (*pos as usize).min(section.slides.len());
+                section.slides.insert(pos, id);
+            }
+        }
+        for (list, pos) in &shows {
+            if let Some(show) = doc.custom_shows.get_mut(*list as usize)
+                && !show.slides.contains(&id)
+            {
+                let pos = (*pos as usize).min(show.slides.len());
+                show.slides.insert(pos, id);
+            }
+        }
+        doc.slides.insert(at, Arc::new(slide));
+        doc.fix_next_id();
+        sel.target = Target::Slides;
+        sel.slide = at;
+        sel.slides = vec![id];
+        sel.shapes.clear();
+        sel.text = None;
+        Ok(json!({"ids": [id]}))
+    })
+}
+
+/// `[[index, position], …]` from a command parameter; out-of-range numbers are refused.
+fn positions(p: &Value, key: &str, cmd: &str) -> Result<Vec<(u32, u32)>> {
+    let Some(list) = p.get(key).filter(|v| !v.is_null()) else { return Ok(Vec::new()) };
+    let list = list.as_array().ok_or_else(|| bad(cmd, format!("`{key}` must be a list of [index, position] pairs")))?;
+    if list.len() > 4096 {
+        return Err(bad(cmd, format!("`{key}` is too long")));
+    }
+    list.iter()
+        .map(|pair| serde_json::from_value::<(u32, u32)>(pair.clone()).map_err(|_| bad(cmd, format!("`{key}` must hold [index, position] pairs"))))
+        .collect()
 }
 
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {
@@ -760,6 +836,34 @@ mod tests {
                 assert_eq!(s.doc().expect("doc").doc.slides.len(), 3, "{cmd} {p}");
             }
         }
+    }
+
+    #[test]
+    fn restore_puts_a_deleted_slide_back_with_its_section_membership() {
+        let (mut s, ids) = deck(3);
+        s.execute("section.add", &json!({"name": "Part", "at": 1})).expect("section");
+        let (slide, index, sections) = {
+            let doc = s.doc().expect("doc").doc.clone();
+            let at = doc.slide_index(deckcraft_model::SlideId(ids[1])).expect("slide index");
+            let sections: Vec<(u32, u32)> = doc
+                .sections
+                .iter()
+                .enumerate()
+                .filter_map(|(i, sec)| sec.slides.iter().position(|x| *x == deckcraft_model::SlideId(ids[1])).map(|p| (i as u32, p as u32)))
+                .collect();
+            assert!(!sections.is_empty(), "the section holds the slide");
+            (serde_json::to_value(doc.slides[at].as_ref()).expect("slide json"), at as u32, sections)
+        };
+        s.execute("slide.delete", &json!({"ids": [ids[1]]})).expect("delete");
+        assert_eq!(s.doc().expect("doc").doc.slides.len(), 2);
+        s.execute("slide.restore", &json!({"index": index, "slide": slide, "sections": sections})).expect("restore");
+        let doc = s.doc().expect("doc").doc.clone();
+        assert_eq!(doc.slides.len(), 3);
+        assert_eq!(doc.slides[index as usize].id, deckcraft_model::SlideId(ids[1]), "the slide came back at its index");
+        assert!(doc.sections.iter().any(|sec| sec.slides.contains(&doc.slides[index as usize].id)), "the section got it back");
+        let again =
+            s.execute("slide.restore", &json!({"index": index, "slide": serde_json::to_value(doc.slides[index as usize].as_ref()).expect("json")}));
+        assert!(again.is_err(), "the same slide id cannot be open twice");
     }
 
     /// A deck of `n` slides and its slide ids, in order.

@@ -24,7 +24,7 @@ use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, SlideId, find_sha
 use serde_json::{Value, json};
 
 use crate::delta::delta;
-use crate::history::{Histories, Image, Snapshot, Step};
+use crate::history::{Change, Histories, Image, Restore, SlideImage, Snapshot, Step};
 use crate::keys::{KeyIssuer, KeyMap};
 use crate::media::MediaCache;
 
@@ -152,18 +152,13 @@ impl Adapter {
                 return Err(Rejection::undo_conflict("that operation is not the latest step of this history", Some(head)));
             }
         }
-        if let Payload::ShapeField { .. } = &op.payload {
-            // The exact model value is the server's own before/after image, never a client edit:
-            // a forged value would go around the fill/line/format allowlists.
+        if op.history.is_some() || matches!(op.payload, Payload::ShapeField { .. } | Payload::ShapeFields { .. } | Payload::SlideRestore { .. }) {
+            // A history move is the server's own before/after image, never a client edit: the
+            // exact value, the object and a structural restore must all match the recorded step.
             self.check_restore(actor, op, head)?;
         }
 
         let before = session.doc().map_err(|_| Rejection::invalid("no document open", Some(head)))?.doc.clone();
-        // What this step replaces, for the actor's own undo (ADR 0010). Captured only for
-        // operations that are a merge of one object's values; a structural step is not undone in
-        // v1 (RFC §13, open question 4).
-        let old_image = self.capture(&before, op);
-
         let out = self.apply_confirmed(session, head, actor, op)?;
         let after = session.doc().map_err(|_| Rejection::invalid("the document closed while applying", Some(head)))?.doc.clone();
 
@@ -171,11 +166,10 @@ impl Adapter {
             Some(HistoryAction::Undo { .. }) => self.history.of(actor).commit_undo(),
             Some(HistoryAction::Redo { .. }) => self.history.of(actor).commit_redo(),
             None => {
-                if let Some(old) = old_image
-                    && let Some(new) = self.capture(&after, op)
-                {
-                    let slot = self.history.of(actor);
-                    slot.record(Step { op_id: op.op_id.clone(), version: head.saturating_add(1), before: old, after: new });
+                // What this step replaced and what it left, for the actor's own undo (ADR 0010).
+                // A merge step may touch several objects (a group's members) or a whole slide.
+                if let Some((old, new)) = self.capture_step(&before, &after, op) {
+                    self.history.of(actor).record(Step { op_id: op.op_id.clone(), version: head.saturating_add(1), before: old, after: new });
                 }
             }
         }
@@ -193,30 +187,34 @@ impl Adapter {
         self.keys.sync(&after, &mut self.issuer);
         let out = delta(&self.keys, &before, &after);
         self.bury(&before, &out);
+        // A restored slide comes back from the grave: a late operation on it is valid again.
+        for change in &out.changes {
+            if change.shape.is_none() && change.kind == ChangeKind::Inserted {
+                self.dead_slides.remove(&change.slide);
+            }
+        }
         Ok(out)
     }
 
     /// Build the operation that takes back `actor`'s last step (ADR 0010).
     ///
-    /// Refused with `undo_conflict` when the object no longer holds what that step left: someone
-    /// else changed it after, and their edit must not be overwritten. The history is only moved
-    /// when the returned operation is applied and accepted, so a refusal changes nothing.
+    /// Refused with `undo_conflict` when the objects no longer hold what that step left: someone
+    /// else changed one of them after, and their edit must not be overwritten. The history is only
+    /// moved when the returned operation is applied and accepted, so a refusal changes nothing.
     pub fn undo(&mut self, session: &Session, head: u64, actor: &str, op_id: &str) -> Result<OpEnvelope, Rejection> {
         let step = self.history.of(actor).peek_undo().cloned().ok_or_else(|| Rejection::invalid("nothing to undo", Some(head)))?;
         let doc = session.doc().map_err(|_| Rejection::invalid("no document open", Some(head)))?.doc.clone();
-        let current =
-            self.capture_snapshot(&doc, &step.before).ok_or_else(|| Rejection::undo_conflict("the object of this step is gone", Some(head)))?;
-        if current != step.after {
+        if !self.step_matches(&doc, &step.after) {
             return Err(Rejection::undo_conflict("someone else changed this object after the step", Some(head)));
         }
-        let (slide, shape, payload) =
+        let Restore { slide, shape, payload } =
             step.restoring_payload().ok_or_else(|| Rejection::invalid("the recorded value cannot be restored", Some(head)))?;
         Ok(OpEnvelope {
             op_id: op_id.to_string(),
             doc: String::new(),
             base_version: head,
-            kind: OpKind::Command,
-            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            kind: class_of(&payload),
+            target: Target { slide: Some(slide), shape, ..Target::default() },
             payload,
             history: Some(HistoryAction::Undo { op_id: step.op_id.clone() }),
         })
@@ -226,26 +224,29 @@ impl Adapter {
     pub fn redo(&mut self, session: &Session, head: u64, actor: &str, op_id: &str) -> Result<OpEnvelope, Rejection> {
         let step = self.history.of(actor).peek_redo().cloned().ok_or_else(|| Rejection::invalid("nothing to redo", Some(head)))?;
         let doc = session.doc().map_err(|_| Rejection::invalid("no document open", Some(head)))?.doc.clone();
-        let current =
-            self.capture_snapshot(&doc, &step.after).ok_or_else(|| Rejection::undo_conflict("the object of this step is gone", Some(head)))?;
-        if current != step.before {
+        if !self.step_matches(&doc, &step.before) {
             return Err(Rejection::undo_conflict("someone else changed this object after the undo", Some(head)));
         }
-        let (slide, shape, payload) =
+        let Restore { slide, shape, payload } =
             step.reapplying_payload().ok_or_else(|| Rejection::invalid("the recorded value cannot be restored", Some(head)))?;
         Ok(OpEnvelope {
             op_id: op_id.to_string(),
             doc: String::new(),
             base_version: head,
-            kind: OpKind::Command,
-            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            kind: class_of(&payload),
+            target: Target { slide: Some(slide), shape, ..Target::default() },
             payload,
             history: Some(HistoryAction::Redo { op_id: step.op_id.clone() }),
         })
     }
 
-    /// A restore payload may only repeat a value this actor's own latest step recorded: it is a
-    /// history move, not a way to set any model value.
+    /// Whether the document still holds every value a step left (undo) or replaced (redo).
+    fn step_matches(&self, doc: &Presentation, expected: &[Change]) -> bool {
+        !expected.is_empty() && expected.iter().all(|at| self.capture_change(doc, at).is_some_and(|current| current.same_state(at)))
+    }
+
+    /// A restore payload may only repeat what this actor's own latest step recorded: it is a
+    /// history move, not a way to set any model value or to address another object.
     fn check_restore(&self, actor: &str, op: &OpEnvelope, head: u64) -> Result<(), Rejection> {
         let history = self.history.get(actor);
         let step = match (&op.history, history) {
@@ -255,36 +256,134 @@ impl Adapter {
         }
         .ok_or_else(|| Rejection::invalid("a restore is only sent as an undo or redo of this actor's own step", Some(head)))?;
         let redo = matches!(op.history, Some(HistoryAction::Redo { .. }));
-        let at = if redo { &step.after } else { &step.before };
-        if op.target.slide.as_ref() != Some(&at.slide) || op.target.shape.as_ref() != Some(&at.shape) {
-            return Err(Rejection::invalid("a restore must address the object of its step", Some(head)));
-        }
-        match at.image.payload(at.cell) {
-            Some(expected) if expected == op.payload => Ok(()),
-            _ => Err(Rejection::invalid("the restore value is not the one its step recorded", Some(head))),
+        let expected = if redo { step.reapplying_payload() } else { step.restoring_payload() };
+        match expected {
+            Some(expected)
+                if op.target.slide.as_ref() == Some(&expected.slide) && op.target.shape == expected.shape && op.payload == expected.payload =>
+            {
+                Ok(())
+            }
+            Some(_) => Err(Rejection::invalid("the restore does not match the value and object its step recorded", Some(head))),
+            None => Err(Rejection::invalid("the recorded value cannot be restored", Some(head))),
         }
     }
 
-    /// The image an operation replaces, when it is a merge of one object's values.
-    fn capture(&self, doc: &Presentation, op: &OpEnvelope) -> Option<Snapshot> {
-        // Only a merge of one object's values is undoable in v1; a structural step is not.
+    /// The before and after images of one operation, when it is undoable in v1.
+    ///
+    /// Shape value steps record one image per object a merge touched (a group's fill/outline
+    /// records every member). `slide.delete`, `slide.new` and `slide.duplicate` record the whole
+    /// slide, which is what structural undo restores (RFC §13, item 4). Other structural shape
+    /// operations are still out of v1.
+    fn capture_step(&self, before: &Presentation, after: &Presentation, op: &OpEnvelope) -> Option<(Vec<Change>, Vec<Change>)> {
         let (cell, image) = match &op.payload {
             Payload::ShapeMove { .. } | Payload::ShapeSetBounds { .. } => (None, Image::Xfrm { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }),
             Payload::TextSet { cell, .. } => (*cell, Image::Text(String::new())),
             Payload::TextInsert { .. } | Payload::TextDelete { .. } => (None, Image::Text(String::new())),
-            // A fill, an outline and a `format.*` step replace one object's value, so they are
-            // undoable too (the value is captured from the document, not from the payload).
-            Payload::ShapeFill { .. } => (None, Image::Fill(None)),
-            Payload::ShapeLine { .. } => (None, Image::Line(None)),
+            Payload::ShapeFill { .. } => return self.capture_appearance(before, after, op, Image::Fill(None)),
+            Payload::ShapeLine { .. } => return self.capture_appearance(before, after, op, Image::Line(None)),
             Payload::FormatSet { .. } => (None, Image::Format(TextBody::default())),
             Payload::ShapeField { field, .. } => (None, image_of_field(*field)),
+            Payload::SlideDelete {} => return self.capture_slide_delete(before, after, op),
+            Payload::SlideInsert { .. } | Payload::SlideDuplicate {} => return self.capture_slide_insert(before, after),
             _ => return None,
         };
-        let snapshot = Snapshot { slide: op.target.slide.clone()?, shape: op.target.shape.clone()?, cell, image };
-        self.capture_snapshot(doc, &snapshot)
+        let template = Snapshot { slide: op.target.slide.clone()?, shape: op.target.shape.clone()?, cell, image };
+        Some((vec![Change::Shape(self.capture_snapshot(before, &template)?)], vec![Change::Shape(self.capture_snapshot(after, &template)?)]))
     }
 
-    /// Read the current value of one object, if this adapter knows its keys.
+    /// A group's fill or outline formats the group and every visible member; record one image
+    /// per object and keep the ones the step actually changed.
+    fn capture_appearance(&self, before: &Presentation, after: &Presentation, op: &OpEnvelope, image: Image) -> Option<(Vec<Change>, Vec<Change>)> {
+        let slide_key = op.target.slide.clone()?;
+        let shape_key = op.target.shape.clone()?;
+        let slide_id = self.keys.slide_id(&slide_key)?;
+        let shape_id = self.keys.shape_id(slide_id, &shape_key)?;
+        let slide = before.slide(slide_id)?;
+        let shape = find_shape(&slide.shapes, shape_id)?;
+        let mut templates = Vec::new();
+        fn walk(shapes: &[Shape], slide_id: SlideId, slide_key: &SlideKey, image: &Image, keys: &KeyMap, out: &mut Vec<Snapshot>, depth: usize) {
+            if depth > 64 {
+                return;
+            }
+            for sh in shapes {
+                if let Some(key) = keys.shape_key(slide_id, sh.id) {
+                    out.push(Snapshot { slide: slide_key.clone(), shape: key.clone(), cell: None, image: image.clone() });
+                }
+                walk(sh.children(), slide_id, slide_key, image, keys, out, depth + 1);
+            }
+        }
+        walk(std::slice::from_ref(shape), slide_id, &slide_key, &image, &self.keys, &mut templates, 0);
+        let mut old = Vec::with_capacity(templates.len());
+        let mut new = Vec::with_capacity(templates.len());
+        for at in &templates {
+            let (Some(was), Some(now)) = (self.capture_snapshot(before, at), self.capture_snapshot(after, at)) else {
+                return None;
+            };
+            if was != now {
+                old.push(Change::Shape(was));
+                new.push(Change::Shape(now));
+            }
+        }
+        (!old.is_empty()).then_some((old, new))
+    }
+
+    /// Undo of `slide.delete`: the whole slide was present before and is absent after.
+    fn capture_slide_delete(&self, before: &Presentation, after: &Presentation, op: &OpEnvelope) -> Option<(Vec<Change>, Vec<Change>)> {
+        let key = op.target.slide.clone()?;
+        let id = self.keys.slide_id(&key)?;
+        let was = self.slide_image(before, &key, id)?;
+        debug_assert!(after.slide(id).is_none(), "the slide is gone after a delete");
+        Some((vec![Change::Slide(was)], vec![Change::Slide(absent_slide(key))]))
+    }
+
+    /// Undo of `slide.new` or `slide.duplicate`: find the one slide the step added.
+    fn capture_slide_insert(&self, before: &Presentation, after: &Presentation) -> Option<(Vec<Change>, Vec<Change>)> {
+        let added: Vec<SlideId> = after.slides.iter().map(|s| s.id).filter(|id| before.slide(*id).is_none()).collect();
+        let [id] = added.as_slice() else { return None };
+        let key = self.keys.slide_key(*id)?.clone();
+        let now = self.slide_image(after, &key, *id)?;
+        Some((vec![Change::Slide(absent_slide(key))], vec![Change::Slide(now)]))
+    }
+
+    /// Read the current state of one recorded object, if this adapter knows its keys.
+    fn capture_change(&self, doc: &Presentation, at: &Change) -> Option<Change> {
+        match at {
+            Change::Shape(snapshot) => self.capture_snapshot(doc, snapshot).map(Change::Shape),
+            Change::Slide(snapshot) => {
+                let id = self.keys.slide_id(&snapshot.key)?;
+                match doc.slide(id) {
+                    Some(_) => Some(Change::Slide(self.slide_image(doc, &snapshot.key, id)?)),
+                    None => Some(Change::Slide(absent_slide(snapshot.key.clone()))),
+                }
+            }
+        }
+    }
+
+    /// The full image of one present slide: content, position and section/custom-show membership.
+    fn slide_image(&self, doc: &Presentation, key: &SlideKey, id: SlideId) -> Option<SlideImage> {
+        let slide = doc.slide(id)?;
+        let sections = doc
+            .sections
+            .iter()
+            .enumerate()
+            .filter_map(|(i, section)| section.slides.iter().position(|x| *x == id).map(|p| (i as u32, p as u32)))
+            .collect();
+        let shows = doc
+            .custom_shows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, show)| show.slides.iter().position(|x| *x == id).map(|p| (i as u32, p as u32)))
+            .collect();
+        Some(SlideImage {
+            key: key.clone(),
+            index: doc.slide_index(id).unwrap_or(0) as u32,
+            slide: Some(serde_json::to_value(slide).ok()?),
+            sections,
+            shows,
+        })
+    }
+
+    /// Read the current value of one shape, if this adapter knows its keys.
     fn capture_snapshot(&self, doc: &Presentation, at: &Snapshot) -> Option<Snapshot> {
         let slide_id = self.keys.slide_id(&at.slide)?;
         let shape_id = self.keys.shape_id(slide_id, &at.shape)?;
@@ -303,20 +402,10 @@ impl Adapter {
                 };
                 Image::Text(body.text())
             }
-            Image::Fill(_) => {
-                // `shape.fill` also formats a group's members; one object's image could not put
-                // them back, so a group's fill step is not recorded (RFC §13.4).
-                if matches!(shape.kind, ShapeKind::Group { .. }) {
-                    return None;
-                }
-                Image::Fill(shape.fill.clone())
-            }
-            Image::Line(_) => {
-                if matches!(shape.kind, ShapeKind::Group { .. }) {
-                    return None;
-                }
-                Image::Line(shape.line.clone())
-            }
+            // A group carries its own fill/outline too; the member images are captured by the
+            // same traversal, so a group's appearance step is fully restorable.
+            Image::Fill(_) => Image::Fill(shape.fill.clone()),
+            Image::Line(_) => Image::Line(shape.line.clone()),
             Image::Format(_) => Image::Format(shape.text.clone()?),
         };
         Some(Snapshot { slide: at.slide.clone(), shape: at.shape.clone(), cell: at.cell, image })
@@ -462,6 +551,34 @@ impl Adapter {
                     ShapeField::Text => "text",
                 };
                 self.call(session, "shape.setField", json!({"field": name, "value": value, "ids": [shape.0]}), head)
+            }
+            Payload::ShapeFields { items } => {
+                let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
+                // Resolve every object before the first write: the operation is one atomic step,
+                // so a missing member must refuse it instead of applying half a group.
+                let mut resolved = Vec::with_capacity(items.len());
+                for item in items {
+                    let shape = self.resolve_shape(before, slide, &item.shape, head)?;
+                    resolved.push((shape, item));
+                }
+                if resolved.is_empty() {
+                    return Err(Rejection::invalid("a merge restore carries no values", Some(head)));
+                }
+                self.select_slide(session, before, slide, head)?;
+                let values: Vec<Value> = resolved
+                    .iter()
+                    .map(|(shape, item)| {
+                        json!({
+                            "id": shape.0,
+                            "field": match item.field { ShapeField::Fill => "fill", ShapeField::Line => "line", ShapeField::Text => "text" },
+                            "value": item.value.clone(),
+                        })
+                    })
+                    .collect();
+                self.call(session, "shape.setFields", json!({"items": values}), head)
+            }
+            Payload::SlideRestore { index, slide: image, sections, shows } => {
+                self.call(session, "slide.restore", json!({"index": index, "slide": image, "sections": sections, "shows": shows}), head)
             }
             Payload::ShapeDelete {} => {
                 let (_, shapes) = self.resolve_many(before, &op.target, head)?;
@@ -672,6 +789,11 @@ fn walk_ids(shapes: &[Shape], out: &mut Vec<ShapeId>, depth: usize) {
     }
 }
 
+/// The image of a slide that is not in the document.
+fn absent_slide(key: SlideKey) -> SlideImage {
+    SlideImage { key, index: 0, slide: None, sections: Vec::new(), shows: Vec::new() }
+}
+
 /// The kind of value a restore puts back. The document supplies the value itself; the payload
 /// only says which field to read.
 fn image_of_field(field: ShapeField) -> Image {
@@ -733,7 +855,8 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::ShapeFill { .. }
         | Payload::ShapeLine { .. }
         | Payload::FormatSet { .. }
-        | Payload::ShapeField { .. } => OpKind::Command,
+        | Payload::ShapeField { .. }
+        | Payload::ShapeFields { .. } => OpKind::Command,
         Payload::ShapeInsert { .. }
         | Payload::PictureInsert { .. }
         | Payload::MediaInsert { .. }
@@ -743,6 +866,7 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::Ungroup {}
         | Payload::SlideInsert { .. }
         | Payload::SlideDelete {}
+        | Payload::SlideRestore { .. }
         | Payload::SlideMove { .. }
         | Payload::SlideDuplicate {} => OpKind::Structural,
     }
@@ -1432,26 +1556,166 @@ mod tests {
     }
 
     #[test]
-    fn a_fill_step_on_a_group_is_not_recorded_for_undo() {
+    fn undo_of_a_group_fill_restores_the_group_and_every_member() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let doc = doc_of(&a);
+        let slide = aa.keys().slide_key(doc.slides[0].id).expect("slide").clone();
+        let ids: Vec<ShapeKey> = doc.slides[0].shapes.iter().map(|x| aa.keys().shape_key(doc.slides[0].id, x.id).expect("key").clone()).collect();
+        let group = op(OpKind::Structural, 0, Target { slide: Some(slide.clone()), shapes: ids, ..Target::default() }, Payload::Group {});
+        aa.apply(&mut a, 0, "a", &group).expect("group");
+        bb.apply_confirmed(&mut b, 0, "a", &group).expect("b groups");
+        let group_key = {
+            let after = doc_of(&a);
+            aa.keys().shape_key(after.slides[0].id, after.slides[0].shapes[0].id).expect("group key").clone()
+        };
+
+        let fill = command("op-2", 1, &slide, &group_key, Payload::ShapeFill { fill: FillSpec::Solid { color: "#ff0000".into() } });
+        aa.apply(&mut a, 1, "a", &fill).expect("fill the group");
+        bb.apply_confirmed(&mut b, 1, "a", &fill).expect("b fills the group");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(aa.history().get("a").map(|h| h.undo_len()), Some(1), "the group's appearance step is now recorded");
+
+        let undo = aa.undo(&a, 2, "a", "undo-1").expect("undo the group fill");
+        let Payload::ShapeFields { items } = &undo.payload else { panic!("a group restore is one merge payload: {:?}", undo.payload) };
+        assert_eq!(items.len(), 3, "the group and its two members");
+        assert_eq!(undo.kind, OpKind::Command);
+        aa.apply(&mut a, 2, "a", &undo).expect("undo on a");
+        bb.apply_confirmed(&mut b, 2, "a", &undo).expect("b applies the undo");
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas converge on the restore");
+        let group = &doc_of(&a).slides[0].shapes[0];
+        assert!(group.fill.is_none(), "the group's own fill is back to inherited");
+        assert!(group.children().iter().all(|child| child.fill.is_none()), "every member's fill is back");
+
+        let redo = aa.redo(&a, 3, "a", "redo-1").expect("redo the group fill");
+        aa.apply(&mut a, 3, "a", &redo).expect("redo on a");
+        bb.apply_confirmed(&mut b, 3, "a", &redo).expect("b applies the redo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        let group = &doc_of(&a).slides[0].shapes[0];
+        assert!(matches!(group.fill, Some(deckcraft_model::Fill::Solid { .. })));
+        assert!(group.children().iter().all(|child| matches!(child.fill, Some(deckcraft_model::Fill::Solid { .. }))));
+    }
+
+    #[test]
+    fn a_group_undo_is_refused_when_someone_else_changed_one_member() {
         let mut s = deck();
         let mut ad = Adapter::new("k");
         ad.join(&doc_of(&s));
         let doc = doc_of(&s);
         let slide = ad.keys().slide_key(doc.slides[0].id).expect("slide").clone();
         let ids: Vec<ShapeKey> = doc.slides[0].shapes.iter().map(|x| ad.keys().shape_key(doc.slides[0].id, x.id).expect("key").clone()).collect();
-        let group = op(OpKind::Structural, 0, Target { slide: Some(slide.clone()), shapes: ids, ..Target::default() }, Payload::Group {});
-        ad.apply(&mut s, 0, "a", &group).expect("group");
-        let group_key = {
+        ad.apply(
+            &mut s,
+            0,
+            "a",
+            &op(OpKind::Structural, 0, Target { slide: Some(slide.clone()), shapes: ids, ..Target::default() }, Payload::Group {}),
+        )
+        .expect("group");
+        let (group_key, member_key) = {
             let after = doc_of(&s);
-            ad.keys().shape_key(after.slides[0].id, after.slides[0].shapes[0].id).expect("group key").clone()
+            let group = after.slides[0].shapes[0].clone();
+            let member = group.children()[0].id;
+            (
+                ad.keys().shape_key(after.slides[0].id, group.id).expect("group key").clone(),
+                ad.keys().shape_key(after.slides[0].id, member).expect("member key").clone(),
+            )
         };
-        ad.apply(&mut s, 1, "a", &command("op-1", 1, &slide, &group_key, Payload::ShapeFill { fill: FillSpec::Solid { color: "#ff0000".into() } }))
-            .expect("fill the group");
-        assert_eq!(
-            ad.history().get("a").map(|h| h.undo_len()),
-            None,
-            "one object's fill image cannot put a group's members back, so the step is not undoable"
-        );
+        ad.apply(&mut s, 1, "a", &command("op-2", 1, &slide, &group_key, Payload::ShapeFill { fill: FillSpec::Solid { color: "#ff0000".into() } }))
+            .expect("a fills the group");
+        ad.apply(&mut s, 2, "b", &command("op-3", 2, &slide, &member_key, Payload::ShapeFill { fill: FillSpec::Solid { color: "#00ff00".into() } }))
+            .expect("b repaints one member");
+        let err = ad.undo(&s, 3, "a", "undo-1").expect_err("a member no longer holds the step's value");
+        assert_eq!(err.code, RejectCode::UndoConflict);
+        assert!(!err.retryable);
+        assert_eq!(ad.history().get("a").map(|h| h.undo_len()), Some(1), "the refused undo moves nothing");
+    }
+
+    #[test]
+    fn undo_of_a_slide_delete_restores_the_whole_slide_on_both_replicas() {
+        let (mut a, mut b) = (deck(), deck());
+        for s in [&mut a, &mut b] {
+            s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("second slide");
+            s.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100], "text": "Kept"})).expect("content");
+        }
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let before = doc_of(&a);
+        let slide = aa.keys().slide_key(before.slides[1].id).expect("slide").clone();
+
+        let delete = op(OpKind::Structural, 0, Target { slide: Some(slide.clone()), ..Target::default() }, Payload::SlideDelete {});
+        aa.apply(&mut a, 0, "a", &delete).expect("delete the slide");
+        bb.apply_confirmed(&mut b, 0, "a", &delete).expect("b deletes it");
+        assert_eq!(doc_of(&a).slides.len(), 1);
+        assert_eq!(aa.history().get("a").map(|h| h.undo_len()), Some(1), "a structural step is now undoable");
+
+        let undo = aa.undo(&a, 1, "a", "undo-1").expect("undo the delete");
+        assert!(matches!(undo.payload, Payload::SlideRestore { .. }), "{:?}", undo.payload);
+        assert_eq!(undo.kind, OpKind::Structural, "putting a slide back changes every index after it");
+        assert_eq!(undo.target.slide.as_ref(), Some(&slide));
+        aa.apply(&mut a, 1, "a", &undo).expect("undo on a");
+        bb.apply_confirmed(&mut b, 1, "a", &undo).expect("b applies the undo");
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas converge on the restored slide");
+        assert_eq!(doc_of(&a).slides.len(), 2);
+        assert_eq!(doc_of(&a).slides[1].shapes[0].text.as_ref().map(|t| t.text()), Some("Kept".into()), "the whole slide came back");
+
+        let redo = aa.redo(&a, 2, "a", "redo-1").expect("redo the delete");
+        assert_eq!(redo.payload, Payload::SlideDelete {});
+        aa.apply(&mut a, 2, "a", &redo).expect("redo on a");
+        bb.apply_confirmed(&mut b, 2, "a", &redo).expect("b applies the redo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides.len(), 1);
+    }
+
+    #[test]
+    fn undo_of_a_slide_insert_deletes_it_and_redo_puts_it_back() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let insert = op(OpKind::Structural, 0, Target::default(), Payload::SlideInsert { before: None, layout: Some("blank".into()) });
+        aa.apply(&mut a, 0, "a", &insert).expect("new slide");
+        bb.apply_confirmed(&mut b, 0, "a", &insert).expect("b adds the slide");
+        assert_eq!(doc_of(&a).slides.len(), 2);
+        assert_eq!(aa.history().get("a").map(|h| h.undo_len()), Some(1));
+
+        let undo = aa.undo(&a, 1, "a", "undo-1").expect("undo the insert");
+        assert_eq!(undo.payload, Payload::SlideDelete {});
+        aa.apply(&mut a, 1, "a", &undo).expect("undo on a");
+        bb.apply_confirmed(&mut b, 1, "a", &undo).expect("b applies the undo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides.len(), 1);
+
+        let redo = aa.redo(&a, 2, "a", "redo-1").expect("redo the insert");
+        assert!(matches!(redo.payload, Payload::SlideRestore { .. }), "{:?}", redo.payload);
+        aa.apply(&mut a, 2, "a", &redo).expect("redo on a");
+        bb.apply_confirmed(&mut b, 2, "a", &redo).expect("b applies the redo");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(doc_of(&a).slides.len(), 2);
+    }
+
+    #[test]
+    fn a_slide_restore_cannot_name_another_slide() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        // Add a second slide so a forged target exists.
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("second slide");
+        ad.join(&doc_of(&s));
+        let key = |s: &Session, i: usize| ad.keys().slide_key(doc_of(s).slides[i].id).expect("slide key").clone();
+        let (title, second) = (key(&s, 0), key(&s, 1));
+        ad.apply(&mut s, 0, "a", &op(OpKind::Structural, 0, Target { slide: Some(title.clone()), ..Target::default() }, Payload::SlideDelete {}))
+            .expect("delete");
+        let mut undo = ad.undo(&s, 1, "a", "undo-1").expect("undo");
+        undo.target.slide = Some(second);
+        let err = ad.apply(&mut s, 1, "a", &undo).expect_err("a restore must address its own slide");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert_eq!(doc_of(&s).slides.len(), 1, "nothing was resurrected");
     }
 
     #[test]

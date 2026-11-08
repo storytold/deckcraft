@@ -186,6 +186,23 @@ pub enum Payload {
     /// commands accept only a lossy subset of the model. A replica runs it through
     /// `shape.setField`, so every replica puts the same value back.
     ShapeField { field: ShapeField, value: serde_json::Value },
+    /// Puts back the exact values of several shapes in one operation. A group's `shape.fill` or
+    /// `shape.line` also formats every visible member, so its undo restores the group and each
+    /// member atomically: `target.slide` names the slide, every item names one shape on it.
+    /// Like [`Payload::ShapeField`], the server builds this from the actor's history only.
+    ShapeFields { items: Vec<ShapeFieldItem> },
+    /// Puts back a deleted slide from the server's whole-slide image (undo of `slide.delete`, or
+    /// the redo of `slide.new`/`slide.duplicate`). `slide` is the model serialised as JSON; the
+    /// membership lists return it to the sections and custom shows it belonged to. Structural:
+    /// it changes every index after `index`.
+    SlideRestore {
+        index: u32,
+        slide: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sections: Vec<(u32, u32)>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        shows: Vec<(u32, u32)>,
+    },
     /// Removes one shape (`target.shape`) or several (`target.shapes`).
     ShapeDelete {},
     /// Inserts a slide before `target.slide` (`None`: at the end).
@@ -233,6 +250,16 @@ pub enum ShapeField {
     Fill,
     Line,
     Text,
+}
+
+/// One shape value in a [`Payload::ShapeFields`] merge restore.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShapeFieldItem {
+    pub shape: ShapeKey,
+    pub field: ShapeField,
+    /// The model value as JSON; `null` = unset.
+    pub value: serde_json::Value,
 }
 
 /// A final fill value. Only absolute forms are on the wire: a solid colour from the palette or
@@ -430,6 +457,8 @@ impl Payload {
             Payload::ShapeLine { .. } => "shape.line",
             Payload::FormatSet { format, .. } => format.id(),
             Payload::ShapeField { .. } => "shape.setField",
+            Payload::ShapeFields { .. } => "shape.setFields",
+            Payload::SlideRestore { .. } => "slide.restore",
             Payload::ShapeDelete {} => "edit.delete",
             Payload::SlideInsert { .. } => "slide.new",
             Payload::SlideDelete {} => "slide.delete",
@@ -992,6 +1021,27 @@ mod tests {
         assert_eq!(FormatCmd::from_id("format.bold"), Some(FormatCmd::Bold));
         assert_eq!(FormatCmd::from_id("format.nope"), None);
         assert_eq!(Payload::SlideDuplicate {}.command(), "slide.duplicate");
+    }
+
+    #[test]
+    fn merge_and_slide_restores_round_trip_and_name_their_command() {
+        let fields = Payload::ShapeFields {
+            items: vec![
+                ShapeFieldItem { shape: ShapeKey("k-h1".into()), field: ShapeField::Fill, value: json!({"kind": "none"}) },
+                ShapeFieldItem { shape: ShapeKey("k-h2".into()), field: ShapeField::Line, value: serde_json::Value::Null },
+            ],
+        };
+        let text = serde_json::to_string(&fields).expect("encode");
+        assert!(text.contains("\"cmd\":\"shape_fields\""), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), fields);
+        assert_eq!(fields.command(), "shape.setFields");
+
+        let restore = Payload::SlideRestore { index: 2, slide: json!({"id": 7, "name": "Back"}), sections: vec![(0, 1)], shows: vec![] };
+        let text = serde_json::to_string(&restore).expect("encode");
+        assert!(text.contains("\"cmd\":\"slide_restore\""), "{text}");
+        assert!(!text.contains("shows"), "an empty list is omitted: {text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), restore);
+        assert_eq!(restore.command(), "slide.restore");
     }
 
     #[test]

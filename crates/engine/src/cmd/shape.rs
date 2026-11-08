@@ -157,6 +157,15 @@ pub fn specs() -> Vec<CommandSpec> {
             set_field
         ),
         cmd!(
+            "shape.setFields",
+            "Set Exact Values",
+            [],
+            None,
+            "{items: [{id, field: fill|line|text, value}]} (restores several values in one atomic step; a group's fill/outline undo uses it)",
+            has_slide,
+            set_fields
+        ),
+        cmd!(
             "picture.crop",
             "Crop",
             ["Picture Format", "Size"],
@@ -408,6 +417,66 @@ fn decode_field<T: serde::de::DeserializeOwned>(v: &Value, what: &str) -> Result
     serde_json::from_value(v.clone()).map(Some).map_err(|e| bad("shape.setField", format!("invalid {what}: {e}")))
 }
 
+/// Most objects one `shape.setFields` merge may restore.
+const MAX_FIELDS_ITEMS: usize = 4096;
+/// Longest combined JSON of all values, so one operation stays inside the wire message limit.
+const MAX_FIELDS_JSON: usize = 192 * 1024;
+
+/// Set several shapes' fields in one atomic step.
+///
+/// A group's `shape.fill`/`shape.line` also formats every visible member, and undo must put all of
+/// them back. The values are validated and deserialised before the first shape is touched, so a
+/// bad member refuses the whole operation instead of leaving half a group restored.
+fn set_fields(s: &mut Session, p: &Value) -> Result<Value> {
+    enum Set {
+        Fill(Option<Fill>),
+        Line(Option<Line>),
+        Text(deckcraft_model::text::TextBody),
+    }
+    let items = p.get("items").and_then(Value::as_array).ok_or_else(|| bad("shape.setFields", "missing `items`"))?;
+    if items.is_empty() || items.len() > MAX_FIELDS_ITEMS {
+        return Err(bad("shape.setFields", format!("`items` must hold 1–{MAX_FIELDS_ITEMS} values")));
+    }
+    let mut prepared = Vec::with_capacity(items.len());
+    let mut total = 0usize;
+    for item in items {
+        let id = item.get("id").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok()).ok_or_else(|| bad("shape.setFields", "missing `id`"))?;
+        let field = str_param(item, "field").ok_or_else(|| bad("shape.setFields", "missing `field` (fill, line or text)"))?;
+        let value = item.get("value").cloned().unwrap_or(Value::Null);
+        let bytes = serde_json::to_vec(&value).map_err(|e| bad("shape.setFields", format!("invalid value: {e}")))?;
+        total = total.saturating_add(bytes.len());
+        if total > MAX_FIELDS_JSON {
+            return Err(bad("shape.setFields", "the values are too large"));
+        }
+        let set = match field {
+            "fill" => Set::Fill(decode_field::<Fill>(&value, "fill")?),
+            "line" => Set::Line(decode_field::<Line>(&value, "line")?),
+            "text" => {
+                let body = decode_field::<deckcraft_model::text::TextBody>(&value, "text")?
+                    .ok_or_else(|| bad("shape.setFields", "a text body cannot be cleared"))?;
+                if body.paragraphs.len() > MAX_PARAGRAPHS || body.paragraphs.iter().map(|q| q.runs.len()).sum::<usize>() > MAX_RUNS {
+                    return Err(bad("shape.setFields", "the text body is too large"));
+                }
+                Set::Text(body)
+            }
+            other => return Err(bad("shape.setFields", format!("unknown field `{other}` (fill, line or text)"))),
+        };
+        prepared.push((ShapeId(id), set));
+    }
+    s.edit(|doc, sel| {
+        let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad("shape.setFields", "no slide"))?;
+        for (id, set) in &prepared {
+            let sh = deckcraft_model::find_shape_mut(&mut shapes[..], *id).ok_or_else(|| bad("shape.setFields", format!("no shape {}", id.0)))?;
+            match set {
+                Set::Fill(fill) => sh.fill.clone_from(fill),
+                Set::Line(line) => sh.line.clone_from(line),
+                Set::Text(body) => sh.text = Some(body.clone()),
+            }
+        }
+        Ok(json!({"updated": prepared.len()}))
+    })
+}
+
 fn rename(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("shape.rename", "missing `name`"))?.to_string();
     edit_shapes(s, p, "shape.rename", |sh| {
@@ -483,6 +552,30 @@ mod tests {
 
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn set_fields_validates_every_value_before_touching_a_shape() {
+        let mut s = Session::with_new();
+        let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).expect("a")["id"].as_u64().expect("id");
+        let b = s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [200, 100, 80, 60]})).expect("b")["id"].as_u64().expect("id");
+        let bad = json!({"items": [
+            {"id": a, "field": "fill", "value": {"kind": "background"}},
+            {"id": b, "field": "fill", "value": {"kind": "nonsense"}},
+        ]});
+        assert!(s.execute("shape.setFields", &bad).is_err(), "a bad value refuses the whole merge");
+        let fills_after_bad: Vec<Option<Fill>> = s.doc().expect("doc").doc.slides[0].shapes.iter().map(|sh| sh.fill.clone()).collect();
+        assert!(fills_after_bad.iter().all(Option::is_none), "nothing was written");
+
+        let good = json!({"items": [
+            {"id": a, "field": "fill", "value": {"kind": "background"}},
+            {"id": b, "field": "fill", "value": {"kind": "none"}},
+        ]});
+        s.execute("shape.setFields", &good).expect("a good merge");
+        let doc = s.doc().expect("doc").doc.clone();
+        let fill_of = |id: u64| doc.slides[0].shapes.iter().find(|sh| sh.id.0 as u64 == id).and_then(|sh| sh.fill.clone());
+        assert_eq!(fill_of(a), Some(Fill::Background));
+        assert_eq!(fill_of(b), Some(Fill::None));
+    }
 
     fn nested_group() -> (Session, Vec<ShapeId>, ShapeId, ShapeId) {
         let mut s = Session::with_new();
