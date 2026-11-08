@@ -401,6 +401,24 @@ fn a_slide_with_an_unknown_master_falls_back_the_same_way_every_time() {
     }
 }
 
+/// A damaged Current User record doesn't make a PowerPoint 97 file "too old": the newest edit is
+/// found by scanning the document stream instead. A file with no edit record at all, behind a
+/// token that isn't PowerPoint 97's, is still reported as too old.
+#[test]
+fn a_damaged_current_user_falls_back_to_the_scan() {
+    let (cu, doc, pics) = streams(0xE391_C05F);
+    let open = |cu: &[u8], doc: &[u8]| crate::import(&crate::cfb::build(&[("Current User", cu), ("PowerPoint Document", doc), ("Pictures", &pics)]));
+    // Truncated after the header and two bytes, so the token can't be read.
+    let truncated = atom(rt::CURRENT_USER, 0, &[0x14, 0]);
+    assert_eq!(open(&truncated, &doc).unwrap().slides.len(), 1);
+    // A corrupted token.
+    let corrupted = atom(rt::CURRENT_USER, 0, &le32(&[0x14, 0xDEAD_BEEF, 0, 0, 0]));
+    assert_eq!(open(&corrupted, &doc).unwrap().slides.len(), 1);
+    assert!(matches!(open(&corrupted, &atom(rt::DOCUMENT_ATOM, 0, &[0; 40])), Err(crate::PptError::TooOld)));
+    // An intact token that points at no edit still gets the scan, and a stream without one is damaged.
+    assert!(matches!(open(&cu, &atom(rt::DOCUMENT_ATOM, 0, &[0; 40])), Err(crate::PptError::Damaged(_))));
+}
+
 #[test]
 fn an_encrypted_presentation_says_so() {
     assert!(matches!(crate::import(&file_with(0xF3D1_C4DF)), Err(crate::PptError::Encrypted)));

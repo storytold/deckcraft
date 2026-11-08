@@ -94,16 +94,23 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
     // The current user names the newest edit; without it (some writers omit the stream), scan
     // for the last UserEditAtom in the stream.
     let mut edit_at = None;
+    // [MS-PPT] allows only the two tokens. Any other value (or none, in a truncated record) is a
+    // damaged PowerPoint 97 file or an older format; only the scan below can tell which.
+    let mut unknown_token = false;
     if let Some(cu) = Rec::at(current_user, 0).filter(|r| r.kind == rt::CURRENT_USER) {
         match cu.u32(4) {
             Some(ENCRYPTED_TOKEN) => return Err(PptError::Encrypted),
             Some(PLAIN_TOKEN) => edit_at = cu.u32(8).map(|v| v as usize),
-            _ => return Err(PptError::TooOld),
+            _ => unknown_token = true,
         }
     }
     let edit_at = match edit_at.filter(|&at| Rec::at(stream, at).is_some_and(|r| r.kind == rt::USER_EDIT)) {
         Some(at) => at,
-        None => Records::new(stream).filter(|r| r.kind == rt::USER_EDIT).last().map(|r| r.offset).ok_or_else(|| damaged("no edit record"))?,
+        None => match Records::new(stream).filter(|r| r.kind == rt::USER_EDIT).last() {
+            Some(r) => r.offset,
+            None if unknown_token => return Err(PptError::TooOld),
+            None => return Err(damaged("no edit record")),
+        },
     };
     // Walk the edits newest first; the first entry seen for a persist id wins.
     let mut persist: HashMap<u32, usize> = HashMap::new();
