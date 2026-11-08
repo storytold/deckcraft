@@ -2344,7 +2344,19 @@ fn a_recorded_ink_layer_keeps_each_stroke_time_through_pptx() {
     for (points, at) in [([[10, 10], [40, 40]], 250), ([[50, 50], [80, 80]], 1500)] {
         s.execute("ink.stroke", &serde_json::json!({"index": 0, "points": points, "width": 3.0, "at": at})).expect("ink");
     }
-    let doc = s.active().expect("doc").doc.clone();
+    let mut doc = (*s.active().expect("doc").doc.clone()).clone();
+    // A stroke the editor drew into the same layer has no time: it still belongs to the ink and
+    // must come back with the timed ones.
+    let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+    let layer = slide.shapes.iter_mut().find(|sh| matches!(sh.kind, ShapeKind::Ink { .. })).expect("ink layer");
+    let ShapeKind::Ink { strokes } = &mut layer.kind else { panic!("the recorded layer is ink") };
+    strokes.push(InkStroke {
+        points: vec![(60.0, 60.0, 0.5), (90.0, 90.0, 0.5)],
+        color: Rgba::rgb(0, 0, 0),
+        width: 3.0,
+        highlighter: false,
+        at_ms: None,
+    });
     let bytes = deckcraft_pptx::export(&doc).expect("export");
     let q = deckcraft_pptx::import(&bytes).expect("import");
     let ink = q.slides[0]
@@ -2358,7 +2370,8 @@ fn a_recorded_ink_layer_keeps_each_stroke_time_through_pptx() {
             panic!("the recorded layer comes back as ink: {:?}", q.slides[0].shapes.iter().map(|s| (&s.name, &s.kind)).collect::<Vec<_>>())
         });
     let times: Vec<Option<u32>> = ink.iter().map(|st| st.at_ms).collect();
-    assert_eq!(times, vec![Some(250), Some(1500)], "each stroke keeps its recorded time");
+    assert_eq!(times, vec![Some(250), Some(1500), None], "each stroke keeps its recorded time, and an untimed one has none");
+    assert_eq!(ink.len(), 3, "the untimed stroke stays in the layer");
     assert_eq!(ink[0].points.len(), 2, "the samples come back with the time: {:?}", ink[0].points);
     assert!((ink[0].width - 3.0).abs() < 1e-6, "the pen width survives, got {}", ink[0].width);
 }

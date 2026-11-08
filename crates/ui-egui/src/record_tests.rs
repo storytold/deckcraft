@@ -212,3 +212,23 @@ fn a_sticky_microphone_notice_is_not_replaced_by_a_transient_one() {
     crate::toast::show_queued(&mut app);
     assert_eq!(app.toast.as_ref().map(|t| t.text.clone()), Some("Saved".to_string()));
 }
+
+/// The take outlives the slide it started on: closing that presentation while recording stops the
+/// microphone and inserts the audio on the slide in view instead of losing it.
+#[test]
+fn a_take_survives_the_presentation_it_started_in_closing() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).expect("slide");
+    s.execute("file.new", &json!({})).expect("a second presentation");
+    let mic = FakeMic::ok(8_000, vec![0.0; 4_000]);
+    let mut app = SlideApp::new(s, Services { mic: Some(Box::new(mic)), ..Default::default() });
+    app.start_audio_recording().expect("start");
+    app.tick_audio_recording();
+    app.session.execute("file.close", &json!({})).expect("close the presentation the take was made for");
+    app.stop_audio_recording().expect("the take is kept");
+    let d = app.session.active().expect("doc");
+    assert!(
+        d.doc.slides.iter().flat_map(|sl| sl.shapes.iter()).any(|sh| matches!(sh.kind, ShapeKind::Media(_))),
+        "the audio lands on the slide in view"
+    );
+}

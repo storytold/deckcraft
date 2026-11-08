@@ -286,8 +286,9 @@ Zoom: live thumbnails, the zoom-in animation and the native `p166:sldZm` element
 `insert.zoom` makes linked pictures with Return to Zoom), reuse slides pane with thumbnails
 (1–2 h; `slide.reuseList` picks which slides of a file to insert, #1103; reused content now fits the destination size), laser pointer from the presenter window (1–2 h),
 artistic effects (3–6 h for the other 15 of 22; 7 approximated and round-tripped), remove
-background (6–10 h; needs a model or a classical matte), insert screenshot (2–3 h), screen
-capture while recording (4–8 h; Record Slide Show keeps timings, narration, pen ink and a laser trace), compare presentations beyond accepting and rejecting each revision, or all (#850; per-object accept and reject, markers on the slide: 2–4 h), password protection (4–6 h, ECMA-376
+background (6–10 h; needs a model or a classical matte), insert screenshot (2–3 h), screen and
+camera capture while recording (4–8 h; Record Slide Show keeps timings, narration, pen ink and a laser
+trace; the live Cameo preview and camera capture are #1837), compare presentations beyond accepting and rejecting each revision, or all (#850; per-object accept and reject, markers on the slide: 2–4 h), password protection (4–6 h, ECMA-376
 agile encryption), ink to text and math beyond Ink to Shape (6–10 h), 3-D models and stock content
 (6–10 h; Insert › Icons places a Lucide stroke set).
 

@@ -603,12 +603,16 @@ fn diagram(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, d: &dec
     frame_close(w);
 }
 
-/// The recorded-ink extension: every stroke that has a recorded time, with the samples, colour and
-/// width a freeform line cannot carry. `None` for ink drawn in the editor, which has no timeline.
+/// The recorded-ink extension: every stroke of a layer a recording touched, with the samples,
+/// colour and width a freeform line cannot carry. A stroke without a time (one the editor drew)
+/// is part of the layer but has no `at`. `None` when no stroke carries a time: then the freeform
+/// lines alone stand for the ink.
 fn ink_ext(strokes: &[deckcraft_model::InkStroke]) -> Option<String> {
+    if !strokes.iter().take(10_000).any(|st| st.at_ms.is_some()) {
+        return None;
+    }
     let mut body = String::new();
     for st in strokes.iter().take(10_000) {
-        let Some(at) = st.at_ms else { continue };
         let mut pts = String::new();
         for (x, y, p) in st.points.iter().filter(|p| p.0.is_finite() && p.1.is_finite()).take(4096) {
             let (x, y) = (x.clamp(-1.0e7, 1.0e7), y.clamp(-1.0e7, 1.0e7));
@@ -619,10 +623,14 @@ fn ink_ext(strokes: &[deckcraft_model::InkStroke]) -> Option<String> {
             continue;
         }
         let width = if st.width.is_finite() { st.width.clamp(0.0, 1.0e6) } else { 0.0 };
+        let at = match st.at_ms {
+            Some(at) => format!(" at=\"{at}\""),
+            None => String::new(),
+        };
         let _ = std::fmt::Write::write_fmt(
             &mut body,
             format_args!(
-                "<dc:stroke r=\"{}\" g=\"{}\" b=\"{}\" w=\"{width:.2}\" hl=\"{}\" at=\"{at}\">{pts}</dc:stroke>",
+                "<dc:stroke r=\"{}\" g=\"{}\" b=\"{}\" w=\"{width:.2}\" hl=\"{}\"{at}>{pts}</dc:stroke>",
                 st.color.r,
                 st.color.g,
                 st.color.b,

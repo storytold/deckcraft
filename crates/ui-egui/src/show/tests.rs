@@ -1744,8 +1744,10 @@ fn escape_leaves_a_record_preview_and_keeps_the_editor_slide() {
         app,
     );
     harness.run_steps(3);
-    // The editor's own slide: `slide.new` selects each new slide, so it starts on the last one.
+    // The editor sits on slide 0 while the preview starts on slide 2, so a stray `slide.go` shows.
+    harness.state_mut().run("slide.go", json!({"index": 0})).unwrap();
     let editor_slide = harness.state().session.active().expect("document").selection.slide;
+    assert_eq!(editor_slide, 0);
     harness.state_mut().start_show(2, false);
     let show = harness.state_mut().show.as_mut().expect("preview is up");
     show.recording_preview = true;

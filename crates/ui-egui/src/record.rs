@@ -236,9 +236,19 @@ impl SlideApp {
         };
         let name = self.next_recording_name();
         let params = serde_json::json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(&wav)});
-        // Inserted where the take started, not where the user happens to be now.
+        // Inserted where the take started, not where the user happens to be now. When that slide
+        // or its presentation has gone the audio is still real, so keep the take on the slide in
+        // view; any other failure keeps its own error.
         match self.execute_on_target(&target, "The recording", "insert.audio", &params) {
             Ok(()) => self.set_status("Recording inserted on the slide it was made for"),
+            Err(e) if target_gone(&e) => {
+                if let Err(again) = self.session.execute("insert.audio", &params).map(|_| ()) {
+                    let text = format!("Couldn't insert the recording: {again}");
+                    self.set_status(text.clone());
+                    return Err(text);
+                }
+                self.set_status("Recording inserted on the current slide: the one it was made for is gone");
+            }
             Err(e) => {
                 self.set_status(format!("Couldn't insert the recording: {e}"));
                 return Err(e);
@@ -302,4 +312,11 @@ pub(crate) fn bar(app: &mut SlideApp, ctx: &egui::Context) {
                 });
         },
     );
+}
+
+/// `execute_on_target`'s refusals for a target that no longer exists: the presentation was closed,
+/// or the slide (the place) it points at is gone. A recording that took either still has real
+/// audio, so it is inserted in view rather than lost.
+fn target_gone(e: &str) -> bool {
+    e.contains("the presentation it was chosen for is closed") || e.contains("was not applied:")
 }
