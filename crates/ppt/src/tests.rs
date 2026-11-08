@@ -172,6 +172,11 @@ fn png() -> Vec<u8> {
 
 /// The streams of a one-slide presentation, with `edit` choosing the current user's header token.
 fn streams(token: u32) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    streams_listing(token, 1)
+}
+
+/// The test document with its slide listed `times` times in the slide list.
+fn streams_listing(token: u32, times: usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     let pictures = atom(0xF01E, 0x6E0, &[&[0u8; 17][..], &png()].concat());
     let mut fbse = vec![0u8; 36];
     fbse[0] = 6;
@@ -212,7 +217,7 @@ fn streams(token: u32) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
             container(rt::ENVIRONMENT, 0, &[container(rt::FONT_COLLECTION, 0, &[atom(rt::FONT_ENTITY, 0, &font), atom(rt::FONT_ENTITY, 1, &wing)])]),
             container(rt::DRAWING_GROUP, 0, &[container(rt::DGG_CONTAINER, 0, &[bstore])]),
             container(rt::SLIDE_LIST_WITH_TEXT, 1, &[persist(2)]),
-            container(rt::SLIDE_LIST_WITH_TEXT, 0, &[persist(3)]),
+            container(rt::SLIDE_LIST_WITH_TEXT, 0, &vec![persist(3); times]),
             container(rt::SLIDE_LIST_WITH_TEXT, 2, &[persist(4)]),
         ],
     );
@@ -322,6 +327,21 @@ fn check_master(p: &Presentation, s: &Slide) {
     assert!(m.shapes.iter().any(|sh| sh.ph.is_none() && sh.fill == Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0, 0xCC, 0))))));
     assert_eq!(m.title_style.level(0).and_then(|l| l.run.size), Some(44.0));
     assert!(p.layout(s.layout).is_some());
+}
+
+/// A slide listed many times is one slide: a hostile file can't make the importer convert one
+/// big drawing again for every listing (180k listings of a 100k-shape slide fit in ~10 MB).
+#[test]
+fn a_slide_listed_again_is_imported_once() {
+    let (cu, doc, pics) = streams_listing(0xE391_C05F, 3);
+    let bytes = crate::cfb::build(&[("Current User", &cu), ("PowerPoint Document", &doc), ("Pictures", &pics)]);
+    let p = crate::import(&bytes).unwrap();
+    assert_eq!(p.slides.len(), 1);
+    assert_eq!(
+        p.slides[0].notes.text(),
+        "Say hello
+Then wave"
+    );
 }
 
 #[test]

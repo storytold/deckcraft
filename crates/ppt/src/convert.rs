@@ -106,11 +106,21 @@ pub fn convert<'a>(d: &Doc<'a>, pictures: &'a [u8]) -> Presentation {
         cx.title_master(m, &mut masters);
     }
 
+    // Each slide's notes page, by the slide id its NotesAtom names (the first one wins), built once:
+    // a scan per slide would be slides × notes pages.
+    let mut notes_of: HashMap<u32, usize> = HashMap::new();
+    for (i, n) in d.notes.iter().enumerate() {
+        if n.rec.kind == rt::NOTES
+            && let Some(id) = n.rec.child(rt::NOTES_ATOM).and_then(|a| a.u32(0))
+        {
+            notes_of.entry(id).or_insert(i);
+        }
+    }
     for s in &d.slides {
         if s.rec.kind != rt::SLIDE {
             continue;
         }
-        if let Some(slide) = cx.slide(d, s, &masters) {
+        if let Some(slide) = cx.slide(d, s, &masters, &notes_of) {
             cx.p.slides.push(Arc::new(slide));
         }
     }
@@ -250,7 +260,7 @@ impl<'a> Ctx<'a> {
         ls
     }
 
-    fn slide(&mut self, d: &Doc<'a>, s: &Listed<'a>, masters: &HashMap<u32, MasterInfo>) -> Option<Slide> {
+    fn slide(&mut self, d: &Doc<'a>, s: &Listed<'a>, masters: &HashMap<u32, MasterInfo>, notes_of: &HashMap<u32, usize>) -> Option<Slide> {
         let atom = doc::slide_atom(&s.rec);
         let info = masters.get(&atom.master_id).or_else(|| masters.values().min_by_key(|m| m.index)).cloned();
         let (index, master_scheme, styles, title_layout) = match &info {
@@ -269,12 +279,7 @@ impl<'a> Ctx<'a> {
         let background = if atom.follow_master_background { None } else { drawing.background.as_ref().and_then(|b| self.background(b, &scope)) };
         let shapes = drawing.shapes.iter().filter_map(|r| self.shape(r, &scope, 0, TOP)).collect();
         let hidden = s.rec.child(rt::SLIDE_SHOW_SLIDE_INFO).and_then(|i| i.u16(10)).is_some_and(|f| f & 0x4 != 0);
-        let notes = d
-            .notes
-            .iter()
-            .find(|n| n.rec.kind == rt::NOTES && n.rec.child(rt::NOTES_ATOM).and_then(|a| a.u32(0)) == Some(s.slide_id))
-            .map(|n| self.notes(n, &styles, scheme))
-            .unwrap_or_default();
+        let notes = notes_of.get(&s.slide_id).and_then(|&i| d.notes.get(i)).map(|n| self.notes(n, &styles, scheme)).unwrap_or_default();
         Some(Slide { id, layout, shapes, background, hidden, show_master_shapes: atom.follow_master_objects, notes, ..Default::default() })
     }
 

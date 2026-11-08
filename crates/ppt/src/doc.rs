@@ -140,6 +140,10 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
         return Err(PptError::Encrypted);
     }
     let mut doc = Doc { document, masters: vec![], slides: vec![], notes: vec![] };
+    // Each object is listed once. PowerPoint never lists one twice, and a hostile file that lists a
+    // big drawing many times would otherwise have it converted again for every listing (shapes ×
+    // listings, from linear input).
+    let mut listed = HashSet::new();
     for list in document.children_of(rt::SLIDE_LIST_WITH_TEXT) {
         let out = match list.instance {
             0 => &mut doc.slides,
@@ -155,6 +159,7 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
                 }
                 let (Some(pid), Some(slide_id)) = (r.u32(0), r.u32(12)) else { continue };
                 match lookup(pid) {
+                    Some(rec) if !listed.insert(rec.offset) => log::warn!("ppt: persist id {pid} is listed again; skipped"),
                     Some(rec) => current = Some(Listed { rec, slide_id, outline: vec![] }),
                     None => log::warn!("ppt: slide persist id {pid} has no object"),
                 }
