@@ -21,7 +21,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr7` | `d28c8ae5` | `CollabDoc` command glue + in-memory `Hub` |
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
-| `collab/pr10` | `5c4d5f81` | media channel: pictures by `sha256`, upload/fetch, persistence |
+| `collab/pr10` | `7fe75711` | media channel: pictures by `sha256`, upload/fetch, persistence |
 
 All work is local. Nothing was pushed to `storytold/deckcraft`; a fork and a human decision are
 required for the upstream PR.
