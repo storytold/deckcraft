@@ -159,6 +159,11 @@ fn chart_table_and_text_corpus_round_trips() {
         assert_eq!(a.data_labels, b.data_labels);
     }
 
+    merged_table_survives(slide);
+    text_columns_and_warp_survive(slide);
+}
+
+fn merged_table_survives(slide: &Slide) {
     let ShapeKind::Table(t) = &by_name(slide, "Merged table").kind else { panic!("not a table") };
     let anchor = t.cell(0, 0).expect("anchor");
     assert_eq!((anchor.grid_span, anchor.row_span), (2, 2));
@@ -171,7 +176,9 @@ fn chart_table_and_text_corpus_round_trips() {
     assert_eq!(diag.diag_down, Some(Line::solid(ColorRef::rgb(Rgba::rgb(180, 40, 40)), 1.5)));
     assert_eq!(diag.diag_up, Some(Line::solid(ColorRef::rgb(Rgba::rgb(20, 90, 160)), 2.0)));
     assert_eq!(plain(&diag.text), "Diag");
+}
 
+fn text_columns_and_warp_survive(slide: &Slide) {
     let cols = by_name(slide, "Columns").text.as_ref().expect("columns");
     assert_eq!(plain(cols), "Two columns\nof vertical text");
     assert_eq!(cols.body.columns, Some(3));

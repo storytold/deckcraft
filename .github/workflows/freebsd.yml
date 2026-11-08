@@ -27,4 +27,8 @@ jobs:
     # Intentionally tracked at @main (not SHA-pinned) so org-wide CI improvements, security fixes, and build optimizations propagate without PR churn across all craftapp repos.
     uses: storytold/craft-common-actions/.github/workflows/freebsd.yml@main
     with:
-      craft-fonts-ref: 43913056ce82a3fdad0ef69f6b88d1dc922a8104
+      # Keep identical to ci.yml and release.yml. The shared FreeBSD workflow passes
+      # CRAFT_FONTS_DIR to its tests but has no CRAFT_FONTS_REQUIRED input yet, so it does not
+      # qualify the required Chinese input after the pin advances; that gate stays explicitly
+      # pending in docs/egui-037-migration-plan.md section 5.1.
+      craft-fonts-ref: 37827adc41fd165f9a9234ac40f94dbad353aa69

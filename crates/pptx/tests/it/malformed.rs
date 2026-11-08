@@ -287,3 +287,34 @@ fn unreadable_slide_is_reported() {
     assert_eq!(lost, vec!["ppt/slides/slide2.xml".to_string()]);
     assert_eq!(deckcraft_pptx::import(&broken).expect("import").slides.len(), 1);
 }
+
+/// Many slides naming one notes part: it is read for the first slide only, not copied onto every
+/// slide that names it.
+#[test]
+fn a_shared_notes_part_is_read_once() {
+    use std::sync::Arc;
+    let mut p = defaults::new_presentation(None);
+    let layout = p.slides[0].layout;
+    for _ in 0..3 {
+        let s = defaults::new_slide(&mut p, layout).expect("slide");
+        p.slides.push(Arc::new(s));
+    }
+    for (i, s) in p.slides.iter_mut().enumerate() {
+        Arc::make_mut(s).notes = deckcraft_model::text::TextBody::from_text(&format!("notes {i}"));
+    }
+    let mut es = entries(&deckcraft_pptx::export(&p).expect("export"));
+    for (n, d) in es.iter_mut() {
+        if n.starts_with("ppt/slides/_rels/") {
+            let x = String::from_utf8(d.clone()).expect("utf8");
+            let x = x
+                .replace("notesSlide2.xml", "notesSlide1.xml")
+                .replace("notesSlide3.xml", "notesSlide1.xml")
+                .replace("notesSlide4.xml", "notesSlide1.xml");
+            *d = x.into_bytes();
+        }
+    }
+    let q = deckcraft_pptx::import(&rezip(&es)).expect("import");
+    assert_eq!(q.slides.len(), 4);
+    assert_eq!(q.slides[0].notes.text(), "notes 0");
+    assert!(q.slides[1..].iter().all(|s| s.notes.text().is_empty()), "a shared notes part is not copied");
+}

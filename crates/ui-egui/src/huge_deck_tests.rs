@@ -57,6 +57,7 @@ fn the_thumbnail_pane_of_a_huge_deck_renders_only_the_slides_in_view() {
         delta: egui::vec2(0.0, -40_000.0),
         modifiers: egui::Modifiers::NONE,
         phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
     });
     h.run_steps(60);
     let scrolled = h.state().textures.thumb_count();
@@ -107,6 +108,7 @@ fn a_settled_thumbnail_pane_renders_nothing_more() {
         delta: egui::vec2(0.0, -40_000.0),
         modifiers: egui::Modifiers::NONE,
         phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
     });
     h.run_steps(60);
     let after = h.state().textures.thumb_renders();

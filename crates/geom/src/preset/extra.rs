@@ -2,7 +2,10 @@
 //! ribbons, gears, tabs and chart markers. Like the rest of `preset`, every outline is our own
 //! construction, fitted to how the shapes look and to what their adjust values mean.
 
-use super::*;
+use super::{
+    Corner, Dir, FillMode, Geometry, Handle, Pb, Point, Rect, Vec2, corner_rect, fill, fill_eo, fill_only, mid_sites, orient, shade, simple,
+    stroke_only, vis,
+};
 
 /// The preset outlines this module builds, named for their Office Open XML identifiers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -753,6 +756,87 @@ mod tests {
 
     fn outline(name: &str, w: f64, h: f64, adj: &[f64]) -> BezPath {
         build(name, w, h, adj).map(|g| g.outline()).unwrap_or_default()
+    }
+
+    /// Adjust sets the digests were taken at: the defaults (an empty slice) and explicit values,
+    /// so every adjust branch runs.
+    const GOLD_ADJ: [&[f64]; 2] = [&[], &[0.25, 0.1, 0.5, 0.3, 0.7, 0.2, 0.6, 0.4, 0.9, 0.15]];
+    /// Sizes the digests were taken at: wide, tall and square.
+    const GOLD_SIZES: [(f64, f64); 3] = [(120.0, 80.0), (300.0, 50.0), (64.0, 64.0)];
+
+    /// FNV-1a over each outline's path elements, for every adjust set and size. Coordinates are
+    /// printed to 3 decimal places so last-bit libm differences between platforms do not change it.
+    fn outline_digest(name: &str) -> u64 {
+        use std::fmt::Write;
+        let mut text = String::new();
+        for adj in GOLD_ADJ {
+            for (w, h) in GOLD_SIZES {
+                let g = build(name, w, h, adj).unwrap_or_else(|| panic!("{name} builds no outline"));
+                for el in g.outline().elements() {
+                    let _ = match *el {
+                        PathEl::MoveTo(p) => write!(text, "M{:.3},{:.3}", p.x, p.y),
+                        PathEl::LineTo(p) => write!(text, "L{:.3},{:.3}", p.x, p.y),
+                        PathEl::QuadTo(a, p) => write!(text, "Q{:.3},{:.3},{:.3},{:.3}", a.x, a.y, p.x, p.y),
+                        PathEl::CurveTo(a, b, p) => write!(text, "C{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}", a.x, a.y, b.x, b.y, p.x, p.y),
+                        PathEl::ClosePath => write!(text, "Z"),
+                    };
+                }
+                text.push('|');
+            }
+        }
+        text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+    }
+
+    /// Digests of every name's outlines as the string dispatch on `main` (fc35ad67) built them, so
+    /// this refactor is proven output-identical: any changed outline fails here.
+    const GOLDEN: [(&str, u64); 38] = [
+        ("lineInv", 0xfaffc13f44a93375),
+        ("nonIsoscelesTrapezoid", 0xb50af577fa048fe7),
+        ("pieWedge", 0x00895c33a77ec585),
+        ("leftRightArrowCallout", 0xd0463d85d78bc271),
+        ("upDownArrowCallout", 0x7f43aa4d5dbbcef7),
+        ("quadArrowCallout", 0x28601e0d2ed615a7),
+        ("circularArrow", 0x2dddaea620df13d1),
+        ("leftCircularArrow", 0x65ff0bf526b9a076),
+        ("leftRightCircularArrow", 0x986c81c2a50ea9b9),
+        ("curvedRightArrow", 0xb0a5dc797a9f4d7e),
+        ("curvedLeftArrow", 0x83fbcb519025edc5),
+        ("curvedUpArrow", 0x04beb7a91bee8639),
+        ("curvedDownArrow", 0x722b0ba43cf669f1),
+        ("swooshArrow", 0xf6712de3201f217a),
+        ("callout1", 0x069eafd1a6d4007f),
+        ("callout2", 0xd65e3684f4a492da),
+        ("callout3", 0x4613c383ae932b3d),
+        ("accentCallout1", 0xde0690bc860224b1),
+        ("accentCallout2", 0x8d59ee7686ec555e),
+        ("accentCallout3", 0x819cfef7c7112557),
+        ("borderCallout2", 0xd65e3684f4a492da),
+        ("borderCallout3", 0x4613c383ae932b3d),
+        ("accentBorderCallout1", 0xde0690bc860224b1),
+        ("accentBorderCallout2", 0x8d59ee7686ec555e),
+        ("accentBorderCallout3", 0x819cfef7c7112557),
+        ("ellipseRibbon", 0x81723469e4feea75),
+        ("ellipseRibbon2", 0x2b3d31c91db846f8),
+        ("leftRightRibbon", 0x17dfed97cabced8b),
+        ("flowChartOfflineStorage", 0xb4314c28244ae4b9),
+        ("gear6", 0xa86ad08361c706bb),
+        ("gear9", 0x990b036fda62a753),
+        ("funnel", 0x28bac03b8ceb3965),
+        ("cornerTabs", 0x0830876c5934b9a5),
+        ("squareTabs", 0x1f78f490021e9705),
+        ("plaqueTabs", 0xf1937a13710d7fb5),
+        ("chartX", 0xbe7b481be55defe5),
+        ("chartStar", 0x3a7d02b57c488b5f),
+        ("chartPlus", 0x876a6f5f949e2b4d),
+    ];
+
+    /// Every name builds the same outline as before the `Name` enum, and unknown names build nothing.
+    #[test]
+    fn outlines_match_the_string_dispatch() {
+        for (name, want) in GOLDEN {
+            assert_eq!(outline_digest(name), want, "{name} outline changed");
+        }
+        assert!(build("noSuchShape", 100.0, 100.0, &[]).is_none());
     }
 
     /// Every name this module builds round-trips through its OOXML identifier, and unknown

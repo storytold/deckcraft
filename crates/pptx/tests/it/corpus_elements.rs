@@ -215,7 +215,14 @@ fn assert_deck(q: &Presentation) {
     let inherited = resolve::run(&ctx, body, &paras[1], &paras[1].runs[0].props);
     assert_eq!(inherited.size, Some(28.0), "the second paragraph takes the layout list style");
     assert_eq!(inherited.font.as_deref(), Some("Source Serif 4"));
+    assert_group(q);
+    assert_comments(q);
+    assert_click_links(q);
+    assert_custom_show_links(q);
+    assert_custom_shows(q);
+}
 
+fn assert_group(q: &Presentation) {
     let cluster = shape(q, 0, "Cluster");
     let g = cluster.xfrm.expect("group box");
     assert_eq!((g.x, g.y, g.w, g.h, g.rot, g.flip_h), (80.0, 40.0, 220.0, 140.0, 25.0, true));
@@ -225,13 +232,17 @@ fn assert_deck(q: &Presentation) {
     assert_eq!(gem.text.as_ref().map(|t| t.text()), Some("Tilted".into()));
     let gx = gem.xfrm.expect("gem");
     assert_eq!((gx.x, gx.y, gx.w, gx.h, gx.rot, gx.flip_v), (12.0, 18.0, 80.0, 40.0, 20.0, true));
+}
 
+fn assert_comments(q: &Presentation) {
     let c = &q.slides[0].comments;
     assert_eq!(c.len(), 1);
     assert_eq!((c[0].author.as_str(), c[0].initials.as_str(), c[0].text.as_str()), ("Mina", "ML", "Check the quote"));
     assert_eq!(c[0].date, "2026-03-01T09:30:00.000");
     assert_eq!((c[0].x, c[0].y), (36.0, 48.0));
+}
 
+fn assert_click_links(q: &Presentation) {
     let click = |name: &str| shape(q, 0, name).click.clone().unwrap_or_else(|| panic!("{name} lost its click"));
     match click("Site").action {
         Action::Url { url } => assert_eq!(url, "https://example.com/deck"),
@@ -259,7 +270,10 @@ fn assert_deck(q: &Presentation) {
     assert!(matches!(hover.action, Action::PreviousSlide));
     assert!(hover.stop_sound);
     assert_eq!(hover.tooltip, "Back one");
+}
 
+fn assert_custom_show_links(q: &Presentation) {
+    let click = |name: &str| shape(q, 0, name).click.clone().unwrap_or_else(|| panic!("{name} lost its click"));
     match click("To board").action {
         Action::CustomShow { name, returns } => {
             assert_eq!(name, "Board");
@@ -276,7 +290,9 @@ fn assert_deck(q: &Presentation) {
         }
         other => panic!("{other:?}"),
     }
+}
 
+fn assert_custom_shows(q: &Presentation) {
     assert_eq!(q.custom_shows.len(), 2);
     assert_eq!(q.custom_shows[0].name, "Short");
     assert_eq!(q.custom_shows[0].slides, vec![q.slides[0].id]);

@@ -7,12 +7,12 @@ use deckcraft_geom::Xfrm;
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, TextBuild, Transition};
 use deckcraft_model::chart::{Chart, ChartType};
 use deckcraft_model::style::{
-    ColorRef, Dash, Effects, Fill, Glow, Gradient, GradientShape, GradientStop, Line, LineEnd, PatternFill, PictureAdjust, PictureFill, PictureMode,
-    Shadow,
+    ColorRef, Dash, Effects, Fill, Glow, Gradient, GradientFlip, GradientShape, GradientStop, Line, LineEnd, PatternFill, PictureAdjust, PictureFill,
+    PictureMode, Shadow,
 };
 use deckcraft_model::table::Table;
 use deckcraft_model::text::{
-    Action, Align, Anchor, AutoFit, BodyProps, Bullet, Caps, Hyperlink, Paragraph, Run, RunKind, RunProps, Spacing, Strike, TextBody,
+    Action, Align, Anchor, AutoFit, BodyProps, Bullet, Caps, Hyperlink, Paragraph, Run, RunKind, RunProps, Spacing, Strike, TextBody, TextOverflow,
 };
 use deckcraft_model::{
     Background, Comment, CustomPath, CustomShow, Geom, InkStroke, MediaClip, Presentation, Section, Shape, ShapeId, ShapeKind, Slide, SlideId,
@@ -115,6 +115,8 @@ pub fn rich_deck() -> Presentation {
         ],
         shape: GradientShape::Linear { angle: 45.0, scaled: false },
         rotate_with_shape: true,
+
+        flip: Some(GradientFlip::Xy),
     }));
     a.line = Some(Line { width: Some(3.0), dash: Some(Dash::Preset { name: "dash".into() }), ..Line::solid(ColorRef::rgb(Rgba::rgb(0, 0, 0)), 3.0) });
     a.effects = Some(Effects {
@@ -467,6 +469,143 @@ fn text_and_formatting_round_trip() {
 }
 
 #[test]
+fn centered_cell_anchor_survives_two_pptx_round_trips() {
+    let mut p = Presentation::default();
+    let mut slide = new_slide(&mut p, "Cell anchor");
+    let mut table_shape = shape(&mut p, "Table", 10.0, 10.0, 200.0, 80.0);
+    let mut table = Table::new(1, 1, 200.0, 80.0);
+    table.rows[0].cells[0].anchor_ctr = Some(true);
+    table_shape.kind = ShapeKind::Table(table);
+    slide.shapes.push(table_shape);
+    p.slides.push(Arc::new(slide));
+
+    let once = round(&p);
+    let twice = round(&once);
+    let slide = twice.slides.last().expect("added slide");
+    let ShapeKind::Table(table) = &by_name(slide, "Table").kind else { panic!("table") };
+    assert_eq!(table.rows[0].cells[0].anchor_ctr, Some(true));
+}
+
+#[test]
+fn normalized_character_height_survives_two_pptx_round_trips() {
+    let mut p = Presentation::default();
+    let mut slide = new_slide(&mut p, "Normalized height");
+    let mut enabled = shape(&mut p, "Enabled", 10.0, 10.0, 200.0, 80.0);
+    let mut enabled_body = TextBody::from_text("enabled");
+    enabled_body.paragraphs[0].runs[0].props.normalize_height = Some(true);
+    enabled_body.paragraphs[0].runs[0].props.size = Some(18.0);
+    enabled_body.paragraphs[0].runs[0].props.caps = Some(Caps::Small);
+    enabled_body.paragraphs[0].runs[0].props.spacing = Some(1.5);
+    enabled.text = Some(enabled_body);
+    let mut disabled = shape(&mut p, "Disabled", 10.0, 100.0, 200.0, 80.0);
+    let mut disabled_body = TextBody::from_text("disabled");
+    disabled_body.paragraphs[0].runs[0].props.normalize_height = Some(false);
+    disabled.text = Some(disabled_body);
+    let mut absent = shape(&mut p, "Absent", 10.0, 190.0, 200.0, 80.0);
+    absent.text = Some(TextBody::from_text("absent"));
+    slide.shapes = vec![enabled, disabled, absent];
+    p.slides.push(Arc::new(slide));
+
+    let twice = round(&round(&p));
+    let slide = twice.slides.last().expect("added slide");
+    let run = &by_name(slide, "Enabled").text.as_ref().expect("text").paragraphs[0].runs[0];
+    assert_eq!(run.props.normalize_height, Some(true));
+    assert_eq!(run.props.size, Some(18.0));
+    assert_eq!(run.props.caps, Some(Caps::Small));
+    assert_eq!(run.props.spacing, Some(1.5));
+    let run = &by_name(slide, "Disabled").text.as_ref().expect("text").paragraphs[0].runs[0];
+    assert_eq!(run.props.normalize_height, Some(false));
+    let run = &by_name(slide, "Absent").text.as_ref().expect("text").paragraphs[0].runs[0];
+    assert_eq!(run.props.normalize_height, None);
+}
+
+#[test]
+fn thai_distributed_alignment_survives_two_pptx_round_trips() {
+    assert_eq!(Align::from_xml("thaiDist"), Some(Align::ThaiDistributed));
+    assert_eq!(Align::ThaiDistributed.xml(), "thaiDist");
+    assert_eq!(Align::from_xml("just"), Some(Align::Justify));
+
+    let mut p = Presentation::default();
+    let mut slide = new_slide(&mut p, "Thai distributed alignment");
+    let mut text = shape(&mut p, "Text", 10.0, 10.0, 200.0, 80.0);
+    let mut body = TextBody::from_text("one two three");
+    body.paragraphs[0].props.align = Some(Align::ThaiDistributed);
+    text.text = Some(body);
+    slide.shapes.push(text);
+    p.slides.push(Arc::new(slide));
+
+    let twice = round(&round(&p));
+    let slide = twice.slides.last().expect("added slide");
+    let text = by_name(slide, "Text").text.as_ref().expect("text body");
+    assert_eq!(text.paragraphs[0].props.align, Some(Align::ThaiDistributed));
+}
+
+#[test]
+fn compatible_line_spacing_mode_survives_two_pptx_round_trips() {
+    let mut p = Presentation::default();
+    let mut slide = new_slide(&mut p, "Compatible line spacing");
+    let mut enabled = shape(&mut p, "Enabled", 10.0, 10.0, 200.0, 80.0);
+    let mut enabled_body = TextBody::from_text("enabled");
+    enabled_body.body.compat_ln_spc = Some(true);
+    enabled.text = Some(enabled_body);
+    let mut disabled = shape(&mut p, "Disabled", 10.0, 100.0, 200.0, 80.0);
+    let mut disabled_body = TextBody::from_text("disabled");
+    disabled_body.body.compat_ln_spc = Some(false);
+    disabled.text = Some(disabled_body);
+    slide.shapes = vec![enabled, disabled];
+    p.slides.push(Arc::new(slide));
+
+    let twice = round(&round(&p));
+    let slide = twice.slides.last().expect("added slide");
+    assert_eq!(by_name(slide, "Enabled").text.as_ref().expect("text").body.compat_ln_spc, Some(true));
+    assert_eq!(by_name(slide, "Disabled").text.as_ref().expect("text").body.compat_ln_spc, Some(false));
+}
+
+#[test]
+fn text_overflow_policies_survive_two_pptx_round_trips() {
+    let mut p = Presentation::default();
+    let mut slide = new_slide(&mut p, "Text overflow");
+    let mut text = shape(&mut p, "Text", 10.0, 10.0, 200.0, 80.0);
+    let mut body = TextBody::from_text("policy");
+    body.body.vert_overflow = Some(TextOverflow::Clip);
+    body.body.horz_overflow = Some(TextOverflow::Overflow);
+    text.text = Some(body);
+    let mut table_shape = shape(&mut p, "Table", 10.0, 100.0, 200.0, 80.0);
+    let mut table = Table::new(1, 1, 200.0, 80.0);
+    table.rows[0].cells[0].horz_overflow = Some(TextOverflow::Clip);
+    table_shape.kind = ShapeKind::Table(table);
+    slide.shapes = vec![text, table_shape];
+    p.slides.push(Arc::new(slide));
+
+    let twice = round(&round(&p));
+    let slide = twice.slides.last().expect("added slide");
+    let text = by_name(slide, "Text").text.as_ref().expect("text body");
+    assert_eq!(text.body.vert_overflow, Some(TextOverflow::Clip));
+    assert_eq!(text.body.horz_overflow, Some(TextOverflow::Overflow));
+    let ShapeKind::Table(table) = &by_name(slide, "Table").kind else { panic!("table") };
+    assert_eq!(table.rows[0].cells[0].horz_overflow, Some(TextOverflow::Clip));
+}
+
+#[test]
+fn horizontal_ellipsis_is_not_written_because_only_vertical_overflow_has_it() {
+    let mut p = Presentation::default();
+    let mut slide = new_slide(&mut p, "Horizontal ellipsis");
+    let mut text = shape(&mut p, "Text", 10.0, 10.0, 200.0, 80.0);
+    let mut body = TextBody::from_text("policy");
+    body.body.vert_overflow = Some(TextOverflow::Ellipsis);
+    body.body.horz_overflow = Some(TextOverflow::Ellipsis);
+    text.text = Some(body);
+    slide.shapes = vec![text];
+    p.slides.push(Arc::new(slide));
+
+    let once = round(&p);
+    let slide = once.slides.last().expect("added slide");
+    let text = by_name(slide, "Text").text.as_ref().expect("text body");
+    assert_eq!(text.body.vert_overflow, Some(TextOverflow::Ellipsis));
+    assert_eq!(text.body.horz_overflow, None);
+}
+
+#[test]
 fn shapes_fills_lines_effects_round_trip() {
     let p = rich_deck();
     let q = round(&p);
@@ -486,6 +625,129 @@ fn shapes_fills_lines_effects_round_trip() {
     assert_eq!(c.line, by_name(&p.slides[1], "Connector").line);
     // Ids are kept.
     assert_eq!(by_name(&q.slides[1], "Group").id, by_name(&p.slides[1], "Group").id);
+}
+
+#[test]
+fn bullet_size_in_points_survives_two_pptx_round_trips() {
+    let mut p = Presentation::default();
+    let mut textbox = shape(&mut p, "Point-sized bullet", 20.0, 20.0, 400.0, 100.0);
+    textbox.text = Some(TextBody {
+        paragraphs: [12.0, 500.0, 4000.0]
+            .into_iter()
+            .map(|size| Paragraph {
+                props: deckcraft_model::text::ParaProps {
+                    bullet: Some(Bullet::Char { char: "•".into() }),
+                    bullet_size_points: Some(size),
+                    ..Default::default()
+                },
+                runs: vec![Run::with("Bullet text", RunProps::default())],
+                ..Default::default()
+            })
+            .collect(),
+        ..Default::default()
+    });
+    Arc::make_mut(&mut p.slides[0]).shapes.push(textbox);
+
+    let q = round(&round(&p));
+    let props = &by_name(&q.slides[0], "Point-sized bullet").text.as_ref().expect("text").paragraphs;
+    assert_eq!(props.iter().map(|p| p.props.bullet_size_points).collect::<Vec<_>>(), vec![Some(12.0), Some(500.0), Some(4000.0)]);
+    assert!(props.iter().all(|p| p.props.bullet_size.is_none()));
+}
+
+#[test]
+fn line_miter_limit_survives_two_pptx_round_trips() {
+    let mut p = Presentation::default();
+    let mut limited = shape(&mut p, "Limited miter", 20.0, 20.0, 100.0, 100.0);
+    limited.line = Some(Line { join: Some(deckcraft_model::style::LineJoin::Miter), miter_limit: Some(200_000), ..Default::default() });
+    let mut defaulted = shape(&mut p, "Default miter", 140.0, 20.0, 100.0, 100.0);
+    defaulted.line = Some(Line { join: Some(deckcraft_model::style::LineJoin::Miter), ..Default::default() });
+    let mut large = shape(&mut p, "Large miter", 260.0, 20.0, 100.0, 100.0);
+    large.line = Some(Line { join: Some(deckcraft_model::style::LineJoin::Miter), miter_limit: Some(1_000_001), ..Default::default() });
+    Arc::make_mut(&mut p.slides[0]).shapes.extend([limited, defaulted, large]);
+
+    let q = round(&round(&p));
+    assert_eq!(by_name(&q.slides[0], "Limited miter").line.as_ref().and_then(|line| line.miter_limit), Some(200_000));
+    assert_eq!(by_name(&q.slides[0], "Default miter").line.as_ref().and_then(|line| line.miter_limit), None);
+    assert_eq!(by_name(&q.slides[0], "Large miter").line.as_ref().and_then(|line| line.miter_limit), Some(1_000_001));
+}
+
+#[test]
+
+fn bullet_follow_text_resets_survive_two_pptx_round_trips() {
+    let mut p = Presentation::default();
+    let mut textbox = shape(&mut p, "Follow text bullets", 20.0, 20.0, 400.0, 100.0);
+    textbox.text = Some(TextBody {
+        paragraphs: vec![Paragraph {
+            props: deckcraft_model::text::ParaProps {
+                bullet: Some(Bullet::Char { char: "•".into() }),
+                bullet_color_follow_text: Some(true),
+                bullet_size_follow_text: Some(true),
+                bullet_font_follow_text: Some(true),
+                ..Default::default()
+            },
+            runs: vec![Run::with("Bullet text", RunProps::default())],
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    Arc::make_mut(&mut p.slides[0]).shapes.push(textbox);
+    let mut conflicting = shape(&mut p, "Explicit bullet values", 20.0, 140.0, 400.0, 100.0);
+    conflicting.text = Some(TextBody {
+        paragraphs: vec![Paragraph {
+            props: deckcraft_model::text::ParaProps {
+                bullet: Some(Bullet::Char { char: "•".into() }),
+                bullet_color: Some(deckcraft_model::style::ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0))),
+                bullet_color_follow_text: Some(true),
+                bullet_size: Some(1.5),
+                bullet_size_follow_text: Some(true),
+                bullet_font: Some("Inter".into()),
+                bullet_font_follow_text: Some(true),
+                ..Default::default()
+            },
+            runs: vec![Run::with("Explicit bullet text", RunProps::default())],
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    Arc::make_mut(&mut p.slides[0]).shapes.push(conflicting);
+
+    let q = round(&round(&p));
+    let props = &by_name(&q.slides[0], "Follow text bullets").text.as_ref().expect("text").paragraphs[0].props;
+    assert_eq!(props.bullet_color_follow_text, Some(true));
+    assert_eq!(props.bullet_size_follow_text, Some(true));
+    assert_eq!(props.bullet_font_follow_text, Some(true));
+    let explicit = &by_name(&q.slides[0], "Explicit bullet values").text.as_ref().expect("text").paragraphs[0].props;
+    assert_eq!(explicit.bullet_color_follow_text, None);
+    assert_eq!(explicit.bullet_size_follow_text, None);
+    assert_eq!(explicit.bullet_font_follow_text, None);
+    assert_eq!(explicit.bullet_size, Some(1.5));
+    assert_eq!(explicit.bullet_font.as_deref(), Some("Inter"));
+    assert_eq!(explicit.bullet_color, Some(deckcraft_model::style::ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0))));
+}
+
+#[test]
+
+fn line_alignment_survives_two_pptx_round_trips() {
+    let mut p = Presentation::default();
+    let mut inside = shape(&mut p, "Inset line", 20.0, 20.0, 100.0, 100.0);
+    inside.line = Some(Line { align: Some(deckcraft_model::style::LineAlign::Inside), ..Default::default() });
+    let mut centered = shape(&mut p, "Centered line", 140.0, 20.0, 100.0, 100.0);
+    centered.line = Some(Line { align: Some(deckcraft_model::style::LineAlign::Center), ..Default::default() });
+    Arc::make_mut(&mut p.slides[0]).shapes.extend([inside, centered]);
+
+    let q = round(&round(&p));
+    assert_eq!(by_name(&q.slides[0], "Inset line").line.as_ref().and_then(|line| line.align), Some(deckcraft_model::style::LineAlign::Inside));
+    assert_eq!(by_name(&q.slides[0], "Centered line").line.as_ref().and_then(|line| line.align), Some(deckcraft_model::style::LineAlign::Center));
+    assert_eq!(deckcraft_model::style::LineAlign::from_xml("out"), None);
+}
+
+#[test]
+
+fn gradient_flip_mode_survives_two_pptx_round_trips() {
+    let p = rich_deck();
+    let q = round(&round(&p));
+    let gradient = by_name(&q.slides[1], "Gradient Star").fill.as_ref();
+    assert!(matches!(gradient, Some(Fill::Gradient(g)) if g.flip == Some(GradientFlip::Xy)));
 }
 
 #[test]
@@ -1403,6 +1665,32 @@ fn literal_line_ends_in_run_text_read_as_breaks_and_survive_save() {
 }
 
 #[test]
+fn alternate_run_language_survives_pptx_saves_and_absence() {
+    let mut p = defaults::new_presentation(None);
+    let first = p.slides[0].id;
+    let slide = p.slide_mut(first).expect("slide");
+    slide.shapes[0].text = Some(TextBody {
+        paragraphs: vec![Paragraph {
+            runs: vec![
+                Run::with("bonjour", RunProps { lang: Some("en-US".into()), alt_lang: Some("fr-FR".into()), ..Default::default() }),
+                Run::with(" plain", RunProps { lang: Some("en-US".into()), ..Default::default() }),
+            ],
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    let mut q = round(&p);
+    for _ in 0..2 {
+        let runs = &q.slides[0].shapes[0].text.as_ref().expect("text").paragraphs[0].runs;
+        assert_eq!(runs[0].props.lang.as_deref(), Some("en-US"));
+        assert_eq!(runs[0].props.alt_lang.as_deref(), Some("fr-FR"));
+        assert_eq!(runs[1].props.lang.as_deref(), Some("en-US"));
+        assert_eq!(runs[1].props.alt_lang, None);
+        q = round(&q);
+    }
+}
+
+#[test]
 fn color_pulse_keeps_its_effect_colour_and_duration() {
     let mut p = defaults::new_presentation(None);
     let s = shape(&mut p, "Pulsed", 10.0, 10.0, 200.0, 100.0);
@@ -1924,4 +2212,99 @@ fn zoom_inserts_linked_slide_pictures() {
     assert!(matches!(z.click.as_ref().unwrap().action, Action::Slide { .. }));
     assert!(s.execute("insert.zoom", &json!({"slides": [42]})).is_err());
     assert!(s.execute("insert.zoom", &json!({"kind": "slide"})).is_err());
+}
+
+#[test]
+fn darken_and_desaturate_write_powerpoints_hsl_shift() {
+    for (effect, preset, shift) in [("darken", 24, r#"s="0" l="-25098""#), ("desaturate", 25, r#"s="-70588" l="0""#)] {
+        let mut p = defaults::new_presentation(None);
+        let mut s = p.slides[0].as_ref().clone();
+        let sh = shape(&mut p, "Target", 100.0, 100.0, 100.0, 100.0);
+        let id = sh.id;
+        s.shapes.push(sh);
+        s.animations.push(Animation { shape: id, class: AnimClass::Emphasis, effect: effect.into(), duration_ms: 500, ..Default::default() });
+        p.slides[0] = Arc::new(s);
+        let bytes = deckcraft_pptx::export(&p).expect("export");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name("ppt/slides/slide1.xml").unwrap(), &mut xml).unwrap();
+        assert!(xml.contains(&format!(r#"presetID="{preset}""#)), "{effect}");
+        assert!(xml.contains(r#"clrSpc="hsl""#) && xml.contains(shift), "{effect}: {xml}");
+        assert_eq!(round(&p).slides[0].animations[0].effect, effect);
+    }
+}
+
+/// PowerPoint's default durations (COM `AddEffect`), which differ from the 0.5 s most effects get.
+#[test]
+fn default_durations_match_powerpoint() {
+    for (effect, ms) in [
+        ("grow", 1000),
+        ("shrinkTurn", 1000),
+        ("box", 2000),
+        ("circle", 2000),
+        ("diamond", 2000),
+        ("boxOut", 2000),
+        ("diamondOut", 2000),
+        ("expand", 1000),
+        ("contract", 1000),
+        ("spinner", 500),
+        ("spinnerOut", 500),
+        ("colorPulse", 250),
+        ("objectColor", 500),
+        ("boldFlash", 2000),
+    ] {
+        let a = deckcraft_model::anim::ANIMATIONS.iter().find(|a| a.0 == effect).unwrap();
+        assert_eq!(a.4, ms, "{effect}");
+    }
+}
+
+/// Show media controls is PowerPoint's `p14:showMediaCtrls` extension inside `p:showPr`: off is
+/// written there, under its extension uri and with the p14 namespace declared on the element;
+/// on (the default) writes nothing.
+#[test]
+fn hidden_media_controls_survive_save_and_reopen() {
+    let props = |p: &Presentation| {
+        let bytes = deckcraft_pptx::export(p).expect("export");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("zip");
+        let mut x = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name("ppt/presProps.xml").expect("presProps"), &mut x).expect("read");
+        x
+    };
+    let mut p = Presentation::default();
+    p.show.show_media_controls = false;
+    let xml = props(&p);
+    let show = xml.split("<p:showPr").nth(1).and_then(|r| r.split("</p:showPr>").next()).expect("p:showPr");
+    assert!(
+        show.contains(
+            "<p:ext uri=\"{2FDB2607-1784-4EEB-B798-7EB5836EED8A}\"><p14:showMediaCtrls xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\" val=\"0\"/></p:ext>"
+        ),
+        "{xml}"
+    );
+    assert!(!round(&p).show.show_media_controls);
+    let default = Presentation::default();
+    assert!(!props(&default).contains("showMediaCtrls"));
+    assert!(round(&default).show.show_media_controls);
+}
+
+#[test]
+fn reflection_angles_and_skews_out_of_range_are_written_inside_the_schema() {
+    let mut p = Presentation::default();
+    let mut slide = new_slide(&mut p, "Reflection ranges");
+    let mut s = shape(&mut p, "Reflected", 10.0, 10.0, 200.0, 80.0);
+    s.effects = Some(deckcraft_model::style::Effects {
+        reflection: Some(deckcraft_model::style::Reflection {
+            st_pos: Some(150_000),
+            dir: Some(-5),
+            fade_dir: Some(21_600_000),
+            kx: Some(9_000_000),
+            ky: Some(-9_000_000),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    slide.shapes.push(s);
+    p.slides.push(Arc::new(slide));
+
+    let r = round(&p).slides.last().and_then(|sl| by_name(sl, "Reflected").effects.clone()).and_then(|fx| fx.reflection).expect("reflection");
+    assert_eq!((r.st_pos, r.dir, r.fade_dir, r.kx, r.ky), (Some(100_000), Some(21_599_995), Some(0), Some(5_399_999), Some(-5_399_999)));
 }
