@@ -42,6 +42,10 @@ The eight existing PR #241 `chart_workbook` integration tests also passed locall
 The PR's newly generated workbook was inspected in the package; its new-chart native
 edit/save/reopen path was **not** separately exercised in this run.
 
+Protocol clarification on 2026-11-08: the checks below now require pre-Office linkage
+verification, chart/workbook agreement and separate one-sheet new-chart expectations.
+These additions describe required future checks; they do not expand the measured run above.
+
 ## Reproduce with owned synthetic input
 
 Do not use issue attachments or linked reproduction files. Use separate baseline and
@@ -105,8 +109,15 @@ binary, including a title-only edit that should not change workbook data:
   --save data-edit.pptx
 ```
 
-Before opening Office, compare the embedded workbook bytes for the title-only case,
-inspect the data-edit cells/formulas and workbook calculation properties, and record the
+Before opening Office, check every output, including the newly inserted chart and every
+fallback-regeneration variation, for an embedded XLSX part, its package content type, the
+chart's package relationship targeting that part, and `c:externalData` using that relationship
+ID. Resolve the relationship target and open the workbook to verify its categories, series
+names and values match the chart references and caches. Missing or broken workbook linkage
+is a generation failure even if Office later reconstructs Edit Data from the caches.
+
+For the title-only control, also compare the embedded workbook bytes with the source.
+Inspect the data-edit cells/formulas and workbook calculation properties, and record the
 actual revisions and file hashes. Do not treat cached formula values as recalculated results.
 
 ## Native acceptance procedure
@@ -118,12 +129,23 @@ actual revisions and file hashes. Do not treat cached formula values as recalcul
    used ranges. A reconstructed sheet counts as reconstruction, not preservation.
 3. For the two-sheet title control, check both sheets, the sentinel, formulas and values.
    For the data edit, expect B2=7, D2=9 and Notes!B2=14 after Excel recalculates.
-4. Change Sheet1!B2 to 8 in Excel. Confirm D2=10 and Notes!B2=16. Close the embedded
-   workbook, save the presentation, close it and reopen it in PowerPoint. Invoke Edit Data
-   again and verify the same values, formulas, sentinel and both worksheets.
-5. Repeat for a newly inserted chart as a separate case; imported-workbook preservation
-   does not prove new-workbook generation. Cover added points/series separately because
-   fallback regeneration has different preservation guarantees.
+   In PowerPoint, compare chart categories Alpha/Beta, series Sales and plotted values 7/2
+   with the workbook; the title-only control instead retains 1/2. Record discrepancies.
+4. For that two-sheet data-edit case, change Sheet1!B2 to 8 in Excel. Confirm D2=10 and
+   Notes!B2=16, then return to PowerPoint and confirm the chart shows Sales values 8/2
+   against Alpha/Beta. Close the embedded workbook, save the presentation, close it and
+   reopen it in PowerPoint. Verify the chart still matches those categories and values;
+   invoke Edit Data again and verify the same values, formulas, sentinel and both worksheets.
+5. Run a newly inserted chart as a separate case. Its generated Sheet1 has B1=Sales,
+   A2=Alpha, B2=1, A3=Beta and B3=2 (A1 is blank), matching the chart's categories and Sales values.
+   Change B2 to 8, confirm the chart shows Alpha/Beta with Sales values 8/2, then close the
+   workbook, save/close/reopen the presentation and verify both the chart and Edit Data
+   retain those cells and values. This one-sheet case has no D2 formula, Notes sheet or
+   sentinel; do not apply the two-sheet preservation expectations to it. Cover added
+   points/series separately: record the exact expected categories, series and cell matrix,
+   verify their workbook linkage before Office, and compare chart/workbook data before
+   and after a native edit and save/reopen. Fallback regeneration has different preservation
+   guarantees, so state which extra cells, formulas or sheets it is expected to retain.
 6. Inspect the saved local package as a second persistence check, without committing it.
    Close disposable test documents, discard unused test-only changes, then quit both apps.
    Preserve unrelated user documents.

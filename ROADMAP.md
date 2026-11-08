@@ -342,7 +342,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-08 | trivial | Native chart workbook validation protocol, Mac observations and untested cases recorded; no export implementation or score change |
+| 2026-11-08 | trivial | Native chart workbook validation protocol, Mac observations and untested cases recorded; clarified linkage, chart/workbook comparisons and separate new-chart expectations; no export implementation or score change |
 | 2026-11-04 | trivial | Ogg Opus recovery duration includes its recovered tail; parity scores unchanged |
 | 2026-11-02 | trivial | Progress log: run alternate-language metadata round-trips through native and PPTX formats; product parity scores unchanged |
 | 2026-11-03 | trivial | Reuse Slides brings referenced custom table styles along; scores unchanged |

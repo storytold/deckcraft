@@ -123,7 +123,7 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-08 | trivial | Native chart workbook validation protocol, Mac observations and untested cases recorded; no export implementation or score change |
+| 2026-11-08 | trivial | Native chart workbook validation protocol, Mac observations and untested cases recorded; clarified linkage, chart/workbook comparisons and separate new-chart expectations; no export implementation or score change |
 | 2026-11-02 | minor | Optional table RTL direction is read and written as `a:tblPr/@rtl`; native and two PPTX saves preserve true, false and absent values with distinguishable column text |
 | 2026-11-02 | minor | Text runs preserve alternate-language metadata in native and PPTX round trips |
 | 2026-11-03 | trivial | Reuse Slides transfers referenced custom table styles from native and PPTX sources; grouped tables, undo, native save/reopen and style-id conflicts are covered |
