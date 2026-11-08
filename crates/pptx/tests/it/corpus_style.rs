@@ -317,6 +317,7 @@ fn right_of(p: &Presentation) -> ShapeId {
     by_name(p, "Right").id
 }
 
+/// Return a copy of the `.pptx` archive `bytes` with `entry_name` rewritten by `f`.
 fn rewrite_zip_entry(bytes: &[u8], entry_name: &str, f: impl Fn(&str) -> String) -> Vec<u8> {
     use std::io::{Cursor, Read, Write};
     let mut r = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
@@ -370,22 +371,26 @@ fn paragraph_build_without_bld_lst_still_folds_into_by_paragraph() {
     assert_eq!(back.slides[0].animations.len(), 1);
     assert_eq!(back.slides[0].animations[0].text_build, TextBuild::ByParagraph);
 
-    // Non-500ms After Previous paragraph build without bldLst is also inferred.
+    // Explicit bldP build="p" folds non-500ms After Previous builds, while without bldLst an 800ms
+    // After Previous run stays separate so playback does not alter its 800ms stagger to 500ms.
     let mut pres_after = pres.clone();
     let s_after = Arc::make_mut(&mut pres_after.slides[0]);
     s_after.animations[0].start = AnimStart::AfterPrevious;
     s_after.animations[0].duration_ms = 800;
     let bytes_after = deckcraft_pptx::export(&pres_after).unwrap();
+    let back_explicit_after = deckcraft_pptx::import(&bytes_after).unwrap();
+    assert_eq!(back_explicit_after.slides[0].animations.len(), 1);
+    assert_eq!(back_explicit_after.slides[0].animations[0].text_build, TextBuild::ByParagraph);
+    assert_eq!(back_explicit_after.slides[0].animations[0].duration_ms, 800);
+
     let without_bld_after = rewrite_zip_entry(&bytes_after, "ppt/slides/slide1.xml", |xml| {
         let start = xml.find("<p:bldLst>").expect("bldLst");
         let end = xml.find("</p:bldLst>").expect("/bldLst") + "</p:bldLst>".len();
         format!("{}{}", &xml[..start], &xml[end..])
     });
     let back_after = deckcraft_pptx::import(&without_bld_after).unwrap();
-    assert_eq!(back_after.slides[0].animations.len(), 1);
-    assert_eq!(back_after.slides[0].animations[0].text_build, TextBuild::ByParagraph);
-    assert_eq!(back_after.slides[0].animations[0].duration_ms, 800);
-
+    assert_eq!(back_after.slides[0].animations.len(), 2);
+    assert!(back_after.slides[0].animations.iter().all(|a| a.text_build == TextBuild::default()));
     // Explicit bldP with build!="p" (e.g. build="cust") opts out of folding.
     let custom_bld = rewrite_zip_entry(&bytes, "ppt/slides/slide1.xml", |xml| xml.replace(r#"build="p""#, r#"build="cust""#));
     let back_cust = deckcraft_pptx::import(&custom_bld).unwrap();

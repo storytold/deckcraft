@@ -330,9 +330,10 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
     for run in out.chunk_by(same_build) {
         let effects: Vec<&Animation> = run.iter().map(|(a, ..)| a).collect();
         let build = run.first().is_some_and(|r| r.3);
+        let explicit_bld = run.first().is_some_and(|r| bld_p.get(&(r.1, r.2.clone())) == Some(&true));
         let text = effects.first().and_then(|a| find_shape(shapes, a.shape)).and_then(|s| s.text.as_ref());
         match (effects.first(), text) {
-            (Some(first), Some(text)) if build && plays_as_build(&effects, text) => {
+            (Some(first), Some(text)) if build && plays_as_build(&effects, text, explicit_bld) => {
                 anims.push(Animation { text_build: TextBuild::ByParagraph, paragraph: None, ..(*first).clone() });
             }
             _ => anims.extend(effects.into_iter().cloned()),
@@ -345,7 +346,7 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
 /// first one plays: one effect per paragraph the build animates, in paragraph order, later top
 /// paragraphs on click (after previous when the build doesn't start on click), deeper ones with
 /// their parent, all with the same settings?
-fn plays_as_build(effects: &[&Animation], text: &TextBody) -> bool {
+fn plays_as_build(effects: &[&Animation], text: &TextBody, explicit_bld: bool) -> bool {
     let roles = paragraph_build_roles(text);
     let expected = roles.iter().enumerate().filter(|(i, r)| match r {
         BuildRole::Top => true,
@@ -353,6 +354,9 @@ fn plays_as_build(effects: &[&Animation], text: &TextBody) -> bool {
         BuildRole::Unowned => false,
     });
     let Some(first) = effects.first() else { return false };
+    if !explicit_bld && first.start != AnimStart::OnClick && (span_ms(first) != 500 || first.delay_ms != 0) {
+        return false;
+    }
     let settings = |a: &Animation| Animation { start: AnimStart::OnClick, paragraph: None, ..a.clone() };
     let base = settings(first);
     let mut matched = 0;
