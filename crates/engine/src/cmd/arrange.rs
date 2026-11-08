@@ -385,10 +385,11 @@ fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {
             };
             let freed_ids: Vec<ShapeId> = freed.iter().map(|c| c.id).collect();
             siblings.splice(at..=at, freed);
-            // Ungrouped along with its outer group, it was listed among that group's children.
+            // Ungrouped along with an outer group, it was listed among that group's children (once per expanded ancestor).
             match new_sel.iter().position(|x| x == id) {
                 Some(i) => {
                     new_sel.splice(i..=i, freed_ids);
+                    new_sel.retain(|x| x != id);
                 }
                 None => new_sel.extend(freed_ids),
             }
