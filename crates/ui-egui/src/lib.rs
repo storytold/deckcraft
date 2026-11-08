@@ -143,7 +143,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.preferences", "Preferences…", Some("Cmd+,"), "{}"),
     ("app.openDialog", "Open…", None, "{purpose?}"),
     ("app.insertPictureDialog", "Picture from File…", None, "{}"),
-    ("app.smartArtPictureDialog", "Insert Picture in SmartArt…", None, "{id?, index}"),
+    ("app.smartArtPictureDialog", "Insert Picture in Diagram…", None, "{id?, index}"),
     ("app.changePictureDialog", "Change Picture…", None, "{}"),
     ("app.insertAudioDialog", "Audio from File…", None, "{}"),
     ("app.reuseSlidesDialog", "Reuse Slides…", None, "{keepFormatting?: bool}"),

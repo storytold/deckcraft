@@ -83,7 +83,7 @@ pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
         }
-        let (main, arrow) = small_button_ex(ui, Icon::SmartArt, "SmartArt Styles", gid.is_some(), false, true);
+        let (main, arrow) = small_button_ex(ui, Icon::SmartArt, "Diagram Styles", gid.is_some(), false, true);
         if let Some(arrow) = arrow {
             widgets::split_menu(&main, &arrow, |ui| {
                 for (k, label) in deckcraft_engine::cmd::smartart::STYLES {

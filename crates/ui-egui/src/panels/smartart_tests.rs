@@ -66,12 +66,12 @@ fn home_convert_to_smartart_gallery_converts_the_text() {
         app,
     );
     h.run_steps(3);
-    h.get_by_label("Convert to SmartArt").click();
+    h.get_by_label("Convert to Diagram").click();
     h.run_steps(3);
     h.get_by_role_and_label(egui::accesskit::Role::Button, "Basic Block List").click();
     h.run_steps(3);
     let st = h.state().session.active().unwrap();
-    let (_, d) = deckcraft_engine::cmd::smartart::selected(st).expect("the text became a SmartArt graphic");
+    let (_, d) = deckcraft_engine::cmd::smartart::selected(st).expect("the text became a Diagram graphic");
     assert_eq!(d.kind, "blockList");
     assert_eq!(d.nodes.len(), 3);
 }
