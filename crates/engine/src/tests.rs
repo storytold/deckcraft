@@ -269,6 +269,7 @@ fn a_shape_copied_from_a_group_pastes_where_it_was_drawn() {
             assert!(s.doc().unwrap().shapes().iter().any(|x| x.id == pasted), "case {n}: {cmd} pastes on the top level");
             let d = if same_slide { off } else { 0.0 };
             let now = sites(&s, pasted);
+            assert_eq!(was.len(), now.len(), "case {n}: {cmd}");
             assert!(
                 was.iter().zip(&now).all(|(p, q)| (q.x - p.x - d).hypot(q.y - p.y - d) < 1e-6),
                 "case {n}: {cmd} on the same slide {same_slide}: drawn at {was:?}, pasted at {now:?}"
