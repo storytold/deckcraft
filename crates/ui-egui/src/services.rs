@@ -4,6 +4,11 @@ pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
 
 pub type PickFn = Box<dyn FnMut(&str) -> Option<String>>;
 
+/// `(save, argument)` → the receiver that later gets the picked path (`None`: cancelled), or `None`
+/// when no dialog could be started. The dialog must not run inside the event handler (macOS shows a
+/// sheet: a modal loop there crashes the app when the dialog is resized).
+pub type StartPickFn = Box<dyn FnMut(bool, &str) -> Option<std::sync::mpsc::Receiver<Option<String>>>>;
+
 /// `(purpose, request id)`. The host shows a picker and later pushes an [`InboxEvent`]
 /// carrying that same id. Completing a cancelled or unknown id does nothing: the file is
 /// not applied to whichever document happens to be active.
@@ -46,6 +51,8 @@ pub struct Services {
     pub pick_open: Option<PickFn>,
     /// Save dialog with a suggested name → path.
     pub pick_save: Option<PickFn>,
+    /// When set, [`SlideApp::pick`] uses it instead of `pick_open` / `pick_save`.
+    pub start_pick: Option<StartPickFn>,
     pub read: Option<ReadFn>,
     pub write: Option<WriteFn>,
     /// Asynchronous open dialog (web). The callback receives the purpose and the request id

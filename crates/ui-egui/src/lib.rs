@@ -72,7 +72,7 @@ pub use panels::notes;
 pub use panels::selpane;
 pub use panels::thumbs;
 pub use ribbon::qat;
-pub use services::{DownloadFn, HostSaveFn, Inbox, InboxEvent, InboxFile, OpenAsyncFn, PickFn, ReadFn, Services, WriteFn};
+pub use services::{DownloadFn, HostSaveFn, Inbox, InboxEvent, InboxFile, OpenAsyncFn, PickFn, ReadFn, Services, StartPickFn, WriteFn};
 use state::{FilePlace, FilePurpose, ImeDescriptorKey, ImeDestination, ImeTerminalStamp};
 pub use state::{RECENT_MAX, UiState, ViewMode, ZOOM_RANGE};
 
@@ -86,6 +86,12 @@ enum FileTarget {
         doc: u64,
         place: FilePlace,
     },
+}
+
+/// A file dialog that is open, and what to do with the path it answers.
+struct PendingPick {
+    answer: std::sync::mpsc::Receiver<Option<String>>,
+    then: Box<dyn FnOnce(&mut SlideApp, String)>,
 }
 
 struct PendingFile {
@@ -335,6 +341,8 @@ pub struct SlideApp {
     next_file_id: u64,
     /// Picks and drops whose bytes have not arrived yet.
     pending_files: Vec<PendingFile>,
+    /// File dialogs shown outside the event handler, with what to do with the path they answer.
+    pending_picks: Vec<PendingPick>,
     /// The empty presentation host mode starts with ([`SlideApp::start_for_host`]), until the
     /// first file the page sends takes its place.
     host_start: Option<u64>,
@@ -476,6 +484,8 @@ mod reuse_picker_tests;
 mod slide_size_tests;
 #[cfg(test)]
 mod split_button_tests;
+#[cfg(test)]
+mod start_pick_tests;
 #[cfg(test)]
 mod texture_limit_tests;
 #[cfg(test)]

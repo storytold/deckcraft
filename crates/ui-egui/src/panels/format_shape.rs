@@ -597,12 +597,7 @@ fn fx_slider(
 
 /// Asks for a picture file and makes it the selected shapes' fill.
 fn pick_fill_picture(app: &mut SlideApp) {
-    if let Some(pick) = app.services.pick_open.as_mut()
-        && let Some(path) = pick("picture")
-        && let Some(Ok(bytes)) = app.services.read.as_ref().map(|r| r(&path))
-    {
-        run(app, "shape.fill", json!({"picture": deckcraft_engine::cmd::base64_encode(&bytes)}));
-    }
+    app.pick_picture_bytes(|app, bytes| run(app, "shape.fill", json!({"picture": deckcraft_engine::cmd::base64_encode(&bytes)})));
 }
 
 /// A number field for one picture-fill option; runs `shape.fill` with `{pictureProps: {key: v × scale}}`
