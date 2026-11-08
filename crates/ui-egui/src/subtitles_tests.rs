@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use deckcraft_asr::{Event, FakeTranscriber, Position, ProviderState, SubtitleSettings, Transcriber};
+use deckcraft_asr::{Event, FakeTranscriber, ModelState, Position, ProviderState, SubtitleSettings, Transcriber};
 
 use crate::subtitles::Subtitles;
 
@@ -115,6 +115,30 @@ fn the_fake_provider_reports_lines_through_the_host() {
     assert_eq!(fake.poll(), vec![Event::Partial { text: "one".into() }]);
     fake.stop();
     assert!(fake.poll().is_empty());
+}
+
+#[test]
+fn adopting_a_folder_verifies_it_off_the_ui_thread() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-subtitles-adopt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    for name in ["model.safetensors", "config.json", "tokenizer.json"] {
+        std::fs::write(dir.join(name), b"not the model").expect("write");
+    }
+    let settings = SubtitleSettings::default();
+    let mut subs = Subtitles::default();
+    subs.adopt_dir(dir.clone());
+    assert_eq!(subs.model().state, ModelState::Ready, "the presence check reports without waiting for the hash");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        subs.sync(&settings, false);
+        if subs.model().state != ModelState::Ready {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(subs.model().state, ModelState::Corrupt, "the full check still runs, and reports the wrong contents");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

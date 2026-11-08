@@ -74,7 +74,9 @@ pub struct SubtitleSettings {
     pub font_pt: f64,
     pub max_lines: usize,
     /// The processor to run the model on; an unavailable request falls back to the CPU with a
-    /// note in the provider status.
+    /// note in the provider status. An unknown spelling (a hand-edited file, or a variant from a
+    /// newer build) is the default rather than a damaged settings file that loses every value.
+    #[serde(default, deserialize_with = "lenient_accelerator")]
     pub accelerator: Accelerator,
 }
 
@@ -128,6 +130,13 @@ fn lenient_position<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Position, 
     use serde::Deserialize;
     let value = serde_json::Value::deserialize(d)?;
     Ok(value.as_str().and_then(Position::parse).unwrap_or_default())
+}
+
+/// Read an accelerator leniently: an unknown spelling is the default.
+fn lenient_accelerator<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Accelerator, D::Error> {
+    use serde::Deserialize;
+    let value = serde_json::Value::deserialize(d)?;
+    Ok(value.as_str().and_then(Accelerator::parse).unwrap_or_default())
 }
 
 /// A short language tag: letters and `-`, at most 16 characters. `auto` is accepted only where
@@ -213,6 +222,14 @@ mod tests {
         assert!(!a.provider_equivalent(&SubtitleSettings { spoken: "fr".into(), ..b.clone() }));
         assert!(!a.provider_equivalent(&SubtitleSettings { microphone: None, ..b.clone() }));
         assert!(!a.provider_equivalent(&SubtitleSettings { on: false, ..b }));
+        // A hand-edited or newer accelerator spelling must not cost the rest of the settings.
+        let lenient: SubtitleSettings =
+            serde_json::from_str(r#"{"spoken":"fr","accelerator":"npu-3000"}"#).expect("lenient accelerator");
+        assert_eq!(lenient.spoken, "fr");
+        assert_eq!(lenient.accelerator, Accelerator::Cpu, "an unknown accelerator is the default");
+        let spelled: SubtitleSettings =
+            serde_json::from_str(r#"{"accelerator":"OpenVINO"}"#).expect("a lenient spelling is read");
+        assert_eq!(spelled.accelerator, Accelerator::OpenVino, "a known accelerator spelled differently is kept");
         assert!(SPOKEN_LANGUAGES.iter().any(|(t, _)| *t == AUTO_LANGUAGE));
         assert!(SUBTITLE_LANGUAGES.iter().all(|(t, _)| *t != AUTO_LANGUAGE));
         // `auto` is a spoken-language choice only: a subtitle language falls back, so a command or

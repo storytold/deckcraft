@@ -179,7 +179,11 @@ fn run(model_dir: PathBuf, settings: SubtitleSettings, stop: Arc<AtomicBool>, st
     // kernel warm-up (measured ~4x the steady-state cost), and doing it before the microphone
     // opens keeps that out of the first caption.
     let warm = std::time::Instant::now();
-    let _ = engine.transcribe(&vec![0.0f32; 16_000], settings.language_hint());
+    // The warm-up is a real decode: an invalid language tag fails here, before the microphone
+    // opens, instead of surfacing on the first line the presenter speaks.
+    if let Err(e) = engine.transcribe(&vec![0.0f32; 16_000], settings.language_hint()) {
+        return fail(&status, &tx, e);
+    }
     log::debug!("subtitles: warm-up took {:?}", warm.elapsed());
     if stop.load(Ordering::Relaxed) {
         return;

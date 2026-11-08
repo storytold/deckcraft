@@ -71,7 +71,7 @@ Settings are per user (`prefs.json`, `Prefs::subtitles`), not part of the presen
 | Setting | Values |
 |---|---|
 | Always use subtitles | off by default |
-| Spoken language | detect, or one of Whisper's 99 language tokens |
+| Spoken language | detect, or one of 16 named languages in the dialog; `show.subtitles` accepts any of Whisper's 99 language tokens |
 | Subtitle language | the caption's language (translation is not implemented yet) |
 | Microphone | system default, or a named input device |
 | Position | bottom of slide, top of slide, below slide, above slide |

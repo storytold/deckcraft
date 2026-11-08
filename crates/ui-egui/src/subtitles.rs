@@ -49,6 +49,8 @@ pub struct Subtitles {
     pub download: Option<DownloadJob>,
     /// Why the last download failed; the dialog shows it until the next attempt.
     pub download_error: Option<String>,
+    /// A full hash check running off the UI thread; its result replaces `model`.
+    verifying: Option<Receiver<ModelStatus>>,
 }
 
 impl Default for Subtitles {
@@ -63,6 +65,7 @@ impl Default for Subtitles {
             checked: false,
             download: None,
             download_error: None,
+            verifying: None,
         }
     }
 }
@@ -100,11 +103,41 @@ impl Subtitles {
         self.model_dir = dir;
     }
 
-    /// Use a directory the user chose by hand: any of the model files' folder.
+    /// Use a directory the user chose by hand: any of the model files' folder. It is reported by
+    /// presence at once and hashed off the UI thread, because the full check reads 151 MB.
     pub fn adopt_dir(&mut self, dir: PathBuf) {
-        self.model = model::check_dir(&dir, &whisper_tiny());
+        self.verify_off_thread(dir);
+    }
+
+    /// Report `dir` by presence now and run the full hash check on a worker thread; the result
+    /// replaces [`Self::model`] when it arrives.
+    fn verify_off_thread(&mut self, dir: PathBuf) {
+        self.model = model::check_dir_files(&dir, &whisper_tiny());
         self.model_dir = dir;
         self.checked = true;
+        let dir = self.model_dir.clone();
+        let (tx, rx) = channel();
+        let spawned = std::thread::Builder::new().name("deckcraft-model-check".into()).spawn(move || {
+            let _ = tx.send(model::check_dir(&dir, &whisper_tiny()));
+        });
+        match spawned {
+            Ok(_) => self.verifying = Some(rx),
+            // No thread available: pay the hash once here rather than report an unverified model.
+            Err(_) => {
+                self.model = model::check_dir(&self.model_dir, &whisper_tiny());
+                self.verifying = None;
+            }
+        }
+    }
+
+    /// Take the background check's result, if it has finished.
+    fn poll_verification(&mut self) {
+        let Some(rx) = self.verifying.take() else { return };
+        match rx.try_recv() {
+            Ok(status) => self.model = status,
+            Err(TryRecvError::Empty) => self.verifying = Some(rx),
+            Err(TryRecvError::Disconnected) => {}
+        }
     }
 
     /// The accelerators this build can use here (the CPU alone until an accelerator backend
@@ -128,6 +161,7 @@ impl Subtitles {
     /// The model's state, as the dialog shows it.
     pub fn model(&mut self) -> &ModelStatus {
         self.ensure_checked();
+        self.poll_verification();
         &self.model
     }
 
@@ -209,9 +243,9 @@ impl Subtitles {
             match result {
                 Ok(()) => {
                     // The downloader verified each file; hash again to be sure nothing else
-                    // touched the directory, then look for the model.
-                    self.model = model::check_dir(&self.model_dir, &whisper_tiny());
-                    self.checked = true;
+                    // touched the directory. That reads 151 MB, so it runs off the UI thread.
+                    let dir = self.model_dir.clone();
+                    self.verify_off_thread(dir);
                 }
                 Err(e) => self.download_error = Some(e),
             }
@@ -229,6 +263,7 @@ impl Subtitles {
     /// Returns a message to show once (a failure), if any.
     pub fn sync(&mut self, settings: &SubtitleSettings, show_active: bool) -> Option<String> {
         self.poll_download();
+        self.poll_verification();
         if !(settings.on && show_active) {
             self.stop();
             self.caption = None;
