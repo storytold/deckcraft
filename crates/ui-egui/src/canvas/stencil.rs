@@ -30,14 +30,23 @@ struct AngleEdit {
     text: String,
 }
 
+/// The temp-store key of the typed-angle field.
 fn edit_id(ui: &Ui) -> egui::Id {
     ui.scope_id().with("stencil_ruler_angle")
 }
 
+/// The temp-store key of the active grab.
 fn grab_id(ui: &Ui) -> egui::Id {
     ui.scope_id().with("stencil_ruler_grab")
 }
 
+/// Wheel notches left over from the last frame: a trackpad sends a few points at a time, so the
+/// fraction that did not yet reach a whole notch is carried, as the slide wheel does.
+fn wheel_id(ui: &Ui) -> egui::Id {
+    ui.scope_id().with("stencil_ruler_wheel")
+}
+
+/// A slide point on screen.
 fn to_pos(xf: Xf, p: Point) -> Pos2 {
     xf.to_screen(p)
 }
@@ -48,6 +57,7 @@ fn axes(r: &RulerState) -> (Vec2, Vec2) {
     (vec2(a.cos(), a.sin()), vec2(-a.sin(), a.cos()))
 }
 
+/// The body's four corners on screen.
 fn body(r: &RulerState, xf: Xf) -> Vec<Pos2> {
     let (dir, nor) = axes(r);
     let c = to_pos(xf, r.center());
@@ -79,8 +89,9 @@ pub(super) fn wheel(app: &mut SlideApp, ui: &Ui, xf: Xf, hover: Option<Pos2>, av
     if !hit(&r, xf, at) || over_page_ruler(app, avail, at) {
         return false;
     }
-    // Read the raw wheel notches, not the smoothed delta: one notch is one degree.
-    let mut notches = 0.0_f64;
+    // Read the raw wheel notches, not the smoothed delta: one notch is one degree. A trackpad
+    // delivers a fraction of a notch per frame, so the remainder is kept for the next frame.
+    let mut notches: f64 = ui.data_mut(|d| d.get_temp(wheel_id(ui)).unwrap_or(0.0));
     ui.input(|i| {
         for e in &i.events {
             if let egui::Event::MouseWheel { unit, delta, .. } = e {
@@ -88,18 +99,25 @@ pub(super) fn wheel(app: &mut SlideApp, ui: &Ui, xf: Xf, hover: Option<Pos2>, av
                 if !y.is_finite() {
                     continue;
                 }
-                notches += match unit {
+                let n = match unit {
                     egui::MouseWheelUnit::Line => y,
                     // A point-unit wheel reports about 50 points for one notch.
                     egui::MouseWheelUnit::Point => y / 50.0,
                     egui::MouseWheelUnit::Page => y * 5.0,
                 };
+                // A change of direction drops what was left, so reversing turns immediately.
+                if notches * n < 0.0 {
+                    notches = 0.0;
+                }
+                notches += n;
             }
         }
     });
-    if notches.abs() >= 0.5 {
-        // Whole notches only: a slow trackpad flick should not jitter the angle.
-        let steps = notches.trunc().clamp(-90.0, 90.0);
+    // Whole notches only: a slow trackpad flick should not jitter the angle.
+    let steps = notches.trunc().clamp(-90.0, 90.0);
+    notches = if steps.abs() >= 90.0 { 0.0 } else { notches - steps };
+    ui.data_mut(|d| d.insert_temp(wheel_id(ui), notches));
+    if steps != 0.0 {
         let turned = ruler::rotate_about(&r, xf.to_slide(at), -steps);
         let _ = app.run("draw.ruler", serde_json::json!({"x": turned.x, "y": turned.y, "angle": turned.angle}));
     }
@@ -113,6 +131,7 @@ pub(super) fn overlay(app: &mut SlideApp, ui: &mut Ui, painter: &egui::Painter, 
     if !r.visible {
         ui.data_mut(|d| d.remove_temp::<Option<Grab>>(grab_id(ui)));
         ui.data_mut(|d| d.remove_temp::<AngleEdit>(edit_id(ui)));
+        ui.data_mut(|d| d.remove_temp::<f64>(wheel_id(ui)));
         return false;
     }
     paint(painter, xf, &r, t, app.session.prefs.units);
@@ -233,10 +252,13 @@ fn paint(p: &egui::Painter, xf: Xf, r: &RulerState, t: &Tokens, unit: deckcraft_
     let (step, sub) = super::rulers::ruler_steps(unit);
     let major = step as f32;
     let minor = (step / f64::from(sub.max(1))) as f32;
+    // Ticks and numbers are both counted from the left end, as on a ruler, so each long tick sits
+    // under its number and neither runs past the ends of the body.
+    let left = c - dir * half * scale;
     let n = (ruler::LENGTH as f32 / minor).floor() as i32;
-    for i in -n..=n {
+    for i in 0..=n {
         let at = i as f32 * minor;
-        let q = c + dir * at * scale;
+        let q = left + dir * at * scale;
         let fraction = (at / major).fract().abs();
         let is_major = fraction < 0.01 || 1.0 - fraction < 0.01;
         let len = if is_major { 11.0 } else { 5.5 };
@@ -247,7 +269,7 @@ fn paint(p: &egui::Painter, xf: Xf, r: &RulerState, t: &Tokens, unit: deckcraft_
     // A number at each major step on both edges, counted from the left end as on a ruler.
     let a = text_angle(r);
     for v in 0..=(ruler::LENGTH as f32 / major).floor() as i32 {
-        let q = c - dir * half * scale + dir * (v as f32 * major) * scale;
+        let q = left + dir * (v as f32 * major) * scale;
         let label = format!("{v}");
         for side in [1.0, -1.0] {
             let at = q + nor * (side * 8.0) * scale;

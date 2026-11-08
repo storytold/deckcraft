@@ -43,6 +43,7 @@ fn num(p: &Value, key: &str) -> Result<Option<f64>> {
     }
 }
 
+/// Show, hide or place the ruler; the state is clamped and wrapped after every change.
 fn ruler(s: &mut Session, p: &Value) -> Result<Value> {
     let mut st = s.view.ruler;
     let (x, y, angle) = (num(p, "x")?, num(p, "y")?, num(p, "angle")?);
@@ -84,10 +85,12 @@ fn ruler(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(state_json(&s.view.ruler))
 }
 
+/// The ruler's current state, for the UI and control channel.
 fn state(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(state_json(&s.view.ruler))
 }
 
+/// The ruler's state as the commands return it, with its fixed geometry for clients.
 fn state_json(r: &RulerState) -> Value {
     json!({
         "visible": r.visible,

@@ -137,14 +137,17 @@ pub fn edges(r: &RulerState) -> [EdgeLine; 2] {
     })
 }
 
-/// The edge nearest `points` (every sample considered) and its distance.
+/// The edge nearest `points` and how far its farthest sample is from the finite edge, when every
+/// sample is near the body. Measuring to the segment, and taking the farthest sample rather than
+/// the nearest, is what keeps a stroke that merely crosses the ruler's extended line (a circle, a
+/// word, a scribble) freehand: it only counts as along the edge when the whole stroke hugs it.
 pub fn nearest_edge(r: &RulerState, points: &[Point]) -> Option<(usize, f64)> {
     if points.is_empty() || !points.iter().all(|p| p.x.is_finite() && p.y.is_finite()) {
         return None;
     }
     let mut best: Option<(usize, f64)> = None;
     for (i, e) in edges(r).iter().enumerate() {
-        let d = points.iter().map(|p| e.distance(*p)).fold(f64::INFINITY, f64::min);
+        let d = points.iter().map(|p| e.segment_distance(*p)).fold(0.0, f64::max);
         if best.is_none_or(|(_, bd)| d < bd) {
             best = Some((i, d));
         }
@@ -184,10 +187,10 @@ pub fn rotate_about(r: &RulerState, pivot: Point, degrees: f64) -> RulerState {
     out
 }
 
-/// A stroke straightened along the nearest ruler edge, when the ruler is on and the stroke comes
-/// within `tol` of an edge. The straight line keeps the stroke's along-edge extent (the
-/// projection of its first and last points) and each end's pressure; colour and width are the
-/// tool's and are not part of this function.
+/// A stroke straightened along the nearest ruler edge, when the ruler is on and the whole stroke
+/// runs within `tol` of one edge of the body (not of its extended line). The straight line keeps
+/// the stroke's along-edge extent (the projection of its first and last points) and each end's
+/// pressure; colour and width are the tool's and are not part of this function.
 pub fn straighten(points: &[(f64, f64, f32)], r: &RulerState, tol: f64) -> Option<Vec<(f64, f64, f32)>> {
     if !r.visible || points.len() < 2 {
         return None;
@@ -216,7 +219,8 @@ pub fn straighten(points: &[(f64, f64, f32)], r: &RulerState, tol: f64) -> Optio
 /// translation that does it. The translation is along the edge's normal, so a horizontal edge
 /// brings the box's parallel side onto the line, and a turned edge brings the box's nearest
 /// corner onto it (an axis-aligned box cannot have an edge along a diagonal line). A box the
-/// edge already crosses, or runs through, is left alone.
+/// edge already crosses, or runs through, is left alone, and so is one past either end of the
+/// body: only the body's own edge aligns anything.
 pub fn snap_rect(rect: Rect, r: &RulerState, tol: f64) -> Option<Vec2> {
     if !r.visible || !(rect.x0.is_finite() && rect.y0.is_finite() && rect.x1.is_finite() && rect.y1.is_finite()) {
         return None;
@@ -226,6 +230,14 @@ pub fn snap_rect(rect: Rect, r: &RulerState, tol: f64) -> Option<Vec2> {
     let centre = rect.center();
     let mut best: Option<(f64, Vec2)> = None;
     for e in edges(r) {
+        // A box past the end of the body is not near the edge, however close it is to the line
+        // the edge lies on.
+        let along = Vec2::new(centre.x, centre.y).dot(e.dir);
+        let along_reach = half.x * e.dir.x.abs() + half.y * e.dir.y.abs();
+        let (lo, hi) = (Vec2::new(e.from.x, e.from.y).dot(e.dir), Vec2::new(e.to.x, e.to.y).dot(e.dir));
+        if along + along_reach < lo || along - along_reach > hi {
+            continue;
+        }
         let line = Vec2::new(e.from.x, e.from.y).dot(e.normal);
         let mid = Vec2::new(centre.x, centre.y).dot(e.normal);
         // How far the box reaches along the normal: its nearest side is this close to the line.
@@ -321,15 +333,26 @@ mod tests {
     }
 
     #[test]
-    fn a_stroke_that_crosses_the_ruler_at_an_angle_projects_along_the_edge() {
+    fn a_stroke_that_crosses_the_ruler_stays_freehand() {
         let r = ruler(300.0, 200.0, 0.0);
-        let edge_y = 200.0 + HALF_WIDTH;
-        // Drawn diagonally across the body, ending just under the lower edge.
+        // Drawn diagonally across the body and out below the lower edge: the last sample is 6 pt
+        // from the edge, but the stroke crosses the line rather than following it.
         let stroke = [(240.0, 260.0, 1.0), (300.0, 245.0, 1.0), (360.0, 232.0, 1.0)];
-        let line = straighten(&stroke, &r, SNAP).expect("the lower edge is nearest within the threshold");
-        assert_eq!(line.len(), 2);
-        assert!((line[0].1 - edge_y).abs() < 1e-9 && (line[1].1 - edge_y).abs() < 1e-9, "{line:?}");
-        assert!((line[0].0 - 240.0).abs() < 1e-9 && (line[1].0 - 360.0).abs() < 1e-9, "{line:?}");
+        assert!(straighten(&stroke, &r, SNAP).is_none(), "a crossing stroke keeps its shape");
+        // A circle around the edge: one sample sits on the line without the stroke following it.
+        let ring: Vec<(f64, f64, f32)> = (0..16)
+            .map(|i| {
+                let a = f64::from(i) / 16.0 * std::f64::consts::TAU;
+                (300.0 + 40.0 * a.cos(), 226.0 + 40.0 * a.sin(), 1.0)
+            })
+            .collect();
+        assert!(straighten(&ring, &r, SNAP).is_none(), "a circle crossing the edge is not a line");
+        // Past the end of the body is away from the edge, not on its extended line.
+        let past_end = [(900.0, 222.0, 1.0), (940.0, 223.0, 1.0)];
+        assert!(straighten(&past_end, &r, SNAP).is_none());
+        // And a box there does not snap to the line either.
+        let top = 200.0 - HALF_WIDTH;
+        assert!(snap_rect(Rect::new(900.0, top - 43.0, 1000.0, top - 3.0), &r, SNAP).is_none());
     }
 
     #[test]

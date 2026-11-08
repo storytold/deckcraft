@@ -109,10 +109,10 @@ fn ink_near_the_ruler_is_drawn_straight_along_it() {
     let mut s = blank();
     s.execute("draw.ruler", &json!({"on": true, "x": 300, "y": 300, "angle": 0})).unwrap();
     pen(&mut s);
-    // Drawn diagonally across the body, a little below the lower edge.
+    // Drawn along the body a little below the lower edge, wobbling within the snap threshold.
     let edge = 300.0 + HALF_WIDTH;
     s.pointer(ev(PointerKind::Down, 240.0, edge + 6.0)).unwrap();
-    s.pointer(ev(PointerKind::Drag, 300.0, edge - 12.0)).unwrap();
+    s.pointer(ev(PointerKind::Drag, 300.0, edge + 2.0)).unwrap();
     s.pointer(ev(PointerKind::Drag, 360.0, edge + 4.0)).unwrap();
     assert_eq!(s.tool.ink_preview.len(), 2, "the live preview is the snapped line");
     s.pointer(ev(PointerKind::Up, 360.0, edge + 3.0)).unwrap();
@@ -151,6 +151,20 @@ fn ink_away_from_the_ruler_stays_freehand() {
     s.pointer(ev(PointerKind::Up, 360.0, 95.0)).unwrap();
     let strokes = ink_strokes(&s);
     assert_eq!(strokes[1].len(), 3, "{strokes:?}");
+}
+
+#[test]
+fn ink_that_crosses_the_ruler_is_not_straightened() {
+    let mut s = blank();
+    s.execute("draw.ruler", &json!({"on": true, "x": 300, "y": 300, "angle": 0})).unwrap();
+    pen(&mut s);
+    // A stroke over the body and out both sides: it touches each edge once, but follows neither.
+    s.pointer(ev(PointerKind::Down, 240.0, 200.0)).unwrap();
+    s.pointer(ev(PointerKind::Drag, 300.0, 330.0)).unwrap();
+    s.pointer(ev(PointerKind::Drag, 360.0, 200.0)).unwrap();
+    s.pointer(ev(PointerKind::Up, 360.0, 200.0)).unwrap();
+    let strokes = ink_strokes(&s);
+    assert!(strokes[0].len() > 2, "crossing ink keeps its shape: {strokes:?}");
 }
 
 fn rect(s: &mut Session, r: [f64; 4]) -> u64 {

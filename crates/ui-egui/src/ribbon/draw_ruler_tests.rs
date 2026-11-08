@@ -45,6 +45,45 @@ fn ink_line(h: &Harness<'_, SlideApp>) -> Vec<(f64, f64, f32)> {
 }
 
 #[test]
+fn a_trackpad_turns_the_ruler_once_its_small_deltas_add_up() {
+    let _gpu = crate::gpu_lock::gpu_lock();
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("draw.ruler", &json!({"on": true})).unwrap();
+    let mut app = SlideApp::new(s, Services::default());
+    app.ui.tab = "Draw".into();
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    let r = h.state().session.view.ruler;
+    assert!(r.visible, "{r:?}");
+    let a = r.angle.to_radians();
+    let along = egui::vec2(a.cos() as f32, a.sin() as f32);
+    let body_at = slide_at(&h, r.x + 300.0 * f64::from(along.x), r.y + 300.0 * f64::from(along.y));
+    // A trackpad sends a fraction of a notch per frame. Four frames of a quarter notch each make
+    // one degree, though no single frame comes near half a notch.
+    for _ in 0..4 {
+        h.hover_at(body_at);
+        h.run_steps(1);
+        h.event(egui::Event::MouseWheel {
+            unit: MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 12.5),
+            phase: TouchPhase::Move,
+            source: MouseWheelSource::Trackpad,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(1);
+    }
+    let turned = h.state().session.view.ruler;
+    assert!((turned.angle - (r.angle - 1.0)).abs() < 1e-6, "the fractions added up: {r:?} -> {turned:?}");
+}
+
+#[test]
 fn show_turn_and_type_the_ruler_then_draw_a_straight_line_along_it() {
     let _gpu = crate::gpu_lock::gpu_lock();
     let mut s = Session::with_new();
