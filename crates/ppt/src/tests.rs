@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used)]
 
 use deckcraft_model::text::{Align, Bullet, RunKind};
-use deckcraft_model::{Background, Fill, PhType, Rgba, ShapeKind};
+use deckcraft_model::{Background, Fill, PhType, Presentation, Rgba, ShapeKind, Slide};
 
 use crate::doc::rt;
 use crate::draw::prop;
@@ -253,7 +253,14 @@ fn imports_a_presentation() {
     let s = &p.slides[0];
     assert!(s.hidden);
     assert_eq!(s.notes.text(), "Say hello\nThen wave");
+    check_title_placeholder(s);
+    check_picture(&p, s);
+    check_group(s);
+    check_text_box(s);
+    check_master(&p, s);
+}
 
+fn check_title_placeholder(s: &Slide) {
     // The title placeholder: its box, its text and the master's title style.
     let title = &s.shapes[0];
     assert_eq!(title.ph_type(), Some(PhType::Title));
@@ -270,13 +277,17 @@ fn imports_a_presentation() {
     assert_eq!((r.size, r.bold, r.font.as_deref()), (Some(44.0), Some(true), Some("Arial")));
     assert_eq!(r.fill, Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0x11, 0x22, 0x33)))));
     assert_eq!(s.title(), "Hello\nWorld");
+}
 
+fn check_picture(p: &Presentation, s: &Slide) {
     // The picture.
     let ShapeKind::Picture { fill } = &s.shapes[1].kind else { panic!("not a picture: {:?}", s.shapes[1].kind) };
     let media = p.media.iter().find(|m| m.id == fill.media).unwrap();
     assert_eq!(media.content_type, "image/png");
     assert!(media.data.starts_with(b"\x89PNG"));
+}
 
+fn check_group(s: &Slide) {
     // The group: children in slide points, the child space the group's own box.
     let g = &s.shapes[2];
     let ShapeKind::Group { children, child } = &g.kind else { panic!("not a group") };
@@ -288,7 +299,9 @@ fn imports_a_presentation() {
     assert_eq!(children[0].geom.preset_name(), Some("ellipse"));
     assert_eq!(children[0].fill, Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0, 0xFF, 0)))));
     assert_eq!(children[0].line.as_ref().and_then(|l| l.width), Some(2.0));
+}
 
+fn check_text_box(s: &Slide) {
     // The text box: runs split at the format change, the star a slide number field.
     let tb = s.shapes[3].text.as_ref().unwrap();
     let runs = &tb.paragraphs[0].runs;
@@ -299,7 +312,9 @@ fn imports_a_presentation() {
     assert_eq!(runs[2].kind, RunKind::Field { field: "slidenum".into() });
     assert_eq!(runs[0].props.font.as_deref(), Some("Wingdings"));
     assert_eq!(s.shapes[3].fill, Some(Fill::None));
+}
 
+fn check_master(p: &Presentation, s: &Slide) {
     // The master: its background, colours and decoration.
     let m = &p.masters[0];
     assert_eq!(m.background, Some(Background::Fill { fill: Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0xFF, 0, 0))) }));

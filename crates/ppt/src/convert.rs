@@ -464,7 +464,7 @@ impl<'a> Ctx<'a> {
                     let a = props.fixed(prop::FILL_ANGLE).unwrap_or(0.0);
                     GradientShape::Linear { angle: (90.0 - a).rem_euclid(360.0), scaled: false }
                 };
-                Fill::Gradient(Gradient { stops, shape, rotate_with_shape: true, tile: [0.0; 4] })
+                Fill::Gradient(Gradient { stops, shape, flip: None, rotate_with_shape: true, tile: [0.0; 4] })
             }
             9 => Fill::Background,
             _ => Fill::solid(fg),

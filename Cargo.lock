@@ -1257,7 +1257,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-ppt"
-version = "0.11.1"
+version = "0.15.0"
 dependencies = [
  "deckcraft-color",
  "deckcraft-engine",
