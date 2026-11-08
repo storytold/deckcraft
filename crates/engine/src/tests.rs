@@ -944,6 +944,44 @@ fn distribute_wide_middle_stays_in_selection_bounds() {
     assert!(xs.iter().all(|x| (*x - [0.0, 10.0, 110.0][xs.iter().position(|y| y == x).unwrap()]).abs() < 1e-6), "{xs:?}");
 }
 
+/// An `edge`, `dir` or `to` that the commands do not name, or no `edge` at all, is refused with
+/// the accepted values. Before, such a call reported its shapes as edited and moved nothing,
+/// aligned to the selection, or fell back to the left edge or to horizontal.
+#[test]
+fn align_and_distribute_refuse_values_they_do_not_name() {
+    let mut s = session();
+    let mut ids = vec![];
+    for (x, y) in [(10.0, 10.0), (200.0, 50.0), (500.0, 200.0)] {
+        ids.push(s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, y, 40, 40]})).unwrap()["id"].as_u64().unwrap());
+    }
+    s.execute("edit.select", &json!({"ids": ids})).unwrap();
+    let before = s.doc().unwrap().revision;
+    let edges = "`edge` must be left, center, right, top, middle or bottom";
+    let dirs = "`dir` must be horizontal or vertical";
+    let tos = "`to` must be slide or selection";
+    for (cmd, params, want) in [
+        ("arrange.align", json!({"edge": "centre"}), edges),
+        ("arrange.align", json!({"edge": "Left"}), edges),
+        ("arrange.align", json!({"edge": "hcenter"}), edges),
+        ("arrange.align", json!({}), edges),
+        ("arrange.align", json!({"ids": [ids[0]], "edge": "left", "to": "Slide"}), tos),
+        ("arrange.distribute", json!({"dir": "Vertical"}), dirs),
+        ("arrange.distribute", json!({"dir": "columns"}), dirs),
+        ("arrange.distribute", json!({"dir": "v"}), dirs),
+        ("arrange.distribute", json!({"dir": "vertical", "to": "page"}), tos),
+    ] {
+        let err = s.execute(cmd, &params).unwrap_err().to_string();
+        assert!(err.contains(want), "{cmd} {params}: {err}");
+    }
+    assert_eq!(s.doc().unwrap().revision, before, "a refused call leaves the slide as it was");
+    let pos = |s: &mut Session, id: u64, k: &str| s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"][k].as_f64().unwrap();
+    s.execute("arrange.align", &json!({"ids": [ids[1]], "edge": "left", "to": "slide"})).unwrap();
+    assert!(pos(&mut s, ids[1], "x").abs() < 1e-6);
+    // Within the selection's span, 10..240: 120 pt of shapes leaves two 55 pt gaps.
+    s.execute("arrange.distribute", &json!({"ids": ids, "dir": "vertical", "to": "selection"})).unwrap();
+    assert!((pos(&mut s, ids[1], "y") - 105.0).abs() < 1e-6);
+}
+
 #[test]
 fn pointer_draw_move_resize() {
     let mut s = session();
