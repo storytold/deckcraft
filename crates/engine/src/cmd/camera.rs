@@ -378,7 +378,9 @@ mod tests {
         let id = deckcraft_model::ShapeId(r["id"].as_u64().expect("id") as u32);
         let doc = s.doc().expect("doc");
         let sh = doc.doc.slides[0].shape(id).expect("shape");
-        assert_eq!(sh.name, "Camera 2");
+        // The new deck opens on a title slide, whose Title 1 and Subtitle 2 placeholders are
+        // objects 1 and 2; auto-naming counts every shape on the slide, as PowerPoint does.
+        assert_eq!(sh.name, "Camera 3");
         assert!(sh.is_cameo());
         assert_eq!(sh.geom.preset_name(), Some("ellipse"));
         let x = sh.xfrm.expect("xfrm");
@@ -390,6 +392,17 @@ mod tests {
             _ => panic!("picture"),
         };
         assert_eq!(doc.doc.media(media).map(|m| m.content_type.as_str()), Some("image/svg+xml"));
+    }
+
+    #[test]
+    fn first_cameo_on_a_slide_with_no_objects_is_camera_1() {
+        let mut s = Session::with_new();
+        s.execute("file.new", &json!({"blank": true})).expect("blank");
+        s.execute("slide.new", &json!({"layout": "blank"})).expect("slide");
+        let r = s.execute("insert.cameo", &json!({})).expect("insert");
+        let id = deckcraft_model::ShapeId(r["id"].as_u64().expect("id") as u32);
+        let doc = s.doc().expect("doc");
+        assert_eq!(doc.doc.slides[0].shape(id).expect("shape").name, "Camera 1");
     }
 
     #[test]
@@ -455,8 +468,12 @@ mod tests {
     fn apply_to_all_slides_copies_formatting_to_every_cameo_only() {
         let mut s = Session::with_new();
         s.execute("slide.new", &json!({})).expect("slide");
-        s.execute("insert.cameo", &json!({"all": true})).expect("insert");
+        let r = s.execute("insert.cameo", &json!({"all": true})).expect("insert");
+        let cameo = deckcraft_model::ShapeId(r["id"].as_u64().expect("id") as u32);
         s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 40, 40]})).expect("shape");
+        // Shape commands select what they insert, so select the Cameo again: Camera Styles and
+        // Apply to All Slides act on the selected Cameo, and the plain rectangle must stay plain.
+        s.doc_mut().expect("doc").selection.shapes = vec![cameo];
         s.execute("camera.style", &json!({"style": "centerShadowCircle"})).expect("style");
         let r = s.execute("camera.applyToAll", &json!({})).expect("apply");
         assert_eq!(r["styled"], 2);
