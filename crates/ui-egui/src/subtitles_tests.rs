@@ -117,6 +117,19 @@ fn the_fake_provider_reports_lines_through_the_host() {
     assert!(fake.poll().is_empty());
 }
 
+#[test]
+fn a_provider_that_stops_on_its_own_takes_the_caption_with_it() {
+    let settings = on(SubtitleSettings::default());
+    let mut subs = Subtitles::default();
+    subs.install(Box::new(FakeTranscriber::new(vec![Event::partial("half a line"), Event::Stopped])), &settings);
+    subs.sync(&settings, true);
+    assert_eq!(subs.caption.as_deref(), Some("half a line"));
+    subs.sync(&settings, true);
+    assert!(subs.caption.is_none(), "a stopped provider leaves no live-looking line on screen");
+    assert_eq!(subs.status().state, ProviderState::Stopped);
+    assert!(!subs.is_running());
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn missing_model_dir() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("deckcraft-subtitles-restart-{}", std::process::id()));

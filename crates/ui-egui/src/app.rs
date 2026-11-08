@@ -294,12 +294,14 @@ impl SlideApp {
         }
         let t0 = now_ms();
         let t = theme::Tokens::get(&ctx);
+        // Before the font pass: a caption that arrives this frame is then noted (and its fallback
+        // faces installed) before the show draws it.
+        self.sync_subtitles(&ctx);
         self.note_ui_text(&ctx);
         self.media.sync_video_textures(&ctx);
         canvas::trackpad_twist(self, &ctx);
         eyedropper::tick(self, &ctx);
         self.opening_ui(&ctx);
-        self.sync_subtitles(&ctx);
         if self.show.is_some() {
             self.anim_preview = None;
             show::ui(self, ui);

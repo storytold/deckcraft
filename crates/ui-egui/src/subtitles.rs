@@ -271,7 +271,9 @@ impl Subtitles {
                     break;
                 }
                 Event::Stopped => {
+                    // The device went away: the last line must not stay on screen looking live.
                     self.stop();
+                    self.caption = None;
                     self.status = ProviderStatus::stopped();
                 }
             }
