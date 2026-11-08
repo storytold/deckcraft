@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-09. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, docs commits on top).
+Updated: 2026-11-09. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, docs commits on top).
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -29,8 +29,8 @@ The Commit column names the slice commits; each branch also carries documentatio
 `collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711`, `0a57b61e`, `58eee059`, `69c2ff22`,
 `41fe1ad9`, `4e666b95`, `f6281736` (journal replay of history operations), `3ec81d70` (shape
 insert/delete undo), `31842050` (cabinet commit publication), `f28ee048` (docs), `98d9e9ce`
-(group/ungroup undo), `31d353fe` (align/distribute as one final-bounds step), plus the docs
-commits on top. The working tree is clean: the chair's
+(group/ungroup undo), `31d353fe` (align/distribute as one final-bounds step), `5b078c7d`
+(the §8 gates and the non-active-slide fix), plus the docs commits on top. The working tree is clean: the chair's
 uncommitted finding of 2026-11-08 is `7fe75711`; the second slice added `0a57b61e` (media kinds,
 TLS, command slices, tests, docs), `69c2ff22` hardened the format command, `41fe1ad9` added undo
 of fill/line/format steps, `4e666b95` added undo of a group's fill/line and of slide
@@ -42,7 +42,7 @@ as one final-bounds operation with one undo step.
 
 The published head of the fork branch `copoka/deckcraft:collab/pr10` is `63ec1ebe`, open as
 [PR #1975](https://github.com/storytold/deckcraft/pull/1975). Local `collab/pr10` is ahead of it by
-`3ec81d70`, `ded9d1ee`, `31842050`, `f28ee048`, `98d9e9ce` and `31d353fe`. `git fetch fork` shows no commit on the fork side that is missing locally, and a
+`3ec81d70`, `ded9d1ee`, `31842050`, `f28ee048`, `98d9e9ce`, `31d353fe` and `5b078c7d`. `git fetch fork` shows no commit on the fork side that is missing locally, and a
 `git push --dry-run` from this workspace is refused by the environment policy, so publishing the
 new head is a manual step. Nothing was pushed to `storytold/deckcraft`; the PR comes from the
 fork and a human decision still governs merging it. The PR body is prepared in [`pr10.md`](pr10.md):
@@ -159,11 +159,47 @@ slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human 
   through the same `apply` path. Without `COLLAB_STORE_DIR` the server is memory-only.
 - Logs/metrics contain ids, versions and counts; no slide content, text, media or tokens.
 
+## 8. Gates (TASK.md §8)
+
+Both gates are tests, not scripts: `apps/deckcraft-collab-server/tests/gates.rs`. Run them with
+
+```bash
+cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1
+```
+
+- **Large deck with media.** 120 slides, each with a decoded picture (four content-addressed media
+  objects, one per slide reused) and an autoshape, opened as an authoritative room; two editor
+  sessions submit a `shape.move` for every slide. On the build host (`agents`, 20 cores, Ubuntu
+  24.04, rust 1.99.1, test profile: `opt-level = 1`, dependencies at `opt-level = 2`) the
+  authoritative apply took 0.1 ms p50 / 0.1 ms p95 / 0.2 ms max over 120 steps, the room opened in
+  4 ms, the commit built a 154 KiB `.pptx` in 15 ms, and an unchanged commit came from the cache
+  in 0.3 ms (the same remote-built test binary, run where LibreOffice exists, measured 0.2/0.2/0.7
+  ms and a 63 ms commit). Both clients settle at version 120 and every picture moved. The
+  assertions use generous ceilings (2 s per apply, 60 s per commit), so the test catches a
+  pathological regression rather than machine noise; the numbers above are the evidence.
+- **LibreOffice open/repair.** A 120-slide deck with media goes through the real commit endpoint
+  (`POST /v1/sessions/gate/commit`, bytes inline, no cabinet), then LibreOffice 26.2.6.3
+  (`soffice --headless --convert-to`) opens the result, renders 121 pages (the 120 slides plus the
+  slide inserted in the session, counted with `pdfinfo`) in 4.2 s, and a `pptx → pptx` round trip
+  takes 5.3 s and reimports as 121 slides with 120 pictures. A non-zero exit, an `Error:` line, a
+  missing or empty output, or a page-count mismatch fails the test. The build host has no
+  `soffice` or `pdfinfo`, so there the test prints a skip line and passes; the gate was run with
+  the remote-built binary on the workstation, which has LibreOffice 26.2.6.3.
+
+The gates found a real adapter bug: `shape.move`, `shape.setBounds` and `text.set` ran against the
+engine *selection*, so a replica whose active slide was another one refused a remote edit on
+slide 5 with `no such shape`. Those payloads now select the target shape (and its slide) first.
+`crates/collab/src/apply.rs`
+`an_operation_on_another_slide_applies_whatever_the_replica_is_looking_at` fails without the fix,
+and the 120-slide gate now moves a picture on every slide.
+
 ## Verification
 
 | Command | Result |
 |---|---|
-| `cargo test -p deckcraft-collab` | 122 unit + 8 integration |
+| `cargo test -p deckcraft-collab` | 123 unit + 8 integration |
+| `cargo test -p deckcraft-collab-server --test gates` (on `agents`, then the same binary where LibreOffice exists) | 2 passed: the 120-slide/media room and commit; LibreOffice 26.2 renders 121 pages and round-trips the commit; on the build host the LibreOffice test skips itself (no `soffice`) |
+| `cargo test -p deckcraft-collab --lib apply::` | 123 (a remote edit on a slide the replica is not looking at applies) |
 | `cargo test -p deckcraft-collab-server` | 10 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist, shape-undo replay) + 4 commit tests (two copies with their originals kept, an external change is a `409`, a client commit answered after publication, the no-callback mode) |
 | `cargo test -p deckcraft-collab-proto` | 20 |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 |
@@ -233,6 +269,7 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | Criterion | State | Where / why |
 |---|---|---|
 | Two or more clients edit one presentation | ✅ for the v1 command set | hub, socket test, UI pipe test |
+| A 100+ slide deck with media stays responsive and its commit opens in LibreOffice | ✅ 120 slides/120 pictures, 4 media objects; commit renders 121 pages and survives an LO round trip | `tests/gates.rs`; adapter fix for edits on a non-active slide |
 | Insert a picture in a shared session | ✅ pictures, audio and video over `ws://` and `wss://` | media channel, adapter and socket tests |
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
 | Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format/duplicate | collab tests |
@@ -282,8 +319,9 @@ whose `expectedVersion` does not match the room is refused before any callback i
    Correct on a LAN, noticeable on a WAN. Preview needs a before-image and a rollback path; a
    rejected preview can be rolled back only if no other command has been applied since, otherwise
    the client must resync.
-8. **Large-deck and compatibility gates.** A 100+ slide/media performance test, a LibreOffice
-   open/repair gate for every commit, and a longer soak with three clients are still to add.
+8. **Three-client soak.** The 120-slide/media performance gate and the LibreOffice commit gate now
+   run in `tests/gates.rs` (see §8). What remains is a longer three-client soak and running the
+   LibreOffice gate in CI, where LibreOffice is not installed (there it skips itself).
 9. **Base transfer for an evicted journal tail.** `resync` sends the tail only; if the tail was
    compacted, a client that missed the base cannot rebuild. The store now survives restarts, so
    the next step is a chunked `snapshot` carrying the native base.
@@ -310,6 +348,9 @@ DECKCRAFT_COLLAB_URL=ws://127.0.0.1:8080/v1/sessions/demo/ws \
 DECKCRAFT_COLLAB_TOKEN=<jwt> \
 DECKCRAFT_COLLAB_SESSION=demo \
 cargo run -p deckcraft
+
+# the §8 gates (the LibreOffice half needs `soffice` and `pdfinfo` on the machine that runs it)
+cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1
 ```
 
 The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: "deckcraft"`,
@@ -335,12 +376,31 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    insert/delete/duplicate, shape insert/delete and group/ungroup (whole-subtree images on both
    sides). The remaining undo work is table/notes text and run-level formatting, which wait for
    their command slices.
-6. Add the LibreOffice commit gate and the 100-slide performance test.
+6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the next gate is a longer three-client soak.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 
 ## Session log
 
+### 2026-11-09 — TASK.md §8 gates: 120 slides with media, LibreOffice on the commit
+
+- `apps/deckcraft-collab-server/tests/gates.rs`: two environment gates. A 120-slide deck with
+  120 pictures (4 media objects) is opened as a room; two editor sessions move a picture on every
+  slide (0.1 ms p50, 0.1 ms p95, 0.2 ms max on the build host), both settle at version 120, the
+  commit builds 154 KiB in 15 ms, and the bytes reimport with 120 slides and 120 pictures. The
+  same gate takes the commit through `POST /v1/sessions/{id}/commit`, opens it in LibreOffice 26.2
+  (121 pages via `pdfinfo`, 4.2 s) and round-trips it through LibreOffice back into
+  `deckcraft_pptx::import` (5.3 s, 121 slides, 120 pictures). The build host has no LibreOffice,
+  so there the test skips itself with a printed line; the gate ran with the remote-built binary on
+  the workstation, where LibreOffice 26.2.6.3 is installed.
+- The large-deck gate exposed a real bug: `shape.move`/`shape.setBounds`/`text.set` were applied
+  against the replica's own selection, so an edit on a slide that replica was not looking at was
+  refused with "no such shape". The adapter now selects the target shape and its slide; a focused
+  regression test in `crates/collab/src/apply.rs` covers a move and a `text.set` on slide 1 while
+  the other replica looks at slide 0.
+- Verification on the build host: `cargo test -j 4 -p deckcraft-collab -p
+  deckcraft-collab-server` (123 + 8, 10, 4, 6, 2 gates), `cargo clippy -j 4 -p deckcraft-collab -p
+  deckcraft-collab-server --all-targets -- -D warnings` clean, `cargo fmt --all -- --check` clean.
 ### 2026-11-09 — align and distribute as one final-bounds step
 
 - `arrange.align` and `arrange.distribute` now travel as **one** operation

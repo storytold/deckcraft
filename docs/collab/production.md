@@ -259,8 +259,11 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    rollback are the next latency slice.
 7. **P2 — Base transfer for a compacted journal tail**: restart and tail replay work, but a client
    that missed the base needs a chunked `snapshot`.
-8. **P2 — Large-deck gate**: a 100+ slide/media performance run and a LibreOffice open/repair gate
-   for commits are still to add; the three-client soak is short.
+8. **P3 — Three-client soak**: the 120-slide/media performance gate and the LibreOffice
+   open/repair gate live in `apps/deckcraft-collab-server/tests/gates.rs`
+   (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the
+   LibreOffice test skips itself with a printed line where `soffice` is absent. What remains is a
+   longer three-client soak and running the LibreOffice gate in CI.
 9. **Human action — Upstream PR**: the work is in the fork branch `copoka/deckcraft:collab/pr10`
    and open as PR #1975; the local head holds commits the PR head did not have at the last check
    (`63ec1ebe`), and the push is manual because this workspace cannot push. The body is
