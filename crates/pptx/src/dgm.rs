@@ -498,7 +498,7 @@ fn outline_ids(data: &El) -> Vec<(String, DiagramNode)> {
             stack.extend(v.iter().rev().map(|(_, c)| (*c, level.saturating_add(1))));
         }
     }
-    if out.is_empty() {
+    if out.is_empty() && kids.is_empty() {
         for id in pt_order {
             if out.len() >= MAX_NODES || !seen.insert(id) {
                 continue;
@@ -900,5 +900,10 @@ mod tests {
         let unconnected = br#"<dgm:dataModel xmlns:dgm="d"><dgm:ptLst><dgm:pt modelId="0" type="doc"/><dgm:pt modelId="1" type="node"><dgm:t><a:p xmlns:a="a"><a:r><a:t>Alpha</a:t></a:r></a:p></dgm:t></dgm:pt><dgm:pt modelId="2" type="node"><dgm:t><a:p xmlns:a="a"><a:r><a:t>Beta</a:t></a:r></a:p></dgm:t></dgm:pt></dgm:ptLst><dgm:cxnLst/></dgm:dataModel>"#;
         let unconnected_doc = crate::xml::parse(unconnected).unwrap();
         assert_eq!(outline(&unconnected_doc.root), nodes(&[("Alpha", 0), ("Beta", 0)]));
+
+        // When parOf connections exist but no root (type="doc") reaches them, do not flatten the hierarchy to level 0.
+        let unrooted_hierarchy = br#"<dgm:dataModel xmlns:dgm="d"><dgm:ptLst><dgm:pt modelId="1" type="node"><dgm:t><a:p xmlns:a="a"><a:r><a:t>Parent</a:t></a:r></a:p></dgm:t></dgm:pt><dgm:pt modelId="2" type="node"><dgm:t><a:p xmlns:a="a"><a:r><a:t>Child</a:t></a:r></a:p></dgm:t></dgm:pt></dgm:ptLst><dgm:cxnLst><dgm:cxn srcId="1" destId="2"/></dgm:cxnLst></dgm:dataModel>"#;
+        let unrooted_doc = crate::xml::parse(unrooted_hierarchy).unwrap();
+        assert!(outline(&unrooted_doc.root).is_empty());
     }
 }
