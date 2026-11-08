@@ -9,3 +9,7 @@ The existing `smartArt.*`, `insert.smartArt`, `insert.wordArt`, dialog and icon 
 Existing document-owned object names are not rewritten. PPTX diagram parts, DrawingML names, public data types, import/export code and attribution remain unchanged.
 
 DeckCraft currently authors these interface strings directly in English and has no shipped translation catalog. This change does not add a localization system. Complete the existing diagram/format round-trip tests, UI tests and visual checks before marking the draft ready.
+
+## Regression coverage
+
+The standard-library-only `display_names` integration tests scan production Rust string literals for the retired display names and preserve explicit compatibility exceptions. They also test identifier, comment and raw-string handling. These focused checks do not replace application or visual testing.
