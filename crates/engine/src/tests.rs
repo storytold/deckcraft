@@ -6559,6 +6559,7 @@ fn duplicating_a_shape_in_a_group_copies_it_into_the_group() {
         let st = s.doc().unwrap();
         let sites = |id| connect::sites_of(&st.doc, &st.selection, st.shapes(), sid(id)).unwrap();
         let (p, q) = (sites(from), sites(to));
+        assert_eq!(p.len(), q.len(), "{p:?} {q:?}");
         let d = q[0] - p[0];
         assert!(p.iter().zip(&q).all(|(p, q)| (*q - *p - d).hypot() < 1e-6), "{p:?} {q:?}");
         (d.x, d.y)
