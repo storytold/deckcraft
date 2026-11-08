@@ -959,6 +959,33 @@ fn ungrouping_a_nested_group_frees_its_shapes_into_the_outer_group() {
     }
 }
 
+/// Ungrouping nested groups in one call returns each freed shape once, whatever order the groups
+/// are named in. Before, a group freed into a group that the same call freed next was listed twice
+/// and replaced once, so the call returned the id of a group that no longer existed.
+#[test]
+fn ungrouping_nested_groups_in_any_order_returns_only_freed_shapes() {
+    fn rect(s: &mut Session, x: f64, y: f64) -> u64 {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, y, 100, 100]})).unwrap()["id"].as_u64().unwrap()
+    }
+    fn group(s: &mut Session, ids: [u64; 2]) -> u64 {
+        s.execute("arrange.group", &json!({"ids": ids})).unwrap()["id"].as_u64().unwrap()
+    }
+    let sid = |id: u64| ShapeId(u32::try_from(id).unwrap());
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let [a, b, c, d, e] = [(100.0, 100.0), (300.0, 100.0), (100.0, 300.0), (300.0, 300.0), (500.0, 300.0)].map(|(x, y)| rect(&mut s, x, y));
+    let inner = group(&mut s, [a, b]);
+    let middle = group(&mut s, [inner, c]);
+    let upper = group(&mut s, [middle, d]);
+    let outer = group(&mut s, [upper, e]);
+    let r = s.execute("arrange.ungroup", &json!({"ids": [middle, upper, inner]})).unwrap();
+    assert_eq!(r["ids"], json!([a, b, c, d]));
+    assert_eq!(s.doc().unwrap().selection.shapes, [sid(a), sid(b), sid(c), sid(d)]);
+    let st = s.doc().unwrap();
+    let order: Vec<ShapeId> = deckcraft_model::find_shape(st.shapes(), sid(outer)).unwrap().children().iter().map(|x| x.id).collect();
+    assert_eq!(order, [sid(a), sid(b), sid(c), sid(d), sid(e)]);
+}
+
 /// Grouping a group again and again stops at `MAX_GROUP_DEPTH`: past about 39 levels a saved
 /// .deckcraft file no longer opens, and past 64 commands such as format.languageAll miss the text.
 #[test]
