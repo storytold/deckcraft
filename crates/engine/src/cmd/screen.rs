@@ -57,9 +57,15 @@ fn quality(p: &Value) -> Result<u8, crate::EngineError> {
     u8::try_from(n).ok().filter(|n| (10..=51).contains(n)).ok_or_else(|| bad(CMD, "`quality` must be from 10 (best) to 51 (smallest)"))
 }
 
-fn target(p: &Value) -> Option<u64> {
+/// The capture target the caller named: `Ok(None)` when absent (a host that picks the source
+/// itself, and the primary display everywhere else), `Err` when present but not a target id, so a
+/// malformed id never starts a capture of the default surface instead.
+fn target(p: &Value) -> Result<Option<u64>, crate::EngineError> {
     // Id 0 is a real `scap` target: only an absent target means the primary display.
-    p.get("target").and_then(Value::as_u64)
+    match p.get("target") {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_u64().map(Some).ok_or_else(|| bad(CMD, format!("`target` is not a capture target id: {v}"))),
+    }
 }
 
 fn target_kind(p: &Value) -> Result<Option<deckcraft_screen::TargetKind>, crate::EngineError> {
@@ -98,7 +104,7 @@ fn run(s: &mut Session, p: &Value) -> crate::Result<Value> {
             let fps = fps(p)?;
             let region = region(p)?;
             let show_cursor = bool_or(p, "cursor", false);
-            let options = CaptureOptions { target: target(p), kind: target_kind(p)?, region, fps, show_cursor };
+            let options = CaptureOptions { target: target(p)?, kind: target_kind(p)?, region, fps, show_cursor };
             let mut cfg = deckcraft_screen::RecorderConfig::new(fps);
             cfg.region = region;
             cfg.quality = quality(p)?;
@@ -259,6 +265,18 @@ mod tests {
         assert_eq!(target_kind(&json!({"targetKind": "window"})).expect("window"), Some(deckcraft_screen::TargetKind::Window));
         assert_eq!(target_kind(&json!({"targetKind": "Display"})).expect("display"), Some(deckcraft_screen::TargetKind::Display));
         assert!(target_kind(&json!({"targetKind": "monitor"})).is_err(), "an unknown kind is refused");
+    }
+
+    #[test]
+    fn a_target_that_is_not_an_id_is_refused_instead_of_recording_the_default_screen() {
+        assert_eq!(target(&json!({})).expect("absent"), None);
+        assert_eq!(target(&json!({"target": null})).expect("null is absent"), None);
+        assert_eq!(target(&json!({"target": 0})).expect("id 0 is a real target"), Some(0));
+        assert_eq!(target(&json!({"target": 7})).expect("a target id"), Some(7));
+        for malformed in [json!({"target": -1}), json!({"target": "screen"}), json!({"target": 1.5}), json!({"target": true})] {
+            let e = target(&malformed).expect_err("not a target id").to_string();
+            assert!(e.contains("`target`"), "{malformed}: {e}");
+        }
     }
 
     #[test]
