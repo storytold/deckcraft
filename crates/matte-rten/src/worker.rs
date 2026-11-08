@@ -220,7 +220,17 @@ mod tests {
             let _ = w.process(&f, &opts, None, true);
             std::thread::sleep(Duration::from_millis(5));
         }
-        std::thread::sleep(Duration::from_millis(400));
+        // Wait for the first inference to land — bounded, so a loaded machine only delays the
+        // assertion — then give a queued second run time to appear: the buggy gate started one as
+        // soon as the first finished.
+        for _ in 0..400 {
+            if w.timings().runs >= 1 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(w.timings().runs >= 1, "the first inference ran");
+        std::thread::sleep(Duration::from_millis(300));
         assert_eq!(w.timings().runs, 1, "100 ms of calls while the first inference ran must not queue another");
     }
 

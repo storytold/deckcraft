@@ -25,6 +25,9 @@ pub struct Service {
     worker: Option<MatteWorker>,
     download: Option<std::thread::JoinHandle<()>>,
     download_state: Option<Arc<Mutex<ModelState>>>,
+    /// The current `Failed` state came from a download and stays on screen until the user acts
+    /// on it; probe and load failures are re-probed by [`Service::refresh`].
+    download_failed: bool,
     interval: Duration,
     feather: u32,
     accelerator: Accelerator,
@@ -46,6 +49,7 @@ impl Service {
             worker: None,
             download: None,
             download_state: None,
+            download_failed: false,
             interval: Duration::from_millis(interval_ms.clamp(0, 60_000)),
             // One stage owns the feather: the compositor (`CompositeOptions`), not the model.
             feather: 0,
@@ -65,11 +69,13 @@ impl Service {
         if self.download.is_some() {
             return;
         }
-        // A download failure sentence stays until the user acts on it: a probe that finds no
-        // file must not replace it with "not installed". A model that appeared does win.
-        if matches!(self.state, ModelState::Failed { .. }) && !state.is_ready() {
+        // Only a download failure is sticky: the panel should keep showing why the download failed
+        // until the user acts on it. A wrong-size file or a load failure is re-probed, so deleting
+        // or replacing the bad file clears it.
+        if self.download_failed && !state.is_ready() {
             return;
         }
+        self.download_failed = false;
         self.state = state;
     }
 
@@ -120,6 +126,7 @@ impl Service {
             if let ModelState::Failed { detail } = &failed {
                 log::warn!("camera background model download did not install: {detail}");
             }
+            self.download_failed = true;
             self.state = failed;
         }
     }
@@ -143,6 +150,7 @@ impl MatteService for Service {
             return Err("a download is running: wait for it to finish before importing the model".into());
         }
         let target = model::install_from(Path::new(path), &self.root)?;
+        self.download_failed = false;
         self.state = ModelState::Ready { path: target.display().to_string(), bytes: deckcraft_matte::manifest::MODEL_BYTES };
         self.worker = None;
         Ok(())
@@ -172,6 +180,7 @@ impl MatteService for Service {
             .map_err(|e| format!("cannot start the download: {e}"))?;
         self.download = Some(handle);
         self.download_state = Some(shared);
+        self.download_failed = false;
         self.state = ModelState::Downloading { received: 0, total: deckcraft_matte::manifest::MODEL_BYTES };
         Ok(())
     }
@@ -260,6 +269,29 @@ mod tests {
 
     /// A download that fails leaves no file, so probing the disk cannot say why: the panel must
     /// still show the thread's sentence instead of "not installed".
+    /// Only a download failure is sticky: a probe or load failure is re-read when the panel
+    /// refreshes, so deleting or replacing the bad file clears the sentence.
+    #[test]
+    fn a_stale_probe_failure_clears_on_refresh() {
+        let mut s = Service::new(0);
+        s.state = ModelState::Failed { detail: "old probe failure".into() };
+        s.refresh();
+        assert!(!matches!(&s.state, ModelState::Failed { detail } if detail == "old probe failure"), "{:?}", s.state);
+    }
+
+    /// The sentence a failed download left behind survives the panel's refresh: a probe that finds
+    /// no file cannot say why the download failed.
+    #[test]
+    fn a_download_failure_is_sticky_until_acted_on() {
+        let mut s = Service::new(0);
+        s.download_failed = true;
+        s.state = ModelState::Failed { detail: "download failed: connection reset".into() };
+        s.refresh();
+        if !model::probe().1.is_ready() {
+            assert!(matches!(&s.state, ModelState::Failed { detail } if detail.contains("connection reset")), "{:?}", s.state);
+        }
+    }
+
     #[test]
     fn a_failed_download_keeps_the_threads_sentence() {
         let mut s = Service::new(0);
@@ -279,9 +311,8 @@ mod tests {
     /// next frame does not re-hash and re-parse the file.
     #[test]
     fn a_model_that_cannot_load_is_not_retried_on_every_frame() {
-        let dir = std::env::temp_dir().join(format!("deckcraft-matte-load-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("dir");
-        let path = dir.join("model.onnx");
+        let dir = crate::test_temp::TempDir::new("load");
+        let path = dir.path().join("model.onnx");
         std::fs::write(&path, b"not the model").expect("file");
         let mut s = Service::new(0);
         s.state = ModelState::Ready { path: path.display().to_string(), bytes: 13 };
@@ -293,6 +324,5 @@ mod tests {
         std::fs::remove_file(&path).expect("remove");
         let second = s.process(&f, &opts, None).expect_err("still remembered").message();
         assert_eq!(first, second, "the failure is cached, not re-probed");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

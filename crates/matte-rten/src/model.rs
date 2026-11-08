@@ -328,8 +328,8 @@ mod tests {
     /// the answer must agree with `installed_name` (which scans every root).
     #[test]
     fn a_wrong_size_file_does_not_hide_a_valid_root() {
-        let dir = std::env::temp_dir().join(format!("deckcraft-probe-{}", std::process::id()));
-        let (bad, good) = (dir.join("bad"), dir.join("good"));
+        let dir = crate::test_temp::TempDir::new("probe");
+        let (bad, good) = (dir.path().join("bad"), dir.path().join("good"));
         for root in [&bad, &good] {
             let path = manifest::MANIFEST.path_in(root);
             std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
@@ -347,23 +347,21 @@ mod tests {
         assert_eq!(root, bad, "only a failure to report");
         assert!(matches!(state, ModelState::Failed { .. }), "{state:?}");
 
-        let (root, state) = probe_roots(&[dir.join("empty")]);
-        assert_eq!(root, dir.join("empty"));
+        let empty = dir.path().join("empty");
+        let (root, state) = probe_roots(std::slice::from_ref(&empty));
+        assert_eq!(root, empty);
         assert!(matches!(state, ModelState::Missing { .. }), "{state:?}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn install_rejects_a_file_that_is_not_the_model_and_leaves_nothing_behind() {
-        let dir = std::env::temp_dir().join(format!("deckcraft-matte-test-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        let bad = dir.join("bad.onnx");
+        let dir = crate::test_temp::TempDir::new("install");
+        let bad = dir.path().join("bad.onnx");
         std::fs::write(&bad, b"not the model").unwrap_or_default();
-        let err = install_from(&bad, &dir).expect_err("rejected");
+        let err = install_from(&bad, dir.path()).expect_err("rejected");
         assert!(err.contains("bytes"), "{err}");
-        let target = manifest::MANIFEST.path_in(&dir);
+        let target = manifest::MANIFEST.path_in(dir.path());
         assert!(!target.exists(), "no partial install");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
