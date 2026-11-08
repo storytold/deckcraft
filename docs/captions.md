@@ -39,10 +39,12 @@ Two paths, both supported:
    SHA-256, and only then renamed, so an interrupted download never looks installed. A
    `manifest.json` provenance sidecar is written beside the files when the set is complete.
 2. **By hand.** Put `model.safetensors`, `config.json` and `tokenizer.json` in a `whisper-tiny`
-   folder, or point the app at the folder with **Choose Files…** (pick any of the three). The
-   folder is checked again with **Check Again**. A folder chosen this way is used for the current
-   session only: discovery searches the roots below again after a restart, so copy the three files
-   into one of those roots to keep the model installed.
+   folder under one of the roots below, then press **Check Again**, which searches those roots.
+   Or point the app at a folder elsewhere with **Choose Files…** (pick any of the three), which
+   checks that folder immediately. A folder chosen this way is used for the current session only:
+   after a restart discovery searches the roots again, so copy the three files into one of them to
+   keep the model installed. **Check Again** always searches the roots, so it replaces a folder
+   chosen with **Choose Files…**.
 
 The model directory is resolved first hit wins, the same shape as the other Craft apps:
 

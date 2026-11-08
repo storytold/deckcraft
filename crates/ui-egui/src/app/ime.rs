@@ -5,7 +5,8 @@ use super::{
 
 impl SlideApp {
     /// Borrow faces for interface text in scripts the interface fonts lack (#101): the open
-    /// presentations' names and text, recent files, and what is typed or composed this frame.
+    /// presentations' names and text, recent files, the live caption, and what is typed or
+    /// composed this frame.
     pub(super) fn note_ui_text(&mut self, ctx: &egui::Context) {
         let typed: String = ctx.input(|i| {
             i.events
@@ -23,6 +24,11 @@ impl SlideApp {
         }
         for r in &self.ui.recent {
             self.ui_fonts.note(ctx, r);
+        }
+        // A caption is spoken in whatever language the presenter uses and drawn by the same
+        // painter as the interface, so its glyphs need the fallback faces too.
+        if let Some(caption) = self.subtitles.caption.as_deref() {
+            self.ui_fonts.note(ctx, caption);
         }
         if let Some(st) = self.session.active() {
             self.ui_fonts.note_doc(ctx, st);

@@ -234,6 +234,12 @@ fn run(model_dir: PathBuf, settings: SubtitleSettings, stop: Arc<AtomicBool>, st
             Ok(_) => {}
             Err(e) => return fail(&status, &tx, e),
         }
+        // A decode takes seconds, and the audio that arrived meanwhile is still in the capture
+        // queue. Fold it in before deciding the speaker paused: speech heard during the decode
+        // must refresh `last_voice`, or continuous speech would be cut at every decode boundary.
+        while let Some(chunk) = capture.recv(Duration::ZERO) {
+            absorb(&chunk, &mut ring, &mut new_samples, &mut last_voice);
+        }
         if last_voice.elapsed() >= FINAL_AFTER
             && let Some(text) = pending.take()
         {
