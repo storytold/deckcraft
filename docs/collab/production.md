@@ -2,7 +2,9 @@
 
 This document is the operator's view of the collaboration feature: how it is deployed, what it
 promises, and what it deliberately does not do yet. The protocol itself is in
-[`rfc.md`](rfc.md); the shared decisions are in `.craft/protocol/ARCHITECTURE.md` and ADR 0001–0010.
+[`rfc.md`](rfc.md); the current implementation state, test evidence and the next-session
+checklist are in [`STATUS.md`](STATUS.md); the shared decisions are in
+`.craft/protocol/ARCHITECTURE.md` and ADR 0001–0010.
 
 ## Topology
 
@@ -104,6 +106,13 @@ A viewer is stopped twice: the server refuses every `op`, and the engine's read-
 (`Session::set_read_only` + `CommandSpec::changes_document`) refuses editing, undo/redo, file
 replacement and input-method commands before they run.
 
+An editor with an attached link runs in **collaboration queue** mode: `Session::set_collab_queue`
+makes every mutating command, from every path (ribbon, keyboard, pointer, IME, control channel),
+return `{"queued":true}` and land in `take_pending_commands()` instead of changing the document.
+`CollabUi::pump` normalises and sends those commands once per frame. `apply_remote` still applies
+the server's authoritative command directly. With the flag on but no link, the engine is
+read-only: an edit is refused instead of diverging.
+
 ## What v1 syncs
 
 The first release deliberately normalises a small, idempotent command set:
@@ -128,7 +137,12 @@ wire.
 The server builds the `.pptx` from the authoritative document and answers `commit-result` with
 `sha256`, `version`, inline base64 bytes and `warnings[]` (what the writer could not keep). A
 stale `expectedVersion` is a `409`/`rejected{code:"conflict"}`; the session never overwrites an
-externally changed file. The cabinet creates the new file version.
+externally changed file.
+
+The desktop client stores the last committed file in `CollabUi::take_commit()` and shows the
+warning banner. The **cabinet callback** that would create the new file version is not wired yet:
+that is the host-bridge task (external contract). Until it exists, commit produces verified bytes
+in the process, not a new cabinet version.
 
 ## Restart and persistence
 
@@ -142,16 +156,30 @@ The room directory is the SHA-256 of the cabinet's file id, and `meta.json` name
 file id never becomes a path component. Without `COLLAB_STORE_DIR` the server is memory-only and
 must be treated as a development instance.
 
+## Verification and tests
+
+| Suite | What it covers |
+|---|---|
+| `cargo test -p deckcraft-collab` | 67 unit + 5 integration: convergence, dedup, structural exclusion, tombstones, undo per actor, text rebase, shape insert, presence, snapshots, commit |
+| `cargo test -p deckcraft-collab-server` | unit JWT test + 3 real-socket tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay |
+| `cargo test -p deckcraft-ui-egui collab::` | 17 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue |
+| `cargo test -p deckcraft-engine` | 558: the collaboration queue and read-only gate did not change single-user behaviour |
+| `cargo clippy … --all-targets -- -D warnings`, `cargo fmt --check`, `cargo xtask layers` | clean |
+
 ## Known gaps before this is a finished product
 
-1. **Text editing in tables/notes** and rich formatting runs are not normalised yet; shape
-   text (typing, inserting, deleting, whole-body replacement) is, with server-side rebase.
-2. **Media**: large pictures/video are not uploaded once and referenced by hash yet.
-3. **Host bridge**: the cabinet's iframe contract (`session`, `presence`, `commit`) lives in
-   `craft-web-host` and is external to this repository.
-4. **Browser transport**: the web build shows the UI but has no `web-sys` WebSocket link yet.
-5. **Full command surface**: see "What v1 syncs"; the rest is refused, not desynchronised.
-6. **Optimistic preview**: local edits become visible when `applied` returns. Correctness first;
-   previews with rollback are a later slice.
+1. **Media**: pictures/video are not uploaded once and referenced by hash; a large binary cannot
+   travel in a 256 KiB operation.
+2. **Full command surface**: fill, fonts, animations, tables, diagrams, charts and other commands
+   are refused in a shared session instead of being normalised (see "What v1 syncs"). This is the
+   largest product gap.
+3. **Text in tables/notes and rich runs** are not normalised; shape text is.
+4. **Cabinet callback and host bridge**: `session`, `presence`, `commit` in `craft-web-host` are
+   an external contract; without them there is no new file version in the cabinet.
+5. **Browser transport**: the web build shows the UI but has no `web-sys` WebSocket link.
+6. **Optimistic preview**: edits become visible on `applied`; correctness first, preview and
+   rollback are the next latency slice.
+7. **Structural undo** (deleting a slide/shape) is still out of v1, as RFC §13 records.
+8. **Upstream PR**: the work is local branches; a fork and a human decision are required.
 
-These are tracked in the project task and are the acceptance blockers for the production cut.
+These are the acceptance blockers for the production cut; `STATUS.md` tracks them by slice.
