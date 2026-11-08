@@ -543,7 +543,14 @@ fn diagram(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, d: &dec
     let mut k = 0;
     let mut flat = vec![];
     walk(children, &mut |c, _| match &c.kind {
-        ShapeKind::Shape | ShapeKind::Connector { .. } => flat.push(c.clone()),
+        ShapeKind::Shape => flat.push(c.clone()),
+        ShapeKind::Connector { .. } => {
+            let mut sc = c.clone();
+            if sc.geom.preset_name() == Some("rect") {
+                sc.geom = Geom::preset("line");
+            }
+            flat.push(sc);
+        }
         ShapeKind::Picture { fill } => {
             let mut sc = c.clone();
             sc.kind = ShapeKind::Shape;
