@@ -135,6 +135,19 @@ pub enum Payload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cell: Option<(u32, u32)>,
     },
+    /// Inserts at a character offset in the shape's text body (`\n` is a paragraph break). The
+    /// server rebases the offset against operations that arrived after `baseVersion`, so two
+    /// people typing in one paragraph both keep their text.
+    TextInsert { at: u32, text: String },
+    /// Removes the characters in `[from, to)` of the shape's text body.
+    TextDelete { from: u32, to: u32 },
+    /// Inserts a preset shape with final geometry (and optional text).
+    ShapeInsert {
+        preset: String,
+        rect: [f64; 4],
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+    },
     /// Removes one shape (`target.shape`) or several (`target.shapes`).
     ShapeDelete {},
     /// Inserts a slide before `target.slide` (`None`: at the end).
@@ -169,6 +182,9 @@ impl Payload {
             Payload::ShapeMove { .. } => "shape.move",
             Payload::ShapeSetBounds { .. } => "shape.setBounds",
             Payload::TextSet { .. } => "text.set",
+            Payload::TextInsert { .. } => "text.insert",
+            Payload::TextDelete { .. } => "text.delete",
+            Payload::ShapeInsert { .. } => "shape.insert",
             Payload::ShapeDelete {} => "edit.delete",
             Payload::SlideInsert { .. } => "slide.new",
             Payload::SlideDelete {} => "slide.delete",

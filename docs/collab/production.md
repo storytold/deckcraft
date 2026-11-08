@@ -112,6 +112,8 @@ The first release deliberately normalises a small, idempotent command set:
 |---|---|---|
 | `shape.move`, `shape.setBounds` | command | absolute position and size |
 | `text.set` | command | whole body or one table cell |
+| `text.insert`, `text.delete` | command | character offsets; the server rebases them against operations since the base, so two people typing in one paragraph keep both texts |
+| `shape.insert` | structural | preset, final geometry, optional text; ids are deterministic on every replica |
 | `edit.delete` (shapes) | structural | explicit shape keys |
 | `slide.new`, `slide.delete`, `slide.move` | structural | anchor, not index |
 | `arrange.group`, `arrange.ungroup`, `arrange.reorder` | structural | explicit sibling anchor |
@@ -130,20 +132,26 @@ externally changed file. The cabinet creates the new file version.
 
 ## Restart and persistence
 
-The room currently lives in memory. Session control passes `initialBytes`, so a restarted server
-builds a new room from that file; operations accepted after the last base are not replayed yet.
-Journal/snapshot storage is the next infrastructure slice (ADR 0005) and is required before
-production writes are enabled.
+With `COLLAB_STORE_DIR` set, a room is a native base (`base.deckcraft`, written atomically) plus
+an append-only `journal.jsonl`. Every accepted operation is appended and flushed before the next
+one is applied; a base is taken every `COLLAB_SNAPSHOT_EVERY` operations (default 200) and the
+journal is trimmed to the tail after it. On start the latest base is loaded and the tail replayed
+through the same `apply` path, so versions, dedup and undo history come back.
+
+The room directory is the SHA-256 of the cabinet's file id, and `meta.json` names the file; a
+file id never becomes a path component. Without `COLLAB_STORE_DIR` the server is memory-only and
+must be treated as a development instance.
 
 ## Known gaps before this is a finished product
 
-1. **Persistence across restart** (base + journal + replay) — infrastructure, not protocol.
-2. **Text editing**: `text.set` is whole-body; concurrent typing in one paragraph needs
-   operational text merge and a dedicated test.
-3. **Media**: large pictures/video are not uploaded once and referenced by hash yet.
-4. **Host bridge**: the cabinet's iframe contract (`session`, `presence`, `commit`) lives in
+1. **Text editing in tables/notes** and rich formatting runs are not normalised yet; shape
+   text (typing, inserting, deleting, whole-body replacement) is, with server-side rebase.
+2. **Media**: large pictures/video are not uploaded once and referenced by hash yet.
+3. **Host bridge**: the cabinet's iframe contract (`session`, `presence`, `commit`) lives in
    `craft-web-host` and is external to this repository.
-5. **Browser transport**: the web build shows the UI but has no `web-sys` WebSocket link yet.
-6. **Full command surface**: see "What v1 syncs"; the rest is refused, not desynchronised.
+4. **Browser transport**: the web build shows the UI but has no `web-sys` WebSocket link yet.
+5. **Full command surface**: see "What v1 syncs"; the rest is refused, not desynchronised.
+6. **Optimistic preview**: local edits become visible when `applied` returns. Correctness first;
+   previews with rollback are a later slice.
 
 These are tracked in the project task and are the acceptance blockers for the production cut.

@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use deckcraft_model::{Presentation, Shape, ShapeId, Slide, SlideId};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
 pub use deckcraft_geom as geom;
@@ -516,6 +516,10 @@ pub struct Session {
     /// [`Self::execute`], while queries, navigation and [`Self::apply_remote`] still work. Off by
     /// default, so the single-user application is untouched.
     read_only: bool,
+    /// A collaboration editor: mutating commands are queued for the collaboration layer instead
+    /// of running here, so every path (ribbon, keyboard, pointer, IME) becomes an operation.
+    collab_queue: bool,
+    pending_commands: Vec<(String, Value)>,
     /// Presentations a host read off the UI thread, waiting for `file.adopt` (by token).
     loaded: Vec<(u64, cmd::file::LoadedFile)>,
     next_loaded: u64,
@@ -553,6 +557,8 @@ impl Session {
             mac_keys: cfg!(target_os = "macos"),
             panics_caught: 0,
             read_only: false,
+            collab_queue: false,
+            pending_commands: Vec::new(),
             loaded: vec![],
             next_loaded: 0,
             composition_settles: 0,
@@ -591,6 +597,21 @@ impl Session {
     }
     pub fn is_read_only(&self) -> bool {
         self.read_only
+    }
+    /// In a shared session every mutating command is queued for the collaboration layer; the
+    /// engine does not execute it here. [`Self::apply_remote`] is unaffected.
+    pub fn set_collab_queue(&mut self, on: bool) {
+        self.collab_queue = on;
+        if !on {
+            self.pending_commands.clear();
+        }
+    }
+    pub fn is_collab_queue(&self) -> bool {
+        self.collab_queue
+    }
+    /// Commands a keyboard, pointer or menu action asked for while the queue was on.
+    pub fn take_pending_commands(&mut self) -> Vec<(String, Value)> {
+        std::mem::take(&mut self.pending_commands)
     }
     pub fn active_index(&self) -> Option<usize> {
         self.active
@@ -672,6 +693,12 @@ impl Session {
         // participants' operations still land.
         if self.read_only && record && spec.changes_document() {
             return Err(EngineError::Disabled(id.into(), cmd::READ_ONLY.into()));
+        }
+        // In a shared session the document changes only through the server's `applied`. Queue the
+        // user's intent; the collaboration layer normalises and sends it.
+        if self.collab_queue && record && spec.changes_document() {
+            self.pending_commands.push((id.to_string(), params.clone()));
+            return Ok(json!({"queued": true}));
         }
         // Any other edit (or a click, a key, undo) settles an input method's composition first.
         if self.depth == 0 && (spec.journal || spec.undoable) && !matches!(id, "text.compose" | "text.commit") {

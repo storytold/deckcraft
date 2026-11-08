@@ -99,6 +99,9 @@ impl Hub {
                     "shape.move".into(),
                     "shape.setBounds".into(),
                     "text.set".into(),
+                    "text.insert".into(),
+                    "text.delete".into(),
+                    "shape.insert".into(),
                     "edit.delete".into(),
                     "slide.new".into(),
                     "slide.delete".into(),
@@ -502,6 +505,73 @@ mod tests {
             ServerMsg::Rejected(r) => assert_eq!(r.code, RejectCode::Forbidden),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn two_typing_clients_keep_both_insertions() {
+        let mut hub = hub();
+        let _ = join(&mut hub, "alice", Role::Editor);
+        let _ = join(&mut hub, "bob", Role::Editor);
+        let (slide, shape) = keys_of(&hub);
+        let set = OpEnvelope {
+            op_id: "set".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Command,
+            target: Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
+            payload: Payload::TextSet { text: "AB".into(), cell: None },
+            history: None,
+        };
+        hub.receive("alice", ClientMsg::Op(set)).expect("set");
+        let _ = hub.poll("alice");
+        let _ = hub.poll("bob");
+        for (id, ch) in [("a", "X"), ("b", "Y")] {
+            let op = OpEnvelope {
+                op_id: id.into(),
+                doc: "d".into(),
+                base_version: 1,
+                kind: OpKind::Command,
+                target: Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
+                payload: Payload::TextInsert { at: 1, text: ch.into() },
+                history: None,
+            };
+            hub.receive(if id == "a" { "alice" } else { "bob" }, ClientMsg::Op(op)).expect("insert");
+            let _ = hub.poll("alice");
+            let _ = hub.poll("bob");
+        }
+        let doc = hub.session().document().expect("doc");
+        let text = doc.slides[0].shapes[0].text.as_ref().expect("text").text();
+        assert_eq!(text.chars().count(), 4, "{text}");
+        assert!(text.contains('X') && text.contains('Y'), "both insertions survive: {text}");
+        assert_eq!(hub.version(), 3);
+    }
+
+    #[test]
+    fn a_shape_insert_converges_with_the_same_id_and_key() {
+        let mut hub = hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let mut sa = deck_session();
+        let mut sb = deck_session();
+        let mut a = CollabDoc::new("d");
+        let mut b = CollabDoc::new("d");
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+        a.submit(&sa, "shape.insert", &json!({"preset": "rect", "rect": [50, 50, 40, 30], "text": "hi"}), "ins-1").expect("submit");
+        while let Some(msg) = a.next_outgoing() {
+            if let ClientMsg::Op(op) = msg {
+                hub.receive("alice", ClientMsg::Op(op)).expect("receive");
+            }
+        }
+        a.on_msg(&mut sa, hub.poll("alice").expect("a"));
+        b.on_msg(&mut sb, hub.poll("bob").expect("b"));
+        let count = |s: &Session| s.doc().expect("doc").doc.slides[0].shapes.len();
+        assert_eq!(count(&sa), 3);
+        assert_eq!(count(&sb), 3);
+        let ids = |s: &Session| s.doc().expect("doc").doc.slides[0].shapes.iter().map(|x| x.id).collect::<Vec<_>>();
+        assert_eq!(ids(&sa), ids(&sb), "the same deterministic id on both replicas");
     }
 
     #[test]

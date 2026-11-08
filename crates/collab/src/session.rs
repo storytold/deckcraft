@@ -173,6 +173,17 @@ impl DocSession {
         if op.doc != self.file_id {
             return Err(refuse(op, Rejection::invalid("the operation is for another document", Some(self.version))));
         }
+        // Text operations carry a character offset; turn it into the position this operation
+        // actually has after everything that arrived since its base (ADR 0004, merge class).
+        let mut rebased: Option<OpEnvelope> = None;
+        if matches!(op.payload, deckcraft_collab_proto::Payload::TextInsert { .. } | deckcraft_collab_proto::Payload::TextDelete { .. })
+            && op.base_version < self.version
+        {
+            let mut adjusted = op.clone();
+            self.rebase_text(&mut adjusted)?;
+            rebased = Some(adjusted);
+        }
+        let op = rebased.as_ref().unwrap_or(op);
         let delta = match self.adapter.apply(&mut self.engine, self.version, actor, op) {
             Ok(delta) => delta,
             Err(rejection) => return Err(refuse(op, rejection)),
@@ -192,6 +203,60 @@ impl DocSession {
         }
         self.maybe_snapshot();
         Ok(out)
+    }
+
+    /// Move a text operation's offsets past the operations that arrived after its base. The
+    /// journal tail is the source: inserts shift positions right, deletes pull them left (and
+    /// clamp positions inside a removed range). Ties go to the earlier operation, so two people
+    /// typing at one caret both keep their text.
+    fn rebase_text(&mut self, op: &mut OpEnvelope) -> Result<(), Rejected> {
+        use deckcraft_collab_proto::Payload;
+        if self.tail.is_empty() && self.version > op.base_version {
+            return Err(refuse(op, Rejection::stale("the text history was compacted; resync first", Some(self.version))));
+        }
+        if let Some(first) = self.tail.first()
+            && op.base_version.saturating_add(1) < first.version
+            && self.version > op.base_version
+        {
+            return Err(refuse(op, Rejection::stale("the text history was compacted; resync first", Some(self.version))));
+        }
+        let shape = op.target.shape.clone();
+        let adjust_point = |point: &mut u32, payload: &Payload| match payload {
+            Payload::TextInsert { at, text } if shape.as_ref() == op.target.shape.as_ref() => {
+                if *at <= *point {
+                    *point = point.saturating_add(text.chars().count() as u32);
+                }
+            }
+            Payload::TextDelete { from, to } if shape.as_ref() == op.target.shape.as_ref() => {
+                if *to <= *point {
+                    *point = point.saturating_sub(to.saturating_sub(*from));
+                } else if *from < *point {
+                    *point = *from;
+                }
+            }
+            _ => {}
+        };
+        let tail: Vec<Applied> = self.tail.iter().filter(|a| a.version > op.base_version).cloned().collect();
+        for applied in tail {
+            let Some(command) = applied.command else { continue };
+            if command.target.shape != op.target.shape {
+                continue;
+            }
+            match &mut op.payload {
+                Payload::TextInsert { at, .. } => adjust_point(at, &command.payload),
+                Payload::TextDelete { from, to } => {
+                    adjust_point(from, &command.payload);
+                    adjust_point(to, &command.payload);
+                }
+                _ => {}
+            }
+        }
+        if let Payload::TextDelete { from, to } = op.payload
+            && to <= from
+        {
+            return Err(refuse(op, Rejection::invalid("the deleted text was already changed", Some(self.version))));
+        }
+        Ok(())
     }
 
     /// What a reconnecting client gets: the base cursor and the journal tail after `last_version`.

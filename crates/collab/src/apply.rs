@@ -15,8 +15,9 @@
 use std::collections::HashSet;
 
 use deckcraft_collab_proto::{ChangeKind, Delta, HistoryAction, OpEnvelope, OpKind, Payload, RejectCode, ShapeKey, SlideKey, Target};
-use deckcraft_engine::Session;
-use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, SlideId, parent_of};
+use deckcraft_engine::{Session, Target as EngineTarget, TextSel};
+use deckcraft_model::text::TextBody;
+use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, SlideId, find_shape, parent_of};
 use serde_json::{Value, json};
 
 use crate::delta::delta;
@@ -212,6 +213,7 @@ impl Adapter {
         let (cell, image) = match &op.payload {
             Payload::ShapeMove { .. } | Payload::ShapeSetBounds { .. } => (None, Image::Xfrm { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }),
             Payload::TextSet { cell, .. } => (*cell, Image::Text(String::new())),
+            Payload::TextInsert { .. } | Payload::TextDelete { .. } => (None, Image::Text(String::new())),
             _ => return None,
         };
         let snapshot = Snapshot { slide: op.target.slide.clone()?, shape: op.target.shape.clone()?, cell, image };
@@ -261,6 +263,33 @@ impl Adapter {
                     args["cell"] = json!([r, c]);
                 }
                 self.call(session, "text.set", args, head)
+            }
+            Payload::TextInsert { at, text } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                let body = before.slide(slide).and_then(|s| find_shape(&s.shapes, shape)).and_then(|s| s.text.as_ref());
+                let pos = offset_position(body, *at as usize);
+                self.select_text(session, before, slide, shape, (pos, pos), head)?;
+                self.call(session, "text.insert", json!({"text": text}), head)
+            }
+            Payload::TextDelete { from, to } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                if to <= from {
+                    return Err(Rejection::invalid("the deleted range is empty", Some(head)));
+                }
+                let body = before.slide(slide).and_then(|s| find_shape(&s.shapes, shape)).and_then(|s| s.text.as_ref());
+                let start = offset_position(body, *from as usize);
+                let end = offset_position(body, *to as usize);
+                self.select_text(session, before, slide, shape, (start, end), head)?;
+                self.call(session, "text.delete", json!({}), head)
+            }
+            Payload::ShapeInsert { preset, rect, text } => {
+                let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
+                self.select_slide(session, before, slide, head)?;
+                let mut args = json!({"preset": preset, "rect": rect});
+                if let Some(text) = text {
+                    args["text"] = json!(text);
+                }
+                self.call(session, "shape.insert", args, head)
             }
             Payload::ShapeDelete {} => {
                 let (_, shapes) = self.resolve_many(before, &op.target, head)?;
@@ -320,6 +349,40 @@ impl Adapter {
                 self.call(session, "slide.move", json!({"ids": [slide.0], "to": to}), head)
             }
         }
+    }
+
+    /// Put the engine's selection on one shape's text, so `text.insert`/`text.delete` act at the
+    /// authoritative position rather than at whatever this replica had selected.
+    fn select_text(
+        &self,
+        session: &mut Session,
+        before: &Presentation,
+        slide: SlideId,
+        shape: ShapeId,
+        (anchor, caret): ((usize, usize), (usize, usize)),
+        head: u64,
+    ) -> Result<(), Rejection> {
+        let index = before.slide_index(slide).ok_or_else(|| Rejection::stale("the slide is gone", Some(head)))?;
+        let st = session.doc_mut().map_err(|_| Rejection::invalid("no document open", Some(head)))?;
+        st.selection.target = EngineTarget::Slides;
+        st.selection.slide = index;
+        st.selection.slides.clear();
+        st.selection.shapes = vec![shape];
+        st.selection.cells = None;
+        st.selection.text = Some(TextSel { shape, anchor, caret, cell: None, notes: false, line_end: None });
+        Ok(())
+    }
+
+    fn select_slide(&self, session: &mut Session, before: &Presentation, slide: SlideId, head: u64) -> Result<(), Rejection> {
+        let index = before.slide_index(slide).ok_or_else(|| Rejection::stale("the slide is gone", Some(head)))?;
+        let st = session.doc_mut().map_err(|_| Rejection::invalid("no document open", Some(head)))?;
+        st.selection.target = EngineTarget::Slides;
+        st.selection.slide = index;
+        st.selection.slides.clear();
+        st.selection.shapes.clear();
+        st.selection.cells = None;
+        st.selection.text = None;
+        Ok(())
     }
 
     fn call(&self, session: &mut Session, cmd: &str, args: Value, head: u64) -> Result<(), Rejection> {
@@ -419,10 +482,55 @@ fn walk_ids(shapes: &[Shape], out: &mut Vec<ShapeId>, depth: usize) {
 }
 
 /// Which kind an operation must carry. Structure-changing operations are exclusive.
+/// Length of a text body in characters, counting one newline between paragraphs.
+pub fn body_len(body: Option<&TextBody>) -> usize {
+    let Some(body) = body else { return 0 };
+    let text: usize = body.paragraphs.iter().map(|p| p.char_len()).sum();
+    text + body.paragraphs.len().saturating_sub(1)
+}
+
+/// A paragraph/character position as a whole-body character offset.
+pub fn position_offset(body: Option<&TextBody>, pos: (usize, usize)) -> usize {
+    let Some(body) = body else { return 0 };
+    let mut offset = 0;
+    for (i, paragraph) in body.paragraphs.iter().enumerate() {
+        if i > 0 {
+            offset += 1;
+        }
+        if i == pos.0 {
+            return offset + pos.1.min(paragraph.char_len());
+        }
+        offset += paragraph.char_len();
+    }
+    offset
+}
+
+/// A whole-body character offset as paragraph/character. Out-of-range offsets clamp to the end.
+pub fn offset_position(body: Option<&TextBody>, offset: usize) -> (usize, usize) {
+    let Some(body) = body else { return (0, 0) };
+    let mut left = offset;
+    for (i, paragraph) in body.paragraphs.iter().enumerate() {
+        let len = paragraph.char_len();
+        if left <= len {
+            return (i, left);
+        }
+        left -= len;
+        if i + 1 < body.paragraphs.len() {
+            left = left.saturating_sub(1);
+        }
+    }
+    (body.paragraphs.len().saturating_sub(1), body.paragraphs.last().map_or(0, |p| p.char_len()))
+}
+
 pub fn class_of(payload: &Payload) -> OpKind {
     match payload {
-        Payload::ShapeMove { .. } | Payload::ShapeSetBounds { .. } | Payload::TextSet { .. } => OpKind::Command,
-        Payload::ShapeDelete {}
+        Payload::ShapeMove { .. }
+        | Payload::ShapeSetBounds { .. }
+        | Payload::TextSet { .. }
+        | Payload::TextInsert { .. }
+        | Payload::TextDelete { .. } => OpKind::Command,
+        Payload::ShapeInsert { .. }
+        | Payload::ShapeDelete {}
         | Payload::Reorder { .. }
         | Payload::Group {}
         | Payload::Ungroup {}

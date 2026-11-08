@@ -18,7 +18,7 @@ use deckcraft_engine::{DocState, Session, Target as EngineTarget};
 use deckcraft_model::{Presentation, Shape, ShapeId, SlideId, find_shape, parent_of};
 use serde_json::Value;
 
-use crate::apply::{Adapter, class_of};
+use crate::apply::{Adapter, class_of, position_offset};
 use crate::client::{ClientSession, Effect};
 
 /// Why a local command could not be turned into an operation.
@@ -303,12 +303,75 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
             if p.get("scope").and_then(Value::as_str) == Some("slides") {
                 return slide_delete_ops(keys, st, p, make);
             }
+            if let Some(ts) = st.selection.text.as_ref() {
+                if ts.notes || ts.cell.is_some() {
+                    return Err(LocalError::Unsupported("editing notes or a table cell".into()));
+                }
+                let shape = find_shape(&slide.shapes, ts.shape).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
+                let (from, to) = (position_offset(shape.text.as_ref(), ts.ordered().0), position_offset(shape.text.as_ref(), ts.ordered().1));
+                if to <= from {
+                    return Err(LocalError::BadParams("nothing selected".into()));
+                }
+                return Ok(vec![make(
+                    Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, ts.shape)?), ..Target::default() },
+                    Payload::TextDelete { from: from as u32, to: to as u32 },
+                )]);
+            }
             let ids = shape_ids(p, st)?;
             if ids.is_empty() {
                 return Err(LocalError::BadParams("nothing selected".into()));
             }
             let shapes: Vec<ShapeKey> = ids.into_iter().map(|id| shape_key(keys, slide.id, id)).collect::<Result<_, _>>()?;
             Ok(vec![make(Target { slide: slide_key, shapes, ..Target::default() }, Payload::ShapeDelete {})])
+        }
+        "text.insert" => {
+            let ts = st.selection.text.as_ref().ok_or_else(|| LocalError::BadParams("text.insert needs a caret".into()))?;
+            if ts.notes || ts.cell.is_some() {
+                return Err(LocalError::Unsupported("typing in notes or a table cell".into()));
+            }
+            let text = p.get("text").and_then(Value::as_str).ok_or_else(|| LocalError::BadParams("text.insert needs `text`".into()))?;
+            let shape = find_shape(&slide.shapes, ts.shape).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
+            let at = position_offset(shape.text.as_ref(), ts.caret);
+            Ok(vec![make(
+                Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, ts.shape)?), ..Target::default() },
+                Payload::TextInsert { at: at as u32, text: text.to_string() },
+            )])
+        }
+        "text.delete" => {
+            let ts = st.selection.text.as_ref().ok_or_else(|| LocalError::BadParams("text.delete needs a text selection".into()))?;
+            if ts.notes || ts.cell.is_some() {
+                return Err(LocalError::Unsupported("editing notes or a table cell".into()));
+            }
+            let shape = find_shape(&slide.shapes, ts.shape).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
+            let (from, to) = (position_offset(shape.text.as_ref(), ts.ordered().0), position_offset(shape.text.as_ref(), ts.ordered().1));
+            if to <= from {
+                return Err(LocalError::BadParams("nothing selected".into()));
+            }
+            Ok(vec![make(
+                Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, ts.shape)?), ..Target::default() },
+                Payload::TextDelete { from: from as u32, to: to as u32 },
+            )])
+        }
+        "shape.insert" => {
+            let preset = p.get("preset").and_then(Value::as_str).ok_or_else(|| LocalError::BadParams("shape.insert needs `preset`".into()))?;
+            let rect = p
+                .get("rect")
+                .and_then(Value::as_array)
+                .filter(|a| a.len() == 4)
+                .ok_or_else(|| LocalError::BadParams("shape.insert needs `rect: [x,y,w,h]`".into()))?;
+            let mut r = [0.0; 4];
+            for (i, v) in rect.iter().enumerate() {
+                r[i] = v.as_f64().ok_or_else(|| LocalError::BadParams("shape.insert rect values must be numbers".into()))?;
+            }
+            // Anything else (flip, placeholder, custom geometry) has no v1 form: refuse it rather
+            // than silently dropping the difference on another replica.
+            for key in p.as_object().map(|o| o.keys()).into_iter().flatten() {
+                if !matches!(key.as_str(), "preset" | "rect" | "text") {
+                    return Err(LocalError::Unsupported(format!("shape.insert {key}")));
+                }
+            }
+            let text = p.get("text").and_then(Value::as_str).map(str::to_string);
+            Ok(vec![make(Target { slide: slide_key, ..Target::default() }, Payload::ShapeInsert { preset: preset.to_string(), rect: r, text })])
         }
         "slide.new" => {
             if p.get("title").is_some() || p.get("body").is_some() {

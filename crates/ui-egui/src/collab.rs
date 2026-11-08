@@ -200,6 +200,16 @@ impl CollabUi {
         for msg in incoming {
             self.handle_server_msg(session, msg, now_ms);
         }
+        for (cmd, params) in session.take_pending_commands() {
+            let result = match cmd.as_str() {
+                "edit.undo" => self.undo(),
+                "edit.redo" => self.redo(),
+                _ => self.submit(session, &cmd, &params).map(|_| ()),
+            };
+            if let Err(e) = result {
+                self.error = Some(e);
+            }
+        }
         while let Some(msg) = self.doc.as_mut().and_then(CollabDoc::next_outgoing) {
             if !self.send_or_queue(msg) {
                 break;
@@ -593,7 +603,11 @@ impl SlideApp {
     /// Mirror the collaboration role into the engine's read-only gate. Called every frame and
     /// before every command, so a role change can never leave one mutating path open.
     pub fn sync_collab_gate(&mut self) {
-        self.session.set_read_only(!self.collab.may_write());
+        // A viewer is read-only. An editor whose session is on but not attached is also stopped:
+        // a local edit would have nowhere to go.
+        let attached = self.collab.is_attached();
+        self.session.set_read_only(!self.collab.may_write() || (self.collab.is_enabled() && !attached));
+        self.session.set_collab_queue(self.collab.is_enabled() && attached);
         // A participants pane remembered from a run with the flag on must not linger when the
         // host starts without collaboration.
         if !self.collab.is_enabled() && self.ui.pane.as_deref() == Some(PANE) {
@@ -1047,6 +1061,61 @@ mod tests {
         indicator.click();
         h.run_steps(3);
         assert_eq!(h.state().ui.pane.as_deref(), Some(PANE));
+    }
+
+    #[test]
+    fn a_command_goes_through_the_link_and_changes_the_document_only_on_applied() {
+        use deckcraft_collab::{CollabDoc, PipeTransport};
+        use deckcraft_collab_proto::{Applied, ClientMsg, ConfirmedCommand, OpKind, Payload, ServerMsg};
+
+        let mut app = SlideApp::new(Session::with_new(), crate::Services::default());
+        let mut doc = CollabDoc::new("d");
+        let (transport, from_ui, to_ui) = PipeTransport::pair();
+        let _ = doc.connect(&app.session, "jwt", deckcraft_collab_proto::ClientInfo { name: "t".into(), ver: "1".into() });
+        app.collab.attach(doc, Box::new(transport));
+        app.sync_collab_gate();
+        to_ui
+            .send(ServerMsg::Welcome(deckcraft_collab_proto::Welcome {
+                v: deckcraft_collab_proto::PROTO_VERSION,
+                session_id: "d".into(),
+                actor_id: "alice".into(),
+                role: Role::Editor,
+                lease: None,
+                version: 0,
+                snapshot: deckcraft_collab_proto::SnapshotRef { mode: deckcraft_collab_proto::SnapshotMode::BaseAndTail, cursor: "tail@0".into() },
+                capabilities: deckcraft_collab_proto::Capabilities {
+                    kinds: vec![OpKind::Command, OpKind::Structural],
+                    limits: deckcraft_collab_proto::Limits::default(),
+                    commands: vec![],
+                },
+            }))
+            .expect("welcome");
+        app.collab.pump(&mut app.session, 1_000);
+        assert!(app.session.is_collab_queue());
+
+        let before = app.session.doc().expect("doc").doc.slides[0].shapes.len();
+        app.run("shape.insert", json!({"preset": "rect", "rect": [40, 40, 80, 60]})).expect("queued");
+        assert_eq!(app.session.doc().expect("doc").doc.slides[0].shapes.len(), before, "nothing local before applied");
+        app.collab.pump(&mut app.session, 1_060);
+        let mut op = None;
+        while let Ok(msg) = from_ui.try_recv() {
+            if let ClientMsg::Op(envelope) = msg {
+                op = Some(envelope);
+            }
+        }
+        let op = op.expect("the operation reached the link");
+        let payload = op.payload.clone();
+        let applied = ServerMsg::Applied(Applied {
+            op_id: op.op_id.clone(),
+            version: 1,
+            actor_id: "alice".into(),
+            command: Some(ConfirmedCommand { cmd: payload.command().into(), target: op.target.clone(), payload }),
+            delta: Default::default(),
+        });
+        to_ui.send(applied).expect("applied");
+        app.collab.pump(&mut app.session, 1_100);
+        assert_eq!(app.session.doc().expect("doc").doc.slides[0].shapes.len(), before + 1, "the server's command created the shape");
+        let _ = Payload::ShapeInsert { preset: "rect".into(), rect: [0.0; 4], text: None };
     }
 
     #[test]

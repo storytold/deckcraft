@@ -27,25 +27,6 @@ impl SlideApp {
             // to the page like Ctrl+S. The engine would write to the presentation's path, which a
             // browser can't.
             self.save_to_host(None).map(|name| json!({"path": name}))
-        } else if self.collab.is_enabled() && matches!(id, "edit.undo" | "edit.redo") {
-            let r = if id == "edit.undo" { self.collab.undo() } else { self.collab.redo() };
-            match r {
-                Ok(()) => Ok(json!({"queued": 1})),
-                Err(e) => {
-                    self.set_status(e.clone());
-                    Err(e)
-                }
-            }
-        } else if self.collab.is_enabled() && deckcraft_engine::find_command(id).is_some_and(|c| c.changes_document()) {
-            // In a shared session the server is the author: normalise the command and wait for
-            // `applied`, so every replica runs the same command in the same order.
-            match self.collab.submit(&self.session, id, &params) {
-                Ok(n) => Ok(json!({"queued": n})),
-                Err(e) => {
-                    self.set_status(e.clone());
-                    Err(e)
-                }
-            }
         } else {
             self.session.execute(id, &params).map_err(|e| e.to_string())
         };
