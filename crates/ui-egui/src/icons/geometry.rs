@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Align2, BLUE, Color32, DARK, FontId, GOLD, GREEN, Mesh, ORANGE, PI, PURPLE, Painter, PathShape, Pos2, RED, Rect, Shape, Stroke, StrokeKind,
+    TextShape, pos2, vec2,
+};
 
 // ---------------------------------------------------------------------------------------------
 // Drawing toolkit
@@ -49,6 +52,8 @@ pub(super) fn t(c: C) -> C {
 }
 
 pub(super) type P2 = (f32, f32);
+/// A box as `(x0, y0, x1, y1)`.
+pub(super) type Box4 = (f32, f32, f32, f32);
 
 #[derive(Clone, Copy)]
 pub(super) enum Glyph {
@@ -363,13 +368,13 @@ impl Pen<'_> {
         self.p.add(PathShape::convex_polygon(v, self.col(fill), self.stroke(stroke, w)));
     }
 
-    fn rect_w(&self, x0: f32, y0: f32, x1: f32, y1: f32, r: f32, fill: C, stroke: C, w: f32) {
+    fn rect_w(&self, (x0, y0, x1, y1): Box4, r: f32, fill: C, stroke: C, w: f32) {
         let rect = Rect::from_min_max(self.pt((x0, y0)), self.pt((x1, y1)));
         self.p.rect(rect, r * self.k, self.col(fill), self.stroke(stroke, w), StrokeKind::Middle);
     }
 
-    pub(super) fn rect(&self, x0: f32, y0: f32, x1: f32, y1: f32, r: f32, fill: C, stroke: C) {
-        self.rect_w(x0, y0, x1, y1, r, fill, stroke, 1.0);
+    pub(super) fn rect(&self, b: Box4, r: f32, fill: C, stroke: C) {
+        self.rect_w(b, r, fill, stroke, 1.0);
     }
 
     fn circle_w(&self, c: P2, r: f32, fill: C, stroke: C, w: f32) {
@@ -516,7 +521,7 @@ impl Pen<'_> {
 
     /// Landscape slide frame.
     pub(super) fn frame(&self, x0: f32, y0: f32, x1: f32, y1: f32) {
-        self.rect(x0, y0, x1, y1, 1.5, N, K);
+        self.rect((x0, y0, x1, y1), 1.5, N, K);
     }
 
     /// Document page with a folded top-right corner.
@@ -530,7 +535,7 @@ impl Pen<'_> {
     pub(super) fn picture(&self, x0: f32, y0: f32, x1: f32, y1: f32) {
         let (w, h) = (x1 - x0, y1 - y0);
         let m = w.min(h);
-        self.rect(x0, y0, x1, y1, 1.5, N, K);
+        self.rect((x0, y0, x1, y1), 1.5, N, K);
         self.dot((x1 - w * 0.27, y0 + h * 0.3), m * 0.12, Y);
         let base = y1 - h * 0.14;
         self.poly(&[(x0 + w * 0.12, base), (x0 + w * 0.38, y0 + h * 0.36), (x0 + w * 0.64, base)], G, N);
@@ -597,11 +602,11 @@ impl Pen<'_> {
     }
 
     /// Table grid; `header` fills the first row.
-    pub(super) fn table(&self, x0: f32, y0: f32, x1: f32, y1: f32, rows: usize, cols: usize, header: C) {
+    pub(super) fn table(&self, (x0, y0, x1, y1): Box4, rows: usize, cols: usize, header: C) {
         let rh = (y1 - y0) / rows as f32;
         let cw = (x1 - x0) / cols as f32;
         if !matches!(header, C::None) {
-            self.rect(x0, y0, x1, y0 + rh, 1.2, header, N);
+            self.rect((x0, y0, x1, y0 + rh), 1.2, header, N);
         }
         for i in 1..rows {
             let y = y0 + rh * i as f32;
@@ -611,7 +616,7 @@ impl Pen<'_> {
             let x = x0 + cw * j as f32;
             self.seg_w((x, y0), (x, y1), K, 0.8);
         }
-        self.rect(x0, y0, x1, y1, 1.2, N, K);
+        self.rect((x0, y0, x1, y1), 1.2, N, K);
     }
 
     /// Bar chart in the box.
@@ -620,13 +625,13 @@ impl Pen<'_> {
         let h = y1 - y0;
         for (i, (frac, c)) in [(0.5, B), (1.0, O), (0.72, G)].into_iter().enumerate() {
             let bx = x0 + w * i as f32;
-            self.rect(bx + w * 0.16, y1 - h * frac, bx + w * 0.84, y1, 0.6, c, N);
+            self.rect((bx + w * 0.16, y1 - h * frac, bx + w * 0.84, y1), 0.6, c, N);
         }
         self.seg((x0 - 0.5, y1 + 0.2), (x1 + 0.5, y1 + 0.2), K);
     }
 
     /// A writing tool lying along `ang` degrees with its point at `tip`.
-    pub(super) fn tool(&self, tip: P2, ang: f32, len: f32, hw: f32, cone: f32, body: C, lead: C, cap_len: f32, cap: C) {
+    pub(super) fn tool(&self, (tip, ang): (P2, f32), (len, hw, cone): (f32, f32, f32), body: C, lead: C, (cap_len, cap): (f32, C)) {
         let m = |pts: &[P2]| tf(tip, ang, pts);
         self.poly(&m(&[(0.0, 0.0), (cone, -hw), (cone, hw)]), N, K);
         self.poly(&m(&[(0.0, 0.0), (cone * 0.42, -hw * 0.42), (cone * 0.42, hw * 0.42)]), lead, N);
@@ -714,7 +719,7 @@ impl Pen<'_> {
     }
 
     pub(super) fn monitor(&self, x0: f32, y0: f32, x1: f32, y1: f32) {
-        self.rect(x0, y0, x1, y1, 1.5, N, K);
+        self.rect((x0, y0, x1, y1), 1.5, N, K);
         let cx = (x0 + x1) * 0.5;
         self.seg((cx, y1), (cx, y1 + 3.2), K);
         self.seg((cx - 4.0, y1 + 3.6), (cx + 4.0, y1 + 3.6), K);
@@ -749,7 +754,7 @@ impl Pen<'_> {
         sh.extend(arc_pts((cx, y0 - r * 0.7), r, r, 180.0, 360.0));
         sh.push((cx + r, y0));
         self.line(&sh, K);
-        self.rect(x0, y0, x1, y1, 1.2, Y, K);
+        self.rect((x0, y0, x1, y1), 1.2, Y, K);
         let ky = (y0 + y1) * 0.5;
         self.dot((cx, ky - 0.4), 1.1, D);
         self.seg_w((cx, ky), (cx, ky + 2.0), D, 0.9);

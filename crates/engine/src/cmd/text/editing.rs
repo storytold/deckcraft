@@ -1,6 +1,9 @@
 use super::autocorrect::autocorrect;
 use super::layout::{ctx_for, pos_param};
-use super::*;
+use super::{
+    Align, Pos, Result, Run, RunKind, RunProps, Session, ShapeId, ShapeKind, TextBody, TextSel, Value, bad, body_of, bool_or, ed, edit_text,
+    id_param, json, ok, resolve, shape_of,
+};
 
 pub(super) fn edit(s: &mut Session, p: &Value) -> Result<Value> {
     if bool_or(p, "notes", false) {

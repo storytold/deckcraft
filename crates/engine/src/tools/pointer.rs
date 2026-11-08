@@ -1,5 +1,8 @@
 use super::hit::{EditZone, contains_rect, edit_zone, edited_box, hit_shape, in_table_cell, is_text_first, shape_in_front};
-use super::*;
+use super::{
+    Arc, DRAW_TABLE, Drag, HistoryEntry, Hit, Mods, Point, PointerEvent, PointerKind, Rect, Result, Session, ShapeId, ShapeKind, TABLE_ERASER,
+    TextTarget, ToolKind, Value, Xfrm, box_handles, cmd, is_freeform_tool, json, wordart_handles, xfrm_of,
+};
 
 impl Session {
     pub fn set_tool(&mut self, kind: ToolKind) {
@@ -217,6 +220,7 @@ impl Session {
         }
     }
 
+    /// Handle a pointer press and start the applicable tool interaction.
     fn down(&mut self, p: Point, mods: Mods, tol: f64) -> Result<Value> {
         if let Some(Drag::Freeform { mode, mut points, .. }) = self.tool.drag.clone() {
             // Next click of a freeform: close on the start point, else add a vertex.
@@ -300,8 +304,12 @@ impl Session {
             Some(Hit::TableRow { id, row }) => self.begin_table_border(id, false, row, p)?,
             Some(Hit::Resize { id, handle }) => {
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
+                let ids: Vec<ShapeId> = if st.selection.shapes.contains(&id) { st.selection.shapes.clone() } else { vec![id] };
+                let origs: Vec<(ShapeId, Xfrm)> =
+                    ids.iter().filter_map(|i| st.shape(*i).filter(|s| !s.locked).map(|s| (*i, xfrm_of(&st.doc, &st.selection, s)))).collect();
+                let ids: Vec<ShapeId> = origs.iter().map(|(id, _)| *id).collect();
                 self.begin("Size");
-                self.tool.drag = Some(Drag::Resize { id, handle, orig, start: p });
+                self.tool.drag = Some(Drag::Resize { id, orig, ids, handle, origs, start: p });
             }
             Some(Hit::LineEnd { id, end }) => {
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
@@ -433,6 +441,7 @@ impl Session {
         Ok(json!({"hit": serde_json::to_value(&hit).unwrap_or_default()}))
     }
 
+    /// Handle a pointer release and finalize the active tool interaction.
     fn up(&mut self, p: Point, mods: Mods) -> Result<Value> {
         let drag = self.tool.drag.take();
         self.tool.guides.clear();
@@ -452,12 +461,11 @@ impl Session {
                     self.execute("guide.move", &json!({"index": index, "pos": pos}))?
                 };
             }
-            Some(Drag::Move { moved: false, enter_text: Some((id, at)), .. }) => {
+            Some(Drag::Move { moved: false, enter_text: Some((id, at)), .. })
                 // Plain click on text: caret at the click (in a table, in the clicked cell).
-                if self.edit_text_at(id, at)? {
+                if self.edit_text_at(id, at)? => {
                     out = json!({"editing": id});
                 }
-            }
             Some(Drag::Marquee { start, add }) => {
                 let r = Rect::from_points(start, p);
                 self.tool.marquee = None;
@@ -556,10 +564,22 @@ impl Session {
                     out = self.add_ink(points)?;
                 }
             }
-            Some(Drag::Resize { id, .. }) => {
+            Some(Drag::Resize { origs, .. }) => {
+                let changed: Vec<ShapeId> = origs
+                    .iter()
+                    .filter_map(|(id, orig)| {
+                        let current = self.active().and_then(|st| st.shape(*id).map(|s| xfrm_of(&st.doc, &st.selection, s)))?;
+
+                        (current != *orig).then_some(*id)
+                    })
+                    .collect();
+                if !changed.is_empty() {
+                    for id in changed {
+                        let _ = cmd::text::fit_text_box(self, id);
+                        self.refit_after_resize(id)?;
+                    }
+                }
                 self.commit();
-                let _ = cmd::text::fit_text_box(self, id);
-                self.refit_after_resize(id)?;
             }
             Some(Drag::TextSelect { before, .. }) => {
                 out = self.paint_if_selection_changed(before, out)?;

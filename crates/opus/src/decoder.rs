@@ -202,19 +202,10 @@ impl StreamDecoder {
                     Some(m) => m,
                 };
                 if audiosize > f20 {
-                    let mut done = 0;
-                    while done < audiosize {
-                        let r = self.decode_frame(None, &mut pcm[done * ch..], (audiosize - done).min(f20), false)?;
-                        done += r;
-                    }
+                    self.conceal_long(pcm, audiosize, f20)?;
                     return Ok(frame_size);
-                } else if audiosize < f20 {
-                    if audiosize > f10 {
-                        audiosize = f10;
-                    } else if mode != Mode::SilkOnly && audiosize > f5 && audiosize < f10 {
-                        audiosize = f5;
-                    }
                 }
+                audiosize = shorten_concealment(audiosize, mode, fs);
             }
         }
         let data_len = data.map_or(0, <[_]>::len);
@@ -248,76 +239,21 @@ impl StreamDecoder {
         // SILK.
         let mut pcm_silk: Vec<f32> = Vec::new();
         if mode != Mode::CeltOnly {
-            pcm_silk.resize(frame_size.max(f10) * ch, 0.0);
-            if self.prev_mode == Some(Mode::CeltOnly) {
-                self.silk.reset();
-            }
-            let payload_ms = (1000 * audiosize / fs).max(10);
-            let internal_rate = if mode == Mode::SilkOnly {
-                match bandwidth {
-                    Some(Bandwidth::Narrowband) => 8000,
-                    Some(Bandwidth::Mediumband) => 12000,
-                    _ => 16000,
-                }
-            } else {
-                16000
-            };
-            if data.is_some() {
-                self.silk.set_stream(self.stream_channels, internal_rate);
-            }
-            let lost = if data.is_none() {
-                LostFlag::Lost
-            } else if fec {
-                LostFlag::Lbrr
-            } else {
-                LostFlag::Normal
-            };
-            let mut decoded = 0;
-            while decoded < frame_size {
-                let first = decoded == 0;
-                let n = match self.silk.decode(dec.as_deref_mut(), lost, first, payload_ms, &mut pcm_silk[decoded * ch..]) {
-                    Ok(n) => n,
-                    Err(e) => {
-                        if lost != LostFlag::Normal {
-                            let n = frame_size - decoded;
-                            pcm_silk[decoded * ch..(decoded + n) * ch].fill(0.0);
-                            n
-                        } else {
-                            return Err(e);
-                        }
-                    }
-                };
-                if n == 0 {
-                    break;
-                }
-                decoded += n;
-            }
+            pcm_silk = self.decode_silk_layer(
+                dec.as_deref_mut(),
+                SilkLayer { mode, bandwidth, lost: lost_flag(data.is_some(), fec), frame_size, audiosize, f10 },
+            )?;
         }
 
         let mut start_band = 0;
-        let mut redundancy = false;
-        let mut celt_to_silk = false;
-        let mut redundancy_bytes = 0usize;
-        let mut len = data_len;
+        let mut redundancy = Redundancy::none(data_len);
         if !fec
             && mode != Mode::CeltOnly
             && let Some(d) = dec.as_deref_mut()
-            && d.tell() + 17 + 20 * (self.mode == Some(Mode::Hybrid)) as i32 <= 8 * len as i32
         {
-            redundancy = if mode == Mode::Hybrid { d.bit_logp(12) } else { true };
-            if redundancy {
-                celt_to_silk = d.bit_logp(1);
-                redundancy_bytes = if mode == Mode::Hybrid { d.uint(256) as usize + 2 } else { len - ((d.tell() as usize + 7) >> 3) };
-                if redundancy_bytes > len || (len - redundancy_bytes) * 8 < d.tell() as usize {
-                    len = 0;
-                    redundancy_bytes = 0;
-                    redundancy = false;
-                } else {
-                    len -= redundancy_bytes;
-                }
-                d.shrink_storage(redundancy_bytes);
-            }
+            redundancy = Redundancy::parse(d, mode, self.mode == Some(Mode::Hybrid), data_len);
         }
+        let Redundancy { present: redundancy, celt_to_silk, bytes: redundancy_bytes, len } = redundancy;
         if mode != Mode::CeltOnly {
             start_band = 17;
         }
@@ -375,15 +311,11 @@ impl StreamDecoder {
             smooth_fade(&tail, &redundant_audio[ch * f2_5..], &mut pcm[o..], f2_5, ch, window, self.rate);
         }
         if redundancy && celt_to_silk {
-            pcm[..f2_5 * ch].copy_from_slice(&redundant_audio[..f2_5 * ch]);
-            let cur: Vec<f32> = pcm[ch * f2_5..ch * 2 * f2_5].to_vec();
-            smooth_fade(&redundant_audio[ch * f2_5..], &cur, &mut pcm[ch * f2_5..], f2_5, ch, window, self.rate);
+            self.fade_in_from(pcm, &redundant_audio, f2_5);
         }
         if transition {
             if audiosize >= f5 {
-                pcm[..f2_5 * ch].copy_from_slice(&pcm_transition[..f2_5 * ch]);
-                let cur: Vec<f32> = pcm[ch * f2_5..ch * 2 * f2_5].to_vec();
-                smooth_fade(&pcm_transition[ch * f2_5..], &cur, &mut pcm[ch * f2_5..], f2_5, ch, window, self.rate);
+                self.fade_in_from(pcm, &pcm_transition, f2_5);
             } else {
                 let cur: Vec<f32> = pcm[..ch * f2_5].to_vec();
                 smooth_fade(&pcm_transition, &cur, pcm, f2_5, ch, window, self.rate);
@@ -402,6 +334,135 @@ impl StreamDecoder {
         self.prev_mode = Some(mode);
         self.prev_redundancy = redundancy && !celt_to_silk;
         Ok(audiosize)
+    }
+
+    /// Conceals a lost span longer than 20 ms by decoding it in 20 ms pieces.
+    fn conceal_long(&mut self, pcm: &mut [f32], audiosize: usize, f20: usize) -> Result<()> {
+        let mut done = 0;
+        while done < audiosize {
+            done += self.decode_frame(None, &mut pcm[done * self.channels..], (audiosize - done).min(f20), false)?;
+        }
+        Ok(())
+    }
+
+    /// Replaces the first `f2_5` samples of `pcm` with `src` and cross-fades the following `f2_5` samples from `src` into `pcm`.
+    fn fade_in_from(&self, pcm: &mut [f32], src: &[f32], f2_5: usize) {
+        let ch = self.channels;
+        let window = &crate::celt::mode().window;
+        pcm[..f2_5 * ch].copy_from_slice(&src[..f2_5 * ch]);
+        let cur: Vec<f32> = pcm[ch * f2_5..ch * 2 * f2_5].to_vec();
+        smooth_fade(&src[ch * f2_5..], &cur, &mut pcm[ch * f2_5..], f2_5, ch, window, self.rate);
+    }
+
+    /// Runs the SILK layer over the frame, zero-filling spans it cannot decode when the packet was lost.
+    fn decode_silk_layer(&mut self, mut dec: Option<&mut RangeDecoder>, l: SilkLayer) -> Result<Vec<f32>> {
+        let ch = self.channels;
+        let mut pcm_silk = vec![0.0; l.frame_size.max(l.f10) * ch];
+        if self.prev_mode == Some(Mode::CeltOnly) {
+            self.silk.reset();
+        }
+        let payload_ms = (1000 * l.audiosize / self.rate as usize).max(10);
+        if l.lost != LostFlag::Lost {
+            self.silk.set_stream(self.stream_channels, silk_internal_rate(l.mode, l.bandwidth));
+        }
+        let mut decoded = 0;
+        while decoded < l.frame_size {
+            let first = decoded == 0;
+            let out = &mut pcm_silk[decoded * ch..];
+            let n = match self.silk.decode(dec.as_deref_mut(), l.lost, first, payload_ms, out) {
+                Ok(n) => n,
+                Err(_) if l.lost != LostFlag::Normal => {
+                    let n = l.frame_size - decoded;
+                    pcm_silk[decoded * ch..(decoded + n) * ch].fill(0.0);
+                    n
+                }
+                Err(e) => return Err(e),
+            };
+            if n == 0 {
+                break;
+            }
+            decoded += n;
+        }
+        Ok(pcm_silk)
+    }
+}
+
+/// Inputs for one SILK-layer decode.
+struct SilkLayer {
+    mode: Mode,
+    bandwidth: Option<Bandwidth>,
+    lost: LostFlag,
+    frame_size: usize,
+    audiosize: usize,
+    f10: usize,
+}
+
+fn lost_flag(has_data: bool, fec: bool) -> LostFlag {
+    if !has_data {
+        LostFlag::Lost
+    } else if fec {
+        LostFlag::Lbrr
+    } else {
+        LostFlag::Normal
+    }
+}
+
+fn silk_internal_rate(mode: Mode, bandwidth: Option<Bandwidth>) -> u32 {
+    match (mode, bandwidth) {
+        (Mode::SilkOnly, Some(Bandwidth::Narrowband)) => 8000,
+        (Mode::SilkOnly, Some(Bandwidth::Mediumband)) => 12000,
+        _ => 16000,
+    }
+}
+
+/// Picks the shorter concealment length for spans of at most 20 ms (10 ms, or 5 ms outside SILK-only mode).
+fn shorten_concealment(audiosize: usize, mode: Mode, rate: usize) -> usize {
+    let f20 = rate / 50;
+    let f10 = f20 >> 1;
+    let f5 = f10 >> 1;
+    if audiosize >= f20 {
+        audiosize
+    } else if audiosize > f10 {
+        f10
+    } else if mode != Mode::SilkOnly && audiosize > f5 && audiosize < f10 {
+        f5
+    } else {
+        audiosize
+    }
+}
+
+/// In-band redundancy header of a packet: whether a redundant CELT frame follows, its direction and size.
+struct Redundancy {
+    present: bool,
+    celt_to_silk: bool,
+    bytes: usize,
+    /// Payload length left for the main frame.
+    len: usize,
+}
+
+impl Redundancy {
+    fn none(len: usize) -> Self {
+        Self { present: false, celt_to_silk: false, bytes: 0, len }
+    }
+
+    fn parse(d: &mut RangeDecoder, mode: Mode, prev_hybrid: bool, len: usize) -> Self {
+        let mut r = Self::none(len);
+        if d.tell() + 17 + 20 * prev_hybrid as i32 > 8 * len as i32 {
+            return r;
+        }
+        r.present = if mode == Mode::Hybrid { d.bit_logp(12) } else { true };
+        if !r.present {
+            return r;
+        }
+        r.celt_to_silk = d.bit_logp(1);
+        r.bytes = if mode == Mode::Hybrid { d.uint(256) as usize + 2 } else { len - ((d.tell() as usize + 7) >> 3) };
+        if r.bytes > len || (len - r.bytes) * 8 < d.tell() as usize {
+            r = Self { celt_to_silk: r.celt_to_silk, ..Self::none(0) };
+        } else {
+            r.len -= r.bytes;
+        }
+        d.shrink_storage(r.bytes);
+        r
     }
 }
 

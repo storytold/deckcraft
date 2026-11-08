@@ -1,10 +1,11 @@
-use super::*;
+use super::{ColorRef, Fill, Geom, Line, NO_ID_SPACE, Result, Session, Value, bad, bool_or, id_param, json, str_param, usize_param};
 
 pub(super) fn sites(s: &mut Session, p: &Value) -> Result<Value> {
     let id = id_param(p, "id", "shape.sites")?.ok_or_else(|| bad("shape.sites", "missing `id`"))?;
     let st = s.doc()?;
-    let sh = st.shape(id).ok_or_else(|| bad("shape.sites", "no such shape"))?;
-    Ok(json!(crate::connect::sites(&st.doc, &st.selection, sh).iter().map(|q| [q.x, q.y]).collect::<Vec<_>>()))
+    // In slide space, as shape.connect uses them, for a shape inside a group too.
+    let v = crate::connect::sites_of(&st.doc, &st.selection, st.shapes(), id).ok_or_else(|| bad("shape.sites", "no such shape"))?;
+    Ok(json!(v.iter().map(|q| [q.x, q.y]).collect::<Vec<_>>()))
 }
 
 pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
@@ -12,8 +13,13 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("shape.connect", "missing `from` / `to`"));
     };
     let st = s.doc()?;
-    let site_list = |id| st.shape(id).map(|sh| crate::connect::sites(&st.doc, &st.selection, sh)).unwrap_or_default();
-    let (a, b) = (site_list(from), site_list(to));
+    // Anywhere in the slide's tree: a shape inside a group takes a connector too (PowerPoint
+    // glues to grouped shapes), its sites where the group draws them.
+    let site_list = |id| {
+        crate::connect::sites_of(&st.doc, &st.selection, st.shapes(), id)
+            .ok_or_else(|| bad("shape.connect", format!("no shape {} on the current slide", id.0)))
+    };
+    let (a, b) = (site_list(from)?, site_list(to)?);
     if a.is_empty() || b.is_empty() {
         return Err(bad("shape.connect", "both shapes need connection sites (lines and groups have none)"));
     }
@@ -35,6 +41,11 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let (p0, p1) = (a[ia], b[ib]);
     let id = match id_param(p, "id", "shape.connect")? {
+        // The ends are in slide space and rerouting follows the slide's own connectors, so a line
+        // inside a group would be drawn in the group's space and never follow its shapes.
+        Some(id) if !st.shapes().iter().any(|sh| sh.id == id) && st.shape(id).is_some_and(|sh| sh.is_line()) => {
+            return Err(bad("shape.connect", "`id` names a line inside a group; ungroup it first, or leave `id` out for a new connector"));
+        }
         Some(id) => id,
         None => {
             let preset = str_param(p, "preset").unwrap_or("straightConnector1");

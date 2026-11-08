@@ -1,6 +1,9 @@
 use super::files::{place_row, square_button};
 use super::info::SAVE_TYPES;
-use super::*;
+use super::{
+    Align2, Backstage, Color32, CornerRadius, ExportTask, Icon, PrintScope, Rect, RichText, Sense, SlideApp, Stroke, StrokeKind, Tokens, Ui, Value,
+    bullets, dim, heading, icon_button, json, pos2, theme, vec2,
+};
 
 /// The slides the Print page prints, in order (0-based).
 pub fn print_slides(doc: &deckcraft_model::Presentation, bs: &Backstage, current: usize) -> Result<Vec<usize>, String> {
@@ -204,7 +207,8 @@ fn preview(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, doc: &deckcraft_
     let mut budget = 4u32;
     let mut draw_slide = |ui: &mut Ui, i: usize, r: Rect| {
         let px = (r.width() * ui.ctx().pixels_per_point()).round().clamp(16.0, 1600.0) as u32;
-        match app.textures.thumb(ui.ctx(), doc, i, px, &mut budget) {
+        // Print preview matches the actual exported PDF output (always full color).
+        match app.textures.thumb(ui.ctx(), doc, i, px, false, &mut budget) {
             Some(tex) => {
                 ui.painter().image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
             }

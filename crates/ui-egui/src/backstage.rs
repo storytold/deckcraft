@@ -2,7 +2,7 @@
 //! bar until Esc or the back arrow returns to the presentation. With nothing open it is the start
 //! screen: PowerPoint's start screen and File › Home are the same page.
 //!
-//! A side menu on the left picks a page (Home, New, Open, Info, Save As, Print, Export, Account);
+//! A side menu on the left picks a page (Home, New, Open, Info, Save As, Print, Export, About);
 //! Save, Close and Options act at once. Every action runs an existing command through
 //! [`SlideApp::run`] or one of the app's file helpers ([`SlideApp::export_as`],
 //! [`SlideApp::print_pdf`], [`SlideApp::save_as_dialog`]); the state here is UI-only and never
@@ -24,7 +24,7 @@ mod print;
 
 pub use files::split_path;
 use files::{home, new_page, open_page};
-use info::{PROPERTIES, account, commit_props, info, save_as};
+use info::{PROPERTIES, about, commit_props, info, save_as};
 pub use info::{SAVE_TYPES, format_bytes};
 use print::{export, print};
 pub use print::{print_page_size, print_params, print_slides};
@@ -47,11 +47,11 @@ pub enum Page {
     SaveAs,
     Print,
     Export,
-    Account,
+    About,
 }
 
 impl Page {
-    pub const ALL: [Page; 8] = [Page::Home, Page::New, Page::Open, Page::Info, Page::SaveAs, Page::Print, Page::Export, Page::Account];
+    pub const ALL: [Page; 8] = [Page::Home, Page::New, Page::Open, Page::Info, Page::SaveAs, Page::Print, Page::Export, Page::About];
 
     /// The id `app.backstage {page}` takes.
     pub fn id(self) -> &'static str {
@@ -63,12 +63,16 @@ impl Page {
             Page::SaveAs => "saveAs",
             Page::Print => "print",
             Page::Export => "export",
-            Page::Account => "account",
+            Page::About => "about",
         }
     }
 
     pub fn parse(id: &str) -> Option<Page> {
         let id = id.trim();
+        // Keep existing control-channel callers working after the visible page rename.
+        if id.eq_ignore_ascii_case("account") {
+            return Some(Page::About);
+        }
         Page::ALL.into_iter().find(|p| p.id().eq_ignore_ascii_case(id))
     }
 
@@ -82,7 +86,7 @@ impl Page {
             Page::SaveAs => "Save As",
             Page::Print => "Print",
             Page::Export => "Export",
-            Page::Account => "Account",
+            Page::About => "About",
         }
     }
 
@@ -95,7 +99,7 @@ impl Page {
             Page::SaveAs => Icon::SaveAs,
             Page::Print => Icon::Print,
             Page::Export => Icon::Export,
-            Page::Account => Icon::Account,
+            Page::About => Icon::Help,
         }
     }
 
@@ -140,7 +144,7 @@ pub fn entries(has_doc: bool) -> (Vec<Nav>, Vec<Nav>) {
     if has_doc {
         top.extend([Nav::Page(Page::Info), Nav::Save, Nav::Page(Page::SaveAs), Nav::Page(Page::Print), Nav::Page(Page::Export), Nav::Close]);
     }
-    (top, vec![Nav::Page(Page::Account), Nav::Options])
+    (top, vec![Nav::Page(Page::About), Nav::Options])
 }
 
 /// Print page: which slides.
@@ -245,7 +249,8 @@ fn act(app: &mut SlideApp, nav: Nav, current: Page) -> Option<Page> {
     match nav {
         Nav::Page(p) => Some(p),
         Nav::Save => {
-            let web = app.services.pick_save.is_none() && app.services.download.is_some();
+            // A page that keeps the files (`host_save`) saves as the desktop does.
+            let web = app.services.pick_save.is_none() && app.services.download.is_some() && app.services.host_save.is_none();
             let has_path = app.session.active().is_some_and(|d| d.path.is_some());
             if !has_path && !web {
                 // A presentation that was never saved goes to Save As first, as in PowerPoint.
@@ -389,7 +394,9 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         w.active.bg_stroke = Stroke::new(1.0, t.accent);
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             egui::Frame::NONE.inner_margin(egui::Margin { left: 48, right: 36, top: 22, bottom: 32 }).show(ui, |ui| {
-                ui.set_max_width(CONTENT_W);
+                // set_max_width can also widen: in a window narrower than CONTENT_W it would push the
+                // page past the right margin and clip the tiles (#1421).
+                ui.set_max_width(ui.available_width().min(CONTENT_W));
                 if bs.page != Page::Home {
                     ui.label(RichText::new(bs.page.label()).font(theme::bold(22.0)).color(t.text));
                     ui.add_space(16.0);
@@ -410,7 +417,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                     Page::SaveAs => save_as(app, ui, &mut bs, &mut out),
                     Page::Print => print(app, ui, &mut bs),
                     Page::Export => export(app, ui, &mut bs),
-                    Page::Account => account(app, ui),
+                    Page::About => about(app, ui),
                 }
             });
         });
