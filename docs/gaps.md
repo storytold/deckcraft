@@ -361,12 +361,14 @@ Detail in [localization-parity.md](localization-parity.md).
 ## AI features
 
 - **No Designer, Copilot, Speaker Coach or Translate.** All are Microsoft cloud services; an
-  offline rule-based Designer is in the catalogue (P2). Local translation needs a model choice of
-  its own (the subtitle model transcribes, it does not translate). 20–40 h.
+  offline rule-based Designer is in the catalogue (P2). Translation is not implemented: the
+  decoder is asked to transcribe. Whisper's translate task reaches English from any language, but
+  a caption target other than English needs a model choice of its own. 20–40 h.
 - **Live subtitles are one small model.** Whisper tiny is user-downloaded and offline, so it is
   slower and less accurate than PowerPoint's cloud captions, and only the audience window shows
   the caption. A larger whisper model needs a manifest entry and a download the disk can hold;
-  translating the caption needs a second model. 6–12 h.
+  a caption in a language other than the spoken one (or than English, for Whisper's translate
+  task) needs a second model. 6–12 h.
 
 ## Revision history
 

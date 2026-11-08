@@ -12,7 +12,7 @@ The feature is one row of [slideshow-parity.md](slideshow-parity.md); the choice
 
 ## The model
 
-`openai/whisper-tiny` — MIT weights, multilingual, 153.5 MB on disk.
+`openai/whisper-tiny` — Apache-2.0 weights, multilingual, 153.5 MB on disk.
 
 | File | Bytes | SHA-256 |
 |---|---|---|
@@ -22,7 +22,8 @@ The feature is one row of [slideshow-parity.md](slideshow-parity.md); the choice
 
 - Revision: `169d4a4341b33bc18d8881c4b69c2e104e1cc0af` of
   <https://huggingface.co/openai/whisper-tiny>.
-- Licence: MIT (the model card's licence). The manifest records it, and Subtitle Settings shows it,
+- Licence: Apache-2.0 (the Hugging Face model card at the pinned revision). The manifest records
+  it, and Subtitle Settings shows it,
   with the source, total size and per-file hashes, before anything is downloaded.
 - Weights are never committed to this repository and never shipped in a release: the manifest in
   `crates/asr/src/model.rs` (`model::whisper_tiny`) is the only part that lives here.

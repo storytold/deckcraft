@@ -10,7 +10,8 @@ the whole batch shares is in the maintainer's `MODEL-POLICY.md`.
 
 **Chosen: `openai/whisper-tiny` run by `candle-transformers` on the CPU.**
 
-- Offline and permissive. Whisper's weights are MIT; candle is `MIT OR Apache-2.0`; tokenizers and
+- Offline and permissive. Whisper's weights are Apache-2.0 (the model card at the pinned
+  revision); candle is `MIT OR Apache-2.0`; tokenizers and
   cpal are Apache-2.0. All are inside the shared licence allowlist. No cloud service, no account,
   no network call during inference.
 - Pure Rust, no `unsafe`. A binding to whisper.cpp would drag C/C++ and an FFI boundary into a
@@ -37,7 +38,7 @@ Following the shared policy:
 
 - The repository has a **manifest** ([`deckcraft_asr::model::whisper_tiny`](../crates/asr/src/model.rs)):
   id, repository, exact revision, each file's name, byte size, SHA-256, download URL, and the
-  model card's licence (MIT).
+  model card's licence (Apache-2.0).
 - The user downloads the files through Subtitle Settings (a consent view showing source, size,
   licence and hashes, then HTTPS through the desktop host's `ureq` hook) or places them by hand in
   the documented directory. Both paths are supported; the dialog shows the folder either way.

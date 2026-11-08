@@ -115,7 +115,7 @@ impl ModelManifest {
     }
 }
 
-/// The manifest of the model live subtitles use: `openai/whisper-tiny`, MIT, multilingual,
+/// The manifest of the model live subtitles use: `openai/whisper-tiny`, Apache-2.0, multilingual,
 /// 151 MB. The hashes were measured from the Hugging Face revision in
 /// [`WHISPER_TINY_REVISION`]; see `docs/captions.md`.
 pub fn whisper_tiny() -> ModelManifest {
@@ -127,7 +127,7 @@ pub fn whisper_tiny() -> ModelManifest {
         name: "Whisper Tiny".to_string(),
         repo: "openai/whisper-tiny".to_string(),
         revision: WHISPER_TINY_REVISION.to_string(),
-        license: "MIT".to_string(),
+        license: "Apache-2.0".to_string(),
         runtime: "candle-cpu".to_string(),
         license_url: "https://huggingface.co/openai/whisper-tiny".to_string(),
         files: vec![
@@ -413,7 +413,7 @@ mod tests {
         let m = whisper_tiny();
         assert_eq!(m.validate(), Ok(()));
         assert_eq!(m.id, WHISPER_TINY_ID);
-        assert_eq!(m.license, "MIT");
+        assert_eq!(m.license, "Apache-2.0");
         assert_eq!(m.revision, WHISPER_TINY_REVISION);
         assert_eq!(m.total_bytes(), 153_544_121);
         let weights = m.file("model.safetensors").expect("weights entry");

@@ -180,7 +180,10 @@ impl Event {
 
 fn clip(text: impl Into<String>) -> String {
     let text = text.into();
-    if text.chars().count() > Event::MAX_LINE_CHARS { text.chars().take(Event::MAX_LINE_CHARS).collect() } else { text }
+    let count = text.chars().count();
+    // Captions are read while they are still being spoken: an overlong transcript keeps its end,
+    // the newest words, as the layout does with `wrap_tail`.
+    if count > Event::MAX_LINE_CHARS { text.chars().skip(count - Event::MAX_LINE_CHARS).collect() } else { text }
 }
 
 /// A speech engine the slide show can start, stop and poll.
@@ -319,6 +322,8 @@ mod tests {
         let long = "x".repeat(Event::MAX_LINE_CHARS * 3);
         let e = Event::final_line(long);
         assert_eq!(e.text().chars().count(), Event::MAX_LINE_CHARS);
+        let overlong = "old ".repeat(200) + "newest";
+        assert!(Event::partial(&overlong).text().ends_with("newest"), "the newest words are kept");
         assert!(e.is_final());
         assert!(!Event::partial("a").is_final());
         assert_eq!(Event::Stopped.text(), "");

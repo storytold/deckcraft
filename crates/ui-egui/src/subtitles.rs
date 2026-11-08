@@ -132,6 +132,11 @@ impl Subtitles {
         }
     }
 
+    /// Whether a background hash check is still running (a repaint is due when it finishes).
+    pub fn is_verifying(&self) -> bool {
+        self.verifying.is_some()
+    }
+
     /// Take the background check's result, if it has finished.
     fn poll_verification(&mut self) {
         let Some(rx) = self.verifying.take() else { return };
@@ -376,8 +381,9 @@ impl SlideApp {
             self.set_status(text);
         }
         let status = self.subtitles.status();
-        if status.state.is_active() || self.subtitles.download.is_some() {
-            // Partial lines and download progress must appear without waiting for the pointer.
+        if status.state.is_active() || self.subtitles.download.is_some() || self.subtitles.is_verifying() {
+            // Partial lines, download progress and the hash result must appear without waiting for
+            // the pointer.
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
         self.session.subtitle_status = status;
