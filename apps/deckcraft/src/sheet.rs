@@ -39,6 +39,7 @@ pub fn start_pick(window: Arc<winit::window::Window>, ui: egui::Context) -> deck
     })
 }
 
+/// The dialog for `arg`: a save dialog suggesting that file name, or an open dialog for that purpose.
 fn dialog(arg: &str, save: bool) -> rfd::AsyncFileDialog {
     let d = rfd::AsyncFileDialog::new();
     if save {

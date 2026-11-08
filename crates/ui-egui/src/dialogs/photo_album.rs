@@ -44,6 +44,7 @@ fn pick_album_picture(app: &mut SlideApp) {
     });
 }
 
+/// The album item for the picture file at `path` (its name and data), or why it is not one (in the status bar).
 fn load_album_picture(app: &mut SlideApp, path: &str) -> Option<Value> {
     let loaded = if let Some(read) = app.services.read.as_ref() {
         match read(path) {

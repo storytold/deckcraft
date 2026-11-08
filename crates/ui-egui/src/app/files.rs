@@ -1,6 +1,6 @@
 use super::{
-    FilePlace, FilePurpose, FileTarget, InboxEvent, LocatedPlace, PendingFile, PendingPick, RECENT_MAX, SlideApp, Target, UiRequest, Value, ViewMode,
-    dialogs, json, media,
+    FilePlace, FilePurpose, FileTarget, InboxEvent, LocatedPlace, PendingFile, PendingPick, PickBind, RECENT_MAX, SlideApp, Target, UiRequest, Value,
+    ViewMode, dialogs, json, media,
 };
 
 #[derive(Default)]
@@ -295,15 +295,36 @@ impl SlideApp {
         }
     }
 
-    /// Shows an open (or `save`) dialog for `arg` and calls `then` with the path picked. With
-    /// `start_pick` the dialog runs outside this frame and `then` runs when it answers; one dialog
-    /// at a time. Otherwise it blocks here.
+    /// Shows an open (or `save`) dialog for `arg` and calls `then` with the path picked, on the
+    /// presentation that asked: if another one is active by then it is made active again, and if it
+    /// was closed nothing is done. With `start_pick` the dialog runs outside this frame and `then`
+    /// runs when it answers; one dialog at a time. Otherwise it blocks here.
     pub(crate) fn pick(&mut self, save: bool, arg: &str, then: impl FnOnce(&mut Self, String) + 'static) {
+        let bind = self.session.active().map_or(PickBind::Free, |d| PickBind::Doc(d.uid));
+        self.pick_bound(bind, save, arg, then);
+    }
+
+    /// [`Self::pick`] for what is inserted at the current slide (or master, layout): if the
+    /// selection moved by the time the dialog answers, nothing is inserted.
+    pub(crate) fn pick_at(&mut self, arg: &str, then: impl FnOnce(&mut Self, String) + 'static) {
+        let bind = match self.capture_file_target() {
+            FileTarget::Absent => PickBind::Free,
+            target => PickBind::Place(target),
+        };
+        self.pick_bound(bind, false, arg, then);
+    }
+
+    /// [`Self::pick`] for a dialog whose answer is for no presentation (Open).
+    pub(crate) fn pick_free(&mut self, arg: &str, then: impl FnOnce(&mut Self, String) + 'static) {
+        self.pick_bound(PickBind::Free, false, arg, then);
+    }
+
+    fn pick_bound(&mut self, bind: PickBind, save: bool, arg: &str, then: impl FnOnce(&mut Self, String) + 'static) {
         if let Some(start) = self.services.start_pick.as_mut() {
             if self.pending_picks.is_empty()
                 && let Some(answer) = start(save, arg)
             {
-                self.pending_picks.push(PendingPick { answer, then: Box::new(then) });
+                self.pending_picks.push(PendingPick { answer, bind, then: Box::new(then) });
             }
             return;
         }
@@ -315,7 +336,7 @@ impl SlideApp {
 
     /// Asks for a picture file and calls `then` with its bytes (desktop only; nothing on the web).
     pub(crate) fn pick_picture_bytes(&mut self, then: impl FnOnce(&mut Self, Vec<u8>) + 'static) {
-        self.pick(false, "picture", move |app, path| {
+        self.pick_at("picture", move |app, path| {
             if let Some(Ok(bytes)) = app.services.read.as_ref().map(|r| r(&path)) {
                 then(app, bytes);
             }
@@ -326,15 +347,16 @@ impl SlideApp {
     /// always runs from the next [`Self::drain_picks`], never inside this call.
     pub(crate) fn pick_later(&mut self, arg: &str, then: impl FnOnce(&mut Self, String) + 'static) {
         if self.services.start_pick.is_some() {
-            return self.pick(false, arg, then);
+            return self.pick_free(arg, then);
         }
         let path = self.services.pick_open.as_mut().and_then(|p| p(arg));
         let (tx, answer) = std::sync::mpsc::channel();
         let _ = tx.send(path);
-        self.pending_picks.push(PendingPick { answer, then: Box::new(then) });
+        self.pending_picks.push(PendingPick { answer, bind: PickBind::Free, then: Box::new(then) });
     }
 
-    /// Runs the continuation of every file dialog that has answered.
+    /// Runs the continuation of every file dialog that has answered, for the presentation and
+    /// selection that asked for it ([`PickBind`]).
     pub(crate) fn drain_picks(&mut self) {
         use std::sync::mpsc::TryRecvError;
         let mut i = 0;
@@ -343,7 +365,9 @@ impl SlideApp {
                 Err(TryRecvError::Empty) => i += 1,
                 answer => {
                     let pick = self.pending_picks.remove(i);
-                    if let Ok(Some(path)) = answer {
+                    if let Ok(Some(path)) = answer
+                        && self.return_to(&pick.bind)
+                    {
                         (pick.then)(self, path);
                     }
                 }
@@ -351,14 +375,40 @@ impl SlideApp {
         }
     }
 
+    /// Makes the presentation a dialog was asked for active again; false (with the reason in the
+    /// status bar) when it is closed, or when the selection it was asked for has moved.
+    fn return_to(&mut self, bind: &PickBind) -> bool {
+        let (doc, place) = match bind {
+            PickBind::Free => return true,
+            PickBind::Doc(doc) => (*doc, None),
+            PickBind::Place(FileTarget::Absent) => return true,
+            PickBind::Place(target @ FileTarget::Document { doc, .. }) => (*doc, Some(target)),
+        };
+        if self.session.active().is_none_or(|d| d.uid != doc) {
+            match self.session.documents().iter().position(|d| d.uid == doc) {
+                Some(index) => self.session.set_active(index),
+                None => {
+                    self.set_status("The presentation was closed while the dialog was open: nothing was done");
+                    return false;
+                }
+            }
+        }
+        if place.is_some_and(|target| !self.viewing_target(target)) {
+            self.set_status("The selection changed while the dialog was open: nothing was inserted");
+            return false;
+        }
+        true
+    }
+
     /// Whether a file dialog is open.
     pub fn file_dialog_open(&self) -> bool {
         !self.pending_picks.is_empty()
     }
 
+    /// File › Open: asks for a presentation and opens it in the background.
     pub(crate) fn pick_and_open(&mut self) {
         if self.services.start_pick.is_some() || self.services.pick_open.is_some() {
-            self.pick(false, "open", |app, path| app.open_path_in_background(&path));
+            self.pick_free("open", |app, path| app.open_path_in_background(&path));
         } else if self.services.open_async.is_some() {
             let id = self.begin_external_file("open");
             if let Some(f) = self.services.open_async.as_mut() {
@@ -417,9 +467,10 @@ impl SlideApp {
             self.set_status("Reuse Slides needs the desktop app".to_string());
             return;
         }
-        self.pick(false, "open", move |app, path| app.reuse_from(&path, keep));
+        self.pick_at("open", move |app, path| app.reuse_from(&path, keep));
     }
 
+    /// Reuse Slides, once the presentation to take the slides from is picked: lists its slides.
     fn reuse_from(&mut self, path: &str, keep: bool) {
         // Read the file once: the list shown and the slides inserted come from the same bytes, even
         // if the file changes while the dialog is open. Without a reader the path is used as is.
@@ -481,7 +532,7 @@ impl SlideApp {
     pub(super) fn pick_and_run(&mut self, purpose: &str, cmd: &str, extra: &Value) {
         if self.services.pick_open.is_some() || self.services.start_pick.is_some() {
             let (cmd, extra) = (cmd.to_string(), extra.clone());
-            self.pick(false, purpose, move |app, path| {
+            self.pick_at(purpose, move |app, path| {
                 let mut args = if extra.is_object() { extra } else { json!({}) };
                 let r = match app.services.read.as_ref().map(|r| r(&path)) {
                     Some(Ok(bytes)) => {
@@ -513,6 +564,7 @@ impl SlideApp {
         }
     }
 
+    /// File › Save As: asks for a file and saves the active presentation there (a download on the web).
     pub fn save_as_dialog(&mut self, format: &str) {
         let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
         let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
@@ -542,14 +594,15 @@ impl SlideApp {
     /// Returns false if one wasn't saved (cancelled or failed).
     pub fn save_all(&mut self) -> bool {
         let dirty: Vec<usize> = self.session.documents().iter().enumerate().filter(|(_, d)| d.is_dirty()).map(|(i, _)| i).collect();
+        let mut saved = true;
         for i in dirty {
             self.session.set_active(i);
             self.save();
-            if self.session.documents().get(i).is_some_and(|d| d.is_dirty()) {
-                return false;
-            }
+            // A Save dialog shown as a sheet answers later: the other presentations are saved
+            // meanwhile, and Save All reports that one as not saved yet.
+            saved &= self.session.documents().get(i).is_none_or(|d| !d.is_dirty());
         }
-        true
+        saved
     }
 
     pub fn save(&mut self) {

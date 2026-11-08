@@ -88,9 +88,21 @@ enum FileTarget {
     },
 }
 
+/// What a file dialog's answer is for, checked when it arrives: a dialog open for a while may
+/// answer after the presentation or the selection that asked for it is gone.
+enum PickBind {
+    /// Nothing: Open makes its own presentation.
+    Free,
+    /// The presentation that was active when the dialog was asked for.
+    Doc(u64),
+    /// The presentation and the slide (or master, layout) that were current.
+    Place(FileTarget),
+}
+
 /// A file dialog that is open, and what to do with the path it answers.
 struct PendingPick {
     answer: std::sync::mpsc::Receiver<Option<String>>,
+    bind: PickBind,
     then: Box<dyn FnOnce(&mut SlideApp, String)>,
 }
 
