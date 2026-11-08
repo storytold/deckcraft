@@ -646,7 +646,9 @@ impl Session {
             self.settle_composition();
         }
         if let Err(e) = (spec.enabled)(self) {
-            let named = (e == cmd::NOTHING_SELECTED || e == cmd::SELECT_TWO) && (params.get("ids").is_some() || params.get("id").is_some());
+            // A command told which shapes to act on doesn't depend on what is selected.
+            let named = (e == cmd::NOTHING_SELECTED || e == cmd::SELECT_TWO || e == cmd::merge::IN_GROUP)
+                && (params.get("ids").is_some() || params.get("id").is_some());
             if !named {
                 return Err(EngineError::Disabled(id.into(), e));
             }

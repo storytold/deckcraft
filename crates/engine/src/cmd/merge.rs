@@ -24,10 +24,22 @@ pub fn specs() -> Vec<CommandSpec> {
         "Merge Shapes",
         ["Shape Format", "Insert Shapes", "Merge Shapes"],
         None,
-        "{op: union|combine|fragment|intersect|subtract, ids?: shapes in selection order (the first one's formatting is kept)} → {ids}",
-        has_two,
+        "{op: union|combine|fragment|intersect|subtract, ids?: shapes in selection order (the first one's formatting is kept)} → {ids} (a shape inside a group is refused; ungroup it first)",
+        can_merge,
         merge
     )]
+}
+
+/// Why Merge Shapes is unavailable while a shape inside a group is selected.
+pub(crate) const IN_GROUP: &str = "a shape in a group can't be merged; ungroup it first";
+
+/// Two or more shapes selected, none of them inside a group: the result replaces its sources in
+/// the slide's top-level list, so a member would be drawn outside its group's scale and offset.
+fn can_merge(s: &Session) -> std::result::Result<(), String> {
+    has_two(s)?;
+    let in_group =
+        s.active().is_some_and(|st| st.selection.shapes.iter().any(|id| st.shape(*id).is_some() && !st.shapes().iter().any(|t| t.id == *id)));
+    if in_group { Err(IN_GROUP.into()) } else { Ok(()) }
 }
 
 /// The filled outline of `s` in slide points (curves flattened). A text box with no fill and no
@@ -197,6 +209,10 @@ fn merge(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
     let st = s.doc()?;
     let shapes: Vec<Shape> = ids.iter().filter_map(|id| st.shape(*id).cloned()).collect();
+    if let Some(member) = shapes.iter().find(|x| !st.shapes().iter().any(|t| t.id == x.id)) {
+        let name = if member.name.is_empty() { format!("shape {}", member.id.0) } else { format!("`{}`", member.name) };
+        return Err(bad("shape.merge", format!("{name} is in a group; ungroup it first to merge it")));
+    }
     let mergeable = |x: &Shape| matches!(x.kind, ShapeKind::Shape | ShapeKind::Picture { .. }) && !x.is_line();
     if shapes.len() < 2 || !shapes.iter().all(mergeable) {
         return Err(bad("shape.merge", "select two or more shapes (not lines, groups, tables or charts)"));
@@ -378,5 +394,41 @@ mod tests {
             assert_eq!(animations[1].shape.0, unrelated);
             assert_eq!(animations[1].trigger.map(|id| id.0), Some(first));
         }
+    }
+
+    /// Merge Shapes refuses a shape inside a group, naming it, and is unavailable while one is
+    /// selected. Before, the result went to the slide's top level with the member's box from the
+    /// group's own space, so the shapes of a moved or resized group were redrawn somewhere else.
+    #[test]
+    fn a_shape_in_a_group_is_refused() {
+        fn rect(s: &mut Session, x: f64) -> u64 {
+            s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, 100, 100, 100]})).unwrap()["id"].as_u64().unwrap()
+        }
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let (a, b, c) = (rect(&mut s, 100.0), rect(&mut s, 150.0), rect(&mut s, 500.0));
+        let g = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("shape.move", &json!({"ids": [g], "dx": 300})).unwrap();
+        let before = s.doc().unwrap().current_slide().unwrap().shapes.clone();
+        let name = s.doc().unwrap().shape(ShapeId(a as u32)).unwrap().name.clone();
+        for ids in [json!([a, b]), json!([c, a])] {
+            let err = s.execute("shape.merge", &json!({"op": "union", "ids": ids})).unwrap_err().to_string();
+            assert!(err.contains(&format!("`{name}` is in a group; ungroup it first")), "{ids}: {err}");
+        }
+        assert_eq!(s.doc().unwrap().current_slide().unwrap().shapes, before, "a refused merge leaves the slide as it was");
+
+        let spec = crate::cmd::find_command("shape.merge").unwrap();
+        s.execute("edit.select", &json!({"ids": [a, c]})).unwrap();
+        assert_eq!((spec.enabled)(&s), Err("a shape in a group can't be merged; ungroup it first".to_string()));
+        assert!(s.execute("shape.merge", &json!({"op": "union"})).is_err());
+        // Named top-level shapes don't depend on the selection.
+        let d = rect(&mut s, 550.0);
+        s.execute("edit.select", &json!({"ids": [a, b]})).unwrap();
+        assert_eq!(s.execute("shape.merge", &json!({"op": "union", "ids": [c, d]})).unwrap()["ids"].as_array().map(Vec::len), Some(1));
+
+        s.execute("arrange.ungroup", &json!({"ids": [g]})).unwrap();
+        s.execute("edit.select", &json!({"ids": [a, b]})).unwrap();
+        assert_eq!((spec.enabled)(&s), Ok(()));
+        assert_eq!(s.execute("shape.merge", &json!({"op": "union"})).unwrap()["ids"].as_array().map(Vec::len), Some(1));
     }
 }
