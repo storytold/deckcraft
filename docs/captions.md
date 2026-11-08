@@ -49,12 +49,13 @@ Two paths, both supported:
 The model directory is resolved first hit wins, the same shape as the other Craft apps:
 
 ```text
-$DECKCRAFT_MODELS/whisper-tiny/            (the environment variable names the root)
-<config dir>/DeckCraft/models/whisper-tiny  (APPDATA on Windows; $XDG_CONFIG_HOME/deckcraft on
-                                             Linux, or ~/.config/deckcraft when it is unset;
-                                             ~/Library/Application Support/DeckCraft on macOS)
-models/whisper-tiny/                        (beside the executable)
-models/whisper-tiny/                        (in the source tree, for development)
+$DECKCRAFT_MODELS/whisper-tiny/                     (the environment variable names the root)
+%APPDATA%/DeckCraft/models/whisper-tiny             (Windows)
+$XDG_CONFIG_HOME/deckcraft/models/whisper-tiny      (Linux, or the next line when it is unset)
+~/.config/deckcraft/models/whisper-tiny             (Linux, XDG_CONFIG_HOME unset)
+~/Library/Application Support/DeckCraft/models/whisper-tiny   (macOS)
+models/whisper-tiny/                                (beside the executable)
+models/whisper-tiny/                                (in the source tree, for development)
 ```
 
 A missing or incomplete set disables the ribbon entry with an explanation; the show itself is

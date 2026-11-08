@@ -250,6 +250,9 @@ impl Subtitles {
         let applied = self.applied.as_ref().is_some_and(|applied| applied.provider_equivalent(settings));
         if !applied {
             self.stop();
+            // The line belongs to the old stream (and possibly the old language); do not leave it
+            // on screen looking live while the replacement starts or when it fails to.
+            self.caption = None;
             self.applied = Some(settings.clone());
             if let Some(message) = self.start(settings) {
                 return Some(message);

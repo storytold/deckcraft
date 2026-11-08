@@ -106,19 +106,25 @@ impl Transcriber for WhisperTranscriber {
         let stop = Arc::new(AtomicBool::new(false));
         let status = self.status.clone();
         let (dir, settings) = (self.model_dir.clone(), self.settings.clone());
+        // `starting` goes in before the worker exists: a damaged model fails within microseconds,
+        // and that failure must not be overwritten by a late `starting`.
+        let caps = capabilities(self.settings.accelerator);
+        let mut starting = ProviderStatus::starting(manifest.id, self.settings.language_hint().map(str::to_string));
+        starting.accelerator = Some(caps.chosen);
+        starting.capabilities = Some(caps);
+        self.set_status(starting);
         let worker_stop = stop.clone();
         let handle = std::thread::Builder::new()
             .name("deckcraft-subtitles".into())
             .spawn(move || run(dir, settings, worker_stop, status, tx))
-            .map_err(|e| AsrError::new(format!("cannot start the subtitle worker: {e}")))?;
+            .map_err(|e| {
+                let message = format!("cannot start the subtitle worker: {e}");
+                self.set_status(ProviderStatus::failed(message.clone()));
+                AsrError::new(message)
+            })?;
         self.events = Some(rx);
         self.stop = Some(stop);
         self.handle = Some(handle);
-        let caps = capabilities(self.settings.accelerator);
-        let mut status = ProviderStatus::starting(manifest.id, self.settings.language_hint().map(str::to_string));
-        status.accelerator = Some(caps.chosen);
-        status.capabilities = Some(caps);
-        self.set_status(status);
         Ok(())
     }
 

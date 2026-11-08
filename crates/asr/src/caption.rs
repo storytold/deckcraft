@@ -271,9 +271,12 @@ pub fn wrap(text: &str, per_line: usize, max_lines: usize) -> (Vec<String>, bool
             if lines.len() + 1 >= max_lines {
                 // This is the last line: keep what fits of the word and drop the rest.
                 let room = per_line.saturating_sub(units_of(&current) + 1);
-                if room > 0 {
+                // `take_units` keeps at least one character, which can be a wide glyph that needs
+                // two units: append only what actually fits, so the line never exceeds `per_line`.
+                let part = take_units(word, room);
+                if !part.is_empty() && units_of(part) <= room {
                     current.push(' ');
-                    current.push_str(take_units(word, room));
+                    current.push_str(part);
                 }
                 lines.push(std::mem::take(&mut current));
                 return (lines, true);
@@ -493,6 +496,13 @@ mod tests {
         assert_eq!(wrap("a b c d", 5, 2), (vec!["a b c".to_string(), "d".to_string()], false));
         assert_eq!(wrap("   ", 10, 2), (vec![], false));
         assert!(wrap(&"x".repeat(MAX_TEXT_CHARS + 10), 4, 2).1, "an overlong line is clipped");
+    }
+
+    #[test]
+    fn a_wide_glyph_is_never_squeezed_into_the_last_line() {
+        // `room` is one unit and the next glyph needs two: drop it rather than overflow.
+        assert_eq!(wrap("ab 字字", 4, 1), (vec!["ab".to_string()], true));
+        assert_eq!(wrap("ab cd", 4, 1), (vec!["ab c".to_string()], true), "a narrow glyph still fills the room");
     }
 
     #[test]

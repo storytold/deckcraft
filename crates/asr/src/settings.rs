@@ -137,8 +137,8 @@ fn language(value: &str, fallback: &str, allow_auto: bool) -> String {
     if v.is_empty() || v.chars().count() > 16 {
         return fallback.to_string();
     }
-    if allow_auto && v == AUTO_LANGUAGE {
-        return AUTO_LANGUAGE.to_string();
+    if v == AUTO_LANGUAGE {
+        return if allow_auto { AUTO_LANGUAGE.to_string() } else { fallback.to_string() };
     }
     if !v.chars().all(|c| c.is_ascii_alphabetic() || c == '-') {
         return fallback.to_string();
@@ -215,5 +215,9 @@ mod tests {
         assert!(!a.provider_equivalent(&SubtitleSettings { on: false, ..b }));
         assert!(SPOKEN_LANGUAGES.iter().any(|(t, _)| *t == AUTO_LANGUAGE));
         assert!(SUBTITLE_LANGUAGES.iter().all(|(t, _)| *t != AUTO_LANGUAGE));
+        // `auto` is a spoken-language choice only: a subtitle language falls back, so a command or
+        // a hand-edited prefs.json cannot store a value the dialog never offers.
+        let auto_subtitle = SubtitleSettings { subtitle: AUTO_LANGUAGE.into(), ..Default::default() }.sanitized();
+        assert_eq!(auto_subtitle.subtitle, "en");
     }
 }

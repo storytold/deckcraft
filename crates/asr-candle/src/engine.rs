@@ -131,8 +131,13 @@ impl WhisperEngine {
     }
 
     fn language_token(&self, tag: &str) -> Result<u32, AsrError> {
-        let name = format!("<|{tag}|>");
-        self.tokenizer.token_to_id(&name).ok_or_else(|| AsrError::new(format!("`{tag}` is not a Whisper language")))
+        // Look the tag up among the model's languages: the tokenizer also knows special tokens
+        // that are not languages (`<|transcribe|>`), which must not become the prompt.
+        self.languages
+            .iter()
+            .find(|(code, _)| code == tag)
+            .map(|(_, id)| *id)
+            .ok_or_else(|| AsrError::new(format!("`{tag}` is not a Whisper language")))
     }
 
     fn encode(&mut self, pcm: &[f32]) -> Result<Tensor, AsrError> {

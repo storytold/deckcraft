@@ -166,4 +166,5 @@ fn a_settings_change_restarts_a_running_stream() {
     let message = subs.sync(&changed, true).expect("the restart is reported");
     assert!(message.contains("not installed"), "{message}");
     assert!(!subs.is_running(), "the provider started with the old settings was stopped");
+    assert!(subs.caption.is_none(), "the old stream's line does not outlive the restart");
 }
