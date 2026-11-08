@@ -92,6 +92,7 @@ pub struct UiState {
     /// Comment the Review Previous/Next buttons last landed on: `(slide, index)`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment_focus: Option<(usize, usize)>,
+    /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
     /// Web `?chrome=none|notitlebar` (#1897): the title bar is left out. Not persisted.
     #[serde(skip)]
@@ -100,6 +101,7 @@ pub struct UiState {
     #[serde(skip)]
     pub hide_filetab: bool,
 }
+
 impl Default for UiState {
     fn default() -> Self {
         UiState {

@@ -135,7 +135,7 @@ fn without_the_file_tab_nothing_opens_the_backstage() {
     h.key_press_modifiers(Modifiers::ALT, Key::F);
     h.run_steps(3);
     assert!(!h.state().backstage_open(), "Alt+F is ignored");
-    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    assert!(h.state_mut().run("app.backstage", json!({"page": "saveAs"})).is_err(), "the command says it did nothing");
     h.run_steps(3);
     assert!(!h.state().backstage_open(), "the command is ignored too");
     assert!(h.query_by_label("Blank Presentation").is_none());

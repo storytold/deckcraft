@@ -216,6 +216,9 @@ impl SlideApp {
                     return Err(format!("File › {} needs an open presentation", page.label()));
                 }
                 self.open_backstage(page);
+                if self.backstage.is_none() {
+                    return Err("the File tab is turned off in this window".into());
+                }
                 return Ok(json!({"page": page.id()}));
             }
             "app.closePresentation" => self.close_presentation(),
