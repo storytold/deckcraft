@@ -271,6 +271,12 @@ impl Session {
         (p.x, p.y, pressure)
     }
 
+    /// The stroke as it will be drawn: along the nearest ruler edge when the ruler is on and the
+    /// pen came within [`crate::ruler::SNAP`] of it, freehand otherwise.
+    pub(super) fn ink_stroke(&self, points: &[(f64, f64, f32)]) -> Vec<(f64, f64, f32)> {
+        crate::ruler::straighten(points, &self.view.ruler, crate::ruler::SNAP).unwrap_or_else(|| points.to_vec())
+    }
+
     pub(super) fn add_ink(&mut self, points: Vec<(f64, f64, f32)>) -> Result<Value> {
         let ToolKind::Ink { mode, color, width } = self.tool.kind.clone() else { return Ok(Value::Null) };
         let stroke = deckcraft_model::InkStroke { points, color, width, highlighter: mode == "highlighter" };

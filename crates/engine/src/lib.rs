@@ -22,6 +22,7 @@ pub mod keys;
 pub mod links;
 pub mod media_refs;
 pub mod recovery;
+pub mod ruler;
 pub mod sample;
 pub mod sounds;
 pub mod spell;
@@ -41,6 +42,7 @@ pub use deckcraft_media as media;
 pub use deckcraft_model as model;
 pub use deckcraft_pdf as pdf;
 pub use deckcraft_render as render;
+pub use ruler::{RulerState, ViewState};
 pub use tools::{Mods, PointerEvent, PointerKind, ToolKind};
 
 #[derive(Debug, thiserror::Error)]
@@ -490,6 +492,8 @@ pub struct Session {
     pub clipboard: Clipboard,
     pub ui_requests: Vec<UiRequest>,
     pub tool: tools::ToolState,
+    /// View state (the Draw ruler): shown on the canvas, never saved with the presentation.
+    pub view: ViewState,
     pub(crate) untitled: u32,
     /// Format Painter: copied shape/text formatting and whether it stays on (double-click).
     pub painter: Option<(cmd::format::Painted, bool)>,
@@ -538,6 +542,7 @@ impl Session {
             clipboard: Clipboard::default(),
             ui_requests: vec![],
             tool: tools::ToolState::default(),
+            view: ViewState::default(),
             untitled: 0,
             default_look: None,
             painter: None,

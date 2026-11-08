@@ -9,13 +9,13 @@
 > **Previously (2026-11-01):** Locked-shape and no-outline regressions added for #1621; fill row re-assessed: remains D; No Fill hit-testing now follows resolved appearance. Scores unchanged.
 
 The summary between `<!-- SUMMARY -->
-**Weighted breadth parity: 84%** over 191 features.
+**Weighted breadth parity: 84%** over 192 features.
 
 | Priority | Features | Done | Partial | Missing | Parity |
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
 | P1 | 65 | 45 | 16 | 4 | 82% |
-| P2 | 54 | 18 | 24 | 12 | 56% |
+| P2 | 55 | 19 | 24 | 12 | 56% |
 
 | Area | Parity |
 |---|---|
@@ -37,7 +37,7 @@ The summary between `<!-- SUMMARY -->
 | Animations | 85% |
 | Slide show | 68% |
 | Review | 70% |
-| Draw | 50% |
+| Draw | 62% |
 | Undo & clipboard | 100% |
 | Automation (✱) | 100% |
 | Platforms (✱) | 67% |
@@ -231,6 +231,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Review | Track changes / version history | P2 | M |
 | Draw | Ink pens, highlighter, eraser | P1 | P |
 | Draw | Ink to shape / text | P2 | P |
+| Draw | Stencil ruler (show, move, turn; ink and object snapping) | P2 | D |
 | Undo & clipboard | Unlimited undo/redo | P0 | D |
 | Undo & clipboard | Cut, copy, paste shapes and slides | P0 | D |
 | Undo & clipboard | Paste special (keep formatting, picture, text only) | P1 | D |

@@ -23,6 +23,7 @@ mod media;
 mod overlays;
 mod rulers;
 mod scroll;
+mod stencil;
 
 use context_menu::context_menu;
 use guides::{draw_grid, draw_guides, grid_line_step};
@@ -223,7 +224,9 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
     }
-    if (resp.hovered() || on_bar) && !zooming {
+    // The Draw ruler takes the wheel over its body: it turns 1° a notch rather than scrolling.
+    let over_stencil = stencil::wheel(app, ui, Xf { origin: content_rect.translate(-offset).min, scale }, hover, avail);
+    if (resp.hovered() || on_bar) && !zooming && !over_stencil {
         if overflow != egui::Vec2::ZERO {
             offset -= wheel;
         } else {
@@ -334,7 +337,11 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         ruler(&painter, avail, slide_rect, scale, app.session.prefs.units, &t);
         ruler_markers(app, ui, &painter, avail, xf, &t);
     }
-    pointer(app, ui, &resp, xf);
+    // Draw ▸ Stencils ▸ Ruler: painted over the slide; a press on its body never reaches the slide.
+    let stencil_owns = stencil::overlay(app, ui, &painter, xf, avail, &t);
+    if !stencil_owns {
+        pointer(app, ui, &resp, xf);
+    }
     if !app.anim_preview_active() {
         overlays(app, ui, &painter, xf, &t);
         ime_output(app, ui, xf);

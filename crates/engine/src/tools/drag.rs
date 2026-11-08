@@ -193,7 +193,7 @@ impl Session {
             }
             Drag::Ink { mut points } => {
                 points.push(self.ink_sample(p));
-                self.tool.ink_preview = points.clone();
+                self.tool.ink_preview = self.ink_stroke(&points);
                 self.tool.drag = Some(Drag::Ink { points });
             }
         }
@@ -221,12 +221,19 @@ impl Session {
                 d.x = 0.0;
             }
         }
-        // Smart guides on the moved group's bounds.
+        // Smart guides on the moved group's bounds. A ruler edge wins over them and the grid: it
+        // is explicitly placed by the user, so an object that comes near it aligns to it.
         let bounds = origs.iter().map(|(_, x)| x.bounds()).reduce(|a, b| a.union(b)).unwrap_or_default();
         let moved_b = bounds + d;
-        let (snap, guides) = self.snap_rect(moved_b, &ids_now, tol * 1.5, !mods.cmd);
-        d += snap;
-        self.tool.guides = guides;
+        let ruler_snap = if mods.cmd { None } else { crate::ruler::snap_rect(moved_b, &self.view.ruler, tol * 1.5) };
+        if let Some(snap) = ruler_snap {
+            d += snap;
+            self.tool.guides.clear();
+        } else {
+            let (snap, guides) = self.snap_rect(moved_b, &ids_now, tol * 1.5, !mods.cmd);
+            d += snap;
+            self.tool.guides = guides;
+        }
         let origs2: Vec<(ShapeId, Xfrm)> = if duplicate { ids_now.iter().copied().zip(origs.iter().map(|o| o.1)).collect() } else { origs.clone() };
         self.edit(|doc, sel| {
             let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("move", "no slide"))?;
