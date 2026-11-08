@@ -39,11 +39,12 @@ pub struct Hub {
     session: DocSession,
     peers: BTreeMap<String, Peer>,
     out: HashMap<String, VecDeque<ServerMsg>>,
+    last_applied: Option<deckcraft_collab_proto::Applied>,
 }
 
 impl Hub {
     pub fn new(session: DocSession) -> Self {
-        Hub { session, peers: BTreeMap::new(), out: HashMap::new() }
+        Hub { session, peers: BTreeMap::new(), out: HashMap::new(), last_applied: None }
     }
 
     pub fn session(&self) -> &DocSession {
@@ -135,7 +136,10 @@ impl Hub {
                     return Ok(());
                 }
                 match self.session.apply(actor, &op) {
-                    Ok(applied) => self.broadcast(ServerMsg::Applied(applied)),
+                    Ok(applied) => {
+                        self.last_applied = Some(applied.clone());
+                        self.broadcast(ServerMsg::Applied(applied))
+                    }
                     Err(rejected) => self.send(actor, ServerMsg::Rejected(rejected)),
                 }
                 Ok(())
@@ -155,6 +159,8 @@ impl Hub {
                 self.send(actor, ServerMsg::Snapshot(snapshot));
                 Ok(())
             }
+            ClientMsg::Undo => self.history(actor, true),
+            ClientMsg::Redo => self.history(actor, false),
             ClientMsg::Ping => {
                 self.send(actor, ServerMsg::Pong);
                 Ok(())
@@ -177,6 +183,53 @@ impl Hub {
                 Ok(())
             }
         }
+    }
+
+    /// Build and apply this actor's undo or redo. The server owns the before/after image; the
+    /// resulting inverse is an ordinary operation, broadcast like any other (ADR 0010).
+    fn history(&mut self, actor: &str, undo: bool) -> Result<(), ServerError> {
+        if self.peers.get(actor).is_none_or(|peer| !peer.role.may_write()) {
+            self.send(
+                actor,
+                ServerMsg::Rejected(Rejected {
+                    op_id: "undo".into(),
+                    code: RejectCode::Forbidden,
+                    message: "a viewer has no history to move".into(),
+                    retryable: false,
+                    hint: None,
+                }),
+            );
+            return Ok(());
+        }
+        let id = format!("{actor}-{}-{}", if undo { "undo" } else { "redo" }, self.session.version());
+        let built = if undo { self.session.undo(actor, &id) } else { self.session.redo(actor, &id) };
+        let op = match built {
+            Ok(op) => op,
+            Err(rej) => {
+                let rejected = Rejected {
+                    op_id: id,
+                    code: rej.code,
+                    message: rej.message,
+                    retryable: rej.retryable,
+                    hint: rej.hint_version.map(|version| deckcraft_collab_proto::Hint { version }),
+                };
+                self.send(actor, ServerMsg::Rejected(rejected));
+                return Ok(());
+            }
+        };
+        match self.session.apply(actor, &op) {
+            Ok(applied) => {
+                self.last_applied = Some(applied.clone());
+                self.broadcast(ServerMsg::Applied(applied))
+            }
+            Err(rejected) => self.send(actor, ServerMsg::Rejected(rejected)),
+        }
+        Ok(())
+    }
+
+    /// The last operation this room accepted, for the journal. Taking it clears the slot.
+    pub fn take_last_applied(&mut self) -> Option<deckcraft_collab_proto::Applied> {
+        self.last_applied.take()
     }
 
     /// Build the file and queue a `commit-result`. Errors become a `rejected` for the requester;
@@ -414,6 +467,39 @@ mod tests {
         hub.receive("owner", ClientMsg::Commit { expected_file_version: Some("etag-old".into()) }).expect("commit");
         match hub.poll("owner").expect("conflict") {
             ServerMsg::Rejected(r) => assert_eq!(r.code, RejectCode::Conflict),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn undo_is_an_operation_and_never_takes_back_someone_elses_step() {
+        let mut hub = hub();
+        let _ = join(&mut hub, "alice", Role::Editor);
+        let _ = join(&mut hub, "bob", Role::Editor);
+        let doc = hub.session().document().expect("doc");
+        let slide = hub.session().keys().slide_key(doc.slides[0].id).expect("slide").clone();
+        let first = hub.session().keys().shape_key(doc.slides[0].id, doc.slides[0].shapes[0].id).expect("a").clone();
+        let second = hub.session().keys().shape_key(doc.slides[0].id, doc.slides[0].shapes[1].id).expect("b").clone();
+        hub.receive("alice", ClientMsg::Op(move_op("a1", 0, &slide, &first, 250.0))).expect("a");
+        let _ = hub.poll("alice");
+        let _ = hub.poll("bob");
+        hub.receive("bob", ClientMsg::Op(move_op("b1", 1, &slide, &second, 500.0))).expect("b");
+        let _ = hub.poll("alice");
+        let _ = hub.poll("bob");
+        hub.receive("alice", ClientMsg::Undo).expect("undo");
+        match hub.poll("alice").expect("applied") {
+            ServerMsg::Applied(a) => assert_eq!(a.version, 3),
+            other => panic!("{other:?}"),
+        }
+        let doc = hub.session().document().expect("doc");
+        assert_eq!(doc.slides[0].shapes[0].xfrm.expect("xfrm").x, 100.0, "alice's move is taken back");
+        assert_eq!(doc.slides[0].shapes[1].xfrm.expect("xfrm").x, 500.0, "bob's move stays");
+        assert_eq!(hub.version(), 3);
+
+        let _ = join(&mut hub, "victor", Role::Viewer);
+        hub.receive("victor", ClientMsg::Undo).expect("undo");
+        match hub.poll("victor").expect("refused") {
+            ServerMsg::Rejected(r) => assert_eq!(r.code, RejectCode::Forbidden),
             other => panic!("{other:?}"),
         }
     }

@@ -1,0 +1,26 @@
+[package]
+name = "deckcraft-collab-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft collaboration server: WebSocket rooms, JWT, lease-free v1 sessions, commit and metrics"
+
+[lints]
+workspace = true
+
+[dependencies]
+deckcraft-collab = { workspace = true }
+deckcraft-collab-proto = { workspace = true }
+deckcraft-engine = { workspace = true }
+deckcraft-model = { workspace = true }
+deckcraft-format = { workspace = true }
+base64 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tungstenite = { workspace = true }
+jsonwebtoken = { workspace = true }
+sha2 = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+deckcraft-engine = { workspace = true }

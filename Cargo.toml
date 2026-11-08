@@ -46,6 +46,8 @@ thiserror = "2"
 serde = { version = "1", features = ["derive", "rc"] }
 sha2 = "0.10"
 base64 = "0.22"
+tungstenite = "0.30"
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto", "use_pem"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
 proptest = "1"

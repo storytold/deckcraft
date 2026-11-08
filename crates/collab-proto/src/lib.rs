@@ -245,8 +245,17 @@ pub enum ClientMsg {
     Hello(Hello),
     Op(OpEnvelope),
     Presence(PresenceMsg),
-    Resync { last_version: u64 },
-    Commit { expected_file_version: Option<String> },
+    Resync {
+        last_version: u64,
+    },
+    Commit {
+        expected_file_version: Option<String>,
+    },
+    /// Take back this actor's latest step. The server owns the before/after image and answers with
+    /// an ordinary `applied` (ADR 0010).
+    Undo,
+    /// Re-apply the step that this actor's latest undo took back.
+    Redo,
     Ping,
 }
 
@@ -576,6 +585,14 @@ mod tests {
         assert!(text.contains("\"type\":\"op\""), "{text}");
         assert!(text.contains("\"cmd\":\"shape_move\""), "{text}");
         assert_eq!(decode_client(&text).expect("decode"), msg);
+    }
+
+    #[test]
+    fn undo_and_redo_requests_round_trip() {
+        for msg in [ClientMsg::Undo, ClientMsg::Redo] {
+            let text = encode_client(&msg).expect("encode");
+            assert_eq!(decode_client(&text).expect("decode"), msg);
+        }
     }
 
     #[test]

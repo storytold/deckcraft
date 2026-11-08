@@ -60,6 +60,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("engine", Class::Layer(5)),
     // Collaboration adapter: sits above the engine because it drives commands (L5 chain below).
     ("collab", Class::Layer(5)),
+    // The server binary sits above the adapter; it is deployed, not linked into the apps.
+    ("collab-server", Class::Exempt),
     // Wire types only: no workspace crate, no engine.
     ("collab-proto", Class::Standalone),
     ("ui-egui", Class::Layer(6)),

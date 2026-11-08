@@ -6,7 +6,10 @@
 //! it. With the flag off every function here is a no-op and the single-user application behaves
 //! exactly as before.
 
-use deckcraft_collab::{ClientSession, KeyIssuer, KeyMap, Link, Participant, PresenceSet};
+use std::collections::VecDeque;
+
+use deckcraft_collab::{ClientSession, CollabDoc, KeyIssuer, KeyMap, Link, Participant, PresenceSet, Transport};
+use deckcraft_collab_proto::{ClientMsg, ServerMsg};
 use deckcraft_collab_proto::{PresenceMsg, Role, ShapeKey, SlideKey, TextCursor};
 use deckcraft_engine::{DocState, Target, TextSel, cmd::xfrm_of};
 use deckcraft_geom::Point;
@@ -57,7 +60,6 @@ impl SyncStatus {
 }
 
 /// Collaboration state the UI draws. Disabled until the host turns the feature flag on.
-#[derive(Debug)]
 pub struct CollabUi {
     enabled: bool,
     actor_id: Option<String>,
@@ -75,6 +77,18 @@ pub struct CollabUi {
     /// What the last commit could not keep (ADR 0009); shown until dismissed.
     warnings: Vec<String>,
     warnings_hidden: bool,
+    /// The connected client, when a host attached one.
+    doc: Option<CollabDoc>,
+    transport: Option<Box<dyn Transport>>,
+    /// Messages popped from the client while the socket was down.
+    pending: VecDeque<ClientMsg>,
+    /// Presence we sent last, and when, so an idle session does not spam the room.
+    sent_presence: Option<PresenceMsg>,
+    sent_presence_ms: u64,
+    /// A local operation id prefix: actor plus a monotonic counter.
+    op_seq: u64,
+    /// The last committed file, for the host to store (sha256, bytes, warnings).
+    commit: Option<(String, Vec<u8>, Vec<String>)>,
 }
 
 impl Default for CollabUi {
@@ -94,6 +108,13 @@ impl Default for CollabUi {
             keys_for: None,
             warnings: Vec::new(),
             warnings_hidden: false,
+            doc: None,
+            transport: None,
+            pending: VecDeque::new(),
+            sent_presence: None,
+            sent_presence_ms: 0,
+            op_seq: 0,
+            commit: None,
         }
     }
 }
@@ -115,6 +136,163 @@ impl CollabUi {
         self.enabled = true;
         self.link = Link::Connecting;
         self.error = None;
+    }
+
+    /// Attach a connected client and its transport (a desktop socket, the browser link, or a
+    /// test pipe). Without one the flag is on but edits are refused: they would diverge.
+    pub fn attach(&mut self, doc: CollabDoc, transport: Box<dyn Transport>) {
+        self.enabled = true;
+        self.link = Link::Connecting;
+        self.doc = Some(doc);
+        self.transport = Some(transport);
+    }
+
+    /// Start the desktop WebSocket link for `file_id`. The host supplies the token from the
+    /// cabinet session; only the first frame carries it (ADR 0008).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn start_native(&mut self, session: &deckcraft_engine::Session, file_id: &str, url: &str, jwt: &str) -> Result<(), String> {
+        let info = deckcraft_collab_proto::ClientInfo { name: "DeckCraft".into(), ver: env!("CARGO_PKG_VERSION").into() };
+        let mut doc = CollabDoc::new(file_id);
+        let hello = doc.connect(session, jwt, info);
+        let transport = deckcraft_collab::WsTransport::start(url, hello);
+        self.attach(doc, Box::new(transport));
+        Ok(())
+    }
+
+    pub fn is_attached(&self) -> bool {
+        self.doc.is_some()
+    }
+
+    /// Normalise and queue one local command. The document changes only when the server answers.
+    pub fn submit(&mut self, session: &deckcraft_engine::Session, cmd: &str, params: &serde_json::Value) -> Result<usize, String> {
+        let doc = self.doc.as_mut().ok_or_else(|| "collaboration is not connected".to_string())?;
+        self.op_seq = self.op_seq.saturating_add(1);
+        let actor = self.actor_id.clone().unwrap_or_else(|| "local".into());
+        doc.submit(session, cmd, params, &format!("{actor}:{}", self.op_seq)).map_err(|e| e.to_string())
+    }
+
+    /// Ask the server to undo/redo this actor's latest step.
+    pub fn undo(&mut self) -> Result<(), String> {
+        self.doc.as_mut().ok_or_else(|| "collaboration is not connected".to_string())?.undo().map_err(|e| e.to_string())
+    }
+
+    pub fn redo(&mut self) -> Result<(), String> {
+        self.doc.as_mut().ok_or_else(|| "collaboration is not connected".to_string())?.redo().map_err(|e| e.to_string())
+    }
+
+    /// The committed file, if a `commit-result` arrived and the host has not taken it yet.
+    pub fn take_commit(&mut self) -> Option<(String, Vec<u8>, Vec<String>)> {
+        self.commit.take()
+    }
+
+    /// Pump the link: send what the client queued, apply what the server sent, and keep presence
+    /// fresh. Called once per frame before the UI is laid out.
+    pub fn pump(&mut self, session: &mut deckcraft_engine::Session, now_ms: u64) {
+        if !self.enabled {
+            return;
+        }
+        let mut incoming = Vec::new();
+        if let Some(transport) = &mut self.transport {
+            while let Some(msg) = transport.next() {
+                incoming.push(msg);
+            }
+        }
+        for msg in incoming {
+            self.handle_server_msg(session, msg, now_ms);
+        }
+        while let Some(msg) = self.doc.as_mut().and_then(CollabDoc::next_outgoing) {
+            if !self.send_or_queue(msg) {
+                break;
+            }
+        }
+        self.tick_presence(session, now_ms);
+        let _ = self.tick_expire(now_ms);
+    }
+
+    fn send_or_queue(&mut self, msg: ClientMsg) -> bool {
+        match &mut self.transport {
+            Some(transport) => match transport.send(msg) {
+                Ok(()) => true,
+                Err(e) => {
+                    self.error = Some(e);
+                    false
+                }
+            },
+            None => {
+                self.pending.push_back(msg);
+                false
+            }
+        }
+    }
+
+    fn handle_server_msg(&mut self, session: &mut deckcraft_engine::Session, msg: ServerMsg, now_ms: u64) {
+        {
+            let echo = msg.clone();
+            if let Some(doc) = &mut self.doc {
+                let _ = doc.on_msg(session, msg);
+                if let Some(err) = doc.last_apply_error() {
+                    self.error = Some(err.to_string());
+                }
+            }
+            self.refresh_client();
+            match echo {
+                deckcraft_collab_proto::ServerMsg::Welcome(w) => {
+                    self.welcome(w.actor_id.clone(), w.role, w.version);
+                    self.presence.set_role(&w.actor_id, w.role);
+                }
+                deckcraft_collab_proto::ServerMsg::Rejected(r) => {
+                    self.error = Some(r.message.clone());
+                    if r.retryable {
+                        self.link = Link::Connecting;
+                    }
+                }
+                deckcraft_collab_proto::ServerMsg::CommitResult(r) => self.on_commit_result(r),
+                deckcraft_collab_proto::ServerMsg::Error(e) => {
+                    self.error = Some(e.message.clone());
+                    self.link = Link::Down;
+                    self.pending.clear();
+                    if let Some(doc) = &mut self.doc {
+                        doc.disconnected();
+                    }
+                }
+                deckcraft_collab_proto::ServerMsg::Presence(p) => self.on_presence(p, now_ms),
+                _ => {}
+            }
+        }
+    }
+
+    fn tick_presence(&mut self, session: &deckcraft_engine::Session, now_ms: u64) {
+        let Some(st) = session.active() else { return };
+        let Some(presence) = self.local_presence(st) else { return };
+        let changed = self.sent_presence.as_ref() != Some(&presence);
+        if changed && now_ms.saturating_sub(self.sent_presence_ms) >= 50 {
+            self.sent_presence = Some(presence.clone());
+            self.sent_presence_ms = now_ms;
+            if let Some(transport) = &mut self.transport
+                && transport.is_open()
+            {
+                let _ = transport.send(ClientMsg::Presence(presence));
+            }
+        }
+    }
+
+    fn tick_expire(&mut self, now_ms: u64) -> bool {
+        self.presence.expire(now_ms) > 0
+    }
+
+    fn on_commit_result(&mut self, r: deckcraft_collab_proto::CommitResult) {
+        self.warnings_hidden = false;
+        self.warnings = r.warnings.clone();
+        if let Some(encoded) = r.bytes_base64.as_deref() {
+            use base64::Engine as _;
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) {
+                self.commit = Some((r.sha256, bytes, r.warnings));
+            }
+        }
+    }
+
+    fn keys(&self) -> &KeyMap {
+        self.doc.as_ref().map_or(&self.keys, |doc| doc.keys())
     }
 
     pub fn actor_id(&self) -> Option<&str> {
@@ -158,6 +336,25 @@ impl CollabUi {
 
     pub fn set_error(&mut self, error: Option<String>) {
         self.error = error;
+    }
+
+    /// Copy the client's state without holding a borrow of it: the UI fields are what the
+    /// status bar and the gate read.
+    fn refresh_client(&mut self) {
+        let snapshot = self.doc.as_ref().map(|doc| {
+            let c = doc.client();
+            (c.actor_id().map(str::to_string), c.role(), c.link(), c.version(), c.queued(), c.in_flight(), c.last_error().map(str::to_string))
+        });
+        if let Some((actor, role, link, version, queued, in_flight, error)) = snapshot {
+            self.enabled = true;
+            self.actor_id = actor;
+            self.role = role;
+            self.link = link;
+            self.version = version;
+            self.queued = queued;
+            self.in_flight = in_flight;
+            self.error = error;
+        }
     }
 
     /// Mirror the state machine after the transport moved a message. Keeps the UI from
@@ -213,7 +410,7 @@ impl CollabUi {
     /// Keep the session-scoped key map in step with the document. Cheap when nothing changed:
     /// the walk only runs when the document's revision moved.
     pub fn sync_keys(&mut self, uid: u64, revision: u64, doc: &Presentation) {
-        if self.keys_for == Some((uid, revision)) {
+        if self.doc.is_some() || self.keys_for == Some((uid, revision)) {
             return;
         }
         self.keys.sync(doc, &mut self.issuer);
@@ -221,15 +418,15 @@ impl CollabUi {
     }
 
     pub fn slide_key(&self, id: SlideId) -> Option<&SlideKey> {
-        self.keys.slide_key(id)
+        self.keys().slide_key(id)
     }
 
     pub fn slide_id(&self, key: &SlideKey) -> Option<SlideId> {
-        self.keys.slide_id(key)
+        self.keys().slide_id(key)
     }
 
     pub fn shape_id(&self, slide: SlideId, key: &ShapeKey) -> Option<ShapeId> {
-        self.keys.shape_id(slide, key)
+        self.keys().shape_id(slide, key)
     }
 
     /// Adopt a key map issued elsewhere (the transport seeds it from the server's snapshot).
@@ -272,8 +469,8 @@ impl CollabUi {
         }
         let actor_id = self.actor_id.clone()?;
         let current = st.doc.slides.get(st.selection.slide)?;
-        let slide = self.keys.slide_key(current.id)?.clone();
-        let shapes = st.selection.shapes.iter().filter_map(|shape| self.keys.shape_key(current.id, *shape).cloned()).collect();
+        let slide = self.keys().slide_key(current.id)?.clone();
+        let shapes = st.selection.shapes.iter().filter_map(|shape| self.keys().shape_key(current.id, *shape).cloned()).collect();
         let text = st.selection.text.as_ref().filter(|t| !t.notes).map(|t| TextCursor {
             cell: t.cell.map(|(r, c)| (r as u32, c as u32)),
             anchor: Some((t.anchor.0 as u32, t.anchor.1 as u32)),
@@ -290,7 +487,7 @@ impl CollabUi {
             return out;
         }
         let Some(slide) = st.doc.slides.get(st.selection.slide) else { return out };
-        let Some(slide_key) = self.keys.slide_key(slide.id) else { return out };
+        let Some(slide_key) = self.keys().slide_key(slide.id) else { return out };
         for p in self.presence.on_slide(slide_key) {
             if self.actor_id.as_deref() == Some(p.actor_id.as_str()) {
                 continue;
@@ -300,7 +497,7 @@ impl CollabUi {
             let mut first = true;
             let mut caret_done = false;
             for key in &p.shapes {
-                let Some(id) = self.keys.shape_id(slide.id, key) else { continue };
+                let Some(id) = self.keys().shape_id(slide.id, key) else { continue };
                 let Some(shape) = st.shape(id) else { continue };
                 let x = xfrm_of(&st.doc, &st.selection, shape);
                 let a = x.affine();
@@ -382,6 +579,15 @@ impl SlideApp {
         if let Some(st) = self.session.active() {
             self.collab.sync_keys(st.uid, st.revision, &st.doc);
         }
+    }
+
+    /// Connect the desktop app to a session. The token comes from the cabinet; it is only sent in
+    /// the first WebSocket frame.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn start_collab_native(&mut self, file_id: &str, url: &str, jwt: &str) -> Result<(), String> {
+        self.collab.start_native(&self.session, file_id, url, jwt)?;
+        self.sync_collab_gate();
+        Ok(())
     }
 
     /// Mirror the collaboration role into the engine's read-only gate. Called every frame and
@@ -688,7 +894,9 @@ mod tests {
         assert!(app.run("slide.new", json!({"layout": "blank"})).is_err(), "a viewer's insert is refused");
         assert_eq!(app.session.doc().expect("doc").doc.slides.len(), before);
 
-        app.collab.set_role(Some(Role::Editor));
+        // With collaboration off, the ordinary engine path is unchanged.
+        app.collab = CollabUi::default();
+        app.sync_collab_gate();
         app.run("slide.new", json!({"layout": "blank"})).expect("an editor may insert");
     }
 

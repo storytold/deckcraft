@@ -86,7 +86,7 @@ fn pump(server: &mut DocSession, peer: &mut Peer, others: &mut [&mut Peer]) {
                 let snapshot = server.resync(last_version);
                 peer.client.on_msg(ServerMsg::Snapshot(snapshot));
             }
-            ClientMsg::Ping | ClientMsg::Commit { .. } | ClientMsg::Presence(_) | ClientMsg::Hello(_) => return,
+            ClientMsg::Ping | ClientMsg::Commit { .. } | ClientMsg::Presence(_) | ClientMsg::Hello(_) | ClientMsg::Undo | ClientMsg::Redo => return,
         }
     }
 }

@@ -316,6 +316,9 @@ impl SlideApp {
         }
         self.sync_backstage();
         self.sync_collab_gate();
+        let collab_now = now_ms() as u64;
+        self.collab.pump(&mut self.session, collab_now);
+        self.sync_collab_gate();
         self.keyboard(&ctx);
         self.sync_backstage();
         ribbon::title_bar(self, ui);

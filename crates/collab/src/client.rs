@@ -234,12 +234,16 @@ impl ClientSession {
     }
 
     /// Drop everything for a reconnect: unacknowledged operations stay queued with their ids, so
-    /// the server dedups them if they did arrive (ADR 0003).
+    /// the server dedups them if they did arrive (ADR 0003). They go back to the **front** in
+    /// their original order: after the handshake the client must resend them before newer work.
     pub fn disconnected(&mut self) {
         self.state = Link::Down;
         self.lease = None;
         self.role = None;
-        self.in_flight.clear();
+        while let Some(op) = self.in_flight.pop_back() {
+            self.queued.push_front(op);
+        }
+        self.resync_wanted = false;
     }
 }
 
@@ -376,9 +380,11 @@ mod tests {
         c.disconnected();
         assert_eq!(c.link(), Link::Down);
         assert_eq!(c.in_flight(), 0);
-        // The operation was in flight and is not re-queued: the server dedups a resend by id,
-        // so the application decides whether to resend it after the resync.
-        assert_eq!(c.queued(), 0);
+        assert_eq!(c.queued(), 1, "an unanswered operation is kept for the resend");
+        let _ = c.connect("jwt", ClientInfo { name: "t".into(), ver: "1".into() });
+        c.on_msg(welcome(0, Role::Editor));
+        let sent = c.next_outgoing().expect("resent");
+        assert!(matches!(sent, ClientMsg::Op(ref op) if op.op_id == "o1"), "same opId, so the server dedups it");
     }
 
     #[test]

@@ -68,13 +68,23 @@ pub struct CollabDoc {
     version: u64,
     /// The last local command that could not be applied, for the status bar.
     last_apply_error: Option<String>,
+    /// Undo/redo requests waiting for a live link (they are not operations until the server builds
+    /// the inverse).
+    control: std::collections::VecDeque<ClientMsg>,
 }
 
 impl CollabDoc {
     pub fn new(file_id: impl Into<String>) -> Self {
         let file_id = file_id.into();
         let adapter = Adapter::new(format!("{file_id}-"));
-        CollabDoc { client: ClientSession::new(file_id.clone()), file_id, adapter, version: 0, last_apply_error: None }
+        CollabDoc {
+            client: ClientSession::new(file_id.clone()),
+            file_id,
+            adapter,
+            version: 0,
+            last_apply_error: None,
+            control: std::collections::VecDeque::new(),
+        }
     }
 
     /// Start a connection and issue keys for the document the host opened. The caller sends the
@@ -87,7 +97,38 @@ impl CollabDoc {
     }
 
     pub fn next_outgoing(&mut self) -> Option<ClientMsg> {
+        // Control messages wait for the handshake, then go before operations.
+        if self.client.link() == crate::Link::Live
+            && matches!(self.client.role(), Some(role) if role.may_write())
+            && let Some(msg) = self.control.pop_front()
+        {
+            return Some(msg);
+        }
         self.client.next_outgoing()
+    }
+
+    /// Ask the server to take back this actor's latest step.
+    pub fn undo(&mut self) -> Result<(), LocalError> {
+        if self.client.role().is_some_and(|role| !role.may_write()) {
+            return Err(LocalError::ReadOnly);
+        }
+        self.control.push_back(ClientMsg::Undo);
+        Ok(())
+    }
+
+    /// Ask the server to re-apply the step the latest undo took back.
+    pub fn redo(&mut self) -> Result<(), LocalError> {
+        if self.client.role().is_some_and(|role| !role.may_write()) {
+            return Err(LocalError::ReadOnly);
+        }
+        self.control.push_back(ClientMsg::Redo);
+        Ok(())
+    }
+
+    /// The socket dropped: keep unacknowledged operations for the resend and wait for a new
+    /// handshake. The caller starts it with [`Self::connect`].
+    pub fn disconnected(&mut self) {
+        self.client.disconnected();
     }
 
     pub fn client(&self) -> &ClientSession {

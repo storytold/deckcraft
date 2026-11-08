@@ -15,9 +15,12 @@ pub mod delta;
 pub mod history;
 pub mod hub;
 pub mod keys;
+pub mod link;
 pub mod local;
 pub mod presence;
 pub mod session;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod transport;
 
 pub use apply::{Adapter, Rejection, class_of};
 pub use client::{ClientSession, Effect, Link, SubmitError};
@@ -25,6 +28,9 @@ pub use delta::delta;
 pub use history::{ActorHistory, Histories, Image, Snapshot, Step};
 pub use hub::{Claims, Hub, Peer};
 pub use keys::{KeyIssuer, KeyMap};
+pub use link::{PipeTransport, Transport};
 pub use local::{CollabDoc, LocalError, normalize};
 pub use presence::{DEFAULT_TTL_MS, Participant, PresenceSet, color_for};
 pub use session::{DocSession, SessionConfig, SnapshotState, warnings};
+#[cfg(not(target_arch = "wasm32"))]
+pub use transport::WsTransport;

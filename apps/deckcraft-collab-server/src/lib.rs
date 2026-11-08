@@ -1,0 +1,682 @@
+//! DeckCraft collaboration server.
+//!
+//! The process around [`deckcraft_collab::Hub`]: HTTP session control, a WebSocket per
+//! participant, JWT authentication in the first frame, limits, health and metrics.
+//!
+//! What it deliberately does not do yet: persist rooms across a restart, a media upload channel
+//! and a lease table. The room model and the wire types are in `deckcraft-collab`; this crate is
+//! the transport around them.
+//!
+//! Security rules (ADR-0008, RFC §12):
+//! - the JWT travels in the first WebSocket frame, never in the URL;
+//! - the actor and the role come from the token; a message field cannot choose them;
+//! - the cabinet's service token guards session control;
+//! - logs name sessions and counts, never slide content, text or tokens.
+
+use std::collections::{HashMap, VecDeque};
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use base64::Engine as _;
+use deckcraft_collab::session::SessionConfig;
+use deckcraft_collab::{Claims, Hub};
+use deckcraft_collab_proto::{ClientMsg, PROTO_VERSION, Role, ServerError, ServerMsg, decode_client, encode_server};
+use deckcraft_model::Presentation;
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use tungstenite::error::Error as WsError;
+
+pub mod store;
+use store::Store;
+
+/// How a token is checked. The cabinet signs with an asymmetric key; local runs may use HS256.
+#[derive(Clone)]
+pub enum JwtConfig {
+    Secret(Vec<u8>),
+    Pem(Vec<u8>),
+}
+
+impl JwtConfig {
+    fn key_and_algorithms(&self) -> Result<(DecodingKey, Vec<Algorithm>), String> {
+        match self {
+            JwtConfig::Secret(secret) => Ok((DecodingKey::from_secret(secret), vec![Algorithm::HS256, Algorithm::HS384, Algorithm::HS512])),
+            JwtConfig::Pem(pem) => {
+                if let Ok(key) = DecodingKey::from_ec_pem(pem) {
+                    return Ok((key, vec![Algorithm::ES256, Algorithm::ES384]));
+                }
+                if let Ok(key) = DecodingKey::from_rsa_pem(pem) {
+                    return Ok((key, vec![Algorithm::RS256, Algorithm::RS384, Algorithm::RS512]));
+                }
+                if let Ok(key) = DecodingKey::from_ed_pem(pem) {
+                    return Ok((key, vec![Algorithm::EdDSA]));
+                }
+                Err("the PEM key is not EC, RSA or Ed25519".into())
+            }
+        }
+    }
+}
+
+/// Server configuration, from the environment in `main`.
+#[derive(Clone)]
+pub struct Config {
+    /// The cabinet's service token for `/v1/sessions`. `None` refuses session control.
+    pub service_token: Option<String>,
+    pub jwt: JwtConfig,
+    pub audience: String,
+    /// Most participants in one room (`0` = unlimited).
+    pub max_participants: usize,
+    /// Largest client frame.
+    pub max_message_bytes: usize,
+    /// Operations per second per connection (`0` = unlimited).
+    pub max_ops_per_sec: usize,
+    /// Where rooms are persisted (native base + journal). `None` keeps them in memory.
+    pub store_dir: Option<PathBuf>,
+    /// Operations between base snapshots.
+    pub snapshot_every: u64,
+}
+
+impl Config {
+    pub fn for_tests(secret: &[u8], service: &str) -> Self {
+        Config {
+            service_token: Some(service.to_string()),
+            jwt: JwtConfig::Secret(secret.to_vec()),
+            audience: "office-sync".into(),
+            max_participants: 16,
+            max_message_bytes: 256 * 1024,
+            max_ops_per_sec: 50,
+            store_dir: None,
+            snapshot_every: 200,
+        }
+    }
+}
+
+/// The token's claims. The role is a string here; [`Role`] is the checked value.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenClaims {
+    pub sub: String,
+    pub role: String,
+    #[serde(default)]
+    pub file_id: Option<String>,
+    #[serde(default)]
+    pub app: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub aud: Option<String>,
+    #[serde(default)]
+    pub exp: Option<u64>,
+}
+
+fn role_of(s: &str) -> Option<Role> {
+    match s {
+        "owner" => Some(Role::Owner),
+        "editor" => Some(Role::Editor),
+        "viewer" => Some(Role::Viewer),
+        _ => None,
+    }
+}
+
+#[derive(Default)]
+struct Metrics {
+    sessions: AtomicU64,
+    connections: AtomicU64,
+    active_connections: AtomicU64,
+    messages: AtomicU64,
+    ops: AtomicU64,
+    rejected: AtomicU64,
+    commits: AtomicU64,
+    resyncs: AtomicU64,
+    bytes_in: AtomicU64,
+    bytes_out: AtomicU64,
+}
+
+impl Metrics {
+    fn render(&self, rooms: usize) -> String {
+        let mut out = String::new();
+        let row = |name: &str, value: u64| format!("deckcraft_collab_{name} {value}\n");
+        out.push_str(&row("rooms", rooms as u64));
+        out.push_str(&row("sessions_total", self.sessions.load(Ordering::Relaxed)));
+        out.push_str(&row("connections_total", self.connections.load(Ordering::Relaxed)));
+        out.push_str(&row("connections_active", self.active_connections.load(Ordering::Relaxed)));
+        out.push_str(&row("messages_total", self.messages.load(Ordering::Relaxed)));
+        out.push_str(&row("ops_total", self.ops.load(Ordering::Relaxed)));
+        out.push_str(&row("rejected_total", self.rejected.load(Ordering::Relaxed)));
+        out.push_str(&row("commits_total", self.commits.load(Ordering::Relaxed)));
+        out.push_str(&row("resyncs_total", self.resyncs.load(Ordering::Relaxed)));
+        out.push_str(&row("bytes_in_total", self.bytes_in.load(Ordering::Relaxed)));
+        out.push_str(&row("bytes_out_total", self.bytes_out.load(Ordering::Relaxed)));
+        out
+    }
+}
+
+struct Shared {
+    config: Config,
+    hubs: Mutex<HashMap<String, Arc<Mutex<Hub>>>>,
+    metrics: Metrics,
+    store: Option<Store>,
+}
+
+/// A running server. Dropping it stops the accept loop.
+pub struct Handle {
+    pub addr: SocketAddr,
+    stop: Arc<AtomicBool>,
+    join: Option<thread::JoinHandle<()>>,
+}
+
+impl Handle {
+    pub fn shutdown(mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+/// Bind `addr` and serve until the handle is shut down.
+pub fn serve(addr: SocketAddr, config: Config) -> std::io::Result<Handle> {
+    let listener = TcpListener::bind(addr)?;
+    let addr = listener.local_addr()?;
+    listener.set_nonblocking(true)?;
+    let store = match &config.store_dir {
+        Some(dir) => match Store::new(dir, config.snapshot_every) {
+            Ok(store) => Some(store),
+            Err(e) => return Err(std::io::Error::other(format!("store {}: {e}", dir.display()))),
+        },
+        None => None,
+    };
+    let shared = Arc::new(Shared { config, hubs: Mutex::new(HashMap::new()), metrics: Metrics::default(), store });
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_flag = stop.clone();
+    let join = thread::spawn(move || {
+        while !stop_flag.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    let shared = shared.clone();
+                    thread::spawn(move || {
+                        if let Err(e) = handle_connection(stream, shared) {
+                            log::debug!("connection closed: {e}");
+                        }
+                    });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(20)),
+                Err(e) => {
+                    log::warn!("accept failed: {e}");
+                    thread::sleep(Duration::from_millis(200));
+                }
+            }
+        }
+    });
+    Ok(Handle { addr, stop, join: Some(join) })
+}
+
+/// Serve on an ephemeral port (tests).
+pub fn serve_ephemeral(config: Config) -> std::io::Result<Handle> {
+    serve("127.0.0.1:0".parse().unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 0))), config)
+}
+
+fn handle_connection(mut stream: TcpStream, shared: Arc<Shared>) -> std::io::Result<()> {
+    stream.set_nonblocking(false)?;
+    stream.set_nodelay(true)?;
+    let mut probe = [0u8; 4096];
+    let n = stream.peek(&mut probe)?;
+    let head = String::from_utf8_lossy(&probe[..n]).to_ascii_lowercase();
+    if head.contains("upgrade: websocket") {
+        return websocket(stream, shared);
+    }
+    let request = read_request(&mut stream)?;
+    let response = route(&request, &shared)?;
+    write_response(&mut stream, response)
+}
+
+struct Request {
+    method: String,
+    path: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+impl Request {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+    }
+    fn bearer(&self) -> Option<&str> {
+        self.header("authorization")?.strip_prefix("Bearer ")
+    }
+}
+
+struct Response {
+    status: u16,
+    reason: &'static str,
+    content_type: &'static str,
+    body: Vec<u8>,
+}
+
+impl Response {
+    fn json(status: u16, value: Value) -> Self {
+        let reason = match status {
+            200 => "OK",
+            201 => "Created",
+            400 => "Bad Request",
+            401 => "Unauthorized",
+            404 => "Not Found",
+            405 => "Method Not Allowed",
+            409 => "Conflict",
+            413 => "Payload Too Large",
+            _ => "Internal Server Error",
+        };
+        Response { status, reason, content_type: "application/json", body: value.to_string().into_bytes() }
+    }
+    fn text(status: u16, reason: &'static str, body: String) -> Self {
+        Response { status, reason, content_type: "text/plain; version=0.0.4", body: body.into_bytes() }
+    }
+}
+
+fn read_request(stream: &mut TcpStream) -> std::io::Result<Request> {
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 8192];
+    let header_end = loop {
+        let n = stream.read(&mut tmp)?;
+        if n == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "empty request"));
+        }
+        buf.extend_from_slice(&tmp[..n]);
+        if let Some(pos) = find(&buf, b"\r\n\r\n") {
+            break pos + 4;
+        }
+        if buf.len() > 64 * 1024 {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "request headers too large"));
+        }
+    };
+    let head = String::from_utf8_lossy(&buf[..header_end]).to_string();
+    let mut lines = head.lines();
+    let first = lines.next().unwrap_or_default();
+    let mut parts = first.split_whitespace();
+    let method = parts.next().unwrap_or_default().to_string();
+    let path = parts.next().unwrap_or("/").split('?').next().unwrap_or("/").to_string();
+    let mut headers = Vec::new();
+    for line in lines {
+        if let Some((k, v)) = line.split_once(':') {
+            headers.push((k.trim().to_string(), v.trim().to_string()));
+        }
+    }
+    let length = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("content-length")).and_then(|(_, v)| v.parse::<usize>().ok()).unwrap_or(0);
+    if length > 16 * 1024 * 1024 {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "body too large"));
+    }
+    let mut body = buf[header_end..].to_vec();
+    while body.len() < length {
+        let n = stream.read(&mut tmp)?;
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&tmp[..n]);
+    }
+    body.truncate(length);
+    Ok(Request { method, path, headers, body })
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+fn write_response(stream: &mut TcpStream, response: Response) -> std::io::Result<()> {
+    let head = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        response.status,
+        response.reason,
+        response.content_type,
+        response.body.len()
+    );
+    stream.write_all(head.as_bytes())?;
+    stream.write_all(&response.body)?;
+    stream.flush()
+}
+
+fn route(request: &Request, shared: &Arc<Shared>) -> std::io::Result<Response> {
+    match (request.method.as_str(), request.path.as_str()) {
+        ("GET", "/healthz") | ("GET", "/readyz") => Ok(Response::json(200, json!({"ok": true, "version": env!("CARGO_PKG_VERSION")}))),
+        ("GET", "/metrics") => {
+            let rooms = shared.hubs.lock().map(|h| h.len()).unwrap_or(0);
+            Ok(Response::text(200, "OK", shared.metrics.render(rooms)))
+        }
+        ("POST", "/v1/sessions") => create_session(request, shared),
+        (method, path) if path.starts_with("/v1/sessions/") => {
+            let rest = &path["/v1/sessions/".len()..];
+            let id = rest.trim_end_matches('/');
+            if id.contains('/') {
+                return Ok(Response::json(404, json!({"error": "not found"})));
+            }
+            match method {
+                "GET" => session_info(id, shared, request),
+                "DELETE" => close_session(id, shared, request),
+                _ => Ok(Response::json(405, json!({"error": "method not allowed"}))),
+            }
+        }
+        _ => Ok(Response::json(404, json!({"error": "not found"}))),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateBody {
+    file_id: String,
+    #[serde(default)]
+    app: Option<String>,
+    #[serde(default)]
+    initial_bytes: Option<String>,
+    #[serde(default)]
+    expected_version: Option<String>,
+}
+
+fn service_allowed(request: &Request, shared: &Shared) -> bool {
+    let Some(expected) = &shared.config.service_token else { return false };
+    request.bearer().is_some_and(|token| token == expected)
+}
+
+fn create_session(request: &Request, shared: &Arc<Shared>) -> std::io::Result<Response> {
+    if !service_allowed(request, shared) {
+        return Ok(Response::json(401, json!({"error": "service token required"})));
+    }
+    let Ok(body) = serde_json::from_slice::<CreateBody>(&request.body) else {
+        return Ok(Response::json(400, json!({"error": "invalid JSON"})));
+    };
+    if body.app.as_deref().is_some_and(|app| app != "deckcraft") {
+        return Ok(Response::json(400, json!({"error": "this server serves deckcraft only"})));
+    }
+    if body.file_id.is_empty() || body.file_id.len() > 256 {
+        return Ok(Response::json(400, json!({"error": "fileId is empty or too long"})));
+    }
+    let mut hubs = shared.hubs.lock().map_err(|_| std::io::Error::other("hub lock"))?;
+    if hubs.contains_key(&body.file_id) {
+        drop(hubs);
+        return Ok(Response::json(200, session_json(&body.file_id, shared)));
+    }
+    let stored = match &shared.store {
+        Some(store) => match store.load(&body.file_id) {
+            Ok(session) => session,
+            Err(e) => return Ok(Response::json(500, json!({"error": e}))),
+        },
+        None => None,
+    };
+    let mut session = match stored {
+        Some(session) => session,
+        None => {
+            let session = match body.initial_bytes {
+                Some(ref encoded) => {
+                    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
+                        return Ok(Response::json(400, json!({"error": "initialBytes is not base64"})));
+                    };
+                    deckcraft_collab::DocSession::open(&body.file_id, &bytes)
+                }
+                None => deckcraft_collab::DocSession::from_document(&body.file_id, Presentation::default(), SessionConfig::default()),
+            };
+            match session {
+                Ok(session) => session,
+                Err(e) => return Ok(Response::json(400, json!({"error": e}))),
+            }
+        }
+    };
+    if let Some(version) = body.expected_version {
+        session.set_base_file_etag(version);
+    }
+    if let Some(store) = &shared.store
+        && let Err(e) = store.snapshot(&body.file_id, &mut session)
+    {
+        return Ok(Response::json(500, json!({"error": e})));
+    }
+    let hub = Hub::new(session);
+    hubs.insert(body.file_id.clone(), Arc::new(Mutex::new(hub)));
+    drop(hubs);
+    shared.metrics.sessions.fetch_add(1, Ordering::Relaxed);
+    Ok(Response::json(201, session_json(&body.file_id, shared)))
+}
+
+fn session_json(id: &str, shared: &Shared) -> Value {
+    let (participants, version) = shared
+        .hubs
+        .lock()
+        .ok()
+        .and_then(|h| h.get(id).cloned())
+        .and_then(|hub| hub.lock().ok().map(|hub| (hub.participants().len(), hub.version())))
+        .unwrap_or((0, 0));
+    json!({
+        "sessionId": id,
+        "fileId": id,
+        "state": "open",
+        "participants": participants,
+        "version": version,
+        "wsUrl": format!("/v1/sessions/{id}/ws"),
+        "expiresAt": now_secs().saturating_add(3600),
+    })
+}
+
+fn session_info(id: &str, shared: &Arc<Shared>, _request: &Request) -> std::io::Result<Response> {
+    let hubs = shared.hubs.lock().map_err(|_| std::io::Error::other("hub lock"))?;
+    if !hubs.contains_key(id) {
+        return Ok(Response::json(404, json!({"error": "no such session"})));
+    }
+    drop(hubs);
+    Ok(Response::json(200, session_json(id, shared)))
+}
+
+fn close_session(id: &str, shared: &Arc<Shared>, request: &Request) -> std::io::Result<Response> {
+    if !service_allowed(request, shared) {
+        return Ok(Response::json(401, json!({"error": "service token required"})));
+    }
+    let mut hubs = shared.hubs.lock().map_err(|_| std::io::Error::other("hub lock"))?;
+    match hubs.remove(id) {
+        Some(_) => Ok(Response::json(200, json!({"closed": true}))),
+        None => Ok(Response::json(404, json!({"error": "no such session"}))),
+    }
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+fn verify_token(token: &str, config: &JwtConfig, audience: &str) -> Result<TokenClaims, String> {
+    let (key, algorithms) = config.key_and_algorithms()?;
+    for algorithm in algorithms {
+        let mut validation = Validation::new(algorithm);
+        validation.set_audience(&[audience]);
+        validation.set_required_spec_claims(&["exp", "sub", "aud"]);
+        if let Ok(data) = decode::<TokenClaims>(token, &key, &validation) {
+            return Ok(data.claims);
+        }
+    }
+    Err("the token is not valid for this audience".into())
+}
+
+fn websocket(stream: TcpStream, shared: Arc<Shared>) -> std::io::Result<()> {
+    let peer = stream.peer_addr().ok();
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    let mut ws = tungstenite::accept(stream).map_err(std::io::Error::other)?;
+    shared.metrics.connections.fetch_add(1, Ordering::Relaxed);
+    shared.metrics.active_connections.fetch_add(1, Ordering::Relaxed);
+    let result = ws_session(&mut ws, &shared);
+    shared.metrics.active_connections.fetch_sub(1, Ordering::Relaxed);
+    if let Err(e) = &result {
+        log::debug!("ws peer {peer:?}: {e}");
+    }
+    let _ = ws.close(None);
+    result
+}
+
+fn ws_session(ws: &mut tungstenite::WebSocket<TcpStream>, shared: &Arc<Shared>) -> std::io::Result<()> {
+    let first = ws.read().map_err(std::io::Error::other)?;
+    let text = match first {
+        tungstenite::Message::Text(text) => text.as_str().to_string(),
+        _ => return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "the first frame must be hello (text)")),
+    };
+    shared.metrics.bytes_in.fetch_add(text.len() as u64, Ordering::Relaxed);
+    let hello = match decode_client(&text) {
+        Ok(ClientMsg::Hello(hello)) => hello,
+        _ => return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "the first frame must be hello")),
+    };
+    let claims = verify_token(&hello.jwt, &shared.config.jwt, &shared.config.audience).map_err(std::io::Error::other)?;
+    let role = role_of(&claims.role).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::PermissionDenied, "unknown role"))?;
+    if claims.app.as_deref().is_some_and(|app| app != "deckcraft") {
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "the token is for another app"));
+    }
+    if claims.file_id.as_deref().is_some_and(|id| id != hello.doc) {
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "the token is for another file"));
+    }
+    let hub = {
+        let hubs = shared.hubs.lock().map_err(|_| std::io::Error::other("hub lock"))?;
+        hubs.get(&hello.doc).cloned()
+    };
+    let Some(hub) = hub else {
+        return send_error(ws, "not-found", "no such session", false);
+    };
+    let actor = claims.sub.clone();
+    {
+        let mut hub = hub.lock().map_err(|_| std::io::Error::other("hub lock"))?;
+        if shared.config.max_participants > 0 && hub.participants().len() >= shared.config.max_participants {
+            drop(hub);
+            return send_error(ws, "full", "the room is full", false);
+        }
+        match hub.join(&hello, Claims { actor_id: actor.clone(), role }) {
+            Ok(welcome) => send_msg(ws, &ServerMsg::Welcome(welcome), shared)?,
+            Err(e) => return send_error(ws, &e.code, &e.message, e.retryable),
+        }
+    }
+    ws.get_mut().set_read_timeout(Some(Duration::from_millis(50))).map_err(std::io::Error::other)?;
+    let mut ops = VecDeque::new();
+    loop {
+        match ws.read() {
+            Ok(tungstenite::Message::Text(text)) => {
+                shared.metrics.messages.fetch_add(1, Ordering::Relaxed);
+                shared.metrics.bytes_in.fetch_add(text.len() as u64, Ordering::Relaxed);
+                if text.len() > shared.config.max_message_bytes {
+                    return send_error(ws, "too-large", "the message is too large", false);
+                }
+                match decode_client(text.as_str()) {
+                    Ok(ClientMsg::Hello(_)) => return send_error(ws, "invalid", "already joined", false),
+                    Ok(ClientMsg::Op(_)) => {
+                        let now = Instant::now();
+                        while ops.front().is_some_and(|t: &Instant| now.duration_since(*t) > Duration::from_secs(1)) {
+                            ops.pop_front();
+                        }
+                        if shared.config.max_ops_per_sec > 0 && ops.len() >= shared.config.max_ops_per_sec {
+                            let error = ServerError { code: "rate-limit".into(), message: "too many operations".into(), retryable: true };
+                            send_msg(ws, &ServerMsg::Error(error), shared)?;
+                        } else {
+                            ops.push_back(now);
+                            if let Ok(msg) = decode_client(text.as_str()) {
+                                handle_client_message(&hub, &actor, msg, shared)?;
+                            }
+                        }
+                    }
+                    Ok(msg) => handle_client_message(&hub, &actor, msg, shared)?,
+                    Err(e) => {
+                        let error = ServerError { code: "invalid".into(), message: format!("bad frame: {e}"), retryable: false };
+                        send_msg(ws, &ServerMsg::Error(error), shared)?;
+                    }
+                }
+            }
+            Ok(tungstenite::Message::Ping(payload)) => {
+                ws.send(tungstenite::Message::Pong(payload)).map_err(std::io::Error::other)?;
+            }
+            Ok(tungstenite::Message::Close(_)) => break,
+            Ok(_) => {}
+            Err(WsError::Io(e)) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+            Err(WsError::ConnectionClosed | WsError::AlreadyClosed) => break,
+            Err(e) => return Err(std::io::Error::other(e)),
+        }
+        drain(&hub, &actor, ws, shared)?;
+    }
+    if let Ok(mut hub) = hub.lock() {
+        hub.remove_peer(&actor);
+    }
+    Ok(())
+}
+
+fn handle_client_message(hub: &Arc<Mutex<Hub>>, actor: &str, msg: ClientMsg, shared: &Arc<Shared>) -> std::io::Result<()> {
+    let is_resync = matches!(msg, ClientMsg::Resync { .. });
+    let is_commit = matches!(msg, ClientMsg::Commit { .. });
+    let is_op = matches!(msg, ClientMsg::Op(_));
+    let mut hub = hub.lock().map_err(|_| std::io::Error::other("hub lock"))?;
+    if let Err(e) = hub.receive(actor, msg) {
+        drop(hub);
+        return Err(std::io::Error::other(format!("{}: {}", e.code, e.message)));
+    }
+    if let Some(applied) = hub.take_last_applied()
+        && let Some(store) = &shared.store
+    {
+        let file_id = hub.file_id().to_string();
+        if let Err(e) = store.record(&file_id, hub.session_mut(), &applied) {
+            log::error!("journal {file_id} version {}: {e}", applied.version);
+        }
+    }
+    if is_op {
+        shared.metrics.ops.fetch_add(1, Ordering::Relaxed);
+    }
+    if is_commit {
+        shared.metrics.commits.fetch_add(1, Ordering::Relaxed);
+    }
+    if is_resync {
+        shared.metrics.resyncs.fetch_add(1, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+fn drain(hub: &Arc<Mutex<Hub>>, actor: &str, ws: &mut tungstenite::WebSocket<TcpStream>, shared: &Arc<Shared>) -> std::io::Result<()> {
+    loop {
+        let msg = {
+            let mut hub = hub.lock().map_err(|_| std::io::Error::other("hub lock"))?;
+            hub.poll(actor)
+        };
+        let Some(msg) = msg else { return Ok(()) };
+        send_msg(ws, &msg, shared)?;
+    }
+}
+
+fn send_msg(ws: &mut tungstenite::WebSocket<TcpStream>, msg: &ServerMsg, shared: &Arc<Shared>) -> std::io::Result<()> {
+    let text = encode_server(msg).map_err(std::io::Error::other)?;
+    shared.metrics.bytes_out.fetch_add(text.len() as u64, Ordering::Relaxed);
+    ws.send(tungstenite::Message::Text(text.into())).map_err(std::io::Error::other)
+}
+
+fn send_error(ws: &mut tungstenite::WebSocket<TcpStream>, code: &str, message: &str, retryable: bool) -> std::io::Result<()> {
+    let error = ServerError { code: code.into(), message: message.into(), retryable };
+    let text = encode_server(&ServerMsg::Error(error)).map_err(std::io::Error::other)?;
+    ws.send(tungstenite::Message::Text(text.into())).map_err(std::io::Error::other)?;
+    Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, message.to_string()))
+}
+
+/// The protocol version this binary speaks, for the health payload and logs.
+pub const PROTOCOL: u16 = PROTO_VERSION;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_token_must_match_the_audience_and_the_role_must_be_known() {
+        let config = JwtConfig::Secret(b"secret".to_vec());
+        let claims = TokenClaims {
+            sub: "alice".into(),
+            role: "editor".into(),
+            file_id: Some("d".into()),
+            app: Some("deckcraft".into()),
+            session_id: Some("d".into()),
+            aud: Some("office-sync".into()),
+            exp: Some(now_secs() + 60),
+        };
+        let token = jsonwebtoken::encode(&jsonwebtoken::Header::new(Algorithm::HS256), &claims, &jsonwebtoken::EncodingKey::from_secret(b"secret"))
+            .expect("token");
+        let out = verify_token(&token, &config, "office-sync").expect("valid");
+        assert_eq!(out.sub, "alice");
+        assert_eq!(role_of(&out.role), Some(Role::Editor));
+        assert!(verify_token(&token, &config, "other").is_err());
+        assert_eq!(role_of("superuser"), None);
+    }
+}
