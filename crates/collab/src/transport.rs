@@ -202,7 +202,13 @@ impl Endpoint {
         }
         stream.flush().map_err(|e| format!("media: {e}"))?;
         let mut response = Vec::new();
-        stream.read_to_end(&mut response).map_err(|e| format!("media: {e}"))?;
+        if let Err(e) = stream.read_to_end(&mut response) {
+            // A peer that closes the TCP connection without a TLS close_notify is common for
+            // `Connection: close` responses; the bytes that did arrive are still the answer.
+            if response.is_empty() || e.kind() != std::io::ErrorKind::UnexpectedEof {
+                return Err(format!("media: {e}"));
+            }
+        }
         let split = response.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4).ok_or("media: the server sent no headers")?;
         let status =
             String::from_utf8_lossy(&response[..split]).split_whitespace().nth(1).and_then(|s| s.parse().ok()).ok_or("media: no status line")?;

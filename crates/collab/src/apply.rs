@@ -323,6 +323,11 @@ impl Adapter {
                     .media
                     .get(sha256)
                     .ok_or_else(|| Rejection::missing_media(format!("picture `{sha256}` has not been uploaded to this session"), Some(head)))?;
+                if let Some(kind) = self.media.kind(sha256)
+                    && kind != crate::MediaType::Picture
+                {
+                    return Err(Rejection::invalid(format!("`{sha256}` is a {} object, not a picture", kind.noun()), Some(head)));
+                }
                 self.select_slide(session, before, slide, head)?;
                 let mut args = json!({
                     "name": name,
@@ -339,6 +344,15 @@ impl Adapter {
                     .media
                     .get(sha256)
                     .ok_or_else(|| Rejection::missing_media(format!("media `{sha256}` has not been uploaded to this session"), Some(head)))?;
+                let expected = match kind {
+                    MediaKind::Video => crate::MediaType::Video,
+                    MediaKind::Audio => crate::MediaType::Audio,
+                };
+                if let Some(stored) = self.media.kind(sha256)
+                    && stored != expected
+                {
+                    return Err(Rejection::invalid(format!("`{sha256}` is a {} object, not {}", stored.noun(), expected.noun()), Some(head)));
+                }
                 self.select_slide(session, before, slide, head)?;
                 let mut args = json!({
                     "name": name,
@@ -1031,6 +1045,25 @@ mod tests {
         bytes.extend(b"ftypisom\0\0\x02\x00isomiso2");
         bytes.extend([0u8; 32]);
         bytes
+    }
+
+    #[test]
+    fn a_picture_may_not_name_an_audio_object() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let bytes = b"RIFF\x0c\0\0\0WAVEfmt ".to_vec();
+        let sha = ad.media_mut().put("hit.wav", bytes).expect("media");
+        let (slide, _) = key_of(&ad, &doc_of(&s), 0);
+        let envelope = op(
+            OpKind::Structural,
+            0,
+            Target { slide: Some(slide), ..Target::default() },
+            Payload::PictureInsert { sha256: sha, name: "hit.wav".into(), rect: None },
+        );
+        let err = ad.apply(&mut s, 0, "a", &envelope).expect_err("an audio object is not a picture");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert!(err.message.contains("audio"), "{}", err.message);
     }
 
     #[test]

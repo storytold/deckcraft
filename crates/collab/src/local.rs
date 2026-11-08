@@ -679,7 +679,18 @@ fn line_spec(p: &Value) -> Result<LineSpec, LocalError> {
             other => return Err(LocalError::Unsupported(format!("shape.line {other}"))),
         }
     }
-    if !spec.none && spec.color.is_none() && spec.width.is_none() && spec.dash.is_none() {
+    if !spec.none
+        && spec.color.is_none()
+        && spec.width.is_none()
+        && spec.dash.is_none()
+        && spec.cap.is_none()
+        && spec.join.is_none()
+        && spec.compound.is_none()
+        && spec.head.is_none()
+        && spec.tail.is_none()
+        && spec.head_size.is_none()
+        && spec.tail_size.is_none()
+    {
         return Err(LocalError::BadParams("shape.line needs `none` or at least one outline value".into()));
     }
     Ok(spec)

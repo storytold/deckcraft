@@ -105,7 +105,7 @@ stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decisi
 
 | Command | Result |
 |---|---|
-| `cargo test -p deckcraft-collab` | 90 unit + 7 integration |
+| `cargo test -p deckcraft-collab` | 91 unit + 7 integration |
 | `cargo test -p deckcraft-collab-server` | 3 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist) |
 | `cargo test -p deckcraft-collab-proto` | 18 |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 |
@@ -114,7 +114,7 @@ stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decisi
 | `cargo fmt --check` | clean |
 | `cargo xtask layers` | 31 crates, no violations |
 
-Re-run on 2026-11-08 after `0a57b61e`: `fmt`, `collab-proto` 18, `collab` 90 + 7, `collab-server`
+Re-run on 2026-11-08 after `0a57b61e`: `fmt`, `collab-proto` 18, `collab` 91 + 7, `collab-server`
 3 + 6, `ui-egui collab::` 17, all green; clippy over the four collab crates and `ui-egui` with
 `-D warnings` clean; `xtask layers` 31 crates. `cargo test -p deckcraft-engine` is from the earlier
 session, not re-run here.
@@ -239,7 +239,7 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
   two-replica test): `shape.fill` (solid/none/background), `shape.line` (final outline values),
   17 `format.*` commands over one explicit shape's text (`FormatCmd` allowlist, no address in
   `args`, explicit `on`), `slide.duplicate` addressed by slide key.
-- Tests: `collab-proto` 18, `collab` 90 + 7, `collab-server` 3 + 6, `ui-egui collab::` 17;
+- Tests: `collab-proto` 18, `collab` 91 + 7, `collab-server` 3 + 6, `ui-egui collab::` 17;
   clippy `-D warnings` and `fmt` clean; `xtask layers` 31 crates. Engine not re-run.
 - Commit `0a57b61e` on `collab/pr10`; docs (rfc §3.2.1/§4.1/§13/§14.1, production, pr10) updated.
   Nothing pushed.

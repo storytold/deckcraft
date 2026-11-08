@@ -188,7 +188,7 @@ must be treated as a development instance.
 
 | Suite | What it covers |
 |---|---|
-| `cargo test -p deckcraft-collab` | 90 unit + 7 integration: convergence, dedup, structural exclusion, tombstones, undo per actor, text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate slices, presence, snapshots, commit |
+| `cargo test -p deckcraft-collab` | 91 unit + 7 integration: convergence, dedup, structural exclusion, tombstones, undo per actor, text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate slices, presence, snapshots, commit |
 | `cargo test -p deckcraft-collab-server` | 3 unit + 6 real-socket tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay, media upload/fetch (picture and audio allowlists), picture insert |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue |
 | `cargo test -p deckcraft-engine` | 558: the collaboration queue and read-only gate did not change single-user behaviour |
