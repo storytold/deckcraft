@@ -166,6 +166,15 @@ pub fn specs() -> Vec<CommandSpec> {
             set_fields
         ),
         cmd!(
+            "shape.restore",
+            "Restore Shapes",
+            [],
+            None,
+            "{items: [{shape: the whole shape as JSON, parent?: the group that holds it, index: position among its siblings (0 = back), animations?: [entries that name it]}]} (puts back shapes a collaborative step removed; undo of a shape insert or delete uses it)",
+            has_slide,
+            restore
+        ),
+        cmd!(
             "picture.crop",
             "Crop",
             ["Picture Format", "Size"],
@@ -477,6 +486,149 @@ fn set_fields(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// Most shapes one `shape.restore` may put back in one step.
+const MAX_RESTORE_ITEMS: usize = 64;
+/// Longest combined JSON of the shape images and their animations; the wire message limit is
+/// 256 KiB, so the rest of the envelope must fit in what is left.
+const MAX_RESTORE_JSON: usize = 192 * 1024;
+
+/// One shape a `shape.restore` puts back, with its place among its siblings.
+#[derive(Clone)]
+struct Restored {
+    shape: deckcraft_model::Shape,
+    parent: Option<ShapeId>,
+    index: usize,
+    animations: Vec<deckcraft_model::Animation>,
+}
+
+/// Put back shapes a collaborative step removed (ADR 0010): the undo of a shape delete, or the
+/// redo of a shape, picture or media insert.
+///
+/// Each item is the whole model value of one shape, so the shape returns with its id, text,
+/// geometry and every other field; a group image carries its children, so one item restores a
+/// whole subtree. `parent` and `index` put it back where it was in the z-order, clamped to the
+/// list that exists now, so neighbours that came and went do not block the restore. The
+/// animations that named the shape (or were triggered by it) come along: the delete dropped
+/// them and cleared the triggers of other effects, and the restore re-attaches both.
+///
+/// The value is hostile input even though the server builds it: it is size-bounded,
+/// deserialised into the model types before anything is touched, and an id already on the slide
+/// refuses the whole operation, not half of it.
+fn restore(s: &mut Session, p: &Value) -> Result<Value> {
+    let items = p.get("items").and_then(Value::as_array).ok_or_else(|| bad("shape.restore", "missing `items`"))?;
+    if items.is_empty() || items.len() > MAX_RESTORE_ITEMS {
+        return Err(bad("shape.restore", format!("`items` must hold 1–{MAX_RESTORE_ITEMS} shapes")));
+    }
+    let mut total = 0usize;
+    let mut prepared = Vec::with_capacity(items.len());
+    for item in items {
+        let value = item.get("value").ok_or_else(|| bad("shape.restore", "missing `value`"))?;
+        total = total.saturating_add(serde_json::to_vec(value).map_err(|e| bad("shape.restore", format!("invalid shape: {e}")))?.len());
+        let mut animations = Vec::new();
+        match item.get("animations") {
+            None | Some(Value::Null) => {}
+            Some(Value::Array(list)) => {
+                for a in list {
+                    total = total.saturating_add(serde_json::to_vec(a).map_err(|e| bad("shape.restore", format!("invalid animation: {e}")))?.len());
+                    animations.push(
+                        serde_json::from_value::<deckcraft_model::Animation>(a.clone())
+                            .map_err(|e| bad("shape.restore", format!("invalid animation: {e}")))?,
+                    );
+                }
+            }
+            Some(_) => return Err(bad("shape.restore", "`animations` must be a list")),
+        }
+        if total > MAX_RESTORE_JSON {
+            return Err(bad("shape.restore", "the images are too large"));
+        }
+        let shape: deckcraft_model::Shape = serde_json::from_value(value.clone()).map_err(|e| bad("shape.restore", format!("invalid shape: {e}")))?;
+        let index = item.get("index").and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok()).unwrap_or(0);
+        let parent = item.get("parent").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok()).map(ShapeId);
+        prepared.push(Restored { shape, parent, index, animations });
+    }
+    // Insert siblings in the order they sat in, and let a round of the loop put a parent back
+    // before its children: the payload may name a group and a child of it that is not one image.
+    prepared.sort_by_key(|item| item.index);
+    s.edit(|doc, sel| {
+        if sel.target != crate::Target::Slides {
+            return Err(bad("shape.restore", "a restore puts shapes back on a slide, not on a master"));
+        }
+        {
+            let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad("shape.restore", "no slide"))?;
+            let mut present = Vec::new();
+            deckcraft_model::walk(shapes, &mut |sh, _| present.push(sh.id));
+            for item in &prepared {
+                let mut ids = Vec::new();
+                subtree_ids(&item.shape, &mut ids, 0);
+                if let Some(clash) = ids.iter().find(|id| present.contains(id)) {
+                    return Err(bad("shape.restore", format!("shape {} is already on the slide", clash.0)));
+                }
+                present.extend(ids);
+            }
+            let mut pending: Vec<Restored> = prepared.clone();
+            loop {
+                let total = pending.len();
+                let mut deferred = Vec::new();
+                for item in pending.drain(..) {
+                    let slot = match item.parent {
+                        None => Some(&mut *shapes),
+                        Some(parent) => deckcraft_model::find_shape_mut(&mut shapes[..], parent).and_then(|group| group.children_mut()),
+                    };
+                    match slot {
+                        Some(slot) => {
+                            let at = item.index.min(slot.len());
+                            slot.insert(at, item.shape);
+                        }
+                        None => deferred.push(item),
+                    }
+                }
+                if deferred.is_empty() {
+                    break;
+                }
+                // Nothing moved this round: the remaining parents are missing or not groups.
+                if deferred.len() == total {
+                    return Err(bad("shape.restore", "a parent named by the restore is missing or is not a group"));
+                }
+                pending = deferred;
+            }
+        }
+        let mut ids = Vec::new();
+        for item in &prepared {
+            subtree_ids(&item.shape, &mut ids, 0);
+        }
+        let slide = doc.slides.get_mut(sel.slide).ok_or_else(|| bad("shape.restore", "no slide"))?;
+        let slide = std::sync::Arc::make_mut(slide);
+        for item in &prepared {
+            for anim in &item.animations {
+                if ids.contains(&anim.shape) {
+                    if !slide.animations.iter().any(|a| a == anim) {
+                        slide.animations.push(anim.clone());
+                    }
+                } else if let Some(trigger) = anim.trigger.filter(|t| ids.contains(t)) {
+                    // The delete cleared this effect's trigger; put it back on the same entry.
+                    let mut cleared = anim.clone();
+                    cleared.trigger = None;
+                    if let Some(at) = slide.animations.iter_mut().find(|a| a.trigger.is_none() && **a == cleared) {
+                        at.trigger = Some(trigger);
+                    }
+                }
+            }
+        }
+        Ok(json!({"restored": prepared.len()}))
+    })
+}
+
+/// Every id in a shape and its descendants.
+fn subtree_ids(shape: &deckcraft_model::Shape, out: &mut Vec<ShapeId>, depth: usize) {
+    if depth > 64 {
+        return;
+    }
+    out.push(shape.id);
+    for child in shape.children() {
+        subtree_ids(child, out, depth + 1);
+    }
+}
+
 fn rename(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("shape.rename", "missing `name`"))?.to_string();
     edit_shapes(s, p, "shape.rename", |sh| {
@@ -575,6 +727,79 @@ mod tests {
         let fill_of = |id: u64| doc.slides[0].shapes.iter().find(|sh| sh.id.0 as u64 == id).and_then(|sh| sh.fill.clone());
         assert_eq!(fill_of(a), Some(Fill::Background));
         assert_eq!(fill_of(b), Some(Fill::None));
+    }
+
+    /// One empty slide, so the sample deck's shapes do not shift the ids and the z-order.
+    fn blank() -> Session {
+        let mut s = Session::with_new();
+        let title = s.doc().unwrap().doc.slides[0].id;
+        s.execute("slide.new", &json!({"layout": "blank", "at": 1})).unwrap();
+        s.execute("slide.delete", &json!({"ids": [title.0]})).unwrap();
+        s
+    }
+
+    #[test]
+    fn restore_puts_a_shape_back_in_its_z_order_with_its_animation() {
+        let mut s = blank();
+        let mut ids = Vec::new();
+        for x in [40, 200, 360] {
+            ids.push(s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap());
+        }
+        s.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [ids[1]]})).unwrap();
+        let (value, index, animations, animation) = {
+            let st = s.doc().unwrap();
+            let slide = &st.doc.slides[0];
+            let shape = deckcraft_model::find_shape(&slide.shapes, ShapeId(ids[1] as u32)).unwrap();
+            let index = slide.shapes.iter().position(|sh| sh.id == shape.id).unwrap();
+            let animations: Vec<Value> = slide.animations.iter().map(|a| serde_json::to_value(a).unwrap()).collect();
+            (serde_json::to_value(shape).unwrap(), index, animations, slide.animations[0].clone())
+        };
+        s.execute("edit.delete", &json!({"ids": [ids[1]]})).unwrap();
+        assert!(s.execute("animation.get", &json!({})).unwrap().as_array().unwrap().is_empty(), "the delete drops its animation");
+
+        s.execute("shape.restore", &json!({"items": [{"value": value, "index": index, "animations": animations}]})).unwrap();
+        let st = s.doc().unwrap();
+        let slide = &st.doc.slides[0];
+        let order: Vec<u64> = slide.shapes.iter().map(|sh| sh.id.0 as u64).collect();
+        assert_eq!(order, ids, "the shape is back where it sat");
+        assert_eq!(slide.animations.len(), 1);
+        assert_eq!(slide.animations[0], animation, "its animation came back");
+    }
+
+    #[test]
+    fn restore_puts_a_group_child_back_under_its_parent() {
+        let mut s = blank();
+        let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap();
+        let b = s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [200, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("edit.select", &json!({"ids": [a, b]})).unwrap();
+        let group = s.execute("arrange.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+        let value = {
+            let st = s.doc().unwrap();
+            let g = deckcraft_model::find_shape(&st.doc.slides[0].shapes, ShapeId(group as u32)).unwrap();
+            serde_json::to_value(&g.children()[0]).unwrap()
+        };
+        s.execute("edit.delete", &json!({"ids": [a]})).unwrap();
+        s.execute("shape.restore", &json!({"items": [{"value": value, "parent": group, "index": 0}]})).unwrap();
+        {
+            let st = s.doc().unwrap();
+            let g = deckcraft_model::find_shape(&st.doc.slides[0].shapes, ShapeId(group as u32)).unwrap();
+            assert_eq!(g.children().len(), 2, "the child is back inside the group");
+            assert_eq!(g.children()[0].id.0 as u64, a, "at the bottom of the group's order");
+        }
+        let before = serde_json::to_value(&s.doc().unwrap().doc).unwrap();
+        let err = s.execute("shape.restore", &json!({"items": [{"value": {"id": 900, "kind": {"kind": "shape"}}, "parent": 9999, "index": 0}]}));
+        assert!(err.is_err(), "a missing parent refuses the restore");
+        assert_eq!(serde_json::to_value(&s.doc().unwrap().doc).unwrap(), before, "nothing was written");
+    }
+
+    #[test]
+    fn restore_refuses_a_shape_id_that_is_already_on_the_slide() {
+        let mut s = blank();
+        let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap();
+        let value = serde_json::to_value(s.doc().unwrap().shape(ShapeId(a as u32)).unwrap()).unwrap();
+        let err = s.execute("shape.restore", &json!({"items": [{"value": value, "index": 0}]}));
+        assert!(err.is_err(), "the id is taken");
+        assert_eq!(s.doc().unwrap().doc.slides[0].shapes.len(), 1, "no duplicate was written");
     }
 
     fn nested_group() -> (Session, Vec<ShapeId>, ShapeId, ShapeId) {

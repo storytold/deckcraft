@@ -17,7 +17,7 @@
 
 use std::collections::HashMap;
 
-use deckcraft_collab_proto::{Payload, ShapeField, ShapeFieldItem, ShapeKey, SlideKey};
+use deckcraft_collab_proto::{Payload, ShapeField, ShapeFieldItem, ShapeKey, ShapeRestoreItem, SlideKey};
 use deckcraft_model::text::TextBody;
 use deckcraft_model::{Fill, Line};
 
@@ -66,19 +66,49 @@ pub struct SlideImage {
     pub shows: Vec<(u32, u32)>,
 }
 
-/// One object a step touched: a shape value or a whole slide.
+/// A whole shape, present or absent, for a structural step: the model as JSON (its id, text,
+/// geometry and every other field), the group that held it and its place among that group's
+/// children, and the animations that named it or a descendant — including the effects of other
+/// shapes that it triggered, which a delete clears.
+///
+/// A group's image carries its children, so one image restores a whole subtree; a step records
+/// only the top-most shapes it removed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapeImage {
+    pub slide: SlideKey,
+    pub key: ShapeKey,
+    /// The group that held the shape; `None` = the top level of the slide.
+    pub parent: Option<ShapeKey>,
+    /// Position among the parent's children (`0` = back) while the shape was present.
+    pub index: u32,
+    /// `None` = the shape was absent.
+    pub shape: Option<serde_json::Value>,
+    /// The animation entries a delete dropped: the shape's own effects and the effects of other
+    /// shapes that it triggered.
+    pub animations: Vec<serde_json::Value>,
+}
+
+/// One object a step touched: a shape value, a whole shape or a whole slide.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Change {
     Shape(Snapshot),
+    ShapeBody(ShapeImage),
     Slide(SlideImage),
 }
 
 impl Change {
-    /// Whether `current` still holds the value this image recorded. A slide's position may have
-    /// moved because other slides came and went; only its presence and content are compared.
+    /// Whether `current` still holds the value this image recorded. A slide's or a shape's
+    /// position may have moved because neighbours came and went; only its presence, owner and
+    /// content are compared. Animations count as content: deleting a shape whose animation
+    /// someone added would drop their effect.
     pub fn same_state(&self, current: &Change) -> bool {
         match (self, current) {
             (Change::Shape(a), Change::Shape(b)) => a == b,
+            (Change::ShapeBody(a), Change::ShapeBody(b)) => match (&a.shape, &b.shape) {
+                (None, None) => a.key == b.key,
+                (Some(x), Some(y)) => a.key == b.key && a.parent == b.parent && x == y && a.animations == b.animations,
+                _ => false,
+            },
             (Change::Slide(a), Change::Slide(b)) => match (&a.slide, &b.slide) {
                 (None, None) => a.key == b.key,
                 (Some(x), Some(y)) => a.key == b.key && x == y,
@@ -94,6 +124,9 @@ impl Change {
 pub struct Restore {
     pub slide: SlideKey,
     pub shape: Option<ShapeKey>,
+    /// The objects a restored or removed group of shapes addresses: several shapes come back in
+    /// one `ShapeRestore`, and several are removed in one `ShapeDelete`.
+    pub shapes: Vec<ShapeKey>,
     pub payload: Payload,
 }
 
@@ -114,11 +147,15 @@ impl Image {
 /// The operation that puts back one step's before or after image.
 ///
 /// One shape value keeps the single-object `ShapeField` payload; a group's appearance step is one
-/// `ShapeFields` merge so its members are restored atomically; a slide is a `SlideRestore` or a
+/// `ShapeFields` merge so its members are restored atomically; a whole shape (or several) comes
+/// back in one `ShapeRestore` or goes in one `ShapeDelete`; a slide is a `SlideRestore` or a
 /// `SlideDelete`.
 pub fn restores(changes: &[Change]) -> Option<Restore> {
     match changes {
-        [Change::Shape(at)] => Some(Restore { slide: at.slide.clone(), shape: Some(at.shape.clone()), payload: at.image.payload(at.cell)? }),
+        [Change::Shape(at)] => {
+            Some(Restore { slide: at.slide.clone(), shape: Some(at.shape.clone()), shapes: Vec::new(), payload: at.image.payload(at.cell)? })
+        }
+        [Change::ShapeBody(at)] => body_restore(&[at]),
         [Change::Slide(at)] => {
             let payload = match &at.slide {
                 Some(slide) => {
@@ -126,9 +163,19 @@ pub fn restores(changes: &[Change]) -> Option<Restore> {
                 }
                 None => Payload::SlideDelete {},
             };
-            Some(Restore { slide: at.key.clone(), shape: None, payload })
+            Some(Restore { slide: at.key.clone(), shape: None, shapes: Vec::new(), payload })
         }
         [] => None,
+        many if many.iter().all(|change| matches!(change, Change::ShapeBody(_))) => {
+            let bodies: Vec<&ShapeImage> = many
+                .iter()
+                .filter_map(|change| match change {
+                    Change::ShapeBody(at) => Some(at),
+                    _ => None,
+                })
+                .collect();
+            body_restore(&bodies)
+        }
         many => {
             // A group's fill/outline is one step over its members: every image is an exact model
             // value of the same kind, and the restore is one atomic operation.
@@ -145,9 +192,36 @@ pub fn restores(changes: &[Change]) -> Option<Restore> {
                     _ => return None,
                 }
             }
-            Some(Restore { slide: slide?.clone(), shape: None, payload: Payload::ShapeFields { items } })
+            Some(Restore { slide: slide?.clone(), shape: None, shapes: Vec::new(), payload: Payload::ShapeFields { items } })
         }
     }
+}
+
+/// One operation over a step's whole-shape images: they are all present (put them back) or all
+/// absent (remove them again). A mix has no single operation.
+fn body_restore(bodies: &[&ShapeImage]) -> Option<Restore> {
+    let slide = bodies.first()?.slide.clone();
+    if bodies.iter().any(|b| b.slide != slide) {
+        return None;
+    }
+    if bodies.iter().all(|b| b.shape.is_none()) {
+        let shapes: Vec<ShapeKey> = bodies.iter().map(|b| b.key.clone()).collect();
+        return Some(Restore { slide, shape: None, shapes, payload: Payload::ShapeDelete {} });
+    }
+    if bodies.iter().any(|b| b.shape.is_none()) {
+        return None;
+    }
+    let mut items = Vec::with_capacity(bodies.len());
+    for b in bodies {
+        items.push(ShapeRestoreItem {
+            shape: b.key.clone(),
+            parent: b.parent.clone(),
+            index: b.index,
+            value: b.shape.clone()?,
+            animations: b.animations.clone(),
+        });
+    }
+    Some(Restore { slide, shape: None, shapes: Vec::new(), payload: Payload::ShapeRestore { items } })
 }
 
 /// One undoable step of one actor. A step may touch several objects (a group's members) or one
@@ -378,6 +452,68 @@ mod tests {
             shows: vec![],
         });
         assert!(!at.same_state(&edited), "the slide itself changed");
+    }
+
+    #[test]
+    fn a_whole_shape_step_restores_or_deletes_it() {
+        let value = serde_json::json!({"id": 7, "name": "Gone"});
+        let step = Step {
+            op_id: "op".into(),
+            version: 1,
+            before: vec![Change::ShapeBody(ShapeImage {
+                slide: "s1".into(),
+                key: "h1".into(),
+                parent: Some("h9".into()),
+                index: 2,
+                shape: Some(value.clone()),
+                animations: vec![serde_json::json!({"shape": 7, "effect": "fade"})],
+            })],
+            after: vec![Change::ShapeBody(ShapeImage {
+                slide: "s1".into(),
+                key: "h1".into(),
+                parent: Some("h9".into()),
+                index: 2,
+                shape: None,
+                animations: Vec::new(),
+            })],
+        };
+        let restore = step.restoring_payload().expect("a shape restore");
+        assert_eq!(restore.slide.0, "s1");
+        assert!(restore.shape.is_none(), "the payload names the shape");
+        assert!(restore.shapes.is_empty());
+        let Payload::ShapeRestore { items } = restore.payload else { panic!("one shape restore") };
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].shape.0, "h1");
+        assert_eq!(items[0].parent.as_ref().map(|k| k.0.as_str()), Some("h9"));
+        assert_eq!((items[0].index, &items[0].value), (2, &value));
+        assert_eq!(items[0].animations.len(), 1);
+
+        let redo = step.reapplying_payload().expect("a shape delete");
+        assert_eq!(redo.payload, Payload::ShapeDelete {});
+        assert_eq!(redo.shapes, vec![ShapeKey("h1".into())], "the delete names the shapes it removes");
+    }
+
+    #[test]
+    fn a_shape_image_compares_content_and_owner_but_not_position() {
+        let at = ShapeImage {
+            slide: "s1".into(),
+            key: "h1".into(),
+            parent: None,
+            index: 0,
+            shape: Some(serde_json::json!({"id": 7})),
+            animations: Vec::new(),
+        };
+        let shifted = Change::ShapeBody(ShapeImage { index: 3, ..at.clone() });
+        assert!(Change::ShapeBody(at.clone()).same_state(&shifted), "a neighbour was inserted or removed before it");
+        let edited = Change::ShapeBody(ShapeImage { shape: Some(serde_json::json!({"id": 7, "name": "Edited"})), ..at.clone() });
+        assert!(!Change::ShapeBody(at.clone()).same_state(&edited), "the shape itself changed");
+        let regrouped = Change::ShapeBody(ShapeImage { parent: Some("h2".into()), ..at.clone() });
+        assert!(!Change::ShapeBody(at.clone()).same_state(&regrouped), "the shape moved into another group");
+        let animated = Change::ShapeBody(ShapeImage { animations: vec![serde_json::json!({"shape": 7})], ..at.clone() });
+        assert!(!Change::ShapeBody(at.clone()).same_state(&animated), "someone added an effect that a delete would drop");
+        let gone = Change::ShapeBody(ShapeImage { shape: None, animations: Vec::new(), ..at.clone() });
+        assert!(!Change::ShapeBody(at).same_state(&gone), "presence is compared");
+        assert!(gone.same_state(&gone));
     }
 
     #[test]

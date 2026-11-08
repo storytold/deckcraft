@@ -278,6 +278,46 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn a_shape_undo_operation_replays_from_the_journal() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-store-shape-undo-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let store = Store::new(&dir, 100).expect("store");
+        let mut session = DocSession::from_document("file-s", deck(), SessionConfig::default()).expect("session");
+        store.snapshot("file-s", &mut session).expect("snapshot");
+        let doc = session.document().expect("doc").clone();
+        let slide_id = doc.slides[0].id;
+        let shape_id = doc.slides[0].shapes[0].id;
+        let shapes_before = doc.slides[0].shapes.len();
+        let key = session.keys().shape_key(slide_id, shape_id).expect("key").clone();
+        let slide = session.keys().slide_key(slide_id).expect("slide").clone();
+        let delete = OpEnvelope {
+            op_id: "del-1".into(),
+            doc: "file-s".into(),
+            base_version: 0,
+            kind: deckcraft_collab_proto::OpKind::Structural,
+            target: deckcraft_collab_proto::Target { slide: Some(slide), shapes: vec![key.clone()], ..Default::default() },
+            payload: deckcraft_collab_proto::Payload::ShapeDelete {},
+            history: None,
+        };
+        let applied = session.apply("alice", &delete).expect("delete");
+        store.record("file-s", &mut session, &applied).expect("record delete");
+        let undo = session.undo("alice", "undo-1").expect("undo");
+        assert!(matches!(undo.payload, deckcraft_collab_proto::Payload::ShapeRestore { .. }));
+        let applied = session.apply("alice", &undo).expect("undo");
+        store.record("file-s", &mut session, &applied).expect("record undo");
+        assert_eq!(session.version(), 2);
+
+        // Replay runs the confirmed command: the shape comes back under the key it had.
+        let restored = store.load("file-s").expect("load").expect("stored");
+        assert_eq!(restored.version(), 2);
+        let doc = restored.document().expect("doc");
+        assert_eq!(doc.slides[0].shapes.len(), shapes_before, "the shape came back");
+        assert_eq!(doc.slides[0].shapes[0].id, shape_id, "at its place in the z-order");
+        assert_eq!(restored.keys().shape_key(doc.slides[0].id, shape_id), Some(&key), "under the same key");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     fn png() -> Vec<u8> {
         vec![
             137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 8, 0, 0, 0, 8, 8, 2, 0, 0, 0, 75, 109, 41, 220, 0, 0, 0, 17, 73,

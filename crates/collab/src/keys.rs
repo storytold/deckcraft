@@ -107,20 +107,23 @@ impl KeyMap {
 
     /// A shape that had a key but is gone from the model now.
     pub fn is_dead_shape(&self, slide: SlideId, key: &ShapeKey) -> bool {
-        match self.shape_id.get(&slide).and_then(|m| m.get(key)) {
-            Some(_) => false,
-            None => self.dead_shapes.get(key).is_some_and(|s| *s == slide),
-        }
+        self.dead_shapes.get(key).is_some_and(|s| *s == slide)
     }
 
     /// Remember that a shape is gone, so a late operation is refused rather than resurrected.
+    ///
+    /// Both directions of the map stay: a restore puts the shape back under the key it had, so
+    /// the step that restored it stays addressable and every replica issues the same key.
     pub fn bury_shape(&mut self, slide: SlideId, shape: ShapeId) {
-        let key = self.shape_key.get_mut(&slide).and_then(|m| m.remove(&shape));
-        if let Some(key) = key {
-            if let Some(ids) = self.shape_id.get_mut(&slide) {
-                ids.remove(&key);
-            }
+        if let Some(key) = self.shape_key.get(&slide).and_then(|m| m.get(&shape)).cloned() {
             self.dead_shapes.insert(key, slide);
+        }
+    }
+
+    /// A restore put the shape back: its key is live again.
+    pub fn revive_shape(&mut self, slide: SlideId, shape: ShapeId) {
+        if let Some(key) = self.shape_key.get(&slide).and_then(|m| m.get(&shape)) {
+            self.dead_shapes.remove(key);
         }
     }
 
@@ -184,6 +187,10 @@ mod tests {
         let key = map.shape_key(slide, shape).expect("key").clone();
         map.bury_shape(slide, shape);
         assert!(map.is_dead_shape(slide, &key));
-        assert!(map.shape_id(slide, &key).is_none());
+        assert_eq!(map.shape_id(slide, &key), Some(shape), "a restore puts the shape back under the key it had");
+        map.revive_shape(slide, shape);
+        assert!(!map.is_dead_shape(slide, &key));
+        map.sync(&doc, &mut issuer);
+        assert_eq!(map.shape_key(slide, shape), Some(&key), "a restore issues no second key");
     }
 }

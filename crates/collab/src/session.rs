@@ -232,8 +232,8 @@ impl DocSession {
     /// The stored `Applied` already carries the authoritative command: replay must not re-run the
     /// history checks (there is no client undo on this path) and must not record a new undo step,
     /// but it fills the same version, dedup window and journal tail as [`Self::apply`]. This is
-    /// what lets an undo operation (an exact `shape_field`, a group's `shape_fields` or a
-    /// `slide_restore`) survive a restart.
+    /// what lets an undo operation (an exact `shape_field`, a group's `shape_fields`, a
+    /// `shape_restore` or a `slide_restore`) survive a restart.
     pub fn replay(&mut self, actor: &str, stored: &Applied) -> Result<(), String> {
         let Some(command) = &stored.command else { return Ok(()) };
         let op = OpEnvelope {
