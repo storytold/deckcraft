@@ -343,7 +343,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
                 {
                     dml::effects(w, fx);
                 }
-                if let Some(raw) = &fx.raw3d {
+                if let Some(raw) = fx.raw3d.as_deref().and_then(|s| dml::valid_raw3d(s, &["scene3d"])) {
                     w.raw(raw);
                 }
             }
