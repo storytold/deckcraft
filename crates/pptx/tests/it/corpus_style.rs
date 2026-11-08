@@ -396,4 +396,19 @@ fn paragraph_build_without_bld_lst_still_folds_into_by_paragraph() {
     let back_cust = deckcraft_pptx::import(&custom_bld).unwrap();
     assert_eq!(back_cust.slides[0].animations.len(), 2);
     assert!(back_cust.slides[0].animations.iter().all(|a| a.text_build == TextBuild::default()));
+
+    // Without bldLst, an AfterPrevious second paragraph whose parent container delay (1000ms)
+    // disagrees with the 500ms first paragraph span must not fold into a 500ms build.
+    let mut pres_with = pres.clone();
+    Arc::make_mut(&mut pres_with.slides[0]).animations[0].start = AnimStart::WithPrevious;
+    let bytes_with = deckcraft_pptx::export(&pres_with).unwrap();
+    let mismatched_offset = rewrite_zip_entry(&bytes_with, "ppt/slides/slide1.xml", |xml| {
+        let start = xml.find("<p:bldLst>").expect("bldLst");
+        let end = xml.find("</p:bldLst>").expect("/bldLst") + "</p:bldLst>".len();
+        let stripped = format!("{}{}", &xml[..start], &xml[end..]);
+        stripped.replacen(r#"<p:cond delay="500"/>"#, r#"<p:cond delay="1000"/>"#, 1)
+    });
+    let back_mismatch = deckcraft_pptx::import(&mismatched_offset).unwrap();
+    assert_eq!(back_mismatch.slides[0].animations.len(), 2);
+    assert!(back_mismatch.slides[0].animations.iter().all(|a| a.text_build == TextBuild::default()));
 }
