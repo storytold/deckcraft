@@ -6913,7 +6913,27 @@ fn format_color_and_friends_take_ids() {
     s.execute("format.font", &json!({"ids": [c], "family": "Lato"})).unwrap();
     assert_eq!(s.doc().unwrap().shape(ShapeId(c as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.font.as_deref(), Some("Lato"));
     s.execute("format.highlight", &json!({"ids": [a], "color": "#FFFF00"})).unwrap();
+    let run = |s: &Session, id: u64| s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.clone();
+    assert_eq!(run(&s, a).highlight, Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 255, 0))));
+    assert_eq!(run(&s, c).highlight, None, "an unnamed shape is untouched");
     s.execute("format.textTransparency", &json!({"ids": [b], "value": 0.5})).unwrap();
+    let Some(Fill::Solid { color }) = run(&s, b).fill else { panic!("solid fill expected") };
+    assert!((color.alpha() - 0.5).abs() < 1e-9, "{color:?}");
+    assert_eq!(run(&s, a).fill, red, "an unnamed shape keeps its opacity");
+    // The Font and Tabs dialogs' settings go to the named shapes too; with nothing to set they
+    // would open on the selection, so `ids` alone is refused.
+    s.execute("format.fontDialog", &json!({"ids": [c], "size": 30, "bold": true})).unwrap();
+    assert_eq!((run(&s, c).size, run(&s, c).bold), (Some(30.0), Some(true)));
+    assert_eq!(run(&s, a).size, None, "an unnamed shape is untouched");
+    s.execute("format.tabs", &json!({"ids": [a], "defaultTab": 36})).unwrap();
+    let para = |s: &Session, id: u64| s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].props.clone();
+    assert_eq!(para(&s, a).default_tab, Some(36.0));
+    assert_eq!(para(&s, b).default_tab, None, "an unnamed shape is untouched");
+    let dialogs = s.ui_requests.len();
+    assert!(s.execute("format.fontDialog", &json!({"ids": [c]})).is_err());
+    assert!(s.execute("format.tabs", &json!({"ids": [a]})).is_err());
+    assert_eq!(s.ui_requests.len(), dialogs, "no dialog opens for named shapes");
+    assert!(s.doc().unwrap().selection.shapes.is_empty(), "the selection is left alone");
 }
 
 /// MM1: a refused named `format.color` leaves the selection as it was.

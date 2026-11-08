@@ -470,6 +470,10 @@ fn font_dialog_params(s: &Session) -> Value {
 pub(super) fn font_dialog(s: &mut Session, p: &Value) -> Result<Value> {
     let edits = font_edits(p)?;
     if edits.is_empty() {
+        // The dialog opens on the selection, so named shapes with nothing to set would be ignored.
+        if super::names_targets(p) {
+            return Err(bad("format.fontDialog", "`ids` needs a setting to apply (family, size, bold…)"));
+        }
         s.ui_requests.push(crate::UiRequest::Dialog { id: "font".into(), params: font_dialog_params(s) });
         return ok();
     }

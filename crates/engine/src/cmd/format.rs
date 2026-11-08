@@ -136,7 +136,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Text Transparency",
             ["Shape Format", "WordArt Styles"],
             None,
-            "{value: 0..1, ids?: [shape ids]} — 0 opaque, 1 invisible; keeps the text's colour (inherited colours included)",
+            "{value: 0..1, ids?: [shape ids] (default: the selection)} — 0 opaque, 1 invisible; keeps the text's colour (inherited colours included)",
             has_text_or_shapes,
             text_transparency
         ),
@@ -163,7 +163,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Text Highlight Color",
             ["Home", "Font"],
             None,
-            "{color? (absent = none), ids?: [shape ids]}",
+            "{color? (absent = none), ids?: [shape ids] (default: the selection)}",
             has_text_or_shapes,
             highlight
         ),
@@ -202,9 +202,9 @@ pub fn specs() -> Vec<CommandSpec> {
             "Font…",
             ["Home", "Font"],
             Some("Cmd+T"),
-            "{family?, size?: pt, bold?: bool, italic?: bool, underline?: none|sng|dbl|heavy|dotted|dash|wavy, color?, strike?: none|sng|dbl, baseline?: none|super|sub|<fraction>, caps?: none|small|all, spacing?: pt} — with none of these, opens the Font dialog",
+            "{family?, size?: pt, bold?: bool, italic?: bool, underline?: none|sng|dbl|heavy|dotted|dash|wavy, color?, strike?: none|sng|dbl, baseline?: none|super|sub|<fraction>, caps?: none|small|all, spacing?: pt, ids?: [shape ids] (default: the selection)} — with none of these (ids aside), opens the Font dialog",
             has_text_or_shapes,
-            font_dialog
+            |s, p| on_named(s, p, "format.fontDialog", |s| font_dialog(s, p))
         ),
         cmd!(
             "format.textShadow",
@@ -356,9 +356,9 @@ pub fn specs() -> Vec<CommandSpec> {
             "Tabs…",
             ["Home", "Paragraph"],
             None,
-            "{set?: [{pos, align?}] (replaces all), add?: {pos, align?: l|ctr|r|dec}, move?: {from, to}, remove?: pos, clear?: bool, defaultTab?: pt} on the selected paragraphs; with none of them, opens the Tabs dialog (pos in pt from the text area's left)",
+            "{set?: [{pos, align?}] (replaces all), add?: {pos, align?: l|ctr|r|dec}, move?: {from, to}, remove?: pos, clear?: bool, defaultTab?: pt, ids?: [shape ids] (default: the selection)} on the selected paragraphs; with none of them (ids aside), opens the Tabs dialog (pos in pt from the text area's left)",
             has_text_or_shapes,
-            tabs
+            |s, p| on_named(s, p, "format.tabs", |s| tabs(s, p))
         ),
         cmd!(
             "format.anchor",
@@ -423,14 +423,19 @@ pub fn specs() -> Vec<CommandSpec> {
 /// Run `f` on the shapes `ids`/`id` name instead of the selection, as `shape.fill` does; without
 /// either, on the selection. An id the page being edited doesn't have is refused, naming it,
 /// rather than formatting nothing. The selection is put back after, also when the edit is refused (unless the edit went to another slide).
+/// Whether `p` names shapes with `ids` or `id`. An empty `ids` names nothing and means the
+/// selection, as `targets` reads it.
+fn names_targets(p: &Value) -> bool {
+    let named = |k: &str| p.get(k).is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()));
+    named("ids") || named("id")
+}
+
 fn on_named(s: &mut Session, p: &Value, cmd: &str, f: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
     // `targets` reads only an array, so any other `ids` would silently format the selection.
     if p.get("ids").is_some_and(|v| !v.is_null() && !v.is_array()) {
         return Err(super::bad(cmd, "`ids` must be an array of shape ids"));
     }
-    // An empty `ids` names nothing and means the selection, as `targets` reads it.
-    let named = |k: &str| p.get(k).is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()));
-    if !named("ids") && !named("id") {
+    if !names_targets(p) {
         return f(s);
     }
     let mut ids = super::targets(s, p)?;
