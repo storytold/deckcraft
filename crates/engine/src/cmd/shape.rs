@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use deckcraft_color::{ColorTransform, Rgba, SchemeSlot};
 use deckcraft_model::style::{Dash, Glow, Gradient, GradientShape, GradientStop, LineEnd, PatternFill, PictureFill, PictureMode, Reflection, Shadow};
-use deckcraft_model::{ColorRef, Effects, Fill, Geom, Line, ShapeId, ShapeStyle};
+use deckcraft_model::{ColorRef, Effects, Fill, Geom, Line, ShapeId, ShapeKind, ShapeStyle};
 use serde_json::{Value, json};
 
 use super::{
@@ -161,7 +161,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Exact Value",
             [],
             None,
-            "{field: fill|line|text, value: the exact model value as JSON, ids?} (restores the value an undoable step replaced; the fill, line and format commands cannot express the whole model, so collaboration undo uses this)",
+            "{field: fill|line|text|table, value: the exact model value as JSON, ids?} (restores the value an undoable step replaced; the fill, line and format commands cannot express the whole model, so collaboration undo uses this)",
             has_selection,
             set_field
         ),
@@ -451,6 +451,8 @@ const MAX_FIELD_JSON: usize = 256 * 1024;
 /// Most paragraphs and runs one restored text body may hold.
 const MAX_PARAGRAPHS: usize = 10_000;
 const MAX_RUNS: usize = 50_000;
+/// Most rows and columns one restored table may hold.
+const MAX_TABLE_LINES: usize = 1_000;
 
 /// Set one shape field to an exact model value.
 ///
@@ -460,7 +462,7 @@ const MAX_RUNS: usize = 50_000;
 /// argument), so a lossless restore cannot go through them. The value is still hostile input:
 /// it is size-bounded and deserialised into the model type before anything is touched.
 fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
-    let field = str_param(p, "field").ok_or_else(|| bad("shape.setField", "missing `field` (fill, line or text)"))?;
+    let field = str_param(p, "field").ok_or_else(|| bad("shape.setField", "missing `field` (fill, line, text or table)"))?;
     let value = p.get("value").cloned().unwrap_or(Value::Null);
     let bytes = serde_json::to_vec(&value).map_err(|e| bad("shape.setField", format!("invalid value: {e}")))?;
     if bytes.len() > MAX_FIELD_JSON {
@@ -492,7 +494,21 @@ fn set_field(s: &mut Session, p: &Value) -> Result<Value> {
                 Ok(())
             })
         }
-        other => Err(bad("shape.setField", format!("unknown field `{other}` (fill, line or text)"))),
+        "table" => {
+            let table = decode_field::<deckcraft_model::Table>(&value, "table")?.ok_or_else(|| bad("shape.setField", "a table cannot be cleared"))?;
+            let (rows, cols) = (table.rows.len(), table.cols.len());
+            if rows == 0 || cols == 0 || rows > MAX_TABLE_LINES || cols > MAX_TABLE_LINES {
+                return Err(bad("shape.setField", format!("the table must have 1–{MAX_TABLE_LINES} rows and columns")));
+            }
+            edit_shapes(s, p, "shape.setField", |sh| {
+                if !matches!(sh.kind, ShapeKind::Table(_)) {
+                    return Err(bad("shape.setField", "the shape is not a table"));
+                }
+                sh.kind = ShapeKind::Table(table.clone());
+                Ok(())
+            })
+        }
+        other => Err(bad("shape.setField", format!("unknown field `{other}` (fill, line, text or table)"))),
     }
 }
 
@@ -1305,6 +1321,43 @@ mod tests {
         let sh = doc.shape(id).unwrap();
         assert!(sh.fill.is_none() && sh.line.is_none());
         assert_eq!(sh.text.as_ref().unwrap().text(), "Hello", "the text is untouched");
+    }
+
+    #[test]
+    fn set_field_restores_a_whole_table() {
+        let mut s = Session::with_new();
+        let id = s
+            .execute("insert.table", &json!({"rows": 2, "cols": 2, "rect": [10.0, 10.0, 200.0, 80.0], "data": [["a", "b"], ["c", "d"]]}))
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        let id = ShapeId(id as u32);
+        let before = match &s.doc().unwrap().shape(id).unwrap().kind {
+            ShapeKind::Table(t) => t.clone(),
+            other => panic!("not a table: {other:?}"),
+        };
+        s.execute("table.insertRowAbove", &json!({"row": 0})).unwrap();
+        assert_eq!(
+            match &s.doc().unwrap().shape(id).unwrap().kind {
+                ShapeKind::Table(t) => t.n_rows(),
+                _ => 0,
+            },
+            3
+        );
+
+        let value = serde_json::to_value(&before).unwrap();
+        s.execute("shape.setField", &json!({"field": "table", "value": value})).unwrap();
+        let after = match &s.doc().unwrap().shape(id).unwrap().kind {
+            ShapeKind::Table(t) => t.clone(),
+            other => panic!("not a table: {other:?}"),
+        };
+        assert_eq!(after.n_rows(), 2, "the whole table came back");
+        assert_eq!(after.cell(0, 0).unwrap().text.text(), "a");
+
+        // A shape that is not a table refuses a table value, and a table cannot be cleared.
+        let rect = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 100.0, 30.0, 30.0]})).unwrap()["id"].as_u64().unwrap();
+        assert!(s.execute("shape.setField", &json!({"ids": [rect], "field": "table", "value": serde_json::to_value(&before).unwrap()})).is_err());
+        assert!(s.execute("shape.setField", &json!({"ids": [id.0], "field": "table", "value": null})).is_err());
     }
 
     #[test]

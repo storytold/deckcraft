@@ -16,7 +16,7 @@ use std::collections::HashSet;
 
 use base64::Engine as _;
 use deckcraft_collab_proto::{
-    ChangeKind, Delta, HistoryAction, MediaKind, OpEnvelope, OpKind, Payload, RejectCode, ShapeField, ShapeKey, SlideKey, Target,
+    ChangeKind, Delta, HistoryAction, MediaKind, OpEnvelope, OpKind, Payload, RejectCode, ShapeField, ShapeKey, SlideKey, TableAxis, Target,
 };
 use deckcraft_engine::{Session, Target as EngineTarget, TextSel};
 use deckcraft_model::text::TextBody;
@@ -313,7 +313,8 @@ impl Adapter {
             Payload::ShapeMove { .. } | Payload::ShapeSetBounds { .. } => (None, Image::Xfrm { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }),
             Payload::ShapesSetBounds { items } => return self.capture_bounds_step(before, after, op, items),
             Payload::TextSet { cell, .. } => (*cell, Image::Text(String::new())),
-            Payload::TextInsert { .. } | Payload::TextDelete { .. } => (None, Image::Text(String::new())),
+            Payload::TextInsert { cell, .. } | Payload::TextDelete { cell, .. } => (*cell, Image::Text(String::new())),
+            Payload::TableEdit { .. } => (None, Image::Table(deckcraft_model::Table::default())),
             Payload::ShapeFill { .. } => return self.capture_appearance(before, after, op, Image::Fill(None)),
             Payload::ShapeLine { .. } => return self.capture_appearance(before, after, op, Image::Line(None)),
             Payload::SlideTransition { .. } => return self.capture_transition_step(before, after, op),
@@ -680,6 +681,10 @@ impl Adapter {
             Image::Fill(_) => Image::Fill(shape.fill.clone()),
             Image::Line(_) => Image::Line(shape.line.clone()),
             Image::Format(_) => Image::Format(shape.text.clone()?),
+            Image::Table(_) => match &shape.kind {
+                ShapeKind::Table(t) => Image::Table(t.clone()),
+                _ => return None,
+            },
         };
         Some(Snapshot { slide: at.slide.clone(), shape: at.shape.clone(), cell: at.cell, image })
     }
@@ -737,22 +742,25 @@ impl Adapter {
                 }
                 self.call(session, "text.set", args, head)
             }
-            Payload::TextInsert { at, text } => {
+            Payload::TextInsert { at, text, cell } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
-                let body = before.slide(slide).and_then(|s| find_shape(&s.shapes, shape)).and_then(|s| s.text.as_ref());
+                let body = self.text_body(before, slide, shape, *cell, head)?;
                 let pos = offset_position(body, *at as usize);
-                self.select_text(session, before, slide, shape, (pos, pos), head)?;
+                let sel = TextSel { shape, anchor: pos, caret: pos, cell: cell.map(|(r, c)| (r as usize, c as usize)), notes: false, line_end: None };
+                self.select_text(session, before, slide, sel, head)?;
                 self.call(session, "text.insert", json!({"text": text}), head)
             }
-            Payload::TextDelete { from, to } => {
+            Payload::TextDelete { from, to, cell } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
                 if to <= from {
                     return Err(Rejection::invalid("the deleted range is empty", Some(head)));
                 }
-                let body = before.slide(slide).and_then(|s| find_shape(&s.shapes, shape)).and_then(|s| s.text.as_ref());
+                let body = self.text_body(before, slide, shape, *cell, head)?;
                 let start = offset_position(body, *from as usize);
                 let end = offset_position(body, *to as usize);
-                self.select_text(session, before, slide, shape, (start, end), head)?;
+                let sel =
+                    TextSel { shape, anchor: start, caret: end, cell: cell.map(|(r, c)| (r as usize, c as usize)), notes: false, line_end: None };
+                self.select_text(session, before, slide, sel, head)?;
                 self.call(session, "text.delete", json!({}), head)
             }
             Payload::ShapeInsert { preset, rect, text } => {
@@ -860,6 +868,24 @@ impl Adapter {
                 }
                 self.call(session, format.id(), args.clone(), head)
             }
+            Payload::TableEdit { axis, at, insert } => {
+                let (slide, shape) = self.resolve_one(before, &op.target, head)?;
+                let table = before
+                    .slide(slide)
+                    .and_then(|s| find_shape(&s.shapes, shape))
+                    .ok_or_else(|| Rejection::stale("the shape is gone", Some(head)))?;
+                if !matches!(&table.kind, ShapeKind::Table(_)) {
+                    return Err(Rejection::invalid("the shape is not a table", Some(head)));
+                }
+                let (cmd, key) = match (axis, insert) {
+                    (TableAxis::Row, true) => ("table.insertRowAbove", "row"),
+                    (TableAxis::Row, false) => ("table.deleteRow", "row"),
+                    (TableAxis::Column, true) => ("table.insertColumnLeft", "col"),
+                    (TableAxis::Column, false) => ("table.deleteColumn", "col"),
+                };
+                self.select_shapes(session, before, slide, &[shape], head)?;
+                self.call(session, cmd, json!({"id": shape.0, key: *at}), head)
+            }
             Payload::ShapeField { field, value } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
                 self.select_shapes(session, before, slide, &[shape], head)?;
@@ -867,6 +893,7 @@ impl Adapter {
                     ShapeField::Fill => "fill",
                     ShapeField::Line => "line",
                     ShapeField::Text => "text",
+                    ShapeField::Table => "table",
                 };
                 self.call(session, "shape.setField", json!({"field": name, "value": value, "ids": [shape.0]}), head)
             }
@@ -888,7 +915,7 @@ impl Adapter {
                     .map(|(shape, item)| {
                         json!({
                             "id": shape.0,
-                            "field": match item.field { ShapeField::Fill => "fill", ShapeField::Line => "line", ShapeField::Text => "text" },
+                            "field": match item.field { ShapeField::Fill => "fill", ShapeField::Line => "line", ShapeField::Text => "text", ShapeField::Table => "table" },
                             "value": item.value.clone(),
                         })
                     })
@@ -1005,25 +1032,39 @@ impl Adapter {
         Ok(())
     }
 
-    /// Put the engine's selection on one shape's text, so `text.insert`/`text.delete` act at the
-    /// authoritative position rather than at whatever this replica had selected.
-    fn select_text(
+    /// The text body of `shape`, or of one table cell, that a text operation's offset is inside.
+    /// A table without a cell address is refused: a cell has its own body, and the shape's own
+    /// `text` is empty for a table.
+    fn text_body<'a>(
         &self,
-        session: &mut Session,
-        before: &Presentation,
+        before: &'a Presentation,
         slide: SlideId,
         shape: ShapeId,
-        (anchor, caret): ((usize, usize), (usize, usize)),
+        cell: Option<(u32, u32)>,
         head: u64,
-    ) -> Result<(), Rejection> {
+    ) -> Result<Option<&'a TextBody>, Rejection> {
+        let sh = before.slide(slide).and_then(|s| find_shape(&s.shapes, shape)).ok_or_else(|| Rejection::stale("the shape is gone", Some(head)))?;
+        match (&sh.kind, cell) {
+            (ShapeKind::Table(t), Some((r, c))) => t
+                .cell(r as usize, c as usize)
+                .map(|x| Some(&x.text))
+                .ok_or_else(|| Rejection::invalid(format!("the table has no cell ({r}, {c})"), Some(head))),
+            (ShapeKind::Table(_), None) => Err(Rejection::invalid("a table text operation needs a cell address", Some(head))),
+            _ => Ok(sh.text.as_ref()),
+        }
+    }
+
+    /// Put the engine's selection on one shape's text, so `text.insert`/`text.delete` act at the
+    /// authoritative position rather than at whatever this replica had selected.
+    fn select_text(&self, session: &mut Session, before: &Presentation, slide: SlideId, sel: TextSel, head: u64) -> Result<(), Rejection> {
         let index = before.slide_index(slide).ok_or_else(|| Rejection::stale("the slide is gone", Some(head)))?;
         let st = session.doc_mut().map_err(|_| Rejection::invalid("no document open", Some(head)))?;
         st.selection.target = EngineTarget::Slides;
         st.selection.slide = index;
         st.selection.slides.clear();
-        st.selection.shapes = vec![shape];
+        st.selection.shapes = vec![sel.shape];
         st.selection.cells = None;
-        st.selection.text = Some(TextSel { shape, anchor, caret, cell: None, notes: false, line_end: None });
+        st.selection.text = Some(sel);
         Ok(())
     }
 
@@ -1194,6 +1235,7 @@ fn image_of_field(field: ShapeField) -> Image {
         ShapeField::Fill => Image::Fill(None),
         ShapeField::Line => Image::Line(None),
         ShapeField::Text => Image::Format(TextBody::default()),
+        ShapeField::Table => Image::Table(deckcraft_model::Table::default()),
     }
 }
 
@@ -1264,7 +1306,8 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::SlideDelete {}
         | Payload::SlideRestore { .. }
         | Payload::SlideMove { .. }
-        | Payload::SlideDuplicate {} => OpKind::Structural,
+        | Payload::SlideDuplicate {}
+        | Payload::TableEdit { .. } => OpKind::Structural,
     }
 }
 
@@ -1337,6 +1380,29 @@ mod tests {
 
     fn op(kind: OpKind, base: u64, target: Target, payload: Payload) -> OpEnvelope {
         OpEnvelope { op_id: "op-1".into(), doc: "d".into(), base_version: base, kind, target, payload, history: None }
+    }
+
+    /// The same deck with a 2×2 table as the third shape, and its top-left cell seeded.
+    fn table_deck() -> Session {
+        let mut s = deck();
+        s.apply_remote("insert.table", &json!({"rows": 2, "cols": 2, "rect": [100, 300, 300, 100]})).expect("table");
+        let table = s.doc().expect("doc").doc.slides[0].shapes[2].id;
+        s.apply_remote("text.set", &json!({"id": table.0, "cell": [0, 0], "text": "seed"})).expect("seed");
+        s
+    }
+
+    fn cell_text(doc: &Presentation, shape: usize, r: usize, c: usize) -> String {
+        match &doc.slides[0].shapes[shape].kind {
+            ShapeKind::Table(t) => t.cell(r, c).expect("cell").text.text(),
+            other => panic!("shape {shape} is not a table: {other:?}"),
+        }
+    }
+
+    fn table_rows(doc: &Presentation, shape: usize) -> usize {
+        match &doc.slides[0].shapes[shape].kind {
+            ShapeKind::Table(t) => t.n_rows(),
+            other => panic!("shape {shape} is not a table: {other:?}"),
+        }
     }
 
     #[test]
@@ -1507,6 +1573,89 @@ mod tests {
         );
         aa.apply(&mut a, 0, "a", &envelope).expect("text");
         assert_eq!(doc_of(&a).slides[0].shapes[1].text.as_ref().expect("text").text(), "Hello");
+    }
+
+    #[test]
+    fn two_clients_type_in_different_cells_of_one_table() {
+        let (mut a, mut b) = (table_deck(), table_deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let doc = doc_of(&a);
+        let (slide, shape) = key_of(&aa, &doc, 2);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+
+        let first = op(OpKind::Command, 0, target.clone(), Payload::TextInsert { at: 0, text: "A".into(), cell: Some((0, 0)) });
+        let mut second = op(OpKind::Command, 1, target, Payload::TextInsert { at: 0, text: "B".into(), cell: Some((1, 1)) });
+        second.op_id = "op-2".into();
+        aa.apply(&mut a, 0, "a", &first).expect("first");
+        bb.apply(&mut b, 0, "a", &first).expect("first on b");
+        aa.apply(&mut a, 1, "b", &second).expect("second");
+        bb.apply(&mut b, 1, "b", &second).expect("second on b");
+
+        assert_eq!(doc_of(&a), doc_of(&b), "the replicas converge");
+        assert_eq!(cell_text(&doc_of(&a), 2, 0, 0), "Aseed");
+        assert_eq!(cell_text(&doc_of(&a), 2, 1, 1), "B");
+    }
+
+    #[test]
+    fn undo_of_cell_text_steps_restores_the_exact_cell_value() {
+        let mut s = table_deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let doc = doc_of(&s);
+        let (slide, shape) = key_of(&ad, &doc, 2);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+
+        let insert = op(OpKind::Command, 0, target.clone(), Payload::TextInsert { at: 4, text: "Z".into(), cell: Some((0, 0)) });
+        ad.apply(&mut s, 0, "a", &insert).expect("insert");
+        assert_eq!(cell_text(&doc_of(&s), 2, 0, 0), "seedZ");
+        assert!(doc_of(&s).slides[0].shapes[2].text.is_none(), "a cell edit does not create shape text");
+
+        let undo = ad.undo(&s, 1, "a", "u-1").expect("undo");
+        assert!(matches!(undo.payload, Payload::TextSet { cell: Some((0, 0)), ref text } if text == "seed"), "{undo:?}");
+        ad.apply(&mut s, 1, "a", &undo).expect("apply undo");
+        assert_eq!(cell_text(&doc_of(&s), 2, 0, 0), "seed");
+
+        let redo = ad.redo(&s, 2, "a", "r-1").expect("redo");
+        ad.apply(&mut s, 2, "a", &redo).expect("apply redo");
+        assert_eq!(cell_text(&doc_of(&s), 2, 0, 0), "seedZ");
+
+        let mut delete = op(OpKind::Command, 3, target, Payload::TextDelete { from: 0, to: 4, cell: Some((0, 0)) });
+        delete.op_id = "op-del".into();
+        ad.apply(&mut s, 3, "a", &delete).expect("delete");
+        assert_eq!(cell_text(&doc_of(&s), 2, 0, 0), "Z");
+        let undo = ad.undo(&s, 4, "a", "u-2").expect("undo delete");
+        assert!(matches!(undo.payload, Payload::TextSet { cell: Some((0, 0)), ref text } if text == "seedZ"), "{undo:?}");
+        ad.apply(&mut s, 4, "a", &undo).expect("apply undo");
+        assert_eq!(cell_text(&doc_of(&s), 2, 0, 0), "seedZ");
+    }
+
+    #[test]
+    fn a_table_row_edit_records_and_restores_the_whole_table() {
+        let mut s = table_deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let doc = doc_of(&s);
+        let (slide, shape) = key_of(&ad, &doc, 2);
+        let target = Target { slide: Some(slide), shape: Some(shape), ..Target::default() };
+
+        let edit = op(OpKind::Structural, 0, target, Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true });
+        ad.apply(&mut s, 0, "a", &edit).expect("insert row");
+        assert_eq!(table_rows(&doc_of(&s), 2), 3);
+        assert_eq!(cell_text(&doc_of(&s), 2, 0, 0), "");
+        assert_eq!(cell_text(&doc_of(&s), 2, 1, 0), "seed", "the old row moved down");
+
+        let undo = ad.undo(&s, 1, "a", "u-1").expect("undo");
+        assert!(matches!(undo.payload, Payload::ShapeField { field: ShapeField::Table, .. }), "{undo:?}");
+        ad.apply(&mut s, 1, "a", &undo).expect("apply undo");
+        assert_eq!(table_rows(&doc_of(&s), 2), 2, "the whole table came back");
+        assert_eq!(cell_text(&doc_of(&s), 2, 0, 0), "seed");
+
+        let redo = ad.redo(&s, 2, "a", "r-1").expect("redo");
+        ad.apply(&mut s, 2, "a", &redo).expect("apply redo");
+        assert_eq!(table_rows(&doc_of(&s), 2), 3);
     }
 
     #[test]

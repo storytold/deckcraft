@@ -15,10 +15,10 @@ use std::sync::Arc;
 use base64::Engine as _;
 use deckcraft_collab_proto::{
     Applied, BaseSnapshot, Change, ClientInfo, ClientMsg, ConfirmedCommand, FillSpec, FormatCmd, LineSpec, MediaKind, OpEnvelope, OpKind, Payload,
-    ServerMsg, ShapeBounds, ShapeKey, SlideKey, Target,
+    ServerMsg, ShapeBounds, ShapeKey, SlideKey, TableAxis, Target,
 };
 use deckcraft_engine::{DocState, Session, Target as EngineTarget};
-use deckcraft_model::{Presentation, Shape, ShapeId, SlideId, find_shape, parent_of};
+use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, SlideId, find_shape, parent_of};
 use serde_json::Value;
 
 use crate::apply::{Adapter, class_of, position_offset};
@@ -402,7 +402,8 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
             let cell = p
                 .get("cell")
                 .and_then(|c| c.as_array())
-                .and_then(|a| Some((u32::try_from(a.first()?.as_u64()?).ok()?, u32::try_from(a.get(1)?.as_u64()?).ok()?)));
+                .and_then(|a| Some((u32::try_from(a.first()?.as_u64()?).ok()?, u32::try_from(a.get(1)?.as_u64()?).ok()?)))
+                .or_else(|| st.selection.text.as_ref().filter(|t| t.shape == id).and_then(|t| t.cell).map(|(r, c)| (r as u32, c as u32)));
             Ok(vec![make(
                 Target { slide: slide_key.clone(), shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() },
                 Payload::TextSet { text: text.to_string(), cell },
@@ -413,17 +414,17 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
                 return slide_delete_ops(keys, st, p, make);
             }
             if let Some(ts) = st.selection.text.as_ref() {
-                if ts.notes || ts.cell.is_some() {
-                    return Err(LocalError::Unsupported("editing notes or a table cell".into()));
+                if ts.notes {
+                    return Err(LocalError::Unsupported("editing notes".into()));
                 }
-                let shape = find_shape(&slide.shapes, ts.shape).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
-                let (from, to) = (position_offset(shape.text.as_ref(), ts.ordered().0), position_offset(shape.text.as_ref(), ts.ordered().1));
+                let (body, cell) = selected_body(&slide.shapes, ts)?;
+                let (from, to) = (position_offset(body, ts.ordered().0), position_offset(body, ts.ordered().1));
                 if to <= from {
                     return Err(LocalError::BadParams("nothing selected".into()));
                 }
                 return Ok(vec![make(
                     Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, ts.shape)?), ..Target::default() },
-                    Payload::TextDelete { from: from as u32, to: to as u32 },
+                    Payload::TextDelete { from: from as u32, to: to as u32, cell },
                 )]);
             }
             let ids = shape_ids(p, st)?;
@@ -435,30 +436,30 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
         }
         "text.insert" => {
             let ts = st.selection.text.as_ref().ok_or_else(|| LocalError::BadParams("text.insert needs a caret".into()))?;
-            if ts.notes || ts.cell.is_some() {
-                return Err(LocalError::Unsupported("typing in notes or a table cell".into()));
+            if ts.notes {
+                return Err(LocalError::Unsupported("typing in notes".into()));
             }
             let text = p.get("text").and_then(Value::as_str).ok_or_else(|| LocalError::BadParams("text.insert needs `text`".into()))?;
-            let shape = find_shape(&slide.shapes, ts.shape).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
-            let at = position_offset(shape.text.as_ref(), ts.caret);
+            let (body, cell) = selected_body(&slide.shapes, ts)?;
+            let at = position_offset(body, ts.caret);
             Ok(vec![make(
                 Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, ts.shape)?), ..Target::default() },
-                Payload::TextInsert { at: at as u32, text: text.to_string() },
+                Payload::TextInsert { at: at as u32, text: text.to_string(), cell },
             )])
         }
         "text.delete" => {
             let ts = st.selection.text.as_ref().ok_or_else(|| LocalError::BadParams("text.delete needs a text selection".into()))?;
-            if ts.notes || ts.cell.is_some() {
-                return Err(LocalError::Unsupported("editing notes or a table cell".into()));
+            if ts.notes {
+                return Err(LocalError::Unsupported("editing notes".into()));
             }
-            let shape = find_shape(&slide.shapes, ts.shape).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
-            let (from, to) = (position_offset(shape.text.as_ref(), ts.ordered().0), position_offset(shape.text.as_ref(), ts.ordered().1));
+            let (body, cell) = selected_body(&slide.shapes, ts)?;
+            let (from, to) = (position_offset(body, ts.ordered().0), position_offset(body, ts.ordered().1));
             if to <= from {
                 return Err(LocalError::BadParams("nothing selected".into()));
             }
             Ok(vec![make(
                 Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, ts.shape)?), ..Target::default() },
-                Payload::TextDelete { from: from as u32, to: to as u32 },
+                Payload::TextDelete { from: from as u32, to: to as u32, cell },
             )])
         }
         "shape.insert" => {
@@ -707,6 +708,58 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
             let before = rest.get(index).map(|s| shape_key(keys, slide.id, s.id)).transpose()?;
             Ok(vec![make(Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() }, Payload::Reorder { before })])
         }
+        "table.insertRowAbove"
+        | "table.insertRowBelow"
+        | "table.deleteRow"
+        | "table.insertColumnLeft"
+        | "table.insertColumnRight"
+        | "table.deleteColumn" => {
+            let cell = st.selection.text.as_ref().and_then(|t| t.cell.map(|c| (t.shape, c))).or_else(|| st.selection.cells.map(|c| (c.0, c.1)));
+            let id = p
+                .get("id")
+                .and_then(Value::as_u64)
+                .map(|v| ShapeId(v as u32))
+                .or(cell.map(|c| c.0))
+                .or_else(|| st.selection.shapes.first().copied())
+                .ok_or_else(|| LocalError::BadParams(format!("{cmd} needs a table")))?;
+            let shape = find_shape(&slide.shapes, id).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
+            let ShapeKind::Table(t) = &shape.kind else {
+                return Err(LocalError::BadParams(format!("{cmd} needs a table")));
+            };
+            let (n_rows, n_cols) = (t.n_rows(), t.n_cols());
+            let at_cell = cell.map(|c| c.1).unwrap_or((0, 0));
+            let row = p.get("row").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(at_cell.0);
+            let col = p.get("col").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(at_cell.1);
+            let (axis, at, insert) = match cmd {
+                "table.insertRowAbove" => (TableAxis::Row, row, true),
+                "table.insertRowBelow" => (TableAxis::Row, row.saturating_add(1), true),
+                "table.deleteRow" => {
+                    if row >= n_rows {
+                        return Err(LocalError::BadParams(format!("the table has no row {row}")));
+                    }
+                    (TableAxis::Row, row, false)
+                }
+                "table.insertColumnLeft" => (TableAxis::Column, col, true),
+                "table.insertColumnRight" => (TableAxis::Column, col.saturating_add(1), true),
+                _ => {
+                    if col >= n_cols {
+                        return Err(LocalError::BadParams(format!("the table has no column {col}")));
+                    }
+                    (TableAxis::Column, col, false)
+                }
+            };
+            let limit = match axis {
+                TableAxis::Row => n_rows,
+                TableAxis::Column => n_cols,
+            };
+            if insert && at > limit {
+                return Err(LocalError::BadParams(format!("{cmd}: no position {at} on that axis")));
+            }
+            Ok(vec![make(
+                Target { slide: slide_key, shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() },
+                Payload::TableEdit { axis, at: u32::try_from(at).map_err(|_| LocalError::BadParams("the table is too large".into()))?, insert },
+            )])
+        }
         other => Err(LocalError::Unsupported(other.into())),
     }
 }
@@ -842,6 +895,23 @@ fn shape_key(keys: &crate::KeyMap, slide: SlideId, id: ShapeId) -> Result<ShapeK
     keys.shape_key(slide, id).cloned().ok_or(LocalError::NoDocument)
 }
 
+/// The text body a local text command edits, and the table cell it lives in. A table cell has
+/// its own body; a table without a cell address is refused, and the offset is inside that body.
+fn selected_body<'a>(
+    shapes: &'a [Shape],
+    ts: &deckcraft_engine::TextSel,
+) -> Result<(Option<&'a deckcraft_model::text::TextBody>, Option<(u32, u32)>), LocalError> {
+    let shape = find_shape(shapes, ts.shape).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
+    match (&shape.kind, ts.cell) {
+        (ShapeKind::Table(t), Some((r, c))) => {
+            let cell = t.cell(r, c).ok_or_else(|| LocalError::BadParams(format!("the table has no cell ({r}, {c})")))?;
+            Ok((Some(&cell.text), Some((r as u32, c as u32))))
+        }
+        (ShapeKind::Table(_), None) => Err(LocalError::Unsupported("a table text command needs a cell".into())),
+        _ => Ok((shape.text.as_ref(), None)),
+    }
+}
+
 fn current_xfrm(doc: &Presentation, st: &DocState, shape: &Shape) -> deckcraft_model::Xfrm {
     deckcraft_engine::cmd::xfrm_of(doc, &st.selection, shape)
 }
@@ -882,7 +952,7 @@ pub fn kind_of(payload: &Payload) -> OpKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use deckcraft_engine::Session;
+    use deckcraft_engine::{Session, TextSel};
     use serde_json::json;
 
     fn deck() -> (Session, String, SlideId, Vec<ShapeId>) {
@@ -903,6 +973,24 @@ mod tests {
         let mut map = crate::KeyMap::new();
         map.sync(doc, &mut issuer);
         map
+    }
+
+    /// One slide with a 2×2 table; its top-left cell holds "ab".
+    fn table_deck() -> (Session, String, SlideId, ShapeId) {
+        let mut s = Session::with_new();
+        let title = s.doc().expect("doc").doc.slides[0].id;
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("blank");
+        s.apply_remote("slide.delete", &json!({"ids": [title.0]})).expect("drop title");
+        s.apply_remote("insert.table", &json!({"rows": 2, "cols": 2, "rect": [100, 100, 300, 100]})).expect("table");
+        let st = s.doc().expect("doc");
+        let slide = st.doc.slides[0].id;
+        let table = st.doc.slides[0].shapes[0].id;
+        s.apply_remote("text.set", &json!({"id": table.0, "cell": [0, 0], "text": "ab"})).expect("seed");
+        (s, "d".into(), slide, table)
+    }
+
+    fn caret(s: &mut Session, shape: ShapeId, at: (usize, usize), cell: Option<(usize, usize)>) {
+        s.doc_mut().expect("doc").selection.text = Some(TextSel { shape, anchor: at, caret: at, cell, notes: false, line_end: None });
     }
 
     #[test]
@@ -1035,6 +1123,59 @@ mod tests {
             Payload::Reorder { before } => assert_eq!(before.as_ref(), km.shape_key(s.doc().unwrap().doc.slides[0].id, shapes[0]).cloned().as_ref()),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn typing_in_a_table_cell_normalises_with_its_address() {
+        let (mut s, doc_id, _slide, table) = table_deck();
+        caret(&mut s, table, (0, 1), Some((0, 0)));
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+
+        let ops = normalize(&km, st, "text.insert", &json!({"text": "X"}), "op", &doc_id).expect("insert");
+        assert_eq!(ops[0].payload, Payload::TextInsert { at: 1, text: "X".into(), cell: Some((0, 0)) });
+
+        // A selected range in the cell becomes a delete inside the same body.
+        caret(&mut s, table, (0, 2), Some((0, 0)));
+        s.doc_mut().expect("doc").selection.text.as_mut().expect("caret").anchor = (0, 0);
+        let st = s.doc().expect("doc");
+        let ops = normalize(&km, st, "text.delete", &json!({}), "op", &doc_id).expect("delete");
+        assert_eq!(ops[0].payload, Payload::TextDelete { from: 0, to: 2, cell: Some((0, 0)) });
+
+        let ops = normalize(&km, st, "edit.delete", &json!({}), "op", &doc_id).expect("edit.delete");
+        assert_eq!(ops[0].payload, Payload::TextDelete { from: 0, to: 2, cell: Some((0, 0)) });
+
+        // `text.set` without an explicit `cell` takes it from the caret.
+        let ops = normalize(&km, st, "text.set", &json!({"text": "new"}), "op", &doc_id).expect("set");
+        assert_eq!(ops[0].payload, Payload::TextSet { text: "new".into(), cell: Some((0, 0)) });
+    }
+
+    #[test]
+    fn a_table_row_or_column_edit_normalises_to_one_structural_step() {
+        let (mut s, doc_id, _slide, table) = table_deck();
+        caret(&mut s, table, (0, 0), Some((0, 0)));
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+
+        let ops = normalize(&km, st, "table.insertRowAbove", &json!({}), "op", &doc_id).expect("insert above");
+        assert_eq!(ops[0].kind, OpKind::Structural);
+        assert_eq!(ops[0].payload, Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true });
+
+        let ops = normalize(&km, st, "table.insertRowBelow", &json!({}), "op", &doc_id).expect("insert below");
+        assert_eq!(ops[0].payload, Payload::TableEdit { axis: TableAxis::Row, at: 1, insert: true });
+
+        let ops = normalize(&km, st, "table.deleteRow", &json!({"row": 1}), "op", &doc_id).expect("delete row");
+        assert_eq!(ops[0].payload, Payload::TableEdit { axis: TableAxis::Row, at: 1, insert: false });
+
+        let ops = normalize(&km, st, "table.insertColumnRight", &json!({}), "op", &doc_id).expect("insert right");
+        assert_eq!(ops[0].payload, Payload::TableEdit { axis: TableAxis::Column, at: 1, insert: true });
+
+        let ops = normalize(&km, st, "table.deleteColumn", &json!({"col": 1}), "op", &doc_id).expect("delete column");
+        assert_eq!(ops[0].payload, Payload::TableEdit { axis: TableAxis::Column, at: 1, insert: false });
+
+        // An address outside the table is refused before anything is sent.
+        assert!(normalize(&km, st, "table.deleteRow", &json!({"row": 9}), "op", &doc_id).is_err());
+        assert!(normalize(&km, st, "table.deleteColumn", &json!({"col": 9}), "op", &doc_id).is_err());
     }
 
     #[test]

@@ -287,14 +287,19 @@ impl DocSession {
         {
             return Err(refuse(op, Rejection::stale("the text history was compacted; resync first", Some(self.version))));
         }
-        let shape = op.target.shape.clone();
-        let adjust_point = |point: &mut u32, payload: &Payload| match payload {
-            Payload::TextInsert { at, text } if shape.as_ref() == op.target.shape.as_ref() => {
+        // The cell address is part of the text address: a row or column edit moves it, and two
+        // operations in different cells of one table never shift each other's offsets.
+        let mut cell = match &op.payload {
+            Payload::TextInsert { cell, .. } | Payload::TextDelete { cell, .. } => *cell,
+            _ => None,
+        };
+        let shift = |point: &mut u32, payload: &Payload, cell: Option<(u32, u32)>| match payload {
+            Payload::TextInsert { at, text, cell: entry } if *entry == cell => {
                 if *at <= *point {
                     *point = point.saturating_add(text.chars().count() as u32);
                 }
             }
-            Payload::TextDelete { from, to } if shape.as_ref() == op.target.shape.as_ref() => {
+            Payload::TextDelete { from, to, cell: entry } if *entry == cell => {
                 if *to <= *point {
                     *point = point.saturating_sub(to.saturating_sub(*from));
                 } else if *from < *point {
@@ -309,16 +314,38 @@ impl DocSession {
             if command.target.shape != op.target.shape {
                 continue;
             }
+            if let Payload::TableEdit { axis, at, insert } = &command.payload {
+                let index = match axis {
+                    deckcraft_collab_proto::TableAxis::Row => cell.as_mut().map(|(r, _)| r),
+                    deckcraft_collab_proto::TableAxis::Column => cell.as_mut().map(|(_, c)| c),
+                };
+                if let Some(index) = index {
+                    if *insert {
+                        if *index >= *at {
+                            *index = index.saturating_add(1);
+                        }
+                    } else if *index == *at {
+                        return Err(refuse(op, Rejection::stale("the table line holding this operation was removed", Some(self.version))));
+                    } else if *index > *at {
+                        *index -= 1;
+                    }
+                }
+                continue;
+            }
             match &mut op.payload {
-                Payload::TextInsert { at, .. } => adjust_point(at, &command.payload),
-                Payload::TextDelete { from, to } => {
-                    adjust_point(from, &command.payload);
-                    adjust_point(to, &command.payload);
+                Payload::TextInsert { at, .. } => shift(at, &command.payload, cell),
+                Payload::TextDelete { from, to, .. } => {
+                    shift(from, &command.payload, cell);
+                    shift(to, &command.payload, cell);
                 }
                 _ => {}
             }
         }
-        if let Payload::TextDelete { from, to } = op.payload
+        match &mut op.payload {
+            Payload::TextInsert { cell: at, .. } | Payload::TextDelete { cell: at, .. } => *at = cell,
+            _ => {}
+        }
+        if let Payload::TextDelete { from, to, .. } = op.payload
             && to <= from
         {
             return Err(refuse(op, Rejection::invalid("the deleted text was already changed", Some(self.version))));
@@ -579,7 +606,7 @@ fn media_options_differ(clip: &MediaClip) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use deckcraft_collab_proto::{OpKind, Payload, RejectCode, ShapeKey, SlideKey, Target};
+    use deckcraft_collab_proto::{OpKind, Payload, RejectCode, ShapeKey, SlideKey, TableAxis, Target};
 
     fn deck() -> Presentation {
         let mut s = Session::with_new();
@@ -588,6 +615,48 @@ mod tests {
         s.apply_remote("slide.delete", &json!({"ids": [title.0]})).expect("drop title");
         s.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).expect("insert");
         s.doc().expect("doc").doc.as_ref().clone()
+    }
+
+    /// One blank slide with a 2×2 table whose top-left cell holds "ab".
+    fn table_deck() -> Presentation {
+        let mut s = Session::with_new();
+        let title = s.doc().expect("doc").doc.slides[0].id;
+        s.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("blank");
+        s.apply_remote("slide.delete", &json!({"ids": [title.0]})).expect("drop title");
+        s.apply_remote("insert.table", &json!({"rows": 2, "cols": 2, "rect": [100, 100, 300, 100]})).expect("table");
+        let table = s.doc().expect("doc").doc.slides[0].shapes[0].id;
+        s.apply_remote("text.set", &json!({"id": table.0, "cell": [0, 0], "text": "ab"})).expect("seed");
+        s.doc().expect("doc").doc.as_ref().clone()
+    }
+
+    fn table_keys(session: &DocSession) -> (SlideKey, ShapeKey) {
+        let doc = session.document().expect("doc");
+        let slide = doc.slides.first().expect("slide");
+        let key = session.adapter.keys();
+        (
+            key.slide_key(slide.id).expect("slide key").clone(),
+            key.shape_key(slide.id, slide.shapes.first().expect("table").id).expect("shape key").clone(),
+        )
+    }
+
+    fn cell(session: &DocSession, r: usize, c: usize) -> String {
+        let doc = session.document().expect("doc");
+        match &doc.slides[0].shapes[0].kind {
+            deckcraft_model::ShapeKind::Table(t) => t.cell(r, c).expect("cell").text.text(),
+            other => panic!("not a table: {other:?}"),
+        }
+    }
+
+    fn cell_op(slide: &SlideKey, shape: &ShapeKey, payload: Payload, base: u64, op_id: &str) -> OpEnvelope {
+        OpEnvelope {
+            op_id: op_id.into(),
+            doc: "d".into(),
+            base_version: base,
+            kind: OpKind::Command,
+            target: Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
+            payload,
+            history: None,
+        }
     }
 
     fn keys(session: &DocSession) -> (SlideKey, ShapeKey) {
@@ -624,6 +693,81 @@ mod tests {
         assert_eq!(first, again);
         assert_eq!(s.version(), 1);
         assert_eq!(*s.document().expect("doc"), doc_after, "a resend does not apply twice");
+    }
+
+    #[test]
+    fn a_cell_resend_after_reconnect_applies_once() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let op = cell_op(&slide, &shape, Payload::TextInsert { at: 2, text: "X".into(), cell: Some((0, 0)) }, 0, "op-1");
+        s.apply("a", &op).expect("first");
+        assert_eq!(cell(&s, 0, 0), "abX");
+        let again = s.apply("a", &op).expect("resend after reconnect");
+        assert_eq!(again.version, 1);
+        assert_eq!(s.version(), 1, "the resend does not bump the version");
+        assert_eq!(cell(&s, 0, 0), "abX", "the character is not inserted twice");
+    }
+
+    #[test]
+    fn a_cell_insert_rebases_past_an_inserted_row() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        // A client at version 0 types before the "b" of the seeded cell.
+        let queued = cell_op(&slide, &shape, Payload::TextInsert { at: 1, text: "X".into(), cell: Some((0, 0)) }, 0, "typed");
+        // Someone else inserts a row above it; the queued operation's address must move down.
+        let row = OpEnvelope {
+            op_id: "row".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true },
+            history: None,
+        };
+        s.apply("b", &row).expect("insert row");
+        s.apply("a", &queued).expect("the queued cell insert applies after the shift");
+        assert_eq!(cell(&s, 1, 0), "aXb");
+        assert_eq!(cell(&s, 0, 0), "", "the inserted row stays empty");
+        assert_eq!(s.version(), 2);
+    }
+
+    #[test]
+    fn a_cell_insert_is_refused_when_its_row_is_deleted() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let target = Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() };
+        let queued = cell_op(&slide, &shape, Payload::TextInsert { at: 1, text: "X".into(), cell: Some((0, 0)) }, 0, "typed");
+        let row = OpEnvelope {
+            op_id: "row".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target,
+            payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: false },
+            history: None,
+        };
+        s.apply("b", &row).expect("delete row");
+        let err = s.apply("a", &queued).expect_err("the cell is gone");
+        assert_eq!(err.code, RejectCode::Stale);
+        assert!(err.retryable);
+        assert_eq!(s.version(), 1, "the refused operation does not bump the version");
+    }
+
+    #[test]
+    fn two_people_typing_in_one_cell_keep_both_insertions() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let x = cell_op(&slide, &shape, Payload::TextInsert { at: 1, text: "X".into(), cell: Some((0, 0)) }, 0, "x");
+        let y = cell_op(&slide, &shape, Payload::TextInsert { at: 1, text: "Y".into(), cell: Some((0, 0)) }, 0, "y");
+        s.apply("a", &x).expect("x");
+        s.apply("b", &y).expect("y is rebased past x");
+        assert_eq!(cell(&s, 0, 0), "aXYb");
+
+        // The same offsets in two different cells do not shift each other.
+        let other = cell_op(&slide, &shape, Payload::TextInsert { at: 0, text: "Q".into(), cell: Some((1, 1)) }, 0, "q");
+        s.apply("b", &other).expect("another cell");
+        assert_eq!(cell(&s, 0, 0), "aXYb", "the other cell's offset did not move this one");
+        assert_eq!(cell(&s, 1, 1), "Q");
     }
 
     #[test]

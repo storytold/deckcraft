@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use deckcraft_collab_proto::{Payload, ShapeBounds, ShapeField, ShapeFieldItem, ShapeKey, ShapeRestoreItem, SlideKey};
 use deckcraft_model::anim::Transition;
 use deckcraft_model::text::TextBody;
-use deckcraft_model::{Fill, Line};
+use deckcraft_model::{Fill, Line, Table};
 
 /// A value one step replaced. Coarse on purpose: the whole box for a move/resize, the whole
 /// text body for a text edit or a format step, the whole fill or outline for an appearance step,
@@ -39,6 +39,9 @@ pub enum Image {
     /// per run and per paragraph, so one command's arguments cannot describe the value it
     /// replaced: the image is the body itself.
     Format(TextBody),
+    /// A whole table, for a structural row/column edit: the cells' indices and values both
+    /// change, so only the whole table is an exact image.
+    Table(Table),
 }
 
 /// One shape a step touched.
@@ -188,6 +191,7 @@ impl Image {
             Image::Fill(fill) => Payload::ShapeField { field: ShapeField::Fill, value: serde_json::to_value(fill).ok()? },
             Image::Line(line) => Payload::ShapeField { field: ShapeField::Line, value: serde_json::to_value(line).ok()? },
             Image::Format(body) => Payload::ShapeField { field: ShapeField::Text, value: serde_json::to_value(body).ok()? },
+            Image::Table(table) => Payload::ShapeField { field: ShapeField::Table, value: serde_json::to_value(table).ok()? },
         })
     }
 }

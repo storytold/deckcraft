@@ -115,6 +115,7 @@ impl Hub {
                     "text.set".into(),
                     "text.insert".into(),
                     "text.delete".into(),
+                    "table.edit".into(),
                     "shape.insert".into(),
                     "insert.picture".into(),
                     "edit.delete".into(),
@@ -567,7 +568,7 @@ mod tests {
                 base_version: 1,
                 kind: OpKind::Command,
                 target: Target { slide: Some(slide.clone()), shape: Some(shape.clone()), ..Target::default() },
-                payload: Payload::TextInsert { at: 1, text: ch.into() },
+                payload: Payload::TextInsert { at: 1, text: ch.into(), cell: None },
                 history: None,
             };
             hub.receive(if id == "a" { "alice" } else { "bob" }, ClientMsg::Op(op)).expect("insert");

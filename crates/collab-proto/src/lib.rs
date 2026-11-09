@@ -135,12 +135,24 @@ pub enum Payload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cell: Option<(u32, u32)>,
     },
-    /// Inserts at a character offset in the shape's text body (`\n` is a paragraph break). The
-    /// server rebases the offset against operations that arrived after `baseVersion`, so two
-    /// people typing in one paragraph both keep their text.
-    TextInsert { at: u32, text: String },
-    /// Removes the characters in `[from, to)` of the shape's text body.
-    TextDelete { from: u32, to: u32 },
+    /// Inserts at a character offset in the shape's text body or in one table cell (`\n` is a
+    /// paragraph break). The server rebases the offset against operations that arrived after
+    /// `baseVersion`, so two people typing in one paragraph both keep their text. `cell`
+    /// addresses one table cell: the offset is inside that cell's own body, and a row or column
+    /// inserted or deleted above/left of it moves the address and not the text.
+    TextInsert {
+        at: u32,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cell: Option<(u32, u32)>,
+    },
+    /// Removes the characters in `[from, to)` of the shape's text body or of one table cell.
+    TextDelete {
+        from: u32,
+        to: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cell: Option<(u32, u32)>,
+    },
     /// Inserts a preset shape with final geometry (and optional text).
     ShapeInsert {
         preset: String,
@@ -186,6 +198,11 @@ pub enum Payload {
     /// One allowlisted `format.*` command with absolute arguments, aimed at the whole text body
     /// of `target.shape`. Run-level ranges are a later slice (RFC §15).
     FormatSet { format: FormatCmd, args: serde_json::Value },
+    /// Inserts or deletes one row or column of the table in `target.shape`. Structural: every
+    /// cell at or after `at` on the axis moves, so a queued text operation in a cell rebases its
+    /// address before it applies. `insert` puts an empty line before `at`; otherwise the line
+    /// `at` is removed.
+    TableEdit { axis: TableAxis, at: u32, insert: bool },
     /// Puts back the exact value an undoable step replaced (ADR 0010). The server builds this
     /// from the actor's history and never a client from a user edit: `value` is the model value
     /// of `field` as JSON (`null` = unset), because the user-facing fill, line and format
@@ -267,6 +284,14 @@ pub enum MediaKind {
     Audio,
 }
 
+/// The axis of a table a [`Payload::TableEdit`] changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TableAxis {
+    Row,
+    Column,
+}
+
 /// The shape value a [`Payload::ShapeField`] restore puts back. These are exactly the values
 /// the v1 command surface can replace but not reproduce: a fill or an outline with fields the
 /// fill/line commands do not carry, and a whole text body with its run and paragraph formatting.
@@ -276,6 +301,9 @@ pub enum ShapeField {
     Fill,
     Line,
     Text,
+    /// The whole table in a table shape, for the undo of a row/column edit: a structural table
+    /// step changes the cells' indices and their values, so only the whole table is exact.
+    Table,
 }
 
 /// One shape value in a [`Payload::ShapeFields`] merge restore.
@@ -560,6 +588,7 @@ impl Payload {
             Payload::ShapeLine { .. } => "shape.line",
             Payload::SlideTransition { .. } => "slide.transition.set",
             Payload::FormatSet { format, .. } => format.id(),
+            Payload::TableEdit { .. } => "table.edit",
             Payload::ShapeField { .. } => "shape.setField",
             Payload::ShapeFields { .. } => "shape.setFields",
             Payload::ShapesSetBounds { .. } => "shape.setBoundsMany",
@@ -1167,9 +1196,36 @@ mod tests {
     fn payload_reports_the_command_it_normalises_to() {
         assert_eq!(Payload::ShapeMove { x: 0.0, y: 0.0 }.command(), "shape.move");
         assert_eq!(Payload::TextSet { text: "hi".into(), cell: None }.command(), "text.set");
+        assert_eq!(Payload::TextInsert { at: 0, text: "hi".into(), cell: None }.command(), "text.insert");
+        assert_eq!(Payload::TextDelete { from: 0, to: 1, cell: None }.command(), "text.delete");
+        assert_eq!(Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true }.command(), "table.edit");
         assert_eq!(Payload::SlideMove { before: None }.command(), "slide.move");
         assert_eq!(Payload::Reorder { before: None }.command(), "arrange.reorder");
         assert_eq!(Payload::SlideTransition { transition: None }.command(), "slide.transition.set");
+    }
+
+    #[test]
+    fn a_cell_address_travels_with_text_and_a_table_step() {
+        let insert = Payload::TextInsert { at: 3, text: "x".into(), cell: Some((1, 2)) };
+        let text = serde_json::to_string(&insert).expect("encode");
+        assert!(text.contains("\"cell\":[1,2]"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), insert);
+
+        let delete = Payload::TextDelete { from: 0, to: 3, cell: Some((1, 2)) };
+        let text = serde_json::to_string(&delete).expect("encode");
+        assert!(text.contains("\"cell\":[1,2]"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), delete);
+
+        // A body operation on a shape stays free of the field.
+        let shape = Payload::TextInsert { at: 0, text: "x".into(), cell: None };
+        assert!(!serde_json::to_string(&shape).expect("encode").contains("cell"));
+
+        let step = Payload::TableEdit { axis: TableAxis::Row, at: 4, insert: true };
+        let text = serde_json::to_string(&step).expect("encode");
+        assert!(text.contains("\"cmd\":\"table_edit\""), "{text}");
+        assert!(text.contains("\"axis\":\"row\""), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), step);
+        assert_eq!(Payload::TableEdit { axis: TableAxis::Column, at: 0, insert: false }.command(), "table.edit");
     }
 
     #[test]
