@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-09. Branch: `collab/pr11`, from `collab/pr10` at `922a4bf4` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, the browser link `66d4658c`, the transition slice `927e773c`, docs commits on top), plus the table-text slice `2a91d49e` and its docs commit on top.
+Updated: 2026-11-09. Branch: `collab/pr11`, from `collab/pr10` at `922a4bf4` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, the browser link `66d4658c`, the transition slice `927e773c`, docs commits on top), plus the table-text slice `2a91d49e`, its docs commit and the cell-set rebase on top.
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -24,7 +24,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
 | `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048`, `e007e965`, `927e773c` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds, `transition.set` as a whole final value; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup, align/distribute and transition; commit published to the cabinet as a new file version (`409` on an external change); base transfer after compaction with the key map, and a three-client soak gate |
-| `collab/pr11` | `2a91d49e` | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image |
+| `collab/pr11` | `2a91d49e` (+ cell-set rebase) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image |
 
 The Commit column names the slice commits; each branch also carries documentation commits. Heads:
 `collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711`, `0a57b61e`, `58eee059`, `69c2ff22`,
@@ -34,7 +34,8 @@ insert/delete undo), `31842050` (cabinet commit publication), `f28ee048` (docs),
 (the §8 gates and the non-active-slide fix), `556c00d9` (three-session gate and the reconnect
 catch-up fix), `e007e965` (base transfer after compaction and the three-client soak), `927e773c`
 (`slide.transition.set` as a final-value slice with its undo), plus the docs commits on top,
-`collab/pr11` = `2a91d49e` (table cell text and row/column edits) plus its docs commit. The working tree is clean: the chair's
+`collab/pr11` = `2a91d49e` (table cell text and row/column edits) plus its docs commit and
+the cell-set rebase on top. The working tree is clean: the chair's
 uncommitted finding of 2026-11-08 is `7fe75711`; the second slice added `0a57b61e` (media kinds,
 TLS, command slices, tests, docs), `69c2ff22` hardened the format command, `41fe1ad9` added undo
 of fill/line/format steps, `4e666b95` added undo of a group's fill/line and of slide
@@ -56,8 +57,8 @@ session message.
 The published head of the fork branch `copoka/deckcraft:collab/pr10` is `63ec1ebe`, open as
 [PR #1975](https://github.com/storytold/deckcraft/pull/1975). Local `collab/pr10` is ahead of it by
 `3ec81d70`, `ded9d1ee`, `31842050`, `f28ee048`, `98d9e9ce`, `31d353fe`, `5b078c7d` and
-`556c00d9`, and local `collab/pr11` adds `927e773c`, `922a4bf4`, `2a91d49e` and the docs commits
-on top. `git fetch fork` shows no commit on the fork side that is missing locally, and a
+`556c00d9`, and local `collab/pr11` adds `927e773c`, `922a4bf4`, `2a91d49e`, the cell-set
+rebase and the docs commits on top. `git fetch fork` shows no commit on the fork side that is missing locally, and a
 `git push --dry-run` from this workspace is refused by the environment policy, so publishing the
 new head is a manual step. Nothing was pushed to `storytold/deckcraft`; the PR comes from the
 fork and a human decision still governs merging it. The PR body is prepared in [`pr10.md`](pr10.md):
@@ -290,7 +291,7 @@ document as the editors.
 
 | Command | Result |
 |---|---|
-| `cargo test -p deckcraft-collab` | 146 unit + 8 integration |
+| `cargo test -p deckcraft-collab` | 147 unit + 8 integration |
 | `cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1` (on `agents`) | 4 passed in about 2.5 s: the 120-slide/media room and commit; three sessions (two editors on different slides and a viewer) across a conflicting edit, an undo-conflict, a forbidden viewer op and a reconnect with journal catch-up, all converging on version 4; the three-client soak (26 move/bounds/text/fill edits, compaction every 5 steps, a viewer rebuilt from a 5 KiB base at version 25 plus one tail step, a reconnect from a two-step tail, all three at version 28 and the commit reimporting); LibreOffice 26.2 renders 121 pages and round-trips the commit (run on the workstation, see below); on the build host the LibreOffice test skips itself (no `soffice`) |
 | `cargo test -p deckcraft-collab --lib apply::` | 52 (a remote edit on a slide the replica is not looking at applies; two replicas converge on different table cells) |
 | `cargo test -p deckcraft-collab-server` | 10 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist, shape-undo replay) + 4 commit tests (two copies with their originals kept, an external change is a `409`, a client commit answered after publication, the no-callback mode) + 4 gates |
@@ -348,12 +349,13 @@ run without `soffice` on the build host. `git status` is clean after the docs co
 pushed and CI was not touched.
 
 Re-run on 2026-11-09 after the table-text slice (`2a91d49e`, on `agents`, rust 1.99.1): `fmt
---check` clean, `collab-proto` 24, `collab` 146 + 8, `collab-server` 10 unit + 4 commit + 4 gates
+--check` clean, `collab-proto` 24, `collab` 147 + 8, `collab-server` 10 unit + 4 commit + 4 gates
 + 6 socket, `deckcraft-engine` 573 + 1 ignored; clippy over `collab-proto`, `collab`,
 `collab-server` and `engine` with `-D warnings` clean; `xtask layers` 32 crates. The gates were
 run without `soffice`. The new tests cover two replicas editing different cells of one table, a
 cell operation resent after a reconnect (one version bump, one insertion), a queued cell insert
-rebased past an inserted row, a queued insert refused after its row is deleted, two people in one
+rebased past an inserted row, a queued whole-cell `text.set` following its cell after an inserted
+row, a queued insert refused after its row is deleted, two people in one
 cell keeping both insertions without moving another cell, and undo/redo of cell text and of a
 whole-table row edit. `git status` is clean after the docs commit; nothing was pushed and CI was
 not touched.
@@ -564,7 +566,8 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
   `table.insertRowAbove/Below`, `table.deleteRow`, `table.insertColumnLeft/Right`,
   `table.deleteColumn` normalise to it; the address is checked against the table before sending.
   Structural, so it needs `baseVersion == head`.
-- Rebase of a queued cell operation past a `table.edit`: an insert above/left of the cell moves
+- Rebase of a queued cell operation (`text.insert`, `text.delete` and a whole-cell `text.set`)
+  past a `table.edit`: an insert above/left of the cell moves
   the address down/right, a delete of the very line refuses the operation `stale` (retryable,
   the text cannot be placed), a delete above/left pulls it up/left. Operations in another cell of
   the same table are untouched.
@@ -579,8 +582,8 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
   an inserted row and lands in the shifted cell; a queued insert is refused after its row is
   deleted; two people typing in one cell keep both insertions and a second cell's offset does not
   move; undo/redo of an insert and a delete restores the exact cell text, and a row edit's undo
-  restores the whole table. `collab` 146 + 8, `collab-proto` 24, `engine` 573 + 1 ignored.
-- Commit `2a91d49e` plus this docs commit on `collab/pr11` (from `collab/pr10` at `922a4bf4`);
+  restores the whole table. `collab` 147 + 8, `collab-proto` 24, `engine` 573 + 1 ignored.
+- Commit `2a91d49e` plus its docs commit and the cell-set rebase on `collab/pr11` (from `collab/pr10` at `922a4bf4`);
   nothing pushed, CI untouched. Still refused: notes text, formatting a table cell (needs a cell
   address in `FormatSet` and a cell-aware exact body restore), other table commands (style, fill,
   merge, sizing), run-range formatting and animations.

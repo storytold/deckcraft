@@ -210,12 +210,16 @@ impl DocSession {
         if op.doc != self.file_id {
             return Err(refuse(op, Rejection::invalid("the operation is for another document", Some(self.version))));
         }
-        // Text operations carry a character offset; turn it into the position this operation
-        // actually has after everything that arrived since its base (ADR 0004, merge class).
+        // Text operations carry a character offset and/or a table cell address; turn both into
+        // the position and cell this operation actually has after everything that arrived since
+        // its base (ADR 0004, merge class).
+        let rebases = match &op.payload {
+            deckcraft_collab_proto::Payload::TextInsert { .. } | deckcraft_collab_proto::Payload::TextDelete { .. } => true,
+            deckcraft_collab_proto::Payload::TextSet { cell, .. } => cell.is_some(),
+            _ => false,
+        };
         let mut rebased: Option<OpEnvelope> = None;
-        if matches!(op.payload, deckcraft_collab_proto::Payload::TextInsert { .. } | deckcraft_collab_proto::Payload::TextDelete { .. })
-            && op.base_version < self.version
-        {
+        if rebases && op.base_version < self.version {
             let mut adjusted = op.clone();
             self.rebase_text(&mut adjusted)?;
             rebased = Some(adjusted);
@@ -290,7 +294,7 @@ impl DocSession {
         // The cell address is part of the text address: a row or column edit moves it, and two
         // operations in different cells of one table never shift each other's offsets.
         let mut cell = match &op.payload {
-            Payload::TextInsert { cell, .. } | Payload::TextDelete { cell, .. } => *cell,
+            Payload::TextSet { cell, .. } | Payload::TextInsert { cell, .. } | Payload::TextDelete { cell, .. } => *cell,
             _ => None,
         };
         let shift = |point: &mut u32, payload: &Payload, cell: Option<(u32, u32)>| match payload {
@@ -342,7 +346,7 @@ impl DocSession {
             }
         }
         match &mut op.payload {
-            Payload::TextInsert { cell: at, .. } | Payload::TextDelete { cell: at, .. } => *at = cell,
+            Payload::TextSet { cell: at, .. } | Payload::TextInsert { cell: at, .. } | Payload::TextDelete { cell: at, .. } => *at = cell,
             _ => {}
         }
         if let Payload::TextDelete { from, to, .. } = op.payload
@@ -751,6 +755,26 @@ mod tests {
         assert_eq!(err.code, RejectCode::Stale);
         assert!(err.retryable);
         assert_eq!(s.version(), 1, "the refused operation does not bump the version");
+    }
+
+    #[test]
+    fn a_queued_cell_set_moves_with_an_inserted_row() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let queued = cell_op(&slide, &shape, Payload::TextSet { text: "replaced".into(), cell: Some((0, 0)) }, 0, "set");
+        let row = OpEnvelope {
+            op_id: "row".into(),
+            doc: "d".into(),
+            base_version: 0,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true },
+            history: None,
+        };
+        s.apply("b", &row).expect("insert row");
+        s.apply("a", &queued).expect("the set follows its cell");
+        assert_eq!(cell(&s, 1, 0), "replaced");
+        assert_eq!(cell(&s, 0, 0), "", "the inserted row stays empty");
     }
 
     #[test]
