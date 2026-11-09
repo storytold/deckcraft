@@ -57,7 +57,9 @@ pub struct Show {
     tex: Option<(Key, TextureHandle)>,
     /// The shapes stacked above the playing videos, drawn over the video frames (#1005).
     overlay: Option<(Key, Vec<ShapeId>, TextureHandle)>,
-    /// The Presenter View's next-slide preview: the presentation and slide it shows.
+    /// The Presenter View's above-Cameo overlay: document identity, slide, size, skip list, step,
+    /// GIF frames, trigger plays, and the texture.
+    presenter_over: Option<(usize, usize, (u32, u32), Vec<ShapeId>, usize, u64, Vec<(ShapeId, usize)>, TextureHandle)>,
     next_tex: Option<(std::sync::Arc<Presentation>, usize, TextureHandle)>,
     /// The one next-slide preview being rendered on another thread (#964).
     next_job: Option<(std::sync::Arc<Presentation>, usize, std::sync::mpsc::Receiver<egui::ColorImage>)>,
@@ -234,6 +236,7 @@ impl Show {
             trans: None,
             tex: None,
             overlay: None,
+            presenter_over: None,
             next_tex: None,
             next_job: None,
             #[cfg(test)]

@@ -132,7 +132,7 @@ pub(crate) fn below_live(doc: &Presentation, idx: usize, live: &[ShapeId]) -> Ve
 }
 
 /// Media on slide `idx` hidden until it plays, as it is when the slide is entered.
-fn hidden_on_entry(doc: &Presentation, idx: usize) -> Vec<ShapeId> {
+pub(crate) fn hidden_on_entry(doc: &Presentation, idx: usize) -> Vec<ShapeId> {
     crate::media::slide_media(doc, idx).into_iter().filter(|(_, _, clip)| clip.hide_while_not_playing).map(|m| m.0).collect()
 }
 

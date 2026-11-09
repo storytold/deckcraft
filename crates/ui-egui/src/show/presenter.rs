@@ -1,5 +1,5 @@
 use super::keys::keyboard;
-use super::render::{below_live, fit, next_rect, render_overlay, render_threads};
+use super::render::{below_live, fit, hidden_on_entry, next_rect, render_overlay, render_threads};
 use super::zoom::{Zoom, grid_indices, paint_grid, see_all_hit, slide_aspect, toggle_blank, unit_uv, zoom_frame};
 use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, ShapeId, Show, Stroke, Ui, live_state, pos2, theme, vec2};
 
@@ -82,16 +82,22 @@ fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) 
 }
 
 /// Render the presenter window and set `keep` false when the user ends or closes the show.
-/// `camera` is the live frame: the current-slide preview shows it in every Cameo, as the audience
-/// screen does (the presentation's own texture predates the camera, which is a layer over it).
+/// `live` is the Cameo live frame plus the GIF clock: the current-slide preview shows the frame
+/// in every Cameo, as the audience screen does (the presentation's own texture predates the
+/// camera, which is a layer over it).
+pub(super) struct PresenterLive<'a> {
+    pub camera: &'a egui::TextureHandle,
+    pub gif_times: &'a [(ShapeId, f64)],
+    pub gif_key: u64,
+}
+
 pub(super) fn presenter_window(
     ctx: &egui::Context,
     show: &mut Show,
     doc: &std::sync::Arc<Presentation>,
     now: f64,
     keep: &mut bool,
-    camera: Option<&egui::TextureHandle>,
-    gif_times: &[(ShapeId, f64)],
+    live: Option<PresenterLive<'_>>,
 ) {
     let cur = show.state.slide;
     let next = show.state.peek_next(doc);
@@ -242,28 +248,12 @@ pub(super) fn presenter_window(
                 let cr = Rect::from_min_size(left.min, cr.size());
                 if let Some(t) = &cur_tex {
                     ui.painter().image(t.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-                    if let Some(camera) = camera {
+                    if let Some(live_frame) = live.as_ref() {
                         // Over the slide's texture, in the Cameo boxes the audience screen uses.
                         let clipped = ui.painter().with_clip_rect(cr);
                         let frame = crate::camera::ShowFrame { srect: cr, uv: unit_uv(), hidden: &[], state: &state };
-                        crate::camera::paint_show(&clipped, camera, doc, cur, frame);
-                        // Shapes above a Cameo stay visible, as on the audience screen: the same
-                        // overlay, rendered at this preview's pixel size over the live frame.
-                        let live = crate::camera::cameo_ids(doc, cur);
-                        let skip = below_live(doc, cur, &live);
-                        if !skip.is_empty() {
-                            // `t` here is the slide texture: the animation clock is recomputed.
-                            let step_t = if show.state.playing { now - show.step_start } else { 0.0 };
-                            let ppp = ui.ctx().pixels_per_point();
-                            let size = crate::textures::fit_size(
-                                ((cr.width() * ppp).round().max(1.0) as u32, (cr.height() * ppp).round().max(1.0) as u32),
-                                crate::textures::max_side(ui.ctx()),
-                            );
-                            let ci =
-                                render_overlay(doc, cur, tl.clone(), step, step_t, size, vec![], &skip, gif_times, render_threads(), &plays, &stamps);
-                            let tex = crate::textures::upload(ui.ctx(), "presenter-camera-overlay", ci);
-                            ui.painter().image(tex.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-                        }
+                        crate::camera::paint_show(&clipped, live_frame.camera, doc, cur, frame);
+                        paint_camera_overlay(ctx, ui, show, doc, cur, cr, &tl, step, &plays, &stamps, live_frame);
                     }
                 }
                 if let Some(z) = show.zoom {
@@ -328,6 +318,61 @@ pub(super) fn presenter_window(
         if !show.apply(a, doc, now) {
             *keep = false;
         }
+    }
+}
+
+/// Shapes stacked above a Cameo, repainted over its live frame in the presenter's current-slide
+/// preview (the audience screen's overlay, at this preview's pixel size). Cached on `Show` like
+/// the audience overlay and re-rendered only while the slide animates or the key changes; media
+/// hidden until it plays stays hidden, as `draw_overlay` does.
+#[allow(clippy::too_many_arguments)]
+fn paint_camera_overlay(
+    ctx: &egui::Context,
+    ui: &mut Ui,
+    show: &mut Show,
+    doc: &std::sync::Arc<Presentation>,
+    cur: usize,
+    cr: Rect,
+    tl: &deckcraft_anim::Timeline,
+    step: usize,
+    plays: &[deckcraft_anim::TriggerPlay],
+    stamps: &[deckcraft_anim::StepStamp],
+    live_frame: &PresenterLive<'_>,
+) {
+    let live = crate::camera::cameo_ids(doc, cur);
+    let skip = below_live(doc, cur, &live);
+    if skip.is_empty() {
+        show.presenter_over = None;
+        return;
+    }
+    let step_t = if show.state.playing { ctx.input(|i| i.time) - show.step_start } else { 0.0 };
+    let ppp = ctx.pixels_per_point();
+    let size = crate::textures::fit_size(
+        ((cr.width() * ppp).round().max(1.0) as u32, (cr.height() * ppp).round().max(1.0) as u32),
+        crate::textures::max_side(ctx),
+    );
+    let ptr = std::sync::Arc::as_ptr(doc) as usize;
+    let done: Vec<(ShapeId, usize)> = plays.iter().map(|p| (p.trigger, p.step)).collect();
+    let moving = show.state.playing || show.state.trigger_playing();
+    let fresh = show
+        .presenter_over
+        .as_ref()
+        .is_some_and(|o| o.0 == ptr && o.1 == cur && o.2 == size && o.3 == skip && o.4 == step && o.5 == live_frame.gif_key && o.6 == done);
+    if !fresh || moving {
+        let hidden = hidden_on_entry(doc, cur);
+        let ci = render_overlay(doc, cur, tl.clone(), step, step_t, size, hidden, &skip, live_frame.gif_times, render_threads(), plays, stamps);
+        match show.presenter_over.as_mut() {
+            Some(o) if o.0 == ptr && o.1 == cur && o.2 == size && o.3 == skip && o.4 == step && o.5 == live_frame.gif_key && o.6 == done => {
+                crate::textures::replace(ctx, &mut o.7, ci);
+            }
+            _ => {
+                show.presenter_over =
+                    Some((ptr, cur, size, skip, step, live_frame.gif_key, done, crate::textures::upload(ctx, "presenter-camera-overlay", ci)));
+            }
+        }
+    }
+    if let Some(o) = &show.presenter_over {
+        ui.painter().image(o.7.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
 }
 

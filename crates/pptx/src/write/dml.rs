@@ -227,7 +227,12 @@ fn blip_tail(w: &mut W, pf: &PictureFill) {
 /// the blip's extension list (with no `r:embed` on the blip itself), so write that shape. A raster
 /// placeholder — a recorded still, or an image the user swapped in — keeps the ordinary blip.
 pub fn cameo_blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFill) {
-    let svg = x.media(pf.media).is_some_and(|m| m.content_type == "image/svg+xml" || m.name.to_ascii_lowercase().ends_with(".svg"));
+    let svg = x.media(pf.media).is_some_and(|m| {
+        // Linked media has no part inside the package, so `r:embed` on `asvg:svgBlip` would be
+        // invalid: the raster form's `r:link` carries it instead.
+        let linked = m.data.is_empty() && m.link.is_some();
+        !linked && (m.content_type == "image/svg+xml" || m.name.to_ascii_lowercase().ends_with(".svg"))
+    });
     if !svg {
         return blip_fill(w, x, o, tag, pf);
     }

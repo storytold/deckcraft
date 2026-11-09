@@ -867,7 +867,9 @@ fn draw_extras(app: &mut SlideApp, show: &mut Show, f: &Fr, painter: &egui::Pain
     if out.keep && show.presenter && !show.reading && !show.remote_opened {
         let gifs = app.media.gifs(f.doc_uid, doc, show.state.slide, now, &app.session.gif_paused);
         let times: Vec<_> = gifs.iter().map(|g| (g.id, g.t)).collect();
-        presenter_window(ctx, show, doc, now, &mut out.keep, app.camera.texture(), &times);
+        let live =
+            app.camera.texture().map(|t| super::presenter::PresenterLive { camera: t, gif_times: &times, gif_key: crate::media::gif_key(&gifs) });
+        presenter_window(ctx, show, doc, now, &mut out.keep, live);
     }
 }
 

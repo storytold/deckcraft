@@ -138,6 +138,20 @@ fn an_svg_cameo_keeps_its_blip_adjustments() {
 }
 
 #[test]
+fn a_linked_svg_cameo_writes_r_link_not_r_embed() {
+    // Linked media has no package part: `r:embed` on `asvg:svgBlip` would name a relationship
+    // that is not inside the package, so the linked form delegates to the raster blip's `r:link`.
+    let mut p = deck("cameo-placeholder.svg", svg());
+    let media = p.media.iter_mut().find(|m| m.name == "cameo-placeholder.svg").expect("placeholder");
+    media.data = std::sync::Arc::new(vec![]);
+    media.link = Some("https://example.org/cameo-placeholder.svg".into());
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let xml = part(&bytes, "ppt/slides/slide1.xml");
+    assert!(!xml.contains("<asvg:svgBlip"), "no SVG blip for linked media: {xml}");
+    assert!(xml.contains("<a:blip r:link=\"rId"), "linked media rides r:link: {xml}");
+}
+
+#[test]
 fn a_camera_background_survives_a_round_trip() {
     let raw = concat!(
         "<alf:liveFeedProps xmlns:alf=\"http://schemas.microsoft.com/office/drawing/2021/livefeed\">",
