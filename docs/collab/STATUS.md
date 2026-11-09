@@ -1,6 +1,23 @@
 # Collaboration status and handoff
 
 Updated: 2026-11-09. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, the browser link `66d4658c`, the transition slice `927e773c`, docs commits on top).
+
+**Rebased onto `origin/main` at `0623b430`** on 2026-11-09: the branch is 55 commits, its
+pre-rebase head was `922a4bf4`, and the commit hashes in this file are the pre-rebase ones (every
+commit was rewritten). `git merge-tree --write-tree origin/main collab/pr10` exits 0 with no
+conflicted path. The four conflicted files were resolved as unions: the import list in
+`crates/engine/src/cmd/shape.rs` (`opt_usize_param` and `current_shapes` both stay),
+`apps/deckcraft-web/Cargo.toml` (main's `craft-web-api` plus the collab crates; `craft-web-host`
+stays pinned to `copoka/craft-libs@7666e2b` because the session messages are not in
+`storytold/craft-libs@fd5e2fe`), `apps/deckcraft-web/src/web.rs` (`api::install` plus the
+collaboration `WebShell` fields) and `Cargo.lock` (that source). Compared with main's own
+`159ed07e..origin/main` patch, the only differences are those two manifests, the lock, this file
+and the one union import line in `cmd/shape.rs` (`current_shapes` next to `opt_usize_param`);
+`fmt`, `clippy -D warnings`, the collab,
+server/gates, web, `ui-egui` and engine tests are green on `agents` (numbers in the verification
+table below and in `collab/pr11`'s status, which is the authoritative handoff and also has the
+later slices).
+
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -49,15 +66,17 @@ carries the protocol, `session-state`/`presence` go back to the cabinet, Save as
 and `deckcraft:committed` records the stored version. Nothing there talks to the network without a
 session message.
 
-The published head of the fork branch `copoka/deckcraft:collab/pr10` is `63ec1ebe`, open as
-[PR #1975](https://github.com/storytold/deckcraft/pull/1975). Local `collab/pr10` is ahead of it by
-`3ec81d70`, `ded9d1ee`, `31842050`, `f28ee048`, `98d9e9ce`, `31d353fe`, `5b078c7d` and
-`556c00d9`. `git fetch fork` shows no commit on the fork side that is missing locally, and a
-`git push --dry-run` from this workspace is refused by the environment policy, so publishing the
-new head is a manual step. Nothing was pushed to `storytold/deckcraft`; the PR comes from the
-fork and a human decision still governs merging it. The PR body is prepared in [`pr10.md`](pr10.md):
-title `feat(collab): realtime collaborative editing`, one description, a review order over the
-slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decision.
+The fork branch `copoka/deckcraft:collab/pr10` is published at `922a4bf4` (the pre-rebase head)
+and is the head of [PR #1975](https://github.com/storytold/deckcraft/pull/1975), which reports
+`CONFLICTING` against `main` until the rebased branch is published. The local branch was rebased
+onto `origin/main` (`0623b430`) and now has rewritten history, so publishing it is a
+`git push --force-with-lease fork collab/pr10` (and the same for `collab/pr11`), not a
+fast-forward. A `git push --dry-run` from this workspace is refused by the environment policy, so
+the publish is a manual step (the chair does it). Nothing was pushed to `storytold/deckcraft`; the
+PR comes from the fork and a human decision still governs merging it. The PR body is prepared in
+[`pr10.md`](pr10.md): title `feat(collab): realtime collaborative editing`, one description, a
+review order over the slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the
+human decision.
 
 ## What is implemented
 
