@@ -429,6 +429,7 @@ pub fn node_pictures(data: &El) -> Vec<(usize, String)> {
     out
 }
 
+/// Extracts diagram outline `(modelId, DiagramNode)` pairs in tree order from a `dgm:dataModel` element.
 fn outline_ids(data: &El) -> Vec<(String, DiagramNode)> {
     let Some(pts) = data.child("ptLst") else { return vec![] };
     let mut texts: HashMap<&str, String> = HashMap::new();
