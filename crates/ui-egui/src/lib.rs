@@ -215,6 +215,10 @@ struct InputTarget {
     opening: Option<(egui::Id, u64)>,
 }
 
+/// A web host's commit call: the session id and, when the host does not hold the assembled file,
+/// its bytes (`INTEGRATION.md` §6: `deckcraft:commit`'s `bytes?`).
+pub type HostCommit = Box<dyn Fn(&str, Option<&[u8]>) -> Result<(), String>>;
+
 pub struct SlideApp {
     /// Shape Fill's last colour (a command colour parameter): the button applies it again. Accent 1 until one is picked.
     pub last_fill: serde_json::Value,
@@ -225,8 +229,16 @@ pub struct SlideApp {
     pub session: Session,
     pub services: Services,
     /// Collaboration session state and the feature flag. Disabled unless the host turns it on
-    /// (`DECKCRAFT_COLLAB=1` on the desktop, `?collab=1` in the web host).
+    /// (`DECKCRAFT_COLLAB=1` on the desktop, `?collab=1`/a `session` message in the web host).
     pub collab: collab::CollabUi,
+    /// Web behind a host bridge: asks the cabinet to commit the live session
+    /// (`deckcraft:commit`). The host owns the stored file, so Save in a shared session is a
+    /// commit, not a browser download.
+    pub host_commit: Option<HostCommit>,
+    /// The session the host opened, for [`SlideApp::host_commit`].
+    pub host_session_id: Option<String>,
+    /// The cabinet's answer to the last `deckcraft:commit`: the stored version and etag.
+    pub host_committed: Option<(u64, String)>,
     pub ui: UiState,
     pub textures: textures::Textures,
     pub control_rx: Option<Receiver<ControlRequest>>,

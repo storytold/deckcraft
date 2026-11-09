@@ -3,7 +3,10 @@
 
 use deckcraft_collab_proto::{ClientMsg, ServerMsg};
 
-pub trait Transport: Send {
+/// What the UI needs from a connection. Not `Send`: the browser link holds the page's
+/// `WebSocket` and its callbacks (`Rc`, `RefCell`, JS closures), which never cross a thread on
+/// wasm32. The desktop link spawns its own thread and is `Send` regardless.
+pub trait Transport {
     /// Queue one message. The link may hold it until the socket is live.
     fn send(&mut self, msg: ClientMsg) -> Result<(), String>;
     /// Take the next message, if one has arrived.

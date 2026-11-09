@@ -64,6 +64,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("collab-server", Class::Exempt),
     // Wire types only: no workspace crate, no engine.
     ("collab-proto", Class::Standalone),
+    // The browser's collaboration link: above the adapter and the engine, wasm-only in its socket.
+    ("collab-web", Class::Layer(6)),
     ("ui-egui", Class::Layer(6)),
     ("mcp", Class::Layer(6)),
     ("testkit", Class::Testkit),

@@ -26,6 +26,8 @@
 mod api;
 #[cfg(target_arch = "wasm32")]
 mod host;
+/// The host bridge's session routing; browser-free so the page-host scenario is tested headlessly.
+mod host_session;
 #[cfg(target_arch = "wasm32")]
 mod presenter;
 #[cfg(target_arch = "wasm32")]
