@@ -6,7 +6,7 @@ use deckcraft_geom::Xfrm;
 use deckcraft_model::{Comment, InkStroke, LaserSample, LaserTrace, MediaClip, Rgba, Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
-use super::edit::{remove_shapes, walk_mut};
+use super::edit::walk_mut;
 use super::{
     CommandSpec, NO_ID_SPACE, RECORDED_INK, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text, id_param,
     is_recorded_ink, mark_recorded, ok, recording_tag, str_param, usize_param,
@@ -1199,6 +1199,24 @@ fn clear_timing(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"cleared": n}))
 }
 
+/// Remove shapes and every animation that referenced a removed shape: direct hits,
+/// group descendants, and groups emptied as a consequence. Effects triggered by a
+/// removed shape fall back to the main sequence (as `edit.delete` does).
+fn remove_shapes_and_animations(sl: &mut deckcraft_model::Slide, ids: &[ShapeId]) -> usize {
+    let mut before = Vec::new();
+    deckcraft_model::walk(&sl.shapes, &mut |sh, _| before.push(sh.id));
+    let n = super::edit::remove_shapes(&mut sl.shapes, ids);
+    let mut left = Vec::new();
+    deckcraft_model::walk(&sl.shapes, &mut |sh, _| left.push(sh.id));
+    let mut gone = ids.to_vec();
+    gone.extend(before.into_iter().filter(|id| !left.contains(id)));
+    sl.animations.retain(|a| !gone.contains(&a.shape));
+    for a in sl.animations.iter_mut().filter(|a| a.trigger.is_some_and(|t| gone.contains(&t))) {
+        a.trigger = None;
+    }
+    n
+}
+
 /// Remove narration clips (the flag Record Slide Show sets). Other audio stays.
 fn clear_narration(s: &mut Session, p: &Value) -> Result<Value> {
     let list = slide_scope(s, p, "show.clearNarration")?;
@@ -1226,22 +1244,10 @@ fn clear_narration(s: &mut Session, p: &Value) -> Result<Value> {
                 }
             }
             n += ids.len() as u32;
+
             let Some(sl) = doc.slides.get_mut(*i) else { continue };
             let sl = Arc::make_mut(sl);
-            let mut before = Vec::new();
-            deckcraft_model::walk(&sl.shapes, &mut |sh, _| before.push(sh.id));
-            super::edit::remove_shapes(&mut sl.shapes, &ids);
-            // Everything that is gone: the given ids plus group descendants and emptied
-            // groups. Animations of deleted shapes go too, and effects triggered by a
-            // deleted shape fall back to the main sequence (as `edit.delete` does).
-            let mut left = Vec::new();
-            deckcraft_model::walk(&sl.shapes, &mut |sh, _| left.push(sh.id));
-            let mut gone = ids.clone();
-            gone.extend(before.into_iter().filter(|id| !left.contains(id)));
-            sl.animations.retain(|a| !gone.contains(&a.shape));
-            for a in sl.animations.iter_mut().filter(|a| a.trigger.is_some_and(|t| gone.contains(&t))) {
-                a.trigger = None;
-            }
+            remove_shapes_and_animations(sl, &ids);
         }
         media.sort_by_key(|m| m.0);
         media.dedup();
@@ -1452,8 +1458,6 @@ fn clear_recording(s: &mut Session, p: &Value) -> Result<Value> {
             let ids = recorded_shape_ids(&sl.shapes);
             let mut touched = false;
             if !ids.is_empty() {
-                let mut before = Vec::new();
-                deckcraft_model::walk(&sl.shapes, &mut |sh, _| before.push(sh.id));
                 // The ids come from a tree walk, so the media must too: a recorded shape inside a
                 // group would otherwise leave its media behind.
                 deckcraft_model::walk(&sl.shapes, &mut |sh, _| {
@@ -1461,18 +1465,7 @@ fn clear_recording(s: &mut Session, p: &Value) -> Result<Value> {
                         media.extend(shape_media_ids(sh));
                     }
                 });
-                let n = remove_shapes(&mut sl.shapes, &ids);
-                // Everything that is gone: the given ids plus group descendants and emptied
-                // groups. Animations of deleted shapes go too, and effects triggered by a
-                // deleted shape fall back to the main sequence (as `edit.delete` does).
-                let mut left = Vec::new();
-                deckcraft_model::walk(&sl.shapes, &mut |sh, _| left.push(sh.id));
-                let mut gone = ids.clone();
-                gone.extend(before.into_iter().filter(|id| !left.contains(id)));
-                sl.animations.retain(|a| !gone.contains(&a.shape));
-                for a in sl.animations.iter_mut().filter(|a| a.trigger.is_some_and(|t| gone.contains(&t))) {
-                    a.trigger = None;
-                }
+                let n = remove_shapes_and_animations(sl, &ids);
                 cleared = cleared.saturating_add(n as u32);
                 touched |= n > 0;
             }
