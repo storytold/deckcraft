@@ -700,15 +700,29 @@ pub struct Word {
     pub repeated: Option<usize>,
 }
 
+/// Longest language tag a word is checked in. BCP 47 tags in documents are a few bytes; a longer
+/// value from a file is no language we have a dictionary for, and copying it into every word of
+/// a paragraph would multiply it.
+const MAX_LANG_LEN: usize = 64;
+
 /// The words of `p`, each with its run's language (`lang` on the run, else `default`). Words
 /// with digits are skipped; apostrophes inside a word belong to it; hyphenated words are checked
-/// part by part.
+/// part by part. A language over [`MAX_LANG_LEN`] counts as none.
 pub fn paragraph_words(p: &deckcraft_model::Paragraph, default: &str) -> Vec<Word> {
     let mut chars: Vec<(char, usize)> = vec![];
     for (ri, r) in p.runs.iter().enumerate() {
         chars.extend(r.content().chars().map(|c| (c, ri)));
     }
-    let lang_of = |ri: usize| p.runs.get(ri).and_then(|r| r.props.lang.clone()).filter(|l| !l.is_empty()).unwrap_or_else(|| default.to_string());
+    let default = if default.len() > MAX_LANG_LEN { "" } else { default };
+    let lang_of = |ri: usize| {
+        p.runs
+            .get(ri)
+            .and_then(|r| r.props.lang.as_deref())
+            .filter(|l| !l.is_empty())
+            .map(|l| if l.len() > MAX_LANG_LEN { "" } else { l })
+            .unwrap_or(default)
+            .to_string()
+    };
     // Combining marks (decomposed accents) belong to the letter before them.
     let inside = |c: char| c.is_alphanumeric() || deckcraft_model::words::is_combining_mark(c) || c == '\'' || c == '’' || c == '-';
     let mut out = vec![];
@@ -791,15 +805,18 @@ pub fn misspelt(p: &deckcraft_model::Paragraph, default: &str, ignore: &[String]
         .chain(repeated(p, default))
         .collect::<Vec<_>>()
         .into_iter()
-        .fold(vec![], |mut v: Vec<Word>, w| {
+        .fold((vec![], HashMap::new()), |(mut v, mut at): (Vec<Word>, HashMap<usize, usize>), w| {
             // A repeated misspelt word is reported once, as repeated.
-            if let Some(i) = v.iter().position(|x| x.start == w.start) {
-                v[i] = w;
-            } else {
-                v.push(w);
+            match at.get(&w.start).and_then(|&i| v.get_mut(i)) {
+                Some(x) => *x = w,
+                None => {
+                    at.insert(w.start, v.len());
+                    v.push(w);
+                }
             }
-            v
+            (v, at)
         })
+        .0
 }
 
 /// Use `d` for `lang` from now on in this process (a dictionary the app loaded itself).
@@ -951,6 +968,23 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         };
         let w: Vec<String> = paragraph_words(&p, "en-US").into_iter().map(|w| w.text).collect();
         assert_eq!(w, vec!["check", "done"]);
+    }
+
+    #[test]
+    fn a_long_paragraph_with_a_huge_language_is_checked_in_linear_work() {
+        use deckcraft_model::{Paragraph, Run, RunProps};
+        // 100,000 copies of one word under a 1 MB language value: every word after the first is
+        // a repeat, and no word carries a copy of the value.
+        let lang = "x".repeat(1 << 20);
+        let p =
+            Paragraph { runs: vec![Run::with("the ".repeat(100_000), RunProps { lang: Some(lang), ..Default::default() })], ..Default::default() };
+        let words = paragraph_words(&p, "en-US");
+        assert_eq!(words.len(), 100_000);
+        assert!(words.iter().all(|w| w.lang.is_empty()));
+        let bad = misspelt(&p, "en-US", &[]);
+        assert_eq!(bad.len(), 99_999);
+        assert!(bad.iter().all(|w| w.repeated.is_some()));
+        assert!(paragraph_words(&Paragraph::new("word"), &"y".repeat(100)).iter().all(|w| w.lang.is_empty()));
     }
 
     #[test]

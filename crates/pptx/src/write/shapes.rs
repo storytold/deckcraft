@@ -359,7 +359,20 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
                 dml::fill(w, x, o, f);
             }
             if let Some(fx) = &s.effects {
-                dml::effects(w, fx);
+                if fx.fill_overlay.is_some()
+                    || fx.glow.is_some()
+                    || fx.inner_shadow.is_some()
+                    || fx.outer_shadow.is_some()
+                    || fx.reflection.is_some()
+                    || fx.soft_edge.is_some()
+                {
+                    dml::effects(w, fx);
+                }
+                if let Some(raw) =
+                    fx.raw3d.as_deref().map(|s| s.find("<a:sp3d").map_or(s, |i| &s[..i])).and_then(|s| dml::valid_raw3d(s, &["scene3d"]))
+                {
+                    w.raw(raw);
+                }
             }
             w.close("p:grpSpPr");
             shapes(w, x, o, cx, children, depth + 1);
@@ -471,7 +484,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
 }
 
 fn model_rel(x: &mut Exp, o: &mut Out, media: deckcraft_model::MediaId) -> Option<String> {
-    if x.p.media(media).is_none_or(|m| m.data.is_empty()) {
+    if x.media(media).is_none_or(|m| m.data.is_empty()) {
         return None;
     }
     x.media_rel(o, media, crate::opc::RT_MODEL3D)
@@ -504,7 +517,7 @@ fn write_model(
         return;
     };
     let id = cx.id_for(s);
-    let poster = poster.filter(|p| x.p.media(*p).is_some_and(|m| !m.data.is_empty()));
+    let poster = poster.filter(|p| x.media(*p).is_some_and(|m| !m.data.is_empty()));
     let Some(poster) = poster else {
         write_model_part(w, x, o, id, s, &rid);
         return;
@@ -797,7 +810,7 @@ fn table(w: &mut W, x: &mut Exp, o: &mut Out, t: &Table) {
     t.normalize();
     w.open0("a:tbl");
     let (guid, _) = crate::tables::guid_for_style(&t.style);
-    if !x.table_styles.contains(&t.style) {
+    if x.table_style_set.insert(t.style.clone()) {
         x.table_styles.push(t.style.clone());
     }
     w.open(
@@ -981,7 +994,7 @@ fn opaque(
         p.name = label.to_string();
     }
     match preview {
-        Some(m) if x.p.media(m).is_some() => {
+        Some(m) if x.media(m).is_some() => {
             p.kind = ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media: m, ..Default::default() } };
             p.ph = None;
             shape_with_id(w, x, o, cx, &p, id);

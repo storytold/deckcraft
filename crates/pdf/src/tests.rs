@@ -290,14 +290,17 @@ fn supported_unicode_is_shaped_and_recovered_from_the_page_text_layer() {
     assert!(runs.iter().all(|run| run.face.family == "Ubuntu" && !run.glyphs.is_empty() && run.glyphs.iter().all(|glyph| glyph.0 != 0)));
 
     let bytes = export(&p, &opts(PageLayout::Slides)).unwrap();
-    assert_eq!(extracted_page_text(bytes), text);
+    assert_eq!(page_text(&bytes, 0), text);
 }
 
-fn extracted_page_text(bytes: Vec<u8>) -> String {
+/// The text of page `index`, read the way a PDF reader does: the content stream's text-showing
+/// operators decoded through the page font's ToUnicode map.
+fn page_text(bytes: &[u8], index: usize) -> String {
     use hayro_syntax::content::ops::TypedInstruction;
     use hayro_syntax::object::{Dict, Object, Stream};
-    let pdf = hayro_syntax::Pdf::new(bytes.clone()).unwrap();
-    let page = &pdf.pages()[0];
+
+    let pdf = hayro_syntax::Pdf::new(bytes.to_vec()).unwrap();
+    let page = &pdf.pages()[index];
     let resources = page.raw().get::<Dict<'_>>(b"Resources").unwrap();
     let fonts = resources.get::<Dict<'_>>(b"Font").unwrap();
     assert_eq!(fonts.len(), 1);
@@ -349,6 +352,50 @@ fn extracted_page_text(bytes: Vec<u8>) -> String {
         }
     }
     extracted
+}
+
+fn ubuntu_runs(runs: Vec<deckcraft_model::text::Run>) -> TextBody {
+    let paragraph = deckcraft_model::text::Paragraph { runs, ..Default::default() };
+    let mut body = TextBody { paragraphs: vec![paragraph], ..Default::default() };
+    for run in &mut body.paragraphs[0].runs {
+        run.props.font = Some("Ubuntu".into());
+        run.props.size = Some(20.0);
+    }
+    body
+}
+
+fn deck_with_body(n: usize, body: TextBody) -> Presentation {
+    use deckcraft_model::{Shape, ShapeId, Xfrm};
+    let mut p = deck(n);
+    for slide in &mut p.slides {
+        Arc::make_mut(slide).shapes =
+            vec![Shape { id: ShapeId(9001), xfrm: Some(Xfrm::new(20.0, 20.0, 920.0, 100.0)), text: Some(body.clone()), ..Default::default() }];
+    }
+    p
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn slide_number_field_is_recovered_from_the_page_text_layer() {
+    use deckcraft_model::text::{Run, RunKind};
+    let mut field = Run::new("<#>");
+    field.kind = RunKind::Field { field: "slidenum".into() };
+    let p = deck_with_body(3, ubuntu_runs(vec![Run::new("Page "), field]));
+    let bytes = export(&p, &opts(PageLayout::Slides)).unwrap();
+    for (i, want) in ["Page 1", "Page 2", "Page 3"].into_iter().enumerate() {
+        assert_eq!(page_text(&bytes, i), want);
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn line_break_keeps_the_text_layer_aligned_with_the_layout() {
+    use deckcraft_model::text::{Run, RunKind};
+    let mut brk = Run::new("");
+    brk.kind = RunKind::Break;
+    let p = deck_with_body(1, ubuntu_runs(vec![Run::new("one"), brk, Run::new("two")]));
+    let bytes = export(&p, &opts(PageLayout::Slides)).unwrap();
+    assert_eq!(page_text(&bytes, 0), "onetwo");
 }
 
 /// Notes pages and handouts print on the chosen paper, landscape included, with every slide box
@@ -701,6 +748,6 @@ fn text_layer_preserves_characters_after_authored_breaks() {
         let mut p = deck(1);
         Arc::make_mut(&mut p.slides[0]).shapes =
             vec![Shape { id: ShapeId(9002), xfrm: Some(Xfrm::new(20.0, 20.0, 920.0, 400.0)), text: Some(body), ..Default::default() }];
-        assert_eq!(extracted_page_text(export(&p, &opts(PageLayout::Slides)).unwrap()), expected);
+        assert_eq!(page_text(&export(&p, &opts(PageLayout::Slides)).unwrap(), 0), expected);
     }
 }

@@ -402,6 +402,12 @@ fn grp(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> Sha
         if let Some(fx) = pr.child("effectLst") {
             s.effects = Some(dml::effects(fx));
         }
+        if let Some(sc) = pr.child("scene3d") {
+            let raw = part.keep_inner(sc);
+            if !raw.is_empty() && raw.len() <= 64 * 1024 {
+                s.effects.get_or_insert_with(Effects::default).raw3d = Some(raw);
+            }
+        }
     }
     let children = sp_tree(imp, part, ctx, e, depth + 1);
     let child = child.or_else(|| s.xfrm.map(|x| Xfrm::new(x.x, x.y, x.w, x.h))).unwrap_or_default();
@@ -482,7 +488,8 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
         .into_iter()
         .map(|id| {
             let rel = part.rels.get(&id).filter(|r| !r.external)?;
-            if !imp.pkg.rels(&rel.target).items.is_empty() {
+            let pkg = imp.pkg;
+            if *imp.has_rels.entry(crate::opc::norm(&rel.target)).or_insert_with(|| !pkg.rels(&rel.target).items.is_empty()) {
                 return None;
             }
             let (kind, target) = (rel.ty.clone(), rel.target.clone());

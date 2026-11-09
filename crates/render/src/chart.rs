@@ -1,5 +1,7 @@
 //! Charts: title, plot area with axes and gridlines, series marks, legend.
 
+use std::collections::HashMap;
+
 use deckcraft_color::{ColorTransform, Rgba, SchemeSlot};
 use deckcraft_model::Shape;
 use deckcraft_model::chart::{
@@ -103,9 +105,9 @@ fn bar_outline(ctx: &Ctx, s: &deckcraft_model::chart::Series) -> Option<(Rgba, f
 /// Paint of one bar: a `<c:dPt>` fill wins, and a single-series chart that varies colours by point uses one accent per point
 /// (not waterfalls, which are never read from a `<c:barChart>`). Pattern fills draw as patterns and
 /// `a:noFill` leaves the bar empty, as in PowerPoint.
-fn bar_paint(ctx: &Ctx, c: &Chart, si: usize, pi: usize, s: &deckcraft_model::chart::Series) -> Paint {
-    if let Some((_, f)) = s.point_fills.iter().find(|(k, _)| *k == pi) {
-        return paint_of(ctx, Some(f), series_fill(ctx, c, si, Some(s)));
+fn bar_paint(ctx: &Ctx, c: &Chart, si: usize, pi: usize, s: &deckcraft_model::chart::Series, fills: Option<&HashMap<usize, &Fill>>) -> Paint {
+    if let Some(f) = fills.and_then(|m| m.get(&pi)) {
+        return paint_of(ctx, Some(*f), series_fill(ctx, c, si, Some(s)));
     }
     if c.vary_colors && c.series.len() == 1 && s.fill.is_none() && c.kind != ChartType::Waterfall {
         return Paint::Color(series_color(ctx, c, pi));
@@ -2159,6 +2161,8 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
         let col = if area_kind { series_fill(rctx, c, si, Some(s)) } else { series_line(rctx, c, si, s) };
         let series_stats = s.error_bars.as_ref().map(|_| deckcraft_model::chart::SeriesStats::of(&s.values));
         let mut pts = vec![];
+        // Whether the series has any x value, found once rather than per point.
+        let any_x = s.x_values.iter().flatten().next().is_some();
         for i in 0..ncat {
             let Some(v) = s.values.get(i).copied().flatten() else { continue };
             let v = if stacked {
@@ -2172,11 +2176,11 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
             };
             let x = match kind {
                 ChartType::Scatter | ChartType::Bubble => {
-                    match (s.x_values.get(i).copied().flatten().and_then(to_x), s.x_values.iter().flatten().next()) {
+                    match (s.x_values.get(i).copied().flatten().and_then(to_x), any_x) {
                         (Some(x), _) => x,
                         // No x values at all: the points are numbered 1, 2, 3...
-                        (None, None) => to_x(i as f64 + 1.0).unwrap_or(plot.x0 + band * (slot(i) + 0.5)),
-                        (None, Some(_)) => continue,
+                        (None, false) => to_x(i as f64 + 1.0).unwrap_or(plot.x0 + band * (slot(i) + 0.5)),
+                        (None, true) => continue,
                     }
                 }
                 _ => plot.x0 + band * (slot(i) + 0.5),
@@ -2332,6 +2336,19 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
         let group = bar + step * (n - 1.0);
         // Error bars need each series' mean and spread: worked out once, not per point.
         let stats: Vec<deckcraft_model::chart::SeriesStats> = bars.iter().map(|(_, s)| deckcraft_model::chart::SeriesStats::of(&s.values)).collect();
+        // Each series' per-point fills by point (the first for a point wins), not searched per bar.
+        let point_fills: Vec<HashMap<usize, &Fill>> = bars
+            .iter()
+            .map(|(_, s)| {
+                let mut m = HashMap::new();
+                for (k, f) in &s.point_fills {
+                    m.entry(*k).or_insert(f);
+                }
+                m
+            })
+            .collect();
+        // A waterfall's running bars, worked out once for all its categories.
+        let waterfall_bars = if waterfall { c.waterfall_bars() } else { Vec::new() };
         for i in 0..ncat {
             let mut pos_acc = 0.0;
             let mut neg_acc = 0.0;
@@ -2345,7 +2362,7 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
                 let v = s.values.get(i).copied().flatten().unwrap_or(0.0) / total;
                 let start = band * slot(i) + (band - group) / 2.0 + if stacked { 0.0 } else { step * bi as f64 };
                 let (a, b) = if waterfall {
-                    c.waterfall_bars().get(i).copied().unwrap_or_default()
+                    waterfall_bars.get(i).copied().unwrap_or_default()
                 } else if stacked {
                     if v >= 0.0 {
                         let r = (pos_acc, pos_acc + v);
@@ -2381,7 +2398,7 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
                     };
                     Paint::Color(series_color(rctx, c, slot))
                 } else {
-                    bar_paint(rctx, c, *si, i, s)
+                    bar_paint(rctx, c, *si, i, s, point_fills.get(bi))
                 };
                 fill_with(ctx, &paint, r.abs(), m);
                 if !waterfall && let Some((oc, ow)) = bar_outline(rctx, s).filter(|o| o.1 > 0.0) {

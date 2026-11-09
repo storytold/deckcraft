@@ -49,10 +49,15 @@ pub struct Snapshot {
     pub paused: bool,
     pub notes_px: f32,
     pub blank: Option<String>,
+    /// All slides is open in the presenter window (#1866); the audience keeps the current slide.
     pub grid: bool,
     pub zoom_armed: bool,
     pub current: Option<Preview>,
     pub next: Option<Preview>,
+    /// The All slides thumbnails, in slide order, while `grid` is on. `None` in a sent delta
+    /// means "unchanged since the last snapshot the window received".
+    #[serde(default)]
+    pub slides: Option<Vec<Preview>>,
 }
 
 /// Images acknowledged by a successful transport send, never merely attempted images.
@@ -60,6 +65,7 @@ pub struct Snapshot {
 pub struct DeltaCache {
     current: Option<Preview>,
     next: Option<Preview>,
+    slides: Option<Vec<Preview>>,
     token: String,
 }
 impl DeltaCache {
@@ -75,6 +81,12 @@ impl DeltaCache {
         let next_changed = fresh || self.next != snapshot.next;
         let current = snapshot.current.clone();
         let next = snapshot.next.clone();
+        let slides = snapshot.slides.clone();
+        if !fresh && self.slides == slides {
+            snapshot.slides = None;
+        } else if snapshot.slides.is_none() {
+            snapshot.slides = Some(Vec::new());
+        }
         if !current_changed {
             snapshot.current = None;
         }
@@ -84,14 +96,28 @@ impl DeltaCache {
         send(snapshot, current_changed, next_changed)?;
         self.current = current;
         self.next = next;
+        self.slides = slides;
         self.token = token.to_owned();
         Ok(())
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Command {
-    Key { name: String, command: bool, shift: bool, alt: bool, ctrl: bool },
-    Zoom { x: f32, y: f32 },
+    Key {
+        name: String,
+        command: bool,
+        shift: bool,
+        alt: bool,
+        ctrl: bool,
+    },
+    Zoom {
+        x: f32,
+        y: f32,
+    },
+    /// A slide chosen in the presenter window's All slides grid (#1866).
+    Goto {
+        slide: usize,
+    },
     End,
 }
 /// Implemented by the browser host. Native hosts retain the existing egui viewport.
@@ -112,6 +138,8 @@ pub struct View {
     next: Option<egui::TextureHandle>,
     previous_current: Option<Preview>,
     previous_next: Option<Preview>,
+    grid_source: Option<Vec<Preview>>,
+    grid: Vec<Option<egui::TextureHandle>>,
 }
 impl View {
     /// Install the same interface and dynamic fallback fonts as SlideApp before layout.
@@ -147,6 +175,10 @@ impl View {
                 .collect::<Vec<_>>()
         });
         for (key, modifiers) in keys {
+            if snapshot.grid && matches!(key, egui::Key::Space | egui::Key::Enter) {
+                // A focused thumbnail takes these to choose its slide; the show ignores them while the grid is open.
+                continue;
+            }
             // Consume once before widgets see Space/Enter, avoiding a second button activation.
             ui.input_mut(|i| i.consume_key(modifiers, key));
             commands.push(Command::Key {
@@ -200,6 +232,11 @@ impl View {
             }
         });
         ui.separator();
+        if snapshot.grid {
+            // All slides opens here, as in the desktop Presenter View; the audience keeps the current slide.
+            self.grid_ui(ui, snapshot, &mut commands);
+            return commands;
+        }
         ui.columns(2, |columns| {
             let left = &mut columns[0];
             if snapshot.ended {
@@ -226,9 +263,6 @@ impl View {
             }
             if snapshot.zoom_armed {
                 left.label("Click the preview to zoom.");
-            }
-            if snapshot.grid {
-                left.label("Choose a slide in the audience window, or press G to return.");
             }
             let right = &mut columns[1];
             right.label("Next");
@@ -260,6 +294,43 @@ impl View {
         commands
     }
 }
+impl View {
+    fn grid_ui(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot, commands: &mut Vec<Command>) {
+        let slides = snapshot.slides.as_deref().unwrap_or_default();
+        if self.grid_source.as_deref() != Some(slides) {
+            self.grid_source = Some(slides.to_vec());
+            self.grid = slides
+                .iter()
+                .enumerate()
+                .map(|(i, p)| p.image().map(|image| ui.ctx().load_texture(format!("remote-grid-{i}"), image, egui::TextureOptions::LINEAR)))
+                .collect();
+        }
+        ui.heading("All slides");
+        ui.label("Choose a slide to show it, or press G to return.");
+        if snapshot.total > crate::show::GRID_CAP {
+            ui.label(format!("First {} slides", crate::show::GRID_CAP));
+        }
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                for (i, texture) in self.grid.iter().enumerate() {
+                    let size = egui::vec2(160.0, 90.0);
+                    let label = format!("{}", i + 1);
+                    let label = if i == snapshot.slide { egui::RichText::new(label).strong() } else { egui::RichText::new(label) };
+                    let response = match texture {
+                        Some(t) => ui.add(egui::Button::image_and_text(
+                            egui::Image::new(t).fit_to_exact_size(fit_preview(t.size_vec2(), size.x, size.y)),
+                            label,
+                        )),
+                        None => ui.add_sized(size, egui::Button::new(label)),
+                    };
+                    if response.clicked() {
+                        commands.push(Command::Goto { slide: i });
+                    }
+                }
+            });
+        });
+    }
+}
 fn fit_preview(size: egui::Vec2, width: f32, height: f32) -> egui::Vec2 {
     size * (width.max(1.0) / size.x.max(1.0)).min(height.max(1.0) / size.y.max(1.0))
 }
@@ -282,6 +353,7 @@ mod tests {
             zoom_armed: false,
             current: Some(Preview { width: 1, height: 1, rgba: vec![255; 4] }),
             next: Some(Preview { width: 1, height: 1, rgba: vec![0; 4] }),
+            slides: None,
         }
     }
 
@@ -418,6 +490,7 @@ mod tests {
             zoom_armed: false,
             current: None,
             next: None,
+            slides: None,
         };
         let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_ui_state(
             |ui, (view, snapshot, sent): &mut (View, Snapshot, Vec<Command>)| {
@@ -435,6 +508,30 @@ mod tests {
         assert_eq!(h.state().0.previous_current, None);
         assert_eq!(h.state().1.slide, 0, "only an audience snapshot changes the displayed position");
         assert!(matches!(h.state().2.last(), Some(Command::Key { name, .. }) if name == egui::Key::Space.name()));
+    }
+
+    #[test]
+    fn all_slides_opens_in_the_popup_and_picks_a_slide() {
+        use egui_kittest::kittest::Queryable;
+        let thumb = Preview { width: 16, height: 9, rgba: vec![200; 16 * 9 * 4] };
+        let mut snapshot = snapshot();
+        snapshot.total = 3;
+        snapshot.grid = true;
+        snapshot.slides = Some(vec![thumb.clone(), thumb.clone(), thumb]);
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_ui_state(
+            |ui, (view, snapshot, sent): &mut (View, Snapshot, Vec<Command>)| {
+                sent.extend(view.ui(ui, snapshot));
+            },
+            (View::default(), snapshot, Vec::new()),
+        );
+        h.run_steps(2);
+        assert!(h.query_by_label("Notes").is_none(), "the grid replaces the presenter panes, as on desktop (#1866)");
+        h.get_by_label("3").click();
+        h.run_steps(2);
+        assert_eq!(h.state().2, vec![Command::Goto { slide: 2 }]);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(2);
+        assert!(!h.state().2.iter().any(|c| matches!(c, Command::Key { .. })), "Enter is left to the focused thumbnail");
     }
 
     #[test]

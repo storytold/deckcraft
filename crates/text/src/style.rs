@@ -45,7 +45,7 @@ pub(crate) struct Style {
     pub(crate) highlight: Option<Rgba>,
     pub(crate) outline: Option<(Rgba, f64)>,
     pub(crate) link: bool,
-    pub(crate) gradient: Option<deckcraft_model::style::Gradient>,
+    pub(crate) gradient: Option<std::sync::Arc<deckcraft_model::style::Gradient>>,
     pub(crate) effects: Option<RunEffects>,
     /// "Regular", "Bold"… for the slot and fallback faces.
     pub(crate) style_name: &'static str,
@@ -137,7 +137,7 @@ pub(crate) fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgb
             for s in &mut g.stops {
                 s.color = deckcraft_model::ColorRef::rgb(ctx.color(&s.color, None));
             }
-            (g.stops.first().map(|s| ctx.color(&s.color, None)).unwrap_or(Rgba::BLACK), 1.0, Some(g))
+            (g.stops.first().map(|s| ctx.color(&s.color, None)).unwrap_or(Rgba::BLACK), 1.0, Some(std::sync::Arc::new(g)))
         }
         Some(Fill::None) => (Rgba::TRANSPARENT, 0.0, None),
         _ => (resolve::text_color(ctx, r), 1.0, None),

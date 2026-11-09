@@ -319,3 +319,20 @@ fn arch_and_inflate_handles_follow_the_pointer() {
     assert!(more > adjust_defaults("textInflate")[0], "{more}");
     assert!((more - 20_000.0).abs() < 1.0, "{more}");
 }
+
+#[test]
+fn many_lines_on_a_follow_band_are_mapped_from_one_measurement() {
+    // 50,000 lines on an arch: each line's scale and anchor come from the band measured once.
+    let w = warp("textArchUp", &[], rect()).unwrap();
+    let inner = Rect::new(7.2, 3.6, W - 7.2, H - 3.6);
+    let lines: Vec<WarpLine> = (0..50_000)
+        .map(|i| {
+            let y = i as f64 * 0.01;
+            WarpLine { ink: Some(Rect::new(190.0, y, 230.0, y + 1.0)), extent: (190.0, 230.0), ref_y: y + 1.0 }
+        })
+        .collect();
+    let m = w.mapper(&lines, inner);
+    // The last line sits on the arc, as with two lines.
+    let last = lines.len() - 1;
+    assert!(m.map(last, Point::new(210.0, lines[last].ref_y)).y.abs() < 0.05);
+}
