@@ -187,6 +187,7 @@ impl SlideApp {
     /// on the web. `extra` adds `file.export` params (the PDF's layout, slides…). The
     /// presentation keeps its own file. Returns whether a file was written or handed over.
     pub fn export_as(&mut self, fmt: &str, extra: Value) -> bool {
+        crate::panes::flush_alt_text(self);
         let Some(slide) = self.session.active().map(|d| d.selection.slide) else { return false };
         let (ext, format, all) = match fmt {
             "pdf" => ("pdf", "pdf", false),
@@ -196,7 +197,6 @@ impl SlideApp {
             "pptx" => ("pptx", "pptx", false),
             "ppsx" => ("ppsx", "ppsx", false),
             "outline" | "txt" => ("txt", "outline", false),
-            "rtf" => ("rtf", "rtf", false),
             "deckcraft" => ("deckcraft", "deckcraft", false),
             "gif" => ("gif", "gif", false),
             other => {
@@ -449,6 +449,9 @@ impl SlideApp {
     }
 
     pub fn save_as_dialog(&mut self, format: &str) {
+        // A description still in the Alt Text pane's draft is unsaved work: commit it before
+        // the document below is serialized.
+        crate::panes::flush_alt_text(self);
         let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
         let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
         let suggested = format!("{name}.{ext}");
@@ -490,6 +493,7 @@ impl SlideApp {
     }
 
     pub fn save(&mut self) {
+        crate::panes::flush_alt_text(self);
         if self.services.host_save.is_some() {
             let _ = self.save_to_host(None);
             return;

@@ -85,4 +85,23 @@ mod tests {
 
         assert!(!rec.undo(10.0));
     }
+
+    /// Undo after Stop restores the pre-Reset value: the timer's own elapsed state excludes
+    /// time recorded while paused, both before and after Reset.
+    #[test]
+    fn undo_after_stop_restores_the_stopped_interval() {
+        let mut rec = RecordView::default();
+        let doc = deckcraft_model::Presentation::default();
+        let mut show = Show::new(&doc, 0, false, false);
+        rec.start(&mut show, 0.0);
+        rec.pause(&mut show, 2.0);
+        rec.resume(&mut show, 5.0);
+        // 7 s on the view clock at Reset (4 s of take: 2 before the pause, 2 after); pausing
+        // again after Reset freezes the timer at 2 s, and Stop leaves it there.
+        rec.reset(10.0);
+        rec.pause(&mut show, 12.0);
+        rec.stop(&mut show, 14.0);
+        assert!(rec.undo(14.0));
+        assert!((rec.elapsed(14.0) - 7.0).abs() < 1e-6, "pre-Reset 7 s, frozen: {}", rec.elapsed(14.0));
+    }
 }

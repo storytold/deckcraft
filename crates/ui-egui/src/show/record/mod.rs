@@ -224,8 +224,10 @@ impl RecordView {
     /// Put back the clock value the last Reset replaced. Returns whether anything was undone.
     pub(super) fn undo(&mut self, now: f64) -> bool {
         let Some((secs, at)) = self.undo_elapsed.take() else { return false };
-        // The clock kept running after the reset, so the restored run includes that interval.
-        let since = if self.status == RecordStatus::Recording { (now - at).max(0.0) } else { 0.0 };
+        // The clock kept running after the reset (recording, or stopped-but-idle rather than
+        // paused): the restored run includes that interval. The timer's own elapsed delta is
+        // the same interval, excluding paused stretches.
+        let since = (self.timer.elapsed(now) - self.timer.elapsed(at)).max(0.0);
         self.timer = PresenterTimer::start(now - (secs + since).max(0.0));
         if self.status != RecordStatus::Recording {
             self.timer.toggle(now);
