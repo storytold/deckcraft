@@ -847,12 +847,12 @@ dependencies = [
 [[package]]
 name = "craft-fonts-build"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+source = "git+https://github.com/dotCooCoo/craft-libs?rev=c7c84230631cbc01ee928f0a0e0d838b1ed612ae#c7c84230631cbc01ee928f0a0e0d838b1ed612ae"
 
 [[package]]
 name = "craft-i18n"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+source = "git+https://github.com/dotCooCoo/craft-libs?rev=c7c84230631cbc01ee928f0a0e0d838b1ed612ae#c7c84230631cbc01ee928f0a0e0d838b1ed612ae"
 dependencies = [
  "fixed_decimal",
  "icu_decimal",
@@ -875,7 +875,7 @@ dependencies = [
 [[package]]
 name = "craft-media"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+source = "git+https://github.com/dotCooCoo/craft-libs?rev=c7c84230631cbc01ee928f0a0e0d838b1ed612ae#c7c84230631cbc01ee928f0a0e0d838b1ed612ae"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -883,7 +883,7 @@ dependencies = [
 [[package]]
 name = "craft-pdf"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+source = "git+https://github.com/dotCooCoo/craft-libs?rev=c7c84230631cbc01ee928f0a0e0d838b1ed612ae#c7c84230631cbc01ee928f0a0e0d838b1ed612ae"
 dependencies = [
  "krilla",
  "thiserror 2.0.21",
@@ -892,7 +892,7 @@ dependencies = [
 [[package]]
 name = "craft-ui"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+source = "git+https://github.com/dotCooCoo/craft-libs?rev=c7c84230631cbc01ee928f0a0e0d838b1ed612ae#c7c84230631cbc01ee928f0a0e0d838b1ed612ae"
 dependencies = [
  "craft-fonts-build",
  "craft-i18n",
@@ -912,7 +912,7 @@ dependencies = [
 [[package]]
 name = "craft-update"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+source = "git+https://github.com/dotCooCoo/craft-libs?rev=c7c84230631cbc01ee928f0a0e0d838b1ed612ae#c7c84230631cbc01ee928f0a0e0d838b1ed612ae"
 dependencies = [
  "chrono",
  "dunce",
@@ -2791,7 +2791,7 @@ dependencies = [
 [[package]]
 name = "krilla"
 version = "0.8.2"
-source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
+source = "git+https://github.com/dotCooCoo/craft-libs?rev=c7c84230631cbc01ee928f0a0e0d838b1ed612ae#c7c84230631cbc01ee928f0a0e0d838b1ed612ae"
 dependencies = [
  "base64 0.22.1",
  "bumpalo",
@@ -6571,7 +6571,6 @@ dependencies = [
  "nix",
  "typed-path",
  "windows-sys 0.61.2",
- "zopfli",
 ]
 
 [[package]]
