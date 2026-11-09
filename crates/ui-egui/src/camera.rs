@@ -45,8 +45,9 @@ pub struct CameraHost {
     /// The last value of `preview || show_wants` a start/stop acted on.
     wanted: bool,
     /// The editor overlay of shapes stacked above a Cameo (repainted over the live frame so the
-    /// preview keeps slide z-order): slide identity, texture size, skipped ids, grayscale, texture.
-    over: Option<(usize, (u32, u32), Vec<ShapeId>, bool, TextureHandle)>,
+    /// preview keeps slide z-order): slide identity, texture size, skipped ids, grayscale, GIF
+    /// frames, texture.
+    over: Option<(usize, (u32, u32), Vec<ShapeId>, bool, u64, TextureHandle)>,
     /// A one-shot explanation for the status bar, taken by the logic pass.
     notice: Option<String>,
 }
@@ -394,7 +395,13 @@ fn paint_preview_overlay(
     // overlay renders at the same size so it still lands texel-aligned with it.
     let size = crate::textures::fit_size(full, crate::textures::max_side(ctx));
     let gray = app.ui.grayscale;
-    let fresh = app.camera.over.as_ref().is_some_and(|(p, s, sk, g, _)| *p == ptr && *s == size && *sk == skip && *g == gray);
+    // A playing GIF above the Cameo must not freeze at its first frame in the overlay: the slide
+    // texture keys on the GIF frames, so the overlay renders with the same times and keys on them.
+    let now = ctx.input(|i| i.time);
+    let gifs = app.session.active().map(|d| app.media.gifs(d.uid, &d.doc, idx, now, &app.session.gif_paused)).unwrap_or_default();
+    let times: Vec<(ShapeId, f64)> = gifs.iter().map(|g| (g.id, g.t)).collect();
+    let gkey = crate::media::gif_key(&gifs);
+    let fresh = app.camera.over.as_ref().is_some_and(|o| o.0 == ptr && o.1 == size && o.2 == skip && o.3 == gray && o.4 == gkey);
     if !fresh || moving {
         let frame = app.anim_preview_draw();
         let state_of = |id: ShapeId| frame.as_ref().map(|(tl, t)| crate::canvas::preview::shape_state_at(tl, id, *t)).unwrap_or_default();
@@ -405,24 +412,25 @@ fn paint_preview_overlay(
             size: Some(size),
             state,
             skip: &skip,
+            gif_times: &times,
             threads: crate::show::render::render_threads(),
             ..Default::default()
         };
         let img = deckcraft_render::render_slide_part(doc, idx, deckcraft_render::SlidePart::Content, &opts);
         let ci = crate::textures::to_color_image(&img, gray);
-        let same_slot = app.camera.over.as_ref().is_some_and(|(p, s, sk, g, _)| *p == ptr && *s == size && *sk == skip && *g == gray);
+        let same_slot = app.camera.over.as_ref().is_some_and(|o| o.0 == ptr && o.1 == size && o.2 == skip && o.3 == gray && o.4 == gkey);
         if same_slot {
-            if let Some((_, _, _, _, tex)) = app.camera.over.as_mut() {
+            if let Some((_, _, _, _, _, tex)) = app.camera.over.as_mut() {
                 crate::textures::replace_editor(ctx, tex, ci);
             }
         } else {
-            app.camera.over = Some((ptr, size, skip.clone(), gray, crate::textures::upload_editor(ctx, "cameo-overlay", ci)));
+            app.camera.over = Some((ptr, size, skip.clone(), gray, gkey, crate::textures::upload_editor(ctx, "cameo-overlay", ci)));
         }
     }
     if app.camera.over.is_some() {
         let w = doc.slide_size.width as f32 * xf.scale;
         let h = doc.slide_size.height as f32 * xf.scale;
-        let tex = app.camera.over.as_ref().map(|(_, _, _, _, t)| t.clone());
+        let tex = app.camera.over.as_ref().map(|(_, _, _, _, _, t)| t.clone());
         if let Some(tex) = tex {
             painter.image(tex.id(), Rect::from_min_size(xf.origin, vec2(w, h)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         }

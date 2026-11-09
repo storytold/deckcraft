@@ -111,14 +111,24 @@ pub(super) fn render_overlay(
 /// The shapes of slide `idx` to leave out when drawing what is stacked above the lowest of the
 /// `live` shapes — those the UI paints itself (a playing video's frame, a Cameo's camera): the
 /// shape itself, everything below it and the other live shapes. Empty when nothing is above a
-/// live shape: its frame is then painted last.
+/// live shape: its frame is then painted last. A live shape nested in a group counts at its
+/// outermost group's position, and the whole group is skipped (the overlay paints after the
+/// frame, so nothing below the frame is lost).
 pub(crate) fn below_live(doc: &Presentation, idx: usize, live: &[ShapeId]) -> Vec<ShapeId> {
     let Some(slide) = doc.slides.get(idx) else { return vec![] };
-    let Some(first) = slide.shapes.iter().position(|s| live.contains(&s.id)) else { return vec![] };
+    if live.is_empty() {
+        return vec![];
+    }
+    let subtree_live = |s: &deckcraft_model::Shape| {
+        let mut hits = false;
+        deckcraft_model::walk(std::slice::from_ref(s), &mut |sh, _| hits |= live.contains(&sh.id));
+        hits
+    };
+    let Some(first) = slide.shapes.iter().position(subtree_live) else { return vec![] };
     if slide.shapes.iter().skip(first + 1).all(|s| live.contains(&s.id)) {
         return vec![];
     }
-    slide.shapes.iter().enumerate().filter(|(i, s)| *i <= first || live.contains(&s.id)).map(|(_, s)| s.id).collect()
+    slide.shapes.iter().enumerate().filter(|(i, s)| *i <= first || live.contains(&s.id) || subtree_live(s)).map(|(_, s)| s.id).collect()
 }
 
 /// Media on slide `idx` hidden until it plays, as it is when the slide is entered.

@@ -46,6 +46,33 @@ fn shapes_above_a_cameo_are_the_overlay() {
     assert_eq!(skip.len(), doc.slides[0].shapes.len() - 1, "everything at or below it is skipped");
 }
 
+/// A Cameo nested in a group counts at the group's stack position: a shape above the group goes
+/// into the overlay, and the group itself is skipped (its frame belongs to the camera layer).
+#[test]
+fn a_grouped_cameo_counts_at_its_group() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("insert.cameo", &json!({})).unwrap();
+    let cameo_doc = session.active().unwrap().doc.clone();
+    let cameo = crate::camera::cameo_ids(&cameo_doc, 0);
+    assert_eq!(cameo.len(), 1);
+    let buddy = session.execute("shape.insert", &json!({"preset": "rect", "rect": [300.0, 300.0, 60.0, 60.0]})).unwrap();
+    let doc = session.active().unwrap().doc.clone();
+    let ids: Vec<u32> = doc.slides[0].shapes.iter().map(|s| s.id.0).collect();
+    session.execute("arrange.group", &json!({"ids": ids})).unwrap();
+    let doc = session.active().unwrap().doc.clone();
+    assert_eq!(doc.slides[0].shapes.len(), 1, "the Cameo and its buddy are one group");
+    let group = doc.slides[0].shapes[0].id;
+    // No shape above the group: the frame is painted last.
+    assert!(below_live(&doc, 0, &cameo).is_empty());
+    let above = session.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, 60.0, 60.0]})).unwrap();
+    let above = ShapeId(above["id"].as_u64().unwrap() as u32);
+    let doc = session.active().unwrap().doc.clone();
+    let skip = below_live(&doc, 0, &cameo);
+    assert!(skip.contains(&group), "the group holding the Cameo is left to the camera layer");
+    assert!(!skip.contains(&above), "the shape above the group goes into the overlay");
+    let _ = buddy;
+}
+
 /// #968: over a shape a click acts on (a clip with its play trigger, a link) the pointing hand
 /// never gave way to the idle hide, so a still pointer stayed on the playing video.
 #[test]
