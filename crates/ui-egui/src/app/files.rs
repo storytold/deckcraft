@@ -89,6 +89,19 @@ pub(crate) fn with_save_extension(path: String, ext: &str) -> String {
     if deckcraft_engine::cmd::file::writable_format_for_path(&path).is_some() { path } else { format!("{path}.{ext}") }
 }
 
+/// The path to write once the Save dialog returned `picked`: [`with_save_extension`] applied. When
+/// adding the extension lands on a file that already exists, the dialog confirmed replacing the
+/// bare name, not that file, so the save is refused with a message rather than overwriting it
+/// silently; typing the full name (with its extension) goes through the dialog's own replace prompt.
+pub(crate) fn save_path(picked: String, ext: &str) -> Result<String, String> {
+    let path = with_save_extension(picked.clone(), ext);
+    if path != picked && std::path::Path::new(&path).exists() {
+        let name = std::path::Path::new(&path).file_name().map_or_else(|| path.clone(), |n| n.to_string_lossy().to_string());
+        return Err(format!("{name} already exists. Type the full name, with its extension, to replace it."));
+    }
+    Ok(path)
+}
+
 /// File → Open keeps the requested operation: a presentation opens, an outline becomes slides.
 fn open_command(name: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
@@ -212,8 +225,15 @@ impl SlideApp {
             }
         };
         let suggested = self.suggested_name(ext);
-        if let Some(pick) = self.services.pick_save.as_mut() {
-            let Some(path) = pick(&suggested).map(|p| with_save_extension(p, ext)) else { return false };
+        if self.services.pick_save.is_some() {
+            let Some(picked) = self.services.pick_save.as_mut().and_then(|pick| pick(&suggested)) else { return false };
+            let path = match save_path(picked, ext) {
+                Ok(p) => p,
+                Err(e) => {
+                    self.set_status(e);
+                    return false;
+                }
+            };
             let mut params = json!({"path": path, "format": format, "all": all});
             if let (Some(o), Some(x)) = (params.as_object_mut(), extra.as_object()) {
                 o.extend(x.clone());
@@ -459,16 +479,17 @@ impl SlideApp {
         let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
         let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
         let suggested = format!("{name}.{ext}");
-        if let Some(pick) = self.services.pick_save.as_mut() {
-            if let Some(path) = pick(&suggested).map(|p| with_save_extension(p, ext)) {
-                match self.session.execute("file.saveAs", &json!({"path": path})) {
-                    Ok(_) => {
-                        self.set_status(format!("Saved {path}"));
-                        self.ui.recent.retain(|p| *p != path);
-                        self.ui.recent.insert(0, path);
-                    }
-                    Err(e) => self.set_status(e.to_string()),
+        if self.services.pick_save.is_some() {
+            let Some(picked) = self.services.pick_save.as_mut().and_then(|pick| pick(&suggested)) else { return };
+            match save_path(picked, ext)
+                .and_then(|path| self.session.execute("file.saveAs", &json!({"path": path})).map(|_| path).map_err(|e| e.to_string()))
+            {
+                Ok(path) => {
+                    self.set_status(format!("Saved {path}"));
+                    self.ui.recent.retain(|p| *p != path);
+                    self.ui.recent.insert(0, path);
                 }
+                Err(e) => self.set_status(e),
             }
         } else if self.services.host_save.is_some() {
             let _ = self.save_to_host(Some(ext));
@@ -889,5 +910,23 @@ mod save_extension_tests {
         assert_eq!(p("/tmp/Quarterly.deckcraft"), "/tmp/Quarterly.deckcraft", "a typed writable format is kept");
         assert_eq!(p("/tmp/Plan v2.1"), "/tmp/Plan v2.1.pptx", "\"1\" names no format");
         assert_eq!(with_save_extension("/tmp/Slide 3.jpeg".into(), "jpg"), "/tmp/Slide 3.jpeg");
+    }
+
+    /// Adding the extension must not land on a file the dialog never asked about: that save is
+    /// refused. A path typed in full (the dialog prompted for it) or one that is free goes through.
+    #[test]
+    fn an_added_extension_never_overwrites_an_existing_file_unasked() {
+        use super::save_path;
+        let dir = std::env::temp_dir().join(format!("deckcraft-save-path-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let full = dir.join("Quarterly.pptx");
+        std::fs::write(&full, b"old").unwrap();
+        let bare = dir.join("Quarterly").to_string_lossy().to_string();
+        let e = save_path(bare, "pptx").unwrap_err();
+        assert!(e.starts_with("Quarterly.pptx already exists"), "{e}");
+        assert_eq!(std::fs::read(&full).unwrap(), b"old", "untouched");
+        assert_eq!(save_path(full.to_string_lossy().to_string(), "pptx").unwrap(), full.to_string_lossy(), "typed in full: the dialog confirmed it");
+        assert_eq!(save_path(dir.join("Fresh").to_string_lossy().to_string(), "pptx").unwrap(), dir.join("Fresh.pptx").to_string_lossy());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

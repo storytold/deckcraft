@@ -353,6 +353,17 @@ fn save_as_and_export_add_the_extension_the_dialog_dropped() {
     click_on_page(&h, "Create PDF");
     h.run_steps(3);
     assert!(std::fs::read(dir.join(format!("{title}.pdf"))).unwrap().starts_with(b"%PDF"), "exports get theirs too");
+
+    // The bare name again, now that `<title>.pptx` exists: the dialog only confirmed the bare
+    // name, so the existing file is kept and the status bar says why.
+    h.state_mut().run("slide.new", json!({})).unwrap();
+    let before = std::fs::read(&pptx).unwrap();
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Save");
+    h.run_steps(3);
+    assert_eq!(std::fs::read(&pptx).unwrap(), before, "not overwritten without the dialog's replace prompt");
+    assert!(h.state().status.as_ref().is_some_and(|s| s.0.contains("already exists")), "{:?}", h.state().status);
 }
 
 /// Export › Change File Type › PNG offers "Transparent background" (#784): the PNG it saves
