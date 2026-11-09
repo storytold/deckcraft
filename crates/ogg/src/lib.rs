@@ -415,6 +415,11 @@ impl CaptureScanner {
 }
 
 fn read_parts(src: &(impl ByteSource + ?Sized), parts: &[(u64, u32)]) -> Result<Vec<u8>> {
+    // Ranges come from a scan of some source; check them against this one before sizing a buffer.
+    let len = src.len();
+    if parts.iter().any(|&(o, n)| o.checked_add(u64::from(n)).is_none_or(|end| end > len)) {
+        return Err(Error::Invalid("packet range lies outside the source".into()));
+    }
     let mut v = Vec::with_capacity(parts.iter().map(|p| p.1 as usize).sum());
     for &(o, n) in parts {
         let a = v.len();
@@ -508,6 +513,7 @@ impl OpusTiming {
                     c = timing_add(c, i64::from(durations[k]))?;
                     ends[k] = Some(c);
                 }
+                cursor = Some(c);
                 break;
             }
             let Some(g) = stream.packets[j].granule else { break };
