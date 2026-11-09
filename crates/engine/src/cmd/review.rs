@@ -1312,6 +1312,11 @@ fn media_used(doc: &deckcraft_model::Presentation, id: deckcraft_model::MediaId)
 }
 
 fn shape_uses_media(sh: &Shape, id: deckcraft_model::MediaId) -> bool {
+    // A hyperlink sound (`a:snd`) is written from the media item: clearing narration must not
+    // drop the bytes out from under the surviving click/hover action.
+    if sh.click.as_ref().is_some_and(|h| h.sound == Some(id)) || sh.hover.as_ref().is_some_and(|h| h.sound == Some(id)) {
+        return true;
+    }
     if matches!(&sh.fill, Some(deckcraft_model::style::Fill::Picture(p)) if p.media == id) {
         return true;
     }
@@ -2001,6 +2006,43 @@ mod tests {
         s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(narrations(&s, 0).len(), 1);
         assert!(s.execute("show.clearNarration", &json!({"index": 99})).is_err());
+    }
+
+    /// #1836 review: a hyperlink sound that reuses narration bytes keeps those bytes when the
+    /// narration clip is cleared.
+    #[test]
+    fn clear_narration_keeps_a_shared_hyperlink_sound() {
+        use deckcraft_model::text::{Action, Hyperlink};
+        let mut s = Session::new();
+        open_sample(&mut s).unwrap();
+        let wav = tone(4000);
+        let other = tone(3200);
+        s.execute("show.narration", &json!({"index": 0, "name": "narration.wav", "data": base64_encode(&wav)})).unwrap();
+        s.execute("slide.go", &json!({"index": 0})).unwrap();
+        s.execute("insert.audio", &json!({"name": "tone.wav", "data": base64_encode(&other)})).unwrap();
+        let clip = narrations(&s, 0)[0].clone();
+        // A surviving audio shape's click action plays the narration's own bytes (`a:snd`):
+        // clearing the narration removes its shape but must keep the shared media item.
+        let doc = s.doc().unwrap();
+        let target = doc.doc.slides[0].shapes.iter().find(|sh| matches!(&sh.kind, ShapeKind::Media(m) if !m.narration)).expect("inserted audio").id;
+        s.edit(|doc, _| {
+            let Some(sl) = doc.slides.first_mut() else { return Err(crate::cmd::bad("test", "no slide")) };
+            let sl = Arc::make_mut(sl);
+            let sh = sl.shapes.iter_mut().find(|sh| sh.id == target).expect("inserted audio");
+            sh.click = Some(Hyperlink {
+                action: Action::NextSlide,
+                tooltip: String::new(),
+                highlight_click: false,
+                sound: Some(clip.media),
+                stop_sound: false,
+                zoom_return: None,
+            });
+            Ok(())
+        })
+        .unwrap();
+        s.execute("show.clearNarration", &json!({"index": 0})).unwrap();
+        assert!(narrations(&s, 0).is_empty(), "the narration clip is gone");
+        assert!(s.doc().unwrap().doc.media(clip.media).is_some(), "the hyperlink sound keeps the shared bytes");
     }
 
     /// A shape by id, whichever slide of the deck holds it.
