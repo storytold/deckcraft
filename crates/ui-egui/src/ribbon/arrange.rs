@@ -3,6 +3,7 @@ use super::{
 };
 use crate::i18n;
 
+/// Offer ordering and grouping commands with supported localized display labels.
 pub fn arrange_menu(app: &mut SlideApp, ui: &mut Ui) {
     let lang = app.lang();
     ui.label(egui::RichText::new(i18n::text(lang, "ribbon.arrange.order_heading")).font(theme::bold(12.0)));
@@ -34,6 +35,7 @@ pub fn arrange_menu(app: &mut SlideApp, ui: &mut Ui) {
     }
 }
 
+/// Offer alignment commands while retaining their stored values and target scope.
 pub fn align_menu(app: &mut SlideApp, ui: &mut Ui) {
     let lang = app.lang();
     let selection = app.session.active().map(|d| d.selection.shapes.clone()).unwrap_or_default();

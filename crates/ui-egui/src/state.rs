@@ -99,6 +99,7 @@ pub struct UiState {
 }
 
 impl Default for UiState {
+    /// Construct initial interface state with system language and stock toolbar commands.
     fn default() -> Self {
         UiState {
             brightness: theme::Brightness::Light,

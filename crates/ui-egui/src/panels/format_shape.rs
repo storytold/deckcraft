@@ -25,6 +25,7 @@ pub(super) fn fill_transparency_to_apply(shown_percent: f32, seed_percent: f32) 
     Some(f64::from(shown) / 100.0)
 }
 
+/// Choose a Format Shape section without changing its stored tab value.
 fn format_tabs(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
     let lang = app.lang();
     // Tabs as icons.
@@ -48,6 +49,7 @@ fn format_tabs(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
     });
 }
 
+/// Edit shape effects using supported localized captions and existing command parameters.
 fn effects_tab(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
     let lang = app.lang();
     ui.label(egui::RichText::new("Shadow").font(theme::bold(13.0)));

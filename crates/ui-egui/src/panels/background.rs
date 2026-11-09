@@ -1,6 +1,7 @@
 use super::{Fill, SlideApp, Ui, Value, cref_param, json, run, scheme, theme, vec2, widgets};
 use crate::i18n;
 
+/// Edit slide backgrounds with supported localized captions and existing color commands.
 pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
     let lang = app.lang();
     let sc = scheme(app);

@@ -133,6 +133,7 @@ fn localized_label(lang: i18n::Resolved, q: &QatItem) -> &str {
     key.map_or(q.label.as_str(), |key| i18n::text(lang, key))
 }
 
+/// Combine a display caption with the existing command and toolbar shortcuts.
 fn tip(q: &QatItem, label: &str, index: usize, mac: bool) -> String {
     let sc =
         deckcraft_engine::find_command(&q.id).and_then(|c| c.shortcut).or_else(|| crate::UI_COMMANDS.iter().find(|c| c.0 == q.id).and_then(|c| c.2));

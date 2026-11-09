@@ -19,6 +19,7 @@ pub enum LanguageChoice {
 impl LanguageChoice {
     pub const ALL: [LanguageChoice; 3] = [Self::System, Self::En, Self::Ja];
 
+    /// Return this language's stable command or preference code.
     pub fn code(self) -> &'static str {
         match self {
             Self::System => "system",
@@ -42,6 +43,7 @@ impl LanguageChoice {
         None
     }
 
+    /// Resolve an explicit choice or system locale to a supported display language.
     pub fn resolve(self, system: Option<&str>) -> Resolved {
         match self {
             Self::En => Resolved::En,
@@ -52,12 +54,14 @@ impl LanguageChoice {
 }
 
 impl Serialize for LanguageChoice {
+    /// Save the language choice as its stable code rather than a translated caption.
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(self.code())
     }
 }
 
 impl<'de> Deserialize<'de> for LanguageChoice {
+    /// Read a saved language choice, falling back to System for unknown codes.
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let raw = String::deserialize(deserializer)?;
         Ok(Self::parse(&raw).unwrap_or(Self::System))
@@ -72,6 +76,7 @@ pub enum Resolved {
 }
 
 impl Resolved {
+    /// Return this language's stable command or preference code.
     pub fn code(self) -> &'static str {
         match self {
             Self::En => "en",
@@ -89,6 +94,7 @@ pub fn resolve_tag(tag: &str) -> Resolved {
     Resolved::En
 }
 
+/// Normalize locale separators, case and encoding suffixes for catalog selection.
 fn normalize(raw: &str) -> String {
     let trimmed = raw.trim();
     let head = trimmed.split(['.', '@']).next().unwrap_or(trimmed);
@@ -102,6 +108,7 @@ pub fn system_tag() -> Option<String> {
     CACHED.get_or_init(read_system_tag).clone()
 }
 
+/// Read the platform locale when available; the web build has no native locale here.
 fn read_system_tag() -> Option<String> {
     #[cfg(not(target_arch = "wasm32"))]
     let tag = sys_locale::get_locale();
@@ -660,6 +667,7 @@ pub fn slide_size_label(lang: Resolved, name: &str) -> &str {
     text(lang, id)
 }
 
+/// Return the localized caption for a stable language-preference choice.
 pub fn choice_label(lang: Resolved, choice: LanguageChoice) -> &'static str {
     let id = match choice {
         LanguageChoice::System => "pref.system",
@@ -684,6 +692,7 @@ pub(crate) fn japanese_font_input_available() -> bool {
 mod tests {
     use super::*;
 
+    /// Collect placeholder names in order so translated messages can be compared.
     fn holes(s: &str) -> Vec<&str> {
         let mut out = Vec::new();
         let mut rest = s;
@@ -697,6 +706,7 @@ mod tests {
     }
 
     #[test]
+    /// Require unique sorted keys, nonempty translations and matching message placeholders.
     fn the_shell_catalog_is_sorted_and_complete() {
         let mut previous = "";
         for (id, en, ja) in CATALOG {
@@ -713,6 +723,7 @@ mod tests {
     }
 
     #[test]
+    /// Verify Japanese locale variants and English fallback for unsupported locales.
     fn japanese_tags_resolve_and_other_tags_do_not() {
         for tag in ["ja", "ja-JP", "ja_JP.UTF-8", "ja-JP-mac", "JA-jp"] {
             assert_eq!(resolve_tag(tag), Resolved::Ja, "{tag}");
@@ -728,6 +739,7 @@ mod tests {
     }
 
     #[test]
+    /// Accept System, English and Japanese codes while rejecting unsupported choices.
     fn the_language_command_accepts_the_three_choices() {
         assert_eq!(LanguageChoice::parse("system"), Some(LanguageChoice::System));
         assert_eq!(LanguageChoice::parse("en"), Some(LanguageChoice::En));
@@ -739,6 +751,7 @@ mod tests {
     }
 
     #[test]
+    /// Preserve saved Japanese choices and use System for unrecognized saved codes.
     fn a_saved_choice_round_trips_and_an_unknown_code_falls_back() {
         let raw = serde_json::to_string(&LanguageChoice::Ja).expect("serialize");
         assert_eq!(raw, "\"ja\"");
@@ -749,6 +762,7 @@ mod tests {
     }
 
     #[test]
+    /// Fill named message arguments without losing unresolved placeholders.
     fn placeholders_keep_their_names() {
         let ja = text(Resolved::Ja, "status.slide_of");
         assert_eq!(fill(ja, &[("n", "2"), ("m", "9")]), "スライド 2/9");
@@ -758,6 +772,7 @@ mod tests {
     }
 
     #[test]
+    /// Translate tab captions while retaining English identifiers and unknown-tab fallback.
     fn tab_titles_follow_the_language_and_keep_the_english_id() {
         assert_eq!(tab_label(Resolved::Ja, "File"), "ファイル");
         assert_eq!(tab_label(Resolved::Ja, "Home"), "ホーム");
@@ -847,6 +862,7 @@ mod tests {
     }
 
     #[test]
+    /// Keep preset identities and preserve braces inside user-provided message arguments.
     fn preset_labels_keep_model_identity_and_user_placeholders_are_literal() {
         for &(name, _, _) in deckcraft_model::defaults::SLIDE_SIZES {
             assert_eq!(slide_size_label(Resolved::En, name), name);

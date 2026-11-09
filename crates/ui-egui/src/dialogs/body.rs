@@ -79,6 +79,7 @@ fn run(app: &mut SlideApp, id: &str, p: Value) {
     let _ = app.run(id, p);
 }
 
+/// Insert a table from the stable row/column fields behind translated captions.
 fn dlg_table(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     field(ui, d, i18n::text(lang, "dialog.table.columns"), "cols", "5");
@@ -91,6 +92,7 @@ fn dlg_table(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Edit exact slide dimensions and display localized preset names without changing preset identities.
 fn dlg_slide_size(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     let cur = app.session.active().map(|s| s.doc.slide_size).unwrap_or(deckcraft_model::defaults::WIDE);
@@ -141,6 +143,7 @@ fn dlg_slide_size(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Apply header/footer choices without rewriting untouched date-format values.
 fn dlg_header_footer(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     let hf = app.session.active().map(|s| s.doc.header_footer.clone()).unwrap_or_default();
@@ -200,6 +203,7 @@ fn dlg_header_footer(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     apply || apply_all || d.fields.contains_key("cancel")
 }
 
+/// Edit hyperlink display fields while preserving stored link kinds and target parameters.
 fn dlg_hyperlink(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     let seed = hyperlink_seed_of(app.session.active());
@@ -250,6 +254,7 @@ fn dlg_hyperlink(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Configure playback options with translated captions and the existing show values.
 fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     let sh = app.session.active().map(|s| s.doc.show.clone()).unwrap_or_default();
@@ -294,6 +299,7 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Resolve save/discard/cancel decisions for dirty presentations before application exit.
 fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     let lang = app.lang();
     let names: Vec<String> = app.session.documents().iter().filter(|d| d.is_dirty()).map(|d| d.title()).collect();
@@ -338,6 +344,7 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     done
 }
 
+/// Resolve save/discard/cancel for the active presentation.
 fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     let lang = app.lang();
     // File › Close and Ctrl+W on a presentation with unsaved changes.
@@ -374,6 +381,7 @@ fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     done
 }
 
+/// Post nonempty user-authored comment text through the existing comment command.
 fn dlg_comment(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     let mut v = d.get("text", "");
@@ -490,6 +498,7 @@ fn dlg_bullets(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel || none
 }
 
+/// Edit shape interaction settings while retaining their stored action kinds and targets.
 fn dlg_action(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     use deckcraft_model::text::Action;
@@ -615,6 +624,7 @@ fn dlg_action(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Edit descriptive text and the decorative flag without translating user-authored content.
 fn dlg_alt_text(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     let (cur, deco_now) = app
@@ -639,6 +649,7 @@ fn dlg_alt_text(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Insert slides from the entered outline, keeping the outline text literal.
 fn dlg_outline(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     ui.label(i18n::text(lang, "dialog.outline.description"));
@@ -652,6 +663,7 @@ fn dlg_outline(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Choose source slides for reuse while preserving presentation names and command parameters.
 fn dlg_reuse_slides(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     let path = d.params.get("path").and_then(Value::as_str).unwrap_or("").to_string();
@@ -716,6 +728,7 @@ fn dlg_reuse_slides(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     cancel
 }
 
+/// Rename a section, shape or layout while preserving its target identity.
 fn dlg_rename_section(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     let cur = d.params.get("name").and_then(Value::as_str).unwrap_or("").to_string();
@@ -732,6 +745,7 @@ fn dlg_rename_section(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Choose an export action using localized captions and the existing export parameters.
 fn dlg_export(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     ui.label(i18n::text(lang, "dialog.export.description"));
@@ -878,6 +892,7 @@ fn dlg_replace_fonts(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     cancel
 }
 
+/// Display localized symbol-group captions and insert the selected original character.
 fn dlg_symbol(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     let lang = app.lang();
     ui.label(i18n::text(lang, "dialog.symbol.description"));
@@ -906,6 +921,7 @@ fn dlg_symbol(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Insert an equation from literal user input behind localized dialog captions.
 fn dlg_equation(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     ui.label(i18n::text(lang, "dialog.equation.description"));
@@ -947,6 +963,7 @@ fn dlg_paste_special(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Review spelling results and route actions to their original slide and shape identifiers.
 fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     // Words skipped with Ignore All while the dialog is open, one per line.
@@ -1091,6 +1108,7 @@ fn dlg_spelling(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Display accessibility results and navigate to the original reported object.
 fn dlg_accessibility(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     let lang = app.lang();
     let v = app.session.execute("review.accessibility", &json!({})).unwrap_or_default();
@@ -1120,6 +1138,7 @@ fn dlg_accessibility(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Set text proofing language independently of the interface-language choice.
 fn dlg_language(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let ui_lang = app.lang();
     // Starts from the selected text's language and Do Not Check Spelling.
@@ -1169,6 +1188,7 @@ fn dlg_language(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Manage custom shows without translating their names or stored slide lists.
 fn dlg_custom_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     let shows = app.session.active().map(|s| s.doc.custom_shows.clone()).unwrap_or_default();
@@ -1199,6 +1219,7 @@ fn dlg_custom_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Edit literal chart data behind localized controls and retain the existing grid format.
 fn dlg_chart_data(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     let ch = app.session.active().and_then(|s| {
@@ -1253,6 +1274,7 @@ fn dlg_chart_data(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Apply media trimming and fade values through the existing command fields.
 fn dlg_trim(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     let seed = trim_seed(app.session.active());
@@ -1276,6 +1298,7 @@ fn dlg_trim(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Insert the chosen SmartArt kind with literal user-authored item text.
 fn dlg_smartart(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     ui.label(i18n::text(lang, "dialog.smartart.description"));
@@ -1305,6 +1328,7 @@ fn dlg_smartart(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Switch credit sections by stable keys while localizing their visible captions.
 fn dlg_about(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     let tab = d.get("tab", "about");
@@ -1330,6 +1354,7 @@ fn dlg_about(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Edit autocorrection preferences without translating user-defined replacements.
 fn dlg_autocorrect(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     let pr = &mut app.session.prefs;
@@ -1376,6 +1401,7 @@ fn dlg_autocorrect(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ok || cancel
 }
 
+/// Preview preferences and restore the opening snapshot, including language, on cancellation.
 fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let lang = app.lang();
     // The controls apply as they change, so the dialog remembers what it opened with and

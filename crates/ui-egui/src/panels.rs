@@ -30,6 +30,7 @@ use format_shape::{fill_transparency_to_apply, solid_fill_transparency_percent};
 use smartart::smartart;
 use thesaurus::thesaurus;
 
+/// Draw the selected task pane with translated headings and stable pane identifiers.
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let lang = app.lang();
     let t = Tokens::get(ui.ctx());
@@ -90,6 +91,7 @@ fn scheme(app: &SlideApp) -> deckcraft_color::ColorScheme {
     app.session.active().and_then(|d| d.doc.masters.first().map(|m| m.scheme())).unwrap_or_else(|| deckcraft_model::Theme::default().colors)
 }
 
+/// Choose a pane color without translating its stored color value.
 fn color_button(
     app: &mut SlideApp,
     ui: &mut Ui,

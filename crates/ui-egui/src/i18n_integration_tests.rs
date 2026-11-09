@@ -14,6 +14,7 @@ pub(crate) fn preview(harness: &mut egui_kittest::Harness<'_, SlideApp>, name: &
 
 /// A text glyph's visible paint rectangle, independent of AccessKit metadata.
 fn painted_text_rect(output: &egui::FullOutput, expected: &str) -> Option<egui::Rect> {
+    /// Find an unclipped painted text rectangle, including text inside nested shape groups.
     fn find(shape: &egui::Shape, clip: egui::Rect, expected: &str) -> Option<egui::Rect> {
         match shape {
             egui::Shape::Text(text) if text.galley.text() == expected => {
@@ -30,6 +31,7 @@ fn painted_text_rect(output: &egui::FullOutput, expected: &str) -> Option<egui::
 /// Comment actions must fit narrow panes in both interface languages.
 #[test]
 fn comment_actions_fit_the_pane_and_resolve_only_the_clicked_thread() {
+    /// Count matching painted labels and require their glyph bounds to fit the clip and viewport.
     fn painted_count(shape: &egui::Shape, clip: egui::Rect, viewport: egui::Rect, label: &str) -> usize {
         match shape {
             egui::Shape::Text(text) if text.galley.text() == label => {
@@ -159,6 +161,7 @@ fn japanese_renames_the_file_tab_and_preferences() {
 }
 
 #[test]
+/// Default older saved interface state to System and resolve Japanese system locales.
 fn an_older_ui_state_without_a_language_stays_on_system() {
     let ui: UiState = serde_json::from_str(r#"{"tab":"Home"}"#).unwrap();
     assert_eq!(ui.language, i18n::LanguageChoice::System);

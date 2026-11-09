@@ -8,6 +8,7 @@ use crate::i18n;
 
 // ---------- Home ----------
 
+/// Draw supported translated clipboard controls and invoke their existing commands.
 fn clipboard_group(app: &mut SlideApp, ui: &mut Ui) {
     let lang = app.lang();
     group(ui, |ui| {
@@ -169,6 +170,7 @@ pub fn font_families(app: &SlideApp) -> Vec<String> {
     v
 }
 
+/// Draw Home's text-format controls with supported translated captions and tooltips.
 fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
     let lang = app.lang();
     let en = enabled(app, "format.bold");
@@ -467,6 +469,7 @@ fn drawing_group(app: &mut SlideApp, ui: &mut Ui) {
     });
 }
 
+/// Compose the Home ribbon groups using the resolved interface language.
 pub(super) fn home(app: &mut SlideApp, ui: &mut Ui) {
     let lang = app.lang();
     let st = fmt_state(app);

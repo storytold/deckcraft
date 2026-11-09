@@ -29,6 +29,7 @@ impl Dialog {
     }
 }
 
+/// Resolve supported dialog captions without changing the dialog identifier.
 fn title(lang: i18n::Resolved, id: &str) -> &'static str {
     match id {
         "table" => i18n::text(lang, "dialog.table.title"),
@@ -126,14 +127,17 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     }
 }
 
+/// Draw the default confirmation row with an English Cancel caption.
 fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
     buttons_labeled(ui, ok_label, "Cancel")
 }
 
+/// Translate Cancel while retaining the caller's confirmation caption.
 fn localized_buttons(ui: &mut Ui, lang: i18n::Resolved, ok_label: &str) -> (bool, bool) {
     buttons_labeled(ui, ok_label, i18n::text(lang, "pref.cancel"))
 }
 
+/// Lay out confirmation and cancellation actions and report which was activated.
 fn buttons_labeled(ui: &mut Ui, ok_label: &str, cancel_label: &str) -> (bool, bool) {
     let mut ok = false;
     let mut cancel = false;

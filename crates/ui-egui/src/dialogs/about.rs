@@ -16,6 +16,7 @@ pub(super) fn credits_block(ui: &mut Ui, models: bool) -> Rect {
     .rect
 }
 
+/// Draw version and project information with the supported localized captions.
 pub fn about(app: &mut SlideApp, ui: &mut Ui) {
     let lang = app.lang();
     let t = Tokens::get(ui.ctx());

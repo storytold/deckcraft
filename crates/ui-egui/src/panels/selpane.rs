@@ -118,6 +118,7 @@ fn small_icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> egu
     resp.on_hover_text(label)
 }
 
+/// Offer selection visibility and ordering actions with translated captions.
 fn toolbar(app: &mut SlideApp, ui: &mut Ui, t: &Tokens, has_sel: bool) {
     let lang = app.lang();
     ui.horizontal(|ui| {
@@ -148,6 +149,7 @@ fn focus_lock(ui: &mut Ui, rows: &[Row]) -> Option<u32> {
     focused_row
 }
 
+/// Expose localized expand/collapse actions for the original named group.
 fn group_chevron(app: &mut SlideApp, ui: &mut Ui, row: &Row, painter: &egui::Painter, x0: f32, r: Rect, t: &Tokens) {
     let lang = app.lang();
     let open = !app.selpane.collapsed.contains(&row.id);
@@ -389,6 +391,7 @@ fn keys(app: &mut SlideApp, ui: &Ui, rows: &[Row], selected: &[u32], focused: u3
     }
 }
 
+/// Route translated selection actions to the original shape identifier.
 fn context_menu(app: &mut SlideApp, resp: &egui::Response, row: &Row) {
     let lang = app.lang();
     resp.context_menu(|ui| {

@@ -53,6 +53,7 @@ impl SlideApp {
         params.get("on").and_then(Value::as_bool).unwrap_or(!cur)
     }
 
+    /// Execute application commands, including validated interface-language changes.
     fn run_ui(&mut self, id: &str, p: &Value) -> Result<Value, String> {
         match id {
             "view.normal" => self.ui.view = ViewMode::Normal,

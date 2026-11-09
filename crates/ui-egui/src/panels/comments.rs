@@ -65,6 +65,7 @@ pub(super) fn revisions(app: &mut SlideApp, ui: &mut Ui) {
     }
 }
 
+/// Draw cross-slide comment threads with translated actions and unchanged thread identities.
 pub(super) fn comments(app: &mut SlideApp, ui: &mut Ui) {
     let lang = app.lang();
     let t = Tokens::get(ui.ctx());
