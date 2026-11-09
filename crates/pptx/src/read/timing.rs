@@ -365,7 +365,8 @@ fn plays_as_build(effects: &[&Animation], offsets: &[u32], text: &TextBody, expl
         .zip(effects.iter())
         .zip(flat.iter())
         .all(|((&off, a), &ft)| off == off0 || off.saturating_add(a.delay_ms) == off0.saturating_add(ft));
-    if !explicit_bld && first.start != AnimStart::OnClick && (span_ms(first) != 500 || first.delay_ms != 0 || off0 != 0 || !parent_starts_match) {
+    if !explicit_bld && (!parent_starts_match || (first.start != AnimStart::OnClick && (span_ms(first) != 500 || first.delay_ms != 0 || off0 != 0)))
+    {
         return false;
     }
     let settings = |a: &Animation| Animation { start: AnimStart::OnClick, paragraph: None, ..a.clone() };
