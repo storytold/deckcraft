@@ -143,6 +143,8 @@ The first release deliberately normalises a small, idempotent command set:
 | `table.merge`, `table.split` | command | final merge corners or the merge anchor (`table.merge`/`table.split`); cells keep their indices, so a queued cell operation is only moved by a row/column edit, and a merge that covered an addressed cell refuses it `stale` |
 | `table.columnWidth`, `table.rowHeight` | command | one final column width (`keepTotal` takes the difference from the next column) or row height in points (`table.columnWidth`/`table.rowHeight`) |
 | `smartArt.setNodes`, `smartArt.addNode`, `smartArt.removeNode`, `smartArt.promote`, `smartArt.demote`, `smartArt.layout`, `smartArt.style`, `smartArt.colors` | command | the graphic's **whole** diagram value — layout, outline (text, levels, assistants, titles, pictures), style and colours — in one `smartArt.setDiagram`; the client runs the engine's `smartArt::plan`, the same function the single-user command uses, so it sends the value that command would leave (a layout change drops the file's saved layout, a style/colour change its own XML); an unknown layout/style/colour, an unaddressable node and a too-large value are refused before sending (and by the engine before the first write); the undo image is the whole group (`shape_field{field: smartArt}`), because an outline edit regenerates the children with fresh ids and replaces an imported file's drawing |
+| `chart.type`, `chart.data`, `chart.options` | command | the chart's **whole** value — type, categories (with outer levels), series, element options and any kept part — in one `chart.setWhole`; the client runs the engine's `chart::plan`, the same plan the single-user command uses, so it sends the value that command would leave; the adapter requires a chart shape and bounds the value (category/series/point counts, text, JSON size) before the first write; the undo image is the whole chart shape (`shape_field{field: chart}`), because a kept chart part cannot be replayed from arguments |
+| `insert.chart` | structural | the **whole chart** the insertion would create (its sample and typed data) plus the final box, in a `chart_insert`; every replica creates that chart instead of running its own sample; the undo is the ordinary shape-delete step |
 | `shape.insert` | structural | preset, final geometry, optional text; ids are deterministic on every replica |
 | `insert.picture` | structural | the operation carries a sha256 reference, not bytes; see "Media channel" |
 | `insert.video`, `insert.audio` | structural | same reference; the clip's bytes are allowlisted separately |
@@ -169,7 +171,7 @@ The first release deliberately normalises a small, idempotent command set:
 Anything else that changes the document is refused with a "not available in a shared session
 yet" message instead of being applied locally and silently diverging. The design rule stands: only
 commands whose result is a deterministic function of the authoritative state, expressed as final
-values, go on the wire. What is still refused: charts, `insert.smartArt` and the SmartArt
+values, go on the wire. What is still refused: `insert.smartArt` and the SmartArt
 convert/picture commands, 3-D models and relative effects.
 The full command surface is the next slice; it needs a final-value normalisation for each
 command, not a raw `execute` on the wire.
@@ -347,7 +349,8 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    image is the whole table, as for a row/column edit), and Table Layout ▸ Cell Size has the
    Column Width and Row Height fields, which carry the selected column/row as final values and run
    the same `table.columnWidth`/`table.rowHeight` commands a border drag does. What is left in
-   this line: SmartArt/charts.
+   this line: `insert.smartArt` and its conversions; charts are in (type/data/options and an
+   insertion as one whole chart value, the whole chart shape as the undo image).
 4. **Done — Browser transport**: the web build gets its session from the host bridge and dials the
    sync server over the page's `WebSocket` (`crates/collab-web`); the token comes from
    `deckcraft:session`, media goes over `fetch` with it, and Save asks the cabinet to commit.
