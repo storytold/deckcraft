@@ -5,7 +5,7 @@
 use deckcraft_model::{Shape, ShapeId};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, bad, bool_or, cmd, has_slide, id_param, ids_param, ok};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -28,7 +28,10 @@ pub fn specs() -> Vec<CommandSpec> {
 /// together (Ctrl+click on the other kind is ignored, as in PowerPoint), and picking a hidden
 /// object from the list shows it again.
 fn select(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids = ids_param(p, "ids").or_else(|| id_param(p, "id").map(|i| vec![i])).unwrap_or_default();
+    let ids = match ids_param(p, "ids") {
+        Some(ids) => ids,
+        None => id_param(p, "id", "selection.select")?.map(|i| vec![i]).unwrap_or_default(),
+    };
     let (toggle, add) = (bool_or(p, "toggle", false), bool_or(p, "add", false));
     let st = s.doc()?;
     let in_group = |id: &ShapeId| deckcraft_model::parent_of(st.shapes(), *id).map(|p| p.is_some());

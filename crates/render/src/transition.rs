@@ -87,7 +87,7 @@ pub fn render_transition(pres: &Presentation, index: usize, t: f64, opts: &Rende
                 .iter()
                 .map(|x| crate::PathMorph { id: x.id, from: x.from.clone(), from_box: x.from_box, to_box: x.to_box, t: m.mix })
                 .collect();
-            return render_blend(pres, from, index, m.mix, &m.shapes, &text, &paths, &o);
+            return render_blend(pres, (from, index), m.mix, &m.shapes, &text, &paths, &o);
         }
     }
     let new = render_slide(pres, index, opts);
@@ -105,6 +105,7 @@ fn copy_opts<'a>(o: &RenderOpts<'a>) -> RenderOpts<'a> {
         state: o.state,
         skip: o.skip,
         skip_text: o.skip_text,
+        editing_text: o.editing_text,
         gif_times: o.gif_times,
         threads: o.threads,
         offset: o.offset,
@@ -112,6 +113,7 @@ fn copy_opts<'a>(o: &RenderOpts<'a>) -> RenderOpts<'a> {
         clear: o.clear,
         date_text: o.date_text.clone(),
         now: o.now,
+        transparent_background: o.transparent_background,
     }
 }
 

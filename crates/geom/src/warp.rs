@@ -234,6 +234,246 @@ pub fn is_supported(name: &str) -> bool {
     !adjust_defaults(name).is_empty()
 }
 
+/// One DrawingML text-warp preset, in gallery order.
+pub struct Preset {
+    /// `prstTxWarp` value, e.g. `textArchUp`.
+    pub id: &'static str,
+    /// Name shown on the Transform gallery tile.
+    pub label: &'static str,
+}
+
+/// The 40 presets DeckCraft draws, Follow Path first, then Warp.
+pub const CATALOG: &[Preset] = &[
+    Preset { id: "textArchUp", label: "Arch Up" },
+    Preset { id: "textArchDown", label: "Arch Down" },
+    Preset { id: "textCircle", label: "Circle" },
+    Preset { id: "textButton", label: "Button" },
+    Preset { id: "textPlain", label: "Plain" },
+    Preset { id: "textStop", label: "Stop" },
+    Preset { id: "textTriangle", label: "Triangle" },
+    Preset { id: "textTriangleInverted", label: "Inverted Triangle" },
+    Preset { id: "textChevron", label: "Chevron" },
+    Preset { id: "textChevronInverted", label: "Inverted Chevron" },
+    Preset { id: "textRingInside", label: "Ring Inside" },
+    Preset { id: "textRingOutside", label: "Ring Outside" },
+    Preset { id: "textArchUpPour", label: "Arch Up Pour" },
+    Preset { id: "textArchDownPour", label: "Arch Down Pour" },
+    Preset { id: "textCirclePour", label: "Circle Pour" },
+    Preset { id: "textButtonPour", label: "Button Pour" },
+    Preset { id: "textCurveUp", label: "Curve Up" },
+    Preset { id: "textCurveDown", label: "Curve Down" },
+    Preset { id: "textCanUp", label: "Can Up" },
+    Preset { id: "textCanDown", label: "Can Down" },
+    Preset { id: "textWave1", label: "Wave 1" },
+    Preset { id: "textWave2", label: "Wave 2" },
+    Preset { id: "textDoubleWave1", label: "Double Wave 1" },
+    Preset { id: "textWave4", label: "Wave 4" },
+    Preset { id: "textInflate", label: "Inflate" },
+    Preset { id: "textDeflate", label: "Deflate" },
+    Preset { id: "textInflateBottom", label: "Inflate Bottom" },
+    Preset { id: "textDeflateBottom", label: "Deflate Bottom" },
+    Preset { id: "textInflateTop", label: "Inflate Top" },
+    Preset { id: "textDeflateTop", label: "Deflate Top" },
+    Preset { id: "textDeflateInflate", label: "Deflate Inflate" },
+    Preset { id: "textDeflateInflateDeflate", label: "Deflate Inflate Deflate" },
+    Preset { id: "textFadeRight", label: "Fade Right" },
+    Preset { id: "textFadeLeft", label: "Fade Left" },
+    Preset { id: "textFadeUp", label: "Fade Up" },
+    Preset { id: "textFadeDown", label: "Fade Down" },
+    Preset { id: "textSlantUp", label: "Slant Up" },
+    Preset { id: "textSlantDown", label: "Slant Down" },
+    Preset { id: "textCascadeUp", label: "Cascade Up" },
+    Preset { id: "textCascadeDown", label: "Cascade Down" },
+];
+
+/// A yellow adjust handle for one warp guide value. `pos` is in the same space as `rect`
+/// (shape-local points). Dragging projects the pointer onto the handle's axis, or around the
+/// text rectangle's centre for an angle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WarpHandle {
+    pub index: usize,
+    pub pos: Point,
+    kind: HandleKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum HandleKind {
+    /// `pos = origin + dir * raw`. `value_at` projects onto that line and clamps.
+    Line { origin: Point, dir: Vec2, min: f64, max: f64 },
+    /// Angle about `center` (y down, 0° at +x). `invert` is arch-down, whose guide angle is `180° − adj`.
+    Angle { center: Point, invert: bool },
+}
+
+impl WarpHandle {
+    /// The raw guide value (`adj` / `adjN`) for a pointer at `p`.
+    pub fn value_at(&self, p: Point) -> f64 {
+        match self.kind {
+            HandleKind::Line { origin, dir, min, max } => {
+                let l2 = dir.hypot2();
+                if l2 < 1e-18 || !(p.x.is_finite() && p.y.is_finite()) {
+                    return min;
+                }
+                let v = (p - origin).dot(dir) / l2;
+                if !v.is_finite() {
+                    return min;
+                }
+                let (lo, hi) = (min.min(max), max.max(min));
+                v.clamp(lo, hi).round()
+            }
+            HandleKind::Angle { center, invert } => {
+                let d = p - center;
+                if !(d.x.is_finite() && d.y.is_finite()) || d.hypot() < 1e-9 {
+                    return 0.0;
+                }
+                let mut deg = d.y.atan2(d.x).to_degrees();
+                if invert {
+                    deg = 180.0 - deg;
+                }
+                (deg.rem_euclid(360.0) * 60_000.0).round()
+            }
+        }
+    }
+}
+
+fn stored_raw(adj: &[f64], defaults: &[f64], i: usize) -> f64 {
+    adj.get(i).copied().filter(|v| v.is_finite()).or_else(|| defaults.get(i).copied()).unwrap_or(0.0)
+}
+
+fn unit(rect: Rect, u: f64, v: f64) -> Point {
+    Point::new(rect.x0 + u * rect.width(), rect.y0 + v * rect.height())
+}
+
+/// A fraction handle: unit position `(x, sign * frac)`, raw = frac × 100 000, clamped to `lo..=hi`.
+fn frac_handle(rect: Rect, index: usize, x: f64, frac: f64, lo: f64, hi: f64, sign: f64) -> WarpHandle {
+    let frac = frac.clamp(lo, hi);
+    WarpHandle {
+        index,
+        pos: unit(rect, x, sign * frac),
+        kind: HandleKind::Line {
+            origin: unit(rect, x, 0.0),
+            dir: Vec2::new(0.0, sign * rect.height() / 100_000.0),
+            min: lo * 100_000.0,
+            max: hi * 100_000.0,
+        },
+    }
+}
+
+/// A fraction handle that slides horizontally: unit `(frac, y)`.
+fn frac_x_handle(rect: Rect, index: usize, y: f64, frac: f64, lo: f64, hi: f64) -> WarpHandle {
+    let frac = frac.clamp(lo, hi);
+    WarpHandle {
+        index,
+        pos: unit(rect, frac, y),
+        kind: HandleKind::Line {
+            origin: unit(rect, 0.0, y),
+            dir: Vec2::new(rect.width() / 100_000.0, 0.0),
+            min: lo * 100_000.0,
+            max: hi * 100_000.0,
+        },
+    }
+}
+
+/// Angle handle, inset from the ellipse so it doesn't sit on a resize handle.
+fn angle_handle(rect: Rect, index: usize, deg: f64, invert: bool) -> WarpHandle {
+    let geom = if invert { 180.0 - deg } else { deg };
+    let rad = geom.to_radians();
+    let c = rect.center();
+    WarpHandle {
+        index,
+        pos: Point::new(c.x + rect.width() * 0.36 * rad.cos(), c.y + rect.height() * 0.36 * rad.sin()),
+        kind: HandleKind::Angle { center: c, invert },
+    }
+}
+
+/// Inner-ellipse radius (pour presets): the handle sits on the downward point of that ellipse.
+fn radius_handle(rect: Rect, r: f64) -> WarpHandle {
+    let r = r.clamp(0.0, 0.99);
+    WarpHandle {
+        index: 1,
+        pos: unit(rect, 0.5, 0.5 + 0.5 * r),
+        kind: HandleKind::Line { origin: unit(rect, 0.5, 0.5), dir: Vec2::new(0.0, 0.5 * rect.height() / 100_000.0), min: 0.0, max: 99_000.0 },
+    }
+}
+
+/// Wave phase: slides sideways around the middle of the lower half.
+fn shift_handle(rect: Rect, s: f64) -> WarpHandle {
+    let s = s.clamp(-0.1, 0.1);
+    WarpHandle {
+        index: 1,
+        pos: unit(rect, 0.5 + s, 0.78),
+        kind: HandleKind::Line { origin: unit(rect, 0.5, 0.78), dir: Vec2::new(rect.width() / 100_000.0, 0.0), min: -10_000.0, max: 10_000.0 },
+    }
+}
+
+/// Yellow handles for warp `name` over text rectangle `rect`. Empty when `name` isn't a drawn
+/// preset or `rect` isn't a usable box. Missing adjust values take the preset defaults.
+pub fn handles(name: &str, adj: &[f64], rect: Rect) -> Vec<WarpHandle> {
+    if ![rect.x0, rect.y0, rect.x1, rect.y1].iter().all(|v| v.is_finite()) {
+        return Vec::new();
+    }
+    let rect = Rect::new(rect.x0.min(rect.x1), rect.y0.min(rect.y1), rect.x0.max(rect.x1), rect.y0.max(rect.y1));
+    if rect.width() < 1e-3 || rect.height() < 1e-3 {
+        return Vec::new();
+    }
+    let defaults = adjust_defaults(name);
+    if defaults.is_empty() {
+        return Vec::new();
+    }
+    let raw = |i| stored_raw(adj, defaults, i);
+    let frac = |i| raw(i) / 100_000.0;
+    let deg = |i| (raw(i) / 60_000.0).rem_euclid(360.0);
+    let y = |out: &mut Vec<WarpHandle>, x, lo, hi, sign| out.push(frac_handle(rect, 0, x, frac(0), lo, hi, sign));
+    let xh = |out: &mut Vec<WarpHandle>, yy, lo, hi| out.push(frac_x_handle(rect, 0, yy, frac(0), lo, hi));
+    let mut out = Vec::with_capacity(defaults.len());
+    match name {
+        "textPlain" => xh(&mut out, 0.28, 0.3, 0.7),
+        "textStop" => y(&mut out, 0.5, 0.14286, 0.5, 1.0),
+        "textTriangle" | "textTriangleInverted" => y(&mut out, 0.18, 0.0, 1.0, 1.0),
+        "textChevron" => y(&mut out, 0.18, 0.0, 0.5, 1.0),
+        "textChevronInverted" => y(&mut out, 0.18, 0.5, 1.0, 1.0),
+        "textFadeRight" => y(&mut out, 0.82, 0.0, 0.49999, 1.0),
+        "textFadeLeft" => y(&mut out, 0.18, 0.0, 0.49999, 1.0),
+        "textFadeUp" => xh(&mut out, 0.22, 0.0, 0.49999),
+        "textFadeDown" => xh(&mut out, 0.78, 0.0, 0.49999),
+        "textSlantUp" => y(&mut out, 0.18, 0.44444, 1.0, 1.0),
+        "textSlantDown" => y(&mut out, 0.18, 0.0, 0.55556, 1.0),
+        "textCascadeUp" => y(&mut out, 0.82, 0.0, 1.0, 1.0),
+        "textCascadeDown" => y(&mut out, 0.18, 0.0, 1.0, 1.0),
+        "textInflate" => y(&mut out, 0.62, 0.0, 0.2, -1.0),
+        "textDeflate" => y(&mut out, 0.62, 0.0, 0.375, 1.0),
+        "textInflateBottom" => y(&mut out, 0.62, 0.6, 1.0, 1.0),
+        "textDeflateBottom" => y(&mut out, 0.62, 0.0625, 1.0, 1.0),
+        "textInflateTop" => y(&mut out, 0.62, 0.0, 0.5, 1.0),
+        "textDeflateTop" => y(&mut out, 0.62, 0.0, 0.9375, 1.0),
+        "textDeflateInflate" => y(&mut out, 0.5, 0.05, 0.95, 1.0),
+        "textDeflateInflateDeflate" => y(&mut out, 0.5, 0.01, 1.0 / 3.0, 1.0),
+        "textCurveUp" | "textCurveDown" => y(&mut out, 0.18, 0.0, 0.56818, 1.0),
+        "textCanUp" => y(&mut out, 0.62, 0.5, 1.0, 1.0),
+        "textCanDown" => y(&mut out, 0.62, 0.0, 0.5, 1.0),
+        "textRingInside" | "textRingOutside" => y(&mut out, 0.5, 0.5, 0.99, 1.0),
+        "textArchUp" | "textCircle" | "textButton" => out.push(angle_handle(rect, 0, deg(0), false)),
+        "textArchDown" => out.push(angle_handle(rect, 0, deg(0), true)),
+        "textArchUpPour" | "textCirclePour" | "textButtonPour" => {
+            out.push(angle_handle(rect, 0, deg(0), false));
+            out.push(radius_handle(rect, frac(1)));
+        }
+        "textArchDownPour" => {
+            out.push(angle_handle(rect, 0, deg(0), true));
+            out.push(radius_handle(rect, frac(1)));
+        }
+        "textWave1" | "textWave2" => {
+            y(&mut out, 0.32, 0.0, 0.2, 1.0);
+            out.push(shift_handle(rect, frac(1)));
+        }
+        "textDoubleWave1" | "textWave4" => {
+            y(&mut out, 0.32, 0.0, 0.125, 1.0);
+            out.push(shift_handle(rect, frac(1)));
+        }
+        _ => return Vec::new(),
+    }
+    out
+}
+
 /// Segments of a guide in unit coordinates (x, y in 0..1 over the text rectangle).
 #[derive(Clone, Copy, Debug)]
 enum Seg {
@@ -688,11 +928,25 @@ impl Warp {
             k_fill = 1.0;
         }
         zoom = zoom.max(k_fill);
+        // Per band, measured once: its widest line and its first and last lines' baselines.
+        let mut stats: Vec<Option<(f64, f64, f64)>> = vec![None; nb];
+        for (l, &b) in lines.iter().zip(&band_of) {
+            let w = l.extent.1 - l.extent.0;
+            if let Some(slot) = stats.get_mut(b) {
+                match slot {
+                    Some((widest, _, last)) => {
+                        *widest = widest.max(w);
+                        *last = l.ref_y;
+                    }
+                    None => *slot = Some((0.0f64.max(w), l.ref_y, l.ref_y)),
+                }
+            }
+        }
         let mut maps = Vec::with_capacity(n);
         let mut offsets = Vec::new();
         for (i, l) in lines.iter().enumerate() {
             let b = band_of.get(i).copied().unwrap_or(0);
-            let in_band = |j: &usize| band_of.get(*j) == Some(&b);
+            let band = stats.get(b).copied().flatten();
             match self.bands.get(b) {
                 Some(Band::Fill { .. }) | None => {
                     let (y0, y1) = band_y.get(b).copied().flatten().unwrap_or((0.0, 1.0));
@@ -701,16 +955,12 @@ impl Warp {
                 }
                 Some(Band::Follow { path, anchor }) => {
                     let len = path.length();
-                    let widest = (0..n).filter(in_band).filter_map(|j| lines.get(j)).map(|l| l.extent.1 - l.extent.0).fold(0.0, f64::max);
+                    let widest = band.map_or(0.0, |s| s.0);
                     let k = if widest > len && widest > 1e-9 { len / widest } else { 1.0 };
-                    let members: Vec<&WarpLine> = (0..n).filter(in_band).filter_map(|j| lines.get(j)).collect();
                     let ref_y = match anchor {
-                        LineAnchor::Last => members.last().map(|l| l.ref_y),
-                        LineAnchor::First => members.first().map(|l| l.ref_y),
-                        LineAnchor::Middle => match (members.first(), members.last()) {
-                            (Some(a), Some(z)) => Some((a.ref_y + z.ref_y) / 2.0),
-                            _ => None,
-                        },
+                        LineAnchor::Last => band.map(|s| s.2),
+                        LineAnchor::First => band.map(|s| s.1),
+                        LineAnchor::Middle => band.map(|s| (s.1 + s.2) / 2.0),
                     }
                     .unwrap_or(l.ref_y);
                     // Lines off the guide run on a parallel curve at their natural length.

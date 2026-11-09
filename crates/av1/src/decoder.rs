@@ -17,7 +17,11 @@ use crate::cdf::Cdfs;
 use crate::frame::FrameBuf;
 use crate::header::{FilmGrainParams, FrameHeader, HeaderState, LoopFilterDeltas, RefInfo, SegmentationFeatures, SequenceHeader, default_gm_params};
 use crate::par::Pool;
-use crate::spec_tables::*;
+use crate::spec_tables::{
+    ALTREF_FRAME, ALTREF2_FRAME, BWDREF_FRAME, DEFAULT_INTRA_FRAME_Y_MODE_CDF, DIV_MULT, GOLDEN_FRAME, INTRA_FRAME, INTRA_ONLY_FRAME, KEY_FRAME,
+    LAST_FRAME, LAST2_FRAME, MAX_FRAME_DISTANCE, MAX_OFFSET_HEIGHT, MAX_OFFSET_WIDTH, MFMV_STACK_SIZE, NUM_REF_FRAMES, PRIMARY_REF_NONE,
+    REFMVS_LIMIT, REFS_PER_FRAME,
+};
 use crate::state::{FrameShared, FrameState, TileState};
 use crate::stats::{DecodeStats, Stage, Timer};
 use crate::tile::TileDecoder;
@@ -61,7 +65,7 @@ impl<T: Clone> Slot<T> {
     }
 
     fn set(&self, v: Result<T>) {
-        let mut g = self.value.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.value.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         *g = Some(v);
         self.cv.notify_all();
     }
@@ -71,12 +75,12 @@ impl<T: Clone> Slot<T> {
     }
 
     fn wait(&self) -> Result<T> {
-        let mut g = self.value.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.value.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
             if let Some(v) = g.as_ref() {
                 return v.clone();
             }
-            g = self.cv.wait(g).unwrap_or_else(|e| e.into_inner());
+            g = self.cv.wait(g).unwrap_or_else(std::sync::PoisonError::into_inner);
         }
     }
 }
@@ -206,10 +210,33 @@ pub struct Decoder {
     /// Frames submitted to the workers and not known to be finished (oldest first).
     in_flight: VecDeque<Arc<FrameSlot>>,
     max_in_flight: usize,
+    /// Bytes the picture store may take ([`deckcraft_bitstream::budget`]).
+    memory_budget: u64,
     /// Shown pictures not yet returned, in output order.
     out: VecDeque<Output>,
     /// pts of the temporal unit being decoded.
     pts: i64,
+}
+
+/// Whether `pictures` frames of `width` x `height`, padded as `FrameBuf::new` pads them, fit in
+/// `budget` bytes.
+fn store_fits(width: u32, height: u32, color: &crate::header::ColorConfig, pictures: usize, budget: u64) -> bool {
+    let shape = deckcraft_bitstream::budget::PictureShape {
+        width: u64::from(width).div_ceil(128) * 128 + 160,
+        height: u64::from(height).div_ceil(128) * 128 + 160,
+        shift_x: u32::from(color.subsampling_x),
+        shift_y: u32::from(color.subsampling_y),
+        chroma_planes: if color.mono_chrome { 0 } else { 2 },
+        bytes_per_sample: 2,
+    };
+    shape.fits(pictures as u64, budget)
+}
+
+impl Decoder {
+    /// Cap the bytes of decoded pictures (references, current, in flight) this decoder may hold.
+    pub fn set_memory_budget(&mut self, bytes: u64) {
+        self.memory_budget = bytes;
+    }
 }
 
 fn default_threads() -> usize {
@@ -268,6 +295,7 @@ impl Decoder {
             workers,
             in_flight: VecDeque::new(),
             max_in_flight: fthreads + 2,
+            memory_budget: deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET,
             out: VecDeque::new(),
             pts: 0,
         }
@@ -377,49 +405,37 @@ impl Decoder {
         r
     }
 
+    /// Whether an OBU belongs to the selected operating point (spec 7.5: OBUs of other layers are dropped).
+    fn in_operating_point(&self, obu: &ObuUnit) -> bool {
+        if obu.obu_type != OBU_SEQUENCE_HEADER_T
+            && obu.obu_type != OBU_TEMPORAL_DELIMITER_T
+            && obu.ext
+            && let Some(seq) = &self.seq
+            && seq.op_idc != 0
+        {
+            let idc = seq.op_idc;
+            let in_t = (idc >> obu.temporal_id) & 1;
+            let in_s = (idc >> (obu.spatial_id + 8)) & 1;
+            if in_t == 0 || in_s == 0 {
+                return false;
+            }
+        }
+        true
+    }
+
     fn parse_obus(&mut self, data: &[u8], out: &mut Vec<(Output, usize, u32)>) -> Result<()> {
         let mut tu = 0usize;
+        // Repeated-frame outputs in `out`, counted as they are added rather than recounted per OBU.
+        let mut existing = out.iter().filter(|(o, _, _)| matches!(o, Output::Existing { .. })).count();
         let mut pos = 0;
         while pos < data.len() {
-            let h = data[pos];
-            if h & 0x80 != 0 {
-                return Err(Error::Invalid("obu_forbidden_bit"));
+            let obu = parse_obu_unit(data, pos)?;
+            pos = obu.end;
+            if !self.in_operating_point(&obu) {
+                continue;
             }
-            let obu_type = ((h >> 3) & 0xf) as u32;
-            let ext = h & 4 != 0;
-            let has_size = h & 2 != 0;
-            let mut p = pos + 1;
-            let (mut temporal_id, mut spatial_id) = (0, 0);
-            if ext {
-                let e = *data.get(p).ok_or(Error::Truncated)?;
-                temporal_id = (e >> 5) as u32;
-                spatial_id = ((e >> 3) & 3) as u32;
-                p += 1;
-            }
-            let size = if has_size {
-                let (v, n) = leb128(data.get(p..).ok_or(Error::Truncated)?)?;
-                p += n;
-                v as usize
-            } else {
-                data.len().checked_sub(p).ok_or(Error::Truncated)?
-            };
-            let end = p.checked_add(size).filter(|&e| e <= data.len()).ok_or(Error::Truncated)?;
-            let payload = &data[p..end];
-            pos = end;
-            if obu_type != OBU_SEQUENCE_HEADER_T
-                && obu_type != OBU_TEMPORAL_DELIMITER_T
-                && ext
-                && let Some(seq) = &self.seq
-                && seq.op_idc != 0
-            {
-                let idc = seq.op_idc;
-                let in_t = (idc >> temporal_id) & 1;
-                let in_s = (idc >> (spatial_id + 8)) & 1;
-                if in_t == 0 || in_s == 0 {
-                    continue;
-                }
-            }
-            match obu_type {
+            let (payload, spatial_id) = (obu.payload, obu.spatial_id);
+            match obu.obu_type {
                 OBU_SEQUENCE_HEADER_T => {
                     let s = SequenceHeader::parse(payload)?;
                     self.seq = Some(s);
@@ -429,24 +445,12 @@ impl Decoder {
                     tu += 1;
                 }
                 OBU_FRAME_HEADER_T | OBU_REDUNDANT_FRAME_HEADER_T | OBU_FRAME_T => {
-                    if self.seen_frame_header {
-                        // frame_header_copy(): identical to the active header
-                        if obu_type != OBU_FRAME_T {
-                            continue;
+                    if let Some(o) = self.frame_obu(&obu)? {
+                        if existing >= 32 {
+                            return Err(Error::Invalid("too many frame outputs in chunk"));
                         }
-                    }
-                    let mut r = BitReader::new(payload);
-                    let shown = self.frame_header(&mut r, temporal_id, spatial_id)?;
-                    if let Some(o) = shown {
+                        existing += usize::from(matches!(o, Output::Existing { .. }));
                         out.push((o, tu, spatial_id));
-                        continue;
-                    }
-                    if obu_type == OBU_FRAME_T {
-                        r.byte_align();
-                        let rest = payload.get(r.byte_pos()..).ok_or(Error::Truncated)?;
-                        if let Some(o) = self.tile_group(rest)? {
-                            out.push((o, tu, spatial_id));
-                        }
                     }
                 }
                 OBU_TILE_GROUP_T => {
@@ -459,6 +463,22 @@ impl Decoder {
             }
         }
         Ok(())
+    }
+
+    /// A frame header or frame OBU: returns the picture it completes, if any.
+    fn frame_obu(&mut self, obu: &ObuUnit) -> Result<Option<Output>> {
+        // frame_header_copy(): identical to the active header
+        if self.seen_frame_header && obu.obu_type != OBU_FRAME_T {
+            return Ok(None);
+        }
+        let mut r = BitReader::new(obu.payload);
+        let shown = self.frame_header(&mut r, obu.temporal_id, obu.spatial_id)?;
+        if shown.is_some() || obu.obu_type != OBU_FRAME_T {
+            return Ok(shown);
+        }
+        r.byte_align();
+        let rest = obu.payload.get(r.byte_pos()..).ok_or(Error::Truncated)?;
+        self.tile_group(rest)
     }
 
     /// frame_header_obu( ): returns the output for show_existing_frame.
@@ -508,6 +528,12 @@ impl Decoder {
         if fh.upscaled_width > 65536 || fh.frame_height > 65536 {
             return Err(Error::Invalid("frame size"));
         }
+        // The axis cap alone allows 8 GiB pictures: check the whole store (every reference slot,
+        // the new frame and those in flight, as `FrameBuf::new` pads them) before allocating.
+        let width = fh.upscaled_width.max(fh.frame_width);
+        if !store_fits(width, fh.frame_height, &seq.color, NUM_REF_FRAMES + 1 + self.max_in_flight, self.memory_budget) {
+            return Err(Error::Invalid("frame size exceeds the decoder memory budget"));
+        }
         if !fh.frame_is_intra {
             for i in 0..REFS_PER_FRAME {
                 if self.ref_frames[fh.ref_frame_idx[i]].is_none() {
@@ -555,6 +581,7 @@ impl Decoder {
         if tg_end >= num_tiles || tg_start > tg_end {
             return Err(Error::Invalid("tile group range"));
         }
+        check_tile_group_start(job.tiles.len(), tg_start)?;
         let mut pos = r.byte_pos();
         for tile_num in tg_start..=tg_end {
             let size = if tile_num == tg_end {
@@ -633,7 +660,9 @@ impl Decoder {
 /// Decode a frame job and publish its results.
 fn run_job(job: FrameJob, pool: &Pool, stats: &Mutex<DecodeStats>) {
     let mut st = DecodeStats::default();
-    match decode_frame(&job, pool, &mut st) {
+    // A panic while decoding must still publish an error: the output and every frame that
+    // references this one wait on these slots.
+    match guarded(|| decode_frame(&job, pool, &mut st)) {
         Ok((rf, pic)) => {
             if let Some(ps) = &job.picture {
                 ps.set(pic.map(Arc::new).ok_or(Error::Invalid("shown frame without picture")));
@@ -650,6 +679,12 @@ fn run_job(job: FrameJob, pool: &Pool, stats: &Mutex<DecodeStats>) {
     if let Ok(mut s) = stats.lock() {
         s.merge(&st);
     }
+}
+
+/// Run `f`, turning a panic into an error (the decoder's own code never panics on purpose; this
+/// keeps a bug from stranding the job's waiters).
+fn guarded<R>(f: impl FnOnce() -> Result<R>) -> Result<R> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or(Err(Error::Invalid("frame decode panicked")))
 }
 
 /// The whole decoding process of one frame: setup, tiles, post-filters, motion vector storage
@@ -946,4 +981,122 @@ fn project(fs: &mut FrameState, src: usize, dst_sign: i32) -> bool {
         }
     }
     true
+}
+
+/// Tile groups must arrive in order with no gaps and no overlap: each one starts at the tile
+/// after the last one received (`tg_start` semantics, 6.10.1).
+fn check_tile_group_start(received: usize, tg_start: usize) -> Result<()> {
+    if tg_start == received { Ok(()) } else { Err(Error::Invalid("tile group out of order")) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_tile_group_start;
+
+    #[test]
+    fn tile_groups_must_be_contiguous() {
+        assert!(check_tile_group_start(0, 0).is_ok());
+        assert!(check_tile_group_start(2, 2).is_ok());
+        // duplicate coverage
+        assert!(check_tile_group_start(2, 0).is_err());
+        assert!(check_tile_group_start(2, 1).is_err());
+        // skipped tiles
+        assert!(check_tile_group_start(0, 1).is_err());
+        assert!(check_tile_group_start(2, 3).is_err());
+    }
+}
+
+/// One OBU: its header fields, payload and the position just past it.
+struct ObuUnit<'a> {
+    obu_type: u32,
+    ext: bool,
+    temporal_id: u32,
+    spatial_id: u32,
+    payload: &'a [u8],
+    end: usize,
+}
+
+fn parse_obu_unit(data: &[u8], pos: usize) -> Result<ObuUnit<'_>> {
+    let h = data[pos];
+    if h & 0x80 != 0 {
+        return Err(Error::Invalid("obu_forbidden_bit"));
+    }
+    let obu_type = ((h >> 3) & 0xf) as u32;
+    let ext = h & 4 != 0;
+    let has_size = h & 2 != 0;
+    let mut p = pos + 1;
+    let (mut temporal_id, mut spatial_id) = (0, 0);
+    if ext {
+        let e = *data.get(p).ok_or(Error::Truncated)?;
+        temporal_id = (e >> 5) as u32;
+        spatial_id = ((e >> 3) & 3) as u32;
+        p += 1;
+    }
+    let size = if has_size {
+        let (v, n) = leb128(data.get(p..).ok_or(Error::Truncated)?)?;
+        p += n;
+        v as usize
+    } else {
+        data.len().checked_sub(p).ok_or(Error::Truncated)?
+    };
+    let end = p.checked_add(size).filter(|&e| e <= data.len()).ok_or(Error::Truncated)?;
+    Ok(ObuUnit { obu_type, ext, temporal_id, spatial_id, payload: &data[p..end], end })
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::*;
+
+    #[test]
+    fn a_panicking_job_still_publishes_an_error_to_its_waiters() {
+        let slot: Arc<Slot<u32>> = Slot::new();
+        let picture: Arc<Slot<u32>> = Slot::new();
+        // Waiters: the output and a dependent frame, on their own threads.
+        let (tx, rx) = std::sync::mpsc::channel();
+        for s in [slot.clone(), picture.clone()] {
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(s.wait().is_err());
+            });
+        }
+        let (s, p) = (slot.clone(), picture.clone());
+        std::thread::spawn(move || {
+            let r: Result<u32> = guarded(|| panic!("hostile frame"));
+            p.set(r.clone());
+            s.set(r);
+        });
+        for _ in 0..2 {
+            assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(10)), Ok(true));
+        }
+        assert_eq!(guarded(|| Ok(5)).ok(), Some(5));
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET;
+
+    fn color(mono: bool) -> crate::header::ColorConfig {
+        crate::header::ColorConfig { mono_chrome: mono, subsampling_x: 1, subsampling_y: 1, ..Default::default() }
+    }
+
+    #[test]
+    fn the_axis_maximum_is_over_budget_and_4k_is_not() {
+        let refs = NUM_REF_FRAMES + 1 + 4;
+        assert!(!store_fits(65536, 65536, &color(false), refs, DECODE_MEMORY_BUDGET));
+        assert!(!store_fits(65536, 65536, &color(true), 1, DECODE_MEMORY_BUDGET));
+        assert!(store_fits(3840, 2160, &color(false), refs, DECODE_MEMORY_BUDGET));
+        assert!(store_fits(1920, 1080, &color(false), refs, DECODE_MEMORY_BUDGET));
+    }
+
+    #[test]
+    fn exact_budget_boundary_and_reference_count() {
+        // 8x8 pads to 288x288: luma 82944 + chroma 2 * 20736 samples, 2 bytes each.
+        let one = (288 * 288 + 2 * 144 * 144) * 2;
+        assert!(store_fits(8, 8, &color(false), 9, 9 * one));
+        assert!(!store_fits(8, 8, &color(false), 9, 9 * one - 1));
+        assert!(!store_fits(8, 8, &color(false), 10, 9 * one));
+        assert!(store_fits(8, 8, &color(true), 9, 9 * 288 * 288 * 2));
+    }
 }

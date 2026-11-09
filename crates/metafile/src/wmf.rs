@@ -47,6 +47,7 @@ pub(crate) fn parse(input: Bytes) -> Result<(Canvas, Option<Frame>), Error> {
     let mut cv = Canvas::new();
     if let Some((c, size)) = bounds {
         cv.play_into(Some([c[0], c[1], c[2] - c[0], c[3] - c[1]]), size);
+        cv.set_clip_surface([0.0, 0.0, size.0, size.1]);
         cv.pattern_px = PT_PER_PX;
     }
     let mut player_viewport = bounds.is_some();
@@ -122,6 +123,8 @@ fn record(cv: &mut Canvas, func: u16, r: Bytes) {
                 cv.shape(&geom::round_rect(l, t, rr, b, f64::from(ew), f64::from(eh)), true, true);
             })
         }
+        0x0415 => rect16(r, 6).map(|rect| cv.exclude_clip_rect(rect)),
+        0x0416 => rect16(r, 6).map(|rect| cv.intersect_clip_rect(rect)),
         0x0418 => rect16(r, 6).map(|[l, t, rr, b]| cv.shape(&geom::ellipse(l, t, rr, b), true, true)),
         0x0817 | 0x081A | 0x0830 => arc16(r).map(|(bounds, s, e)| {
             let kind = match func {

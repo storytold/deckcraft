@@ -47,10 +47,10 @@ fn boolean(desc: &str) -> Value {
     json!({"type": "boolean", "description": desc})
 }
 fn mods_schema() -> Value {
-    json!({"type": "object", "description": "Modifier keys (cmd = Command on macOS / Ctrl elsewhere; alt = Option)", "properties": {"shift": {"type": "boolean"}, "alt": {"type": "boolean"}, "cmd": {"type": "boolean"}}})
+    json!({"type": "object", "additionalProperties": false, "description": "Modifier keys (cmd = Command on macOS / Ctrl elsewhere; alt = Option)", "properties": {"shift": {"type": "boolean"}, "alt": {"type": "boolean"}, "cmd": {"type": "boolean"}}})
 }
 fn obj(props: Value, required: &[&str]) -> Value {
-    let mut o = json!({"type": "object", "properties": props});
+    let mut o = json!({"type": "object", "properties": props, "additionalProperties": false});
     if !required.is_empty() {
         o["required"] = json!(required);
     }
@@ -115,21 +115,32 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "export",
             "Export",
-            "Export slides: png/jpeg (one slide, or all with all:true), pptx, deckcraft, outline text, or pdf (slides, notes pages or handouts).",
+            "Export slides: png/jpeg (one slide, or all with all:true), pptx, deckcraft, outline text, pdf (slides, notes pages or handouts), or an animated gif of the deck (one frame per slide).",
             obj(
                 json!({
                     "path": string("Output path"),
-                    "format": {"type": "string", "enum": ["png", "jpeg", "pptx", "deckcraft", "outline", "pdf"], "description": "Output format (default: from the path's extension)"},
+                    "format": {"type": "string", "enum": ["png", "jpeg", "pptx", "deckcraft", "outline", "rtf", "pdf", "gif"], "description": "Output format (default: from the path's extension)"},
                     "slide": int("Slide index for images"),
                     "all": boolean("All slides (images)"),
                     "scale": num("Pixels per point for images (default 2)"),
                     "layout": {"type": "string", "enum": ["slides", "notes", "handouts"], "description": "PDF page layout (default slides)"},
                     "perPage": {"type": "integer", "enum": [1, 2, 3, 4, 6, 9], "description": "PDF handouts: slides per page (default 6)"},
                     "dpi": num("PDF: raster resolution of slide artwork, 36-600 (default 200)"),
-                    "slides": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "PDF: slide indices to export (default all)"},
-                    "includeHidden": boolean("PDF: include hidden slides (default false)"),
+                    "slides": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "PDF and GIF: slide indices to export, in order (default all)"},
+                    "includeHidden": boolean("PDF and GIF: include hidden slides (default false)"),
                     "textLayer": boolean("PDF: invisible text layer for search, select and copy (default true)"),
-                    "frame": boolean("PDF notes/handouts: thin frame around each slide (default true)")
+                    "frame": boolean("PDF notes/handouts: thin frame around each slide (default true)"),
+                    "paper": {"type": "string", "enum": ["letter", "a4", "legal", "a3"], "description": "PDF notes/handouts: paper size (default letter)"},
+                    "orientation": {"type": "string", "enum": ["portrait", "landscape"], "description": "PDF notes/handouts: page orientation (default portrait)"},
+                    "width": {
+                        "oneOf": [
+                            {"type": "integer", "minimum": 16, "maximum": 3840},
+                            {"type": "string", "enum": ["small", "medium", "large", "extraLarge"]}
+                        ],
+                        "description": "GIF: frame width in pixels, or a size: small 640, medium 960 (default), large 1280, extraLarge 1920; the height follows the slide's shape"
+                    },
+                    "secondsPerSlide": {"type": "number", "minimum": 0.1, "maximum": 600, "description": "GIF: seconds each slide shows (default 5)"},
+                    "loop": boolean("GIF: loop forever (true, default) or play once (false)")
                 }),
                 &["path"],
             ),
@@ -223,9 +234,9 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "insert_chart",
             "Insert chart",
-            "Insert a chart (column, bar, line, pie, doughnut, area, scatter, stackedColumn…) with categories and series.",
+            "Insert a chart (column, bar, line, pie, doughnut, area, scatter, stackedColumn…) with categories and series, optionally at a box.",
             obj(
-                json!({"type": string("Chart type"), "title": string("Chart title"), "categories": {"type": "array", "items": {"type": "string"}}, "series": {"type": "array", "items": obj(json!({"name": string("Series name"), "values": {"type": "array", "items": {"type": "number"}}}), &["values"])}}),
+                json!({"type": string("Chart type"), "title": string("Chart title"), "categories": {"type": "array", "items": {"type": "string"}}, "series": {"type": "array", "items": obj(json!({"name": string("Series name"), "values": {"type": "array", "items": {"type": "number"}}}), &["values"])}, "x": num("Left"), "y": num("Top"), "w": num("Width"), "h": num("Height")}),
                 &[],
             ),
             false,
@@ -240,9 +251,9 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "pointer",
             "Pointer gesture",
-            "Drive the active tool with pointer events in slide points: down/drag/up/move/doubleclick, exactly like the mouse (draws, moves, resizes, rotates, places the caret).",
+            "Drive the active tool with pointer events in slide points: down/drag/up/move/doubleclick/contextclick, exactly like the mouse (draws, moves, resizes, rotates, places the caret; contextclick selects like a right click).",
             obj(
-                json!({"events": {"type": "array", "items": obj(json!({"kind": string("down|drag|up|move|doubleclick"), "x": num("x (pt)"), "y": num("y (pt)"), "mods": mods_schema()}), &["kind", "x", "y"])}, "mods": mods_schema()}),
+                json!({"events": {"type": "array", "items": obj(json!({"kind": string("down|drag|up|move|doubleclick|tripleclick|contextclick"), "x": num("x (pt)"), "y": num("y (pt)"), "mods": mods_schema()}), &["kind", "x", "y"])}, "mods": mods_schema()}),
                 &["events"],
             ),
             false,
@@ -294,8 +305,37 @@ fn wrap(r: Result<Value, String>) -> ToolResult {
     }
 }
 
+/// Keys other than the tool's schema properties are refused, so a misspelled argument does not
+/// succeed with the tool's defaults. Keys inside a free object such as `run_command`'s `params`
+/// belong to the command and are left for the command to read.
+fn unknown_argument_error(name: &str, args: &Value) -> Option<String> {
+    let defs = tool_definitions();
+    let def = defs.iter().find(|t| t.get("name").and_then(Value::as_str) == Some(name))?;
+    let mut allowed: Vec<&str> = def
+        .get("inputSchema")
+        .and_then(|s| s.get("properties"))
+        .and_then(Value::as_object)
+        .map(|p| p.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    allowed.sort_unstable();
+    let obj = args.as_object()?;
+    let mut unknown: Vec<&str> = obj.keys().map(String::as_str).filter(|k| !allowed.contains(k)).collect();
+    unknown.sort_unstable();
+    let first = unknown.first()?;
+    let expected = if allowed.is_empty() { "none".to_string() } else { allowed.join(", ") };
+    let (what, list) = if unknown.len() == 1 {
+        ("unknown argument", format!("{first:?}"))
+    } else {
+        ("unknown arguments", unknown.iter().map(|k| format!("{k:?}")).collect::<Vec<_>>().join(", "))
+    };
+    Some(format!("{name}: {what} {list} (expected: {expected})"))
+}
+
 pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
     let a = if a.is_object() { a.clone() } else { json!({}) };
+    if let Some(msg) = unknown_argument_error(name, &a) {
+        return ToolResult::error(msg);
+    }
     match name {
         "list_commands" => wrap(b.call("engine.commands", json!({})).map(|v| {
             let f = a.get("filter").and_then(Value::as_str).unwrap_or("").to_lowercase();
@@ -404,7 +444,13 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
             }
             wrap(exec(b, "insert.table", p))
         }
-        "insert_chart" => wrap(exec(b, "insert.chart", a)),
+        "insert_chart" => {
+            let mut p = a.clone();
+            if let (Some(x), Some(y), Some(w), Some(h)) = (f(&a, "x"), f(&a, "y"), f(&a, "w"), f(&a, "h")) {
+                p["rect"] = json!([x, y, w, h]);
+            }
+            wrap(exec(b, "insert.chart", p))
+        }
         "select" => wrap(exec(b, "edit.select", a)),
         "pointer" => wrap(b.call("ui.pointer", a)),
         "select_tool" => wrap(b.call("ui.tool.select", a)),

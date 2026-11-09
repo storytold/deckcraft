@@ -1,0 +1,264 @@
+# DeckCraft's built-in thesaurus: headword|synonym, synonym, ...
+# Written for DeckCraft (no third-party word list). Lowercase; one meaning group per line;
+# a headword may appear on several lines (one per sense).
+ability|capability, capacity, skill, competence, talent
+able|capable, competent, qualified, skilled
+accept|agree to, approve, adopt, embrace
+accurate|precise, exact, correct, right
+achieve|accomplish, attain, reach, realize, deliver
+achievement|accomplishment, success, attainment, milestone
+add|include, append, attach, insert
+advantage|benefit, edge, strength, asset, upside
+affect|influence, impact, change, alter
+aim|goal, objective, target, purpose, intent
+allow|permit, enable, let, authorize
+analyze|examine, study, assess, evaluate, review
+answer|reply, response, solution
+approach|method, strategy, way, technique, plan
+area|region, field, domain, zone, sector
+arrange|organize, order, sort, plan
+ask|request, inquire, query, question
+assess|evaluate, gauge, judge, review, appraise
+assist|help, aid, support, back
+attempt|try, effort, endeavor, bid
+bad|poor, weak, inferior, unfavorable, negative
+basic|fundamental, essential, core, elementary, simple
+begin|start, commence, launch, initiate, open
+benefit|advantage, gain, value, payoff, upside
+best|finest, top, leading, optimal, premier
+big|large, major, substantial, significant, sizable
+boost|increase, raise, lift, improve, strengthen
+brief|short, concise, succinct, quick
+bright|vivid, brilliant, luminous, clever
+build|construct, create, develop, assemble, establish
+business|company, firm, enterprise, organization, venture
+buy|purchase, acquire, obtain
+careful|cautious, thorough, meticulous, attentive
+cause|reason, source, origin, driver
+change|alter, modify, adjust, revise, transform
+change|shift, transition, adjustment, revision
+cheap|inexpensive, affordable, low-cost, economical
+check|verify, confirm, examine, inspect, review
+choice|option, alternative, selection, pick
+choose|select, pick, opt for, decide on
+clear|plain, obvious, evident, transparent, lucid
+client|customer, buyer, account, patron
+close|near, nearby, adjacent
+close|end, finish, conclude, shut
+common|frequent, usual, typical, widespread, shared
+company|business, firm, organization, enterprise, corporation
+complete|finish, conclude, finalize, accomplish
+complete|whole, full, entire, total
+complex|complicated, intricate, involved, elaborate
+concern|worry, issue, problem, risk
+consider|weigh, contemplate, evaluate, think about
+continue|proceed, carry on, keep going, persist, maintain
+cost|price, expense, charge, outlay
+create|make, build, produce, design, generate
+critical|crucial, vital, essential, key, decisive
+current|present, existing, ongoing, latest, up-to-date
+customer|client, buyer, consumer, user
+data|information, figures, facts, statistics
+decide|determine, choose, resolve, settle
+decrease|reduce, lower, cut, decline, drop
+define|specify, describe, explain, outline
+deliver|provide, supply, bring, hand over, ship
+demonstrate|show, prove, illustrate, display
+describe|explain, outline, portray, depict
+design|plan, layout, blueprint, pattern
+design|create, plan, devise, draft
+develop|build, create, grow, expand, evolve
+difference|distinction, contrast, gap, variation
+different|distinct, various, diverse, unlike
+difficult|hard, challenging, tough, demanding
+discuss|talk about, debate, examine, review
+easy|simple, straightforward, effortless, painless
+effect|result, impact, outcome, consequence
+effective|successful, efficient, productive, powerful
+effort|work, attempt, endeavor, exertion
+end|finish, conclusion, close, completion
+enough|sufficient, adequate, ample
+ensure|guarantee, make sure, secure, confirm
+error|mistake, fault, flaw, bug, slip
+essential|vital, crucial, key, necessary, fundamental
+establish|set up, found, create, institute
+estimate|forecast, projection, approximation, guess
+evaluate|assess, appraise, judge, rate, review
+event|occasion, function, happening, incident
+example|instance, case, illustration, sample
+excellent|outstanding, superb, exceptional, first-rate
+expand|grow, extend, enlarge, broaden, scale
+expect|anticipate, foresee, predict, await
+explain|clarify, describe, illustrate, account for
+fail|fall short, miss, flop, break down
+fast|quick, rapid, swift, speedy
+feature|characteristic, attribute, capability, function
+final|last, closing, concluding, ultimate
+find|discover, locate, identify, uncover
+finish|complete, end, conclude, wrap up
+focus|concentrate, center, target, emphasize
+focus|emphasis, priority, attention, core
+future|upcoming, coming, forthcoming, prospective
+gain|increase, rise, improvement, profit
+get|obtain, acquire, receive, gain
+give|provide, offer, supply, grant
+goal|aim, objective, target, purpose, ambition
+good|fine, great, strong, solid, positive
+great|excellent, outstanding, terrific, remarkable
+grow|increase, expand, rise, develop, scale
+growth|expansion, increase, development, rise
+help|assist, aid, support, enable
+help|assistance, aid, support, guidance
+high|elevated, tall, top, strong
+idea|concept, notion, thought, proposal
+identify|recognize, pinpoint, detect, determine
+impact|effect, influence, consequence, result
+important|significant, key, major, crucial, vital
+improve|enhance, upgrade, refine, strengthen, boost
+include|contain, cover, incorporate, comprise
+increase|raise, boost, grow, expand, lift
+increase|rise, growth, gain, jump
+information|data, details, facts, knowledge
+innovative|inventive, creative, original, novel, pioneering
+issue|problem, concern, matter, question
+job|task, assignment, role, position
+keep|retain, maintain, preserve, hold
+key|main, central, critical, essential, principal
+large|big, sizable, substantial, major, extensive
+last|final, latest, previous, closing
+launch|start, introduce, roll out, release, unveil
+lead|guide, direct, head, steer, run
+learn|discover, find out, master, study
+less|fewer, smaller, reduced, lower
+little|small, minor, slight, modest
+look|appear, seem
+look|view, glance, examine, inspect
+low|minimal, modest, small, reduced
+main|primary, chief, principal, central, key
+maintain|keep, preserve, sustain, uphold
+major|significant, important, key, principal, big
+make|create, build, produce, generate
+manage|run, handle, oversee, direct, lead
+market|industry, sector, segment, marketplace
+measure|gauge, assess, quantify, track
+meet|satisfy, fulfil, reach, achieve
+meeting|session, conference, discussion, review
+method|approach, technique, process, procedure, way
+model|framework, template, pattern, design
+more|additional, extra, further, added
+move|shift, transfer, relocate, transition
+need|requirement, demand, necessity
+need|require, call for, demand, want
+new|fresh, recent, novel, modern, latest
+next|following, upcoming, subsequent
+number|figure, count, total, quantity, amount
+objective|goal, aim, target, purpose
+offer|provide, propose, extend, present
+old|previous, former, legacy, outdated, existing
+open|start, launch, begin, unveil
+opportunity|opening, chance, prospect, possibility
+option|choice, alternative, possibility, route
+organize|arrange, structure, coordinate, order
+outcome|result, consequence, effect, end result
+overview|summary, outline, synopsis, recap
+part|portion, piece, segment, section, component
+partner|ally, collaborator, associate, affiliate
+people|staff, team, individuals, personnel
+plan|strategy, scheme, roadmap, proposal, program
+plan|organize, arrange, schedule, prepare
+point|aspect, detail, issue, argument
+popular|well-liked, widespread, in demand, favored
+possible|feasible, achievable, viable, potential
+present|show, display, introduce, demonstrate
+present|current, existing, ongoing
+price|cost, rate, charge, fee
+priority|focus, concern, precedence, goal
+problem|issue, challenge, difficulty, obstacle
+process|procedure, method, workflow, system
+produce|make, create, generate, manufacture, yield
+product|offering, item, solution, good
+profit|earnings, return, gain, margin
+progress|advance, headway, development, improvement
+project|initiative, program, undertaking, venture
+propose|suggest, recommend, put forward, offer
+provide|give, supply, deliver, offer
+purpose|aim, goal, objective, intent, reason
+quality|standard, caliber, excellence, grade
+question|query, issue, inquiry
+quick|fast, rapid, speedy, swift, prompt
+rapid|fast, quick, swift, speedy
+reach|achieve, attain, hit, arrive at
+reason|cause, rationale, motive, basis
+recent|latest, new, current, fresh
+recommend|suggest, advise, propose, advocate
+reduce|cut, lower, decrease, lessen, trim
+region|area, territory, zone, market
+relevant|pertinent, applicable, related, appropriate
+remove|delete, eliminate, take out, drop
+replace|substitute, swap, supersede, change
+report|account, summary, review, statement
+require|need, demand, call for, necessitate
+research|study, investigation, analysis, inquiry
+resource|asset, supply, means, capacity
+result|outcome, effect, consequence, finding
+review|assessment, evaluation, examination, analysis
+review|examine, assess, evaluate, check, revisit
+revenue|income, sales, earnings, turnover
+risk|danger, threat, exposure, hazard
+role|part, function, position, responsibility
+run|operate, manage, conduct, execute
+safe|secure, protected, reliable
+same|identical, equal, matching, equivalent
+save|keep, store, preserve, conserve
+see|view, observe, notice, spot
+sell|market, offer, trade, retail
+service|support, assistance, offering
+share|portion, part, stake, percentage
+share|distribute, spread, communicate, pass on
+show|demonstrate, display, present, reveal, illustrate
+significant|important, notable, considerable, major, meaningful
+similar|alike, comparable, related, equivalent
+simple|easy, straightforward, plain, basic
+size|scale, extent, magnitude, dimensions
+small|little, minor, compact, modest
+solution|answer, fix, remedy, resolution
+solve|resolve, fix, settle, work out
+specific|particular, precise, exact, distinct
+start|begin, launch, commence, kick off, initiate
+step|stage, phase, measure, action
+strategy|plan, approach, policy, roadmap, tactic
+strong|robust, solid, powerful, sturdy
+structure|framework, organization, layout, arrangement
+success|achievement, accomplishment, win, triumph
+successful|effective, thriving, prosperous, winning
+suggest|propose, recommend, advise, imply
+summary|overview, recap, synopsis, digest
+support|help, back, assist, sustain
+support|help, assistance, backing, aid
+sure|certain, confident, positive, definite
+target|goal, objective, aim
+task|job, assignment, duty, activity
+team|group, crew, staff, squad, unit
+test|trial, check, experiment, evaluation
+test|try, check, evaluate, verify
+think|believe, consider, reckon, suppose
+time|period, duration, while, moment
+tool|instrument, utility, device, aid
+total|sum, whole, aggregate, overall
+trend|pattern, tendency, movement, direction
+understand|grasp, comprehend, follow, realize
+unique|distinctive, singular, one-of-a-kind, unmatched
+update|revise, refresh, upgrade, modernize
+update|revision, change, upgrade, news
+use|employ, apply, utilize, leverage
+useful|helpful, practical, handy, valuable
+value|worth, benefit, merit, importance
+various|diverse, assorted, different, several
+view|opinion, perspective, outlook, position
+vision|outlook, aspiration, goal, dream
+way|method, approach, manner, means
+weak|feeble, fragile, poor, limited
+well|effectively, successfully, nicely, properly
+work|labor, effort, activity, job
+work|function, operate, run, succeed
+year|annum, twelve months

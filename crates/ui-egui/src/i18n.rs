@@ -310,7 +310,7 @@ const CATALOG: &[(&str, &str, &str)] = &[
     ("pane.background.insert_picture", "Insert picture from file…", "ファイルから画像を挿入…"),
     ("pane.background.reset", "Reset Background", "背景をリセット"),
     ("pane.background.title", "Format Background", "背景の書式設定"),
-    ("pane.comments.empty", "No comments on this slide.", "このスライドにコメントはありません。"),
+    ("pane.comments.empty", "No comments.", "コメントはありません。"),
     ("pane.comments.new", "+ New Comment", "+ 新しいコメント"),
     ("pane.comments.reopen", "Reopen", "再度開く"),
     ("pane.comments.reply", "Reply…", "返信…"),
@@ -669,6 +669,17 @@ pub fn choice_label(lang: Resolved, choice: LanguageChoice) -> &'static str {
     text(lang, id)
 }
 
+/// Font-dependent UI tests use the same optional input as native builds; required builds cannot skip.
+#[cfg(test)]
+pub(crate) fn japanese_font_input_available() -> bool {
+    if deckcraft_fonts::CRAFT_FONTS.iter().any(|f| f.family == "BIZ UDPGothic" && f.style == "Regular") {
+        return true;
+    }
+    assert!(option_env!("CRAFT_FONTS_REQUIRED").is_none(), "required Japanese interface face is absent");
+    eprintln!("optional Japanese font input absent: translated UI glyph coverage was not qualified");
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -758,6 +769,9 @@ mod tests {
     /// Translated controls keep using the field names accepted by the table command.
     #[test]
     fn japanese_table_dialog_inserts_the_requested_table() {
+        if !japanese_font_input_available() {
+            return;
+        }
         use egui_kittest::kittest::Queryable;
         let mut app = crate::SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
         app.run("app.language", serde_json::json!({"language": "ja"})).unwrap();
@@ -765,17 +779,19 @@ mod tests {
         dialog.fields.insert("cols".into(), "2".into());
         dialog.fields.insert("rows".into(), "3".into());
         app.dialog = Some(dialog);
-        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_ui_state(
-            |ui, app: &mut crate::SlideApp| {
-                app.logic(ui.ctx());
-                crate::dialogs::show(app, ui.ctx());
-            },
-            app,
-        );
+        let mut h =
+            egui_kittest::Harness::builder().with_size(egui::vec2(900.0, 600.0)).with_context_setup(crate::theme::install_fonts).build_ui_state(
+                |ui, app: &mut crate::SlideApp| {
+                    app.logic(ui.ctx());
+                    crate::dialogs::show(app, ui.ctx());
+                },
+                app,
+            );
         h.run_steps(3);
         assert!(h.query_by_label("列数:").is_some());
         assert!(h.query_by_label("行数:").is_some());
         assert!(h.query_by_label("キャンセル").is_some());
+        crate::i18n_integration_tests::preview(&mut h, "ja-table");
         h.get_by_label("挿入").click();
         h.run_steps(2);
         assert!(h.state().dialog.is_none());
@@ -795,6 +811,9 @@ mod tests {
     /// A translated action operates on the same shape; language switches preserve user data.
     #[test]
     fn japanese_selection_actions_keep_shape_names_and_ids() {
+        if !japanese_font_input_available() {
+            return;
+        }
         use egui_kittest::kittest::Queryable;
         let mut session = deckcraft_engine::Session::with_new();
         session.execute("slide.new", &serde_json::json!({"layout": "blank"})).unwrap();
@@ -803,14 +822,16 @@ mod tests {
         session.execute("shape.rename", &serde_json::json!({"id": id, "name": name})).unwrap();
         let mut app = crate::SlideApp::new(session, crate::Services::default());
         app.run("app.language", serde_json::json!({"language": "ja"})).unwrap();
-        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(440.0, 700.0)).build_ui_state(
-            |ui, app: &mut crate::SlideApp| {
-                app.logic(ui.ctx());
-                crate::selpane::show(app, ui);
-            },
-            app,
-        );
+        let mut h =
+            egui_kittest::Harness::builder().with_size(egui::vec2(440.0, 700.0)).with_context_setup(crate::theme::install_fonts).build_ui_state(
+                |ui, app: &mut crate::SlideApp| {
+                    app.logic(ui.ctx());
+                    crate::selpane::show(app, ui);
+                },
+                app,
+            );
         h.run_steps(3);
+        crate::i18n_integration_tests::preview(&mut h, "ja-selection");
         h.get_by_label("File {customer}をロック").click();
         h.run_steps(2);
         let shape = h.state().session.active().unwrap().shapes().iter().find(|s| u64::from(s.id.0) == id).unwrap();

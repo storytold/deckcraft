@@ -1,7 +1,7 @@
 //! CDEF (7.15).
 
 use crate::frame::{FrameBuf, Plane};
-use crate::spec_tables::*;
+use crate::spec_tables::{CDEF_DIRECTIONS, CDEF_PRI_TAPS, CDEF_SEC_TAPS, CDEF_UV_DIR, DIV_TABLE};
 use crate::state::FrameState;
 
 /// Run CDEF on `fs.cur`; returns the CdefFrame, or None when no block is filtered (CdefFrame
@@ -45,7 +45,7 @@ fn cdef_block(fs: &FrameState, out: &mut FrameBuf, r: usize, c: usize, idx: usiz
     let var_str = if (var >> 6) != 0 { (31 - ((var >> 6) as u32).leading_zeros()).min(12) as i32 } else { 0 };
     pri = if var != 0 { (pri * (4 + var_str) + 8) >> 4 } else { 0 };
     let damping = cp.damping as i32 + coeff_shift as i32;
-    filter(fs, out, 0, r, c, pri, sec, damping, dir);
+    filter(fs, out, 0, (r, c), (pri, sec), damping, dir);
     if fs.num_planes == 1 {
         return true;
     }
@@ -53,8 +53,8 @@ fn cdef_block(fs: &FrameState, out: &mut FrameBuf, r: usize, c: usize, idx: usiz
     let sec = (cp.uv_sec[idx] << coeff_shift) as i32;
     let dir = if pri == 0 { 0 } else { CDEF_UV_DIR[fs.ssx][fs.ssy][y_dir] as usize };
     let damping = cp.damping as i32 + coeff_shift as i32 - 1;
-    filter(fs, out, 1, r, c, pri, sec, damping, dir);
-    filter(fs, out, 2, r, c, pri, sec, damping, dir);
+    filter(fs, out, 1, (r, c), (pri, sec), damping, dir);
+    filter(fs, out, 2, (r, c), (pri, sec), damping, dir);
     true
 }
 
@@ -124,33 +124,74 @@ fn constrain(diff: i32, threshold: i32, adj: u32) -> i32 {
     if diff < 0 { -mag } else { mag }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn filter(fs: &FrameState, out: &mut FrameBuf, plane: usize, r: usize, c: usize, pri: i32, sec: i32, damping: i32, dir: usize) {
-    if pri == 0 && sec == 0 {
-        // Every tap contributes 0 and the clamp to [min, max] keeps x: CdefFrame = CurrFrame.
-        return;
+/// Tap offsets, weights and strengths of one block.
+struct Taps {
+    pri: i32,
+    sec: i32,
+    pri_adj: u32,
+    sec_adj: u32,
+    pri_off: [isize; 2],
+    sec_off: [[isize; 2]; 2],
+    pri_taps: [i32; 2],
+    sec_taps: [i32; 2],
+}
+
+impl Taps {
+    fn new(coeff_shift: u32, (pri, sec): (i32, i32), damping: i32, dir: usize) -> Taps {
+        let pri_tap = ((pri >> coeff_shift) & 1) as usize;
+        let off = |d: usize, k: usize| CDEF_DIRECTIONS[d][k][0] as isize * PAD_STRIDE as isize + CDEF_DIRECTIONS[d][k][1] as isize;
+        let pri_off = [off(dir, 0), off(dir, 1)];
+        let d_lo = (dir + 6) & 7;
+        let d_hi = (dir + 2) & 7;
+        let sec_off = [[off(d_lo, 0), off(d_hi, 0)], [off(d_lo, 1), off(d_hi, 1)]];
+        let pri_taps = [CDEF_PRI_TAPS[pri_tap][0] as i32, CDEF_PRI_TAPS[pri_tap][1] as i32];
+        let sec_taps = [CDEF_SEC_TAPS[pri_tap][0] as i32, CDEF_SEC_TAPS[pri_tap][1] as i32];
+        let adj = |t: i32| if t == 0 { 0 } else { (damping - (31 - (t as u32).leading_zeros()) as i32).max(0) as u32 };
+        Taps { pri, sec, pri_adj: adj(pri), sec_adj: adj(sec), pri_off, sec_off, pri_taps, sec_taps }
     }
-    let coeff_shift = fs.bit_depth - 8;
+
+    /// The 12 (offset, weight, strength, adjustment) taps in filtering order.
+    fn tap_list(&self) -> [(isize, i32, i32, u32); 12] {
+        let mut taps = [(0isize, 0i32, 0i32, 0u32); 12];
+        let mut n = 0;
+        for k in 0..2 {
+            for sign in [-1isize, 1] {
+                taps[n] = (sign * self.pri_off[k], self.pri_taps[k], self.pri, self.pri_adj);
+                taps[n + 1] = (sign * self.sec_off[k][0], self.sec_taps[k], self.sec, self.sec_adj);
+                taps[n + 2] = (sign * self.sec_off[k][1], self.sec_taps[k], self.sec, self.sec_adj);
+                n += 3;
+            }
+        }
+        taps
+    }
+}
+
+/// Position and size of a block within its plane.
+#[derive(Clone, Copy)]
+struct BlockRect {
+    x0: usize,
+    y0: usize,
+    w: usize,
+    h: usize,
+}
+
+/// The block with two samples of padding on every side, plus whether every sample is available
+/// (CdefAvailable: its 4x4 block is inside the frame).
+fn padded_block(fs: &FrameState, plane: usize, src: &Plane, rect: BlockRect) -> ([i32; PAD_STRIDE * PAD_STRIDE], bool) {
     let (sub_x, sub_y) = if plane > 0 { (fs.ssx, fs.ssy) } else { (0, 0) };
-    let x0 = (c * 4) >> sub_x;
-    let y0 = (r * 4) >> sub_y;
-    let w = 8 >> sub_x;
-    let h = 8 >> sub_y;
-    let src = &fs.cur.planes[plane];
     let (mi_rows, mi_cols) = (fs.fh.mi_rows as isize, fs.fh.mi_cols as isize);
-    // CdefAvailable per sample: its 4x4 block is inside the frame.
     let mut buf = [CDEF_NA; PAD_STRIDE * PAD_STRIDE];
     let mut all_avail = true;
-    for i in 0..h + 4 {
-        let y = (y0 + i) as isize - 2;
+    for i in 0..rect.h + 4 {
+        let y = (rect.y0 + i) as isize - 2;
         let cand_r = (y << sub_y) >> 2;
         if y < 0 || cand_r >= mi_rows {
             all_avail = false;
             continue;
         }
         let row = src.row(y as usize);
-        for j in 0..w + 4 {
-            let x = (x0 + j) as isize - 2;
+        for j in 0..rect.w + 4 {
+            let x = (rect.x0 + j) as isize - 2;
             let cand_c = (x << sub_x) >> 2;
             if x >= 0 && cand_c < mi_cols {
                 buf[i * PAD_STRIDE + j] = row[x as usize] as i32;
@@ -159,70 +200,70 @@ fn filter(fs: &FrameState, out: &mut FrameBuf, plane: usize, r: usize, c: usize,
             }
         }
     }
-    let pri_tap = ((pri >> coeff_shift) & 1) as usize;
-    let off = |d: usize, k: usize| CDEF_DIRECTIONS[d][k][0] as isize * PAD_STRIDE as isize + CDEF_DIRECTIONS[d][k][1] as isize;
-    let pri_off = [off(dir, 0), off(dir, 1)];
-    let d_lo = (dir + 6) & 7;
-    let d_hi = (dir + 2) & 7;
-    let sec_off = [[off(d_lo, 0), off(d_hi, 0)], [off(d_lo, 1), off(d_hi, 1)]];
-    let pri_taps = [CDEF_PRI_TAPS[pri_tap][0] as i32, CDEF_PRI_TAPS[pri_tap][1] as i32];
-    let sec_taps = [CDEF_SEC_TAPS[pri_tap][0] as i32, CDEF_SEC_TAPS[pri_tap][1] as i32];
-    let adj = |t: i32| if t == 0 { 0 } else { (damping - (31 - (t as u32).leading_zeros()) as i32).max(0) as u32 };
-    let (pri_adj, sec_adj) = (adj(pri), adj(sec));
+    (buf, all_avail)
+}
+
+/// Filters one sample whose taps may be unavailable (CDEF_NA).
+fn filter_sample(buf: &[i32; PAD_STRIDE * PAD_STRIDE], taps: &Taps, ci: isize, x: i32) -> u16 {
+    let mut sum = 0i32;
+    let mut max = x;
+    let mut min = x;
+    for k in 0..2 {
+        for sign in [-1isize, 1] {
+            let p = buf[(ci + sign * taps.pri_off[k]) as usize];
+            if p != CDEF_NA {
+                if taps.pri != 0 {
+                    sum += taps.pri_taps[k] * constrain(p - x, taps.pri, taps.pri_adj);
+                }
+                max = max.max(p);
+                min = min.min(p);
+            }
+            for s in 0..2 {
+                let q = buf[(ci + sign * taps.sec_off[k][s]) as usize];
+                if q != CDEF_NA {
+                    if taps.sec != 0 {
+                        sum += taps.sec_taps[k] * constrain(q - x, taps.sec, taps.sec_adj);
+                    }
+                    max = max.max(q);
+                    min = min.min(q);
+                }
+            }
+        }
+    }
+    (x + ((8 + sum - (sum < 0) as i32) >> 4)).clamp(min, max) as u16
+}
+
+fn filter(fs: &FrameState, out: &mut FrameBuf, plane: usize, (r, c): (usize, usize), strengths: (i32, i32), damping: i32, dir: usize) {
+    let (pri, sec) = strengths;
+    if pri == 0 && sec == 0 {
+        // Every tap contributes 0 and the clamp to [min, max] keeps x: CdefFrame = CurrFrame.
+        return;
+    }
+    let coeff_shift = fs.bit_depth - 8;
+    let (sub_x, sub_y) = if plane > 0 { (fs.ssx, fs.ssy) } else { (0, 0) };
+    let rect = BlockRect { x0: (c * 4) >> sub_x, y0: (r * 4) >> sub_y, w: 8 >> sub_x, h: 8 >> sub_y };
+    let src = &fs.cur.planes[plane];
+    let (buf, all_avail) = padded_block(fs, plane, src, rect);
+    let taps = Taps::new(coeff_shift, strengths, damping, dir);
     let dst = &mut out.planes[plane];
     if all_avail {
         // Every tap is available: whole rows at a time (constrain() with threshold 0 is 0).
-        let mut taps = [(0isize, 0i32, 0i32, 0u32); 12];
-        let mut n = 0;
-        for k in 0..2 {
-            for sign in [-1isize, 1] {
-                taps[n] = (sign * pri_off[k], pri_taps[k], pri, pri_adj);
-                taps[n + 1] = (sign * sec_off[k][0], sec_taps[k], sec, sec_adj);
-                taps[n + 2] = (sign * sec_off[k][1], sec_taps[k], sec, sec_adj);
-                n += 3;
-            }
-        }
-        let rows = (y0, x0, h);
-        match w {
-            8 => filter_rows::<8>(&buf, &taps, dst, rows),
-            _ => filter_rows::<4>(&buf, &taps, dst, rows),
+        let list = taps.tap_list();
+        let rows = (rect.y0, rect.x0, rect.h);
+        match rect.w {
+            8 => filter_rows::<8>(&buf, &list, dst, rows),
+            _ => filter_rows::<4>(&buf, &list, dst, rows),
         }
         return;
     }
-    for i in 0..h {
+    for i in 0..rect.h {
         // The centre sample is read even where CdefAvailable is 0 (8x8 blocks straddling an odd
         // MiRows / MiCols edge).
-        let srow = &src.row(y0 + i)[x0..x0 + w];
-        let drow = &mut dst.row_mut(y0 + i)[x0..x0 + w];
-        for j in 0..w {
+        let srow = &src.row(rect.y0 + i)[rect.x0..rect.x0 + rect.w];
+        let drow = &mut dst.row_mut(rect.y0 + i)[rect.x0..rect.x0 + rect.w];
+        for j in 0..rect.w {
             let ci = ((i + 2) * PAD_STRIDE + j + 2) as isize;
-            let x = srow[j] as i32;
-            let mut sum = 0i32;
-            let mut max = x;
-            let mut min = x;
-            for k in 0..2 {
-                for sign in [-1isize, 1] {
-                    let p = buf[(ci + sign * pri_off[k]) as usize];
-                    if p != CDEF_NA {
-                        if pri != 0 {
-                            sum += pri_taps[k] * constrain(p - x, pri, pri_adj);
-                        }
-                        max = max.max(p);
-                        min = min.min(p);
-                    }
-                    for s in 0..2 {
-                        let q = buf[(ci + sign * sec_off[k][s]) as usize];
-                        if q != CDEF_NA {
-                            if sec != 0 {
-                                sum += sec_taps[k] * constrain(q - x, sec, sec_adj);
-                            }
-                            max = max.max(q);
-                            min = min.min(q);
-                        }
-                    }
-                }
-            }
-            drow[j] = (x + ((8 + sum - (sum < 0) as i32) >> 4)).clamp(min, max) as u16;
+            drow[j] = filter_sample(&buf, &taps, ci, srow[j] as i32);
         }
     }
 }
@@ -242,14 +283,14 @@ fn filter_rows<const W: usize>(
     }
     for i in 0..h {
         let ci = ((i + 2) * PAD_STRIDE + 2) as isize;
-        let Some(&x) = b16.get(ci as usize..).and_then(|r| r.first_chunk::<W>()) else {
+        let Some(&x) = b16.get(ci as usize..).and_then(<[_]>::first_chunk::<W>) else {
             return;
         };
         let (mut sum, mut max, mut min) = ([0i16; W], x, x);
         for &(off, weight, thr, adj) in taps {
             let (weight, thr) = (weight as i16, thr as i16);
             let start = (ci + off) as usize;
-            let Some(p) = b16.get(start..).and_then(|r| r.first_chunk::<W>()) else {
+            let Some(p) = b16.get(start..).and_then(<[_]>::first_chunk::<W>) else {
                 return;
             };
             for j in 0..W {

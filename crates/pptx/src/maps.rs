@@ -304,6 +304,12 @@ const SUBTYPES: &[(&str, &[(&str, u32)])] = &[
     ("blinds", HV),
     ("swivel", HV),
     ("swivelOut", HV),
+    ("blindsOut", HV),
+    ("boxOut", INOUT),
+    ("checkerboardOut", &[("across", 10), ("down", 5)]),
+    ("diamondOut", INOUT),
+    ("peekOut", DIR4),
+    ("stripsOut", &[("lu", 9), ("ru", 3), ("ld", 12), ("rd", 6)]),
     ("checkerboard", &[("across", 10), ("down", 5)]),
     ("wheel", WHEEL),
     ("wheelOut", WHEEL),
@@ -352,6 +358,10 @@ pub fn fallback_effect(class: AnimClass) -> &'static str {
 
 /// The preset id to write for an animation.
 pub fn preset_for(a: &deckcraft_model::Animation) -> u32 {
+    // Float Down is PowerPoint's preset 47 (Float Up is 42).
+    if matches!(a.effect.as_str(), "float" | "floatOut") && a.option == "d" {
+        return 47;
+    }
     if let Some(p) = a.preset_id {
         let consistent = match effect_for_preset(a.class, p) {
             Some(e) => e == a.effect,
@@ -376,6 +386,25 @@ pub fn preset_for(a: &deckcraft_model::Animation) -> u32 {
 mod tests {
     use super::*;
     use crate::xml::parse;
+
+    /// #147: these exits, with their directions, fell back to a plain fade (PowerPoint's ids).
+    #[test]
+    fn exit_presets_import_as_their_own_effects() {
+        for (preset, sub, effect, option) in [
+            (3, 10, "blindsOut", "horz"),
+            (4, 32, "boxOut", "out"),
+            (5, 5, "checkerboardOut", "down"),
+            (8, 16, "diamondOut", "in"),
+            (12, 4, "peekOut", "b"),
+            (18, 6, "stripsOut", "rd"),
+            (37, 0, "sinkDown", ""),
+            (49, 0, "spinnerOut", ""),
+            (55, 0, "contract", ""),
+        ] {
+            let e = effect_for_preset(AnimClass::Exit, preset).expect("known exit");
+            assert_eq!((e, option_from_subtype(e, sub).as_str()), (effect, option), "preset {preset}");
+        }
+    }
 
     #[test]
     fn every_transition_kind_round_trips() {
@@ -405,5 +434,16 @@ mod tests {
         assert_eq!(option_from_subtype("fade", 0), "");
         assert_eq!(effect_for_preset(AnimClass::Entrance, 2), Some("fly"));
         assert_eq!(effect_for_preset(AnimClass::Emphasis, 8), Some("spin"));
+    }
+
+    /// PowerPoint's own ids: Darken is 24 and Desaturate 25 (read back from its saved file).
+    #[test]
+    fn darken_and_desaturate_use_powerpoints_ids() {
+        assert_eq!(effect_for_preset(AnimClass::Emphasis, 24), Some("darken"));
+        assert_eq!(effect_for_preset(AnimClass::Emphasis, 25), Some("desaturate"));
+        for (effect, id) in [("darken", 24), ("desaturate", 25)] {
+            let a = deckcraft_model::Animation { class: AnimClass::Emphasis, effect: effect.into(), ..Default::default() };
+            assert_eq!(preset_for(&a), id, "{effect}");
+        }
     }
 }

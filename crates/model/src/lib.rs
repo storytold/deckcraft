@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod anim;
+pub mod bidi;
 pub mod chart;
 pub mod defaults;
 pub mod edit;
@@ -17,6 +18,7 @@ pub mod style;
 pub mod table;
 pub mod text;
 pub mod theme;
+mod trendline;
 pub mod words;
 
 use std::sync::Arc;
@@ -26,6 +28,7 @@ pub use deckcraft_geom::{Rect, Size, Xfrm};
 use serde::{Deserialize, Serialize};
 
 pub use anim::{AnimClass, AnimStart, Animation, Transition};
+pub use bidi::{first_strong_is_rtl, is_rtl_script};
 pub use chart::Chart;
 pub use style::{ColorBase, ColorRef, Effects, Fill, Line, ShapeStyle};
 pub use table::{Cell, Table};
@@ -228,6 +231,8 @@ pub struct MediaClip {
     pub video: bool,
     /// Poster frame image.
     pub poster: Option<MediaId>,
+    /// Crop of the picture (left, top, right, bottom as fractions), PowerPoint's `srcRect` on the video.
+    pub crop: [f64; 4],
     pub trim_start_ms: u32,
     pub trim_end_ms: u32,
     pub fade_in_ms: u32,
@@ -249,7 +254,8 @@ pub struct MediaClip {
     pub height: u32,
 }
 
-/// One ink stroke (Draw tab): points in slide coordinates with pressure.
+/// One ink stroke (Draw tab): points in slide coordinates with pressure (`0..=1`,
+/// where `1` is [`InkStroke::width`]).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct InkStroke {
@@ -257,6 +263,24 @@ pub struct InkStroke {
     pub color: Rgba,
     pub width: f64,
     pub highlighter: bool,
+}
+
+/// True when every sample is the placeholder `0.5` written before a device reported pressure.
+/// Those strokes were drawn at [`InkStroke::width`] and still are.
+pub fn ink_pressure_is_legacy(points: &[(f64, f64, f32)]) -> bool {
+    !points.is_empty() && points.iter().all(|p| (p.2 - 0.5).abs() <= 1.0e-3)
+}
+
+/// Width of one ink sample. `pressure` of `1` is the pen width. A legacy flat stroke
+/// (`legacy`) draws at the pen width. A missing reading draws at the pen width too.
+/// A light touch stays visible (at least 8% of the pen).
+pub fn ink_sample_width(pen: f64, pressure: f32, legacy: bool) -> f64 {
+    let pen = if pen.is_finite() { pen.abs() } else { 0.0 };
+    if legacy {
+        return pen;
+    }
+    let p = if pressure.is_finite() { pressure.clamp(0.08, 1.0) } else { 1.0 };
+    pen * f64::from(p)
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -282,12 +306,23 @@ pub enum ShapeKind {
     Ink {
         strokes: Vec<InkStroke>,
     },
+    /// A 3-D model (`p:contentPart` with a `model3d` relationship, usually a `.glb`).
+    /// `poster` is the fallback picture an `mc:AlternateContent` choice carried for older readers.
+    Model3d {
+        media: MediaId,
+        #[serde(default)]
+        poster: Option<MediaId>,
+    },
     /// Something we read but don't model (SmartArt without fallback, OLE…): its XML is kept and its
     /// fallback picture, if any, is shown.
     Opaque {
         xml: String,
         preview: Option<MediaId>,
         label: String,
+        /// The parts its XML points to (SmartArt data, an OLE embedding…), so a save writes them
+        /// back: (relationship id used in `xml`, relationship type, the part as a media item).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        parts: Vec<(String, String, MediaId)>,
     },
 }
 
@@ -317,9 +352,63 @@ pub struct Shape {
     pub decorative: bool,
     pub click: Option<text::Hyperlink>,
     pub hover: Option<text::Hyperlink>,
+    /// Add-in tags (`p:custDataLst` → `ppt/tags/tagN.xml`): name/value pairs kept for round trip.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<(String, String)>,
     /// Unmodelled XML kept for round-trip (extension lists etc.).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_ext: Option<String>,
+    /// On a SmartArt group: the diagram's text outline, from which its shapes are regenerated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagram: Option<Diagram>,
+}
+
+/// A SmartArt diagram's data: its layout and its outline of nodes (the Text Pane).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Diagram {
+    /// The layout: list, blockList, hBulletList, process, chevron, verticalProcess, stepUp, cycle,
+    /// blockCycle, radial, hierarchy, pyramid, invertedPyramid, matrix or titledMatrix.
+    pub kind: String,
+    pub nodes: Vec<DiagramNode>,
+    /// SmartArt Style: `flat` (default), `subtle`, `intense` or `outline`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub style: String,
+    /// Change Colors: `colorful` (default: each shape its own accent) or `accent1`…`accent6`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub colors: String,
+    /// The group's shapes are the file's drawing, not generated from `nodes`: text typed into them
+    /// isn't mapped back to nodes (the first outline edit regenerates them).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub imported: bool,
+    /// PowerPoint's layout id (`layoutDef@uniqueId`) the diagram came with.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub layout_id: String,
+    /// The file's own layout, quick style and colour definitions, written back unchanged while the
+    /// layout isn't switched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout_xml: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style_xml: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub colors_xml: Option<String>,
+}
+
+/// One line of the Text Pane: its text and outline level (0 = top level).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DiagramNode {
+    pub text: String,
+    pub level: u8,
+    /// The picture shown in the node's picture placeholder (picture layouts).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub picture: Option<MediaId>,
+    /// An assistant (organisation charts): drawn beside its parent, off the row of its siblings.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub assistant: bool,
+    /// The job title under the name (Name and Title Organization Chart).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub title: String,
 }
 
 impl Default for Shape {
@@ -344,12 +433,19 @@ impl Default for Shape {
             decorative: false,
             click: None,
             hover: None,
+            tags: vec![],
             raw_ext: None,
+            diagram: None,
         }
     }
 }
 
 impl Shape {
+    /// A stand-in shape for laying out one table cell's `body`: a table, so the cell's text takes
+    /// the master's other-text style as PowerPoint's does.
+    pub fn table_cell(body: text::TextBody) -> Shape {
+        Shape { text: Some(body), kind: ShapeKind::Table(Table::default()), ..Default::default() }
+    }
     pub fn is_placeholder(&self) -> bool {
         self.ph.is_some()
     }
@@ -388,6 +484,7 @@ impl Shape {
             ShapeKind::Media(m) if m.video => "video",
             ShapeKind::Media(_) => "audio",
             ShapeKind::Ink { .. } => "ink",
+            ShapeKind::Model3d { .. } => "model",
             ShapeKind::Opaque { .. } => "object",
         }
     }
@@ -534,7 +631,10 @@ pub struct Slide {
     /// the layout.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color_map: Option<Vec<(String, String)>>,
-    /// Unmodelled XML kept for round-trip (custom data, tags).
+    /// Add-in tags (`p:custDataLst` → `ppt/tags/tagN.xml`): name/value pairs kept for round trip.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<(String, String)>,
+    /// Unmodelled XML kept for round-trip (custom data).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_ext: Option<String>,
 }
@@ -554,6 +654,7 @@ impl Default for Slide {
             notes: TextBody::default(),
             comments: vec![],
             color_map: None,
+            tags: vec![],
             raw_ext: None,
         }
     }
@@ -802,6 +903,35 @@ pub struct Properties {
     pub revision: u32,
 }
 
+/// One typeface embedded in the presentation (`p:embeddedFont`). Each slot is a font file in
+/// [`Presentation::media`]: regular, bold, italic, bold italic. A slot is absent when the file
+/// didn't include that face.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct EmbeddedFont {
+    pub typeface: String,
+    /// `panose` on `p:font`, when the file gave the 20 hex digits.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub panose: Option<String>,
+    /// `pitchFamily` on `p:font`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pitch_family: Option<u8>,
+    /// `charset` on `p:font`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub charset: Option<u8>,
+    pub regular: Option<MediaId>,
+    pub bold: Option<MediaId>,
+    pub italic: Option<MediaId>,
+    pub bold_italic: Option<MediaId>,
+}
+
+impl EmbeddedFont {
+    /// The four face slots, in the order the package stores them.
+    pub fn faces(&self) -> [Option<MediaId>; 4] {
+        [self.regular, self.bold, self.italic, self.bold_italic]
+    }
+}
+
 /// An embedded file (image, audio, video, font, workbook).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -817,11 +947,37 @@ pub struct MediaItem {
     pub link: Option<String>,
 }
 
+/// A size whose sides may be missing, null or not numbers (NaN then); see `Presentation::slide_size`.
+fn lenient_size<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Size, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    let side = |k: &str| v.get(k).and_then(serde_json::Value::as_f64).unwrap_or(f64::NAN);
+    Ok(Size::new(side("width"), side("height")))
+}
+
+/// An XML package part DeckCraft doesn't model, kept as written.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct KeptPart {
+    /// Part name from the package root (`customXml/item1.xml`).
+    pub name: String,
+    /// Content type; empty for a relationships part.
+    pub content_type: String,
+    pub xml: String,
+    /// Full relationship type linking it, empty when only its sibling parts point at it.
+    pub rel_type: String,
+    /// Linked from the package root rather than from the presentation part.
+    pub from_root: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Presentation {
-    /// Slide size in points (default 16:9, 960 × 540).
+    /// Slide size in points (default 16:9, 960 × 540). Read leniently: a missing, null or
+    /// non-numeric side becomes NaN for `deckcraft_format::repair` to replace, instead of the
+    /// whole file failing to open.
+    #[serde(deserialize_with = "lenient_size")]
     pub slide_size: Size,
+    #[serde(deserialize_with = "lenient_size")]
     pub notes_size: Size,
     pub slides: Vec<Arc<Slide>>,
     pub masters: Vec<Arc<Master>>,
@@ -838,14 +994,33 @@ pub struct Presentation {
     pub first_slide_number: u32,
     /// Next free shape/slide/layout/media id.
     pub next_id: u32,
-    /// Embedded fonts (family names; bytes in `media`).
-    pub embedded_fonts: Vec<(String, MediaId)>,
+    /// Embedded fonts. The face bytes live in [`Self::media`].
+    pub embedded_fonts: Vec<EmbeddedFont>,
     /// Table styles defined in the file (`ppt/tableStyles.xml`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub table_styles: Vec<table::TableStyleDef>,
+    /// Add-in tags (`p:custDataLst` → `ppt/tags/tagN.xml`): name/value pairs kept for round trip.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<(String, String)>,
+    /// Package parts kept verbatim for round trip: custom XML data (SharePoint metadata), the
+    /// sensitivity label and custom document properties.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub kept_parts: Vec<KeptPart>,
+    /// Drawing guides (View › Guides), shared by every slide (`p:guideLst` in viewProps).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub guides: Vec<DrawGuide>,
     /// Unmodelled presentation-level XML kept for round-trip.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_ext: Option<String>,
+}
+
+/// A drawing guide: a vertical line at `pos` points from the slide's left edge, or a horizontal
+/// one from its top.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DrawGuide {
+    pub vertical: bool,
+    pub pos: f64,
 }
 
 impl Default for Presentation {
@@ -855,10 +1030,13 @@ impl Default for Presentation {
 }
 
 impl Presentation {
-    /// A fresh id, unique across slides, shapes, layouts, masters and media in this deck.
-    pub fn alloc_id(&mut self) -> u32 {
-        self.next_id = self.next_id.max(1).saturating_add(1);
-        self.next_id
+    /// A fresh id, unique across slides, shapes, layouts, masters and media in this deck. `None`
+    /// once every id is in use (a hostile file can arrive that way): the deck cannot grow
+    /// further, and callers must refuse the change rather than duplicate ids (#407).
+    pub fn alloc_id(&mut self) -> Option<u32> {
+        let next = self.next_id.max(1).checked_add(1)?;
+        self.next_id = next;
+        Some(next)
     }
     /// Make sure `next_id` is above every id in use (after loading a file).
     pub fn fix_next_id(&mut self) {
@@ -878,19 +1056,23 @@ impl Presentation {
         for md in &self.media {
             m = m.max(md.id.0);
         }
+        for extra in [self.notes_master.as_deref(), self.handout_master.as_deref()].into_iter().flatten() {
+            m = m.max(extra.id.0);
+            walk(&extra.shapes, &mut |sh, _| m = m.max(sh.id.0));
+        }
         self.next_id = m;
     }
     pub fn slide_index(&self, id: SlideId) -> Option<usize> {
         self.slides.iter().position(|s| s.id == id)
     }
     pub fn slide(&self, id: SlideId) -> Option<&Slide> {
-        self.slides.iter().find(|s| s.id == id).map(|s| s.as_ref())
+        self.slides.iter().find(|s| s.id == id).map(AsRef::as_ref)
     }
     pub fn slide_mut(&mut self, id: SlideId) -> Option<&mut Slide> {
         self.slides.iter_mut().find(|s| s.id == id).map(Arc::make_mut)
     }
     pub fn slide_at(&self, i: usize) -> Option<&Slide> {
-        self.slides.get(i).map(|s| s.as_ref())
+        self.slides.get(i).map(AsRef::as_ref)
     }
     /// Master and layout for a layout id.
     pub fn layout(&self, id: LayoutId) -> Option<(&Master, &Layout)> {
@@ -904,19 +1086,19 @@ impl Presentation {
         self.masters.first().map(|m| (m.as_ref(), m.layouts.first()))
     }
     pub fn first_master(&self) -> Option<&Master> {
-        self.masters.first().map(|m| m.as_ref())
+        self.masters.first().map(AsRef::as_ref)
     }
     pub fn media(&self, id: MediaId) -> Option<&MediaItem> {
         self.media.iter().find(|m| m.id == id)
     }
     /// Add media bytes, reusing an identical existing item.
-    pub fn add_media(&mut self, name: &str, content_type: &str, data: Vec<u8>) -> MediaId {
+    pub fn add_media(&mut self, name: &str, content_type: &str, data: Vec<u8>) -> Option<MediaId> {
         if let Some(m) = self.media.iter().find(|m| m.data.len() == data.len() && *m.data == data) {
-            return m.id;
+            return Some(m.id);
         }
-        let id = MediaId(self.alloc_id());
+        let id = MediaId(self.alloc_id()?);
         self.media.push(MediaItem { id, name: name.into(), content_type: content_type.into(), data: Arc::new(data), link: None });
-        id
+        Some(id)
     }
     /// Section index containing a slide (by position), when sections exist.
     pub fn section_of(&self, slide: SlideId) -> Option<usize> {
@@ -930,11 +1112,13 @@ impl Presentation {
     pub fn validate(&self) -> Vec<String> {
         let mut out = vec![];
         let mut seen = std::collections::HashSet::new();
+        // Indexed once: a per-slide scan of every layout is slides × layouts work.
+        let layouts: std::collections::HashSet<_> = self.masters.iter().flat_map(|m| m.layouts.iter().map(|l| l.id)).collect();
         for s in &self.slides {
             if !seen.insert(s.id) {
                 out.push(format!("duplicate slide id {}", s.id));
             }
-            if self.layout(s.layout).is_none() {
+            if !layouts.contains(&s.layout) {
                 out.push(format!("slide {} uses missing layout {}", s.id, s.layout));
             }
             let mut ids = std::collections::HashSet::new();

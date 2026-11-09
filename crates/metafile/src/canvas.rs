@@ -4,6 +4,7 @@
 
 use std::sync::{Arc, OnceLock};
 
+use crate::clip::{self, MAX_CLIP_RECTS};
 use crate::dib::Rgba;
 use crate::geom::{Op, P};
 use crate::text::{ETO_CLIPPED, ETO_OPAQUE, Font, TA_UPDATECP, Text, align};
@@ -16,7 +17,9 @@ const STOCK: u32 = 0x8000_0000;
 pub(crate) const PS_NULL: u32 = 5;
 /// Pen style bits; the rest of the style word holds end-cap, join and type flags.
 pub(crate) const PS_STYLE_MASK: u32 = 0x0F;
-const BS_SOLID: u32 = 0;
+pub(crate) const BS_SOLID: u32 = 0;
+/// Cells on the longer side of a computed (gradient or texture) fill tile.
+const SHADE_RES: usize = 128;
 pub(crate) const BS_NULL: u32 = 1;
 pub(crate) const BS_HATCHED: u32 = 2;
 /// BS_PATTERN, BS_DIBPATTERN and BS_DIBPATTERNPT: the brush paints a bitmap tile.
@@ -244,19 +247,39 @@ pub(crate) enum Raw {
         fill: Option<[u8; 4]>,
         stroke: Option<([u8; 4], f64)>,
         even_odd: bool,
+        /// Device-space clip region. None is the default clip.
+        region: Option<Vec<[f64; 4]>>,
     },
     /// A path filled with a repeating tile.
     Pattern {
         ops: Vec<Op>,
         even_odd: bool,
         tile: Arc<RawTile>,
+        region: Option<Vec<[f64; 4]>>,
     },
     Bitmap {
         rect: [f64; 4],
         img: Rgba,
+        region: Option<Vec<[f64; 4]>>,
     },
-    /// Text whose transform and clip are in device units.
-    Text(Box<Text>),
+    /// Text whose transform and clip are in device units. `region` is the device clip.
+    Text {
+        text: Box<Text>,
+        region: Option<Vec<[f64; 4]>>,
+    },
+}
+
+impl Raw {
+    fn set_region(&mut self, region: Option<Vec<[f64; 4]>>) {
+        match self {
+            Raw::Path { region: slot, .. }
+            | Raw::Pattern { region: slot, .. }
+            | Raw::Bitmap { region: slot, .. }
+            | Raw::Text { region: slot, .. } => {
+                *slot = region;
+            }
+        }
+    }
 }
 
 /// Text drawing state: colours, background mode, alignment and the selected font.
@@ -277,6 +300,7 @@ struct Saved {
     even_odd: bool,
     rop2: u32,
     text: TextState,
+    clip: Option<Vec<[f64; 4]>>,
 }
 
 pub(crate) struct Canvas {
@@ -304,6 +328,12 @@ pub(crate) struct Canvas {
     in_path: bool,
     path: Vec<Op>,
     full: bool,
+    /// Current clip in device units. None is the default (the whole surface); Some([]) draws nothing.
+    clip: Option<Vec<[f64; 4]>>,
+    /// Device bounds of the picture, so excluding from the default clip has a surface to cut.
+    surface: Option<[f64; 4]>,
+    /// EMF+ convex device clip polygon: drawing is cut to it geometrically.
+    plus_clip: Option<Vec<P>>,
 }
 
 impl Canvas {
@@ -327,7 +357,15 @@ impl Canvas {
             in_path: false,
             path: Vec::new(),
             full: false,
+            clip: None,
+            surface: None,
+            plus_clip: None,
         }
+    }
+
+    /// Device bounds `[x0, y0, x1, y1]` of the picture. Used when a clip record cuts the default clip.
+    pub fn set_clip_surface(&mut self, rect: [f64; 4]) {
+        self.surface = clip::normalize(rect);
     }
 
     /// True once the item cap is hit; the readers stop there and keep what they have.
@@ -336,6 +374,23 @@ impl Canvas {
     }
 
     fn push(&mut self, raw: Raw) {
+        match self.plus_clip.take() {
+            None => self.push_raw(raw),
+            Some(c) => {
+                for r in crate::cliprect::clip_raw(raw, &c) {
+                    self.push_raw(r);
+                }
+                self.plus_clip = Some(c);
+            }
+        }
+    }
+
+    fn push_raw(&mut self, mut raw: Raw) {
+        if self.clip.as_ref().is_some_and(Vec::is_empty) {
+            return;
+        }
+        raw.set_region(self.clip.clone());
+        let region_cost = self.clip.as_ref().map_or(0, |c| c.len() * std::mem::size_of::<[f64; 4]>());
         let cost = match &raw {
             Raw::Path { ops, .. } => ops.len() * std::mem::size_of::<Op>(),
             // A tile shared with its brush is counted once (by the brush); one made for this fill
@@ -345,8 +400,8 @@ impl Canvas {
                 ops.len() * std::mem::size_of::<Op>() + 64 + own
             }
             Raw::Bitmap { img, .. } => img.px.len(),
-            Raw::Text(t) => t.text.len() + t.dx.len() * 4 + t.font.family.len() + 128,
-        };
+            Raw::Text { text: t, .. } => t.text.len() + t.dx.len() * 4 + t.font.family.len() + 128,
+        } + region_cost;
         if self.items.len() >= MAX_ITEMS || self.used.saturating_add(cost) > MAX_BYTES {
             self.full = true;
         } else {
@@ -442,6 +497,83 @@ impl Canvas {
         }
     }
 
+    /// The current world transform (EMF+ draws through it).
+    pub fn world(&self) -> Xform {
+        self.map.world
+    }
+
+    /// Sets the pen and brush directly (EMF+ records name their own pen and brush).
+    pub fn set_pen(&mut self, pen: Pen) {
+        self.pen = pen;
+    }
+
+    pub fn set_brush(&mut self, brush: Brush) {
+        self.brush = brush;
+    }
+
+    /// Sets the EMF+ convex device clip polygon (None: unclipped).
+    pub fn set_clip(&mut self, clip: Option<Vec<P>>) {
+        self.plus_clip = clip;
+    }
+
+    /// Logical to device as one affine transform (the mapping is affine).
+    pub fn device_affine(&self) -> Xform {
+        let o = self.map.device((0.0, 0.0));
+        let x = self.map.device((1.0, 0.0));
+        let y = self.map.device((0.0, 1.0));
+        [x.0 - o.0, x.1 - o.1, y.0 - o.0, y.1 - o.1, o.0, o.1]
+    }
+
+    /// Text colour, font and alignment set directly (EMF+ strings name their own font and brush);
+    /// the background is transparent.
+    pub fn set_text_style(&mut self, color: [u8; 4], font: LogFont, align: u32) {
+        self.text.color = color;
+        self.text.bk_opaque = false;
+        self.text.align = align;
+        self.text.font = Some(Arc::new(font));
+    }
+
+    /// Pushes an item already in device units (a nested metafile's drawing).
+    pub fn push_device(&mut self, raw: Raw) {
+        self.push(raw);
+    }
+
+    /// Fills logical `ops` with a ready-made tile, laid from the device origin.
+    pub fn tile_shape(&mut self, ops: &[Op], tile: Arc<RawTile>) {
+        let dev: Vec<Op> = ops.iter().map(|o| self.map_op(*o)).collect();
+        if dev.len() >= 2 {
+            let even_odd = self.even_odd;
+            self.push(Raw::Pattern { ops: dev, even_odd, tile, region: None });
+        }
+    }
+
+    /// Fills logical `ops` with a colour computed per device point (gradients, textures): a tile
+    /// of at most [`SHADE_RES`] cells on the longer side, laid out so that its one repeat covers
+    /// the shape.
+    pub fn shade_shape(&mut self, ops: &[Op], shade: &dyn Fn(P) -> [u8; 4]) {
+        let dev: Vec<Op> = ops.iter().map(|o| self.map_op(*o)).collect();
+        let Some([l, t, r, b]) = crate::cliprect::ops_bbox(&dev) else { return };
+        let side = (r - l).max(b - t);
+        if dev.len() < 2 || !(side.is_finite() && side > 0.0) {
+            return;
+        }
+        let cell = side / SHADE_RES as f64;
+        let w = (((r - l) / cell).ceil() as usize + 1).clamp(1, SHADE_RES + 1);
+        let h = (((b - t) / cell).ceil() as usize + 1).clamp(1, SHADE_RES + 1);
+        let (pw, ph) = (w as f64 * cell, h as f64 * cell);
+        let mut px = Vec::with_capacity(w * h * 4);
+        for j in 0..h {
+            // The device position this tile row stands for inside the shape's box.
+            let y = t + (j as f64 * cell - t).rem_euclid(ph) + cell / 2.0;
+            for i in 0..w {
+                let x = l + (i as f64 * cell - l).rem_euclid(pw) + cell / 2.0;
+                px.extend_from_slice(&shade((x, y)));
+            }
+        }
+        let even_odd = self.even_odd;
+        self.push(Raw::Pattern { ops: dev, even_odd, tile: Arc::new(RawTile { w, h, px, cell }), region: None });
+    }
+
     /// Pushes the drawing state. Past [`MAX_STACK`] levels the parse stops, since later restores
     /// could no longer match the file.
     pub fn save_dc(&mut self) {
@@ -453,6 +585,7 @@ impl Canvas {
                 even_odd: self.even_odd,
                 rop2: self.rop2,
                 text: self.text.clone(),
+                clip: self.clip.clone(),
             });
         } else {
             self.full = true;
@@ -471,6 +604,61 @@ impl Canvas {
         self.even_odd = s.even_odd;
         self.rop2 = s.rop2;
         self.text = s.text;
+        self.clip = s.clip;
+    }
+
+    /// The logical rectangle as a device rectangle. A scale or translation keeps the rectangle; a
+    /// rotation stores the bounds of the rotated corners.
+    fn device_rect(&self, [l, t, r, b]: [f64; 4]) -> Option<[f64; 4]> {
+        let corners = [(l, t), (r, t), (l, b), (r, b)].map(|p| self.map.device(p));
+        if !corners.iter().all(|p| p.0.is_finite() && p.1.is_finite()) {
+            return None;
+        }
+        let (mut x0, mut y0, mut x1, mut y1) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for p in corners {
+            x0 = x0.min(p.0);
+            y0 = y0.min(p.1);
+            x1 = x1.max(p.0);
+            y1 = y1.max(p.1);
+        }
+        clip::normalize([x0, y0, x1, y1])
+    }
+
+    fn map_rects(&self, logical: &[[f64; 4]]) -> Vec<[f64; 4]> {
+        let mut out = Vec::new();
+        for r in logical.iter().take(MAX_CLIP_RECTS) {
+            if let Some(d) = self.device_rect(*r) {
+                out.push(d);
+            }
+            if out.len() >= MAX_CLIP_RECTS {
+                break;
+            }
+        }
+        out
+    }
+
+    /// INTERSECTCLIPRECT: later drawing is limited to this logical rectangle as well.
+    pub fn intersect_clip_rect(&mut self, logical: [f64; 4]) {
+        self.clip = match self.device_rect(logical) {
+            Some(rect) => clip::intersect(self.clip.clone(), rect),
+            None => Some(Vec::new()),
+        };
+    }
+
+    /// EXCLUDECLIPRECT: this logical rectangle is removed from the clip.
+    pub fn exclude_clip_rect(&mut self, logical: [f64; 4]) {
+        let Some(rect) = self.device_rect(logical) else { return };
+        self.clip = clip::exclude(self.clip.clone(), rect, self.surface);
+    }
+
+    /// EXTSELECTCLIPRGN: combine these logical rectangles with the clip in a `RGN_*` mode.
+    pub fn select_clip_rects(&mut self, logical: &[[f64; 4]], mode: u32) {
+        self.clip = clip::combine(self.clip.clone(), self.map_rects(logical), mode, self.surface);
+    }
+
+    /// The default clip: later records are not limited by a region.
+    pub fn reset_clip(&mut self) {
+        self.clip = None;
     }
 
     /// Stores an object in `slot` (EMF index), or in the first free slot (WMF handle table).
@@ -603,14 +791,14 @@ impl Canvas {
         match fill {
             Some(Paint::Tile(tile)) => {
                 if stroke.is_some() {
-                    self.push(Raw::Pattern { ops: ops.clone(), even_odd, tile });
-                    self.push(Raw::Path { ops, fill: None, stroke, even_odd });
+                    self.push(Raw::Pattern { ops: ops.clone(), even_odd, tile, region: None });
+                    self.push(Raw::Path { ops, fill: None, stroke, even_odd, region: None });
                 } else {
-                    self.push(Raw::Pattern { ops, even_odd, tile });
+                    self.push(Raw::Pattern { ops, even_odd, tile, region: None });
                 }
             }
-            Some(Paint::Solid(c)) => self.push(Raw::Path { ops, fill: Some(c), stroke, even_odd }),
-            None if stroke.is_some() => self.push(Raw::Path { ops, fill: None, stroke, even_odd }),
+            Some(Paint::Solid(c)) => self.push(Raw::Path { ops, fill: Some(c), stroke, even_odd, region: None }),
+            None if stroke.is_some() => self.push(Raw::Path { ops, fill: None, stroke, even_odd, region: None }),
             None => {}
         }
     }
@@ -755,7 +943,7 @@ impl Canvas {
     /// Fills a logical rectangle `[l, t, r, b]` with a solid colour (ROP fills such as BLACKNESS).
     pub fn fill_rect_with(&mut self, [l, t, r, b]: [f64; 4], color: [u8; 4]) {
         let dev: Vec<Op> = crate::geom::rect(l, t, r, b).iter().map(|o| self.map_op(*o)).collect();
-        self.push(Raw::Path { ops: dev, fill: Some(color), stroke: None, even_odd: true });
+        self.push(Raw::Path { ops: dev, fill: Some(color), stroke: None, even_odd: true, region: None });
     }
 
     /// Whether a raster operation draws without a source bitmap (PATCOPY, BLACKNESS, WHITENESS).
@@ -831,17 +1019,21 @@ impl Canvas {
             }
             _ => None,
         };
-        self.push(Raw::Text(Box::new(Text {
-            transform: [sx * c, sx * s, -sy * s, sy * c, o.0, o.1],
-            text,
-            dx,
-            font: lf.font,
-            color: self.text.color,
-            background: self.text.bk_opaque.then_some(self.text.bk_color),
-            h_align,
-            v_align,
-            clip,
-        })));
+        self.push(Raw::Text {
+            text: Box::new(Text {
+                transform: [sx * c, sx * s, -sy * s, sy * c, o.0, o.1],
+                text,
+                dx,
+                font: lf.font,
+                color: self.text.color,
+                background: self.text.bk_opaque.then_some(self.text.bk_color),
+                h_align,
+                v_align,
+                clip,
+                region: None,
+            }),
+            region: None,
+        });
     }
 
     /// A bitmap stretched into a logical rectangle `[x, y, w, h]`. A negative extent mirrors the
@@ -852,7 +1044,7 @@ impl Canvas {
         let b = self.map.device((x + w, y + h));
         crate::dib::flip(&mut img, a.0 > b.0, a.1 > b.1);
         let dev = [a.0.min(b.0), a.1.min(b.1), (b.0 - a.0).abs(), (b.1 - a.1).abs()];
-        self.push(Raw::Bitmap { rect: dev, img });
+        self.push(Raw::Bitmap { rect: dev, img, region: None });
     }
 }
 

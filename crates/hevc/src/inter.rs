@@ -25,7 +25,7 @@ fn filt_w<const T: usize, const W: usize>(src: &[i16], step: usize, f: &[i8; T],
     let mut acc = [0i32; W];
     for k in 0..T {
         let c = f[k] as i32;
-        let Some(p) = src.get(k * step..).and_then(|s| s.first_chunk::<W>()) else {
+        let Some(p) = src.get(k * step..).and_then(<[_]>::first_chunk::<W>) else {
             return;
         };
         for j in 0..W {
@@ -128,7 +128,7 @@ pub fn mc_chroma(f: &Frame, c: usize, x: i32, y: i32, mv: [i16; 2], w: usize, h:
     let yi = y + (mv[1] as i32 >> 3);
     let shift1 = bd.min(12) - 8;
     let shift3 = 14 - bd;
-    f.chroma_window(c, xi - 1, yi - 1, w + 3, h + 3, &mut sc.win, WIN);
+    f.chroma_window(c, (xi - 1, yi - 1), (w + 3, h + 3), &mut sc.win, WIN);
     interpolate::<4>(&sc.win, &mut sc.tmp, fx, fy, &CHROMA_FILTER[fx], &CHROMA_FILTER[fy], w, h, shift1, shift3, out);
 }
 
@@ -158,7 +158,7 @@ pub fn put_bi(p0: &[i16], p1: &[i16], w: usize, h: usize, bd: u32, dst: &mut [u1
 }
 
 /// Explicit weighted prediction, one list (8-265). `o` is the offset already scaled to the bit depth.
-pub fn put_weighted_uni(p: &[i16], w: usize, h: usize, bd: u32, log2wd: u32, wt: i32, o: i32, dst: &mut [u16], ds: usize) {
+pub fn put_weighted_uni(p: &[i16], (w, h): (usize, usize), bd: u32, (log2wd, wt, o): (u32, i32, i32), dst: &mut [u16], ds: usize) {
     let max = (1i32 << bd) - 1;
     for r in 0..h {
         for c in 0..w {
@@ -173,14 +173,9 @@ pub fn put_weighted_uni(p: &[i16], w: usize, h: usize, bd: u32, log2wd: u32, wt:
 pub fn put_weighted_bi(
     p0: &[i16],
     p1: &[i16],
-    w: usize,
-    h: usize,
+    (w, h): (usize, usize),
     bd: u32,
-    log2wd: u32,
-    w0: i32,
-    w1: i32,
-    o0: i32,
-    o1: i32,
+    (log2wd, w0, w1, o0, o1): (u32, i32, i32, i32, i32),
     dst: &mut [u16],
     ds: usize,
 ) {

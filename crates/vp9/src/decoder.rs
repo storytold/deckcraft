@@ -8,7 +8,7 @@ use crate::frame::{BAND_PAD, Band, Frame, FrameInfo, MiGrid, MiInfo, Pools};
 use crate::header::{FrameHeader, HeaderState, KEY_FRAME, RefInfo, parse_compressed, parse_uncompressed, split_superframe};
 use crate::loopfilter::{LfFrame, PlaneView, filter_superblock};
 use crate::probs::{Counts, adapt_coef_probs, adapt_noncoef_probs};
-use crate::tables::*;
+use crate::tables::{AC_QLOOKUP, DC_QLOOKUP, SEG_LVL_ALT_Q, SWITCHABLE, TX_MODE_SELECT};
 use crate::tile::{FrameShared, RefUse, Strip, TileDecoder};
 use crate::{ColorInfo, Picture, Plane};
 use std::collections::VecDeque;
@@ -73,6 +73,8 @@ pub struct Decoder {
     jobs: VecDeque<std::thread::JoinHandle<()>>,
     #[cfg(feature = "threads")]
     pool: Option<rayon::ThreadPool>,
+    /// Bytes the picture store may take ([`deckcraft_bitstream::budget`]).
+    memory_budget: u64,
 }
 
 impl Default for Decoder {
@@ -104,6 +106,11 @@ impl Decoder {
         Self::with_threads(default_threads())
     }
 
+    /// Cap the bytes of decoded pictures (references, current, in flight) this decoder may hold.
+    pub fn set_memory_budget(&mut self, bytes: u64) {
+        self.memory_budget = bytes;
+    }
+
     /// A decoder using up to `threads` worker threads (1 = decode on the calling thread, and
     /// every picture is returned by the `decode` call that completes it).
     pub fn with_threads(threads: usize) -> Self {
@@ -122,6 +129,7 @@ impl Decoder {
             last_show_frame: false,
             stats: DecodeStats::default(),
             threads: threads.max(1),
+            memory_budget: deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET,
             bufs: Arc::default(),
             draft: false,
             pending: VecDeque::new(),
@@ -256,6 +264,13 @@ impl Decoder {
             return Ok(());
         }
         ensure!(h.width <= 16384 && h.height <= 16384, "frame size {}x{} too large", h.width, h.height);
+        // Eight reference slots, the new frame and those still decoding, on the 64-sample grid.
+        ensure!(
+            store_fits(h.width, h.height, &h.color, 8 + 1 + self.threads + 2, self.memory_budget),
+            "frame size {}x{} exceeds the decoder memory budget",
+            h.width,
+            h.height
+        );
         let (mi_rows, mi_cols) = (h.mi_rows as usize, h.mi_cols as usize);
         // compute_image_size semantics (7.2.6).
         let size = (h.width, h.height);
@@ -332,7 +347,7 @@ impl Decoder {
                 let sz = if last {
                     data.len() - pos
                 } else {
-                    let Some(&b) = data.get(pos..).and_then(|d| d.first_chunk::<4>()) else {
+                    let Some(&b) = data.get(pos..).and_then(<[_]>::first_chunk::<4>) else {
                         return Err(Error::Invalid("tile size beyond frame data".into()));
                     };
                     let s = u32::from_be_bytes(b) as usize;
@@ -759,4 +774,42 @@ fn picture_of(f: &Frame, pts: i64, draft: bool) -> Picture {
         b.add(f, r, f.band(r));
     }
     b.finish()
+}
+
+/// Whether `pictures` frames of `width` x `height` (on the 64-sample superblock grid) fit in
+/// `budget` bytes.
+fn store_fits(width: u32, height: u32, color: &crate::header::ColorConfig, pictures: usize, budget: u64) -> bool {
+    let shape = deckcraft_bitstream::budget::PictureShape {
+        width: u64::from(width).div_ceil(64) * 64,
+        height: u64::from(height).div_ceil(64) * 64,
+        shift_x: u32::from(color.subsampling_x),
+        shift_y: u32::from(color.subsampling_y),
+        chroma_planes: 2,
+        bytes_per_sample: 2,
+    };
+    shape.fits(pictures as u64, budget)
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET;
+
+    fn c420() -> crate::header::ColorConfig {
+        crate::header::ColorConfig { subsampling_x: true, subsampling_y: true, ..Default::default() }
+    }
+
+    #[test]
+    fn the_axis_maximum_is_over_budget_and_4k_is_not() {
+        assert!(!store_fits(16384, 16384, &c420(), 8 + 1 + 1 + 2, DECODE_MEMORY_BUDGET));
+        assert!(store_fits(3840, 2160, &c420(), 8 + 1 + 8 + 2, DECODE_MEMORY_BUDGET));
+    }
+
+    #[test]
+    fn exact_budget_boundary_and_reference_count() {
+        let one = (64 * 64 + 2 * 32 * 32) * 2;
+        assert!(store_fits(10, 10, &c420(), 11, 11 * one));
+        assert!(!store_fits(10, 10, &c420(), 11, 11 * one - 1));
+        assert!(!store_fits(10, 10, &c420(), 12, 11 * one));
+    }
 }

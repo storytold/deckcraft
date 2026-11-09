@@ -123,6 +123,23 @@ impl OpusHead {
         Ok(OpusHead { channels, pre_skip, input_sample_rate, output_gain, mapping_family: family, streams, coupled_streams: coupled, mapping })
     }
 
+    /// Checks the invariants the decoder indexes by, for headers built by hand rather than parsed.
+    pub fn validate(&self) -> Result<()> {
+        if self.channels == 0 {
+            return Err(Error::InvalidHeader("zero channels"));
+        }
+        if self.streams == 0 || self.coupled_streams > self.streams || self.streams + self.coupled_streams > 255 {
+            return Err(Error::InvalidHeader("bad stream counts"));
+        }
+        if self.mapping.len() != self.channels {
+            return Err(Error::InvalidHeader("channel mapping length differs from channel count"));
+        }
+        if self.mapping.iter().any(|&m| m != 255 && m as usize >= self.streams + self.coupled_streams) {
+            return Err(Error::InvalidHeader("channel mapping out of range"));
+        }
+        Ok(())
+    }
+
     /// Linear output gain factor.
     pub fn gain_linear(&self) -> f32 {
         10f32.powf(self.output_gain as f32 / (20.0 * 256.0))

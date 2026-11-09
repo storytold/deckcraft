@@ -18,18 +18,22 @@ deckcraft-render = { workspace = true }
 deckcraft-anim = { workspace = true }
 deckcraft-engine = { workspace = true }
 deckcraft-media = { workspace = true }
-egui = { workspace = true }
+egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
+egui_extras = { workspace = true }
+craft-ui = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+web-time = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-sys-locale = "0.3"
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-js-sys = "0.3"
+sys-locale = "0.3.2"
+craft-update = { workspace = true }
 
 [dev-dependencies]
+skrifa = { workspace = true }
+# kittest's own dev-dependencies do not propagate; tests need both font features explicitly.
+egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
 
 [build-dependencies]

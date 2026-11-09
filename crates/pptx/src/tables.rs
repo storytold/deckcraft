@@ -210,13 +210,20 @@ pub fn table_styles_xml(used: &[String], defs: &[deckcraft_model::table::TableSt
     let mut w = W::new();
     w.open("a:tblStyleLst", A::new().a("xmlns:a", NS_A).a("def", "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}"));
     let names = deckcraft_model::table::table_styles();
-    let mut done: Vec<&str> = vec![];
+    // Indexes instead of scans: written ids (as given and ASCII lower-case), and the file's
+    // definitions by lower-case id (the first wins).
+    let mut done: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut done_lower: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut def_of: std::collections::HashMap<String, &deckcraft_model::table::TableStyleDef> = std::collections::HashMap::new();
+    for d in defs {
+        def_of.entry(d.id.to_ascii_lowercase()).or_insert(d);
+    }
     for s in used {
-        if done.contains(&s.as_str()) {
+        if !done.insert(s.as_str()) {
             continue;
         }
-        done.push(s);
-        if let Some(d) = defs.iter().find(|d| d.id.eq_ignore_ascii_case(s))
+        done_lower.insert(s.to_ascii_lowercase());
+        if let Some(d) = def_of.get(&s.to_ascii_lowercase())
             && crate::xml::parse(d.raw.as_bytes()).is_ok_and(|x| x.root.is("tblStyle"))
         {
             w.raw(&d.raw);
@@ -228,6 +235,16 @@ pub fn table_styles_xml(used: &[String], defs: &[deckcraft_model::table::TableSt
         }
         let name = names.iter().find(|(id, _)| id == s).map(|(_, n)| format!("DeckCraft {n}")).unwrap_or_else(|| s.clone());
         style_def(&mut w, s, &name);
+    }
+    // Styles the file defined but no table uses still belong to the deck.
+    for d in defs {
+        if done_lower.contains(&d.id.to_ascii_lowercase()) {
+            continue;
+        }
+        if crate::xml::parse(d.raw.as_bytes()).is_ok_and(|x| x.root.is("tblStyle")) {
+            done_lower.insert(d.id.to_ascii_lowercase());
+            w.raw(&d.raw);
+        }
     }
     w.close("a:tblStyleLst");
     w.finish()

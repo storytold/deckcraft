@@ -36,9 +36,23 @@ fn same_motion(a: &MvField, b: &MvField) -> bool {
     true
 }
 
+/// Coding block and prediction block geometry (6.4.2): coding block (xc, yc, ncb), prediction block (xp, yp, w, h, part_idx).
+#[derive(Clone, Copy)]
+pub struct PbGeom {
+    pub xc: i32,
+    pub yc: i32,
+    pub ncb: i32,
+    pub xp: i32,
+    pub yp: i32,
+    pub w: i32,
+    pub h: i32,
+    pub part_idx: usize,
+}
+
 impl<'a> SliceDecoder<'a> {
     /// Prediction block availability (6.4.2).
-    fn pb_avail(&self, xc: i32, yc: i32, ncb: i32, xp: i32, yp: i32, w: i32, h: i32, part_idx: usize, xn: i32, yn: i32) -> bool {
+    fn pb_avail(&self, g: &PbGeom, xn: i32, yn: i32) -> bool {
+        let PbGeom { xc, yc, ncb, xp, yp, w, h, part_idx } = *g;
         let same_cb = xc <= xn && yc <= yn && xc + ncb > xn && yc + ncb > yn;
         let avail = if !same_cb {
             self.pic.zavail(xp, yp, xn, yn, self.slice_addr)
@@ -59,27 +73,40 @@ impl<'a> SliceDecoder<'a> {
     }
 
     /// Merge mode motion (8.5.3.2.2).
-    pub fn derive_merge(
-        &self,
-        xc: i32,
-        yc: i32,
-        ncb: i32,
-        xp0: i32,
-        yp0: i32,
-        w0: i32,
-        h0: i32,
-        part_idx0: usize,
-        part: PartMode,
-        merge_idx: usize,
-    ) -> MvField {
+    pub fn derive_merge(&self, g: PbGeom, part: PartMode, merge_idx: usize) -> MvField {
+        let (w0, h0) = (g.w, g.h);
+        // With a parallel merge level above 4x4, an 8x8 coding block shares one candidate set.
+        let g = if self.pps.log2_parallel_merge_level > 2 && g.ncb == 8 {
+            PbGeom { xp: g.xc, yp: g.yc, w: g.ncb, h: g.ncb, part_idx: 0, ..g }
+        } else {
+            g
+        };
+        let max = self.sh.max_num_merge_cand as usize;
+        let (list, n) = self.spatial_merge_candidates(&g, part);
+        if merge_idx < n {
+            return self.finish_merge(list[merge_idx], w0, h0);
+        }
+        let mut cands: Vec<MvField> = list[..n].to_vec();
+        cands.extend(self.temporal_merge_candidate(g.xp, g.yp, g.w, g.h));
+        if merge_idx < cands.len() {
+            return self.finish_merge(cands[merge_idx], w0, h0);
+        }
+        self.combined_merge_candidates(&mut cands, max);
+        if merge_idx < cands.len() {
+            return self.finish_merge(cands[merge_idx], w0, h0);
+        }
+        self.zero_merge_candidates(&mut cands, merge_idx);
+        self.finish_merge(cands[merge_idx], w0, h0)
+    }
+
+    /// The spatial candidates A1, B1, B0, A0 and B2 (8.5.3.2.3): the candidates, and how many.
+    fn spatial_merge_candidates(&self, g: &PbGeom, part: PartMode) -> ([MvField; 5], usize) {
+        let PbGeom { xp, yp, w, h, part_idx, .. } = *g;
         let pml = self.pps.log2_parallel_merge_level;
-        let (xp, yp, w, h, part_idx) = if pml > 2 && ncb == 8 { (xc, yc, ncb, ncb, 0) } else { (xp0, yp0, w0, h0, part_idx0) };
         let same_mer = |xn: i32, yn: i32| (xp >> pml) == (xn >> pml) && (yp >> pml) == (yn >> pml);
-        let avail = |xn: i32, yn: i32| self.pb_avail(xc, yc, ncb, xp, yp, w, h, part_idx, xn, yn) && !same_mer(xn, yn);
+        let avail = |xn: i32, yn: i32| self.pb_avail(g, xn, yn) && !same_mer(xn, yn);
         let mut list: [MvField; 5] = [MvField::default(); 5];
         let mut n = 0;
-        let max = self.sh.max_num_merge_cand as usize;
-        // spatial candidates (8.5.3.2.3)
         let pa1 = (xp - 1, yp + h - 1);
         let av_a1 = avail(pa1.0, pa1.1) && !(matches!(part, PartMode::PNx2N | PartMode::PnLx2N | PartMode::PnRx2N) && part_idx == 1);
         let m_a1 = if av_a1 { self.mv_at(pa1.0, pa1.1) } else { MvField::default() };
@@ -126,10 +153,11 @@ impl<'a> SliceDecoder<'a> {
             list[n] = self.mv_at(pb2.0, pb2.1);
             n += 1;
         }
-        if merge_idx < n {
-            return self.finish_merge(list[merge_idx], w0, h0);
-        }
-        // temporal candidate
+        (list, n)
+    }
+
+    /// The temporal candidate (8.5.3.2.8): list 0 from the collocated picture, and list 1 for B slices.
+    fn temporal_merge_candidate(&self, xp: i32, yp: i32, w: i32, h: i32) -> Option<MvField> {
         let mut col = MvField::default();
         let mut col_avail = false;
         if let Some(mv) = self.temporal(xp, yp, w, h, 0, 0) {
@@ -144,30 +172,28 @@ impl<'a> SliceDecoder<'a> {
             col.ref_idx[1] = 0;
             col_avail = true;
         }
-        let mut cands: Vec<MvField> = list[..n].to_vec();
-        if col_avail {
-            cands.push(col);
-        }
-        if merge_idx < cands.len() {
-            return self.finish_merge(cands[merge_idx], w0, h0);
-        }
-        // combined bi-predictive candidates (8.5.3.2.4)
+        col_avail.then_some(col)
+    }
+
+    /// Combined bi-predictive candidates (8.5.3.2.4) from pairs of the original candidates.
+    fn combined_merge_candidates(&self, cands: &mut Vec<MvField>, max: usize) {
         let num_orig = cands.len();
-        if self.sh.is_b() && num_orig > 1 && num_orig < max {
-            let mut comb = 0;
-            while comb < num_orig * (num_orig - 1) && cands.len() < max {
-                let (i0, i1) = COMB[comb];
-                let (c0, c1) = (cands[i0], cands[i1]);
-                if c0.pred(0) && c1.pred(1) && (self.ref_pic(0, c0.ref_idx[0]).poc != self.ref_pic(1, c1.ref_idx[1]).poc || c0.mv[0] != c1.mv[1]) {
-                    cands.push(MvField { mv: [c0.mv[0], c1.mv[1]], ref_idx: [c0.ref_idx[0], c1.ref_idx[1]] });
-                }
-                comb += 1;
+        if !(self.sh.is_b() && num_orig > 1 && num_orig < max) {
+            return;
+        }
+        let mut comb = 0;
+        while comb < num_orig * (num_orig - 1) && cands.len() < max {
+            let (i0, i1) = COMB[comb];
+            let (c0, c1) = (cands[i0], cands[i1]);
+            if c0.pred(0) && c1.pred(1) && (self.ref_pic(0, c0.ref_idx[0]).poc != self.ref_pic(1, c1.ref_idx[1]).poc || c0.mv[0] != c1.mv[1]) {
+                cands.push(MvField { mv: [c0.mv[0], c1.mv[1]], ref_idx: [c0.ref_idx[0], c1.ref_idx[1]] });
             }
+            comb += 1;
         }
-        if merge_idx < cands.len() {
-            return self.finish_merge(cands[merge_idx], w0, h0);
-        }
-        // zero candidates (8.5.3.2.5)
+    }
+
+    /// Zero candidates (8.5.3.2.5) up to and including `merge_idx`.
+    fn zero_merge_candidates(&self, cands: &mut Vec<MvField>, merge_idx: usize) {
         let num_ref = if self.sh.is_b() { self.sh.num_ref_idx[0].min(self.sh.num_ref_idx[1]) } else { self.sh.num_ref_idx[0] } as usize;
         let mut zero_idx = 0;
         while cands.len() <= merge_idx {
@@ -175,7 +201,6 @@ impl<'a> SliceDecoder<'a> {
             cands.push(MvField { mv: [[0; 2]; 2], ref_idx: [r, if self.sh.is_b() { r } else { -1 }] });
             zero_idx += 1;
         }
-        self.finish_merge(cands[merge_idx], w0, h0)
     }
 
     fn finish_merge(&self, mut f: MvField, w: i32, h: i32) -> MvField {
@@ -236,83 +261,59 @@ impl<'a> SliceDecoder<'a> {
         if cur.long_term || col_diff == cur_diff { Some(mv) } else { Some(scale_mv(mv, col_diff, cur_diff)) }
     }
 
+    /// AMVP neighbour motion with the target's reference picture (no scaling), 8.5.3.2.7.
+    fn amvp_exact(&self, f: &MvField, l: usize, tpoc: i32) -> Option<[i16; 2]> {
+        let y = 1 - l;
+        if f.pred(l) && self.ref_pic(l, f.ref_idx[l]).poc == tpoc {
+            Some(f.mv[l])
+        } else if f.pred(y) && self.ref_pic(y, f.ref_idx[y]).poc == tpoc {
+            Some(f.mv[y])
+        } else {
+            None
+        }
+    }
+
+    /// AMVP neighbour motion with a long-term-compatible reference, scaled when both are short-term.
+    fn amvp_scaled(&self, f: &MvField, l: usize, tpoc: i32, tlt: bool, cur_poc: i32) -> Option<[i16; 2]> {
+        let y = 1 - l;
+        let pick = if f.pred(l) && self.ref_pic(l, f.ref_idx[l]).long_term == tlt {
+            Some((f.mv[l], self.ref_pic(l, f.ref_idx[l])))
+        } else if f.pred(y) && self.ref_pic(y, f.ref_idx[y]).long_term == tlt {
+            Some((f.mv[y], self.ref_pic(y, f.ref_idx[y])))
+        } else {
+            None
+        };
+        pick.map(|(mv, r)| if r.poc != tpoc && !r.long_term && !tlt { scale_mv(mv, cur_poc - r.poc, cur_poc - tpoc) } else { mv })
+    }
+
+    /// The first neighbour whose position is available and whose motion `pick` accepts.
+    fn first_amvp_neighbour(&self, pos: &[(i32, i32)], avail: &[bool], pick: impl Fn(&MvField) -> Option<[i16; 2]>) -> Option<[i16; 2]> {
+        pos.iter().zip(avail).find_map(|(&(x, y), &ok)| if ok { pick(&self.mv_at(x, y)) } else { None })
+    }
+
     /// AMVP predictor (8.5.3.2.6, 8.5.3.2.7).
-    pub fn derive_amvp(
-        &self,
-        xc: i32,
-        yc: i32,
-        ncb: i32,
-        xp: i32,
-        yp: i32,
-        w: i32,
-        h: i32,
-        part_idx: usize,
-        l: usize,
-        ref_idx: usize,
-        mvp_flag: usize,
-    ) -> [i16; 2] {
+    pub fn derive_amvp(&self, g: PbGeom, l: usize, ref_idx: usize, mvp_flag: usize) -> [i16; 2] {
+        let PbGeom { xp, yp, w, h, .. } = g;
         let target = &self.refs[l][ref_idx];
         let (tpoc, tlt) = (target.poc, target.long_term);
         let cur_poc = self.pic.poc;
-        let y = 1 - l;
-        // exact reference match (no scaling)
-        let unscaled = |f: &MvField| -> Option<[i16; 2]> {
-            if f.pred(l) && self.ref_pic(l, f.ref_idx[l]).poc == tpoc {
-                Some(f.mv[l])
-            } else if f.pred(y) && self.ref_pic(y, f.ref_idx[y]).poc == tpoc {
-                Some(f.mv[y])
-            } else {
-                None
-            }
-        };
-        // long-term-compatible match, scaled when both references are short-term
-        let scaled = |f: &MvField| -> Option<[i16; 2]> {
-            let pick = if f.pred(l) && self.ref_pic(l, f.ref_idx[l]).long_term == tlt {
-                Some((f.mv[l], self.ref_pic(l, f.ref_idx[l])))
-            } else if f.pred(y) && self.ref_pic(y, f.ref_idx[y]).long_term == tlt {
-                Some((f.mv[y], self.ref_pic(y, f.ref_idx[y])))
-            } else {
-                None
-            };
-            pick.map(|(mv, r)| if r.poc != tpoc && !r.long_term && !tlt { scale_mv(mv, cur_poc - r.poc, cur_poc - tpoc) } else { mv })
-        };
+        let exact = |f: &MvField| self.amvp_exact(f, l, tpoc);
+        let scaled = |f: &MvField| self.amvp_scaled(f, l, tpoc, tlt, cur_poc);
         let pa = [(xp - 1, yp + h), (xp - 1, yp + h - 1)];
-        let av_a = [
-            self.pb_avail(xc, yc, ncb, xp, yp, w, h, part_idx, pa[0].0, pa[0].1),
-            self.pb_avail(xc, yc, ncb, xp, yp, w, h, part_idx, pa[1].0, pa[1].1),
-        ];
+        let av_a = [self.pb_avail(&g, pa[0].0, pa[0].1), self.pb_avail(&g, pa[1].0, pa[1].1)];
         let is_scaled = av_a[0] || av_a[1];
-        let mut a = None;
-        for k in 0..2 {
-            if av_a[k] && a.is_none() {
-                a = unscaled(&self.mv_at(pa[k].0, pa[k].1));
-            }
-        }
+        let mut a = self.first_amvp_neighbour(&pa, &av_a, exact);
         if a.is_none() {
-            for k in 0..2 {
-                if av_a[k] && a.is_none() {
-                    a = scaled(&self.mv_at(pa[k].0, pa[k].1));
-                }
-            }
+            a = self.first_amvp_neighbour(&pa, &av_a, scaled);
         }
         let pb = [(xp + w, yp - 1), (xp + w - 1, yp - 1), (xp - 1, yp - 1)];
-        let av_b = [0, 1, 2].map(|k| self.pb_avail(xc, yc, ncb, xp, yp, w, h, part_idx, pb[k].0, pb[k].1));
-        let mut b = None;
-        for k in 0..3 {
-            if av_b[k] && b.is_none() {
-                b = unscaled(&self.mv_at(pb[k].0, pb[k].1));
-            }
-        }
+        let av_b = [0, 1, 2].map(|k| self.pb_avail(&g, pb[k].0, pb[k].1));
+        let mut b = self.first_amvp_neighbour(&pb, &av_b, exact);
         if !is_scaled && b.is_some() {
             a = b;
         }
         if !is_scaled {
-            b = None;
-            for k in 0..3 {
-                if av_b[k] && b.is_none() {
-                    b = scaled(&self.mv_at(pb[k].0, pb[k].1));
-                }
-            }
+            b = self.first_amvp_neighbour(&pb, &av_b, scaled);
         }
         let mut list: [[i16; 2]; 3] = [[0; 2]; 3];
         let mut n = 0;

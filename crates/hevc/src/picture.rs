@@ -125,7 +125,7 @@ impl Frame {
     }
 
     /// Copy a w x h window of chroma component `c` (0 = Cb, 1 = Cr) with edge replication.
-    pub fn chroma_window(&self, c: usize, x0: i32, y0: i32, w: usize, h: usize, out: &mut [i16], os: usize) {
+    pub fn chroma_window(&self, c: usize, (x0, y0): (i32, i32), (w, h): (usize, usize), out: &mut [i16], os: usize) {
         let (cw, ch) = (self.cwidth as i32, self.cheight as i32);
         let sh = self.log2_ctb - 1;
         let mask = (1i32 << sh) - 1;

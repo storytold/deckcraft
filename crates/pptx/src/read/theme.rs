@@ -60,6 +60,9 @@ pub fn read_theme(imp: &mut Imp, part: &Part, root: &El) -> Theme {
                 .take(16)
                 .map(|e| {
                     let mut fx = e.child("effectLst").map(dml::effects).unwrap_or_default();
+                    if let Some(b) = e.path(&["sp3d", "bevelT"]) {
+                        fx.bevel = Some(b.attr("prst").unwrap_or("circle").to_string());
+                    }
                     let raw: String = e.elements().filter(|c| c.is("scene3d") || c.is("sp3d")).map(|c| part.keep(c)).collect();
                     if !raw.is_empty() {
                         fx.raw3d = Some(raw);

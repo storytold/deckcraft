@@ -14,11 +14,10 @@ use deckcraft_color::Rgba;
 use kurbo::{Affine, BezPath, Point, Rect};
 use vello_cpu::{Pixmap, RenderContext, peniko};
 
+use crate::light::Lighting;
+
 /// Longest side of the rasterised lighting, in pixels.
 const MAX_SIDE: f64 = 512.0;
-const AMBIENT: f64 = 0.453;
-const DIFFUSE: f64 = 0.731;
-const SPECULAR: f64 = 14.7;
 
 /// A top bevel: its width and height in points and its preset.
 #[derive(Clone, Debug, PartialEq)]
@@ -26,9 +25,8 @@ pub struct Bevel {
     pub w: f64,
     pub h: f64,
     pub preset: String,
-    /// Lit as measured (the three-point rig and matte material); other rigs and materials are not
-    /// drawn.
-    pub modelled: bool,
+    /// The light rig and material that light it.
+    pub lighting: Lighting,
 }
 
 /// The top bevel of 3-D XML kept from the file (`scene3d` + `sp3d`), when it has both a scene
@@ -39,8 +37,7 @@ pub fn from_raw(raw: &str) -> Option<Bevel> {
     }
     // A 3-D shape without a bevel still has its face lit: a bevel of no width.
     let Some(i) = raw.find("bevelT") else {
-        let b = Bevel { w: 0.0, h: 0.0, preset: "circle".into(), modelled: false };
-        return Some(Bevel { modelled: modelled(raw), ..b });
+        return Some(Bevel { w: 0.0, h: 0.0, preset: "circle".into(), lighting: Lighting::from_raw(raw) });
     };
     let tag = raw.get(i..)?;
     let tag = tag.get(..tag.find('>')?)?;
@@ -53,23 +50,11 @@ pub fn from_raw(raw: &str) -> Option<Bevel> {
     let emu = |name: &str| attr(name).and_then(|v| v.parse::<f64>().ok()).map(|v| v / 12700.0);
     let w = emu("w").unwrap_or(6.0).clamp(0.0, 2000.0);
     let h = emu("h").unwrap_or(6.0).clamp(0.0, 2000.0);
-    (w > 0.0).then(|| Bevel { w, h, preset: attr("prst").unwrap_or("circle").to_string(), modelled: modelled(raw) })
-}
-
-/// Whether the light rig and material (from anywhere in the XML: `a:lightRig rig=`,
-/// `prstMaterial=`) are the ones measured: the three-point rig, matte.
-fn modelled(raw: &str) -> bool {
-    let value_after = |key: &str| -> Option<&str> {
-        let s = raw.find(key)? + key.len();
-        let rest = raw.get(s..)?;
-        rest.get(..rest.find('"')?)
-    };
-    let rig = value_after("rig=\"").unwrap_or("threePt");
-    let material = value_after("prstMaterial=\"").unwrap_or("warmMatte");
-    rig == "threePt" && matches!(material, "warmMatte" | "matte")
+    (w > 0.0).then(|| Bevel { w, h, preset: attr("prst").unwrap_or("circle").to_string(), lighting: Lighting::from_raw(raw) })
 }
 
 /// The light, pointing from the surface towards it (x right, y down, z towards the viewer).
+#[cfg(test)]
 fn light() -> [f64; 3] {
     let (az, el) = (240f64.to_radians(), 45f64.to_radians());
     [el.cos() * az.cos(), el.cos() * az.sin(), el.sin()]
@@ -121,19 +106,16 @@ fn nearest_edge(polys: &[Vec<Point>], areas: &[f64], p: Point) -> Option<(f64, k
 /// inside `path` (shape space, laid out in `bounds`), `m` mapping it to the output.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(ctx: &mut RenderContext, bevel: &Bevel, fill: Option<Rgba>, path: &BezPath, bounds: Rect, m: Affine, alpha: f64) {
-    // Other light rigs and materials light the face and band differently (brighter, darker,
-    // shinier); rather than guess, they stay flat as before.
-    if !bevel.modelled || bounds.width() <= 0.0 || bounds.height() <= 0.0 || !bounds.is_finite() {
+    let lit = &bevel.lighting;
+    if bounds.width() <= 0.0 || bounds.height() <= 0.0 || !bounds.is_finite() {
         return;
     }
     // No bevel: only the face, one lit colour (as PowerPoint lights a 3-D shape's front face,
     // whichever way the camera turns it, within about 10 levels).
     if bevel.w <= 0.0 {
         if let Some(c) = fill {
-            let f = AMBIENT + DIFFUSE * light()[2];
-            let ch = |v: u8| (v as f64 * f + SPECULAR).round().clamp(0.0, 255.0) as u8;
             ctx.set_transform(m);
-            ctx.set_paint(crate::color(Rgba::rgba(ch(c.r), ch(c.g), ch(c.b), c.a), alpha));
+            ctx.set_paint(crate::color(lit.shade(c, [0.0, 0.0, 1.0]), alpha));
             ctx.fill_path(path);
         }
         return;
@@ -148,30 +130,29 @@ pub fn draw(ctx: &mut RenderContext, bevel: &Bevel, fill: Option<Rgba>, path: &B
         return;
     }
     let areas: Vec<f64> = polys.iter().map(|p| p.windows(2).map(|w| w[0].x * w[1].y - w[1].x * w[0].y).sum::<f64>() / 2.0).collect();
-    let l = light();
-    let face = AMBIENT + DIFFUSE * l[2];
+    let face = lit.factor([0.0, 0.0, 1.0]);
     let ratio = if bevel.w > 0.0 { bevel.h / bevel.w } else { 0.0 };
     let a = alpha.clamp(0.0, 1.0);
     let mut data = Vec::with_capacity((pw * ph) as usize);
     for j in 0..ph {
         for i in 0..pw {
             let p = Point::new(bounds.x0 + (i as f64 + 0.5) / pw as f64 * bounds.width(), bounds.y0 + (j as f64 + 0.5) / ph as f64 * bounds.height());
-            let f = match nearest_edge(&polys, &areas, p) {
+            let n = match nearest_edge(&polys, &areas, p) {
                 Some((d, e)) if d < bevel.w => {
                     let z = slope(&bevel.preset, d / bevel.w) * ratio;
                     let n = [e.x * z, e.y * z, 1.0];
                     let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
-                    let dot = (n[0] * l[0] + n[1] * l[1] + n[2] * l[2]) / len;
-                    AMBIENT + DIFFUSE * dot.max(0.0)
+                    [n[0] / len, n[1] / len, n[2] / len]
                 }
-                _ => face,
+                _ => [0.0, 0.0, 1.0],
             };
+            let f = lit.factor(n);
             let px = match fill {
                 Some(c) => {
-                    let ch = |v: u8| (v as f64 * f + SPECULAR).round().clamp(0.0, 255.0);
+                    let lc = lit.shade(c, n);
                     let ca = c.a as f64 * a / 255.0;
-                    let pm = |v: f64| (v * ca).round().clamp(0.0, 255.0) as u8;
-                    vello_cpu::color::PremulRgba8 { r: pm(ch(c.r)), g: pm(ch(c.g)), b: pm(ch(c.b)), a: (ca * 255.0).round() as u8 }
+                    let pm = |v: u8| (f64::from(v) * ca).round().clamp(0.0, 255.0) as u8;
+                    vello_cpu::color::PremulRgba8 { r: pm(lc.r), g: pm(lc.g), b: pm(lc.b), a: (ca * 255.0).round() as u8 }
                 }
                 None => {
                     // A veil: white where the band is lighter than the face, black where darker.
@@ -204,17 +185,19 @@ mod tests {
     #[test]
     fn bevels_are_read_from_kept_3d_xml() {
         let raw = r#"<a:scene3d><a:camera prst="orthographicFront"/></a:scene3d><a:sp3d><a:bevelT w="50800" h="16510" prst="angle"/></a:sp3d>"#;
-        assert_eq!(from_raw(raw), Some(Bevel { w: 4.0, h: 1.3, preset: "angle".into(), modelled: true }));
+        let b = from_raw(raw).unwrap();
+        assert_eq!((b.w, b.h, b.preset.as_str()), (4.0, 1.3, "angle"));
+        assert_eq!(b.lighting, Lighting::from_raw(raw));
         // Defaults: 6 pt square, circle.
         let raw = r#"<a:scene3d/><a:sp3d><a:bevelT/></a:sp3d>"#;
-        assert_eq!(from_raw(raw), Some(Bevel { w: 6.0, h: 6.0, preset: "circle".into(), modelled: true }));
-        // Another rig or material: not modelled.
+        assert!(from_raw(raw).is_some_and(|b| (b.w, b.h, b.preset.as_str()) == (6.0, 6.0, "circle")));
+        // Another rig or material is lit by it.
         let raw = r#"<a:scene3d><a:lightRig rig="flood" dir="t"/></a:scene3d><a:sp3d prstMaterial="metal"><a:bevelT/></a:sp3d>"#;
-        assert!(from_raw(raw).is_some_and(|b| !b.modelled));
+        assert!(from_raw(raw).is_some_and(|b| b.lighting.specular > 0.0));
         // No scene: flat in PowerPoint.
         assert_eq!(from_raw(r#"<a:sp3d><a:bevelT w="50800"/></a:sp3d>"#), None);
         // A 3-D shape with no bevel: a bevel of no width (its face is lit).
-        assert!(from_raw(r#"<a:scene3d/><a:sp3d extrusionH="10"/>"#).is_some_and(|b| b.w == 0.0 && b.modelled));
+        assert!(from_raw(r#"<a:scene3d/><a:sp3d extrusionH="10"/>"#).is_some_and(|b| b.w == 0.0));
         assert_eq!(from_raw(r#"<a:scene3d/>"#), None);
     }
 

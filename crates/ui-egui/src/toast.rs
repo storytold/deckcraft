@@ -39,6 +39,7 @@ pub fn note_missing_fonts(app: &mut SlideApp) {
     }
 }
 
+/// Render and dismiss the active transient toast without disturbing the document.
 pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let Some(toast) = &app.toast else { return };
     if crate::now_ms() - toast.at > SHOW_MS {
@@ -48,7 +49,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let t = Tokens::get(ctx);
     let text = toast.text.clone();
     let mut close = false;
-    egui::Area::new(egui::Id::new("toast")).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -44.0)).order(egui::Order::Foreground).show(ctx, |ui| {
+    egui::Area::new(egui::Id::unique("toast")).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -44.0)).order(egui::Order::Foreground).show(ctx, |ui| {
         egui::Frame::NONE
             .fill(t.card)
             .stroke(Stroke::new(1.0, t.card_border))
@@ -60,7 +61,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
                 ui.horizontal(|ui| {
                     ui.add(egui::Label::new(egui::RichText::new(&text).font(theme::font(13.0)).color(t.text)).wrap());
                     let (r, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), egui::Sense::click());
-                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Close"));
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close"));
                     if resp.hovered() {
                         ui.painter().rect_filled(r, CornerRadius::same(4), t.hover);
                     }

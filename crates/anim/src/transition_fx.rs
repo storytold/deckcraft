@@ -9,7 +9,10 @@ use std::f64::consts::PI;
 
 use crate::easing::ease;
 use crate::transition::{FULL, Layer, R, Source};
-use crate::transition_geom::*;
+use crate::transition_geom::{
+    Cam, V3, boundary, card, center, clip, dir, edge, ein, eout, facing_shade, fan, field, hash64, moved, offset, poly_layers, pow_inout, q2,
+    rect_poly, rnd, rot, rot_quad, scale_rect, scaled, soft_rect, ss, v3, win,
+};
 
 use Source::{Black, New, NewBack, NewContent, Old, OldBack, OldContent, White};
 
@@ -794,7 +797,11 @@ fn honeycomb(t: f64, a: f64) -> Vec<Layer> {
     let cols = 11usize;
     let w = 1.0 / cols as f64;
     let rh = w * a * 0.5;
-    let rows = (1.0 / (rh * 1.5)).ceil() as usize + 2;
+    // Rows sit 0.866*rh apart; a settled hex reaches only 0.577*rh from its centre at the side
+    // vertices, and the flat bottom zone 0.289*rh. Count the rows whose FLAT zone still covers
+    // the slide's bottom: counting the vertex reach instead left V-notches of black above the
+    // bottom edge on about a third of the aspect ratios (#420).
+    let rows = ((1.0 / (rh * 0.866) - 1.0 / 3.0).ceil().max(1.0)) as usize + 1;
     let mut v = vec![Layer::full(Black, 1.0)];
     let seam = ss(win(t, 0.0, 0.12)) * (1.0 - ss(win(t, 0.85, 1.0)));
     let hex = |cx: f64, cy: f64, s: f64| -> Vec<[f64; 2]> {

@@ -161,7 +161,7 @@ pub fn inverse_transform_add(
     if lossless {
         let mut t = [0i32; 16];
         for i in 0..4 {
-            let c = coefs.get(i * 4..).and_then(|c| c.first_chunk::<4>()).copied().unwrap_or_default();
+            let c = coefs.get(i * 4..).and_then(<[_]>::first_chunk::<4>).copied().unwrap_or_default();
             let r = iwht4(c, 2);
             t[i * 4..i * 4 + 4].copy_from_slice(&r);
         }
@@ -235,7 +235,7 @@ fn itx_narrow<const N: usize>(coefs: &[i32], p: &TxParams, dst: &mut [u16], stri
         add_cols(&y, 0, p, dst, stride);
     } else {
         for c0 in (0..N).step_by(8) {
-            let x: [Cols<8>; N] = std::array::from_fn(|i| Cols(t[i].get(c0..).and_then(|r| r.first_chunk::<8>()).copied().unwrap_or_default()));
+            let x: [Cols<8>; N] = std::array::from_fn(|i| Cols(t[i].get(c0..).and_then(<[_]>::first_chunk::<8>).copied().unwrap_or_default()));
             let y = col_tx8(x, p.col_adst);
             add_cols(&y, c0, p, dst, stride);
         }
@@ -246,7 +246,7 @@ fn itx_narrow<const N: usize>(coefs: &[i32], p: &TxParams, dst: &mut [u16], stri
 #[inline(always)]
 fn add_cols<const N: usize, const W: usize>(y: &[Cols<W>; N], c0: usize, p: &TxParams, dst: &mut [u16], stride: usize) {
     for (i, v) in y.iter().enumerate() {
-        let Some(d) = dst.get_mut(i * stride + c0..).and_then(|d| d.first_chunk_mut::<W>()) else {
+        let Some(d) = dst.get_mut(i * stride + c0..).and_then(<[_]>::first_chunk_mut::<W>) else {
             return;
         };
         for j in 0..W {

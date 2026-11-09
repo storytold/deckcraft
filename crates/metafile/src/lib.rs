@@ -9,14 +9,19 @@
 //! bounds-checked and every count is capped; hostile input yields a shorter picture or an [`Error`],
 //! never a panic.
 //!
-//! Records follow MS-WMF and MS-EMF. Records outside the supported set are skipped silently.
+//! Records follow MS-WMF and MS-EMF. Rectangle clip regions (`INTERSECTCLIPRECT`,
+//! `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit what later records draw. Records outside the
+//! supported set are skipped silently.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
 mod bytes;
 mod canvas;
+mod clip;
+mod cliprect;
 mod dib;
 mod emf;
+mod emfplus;
 mod geom;
 mod place;
 mod text;
@@ -66,12 +71,27 @@ pub enum Item {
         /// Colour and width in picture units.
         stroke: Option<([u8; 4], f32)>,
         even_odd: bool,
+        /// Clip region in picture units, each rectangle `[x0, y0, x1, y1]`. None is the default clip.
+        region: Option<Vec<[f32; 4]>>,
     },
     /// A bitmap stretched into `rect` = `[x, y, w, h]` (picture units), RGBA8 rows top-down.
-    Bitmap { rect: [f32; 4], width: u32, height: u32, rgba: Vec<u8> },
+    Bitmap {
+        rect: [f32; 4],
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+        /// Clip region in picture units. None is the default clip.
+        region: Option<Vec<[f32; 4]>>,
+    },
     /// A path filled with a repeating tile (pattern and hatch brushes). Items filled with the same
     /// brush share its tile.
-    Pattern { segs: Vec<Seg>, even_odd: bool, tile: Arc<Tile> },
+    Pattern {
+        segs: Vec<Seg>,
+        even_odd: bool,
+        tile: Arc<Tile>,
+        /// Clip region in picture units. None is the default clip.
+        region: Option<Vec<[f32; 4]>>,
+    },
     /// A text string.
     Text(Box<Text>),
 }
@@ -153,20 +173,20 @@ fn build(raw: Vec<Raw>, frame: Option<Frame>) -> Picture {
     // Tiles shared by several fills stay shared.
     let mut tiles: HashMap<*const canvas::RawTile, (Arc<canvas::RawTile>, Arc<Tile>)> = HashMap::new();
     let items = raw.into_iter().filter_map(|r| match r {
-        Raw::Path { ops, fill, stroke, even_odd } => {
+        Raw::Path { ops, fill, stroke, even_odd, region } => {
             let segs = ops.iter().map(|op| seg(op, tf)).collect::<Option<Vec<Seg>>>()?;
             if segs.len() < 2 {
                 return None;
             }
             let stroke = stroke.and_then(|(c, w)| Some((c, f((w * stroke_scale).min(diag))?)));
-            Some(Item::Path { segs, fill, stroke, even_odd })
+            Some(Item::Path { segs, fill, stroke, even_odd, region: map_region(region, &tf)? })
         }
-        Raw::Bitmap { rect: r, img } => {
+        Raw::Bitmap { rect: r, img, region } => {
             let (x, y) = tf((r[0], r[1]));
             let rect = [f(x)?, f(y)?, f(r[2] * sx)?, f(r[3] * sy)?];
-            Some(Item::Bitmap { rect, width: img.w as u32, height: img.h as u32, rgba: img.px })
+            Some(Item::Bitmap { rect, width: img.w as u32, height: img.h as u32, rgba: img.px, region: map_region(region, &tf)? })
         }
-        Raw::Pattern { ops, even_odd, tile } => {
+        Raw::Pattern { ops, even_odd, tile, region } => {
             let segs = ops.iter().map(|op| seg(op, tf)).collect::<Option<Vec<Seg>>>()?;
             if segs.len() < 2 {
                 return None;
@@ -188,25 +208,36 @@ fn build(raw: Vec<Raw>, frame: Option<Frame>) -> Picture {
                     t
                 }
             };
-            Some(Item::Pattern { segs, even_odd, tile })
+            Some(Item::Pattern { segs, even_odd, tile, region: map_region(region, &tf)? })
         }
-        Raw::Text(mut t) => {
+        Raw::Text { mut text, region } => {
             // Device to picture: scale by (sx, sy) after moving the frame's corner to the origin.
-            let [a, b, c, d, e, g] = t.transform;
+            let [a, b, c, d, e, g] = text.transform;
             let (e, g) = tf((e, g));
-            t.transform = [a * sx, b * sy, c * sx, d * sy, e, g];
-            if !t.transform.iter().all(|v| v.is_finite()) {
+            text.transform = [a * sx, b * sy, c * sx, d * sy, e, g];
+            if !text.transform.iter().all(|v| v.is_finite()) {
                 return None;
             }
-            if let Some([x0, y0, x1, y1]) = t.clip {
+            if let Some([x0, y0, x1, y1]) = text.clip {
                 let (p, q) = (tf((f64::from(x0), f64::from(y0))), tf((f64::from(x1), f64::from(y1))));
-                t.clip = Some([f(p.0.min(q.0))?, f(p.1.min(q.1))?, f(p.0.max(q.0))?, f(p.1.max(q.1))?]);
+                text.clip = Some([f(p.0.min(q.0))?, f(p.1.min(q.1))?, f(p.0.max(q.0))?, f(p.1.max(q.1))?]);
             }
-            Some(Item::Text(t))
+            text.region = map_region(region, &tf)?;
+            Some(Item::Text(text))
         }
     });
     let items = items.collect();
     Picture { width: f(size.0).unwrap_or(0.0), height: f(size.1).unwrap_or(0.0), items }
+}
+
+fn map_region(region: Option<Vec<[f64; 4]>>, tf: &impl Fn(P) -> P) -> Option<Option<Vec<[f32; 4]>>> {
+    let Some(rects) = region else { return Some(None) };
+    let mut out = Vec::with_capacity(rects.len());
+    for [x0, y0, x1, y1] in rects {
+        let (p, q) = (tf((x0, y0)), tf((x1, y1)));
+        out.push([f(p.0.min(q.0))?, f(p.1.min(q.1))?, f(p.0.max(q.0))?, f(p.1.max(q.1))?]);
+    }
+    Some(Some(out))
 }
 
 fn f(v: f64) -> Option<f32> {
@@ -268,7 +299,7 @@ fn bbox(raw: &[Raw]) -> Option<[f64; 4]> {
                 grow((rect[0], rect[1]));
                 grow((rect[0] + rect[2], rect[1] + rect[3]));
             }
-            Raw::Text(t) => grow((t.transform[4], t.transform[5])),
+            Raw::Text { text: t, .. } => grow((t.transform[4], t.transform[5])),
         }
     }
     b

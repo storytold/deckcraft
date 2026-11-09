@@ -14,8 +14,23 @@ use std::sync::Arc;
 
 use deckcraft_fonts::{FontDb, FontFace};
 
-/// Faces larger than this are left out (egui keeps a copy of each face it is given).
-const MAX_FACE_BYTES: usize = 48 << 20;
+/// Faces larger than this are left out (egui keeps a copy of each face it is given). Large enough
+/// for the stock macOS CJK collections the font database picks: `AppleSDGothicNeo.ttc` (about
+/// 55 MB, the only Hangul face) and `PingFang.ttc` (about 78 MB, Simplified Chinese).
+const MAX_FACE_BYTES: usize = 128 << 20;
+/// Aggregate bytes of every borrowed UI face. `MAX_FACE_BYTES` alone bounded one face but left
+/// `faces` unbounded; three full-size CJK collections are enough for the supported scripts.
+const MAX_AGGREGATE_BYTES: usize = 3 * MAX_FACE_BYTES;
+
+fn accepts_face(byte_len: usize, color: bool) -> bool {
+    !color && byte_len <= MAX_FACE_BYTES
+}
+
+/// Accept a face only when checked addition stays within the aggregate interface-font byte
+/// budget.
+fn aggregate_accepts(total: usize, byte_len: usize) -> bool {
+    total.checked_add(byte_len).is_some_and(|n| n <= MAX_AGGREGATE_BYTES)
+}
 
 /// Faces borrowed for the interface, and the characters already looked at.
 #[derive(Default)]
@@ -51,7 +66,7 @@ pub fn faces_for_text(
             continue;
         }
         let Some(f) = lookup(c) else { continue };
-        if f.is_color() || f.data().len() > MAX_FACE_BYTES || have.iter().chain(&out).any(|h| h.id() == f.id()) {
+        if !accepts_face(f.data().len(), f.is_color()) || have.iter().chain(&out).any(|h| h.id() == f.id()) {
             continue;
         }
         out.push(f);
@@ -67,11 +82,31 @@ impl UiFonts {
         }
         let font = egui::FontId::proportional(13.0);
         let new = ctx.fonts_mut(|f| {
-            faces_for_text(text, &self.faces, &mut self.seen, |c| f.has_glyph(&font, c), |c| FontDb::global().fallback_for(c, u32::MAX))
+            faces_for_text(
+                text,
+                &self.faces,
+                &mut self.seen,
+                |c| f.has_glyph(&font, c),
+                |c| FontDb::global().fallback_for_filtered(c, u32::MAX, |face| accepts_face(face.data().len(), face.is_color())),
+            )
         });
-        if !new.is_empty() {
-            log::debug!("interface fallback fonts: {}", new.iter().map(|f| f.family.as_str()).collect::<Vec<_>>().join(", "));
-            self.faces.extend(new);
+        let mut total: usize = self.faces.iter().map(|f| f.data().len()).sum();
+        let accepted: Vec<_> = new
+            .into_iter()
+            .filter(|f| {
+                let n = f.data().len();
+                if aggregate_accepts(total, n) {
+                    total += n;
+                    true
+                } else {
+                    log::debug!("interface fallback face {} skipped: aggregate font budget", f.family);
+                    false
+                }
+            })
+            .collect();
+        if !accepted.is_empty() {
+            log::debug!("interface fallback fonts: {}", accepted.iter().map(|f| f.family.as_str()).collect::<Vec<_>>().join(", "));
+            self.faces.extend(accepted);
             self.changed = true;
         }
     }
@@ -164,6 +199,24 @@ mod tests {
 
     fn face(family: &str) -> Arc<FontFace> {
         FontDb::global().face(family, "Regular")
+    }
+
+    /// The aggregate font budget accepts the exact cap and rejects overflow or over-budget
+    /// additions.
+    #[test]
+    fn aggregate_font_budget_is_bounded_and_checked() {
+        assert!(aggregate_accepts(0, MAX_FACE_BYTES), "the first face is accepted at the per-face limit");
+        assert!(aggregate_accepts(2 * MAX_FACE_BYTES, MAX_FACE_BYTES), "three faces reach the aggregate limit");
+        assert!(!aggregate_accepts(3 * MAX_FACE_BYTES, 1), "one byte over the aggregate limit is refused");
+        assert!(!aggregate_accepts(usize::MAX, 1), "overflow is refused, not wrapped");
+    }
+
+    #[test]
+    fn interface_face_policy_rejects_colour_and_oversize_faces() {
+        assert!(accepts_face(MAX_FACE_BYTES, false), "the documented size boundary remains accepted");
+        assert!(!accepts_face(MAX_FACE_BYTES + 1, false), "an oversized outline face is still rejected");
+        assert!(!accepts_face(1, true), "even a small colour face is still rejected");
+        assert!(!accepts_face(MAX_FACE_BYTES + 1, true));
     }
 
     /// One face for a whole string, looked up once per character, never for characters the

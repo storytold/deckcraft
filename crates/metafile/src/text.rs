@@ -63,6 +63,9 @@ pub struct Text {
     pub v_align: VAlign,
     /// Clip rectangle `[x0, y0, x1, y1]` in picture units (ETO_CLIPPED).
     pub clip: Option<[f32; 4]>,
+    /// Clip region from the device context, in picture units. None is the default clip. Drawn
+    /// together with [`Text::clip`] when both are set.
+    pub region: Option<Vec<[f32; 4]>>,
 }
 
 /// TA_UPDATECP: the string starts at the current position, which moves past it.

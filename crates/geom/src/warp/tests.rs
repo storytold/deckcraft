@@ -1,47 +1,6 @@
-use super::*;
-
-const ALL: &[&str] = &[
-    "textPlain",
-    "textStop",
-    "textTriangle",
-    "textTriangleInverted",
-    "textChevron",
-    "textChevronInverted",
-    "textRingInside",
-    "textRingOutside",
-    "textArchUp",
-    "textArchDown",
-    "textCircle",
-    "textButton",
-    "textArchUpPour",
-    "textArchDownPour",
-    "textCirclePour",
-    "textButtonPour",
-    "textCurveUp",
-    "textCurveDown",
-    "textCanUp",
-    "textCanDown",
-    "textWave1",
-    "textWave2",
-    "textDoubleWave1",
-    "textWave4",
-    "textInflate",
-    "textDeflate",
-    "textInflateBottom",
-    "textDeflateBottom",
-    "textInflateTop",
-    "textDeflateTop",
-    "textDeflateInflate",
-    "textDeflateInflateDeflate",
-    "textFadeRight",
-    "textFadeLeft",
-    "textFadeUp",
-    "textFadeDown",
-    "textSlantUp",
-    "textSlantDown",
-    "textCascadeUp",
-    "textCascadeDown",
-];
+use super::{
+    Band, BezPath, CATALOG, Guide, Point, Rect, WarpLine, adjust_count, adjust_defaults, band_of_line, handles, is_follow, is_supported, warp,
+};
 
 const W: f64 = 420.0;
 const H: f64 = 200.0;
@@ -78,8 +37,21 @@ fn corners(name: &str, adj: &[f64], tl: (f64, f64), tr: (f64, f64), bl: (f64, f6
 }
 
 #[test]
+fn catalog_is_the_forty_drawn_presets() {
+    assert_eq!(CATALOG.len(), 40);
+    let mut seen = std::collections::BTreeSet::new();
+    for p in CATALOG {
+        assert!(seen.insert(p.id), "duplicate {}", p.id);
+        assert!(!p.label.is_empty(), "{}", p.id);
+        assert!(is_supported(p.id), "{}", p.id);
+        assert_eq!(is_follow(p.id), matches!(p.id, "textArchUp" | "textArchDown" | "textCircle" | "textButton"), "{}", p.id);
+    }
+}
+
+#[test]
 fn every_preset_builds_finite_guides() {
-    for name in ALL {
+    for p in CATALOG {
+        let name = p.id;
         assert!(is_supported(name), "{name}");
         let w = warp(name, &[], rect()).unwrap_or_else(|| panic!("{name}"));
         assert!(!w.bands.is_empty(), "{name}");
@@ -281,7 +253,7 @@ fn hostile_adjusts_and_boxes_stay_finite() {
         WarpLine { ink: None, extent: (5.0, 5.0), ref_y: 3.0 },
         WarpLine { ink: Some(Rect::new(-1e6, -5.0, 1e6, 5.0)), extent: (-1e6, 1e6), ref_y: 4.0 },
     ];
-    for name in ALL {
+    for name in CATALOG.iter().map(|p| p.id) {
         for adj in adjs {
             for r in rects {
                 let Some(w) = warp(name, adj, r) else { panic!("{name} {adj:?} {r:?}") };
@@ -306,4 +278,61 @@ fn hostile_adjusts_and_boxes_stay_finite() {
         }
     }
     assert!(warp("textPlain", &[], Rect::new(f64::NAN, 0.0, 1.0, 1.0)).is_none());
+}
+
+#[test]
+fn every_preset_has_one_handle_per_adjust() {
+    let r = rect();
+    for name in CATALOG.iter().map(|p| p.id) {
+        let hs = handles(name, &[], r);
+        assert_eq!(hs.len(), adjust_count(name), "{name}");
+        let defaults = adjust_defaults(name);
+        for h in &hs {
+            assert!(h.pos.x.is_finite() && h.pos.y.is_finite(), "{name}");
+            let back = h.value_at(h.pos);
+            let want = defaults[h.index];
+            assert!((back - want).abs() <= 1.0, "{name} handle {}: {back} vs {want}", h.index);
+        }
+    }
+    assert!(handles("textNoShape", &[], r).is_empty());
+    assert!(handles("textArchUp", &[], Rect::new(0.0, 0.0, f64::NAN, 10.0)).is_empty());
+    assert!(handles("textArchUp", &[], Rect::new(0.0, 0.0, 0.0, 0.0)).is_empty());
+    // A hostile adjust still places a finite handle on the clamped default.
+    let hs = handles("textInflate", &[f64::NAN], r);
+    assert_eq!(hs.len(), 1);
+    assert!(hs[0].pos.x.is_finite() && hs[0].pos.y.is_finite());
+}
+
+#[test]
+fn arch_and_inflate_handles_follow_the_pointer() {
+    let r = rect();
+    let arch = &handles("textArchUp", &[], r)[0];
+    let deg = arch.value_at(Point::new(r.center().x, r.y0)) / 60_000.0;
+    assert!((deg - 270.0).abs() < 0.5, "{deg}");
+    let down = &handles("textArchDown", &[], r)[0];
+    // The arch-down handle starts on the left; a pointer at the bottom is 90°, which is adjust 90
+    // (guide angle 180 − adj).
+    let deg = down.value_at(Point::new(r.center().x, r.y1)) / 60_000.0;
+    assert!((deg - 90.0).abs() < 0.5, "{deg}");
+    let inf = &handles("textInflate", &[], r)[0];
+    let more = inf.value_at(Point::new(inf.pos.x, r.y0 - 80.0));
+    assert!(more > adjust_defaults("textInflate")[0], "{more}");
+    assert!((more - 20_000.0).abs() < 1.0, "{more}");
+}
+
+#[test]
+fn many_lines_on_a_follow_band_are_mapped_from_one_measurement() {
+    // 50,000 lines on an arch: each line's scale and anchor come from the band measured once.
+    let w = warp("textArchUp", &[], rect()).unwrap();
+    let inner = Rect::new(7.2, 3.6, W - 7.2, H - 3.6);
+    let lines: Vec<WarpLine> = (0..50_000)
+        .map(|i| {
+            let y = i as f64 * 0.01;
+            WarpLine { ink: Some(Rect::new(190.0, y, 230.0, y + 1.0)), extent: (190.0, 230.0), ref_y: y + 1.0 }
+        })
+        .collect();
+    let m = w.mapper(&lines, inner);
+    // The last line sits on the arc, as with two lines.
+    let last = lines.len() - 1;
+    assert!(m.map(last, Point::new(210.0, lines[last].ref_y)).y.abs() < 0.05);
 }
