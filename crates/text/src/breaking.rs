@@ -196,9 +196,13 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
                 next = i + 1;
                 break;
             }
-            // A tab that runs past the end (or whose following aligned word fits on a fresh line
-            // but not in the remaining space) moves to the next line with its word. Trailing spaces
-            // are excluded so trailing whitespace alone cannot cause a line break.
+            // A tab that runs past the end moves to the next line. Also keep it with its
+            // following segment when x + adv + seg.2 overflows here but fresh_tab_adv + seg.2
+            // fits within rest_w: a clamped tab can have zero advance while its text still
+            // overflows, and moving only the text would lose its tab alignment. The fresh-line
+            // check includes the tab advance, not just the text width. seg.2 excludes trailing
+            // whitespace so spaces alone cannot move visible text; an oversized segment that
+            // cannot fit with its tab on a fresh line uses the ordinary wrapping rules.
             let fresh_tab_adv = if seg.2 > 0.0 { tab_advance(x0_rest, tab_stops, default_tab, seg, x0_rest + rest_w) } else { 0.0 };
             let tab_overflow = x + adv > avail + 0.01 || (seg.2 > 0.0 && x + adv + seg.2 > avail + 0.01 && fresh_tab_adv + seg.2 <= rest_w + 0.01);
             if wrap && c == '\t' && tab_overflow && i > start {
@@ -312,10 +316,25 @@ pub(crate) fn tab_segment(cells: &[Cell], i: usize) -> (f64, f64, f64) {
     (w, dec.unwrap_or(w), last_non_ws)
 }
 
-/// Advance of a tab at `x` (from the start edge) to the next stop, placing the text after it
-/// (`seg`: its width, and its width before the decimal point) as the stop aligns it but never
-/// moving back, as PowerPoint does; past the last stop, to the next default stop. Right, center,
-/// and decimal stops beyond `max_x` (the right margin) clamp to `max_x` (#1663).
+/// Advance of a tab at `x` to the next stop, aligning the following text without moving back;
+/// past the last explicit stop, advance to the next default stop.
+///
+/// `x`, stop positions and `max_x` are distances from the same text-column start edge, not
+/// from the current line's indented start. `max_x` is the right-margin coordinate, not the
+/// remaining width: `break_lines` passes `x0 + avail`, while layout's `line_advances` passes
+/// `col_w - mr` (already measured from the column edge). `max_x <= 0.0` disables clamping,
+/// as in `tab_tests`.
+///
+/// `seg` is `(total_width, width_before_first_decimal_point, width_without_trailing_whitespace)`,
+/// from [`tab_segment`]; the second value equals the total width when no "." occurs.
+/// This function uses the first two values for alignment; `break_lines` uses the third for
+/// its visible-segment fit check. Layout passes the same tuple when computing line advances.
+///
+/// Only explicit right, center and decimal stops beyond a positive `max_x` are adjusted
+/// (#1663). Their effective alignment positions are respectively `max_x`,
+/// `max(max_x - seg.0 / 2, 0)` and `max(max_x - max(seg.0 - seg.1, 0), 0)`, so the segment's
+/// right edge reaches the margin when the nonnegative-position and no-backward-motion
+/// limits permit. Stops at or inside the margin, left stops and default stops are unchanged.
 pub(crate) fn tab_advance(x: f64, stops: &[Tab], default_tab: f64, seg: (f64, f64, f64), max_x: f64) -> f64 {
     for s in stops {
         if s.pos > x + 0.5 {
