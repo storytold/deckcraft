@@ -172,11 +172,6 @@ fn list_styles(_s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(STYLES.iter().map(|s| json!({"id": s.id, "label": s.label})).collect())
 }
 
-/// Our own cameo placeholder: a camera body and lens drawn as an SVG, no vendor artwork. It is
-/// embedded as the picture's image, so PowerPoint shows it and the capture layer can swap it for
-/// the live feed. The PPTX reader uses the same art for a Cameo whose poster cannot be read.
-pub const PLACEHOLDER_SVG: &str = deckcraft_pptx::cameo::POSTER_SVG;
-
 /// Bottom-right default box for a slide.
 fn default_rect(size: deckcraft_geom::Size) -> Xfrm {
     let w = DEFAULT_SIZE.min(size.width.max(0.0));
@@ -226,9 +221,12 @@ fn insert_cameo(s: &mut Session, p: &Value) -> Result<Value> {
             None => sel.slide.min(n - 1),
         };
         let size = doc.slide_size;
-        let media = doc
-            .add_media("cameo-placeholder.svg", "image/svg+xml", PLACEHOLDER_SVG.as_bytes().to_vec())
-            .ok_or_else(|| bad("insert.cameo", NO_ID_SPACE))?;
+        // Our own cameo placeholder: a camera body and lens, no vendor artwork. It is the PNG the
+        // PPTX reader also uses for a Cameo whose poster cannot be read, so every renderer draws it
+        // (the SVG art of the same camera is not renderable); PowerPoint shows it and the capture
+        // layer swaps it for the live feed.
+        let media =
+            doc.add_media("cameo-placeholder.png", "image/png", deckcraft_pptx::cameo_poster()).ok_or_else(|| bad("insert.cameo", NO_ID_SPACE))?;
         let box_ = rect.unwrap_or_else(|| default_rect(size));
         let mut ids = Vec::new();
         let mut on_target = None;
@@ -489,7 +487,11 @@ mod tests {
             deckcraft_model::ShapeKind::Picture { fill } => fill.media,
             _ => panic!("picture"),
         };
-        assert_eq!(doc.doc.media(media).map(|m| m.content_type.as_str()), Some("image/svg+xml"));
+        // A PNG the renderer decodes: an SVG placeholder drew as a missing-image mark before the
+        // preview was on.
+        let placeholder = doc.doc.media(media).expect("placeholder media");
+        assert_eq!(placeholder.content_type, "image/png");
+        assert!(placeholder.data.starts_with(b"\x89PNG"));
     }
 
     #[test]

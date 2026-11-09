@@ -343,6 +343,48 @@ impl std::fmt::Display for ConfigError {
     }
 }
 
+/// The levels this encoder writes, from H.264 Table A-1: level idc, MaxFS (macroblocks per
+/// picture) and MaxMBPS (macroblocks per second), lowest first.
+const LEVELS: [(u8, u64, u64); 12] = [
+    (30, 1_620, 40_500),
+    (31, 3_600, 108_000),
+    (32, 5_120, 216_000),
+    (40, 8_192, 245_760),
+    (41, 8_192, 245_760),
+    (42, 8_704, 522_240),
+    (50, 22_080, 589_824),
+    (51, 36_864, 983_040),
+    (52, 36_864, 2_073_600),
+    (60, 139_264, 4_177_920),
+    (61, 139_264, 8_355_840),
+    (62, 139_264, 16_711_680),
+];
+
+/// The largest side, in macroblocks, a level's MaxFS allows: H.264 A.3.1 also caps each side at
+/// `Sqrt(MaxFS × 8)`, so a flat picture needs a higher level than its area alone suggests.
+fn level_side(max_fs: u64) -> u64 {
+    let cap = max_fs.saturating_mul(8);
+    let mut side = (cap as f64).sqrt() as u64;
+    while (side + 1) * (side + 1) <= cap {
+        side += 1;
+    }
+    while side * side > cap {
+        side -= 1;
+    }
+    side
+}
+
+/// The lowest level that holds an `mbw` × `mbh` macroblock picture at `fps` frames per second, or
+/// `None` when no supported level does (level 6.2 is the highest this encoder writes).
+fn level_for(mbw: u64, mbh: u64, fps: u32) -> Option<u8> {
+    let mbs = mbw * mbh;
+    let rate = mbs * u64::from(fps);
+    LEVELS
+        .iter()
+        .find(|(_, max_fs, max_mbps)| mbs <= *max_fs && rate <= *max_mbps && mbw <= level_side(*max_fs) && mbh <= level_side(*max_fs))
+        .map(|level| level.0)
+}
+
 impl Encoder {
     pub fn new(cfg: EncoderConfig) -> Result<Self, ConfigError> {
         if cfg.width < 16 || cfg.height < 16 || cfg.width > 8192 || cfg.height > 4320 || !cfg.width.is_multiple_of(2) || !cfg.height.is_multiple_of(2)
@@ -352,6 +394,10 @@ impl Encoder {
         let mbw = cfg.width.div_ceil(16) as usize;
         let mbh = cfg.height.div_ceil(16) as usize;
         let cfg = EncoderConfig { qp: cfg.qp.clamp(10, 51), fps: cfg.fps.clamp(1, 240), ..cfg };
+        // The clamped rate, so the level the SPS writes is the one the stream really is.
+        if level_for(mbw as u64, mbh as u64, cfg.fps).is_none() {
+            return Err(ConfigError("the picture and frame rate exceed H.264 level 6.2"));
+        }
         Ok(Encoder {
             cfg,
             mbw,
@@ -367,16 +413,8 @@ impl Encoder {
     }
 
     fn level_idc(&self) -> u8 {
-        let mbs = (self.mbw * self.mbh) as u64;
-        let rate = mbs * u64::from(self.cfg.fps);
-        match (mbs, rate) {
-            (m, r) if m <= 1620 && r <= 40_500 => 30,
-            (m, r) if m <= 3600 && r <= 108_000 => 31,
-            (m, r) if m <= 8192 && r <= 245_760 => 40,
-            (m, r) if m <= 8704 && r <= 522_240 => 42,
-            (m, r) if m <= 22_080 && r <= 589_824 => 50,
-            _ => 51,
-        }
+        // `new` accepted the configuration, so a level always fits.
+        level_for(self.mbw as u64, self.mbh as u64, self.cfg.fps).unwrap_or(62)
     }
 
     /// The sequence parameter set NAL unit.
@@ -892,6 +930,29 @@ mod tests {
         assert_eq!(e.level_idc(), 40);
         let e = Encoder::new(EncoderConfig { width: 3840, height: 2160, fps: 30, qp: 26 }).unwrap();
         assert_eq!(e.level_idc(), 51);
+        // 3840×2160 at 60 fps is 1 944 000 macroblocks per second: beyond 5.1's MaxMBPS (983 040).
+        let e = Encoder::new(EncoderConfig { width: 3840, height: 2160, fps: 60, qp: 26 }).unwrap();
+        assert_eq!(e.level_idc(), 52, "5.2 only raises the rate, so this is its row");
+        // 8192×2160 is 69 120 macroblocks: beyond the 36 864 MaxFS of 5.0, 5.1 and 5.2.
+        let e = Encoder::new(EncoderConfig { width: 8192, height: 2160, fps: 30, qp: 26 }).unwrap();
+        assert_eq!(e.level_idc(), 60);
+        assert!(Encoder::new(EncoderConfig { width: 8192, height: 4320, fps: 240, qp: 26 }).is_err(), "beyond level 6.2");
+    }
+
+    /// The level is the lowest that fits the picture size, the macroblock rate *and* the per-axis
+    /// limit of H.264 A.3.1 — a wide flat picture is not small enough for a low level.
+    #[test]
+    fn the_level_is_the_lowest_that_fits_size_rate_and_axis() {
+        assert_eq!(level_for(120, 68, 30), Some(40), "1920×1080");
+        assert_eq!(level_for(240, 135, 30), Some(51), "3840×2160: 5.0's MaxFS is too small");
+        assert_eq!(level_for(512, 270, 30), Some(60), "8192×4320: 5.1's MaxFS is too small");
+        assert_eq!(level_for(512, 270, 60), Some(61), "twice the rate");
+        assert_eq!(level_for(512, 270, 120), Some(62));
+        assert_eq!(level_for(512, 270, 240), None, "beyond 6.2");
+        assert_eq!(level_for(512, 1, 30), Some(51), "8192×16: the per-axis limit rules out 3.0–5.0");
+        assert_eq!(level_for(1, 512, 30), Some(51), "and the other axis");
+        assert_eq!(level_for(16, 16, 30), Some(30), "small pictures keep the level 3.0 floor");
+        assert_eq!(level_side(1_620), 113, "Sqrt(MaxFS × 8)");
     }
 
     #[test]

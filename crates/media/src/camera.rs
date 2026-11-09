@@ -163,6 +163,10 @@ pub struct CameoRecorder {
     written: u64,
     /// The most recent frame, already fitted to the target.
     last: Option<Vec<u8>>,
+    /// The image the last written sample shows: the bytes are otherwise only inside the MP4
+    /// (tests only).
+    #[cfg(test)]
+    last_written: Option<Vec<u8>>,
     capped: Option<CameoCap>,
     /// Largest clip this recorder keeps, in MP4 bytes ([`MAX_CLIP_BYTES`] unless a test lowers it).
     max_bytes: usize,
@@ -182,6 +186,8 @@ impl CameoRecorder {
             start_ms,
             written: 0,
             last: None,
+            #[cfg(test)]
+            last_written: None,
             capped: None,
             max_bytes: MAX_CLIP_BYTES,
         })
@@ -239,26 +245,34 @@ impl CameoRecorder {
         let elapsed = now_ms - self.start_ms;
         if elapsed >= u64::from(MAX_CLIP_MS) {
             self.capped = Some(CameoCap::Duration);
-            self.fill_to(self.max_frames(), None)?;
+            let last = self.last.take();
+            let filled = self.fill_to(self.max_frames(), last.as_deref());
+            self.last = last;
+            filled?;
             return Ok(());
         }
         let fitted = crate::encode::fitted_rgba(&frame.rgba, frame.width, frame.height, self.width, self.height)?;
         let want = elapsed.saturating_mul(u64::from(self.fps)) / 1000;
-        self.fill_to(want.min(self.max_frames()), Some(&fitted))?;
+        // The samples that elapsed before this frame arrived showed the previous one: repeat that
+        // across the gap, so a late frame never shows before its receipt time and the image it
+        // replaces is not lost. The new frame becomes the next sample's image.
+        let prev = self.last.take();
+        self.fill_to(want.min(self.max_frames()), Some(prev.as_deref().unwrap_or(&fitted)))?;
         self.last = Some(fitted);
         Ok(())
     }
 
-    /// Write the missing frames up to `want`, repeating `frame` (or the last frame). Stops at the
-    /// byte budget, keeping what is written, so an over-long slide keeps a truncated clip.
+    /// Write the missing frames up to `want`, repeating `frame`. Stops at the byte budget, keeping
+    /// what is written, so an over-long slide keeps a truncated clip.
     fn fill_to(&mut self, want: u64, frame: Option<&[u8]>) -> crate::Result<()> {
         while self.written < want {
             if self.track.bytes() >= self.byte_budget() {
                 self.capped = Some(CameoCap::Bytes);
                 break;
             }
-            let Some(frame) = frame.or(self.last.as_deref()) else { break };
+            let Some(frame) = frame else { break };
             self.track.push_rgba(frame)?;
+            self.note_written(frame);
             self.written += 1;
         }
         Ok(())
@@ -267,6 +281,16 @@ impl CameoRecorder {
     fn max_frames(&self) -> u64 {
         u64::from(MAX_CLIP_MS) * u64::from(self.fps) / 1000
     }
+
+    /// Remember the image the sample just written shows: the bytes otherwise only live inside the
+    /// MP4, and a test has to compare them.
+    #[cfg(test)]
+    fn note_written(&mut self, frame: &[u8]) {
+        self.last_written = Some(frame.to_vec());
+    }
+
+    #[cfg(not(test))]
+    fn note_written(&mut self, _frame: &[u8]) {}
 
     /// Close the clip at `now_ms`, filling the last period with the last frame.
     pub fn finish(mut self, now_ms: u64) -> crate::Result<CameoClip> {
@@ -328,6 +352,26 @@ mod tests {
         let clip = rec.finish(1_000).expect("finish");
         assert_eq!(clip.duration_ms, 1_000);
         assert_eq!(clip.frames, 10);
+    }
+
+    /// A frame that arrives late is not shown before its receipt time: the gap repeats the previous
+    /// image and the late frame becomes the next sample, so the clip does not jump ahead.
+    #[test]
+    fn a_gap_repeats_the_previous_frame_not_the_late_one() {
+        let mut rec = CameoRecorder::new((16, 16), 10, 30, 0).expect("recorder");
+        let first = frame(0, 8, 8, 10);
+        let late = frame(1, 8, 8, 200);
+        rec.push(&first, 0).expect("first frame");
+        let (w, h) = (rec.width, rec.height);
+        let fitted = |f: &CameraFrame| crate::encode::fitted_rgba(&f.rgba, f.width, f.height, w, h).expect("fit");
+        // 100 ms at 10 fps: one sample elapsed while only the first frame existed.
+        rec.push(&late, 100).expect("a late frame");
+        assert_eq!(rec.frames(), 1, "the elapsed sample is written");
+        assert_eq!(rec.last_written.as_deref(), Some(fitted(&first).as_slice()), "the gap shows the frame that was on screen");
+        assert_eq!(rec.last.as_deref(), Some(fitted(&late).as_slice()), "the late frame becomes the next sample");
+        rec.push(&late, 200).expect("the next sample");
+        assert_eq!(rec.frames(), 2);
+        assert_eq!(rec.last_written.as_deref(), Some(fitted(&late).as_slice()), "then it is shown");
     }
 
     #[test]

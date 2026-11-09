@@ -307,6 +307,33 @@ fn a_recorded_cameo_without_a_readable_poster_stays_a_picture() {
 }
 
 #[test]
+fn a_live_cameo_without_a_readable_poster_stays_a_picture() {
+    let p = deck("still.png", png());
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    // The picture's image is gone, so its fill cannot be read; the live feed remains.
+    let bytes = without_parts(&bytes, &|name| name.starts_with("ppt/media/") && name.ends_with(".png"));
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let mut found = None;
+    deckcraft_model::walk(&q.slides[0].shapes, &mut |sh, _| {
+        if sh.name == "Camera 1" {
+            found = Some(sh.clone());
+        }
+    });
+    let sh = found.expect("cameo shape");
+    assert!(sh.is_cameo(), "a live Cameo without a readable poster stays a picture");
+    assert_eq!(sh.cameo.as_ref().map(|c| c.live), Some(true));
+    let poster = match &sh.kind {
+        ShapeKind::Picture { fill } => fill.media,
+        _ => panic!("picture"),
+    };
+    let m = q.media(poster).expect("fallback poster");
+    assert_eq!(m.content_type, "image/png", "the renderer decodes PNG, not SVG");
+    // Re-export keeps the marker, so the feed settings are not lost with the poster.
+    let again = deckcraft_pptx::export(&q).expect("export");
+    assert!(part(&again, "ppt/slides/slide1.xml").contains("<alf:liveFeedProps"), "the live feed survives");
+}
+
+#[test]
 fn a_recorded_cameo_that_does_not_autoplay_waits_for_a_click() {
     let mut p = recorded_deck();
     if let Some(s) = p.slides.first_mut() {
