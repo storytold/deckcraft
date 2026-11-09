@@ -1848,3 +1848,103 @@ fn a_recorded_stroke_keeps_its_tool_colour_and_width() {
     assert!((*width - 6.75).abs() < 1e-9);
     assert_eq!(*at, 1000, "the stroke keeps the clock it was drawn on");
 }
+
+/// A microphone that stays open until `stop` runs, so a leaked capture is observable.
+struct LeakyMic {
+    rate: u32,
+    samples: Vec<f32>,
+    open: std::rc::Rc<std::cell::Cell<bool>>,
+    stopped: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl deckcraft_media::MicIn for LeakyMic {
+    fn start(&mut self) -> Result<(), String> {
+        self.open.set(true);
+        Ok(())
+    }
+    fn take(&mut self) -> (u32, Vec<f32>) {
+        (self.rate, std::mem::take(&mut self.samples))
+    }
+    fn stop(&mut self) {
+        self.open.set(false);
+        self.stopped.set(self.stopped.get() + 1);
+    }
+}
+
+/// #1836 review (`commands.rs:191`): ending the show when the document is already gone still
+/// stops the microphone instead of leaving it capturing with nowhere to save the take.
+#[test]
+fn ending_the_show_with_no_document_stops_the_microphone() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let open = std::rc::Rc::new(std::cell::Cell::new(false));
+    let stopped = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let mic = LeakyMic { rate: 8_000, samples: vec![0.1; 4_000], open: open.clone(), stopped: stopped.clone() };
+    let mut app = SlideApp::new(session, crate::Services { mic: Some(Box::new(mic)), ..Default::default() });
+    app.start_show(0, false);
+    app.services.mic.as_deref_mut().expect("mic").start().expect("mic opens");
+    assert!(open.get(), "the microphone is capturing");
+    app.show.as_mut().expect("show").mic_tried = true;
+    // `file.close` beats `show.end`: the take has nowhere to be saved.
+    let active = app.session.active_index().expect("an open presentation");
+    app.session.close_document(active);
+    assert!(app.session.active().is_none(), "no document left to save into");
+    app.end_show_now();
+    assert!(!open.get(), "the microphone stops even with no document to save into");
+    assert!(app.show.is_none(), "the show still ends");
+    assert!(stopped.get() >= 1, "stop runs exactly through the teardown path");
+}
+
+/// #1836 review (`show/ui.rs:741`): grouped recorded strokes count toward the preview frame key,
+/// so the cached overlay above a playing video is invalidated when the group's ink is revealed.
+#[test]
+fn grouped_recorded_ink_counts_toward_the_preview_frame_key() {
+    use deckcraft_model::{InkStroke, Rgba, Shape, ShapeKind, Xfrm};
+    let mut session = deckcraft_engine::Session::with_new();
+    session
+        .edit(|doc, _| {
+            let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+            slide.shapes.clear();
+            let stroke = InkStroke {
+                points: vec![(0.1, 0.1, 0.5), (0.2, 0.2, 0.5)],
+                color: Rgba::BLACK,
+                width: 2.25,
+                highlighter: false,
+                at_ms: Some(2_000),
+            };
+            let ink = Shape {
+                kind: ShapeKind::Ink { strokes: vec![stroke] },
+                xfrm: Some(Xfrm::new(0.0, 0.0, 100.0, 100.0)),
+                ..Default::default()
+            };
+            slide.shapes.push(Shape {
+                kind: ShapeKind::Group { children: vec![ink], child: Xfrm::new(0.0, 0.0, 100.0, 100.0) },
+                xfrm: Some(Xfrm::new(0.0, 0.0, 100.0, 100.0)),
+                ..Default::default()
+            });
+            Ok(())
+        })
+        .unwrap();
+    let doc = session.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    show.recording_preview = true;
+    show.slide_start = 0.0;
+    // Before the stroke's clock: nothing due; after it: the group contributes one stroke.
+    let early_due = {
+        let sl = &doc.slides[0].shapes;
+        let mut due = 0usize;
+        let mut next = None;
+        super::ui::count_due_strokes(sl, 1_000, &mut due, &mut next);
+        due
+    };
+    let late_due = {
+        let sl = &doc.slides[0].shapes;
+        let mut due = 0usize;
+        let mut next = None;
+        super::ui::count_due_strokes(sl, 3_000, &mut due, &mut next);
+        due
+    };
+    assert_eq!(early_due, 0, "the grouped stroke is not due before its clock");
+    assert_eq!(late_due, 1, "the grouped stroke counts once its clock is reached");
+    let _ = show;
+}

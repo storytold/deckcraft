@@ -65,7 +65,15 @@ struct Sl {
 pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let Some((doc_uid, doc)) = app.session.active().map(|d| (d.uid, d.doc.clone())) else {
-        app.show = None;
+        if let Some(mut show) = app.show.take() {
+            // The show's own teardown saves the take when a document is still open; with none
+            // (`file.close` won the race) hand over what was captured so the microphone stops.
+            if show.mic_tried {
+                let slide = show.state.slide;
+                super::take_narration(app.services.mic.as_deref_mut(), &mut show, slide);
+                app.stop_mic();
+            }
+        }
         if let Some(host) = app.services.presenter.as_mut() {
             host.close();
         }
@@ -478,17 +486,7 @@ fn begin_slide(app: &mut SlideApp, show: &Show, f: &Fr, size: (u32, u32)) -> Sl 
         let mut due = 0usize;
         let mut next: Option<u32> = None;
         if let Some(sl) = doc.slides.get(idx) {
-            for sh in &sl.shapes {
-                if let deckcraft_model::ShapeKind::Ink { strokes } = &sh.kind {
-                    for st in strokes {
-                        match st.at_ms {
-                            Some(at) if at <= elapsed => due += 1,
-                            Some(at) => next = Some(next.map_or(at, |n| n.min(at))),
-                            None => due += 1,
-                        }
-                    }
-                }
-            }
+            count_due_strokes(&sl.shapes, elapsed, &mut due, &mut next);
         }
         (due, next)
     } else {
@@ -497,6 +495,28 @@ fn begin_slide(app: &mut SlideApp, show: &Show, f: &Fr, size: (u32, u32)) -> Sl 
     let key = Key { slide: idx, step, size, doc: std::sync::Arc::as_ptr(doc) as usize, hidden: hidden.clone(), plays: done, gif, ink: ink_due };
     let back_key = BackKey { slide: idx, size, doc: key.doc };
     Sl { idx, step, animating, t, plays, stamps, media, hidden, times, gifs, key, back_key, size, ink_next }
+}
+
+/// Recorded strokes the clock has reached (`due`) and the next one's clock (`next`): a
+/// recording preview reveals ink on the clock, and the frame key carries the count so the
+/// frame renders once per revealed stroke. Grouped strokes draw too, so the count sees them
+/// inside groups as well.
+pub(super) fn count_due_strokes(shapes: &[deckcraft_model::Shape], elapsed: u32, due: &mut usize, next: &mut Option<u32>) {
+    for sh in shapes {
+        match &sh.kind {
+            deckcraft_model::ShapeKind::Ink { strokes } => {
+                for st in strokes {
+                    match st.at_ms {
+                        Some(at) if at <= elapsed => *due += 1,
+                        Some(at) => *next = Some(next.map_or(at, |n| n.min(at))),
+                        None => *due += 1,
+                    }
+                }
+            }
+            deckcraft_model::ShapeKind::Group { children, .. } => count_due_strokes(children, elapsed, due, next),
+            _ => {}
+        }
+    }
 }
 
 fn frame_texture(show: &mut Show, f: &Fr, sl: &Sl) -> Option<TextureHandle> {

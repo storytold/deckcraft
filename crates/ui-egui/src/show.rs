@@ -190,8 +190,8 @@ pub struct Show {
     /// A slide's narration hit the ten-minute or WAV limit while capturing, so its tail was dropped
     /// before encoding: the save must not call that take complete.
     narration_cut: bool,
-    mic_tried: bool,
-    mic_ok: bool,
+    pub(crate) mic_tried: bool,
+    pub(crate) mic_ok: bool,
     last_move: f64,
     /// The last trackpad flick or mouse-wheel notch, so one gesture turns one page.
     last_swipe: f64,
@@ -1232,7 +1232,7 @@ fn before_slide_change_with(mic: &mut MicSlot, show: &mut Show, action: &ShowAct
 
 /// Hand the microphone's buffer to the show's current slide. The callers decide whether a take is
 /// running: the end of a take also saves what was spoken on the slide it stopped on.
-fn take_narration(mic: Option<&mut (dyn deckcraft_media::MicIn + 'static)>, show: &mut Show, slide: usize) {
+pub(crate) fn take_narration(mic: Option<&mut (dyn deckcraft_media::MicIn + 'static)>, show: &mut Show, slide: usize) {
     if !show.mic_ok {
         return;
     }

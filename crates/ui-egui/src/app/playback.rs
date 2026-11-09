@@ -52,6 +52,12 @@ impl SlideApp {
             if let Some(doc) = self.session.active().map(|d| d.doc.clone()) {
                 let now = show.last_now;
                 show::save_take(self, &mut show, &doc, now);
+            } else if show.mic_tried {
+                // No document left to save the take into (`file.close` beat `show.end`): hand
+                // over what was captured so the desktop microphone does not stay open.
+                let slide = show.state.slide;
+                show::take_narration(self.services.mic.as_deref_mut(), &mut show, slide);
+                self.stop_mic();
             }
             if let Some(host) = self.services.presenter.as_mut() {
                 host.close();
