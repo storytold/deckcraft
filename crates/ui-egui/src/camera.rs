@@ -124,14 +124,9 @@ impl CameraHost {
         self.refresh_want();
     }
 
-    /// Turn the Cameo preview on or off. A click while the preview is on but no session runs —
-    /// failed, cleanly closed, or dropped by a dead worker — restarts it instead of turning it
-    /// off, so one click retries instead of needing off-then-on.
+    /// Turn the Cameo preview on or off. Terminal ends and startup failures leave the toggle
+    /// off, so this is always a plain switch and the next click starts a fresh attempt.
     pub fn toggle_preview(&mut self) {
-        if self.preview && self.session.is_none() {
-            self.restart();
-            return;
-        }
         self.set_preview(!self.preview);
     }
 
@@ -231,6 +226,10 @@ impl CameraHost {
             self.session = None;
             self.frame = None;
             self.texture = None;
+            // A terminal end leaves the preview off, not stranded on: the toggle and its tooltip
+            // stay honest, and the next click starts a fresh attempt from the off state.
+            self.preview = false;
+            self.wanted = false;
         }
         if let Some(frame) = self.frame.clone()
             && self.visible()
@@ -275,6 +274,8 @@ impl CameraHost {
         let Some(source) = self.source.as_mut() else {
             self.status = CameraStatus::Failed(CameraError::Unsupported);
             self.notice = Some(error_text(&CameraError::Unsupported));
+            self.preview = false;
+            self.wanted = false;
             return;
         };
         match source.start(&self.request) {
@@ -282,6 +283,8 @@ impl CameraHost {
             Err(error) => {
                 self.notice = Some(error_text(&error));
                 self.status = CameraStatus::Failed(error);
+                self.preview = false;
+                self.wanted = false;
             }
         }
     }
@@ -768,7 +771,7 @@ mod tests {
     }
 
     #[test]
-    fn toggling_while_failed_restarts_instead_of_turning_off() {
+    fn a_failed_session_leaves_the_preview_off_for_a_fresh_retry() {
         let fake = FakeCamera::default().sized(64, 48);
         let ctx = egui::Context::default();
         let mut host = started(&fake);
@@ -777,8 +780,9 @@ mod tests {
         fake.fail(CameraError::Lost);
         host.tick(&ctx);
         assert!(matches!(host.status(), CameraStatus::Failed(_)), "{:?}", host.status());
+        assert!(!host.preview_on(), "a terminal failure leaves the toggle off");
         host.toggle_preview();
-        assert!(host.preview_on(), "one click retries instead of switching off");
+        assert!(host.preview_on(), "the next click starts a fresh attempt");
         assert_eq!(fake.starts(), 2, "the session restarts");
     }
 
@@ -877,9 +881,10 @@ mod tests {
         assert!(host.tick(&ctx).is_none());
         assert_eq!(host.status(), &CameraStatus::Off);
         assert!(host.frame().is_none());
-        // One click reopens: the preview is still on with no session running.
+        assert!(!host.preview_on(), "a clean close leaves the toggle off");
+        // The next click starts a fresh attempt from the off state.
         host.toggle_preview();
-        assert!(host.preview_on(), "one click retries instead of switching off");
+        assert!(host.preview_on(), "the next click starts a fresh attempt");
         assert_eq!(fake.starts(), 2, "the session reopens");
     }
 
