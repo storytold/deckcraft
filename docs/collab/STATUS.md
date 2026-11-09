@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-09. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, docs commits on top).
+Updated: 2026-11-09. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, docs commits on top).
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -23,7 +23,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr7` | `d28c8ae5` | `CollabDoc` command glue + in-memory `Hub` |
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
-| `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup and align/distribute; commit published to the cabinet as a new file version (`409` on an external change) |
+| `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048`, `e007e965` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup and align/distribute; commit published to the cabinet as a new file version (`409` on an external change); base transfer after compaction with the key map, and a three-client soak gate |
 
 The Commit column names the slice commits; each branch also carries documentation commits. Heads:
 `collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711`, `0a57b61e`, `58eee059`, `69c2ff22`,
@@ -31,7 +31,8 @@ The Commit column names the slice commits; each branch also carries documentatio
 insert/delete undo), `31842050` (cabinet commit publication), `f28ee048` (docs), `98d9e9ce`
 (group/ungroup undo), `31d353fe` (align/distribute as one final-bounds step), `5b078c7d`
 (the §8 gates and the non-active-slide fix), `556c00d9` (three-session gate and the reconnect
-catch-up fix), plus the docs commits on top. The working tree is clean: the chair's
+catch-up fix), `e007e965` (base transfer after compaction and the three-client soak), plus the docs
+commits on top. The working tree is clean: the chair's
 uncommitted finding of 2026-11-08 is `7fe75711`; the second slice added `0a57b61e` (media kinds,
 TLS, command slices, tests, docs), `69c2ff22` hardened the format command, `41fe1ad9` added undo
 of fill/line/format steps, `4e666b95` added undo of a group's fill/line and of slide
@@ -64,6 +65,12 @@ slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human 
   confirmed command** so every replica runs the same command in the same order.
 - Delta of changed fields (no values, no derived state): group frames, connector routes and
   autofit are recomputed on each replica.
+- Base transfer: when compaction removed the journal below a client's version, `resync`
+  (`snapshot`) carries the native `.deckcraft` base, the session key map and the steps above the
+  base. Keys are issued in walk order and cannot be re-derived after structural edits, so the map
+  (`slides`, `shapes`, `dead`, `next`) travels with the base and the replica continues the
+  server's numbering. Above `max_base_inline` (8 MiB, `COLLAB_MAX_BASE_INLINE`) the message names
+  the base without bytes and the client reopens the file from the cabinet.
 - Per-actor undo: server-side before/after images, `undo-conflict` when someone else changed the
   object, undo is an ordinary new operation. The images cover `xfrm`, text, fill, outline and the
   whole `TextBody` of a `format.*` step; the last three travel as an exact model value
@@ -159,11 +166,15 @@ slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human 
   clips / 192 MiB per session; upload and byte counters in metrics.
 - Persistence: native base + append-only journal, snapshot every N ops, replay on restart
   through the same `apply` path. Without `COLLAB_STORE_DIR` the server is memory-only.
+- `COLLAB_SNAPSHOT_EVERY` now also drives a memory-only room (it used to reach the store only),
+  so compaction and a base transfer can be forced in a test or a deployment. `resync` takes a
+  snapshot on demand when the stored base does not cover the client; `base_transfers_total` and
+  `base_bytes_total` count what went out.
 - Logs/metrics contain ids, versions and counts; no slide content, text, media or tokens.
 
 ## 8. Gates (TASK.md §8)
 
-All three gates are tests, not scripts: `apps/deckcraft-collab-server/tests/gates.rs`. Run them with
+All four gates are tests, not scripts: `apps/deckcraft-collab-server/tests/gates.rs`. Run them with
 
 ```bash
 cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1
@@ -199,6 +210,20 @@ cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads
   Bob catches up to version 4. All three clients and all three local replicas settle on one
   version and an equal `Presentation`, and a commit at version 4 reimports with the conflict's
   winner and the later move.
+- **Three-client soak: compaction, base transfer and reconnect.** Two editors and one viewer on a
+  two-slide deck (one rectangle per slide); the server is opened with `snapshot_every = 5`, so the
+  journal is compacted during the run. The editors make 26 edits — six rounds of `shape.move`
+  (Alice), `shape.setBounds` (Bob), `text.set` (Alice) and `shape.fill` (Bob), then a move to 400
+  and a `text.set` — and both replicas follow every step. On the build host the 26 steps took
+  0.67 s. At that point the base is the snapshot at version 25 and the tail is version 26 only.
+  A viewer then joins at version 0: the server answers `resync` with the native base at 25
+  (5 KiB inline), the session key map and the one-step tail; the viewer rebuilds its model, keys
+  and version in 21.4 ms and reaches version 26, equal to both editors. `base_transfers_total`
+  moved by one. Bob drops off, Alice moves the first rectangle to 420 and repaints it (versions
+  27–28), and Bob reconnects with version 26: the answer is a tail of two steps, no base, and he
+  lands on 28. All three replicas and the room settle on version 28 with an equal `Presentation`,
+  and the commit at 28 reimports with the final boxes (420 / 350). The four gates together run in
+  about 2.5 s with `--test-threads=1` on the build host (LibreOffice skipped there).
 
 The gates found a real adapter bug: `shape.move`, `shape.setBounds` and `text.set` ran against the
 engine *selection*, so a replica whose active slide was another one refused a remote edit on
@@ -219,13 +244,13 @@ document as the editors.
 
 | Command | Result |
 |---|---|
-| `cargo test -p deckcraft-collab` | 124 unit + 8 integration |
-| `cargo test -p deckcraft-collab-server --test gates` (on `agents`, then the same binary where LibreOffice exists) | 3 passed: the 120-slide/media room and commit; three sessions (two editors on different slides and a viewer) across a conflicting edit, an undo-conflict, a forbidden viewer op and a reconnect with journal catch-up, all converging on version 4; LibreOffice 26.2 renders 121 pages and round-trips the commit; on the build host the LibreOffice test skips itself (no `soffice`) |
-| `cargo test -p deckcraft-collab --lib apply::` | 124 (a remote edit on a slide the replica is not looking at applies) |
-| `cargo test -p deckcraft-collab-server` | 10 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist, shape-undo replay) + 4 commit tests (two copies with their originals kept, an external change is a `409`, a client commit answered after publication, the no-callback mode) + 3 gates |
-| `cargo test -p deckcraft-collab-proto` | 20 |
+| `cargo test -p deckcraft-collab` | 129 unit + 8 integration |
+| `cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1` (on `agents`) | 4 passed in about 2.5 s: the 120-slide/media room and commit; three sessions (two editors on different slides and a viewer) across a conflicting edit, an undo-conflict, a forbidden viewer op and a reconnect with journal catch-up, all converging on version 4; the three-client soak (26 move/bounds/text/fill edits, compaction every 5 steps, a viewer rebuilt from a 5 KiB base at version 25 plus one tail step, a reconnect from a two-step tail, all three at version 28 and the commit reimporting); LibreOffice 26.2 renders 121 pages and round-trips the commit (run on the workstation, see below); on the build host the LibreOffice test skips itself (no `soffice`) |
+| `cargo test -p deckcraft-collab --lib apply::` | 44 (a remote edit on a slide the replica is not looking at applies) |
+| `cargo test -p deckcraft-collab-server` | 10 unit + 6 socket tests (two editors, viewer, health/metrics, invalid token, restart replay, media upload/fetch, picture insert, audio allowlist, shape-undo replay) + 4 commit tests (two copies with their originals kept, an external change is a `409`, a client commit answered after publication, the no-callback mode) + 4 gates |
+| `cargo test -p deckcraft-collab-proto` | 22 |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 |
-| `cargo test -p deckcraft-engine` | 569 passed, 1 ignored |
+| `cargo test -p deckcraft-engine` | 570 passed, 1 ignored |
 | `cargo clippy -p deckcraft-engine -p deckcraft-collab -p deckcraft-collab-proto -p deckcraft-collab-server -p deckcraft-ui-egui --all-targets -- -D warnings` | clean |
 | `cargo fmt --check` | clean |
 | `cargo xtask layers` | 31 crates, no violations |
@@ -255,6 +280,15 @@ Re-run on 2026-11-09 after the three-session gate (`556c00d9`): `fmt --check` cl
 0.95 s on `agents` (it includes two 300 ms waits for the server to drop the old peer and two
 round trips); its document comparisons are `Presentation` equality on three local replicas, and
 the commit at version 4 reimports with the expected two slides.
+
+Re-run on 2026-11-09 after the base transfer and the three-client soak (`e007e965`, on `agents`,
+rust 1.99.1): `fmt --check` clean, `collab-proto` 22, `collab` 129 + 8, `collab-server` 10 unit
++ 4 commit + 4 gates + 6 socket, `ui-egui collab::` 17, `deckcraft-engine` 570 + 1 ignored;
+clippy over the four collab crates, `engine` and `ui-egui` with `-D warnings` clean; `xtask
+layers` 31 crates. The four gates run in about 2.5 s with `--test-threads=1`; the soak gate itself
+prints 26 edits in 0.67 s, a 5 KiB base at version 25 rebuilt in 21.4 ms and a two-step tail on
+the reconnect. `git status` is clean after the docs commit; nothing was pushed and CI was not
+touched.
 
 The socket tests were run against a real loopback server; the restart test creates a room, moves
 the version, shuts the server down, starts a new one on the same store and asserts the version
@@ -298,12 +332,12 @@ whose `expectedVersion` does not match the room is refused before any callback i
 
 | Criterion | State | Where / why |
 |---|---|---|
-| Two or more clients edit one presentation | ✅ for the v1 command set | hub, socket test, UI pipe test |
+| Two or more clients edit one presentation | ✅ for the v1 command set; a three-client soak (two editors and a viewer, 26 edits) converges across compaction | hub, socket test, UI pipe test, `tests/gates.rs` |
 | A 100+ slide deck with media stays responsive and its commit opens in LibreOffice | ✅ 120 slides/120 pictures, 4 media objects; commit renders 121 pages and survives an LO round trip | `tests/gates.rs`; adapter fix for edits on a non-active slide |
 | Insert a picture in a shared session | ✅ pictures, audio and video over `ws://` and `wss://` | media channel, adapter and socket tests |
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
 | Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format/duplicate | collab tests |
-| Reconnect works | ✅ within the retained journal tail, including the version the replica actually has | client queue + resync; three-session gate; base transfer for an evicted tail is still open |
+| Reconnect works | ✅ within the retained journal tail; after compaction the client is rebuilt from the native base and the key map (inline up to 8 MiB) | client queue + resync; three-session gate; three-client soak; `DocSession::resync` |
 | Per-user undo/redo | ✅ text/shape values, align/distribute, fill, outline, `format.*`, group fill/line, slide insert/delete, shape insert/delete, group/ungroup | server history, `undo-conflict`, `shape_field`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`) |
 | Viewer cannot edit | ✅ server + engine gate, also inside the three-session gate | socket test, UI test |
 | Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
@@ -349,12 +383,16 @@ whose `expectedVersion` does not match the room is refused before any callback i
    Correct on a LAN, noticeable on a WAN. Preview needs a before-image and a rollback path; a
    rejected preview can be rolled back only if no other command has been applied since, otherwise
    the client must resync.
-8. **Three-client soak.** The 120-slide/media performance gate and the LibreOffice commit gate now
-   run in `tests/gates.rs` (see §8). What remains is a longer three-client soak and running the
-   LibreOffice gate in CI, where LibreOffice is not installed (there it skips itself).
-9. **Base transfer for an evicted journal tail.** `resync` sends the tail only; if the tail was
-   compacted, a client that missed the base cannot rebuild. The store now survives restarts, so
-   the next step is a chunked `snapshot` carrying the native base.
+8. **Three-client soak, longer runs.** The three-client soak now runs in `tests/gates.rs` (see
+   §8): 26 move/bounds/text/fill edits across compaction, a viewer rebuilt from the base, a
+   reconnect from the journal, and a commit at the final version. What remains is a longer soak
+   (hundreds of steps, more participants, media in the loop) and running the LibreOffice gate in
+   CI, where LibreOffice is not installed (there it skips itself).
+9. **Base transfer above the inline limit.** A client below a compacted journal is rebuilt from
+   the native base and key map carried by `snapshot`; above `max_base_inline` (8 MiB,
+   `COLLAB_MAX_BASE_INLINE`) the message names the base without bytes and the client must reopen
+   the file from the cabinet. A chunked baseline or an HTTP-served base (the media endpoint
+   pattern) is the next step for 100-slide decks with media.
 10. **Upstream PR head.** The PR is open from the fork; the local head is ahead of it and the push
     is manual. Nothing was pushed to `storytold/deckcraft`.
 
@@ -406,11 +444,46 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    insert/delete/duplicate, shape insert/delete and group/ungroup (whole-subtree images on both
    sides). The remaining undo work is table/notes text and run-level formatting, which wait for
    their command slices.
-6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the three-session gate covers conflict, viewer and reconnect, so the next gate is a longer three-client soak (more edits, a snapshot eviction and base transfer).
+6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the three-client soak covers compaction, base transfer and a reconnect, so the next gate is a longer run (hundreds of steps, media) and a base above the inline limit.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-09 — three-client soak: compaction, base transfer and reconnect
+
+- A client whose version fell below the journal tail could not rebuild: `resync` returned a
+  cursor without state (status item 9, RFC matrix row 12). `SnapshotMsg` now carries
+  `base { version, bytesBase64?, keys }`. `SnapshotMode::Base` means the replica is replaced; the
+  tail above the base is replayed on top of it. `DocSession::resync` answers from the journal
+  while it covers the client, and otherwise takes a snapshot on demand and sends base + tail, so
+  compaction never strands a client. Above `max_base_inline` (8 MiB, `COLLAB_MAX_BASE_INLINE`) the
+  bytes are omitted and the client reopens the file from the cabinet.
+- Keys travel with the base (`SnapshotKeys { slides, shapes, dead, next }`). Keys are issued in
+  walk order and cannot be re-derived after structural edits (ADR-0002), so `Adapter` exports the
+  map and the issuer counter and a replica that rebuilt from a base restores both; the next
+  insertion gets the key the server would issue.
+- Engine: `Session::replace_active_document` swaps the model in place (uid, title and path kept,
+  revision bumped so the UI and render caches refresh; selection and undo history reset).
+  `CollabDoc` uses it for a base and refuses more than 64 MiB of base bytes.
+- Server: `Config.snapshot_every` (and the new `max_base_inline`) now reach a memory-only room,
+  not only the store; `base_transfers_total` / `base_bytes_total` count transfers. The counters
+  are in `/metrics`.
+- The fourth §8 gate (`three_clients_soak_across_compaction_and_a_base_transfer`): two editors,
+  26 move/bounds/text/fill edits with `snapshot_every = 5` (0.67 s on `agents`), a viewer joining
+  below the base (5 KiB at version 25, one tail step, rebuilt in 21.4 ms), an editor reconnecting
+  from a two-step tail, all three at version 28 with an equal `Presentation`, and a commit at 28
+  that reimports with the final boxes (420 / 350). No base is sent when the tail still covers the
+  client, which the reconnect asserts.
+- Tests added: proto round trip of a base and decoding of an old snapshot without one; key map
+  export/import keeps keys, tombstones and the next number; `resync` from inside the tail, after
+  compaction (base reloads into the snapshot document) and above the inline limit; `ClientSession`
+  adopts a base head and drops work the base already covers; `CollabDoc` rebuilds a replica from
+  a base and finishes it with the tail; the engine replaces the active document in place.
+- Verified on `agents`: `fmt --check` clean, `collab-proto` 22, `collab` 129 + 8, `collab-server`
+  10 + 4 + 4 + 6, `ui-egui collab::` 17, `deckcraft-engine` 570 + 1 ignored; clippy over the four
+  collab crates, `engine` and `ui-egui` with `-D warnings` clean; `xtask layers` 31 crates.
+  Commit `e007e965` plus this docs commit on `collab/pr10`; nothing pushed, CI untouched.
 
 ### 2026-11-09 — three-session gate: conflicting edit, viewer, reconnect
 
