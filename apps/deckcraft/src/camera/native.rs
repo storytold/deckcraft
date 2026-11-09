@@ -53,9 +53,18 @@ impl SystemCamera {
 
 impl CameraIn for SystemCamera {
     fn start(&mut self, request: &CameraRequest) -> Result<CameraSession, CameraError> {
-        let commands = self.ensure_worker()?;
         let (events, receiver) = mpsc::sync_channel(EVENT_CAPACITY);
-        commands.send(Command::Start(request.clone(), events)).map_err(|_| CameraError::Backend("the camera worker stopped".into()))?;
+        let commands = self.ensure_worker()?;
+        // A failed send means the worker thread has exited (a panic in the capture backend):
+        // drop the dead sender so the retry below spawns a new worker instead of failing every
+        // later `start` until DeckCraft restarts.
+        if commands.send(Command::Start(request.clone(), events)).is_err() {
+            self.commands = None;
+            let commands = self.ensure_worker()?;
+            let (events, receiver) = mpsc::sync_channel(EVENT_CAPACITY);
+            commands.send(Command::Start(request.clone(), events)).map_err(|_| CameraError::Backend("the camera worker stopped".into()))?;
+            return Ok(CameraSession { started_at: web_time::Instant::now(), events: receiver });
+        }
         Ok(CameraSession { started_at: web_time::Instant::now(), events: receiver })
     }
 
@@ -403,5 +412,17 @@ mod tests {
         assert!(matches!(next_command(&rx, true), Some(Command::Stop)), "Stop is taken on the next frame");
         drop(tx);
         assert!(matches!(next_command(&rx, true), Some(Command::Quit)), "a gone host ends the worker");
+    }
+
+    #[test]
+    fn a_dead_worker_is_replaced_on_the_next_start() {
+        let mut camera = SystemCamera::default();
+        // A sender whose worker is gone: the next `start` must not reuse it.
+        let (dead, receiver) = mpsc::channel::<Command>();
+        drop(receiver);
+        camera.commands = Some(dead);
+        let session = camera.start(&CameraRequest::default()).expect("a new worker serves the start");
+        drop(session);
+        camera.stop();
     }
 }

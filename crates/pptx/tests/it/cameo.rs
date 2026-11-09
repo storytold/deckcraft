@@ -105,6 +105,39 @@ fn cameo_with_a_raster_placeholder_keeps_the_marker() {
 }
 
 #[test]
+fn an_svg_cameo_keeps_its_blip_adjustments() {
+    // A grayscale SVG Cameo must write `a:grayscl` inside the blip (before its `a:extLst`) and
+    // read it back, like the raster form does.
+    let mut p = deck("cameo-placeholder.svg", svg());
+    if let Some(s) = p.slides.first_mut() {
+        for sh in &mut std::sync::Arc::make_mut(s).shapes {
+            if let ShapeKind::Picture { fill } = &mut sh.kind {
+                fill.adjust.grayscale = true;
+            }
+        }
+    }
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let xml = part(&bytes, "ppt/slides/slide1.xml");
+    let blip = xml.find("<a:blip>").expect("an open blip in {xml}");
+    let after = &xml[blip..];
+    let ext = after.find("<a:extLst>").expect("an extLst in {xml}");
+    let gray = after.find("<a:grayscl/>").expect("grayscale in {xml}");
+    assert!(gray < ext, "adjustments ride in the blip before its extLst: {xml}");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let mut found = None;
+    deckcraft_model::walk(&q.slides[0].shapes, &mut |sh, _| {
+        if sh.name == "Camera 1" {
+            found = Some(sh.clone());
+        }
+    });
+    let grayscale = match &found.expect("cameo").kind {
+        ShapeKind::Picture { fill } => fill.adjust.grayscale,
+        _ => panic!("picture"),
+    };
+    assert!(grayscale, "grayscale survives the round trip");
+}
+
+#[test]
 fn a_camera_background_survives_a_round_trip() {
     let raw = concat!(
         "<alf:liveFeedProps xmlns:alf=\"http://schemas.microsoft.com/office/drawing/2021/livefeed\">",

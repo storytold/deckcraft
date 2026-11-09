@@ -389,7 +389,10 @@ fn paint_preview_overlay(
     let moving = app.anim_preview_draw().is_some();
     let Some(rect) = app.slide_rect else { return };
     let ppp = ctx.pixels_per_point();
-    let size = ((rect.width() * ppp).round().max(1.0) as u32, (rect.height() * ppp).round().max(1.0) as u32);
+    let full = ((rect.width() * ppp).round().max(1.0) as u32, (rect.height() * ppp).round().max(1.0) as u32);
+    // The slide texture avoids a picture the GPU cannot hold (`fit_texture`/`max_side`); the
+    // overlay renders at the same size so it still lands texel-aligned with it.
+    let size = crate::textures::fit_size(full, crate::textures::max_side(ctx));
     let gray = app.ui.grayscale;
     let fresh = app.camera.over.as_ref().is_some_and(|(p, s, sk, g, _)| *p == ptr && *s == size && *sk == skip && *g == gray);
     if !fresh || moving {
