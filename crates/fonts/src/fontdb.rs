@@ -398,6 +398,7 @@ pub struct FontDb {
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
 struct CoverageIndex {
+    generation: u64,
     files: Vec<CoverageFile>,
 }
 
@@ -1210,7 +1211,11 @@ impl FontDb {
             sys.tried.clear();
             sys.misses.clear();
         }
-        self.coverage.lock().unwrap_or_else(std::sync::PoisonError::into_inner).files.clear();
+        {
+            let mut coverage = self.coverage.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            coverage.generation = coverage.generation.wrapping_add(1);
+            coverage.files.clear();
+        }
         count
     }
 
@@ -1299,9 +1304,10 @@ impl FontDb {
         }
         let cp = u32::from(c);
         for path in paths {
-            let cached = {
+            let (coverage_gen, cached) = {
                 let coverage = self.coverage.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                coverage.files.iter().find(|f| f.path == path).and_then(|f| f.ranges.as_deref().map(|r| !f.complete || ranges_hold(r, cp)))
+                let hit = coverage.files.iter().find(|f| f.path == path).and_then(|f| f.ranges.as_deref().map(|r| !f.complete || ranges_hold(r, cp)));
+                (coverage.generation, hit)
             };
             if let Some(hit) = cached {
                 if hit {
@@ -1312,11 +1318,13 @@ impl FontDb {
             let (ranges, complete) = coverage_ranges(&path);
             let hit = !complete || ranges_hold(&ranges, cp);
             let mut coverage = self.coverage.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(file) = coverage.files.iter_mut().find(|f| f.path == path) {
-                file.ranges = Some(ranges);
-                file.complete = complete;
-            } else {
-                coverage.files.push(CoverageFile { path, ranges: Some(ranges), complete });
+            if coverage.generation == coverage_gen {
+                if let Some(file) = coverage.files.iter_mut().find(|f| f.path == path) {
+                    file.ranges = Some(ranges);
+                    file.complete = complete;
+                } else {
+                    coverage.files.push(CoverageFile { path, ranges: Some(ranges), complete });
+                }
             }
             if hit {
                 return true;
