@@ -228,6 +228,11 @@ impl Session {
             self.view.ruler.manipulate = false;
             return Ok(Some(json!({"handled": true})));
         }
+        // Manipulation mode owns every arrow key, so a modified one it does not use (Alt+Up and
+        // Alt+Down) never nudges a selected shape or turns the page instead.
+        if matches!(k, "left" | "right" | "up" | "down") {
+            return Ok(Some(json!({"handled": true})));
+        }
         Ok(None)
     }
 

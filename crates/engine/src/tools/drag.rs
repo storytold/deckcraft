@@ -229,7 +229,7 @@ impl Session {
         // own outline, and the object nearest the edge decides where the whole drag goes.
         let bounds = origs.iter().map(|(_, x)| x.bounds()).reduce(|a, b| a.union(b)).unwrap_or_default();
         let moved_b = bounds + d;
-        let ruler_snap = if mods.cmd {
+        let ruler_snap = if mods.cmd || !self.view.ruler.visible {
             None
         } else {
             let outlines = self.ruler_outlines(&ids_now.iter().copied().zip(origs.iter().map(|o| o.1)).collect::<Vec<_>>(), d);

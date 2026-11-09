@@ -232,6 +232,7 @@ pub fn snap_outlines(outlines: &[Vec<Point>], r: &RulerState, tol: f64) -> Optio
     outlines.iter().filter_map(|p| snap_points(p, r, tol)).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, d)| d)
 }
 
+/// The nearest edge's gap and the translation that closes it, for one outline.
 fn snap_points(points: &[Point], r: &RulerState, tol: f64) -> Option<(f64, Vec2)> {
     if !r.visible || points.is_empty() || !points.iter().all(|p| p.x.is_finite() && p.y.is_finite()) {
         return None;

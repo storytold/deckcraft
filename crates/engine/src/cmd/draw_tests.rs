@@ -291,10 +291,25 @@ fn only_left_and_right_turn_the_ruler() {
     let mut s = blank();
     s.execute("draw.ruler", &json!({"on": true, "x": 300, "y": 200, "angle": 0})).unwrap();
     s.key("F6", Mods { shift: true, ..Mods::default() }).unwrap();
-    s.key("Up", Mods { alt: true, ..Mods::default() }).unwrap();
-    s.key("Down", Mods { alt: true, ..Mods::default() }).unwrap();
+    // A selected shape would be the one an unused Alt+arrow moved if they fell through.
+    let id = rect(&mut s, [100.0, 100.0, 100.0, 50.0]);
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
+    s.pointer(ev(PointerKind::Down, 150.0, 125.0)).unwrap();
+    s.pointer(ev(PointerKind::Up, 150.0, 125.0)).unwrap();
+    let before = box_of(&s, id);
+    let page = s.doc().unwrap().selection.slide;
+    for k in ["Up", "Down"] {
+        let r = s.key(k, Mods { alt: true, ..Mods::default() }).unwrap();
+        assert_eq!(r["handled"], true, "manipulation mode owns Alt+{k}");
+    }
     assert_eq!(ruler(&mut s)["angle"].as_f64(), Some(0.0), "Alt+Up/Down do not turn it");
     assert_eq!((ruler(&mut s)["x"].as_f64(), ruler(&mut s)["y"].as_f64()), (Some(300.0), Some(200.0)));
+    assert_eq!(box_of(&s, id), before, "nor do they nudge the selection");
+    // With nothing selected they would otherwise step the slide deck.
+    s.execute("edit.select", &json!({"ids": []})).unwrap();
+    let r = s.key("Up", Mods { alt: true, ..Mods::default() }).unwrap();
+    assert_eq!(r["handled"], true);
+    assert_eq!(s.doc().unwrap().selection.slide, page, "nor turn the page");
     s.key("Left", Mods { alt: true, ..Mods::default() }).unwrap();
     assert_eq!(ruler(&mut s)["angle"].as_f64(), Some(345.0));
 }
