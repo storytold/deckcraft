@@ -24,7 +24,7 @@ use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, SlideId, find_sha
 use serde_json::{Value, json};
 
 use crate::delta::delta;
-use crate::history::{Change, GroupImage, Histories, Image, Restore, ShapeImage, SlideImage, Snapshot, Step};
+use crate::history::{Change, GroupImage, Histories, Image, Restore, ShapeImage, SlideImage, Snapshot, Step, TransitionImage};
 use crate::keys::{KeyIssuer, KeyMap};
 use crate::media::MediaCache;
 
@@ -305,9 +305,9 @@ impl Adapter {
     ///
     /// Shape value steps record one image per object a merge touched (a group's fill/outline
     /// records every member). `slide.delete`, `slide.new` and `slide.duplicate` record the whole
-    /// slide, which is what structural undo restores (RFC §13, item 4). A shape insert (preset,
-    /// picture, media) and `edit.delete` record the whole shape with its place in the z-order and
-    /// its animations (RFC §6).
+    /// slide, which is what structural undo restores (RFC §13, item 4). A transition step records
+    /// the slide's whole transition. A shape insert (preset, picture, media) and `edit.delete`
+    /// record the whole shape with its place in the z-order and its animations (RFC §6).
     fn capture_step(&self, before: &Presentation, after: &Presentation, op: &OpEnvelope) -> Option<(Vec<Change>, Vec<Change>)> {
         let (cell, image) = match &op.payload {
             Payload::ShapeMove { .. } | Payload::ShapeSetBounds { .. } => (None, Image::Xfrm { x: 0.0, y: 0.0, w: 0.0, h: 0.0 }),
@@ -316,6 +316,7 @@ impl Adapter {
             Payload::TextInsert { .. } | Payload::TextDelete { .. } => (None, Image::Text(String::new())),
             Payload::ShapeFill { .. } => return self.capture_appearance(before, after, op, Image::Fill(None)),
             Payload::ShapeLine { .. } => return self.capture_appearance(before, after, op, Image::Line(None)),
+            Payload::SlideTransition { .. } => return self.capture_transition_step(before, after, op),
             Payload::FormatSet { .. } => (None, Image::Format(TextBody::default())),
             Payload::ShapeField { field, .. } => (None, image_of_field(*field)),
             Payload::ShapeInsert { .. } | Payload::PictureInsert { .. } | Payload::MediaInsert { .. } => {
@@ -535,6 +536,18 @@ impl Adapter {
         (!old.is_empty()).then_some((old, new))
     }
 
+    /// Undo of a `transition.set` step: the slide's whole transition before and after.
+    fn capture_transition_step(&self, before: &Presentation, after: &Presentation, op: &OpEnvelope) -> Option<(Vec<Change>, Vec<Change>)> {
+        let key = op.target.slide.clone()?;
+        let id = self.keys.slide_id(&key)?;
+        let was = before.slide(id)?.transition.clone();
+        let now = after.slide(id)?.transition.clone();
+        Some((
+            vec![Change::SlideTransition(TransitionImage { slide: key.clone(), transition: was })],
+            vec![Change::SlideTransition(TransitionImage { slide: key, transition: now })],
+        ))
+    }
+
     /// Undo of `slide.delete`: the whole slide was present before and is absent after.
     fn capture_slide_delete(&self, before: &Presentation, after: &Presentation, op: &OpEnvelope) -> Option<(Vec<Change>, Vec<Change>)> {
         let key = op.target.slide.clone()?;
@@ -565,6 +578,11 @@ impl Adapter {
                     Some(_) => Some(Change::Slide(self.slide_image(doc, &snapshot.key, id)?)),
                     None => Some(Change::Slide(absent_slide(snapshot.key.clone()))),
                 }
+            }
+            Change::SlideTransition(snapshot) => {
+                let id = self.keys.slide_id(&snapshot.slide)?;
+                let slide = doc.slide(id)?;
+                Some(Change::SlideTransition(TransitionImage { slide: snapshot.slide.clone(), transition: slide.transition.clone() }))
             }
         }
     }
@@ -809,6 +827,19 @@ impl Adapter {
                 let mut args = line.args();
                 args["ids"] = json!([shape.0]);
                 self.call(session, "shape.line", args, head)
+            }
+            Payload::SlideTransition { transition } => {
+                let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
+                let index = before.slide_index(slide).ok_or_else(|| Rejection::stale("the slide is gone", Some(head)))?;
+                let value = match transition {
+                    Some(spec) => {
+                        let value =
+                            crate::transition::value(spec).ok_or_else(|| Rejection::invalid("the transition value is not valid", Some(head)))?;
+                        serde_json::to_value(value).map_err(|_| Rejection::invalid("the transition value is not valid", Some(head)))?
+                    }
+                    None => Value::Null,
+                };
+                self.call(session, "slide.transition.set", json!({"index": index, "transition": value}), head)
             }
             Payload::FormatSet { format, args } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
@@ -1218,6 +1249,7 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::ShapeFill { .. }
         | Payload::ShapeLine { .. }
         | Payload::FormatSet { .. }
+        | Payload::SlideTransition { .. }
         | Payload::ShapeField { .. }
         | Payload::ShapeFields { .. } => OpKind::Command,
         Payload::ShapeInsert { .. }
@@ -1278,7 +1310,7 @@ fn reorder_index(
 mod tests {
     use super::*;
     use crate::history::ActorHistory;
-    use deckcraft_collab_proto::{FillSpec, FormatCmd, LineSpec, ShapeBounds, ShapeRestoreItem, TextCursor};
+    use deckcraft_collab_proto::{FillSpec, FormatCmd, LineSpec, ShapeBounds, ShapeRestoreItem, TextCursor, TransitionSpec};
 
     /// A deck with one blank slide and two shapes, built through the same commands on every
     /// replica so ids and keys line up.
@@ -2527,5 +2559,130 @@ mod tests {
         let err = ad.apply(&mut s, 0, "a", &forged).expect_err("a restore is not a user edit");
         assert_eq!(err.code, RejectCode::Invalid);
         assert_eq!(doc_of(&s).slides[0].shapes.len(), 2, "nothing was inserted");
+    }
+
+    fn transition(kind: &str, duration_ms: u32) -> Payload {
+        Payload::SlideTransition { transition: Some(TransitionSpec { kind: kind.into(), duration_ms, ..TransitionSpec::default() }) }
+    }
+
+    fn transition_of(doc: &Presentation) -> Option<deckcraft_model::anim::Transition> {
+        doc.slides[0].transition.clone()
+    }
+
+    #[test]
+    fn a_transition_change_converges_on_both_replicas() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let slide = aa.keys().slide_key(doc_of(&a).slides[0].id).expect("slide").clone();
+
+        let fade = op(OpKind::Command, 0, Target { slide: Some(slide), ..Target::default() }, transition("fade", 700));
+        let da = aa.apply(&mut a, 0, "a", &fade).expect("apply a");
+        let db = bb.apply(&mut b, 0, "b", &fade).expect("apply b");
+        assert_eq!(da, db, "the same operation has the same delta on both replicas");
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas hold the same transition");
+        let t = transition_of(&doc_of(&a)).expect("a transition");
+        assert_eq!((t.kind.as_str(), t.duration_ms), ("fade", 700));
+        assert!(!da.is_empty(), "the slide's transition is a reported change");
+    }
+
+    #[test]
+    fn a_second_participant_replaces_the_transition_and_the_first_undo_is_refused() {
+        let (mut a, mut b) = (deck(), deck());
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let slide = aa.keys().slide_key(doc_of(&a).slides[0].id).expect("slide").clone();
+
+        let fade = op(OpKind::Command, 0, Target { slide: Some(slide.clone()), ..Target::default() }, transition("fade", 700));
+        aa.apply(&mut a, 0, "a", &fade).expect("a fades");
+        bb.apply_confirmed(&mut b, 0, "a", &fade).expect("b sees the fade");
+
+        // Bob decided on the push before Alice's fade reached him (`baseVersion` 0, head 1): the
+        // value is absolute, so nothing is rebased and the later accepted value wins.
+        let push = op(OpKind::Command, 0, Target { slide: Some(slide.clone()), ..Target::default() }, transition("push", 1000));
+        let da = aa.apply(&mut a, 1, "b", &push).expect("a sees b's push");
+        let db = bb.apply(&mut b, 1, "b", &push).expect("b pushes");
+        assert_eq!(da, db);
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(transition_of(&doc_of(&a)).map(|t| t.kind), Some("push".into()), "the later value wins");
+
+        let err = aa.undo(&a, 2, "a", "undo-1").expect_err("undo would overwrite Bob's later change");
+        assert_eq!(err.code, RejectCode::UndoConflict);
+        assert_eq!(transition_of(&doc_of(&a)).map(|t| t.kind), Some("push".into()), "a refused undo changes nothing");
+
+        // Bob's own undo puts back the fade his step replaced.
+        let undo = bb.undo(&b, 2, "b", "undo-2").expect("b's undo");
+        bb.apply(&mut b, 2, "b", &undo).expect("b restores");
+        aa.apply_confirmed(&mut a, 2, "b", &undo).expect("a sees b's restore");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(transition_of(&doc_of(&a)).map(|t| t.kind), Some("fade".into()));
+    }
+
+    #[test]
+    fn undo_of_a_transition_step_restores_the_whole_value_it_replaced_on_both_replicas() {
+        let (mut a, mut b) = (deck(), deck());
+        // Both replicas start from the same transition: an advance timing and a duration that
+        // `transition.set` keeps while it changes only the effect.
+        for s in [&mut a, &mut b] {
+            s.apply_remote("transition.timing", &json!({"duration": 900, "after": 5000})).expect("timing");
+        }
+        let mut aa = Adapter::new("k");
+        let mut bb = Adapter::new("k");
+        aa.join(&doc_of(&a));
+        bb.join(&doc_of(&b));
+        let slide = aa.keys().slide_key(doc_of(&a).slides[0].id).expect("slide").clone();
+
+        let fade = op(OpKind::Command, 0, Target { slide: Some(slide.clone()), ..Target::default() }, transition("fade", 700));
+        aa.apply(&mut a, 0, "a", &fade).expect("a fades");
+        bb.apply_confirmed(&mut b, 0, "a", &fade).expect("b sees the fade");
+        assert_eq!(transition_of(&doc_of(&a)), transition_of(&doc_of(&b)));
+
+        let undo = aa.undo(&a, 1, "a", "undo-1").expect("undo the transition");
+        let Payload::SlideTransition { transition: Some(value) } = &undo.payload else { panic!("the whole previous transition") };
+        assert_eq!((value.kind.as_str(), value.duration_ms, value.advance_after_ms), ("none", 900, Some(5000)));
+        aa.apply(&mut a, 1, "a", &undo).expect("a restores");
+        bb.apply_confirmed(&mut b, 1, "a", &undo).expect("b restores");
+        assert_eq!(doc_of(&a), doc_of(&b), "the restore converges");
+        let t = transition_of(&doc_of(&a)).expect("the timing keeps a transition");
+        assert_eq!((t.kind.as_str(), t.duration_ms, t.advance_after_ms), ("none", 900, Some(5000)));
+
+        let redo = aa.redo(&a, 2, "a", "redo-1").expect("redo the transition");
+        aa.apply(&mut a, 2, "a", &redo).expect("a reapplies");
+        bb.apply_confirmed(&mut b, 2, "a", &redo).expect("b reapplies");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert_eq!(transition_of(&doc_of(&a)).map(|t| t.kind), Some("fade".into()));
+    }
+
+    #[test]
+    fn a_transition_restore_cannot_name_another_value() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let slide = ad.keys().slide_key(doc_of(&s).slides[0].id).expect("slide").clone();
+        ad.apply(&mut s, 0, "a", &op(OpKind::Command, 0, Target { slide: Some(slide.clone()), ..Target::default() }, transition("fade", 700)))
+            .expect("fade");
+        let mut undo = ad.undo(&s, 1, "a", "undo-1").expect("undo");
+        undo.payload = transition("wipe", 1000);
+        let err = ad.apply(&mut s, 1, "a", &undo).expect_err("a restore must repeat its recorded value");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert_eq!(transition_of(&doc_of(&s)).map(|t| t.kind), Some("fade".into()), "nothing was written");
+    }
+
+    #[test]
+    fn an_unknown_effect_on_the_wire_is_refused() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let slide = ad.keys().slide_key(doc_of(&s).slides[0].id).expect("slide").clone();
+        // An effect the model cannot name is accepted only with the XML a file kept for it.
+        let err = ad
+            .apply(&mut s, 0, "a", &op(OpKind::Command, 0, Target { slide: Some(slide), ..Target::default() }, transition("mystery", 1000)))
+            .expect_err("unknown effect without kept XML");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert!(transition_of(&doc_of(&s)).is_none(), "nothing was written");
     }
 }

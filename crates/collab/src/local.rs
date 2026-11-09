@@ -543,6 +543,35 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
             }
             Ok(out)
         }
+        "transition.set" => {
+            // The whole resulting transition, computed with the same planning function the
+            // single-user command runs: `transition.set` keeps the advance timings, the embedded
+            // sound and the kept XML of the value it found, so sending its arguments would let
+            // each replica merge them against a different state.
+            let index = match p.get("index") {
+                None | Some(Value::Null) => {
+                    if st.selection.slides.len() > 1 {
+                        return Err(LocalError::Unsupported("a transition on several selected slides".into()));
+                    }
+                    st.selection.slides.first().copied().and_then(|id| st.doc.slide_index(id)).unwrap_or(st.selection.slide)
+                }
+                Some(v) => v
+                    .as_u64()
+                    .and_then(|v| usize::try_from(v).ok())
+                    .ok_or_else(|| LocalError::BadParams(format!("`index` is not a valid slide index: {v}")))?,
+            };
+            let target = st.doc.slides.get(index).ok_or_else(|| LocalError::BadParams("no such slide".into()))?;
+            let plan =
+                deckcraft_engine::cmd::transition::set_plan(target.transition.as_ref(), p).map_err(|e| LocalError::BadParams(e.to_string()))?;
+            let transition = match plan {
+                Some(value) => {
+                    Some(crate::transition::spec(&value).ok_or_else(|| LocalError::BadParams("the transition value cannot be sent".into()))?)
+                }
+                None => None,
+            };
+            let key = keys.slide_key(target.id).cloned().ok_or(LocalError::NoDocument)?;
+            Ok(vec![make(Target { slide: Some(key), ..Target::default() }, Payload::SlideTransition { transition })])
+        }
         cmd if cmd.starts_with("format.") => {
             let format = FormatCmd::from_id(cmd).ok_or_else(|| LocalError::Unsupported(cmd.into()))?;
             if st.selection.text.is_some() {
@@ -889,6 +918,37 @@ mod tests {
     }
 
     #[test]
+    fn a_transition_command_normalises_to_its_whole_final_value() {
+        let (mut s, doc, slide, _) = deck();
+        s.execute("transition.timing", &json!({"after": 4000})).expect("timing");
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        let ops = normalize(&km, st, "transition.set", &json!({"kind": "push", "option": "l"}), "op", &doc).expect("transition");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].kind, OpKind::Command);
+        assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
+        match &ops[0].payload {
+            Payload::SlideTransition { transition: Some(value) } => {
+                assert_eq!((value.kind.as_str(), value.option.as_str(), value.duration_ms), ("push", "l", 1000));
+                assert_eq!(value.advance_after_ms, Some(4000), "the plan keeps what the user did not name");
+                assert!(value.advance_on_click);
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // `none` with nothing else to keep collapses to the model's "no transition".
+        s.execute("transition.timing", &json!({"after": null})).expect("clear the timing");
+        let st = s.doc().expect("doc");
+        let ops = normalize(&km, st, "transition.set", &json!({"kind": "none"}), "op", &doc).expect("none");
+        assert!(matches!(ops[0].payload, Payload::SlideTransition { transition: None }));
+
+        // An unknown effect is refused before anything is sent, and a bad index never falls back
+        // to the selected slide.
+        assert!(matches!(normalize(&km, st, "transition.set", &json!({"kind": "nope"}), "op", &doc), Err(LocalError::BadParams(_))));
+        assert!(matches!(normalize(&km, st, "transition.set", &json!({"kind": "fade", "index": -1}), "op", &doc), Err(LocalError::BadParams(_))));
+    }
+
+    #[test]
     fn align_normalises_the_whole_selection_into_one_final_bounds_step() {
         let (mut s, doc, slide, shapes) = deck();
         s.execute("edit.select", &json!({"ids": shapes})).expect("select both");
@@ -981,8 +1041,8 @@ mod tests {
     fn commands_outside_the_v1_set_are_refused_by_name() {
         let (s, doc, _, _) = deck();
         let km = keys(s.doc().expect("doc").doc.as_ref());
-        let e = normalize(&km, s.doc().expect("doc"), "transition.set", &json!({}), "op", &doc).expect_err("refused");
-        assert_eq!(e, LocalError::Unsupported("transition.set".into()));
+        let e = normalize(&km, s.doc().expect("doc"), "slide.notes", &json!({"text": "x"}), "op", &doc).expect_err("refused");
+        assert_eq!(e, LocalError::Unsupported("slide.notes".into()));
     }
 
     #[test]

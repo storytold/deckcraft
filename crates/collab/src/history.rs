@@ -18,6 +18,7 @@
 use std::collections::HashMap;
 
 use deckcraft_collab_proto::{Payload, ShapeBounds, ShapeField, ShapeFieldItem, ShapeKey, ShapeRestoreItem, SlideKey};
+use deckcraft_model::anim::Transition;
 use deckcraft_model::text::TextBody;
 use deckcraft_model::{Fill, Line};
 
@@ -66,6 +67,16 @@ pub struct SlideImage {
     pub shows: Vec<(u32, u32)>,
 }
 
+/// One slide's transition, present or absent, for a `transition.set` step. The value is the whole
+/// model transition: the command keeps advance timings, the embedded sound and kept XML of the
+/// value it replaced, so a restore must put all of it back.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TransitionImage {
+    pub slide: SlideKey,
+    /// `None` = the slide had no transition.
+    pub transition: Option<Transition>,
+}
+
 /// A whole shape, present or absent, for a structural step: the model as JSON (its id, text,
 /// geometry and every other field), the group that held it and its place among that group's
 /// children, and the animations that named it or a descendant — including the effects of other
@@ -112,13 +123,15 @@ pub struct GroupImage {
     pub animations: Vec<serde_json::Value>,
 }
 
-/// One object a step touched: a shape value, a whole shape, a whole group or a whole slide.
+/// One object a step touched: a shape value, a whole shape, a whole group, a whole slide or one
+/// slide's transition.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Change {
     Shape(Snapshot),
     ShapeBody(ShapeImage),
     GroupSubtree(GroupImage),
     Slide(SlideImage),
+    SlideTransition(TransitionImage),
 }
 
 impl Change {
@@ -148,6 +161,7 @@ impl Change {
                 (Some(x), Some(y)) => a.key == b.key && x == y,
                 _ => false,
             },
+            (Change::SlideTransition(a), Change::SlideTransition(b)) => a.slide == b.slide && a.transition == b.transition,
             _ => false,
         }
     }
@@ -183,7 +197,8 @@ impl Image {
 /// One shape value keeps the single-object `ShapeField` payload; a group's appearance step is one
 /// `ShapeFields` merge so its members are restored atomically; a whole shape (or several) comes
 /// back in one `ShapeRestore` or goes in one `ShapeDelete`; a slide is a `SlideRestore` or a
-/// `SlideDelete`.
+/// `SlideDelete`; a transition step is one `SlideTransition`, the same payload the edit carried,
+/// with the whole model value the step replaced.
 pub fn restores(changes: &[Change]) -> Option<Restore> {
     match changes {
         [Change::Shape(at)] => {
@@ -199,6 +214,13 @@ pub fn restores(changes: &[Change]) -> Option<Restore> {
                 None => Payload::SlideDelete {},
             };
             Some(Restore { slide: at.key.clone(), shape: None, shapes: Vec::new(), payload })
+        }
+        [Change::SlideTransition(at)] => {
+            let transition = match &at.transition {
+                Some(value) => Some(crate::transition::spec(value)?),
+                None => None,
+            };
+            Some(Restore { slide: at.slide.clone(), shape: None, shapes: Vec::new(), payload: Payload::SlideTransition { transition } })
         }
         [] => None,
         many if many.iter().all(|change| matches!(change, Change::ShapeBody(_))) => {
@@ -627,6 +649,31 @@ mod tests {
         assert_eq!((index, sections), (2, vec![(0, 1)]));
         let redo = s.reapplying_payload().expect("slide delete");
         assert_eq!(redo.payload, Payload::SlideDelete {});
+    }
+
+    #[test]
+    fn a_transition_step_restores_the_whole_value_it_replaced() {
+        let fade = Transition { kind: "fade".into(), duration_ms: 700, advance_after_ms: Some(5000), ..Transition::default() };
+        let step = Step {
+            op_id: "op".into(),
+            version: 3,
+            before: vec![Change::SlideTransition(TransitionImage { slide: "s2".into(), transition: Some(fade.clone()) })],
+            after: vec![Change::SlideTransition(TransitionImage { slide: "s2".into(), transition: None })],
+        };
+        let undo = step.restoring_payload().expect("transition restore");
+        assert_eq!(undo.slide.0, "s2");
+        assert!(undo.shape.is_none());
+        let Payload::SlideTransition { transition: Some(value) } = undo.payload else { panic!("one whole transition") };
+        assert_eq!((value.kind.as_str(), value.duration_ms, value.advance_after_ms), ("fade", 700, Some(5000)));
+        let redo = step.reapplying_payload().expect("transition redo");
+        assert_eq!(redo.payload, Payload::SlideTransition { transition: None });
+
+        let at = Change::SlideTransition(TransitionImage { slide: "s2".into(), transition: Some(fade.clone()) });
+        assert!(at.same_state(&at));
+        let other = Change::SlideTransition(TransitionImage { slide: "s2".into(), transition: None });
+        assert!(!at.same_state(&other), "someone replaced the transition after the step");
+        let elsewhere = Change::SlideTransition(TransitionImage { slide: "s1".into(), transition: Some(fade) });
+        assert!(!at.same_state(&elsewhere), "the image names one slide");
     }
 
     #[test]

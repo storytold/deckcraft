@@ -20,6 +20,7 @@ pub mod local;
 pub mod media;
 pub mod presence;
 pub mod session;
+pub mod transition;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod transport;
 

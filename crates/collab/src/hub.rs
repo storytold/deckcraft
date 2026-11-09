@@ -121,6 +121,7 @@ impl Hub {
                     "slide.new".into(),
                     "slide.delete".into(),
                     "slide.move".into(),
+                    "slide.transition.set".into(),
                     "arrange.group".into(),
                     "arrange.ungroup".into(),
                     "arrange.reorder".into(),

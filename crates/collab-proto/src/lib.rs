@@ -177,6 +177,12 @@ pub enum Payload {
     /// left out keeps the shape's value on every replica because the confirmed command carries
     /// the same arguments.
     ShapeLine { line: LineSpec },
+    /// Sets one slide's transition to a complete final value (`None`: no transition). The whole
+    /// value travels, not the arguments of `transition.set`: `transition.set` keeps the advance
+    /// timings and the embedded sound of the value it replaces, so a replica that merged the same
+    /// arguments against its own state could keep a different value. The command is also the
+    /// exact-value restore of a transition step (ADR 0010), checked like `shape_field`.
+    SlideTransition { transition: Option<TransitionSpec> },
     /// One allowlisted `format.*` command with absolute arguments, aimed at the whole text body
     /// of `target.shape`. Run-level ranges are a later slice (RFC §15).
     FormatSet { format: FormatCmd, args: serde_json::Value },
@@ -332,6 +338,50 @@ impl FillSpec {
             FillSpec::Solid { color } => serde_json::json!({"color": color}),
             FillSpec::None => serde_json::json!({"none": true}),
             FillSpec::Background => serde_json::json!({"background": true}),
+        }
+    }
+}
+
+/// A final slide transition, field for field the model's `Transition` (`crates/model/src/anim.rs`):
+/// the effect id, its option, the duration, the advance settings, the embedded sound and the
+/// unmodelled XML a file kept for round-trip. `None` on `Payload::SlideTransition` means the
+/// slide has no transition, which is the model's own representation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TransitionSpec {
+    /// Effect id: `none`, `fade`, `push`, `wipe`, … (the model's `TRANSITIONS`), or the local name
+    /// of an effect the model does not know, in which case `raw` carries its XML.
+    pub kind: String,
+    /// Effect option, e.g. a direction (`l`, `r`, `u`, `d`, `horz`, `vert`).
+    pub option: String,
+    pub duration_ms: u32,
+    pub advance_on_click: bool,
+    pub advance_after_ms: Option<u32>,
+    /// Embedded sound media id; the object lives in the document's media list on every replica.
+    pub sound: Option<u32>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub sound_loop: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub stop_sound: bool,
+    /// Unmodelled transition XML kept for round-trip.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
+}
+
+impl Default for TransitionSpec {
+    /// The model's defaults (an empty `Transition`), so a payload that omits a field means the
+    /// same value on every replica.
+    fn default() -> Self {
+        TransitionSpec {
+            kind: "none".into(),
+            option: String::new(),
+            duration_ms: 1000,
+            advance_on_click: true,
+            advance_after_ms: None,
+            sound: None,
+            sound_loop: false,
+            stop_sound: false,
+            raw: None,
         }
     }
 }
@@ -508,6 +558,7 @@ impl Payload {
             },
             Payload::ShapeFill { .. } => "shape.fill",
             Payload::ShapeLine { .. } => "shape.line",
+            Payload::SlideTransition { .. } => "slide.transition.set",
             Payload::FormatSet { format, .. } => format.id(),
             Payload::ShapeField { .. } => "shape.setField",
             Payload::ShapeFields { .. } => "shape.setFields",
@@ -1118,6 +1169,32 @@ mod tests {
         assert_eq!(Payload::TextSet { text: "hi".into(), cell: None }.command(), "text.set");
         assert_eq!(Payload::SlideMove { before: None }.command(), "slide.move");
         assert_eq!(Payload::Reorder { before: None }.command(), "arrange.reorder");
+        assert_eq!(Payload::SlideTransition { transition: None }.command(), "slide.transition.set");
+    }
+
+    #[test]
+    fn a_transition_travels_as_a_complete_value() {
+        let fade = TransitionSpec {
+            kind: "fade".into(),
+            option: "smoothly".into(),
+            duration_ms: 700,
+            advance_after_ms: Some(5000),
+            sound: Some(3),
+            ..TransitionSpec::default()
+        };
+        let payload = Payload::SlideTransition { transition: Some(fade.clone()) };
+        let text = serde_json::to_string(&payload).expect("encode");
+        assert!(text.contains("\"cmd\":\"slide_transition\""), "{text}");
+        assert!(text.contains("\"advanceAfterMs\":5000"), "{text}");
+        assert!(text.contains("\"sound\":3"), "{text}");
+        assert!(text.contains("\"advanceOnClick\":true"), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), payload);
+
+        let none = Payload::SlideTransition { transition: None };
+        let text = serde_json::to_string(&none).expect("encode");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), none);
+        assert_eq!(TransitionSpec::default().kind, "none", "the model's default, not Rust's");
+        assert!(TransitionSpec::default().advance_on_click);
     }
 
     #[test]
