@@ -928,7 +928,7 @@ fn narration_wav(rate: u32, samples: &[f32]) -> Option<Vec<u8>> {
     let min_n = (rate as u64).saturating_mul(200) / 1000;
     let mut sum = 0.0f64;
     let mut n = 0u64;
-    for s in samples.iter().take(48_000 * 60 * 10) {
+    for s in samples.iter().take((rate as usize).saturating_mul(60 * 10)) {
         if s.is_finite() {
             let v = *s as f64;
             sum += v * v;

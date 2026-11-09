@@ -1455,6 +1455,22 @@ fn narration_skips_silence_and_play_narrations_can_turn_it_off() {
 }
 
 #[test]
+fn narration_scan_covers_ten_minutes_at_the_device_rate() {
+    // A 96 kHz take holds ten minutes (57.6M samples); quiet for the first five minutes of a
+    // fixed 48 kHz scan must not hide speech later in the take. The tail is a full second of
+    // tone so it clears the 0.008 RMS gate even diluted across the ten-minute scan.
+    let rate = 96_000u32;
+    let five_min = (rate as usize) * 60 * 5;
+    let tail = rate as usize;
+    let mut samples = vec![0.0f32; five_min + tail];
+    for (i, s) in samples.iter_mut().enumerate().skip(five_min) {
+        *s = ((i as f32) * 0.2).sin() * 0.3;
+    }
+    assert!(narration_wav(rate, &samples).is_some());
+    assert!(narration_wav(rate, &vec![0.0f32; five_min + tail]).is_none());
+}
+
+#[test]
 fn ctrl_shows_the_laser_without_a_trace_and_the_button_can_leave_it_on() {
     assert!(pointer_is_laser(false, true, false));
     assert!(pointer_is_laser(true, false, false));
