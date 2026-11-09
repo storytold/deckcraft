@@ -216,9 +216,12 @@ impl DocSession {
         let rebases = match &op.payload {
             deckcraft_collab_proto::Payload::TextInsert { .. } | deckcraft_collab_proto::Payload::TextDelete { .. } => true,
             deckcraft_collab_proto::Payload::TextSet { cell, .. } => cell.is_some(),
-            // A format step addresses one cell and no offset: only a row or column edit can move
-            // it, and it must move, or the step would format the wrong cell.
-            deckcraft_collab_proto::Payload::FormatSet { cell, range, .. } => cell.is_some() || range.is_some(),
+            // A format step addresses one body or N cells and, per address, no offset, a range or
+            // a caret: a row or column edit moves every cell address, a text edit moves the
+            // offsets in its own body.
+            deckcraft_collab_proto::Payload::FormatSet { addresses, .. } => {
+                addresses.iter().any(|address| address.cell.is_some() || address.range.is_some() || address.caret.is_some())
+            }
             // Notes edits carry a body offset like shape text; their address is the slide, so a
             // slide move or a shape edit never shifts them.
             deckcraft_collab_proto::Payload::NotesInsert { .. } | deckcraft_collab_proto::Payload::NotesDelete { .. } => true,
@@ -298,11 +301,12 @@ impl DocSession {
             return Err(refuse(op, Rejection::stale("the text history was compacted; resync first", Some(self.version))));
         }
         // The cell address is part of the text address: a row or column edit moves it, and two
-        // operations in different cells of one table never shift each other's offsets.
-        let mut cell = match &op.payload {
-            Payload::TextSet { cell, .. } | Payload::TextInsert { cell, .. } | Payload::TextDelete { cell, .. } => *cell,
-            Payload::FormatSet { cell, .. } => *cell,
-            _ => None,
+        // operations in different cells of one table never shift each other's offsets. A
+        // `format.*` step addresses one body or N cells, so it carries as many cell addresses.
+        let mut cells: Vec<Option<(u32, u32)>> = match &op.payload {
+            Payload::TextSet { cell, .. } | Payload::TextInsert { cell, .. } | Payload::TextDelete { cell, .. } => vec![*cell],
+            Payload::FormatSet { addresses, .. } => addresses.iter().map(|address| address.cell).collect(),
+            _ => vec![None],
         };
         let shift = |point: &mut u32, payload: &Payload, cell: Option<(u32, u32)>| match payload {
             Payload::TextInsert { at, text, cell: entry } if *entry == cell => {
@@ -350,46 +354,60 @@ impl DocSession {
                 return Err(refuse(op, Rejection::stale("the notes were replaced after this edit began; resync first", Some(self.version))));
             }
             if let Payload::TableEdit { axis, at, insert } = &command.payload {
-                let index = match axis {
-                    deckcraft_collab_proto::TableAxis::Row => cell.as_mut().map(|(r, _)| r),
-                    deckcraft_collab_proto::TableAxis::Column => cell.as_mut().map(|(_, c)| c),
-                };
-                if let Some(index) = index {
-                    if *insert {
-                        if *index >= *at {
-                            *index = index.saturating_add(1);
+                for cell in cells.iter_mut() {
+                    let index = match axis {
+                        deckcraft_collab_proto::TableAxis::Row => cell.as_mut().map(|(r, _)| r),
+                        deckcraft_collab_proto::TableAxis::Column => cell.as_mut().map(|(_, c)| c),
+                    };
+                    if let Some(index) = index {
+                        if *insert {
+                            if *index >= *at {
+                                *index = index.saturating_add(1);
+                            }
+                        } else if *index == *at {
+                            return Err(refuse(op, Rejection::stale("the table line holding this operation was removed", Some(self.version))));
+                        } else if *index > *at {
+                            *index -= 1;
                         }
-                    } else if *index == *at {
-                        return Err(refuse(op, Rejection::stale("the table line holding this operation was removed", Some(self.version))));
-                    } else if *index > *at {
-                        *index -= 1;
                     }
                 }
                 continue;
             }
             match &mut op.payload {
-                Payload::TextInsert { at, .. } => shift(at, &command.payload, cell),
+                Payload::TextInsert { at, .. } => shift(at, &command.payload, cells[0]),
                 Payload::TextDelete { from, to, .. } => {
-                    shift(from, &command.payload, cell);
-                    shift(to, &command.payload, cell);
+                    shift(from, &command.payload, cells[0]);
+                    shift(to, &command.payload, cells[0]);
                 }
-                Payload::NotesInsert { at, .. } => shift(at, &command.payload, cell),
+                Payload::NotesInsert { at, .. } => shift(at, &command.payload, cells[0]),
                 Payload::NotesDelete { from, to } => {
-                    shift(from, &command.payload, cell);
-                    shift(to, &command.payload, cell);
+                    shift(from, &command.payload, cells[0]);
+                    shift(to, &command.payload, cells[0]);
                 }
-                // A run-range format addresses two offsets into the same body; both move by the
-                // edit that arrived before them, so the same characters are formatted (RFC §4.4).
-                Payload::FormatSet { range: Some(range), .. } => {
-                    shift(&mut range.from, &command.payload, cell);
-                    shift(&mut range.to, &command.payload, cell);
+                // A run-range format addresses two offsets into one body; a caret address one.
+                // Each address moves by the edit that arrived before it in its own body, so the
+                // same characters are formatted (RFC §4.4).
+                Payload::FormatSet { addresses, .. } => {
+                    for (address, cell) in addresses.iter_mut().zip(&cells) {
+                        if let Some(range) = &mut address.range {
+                            shift(&mut range.from, &command.payload, *cell);
+                            shift(&mut range.to, &command.payload, *cell);
+                        }
+                        if let Some(caret) = &mut address.caret {
+                            shift(caret, &command.payload, *cell);
+                        }
+                    }
                 }
                 _ => {}
             }
         }
         match &mut op.payload {
-            Payload::TextSet { cell: at, .. } | Payload::TextInsert { cell: at, .. } | Payload::TextDelete { cell: at, .. } => *at = cell,
-            Payload::FormatSet { cell: at, .. } => *at = cell,
+            Payload::TextSet { cell: at, .. } | Payload::TextInsert { cell: at, .. } | Payload::TextDelete { cell: at, .. } => *at = cells[0],
+            Payload::FormatSet { addresses, .. } => {
+                for (address, cell) in addresses.iter_mut().zip(cells) {
+                    address.cell = cell;
+                }
+            }
             _ => {}
         }
         let empty = match &op.payload {
@@ -397,10 +415,13 @@ impl DocSession {
             Payload::NotesDelete { from, to } => Some((to <= from, "the deleted text was already changed")),
             // The characters a queued range formats were removed after it was sent: the address
             // means nothing now, so the operation is refused instead of formatting a different
-            // span (RFC §15).
-            Payload::FormatSet { range: Some(range), .. } => {
-                Some((range.to <= range.from, "the formatted range was removed before this operation arrived"))
-            }
+            // span (RFC §15). A caret is a position, not a span: it stays valid when text around
+            // it changes, so it is never emptied here.
+            Payload::FormatSet { addresses, .. } => addresses
+                .iter()
+                .filter_map(|address| address.range)
+                .find(|range| range.to <= range.from)
+                .map(|_| (true, "the formatted range was removed before this operation arrived")),
             _ => None,
         };
         if let Some((true, message)) = empty {
@@ -664,6 +685,11 @@ mod tests {
     use super::*;
     use deckcraft_collab_proto::{FormatCmd, OpKind, Payload, RejectCode, ShapeKey, SlideKey, TableAxis, Target};
 
+    /// One `format.*` address.
+    fn address(cell: Option<(u32, u32)>, range: Option<deckcraft_collab_proto::TextRange>) -> deckcraft_collab_proto::FormatAddress {
+        deckcraft_collab_proto::FormatAddress { cell, range, caret: None }
+    }
+
     fn deck() -> Presentation {
         let mut s = Session::with_new();
         let title = s.doc().expect("doc").doc.slides[0].id;
@@ -861,7 +887,7 @@ mod tests {
         let queued = cell_op(
             &slide,
             &shape,
-            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)), range: None },
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), addresses: vec![address(Some((0, 0)), None)] },
             0,
             "bold",
         );
@@ -883,7 +909,7 @@ mod tests {
         let queued = cell_op(
             &slide,
             &shape,
-            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)), range: None },
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), addresses: vec![address(Some((0, 0)), None)] },
             0,
             "bold",
         );
@@ -912,7 +938,7 @@ mod tests {
         let queued = cell_op(
             &slide,
             &shape,
-            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)), range: None },
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), addresses: vec![address(Some((0, 0)), None)] },
             0,
             "bold",
         );
@@ -933,6 +959,93 @@ mod tests {
     }
 
     #[test]
+    fn a_multi_cell_format_with_an_unaddressable_body_is_refused_before_any_write() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        let before = s.document().expect("doc").clone();
+        let cases: Vec<(&str, Payload, RejectCode)> = vec![
+            ("empty", Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), addresses: vec![] }, RejectCode::Invalid),
+            (
+                "missing cell",
+                Payload::FormatSet {
+                    format: FormatCmd::Bold,
+                    args: json!({"on": true}),
+                    addresses: vec![address(Some((0, 0)), None), address(Some((5, 5)), None)],
+                },
+                RejectCode::Invalid,
+            ),
+            (
+                "range out of body",
+                Payload::FormatSet {
+                    format: FormatCmd::Bold,
+                    args: json!({"on": true}),
+                    addresses: vec![address(Some((0, 0)), Some(deckcraft_collab_proto::TextRange { from: 0, to: 9 }))],
+                },
+                RejectCode::Invalid,
+            ),
+            (
+                "duplicate cell",
+                Payload::FormatSet {
+                    format: FormatCmd::Bold,
+                    args: json!({"on": true}),
+                    addresses: vec![address(Some((0, 0)), None), address(Some((0, 0)), Some(deckcraft_collab_proto::TextRange { from: 0, to: 1 }))],
+                },
+                RejectCode::Invalid,
+            ),
+            (
+                "table without a cell",
+                Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), addresses: vec![address(None, None)] },
+                RejectCode::Unsupported,
+            ),
+        ];
+        for (name, payload, code) in cases {
+            let err = s.apply("a", &cell_op(&slide, &shape, payload, 0, name)).expect_err(name);
+            assert_eq!(err.code, code, "{name}: {err:?}");
+            assert_eq!(s.version(), 0, "{name}: the refused step does not bump the version");
+            assert_eq!(s.document(), Some(&before), "{name}: nothing was written");
+        }
+        assert_eq!(s.adapter.history().get("a").map(|h| h.undo_len()).unwrap_or(0), 0, "and no step was recorded");
+    }
+
+    #[test]
+    fn a_queued_multi_cell_format_moves_all_its_addresses_with_an_inserted_row() {
+        let mut s = DocSession::from_document("d", table_deck(), SessionConfig::default()).expect("session");
+        let (slide, shape) = table_keys(&s);
+        s.apply("b", &cell_op(&slide, &shape, Payload::TextSet { text: "cd".into(), cell: Some((0, 1)) }, 0, "seed")).expect("seed the second cell");
+        let queued = cell_op(
+            &slide,
+            &shape,
+            Payload::FormatSet {
+                format: FormatCmd::Bold,
+                args: json!({"on": true}),
+                addresses: vec![address(Some((0, 0)), None), address(Some((0, 1)), None)],
+            },
+            1,
+            "bold",
+        );
+        let row = OpEnvelope {
+            op_id: "row".into(),
+            doc: "d".into(),
+            base_version: 1,
+            kind: OpKind::Structural,
+            target: Target { slide: Some(slide), shape: Some(shape), ..Target::default() },
+            payload: Payload::TableEdit { axis: TableAxis::Row, at: 0, insert: true },
+            history: None,
+        };
+        s.apply("c", &row).expect("insert row");
+        s.apply("a", &queued).expect("both addresses follow their cells");
+        assert_eq!(s.version(), 3);
+        assert_eq!(cell(&s, 1, 0), "ab");
+        assert_eq!(cell(&s, 1, 1), "cd");
+        for (r, c, cell_name) in [(1, 0, "first"), (1, 1, "second")] {
+            let bolds = cell_bolds(&s, r, c);
+            assert!(!bolds.is_empty() && bolds.iter().all(|b| *b == Some(true)), "the {cell_name} addressed cell moved and is bold: {bolds:?}");
+        }
+        assert_eq!(cell_bolds(&s, 0, 0), Vec::<Option<bool>>::new(), "the inserted row is not addressed");
+        assert_eq!(cell_bolds(&s, 0, 1), Vec::<Option<bool>>::new());
+    }
+
+    #[test]
     fn a_queued_range_format_follows_the_characters_someone_typed_before_it() {
         let mut s = DocSession::from_document("d", text_deck(), SessionConfig::default()).expect("session");
         let (slide, shape) = keys(&s);
@@ -943,8 +1056,7 @@ mod tests {
             Payload::FormatSet {
                 format: FormatCmd::Bold,
                 args: json!({"on": true}),
-                cell: None,
-                range: Some(deckcraft_collab_proto::TextRange { from: 1, to: 2 }),
+                addresses: vec![address(None, Some(deckcraft_collab_proto::TextRange { from: 1, to: 2 }))],
             },
             0,
             "bold",
@@ -977,8 +1089,7 @@ mod tests {
             Payload::FormatSet {
                 format: FormatCmd::Bold,
                 args: json!({"on": true}),
-                cell: None,
-                range: Some(deckcraft_collab_proto::TextRange { from: 0, to: 3 }),
+                addresses: vec![address(None, Some(deckcraft_collab_proto::TextRange { from: 0, to: 3 }))],
             },
             0,
             "bold",

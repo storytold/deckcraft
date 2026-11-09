@@ -269,6 +269,25 @@ pub fn restores(changes: &[Change]) -> Option<Restore> {
                 .collect();
             body_restore(&bodies)
         }
+        many if many.iter().all(|change| matches!(change, Change::Shape(Snapshot { image: Image::Format(_), cell: Some(_), .. }))) => {
+            // A `format.*` step over N cells of one table: every cell's whole body is one image,
+            // and they go back in one `shape.setCellBodies`, so a neighbour is never touched.
+            let mut slide: Option<&SlideKey> = None;
+            let mut shape: Option<&ShapeKey> = None;
+            let mut cells = Vec::with_capacity(many.len());
+            for change in many {
+                let Change::Shape(at) = change else { return None };
+                let Image::Format(body) = &at.image else { return None };
+                let cell = at.cell?;
+                if slide.is_some_and(|s| s != &at.slide) || shape.is_some_and(|s| s != &at.shape) {
+                    return None;
+                }
+                slide = Some(&at.slide);
+                shape = Some(&at.shape);
+                cells.push(deckcraft_collab_proto::CellBody { cell, body: serde_json::to_value(body).ok()? });
+            }
+            Some(Restore { slide: slide?.clone(), shape: shape.cloned(), shapes: Vec::new(), payload: Payload::CellsText { cells } })
+        }
         many => {
             // A step over several objects of one slide is restored atomically. `arrange.align`
             // and `arrange.distribute` record one geometry image per moved shape and go back in

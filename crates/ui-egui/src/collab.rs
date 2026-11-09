@@ -1197,8 +1197,7 @@ mod tests {
             Payload::FormatSet {
                 format: deckcraft_collab_proto::FormatCmd::Bold,
                 args: json!({"on": true}),
-                cell: None,
-                range: Some(TextRange { from: 0, to: 5 })
+                addresses: vec![deckcraft_collab_proto::FormatAddress { cell: None, range: Some(TextRange { from: 0, to: 5 }), caret: None }]
             },
             "the queued format carries the selected character range, not the whole body"
         );
@@ -1213,6 +1212,85 @@ mod tests {
         to_ui.send(applied).expect("applied");
         app.collab.pump(&mut app.session, 1_100);
         assert_eq!(bold(&app), vec![Some(true), None], "the server's command bolded exactly the range");
+    }
+
+    #[test]
+    fn a_caret_in_a_shape_body_goes_through_the_link_with_its_offset() {
+        use deckcraft_collab::{CollabDoc, PipeTransport};
+        use deckcraft_collab_proto::{Applied, ClientMsg, ConfirmedCommand, FormatAddress, OpKind, Payload, ServerMsg};
+
+        let mut app = SlideApp::new(Session::with_new(), crate::Services::default());
+        app.run("shape.insert", json!({"preset": "rect", "rect": [40, 40, 200, 60], "text": "Hello world"})).expect("shape");
+        let id = app.session.doc().expect("doc").doc.slides[0].shapes.last().expect("shape").id;
+        app.session.doc_mut().expect("doc").selection.shapes = vec![id];
+        app.session.doc_mut().expect("doc").selection.text =
+            Some(deckcraft_engine::TextSel { shape: id, anchor: (0, 8), caret: (0, 8), cell: None, notes: false, line_end: None });
+
+        let mut doc = CollabDoc::new("d");
+        let (transport, from_ui, to_ui) = PipeTransport::pair();
+        let _ = doc.connect(&app.session, "jwt", deckcraft_collab_proto::ClientInfo { name: "t".into(), ver: "1".into() });
+        app.collab.attach(doc, Box::new(transport));
+        app.sync_collab_gate();
+        to_ui
+            .send(ServerMsg::Welcome(deckcraft_collab_proto::Welcome {
+                v: deckcraft_collab_proto::PROTO_VERSION,
+                session_id: "d".into(),
+                actor_id: "alice".into(),
+                role: Role::Editor,
+                lease: None,
+                version: 0,
+                snapshot: deckcraft_collab_proto::SnapshotRef { mode: deckcraft_collab_proto::SnapshotMode::BaseAndTail, cursor: "tail@0".into() },
+                capabilities: deckcraft_collab_proto::Capabilities {
+                    kinds: vec![OpKind::Command, OpKind::Structural],
+                    limits: deckcraft_collab_proto::Limits::default(),
+                    commands: vec![],
+                },
+            }))
+            .expect("welcome");
+        app.collab.pump(&mut app.session, 1_000);
+        assert!(app.session.is_collab_queue());
+
+        app.run("format.bold", json!({"on": true})).expect("queued");
+        app.collab.pump(&mut app.session, 1_060);
+        let mut op = None;
+        while let Ok(msg) = from_ui.try_recv() {
+            if let ClientMsg::Op(envelope) = msg {
+                op = Some(envelope);
+            }
+        }
+        let op = op.expect("the operation reached the link");
+        assert_eq!(
+            op.payload,
+            Payload::FormatSet {
+                format: deckcraft_collab_proto::FormatCmd::Bold,
+                args: json!({"on": true}),
+                addresses: vec![FormatAddress { cell: None, range: None, caret: Some(8) }]
+            },
+            "a caret is its own address, not a word and not the whole body"
+        );
+        let payload = op.payload.clone();
+        let applied = ServerMsg::Applied(Applied {
+            op_id: op.op_id.clone(),
+            version: 1,
+            actor_id: "alice".into(),
+            command: Some(ConfirmedCommand { cmd: payload.command().into(), target: op.target.clone(), payload }),
+            delta: Default::default(),
+        });
+        to_ui.send(applied).expect("applied");
+        app.collab.pump(&mut app.session, 1_100);
+        let bold: Vec<Option<bool>> = app.session.doc().expect("doc").doc.slides[0]
+            .shapes
+            .last()
+            .expect("shape")
+            .text
+            .as_ref()
+            .expect("text")
+            .paragraphs
+            .iter()
+            .flat_map(|p| p.runs.iter())
+            .map(|r| r.props.bold)
+            .collect();
+        assert_eq!(bold, vec![None, Some(true)], "the server's command bolded exactly the word at the caret");
     }
 
     #[test]

@@ -229,7 +229,7 @@ fn media_and_format_slices_go_through_the_server() {
             1,
         ),
         (
-            Payload::FormatSet { format: deckcraft_collab_proto::FormatCmd::Bold, args: json!({"on": true}), cell: None, range: None },
+            Payload::FormatSet { format: deckcraft_collab_proto::FormatCmd::Bold, args: json!({"on": true}), addresses: vec![Default::default()] },
             OpKind::Command,
             first.clone(),
             2,

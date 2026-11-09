@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use deckcraft_collab_proto::{
-    Applied, BaseSnapshot, Change, ClientInfo, ClientMsg, ConfirmedCommand, FillSpec, FormatCmd, LineSpec, MediaKind, OpEnvelope, OpKind, Payload,
-    ServerMsg, ShapeBounds, ShapeKey, SlideKey, TableAxis, Target, TextRange,
+    Applied, BaseSnapshot, Change, ClientInfo, ClientMsg, ConfirmedCommand, FillSpec, FormatAddress, FormatCmd, LineSpec, MediaKind, OpEnvelope,
+    OpKind, Payload, ServerMsg, ShapeBounds, ShapeKey, SlideKey, TableAxis, Target, TextRange,
 };
 use deckcraft_engine::{DocState, Session, Target as EngineTarget};
 use deckcraft_model::anim::Animation;
@@ -913,14 +913,18 @@ fn slide_delete_ops(
         .collect())
 }
 
-/// One allowlisted `format.*` command as wire operations, aimed at the whole body of a shape or
-/// of one table cell, or at a character range inside one of those bodies.
+/// One allowlisted `format.*` command as wire operations, aimed at one body or at N cells of one
+/// table: the whole body of a shape or of a cell, a character range inside one of those bodies,
+/// or a caret (`RFC §15`).
 ///
 /// A table cell has its own body. Its address comes from an explicit `cell` (or `row`+`col`),
-/// else from the one selected cell, else from the cell a collapsed caret is in. A text range
-/// inside a shape or a cell becomes a whole-body character range — the same coordinates
-/// `text.insert`/`text.delete` use — so the server rebases it and every replica derives the same
-/// run range. A range across cells is still not one address and is refused (RFC §15).
+/// else from the selected cells, else from the cell a text caret/range is in. A selection of
+/// several cells becomes **N addresses, one per cell** — never one address widened to the whole
+/// table — so the server formats exactly those cells and undo restores exactly their bodies. A
+/// text range or a caret inside a shape or a cell becomes whole-body character offsets — the same
+/// coordinates `text.insert`/`text.delete` use — so the server rebases it and every replica
+/// derives the same runs. A caret in a shape's own body is an address too: the single-user
+/// command (not the normaliser) decides which characters it touches.
 fn format_ops(
     keys: &crate::KeyMap,
     st: &DocState,
@@ -957,32 +961,72 @@ fn format_ops(
     let mut out = Vec::new();
     for id in ids {
         let shape = find_shape(&slide.shapes, id).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
-        let (cell, range) = match &shape.kind {
-            deckcraft_model::ShapeKind::Table(t) => {
-                let cell = match explicit_cell {
-                    Some(cell) => Some(cell),
-                    None => selected_cell(st, id)?,
-                }
-                .ok_or_else(|| LocalError::Unsupported(format!("{cmd} on a table needs a cell address (one cell at a time in v1)")))?;
-                let cell_body = t
-                    .cell(cell.0 as usize, cell.1 as usize)
-                    .ok_or_else(|| LocalError::BadParams(format!("the table has no cell ({}, {})", cell.0, cell.1)))?;
-                (Some(cell), selected_range(st, id, Some(cell), &cell_body.text)?)
-            }
-            _ => {
-                if explicit_cell.is_some() {
-                    return Err(LocalError::BadParams(format!("{cmd}: the shape is not a table")));
-                }
-                let body = shape.text.as_ref().ok_or_else(|| LocalError::Unsupported(format!("{cmd} on a shape without text")))?;
-                (None, selected_range(st, id, None, body)?)
-            }
-        };
+        let addresses = format_addresses(st, id, explicit_cell, shape)?;
         out.push(make(
             Target { slide: slide_key.clone(), shape: Some(shape_key(keys, slide.id, id)?), ..Target::default() },
-            Payload::FormatSet { format, args: args.clone(), cell, range },
+            Payload::FormatSet { format, args: args.clone(), addresses },
         ));
     }
     Ok(out)
+}
+
+/// Which characters of one addressed body a local `format.*` command selects.
+#[derive(Default)]
+struct TextPart {
+    range: Option<TextRange>,
+    caret: Option<u32>,
+}
+
+/// Every body one local `format.*` command addresses in `shape`: one body for a shape, one
+/// address per cell for a table (and N addresses when a range of cells is selected).
+fn format_addresses(st: &DocState, id: ShapeId, explicit_cell: Option<(u32, u32)>, shape: &Shape) -> Result<Vec<FormatAddress>, LocalError> {
+    match &shape.kind {
+        ShapeKind::Table(t) => {
+            if let Some(cell) = explicit_cell {
+                let body = t
+                    .cell(cell.0 as usize, cell.1 as usize)
+                    .ok_or_else(|| LocalError::BadParams(format!("the table has no cell ({}, {})", cell.0, cell.1)))?;
+                let part = selected_part(st, id, Some(cell), &body.text)?;
+                return Ok(vec![FormatAddress { cell: Some(cell), range: part.range, caret: part.caret }]);
+            }
+            let text = st.selection.text.as_ref().filter(|t| t.shape == id && !t.notes);
+            if let Some((_, _, _)) = st.selection.cells.filter(|(table, ..)| *table == id) {
+                // A cell selection is N addresses, one per cell; a text range elsewhere would be
+                // silently dropped, so it is a contradiction instead.
+                if text.is_some_and(|t| t.is_range()) {
+                    return Err(LocalError::BadParams("a cell range and a text range are not one address".into()));
+                }
+                let block = deckcraft_engine::cmd::table::selected_range(st.selection.cells, id, t);
+                let mut addresses = Vec::new();
+                for (r, row) in t.rows.iter().enumerate() {
+                    for c in 0..row.cells.len() {
+                        if deckcraft_engine::cmd::table::in_range(block, r, c) {
+                            addresses.push(FormatAddress { cell: Some((r as u32, c as u32)), ..FormatAddress::default() });
+                        }
+                    }
+                }
+                if addresses.is_empty() {
+                    return Err(LocalError::BadParams("the selected cell range addresses no cell".into()));
+                }
+                return Ok(addresses);
+            }
+            let Some(selection) = text.and_then(|t| t.cell) else {
+                return Err(LocalError::Unsupported(format!("{} on a table needs a cell address", shape.id.0)));
+            };
+            let (r, c) = selection;
+            let body = t.cell(r, c).ok_or_else(|| LocalError::BadParams(format!("the table has no cell ({r}, {c})")))?;
+            let part = selected_part(st, id, Some((r as u32, c as u32)), &body.text)?;
+            Ok(vec![FormatAddress { cell: Some((r as u32, c as u32)), range: part.range, caret: part.caret }])
+        }
+        _ => {
+            if explicit_cell.is_some() {
+                return Err(LocalError::BadParams("the shape is not a table".into()));
+            }
+            let body = shape.text.as_ref().ok_or_else(|| LocalError::Unsupported(format!("{} on a shape without text", shape.id.0)))?;
+            let part = selected_part(st, id, None, body)?;
+            Ok(vec![FormatAddress { cell: None, range: part.range, caret: part.caret }])
+        }
+    }
 }
 
 fn shape_ids(p: &Value, st: &DocState) -> Result<Vec<ShapeId>, LocalError> {
@@ -1012,54 +1056,38 @@ fn cell_args(p: &Value) -> Option<(u32, u32)> {
     pair.or_else(|| Some((u32::try_from(p.get("row")?.as_u64()?).ok()?, u32::try_from(p.get("col")?.as_u64()?).ok()?)))
 }
 
-/// The one table cell a local format command addresses: the single selected cell, or the cell a
-/// caret is editing. A range across cells is not one address, so it is refused (RFC §15).
-fn selected_cell(st: &DocState, id: ShapeId) -> Result<Option<(u32, u32)>, LocalError> {
-    if let Some((_, from, to)) = st.selection.cells.filter(|(table, ..)| *table == id) {
-        if from != to {
-            return Err(LocalError::Unsupported("formatting a range of table cells (one cell at a time in v1)".into()));
-        }
-        return Ok(Some((from.0 as u32, from.1 as u32)));
-    }
-    if let Some(text) = st.selection.text.as_ref().filter(|t| t.shape == id && !t.notes) {
-        return Ok(text.cell.map(|(r, c)| (r as u32, c as u32)));
-    }
-    Ok(None)
-}
-
-/// The character range a local format command addresses inside one body: the text selection when
-/// it is a range in that body, `None` when the whole body (or a whole cell) is addressed.
+/// The characters a local `format.*` command addresses inside one body: a character range when
+/// the text selection is a range in that body, a caret when it is collapsed in a shape's own
+/// body, and nothing when the whole body (or a whole cell) is addressed.
 ///
 /// The selection is authoritative only for the body it edits: a range in another cell or shape
-/// is not silently moved to this one, and a caret in a shape's own body is refused — the replica
-/// would have to widen it to a word, which is the single-user behaviour but not an address
-/// (RFC §15). A collapsed caret in a table cell still addresses that whole cell.
-fn selected_range(
-    st: &DocState,
-    id: ShapeId,
-    cell: Option<(u32, u32)>,
-    body: &deckcraft_model::text::TextBody,
-) -> Result<Option<TextRange>, LocalError> {
-    let Some(text) = st.selection.text.as_ref().filter(|t| t.shape == id && !t.notes) else { return Ok(None) };
+/// is not silently moved to this one. A collapsed caret in a table cell addresses that whole
+/// cell. A caret in a shape's own body is an address of its own — the engine's single-user
+/// command decides which characters it touches (a run command widens it to the word it is in,
+/// a paragraph command takes the paragraph), and every replica runs that same command against
+/// the same authoritative body, so no replica has to guess (RFC §15).
+fn selected_part(st: &DocState, id: ShapeId, cell: Option<(u32, u32)>, body: &deckcraft_model::text::TextBody) -> Result<TextPart, LocalError> {
+    let Some(text) = st.selection.text.as_ref().filter(|t| t.shape == id && !t.notes) else { return Ok(TextPart::default()) };
     let selection_cell = text.cell.map(|(r, c)| (r as u32, c as u32));
     if selection_cell != cell {
         if text.is_range() {
             return Err(LocalError::BadParams("the selected range is not in the addressed body".into()));
         }
-        return Ok(None);
+        return Ok(TextPart::default());
     }
     if !text.is_range() {
         if cell.is_some() {
-            return Ok(None);
+            return Ok(TextPart::default());
         }
-        return Err(LocalError::BadParams("formatting a caret needs a selection in a shared session".into()));
+        let at = position_offset(Some(body), text.ordered().0);
+        return Ok(TextPart { range: None, caret: Some(at as u32) });
     }
     let (a, b) = text.ordered();
     let (from, to) = (position_offset(Some(body), a), position_offset(Some(body), b));
     if to <= from {
         return Err(LocalError::BadParams("nothing selected".into()));
     }
-    Ok(Some(TextRange { from: from as u32, to: to as u32 }))
+    Ok(TextPart { range: Some(TextRange { from: from as u32, to: to as u32 }), caret: None })
 }
 
 /// The slide and whole body a `slide.notes` edit leaves behind. `body` is the formatted body the
@@ -1183,6 +1211,11 @@ mod tests {
 
     fn caret(s: &mut Session, shape: ShapeId, at: (usize, usize), cell: Option<(usize, usize)>) {
         s.doc_mut().expect("doc").selection.text = Some(TextSel { shape, anchor: at, caret: at, cell, notes: false, line_end: None });
+    }
+
+    /// A whole-cell format address.
+    fn cell(at: (u32, u32)) -> FormatAddress {
+        FormatAddress { cell: Some(at), ..FormatAddress::default() }
     }
 
     #[test]
@@ -1400,14 +1433,14 @@ mod tests {
         let st = s.doc().expect("doc");
         let km = keys(st.doc.as_ref());
         let ops = normalize(&km, st, "format.bold", &json!({"on": true}), "op", &doc_id).expect("selected cell");
-        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((0, 0)), range: None });
+        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), addresses: vec![cell((0, 0))] });
 
         // A collapsed caret inside a cell formats that cell's whole body.
         s.doc_mut().expect("doc").selection.cells = None;
         caret(&mut s, table, (0, 1), Some((0, 1)));
         let st = s.doc().expect("doc");
         let ops = normalize(&km, st, "format.italic", &json!({"on": true}), "op", &doc_id).expect("caret in a cell");
-        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Italic, args: json!({"on": true}), cell: Some((0, 1)), range: None });
+        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Italic, args: json!({"on": true}), addresses: vec![cell((0, 1))] });
 
         // A range inside the cell is a run range in that cell's own body: the address carries
         // both the cell and whole-cell character offsets.
@@ -1420,8 +1453,7 @@ mod tests {
             Payload::FormatSet {
                 format: FormatCmd::Italic,
                 args: json!({"on": true}),
-                cell: Some((0, 0)),
-                range: Some(TextRange { from: 0, to: 1 })
+                addresses: vec![FormatAddress { cell: Some((0, 0)), range: Some(TextRange { from: 0, to: 1 }), caret: None }]
             }
         );
 
@@ -1437,13 +1469,21 @@ mod tests {
         caret(&mut s, table, (0, 1), Some((0, 1)));
         let st = s.doc().expect("doc");
         let ops = normalize(&km, st, "format.bold", &json!({"on": true, "cell": [1, 1]}), "op", &doc_id).expect("explicit cell");
-        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: Some((1, 1)), range: None });
+        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), addresses: vec![cell((1, 1))] });
 
-        // A range across cells is not one address: refused, never widened to the table.
+        // A range of cells is N addresses, one per cell: the operation names exactly the cells
+        // it formats and never widens to the whole table.
         s.doc_mut().expect("doc").selection.cells = Some((table, (0, 0), (1, 1)));
         let st = s.doc().expect("doc");
-        let e = normalize(&km, st, "format.bold", &json!({"on": true}), "op", &doc_id).expect_err("a cell range");
-        assert!(matches!(e, LocalError::Unsupported(_)), "{e:?}");
+        let ops = normalize(&km, st, "format.bold", &json!({"on": true}), "op", &doc_id).expect("a cell range");
+        assert_eq!(
+            ops[0].payload,
+            Payload::FormatSet {
+                format: FormatCmd::Bold,
+                args: json!({"on": true}),
+                addresses: vec![cell((0, 0)), cell((0, 1)), cell((1, 0)), cell((1, 1))]
+            }
+        );
 
         // A cell the table does not have is refused here as well.
         s.doc_mut().expect("doc").selection.cells = None;
@@ -1471,7 +1511,11 @@ mod tests {
         let ops = normalize(&km, st, "format.bold", &json!({"on": true}), "op", &doc_id).expect("a range in a shape");
         assert_eq!(
             ops[0].payload,
-            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: Some(TextRange { from: 0, to: 5 }) }
+            Payload::FormatSet {
+                format: FormatCmd::Bold,
+                args: json!({"on": true}),
+                addresses: vec![FormatAddress { cell: None, range: Some(TextRange { from: 0, to: 5 }), caret: None }]
+            }
         );
         assert_eq!(ops[0].target.shape.as_ref().and_then(|k| km.shape_id(slide, k)), Some(shapes[0]));
         assert_eq!(ops[0].kind, OpKind::Command);
@@ -1483,13 +1527,25 @@ mod tests {
         s.doc_mut().expect("doc").selection.text.as_mut().expect("caret").anchor = (0, 1);
         let st = s.doc().expect("doc");
         let ops = normalize(&km, st, "format.italic", &json!({"on": true}), "op", &doc_id).expect("across paragraphs");
-        assert!(matches!(&ops[0].payload, Payload::FormatSet { range: Some(r), .. } if (r.from, r.to) == (1, 4)), "{:?}", ops[0].payload);
+        assert!(
+            matches!(&ops[0].payload, Payload::FormatSet { addresses, .. } if addresses == &[FormatAddress { cell: None, range: Some(TextRange { from: 1, to: 4 }), caret: None }]),
+            "{:?}",
+            ops[0].payload
+        );
 
-        // A caret is not a range: the replica would have to widen it to a word, so it is refused
-        // instead of guessing.
+        // A caret in a shape's own body is its own address, not a word and not a refusal: the
+        // engine command decides which characters it touches.
         s.doc_mut().expect("doc").selection.text.as_mut().expect("caret").anchor = (1, 1);
         let st = s.doc().expect("doc");
-        assert!(matches!(normalize(&km, st, "format.bold", &json!({"on": true}), "op", &doc_id), Err(LocalError::BadParams(_))));
+        let ops = normalize(&km, st, "format.bold", &json!({"on": true}), "op", &doc_id).expect("a caret in a shape");
+        assert_eq!(
+            ops[0].payload,
+            Payload::FormatSet {
+                format: FormatCmd::Bold,
+                args: json!({"on": true}),
+                addresses: vec![FormatAddress { cell: None, range: None, caret: Some(4) }]
+            }
+        );
 
         // With no text selection at all the whole body is addressed, as before.
         s.doc_mut().expect("doc").selection.text = None;
@@ -1497,7 +1553,10 @@ mod tests {
         s.doc_mut().expect("doc").selection.shapes = vec![shapes[1]];
         let st = s.doc().expect("doc");
         let ops = normalize(&km, st, "format.bold", &json!({"on": true}), "op", &doc_id).expect("the whole body");
-        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: None });
+        assert_eq!(
+            ops[0].payload,
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), addresses: vec![FormatAddress::default()] }
+        );
     }
 
     #[test]
@@ -1608,7 +1667,10 @@ mod tests {
         }
 
         let ops = normalize(&km, st, "format.bold", &json!({"on": true, "id": shapes[0].0}), "op", &doc).expect("format");
-        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: None });
+        assert_eq!(
+            ops[0].payload,
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), addresses: vec![FormatAddress::default()] }
+        );
         let e = normalize(&km, st, "format.bold", &json!({"id": shapes[0].0}), "op", &doc).expect_err("relative toggle");
         assert!(matches!(e, LocalError::BadParams(_)), "{e:?}");
         let second_key = km.shape_key(slide, shapes[1]).expect("key").clone();
@@ -1616,7 +1678,10 @@ mod tests {
             .expect("the address is taken from the command params, not from the args");
         assert_eq!(ops.len(), 1);
         assert_eq!(ops[0].target.shape.as_ref(), Some(&second_key));
-        assert_eq!(ops[0].payload, Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), cell: None, range: None });
+        assert_eq!(
+            ops[0].payload,
+            Payload::FormatSet { format: FormatCmd::Bold, args: json!({"on": true}), addresses: vec![FormatAddress::default()] }
+        );
     }
 
     #[test]
