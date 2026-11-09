@@ -261,7 +261,9 @@ pub struct MediaClip {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Cameo {
-    /// Live feed (`true`) rather than a frozen still or a recorded clip.
+    /// Live feed (`true`) rather than a frozen still or a recorded clip. The PPTX Cameo marker
+    /// (`alf:liveFeedProps`) carries no recorded state: a `recorded` clip or `live == false`
+    /// still exports as a live feed, and imports as live. Recorded Cameo is #1839's scope.
     pub live: bool,
     /// The capture device the cameo shows, when one is named.
     #[serde(skip_serializing_if = "Option::is_none")]

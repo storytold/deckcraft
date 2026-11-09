@@ -15,6 +15,6 @@ pub(super) fn camera_section(app: &mut SlideApp, ui: &mut Ui) {
         if preview.clicked() {
             app.toggle_camera_preview();
         }
-        big_button(ui, Icon::Preview, "More\nOptions", false).on_hover_text("Camera preview options arrive with the Camera Format tab");
+        big_button(ui, Icon::Preview, "More\nOptions", false).on_hover_text("Camera preview options are not available yet");
     });
 }

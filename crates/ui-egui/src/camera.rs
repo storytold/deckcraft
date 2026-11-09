@@ -409,10 +409,12 @@ fn animated(p: Point, centre: Point, st: &ShapeState) -> Point {
     Point::new(centre.x + x * cos - y * sin + st.offset.x, centre.y + x * sin + y * cos + st.offset.y)
 }
 
-/// Cameos on a slide with their slide-space boxes, including cameos inside groups.
+/// Cameos on a slide with their slide-space boxes, including cameos inside groups. Hidden Cameos
+/// and Cameos inside a hidden group are skipped, matching the renderer: a hidden Cameo must not
+/// paint its live frame in the editor or the show (see `placed::place`).
 fn cameo_boxes(shapes: &[deckcraft_model::Shape]) -> Vec<(&deckcraft_model::Shape, deckcraft_geom::Xfrm)> {
     let mut pictures = vec![];
-    crate::media::collect_pictures(shapes, None, 0, &mut pictures);
+    crate::media::collect_pictures(shapes, None, false, 0, &mut pictures);
     pictures.into_iter().filter(|(shape, _)| shape.is_cameo()).collect()
 }
 
@@ -825,6 +827,35 @@ mod tests {
         let shape = doc.slides[0].shape(ids[0]).expect("the Cameo");
         assert!(shape.is_cameo());
         assert!(cameo_ids(&doc, 9).is_empty(), "a slide that does not exist has no Cameos");
+    }
+
+    /// A Cameo the Selection pane hides paints no live frame: neither the hidden Cameo itself
+    /// nor one inside a hidden group reaches the editor overlay or the show's `cameo_ids`.
+    #[test]
+    fn hidden_cameos_leave_the_live_overlay() {
+        use deckcraft_model::ShapeKind;
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("insert.cameo", &serde_json::json!({})).expect("cameo");
+        let doc = session.active().expect("document");
+        let id = doc.selected_shapes().first().map(|s| s.id).expect("a selected Cameo");
+        session.execute("shape.visible", &serde_json::json!({"id": id.0, "visible": false})).expect("hide");
+        let doc = session.active().expect("document").doc.clone();
+        assert!(cameo_boxes(&doc.slides[0].shapes).is_empty(), "a hidden Cameo paints no frame");
+        assert!(cameo_ids(&doc, 0).is_empty());
+        // A Cameo inside a hidden group stays hidden too: the renderer draws nothing below a
+        // hidden shape, so the overlay must not paint a frame there either.
+        let mut grouped = (*doc.slides[0].shapes.iter().find(|s| s.id == id).expect("the Cameo")).clone();
+        grouped.hidden = false;
+        let group = Shape {
+            id: ShapeId(900),
+            name: "group".into(),
+            xfrm: grouped.xfrm,
+            kind: ShapeKind::Group { children: vec![grouped], child: deckcraft_geom::Xfrm::default() },
+            geom: deckcraft_model::Geom::preset("rect"),
+            hidden: true,
+            ..Shape::default()
+        };
+        assert!(cameo_boxes(std::slice::from_ref(&group)).is_empty(), "a Cameo in a hidden group paints no frame");
     }
 
     /// A Cameo with Camera Shape `geom`, and its box, from the command that inserts one.

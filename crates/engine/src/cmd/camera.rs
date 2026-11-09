@@ -525,13 +525,46 @@ mod tests {
 
     /// `all` visits slides only while the enabled state also accepts a master Cameo: with none on
     /// a slide the command must fail rather than succeed having styled nothing (and bump the
-    /// revision with an undo step for an edit that changed nothing).
+    /// revision with an undo step for an edit that changed nothing). A Cameo selected in Slide
+    /// Master view still passes `has_cameo`, so the failure comes from `style`'s `styled == 0`
+    /// branch and not the selection guard.
     #[test]
     fn style_all_without_a_slide_cameo_fails_and_leaves_the_deck_alone() {
         let mut s = Session::with_new();
+        s.execute("insert.cameo", &serde_json::json!({})).expect("a real Cameo on the slide");
+        let doc = s.doc().expect("doc");
+        let cameo = doc.selected_shapes().first().map(|sh| (*sh).clone()).expect("the inserted Cameo");
+        // Slide Master view keeps the layout's shapes, so the master holds a Cameo while no
+        // slide does: `has_cameo` still passes on the master's selection, and `style(all)`
+        // — which visits slides only — fails in its `styled == 0` branch, not the guard.
+        s.execute("view.slideMaster", &serde_json::json!({"master": 0})).expect("master view");
+        s.edit(|doc, sel| {
+            let shapes = crate::shapes_mut(doc, sel).expect("master shapes");
+            shapes.push(cameo.clone());
+            sel.shapes = vec![cameo.id];
+            Ok(serde_json::json!({}))
+        })
+        .expect("the master holds a Cameo");
+        assert!(super::has_cameo(&s).is_ok(), "the master Cameo passes the enabled state");
+        s.execute("slide.go", &serde_json::json!({"index": 0})).expect("back on the slide");
+        s.edit(|doc, sel| {
+            let shapes = crate::shapes_mut(doc, sel).expect("slide shapes");
+            shapes.retain(|sh| !sh.is_cameo());
+            Ok(serde_json::json!({}))
+        })
+        .expect("no slide holds a Cameo");
+        assert_eq!(cameo_count(&s), 0);
+        // Back in Slide Master view the master Cameo is selected again, so `has_cameo` passes
+        // and the failure comes from `style`'s `styled == 0` branch rather than the guard.
+        s.execute("view.slideMaster", &serde_json::json!({"master": 0})).expect("master view again");
+        s.select(|_, sel| {
+            sel.shapes = vec![cameo.id];
+        })
+        .expect("select the master Cameo");
+        assert!(super::has_cameo(&s).is_ok(), "the master Cameo passes the enabled state");
         let revision = s.doc().expect("doc").revision;
-        let err = s.execute("camera.style", &json!({"style": "softEdgeCircle", "all": true})).expect_err("no cameo");
-        assert!(err.to_string().contains("no Cameo"), "{err}");
+        let err = s.execute("camera.style", &serde_json::json!({"style": "softEdgeCircle", "all": true})).expect_err("no cameo");
+        assert!(err.to_string().contains("no Cameo on slides"), "{err}");
         assert_eq!(s.doc().expect("doc").revision, revision);
         assert_eq!(cameo_count(&s), 0);
     }
