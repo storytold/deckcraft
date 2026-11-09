@@ -72,6 +72,7 @@ impl SlideApp {
         }
         let viewport = self.ime_viewport_or(ctx);
         if self.session.active().is_none() {
+            release_anim_delete_latches(ctx, &events);
             // No document: keep slide-editing input suspended, while the start screen's
             // File-tab navigation and document-free shortcuts remain available.
             self.suspend_ime_reset(viewport);
@@ -96,6 +97,7 @@ impl SlideApp {
             ctx.memory_mut(|m| m.surrender_focus(id));
         }
         if ctx.memory(|m| m.focused().is_some()) || modal {
+            release_anim_delete_latches(ctx, &events);
             // A stock field/modal/palette owns input now. Retire the custom fence, then visit
             // controls in raw order; stock text/key events are left for the stock widgets.
             self.suspend_ime_reset(viewport);
@@ -103,6 +105,7 @@ impl SlideApp {
             return;
         }
         if self.backstage.is_some() {
+            release_anim_delete_latches(ctx, &events);
             self.suspend_ime_reset(viewport);
             self.route_ime_controls_only(ctx, &events);
             self.route_backstage_keys(events);
@@ -194,7 +197,7 @@ impl SlideApp {
                     if (key == egui::Key::Delete || key == egui::Key::Backspace)
                         && !modifiers.command
                         && !modifiers.ctrl
-                        && (self.handle_anim_pane_delete(ctx) || ctx.data(|m| m.get_temp::<bool>(anim_delete_latch()).unwrap_or(false)))
+                        && (self.handle_anim_pane_delete(ctx, key) || ctx.data(|m| m.get_temp::<bool>(anim_delete_latch(key)).unwrap_or(false)))
                     {
                         continue;
                     }
@@ -212,8 +215,8 @@ impl SlideApp {
                         self.note_application_edit(ctx);
                     }
                 }
-                egui::Event::Key { key: egui::Key::Delete | egui::Key::Backspace, pressed: false, .. } => {
-                    ctx.data_mut(|m| m.remove::<bool>(anim_delete_latch()));
+                egui::Event::Key { key: key @ (egui::Key::Delete | egui::Key::Backspace), pressed: false, .. } => {
+                    ctx.data_mut(|m| m.remove::<bool>(anim_delete_latch(key)));
                 }
                 _ => {}
             }
@@ -223,8 +226,9 @@ impl SlideApp {
 
     /// Delete/Backspace with an effect picked in the Animation Pane: removes that effect and
     /// answers true. Not while slide text is being edited (the key edits the text, as in
-    /// PowerPoint) and not without a pick. A handled removal arms [`anim_delete_latch`].
-    fn handle_anim_pane_delete(&mut self, ctx: &egui::Context) -> bool {
+    /// PowerPoint) and not without a pick. A handled pick, including a stale one, arms
+    /// [`anim_delete_latch`] for this key until release.
+    fn handle_anim_pane_delete(&mut self, ctx: &egui::Context, key: egui::Key) -> bool {
         if self.ui.pane.as_deref() != Some("animation") {
             return false;
         }
@@ -256,18 +260,27 @@ impl SlideApp {
             } else {
                 ctx.data_mut(|m| m.remove::<usize>(pick_id));
             }
-            ctx.data_mut(|m| m.insert_temp(anim_delete_latch(), true));
         } else {
             ctx.data_mut(|m| m.remove::<usize>(pick_id));
         }
+        ctx.data_mut(|m| m.insert_temp(anim_delete_latch(key), true));
         true
     }
 }
 
-/// Set while a Delete/Backspace that removed an animation is still held (#1725): its repeats belong
-/// to the Animation Pane until the key is released.
-fn anim_delete_latch() -> egui::Id {
-    egui::Id::unique("anim_pane_delete_latch")
+/// Set while a Delete/Backspace handled by the Animation Pane is still held (#1725).
+/// Separate latches keep releasing one key from exposing repeats of the other.
+fn anim_delete_latch(key: egui::Key) -> egui::Id {
+    egui::Id::unique(("anim_pane_delete_latch", key))
+}
+
+/// Routed-away input still ends a held pane key, without consuming the other route's events.
+fn release_anim_delete_latches(ctx: &egui::Context, events: &[egui::Event]) {
+    for e in events {
+        if let egui::Event::Key { key: key @ (egui::Key::Delete | egui::Key::Backspace), pressed: false, .. } = e {
+            ctx.data_mut(|m| m.remove::<bool>(anim_delete_latch(*key)));
+        }
+    }
 }
 
 /// Engine key name for an egui key.

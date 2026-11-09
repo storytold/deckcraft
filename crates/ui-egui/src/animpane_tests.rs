@@ -263,6 +263,112 @@ fn held_delete_repeats_after_the_last_animation_do_not_delete_the_shape() {
     assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), shapes - 1, "a new press deletes the shape");
 }
 
+/// Raw presses let regressions keep a key held across input-route changes.
+fn delete_event(key: egui::Key, pressed: bool, repeat: bool) -> egui::Event {
+    egui::Event::Key { key, physical_key: None, pressed, repeat, modifiers: egui::Modifiers::NONE }
+}
+
+/// A release belongs to the held key even when a different UI surface owns input.
+#[test]
+fn routed_away_releases_allow_fresh_delete_presses() {
+    for key in [egui::Key::Delete, egui::Key::Backspace] {
+        for route in ["field", "modal", "palette", "file"] {
+            let mut h = harness();
+            click_row(&mut h, 1, egui::PointerButton::Primary);
+            h.event(delete_event(key, true, false));
+            h.run_steps(1);
+            h.event(delete_event(key, true, true));
+            h.run_steps(1);
+            assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().animations.len(), 0);
+            match route {
+                "field" => {
+                    h.state_mut().ui.pane = None;
+                    h.run_steps(2);
+                    let id = egui::Id::unique("notes_edit");
+                    h.ctx.memory_mut(|m| m.request_focus(id));
+                    h.run_steps(2);
+                    assert!(h.ctx.memory(|m| m.has_focus(id)));
+                }
+                "modal" => h.state_mut().dialog = Some(crate::dialogs::Dialog::new("about")),
+                "palette" => h.state_mut().palette = Some((String::new(), 0)),
+                "file" => h.state_mut().open_backstage(crate::backstage::Page::Home),
+                _ => unreachable!(),
+            }
+            h.event(delete_event(key, false, false));
+            h.run_steps(1);
+            h.state_mut().dialog = None;
+            h.state_mut().palette = None;
+            h.state_mut().backstage = None;
+            h.state_mut().ui.pane = None;
+            if let Some(id) = h.ctx.memory(|m| m.focused()) {
+                h.ctx.memory_mut(|m| m.surrender_focus(id));
+            }
+            h.key_press(key);
+            h.run_steps(2);
+            assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), 1, "{route}: {key:?}");
+        }
+    }
+}
+
+/// Releasing Delete must not relinquish a Backspace that is still held (and vice versa).
+#[test]
+fn releasing_one_delete_key_keeps_the_other_keys_repeats_in_the_pane() {
+    for routed_away in [false, true] {
+        for (released, held) in [(egui::Key::Delete, egui::Key::Backspace), (egui::Key::Backspace, egui::Key::Delete)] {
+            let mut h = harness();
+            click_row(&mut h, 1, egui::PointerButton::Primary);
+            for key in [released, held] {
+                h.event(delete_event(key, true, false));
+                h.run_steps(1);
+            }
+            if routed_away {
+                h.state_mut().palette = Some((String::new(), 0));
+            }
+            h.event(delete_event(released, false, false));
+            h.run_steps(1);
+            h.state_mut().palette = None;
+            h.state_mut().ui.pane = None;
+            if let Some(id) = h.ctx.memory(|m| m.focused()) {
+                h.ctx.memory_mut(|m| m.surrender_focus(id));
+            }
+            h.event(delete_event(held, true, true));
+            h.run_steps(1);
+            assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), 2);
+            h.event(delete_event(held, false, false));
+            h.run_steps(1);
+            h.key_press(held);
+            h.run_steps(2);
+            assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), 1);
+        }
+    }
+}
+
+/// A stale pane pick consumes the entire held press, not just its first event.
+#[test]
+fn held_delete_with_a_stale_pick_keeps_the_selected_shape() {
+    for key in [egui::Key::Delete, egui::Key::Backspace] {
+        let mut h = harness();
+        click_row(&mut h, 1, egui::PointerButton::Primary);
+        let other = h.state().session.active().unwrap().current_slide().unwrap().animations[1].shape;
+        h.state_mut().session.execute("edit.select", &json!({"ids": [other.0]})).unwrap();
+        h.event(delete_event(key, true, false));
+        h.run_steps(1);
+        for _ in 0..4 {
+            h.event(delete_event(key, true, true));
+            h.run_steps(1);
+        }
+        let st = h.state().session.active().unwrap();
+        assert_eq!(st.selection.shapes, vec![other]);
+        assert_eq!(st.current_slide().unwrap().shapes.len(), 2);
+        assert_eq!(st.current_slide().unwrap().animations.len(), 2);
+        h.event(delete_event(key, false, false));
+        h.run_steps(1);
+        h.key_press(key);
+        h.run_steps(2);
+        assert_eq!(h.state().session.active().unwrap().current_slide().unwrap().shapes.len(), 1);
+    }
+}
+
 /// #1725 review: while slide text is being edited, Delete and Backspace edit the text even with
 /// an effect picked in the pane.
 #[test]
