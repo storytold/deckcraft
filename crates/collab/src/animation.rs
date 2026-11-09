@@ -17,9 +17,15 @@ pub fn spec(value: &Animation) -> Option<serde_json::Value> {
 /// The model animation of one wire value, addressed to `shape`. The addressed shape wins over the
 /// id inside the value: a payload may not animate a shape it does not name.
 pub fn value(spec: &serde_json::Value, shape: ShapeId) -> Option<Animation> {
-    let mut animation: Animation = serde_json::from_value(spec.clone()).ok()?;
+    let mut animation = model(spec)?;
     animation.shape = shape;
     Some(animation)
+}
+
+/// The model animation of one wire value as it stands, id included: a slide-wide list names the
+/// shape in every value, because a step may move past another shape's step.
+pub fn model(spec: &serde_json::Value) -> Option<Animation> {
+    serde_json::from_value(spec.clone()).ok()
 }
 
 #[cfg(test)]

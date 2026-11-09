@@ -238,6 +238,13 @@ pub enum Payload {
     /// command is also the exact-image restore of an animation step (ADR 0010), because a file
     /// can carry preset ids, timings and colours the `animation.add` arguments cannot repeat.
     ShapeAnimations { animations: Vec<serde_json::Value> },
+    /// Replaces one slide's **whole** animation sequence with the exact ordered list given (`[]`:
+    /// none) and is the confirmed command of the normalised `animation.set`, `animation.timing`
+    /// and `animation.move`. `target.slide` is the address; every value is one whole model
+    /// `Animation` as JSON and carries its own shape id, because a step may move past steps of
+    /// another shape, which the per-shape `ShapeAnimations` cannot express. It is also the
+    /// exact-image restore of one of those steps (ADR 0010), checked like `shape_animations`.
+    SlideAnimations { animations: Vec<serde_json::Value> },
     /// Replaces one slide's speaker notes with a complete final value: the whole model text body
     /// (`crates/model/src/text.rs`) as JSON, so runs, paragraph levels and bullets travel with the
     /// text. `target.slide` is the address — notes belong to a slide, not to a shape, so no shape
@@ -693,6 +700,7 @@ impl Payload {
             Payload::ShapeLine { .. } => "shape.line",
             Payload::SlideTransition { .. } => "slide.transition.set",
             Payload::ShapeAnimations { .. } => "slide.animation.set",
+            Payload::SlideAnimations { .. } => "slide.animations.set",
             Payload::NotesSet { .. } => "notes.set",
             Payload::NotesInsert { .. } => "notes.insert",
             Payload::NotesDelete { .. } => "notes.delete",
@@ -1314,6 +1322,7 @@ mod tests {
         assert_eq!(Payload::Reorder { before: None }.command(), "arrange.reorder");
         assert_eq!(Payload::SlideTransition { transition: None }.command(), "slide.transition.set");
         assert_eq!(Payload::ShapeAnimations { animations: Vec::new() }.command(), "slide.animation.set");
+        assert_eq!(Payload::SlideAnimations { animations: Vec::new() }.command(), "slide.animations.set");
     }
 
     #[test]
@@ -1326,6 +1335,22 @@ mod tests {
         assert!(text.contains("\"effect\":\"pulse\""), "{text}");
         assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), payload);
         let empty = Payload::ShapeAnimations { animations: Vec::new() };
+        assert_eq!(serde_json::from_str::<Payload>(&serde_json::to_string(&empty).expect("encode")).expect("decode"), empty);
+    }
+
+    #[test]
+    fn a_slide_animation_list_travels_with_every_steps_own_shape() {
+        let steps = vec![
+            serde_json::json!({"shape": 4, "effect": "fade", "class": "entrance"}),
+            serde_json::json!({"shape": 9, "effect": "pulse", "class": "emphasis", "repeat": 2}),
+            serde_json::json!({"shape": 4, "effect": "zoom", "class": "entrance"}),
+        ];
+        let payload = Payload::SlideAnimations { animations: steps.clone() };
+        let text = serde_json::to_string(&payload).expect("encode");
+        assert!(text.contains("\"cmd\":\"slide_animations\""), "{text}");
+        assert!(text.contains("\"shape\":9"), "a step keeps its own shape: {text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), payload);
+        let empty = Payload::SlideAnimations { animations: Vec::new() };
         assert_eq!(serde_json::from_str::<Payload>(&serde_json::to_string(&empty).expect("encode")).expect("decode"), empty);
     }
 

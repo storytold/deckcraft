@@ -124,6 +124,7 @@ impl Hub {
                     "slide.move".into(),
                     "slide.transition.set".into(),
                     "slide.animation.set".into(),
+                    "slide.animations.set".into(),
                     "arrange.group".into(),
                     "arrange.ungroup".into(),
                     "arrange.reorder".into(),
@@ -721,5 +722,98 @@ mod tests {
         assert_eq!(effects(&sa), ["fade"], "the undo put the shape's step list back");
         assert_eq!(effects(&sb), ["fade"]);
         assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+    }
+
+    #[test]
+    fn animation_set_timing_and_move_reach_both_replicas_and_each_undo_is_one_step() {
+        let mut hub = hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let mut sa = deck_session();
+        let mut sb = deck_session();
+        let mut a = CollabDoc::new("d");
+        let mut b = CollabDoc::new("d");
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+        let shapes: Vec<u32> = sa.doc().expect("doc").doc.slides[0].shapes.iter().map(|s| s.id.0).collect();
+        let (first, second) = (shapes[0], shapes[1]);
+        let sequence = |s: &Session| {
+            s.doc().expect("doc").doc.slides[0].animations.iter().map(|x| (x.shape.0, x.effect.clone(), x.duration_ms)).collect::<Vec<_>>()
+        };
+        #[allow(clippy::too_many_arguments)]
+        fn step(
+            hub: &mut Hub,
+            author: &str,
+            doc: &mut CollabDoc,
+            session: &mut Session,
+            peer_actor: &str,
+            peer: &mut CollabDoc,
+            peer_session: &mut Session,
+            cmd: &str,
+            params: &serde_json::Value,
+            id: &str,
+        ) {
+            doc.submit(session, cmd, params, id).expect("submit");
+            send_all(hub, doc, author);
+            deliver(hub, doc, session, author);
+            deliver(hub, peer, peer_session, peer_actor);
+        }
+
+        step(&mut hub, "alice", &mut a, &mut sa, "bob", &mut b, &mut sb, "animation.set", &json!({"effect": "fade", "ids": [first]}), "a-0");
+        assert_eq!(sequence(&sa), [(first, "fade".into(), 500)]);
+        assert_eq!(sequence(&sb), sequence(&sa), "a remote set arrives on the second replica");
+
+        step(&mut hub, "alice", &mut a, &mut sa, "bob", &mut b, &mut sb, "animation.set", &json!({"effect": "zoom", "ids": [second]}), "a-1");
+        assert_eq!(sequence(&sa).len(), 2);
+        assert_eq!(sequence(&sb), sequence(&sa));
+
+        // Undo of the second set takes back only that shape's step; the first stays.
+        a.undo().expect("undo the set");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!(sequence(&sa), [(first, "fade".into(), 500)], "the undo restored the whole sequence");
+        assert_eq!(sequence(&sb), sequence(&sa));
+
+        // Timing changes one step and its undo restores the exact duration.
+        step(&mut hub, "alice", &mut a, &mut sa, "bob", &mut b, &mut sb, "animation.timing", &json!({"index": 0, "duration": 1_200}), "a-2");
+        assert_eq!(sequence(&sa)[0].2, 1_200);
+        assert_eq!(sequence(&sb), sequence(&sa));
+        a.undo().expect("undo the timing");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!(sequence(&sa)[0].2, 500);
+        assert_eq!(sequence(&sb), sequence(&sa));
+
+        // Reorder across shapes: a's step moves past b's step, and the undo puts the order back.
+        step(&mut hub, "alice", &mut a, &mut sa, "bob", &mut b, &mut sb, "animation.set", &json!({"effect": "zoom", "ids": [second]}), "a-3");
+        assert_eq!(sequence(&sa).iter().map(|x| x.0).collect::<Vec<_>>(), [first, second]);
+        step(&mut hub, "alice", &mut a, &mut sa, "bob", &mut b, &mut sb, "animation.move", &json!({"index": 0, "to": 1}), "a-4");
+        assert_eq!(sequence(&sa).iter().map(|x| x.0).collect::<Vec<_>>(), [second, first], "the step crossed the other shape's step");
+        assert_eq!(sequence(&sb), sequence(&sa));
+        a.undo().expect("undo the move");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!(sequence(&sa).iter().map(|x| x.0).collect::<Vec<_>>(), [first, second], "the undo restored the whole order");
+        assert_eq!(sequence(&sb), sequence(&sa));
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+
+        // A foreign animation edit after the step makes the undo a conflict instead of an overwrite.
+        step(&mut hub, "alice", &mut a, &mut sa, "bob", &mut b, &mut sb, "animation.timing", &json!({"index": 0, "delay": 250}), "a-5");
+        b.submit(&sb, "animation.set", &json!({"effect": "pulse", "class": "emphasis", "ids": [second]}), "b-6").expect("bob submits");
+        send_all(&mut hub, &mut b, "bob");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        let head = hub.session().version();
+        a.undo().expect("request a conflicting undo");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!(hub.session().version(), head, "a refused undo writes nothing");
+        assert_eq!(sequence(&sb), sequence(&sa), "the foreign edit survives");
     }
 }

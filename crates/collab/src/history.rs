@@ -46,6 +46,10 @@ pub enum Image {
     /// A file's animations carry preset ids, timings, colours and motion paths that the
     /// `animation.add` arguments cannot repeat, so the step image is the model list itself.
     Animation(Vec<Animation>),
+    /// One slide's **whole** animation sequence, in order, as `animation.set`, `animation.timing`
+    /// and `animation.move` leave it. A step may move past another shape's step, so a per-shape
+    /// image cannot put the sequence back.
+    SlideAnimations(Vec<Animation>),
     /// One slide's speaker notes as a whole body. Notes belong to a slide, not to a shape, and a
     /// notes edit replaces text the typed string cannot describe (runs, levels, bullets), so the
     /// image is the body itself.
@@ -144,6 +148,7 @@ pub enum Change {
     Slide(SlideImage),
     SlideTransition(TransitionImage),
     Notes(NotesImage),
+    SlideAnimations(SlideAnimationsImage),
 }
 
 /// One slide's speaker notes, present as a whole body, for a `notes.*` step. The address is the
@@ -152,6 +157,15 @@ pub enum Change {
 pub struct NotesImage {
     pub slide: SlideKey,
     pub notes: TextBody,
+}
+
+/// One slide's whole animation sequence, for an `animation.set`/`animation.timing`/
+/// `animation.move` step. Steps of different shapes may interleave, so the image is the ordered
+/// list of the slide itself, not one shape's sub-list.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SlideAnimationsImage {
+    pub slide: SlideKey,
+    pub animations: Vec<Animation>,
 }
 
 impl Change {
@@ -183,6 +197,7 @@ impl Change {
             },
             (Change::SlideTransition(a), Change::SlideTransition(b)) => a.slide == b.slide && a.transition == b.transition,
             (Change::Notes(a), Change::Notes(b)) => a.slide == b.slide && a.notes == b.notes,
+            (Change::SlideAnimations(a), Change::SlideAnimations(b)) => a.slide == b.slide && a.animations == b.animations,
             _ => false,
         }
     }
@@ -216,6 +231,9 @@ impl Image {
             },
             Image::Table(table) => Payload::ShapeField { field: ShapeField::Table, value: serde_json::to_value(table).ok()? },
             Image::Animation(steps) => Payload::ShapeAnimations { animations: steps.iter().map(crate::animation::spec).collect::<Option<Vec<_>>>()? },
+            Image::SlideAnimations(steps) => {
+                Payload::SlideAnimations { animations: steps.iter().map(crate::animation::spec).collect::<Option<Vec<_>>>()? }
+            }
             // Notes are a slide's own body: the payload names the slide and carries the whole body.
             Image::Notes(body) => Payload::NotesSet { notes: serde_json::to_value(body).ok()? },
         })
@@ -257,6 +275,12 @@ pub fn restores(changes: &[Change]) -> Option<Restore> {
             shape: None,
             shapes: Vec::new(),
             payload: Payload::NotesSet { notes: serde_json::to_value(&at.notes).ok()? },
+        }),
+        [Change::SlideAnimations(at)] => Some(Restore {
+            slide: at.slide.clone(),
+            shape: None,
+            shapes: Vec::new(),
+            payload: Payload::SlideAnimations { animations: at.animations.iter().map(crate::animation::spec).collect::<Option<Vec<_>>>()? },
         }),
         [] => None,
         many if many.iter().all(|change| matches!(change, Change::ShapeBody(_))) => {
@@ -764,6 +788,45 @@ mod tests {
             image: Image::Animation(vec![Animation { effect: "wipe".into(), ..pulse }]),
         });
         assert!(!at.same_state(&other), "someone changed the shape's steps after the undo");
+    }
+
+    #[test]
+    fn a_slide_animation_step_restores_the_whole_interleaved_sequence() {
+        let a = deckcraft_model::ShapeId(4);
+        let b = deckcraft_model::ShapeId(7);
+        let fade = Animation { shape: a, effect: "fade".into(), ..Animation::default() };
+        let zoom = Animation { shape: b, effect: "zoom".into(), ..Animation::default() };
+        let pulse = Animation { shape: a, effect: "pulse".into(), duration_ms: 900, ..Animation::default() };
+        let step = Step {
+            op_id: "op".into(),
+            version: 2,
+            before: vec![Change::SlideAnimations(SlideAnimationsImage {
+                slide: "s1".into(),
+                animations: vec![fade.clone(), zoom.clone(), pulse.clone()],
+            })],
+            after: vec![Change::SlideAnimations(SlideAnimationsImage {
+                slide: "s1".into(),
+                animations: vec![zoom.clone(), fade.clone(), pulse.clone()],
+            })],
+        };
+        let undo = step.restoring_payload().expect("slide animation restore");
+        assert_eq!(undo.slide.0, "s1");
+        assert!(undo.shape.is_none(), "the address is the slide");
+        let Payload::SlideAnimations { animations } = &undo.payload else { panic!("the whole sequence: {:?}", undo.payload) };
+        let effects: Vec<&str> = animations.iter().filter_map(|a| a.get("effect").and_then(serde_json::Value::as_str)).collect();
+        assert_eq!(effects, ["fade", "zoom", "pulse"], "the before sequence comes back in its order");
+        assert_eq!(animations[1].get("shape").and_then(serde_json::Value::as_u64), Some(7), "each step keeps its own shape");
+        let redo = step.reapplying_payload().expect("slide animation redo");
+        assert!(matches!(&redo.payload, Payload::SlideAnimations { animations } if animations.len() == 3));
+        assert_eq!(redo.slide, undo.slide);
+        assert!(redo.shape.is_none());
+
+        let at = Change::SlideAnimations(SlideAnimationsImage { slide: "s1".into(), animations: vec![fade.clone(), zoom.clone()] });
+        assert!(at.same_state(&at));
+        let moved = Change::SlideAnimations(SlideAnimationsImage { slide: "s1".into(), animations: vec![zoom, fade.clone()] });
+        assert!(!at.same_state(&moved), "someone reordered the slide's steps after the undo");
+        let elsewhere = Change::SlideAnimations(SlideAnimationsImage { slide: "s2".into(), animations: vec![fade, pulse] });
+        assert!(!at.same_state(&elsewhere), "the image names one slide");
     }
 
     #[test]

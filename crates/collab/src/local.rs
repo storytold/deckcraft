@@ -643,6 +643,60 @@ pub fn normalize(keys: &crate::KeyMap, st: &DocState, cmd: &str, p: &Value, op_i
                 .ok_or_else(|| LocalError::BadParams("the animation steps cannot be sent".into()))?;
             Ok(vec![make(Target { slide: slide_key, shape: Some(key), ..Target::default() }, Payload::ShapeAnimations { animations })])
         }
+        "animation.set" => {
+            // The whole resulting sequence of the slide: `animation.set` replaces each addressed
+            // shape's steps in place, and a slide-wide list keeps the steps of every other shape
+            // exactly where they were, interleaving included.
+            let ids = shape_ids(p, st)?;
+            for id in &ids {
+                find_shape(&slide.shapes, *id).ok_or_else(|| LocalError::BadParams("no such shape".into()))?;
+            }
+            let size = (st.doc.slide_size.width, st.doc.slide_size.height);
+            let animations =
+                deckcraft_engine::cmd::animation::set_plan(p, &slide.animations, &ids, size).map_err(|e| LocalError::BadParams(e.to_string()))?;
+            if animations == slide.animations {
+                return Ok(Vec::new());
+            }
+            animation_list_ops(keys, slide, &animations, &make)
+        }
+        "animation.timing" => {
+            let index = match p.get("index") {
+                None | Some(Value::Null) => None,
+                Some(value) => Some(
+                    value
+                        .as_u64()
+                        .and_then(|v| usize::try_from(v).ok())
+                        .ok_or_else(|| LocalError::BadParams(format!("`index` is not a valid animation index: {value}")))?,
+                ),
+            };
+            let ids: Vec<ShapeId> = if index.is_none() { shape_ids(p, st)? } else { Vec::new() };
+            let (animations, _) =
+                deckcraft_engine::cmd::animation::timing_plan(p, &slide.animations, index, &ids).map_err(|e| LocalError::BadParams(e.to_string()))?;
+            if animations == slide.animations {
+                return Ok(Vec::new());
+            }
+            animation_list_ops(keys, slide, &animations, &make)
+        }
+        "animation.move" => {
+            let index = match p.get("index") {
+                None => return Err(LocalError::BadParams("animation.move needs `index`".into())),
+                Some(value) => value
+                    .as_u64()
+                    .and_then(|v| usize::try_from(v).ok())
+                    .ok_or_else(|| LocalError::BadParams(format!("`index` is not a valid animation index: {value}")))?,
+            };
+            let to = p
+                .get("to")
+                .and_then(Value::as_u64)
+                .and_then(|v| usize::try_from(v).ok())
+                .ok_or_else(|| LocalError::BadParams("animation.move needs `to`".into()))?;
+            let animations =
+                deckcraft_engine::cmd::animation::move_plan(&slide.animations, index, to).map_err(|e| LocalError::BadParams(e.to_string()))?;
+            if animations == slide.animations {
+                return Ok(Vec::new());
+            }
+            animation_list_ops(keys, slide, &animations, &make)
+        }
         cmd if cmd.starts_with("format.") => {
             let format = FormatCmd::from_id(cmd).ok_or_else(|| LocalError::Unsupported(cmd.into()))?;
             format_ops(keys, st, slide, format, p, &make)
@@ -1046,6 +1100,31 @@ fn shape_key(keys: &crate::KeyMap, slide: SlideId, id: ShapeId) -> Result<ShapeK
     keys.shape_key(slide, id).cloned().ok_or(LocalError::NoDocument)
 }
 
+/// One operation carrying a slide's whole ordered animation list, the normalised form of
+/// `animation.set`, `animation.timing` and `animation.move`. The bounds are the engine
+/// command's own, so a list the server would refuse is refused before anything is sent.
+fn animation_list_ops(
+    keys: &crate::KeyMap,
+    slide: &deckcraft_model::Slide,
+    animations: &[Animation],
+    make: &impl Fn(Target, Payload) -> OpEnvelope,
+) -> Result<Vec<OpEnvelope>, LocalError> {
+    if animations.len() > deckcraft_engine::cmd::animation::MAX_SLIDE_ANIMATION_STEPS {
+        return Err(LocalError::BadParams("too many animation steps on one slide".into()));
+    }
+    let values = animations
+        .iter()
+        .map(crate::animation::spec)
+        .collect::<Option<Vec<Value>>>()
+        .ok_or_else(|| LocalError::BadParams("the animation steps cannot be sent".into()))?;
+    let bytes = serde_json::to_vec(&values).map_err(|e| LocalError::BadParams(format!("the animation list cannot be sent: {e}")))?;
+    if bytes.len() > deckcraft_engine::cmd::animation::MAX_SLIDE_ANIMATION_JSON {
+        return Err(LocalError::BadParams("the animation list is too large to send".into()));
+    }
+    let key = keys.slide_key(slide.id).cloned().ok_or(LocalError::NoDocument)?;
+    Ok(vec![make(Target { slide: Some(key), ..Target::default() }, Payload::SlideAnimations { animations: values })])
+}
+
 /// A cell address a local command carries in its arguments: `cell: [row, column]`, or `row` and
 /// `col`. Anything else is no address at all.
 fn cell_args(p: &Value) -> Option<(u32, u32)> {
@@ -1307,6 +1386,63 @@ mod tests {
         assert!(matches!(
             normalize(&km, st, "animation.add", &json!({"effect": "fade", "ids": [shapes[0].0, shapes[1].0]}), "op", &doc),
             Err(LocalError::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn animation_set_timing_and_move_normalise_to_the_slides_whole_sequence() {
+        let (mut s, doc, slide, shapes) = deck();
+        s.execute("animation.add", &json!({"effect": "fade", "ids": [shapes[0].0]})).expect("seed fade");
+        s.execute("animation.add", &json!({"effect": "zoom", "ids": [shapes[1].0]})).expect("seed zoom");
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        let effects = |payload: &Payload| match payload {
+            Payload::SlideAnimations { animations } => {
+                animations.iter().filter_map(|a| a.get("effect").and_then(Value::as_str)).map(String::from).collect::<Vec<_>>()
+            }
+            other => panic!("{other:?}"),
+        };
+
+        // `animation.set` replaces one shape's steps in place and sends the slide's whole sequence.
+        let ops =
+            normalize(&km, st, "animation.set", &json!({"effect": "pulse", "class": "emphasis", "ids": [shapes[0].0]}), "op", &doc).expect("set");
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].target.slide.as_ref().and_then(|k| km.slide_id(k)), Some(slide));
+        assert!(ops[0].target.shape.is_none(), "a slide-wide list is not a shape's address");
+        assert_eq!(effects(&ops[0].payload), ["pulse".to_string(), "zoom".to_string()]);
+        let Payload::SlideAnimations { animations } = &ops[0].payload else { panic!() };
+        assert_eq!(animations[0].get("shape").and_then(Value::as_u64), Some(shapes[0].0 as u64));
+
+        // `animation.timing` by index changes exactly that step, order untouched.
+        let ops =
+            normalize(&km, st, "animation.timing", &json!({"index": 0, "duration": 1_200, "start": "afterPrevious"}), "op", &doc).expect("timing");
+        assert_eq!(effects(&ops[0].payload), ["fade".to_string(), "zoom".to_string()]);
+        let Payload::SlideAnimations { animations } = &ops[0].payload else { panic!() };
+        assert_eq!(animations[0].get("durationMs").and_then(Value::as_u64), Some(1_200));
+        assert_eq!(animations[1].get("durationMs").and_then(Value::as_u64), Some(500), "the other step keeps its timing");
+
+        // `animation.move` sends the reordered sequence, including across shapes.
+        let ops = normalize(&km, st, "animation.move", &json!({"index": 0, "to": 1}), "op", &doc).expect("move");
+        assert_eq!(effects(&ops[0].payload), ["zoom".to_string(), "fade".to_string()]);
+        // A move that changes nothing sends nothing.
+        let ops = normalize(&km, st, "animation.move", &json!({"index": 0, "to": 0}), "op", &doc).expect("no-op move");
+        assert!(ops.is_empty());
+
+        // Unknown effects, bad indices and a timing edit that names no step are refused.
+        assert!(matches!(
+            normalize(&km, st, "animation.set", &json!({"effect": "nope", "ids": [shapes[0].0]}), "op", &doc),
+            Err(LocalError::BadParams(_))
+        ));
+        assert!(matches!(normalize(&km, st, "animation.move", &json!({"index": 9, "to": 0}), "op", &doc), Err(LocalError::BadParams(_))));
+        assert!(matches!(normalize(&km, st, "animation.move", &json!({"index": 0}), "op", &doc), Err(LocalError::BadParams(_))));
+        assert!(matches!(normalize(&km, st, "animation.timing", &json!({"index": 9, "duration": 10}), "op", &doc), Err(LocalError::BadParams(_))));
+        // A timing edit that names no animated shape is refused too.
+        let (bare, bare_doc, _, bare_shapes) = deck();
+        let bare_st = bare.doc().expect("doc");
+        let bare_keys = keys(bare_st.doc.as_ref());
+        assert!(matches!(
+            normalize(&bare_keys, bare_st, "animation.timing", &json!({"ids": [bare_shapes[0].0], "duration": 10}), "op", &bare_doc),
+            Err(LocalError::BadParams(_))
         ));
     }
 

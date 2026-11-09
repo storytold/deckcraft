@@ -25,7 +25,9 @@ use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind, SlideId, find_sha
 use serde_json::{Value, json};
 
 use crate::delta::delta;
-use crate::history::{Change, GroupImage, Histories, Image, NotesImage, Restore, ShapeImage, SlideImage, Snapshot, Step, TransitionImage};
+use crate::history::{
+    Change, GroupImage, Histories, Image, NotesImage, Restore, ShapeImage, SlideAnimationsImage, SlideImage, Snapshot, Step, TransitionImage,
+};
 use crate::keys::{KeyIssuer, KeyMap};
 use crate::media::MediaCache;
 
@@ -342,6 +344,7 @@ impl Adapter {
             Payload::ShapeLine { .. } => return self.capture_appearance(before, after, op, Image::Line(None)),
             Payload::SlideTransition { .. } => return self.capture_transition_step(before, after, op),
             Payload::ShapeAnimations { .. } => (None, Image::Animation(Vec::new())),
+            Payload::SlideAnimations { .. } => return self.capture_animations_step(before, after, op),
             Payload::FormatSet { addresses, .. } => return self.capture_format_step(before, after, op, addresses),
             Payload::ShapeField { field, .. } => (None, image_of_field(*field)),
             Payload::ShapeInsert { .. } | Payload::PictureInsert { .. } | Payload::MediaInsert { .. } => {
@@ -583,6 +586,23 @@ impl Adapter {
         (!old.is_empty()).then_some((old, new))
     }
 
+    /// Undo of an `animation.set`/`animation.timing`/`animation.move` step: the slide's whole
+    /// ordered animation list before and after. A step may move past another shape's step, so a
+    /// per-shape image could not put the sequence back; the whole list can.
+    fn capture_animations_step(&self, before: &Presentation, after: &Presentation, op: &OpEnvelope) -> Option<(Vec<Change>, Vec<Change>)> {
+        let key = op.target.slide.clone()?;
+        let was = self.capture_animations(before, &key)?;
+        let now = self.capture_animations(after, &key)?;
+        Some((vec![Change::SlideAnimations(was)], vec![Change::SlideAnimations(now)]))
+    }
+
+    /// One slide's whole animation sequence as an image, addressed by slide key.
+    fn capture_animations(&self, doc: &Presentation, slide: &SlideKey) -> Option<SlideAnimationsImage> {
+        let id = self.keys.slide_id(slide)?;
+        let found = doc.slide(id)?;
+        Some(SlideAnimationsImage { slide: slide.clone(), animations: found.animations.clone() })
+    }
+
     /// Undo of a `transition.set` step: the slide's whole transition before and after.
     fn capture_transition_step(&self, before: &Presentation, after: &Presentation, op: &OpEnvelope) -> Option<(Vec<Change>, Vec<Change>)> {
         let key = op.target.slide.clone()?;
@@ -632,6 +652,7 @@ impl Adapter {
                 Some(Change::SlideTransition(TransitionImage { slide: snapshot.slide.clone(), transition: slide.transition.clone() }))
             }
             Change::Notes(snapshot) => self.capture_notes(doc, &snapshot.slide).map(Change::Notes),
+            Change::SlideAnimations(snapshot) => self.capture_animations(doc, &snapshot.slide).map(Change::SlideAnimations),
         }
     }
 
@@ -751,6 +772,8 @@ impl Adapter {
             }
             // Notes are a slide body, never a shape value: they have their own `Change::Notes`.
             Image::Notes(_) => return None,
+            // A slide-wide animation list is a slide body too, never a shape value.
+            Image::SlideAnimations(_) => return None,
         };
         Some(Snapshot { slide: at.slide.clone(), shape: at.shape.clone(), cell: at.cell, image })
     }
@@ -930,6 +953,25 @@ impl Adapter {
                     steps.push(json);
                 }
                 self.call(session, "slide.animation.set", json!({"index": index, "shape": shape.0, "animations": steps}), head)
+            }
+            Payload::SlideAnimations { animations } => {
+                // The slide's own ordered sequence: every value carries its shape, because a step
+                // may move past another shape's step. Nothing is written before every value is a
+                // model animation; the engine validates effect, bounds and that each named shape
+                // is still on the slide.
+                let slide = self.resolve_slide(before, op.target.slide.as_ref(), head)?;
+                if op.target.shape.is_some() || !op.target.shapes.is_empty() {
+                    return Err(Rejection::invalid("a slide animation list belongs to a slide, not to a shape", Some(head)));
+                }
+                let index = before.slide_index(slide).ok_or_else(|| Rejection::stale("the slide is gone", Some(head)))?;
+                let mut steps = Vec::with_capacity(animations.len());
+                for value in animations {
+                    let step = crate::animation::model(value)
+                        .ok_or_else(|| Rejection::invalid("an animation step is not a valid model animation", Some(head)))?;
+                    let json = crate::animation::spec(&step).ok_or_else(|| Rejection::invalid("an animation step cannot be sent", Some(head)))?;
+                    steps.push(json);
+                }
+                self.call(session, "slide.animations.set", json!({"index": index, "animations": steps}), head)
             }
             Payload::NotesSet { notes } => {
                 // Notes belong to a slide: `target.slide` is the whole address, and a shape key in
@@ -1708,6 +1750,7 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::FormatSet { .. }
         | Payload::SlideTransition { .. }
         | Payload::ShapeAnimations { .. }
+        | Payload::SlideAnimations { .. }
         | Payload::NotesSet { .. }
         | Payload::NotesInsert { .. }
         | Payload::NotesDelete { .. }

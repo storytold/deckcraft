@@ -28,6 +28,7 @@ fn skipped(id: &str) -> bool {
             | "file.new"
             | "slide.transition.set"
             | "slide.animation.set"
+            | "slide.animations.set"
     ) || id.starts_with("window.")
         || id.starts_with("show.")
         || id.starts_with("media.")
