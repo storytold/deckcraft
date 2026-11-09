@@ -156,12 +156,15 @@ The first release deliberately normalises a small, idempotent command set:
 | `format.*` over N cells | command | one operation with one address per cell of one table and one undo step: exactly those cells change, a neighbour is never touched, a foreign edit of any addressed cell makes its undo `undo-conflict`, and the restore is their whole bodies in one `cells_text` |
 | `arrange.group`, `arrange.ungroup`, `arrange.reorder` | structural | explicit sibling anchor |
 | `shape.restore` | structural | server-built undo/redo image of whole shapes (model JSON, parent, z-order index, animations); a client cannot send it as an edit |
+| `font.create` | command | embeds one face of a document font: the file goes to the media channel, the operation carries its `sha256`, the typeface and the face slot (`regular`/`bold`/`italic`/`boldItalic`); a typeface the document has no entry for gets one, an existing entry only gains/replaces that slot. Presentation-level: no slide is named, so a replica on any slide applies it |
+| `font.set`, `font.remove` | command | the entry's descriptor fields (`panose`, `pitchFamily`, `charset`) as final values, or the whole entry dropped; both refuse an entry the document does not have and change no address |
+| `font.restore` | command | server-built undo/redo image of one whole entry (model JSON with its four face media ids, or `null` for "no entry"); a client cannot send it as an edit |
 
 Anything else that changes the document is refused with a "not available in a shared session
 yet" message instead of being applied locally and silently diverging. The design rule stands: only
 commands whose result is a deterministic function of the authoritative state, expressed as final
-values, go on the wire. What is still refused: fonts as a document asset, the rest of the table
-surface (style, fill, merge/split, sizing), SmartArt/charts and relative effects. The full
+values, go on the wire. What is still refused: the rest of the table surface (style, fill,
+merge/split, sizing), SmartArt/charts, 3-D models and relative effects. The full
 command surface is the next slice; it needs a final-value normalisation for each command, not a
 raw `execute` on the wire.
 
@@ -202,14 +205,18 @@ only the digest.
 
 - `PUT /v1/sessions/{id}/media/{sha256}` with the session token (a viewer is refused). The body is
   the object, the path must match its digest. The allowlist is by signature: PNG, JPEG, GIF, WebP,
-  BMP, TIFF and SVG up to 8 MiB; MP4/MOV/WebM/AVI and WAV/FLAC/Ogg/MP3/M4A/AIFF/MIDI up to 32 MiB.
-  Pictures keep 512 objects / 64 MiB per session; audio and video keep their own 32 objects /
-  192 MiB, so a large clip cannot evict the pictures.
+  BMP, TIFF and SVG up to 8 MiB; TrueType/OpenType, collections and Embedded OpenType (`fntdata`)
+  up to 16 MiB; MP4/MOV/WebM/AVI and WAV/FLAC/Ogg/MP3/M4A/AIFF/MIDI up to 32 MiB. Pictures keep
+  512 objects / 64 MiB per session, fonts their own 32 objects / 64 MiB, and audio and video their
+  own 32 objects / 192 MiB, so a font or a large clip cannot evict the pictures.
 - `GET /media/{sha256}` with a session or service token returns the bytes with their content type.
 - One object per digest per session; a repeated upload is a no-op.
-- Wire: `Payload::PictureInsert { sha256, name, rect }` and
-  `Payload::MediaInsert { kind: video|audio, sha256, name, rect }`. `rect` is optional: without it
-  the server and every replica compute the frame from the same bytes and slide size.
+- Wire: `Payload::PictureInsert { sha256, name, rect }`,
+  `Payload::MediaInsert { kind: video|audio, sha256, name, rect }` and
+  `Payload::FontCreate { typeface, face, sha256, name }`. `rect` is optional: without it the server
+  and every replica compute the frame from the same bytes and slide size. A font has no frame: the
+  entry points at one media object per face, and the `.pptx` writer emits it as
+  `ppt/fonts/fontN.fntdata` (`p:embeddedFontLst`).
 - With `COLLAB_STORE_DIR` the objects live under `<store>/media/<sha256>` and a journal replay
   loads them before the operation runs.
 - The desktop link derives the HTTP endpoint from its WebSocket URL: `ws://` opens a plain socket,
@@ -302,9 +309,9 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    (`INTEGRATION.md` §5.2), the host-bridge messages (`session`, `presence`, `commit`/`committed`)
    and a desktop "save to cabinet" command. Without the cabinet endpoint a deployment still
    builds verified bytes in the process, not a new cabinet version.
-2. **P1 — Media refinement**: pictures, video and audio are on the channel, but fonts and 3D
-   models are not. The browser link fetches and uploads them with `fetch` plus the session token;
-   the sync server has no CORS headers, so a page on another origin cannot use the channel yet.
+2. **P1 — Media refinement**: pictures, video, audio and font faces are on the channel; 3-D models
+   are not. The browser link fetches and uploads them with `fetch` plus the session token; the sync
+   server has no CORS headers, so a page on another origin cannot use the channel yet.
 3. **P1 — Notes, cell formatting, N-cell ranges and carets are in**. Shape text, table-cell text,
    slide notes, a table cell's formatting, a run range inside either body and a caret in a shape's
    body are addressed and rebased now: a notes edit
@@ -327,8 +334,9 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    the address is never pre-widened, and both replicas get the same result. The animation surface
    is complete now: `animation.options`, `animation.clear` and the Animation Painter send the
    slide's whole resulting sequence, the painter's clipboard stays a session value, and each step
-   is one undo. What is left in this line: the rest of the table surfaces and fonts as a document
-   asset.
+   is one undo. Document fonts are in too (`font.create`/`font.set`/`font.remove`, the whole entry
+   as the undo image) but have no UI entry point yet: the commands are on the control channel and
+   the MCP surface. What is left in this line: the rest of the table surfaces.
 4. **Done — Browser transport**: the web build gets its session from the host bridge and dials the
    sync server over the page's `WebSocket` (`crates/collab-web`); the token comes from
    `deckcraft:session`, media goes over `fetch` with it, and Save asks the cabinet to commit.

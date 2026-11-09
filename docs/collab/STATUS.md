@@ -1,7 +1,7 @@
 # Collaboration status and handoff
 
 Updated: 2026-11-09. Branch: `collab/pr11`, **rebased onto `origin/main` at `0623b430`** (heads
-`collab/pr10` = `7459d798` plus its rebase note, `collab/pr11` = `da3199bf` plus this docs
+`collab/pr10` = `7459d798` plus its rebase note, `collab/pr11` = `fd4e54e8` plus this docs
 commit; pre-rebase hashes are kept in the slice notes below and mapped in
 [Rebase onto origin/main](#rebase-onto-originmain-2026-11-09)), from
 `collab/pr10` at `922a4bf4` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo
@@ -15,8 +15,9 @@ slice `f562aea4` with its docs commit on top, the notes-text slice `b7025f9a` wi
 commit on top, the table-cell format slice
 `a48c12de` with its docs commit on top, the run-range format slice `b4f13167` with its docs
 commit on top, the N-cell/caret format slice `6ddc0c4f` with its docs commit on top, the
-whole-slide animation slice `b31bff47` with its docs commit on top, and the
-rest-of-the-animation-surface slice `e2a5ef41` with its docs commit on top.
+whole-slide animation slice `b31bff47` with its docs commit on top, the
+rest-of-the-animation-surface slice `e2a5ef41` with its docs commit on top, and the
+document-font slice `fd4e54e8` with its docs commit on top.
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -40,7 +41,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
 | `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048`, `e007e965`, `927e773c` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds, `transition.set` as a whole final value; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup, align/distribute and transition; commit published to the cabinet as a new file version (`409` on an external change); base transfer after compaction with the key map, and a three-client soak gate |
-| `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs), `e2a5ef41` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image; `animation.options`/`animation.clear` and the Animation Painter as the same slide-wide sequence computed with the engine's `options_plan`/`painter_plan` (the painter's clipboard stays a session value, a no-op sends nothing, a one-shot pick is disarmed after sending), with the whole sequence as the undo image |
+| `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs), `e2a5ef41` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image; `animation.options`/`animation.clear` and the Animation Painter as the same slide-wide sequence computed with the engine's `options_plan`/`painter_plan` (the painter's clipboard stays a session value, a no-op sends nothing, a one-shot pick is disarmed after sending), with the whole sequence as the undo image; and the document-font slice `fd4e54e8`: `font.create`/`font.set`/`font.remove` on the presentation's embedded-font registry (`FontCreate` names one face by digest, `FontSet` sets the descriptors, `FontRemove` drops the entry), a presentation-level merge step with no slide address, a font face on the media channel (`MediaType::Font` with an sfnt allowlist and its own budget) and the whole `EmbeddedFont` entry (`font_restore`) as the undo image |
 
 ### Rebase onto origin/main (2026-11-09)
 
@@ -132,7 +133,7 @@ The fork branch `copoka/deckcraft:collab/pr10` is published at `922a4bf4`, the p
 and `collab/pr11` at `d6ea4051`; PR #1975 is open from the fork on `collab/pr10` (head
 `922a4bf4`, `CONFLICTING` against `main`). The local branches were rebased onto `origin/main`
 (`0623b430`) and now carry rewritten history (`collab/pr10` = `7459d798` plus its rebase note,
-`collab/pr11` = `da3199bf` plus documentation commits, 69 commits ahead of main), so publishing
+`collab/pr11` = `fd4e54e8` plus documentation commits, 75 commits ahead of main), so publishing
 them is a **force-push** of
 the two fork branches and not a fast-forward. A `git push --dry-run` from this workspace is
 refused by the environment policy, so the publish is a manual step (the chair does it): `git push
@@ -278,6 +279,23 @@ human decision.
   the whole shape — and no replica needs the clipboard. A command that changes nothing sends no
   operation, a missing clipboard or an unaddressable target is refused before anything is sent,
   and the UI disarms a one-shot pick after it is sent, as the single-user command does.
+- `font.create`/`font.set`/`font.remove`: the presentation's embedded font registry
+  (`p:embeddedFontLst`). `font.create` embeds one face from a font file: the bytes go to the
+  media channel and the operation carries their `sha256`, the typeface and the slot
+  (`regular`/`bold`/`italic`/`boldItalic`), so an entry the document lacks is created and an
+  existing one only gains or replaces that face. A font is presentation-level — it names no slide
+  or shape, so every replica applies it whatever it is looking at — and it changes no address or
+  key, so it is a merge-class operation. `font.set` sets the entry's descriptors (`panose`,
+  `pitchFamily`, `charset`) as final values; `font.remove` drops the whole entry and leaves the
+  face objects in the media list for an undo image. The engine validates the file (sfnt header and
+  table directory, 16 MiB ceiling), stores it as `application/x-fontdata`, installs the face in
+  the session's font database so the text draws immediately, treats a typeface name
+  case-insensitively, and refuses an unknown entry or a non-font file before the first write.
+- Undo of a font step: the whole entry before and after (the model `EmbeddedFont` as JSON — its
+  descriptors and the media ids of its four face slots — or `null` when the document had none),
+  restored with `font_restore` by the engine's `font.restore`. A later change to the same entry by
+  anyone else is `undo-conflict`; a change to another typeface is not. The restore names no slide:
+  `Restore.slide` became optional for this one presentation-level value.
 - `format.*`: 17 allowlisted commands (`bold`, `italic`, `underline`, `strikethrough`,
   `superscript`, `subscript`, `font`, `size`, `color`, `highlight`, `alignLeft/Center/Right`,
   `justify`, `caps`, `spacing`, `clear`) over one explicit shape's whole text body, over the
@@ -314,8 +332,8 @@ human decision.
   an align that moves nothing sends nothing.
 - Undo/redo: move, bounds, align/distribute, text (shape text and table cells), fill, outline,
   `format.*` (a shape's body, one cell's body, N cells of one table, or a character range/caret of
-  a body), transition and animation (a shape's step list for add/remove, a slide's whole sequence
-  for set/timing/move/options/clear/painter). A restore
+  a body), transition, animation (a shape's step list for add/remove, a slide's whole sequence
+  for set/timing/move/options/clear/painter) and a document font entry (create/set/remove). A restore
   carries the exact model value (`shape_field`) and runs through the `shape.setField` engine
   command, which bounds the JSON and deserialises it into the model type. A cell text step records
   the cell's whole body text with its address and restores it with `text.set{cell}`, so the
@@ -362,9 +380,10 @@ human decision.
   callback, `POST /v1/sessions/{id}/commit` returns the bytes inline (development mode); a client
   `commit` is answered only after the cabinet took the file.
 - Media: `PUT /v1/sessions/{id}/media/{sha256}` (session token, writer only, signature allowlist
-  for pictures/audio/video, 8 MiB per picture, 32 MiB per clip), `GET /media/{sha256}` (session or
-  service token). Content-addressed under `<store>/media/<sha256>`; 512 pictures / 64 MiB and 32
-  clips / 192 MiB per session; upload and byte counters in metrics.
+  for pictures, font faces and audio/video, 8 MiB per picture, 16 MiB per font face, 32 MiB per
+  clip), `GET /media/{sha256}` (session or service token). Content-addressed under
+  `<store>/media/<sha256>`; 512 pictures / 64 MiB, 32 fonts / 64 MiB and 32 clips / 192 MiB per
+  session, so a font cannot evict a picture; upload and byte counters in metrics.
 - Persistence: native base + append-only journal, snapshot every N ops, replay on restart
   through the same `apply` path. Without `COLLAB_STORE_DIR` the server is memory-only.
 - `COLLAB_SNAPSHOT_EVERY` now also drives a memory-only room (it used to reach the store only),
@@ -639,6 +658,29 @@ two replicas with an undo of each; and the UI sending the painted sequence over 
 disarming a one-shot pick. `git status` is clean after the docs commit; nothing was pushed, CI
 was not touched, and PR #1975 is unchanged.
 
+Re-run on 2026-11-09 after the document-font slice (`fd4e54e8`, on `agents`, rust 1.99.1):
+`cargo fmt --all -- --check` clean, `cargo clippy --workspace --all-targets -- -D warnings`
+clean, `collab-proto` 31, `collab` 205 + 8, `collab-web` 15, `collab-server` 10 unit + 4 commit
++ 4 gates + 7 socket, `deckcraft-web` 6, `ui-egui collab::` 20, `deckcraft-engine` 584 + 1
+ignored, `xtask layers` 32 crates with no violations, `cargo check -p deckcraft-web --target
+wasm32-unknown-unknown` ok, `cargo check --workspace --all-targets` clean (the E0502 reported on
+`57da8f76` in `crates/collab/src/local.rs` does not reproduce at `07b6f1c8`, the base of this
+slice, nor after it). `cargo test --workspace --no-fail-fast` is green except the known environment
+failures of a host without `craft-fonts`: `ui-egui ime_tests::korean_composes_in_the_notes_pane`
+and `render tests::east_asian_vertical_text_stands_ideographs_upright` (no CJK face on the
+host; both draw a glyph the machine does not have). The four §8 gates run 4/4 in 2.44 s. The new
+tests cover two replicas converging on `font.create` (the bytes by digest on the media channel,
+the same media id on both, the face installed), `font.set` and `font.remove`; an undo of a
+descriptor step and of the create itself broadcast through the hub to both replicas, with the
+face object staying for the redo; an undo refused `undo-conflict` after another participant
+changed the entry; a step addressed by a slide, a digest that is not a font, a missing upload
+(retryable), an unknown entry and a descriptor set with nothing to set all refused before any
+write with no version move; the normaliser's digest-and-face form, its upload (`take_uploads`),
+and its refusals; the media channel's sfnt allowlist and its own budget; and a real socket:
+upload/fetch of a face, a viewer refused, a `font_create` applied to the room and a commit that
+reimports with the entry. `git status` is clean after the docs commit; nothing was pushed, CI was
+not touched, and PR #1975 is unchanged.
+
 The socket tests were run against a real loopback server; the restart test creates a room, moves
 the version, shuts the server down, starts a new one on the same store and asserts the version
 and document came back. The media tests cover a rejected upload (viewer, wrong digest, no token),
@@ -685,9 +727,9 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | A 100+ slide deck with media stays responsive and its commit opens in LibreOffice | ✅ 120 slides/120 pictures, 4 media objects; commit renders 121 pages and survives an LO round trip | `tests/gates.rs`; adapter fix for edits on a non-active slide |
 | Insert a picture in a shared session | ✅ pictures, audio and video over `ws://` and `wss://` | media channel, adapter and socket tests |
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
-| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format (a shape's body, one table cell, N cells of one table, a run range or a caret)/duplicate/transition/animation (a shape's step list, a slide's whole sequence from set/timing/move/options/clear and the painter), table cell text, table row/column edits and slide notes text | collab tests |
+| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format (a shape's body, one table cell, N cells of one table, a run range or a caret)/duplicate/transition/animation (a shape's step list, a slide's whole sequence from set/timing/move/options/clear and the painter), table cell text, table row/column edits, slide notes text and document fonts (the embedded-font registry: one face by digest, descriptors, removal) | collab tests, socket test, commit reimport |
 | Reconnect works | ✅ within the retained journal tail; after compaction the client is rebuilt from the native base and the key map (inline up to 8 MiB) | client queue + resync; three-session gate; three-client soak; `DocSession::resync` |
-| Per-user undo/redo | ✅ text (shape, table cell and slide notes), shape values, align/distribute, fill, outline, `format.*` (a shape's body, one cell's body, N cells of one table, a run range or a caret), group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, animation (a shape's step list and a slide's whole sequence for set/timing/move/options/clear/painter), table row/column edits | server history, `undo-conflict`, `shape_field`/`cell_text`/`cells_text`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`)/`slide_transition`/`shape_animations`/`slide_animations`/`notes_set`/whole-table `shape_field` |
+| Per-user undo/redo | ✅ text (shape, table cell and slide notes), shape values, align/distribute, fill, outline, `format.*` (a shape's body, one cell's body, N cells of one table, a run range or a caret), group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, animation (a shape's step list and a slide's whole sequence for set/timing/move/options/clear/painter), table row/column edits, document fonts (the whole entry) | server history, `undo-conflict`, `shape_field`/`cell_text`/`cells_text`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`)/`slide_transition`/`shape_animations`/`slide_animations`/`notes_set`/`font_restore`/whole-table `shape_field` |
 | Viewer cannot edit | ✅ server + engine gate, also inside the three-session gate | socket test, UI test |
 | Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`) |
@@ -716,15 +758,15 @@ environment gap, not this change), `deckcraft-engine` not re-run (untouched); cl
    row/column edits, `animation.add`/`animation.remove` (one shape's whole step list),
    `animation.set`/`animation.timing`/`animation.move`/`animation.options`/`animation.clear` and
    the Animation Painter (one slide's whole ordered sequence) and
-   slide notes text (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`) are
-   collaborative now. Still refused: fonts as a document asset, the rest of the table surface
-   (style, fill, merge/split, sizing), SmartArt/charts and relative effects. The design rule
-   stands: only commands whose result is a deterministic function of the authoritative state,
-   expressed as final values, go on the wire; a raw `execute` is not safe (toggles and relative
-   edits diverge). Next candidates: fonts as a document asset, then the rest of the table
-   surface.
-2. **Media refinement.** Fonts and 3D models are not in the media allowlist, and the browser link
-   still needs the same HTTP bridge. The desktop `wss://` path has a TLS client now (system roots;
+   slide notes text (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`) and
+   document fonts (`font.create`/`font.set`/`font.remove`, the whole entry as the undo image) are
+   collaborative now. Still refused: the rest of the table surface (style, fill, merge/split,
+   sizing), SmartArt/charts, 3-D models and relative effects. The design rule stands: only
+   commands whose result is a deterministic function of the authoritative state, expressed as
+   final values, go on the wire; a raw `execute` is not safe (toggles and relative edits
+   diverge). Next: the rest of the table surface.
+2. **Media refinement.** Font faces are in the media allowlist now; 3-D models are not. The
+   browser link still needs the same HTTP bridge. The desktop `wss://` path has a TLS client now (system roots;
    a private CA must be in the store or `SSL_CERT_FILE`).
 3. **Rich runs are in; cell formatting, N-cell ranges and carets are done.** Shape text,
    table-cell text and slide notes are addressed and rebased. A notes edit addresses
@@ -840,20 +882,69 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    `409` and stores the accepted version. For a page on another origin the sync server needs CORS
    headers on `/media/{sha256}` and the two session endpoints.
 4. Extend the command set in vertical slices with the same pattern: payload → normalize →
-   adapter run → confirmed command → test on two clients. Next: fonts as a document asset, then
-   the rest of the table surface (style, fill, merge/split, sizing), then SmartArt/charts.
+   adapter run → confirmed command → test on two clients. Document fonts are done; next is the
+   rest of the table surface (style, fill, merge/split, sizing), then SmartArt/charts.
 5. Undo is covered for move/bounds/text (shape, table cell and slide notes)/fill/line/format
    (shape body, one table cell, N cells of one table, a run range or a caret — each with an exact
    body image)/transition/animation (a shape's step list for add/remove, a slide's whole sequence
    for set/timing/move/options/clear/painter) steps, a group's fill/line, slide
    insert/delete/duplicate, shape insert/delete, group/ungroup and table row/column edits
-   (whole-table image). What is left in this line is only the undo of commands that are not on
-   the wire yet (fonts, the rest of the table surface).
+   (whole-table image) and a document font entry. What is left in this line is only the undo of
+   commands that are not on the wire yet (the rest of the table surface).
 6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the three-client soak covers compaction, base transfer and a reconnect, so the next gate is a longer run (hundreds of steps, media) and a base above the inline limit.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-09 — document fonts: an embedded-font registry on the wire
+
+- A font is a **document asset**, not a shape value: `p:embeddedFontLst` carries one entry per
+  typeface with up to four face slots, and the face bytes are ordinary media objects. The slice
+  keeps that shape. Engine module `crates/engine/src/cmd/font_asset.rs` adds four commands:
+  `font.create` (one face from a file — `typeface`, `face`, `data`/`path`), `font.set` (the
+  entry's `panose`/`pitchFamily`/`charset` as final values), `font.remove` and `font.restore`
+  (the exact whole entry, or `null`, for collaboration undo). The engine validates the sfnt
+  header and table directory, caps the file at 16 MiB, stores it as `application/x-fontdata`,
+  installs the face in the font database so text draws immediately, compares a typeface
+  case-insensitively, and validates every face id of a restore before the first write.
+- Protocol (`crates/collab-proto`): `Payload::FontCreate { typeface, face, sha256, name }`,
+  `FontSet`, `FontRemove` and `FontRestore { typeface, font: Option<Value> }`, with
+  `FontFace { regular, bold, italic, boldItalic }`. A font operation names no slide: it is
+  presentation-level, merge class, and changes no address or key.
+- Media channel: `MediaType::Font`, an sfnt/OpenType/collection/EOT signature allowlist, a 16 MiB
+  per-face cap and its own 32-object / 64 MiB budget, so a font cannot evict pictures. The
+  browser link prefetches a `FontCreate` digest like a picture's, and the desktop client fetches
+  it through the same `apply_command` hook before applying.
+- Normalise and adapter: `CollabDoc::submit` intercepts `font.create` and puts the bytes in the
+  media cache (`take_uploads` for the host), so the operation carries only the digest; the
+  normaliser validates the name, face, digest and descriptors and runs before the slide-view
+  guard, because the command does not need a slide. The adapter resolves `sha256` in its media
+  cache (`missing_media`, retryable, when absent), refuses a digest that is another kind of
+  object and a font step that names a slide, then runs the engine command.
+- Undo: `history::Change::Font` keeps the whole entry before and after (the model
+  `EmbeddedFont`, media ids included) and `restores()` emits one `font_restore`.
+  `Restore.slide` became `Option<SlideKey>` — a font is the first presentation-level value with
+  no slide to address. `capture_font` re-reads the entry for `step_matches`, so any later change
+  to that entry (another participant's face or descriptor) makes the undo `undo-conflict`, while
+  a change to another typeface does not.
+- Tests: eight in `deckcraft-collab` (two replicas converging on create/set/remove; the undo of a
+  descriptor step and of the create broadcast through the hub to both replicas, with the face
+  object kept for the redo; an undo refused after a foreign change; slide-addressed, non-font,
+  missing-upload, unknown-entry and empty-set refusals before any write; the normaliser, the
+  upload path and the media allowlist/budget) and a socket test that uploads a face, applies
+  `font_create` to the room and commits a file that reimports with the entry. The engine module
+  tests cover the four commands, the validation and the save/reimport.
+- Gates (on `agents`, rust 1.99.1): `fmt --check` clean, clippy `--workspace --all-targets -D
+  warnings` clean, `collab-proto` 31, `collab` 205 + 8, `collab-server` 10 + 4 commit + 4 gates
+  (2.44 s) + 7 socket, `collab-web` 15, `deckcraft-web` 6, `engine` 584 + 1 ignored, `ui-egui
+  collab::` 20, `xtask layers` 32 crates, wasm32 check of `deckcraft-web` ok. `cargo test
+  --workspace` is green except the known host-without-`craft-fonts` failures in `ui-egui`
+  (Korean IME) and `render` (east-asian vertical text). Commit `fd4e54e8` plus this docs commit
+  on `collab/pr11`; nothing pushed, CI untouched, PR #1975 unchanged.
+- Not in this slice: a UI entry point ("Embed font…" dialog) and embedding *every* used family in
+  one step; both are follow-ups, the commands are reachable through the control channel, MCP and
+  the animation-free command surface.
 
 ### 2026-11-09 — the rest of the animation surface: `animation.options`, `animation.clear`, the painter
 
