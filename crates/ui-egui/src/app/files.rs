@@ -240,6 +240,13 @@ impl SlideApp {
     /// Hands `bytes` to the browser as a download (web); false (with the reason in the status
     /// bar) when there are no bytes or no way to download.
     fn download(&mut self, name: &str, bytes: deckcraft_engine::Result<Vec<u8>>) -> bool {
+        // Hosted read-only (#1898): the host's `download` is a `deckcraft:save` of a copy (PDF,
+        // picture, outline…), and a read-only session sends the host nothing. A plain browser
+        // download, with no host, is still a copy for the user.
+        if self.session.read_only && self.services.host_save.is_some() {
+            self.set_status(deckcraft_engine::READ_ONLY_REFUSED);
+            return false;
+        }
         match (bytes, self.services.download.as_mut()) {
             (Ok(b), Some(dl)) => {
                 dl(name, &b);

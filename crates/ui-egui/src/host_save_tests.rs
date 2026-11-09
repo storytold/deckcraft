@@ -211,3 +211,22 @@ fn a_damaged_file_from_the_page_saves_as_a_new_repaired_file() {
     app.save();
     assert_eq!(calls(&got), [("talk (Repaired).deckcraft".to_string(), true)]);
 }
+
+/// #1898: a read-only hosted session hands the page nothing — not a save, not a Save As, and not
+/// the "copies" either (Export › PDF, Print go through the host's `download`, which is a
+/// `deckcraft:save` on the page's side). Viewing still works and the deck stays clean.
+#[test]
+fn a_read_only_host_session_sends_the_page_nothing() {
+    let (mut app, got) = host_app(false);
+    app.open_from_host(Some("Lecture 3.pptx"), &pptx(2));
+    app.session.read_only = true;
+    app.save();
+    app.save_as_dialog("deckcraft");
+    assert!(!app.export_as("pdf", serde_json::json!({})), "Export refuses");
+    assert!(!app.print_pdf(serde_json::json!({})), "Print refuses");
+    assert!(got.borrow().is_empty(), "nothing was posted to the page: {:?}", calls(&got));
+    assert!(app.status.as_ref().is_some_and(|s| s.0.contains("read-only")), "{:?}", app.status);
+    assert!(!app.session.active().unwrap().is_dirty());
+    app.run("slide.next", serde_json::json!({})).unwrap();
+    assert_eq!(app.session.active().unwrap().selection.slide, 1, "navigation still works");
+}
