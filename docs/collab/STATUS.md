@@ -1,6 +1,18 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-09. Branch: `collab/pr11`, from `collab/pr10` at `922a4bf4` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, the browser link `66d4658c`, the transition slice `927e773c`, docs commits on top), plus the table-text slice `2a91d49e`, its docs commit, the cell-set rebase `b54eed3d`, the animation-step slice `f562aea4` with its docs commit on top, the notes-text slice `b7025f9a` with its docs commit on top, the table-cell format slice
+Updated: 2026-11-09. Branch: `collab/pr11`, **rebased onto `origin/main` at `0623b430`** (heads
+`collab/pr10` = `7459d798` plus its rebase note, `collab/pr11` = `da3199bf` plus this docs
+commit; pre-rebase hashes are kept in the slice notes below and mapped in
+[Rebase onto origin/main](#rebase-onto-originmain-2026-11-09)), from
+`collab/pr10` at `922a4bf4` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo
+of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`,
+structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of
+group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and
+the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, the
+browser link `66d4658c`, the transition slice `927e773c`, docs commits on top), plus the
+table-text slice `2a91d49e`, its docs commit, the cell-set rebase `b54eed3d`, the animation-step
+slice `f562aea4` with its docs commit on top, the notes-text slice `b7025f9a` with its docs
+commit on top, the table-cell format slice
 `a48c12de` with its docs commit on top, the run-range format slice `b4f13167` with its docs
 commit on top, and the N-cell/caret format slice `6ddc0c4f` with its docs commit on top.
 The production operator view is
@@ -28,7 +40,62 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048`, `e007e965`, `927e773c` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds, `transition.set` as a whole final value; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup, align/distribute and transition; commit published to the cabinet as a new file version (`409` on an external change); base transfer after compaction with the key map, and a three-client soak gate |
 | `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica) |
 
-The Commit column names the slice commits; each branch also carries documentation commits. Heads:
+### Rebase onto origin/main (2026-11-09)
+
+Both branches were rebased onto `origin/main` at `0623b430` (23 commits ahead of the old
+merge-base `159ed07e`) so that [PR #1975](https://github.com/storytold/deckcraft/pull/1975) is no
+longer `CONFLICTING`: `collab/pr10` (55 commits) → `7459d798`, then `collab/pr11` (13 commits,
+`--onto`) → `da3199bf`. `git merge-tree --write-tree origin/main collab/pr10` and the same for
+`collab/pr11` both exit 0 with an empty conflict list. The pre-rebase branches are kept locally as
+`backup/pr10-pre-rebase` and `backup/pr11-pre-rebase`. The PR head is `collab/pr10`, so that
+branch carries a short note of the rebase as well; this file on `collab/pr11` is the
+authoritative one (it also has the later slices).
+
+Every hash in this file that predates the rebase refers to the pre-rebase series; the named
+slices map as follows:
+
+| Pre-rebase | Rebased | Subject |
+|---|---|---|
+| `98d9e9ce` | `9d824224` | undo group and ungroup from whole-subtree images |
+| `e007e965` | `a7da3d8f` | base transfer after compaction and a three-client soak gate |
+| `927e773c` | `85babbaa` | `slide.transition.set` as a final-value command slice |
+| `922a4bf4` | `7459d798` | docs: transition slice (old `collab/pr10` head) |
+| `2a91d49e` | `f7ae5a94` | text in table cells and row/column edits |
+| `b54eed3d` | `649f6e4a` | rebase a whole-cell `text.set` past a table edit |
+| `f562aea4` | `e7e7b601` | shape animation steps as an exact-value command slice |
+| `b7025f9a` | `5edd85b3` | slide notes as an addressable body slice |
+| `a48c12de` | `0178cc6a` | format a table cell's own body, exact cell-body undo |
+| `b4f13167` | `a90a3e31` | format a run range of a text body, exact-body undo |
+| `d6ea4051` | `538649c9` | docs: run-range format slice |
+| `6ddc0c4f` | `b2e976bf` | format several table cells and a caret in one step |
+| `de498801` | `da3199bf` | docs: N-cell and caret format slice (new `collab/pr11` head) |
+
+Main moved 29 files in those 23 commits (a `craft-web-api` page command API, 3-D body/group XML,
+trendline fits, sentence-case and paragraph-alignment fixes, ribbon accessibility and the updater
+UI, plus a craft-libs pin bump). Four files conflicted; each was resolved as a union, not a
+choice:
+
+- `crates/engine/src/cmd/shape.rs` — main's `opt_usize_param` (used by
+  `cmd/shape/appearance.rs`) and the collab-side `current_shapes` both stay; rustfmt keeps one
+  wrapped list.
+- `apps/deckcraft-web/Cargo.toml` — main's `craft-web-api` at
+  `storytold/craft-libs@fd5e2fe` and the collab `deckcraft-collab-web`/`craft-web-host` stay; the
+  host crate remains pinned to `copoka/craft-libs@7666e2b` (the session messages are not in
+  `storytold/craft-libs@fd5e2fe`, ADR-0016 §3), and `Cargo.lock` names that source.
+- `apps/deckcraft-web/src/web.rs` — `crate::api::install(...)` is kept and the `WebShell`
+  literal keeps the collaboration fields (`ctx`, `host_events`, `host_state`,
+  `last_host_state`, `last_presence_ms`).
+- `Cargo.lock` — the only remaining difference from main's own lock diff is the pinned host
+  source; offsets differ because the collab crates add packages.
+
+The code patch main brought in is `origin/main`'s own `159ed07e..origin/main` patch: compared with
+`git diff backup/pr11-pre-rebase collab/pr11`, the only differences are `Cargo.lock`, the host pin
+in `apps/deckcraft-web/Cargo.toml`, this file, and the one union import line in `cmd/shape.rs`
+(`current_shapes` stays next to `opt_usize_param`). Hunk offsets differ because the collab crates
+add lines above them. So the rebase added nothing to the collaboration slices and dropped nothing.
+
+The Commit column names the slice commits; each branch also carries documentation commits. Heads
+after the rebase: `collab/pr10` = `7459d798` (+ its note), `collab/pr11` = `da3199bf` (+ docs). In the pre-rebase series:
 `collab/pr9` = `47ec08fe`, `collab/pr10` = `7fe75711`, `0a57b61e`, `58eee059`, `69c2ff22`,
 `41fe1ad9`, `4e666b95`, `f6281736` (journal replay of history operations), `3ec81d70` (shape
 insert/delete undo), `31842050` (cabinet commit publication), `f28ee048` (docs), `98d9e9ce`
@@ -59,17 +126,19 @@ carries the protocol, `session-state`/`presence` go back to the cabinet, Save as
 and `deckcraft:committed` records the stored version. Nothing there talks to the network without a
 session message.
 
-The published head of the fork branch `copoka/deckcraft:collab/pr10` is `63ec1ebe`, open as
-[PR #1975](https://github.com/storytold/deckcraft/pull/1975). Local `collab/pr10` is ahead of it by
-`3ec81d70`, `ded9d1ee`, `31842050`, `f28ee048`, `98d9e9ce`, `31d353fe`, `5b078c7d` and
-`556c00d9`, and local `collab/pr11` adds `927e773c`, `922a4bf4`, `2a91d49e`, the cell-set
-rebase `b54eed3d`, `f562aea4`, `b7025f9a`, `a48c12de`, `b4f13167`, `6ddc0c4f` and the docs
-commits on top. `git fetch fork` shows no commit on the fork side that is missing locally, and a
-`git push --dry-run` from this workspace is refused by the environment policy, so publishing the
-new head is a manual step. Nothing was pushed to `storytold/deckcraft`; the PR comes from the
-fork and a human decision still governs merging it. The PR body is prepared in [`pr10.md`](pr10.md):
-title `feat(collab): realtime collaborative editing`, one description, a review order over the
-slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human decision.
+The fork branch `copoka/deckcraft:collab/pr10` is published at `922a4bf4`, the pre-rebase head,
+and `collab/pr11` at `d6ea4051`; PR #1975 is open from the fork on `collab/pr10` (head
+`922a4bf4`, `CONFLICTING` against `main`). The local branches were rebased onto `origin/main`
+(`0623b430`) and now carry rewritten history (`collab/pr10` = `7459d798` plus its rebase note,
+`collab/pr11` = `da3199bf` plus documentation commits, 69 commits ahead of main), so publishing
+them is a **force-push** of
+the two fork branches and not a fast-forward. A `git push --dry-run` from this workspace is
+refused by the environment policy, so the publish is a manual step (the chair does it): `git push
+--force-with-lease fork collab/pr10 collab/pr11`. Nothing was pushed to `storytold/deckcraft`;
+the PR comes from the fork and a human decision still governs merging it. The PR body is prepared
+in [`pr10.md`](pr10.md): title `feat(collab): realtime collaborative editing`, one description, a
+review order over the slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the
+human decision.
 
 ## What is implemented
 
@@ -494,6 +563,19 @@ takes only its paragraph, a caret past the body refused `invalid` before any wri
 the normaliser emitting one address per selected cell and a `caret` for a caret in a shape's body,
 and both wire forms (`addresses` with `cell`/`range`/`caret`).
 
+Re-run on 2026-11-09 after the **rebase onto `origin/main` (`0623b430`)** (on `agents`, rust
+1.99.1; `collab/pr10` = `7459d798`, `collab/pr11` = `da3199bf`): `cargo fmt --all -- --check`
+clean, `cargo clippy --workspace --all-targets -- -D warnings` clean (22 s warm), `collab-proto`
+29, `collab` 192 + 8, `collab-web` 15, `collab-server` 10 unit + 4 commit + 4 gates + 6 socket
+(the four gates in 2.52 s with `--test-threads=1`, LibreOffice skipped on the build host),
+`deckcraft-web` 6 (main's page-API tests included), `ui-egui collab::` 19, `ui-egui` full 515
+passed + 4 ignored + the known `ime_tests::korean_composes_in_the_notes_pane` environment failure
+(no `craft-fonts`/Korean font on the build host), `deckcraft-engine` 577 + 1 ignored, `xtask
+layers` 32 crates with no violations, `cargo check -p deckcraft-web --target
+wasm32-unknown-unknown` ok. `git status` is clean after the docs commit; nothing was pushed, CI
+was not touched, and no collab slice changed (the code patch is main's own, see the rebase
+section).
+
 The socket tests were run against a real loopback server; the restart test creates a room, moves
 the version, shuts the server down, starts a new one on the same store and asserts the version
 and document came back. The media tests cover a rejected upload (viewer, wrong digest, no token),
@@ -548,7 +630,7 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`) |
 | Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint and CORS remain external | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
-| PR in `storytold/deckcraft` | ✅ open as [#1975](https://github.com/storytold/deckcraft/pull/1975) from the fork, MERGEABLE at the last check; local head is ahead of the PR head and the push is manual | [`pr10.md`](pr10.md); merge needs a human decision |
+| PR in `storytold/deckcraft` | ✅ open as [#1975](https://github.com/storytold/deckcraft/pull/1975) from the fork; locally rebased onto `origin/main` (`0623b430`) with a clean `merge-tree` (the fork needs a force-push, the chair's manual step) | [`pr10.md`](pr10.md); merge needs a human decision |
 
 Re-run on 2026-11-09 after the browser link (`66d4658c`, on `agents`): `fmt --check` clean,
 `collab` 129 + 8, `collab-proto` 22, `collab-server` 10 unit + 4 commit + 4 gates + 6 socket,
@@ -640,8 +722,10 @@ environment gap, not this change), `deckcraft-engine` not re-run (untouched); cl
    `COLLAB_MAX_BASE_INLINE`) the message names the base without bytes and the client must reopen
    the file from the cabinet. A chunked baseline or an HTTP-served base (the media endpoint
    pattern) is the next step for 100-slide decks with media.
-10. **Upstream PR head.** The PR is open from the fork; the local head is ahead of it and the push
-    is manual. Nothing was pushed to `storytold/deckcraft`.
+10. **Upstream PR head.** The PR is open from the fork. Both branches were rebased onto `main`
+    (§ Rebase onto origin/main), so the fork branches no longer fast-forward and the publish is a
+    `--force-with-lease`. The push is manual (the chair does it). Nothing was pushed to
+    `storytold/deckcraft`.
 
 ## How to run locally
 
@@ -681,9 +765,10 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 
 1. Run the verification table above; if the tree is clean, continue on `collab/pr11` (or branch
    `collab/pr12` from it).
-2. **PR #1975 is open from the fork**; the local head is ahead of the PR head. Publishing the new
-   head needs a manual push from a checkout that may push; do not touch CI and do not mention
-   agents. Merging needs a human decision.
+2. **PR #1975 is open from the fork.** Both branches are rebased onto `origin/main` (`0623b430`)
+   and merge cleanly; publishing them is a `git push --force-with-lease fork collab/pr10
+   collab/pr11` from a checkout that may push (history was rewritten), and remains the chair's
+   manual step. Do not touch CI and do not mention agents. Merging needs a human decision.
 3. The browser side is in (`66d4658c`): `deckcraft:session` → the page's `WebSocket`,
    `session-state`/`presence` back, Save → `deckcraft:commit`, `committed` recorded, media over
    `fetch` with the session token. The cabinet must still implement its side:
@@ -707,6 +792,25 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-09 — rebase onto `origin/main` (`0623b430`)
+
+- `collab/pr10` (55 commits) rebased onto `origin/main` → `7459d798` (+ a short rebase note on that
+  branch, which is the PR head); `collab/pr11` (13 commits, `--onto collab/pr10 922a4bf4`) →
+  `da3199bf` (+ this docs commit). Pre-rebase branches kept as `backup/pr10-pre-rebase` and
+  `backup/pr11-pre-rebase`. `merge-tree --write-tree` against `origin/main` exits 0 with no
+  conflicted path for both heads, so PR #1975 is `MERGEABLE` once the forks are force-pushed.
+- Four files conflicted, all resolved as unions (rationale in the rebase section above):
+  `crates/engine/src/cmd/shape.rs` (import list), `apps/deckcraft-web/Cargo.toml` (page API +
+  collab deps, host crate still the fork pin), `apps/deckcraft-web/src/web.rs` (`api::install` +
+  the collaboration `WebShell` literal) and `Cargo.lock` (fork source for `craft-web-host`).
+- `git diff backup/pr11-pre-rebase collab/pr11` is main's own `159ed07e..origin/main` patch for the
+  same 29 files, byte for byte except `Cargo.lock`; no collab code was added or dropped.
+- Gates on `agents`: `fmt` clean, `clippy --workspace --all-targets -D warnings` clean,
+  `collab-proto` 29, `collab` 192 + 8, `collab-web` 15, `collab-server` 10 + 4 + 4 gates + 6
+  socket (gates 2.52 s), `deckcraft-web` 6, `ui-egui collab::` 19, `ui-egui` full 515 + the known
+  Korean-font environment failure, `engine` 577 + 1 ignored, `xtask layers` 32 crates, wasm32
+  check of `deckcraft-web` ok. Nothing pushed, CI untouched.
 
 ### 2026-11-09 — N cells and a caret in one format step, with an exact per-cell undo
 
