@@ -644,10 +644,14 @@ z-order, анимациями и триггерами, `shape_restore`/`shape_de
 строит `.pptx`, сервер сам отправляет его на callback кабинета
 (`{fileId, name?, bytes, sha256, version, expectedVersion?}` → `{version, etag}`),
 `409` кабинета отдаётся вызывающему, исходная версия в кабинете не
-перезаписывается, `etag` переживает рестарт. Тесты, точные коммиты,
-матрица приёмки `TASK.md` и список незакрытых блокеров (web-транспорт,
-host-bridge кабинета, оптимистичный preview, base-transfer,
-PR) — `docs/collab/STATUS.md`; эксплуатация — `docs/collab/production.md`;
+перезаписывается, `etag` переживает рестарт. Браузерная сессия
+(`crates/collab-web`, ADR-0016 §3): сообщение `deckcraft:session` открывает
+сессию, протокол идёт по `WebSocket` страницы, обратно — `session-state` и
+`presence`, Save в живой сессии просит кабинет о `commit`, ответ
+`committed` фиксирует версию и `etag`; медиа — `fetch` с токеном сессии,
+кадр ждёт свои байты. Тесты, точные коммиты,
+матрица приёмки `TASK.md` и список незакрытых блокеров (endpoint кабинета,
+CORS, оптимистичный preview, base-transfer, PR) — `docs/collab/STATUS.md`; эксплуатация — `docs/collab/production.md`;
 описание PR — `docs/collab/pr10.md`.
 
 ## 15. Соответствие ADR → разделы RFC

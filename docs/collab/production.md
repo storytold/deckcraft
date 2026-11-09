@@ -26,8 +26,8 @@ deckcraft-engine (authoritative model; commands are the only mutations)
 
 - Desktop: `deckcraft` opens a WebSocket to `DECKCRAFT_COLLAB_URL` with the short-lived token in
   the first frame.
-- Web: the same `SlideApp` behind the host bridge; the browser link is a separate transport
-  (the iframe contract is external to this repository).
+- Web: the same `SlideApp` behind the host bridge; `crates/collab-web` is the browser's transport,
+  over the page's `WebSocket` and `fetch` (see "Browser mode").
 - One room per `fileId`. The room's state is the engine document plus the session key map; the
   server is authoritative.
 
@@ -110,6 +110,7 @@ slide content, text or tokens are logged or exported.
 | `DECKCRAFT_COLLAB_TOKEN` | desktop | short-lived cabinet JWT |
 | `DECKCRAFT_COLLAB_SESSION` | desktop | document id the token was issued for |
 | `?collab=1` | web | enables the collaboration UI; the host supplies the link |
+| `deckcraft:session` | web (host → app) | opens the session: `sessionId`, `wsUrl`, `token`, `role` |
 
 With the flag off, the application is the ordinary single-user editor: no transport is created,
 no command is normalised, and `Session::is_read_only()` is `false`.
@@ -152,6 +153,35 @@ yet" message instead of being applied locally and silently diverging. The full c
 the next slice; it needs a final-value normalisation for each command, not a raw `execute` on the
 wire.
 
+## Browser mode
+
+The page that hosts the web build opens the session; the app never dials on its own
+(`INTEGRATION.md` §6, ADR-0016 §3, `apps/deckcraft-web/src/host_session.rs`).
+
+| Message | Direction | What it does |
+|---|---|---|
+| `deckcraft:session` | host → app | `{ sessionId, wsUrl, token, role }`: the app attaches a `CollabDoc` and dials |
+| `deckcraft:session-state` | app → host | `{ status, participants }` on every change: `synced`, `pending`, `offline`, `error` |
+| `deckcraft:presence` | app → host | `{ participants }` at the room's pace (5–10 Hz, ADR-0006) |
+| `deckcraft:commit` | app → host | `{ sessionId }` when Save is pressed in a live session; the cabinet owns the file |
+| `deckcraft:committed` | host → app | `{ version, etag }`: the cabinet stored the session as a new version |
+
+- `craft-web-host` is pinned to `copoka/craft-libs` `7666e2b1` (the revision that carries the
+  session messages); `storytold/craft-libs` `main` does not have them yet.
+- The token travels in the first WebSocket frame and in the media requests' `Authorization`
+  header. It is never put in a URL, a log line, `localStorage` or a DOM attribute;
+  `HostSession`'s `Debug` prints `<redacted>`.
+- Media: a browser cannot fetch synchronously while it applies a command, so the link fetches the
+  bytes a frame names before delivering it and holds the frame in arrival order (giving up after
+  10 s, so a picture that cannot be fetched is reported by the adapter rather than silently
+  skipped). Uploads and fetches are `fetch` calls with the session's bearer token, so the sync
+  server must be reachable from the page (same origin, or CORS enabled: the server sends no CORS
+  headers yet).
+- Without a `session` message the app is the ordinary single-user editor: no socket, no media
+  request, and `?collab=1` alone only shows the UI in its offline state.
+- Reconnect backoff is the desktop link's (250 ms doubling to 10 s); unconfirmed operations are
+  resent with the same `opId` after the next welcome.
+
 ## Media channel
 
 Pictures, audio and video do not travel in an operation: the socket limit is 256 KiB and the same
@@ -173,6 +203,9 @@ only the digest.
 - The desktop link derives the HTTP endpoint from its WebSocket URL: `ws://` opens a plain socket,
   `wss://` a `rustls` connection with the platform root store (`rustls-native-certs`; the
   `SSL_CERT_FILE`/`SSL_CERT_DIR` variables are honoured). A custom CA must be in the system store.
+- The browser link derives the same endpoints (`http://` for `ws://`, `https://` for `wss://`) and
+  uses `fetch` with the token in the `Authorization` header. The page must be allowed to reach the
+  server: same origin, or CORS enabled on it (not implemented yet).
 
 ## Commit
 
@@ -238,8 +271,12 @@ cabinet, so a 100-slide deck with media needs the chunked/base-fetch follow-up.
 | `cargo test -p deckcraft-collab` | 129 unit + 8 integration: convergence, dedup, structural exclusion, tombstones, undo per actor (move, bounds, align/distribute, text, fill, outline, format, group fill, slide insert/delete, shape insert/delete with z-order and animations), text rebase, shape insert, pictures/audio/video through the media channel, fill/line/format/duplicate slices, presence, snapshots, resync (tail, base after compaction, key map, the inline limit), commit |
 | `cargo test -p deckcraft-collab-server` | 10 unit + 6 real-socket + 4 commit + 4 gate tests: two editors, viewer refusal, health/metrics, bad token, restart journal replay (including slide and shape undo), media upload/fetch (picture and audio allowlists), picture insert; the cabinet callback (two copies, original versions kept, `409` on an external change, a client commit answered after the cabinet took the file, the no-callback development mode); 120 slides with media, LibreOffice on the commit, three sessions across a conflict, and a three-client soak across compaction with a base transfer |
 | `cargo test -p deckcraft-ui-egui collab::` | 17 tests: flag off, status, viewer gate, presence TTL/marks, participants, indicator/pane, warnings, command through the pipe, engine queue |
+| `cargo test -p deckcraft-collab-web` | 15 tests: the host contract (`session` → connect, `committed` → recorded, the token redacted, role words), the media endpoints from the session URL, the digest scan of `applied`/snapshot, the ordered frame queue (a picture waits for its bytes, a later frame never overtakes it, a missing one is released after 10 s), the handshake being the first frame, frame delivery through the link |
+| `cargo test -p deckcraft-web` | 3 tests: the headless page-host scenario (one `session` message, handshake against a real in-process `Hub`, two edits to version 2, presence published, Save → `commit`, `committed` recorded), single-user mode without the message, the status words |
 | `cargo test -p deckcraft-engine` | 570 (1 ignored): the collaboration queue, read-only gate, a base transfer replacing the active document in place, `shape.setField`/`shape.setFields`/`shape.setBoundsMany`/`shape.restore` and `slide.restore` did not change single-user behaviour; `arrange.align`/`distribute` keep their numbers after the plan refactor |
-| `cargo clippy … --all-targets -- -D warnings`, `cargo fmt --check`, `cargo xtask layers` | clean |
+| `cargo clippy … --all-targets -- -D warnings`, `cargo fmt --check`, `cargo xtask layers` | clean; `xtask layers` 32 crates (`collab-web` L6), `cargo xtask wasm` 26 crates |
+| `cargo check -p deckcraft-web --target wasm32-unknown-unknown` | ok |
+| `trunk build` in `apps/deckcraft-web` (trunk 0.22.1) | ok in 4m7s (dev profile, cold): `dist/web` with `index.html`, the JS glue and a 49 MB `_bg.wasm` |
 
 ## Known gaps before this is a finished product
 
@@ -258,12 +295,16 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    charts are still refused (see "What v1 syncs"). The largest remaining product gap; add
    commands in vertical slices, one normalisation each.
 3. **P1 — Media refinement**: pictures, video and audio are on the channel, but fonts and 3D
-   models are not, and the browser link needs the same HTTP bridge (the desktop `wss://` path
-   now has a TLS client).
+   models are not. The browser link fetches and uploads them with `fetch` plus the session token;
+   the sync server has no CORS headers, so a page on another origin cannot use the channel yet.
 4. **P1 — Text in tables/notes and rich runs** are not normalised; shape text is. Table cells and
    notes need their own addressing and rebase; formatting runs need a run-level payload.
-5. **P2 — Browser transport**: the web build shows the UI but has no `web-sys` WebSocket link; the
-   host page must also forward media fetches and the session token.
+5. **Done — Browser transport**: the web build gets its session from the host bridge and dials the
+   sync server over the page's `WebSocket` (`crates/collab-web`); the token comes from
+   `deckcraft:session`, media goes over `fetch` with it, and Save asks the cabinet to commit.
+   What remains is deployment detail: the page must reach the sync server (same origin, or CORS
+   headers the server does not send yet), and the cabinet must implement its end of
+   `POST /api/v1/internal/office/sessions/{sessionId}/commit` (`INTEGRATION.md` §5.2).
 6. **P2 — Optimistic preview**: edits become visible on `applied`; correctness first, preview and
    rollback are the next latency slice.
 7. **P2 — Base transfer above the inline limit**: a client that missed a compacted journal tail is

@@ -1,6 +1,6 @@
 # Collaboration status and handoff
 
-Updated: 2026-11-09. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, docs commits on top).
+Updated: 2026-11-09. Branch: `collab/pr10` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo of fill/line/format `41fe1ad9`, undo of a group's fill/line and structural slide undo `4e666b95`, structural undo of shapes `3ec81d70`, cabinet commit publication `31842050`, undo of group/ungroup `98d9e9ce`, align/distribute as final bounds `31d353fe`, the TASK.md §8 gates and the non-active-slide fix `5b078c7d`, base transfer and the three-client soak `e007e965`, the browser link `66d4658c`, docs commits on top).
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -41,6 +41,12 @@ z-order, animations and triggers), `31842050` sends a commit to the cabinet, whi
 version and keeps the original, `98d9e9ce` makes `arrange.group`/`arrange.ungroup` undoable
 with whole-subtree images on both sides, and `31d353fe` carries `arrange.align`/`arrange.distribute`
 as one final-bounds operation with one undo step.
+
+The web build now has its side of the cabinet session (`66d4658c`, `crates/collab-web` +
+`apps/deckcraft-web`): the `deckcraft:session` message opens the session, the page's `WebSocket`
+carries the protocol, `session-state`/`presence` go back to the cabinet, Save asks for a commit
+and `deckcraft:committed` records the stored version. Nothing there talks to the network without a
+session message.
 
 The published head of the fork branch `copoka/deckcraft:collab/pr10` is `63ec1ebe`, open as
 [PR #1975](https://github.com/storytold/deckcraft/pull/1975). Local `collab/pr10` is ahead of it by
@@ -105,6 +111,15 @@ slice stack and the `PR-CHECKLIST.md` mapping. Do not push it without the human 
   `wss://`, reconnects with the same handshake.
 - UI behind a flag (`DECKCRAFT_COLLAB`/`?collab=1`): status indicator, participants pane, remote
   selection frames and carets, commit warnings banner, viewer lock.
+- Browser link (`crates/collab-web`, `Transport` over the page's `WebSocket`): the same
+  `CollabDoc`, dialled from `deckcraft:session` (`sessionId`, `wsUrl`, token, role). Reconnect
+  backoff is the desktop link's; unconfirmed operations keep their ids and are resent after the
+  next welcome. Media: the digests a frame names are `fetch`ed first and the frame waits for them,
+  in order, for at most 10 s; uploads are `fetch`ed with the same token. The token never reaches
+  a URL or a log (`HostSession` prints `<redacted>`), and the shell posts `session-state` /
+  `presence` to the cabinet, asks for `commit` on Save in a live session, and records
+  `committed`'s version and etag. `Transport` is no longer `Send` — a browser link holds JS
+  closures and `Rc`, which never cross a thread on wasm32.
 - `Session::set_collab_queue`: with a room attached, every mutating path (ribbon, keys, pointer,
   IME, control channel) queues the command instead of executing it; `CollabUi::pump` sends it.
   `apply_remote` still applies the server's command directly.
@@ -253,7 +268,11 @@ document as the editors.
 | `cargo test -p deckcraft-engine` | 570 passed, 1 ignored |
 | `cargo clippy -p deckcraft-engine -p deckcraft-collab -p deckcraft-collab-proto -p deckcraft-collab-server -p deckcraft-ui-egui --all-targets -- -D warnings` | clean |
 | `cargo fmt --check` | clean |
-| `cargo xtask layers` | 31 crates, no violations |
+| `cargo xtask layers` | 32 crates (`collab-web` L6), no violations |
+| `cargo test -p deckcraft-collab-web` | 15 passed |
+| `cargo test -p deckcraft-web` | 3 passed (the headless page-host scenario) |
+| `cargo check -p deckcraft-web --target wasm32-unknown-unknown` | ok |
+| `trunk build` in `apps/deckcraft-web` | ok: `dist/web`, 49 MB `_bg.wasm` in the dev profile |
 
 Re-run on 2026-11-08 after `3ec81d70`: `fmt` clean, `collab-proto` 19, `collab` 113 + 7,
 `collab-server` 5 + 6, `ui-egui collab::` 17, `deckcraft-engine` 565 + 1 ignored; clippy over the
@@ -341,9 +360,21 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | Per-user undo/redo | ✅ text/shape values, align/distribute, fill, outline, `format.*`, group fill/line, slide insert/delete, shape insert/delete, group/ungroup | server history, `undo-conflict`, `shape_field`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`) |
 | Viewer cannot edit | ✅ server + engine gate, also inside the three-session gate | socket test, UI test |
 | Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
-| Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests |
+| Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`) |
+| Browser: session, presence, commit through the host bridge | ✅ code + headless gate; the cabinet endpoint and CORS remain external | `crates/collab-web`, `apps/deckcraft-web/src/host_session.rs`, `cargo test -p deckcraft-web` |
 | RFC, protocol, tests, docs | ✅ RFC v1 accepted 4/5 (ADR-0015, 2026-11-08); formal `proposal` `…-47b7` | this tree, bus decision `20261108T143417Z-craft-8036` |
 | PR in `storytold/deckcraft` | ✅ open as [#1975](https://github.com/storytold/deckcraft/pull/1975) from the fork, MERGEABLE at the last check; local head is ahead of the PR head and the push is manual | [`pr10.md`](pr10.md); merge needs a human decision |
+
+Re-run on 2026-11-09 after the browser link (`66d4658c`, on `agents`): `fmt --check` clean,
+`collab` 129 + 8, `collab-proto` 22, `collab-server` 10 unit + 4 commit + 4 gates + 6 socket,
+`collab-web` 15, `deckcraft-web` 3 (the headless page-host scenario), `ui-egui collab::` 17,
+`ui-egui` full suite 509 + 1 failed (`ime_tests::korean_composes_in_the_notes_pane`: the build
+host has no `craft-fonts` and no Korean-capable font, so egui panics on a missing glyph — an
+environment gap, not this change), `deckcraft-engine` not re-run (untouched); clippy over
+`collab`, `collab-proto` (unchanged), `collab-web`, `ui-egui` and `deckcraft-web` with
+`-D warnings` clean; `xtask layers` 32 crates; `xtask wasm` 26 crates;
+`cargo check -p deckcraft-web --target wasm32-unknown-unknown` ok; `trunk build` (0.22.1) ok in
+4m7s cold (3m44s of it rustc), `dist/web` with a 49 MB `_bg.wasm` and the JS glue.
 
 ## What is NOT done (ordered by production impact)
 
@@ -376,9 +407,12 @@ whose `expectedVersion` does not match the room is refused before any callback i
    repository: the cabinet's endpoint (`INTEGRATION.md` §5.2), the host-bridge messages
    (`session`/`presence`/`commit`/`committed`) and a desktop "save to cabinet" command. Without
    `COLLAB_CABINET_URL` a deployment only builds verified bytes in the process.
-6. **Browser transport.** `apps/deckcraft-web` has no `web-sys` WebSocket link yet; `?collab=1`
-   shows the UI in a truthful offline state. A browser bridge must forward frames and media
-   fetches, and the host page must send the session token.
+6. **Browser transport is in (`collab-web`); deployment is not.** `apps/deckcraft-web` opens a
+   session from `deckcraft:session`, dials it with the page's `WebSocket`, posts
+   `session-state`/`presence`, asks for a commit on Save and records `committed`. What remains is
+   outside the code: the cabinet's commit endpoint (`INTEGRATION.md` §5.2), a page that can reach
+   the sync server (same origin, or CORS headers the server does not send), and a token-renewal
+   message (a fresh token today means a new `session` message).
 7. **Optimistic preview.** Edits appear on `applied`, not on the keystroke/pointer release.
    Correct on a LAN, noticeable on a WAN. Preview needs a before-image and a rollback path; a
    rejected preview can be rolled back only if no other command has been applied since, otherwise
@@ -419,6 +453,11 @@ cargo run -p deckcraft
 
 # the §8 gates (the LibreOffice half needs `soffice` and `pdfinfo` on the machine that runs it)
 cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1
+
+# the browser build (trunk 0.22.1, wasm32-unknown-unknown)
+cd apps/deckcraft-web && trunk build           # dist/web
+# the page-host scenario, headless (no socket: an in-process Hub is the server)
+cargo test -p deckcraft-web
 ```
 
 The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: "deckcraft"`,
@@ -432,11 +471,13 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
 2. **PR #1975 is open from the fork**; the local head is ahead of the PR head. Publishing the new
    head needs a manual push from a checkout that may push; do not touch CI and do not mention
    agents. Merging needs a human decision.
-3. The cabinet must implement its side: `POST /api/v1/internal/office/sessions/{sessionId}/commit`
-   (`INTEGRATION.md` §5.2, answers `{version, etag}`, keeps the previous version) and the
-   host-bridge messages; the server already posts the bytes, refuses on `409` and stores the
-   accepted version. Then add the web-sys link once the host contract is agreed; until then keep
-   the browser UI honest, and add the media bridge for `wss://` pages.
+3. The browser side is in (`66d4658c`): `deckcraft:session` → the page's `WebSocket`,
+   `session-state`/`presence` back, Save → `deckcraft:commit`, `committed` recorded, media over
+   `fetch` with the session token. The cabinet must still implement its side:
+   `POST /api/v1/internal/office/sessions/{sessionId}/commit` (`INTEGRATION.md` §5.2, answers
+   `{version, etag}`, keeps the previous version); the server already posts the bytes, refuses on
+   `409` and stores the accepted version. For a page on another origin the sync server needs CORS
+   headers on `/media/{sha256}` and the two session endpoints.
 4. Extend the command set in vertical slices with the same pattern: payload → normalize →
    adapter run → confirmed command → test on two clients. Next: table cell text, transitions,
    run-range formatting.
@@ -449,6 +490,46 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-09 — the browser link: session, presence, commit over the host bridge
+
+`apps/deckcraft-web` showed the collaboration UI but could not join a room: the desktop link is a
+thread with `tungstenite`, and a page has neither. `crates/collab-web` is the browser's side of the
+cabinet contract (`INTEGRATION.md` §6, ADR-0016 §3) and a `Transport` over the page's `WebSocket`
+that drives the same `CollabDoc` as the desktop.
+
+- `craft-web-host` is pinned to `copoka/craft-libs` `7666e2b1` — the revision that carries
+  `session`, `session-state`, `presence`, `commit` and `committed`; `storytold/craft-libs` `main`
+  does not have them. `Cargo.lock` records the same source and revision.
+- `HostSession`/`HostEvent`/`HostState` hold the message contract without `web_sys`, so the
+  handling and the whole page-host scenario are tested on the host. The token is a credential:
+  `Debug` prints `<redacted>`, it travels in the first frame and in the media `Authorization`
+  header and nowhere else.
+- `Transport` no longer requires `Send`. The browser link owns JS closures and `Rc`, which never
+  cross a thread on wasm32; the desktop `WsTransport` spawns its own thread and stays `Send`.
+- Media: a browser cannot fetch synchronously while it applies a command, so `WebLink` scans an
+  `applied` frame (and a snapshot tail) for the digests it names, fetches the missing bytes with
+  `fetch`, and holds the frame in arrival order until they are here — a later frame never
+  overtakes a picture that is still loading. A frame whose bytes never arrive is released after
+  10 s and the adapter reports the picture it cannot place, never a silent divergence. Uploads
+  (`put_media`) and fetches use the session token from the bridge; no new host message is invented.
+- `apps/deckcraft-web`: the shell applies `session`/`committed` on the next frame, posts
+  `session-state` on a status or participant change and `presence` at the room's pace, and Save in
+  a live session asks the cabinet to commit instead of downloading a copy (the cabinet owns the
+  file). `?collab=1` alone still leaves the app single-user and offline.
+- The headless gate (`cargo test -p deckcraft-web`) is the page-host scenario: one `session`
+  message, a handshake against a real in-process `Hub` (no socket, no TLS, no threads), two
+  `shape.insert` edits reaching version 2 on both the app and the room, presence published, Save
+  posting `commit`, and `committed` recording version 2 with its etag. Without the message the app
+  makes no network call at all.
+- Verified on `agents`: `fmt --check` clean; `collab` 129 + 8, `collab-proto` 22, `collab-server`
+  10 + 4 + 4 + 6, `collab-web` 15, `deckcraft-web` 3, `ui-egui collab::` 17; clippy over the
+  touched crates with `-D warnings` clean; `xtask layers` 32 crates; `xtask wasm` 26 crates;
+  `cargo check -p deckcraft-web --target wasm32-unknown-unknown` ok; `trunk build` (0.22.1) ok in
+  4m7s cold, `dist/web` with a 49 MB `_bg.wasm`. The full `ui-egui` suite is 509 passed + 1 failed:
+  `ime_tests::korean_composes_in_the_notes_pane` needs a Korean font this build host does not have
+  (`deckcraft-fonts` builds without `craft-fonts` there) — unrelated to this change.
+- Commit `66d4658c` on `collab/pr10`; nothing pushed, CI untouched.
 
 ### 2026-11-09 — three-client soak: compaction, base transfer and reconnect
 
