@@ -158,6 +158,12 @@ pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
     {
         pf.artistic = Some(deckcraft_model::style::Artistic { effect, original });
     }
+    // Colour saturation: `a14:saturation` inside the picture's `a14:imgLayer` effect.
+    if let Some(layer) = blip.and_then(|b| b.child("extLst")).and_then(|x| x.find("imgLayer"))
+        && let Some(sat) = layer.elements().filter(|e| e.local() == "imgEffect").flat_map(|e| e.elements()).find(|e| e.local() == "saturation")
+    {
+        pf.adjust.saturation = Some(pct(sat, "sat").unwrap_or(1.0).clamp(0.0, 4.0));
+    }
     if let Some(b) = blip {
         for e in b.elements() {
             match e.local() {

@@ -7,8 +7,8 @@ use deckcraft_geom::Xfrm;
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, TextBuild, Transition};
 use deckcraft_model::chart::{Chart, ChartType};
 use deckcraft_model::style::{
-    ColorRef, Dash, Effects, Fill, Glow, Gradient, GradientFlip, GradientShape, GradientStop, Line, LineEnd, PatternFill, PictureAdjust, PictureFill,
-    PictureMode, Shadow,
+    Artistic, ColorRef, Dash, Effects, Fill, Glow, Gradient, GradientFlip, GradientShape, GradientStop, Line, LineEnd, PatternFill, PictureAdjust,
+    PictureFill, PictureMode, Shadow,
 };
 use deckcraft_model::table::Table;
 use deckcraft_model::text::{
@@ -242,7 +242,7 @@ pub fn rich_deck() -> Presentation {
             crop: [0.1, 0.05, 0.2, 0.0],
             mode: PictureMode::Stretch { fill_rect: [0.0; 4] },
             alpha: Some(0.5),
-            adjust: PictureAdjust { brightness: 0.2, contrast: -0.1, grayscale: true, ..Default::default() },
+            adjust: PictureAdjust { brightness: 0.2, contrast: -0.1, saturation: Some(2.5), grayscale: true, ..Default::default() },
             upright: false,
             artistic: None,
         },
@@ -748,6 +748,46 @@ fn gradient_flip_mode_survives_two_pptx_round_trips() {
     let q = round(&round(&p));
     let gradient = by_name(&q.slides[1], "Gradient Star").fill.as_ref();
     assert!(matches!(gradient, Some(Fill::Gradient(g)) if g.flip == Some(GradientFlip::Xy)));
+}
+
+/// Saturation lives in `a14:imgProps`, beside an artistic effect when there is one. It used to be
+/// dropped on save, so a saturation set in Format Picture was gone on reopening.
+#[test]
+fn picture_saturation_survives_a_save_with_and_without_an_artistic_effect() {
+    let mut p = defaults::new_presentation(None);
+    let shown = p.add_media("shown.png", "image/png", png(8, 8, [10, 200, 30])).expect("media");
+    let original = p.add_media("original.png", "image/png", png(8, 8, [90, 90, 90])).expect("media");
+    let mut s = new_slide(&mut p, "Pictures");
+    for (name, saturation, artistic) in [
+        ("Plain", Some(2.5), None),
+        ("Grey", Some(0.0), None),
+        ("Default", None, None),
+        ("Unchanged", Some(1.0), None),
+        ("Artistic", Some(0.5), Some(Artistic { effect: "artisticBlur".into(), original })),
+    ] {
+        let mut pic = shape(&mut p, name, 10.0, 10.0, 100.0, 80.0);
+        let adjust = PictureAdjust { brightness: 0.4, contrast: 0.2, saturation, ..Default::default() };
+        pic.kind = ShapeKind::Picture { fill: PictureFill { media: shown, adjust, artistic, ..Default::default() } };
+        s.shapes.push(pic);
+    }
+    p.slides.push(Arc::new(s));
+    let q = round(&p);
+    let saturation = |name: &str| match &by_name(&q.slides[0], name).kind {
+        ShapeKind::Picture { fill } => (fill.adjust.saturation, fill.adjust.brightness, fill.adjust.contrast, fill.artistic.clone()),
+        other => panic!("{name} is not a picture: {other:?}"),
+    };
+    let (sat, bright, contrast, _) = saturation("Plain");
+    assert_eq!((sat, bright, contrast), (Some(2.5), 0.4, 0.2));
+    assert_eq!(saturation("Grey").0, Some(0.0));
+    // Nothing to write for the default, and 100% is the default.
+    assert_eq!(saturation("Default").0, None);
+    assert_eq!(saturation("Unchanged").0, None);
+    let (sat, bright, _, art) = saturation("Artistic");
+    assert_eq!((sat, bright), (Some(0.5), 0.4));
+    assert!(art.is_some_and(|a| a.effect == "artisticBlur"));
+    // Saving what was read keeps the value.
+    let r = round(&q);
+    assert!(matches!(&by_name(&r.slides[0], "Plain").kind, ShapeKind::Picture { fill } if fill.adjust.saturation == Some(2.5)));
 }
 
 #[test]
