@@ -199,6 +199,10 @@ impl SlideApp {
         let stale = self.backstage.as_ref().is_some_and(|b| b.docs != key);
         if has_doc && stale {
             self.backstage = None;
+        } else if !has_doc && self.ui.hide_filetab {
+            // `?chrome=none|nofiletab` (#1897): no start screen either, so a host that opens the
+            // editor without a presentation can't be handed one it never asked for.
+            self.backstage = None;
         } else if !has_doc && (stale || self.backstage.is_none()) {
             self.backstage = Some(backstage::Backstage::new(backstage::Page::Home, key));
         }

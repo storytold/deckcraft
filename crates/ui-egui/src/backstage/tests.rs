@@ -145,6 +145,15 @@ fn without_the_file_tab_nothing_opens_the_backstage() {
     let h = harness(app);
     assert!(h.query_by_role_and_label(Role::Window, "Window title bar").is_none(), "notitlebar leaves the title bar out");
     assert!(h.query_by_label("File").is_some(), "but keeps the File tab");
+
+    // Nothing open and no File tab: not even the start screen, which could create or open a deck.
+    let mut app = SlideApp::new(Session::new(), Services::default());
+    app.ui.hide_filetab = true;
+    let mut h = harness(app);
+    assert!(h.state().backstage.is_none() && h.query_by_label("Blank Presentation").is_none(), "no start screen");
+    h.key_press_modifiers(Modifiers::ALT, Key::F);
+    h.run_steps(3);
+    assert!(h.state().backstage.is_none());
 }
 
 /// Alt+F opens it with the keyboard in the side menu; arrows walk it (pages show as they get the
