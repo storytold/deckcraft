@@ -117,17 +117,25 @@ fn a_paused_take_files_both_slides() {
     assert_eq!(show.timings, vec![(0, 3.0), (1, 4.0)]);
 }
 
-/// Erasing ink keeps the laser samples a paused or stopped take still has to save: only a show
-/// with no take clears them.
+/// Erasing ink (E) keeps the laser samples a paused or stopped take still has to save: only a
+/// show with no take clears them.
 #[test]
 fn erasing_ink_keeps_a_paused_or_stopped_takes_laser_samples() {
     let doc = doc_with(1);
     let mut show = Show::new(&doc, 0, false, false);
     show.record = true;
     show.laser_live = vec![(1.0, 2.0, 0)];
-    assert!(!show.take_captured(), "no take yet: an ordinary show clears the buffer");
+    // A paused or stopped take owns its samples, so erasing keeps them.
     show.record_view.captured = true;
-    assert!(show.take_captured(), "a paused or stopped take still owns its samples");
+    let mut actions = vec![];
+    let (_, consumed) = crate::show::keys::handle_keys(&mut show, &doc, 0.0, vec![(egui::Key::E, egui::Modifiers::NONE)], false, &mut actions);
+    assert_eq!(consumed.len(), 1, "E is handled");
+    assert_eq!(show.laser_live.len(), 1, "a paused or stopped take keeps its samples");
+    // No take: erase clears the buffer.
+    show.record_view.captured = false;
+    let (_, consumed) = crate::show::keys::handle_keys(&mut show, &doc, 0.0, vec![(egui::Key::E, egui::Modifiers::NONE)], false, &mut actions);
+    assert_eq!(consumed.len(), 1, "E is handled");
+    assert!(show.laser_live.is_empty(), "no take: erase clears the buffer");
 }
 
 #[test]

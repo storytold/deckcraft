@@ -12,7 +12,7 @@ use serde_json::json;
 use crate::SlideApp;
 use crate::theme;
 
-mod keys;
+pub(super) mod keys;
 mod media;
 mod presenter;
 mod record;

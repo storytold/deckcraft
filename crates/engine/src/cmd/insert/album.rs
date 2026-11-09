@@ -748,9 +748,8 @@ mod tests {
     #[test]
     fn a_photo_album_picture_from_a_path_is_typed_by_its_file_name() {
         let mut s = Session::with_new();
-        let dir = std::env::temp_dir().join(format!("deckcraft-album-svg-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("drawing.svg");
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("drawing.svg");
         // The tag sits past the 512 bytes the sniffer scans, so only the file name can say `svg`.
         let svg =
             format!("<?xml version=\"1.0\"?><!--{}--><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"/></svg>", "x".repeat(600));
@@ -783,6 +782,5 @@ mod tests {
         assert!(first.get("typeName").and_then(Value::as_str).is_some_and(|t| t.ends_with(".svg")), "the seed says what the bytes are: {params}");
         let edited = s.execute("insert.photoAlbumEdit", &json!({"pictures": items, "layout": "1"})).expect("the reopened album re-inserts its svg");
         assert_eq!(edited["slides"], 1, "{edited}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

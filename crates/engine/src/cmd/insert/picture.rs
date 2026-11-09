@@ -277,18 +277,16 @@ mod tests {
     /// carry the extension, and the sniffer cannot see an `<svg` tag past its first bytes.
     #[test]
     fn a_picture_from_a_path_is_typed_by_the_file_names_extension() {
-        let mut s = Session::with_new();
-        let dir = std::env::temp_dir().join(format!("deckcraft-svg-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("drawing.svg");
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("drawing.svg");
         // The tag sits past the 512 bytes the sniffer scans, so only the file name can say `svg`.
         let svg =
             format!("<?xml version=\"1.0\"?><!--{}--><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"/></svg>", "x".repeat(600));
         std::fs::write(&path, svg.as_bytes()).unwrap();
+        let mut s = Session::with_new();
         let v = s
             .execute("insert.picture", &json!({"path": path.to_string_lossy(), "name": "Drawing"}))
             .expect("an svg named only by its path is a picture");
         assert!(v.get("id").is_some(), "{v}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
