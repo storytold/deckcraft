@@ -112,6 +112,18 @@ impl Adapter {
         self.keys.sync(doc, &mut self.issuer);
     }
 
+    /// The key map and issuer counter, for a base transfer (ADR-0002, ADR-0005).
+    pub fn snapshot_keys(&self) -> deckcraft_collab_proto::SnapshotKeys {
+        self.keys.to_snapshot(&self.issuer)
+    }
+
+    /// Replace the map with the one a base brought. Keys are session-scoped and cannot be
+    /// re-derived after structural edits, so the server's map wins over the local one.
+    pub fn restore_keys(&mut self, keys: &deckcraft_collab_proto::SnapshotKeys) {
+        self.keys = KeyMap::from_snapshot(keys);
+        self.issuer = KeyIssuer::with_next(self.issuer.prefix(), keys.next);
+    }
+
     pub fn keys(&self) -> &KeyMap {
         &self.keys
     }

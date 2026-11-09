@@ -831,6 +831,41 @@ pub struct Viewport {
     pub y: f64,
 }
 
+/// The session key map in wire form, so a client that joins after the journal tail was
+/// compacted addresses the same objects as everyone else (ADR-0002).
+///
+/// Keys are session-scoped strings issued in walk order; they cannot be re-derived from the
+/// document after structural edits, so a base carries the map and the issuer counter.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotKeys {
+    /// Key → slide id.
+    #[serde(default)]
+    pub slides: Vec<(String, u32)>,
+    /// Key → (slide id, shape id).
+    #[serde(default)]
+    pub shapes: Vec<(String, u32, u32)>,
+    /// Keys of shapes that were deleted; a late operation must be refused (ADR-0002 §3).
+    #[serde(default)]
+    pub dead: Vec<(String, u32)>,
+    /// The number the issuer had reached, so the next key a replica issues is the server's next.
+    #[serde(default)]
+    pub next: u64,
+}
+
+/// The native base a client replaces its replica with after compaction (ADR-0005 §4.5).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BaseSnapshot {
+    /// The version the base represents; the tail carries the steps after it.
+    pub version: u64,
+    /// The native `.deckcraft` file. Absent when it is larger than the server's inline limit, in
+    /// which case the client has to reopen the file from the cabinet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_base64: Option<String>,
+    pub keys: SnapshotKeys,
+}
+
 /// Current state for a reconnecting client: a base and, optionally, the journal tail.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -839,6 +874,10 @@ pub struct SnapshotMsg {
     pub snapshot: SnapshotRef,
     #[serde(default)]
     pub tail: Vec<Applied>,
+    /// Present when the journal tail no longer covers the client's version: the replica is
+    /// rebuilt from this base and the tail above it (ADR-0005, RFC §4.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<BaseSnapshot>,
 }
 
 /// Result of a commit (ADR 0009). `warnings` lists what will not survive the file, by
@@ -1030,6 +1069,28 @@ mod tests {
         let p = Payload::Reorder { before: None };
         let text = serde_json::to_string(&p).expect("encode");
         assert!(!text.contains("before"), "{text}");
+    }
+
+    #[test]
+    fn a_snapshot_base_carries_the_bytes_and_the_key_map() {
+        let keys = SnapshotKeys { slides: vec![("d-s1".into(), 3)], shapes: vec![("d-h2".into(), 3, 7)], dead: vec![], next: 2 };
+        let msg = ServerMsg::Snapshot(SnapshotMsg {
+            version: 9,
+            snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: "base@4".into() },
+            tail: vec![],
+            base: Some(BaseSnapshot { version: 4, bytes_base64: Some("UEsD".into()), keys: keys.clone() }),
+        });
+        let text = encode_server(&msg).expect("encode");
+        assert!(text.contains("\"mode\":\"base\""), "{text}");
+        assert!(text.contains("\"next\":2"), "{text}");
+        assert_eq!(decode_server(&text).expect("decode"), msg);
+    }
+
+    #[test]
+    fn a_snapshot_without_a_base_still_decodes() {
+        let text = r#"{"type":"snapshot","version":3,"snapshot":{"mode":"base_and_tail","cursor":"tail@3"},"tail":[]}"#;
+        let msg = decode_server(text).expect("decode");
+        assert!(matches!(msg, ServerMsg::Snapshot(SnapshotMsg { base: None, .. })));
     }
 
     #[test]

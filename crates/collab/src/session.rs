@@ -12,7 +12,10 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use deckcraft_collab_proto::{Applied, CommitResult, ConfirmedCommand, Hint, OpEnvelope, Rejected, SnapshotMode, SnapshotMsg, SnapshotRef};
+use base64::Engine as _;
+use deckcraft_collab_proto::{
+    Applied, BaseSnapshot, CommitResult, ConfirmedCommand, Hint, OpEnvelope, Rejected, SnapshotMode, SnapshotMsg, SnapshotRef,
+};
 use deckcraft_engine::Session;
 use deckcraft_engine::cmd::file::{Damage, LoadedFile};
 use deckcraft_model::{MediaClip, Presentation, Shape, ShapeKind};
@@ -29,11 +32,14 @@ pub struct SessionConfig {
     pub dedup_window: usize,
     /// How many applied operations the journal tail keeps between snapshots.
     pub max_tail: usize,
+    /// Largest native base sent inline to a client whose tail was compacted. Above it the
+    /// snapshot names the base but carries no bytes, and the client reopens the file instead.
+    pub max_base_inline: usize,
 }
 
 impl Default for SessionConfig {
     fn default() -> Self {
-        SessionConfig { snapshot_every: 200, dedup_window: 10_000, max_tail: 10_000 }
+        SessionConfig { snapshot_every: 200, dedup_window: 10_000, max_tail: 10_000, max_base_inline: 8 << 20 }
     }
 }
 
@@ -138,6 +144,15 @@ impl DocSession {
 
     pub fn version(&self) -> u64 {
         self.version
+    }
+
+    /// Replace the session's tunables (server configuration: snapshot frequency, base size).
+    pub fn set_config(&mut self, config: SessionConfig) {
+        self.config = config;
+    }
+
+    pub fn config(&self) -> SessionConfig {
+        self.config
     }
 
     pub fn file_id(&self) -> &str {
@@ -311,17 +326,71 @@ impl DocSession {
         Ok(())
     }
 
-    /// What a reconnecting client gets: the base cursor and the journal tail after `last_version`.
-    pub fn resync(&self, last_version: u64) -> SnapshotMsg {
-        let (mode, cursor) = match &self.snapshot {
-            Some(snapshot) if last_version < snapshot.version => (SnapshotMode::BaseAndTail, snapshot.cursor.clone()),
-            _ => (SnapshotMode::BaseAndTail, format!("tail@{}", last_version.min(self.version))),
+    /// What a reconnecting client gets: the base (when the journal can no longer rebuild its
+    /// version) and the journal tail above it (ADR-0005, RFC §4.5).
+    ///
+    /// A tail answer is used while the journal still covers the client. Once compaction removed
+    /// it, the client replaces its replica with the native base, so the session takes a snapshot
+    /// on demand when the stored one is too old or missing. A base larger than
+    /// [`SessionConfig::max_base_inline`] travels as a cursor without bytes; the client then has
+    /// to reopen the file from the cabinet instead of rebuilding from the wire.
+    pub fn resync(&mut self, last_version: u64) -> SnapshotMsg {
+        let head = self.version;
+        if self.tail_covers(last_version) {
+            return SnapshotMsg {
+                version: head,
+                snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: format!("tail@{}", last_version.min(head)) },
+                tail: self.tail_after(last_version),
+                base: None,
+            };
+        }
+        // The journal cannot rebuild this client's state: a base is needed, and the tail must
+        // still reach the head. Otherwise take a fresh base at the head (compaction).
+        let usable = self.snapshot.as_ref().is_some_and(|snapshot| self.tail_covers(snapshot.version));
+        if !usable {
+            let _ = self.take_snapshot();
+        }
+        if !self.snapshot.as_ref().is_some_and(|snapshot| self.tail_covers(snapshot.version)) {
+            // The base could not be written; the tail-only answer is all this session has.
+            return SnapshotMsg {
+                version: head,
+                snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: format!("tail@{}", last_version.min(head)) },
+                tail: self.tail_after(last_version),
+                base: None,
+            };
+        }
+        let Some((base_version, cursor, bytes_base64, keys)) = self.base_transfer() else {
+            // No base is stored; the tail-only answer is all this session has.
+            return SnapshotMsg {
+                version: head,
+                snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: format!("tail@{}", last_version.min(head)) },
+                tail: self.tail_after(last_version),
+                base: None,
+            };
         };
         SnapshotMsg {
-            version: self.version,
-            snapshot: SnapshotRef { mode, cursor },
-            tail: self.tail.iter().filter(|a| a.version > last_version).cloned().collect(),
+            version: head,
+            snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor },
+            tail: self.tail_after(base_version),
+            base: Some(BaseSnapshot { version: base_version, bytes_base64, keys }),
         }
+    }
+
+    /// The stored base in wire form, with the key map every replica needs to address it.
+    fn base_transfer(&self) -> Option<(u64, String, Option<String>, deckcraft_collab_proto::SnapshotKeys)> {
+        let snapshot = self.snapshot.as_ref()?;
+        let bytes_base64 =
+            (snapshot.bytes.len() <= self.config.max_base_inline).then(|| base64::engine::general_purpose::STANDARD.encode(&snapshot.bytes));
+        Some((snapshot.version, snapshot.cursor.clone(), bytes_base64, self.adapter.snapshot_keys()))
+    }
+
+    /// Does the tail hold every step after `version` (so replaying it rebuilds the head)?
+    fn tail_covers(&self, version: u64) -> bool {
+        version >= self.version || self.tail.first().is_some_and(|first| first.version <= version.saturating_add(1))
+    }
+
+    fn tail_after(&self, version: u64) -> Vec<Applied> {
+        self.tail.iter().filter(|applied| applied.version > version).cloned().collect()
     }
 
     /// The current base, if one has been taken.
@@ -616,20 +685,62 @@ mod tests {
         for i in 0..4 {
             s.apply("a", &move_op(&slide, &shape, 200.0 + i as f64 * 10.0, i, &format!("op-{i}"))).expect("apply");
         }
-        // A snapshot was taken at version 4, so a client from nothing gets the base and no tail.
+        // A snapshot was taken at version 4, so a client from nothing rebuilds from the base.
         assert_eq!(s.snapshot().map(|x| x.version), Some(4));
         let at_base = s.resync(0);
         assert_eq!(at_base.version, 4);
         assert!(at_base.tail.is_empty(), "the base already covers every operation");
+        assert_eq!(at_base.snapshot.mode, SnapshotMode::Base);
         assert!(at_base.snapshot.cursor.starts_with("base@4"));
+        let base = at_base.base.expect("the compacted client gets the base");
+        assert_eq!(base.version, 4);
+        assert!(base.bytes_base64.is_some(), "a small base travels inline");
+        assert!(!base.keys.shapes.is_empty(), "the base carries the session key map");
 
-        // One more operation: a client at 4 gets exactly that one.
+        // One more operation: a client at 4 gets exactly that one, from the journal.
         s.apply("a", &move_op(&slide, &shape, 500.0, 4, "op-4")).expect("apply");
         let caught = s.resync(4);
         assert_eq!(caught.version, 5);
         assert_eq!(caught.tail.len(), 1);
         assert_eq!(caught.tail[0].version, 5);
+        assert!(caught.base.is_none(), "a covered client needs no base");
         assert!(s.resync(5).tail.is_empty(), "up to date");
+    }
+
+    #[test]
+    fn a_compacted_tail_sends_a_base_that_reloads_into_the_snapshot_document() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig { snapshot_every: 2, ..SessionConfig::default() }).expect("session");
+        let (slide, shape) = keys(&s);
+        for i in 0..4 {
+            s.apply("a", &move_op(&slide, &shape, 200.0 + i as f64 * 10.0, i, &format!("op-{i}"))).expect("apply");
+        }
+        let at_four = s.document().expect("doc").clone();
+        s.apply("a", &move_op(&slide, &shape, 500.0, 4, "op-4")).expect("apply");
+
+        // The client missed 1..4 (the tail starts at 5): base at 4 plus the step above it.
+        let snapshot = s.resync(0);
+        assert_eq!(snapshot.snapshot.mode, SnapshotMode::Base);
+        let base = snapshot.base.expect("a base");
+        assert_eq!(base.version, 4);
+        let bytes = base64::engine::general_purpose::STANDARD.decode(base.bytes_base64.as_deref().expect("inline")).expect("base64");
+        let reloaded = DocSession::open("d", &bytes).expect("the base reloads");
+        assert_eq!(*reloaded.document().expect("doc"), at_four, "the base is the document at its version");
+        assert_eq!(snapshot.tail.len(), 1);
+        assert_eq!(snapshot.tail[0].version, 5);
+        assert_eq!(snapshot.version, 5, "the tail above the base reaches the head");
+    }
+
+    #[test]
+    fn a_base_larger_than_the_limit_travels_without_bytes() {
+        let mut s = DocSession::from_document("d", deck(), SessionConfig { snapshot_every: 1, max_base_inline: 1, ..SessionConfig::default() })
+            .expect("session");
+        let (slide, shape) = keys(&s);
+        s.apply("a", &move_op(&slide, &shape, 300.0, 0, "op-1")).expect("apply");
+        let snapshot = s.resync(0);
+        let base = snapshot.base.expect("a base cursor");
+        assert_eq!(base.version, 1);
+        assert!(base.bytes_base64.is_none(), "over the inline limit the client reopens the file");
+        assert!(!base.keys.shapes.is_empty(), "the key map is small and still travels");
     }
 
     #[test]

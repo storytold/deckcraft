@@ -18,8 +18,8 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use deckcraft_collab::{Adapter, ClientSession, DocSession, SessionConfig};
 use deckcraft_collab_proto::{
-    Applied, Capabilities, ClientInfo, ClientMsg, Limits, OpEnvelope, OpKind, PROTO_VERSION, Payload, Role, ServerMsg, ShapeKey, SlideKey,
-    SnapshotMode, SnapshotMsg, SnapshotRef, Target, Welcome,
+    Applied, BaseSnapshot, Capabilities, ClientInfo, ClientMsg, FillSpec, Limits, OpEnvelope, OpKind, PROTO_VERSION, Payload, Role, ServerMsg,
+    ShapeKey, SlideKey, SnapshotMode, SnapshotMsg, SnapshotRef, Target, Welcome,
 };
 use deckcraft_engine::Session;
 use deckcraft_model::{Presentation, ShapeKind};
@@ -249,14 +249,22 @@ struct Replica {
 
 impl Replica {
     fn open(bytes: &[u8], file_id: &str) -> Self {
-        let mut session = Session::new();
-        let loaded = deckcraft_engine::cmd::file::loaded_file("replica.deck", bytes).expect("load the replica deck");
-        let token = session.stage_loaded(loaded);
-        session.execute("file.adopt", &json!({"path": "replica.deck", "token": token})).expect("adopt the replica deck");
+        let session = replica_session(bytes);
         let doc = session.doc().expect("replica doc").doc.as_ref().clone();
         let mut adapter = Adapter::new(format!("{file_id}-"));
         adapter.join(&doc);
         Self { session, adapter, version: 0, error: None }
+    }
+
+    /// Replace the replica with a base the server sent after compaction and take the key map it
+    /// carries, so the operations above it address the same objects as on every other replica.
+    fn rebuild(&mut self, bytes: &[u8], base: &BaseSnapshot) -> Result<(), String> {
+        let session = replica_session(bytes);
+        self.adapter.restore_keys(&base.keys);
+        self.session = session;
+        self.version = base.version;
+        self.error = None;
+        Ok(())
     }
 
     /// Run the command the server confirmed, at the version the replica has.
@@ -291,12 +299,25 @@ impl Replica {
     }
 }
 
+/// A session over the bytes every participant opened, ready for remote commands.
+fn replica_session(bytes: &[u8]) -> Session {
+    let mut session = Session::new();
+    let loaded = deckcraft_engine::cmd::file::loaded_file("replica.deck", bytes).expect("load the replica deck");
+    let token = session.stage_loaded(loaded);
+    session.execute("file.adopt", &json!({"path": "replica.deck", "token": token})).expect("adopt the replica deck");
+    session
+}
+
 /// One WebSocket participant: the protocol state plus the replica the gate compares.
 struct Live {
     ws: Option<Client>,
     client: ClientSession,
     replica: Replica,
     actor: String,
+    /// The base the last `resync` delivered: its version and its decoded size in bytes.
+    last_base: Option<(u64, usize)>,
+    /// How many journal steps the last `resync` delivered.
+    last_tail: usize,
 }
 
 impl Live {
@@ -307,15 +328,41 @@ impl Live {
         let hello = client.connect(token(actor, role, id), ClientInfo { name: actor.into(), ver: "1".into() });
         ws.send(tungstenite::Message::Text(deckcraft_collab_proto::encode_client(&hello).expect("encode").into())).expect("hello");
         let welcome = read_socket(&mut ws);
-        let mut live = Self { ws: Some(ws), client, replica: Replica::open(bytes, id), actor: actor.into() };
+        let mut live = Self { ws: Some(ws), client, replica: Replica::open(bytes, id), actor: actor.into(), last_base: None, last_tail: 0 };
         live.on(welcome);
+        live.catch_up_after_join();
         live
+    }
+
+    /// A client that joins a room that already moved asks for the state before it reports
+    /// anything else: the journal tail, or the base plus the tail when compaction removed it.
+    fn catch_up_after_join(&mut self) {
+        while let Some(msg) = self.client.next_outgoing() {
+            match msg {
+                ClientMsg::Resync { .. } => {
+                    self.send(msg);
+                    let snapshot = self.recv();
+                    assert!(matches!(snapshot, ServerMsg::Snapshot(_)), "the join got the catch-up, not {snapshot:?}");
+                }
+                other => panic!("a fresh join sent {other:?}"),
+            }
+        }
     }
 
     fn on(&mut self, msg: ServerMsg) {
         match &msg {
             ServerMsg::Applied(applied) => self.replica.apply(applied),
-            ServerMsg::Snapshot(snapshot) => self.replica.catch_up(snapshot),
+            ServerMsg::Snapshot(snapshot) => {
+                self.last_tail = snapshot.tail.len();
+                self.last_base = None;
+                if let Some(base) = &snapshot.base {
+                    let encoded = base.bytes_base64.as_deref().expect("the gate's base is inline");
+                    let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).expect("base64");
+                    self.last_base = Some((base.version, bytes.len()));
+                    self.replica.rebuild(&bytes, base).expect("the base reloads");
+                }
+                self.replica.catch_up(snapshot);
+            }
             _ => {}
         }
         self.client.on_msg(msg);
@@ -529,6 +576,151 @@ fn three_sessions_converge_across_a_conflict_and_a_reconnect() {
     // All three settle on one version and one document; the viewer only read.
     assert_converged([&alice, &bob, &viewer], 4);
     assert_committed_gate_deck(addr, ID, 4, 300.0, 150.0);
+    handle.shutdown();
+}
+
+// ---------------------------------------------------------------- three-client soak
+
+/// Two slides with one rectangle each; the first one starts with text so `text.set` and
+/// `shape.fill` have an object to change from the first step.
+fn soak_deck() -> Vec<u8> {
+    let mut session = Session::with_new();
+    session.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100], "text": "alpha"})).expect("first rect");
+    session.apply_remote("slide.new", &json!({"layout": "blank", "at": 1})).expect("second slide");
+    session.apply_remote("shape.insert", &json!({"preset": "rect", "rect": [300, 100, 200, 100], "text": "beta"})).expect("second rect");
+    deckcraft_format::save(session.doc().expect("doc").doc.as_ref()).expect("save the soak deck")
+}
+
+fn bounds_to(op_id: &str, doc: &str, target: Target, x: f64, y: f64, w: f64, h: f64) -> OpEnvelope {
+    OpEnvelope {
+        op_id: op_id.into(),
+        doc: doc.into(),
+        base_version: 0,
+        kind: OpKind::Command,
+        target,
+        payload: Payload::ShapeSetBounds { x, y, w, h },
+        history: None,
+    }
+}
+
+fn text_to(op_id: &str, doc: &str, target: Target, text: &str) -> OpEnvelope {
+    OpEnvelope {
+        op_id: op_id.into(),
+        doc: doc.into(),
+        base_version: 0,
+        kind: OpKind::Command,
+        target,
+        payload: Payload::TextSet { text: text.into(), cell: None },
+        history: None,
+    }
+}
+
+fn fill_to(op_id: &str, doc: &str, target: Target, color: &str) -> OpEnvelope {
+    OpEnvelope {
+        op_id: op_id.into(),
+        doc: doc.into(),
+        base_version: 0,
+        kind: OpKind::Command,
+        target,
+        payload: Payload::ShapeFill { fill: FillSpec::Solid { color: color.into() } },
+        history: None,
+    }
+}
+
+/// Two editors make 20+ edits of every merge kind the wire carries (move, bounds, text, fill)
+/// while a snapshot every five steps compacts the journal. A viewer then joins: its version is
+/// below the base, so the server sends the native base and the key map instead of a tail. One
+/// editor drops off, edits continue, and he reconnects from the journal. All three replicas end
+/// on one version and one `Presentation`, and the commit at that version reimports with the
+/// final values.
+#[test]
+fn three_clients_soak_across_compaction_and_a_base_transfer() {
+    const ID: &str = "gate-soak";
+    const SNAPSHOT_EVERY: u64 = 5;
+    const ROUNDS: usize = 6;
+    let bytes = soak_deck();
+    let mut config = deckcraft_collab_server::Config::for_tests(SECRET, "service-token");
+    config.snapshot_every = SNAPSHOT_EVERY;
+    let handle = deckcraft_collab_server::serve_ephemeral(config).expect("server");
+    let addr = handle.addr;
+    create(addr, ID, &bytes);
+
+    let mut alice = Live::join(addr, ID, "alice", "editor", &bytes);
+    let mut bob = Live::join(addr, ID, "bob", "editor", &bytes);
+    let first = rect_target(&alice.replica, 0);
+    let second = rect_target(&alice.replica, 1);
+
+    let soak = Instant::now();
+    let mut version = 0u64;
+    for round in 0..ROUNDS {
+        version += 1;
+        alice.submit(move_to(&format!("soak-m{round}"), ID, first.clone(), 120.0 + round as f64 * 10.0));
+        step([&mut alice, &mut bob], version);
+
+        version += 1;
+        bob.submit(bounds_to(&format!("soak-b{round}"), ID, second.clone(), 300.0 + round as f64 * 10.0, 100.0, 200.0 + round as f64, 100.0));
+        step([&mut alice, &mut bob], version);
+
+        version += 1;
+        alice.submit(text_to(&format!("soak-t{round}"), ID, first.clone(), &format!("alpha r{round}")));
+        step([&mut alice, &mut bob], version);
+
+        version += 1;
+        let color = format!("#{:02x}{:02x}40", 0x20 + round as u8 * 0x20, 0xff - round as u8 * 0x20);
+        bob.submit(fill_to(&format!("soak-f{round}"), ID, first.clone(), &color));
+        step([&mut alice, &mut bob], version);
+    }
+    // 25 is a snapshot boundary (the journal is compacted there); 26 stays in the tail.
+    version += 1;
+    alice.submit(move_to("soak-m6", ID, first.clone(), 400.0));
+    step([&mut alice, &mut bob], version);
+    version += 1;
+    bob.submit(text_to("soak-t6", ID, first.clone(), "final"));
+    step([&mut alice, &mut bob], version);
+    assert_eq!(version, 26, "twenty-six edits, all four merge kinds");
+    eprintln!(
+        "deckcraft gate: {version} edits by two editors in {:.2} s; snapshots every {SNAPSHOT_EVERY} steps compacted the journal",
+        soak.elapsed().as_secs_f64()
+    );
+
+    // The third client joins below the base: the server sends the native base, its key map and
+    // the steps above it.
+    let joined = Instant::now();
+    let mut viewer = Live::join(addr, ID, "victor", "viewer", &bytes);
+    let join_ms = joined.elapsed().as_secs_f64() * 1000.0;
+    assert_eq!(viewer.client.version(), 26);
+    let (base_version, base_bytes) = viewer.last_base.expect("the viewer received a base");
+    assert_eq!(base_version, 25, "the base is the snapshot below the head");
+    assert!(base_bytes > 0, "the base arrived inline");
+    assert_eq!(viewer.last_tail, 1, "the step above the base travels as a journal tail");
+    assert_eq!(viewer.replica.version, 26);
+    eprintln!(
+        "deckcraft gate: a third client rebuilt {} KiB at version {base_version} and replayed {} step in {join_ms:.1} ms",
+        base_bytes / 1024,
+        viewer.last_tail
+    );
+    let (status, metrics) = http(addr, "GET", "/metrics", None, "");
+    assert_eq!(status, 200);
+    assert!(metrics.contains("deckcraft_collab_base_transfers_total 1"), "{metrics}");
+    assert!(metrics.contains("deckcraft_collab_base_bytes_total "), "{metrics}");
+
+    // Bob drops off; Alice keeps editing. Compaction does not reach these steps, so the
+    // reconnect is a journal catch-up, not another base.
+    bob.hang_up();
+    version += 1;
+    alice.submit(move_to("soak-m7", ID, first.clone(), 420.0));
+    step([&mut alice, &mut viewer], version);
+    version += 1;
+    alice.submit(fill_to("soak-f7", ID, first.clone(), "#00ff00"));
+    step([&mut alice, &mut viewer], version);
+
+    bob.reconnect(addr, ID, "editor");
+    assert_eq!(bob.client.version(), 28, "the journal tail caught the editor up");
+    assert!(bob.last_base.is_none(), "a client inside the retained tail needs no base");
+    assert_eq!(bob.last_tail, 2, "both missed steps arrived as the tail");
+
+    assert_converged([&alice, &bob, &viewer], 28);
+    assert_committed_gate_deck(addr, ID, 28, 420.0, 350.0);
     handle.shutdown();
 }
 

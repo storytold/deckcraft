@@ -215,13 +215,19 @@ impl ClientSession {
             }
             ServerMsg::Snapshot(snapshot) => {
                 self.version = self.version.max(snapshot.version);
-                // Operations the base already includes need no answer.
-                let version = self.version;
-                let covered: Vec<usize> = self.in_flight.iter().enumerate().filter(|(_, op)| op.base_version < version).map(|(i, _)| i).collect();
+                // Operations the base or the tail already includes need no answer. A base at a
+                // later version replaces the replica; the tail above it is replayed by the host.
+                let floor = snapshot.base.as_ref().map(|base| base.version).unwrap_or(self.version);
+                let tail: Vec<String> = snapshot.tail.iter().map(|applied| applied.op_id.clone()).collect();
+                let covered: Vec<usize> =
+                    self.in_flight.iter().enumerate().filter(|(_, op)| op.base_version < floor || tail.contains(&op.op_id)).map(|(i, _)| i).collect();
                 for index in covered.into_iter().rev() {
                     self.in_flight.remove(index);
                 }
                 if snapshot.snapshot.mode == SnapshotMode::Base {
+                    // The replica is replaced from the server's base; edits that never reached the
+                    // server are not rebased onto it, so they are dropped rather than applied at a
+                    // offset the base does not have.
                     self.queued.clear();
                 }
                 Effect::Rollback
@@ -386,6 +392,7 @@ mod tests {
             version: 5,
             snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: "tail@5".into() },
             tail: vec![],
+            base: None,
         });
         c.on_msg(snapshot);
         c.submit(op("o2", 0)).expect("queue");
@@ -421,10 +428,34 @@ mod tests {
             version: 2,
             snapshot: SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: "base@2".into() },
             tail: vec![],
+            base: None,
         });
         assert_eq!(c.on_msg(snapshot), Effect::Rollback);
         assert_eq!(c.in_flight(), 0, "both operations are in the base");
         assert_eq!(c.version(), 2);
+    }
+
+    #[test]
+    fn a_base_snapshot_replaces_the_replica_at_its_version() {
+        use deckcraft_collab_proto::{BaseSnapshot, SnapshotKeys};
+        let mut c = ClientSession::new("d");
+        c.on_msg(welcome(9, Role::Editor));
+        assert_eq!(c.version(), 0, "the head is not adopted before the base arrives");
+        c.submit(op("q1", 0)).expect("queue");
+        assert_eq!(c.queued(), 1);
+        let snapshot = ServerMsg::Snapshot(SnapshotMsg {
+            version: 9,
+            snapshot: SnapshotRef { mode: SnapshotMode::Base, cursor: "base@6".into() },
+            tail: vec![
+                Applied { op_id: "o7".into(), version: 7, actor_id: "a".into(), command: None, delta: Delta::default() },
+                Applied { op_id: "o8".into(), version: 8, actor_id: "a".into(), command: None, delta: Delta::default() },
+                Applied { op_id: "o9".into(), version: 9, actor_id: "a".into(), command: None, delta: Delta::default() },
+            ],
+            base: Some(BaseSnapshot { version: 6, bytes_base64: Some("UEsD".into()), keys: SnapshotKeys::default() }),
+        });
+        assert_eq!(c.on_msg(snapshot), Effect::Rollback);
+        assert_eq!(c.version(), 9, "after the base and its tail the client is at the head");
+        assert_eq!(c.queued(), 0, "an edit from the old replica is not applied onto the base");
     }
 
     #[test]

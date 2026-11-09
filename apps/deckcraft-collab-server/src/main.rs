@@ -71,6 +71,7 @@ fn main() -> ExitCode {
         max_ops_per_sec: number("COLLAB_MAX_OPS_PER_SEC", 50),
         store_dir: std::env::var("COLLAB_STORE_DIR").ok().filter(|d| !d.is_empty()).map(PathBuf::from),
         snapshot_every: number("COLLAB_SNAPSHOT_EVERY", 200) as u64,
+        max_base_inline: number("COLLAB_MAX_BASE_INLINE", 8 << 20),
         cabinet,
     };
     match serve(bind, config) {

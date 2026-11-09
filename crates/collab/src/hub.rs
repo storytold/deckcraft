@@ -40,11 +40,13 @@ pub struct Hub {
     peers: BTreeMap<String, Peer>,
     out: HashMap<String, VecDeque<ServerMsg>>,
     last_applied: Option<deckcraft_collab_proto::Applied>,
+    /// Bytes of the last base a `resync` sent, for the server's counters.
+    last_base_transfer: Option<u64>,
 }
 
 impl Hub {
     pub fn new(session: DocSession) -> Self {
-        Hub { session, peers: BTreeMap::new(), out: HashMap::new(), last_applied: None }
+        Hub { session, peers: BTreeMap::new(), out: HashMap::new(), last_applied: None, last_base_transfer: None }
     }
 
     pub fn session(&self) -> &DocSession {
@@ -172,6 +174,9 @@ impl Hub {
             }
             ClientMsg::Resync { last_version } => {
                 let snapshot = self.session.resync(last_version);
+                if let Some(base) = &snapshot.base {
+                    self.last_base_transfer = Some(base.bytes_base64.as_ref().map_or(0, |bytes| bytes.len() as u64));
+                }
                 self.send(actor, ServerMsg::Snapshot(snapshot));
                 Ok(())
             }
@@ -246,6 +251,11 @@ impl Hub {
     /// The last operation this room accepted, for the journal. Taking it clears the slot.
     pub fn take_last_applied(&mut self) -> Option<deckcraft_collab_proto::Applied> {
         self.last_applied.take()
+    }
+
+    /// The size of the last base a `resync` sent (inline bytes; `0` for a cursor without bytes).
+    pub fn take_last_base_transfer(&mut self) -> Option<u64> {
+        self.last_base_transfer.take()
     }
 
     /// Build the file and queue a `commit-result`. Errors become a `rejected` for the requester;

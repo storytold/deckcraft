@@ -86,6 +86,8 @@ pub struct Config {
     pub store_dir: Option<PathBuf>,
     /// Operations between base snapshots.
     pub snapshot_every: u64,
+    /// Largest native base sent inline to a client whose journal tail was compacted.
+    pub max_base_inline: usize,
     /// Where a commit becomes a cabinet file version. `None` keeps commits inside the process.
     pub cabinet: Option<cabinet::CabinetConfig>,
 }
@@ -101,6 +103,7 @@ impl Config {
             max_ops_per_sec: 50,
             store_dir: None,
             snapshot_every: 200,
+            max_base_inline: 8 << 20,
             cabinet: None,
         }
     }
@@ -145,6 +148,8 @@ struct Metrics {
     resyncs: AtomicU64,
     media_uploads: AtomicU64,
     media_bytes: AtomicU64,
+    base_transfers: AtomicU64,
+    base_bytes: AtomicU64,
     cabinet_commits: AtomicU64,
     cabinet_conflicts: AtomicU64,
     cabinet_failures: AtomicU64,
@@ -167,6 +172,8 @@ impl Metrics {
         out.push_str(&row("resyncs_total", self.resyncs.load(Ordering::Relaxed)));
         out.push_str(&row("media_uploads_total", self.media_uploads.load(Ordering::Relaxed)));
         out.push_str(&row("media_bytes_total", self.media_bytes.load(Ordering::Relaxed)));
+        out.push_str(&row("base_transfers_total", self.base_transfers.load(Ordering::Relaxed)));
+        out.push_str(&row("base_bytes_total", self.base_bytes.load(Ordering::Relaxed)));
         out.push_str(&row("cabinet_commits_total", self.cabinet_commits.load(Ordering::Relaxed)));
         out.push_str(&row("cabinet_conflicts_total", self.cabinet_conflicts.load(Ordering::Relaxed)));
         out.push_str(&row("cabinet_failures_total", self.cabinet_failures.load(Ordering::Relaxed)));
@@ -464,6 +471,13 @@ fn create_session(request: &Request, shared: &Arc<Shared>) -> std::io::Result<Re
     if let Some(version) = body.expected_version {
         session.set_base_file_etag(version);
     }
+    // The server's snapshot frequency applies to a memory-only room as well as to the store, so a
+    // deployment can force compaction (and a base transfer) with one setting.
+    session.set_config(SessionConfig {
+        snapshot_every: shared.config.snapshot_every,
+        max_base_inline: shared.config.max_base_inline,
+        ..SessionConfig::default()
+    });
     if let Some(name) = body.initial_name.as_deref().map(str::trim).filter(|name| !name.is_empty()) {
         if name.len() > 255 || name.chars().any(char::is_control) {
             return Ok(Response::json(400, json!({"error": "initialName is not a display name"})));
@@ -928,6 +942,10 @@ fn handle_client_message(hub: &Arc<Mutex<Hub>>, actor: &str, msg: ClientMsg, sha
         if let Err(e) = store.record(&file_id, hub.session_mut(), &applied) {
             log::error!("journal {file_id} version {}: {e}", applied.version);
         }
+    }
+    if let Some(bytes) = hub.take_last_base_transfer() {
+        shared.metrics.base_transfers.fetch_add(1, Ordering::Relaxed);
+        shared.metrics.base_bytes.fetch_add(bytes, Ordering::Relaxed);
     }
     if is_op {
         shared.metrics.ops.fetch_add(1, Ordering::Relaxed);

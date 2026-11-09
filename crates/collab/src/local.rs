@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use deckcraft_collab_proto::{
-    Applied, Change, ClientInfo, ClientMsg, ConfirmedCommand, FillSpec, FormatCmd, LineSpec, MediaKind, OpEnvelope, OpKind, Payload, ServerMsg,
-    ShapeBounds, ShapeKey, SlideKey, Target,
+    Applied, BaseSnapshot, Change, ClientInfo, ClientMsg, ConfirmedCommand, FillSpec, FormatCmd, LineSpec, MediaKind, OpEnvelope, OpKind, Payload,
+    ServerMsg, ShapeBounds, ShapeKey, SlideKey, Target,
 };
 use deckcraft_engine::{DocState, Session, Target as EngineTarget};
 use deckcraft_model::{Presentation, Shape, ShapeId, SlideId, find_shape, parent_of};
@@ -276,18 +276,53 @@ impl CollabDoc {
             }
             ServerMsg::Applied(applied) => self.apply_broadcast(session, &applied),
             ServerMsg::Snapshot(snapshot) => {
-                for applied in &snapshot.tail {
-                    self.apply_broadcast(session, applied);
+                let mut usable = true;
+                if let Some(base) = &snapshot.base {
+                    match self.replace_from_base(session, base) {
+                        Ok(()) => {
+                            self.version = base.version;
+                            self.last_apply_error = None;
+                        }
+                        Err(e) => {
+                            self.last_apply_error = Some(e.to_string());
+                            usable = false;
+                        }
+                    }
                 }
-                if snapshot.snapshot.mode == deckcraft_collab_proto::SnapshotMode::Base && snapshot.tail.is_empty() {
-                    // A base-only snapshot replaces the replica; the transport delivers the
-                    // model separately (see `SnapshotMsg::base64` in the RFC).
-                    self.version = snapshot.version;
+                if usable {
+                    for applied in &snapshot.tail {
+                        self.apply_broadcast(session, applied);
+                    }
+                    if snapshot.tail.is_empty() {
+                        // A base alone (or a tail with nothing new) is the whole state.
+                        self.version = snapshot.version;
+                    }
                 }
             }
             _ => {}
         }
         effect
+    }
+
+    /// Rebuild the replica from the native base the server sent after compaction (ADR-0005
+    /// §4.5). The base carries the session key map, so operations above it address the same
+    /// objects as on every other replica.
+    fn replace_from_base(&mut self, session: &mut Session, base: &BaseSnapshot) -> Result<(), LocalError> {
+        /// A hostile or misconfigured server must not make the client allocate without a cap.
+        const MAX_BASE: usize = 64 << 20;
+        let Some(encoded) = base.bytes_base64.as_deref() else {
+            return Err(LocalError::BadParams("the session was compacted past this replica; reopen the file from the cabinet".into()));
+        };
+        if encoded.len() > MAX_BASE {
+            return Err(LocalError::BadParams("the session base is larger than this client accepts".into()));
+        }
+        let bytes =
+            base64::engine::general_purpose::STANDARD.decode(encoded).map_err(|_| LocalError::BadParams("the session base is not base64".into()))?;
+        let loaded = deckcraft_engine::cmd::file::loaded_file(&format!("{}.base", self.file_id), &bytes)
+            .map_err(|e| LocalError::BadParams(format!("the session base does not load: {e}")))?;
+        session.replace_active_document(loaded.doc).map_err(|e| LocalError::BadParams(e.to_string()))?;
+        self.adapter.restore_keys(&base.keys);
+        Ok(())
     }
 
     fn apply_broadcast(&mut self, session: &mut Session, applied: &Applied) {
@@ -1168,5 +1203,64 @@ mod tests {
         let moved = find_shape(&s.doc().expect("doc").doc.slides[0].shapes, shapes[0]).expect("shape");
         assert_eq!(moved.xfrm.expect("xfrm").x, 300.0);
         assert!(client.last_apply_error().is_none());
+    }
+
+    #[test]
+    fn a_base_snapshot_rebuilds_the_replica_and_the_tail_finishes_it() {
+        use deckcraft_collab_proto::{Capabilities, Limits, PROTO_VERSION, Role, SnapshotMode, Welcome};
+
+        let (mut s, _doc, _slide, shapes) = deck();
+        let presentation = s.doc().expect("doc").doc.as_ref().clone();
+        let mut server =
+            crate::DocSession::from_document("d", presentation, crate::SessionConfig { snapshot_every: 2, ..crate::SessionConfig::default() })
+                .expect("session");
+        let (slide_key, shape_key) = {
+            let doc = server.document().expect("doc");
+            let slide_ref = doc.slides.first().expect("slide");
+            (server.keys().slide_key(slide_ref.id).expect("slide").clone(), server.keys().shape_key(slide_ref.id, shapes[0]).expect("shape").clone())
+        };
+        let move_to = |id: &str, x: f64, base: u64| OpEnvelope {
+            op_id: id.into(),
+            doc: "d".into(),
+            base_version: base,
+            kind: OpKind::Command,
+            target: Target { slide: Some(slide_key.clone()), shape: Some(shape_key.clone()), ..Target::default() },
+            payload: Payload::ShapeMove { x, y: 100.0 },
+            history: None,
+        };
+        for (i, x) in [200.0, 250.0, 300.0].iter().enumerate() {
+            server.apply("alice", &move_to(&format!("a-{i}"), *x, i as u64)).expect("apply");
+        }
+
+        // The tail was compacted at version 2, so a client from nothing gets base@2 and the step
+        // above it.
+        let snapshot = server.resync(0);
+        assert_eq!(snapshot.snapshot.mode, SnapshotMode::Base);
+        assert!(snapshot.base.is_some());
+        assert_eq!(snapshot.tail.len(), 1, "only the step above the base travels as a tail");
+
+        let mut local = CollabDoc::new("d");
+        let hello = local.connect(&s, "jwt", ClientInfo { name: "test".into(), ver: "1".into() });
+        assert!(matches!(hello, ClientMsg::Hello(_)));
+        local.on_msg(
+            &mut s,
+            ServerMsg::Welcome(Welcome {
+                v: PROTO_VERSION,
+                session_id: "d".into(),
+                actor_id: "alice".into(),
+                role: Role::Editor,
+                lease: None,
+                version: 3,
+                snapshot: deckcraft_collab_proto::SnapshotRef { mode: SnapshotMode::BaseAndTail, cursor: "tail@0".into() },
+                capabilities: Capabilities { kinds: vec![OpKind::Command], limits: Limits::default(), commands: vec![] },
+            }),
+        );
+        assert!(matches!(local.next_outgoing(), Some(ClientMsg::Resync { last_version: 0 })));
+        local.on_msg(&mut s, ServerMsg::Snapshot(snapshot));
+        assert_eq!(local.last_apply_error(), None);
+        assert_eq!(local.version(), 3, "the base plus its tail land on the head");
+        assert_eq!(*s.doc().expect("doc").doc, *server.document().expect("doc"), "the replica matches the room");
+        let moved = find_shape(&s.doc().expect("doc").doc.slides[0].shapes, shapes[0]).expect("shape");
+        assert_eq!(moved.xfrm.expect("xfrm").x, 300.0, "the tail step applied on top of the base");
     }
 }

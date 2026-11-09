@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use deckcraft_collab_proto::{ShapeKey, SlideKey};
+use deckcraft_collab_proto::{ShapeKey, SlideKey, SnapshotKeys};
 use deckcraft_model::{Presentation, Shape, ShapeId, SlideId};
 
 /// Deepest group nesting walked (the model's other walkers stop at 64).
@@ -24,6 +24,20 @@ pub struct KeyIssuer {
 impl KeyIssuer {
     pub fn new(prefix: impl Into<String>) -> Self {
         KeyIssuer { prefix: prefix.into(), next: 0 }
+    }
+
+    /// Continue issuing after the number a base transfer brought (ADR-0002).
+    pub fn with_next(prefix: impl Into<String>, next: u64) -> Self {
+        KeyIssuer { prefix: prefix.into(), next }
+    }
+
+    pub fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    /// The number of keys issued so far; the next key is `n + 1`.
+    pub fn issued(&self) -> u64 {
+        self.next
     }
 
     fn take(&mut self, tag: &str) -> String {
@@ -130,6 +144,41 @@ impl KeyMap {
     pub fn key_count(&self) -> (usize, usize) {
         (self.slide_id.len(), self.shape_id.values().map(HashMap::len).sum())
     }
+
+    /// The map in wire form, for a base transfer. Sorted, so two replicas serialise it the same.
+    pub fn to_snapshot(&self, issuer: &KeyIssuer) -> SnapshotKeys {
+        let mut slides: Vec<(String, u32)> = self.slide_id.iter().map(|(key, id)| (key.0.clone(), id.0)).collect();
+        slides.sort();
+        let mut shapes: Vec<(String, u32, u32)> =
+            self.shape_id.iter().flat_map(|(slide, keys)| keys.iter().map(move |(key, id)| (key.0.clone(), slide.0, id.0))).collect();
+        shapes.sort();
+        let mut dead: Vec<(String, u32)> = self.dead_shapes.iter().map(|(key, slide)| (key.0.clone(), slide.0)).collect();
+        dead.sort();
+        SnapshotKeys { slides, shapes, dead, next: issuer.issued() }
+    }
+
+    /// Replace the map with one from a base. A key belongs to one object for the session's life
+    /// (ADR-0002), so the transferred map wins over whatever this replica issued for the same
+    /// document before the base arrived.
+    pub fn from_snapshot(keys: &SnapshotKeys) -> Self {
+        let mut map = KeyMap::default();
+        for (key, slide) in &keys.slides {
+            let key = SlideKey(key.clone());
+            let slide = SlideId(*slide);
+            map.slide_key.insert(slide, key.clone());
+            map.slide_id.insert(key, slide);
+        }
+        for (key, slide, shape) in &keys.shapes {
+            let key = ShapeKey(key.clone());
+            let slide = SlideId(*slide);
+            map.shape_key.entry(slide).or_default().insert(ShapeId(*shape), key.clone());
+            map.shape_id.entry(slide).or_default().insert(key, ShapeId(*shape));
+        }
+        for (key, slide) in &keys.dead {
+            map.dead_shapes.insert(ShapeKey(key.clone()), SlideId(*slide));
+        }
+        map
+    }
 }
 
 #[cfg(test)]
@@ -173,6 +222,33 @@ mod tests {
 
         assert_eq!(map.slide_id(&key), Some(slide.id));
         assert_eq!(map.shape_id(slide.id, &skey), Some(shape));
+    }
+
+    #[test]
+    fn a_transferred_key_map_keeps_the_keys_and_the_next_number() {
+        let s = deck();
+        let doc = s.doc().expect("doc").doc.as_ref().clone();
+        let mut issuer = KeyIssuer::new("a");
+        let mut map = KeyMap::new();
+        map.sync(&doc, &mut issuer);
+        let slide = doc.slides[0].id;
+        let shape = doc.slides[0].shapes[0].id;
+        let key = map.shape_key(slide, shape).expect("key").clone();
+        map.bury_shape(slide, shape);
+
+        let sent = map.to_snapshot(&issuer);
+        assert_eq!(sent.next, issuer.issued());
+        let mut restored = KeyMap::from_snapshot(&sent);
+        assert_eq!(restored.shape_key(slide, shape), Some(&key), "the key is the server's, not a new one");
+        assert_eq!(restored.slide_key(slide), map.slide_key(slide));
+        assert!(restored.is_dead_shape(slide, &key), "a tombstone crosses the base");
+
+        // A replica that continues from the transferred map issues the key the server would.
+        let mut issuer = KeyIssuer::with_next("a", sent.next);
+        let mut original_issuer = KeyIssuer::with_next("a", sent.next);
+        assert_eq!(issuer.shape(), original_issuer.shape());
+        restored.revive_shape(slide, shape);
+        assert!(!restored.is_dead_shape(slide, &key));
     }
 
     #[test]

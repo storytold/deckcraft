@@ -681,6 +681,24 @@ impl Session {
         self.execute_inner(id, params, false)
     }
 
+    /// Replace the active document wholesale with the one a collaboration base carried
+    /// (ADR-0005 §4.5). The selection and undo history describe the old state and are reset; any
+    /// composition or comparison in progress is dropped. The document keeps its slot, title and
+    /// path, and its uid, so open windows and the key map stay addressed to it.
+    pub fn replace_active_document(&mut self, doc: Presentation) -> Result<()> {
+        let i = self.active.ok_or(EngineError::NoDocument)?;
+        let old = self.docs.get(i).ok_or(EngineError::NoDocument)?;
+        let (uid, revision, path, title) = (old.uid, old.revision.saturating_add(1), old.path.clone(), old.title.clone());
+        crate::fonts::install_embedded_fonts(&doc);
+        let missing_fonts = crate::fonts::missing_fonts(&doc);
+        let mut st = DocState::new(doc, path, title);
+        st.uid = uid;
+        st.revision = revision;
+        st.missing_fonts = missing_fonts;
+        self.docs[i] = st;
+        Ok(())
+    }
+
     fn execute_inner(&mut self, id: &str, params: &Value, record: bool) -> Result<Value> {
         self.guarded(id, |s| s.execute_unguarded(id, params, record))
     }
