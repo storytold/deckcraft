@@ -496,7 +496,7 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
 }
 
 /// The preview picture of an old-style embedded object (`p:oleObj spid` with no `p:pic`): the
-/// `v:imagedata` of the legacy VML drawing shape with that id, as PowerPoint 2007 wrote them.
+/// `v:imagedata` of the legacy VML drawing shape with that id or `o:spid`, as PowerPoint 2007 wrote them.
 fn vml_preview(imp: &mut Imp, part: &Part, spid: &str) -> Option<deckcraft_model::MediaId> {
     for rel in part.rels.items.iter().filter(|r| r.kind == "vmlDrawing" && !r.external) {
         let key = crate::opc::norm(&rel.target);
