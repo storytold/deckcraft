@@ -1,7 +1,7 @@
 # Collaboration status and handoff
 
 Updated: 2026-11-09. Branch: `collab/pr11`, **rebased onto `origin/main` at `0623b430`** (heads
-`collab/pr10` = `7459d798` plus its rebase note, `collab/pr11` = `05abfe28` plus this docs
+`collab/pr10` = `7459d798` plus its rebase note, `collab/pr11` = `d6c2df6c` plus this docs
 commit; pre-rebase hashes are kept in the slice notes below and mapped in
 [Rebase onto origin/main](#rebase-onto-originmain-2026-11-09)), from
 `collab/pr10` at `922a4bf4` (media slice `7fe75711`, feature slices `0a57b61e`…`69c2ff22`, undo
@@ -20,7 +20,9 @@ rest-of-the-animation-surface slice `e2a5ef41` with its docs commit on top, the
 document-font slice `fd4e54e8` with its docs commit on top, and the rest-of-the-table-surface
 slice `c895183a` with its docs commit on top, and — after `02e87716` — the table-options
 slice: the six style toggles as one final value and the Table Layout ▸ Cell Size fields for
-column width and row height, with its docs commit on top.
+column width and row height, with its docs commit on top, and — after `f3945ddf` — the SmartArt
+slice: outline, layout, style and colour edits as one whole `Diagram` value, with its docs commit
+on top.
 The production operator view is
 [`production.md`](production.md); the protocol design is [`rfc.md`](rfc.md); the prepared PR
 description is [`pr10.md`](pr10.md).
@@ -44,7 +46,7 @@ and what to do next. Update it at the end of every collaboration session.
 | `collab/pr8` | `759b6124` | WebSocket server, desktop link, UI wiring, undo requests, persistence |
 | `collab/pr9` | `149d9840` | text insert/delete with rebase, shape insert, engine command queue |
 | `collab/pr10` | `7fe75711` + `0a57b61e`…`69c2ff22`, `41fe1ad9`, `4e666b95`, `3ec81d70`, `31842050`, `98d9e9ce`, `f28ee048`, `e007e965`, `927e773c` | media channel (pictures by `sha256`, upload/fetch, persistence); audio/video, TLS media client, `shape.fill`/`shape.line`/`format.*`/`slide.duplicate`, `arrange.align`/`arrange.distribute` as final bounds, `transition.set` as a whole final value; undo of fill, line, `format.*`, a group's fill/line, slide insert/delete, shape insert/delete, group/ungroup, align/distribute and transition; commit published to the cabinet as a new file version (`409` on an external change); base transfer after compaction with the key map, and a three-client soak gate |
-| `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs), `e2a5ef41` (+ docs), `c895183a` (+ docs), `05abfe28` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image; `animation.options`/`animation.clear` and the Animation Painter as the same slide-wide sequence computed with the engine's `options_plan`/`painter_plan` (the painter's clipboard stays a session value, a no-op sends nothing, a one-shot pick is disarmed after sending), with the whole sequence as the undo image; and the document-font slice `fd4e54e8`: `font.create`/`font.set`/`font.remove` on the presentation's embedded-font registry (`FontCreate` names one face by digest, `FontSet` sets the descriptors, `FontRemove` drops the entry), a presentation-level merge step with no slide address, a font face on the media channel (`MediaType::Font` with an sfnt allowlist and its own budget) and the whole `EmbeddedFont` entry (`font_restore`) as the undo image; and the rest-of-the-table-surface slice `c895183a`: `table.style`, `table.cellFill` over an explicit cell list, `table.merge`/`table.split` and `table.columnWidth`/`table.rowHeight` as final-value commands addressed by the table, the whole table as the undo image (the `table.edit` image and `shape.setField{field: table}`, whose box now follows the table), a queued cell operation rebased past a row/column edit and refused `stale` when a merge covered its cell, and the merged rectangle recorded so a covered address is never written; and the table-options slice: `table.options` as one final set of the six independent style booleans (an unknown or non-boolean flag refused before any write, the whole table as the undo image) and the Table Layout ▸ Cell Size fields that run `table.columnWidth`/`table.rowHeight` |
+| `collab/pr11` | `2a91d49e`, `b54eed3d` (+ cell-set rebase), `f562aea4` (+ docs), `b7025f9a` (+ docs), `a48c12de` (+ docs), `b4f13167` (+ docs), `6ddc0c4f` (+ docs), `b31bff47` (+ docs), `e2a5ef41` (+ docs), `c895183a` (+ docs), `05abfe28` (+ docs), `d6c2df6c` (+ docs) | table cell text (`text.set`/`text.insert`/`text.delete` with a `(row, col)` cell address, rebased past row/column edits), `table.edit` for row/column insert/delete with the whole table as undo image; `animation.add`/`animation.remove` as one shape's whole step list (`slide.animation.set`) with the exact list as the undo image; slide notes text as an addressable body (`notes.set`/`notes.insert`/`notes.delete`, address `(slide, notes body)`, rebased, whole-body undo image, the receiver's selection kept); `format.*` on one table cell (`FormatSet { cell: [row, col] }`, applied to that cell's own body, refused before any write for a cell the table does not have) with the cell's whole body as the undo image (`cell_text`); `format.*` on a character range of a body (`FormatSet { range }`, whole-body offsets rebased like `text.insert`/`text.delete`, unaddressable range refused before any write, the whole body as the undo image); `format.*` over N table cells as **one** operation with one address per cell (`FormatSet { addresses }`, a neighbour never touched, empty/repeated/missing addresses and ranges past the table refused before any write with no version move, each addressed cell's whole body as the undo image in one `cells_text`, `undo-conflict` on a foreign edit of any addressed cell) and a caret in a shape's body as its own address (`caret: offset`, the single-user command decides what it touches — word for run commands, paragraph for paragraph commands — never pre-widened by the replica); `animation.set`/`animation.timing`/`animation.move` as one slide's whole ordered sequence (`slide.animations.set`) with the whole sequence as the undo image; `animation.options`/`animation.clear` and the Animation Painter as the same slide-wide sequence computed with the engine's `options_plan`/`painter_plan` (the painter's clipboard stays a session value, a no-op sends nothing, a one-shot pick is disarmed after sending), with the whole sequence as the undo image; and the document-font slice `fd4e54e8`: `font.create`/`font.set`/`font.remove` on the presentation's embedded-font registry (`FontCreate` names one face by digest, `FontSet` sets the descriptors, `FontRemove` drops the entry), a presentation-level merge step with no slide address, a font face on the media channel (`MediaType::Font` with an sfnt allowlist and its own budget) and the whole `EmbeddedFont` entry (`font_restore`) as the undo image; and the rest-of-the-table-surface slice `c895183a`: `table.style`, `table.cellFill` over an explicit cell list, `table.merge`/`table.split` and `table.columnWidth`/`table.rowHeight` as final-value commands addressed by the table, the whole table as the undo image (the `table.edit` image and `shape.setField{field: table}`, whose box now follows the table), a queued cell operation rebased past a row/column edit and refused `stale` when a merge covered its cell, and the merged rectangle recorded so a covered address is never written; and the table-options slice: `table.options` as one final set of the six independent style booleans (an unknown or non-boolean flag refused before any write, the whole table as the undo image) and the Table Layout ▸ Cell Size fields that run `table.columnWidth`/`table.rowHeight`; and the SmartArt slice `d6c2df6c`: `smartArt.setNodes`/`addNode`/`removeNode`/`promote`/`demote`/`layout`/`style`/`colors` as **one whole `Diagram` value** (`smartArt.setDiagram`: layout, outline with text/levels/assistants/titles/pictures, style and colours), computed on the sender with the same engine `smartArt::plan` the single-user command runs, checked in the engine before the first write (layout, style, colours, node count and JSON size), with the **whole group** as the undo image (`shape_field{field: smartArt}`: the diagram and the generated children with their ids), because an outline edit regenerates the children with fresh ids and replaces an imported file's drawing |
 
 ### Rebase onto origin/main (2026-11-09)
 
@@ -757,9 +759,9 @@ whose `expectedVersion` does not match the room is refused before any callback i
 | A 100+ slide deck with media stays responsive and its commit opens in LibreOffice | ✅ 120 slides/120 pictures, 4 media objects; commit renders 121 pages and survives an LO round trip | `tests/gates.rs`; adapter fix for edits on a non-active slide |
 | Insert a picture in a shared session | ✅ pictures, audio and video over `ws://` and `wss://` | media channel, adapter and socket tests |
 | Cursors/selections/participants visible | ✅ | `CollabUi::marks`, participants pane |
-| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format (a shape's body, one table cell, N cells of one table, a run range or a caret)/duplicate/transition/animation (a shape's step list, a slide's whole sequence from set/timing/move/options/clear and the painter), table cell text, table row/column edits, the rest of the table surface (style, cell fill, merge/split, column/row sizing), slide notes text and document fonts (the embedded-font registry: one face by digest, descriptors, removal) | collab tests, socket test, commit reimport |
+| Slides, shapes and order converge | ✅ for move/bounds/align/distribute/insert/delete/slide/group/order/fill/line/format (a shape's body, one table cell, N cells of one table, a run range or a caret)/duplicate/transition/animation (a shape's step list, a slide's whole sequence from set/timing/move/options/clear and the painter), table cell text, table row/column edits, the rest of the table surface (style, cell fill, merge/split, column/row sizing), slide notes text, document fonts (the embedded-font registry: one face by digest, descriptors, removal) and SmartArt (outline, layout, style and colours as one whole diagram value) | collab tests, socket test, commit reimport |
 | Reconnect works | ✅ within the retained journal tail; after compaction the client is rebuilt from the native base and the key map (inline up to 8 MiB) | client queue + resync; three-session gate; three-client soak; `DocSession::resync` |
-| Per-user undo/redo | ✅ text (shape, table cell and slide notes), shape values, align/distribute, fill, outline, `format.*` (a shape's body, one cell's body, N cells of one table, a run range or a caret), group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, animation (a shape's step list and a slide's whole sequence for set/timing/move/options/clear/painter), table row/column edits, the whole table for style/fill/merge/split/sizing, document fonts (the whole entry) | server history, `undo-conflict`, `shape_field`/`cell_text`/`cells_text`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`)/`slide_transition`/`shape_animations`/`slide_animations`/`notes_set`/`font_restore`/whole-table `shape_field` |
+| Per-user undo/redo | ✅ text (shape, table cell and slide notes), shape values, align/distribute, fill, outline, `format.*` (a shape's body, one cell's body, N cells of one table, a run range or a caret), group fill/line, slide insert/delete, shape insert/delete, group/ungroup, transition, animation (a shape's step list and a slide's whole sequence for set/timing/move/options/clear/painter), table row/column edits, the whole table for style/fill/merge/split/sizing, document fonts (the whole entry), a SmartArt step (the whole group) | server history, `undo-conflict`, `shape_field`/`cell_text`/`cells_text`/`shape_fields`/`shapes_set_bounds`/`shape_restore`/`slide_restore` (the last with `remove`)/`slide_transition`/`shape_animations`/`slide_animations`/`notes_set`/`font_restore`/whole-table `shape_field` |
 | Viewer cannot edit | ✅ server + engine gate, also inside the three-session gate | socket test, UI test |
 | Commit creates a new version, original kept | ✅ server side: `POST /v1/sessions/{id}/commit` → cabinet callback with the bytes, `409` on an external change, the accepted version stored in `meta.json` | `apps/deckcraft-collab-server` (`cabinet.rs`, `lib.rs`), `tests/commit.rs`; the cabinet endpoint and the desktop save command remain external |
 | Single-user mode unchanged; feature behind a flag | ✅ | flag-off tests; a page without `deckcraft:session` makes no network call (`deckcraft-web`) |
@@ -791,6 +793,26 @@ host-without-`craft-fonts` failures (`render
 tests::east_asian_vertical_text_stands_ideographs_upright` and `ui-egui
 ime_tests::korean_composes_in_the_notes_pane`). `git status` is clean after the docs commit;
 nothing was pushed, CI was not touched, and PR #1975 is unchanged.
+
+Re-run on 2026-11-09 after the SmartArt slice (`d6c2df6c`, on `agents`, rust 1.99.1):
+`cargo fmt --all -- --check` clean, `cargo clippy --workspace --all-targets -- -D warnings`
+clean, `collab-proto` 33, `collab` 223 + 8, `collab-server` 10 unit + 4 commit + 4 gates (2.43 s
+with `--test-threads=1`, LibreOffice skipped on the build host) + 7 socket, `collab-web` 15,
+`deckcraft-web` 6, `ui-egui collab::` 20, `deckcraft-engine` 586 + 1 ignored, `xtask layers` 32
+crates with no violations, `cargo check -p deckcraft-web --target wasm32-unknown-unknown` ok. The
+new tests cover two replicas converging on one whole diagram value (layout, outline, style and
+colours in one step), its undo restoring the previous diagram **and the generated children with
+their own ids** and its redo reapplying it on both replicas; an undo refused `undo-conflict` after
+another participant edited the same graphic; a step addressed to a plain shape refused `invalid`
+with no history step; the normaliser running the engine's plan for `setNodes`, `promote`,
+`layout`, `style`, `colors`, `addNode` and `removeNode` (addressing the group through a child's
+id, keeping the outline through a layout change), and refusing an unknown layout/style/colour, a
+node that does not exist, a plain shape, an empty selection and the structural/convert commands
+this slice does not carry; the engine regenerating from a whole value, the exact group restore
+(children and ids) and refusals (unknown layout/style/colours, > 4096 nodes, a value that is not a
+diagram, a group image that names another shape); and the same step and its undo through the
+in-memory hub on two replicas. `git status` is clean after the docs commit; nothing was pushed, CI
+was not touched, and PR #1975 is unchanged.
 
 ## What is NOT done (ordered by production impact)
 
@@ -930,23 +952,64 @@ The JWT must be HS256 with `aud: "office-sync"`, `sub`, `role`, `fileId`, `app: 
    `409` and stores the accepted version. For a page on another origin the sync server needs CORS
    headers on `/media/{sha256}` and the two session endpoints.
 4. Extend the command set in vertical slices with the same pattern: payload → normalize →
-   adapter run → confirmed command → test on two clients. Document fonts and the whole table
-   surface are done (style, the six style options as one final set, cell fill, merge/split,
-   column/row sizing — and the Cell Size fields run the sizing commands from the ribbon); next are
-   SmartArt/charts.
+   adapter run → confirmed command → test on two clients. Document fonts, the whole table
+   surface and SmartArt are done (the outline, layout, style and colours as one whole `Diagram`
+   value); next are charts.
 5. Undo is covered for move/bounds/text (shape, table cell and slide notes)/fill/line/format
    (shape body, one table cell, N cells of one table, a run range or a caret — each with an exact
    body image)/transition/animation (a shape's step list for add/remove, a slide's whole sequence
    for set/timing/move/options/clear/painter) steps, a group's fill/line, slide
-   insert/delete/duplicate, shape insert/delete, group/ungroup and table row/column edits
-   (whole-table image), the whole table for style/options/fill/merge/split/sizing and a document
-   font entry. What is left in this line is only the undo of commands that are not on the wire yet
-   (SmartArt/charts).
+   insert/delete/duplicate, shape insert/delete, group/ungroup, table row/column edits
+   (whole-table image), the whole table for style/options/fill/merge/split/sizing, a document
+   font entry and a SmartArt outline/layout/style/colour step (the whole group). What is left in
+   this line is only the undo of commands that are not on the wire yet (charts, SmartArt insert
+   and convert, the picture in a node).
 6. Keep the §8 gates green (`cargo test -p deckcraft-collab-server --test gates -- --nocapture --test-threads=1`); the three-client soak covers compaction, base transfer and a reconnect, so the next gate is a longer run (hundreds of steps, media) and a base above the inline limit.
 7. Update `production.md` and this file at the end of the session; post a bus status with the
    commit and test numbers.
 
 ## Session log
+
+### 2026-11-09 — SmartArt: outline, layout, style and colours as one whole diagram value
+
+- Eight commands are collaborative: `smartArt.setNodes` (every form: `nodes`, `lines`,
+  `index`+`text`, `index`+`title`), `addNode`, `removeNode`, `promote`, `demote`, `layout`,
+  `style` and `colors`. Each leaves the graphic as **one value**, so the new `smart_art_set`
+  payload carries the **whole resulting `Diagram`** — layout, outline (text, level, assistant,
+  title, picture), style and colours — and the address is the group (`target.slide` +
+  `target.shape`, also when the user selected a child shape).
+- One source of truth: the engine's outline/layout/style/colour mutations moved into a public
+  `smartArt::plan`, which the single-user commands now call; the normaliser takes the graphic's
+  diagram (with text typed into its shapes synced back, as before every regeneration), runs the
+  same plan and sends the result. A layout change drops the file's saved layout and a style/colour
+  change its own XML exactly as the single-user command does, so the sent value is the value that
+  command would leave.
+- The adapter resolves the group, checks that the target is (inside) a SmartArt graphic and the
+  value fits one message, then runs the new engine command `smartArt.setDiagram`: it
+  deserialises the value, checks the layout, style, colours, at most 4096 nodes and at most
+  64 KiB of node text and 128 KiB of JSON, and only then regenerates the group's children.
+  Refusals write nothing and move no version.
+- Undo: the image is the **whole group** (`shape_field{field: smartArt}` — the model `Shape` as
+  JSON, diagram and generated children with their ids), because an outline edit regenerates the
+  children with fresh ids and replaces any drawing an imported file brought; the engine's
+  `shape.setField` gained a `smartArt` field that puts the group back in place (and refuses an
+  image that names another shape). A foreign edit of the same graphic makes the undo
+  `undo-conflict`.
+- Capabilities list the eight command names; the payload command on the wire is
+  `smartArt.setDiagram`. Not in this slice: `insert.smartArt`, `fromText`/`toText`/`toShapes`
+  (structural), `smartArt.picture` (needs the media channel for the node image) and the
+  `smartArt.nodes` query; charts are the next slice.
+- Tests: two replicas converge on one whole value (layout, outline, style and colours in one
+  step); its undo restores the previous diagram **and the generated children with their own ids**
+  and its redo reapplies it on both; an undo refused `undo-conflict` after another participant
+  edited the graphic; a step on a plain shape refused `invalid` with no history step; the
+  normaliser running the engine's plan for all eight commands (a child id addresses the group, a
+  layout change keeps the outline) and refusing an unknown layout/style/colour, a missing node,
+  a plain shape, an empty selection and the structural commands outside the slice; the engine
+  regenerating from a whole value, the exact group restore and the value/size refusals; the same
+  step and undo through the in-memory hub.
+- Commit `d6c2df6c` on `collab/pr11`, with this docs commit on top; `rfc.md` (§3.2.1, §6, §13,
+  §14.1), `production.md` and this file updated. Nothing pushed, CI untouched, PR #1975 unchanged.
 
 ### 2026-11-09 — table style options and the Cell Size fields
 
