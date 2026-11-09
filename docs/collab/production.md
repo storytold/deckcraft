@@ -138,6 +138,7 @@ The first release deliberately normalises a small, idempotent command set:
 | `text.insert`, `text.delete` | command | character offsets inside the shape body or one table cell; the server rebases them against operations since the base, so two people typing in one paragraph keep both texts, and two cells of one table never shift each other |
 | `table.edit` | structural | one row/column insert or delete (`axis`, `at`, `insert`) on a table shape; a queued cell text operation rebases its address past it, and a delete of the line holding the text refuses the operation |
 | `table.style` | command | one table's style as a final name (`table.style`); a table shape is the address, no cell moves |
+| `table.options` | command | the six style options (`headerRow`, `totalRow`, `bandedRows`, `firstColumn`, `lastColumn`, `bandedColumns`) as **all final values** in one `table.options`; the client applies the flags it names to the table it sees and sends the whole set, so no replica's own copy decides an unnamed option; an unknown or non-boolean flag is refused before anything is sent (and by the engine before the first write) |
 | `table.cellFill` | command | one final fill (solid colour, `none`, or `inherit` to drop the explicit fill) over an **explicit** cell list the sender's normaliser built from its selection (`table.cellFill`); a cell that is not listed is never written |
 | `table.merge`, `table.split` | command | final merge corners or the merge anchor (`table.merge`/`table.split`); cells keep their indices, so a queued cell operation is only moved by a row/column edit, and a merge that covered an addressed cell refuses it `stale` |
 | `table.columnWidth`, `table.rowHeight` | command | one final column width (`keepTotal` takes the difference from the next column) or row height in points (`table.columnWidth`/`table.rowHeight`) |
@@ -167,9 +168,9 @@ The first release deliberately normalises a small, idempotent command set:
 Anything else that changes the document is refused with a "not available in a shared session
 yet" message instead of being applied locally and silently diverging. The design rule stands: only
 commands whose result is a deterministic function of the authoritative state, expressed as final
-values, go on the wire. What is still refused: the table style toggles (`table.options`),
-SmartArt/charts, 3-D models and relative effects. The full command surface is the next slice; it
-needs a final-value normalisation for each command, not a raw `execute` on the wire.
+values, go on the wire. What is still refused: SmartArt/charts, 3-D models and relative effects.
+The full command surface is the next slice; it needs a final-value normalisation for each
+command, not a raw `execute` on the wire.
 
 ## Browser mode
 
@@ -339,11 +340,12 @@ documents the rest. `STATUS.md` tracks the same list by slice, with test evidenc
    slide's whole resulting sequence, the painter's clipboard stays a session value, and each step
    is one undo. Document fonts are in too (`font.create`/`font.set`/`font.remove`, the whole entry
    as the undo image) but have no UI entry point yet: the commands are on the control channel and
-   the MCP surface. The rest of the table surface is in now (style, a cell fill over an explicit
-   cell list, merge/split and column/row sizing; the undo image is the whole table, as for a
-   row/column edit); column and row sizing has no ribbon gesture yet, so it is reachable through
-   the control channel and MCP. What is left in this line: the table style toggles
-   (`table.options`), then SmartArt/charts.
+   the MCP surface. The rest of the table surface is in now (style, the six style options as one
+   final set, a cell fill over an explicit cell list, merge/split and column/row sizing; the undo
+   image is the whole table, as for a row/column edit), and Table Layout ▸ Cell Size has the
+   Column Width and Row Height fields, which carry the selected column/row as final values and run
+   the same `table.columnWidth`/`table.rowHeight` commands a border drag does. What is left in
+   this line: SmartArt/charts.
 4. **Done — Browser transport**: the web build gets its session from the host bridge and dials the
    sync server over the page's `WebSocket` (`crates/collab-web`); the token comes from
    `deckcraft:session`, media goes over `fetch` with it, and Save asks the cabinet to commit.
