@@ -25,7 +25,7 @@ pub fn missing_fonts_message(fonts: &[String]) -> Option<String> {
         list => {
             let (last, rest) = list.split_last()?;
             let joined = rest.join(", ");
-            format!("{joined}, and {last}")
+            format!("{joined} and {last}")
         }
     };
     let (it, them) = if fonts.len() == 1 { ("isn't", "it") } else { ("aren't", "them") };
@@ -107,6 +107,6 @@ mod tests {
         assert_eq!(f(&["Aptos"]).unwrap(), "Aptos isn't installed on this computer. Text that uses it is shown in a similar font.");
         assert!(f(&["Aptos", "Sora"]).unwrap().starts_with("Aptos and Sora aren't installed"));
         assert!(f(&["A", "B", "C"]).unwrap().starts_with("A, B and C aren't"));
-        assert!(f(&["A", "B", "C", "D", "E"]).unwrap().starts_with("A, B, C, D, and E aren't"));
+        assert!(f(&["A", "B", "C", "D", "E"]).unwrap().starts_with("A, B, C, D and E aren't"));
     }
 }
