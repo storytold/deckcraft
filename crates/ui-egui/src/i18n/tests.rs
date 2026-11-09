@@ -83,7 +83,9 @@ fn app_language_reports_and_changes_the_setting() {
     let v = app.run("app.language", json!({})).unwrap();
     assert_eq!((v["language"].as_str(), v["current"].as_str()), (Some(AUTO), Some("en")));
     let codes: Vec<&str> = v["available"].as_array().unwrap().iter().filter_map(|l| l["code"].as_str()).collect();
-    assert_eq!(codes, ["en", "de"]);
+    // Hebrew is listed when its catalogs are embedded (a build with `CRAFT_I18N_DIR`).
+    let expected: Vec<&str> = ["en", "de", "he"].into_iter().filter(|c| *c != "he" || Lang::from_code("he").is_some()).collect();
+    assert_eq!(codes, expected);
     let v = app.run("app.language", json!({"language": "DE"})).unwrap();
     assert_eq!((v["language"].as_str(), v["current"].as_str()), (Some("de"), Some("de")));
     assert_eq!(app.ui.language, "de");
@@ -157,4 +159,23 @@ fn embedded_catalogs_parse_cleanly() {
     for (code, ..) in CRAFT_I18N {
         assert!(LANGUAGES.contains(code), "{code} is embedded but not offered");
     }
+}
+
+/// The Hebrew catalog translates core labels from both the shared and DeckCraft rows, and Hebrew
+/// locale tags resolve to it. Skipped in a build without the Hebrew catalogs (`CRAFT_I18N_DIR`).
+#[test]
+fn the_hebrew_catalog_translates_core_labels() {
+    let Some(he) = Lang::from_code("he") else {
+        eprintln!("skipped: built without the Hebrew catalogs (CRAFT_I18N_DIR)");
+        return;
+    };
+    assert_eq!(he.name(), "עברית");
+    for tag in ["he", "he-IL", "he_IL.UTF-8"] {
+        assert_eq!(lang_from_tag(tag), Some(he), "{tag}");
+    }
+    // A shared row and DeckCraft rows, one of them a two-line ribbon label.
+    assert_eq!(tr(he, "Save"), "שמירה");
+    assert_eq!(tr(he, "New Slide"), "שקופית חדשה");
+    assert_eq!(tr(he, "New\nSlide"), "שקופית\nחדשה");
+    assert_eq!(fmt_plain(tr(he, "Slide {n} of {total}"), &[("n", "2"), ("total", "9")]), "שקופית 2 מתוך 9");
 }
