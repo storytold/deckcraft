@@ -196,7 +196,7 @@ impl CollabDoc {
         // digest on the operation. The author always has the bytes, so the confirmed command can
         // run here too.
         let mut wire;
-        let params = if matches!(cmd, "insert.picture" | "insert.audio" | "insert.video") {
+        let params = if matches!(cmd, "insert.picture" | "insert.audio" | "insert.video" | "font.create") {
             let (name, bytes) = media_bytes(params, cmd)?;
             let sha = self.adapter.media_mut().put(&name, bytes).map_err(|e| LocalError::BadParams(e.message))?;
             if let Some(stored) = self.adapter.media().get(&sha) {
@@ -209,6 +209,10 @@ impl CollabDoc {
             }
             wire["sha256"] = Value::String(sha);
             wire["name"] = Value::String(name);
+            if cmd == "font.create" && params.get("name").is_none() {
+                let typeface = params.get("typeface").and_then(Value::as_str).unwrap_or("font");
+                wire["name"] = Value::String(format!("{typeface}.ttf"));
+            }
             &wire
         } else {
             params
@@ -228,6 +232,7 @@ impl CollabDoc {
         }
         if let Some((sha256, kind)) = match &command.payload {
             Payload::PictureInsert { sha256, .. } => Some((sha256, crate::MediaType::Picture)),
+            Payload::FontCreate { sha256, .. } => Some((sha256, crate::MediaType::Font)),
             Payload::MediaInsert { sha256, kind, .. } => {
                 Some((sha256, if matches!(kind, MediaKind::Video) { crate::MediaType::Video } else { crate::MediaType::Audio }))
             }
@@ -354,6 +359,20 @@ pub fn normalize_with_painter(
     op_id: &str,
     doc: &str,
 ) -> Result<Vec<OpEnvelope>, LocalError> {
+    // A document font is a presentation value: it belongs to no slide, so it is normalised
+    // before the slide-view guard and carries no target at all.
+    if matches!(cmd, "font.create" | "font.set" | "font.remove") {
+        let payload = font_payload(cmd, p)?;
+        return Ok(vec![OpEnvelope {
+            op_id: op_id.to_string(),
+            doc: doc.to_string(),
+            base_version: 0,
+            kind: class_of(&payload),
+            target: Target::default(),
+            payload,
+            history: None,
+        }]);
+    }
     if st.selection.target != EngineTarget::Slides {
         return Err(LocalError::Unsupported(cmd.into()));
     }
@@ -871,6 +890,80 @@ pub fn normalize_with_painter(
 
 /// Bytes for `insert.picture|insert.audio|insert.video`: base64 `data`, or a local `path` on
 /// desktop. The web build has no file system, so the host passes `data`.
+/// One document-font operation from the user's command. The font file itself has already been
+/// stored on the media channel (`submit` replaces `data`/`path` with the digest), so the
+/// operation carries only the digest. A typeface is the document's key for the entry; a face is
+/// one of its four slots. Nothing names a slide, because the entry belongs to the presentation.
+fn font_payload(cmd: &str, p: &Value) -> Result<Payload, LocalError> {
+    let typeface = p
+        .get("typeface")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| LocalError::BadParams(format!("{cmd} needs `typeface`")))?;
+    if typeface.chars().count() > 255 || typeface.chars().any(char::is_control) {
+        return Err(LocalError::BadParams(format!("{cmd}: `typeface` is not a usable font name")));
+    }
+    let keys = |allowed: &[&str]| -> Result<(), LocalError> {
+        for key in p.as_object().map(|o| o.keys()).into_iter().flatten() {
+            if !allowed.contains(&key.as_str()) {
+                return Err(LocalError::Unsupported(format!("{cmd} {key}")));
+            }
+        }
+        Ok(())
+    };
+    match cmd {
+        "font.create" => {
+            keys(&["typeface", "face", "sha256", "name", "data", "path"])?;
+            let face = match p.get("face").and_then(Value::as_str) {
+                None => crate::FontFace::Regular,
+                Some(name) => crate::FontFace::parse(name)
+                    .ok_or_else(|| LocalError::BadParams(format!("font.create: `face` is regular, bold, italic or boldItalic, not `{name}`")))?,
+            };
+            let sha = p.get("sha256").and_then(Value::as_str).ok_or_else(|| LocalError::BadParams("font.create: the font file is missing".into()))?;
+            if !crate::media::valid_sha(sha) {
+                return Err(LocalError::BadParams("font.create: the font digest is not a sha256".into()));
+            }
+            let name = p.get("name").and_then(Value::as_str).unwrap_or("font").to_string();
+            Ok(Payload::FontCreate { typeface: typeface.to_string(), face, sha256: sha.to_string(), name })
+        }
+        "font.set" => {
+            keys(&["typeface", "panose", "pitchFamily", "charset"])?;
+            let panose = match p.get("panose") {
+                None | Some(Value::Null) => None,
+                Some(value) => {
+                    let text =
+                        value.as_str().map(str::trim).ok_or_else(|| LocalError::BadParams("font.set: `panose` must be 20 hex digits".into()))?;
+                    if text.len() != 20 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+                        return Err(LocalError::BadParams("font.set: `panose` must be 20 hex digits".into()));
+                    }
+                    Some(text.to_string())
+                }
+            };
+            let field = |key: &str| -> Result<Option<u8>, LocalError> {
+                match p.get(key) {
+                    None | Some(Value::Null) => Ok(None),
+                    Some(value) => value
+                        .as_u64()
+                        .and_then(|v| u8::try_from(v).ok())
+                        .map(Some)
+                        .ok_or_else(|| LocalError::BadParams(format!("font.set: `{key}` must be a number from 0 to 255"))),
+                }
+            };
+            let pitch_family = field("pitchFamily")?;
+            let charset = field("charset")?;
+            if panose.is_none() && pitch_family.is_none() && charset.is_none() {
+                return Err(LocalError::BadParams("font.set needs `panose`, `pitchFamily` or `charset`".into()));
+            }
+            Ok(Payload::FontSet { typeface: typeface.to_string(), panose, pitch_family, charset })
+        }
+        _ => {
+            keys(&["typeface"])?;
+            Ok(Payload::FontRemove { typeface: typeface.to_string() })
+        }
+    }
+}
+
 fn media_bytes(p: &Value, cmd: &str) -> Result<(String, Vec<u8>), LocalError> {
     let name = p.get("name").and_then(Value::as_str).unwrap_or("media").to_string();
     if let Some(data) = p.get("data").and_then(Value::as_str) {
@@ -1921,6 +2014,80 @@ mod tests {
         assert_eq!(ops[0].payload, Payload::NotesDelete { from: 0, to: 3 });
         let ops = normalize(&km, st, "edit.delete", &json!({}), "op", &doc_id).expect("edit.delete");
         assert_eq!(ops[0].payload, Payload::NotesDelete { from: 0, to: 3 });
+    }
+
+    /// A small original font the model carries (ColrSquares), as the UI would pass it.
+    fn font_file() -> Vec<u8> {
+        include_bytes!("../../render/tests/fixtures/colr-squares.ttf").to_vec()
+    }
+
+    #[test]
+    fn a_font_command_uploads_bytes_and_sends_only_a_reference() {
+        let (mut s, _doc, _slide, _shapes) = deck();
+        let mut client = CollabDoc::new("d");
+        client.connect(&s, "jwt", ClientInfo { name: "test".into(), ver: "1".into() });
+        client.on_msg(&mut s, welcome(0));
+        let bytes = font_file();
+        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let sent = client.submit(&s, "font.create", &json!({"typeface": "Deck Test Face", "face": "bold", "data": data}), "op-f").expect("submit");
+        assert_eq!(sent, 1);
+        let Some(ClientMsg::Op(op)) = client.next_outgoing() else { panic!("expected an operation") };
+        match &op.payload {
+            Payload::FontCreate { typeface, face, sha256, name } => {
+                assert_eq!(typeface, "Deck Test Face");
+                assert_eq!(*face, crate::FontFace::Bold);
+                assert_eq!(sha256, &crate::media::sha256_hex(&bytes), "the operation names the bytes by their digest");
+                assert_eq!(name, "Deck Test Face.ttf", "a font names its object after the typeface unless told otherwise");
+                assert!(!serde_json::to_string(&op.payload).expect("json").contains("data"), "no bytes on the wire");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(op.target.slide.is_none() && op.target.shape.is_none(), "a document font has no slide address");
+        assert_eq!(op.kind, OpKind::Command);
+        assert_eq!(client.take_uploads().len(), 1, "the bytes go to the media channel first");
+        let doc = s.doc().expect("doc").doc.clone();
+        assert!(doc.embedded_fonts.is_empty(), "a submit applies nothing locally");
+    }
+
+    #[test]
+    fn font_commands_normalise_to_final_values_and_refuse_bad_arguments() {
+        let (s, doc_id, _slide, _shapes) = deck();
+        let st = s.doc().expect("doc");
+        let km = keys(st.doc.as_ref());
+        let sha = crate::media::sha256_hex(&font_file());
+
+        let ops = normalize(&km, st, "font.create", &json!({"typeface": "Deck Test Face", "sha256": sha, "name": "face.ttf"}), "op", &doc_id)
+            .expect("create");
+        assert_eq!(
+            ops[0].payload,
+            Payload::FontCreate { typeface: "Deck Test Face".into(), face: crate::FontFace::Regular, sha256: sha.clone(), name: "face.ttf".into() }
+        );
+        assert_eq!(ops[0].kind, OpKind::Command);
+        assert!(ops[0].target.slide.is_none());
+
+        let ops =
+            normalize(&km, st, "font.set", &json!({"typeface": "Deck Test Face", "panose": "020B0604020202020204"}), "op", &doc_id).expect("set");
+        assert_eq!(
+            ops[0].payload,
+            Payload::FontSet { typeface: "Deck Test Face".into(), panose: Some("020B0604020202020204".into()), pitch_family: None, charset: None }
+        );
+
+        let ops = normalize(&km, st, "font.remove", &json!({"typeface": "Deck Test Face"}), "op", &doc_id).expect("remove");
+        assert_eq!(ops[0].payload, Payload::FontRemove { typeface: "Deck Test Face".into() });
+
+        for (why, cmd, params) in [
+            ("a missing typeface", "font.create", json!({"sha256": sha, "name": "x"})),
+            ("an empty typeface", "font.remove", json!({"typeface": "  "})),
+            ("an unknown face", "font.create", json!({"typeface": "X", "face": "black", "sha256": sha, "name": "x"})),
+            ("a digest that is not a sha256", "font.create", json!({"typeface": "X", "sha256": "abc", "name": "x"})),
+            ("a bad panose", "font.set", json!({"typeface": "X", "panose": "xyz"})),
+            ("a charset out of range", "font.set", json!({"typeface": "X", "charset": 300})),
+            ("nothing to set", "font.set", json!({"typeface": "X"})),
+            ("an address in the arguments", "font.remove", json!({"typeface": "X", "id": 3})),
+        ] {
+            let e = normalize(&km, st, cmd, &params, "op", &doc_id).expect_err(why);
+            assert!(matches!(e, LocalError::BadParams(_) | LocalError::Unsupported(_)), "{why}: {e:?}");
+        }
     }
 
     #[test]

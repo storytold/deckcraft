@@ -706,7 +706,8 @@ fn rejected(op_id: &str, code: RejectCode, message: &str) -> Rejected {
     Rejected { op_id: op_id.into(), code, message: message.into(), retryable: false, hint: None }
 }
 
-/// `PUT /v1/sessions/{id}/media/{sha256}`: upload one picture. The session token decides the
+/// `PUT /v1/sessions/{id}/media/{sha256}`: upload one media object (a picture, a font face or
+/// an audio/video clip). The session token decides the
 /// role and the file; the body is the object, and the path must name its digest. Content-addressed,
 /// so a repeated upload of the same bytes changes nothing.
 fn put_media(id: &str, sha: &str, request: &Request, shared: &Arc<Shared>) -> std::io::Result<Response> {
@@ -727,13 +728,13 @@ fn put_media(id: &str, sha: &str, request: &Request, shared: &Arc<Shared>) -> st
         return Ok(Response::json(403, json!({"error": "the token is for another file"})));
     }
     if !role_of(&claims.role).is_some_and(Role::may_write) {
-        return Ok(Response::json(403, json!({"error": "a viewer cannot upload pictures"})));
+        return Ok(Response::json(403, json!({"error": "a viewer cannot upload media"})));
     }
     if request.body.is_empty() {
         return Ok(Response::json(400, json!({"error": "the media object is empty"})));
     }
     let Some(kind) = deckcraft_collab::media_type("", &request.body) else {
-        return Ok(Response::json(400, json!({"error": "the body is not a picture, video or audio file this channel stores"})));
+        return Ok(Response::json(400, json!({"error": "the body is not a picture, font, video or audio file this channel stores"})));
     };
     let max = kind.max_bytes();
     if request.body.len() > max {
@@ -759,15 +760,15 @@ fn put_media(id: &str, sha: &str, request: &Request, shared: &Arc<Shared>) -> st
         && let Err(e) = store.save_media(sha, &request.body)
     {
         log::error!("media {sha}: {e}");
-        return Ok(Response::json(500, json!({"error": "the picture could not be stored"})));
+        return Ok(Response::json(500, json!({"error": "the media object could not be stored"})));
     }
     shared.metrics.media_uploads.fetch_add(1, Ordering::Relaxed);
     shared.metrics.media_bytes.fetch_add(request.body.len() as u64, Ordering::Relaxed);
     Ok(Response::json(201, json!({"sha256": sha, "bytes": request.body.len()})))
 }
 
-/// `GET /media/{sha256}`: one picture by digest. Content-addressed, so any authenticated session
-/// may fetch it if it knows the name.
+/// `GET /media/{sha256}`: one media object by digest. Content-addressed, so any authenticated
+/// session may fetch it if it knows the name.
 fn get_media(sha: &str, request: &Request, shared: &Arc<Shared>) -> Response {
     if !valid_sha(sha) {
         return Response::json(404, json!({"error": "not found"}));
@@ -787,7 +788,7 @@ fn get_media(sha: &str, request: &Request, shared: &Arc<Shared>) -> Response {
             return media_response(bytes.as_ref().clone());
         }
     }
-    Response::json(404, json!({"error": "no such picture"}))
+    Response::json(404, json!({"error": "no such media object"}))
 }
 
 fn media_reader_allowed(request: &Request, shared: &Shared) -> bool {

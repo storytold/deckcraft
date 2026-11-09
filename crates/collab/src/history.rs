@@ -149,6 +149,19 @@ pub enum Change {
     SlideTransition(TransitionImage),
     Notes(NotesImage),
     SlideAnimations(SlideAnimationsImage),
+    Font(FontImage),
+}
+
+/// One embedded font entry, present or absent, for a `font.create`, `font.set` or `font.remove`
+/// step. A document font is presentation-level (it belongs to no slide) and a font step changes
+/// no slide, shape or media address, so it is its own image kind. The whole entry is kept: its
+/// descriptors and the media ids of its four face slots, because the arguments of the user
+/// command cannot describe the entry it replaced.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FontImage {
+    pub typeface: String,
+    /// `None` = the document had no entry for this typeface.
+    pub font: Option<deckcraft_model::EmbeddedFont>,
 }
 
 /// One slide's speaker notes, present as a whole body, for a `notes.*` step. The address is the
@@ -198,6 +211,7 @@ impl Change {
             (Change::SlideTransition(a), Change::SlideTransition(b)) => a.slide == b.slide && a.transition == b.transition,
             (Change::Notes(a), Change::Notes(b)) => a.slide == b.slide && a.notes == b.notes,
             (Change::SlideAnimations(a), Change::SlideAnimations(b)) => a.slide == b.slide && a.animations == b.animations,
+            (Change::Font(a), Change::Font(b)) => a.typeface.eq_ignore_ascii_case(&b.typeface) && a.font == b.font,
             _ => false,
         }
     }
@@ -206,7 +220,9 @@ impl Change {
 /// The payload that puts one image back, and the object it addresses. `None` when the value
 /// cannot be described on the wire (a text image of a table cell keeps using `text.set`).
 pub struct Restore {
-    pub slide: SlideKey,
+    /// The slide the restored object lives on; `None` for a presentation-level value (a document
+    /// font), which no slide addresses.
+    pub slide: Option<SlideKey>,
     pub shape: Option<ShapeKey>,
     /// The objects a restored or removed group of shapes addresses: several shapes come back in
     /// one `ShapeRestore`, and several are removed in one `ShapeDelete`.
@@ -250,7 +266,7 @@ impl Image {
 pub fn restores(changes: &[Change]) -> Option<Restore> {
     match changes {
         [Change::Shape(at)] => {
-            Some(Restore { slide: at.slide.clone(), shape: Some(at.shape.clone()), shapes: Vec::new(), payload: at.image.payload(at.cell)? })
+            Some(Restore { slide: Some(at.slide.clone()), shape: Some(at.shape.clone()), shapes: Vec::new(), payload: at.image.payload(at.cell)? })
         }
         [Change::ShapeBody(at)] => body_restore(&[at]),
         [Change::GroupSubtree(at)] => Some(group_restore(at)),
@@ -261,26 +277,38 @@ pub fn restores(changes: &[Change]) -> Option<Restore> {
                 }
                 None => Payload::SlideDelete {},
             };
-            Some(Restore { slide: at.key.clone(), shape: None, shapes: Vec::new(), payload })
+            Some(Restore { slide: Some(at.key.clone()), shape: None, shapes: Vec::new(), payload })
         }
         [Change::SlideTransition(at)] => {
             let transition = match &at.transition {
                 Some(value) => Some(crate::transition::spec(value)?),
                 None => None,
             };
-            Some(Restore { slide: at.slide.clone(), shape: None, shapes: Vec::new(), payload: Payload::SlideTransition { transition } })
+            Some(Restore { slide: Some(at.slide.clone()), shape: None, shapes: Vec::new(), payload: Payload::SlideTransition { transition } })
         }
         [Change::Notes(at)] => Some(Restore {
-            slide: at.slide.clone(),
+            slide: Some(at.slide.clone()),
             shape: None,
             shapes: Vec::new(),
             payload: Payload::NotesSet { notes: serde_json::to_value(&at.notes).ok()? },
         }),
         [Change::SlideAnimations(at)] => Some(Restore {
-            slide: at.slide.clone(),
+            slide: Some(at.slide.clone()),
             shape: None,
             shapes: Vec::new(),
             payload: Payload::SlideAnimations { animations: at.animations.iter().map(crate::animation::spec).collect::<Option<Vec<_>>>()? },
+        }),
+        [Change::Font(at)] => Some(Restore {
+            slide: None,
+            shape: None,
+            shapes: Vec::new(),
+            payload: Payload::FontRestore {
+                typeface: at.typeface.clone(),
+                font: match &at.font {
+                    Some(entry) => Some(serde_json::to_value(entry).ok()?),
+                    None => None,
+                },
+            },
         }),
         [] => None,
         many if many.iter().all(|change| matches!(change, Change::ShapeBody(_))) => {
@@ -310,7 +338,7 @@ pub fn restores(changes: &[Change]) -> Option<Restore> {
                 shape = Some(&at.shape);
                 cells.push(deckcraft_collab_proto::CellBody { cell, body: serde_json::to_value(body).ok()? });
             }
-            Some(Restore { slide: slide?.clone(), shape: shape.cloned(), shapes: Vec::new(), payload: Payload::CellsText { cells } })
+            Some(Restore { slide: Some(slide?.clone()), shape: shape.cloned(), shapes: Vec::new(), payload: Payload::CellsText { cells } })
         }
         many => {
             // A step over several objects of one slide is restored atomically. `arrange.align`
@@ -334,7 +362,7 @@ pub fn restores(changes: &[Change]) -> Option<Restore> {
                     items.push(ShapeBounds { shape: at.shape.clone(), x, y, w, h });
                 }
                 return Some(Restore {
-                    slide,
+                    slide: Some(slide),
                     shape: None,
                     shapes: items.iter().map(|b| b.shape.clone()).collect(),
                     payload: Payload::ShapesSetBounds { items },
@@ -348,7 +376,7 @@ pub fn restores(changes: &[Change]) -> Option<Restore> {
                     _ => return None,
                 }
             }
-            Some(Restore { slide, shape: None, shapes: Vec::new(), payload: Payload::ShapeFields { items } })
+            Some(Restore { slide: Some(slide), shape: None, shapes: Vec::new(), payload: Payload::ShapeFields { items } })
         }
     }
 }
@@ -362,7 +390,7 @@ fn body_restore(bodies: &[&ShapeImage]) -> Option<Restore> {
     }
     if bodies.iter().all(|b| b.shape.is_none()) {
         let shapes: Vec<ShapeKey> = bodies.iter().map(|b| b.key.clone()).collect();
-        return Some(Restore { slide, shape: None, shapes, payload: Payload::ShapeDelete {} });
+        return Some(Restore { slide: Some(slide), shape: None, shapes, payload: Payload::ShapeDelete {} });
     }
     if bodies.iter().any(|b| b.shape.is_none()) {
         return None;
@@ -377,7 +405,7 @@ fn body_restore(bodies: &[&ShapeImage]) -> Option<Restore> {
             animations: b.animations.clone(),
         });
     }
-    Some(Restore { slide, shape: None, shapes: Vec::new(), payload: Payload::ShapeRestore { items, remove: Vec::new() } })
+    Some(Restore { slide: Some(slide), shape: None, shapes: Vec::new(), payload: Payload::ShapeRestore { items, remove: Vec::new() } })
 }
 
 /// One operation that moves between a group and its members. The payload removes the shapes of
@@ -390,7 +418,7 @@ fn group_restore(at: &GroupImage) -> Restore {
             let item =
                 ShapeRestoreItem { shape: at.key.clone(), parent: None, index: at.index, value: value.clone(), animations: at.animations.clone() };
             Restore {
-                slide: at.slide.clone(),
+                slide: Some(at.slide.clone()),
                 shape: None,
                 shapes: Vec::new(),
                 payload: Payload::ShapeRestore { items: vec![item], remove: at.children.clone() },
@@ -409,7 +437,7 @@ fn group_restore(at: &GroupImage) -> Restore {
                 })
                 .collect();
             Restore {
-                slide: at.slide.clone(),
+                slide: Some(at.slide.clone()),
                 shape: None,
                 shapes: Vec::new(),
                 payload: Payload::ShapeRestore { items, remove: vec![at.key.clone()] },
@@ -560,7 +588,7 @@ mod tests {
     #[test]
     fn a_restoring_payload_uses_the_before_image() {
         let restore = step("op-1", 5).restoring_payload().expect("payload");
-        assert_eq!(restore.slide.0, "s1");
+        assert_eq!(restore.slide.as_ref().map(|s| s.0.as_str()), Some("s1"));
         assert_eq!(restore.shape.as_ref().map(|k| k.0.as_str()), Some("h1"));
         assert_eq!(restore.payload, Payload::ShapeSetBounds { x: 1.0, y: 2.0, w: 3.0, h: 4.0 });
     }
@@ -596,7 +624,7 @@ mod tests {
             after: vec![image("g", deckcraft_model::Fill::None), image("h1", deckcraft_model::Fill::None)],
         };
         let restore = s.restoring_payload().expect("group payload");
-        assert_eq!(restore.slide.0, "s1");
+        assert_eq!(restore.slide.as_ref().map(|s| s.0.as_str()), Some("s1"));
         assert!(restore.shape.is_none(), "the restore addresses the slide and every member");
         let Payload::ShapeFields { items } = restore.payload else { panic!("one merge payload") };
         let keys: Vec<&str> = items.iter().map(|i| i.shape.0.as_str()).collect();
@@ -637,7 +665,7 @@ mod tests {
             })],
         };
         let undo = step.restoring_payload().expect("undo of a group");
-        assert_eq!(undo.slide.0, "s1");
+        assert_eq!(undo.slide.as_ref().map(|s| s.0.as_str()), Some("s1"));
         let Payload::ShapeRestore { items, remove } = undo.payload else { panic!("one atomic restore") };
         assert_eq!(remove, vec![ShapeKey("g".into())], "the group goes out first");
         let keys: Vec<&str> = items.iter().map(|i| i.shape.0.as_str()).collect();
@@ -722,7 +750,7 @@ mod tests {
             after: vec![Change::Slide(SlideImage { key: "s1".into(), index: 0, slide: None, sections: vec![], shows: vec![] })],
         };
         let restore = s.restoring_payload().expect("slide restore");
-        assert_eq!(restore.slide.0, "s1");
+        assert_eq!(restore.slide.as_ref().map(|s| s.0.as_str()), Some("s1"));
         assert!(restore.shape.is_none());
         let Payload::SlideRestore { index, sections, .. } = restore.payload else { panic!("a slide restore") };
         assert_eq!((index, sections), (2, vec![(0, 1)]));
@@ -740,7 +768,7 @@ mod tests {
             after: vec![Change::SlideTransition(TransitionImage { slide: "s2".into(), transition: None })],
         };
         let undo = step.restoring_payload().expect("transition restore");
-        assert_eq!(undo.slide.0, "s2");
+        assert_eq!(undo.slide.as_ref().map(|s| s.0.as_str()), Some("s2"));
         assert!(undo.shape.is_none());
         let Payload::SlideTransition { transition: Some(value) } = undo.payload else { panic!("one whole transition") };
         assert_eq!((value.kind.as_str(), value.duration_ms, value.advance_after_ms), ("fade", 700, Some(5000)));
@@ -771,7 +799,7 @@ mod tests {
             })],
         };
         let undo = step.restoring_payload().expect("animation restore");
-        assert_eq!(undo.slide.0, "s1");
+        assert_eq!(undo.slide.as_ref().map(|s| s.0.as_str()), Some("s1"));
         assert_eq!(undo.shape.as_ref().map(|k| k.0.as_str()), Some("k4"));
         let Payload::ShapeAnimations { animations } = &undo.payload else { panic!("the whole step list: {:?}", undo.payload) };
         assert_eq!(animations.len(), 1, "the step's before image keeps the other steps");
@@ -810,7 +838,7 @@ mod tests {
             })],
         };
         let undo = step.restoring_payload().expect("slide animation restore");
-        assert_eq!(undo.slide.0, "s1");
+        assert_eq!(undo.slide.as_ref().map(|s| s.0.as_str()), Some("s1"));
         assert!(undo.shape.is_none(), "the address is the slide");
         let Payload::SlideAnimations { animations } = &undo.payload else { panic!("the whole sequence: {:?}", undo.payload) };
         let effects: Vec<&str> = animations.iter().filter_map(|a| a.get("effect").and_then(serde_json::Value::as_str)).collect();
@@ -874,7 +902,7 @@ mod tests {
             })],
         };
         let restore = step.restoring_payload().expect("a shape restore");
-        assert_eq!(restore.slide.0, "s1");
+        assert_eq!(restore.slide.as_ref().map(|s| s.0.as_str()), Some("s1"));
         assert!(restore.shape.is_none(), "the payload names the shape");
         assert!(restore.shapes.is_empty());
         let Payload::ShapeRestore { items, .. } = restore.payload else { panic!("one shape restore") };

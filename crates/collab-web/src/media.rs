@@ -104,7 +104,7 @@ pub fn wanted(msg: &ServerMsg) -> Vec<String> {
 
 fn push_digest(payload: &Payload, out: &mut Vec<String>) {
     match payload {
-        Payload::PictureInsert { sha256, .. } | Payload::MediaInsert { sha256, .. } => out.push(sha256.clone()),
+        Payload::PictureInsert { sha256, .. } | Payload::MediaInsert { sha256, .. } | Payload::FontCreate { sha256, .. } => out.push(sha256.clone()),
         _ => {}
     }
 }

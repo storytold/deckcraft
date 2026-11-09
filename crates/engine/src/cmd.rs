@@ -9,6 +9,7 @@ pub mod design;
 pub mod edit;
 pub mod file;
 pub mod find;
+pub mod font_asset;
 pub mod format;
 pub mod ideas;
 pub mod insert;
@@ -213,6 +214,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(points::specs());
         v.extend(text::specs());
         v.extend(format::specs());
+        v.extend(font_asset::specs());
         v.extend(design::specs());
         v.extend(ideas::specs());
         v.extend(transition::specs());

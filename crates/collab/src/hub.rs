@@ -128,6 +128,9 @@ impl Hub {
                     "arrange.group".into(),
                     "arrange.ungroup".into(),
                     "arrange.reorder".into(),
+                    "font.create".into(),
+                    "font.set".into(),
+                    "font.remove".into(),
                 ],
             },
         };
@@ -908,6 +911,88 @@ mod tests {
         deliver(&mut hub, &mut b, &mut sb, "bob");
         assert_eq!(effects(&sa), ["fade", "zoom"], "the undo restored the cleared sequence");
         assert_eq!(sequence(&sb), sequence(&sa));
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+    }
+
+    #[test]
+    fn a_document_font_reaches_both_replicas_and_its_undo_comes_back_through_the_hub() {
+        let mut hub = hub();
+        let welcome_a = join(&mut hub, "alice", Role::Editor);
+        let welcome_b = join(&mut hub, "bob", Role::Editor);
+        let mut sa = deck_session();
+        let mut sb = deck_session();
+        let mut a = CollabDoc::new("d");
+        let mut b = CollabDoc::new("d");
+        let _ = a.connect(&sa, "ja", ClientInfo { name: "a".into(), ver: "1".into() });
+        let _ = b.connect(&sb, "jb", ClientInfo { name: "b".into(), ver: "1".into() });
+        a.on_msg(&mut sa, ServerMsg::Welcome(welcome_a));
+        b.on_msg(&mut sb, ServerMsg::Welcome(welcome_b));
+
+        let bytes = include_bytes!("../../render/tests/fixtures/colr-squares.ttf").to_vec();
+        let sha = crate::media::sha256_hex(&bytes);
+        let served = bytes.clone();
+        // The second replica has no bytes: it fetches them from the room before applying.
+        b.set_media_fetcher(std::sync::Arc::new(move |asked: &str| (asked == sha).then(|| served.clone())));
+        let entry = |s: &Session| s.doc().expect("doc").doc.embedded_fonts.first().cloned();
+
+        // Alice embeds a face: the bytes go to the media channel, the operation names the digest.
+        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        a.submit(&sa, "font.create", &json!({"typeface": "Deck Test Face", "data": data}), "f-1").expect("submit font");
+        for (digest, upload) in a.take_uploads() {
+            assert_eq!(hub.put_media("DeckFace.ttf", upload.as_ref().clone()).expect("upload"), digest);
+        }
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        let first = entry(&sa).expect("alice embeds the font");
+        assert_eq!(first.typeface, "Deck Test Face");
+        assert!(first.regular.is_some());
+        assert_eq!(entry(&sb).expect("bob applies the same entry"), first);
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+        assert_eq!((a.version(), b.version()), (1, 1));
+
+        // A descriptor step is the same whole value on both replicas.
+        a.submit(&sa, "font.set", &json!({"typeface": "Deck Test Face", "panose": "020B0604020202020204", "charset": 204}), "f-2")
+            .expect("submit the descriptors");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!(entry(&sa).and_then(|e| e.panose).as_deref(), Some("020B0604020202020204"));
+        assert_eq!(entry(&sb).and_then(|e| e.panose).as_deref(), Some("020B0604020202020204"));
+        assert_eq!((a.version(), b.version()), (2, 2));
+
+        // The undo of the descriptor step is broadcast like any other operation and lands on
+        // both replicas: the face stays, the descriptors go back to what they were.
+        a.undo().expect("request an undo");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (3, 3));
+        assert_eq!(entry(&sa).and_then(|e| e.panose), None);
+        assert_eq!(entry(&sb).and_then(|e| e.panose), None);
+        assert!(entry(&sa).is_some_and(|e| e.regular.is_some()), "the face is untouched");
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+
+        // A second undo takes back the create itself: the entry leaves both documents and the
+        // face object stays, so the redo can put the entry back.
+        a.undo().expect("undo the create");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (4, 4));
+        assert!(entry(&sa).is_none());
+        assert!(entry(&sb).is_none());
+        assert!(!sa.doc().expect("doc").doc.media.is_empty(), "the face object stays on the replica");
+        assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
+
+        // Redo puts the entry back on both.
+        a.redo().expect("redo the create");
+        send_all(&mut hub, &mut a, "alice");
+        deliver(&mut hub, &mut a, &mut sa, "alice");
+        deliver(&mut hub, &mut b, &mut sb, "bob");
+        assert_eq!((a.version(), b.version()), (5, 5));
+        assert!(entry(&sa).is_some_and(|e| e.regular.is_some()));
+        assert_eq!(entry(&sb), entry(&sa));
         assert_eq!(*sa.doc().expect("doc").doc, *sb.doc().expect("doc").doc);
     }
 }

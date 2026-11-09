@@ -259,6 +259,46 @@ pub enum Payload {
     NotesInsert { at: u32, text: String },
     /// Removes the characters in `[from, to)` of `target.slide`'s notes.
     NotesDelete { from: u32, to: u32 },
+    /// Embeds one face of a document font (`p:embeddedFontLst`) in the presentation, creating the
+    /// entry for `typeface` when the document has none and pointing the named face slot at the
+    /// new object otherwise. The bytes travel on the media channel and the operation names them
+    /// by `sha256`, like a picture, so an operation stays small and the same font is stored once.
+    ///
+    /// This is a **presentation-level** value: `target` names no slide or shape, so a replica
+    /// applies it whatever slide it is looking at, and it changes no object address or key. The
+    /// font's faces live in the document's media list on every replica (see
+    /// [`Payload::FontRestore`] for the undo image).
+    FontCreate { typeface: String, face: FontFace, sha256: String, name: String },
+    /// Sets the descriptor fields of one embedded font entry to final values (`panose`,
+    /// `pitchFamily`, `charset`). A field left out keeps the entry's value on every replica,
+    /// because the confirmed command carries the same arguments. Presentation-level, like
+    /// [`Payload::FontCreate`]; an entry the document does not have is refused before any write.
+    FontSet {
+        typeface: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        panose: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pitch_family: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        charset: Option<u8>,
+    },
+    /// Drops one embedded font entry from the presentation (`p:embeddedFontLst`). The face
+    /// objects stay in the document's media list; a save writes only the objects the model still
+    /// references. Presentation-level and undoable like [`Payload::FontCreate`].
+    FontRemove { typeface: String },
+    /// Puts back one embedded font entry, exactly, from the server's whole-entry image (ADR
+    /// 0010). `font` is the model `EmbeddedFont` (`crates/model/src/lib.rs`) as JSON — its
+    /// descriptors and the media ids of its four face slots — and `null` means the document had
+    /// no entry for that typeface. The entry is presentation-level, so the restore names no
+    /// slide; media ids are document ids every replica allocated in the same order, so a restore
+    /// puts back the same objects.
+    ///
+    /// Like [`Payload::ShapeField`], the server builds this from the actor's history only.
+    FontRestore {
+        typeface: String,
+        #[serde(default)]
+        font: Option<serde_json::Value>,
+    },
     /// One allowlisted `format.*` command with absolute arguments, aimed at one or more text
     /// bodies (§15): the whole body of `target.shape`, a whole table cell, a character range
     /// inside one body, or a caret in one body. Every body is one [`FormatAddress`] — a table
@@ -385,6 +425,40 @@ pub enum Payload {
 pub enum MediaKind {
     Video,
     Audio,
+}
+
+/// One face slot of an embedded font: the four slots `p:embeddedFont` stores, in the order the
+/// package writes them (`regular`, `bold`, `italic`, `boldItalic`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FontFace {
+    Regular,
+    Bold,
+    Italic,
+    BoldItalic,
+}
+
+impl FontFace {
+    /// The name the engine command and the model use.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FontFace::Regular => "regular",
+            FontFace::Bold => "bold",
+            FontFace::Italic => "italic",
+            FontFace::BoldItalic => "boldItalic",
+        }
+    }
+
+    /// One face slot from an engine argument (`regular`, `bold`, `italic`, `boldItalic`).
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "regular" => Some(FontFace::Regular),
+            "bold" => Some(FontFace::Bold),
+            "italic" => Some(FontFace::Italic),
+            "boldItalic" => Some(FontFace::BoldItalic),
+            _ => None,
+        }
+    }
 }
 
 /// The axis of a table a [`Payload::TableEdit`] changes.
@@ -704,6 +778,10 @@ impl Payload {
             Payload::NotesSet { .. } => "notes.set",
             Payload::NotesInsert { .. } => "notes.insert",
             Payload::NotesDelete { .. } => "notes.delete",
+            Payload::FontCreate { .. } => "font.create",
+            Payload::FontSet { .. } => "font.set",
+            Payload::FontRemove { .. } => "font.remove",
+            Payload::FontRestore { .. } => "font.restore",
             Payload::FormatSet { format, .. } => format.id(),
             Payload::TableEdit { .. } => "table.edit",
             Payload::ShapeField { .. } => "shape.setField",
@@ -1373,6 +1451,43 @@ mod tests {
         assert!(serde_json::to_string(&delete).expect("encode").contains("\"cmd\":\"notes_delete\""));
         assert_eq!(serde_json::from_str::<Payload>(&serde_json::to_string(&delete).expect("encode")).expect("decode"), delete);
         assert_eq!(delete.command(), "notes.delete");
+    }
+
+    #[test]
+    fn a_document_font_travels_as_an_entry_and_its_faces_by_digest() {
+        let create =
+            Payload::FontCreate { typeface: "Deck Face".into(), face: FontFace::Bold, sha256: "ab".repeat(32), name: "DeckFace-Bold.ttf".into() };
+        let text = serde_json::to_string(&create).expect("encode");
+        assert!(text.contains("\"cmd\":\"font_create\""), "{text}");
+        assert!(text.contains("\"face\":\"bold\""), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), create);
+        assert_eq!(create.command(), "font.create");
+        assert_eq!(FontFace::parse("boldItalic"), Some(FontFace::BoldItalic));
+        assert_eq!(FontFace::BoldItalic.as_str(), "boldItalic");
+        assert_eq!(FontFace::parse("black"), None);
+
+        let set =
+            Payload::FontSet { typeface: "Deck Face".into(), panose: Some("020B0604020202020204".into()), pitch_family: Some(2), charset: None };
+        let text = serde_json::to_string(&set).expect("encode");
+        assert!(text.contains("\"cmd\":\"font_set\""), "{text}");
+        assert!(!text.contains("charset"), "an absent descriptor is not sent: {text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), set);
+        assert_eq!(set.command(), "font.set");
+
+        let remove = Payload::FontRemove { typeface: "Deck Face".into() };
+        assert!(serde_json::to_string(&remove).expect("encode").contains("\"cmd\":\"font_remove\""));
+        assert_eq!(serde_json::from_str::<Payload>(&serde_json::to_string(&remove).expect("encode")).expect("decode"), remove);
+        assert_eq!(remove.command(), "font.remove");
+
+        // The undo image is the whole model entry or `null` (no entry before the step).
+        let restore = Payload::FontRestore { typeface: "Deck Face".into(), font: Some(serde_json::json!({"typeface": "Deck Face", "regular": 7})) };
+        let text = serde_json::to_string(&restore).expect("encode");
+        assert!(text.contains("\"cmd\":\"font_restore\""), "{text}");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), restore);
+        assert_eq!(restore.command(), "font.restore");
+        let gone = Payload::FontRestore { typeface: "Deck Face".into(), font: None };
+        let text = serde_json::to_string(&gone).expect("encode");
+        assert_eq!(serde_json::from_str::<Payload>(&text).expect("decode"), gone);
     }
 
     #[test]

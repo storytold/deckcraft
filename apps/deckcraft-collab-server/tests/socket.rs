@@ -290,6 +290,64 @@ fn audio_and_video_use_the_same_media_channel_with_their_own_allowlist() {
 }
 
 #[test]
+fn a_font_face_uses_the_media_channel_and_lands_in_the_committed_file() {
+    let handle = start();
+    let addr = handle.addr;
+    let body =
+        serde_json::json!({"fileId": "file-f", "app": "deckcraft", "initialBytes": base64::engine::general_purpose::STANDARD.encode(native_deck())})
+            .to_string();
+    let (status, created) = http(addr, "POST", "/v1/sessions", Some("service-token"), &body);
+    assert_eq!(status, 201, "{created}");
+    let editor = token("alice", "editor", "file-f");
+    let viewer = token("victor", "viewer", "file-f");
+
+    // A font face is a media object like a picture: the writer stores it as `fntdata`.
+    let face = include_bytes!("../../../crates/render/tests/fixtures/colr-squares.ttf").to_vec();
+    let sha = sha256(&face);
+    let upload = format!("/v1/sessions/file-f/media/{sha}");
+    let (status, _) = http_bytes(addr, "PUT", &upload, Some(&viewer), &face);
+    assert_eq!(status, 403, "a viewer cannot upload media");
+    let (status, uploaded) = http_bytes(addr, "PUT", &upload, Some(&editor), &face);
+    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&uploaded));
+    let (status, fetched) = http_bytes(addr, "GET", &format!("/media/{sha}"), Some(&editor), b"");
+    assert_eq!(status, 200);
+    assert_eq!(fetched, face, "the font bytes come back unchanged");
+
+    // The operation names the digest and no slide: a document font belongs to the presentation.
+    let mut a = join(addr, "file-f", "alice", "editor");
+    let op = ClientMsg::Op(OpEnvelope {
+        op_id: "font-1".into(),
+        doc: "file-f".into(),
+        base_version: 0,
+        kind: OpKind::Command,
+        target: Target::default(),
+        payload: Payload::FontCreate {
+            typeface: "Deck Test Face".into(),
+            face: deckcraft_collab_proto::FontFace::Regular,
+            sha256: sha.clone(),
+            name: "DeckFace.ttf".into(),
+        },
+        history: None,
+    });
+    a.send(tungstenite::Message::Text(encode_client(&op).expect("encode").into())).expect("send op");
+    match read(&mut a) {
+        ServerMsg::Applied(applied) => assert_eq!(applied.version, 1),
+        other => panic!("expected applied, got {other:?}"),
+    }
+
+    // The commit reimports with the entry, so the face really travelled through the room.
+    let (status, committed) = http(addr, "POST", "/v1/sessions/file-f/commit", Some("service-token"), "");
+    assert_eq!(status, 200, "{committed}");
+    let value: serde_json::Value = serde_json::from_str(&committed).expect("json");
+    let bytes = base64::engine::general_purpose::STANDARD.decode(value["bytes"].as_str().expect("inline bytes")).expect("base64");
+    let (deck, _lost) = deckcraft_pptx::import_checked(&bytes).expect("reimport");
+    assert_eq!(deck.embedded_fonts.len(), 1, "the file carries the embedded font");
+    assert_eq!(deck.embedded_fonts[0].typeface, "Deck Test Face");
+    assert!(deck.embedded_fonts[0].regular.is_some());
+    handle.shutdown();
+}
+
+#[test]
 fn the_desktop_link_uploads_and_fetches_pictures_over_http() {
     use deckcraft_collab::Transport as _;
     let handle = start();

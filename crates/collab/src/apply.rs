@@ -26,7 +26,8 @@ use serde_json::{Value, json};
 
 use crate::delta::delta;
 use crate::history::{
-    Change, GroupImage, Histories, Image, NotesImage, Restore, ShapeImage, SlideAnimationsImage, SlideImage, Snapshot, Step, TransitionImage,
+    Change, FontImage, GroupImage, Histories, Image, NotesImage, Restore, ShapeImage, SlideAnimationsImage, SlideImage, Snapshot, Step,
+    TransitionImage,
 };
 use crate::keys::{KeyIssuer, KeyMap};
 use crate::media::MediaCache;
@@ -185,6 +186,7 @@ impl Adapter {
                     | Payload::ShapeFields { .. }
                     | Payload::ShapeRestore { .. }
                     | Payload::SlideRestore { .. }
+                    | Payload::FontRestore { .. }
             )
         {
             // A history move is the server's own before/after image, never a client edit: the
@@ -261,7 +263,7 @@ impl Adapter {
             doc: String::new(),
             base_version: head,
             kind: class_of(&payload),
-            target: Target { slide: Some(slide), shape, shapes, ..Target::default() },
+            target: Target { slide, shape, shapes, ..Target::default() },
             payload,
             history: Some(HistoryAction::Undo { op_id: step.op_id.clone() }),
         })
@@ -281,7 +283,7 @@ impl Adapter {
             doc: String::new(),
             base_version: head,
             kind: class_of(&payload),
-            target: Target { slide: Some(slide), shape, shapes, ..Target::default() },
+            target: Target { slide, shape, shapes, ..Target::default() },
             payload,
             history: Some(HistoryAction::Redo { op_id: step.op_id.clone() }),
         })
@@ -306,7 +308,7 @@ impl Adapter {
         let expected = if redo { step.reapplying_payload() } else { step.restoring_payload() };
         match expected {
             Some(expected)
-                if op.target.slide.as_ref() == Some(&expected.slide)
+                if op.target.slide == expected.slide
                     && op.target.shape == expected.shape
                     && op.target.shapes == expected.shapes
                     && op.payload == expected.payload =>
@@ -346,6 +348,13 @@ impl Adapter {
             Payload::ShapeAnimations { .. } => (None, Image::Animation(Vec::new())),
             Payload::SlideAnimations { .. } => return self.capture_animations_step(before, after, op),
             Payload::FormatSet { addresses, .. } => return self.capture_format_step(before, after, op, addresses),
+            Payload::FontCreate { .. } | Payload::FontSet { .. } | Payload::FontRemove { .. } => {
+                let typeface = match &op.payload {
+                    Payload::FontCreate { typeface, .. } | Payload::FontSet { typeface, .. } | Payload::FontRemove { typeface } => typeface,
+                    _ => return None,
+                };
+                return Some((vec![Change::Font(capture_font(before, typeface))], vec![Change::Font(capture_font(after, typeface))]));
+            }
             Payload::ShapeField { field, .. } => (None, image_of_field(*field)),
             Payload::ShapeInsert { .. } | Payload::PictureInsert { .. } | Payload::MediaInsert { .. } => {
                 return self.capture_shape_insert(before, after, op);
@@ -653,6 +662,7 @@ impl Adapter {
             }
             Change::Notes(snapshot) => self.capture_notes(doc, &snapshot.slide).map(Change::Notes),
             Change::SlideAnimations(snapshot) => self.capture_animations(doc, &snapshot.slide).map(Change::SlideAnimations),
+            Change::Font(snapshot) => Some(Change::Font(capture_font(doc, &snapshot.typeface))),
         }
     }
 
@@ -910,6 +920,61 @@ impl Adapter {
                     MediaKind::Audio => "insert.audio",
                 };
                 self.call(session, cmd, args, head)
+            }
+            Payload::FontCreate { typeface, face, sha256, name } => {
+                // A document font is presentation-level: no slide is named, so nothing is
+                // selected and the operation applies whatever slide the replica is looking at.
+                if op.target.slide.is_some() || op.target.shape.is_some() || !op.target.shapes.is_empty() {
+                    return Err(Rejection::invalid("a document font belongs to the presentation, not to a slide or a shape", Some(head)));
+                }
+                let bytes = self
+                    .media
+                    .get(sha256)
+                    .ok_or_else(|| Rejection::missing_media(format!("font `{sha256}` has not been uploaded to this session"), Some(head)))?;
+                if let Some(kind) = self.media.kind(sha256)
+                    && kind != crate::MediaType::Font
+                {
+                    return Err(Rejection::invalid(format!("`{sha256}` is a {} object, not a font", kind.noun()), Some(head)));
+                }
+                self.call(
+                    session,
+                    "font.create",
+                    json!({
+                        "typeface": typeface,
+                        "face": face.as_str(),
+                        "name": name,
+                        "data": base64::engine::general_purpose::STANDARD.encode(bytes.as_slice()),
+                    }),
+                    head,
+                )
+            }
+            Payload::FontSet { typeface, panose, pitch_family, charset } => {
+                if op.target.slide.is_some() || op.target.shape.is_some() || !op.target.shapes.is_empty() {
+                    return Err(Rejection::invalid("a document font belongs to the presentation, not to a slide or a shape", Some(head)));
+                }
+                let mut args = json!({"typeface": typeface});
+                if let Some(value) = panose {
+                    args["panose"] = json!(value);
+                }
+                if let Some(value) = pitch_family {
+                    args["pitchFamily"] = json!(value);
+                }
+                if let Some(value) = charset {
+                    args["charset"] = json!(value);
+                }
+                self.call(session, "font.set", args, head)
+            }
+            Payload::FontRemove { typeface } => {
+                if op.target.slide.is_some() || op.target.shape.is_some() || !op.target.shapes.is_empty() {
+                    return Err(Rejection::invalid("a document font belongs to the presentation, not to a slide or a shape", Some(head)));
+                }
+                self.call(session, "font.remove", json!({"typeface": typeface}), head)
+            }
+            Payload::FontRestore { typeface, font } => {
+                if op.target.slide.is_some() || op.target.shape.is_some() || !op.target.shapes.is_empty() {
+                    return Err(Rejection::invalid("a document font belongs to the presentation, not to a slide or a shape", Some(head)));
+                }
+                self.call(session, "font.restore", json!({"typeface": typeface, "font": font}), head)
             }
             Payload::ShapeFill { fill } => {
                 let (slide, shape) = self.resolve_one(before, &op.target, head)?;
@@ -1737,6 +1802,12 @@ fn shift_notes_offset(point: u32, shift: &NotesShift) -> u32 {
     }
 }
 
+/// One embedded font entry as the history stores it: present with its whole model value, or
+/// absent. A document font is presentation-level, so no slide is resolved.
+fn capture_font(doc: &Presentation, typeface: &str) -> FontImage {
+    FontImage { typeface: typeface.to_string(), font: doc.embedded_fonts.iter().find(|f| f.typeface.eq_ignore_ascii_case(typeface)).cloned() }
+}
+
 pub fn class_of(payload: &Payload) -> OpKind {
     match payload {
         Payload::ShapeMove { .. }
@@ -1757,7 +1828,11 @@ pub fn class_of(payload: &Payload) -> OpKind {
         | Payload::ShapeField { .. }
         | Payload::CellText { .. }
         | Payload::CellsText { .. }
-        | Payload::ShapeFields { .. } => OpKind::Command,
+        | Payload::ShapeFields { .. }
+        | Payload::FontCreate { .. }
+        | Payload::FontSet { .. }
+        | Payload::FontRemove { .. }
+        | Payload::FontRestore { .. } => OpKind::Command,
         Payload::ShapeInsert { .. }
         | Payload::PictureInsert { .. }
         | Payload::MediaInsert { .. }
@@ -4297,5 +4372,195 @@ mod tests {
         let err =
             ad.apply(&mut s, 1, "a", &op(OpKind::Command, 1, Target::default(), Payload::NotesSet { notes: json!(42) })).expect_err("not a body");
         assert!(matches!(err.code, RejectCode::Invalid | RejectCode::Stale), "{err:?}");
+    }
+
+    /// A small original font the model carries and the font database reads (ColrSquares).
+    fn font_bytes() -> Vec<u8> {
+        include_bytes!("../../render/tests/fixtures/colr-squares.ttf").to_vec()
+    }
+
+    /// The document's entry for the test typeface, if it has one.
+    fn font_entry(doc: &Presentation) -> Option<deckcraft_model::EmbeddedFont> {
+        doc.embedded_fonts.iter().find(|f| f.typeface == "Deck Test Face").cloned()
+    }
+
+    /// `(adapter, session)` for one replica that holds the font bytes on its media channel.
+    fn font_replica() -> (Adapter, Session) {
+        let s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let bytes = font_bytes();
+        ad.media_mut().insert(&crate::media::sha256_hex(&bytes), bytes).expect("media");
+        (ad, s)
+    }
+
+    fn font_create(sha: &str) -> Payload {
+        Payload::FontCreate {
+            typeface: "Deck Test Face".into(),
+            face: deckcraft_collab_proto::FontFace::Regular,
+            sha256: sha.into(),
+            name: "DeckFace.ttf".into(),
+        }
+    }
+
+    #[test]
+    fn two_clients_converge_on_an_embedded_font_and_its_descriptors() {
+        let ((mut aa, mut a), (mut bb, mut b)) = (font_replica(), font_replica());
+        let sha = crate::media::sha256_hex(&font_bytes());
+        let create = op(OpKind::Command, 0, Target::default(), font_create(&sha));
+
+        let da = aa.apply(&mut a, 0, "a", &create).expect("a embeds the font");
+        let db = bb.apply(&mut b, 0, "b", &create).expect("b applies the confirmed command");
+        assert_eq!(da, db, "the same operation has the same delta on both replicas");
+        assert_eq!(doc_of(&a), doc_of(&b), "the replicas converge, media objects included");
+        let entry = font_entry(&doc_of(&a)).expect("the entry");
+        assert_eq!(entry.typeface, "Deck Test Face");
+        let id = entry.regular.expect("the regular face points at an object");
+        assert_eq!(doc_of(&a).media(id).map(|m| m.content_type.as_str()), Some("application/x-fontdata"));
+        assert!(doc_of(&b).media(id).is_some(), "the same object id exists on the other replica");
+
+        // A descriptor step is one absolute value: the later accepted one wins on both.
+        let mut set = op(
+            OpKind::Command,
+            1,
+            Target::default(),
+            Payload::FontSet {
+                typeface: "Deck Test Face".into(),
+                panose: Some("020B0604020202020204".into()),
+                pitch_family: Some(2),
+                charset: Some(204),
+            },
+        );
+        set.op_id = "op-2".into();
+        let da = aa.apply(&mut a, 1, "a", &set).expect("a sets the descriptors");
+        let db = bb.apply(&mut b, 1, "b", &set).expect("b applies the confirmed command");
+        assert_eq!(da, db);
+        assert_eq!(doc_of(&a), doc_of(&b));
+        let entry = font_entry(&doc_of(&a)).expect("the entry");
+        assert_eq!(entry.panose.as_deref(), Some("020B0604020202020204"));
+        assert_eq!((entry.pitch_family, entry.charset), (Some(2), Some(204)));
+        assert_eq!(entry.regular, Some(id), "the face is untouched by a descriptor step");
+
+        // And removal reaches both, leaving the face object for an undo image that names it.
+        let mut remove = op(OpKind::Command, 2, Target::default(), Payload::FontRemove { typeface: "Deck Test Face".into() });
+        remove.op_id = "op-3".into();
+        aa.apply(&mut a, 2, "a", &remove).expect("a removes the entry");
+        bb.apply(&mut b, 2, "b", &remove).expect("b applies the confirmed command");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert!(font_entry(&doc_of(&a)).is_none());
+        assert!(doc_of(&a).media(id).is_some(), "the face object stays in the media list");
+    }
+
+    #[test]
+    fn an_undo_of_a_document_font_restores_the_whole_entry() {
+        let ((mut aa, mut a), (mut bb, mut b)) = (font_replica(), font_replica());
+        let sha = crate::media::sha256_hex(&font_bytes());
+        let create = op(OpKind::Command, 0, Target::default(), font_create(&sha));
+        aa.apply(&mut a, 0, "a", &create).expect("create");
+        bb.apply(&mut b, 0, "a", &create).expect("the confirmed command on the second replica");
+
+        let mut set = op(
+            OpKind::Command,
+            1,
+            Target::default(),
+            Payload::FontSet { typeface: "Deck Test Face".into(), panose: Some("020B0604020202020204".into()), pitch_family: None, charset: None },
+        );
+        set.op_id = "op-2".into();
+        aa.apply(&mut a, 1, "a", &set).expect("set");
+        bb.apply(&mut b, 1, "a", &set).expect("set on the second replica");
+        assert_eq!(font_entry(&doc_of(&a)).and_then(|e| e.panose), Some("020B0604020202020204".into()));
+
+        // Undo of the descriptor step is the whole entry before it: no slide is named.
+        let undo = aa.undo(&a, 2, "a", "u-1").expect("undo the set");
+        assert_eq!(undo.target.slide, None, "a document font is presentation-level");
+        assert!(matches!(&undo.payload, Payload::FontRestore { font: Some(_), .. }), "{:?}", undo.payload);
+        aa.apply(&mut a, 2, "a", &undo).expect("apply the undo");
+        bb.apply(&mut b, 2, "a", &undo).expect("apply the undo on the second replica");
+        assert_eq!(doc_of(&a), doc_of(&b), "both replicas put the same entry back");
+        assert_eq!(font_entry(&doc_of(&a)).and_then(|e| e.panose), None, "the descriptor step is gone");
+        assert!(font_entry(&doc_of(&a)).is_some(), "the entry and its face stay");
+
+        // Undo of the create itself removes the entry on both; its object stays for the redo.
+        let undo = aa.undo(&a, 3, "a", "u-2").expect("undo the create");
+        assert!(matches!(&undo.payload, Payload::FontRestore { font: None, .. }), "{:?}", undo.payload);
+        aa.apply(&mut a, 3, "a", &undo).expect("apply the undo");
+        bb.apply(&mut b, 3, "a", &undo).expect("apply the undo on the second replica");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert!(font_entry(&doc_of(&a)).is_none());
+        assert_eq!(doc_of(&a).media.len(), doc_of(&b).media.len(), "the face object stays on both");
+
+        // Redo of the create puts the whole entry back.
+        let redo = aa.redo(&a, 4, "a", "r-1").expect("redo the create");
+        aa.apply(&mut a, 4, "a", &redo).expect("apply the redo");
+        bb.apply(&mut b, 4, "a", &redo).expect("apply the redo on the second replica");
+        assert_eq!(doc_of(&a), doc_of(&b));
+        assert!(font_entry(&doc_of(&a)).is_some_and(|e| e.regular.is_some()));
+    }
+
+    #[test]
+    fn an_undo_of_a_document_font_is_refused_after_someone_else_changed_the_entry() {
+        let (mut ad, mut s) = font_replica();
+        let sha = crate::media::sha256_hex(&font_bytes());
+        ad.apply(&mut s, 0, "a", &op(OpKind::Command, 0, Target::default(), font_create(&sha))).expect("a embeds");
+        let mut set = op(
+            OpKind::Command,
+            1,
+            Target::default(),
+            Payload::FontSet { typeface: "Deck Test Face".into(), charset: Some(1), panose: None, pitch_family: None },
+        );
+        set.op_id = "op-2".into();
+        ad.apply(&mut s, 1, "b", &set).expect("b changes the entry");
+
+        let err = ad.undo(&s, 2, "a", "u-1").expect_err("b changed the entry after a's step");
+        assert_eq!(err.code, RejectCode::UndoConflict);
+        assert!(!err.retryable);
+        assert_eq!(ad.history.get("a").map(ActorHistory::undo_len), Some(1), "a refused undo moves nothing");
+        assert_eq!(font_entry(&doc_of(&s)).and_then(|e| e.charset), Some(1), "b's value stays");
+    }
+
+    #[test]
+    fn a_font_step_is_validated_before_the_first_write() {
+        let mut s = deck();
+        let mut ad = Adapter::new("k");
+        ad.join(&doc_of(&s));
+        let bytes = font_bytes();
+        let sha = crate::media::sha256_hex(&bytes);
+        let doc = doc_of(&s);
+
+        // The bytes are not on this replica's media channel: retryable, nothing written.
+        let err = ad.apply(&mut s, 0, "a", &op(OpKind::Command, 0, Target::default(), font_create(&sha))).expect_err("no bytes yet");
+        assert!(err.retryable, "fetching the object and resending can succeed");
+        assert_eq!(doc_of(&s), doc);
+
+        // A picture digest is not a font.
+        let png = png();
+        let png_sha = crate::media::sha256_hex(&png);
+        ad.media_mut().insert(&png_sha, png).expect("media");
+        let err = ad.apply(&mut s, 0, "a", &op(OpKind::Command, 0, Target::default(), font_create(&png_sha))).expect_err("a picture");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert_eq!(doc_of(&s), doc);
+
+        // A document font addressed by a slide is refused.
+        let (slide, _shape) = key_of(&ad, &doc, 0);
+        ad.media_mut().insert(&sha, bytes.clone()).expect("media");
+        let err = ad
+            .apply(&mut s, 0, "a", &op(OpKind::Command, 0, Target { slide: Some(slide), ..Target::default() }, font_create(&sha)))
+            .expect_err("a font has no slide");
+        assert_eq!(err.code, RejectCode::Invalid);
+
+        // An unknown entry cannot be described or removed, and a set with no descriptor is refused.
+        let unknown = |payload| op(OpKind::Command, 0, Target::default(), payload);
+        let err = ad
+            .apply(&mut s, 0, "a", &unknown(Payload::FontSet { typeface: "Nope".into(), panose: None, pitch_family: None, charset: Some(1) }))
+            .expect_err("no such entry");
+        assert_eq!(err.code, RejectCode::Invalid);
+        let err = ad.apply(&mut s, 0, "a", &unknown(Payload::FontRemove { typeface: "Nope".into() })).expect_err("no such entry");
+        assert_eq!(err.code, RejectCode::Invalid);
+        let err = ad
+            .apply(&mut s, 0, "a", &unknown(Payload::FontSet { typeface: "Deck Test Face".into(), panose: None, pitch_family: None, charset: None }))
+            .expect_err("nothing to set");
+        assert_eq!(err.code, RejectCode::Invalid);
+        assert!(doc_of(&s).embedded_fonts.is_empty(), "no refused step wrote an entry");
+        assert_eq!(doc_of(&s).media.len(), 0, "and no object was added");
     }
 }

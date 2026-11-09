@@ -1,4 +1,4 @@
-//! The media channel: content-addressed picture, audio and video bytes beside the operation
+//! The media channel: content-addressed picture, font, audio and video bytes beside the operation
 //! stream.
 //!
 //! An operation never carries media. The client uploads the bytes once, names them by `sha256`
@@ -7,10 +7,10 @@
 //! socket limit is 256 KiB), makes a repeated picture free, and lets a commit and a snapshot reuse
 //! the same bytes.
 //!
-//! The cache is deliberately small and bounded: only pictures, audio and video are accepted, each
-//! object is capped by its kind, and a session keeps a separate object/byte budget for pictures
-//! and for audio/video, so a participant cannot exhaust the server's memory with uploads. The
-//! digest is always computed here and never trusted from a caller.
+//! The cache is deliberately small and bounded: only pictures, fonts, audio and video are
+//! accepted, each object is capped by its kind, and a session keeps a separate object/byte budget
+//! for pictures, fonts and audio/video, so a participant cannot exhaust the server's memory with
+//! uploads. The digest is always computed here and never trusted from a caller.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,6 +29,12 @@ pub const MAX_MEDIA_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_AV_OBJECTS: usize = 32;
 /// Most audio/video bytes one session keeps in total.
 pub const MAX_AV_TOTAL_BYTES: usize = 192 * 1024 * 1024;
+/// Largest single embedded-font face. A face is drawn whole, not subsetted by this channel.
+pub const MAX_FONT_BYTES: usize = 16 * 1024 * 1024;
+/// Most font objects one session keeps.
+pub const MAX_FONT_OBJECTS: usize = 32;
+/// Most font bytes one session keeps in total.
+pub const MAX_FONT_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 
 /// What the media channel stores. The allowlist is the set the `.pptx` writer and the media probe
 /// handle; anything else belongs to a later channel with its own limits.
@@ -37,6 +43,8 @@ pub enum MediaType {
     Picture,
     Video,
     Audio,
+    /// One face of a font the document embeds (`p:embeddedFontLst`).
+    Font,
 }
 
 impl MediaType {
@@ -46,6 +54,7 @@ impl MediaType {
             MediaType::Picture => image_type("", bytes).unwrap_or("application/octet-stream"),
             MediaType::Video => video_type(bytes).unwrap_or("application/octet-stream"),
             MediaType::Audio => audio_type(bytes).unwrap_or("application/octet-stream"),
+            MediaType::Font => font_type(bytes).unwrap_or(FONT_CONTENT_TYPE),
         }
     }
 
@@ -54,6 +63,7 @@ impl MediaType {
         match self {
             MediaType::Picture => MAX_MEDIA_BYTES,
             MediaType::Video | MediaType::Audio => MAX_AV_BYTES,
+            MediaType::Font => MAX_FONT_BYTES,
         }
     }
 
@@ -63,6 +73,7 @@ impl MediaType {
             MediaType::Picture => "picture",
             MediaType::Video => "video",
             MediaType::Audio => "audio",
+            MediaType::Font => "font",
         }
     }
 }
@@ -87,6 +98,31 @@ impl std::fmt::Display for MediaError {
 
 impl std::error::Error for MediaError {}
 
+/// The content type a face is stored under; the `.pptx` writer names the part the same way.
+pub const FONT_CONTENT_TYPE: &str = "application/x-fontdata";
+
+/// The font file `bytes` hold, or `None` when the signature is not one this channel stores.
+///
+/// The allowlist is the set the `.pptx` writer and the font database read: TrueType, OpenType and
+/// collections by their sfnt tag, and Embedded OpenType by its header. MicroType Express subsets
+/// keep their `fntdata` extension but are not a plain sfnt; they are refused here (the `.pptx`
+/// reader still round-trips them when a file already carries one).
+pub fn font_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 12
+        && (bytes.starts_with(&[0x00, 0x01, 0x00, 0x00])
+            || bytes.starts_with(b"OTTO")
+            || bytes.starts_with(b"true")
+            || bytes.starts_with(b"typ1")
+            || bytes.starts_with(b"ttcf"))
+    {
+        return Some(FONT_CONTENT_TYPE);
+    }
+    if bytes.len() >= 82 && u16::from_le_bytes([bytes[34], bytes[35]]) == 0x504C {
+        return Some("application/vnd.ms-fontobject");
+    }
+    None
+}
+
 /// Lowercase hex digest of `bytes`, the object's name on the wire and on disk.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
@@ -107,7 +143,7 @@ pub fn valid_sha(sha: &str) -> bool {
 /// The image type of `bytes`, or `None` when they are not a picture this channel stores.
 ///
 /// The allowlist is the set the `.pptx` writer and the renderer handle; anything else (video,
-/// fonts, arbitrary files) belongs to a later channel with its own limits.
+/// fonts, arbitrary files) has its own check in [`media_type`].
 pub fn image_type(name: &str, bytes: &[u8]) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
     if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
@@ -189,6 +225,9 @@ pub fn media_type(name: &str, bytes: &[u8]) -> Option<MediaType> {
     if image_type(name, bytes).is_some() {
         return Some(MediaType::Picture);
     }
+    if font_type(bytes).is_some() {
+        return Some(MediaType::Font);
+    }
     let lower = name.to_ascii_lowercase();
     let avi = bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"AVI ");
     let webm = bytes.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]);
@@ -230,8 +269,10 @@ pub struct MediaCache {
     objects: HashMap<String, (Arc<Vec<u8>>, MediaType)>,
     picture_bytes: usize,
     av_bytes: usize,
+    font_bytes: usize,
     pictures: usize,
     av_objects: usize,
+    fonts: usize,
 }
 
 impl MediaCache {
@@ -244,8 +285,8 @@ impl MediaCache {
         if bytes.is_empty() {
             return Err(MediaError::new("the media object is empty"));
         }
-        let kind =
-            media_type(name, &bytes).ok_or_else(|| MediaError::new(format!("{name} is not a picture, video or audio file this channel stores")))?;
+        let kind = media_type(name, &bytes)
+            .ok_or_else(|| MediaError::new(format!("{name} is not a picture, font, video or audio file this channel stores")))?;
         self.check_size(kind, &bytes)?;
         let sha = sha256_hex(&bytes);
         self.insert_checked(kind, &sha, bytes)?;
@@ -261,8 +302,8 @@ impl MediaCache {
         if bytes.is_empty() {
             return Err(MediaError::new("the media object is empty"));
         }
-        let kind =
-            media_type("", &bytes).ok_or_else(|| MediaError::new("the media bytes are not a picture, video or audio file this channel stores"))?;
+        let kind = media_type("", &bytes)
+            .ok_or_else(|| MediaError::new("the media bytes are not a picture, font, video or audio file this channel stores"))?;
         self.check_size(kind, &bytes)?;
         if sha256_hex(&bytes) != sha {
             return Err(MediaError::new("the media bytes do not match their digest"));
@@ -304,6 +345,16 @@ impl MediaCache {
                 self.av_objects += 1;
                 self.av_bytes = self.av_bytes.saturating_add(len);
             }
+            MediaType::Font => {
+                if self.fonts >= MAX_FONT_OBJECTS {
+                    return Err(MediaError::new("this session holds too many fonts"));
+                }
+                if self.font_bytes.saturating_add(len) > MAX_FONT_TOTAL_BYTES {
+                    return Err(MediaError::new("this session holds too many font bytes"));
+                }
+                self.fonts += 1;
+                self.font_bytes = self.font_bytes.saturating_add(len);
+            }
         }
         self.objects.insert(sha.to_string(), (Arc::new(bytes), kind));
         Ok(())
@@ -333,7 +384,7 @@ impl MediaCache {
 
     /// Total bytes held.
     pub fn bytes(&self) -> usize {
-        self.picture_bytes.saturating_add(self.av_bytes)
+        self.picture_bytes.saturating_add(self.av_bytes).saturating_add(self.font_bytes)
     }
 
     /// Every stored object, in digest order, for persistence and tests.
@@ -394,6 +445,26 @@ mod tests {
         assert_eq!(media_type("a.txt", b"not media"), None);
         assert_eq!(MediaType::Audio.content_type(b"OggS\0\0"), "audio/ogg");
         assert_eq!(MediaType::Video.content_type(&mp4), "video/mp4");
+    }
+
+    #[test]
+    fn a_font_is_recognised_by_its_sfnt_tag_and_has_its_own_budget() {
+        let ttf = include_bytes!("../../render/tests/fixtures/colr-squares.ttf");
+        assert_eq!(media_type("face.ttf", ttf), Some(MediaType::Font));
+        assert_eq!(media_type("face.otf", b"OTTO\0\0\0\0\0\0\0\0"), Some(MediaType::Font));
+        // An sfnt tag alone is not a readable font, but the channel stores what the writer can
+        // carry; the engine decides whether it can be embedded.
+        assert_eq!(media_type("x", b"ttcf\0\0\0\0\0\0\0\0"), Some(MediaType::Font));
+        assert_eq!(media_type("a.txt", b"not a font"), None);
+        let mut media = MediaCache::new();
+        let sha = media.put("face.ttf", ttf.to_vec()).expect("font");
+        assert_eq!(media.kind(&sha), Some(MediaType::Font));
+        assert_eq!(MediaType::Font.content_type(ttf), "application/x-fontdata");
+        assert_eq!(MediaType::Font.noun(), "font");
+        assert!(media.bytes() >= ttf.len(), "a font counts against the byte total");
+        assert!(media.put("a.txt", b"not a picture or a font".to_vec()).is_err());
+        assert_eq!(MediaType::Picture.max_bytes(), MAX_MEDIA_BYTES);
+        assert_eq!(MediaType::Font.max_bytes(), MAX_FONT_BYTES);
     }
 
     #[test]
