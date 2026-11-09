@@ -361,8 +361,22 @@ pub(crate) fn paint_preview(app: &mut SlideApp, painter: &egui::Painter, xf: cra
     };
     let Some(ptr) = ptr else { return };
     let Some(slide) = doc.slides.get(idx) else { return };
+    // The animation preview can hide, move, scale or fade a Cameo: the live frame follows the
+    // same state the slide texture uses, or it would show before an entrance or after an exit.
+    let frame = app.anim_preview_draw();
     for (shape, x) in cameo_boxes(&slide.shapes) {
-        paint_cameo(painter, &texture, shape, x, 1.0, &|p| xf.to_screen(p));
+        let st = frame.as_ref().map(|(tl, t)| crate::canvas::preview::shape_state_at(tl, shape.id, *t));
+        if st.as_ref().is_some_and(|s| !s.visible || s.opacity <= 0.0) {
+            continue;
+        }
+        let (opacity, to_screen): (f64, Box<dyn Fn(Point) -> Pos2>) = match &st {
+            Some(s) => {
+                let centre = Point::new(x.x + x.w / 2.0, x.y + x.h / 2.0);
+                (s.opacity, Box::new(move |p: Point| xf.to_screen(animated(p, centre, s))))
+            }
+            None => (1.0, Box::new(move |p: Point| xf.to_screen(p))),
+        };
+        paint_cameo(painter, &texture, shape, x, opacity, &to_screen);
     }
     paint_preview_overlay(app, OverlayPaint { painter, xf, doc: &doc, idx, ptr, editing, ctx });
 }

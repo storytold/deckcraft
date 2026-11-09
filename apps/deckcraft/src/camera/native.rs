@@ -215,7 +215,9 @@ fn open(request: &CameraRequest, events: SyncSender<CameraEvent>) -> Option<Runn
     let (config, fps) = match cameras::best_format(&capabilities, &wanted) {
         Some(found) => (
             cameras::StreamConfig { resolution: found.resolution, framerate: wanted.framerate, pixel_format: found.pixel_format },
-            found.framerate_range.max as f32,
+            // The stream runs at the requested rate, not the format's maximum: report it clamped
+            // to the range the device really produces, so the status text matches the stream.
+            (wanted.framerate as f64).clamp(found.framerate_range.min, found.framerate_range.max) as f32,
         ),
         None => (wanted, wanted.framerate as f32),
     };
